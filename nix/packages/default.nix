@@ -338,6 +338,63 @@
         };
       });
 
+      # The native arm's builds (`configuration "vulkan"`): sparkles:wsi windows
+      # drawn by sparkles:ui-vulkan, whose canvas SPIR-V comes prebuilt
+      # (`ui-vulkan-shaders`). Packaged so the desktop aggregate compiles
+      # them; `dub test` builds neither. raylib stays a build input: the
+      # native host resolves its cell font through sparkles:raylib-text,
+      # which links it, until sparkles:font's catalog replaces that.
+      packages.ui-gallery-vulkan = config.legacyPackages.buildSparklesApp (finalAttrs: {
+        pname = "ui-gallery-vulkan";
+        version = "0.1.0";
+        appDir = "apps/ui-gallery";
+        dubBuildFlags = [ "--config=vulkan" ];
+
+        nativeBuildInputs = [ pkgs.pkg-config ];
+        buildInputs = [
+          pkgs.raylib
+          inputs'.ghostty.packages.libghostty-vt
+          inputs'.ghostty.packages.libghostty-vt.dev
+        ];
+
+        env = d-toolchain.env;
+
+        installPhase = ''
+          install -Dm755 build/ui-gallery $out/bin/${finalAttrs.pname}
+        '';
+
+        meta = {
+          description = "The sparkles:ui catalog on the native Vulkan arm";
+          mainProgram = finalAttrs.pname;
+        };
+      });
+
+      packages.terminal-vulkan = config.legacyPackages.buildSparklesApp (finalAttrs: {
+        pname = "terminal-vulkan";
+        version = "0.1.0";
+        appDir = "apps/terminal";
+        dubBuildFlags = [ "--config=vulkan" ];
+
+        nativeBuildInputs = [ pkgs.pkg-config ];
+        buildInputs = [
+          pkgs.tree-sitter
+          pkgs.raylib
+          inputs'.ghostty.packages.libghostty-vt
+          inputs'.ghostty.packages.libghostty-vt.dev
+        ];
+
+        env = d-toolchain.env;
+
+        installPhase = ''
+          install -Dm755 build/terminal $out/bin/${finalAttrs.pname}
+        '';
+
+        meta = {
+          description = "The terminal on the native Vulkan arm (text waits on the font atlas)";
+          mainProgram = finalAttrs.pname;
+        };
+      });
+
       apps.ci = {
         type = "app";
         program = lib.getExe config.packages.ci;

@@ -8,7 +8,7 @@ drains the pty and makes the dirty/skip decision, `handle` maps
 runs the per-cell renderer inside the host's draw phase (`HST13`). `main`
 shrinks to CLI-parse-then-`runApp`.
 
-100 1 17 62 67 100 131 974 979 986 987 989 990 994 995 997 998B The mouse) is events in pane pixels (`pointerInPane`, `wheelInPane`,
+$(B The mouse) is events in pane pixels (`pointerInPane`, `wheelInPane`,
 `sparkles.terminal_view.pointer`): the overlay bar on the toolkit's
 `ScrollView` machine (`TVW9`), selection, link hover, mouse reporting. A
 host that reports pixels reaches them through `handle`; where raylib is
@@ -38,8 +38,7 @@ version (TerminalViewRaylib)
         IsWindowMinimized, SetWindowTitle;
     import sparkles.raylib_text : FontSet;
     import sparkles.terminal_view.raylib_input : pollPointer;
-    import sparkles.terminal_view.raylib_painter : installPngDecoder, RaylibPainter,
-        RaylibTextures;
+    import sparkles.terminal_view.raylib_painter : RaylibPainter, RaylibTextures;
 }
 
 import sparkles.base.term_color : RgbColor;
@@ -57,6 +56,7 @@ import sparkles.terminal_view.notification_log : NotificationLog,
     NotificationRecord, NotificationRoute, routeNotification;
 import sparkles.terminal_view.osc_scan : maxIconBytes, maxTitleBytes, Notification;
 import sparkles.terminal_view.painter : isTerminalPainter, NoTextures;
+import sparkles.terminal_view.png_decoder : installPngDecoder;
 import sparkles.terminal_view.pointer : PaneGeometry, pointerEvent, pointerFrame, PointerTrack,
     wheelEvent;
 import sparkles.terminal_view.protocols : ClipboardReadAnswer, ClipboardReadPolicy,
@@ -68,6 +68,26 @@ import sparkles.terminal_view.selection : bounds, findBackward, FindResult, Gran
 import sparkles.ui.geometry : Point, Rect;
 import sparkles.ui.layout : Frame;
 import sparkles.ui.widget : WidgetTree;
+
+/**
+What a host must offer for a pane to paint on it in pixels without raylib
+(`UVX11`): a canvas with pixel fills (the Vulkan painter's target), and its
+cell in pixels (a pane opens at it). Named, so an application can assert
+them against its host (`static assert(hasPixelCanvas!NativeHost)`) and a
+signature drift fails the build instead of leaving a pane that paints
+nothing.
+*/
+enum bool hasPixelCanvas(H) = __traits(compiles, (ref H h) {
+    import sparkles.shaders : v4;
+
+    h.canvas.fillPx(0, 0, 0, 0, v4(0, 0, 0, 0));
+});
+
+/// ditto
+enum bool reportsCellPixels(H) = __traits(compiles, (ref H h) {
+    int w = h.cellWidth;
+    int ht = h.cellHeight;
+});
 
 /**
 Default colours to install over the emulator's: any of the foreground,
@@ -487,9 +507,7 @@ struct TerminalView
     {
         this.fonts = fonts;
         s.fontSize = fonts.size;
-        // The PNG decoder for kitty graphics: process-global, before any
-        // terminal exists.
-        installPngDecoder();
+        // The PNG decoder is installed by `openCore` (it draws pixels).
         if (!openCore(cols, rows, fonts.cellW(), fonts.cellH(), drawsPixels: true))
             return false;
         prevFocused = IsWindowFocused();
@@ -501,6 +519,28 @@ struct TerminalView
         /// The face set the raylib painter draws with, borrowed from the window
         /// session (`HST14`); null for a pane opened without fonts.
         FontSet* fonts;
+    }
+
+    version (TerminalViewVulkan)
+    {
+        import sparkles.terminal_view.vulkan_images : VulkanImages;
+        import sparkles.ui.image : ImageRegistry;
+
+        /// Kitty images this pane registered; the canvas uploads them.
+        VulkanImages vulkanImages;
+        /// Registry every Vulkan pane registers its images in.
+        private static ImageRegistry sharedImageRegistry;
+    }
+    /**
+    A pixel pane on a host that draws its own canvas (`UVX11`). `cellW` and
+    `cellH` are the host's cell metrics; kitty storage is enabled and the
+    pty reports a pixel size. No font set — glyphs wait on the atlas.
+    */
+    bool openPixels(ushort cols, ushort rows, int cellW, int cellH) @system
+    {
+        version (TerminalViewVulkan)
+            vulkanImages.sharedRegistry = &sharedImageRegistry;
+        return openCore(cols, rows, cellW, cellH, drawsPixels: true);
     }
 
     /**
@@ -589,6 +629,7 @@ struct TerminalView
         // Fontless (no renderer for them), the protocol stays disabled.
         if (s.drawsPixels)
         {
+            installPngDecoder();
             ulong kittyStorage = 64 * 1024 * 1024;
             ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_STORAGE_LIMIT, &kittyStorage);
             bool kittyMedium = true;
@@ -845,7 +886,9 @@ struct TerminalView
         }
         // The images are raylib textures where a raylib painter drew them;
         // a pane nothing painted in pixels made none.
-        version (TerminalViewRaylib)
+        version (TerminalViewVulkan)
+            s.images.release(vulkanImages);
+        else version (TerminalViewRaylib)
         {
             RaylibTextures textures;
             s.images.release(textures);
@@ -995,7 +1038,13 @@ struct TerminalView
             // Only a window with fonts can open a pane here; any other host
             // needs it opened beforehand (`openCore`), as an embedder does.
             bool ok;
-            version (TerminalViewRaylib)
+            version (TerminalViewVulkan)
+            {
+                static if (reportsCellPixels!H)
+                    ok = openPixels(cast(ushort) paneCols, cast(ushort) paneRows,
+                        h.cellWidth, h.cellHeight);
+            }
+            else version (TerminalViewRaylib)
             {
                 static if (__traits(compiles, { auto c = h.canvas; FontSet* f = c.fonts; }))
                 {
@@ -1026,11 +1075,21 @@ struct TerminalView
         {
             s.fontSize = newFontSize;
             version (TerminalViewRaylib)
+            {
                 if (fonts !is null)
                 {
                     s.cellWidth = fonts.cellW();
                     s.cellHeight = fonts.cellH();
                 }
+            }
+            else version (TerminalViewVulkan)
+            {
+                static if (reportsCellPixels!H)
+                {
+                    s.cellWidth = h.cellWidth;
+                    s.cellHeight = h.cellHeight;
+                }
+            }
             gridChanged = true;
         }
         if (paneCols > 0 && paneRows > 0
@@ -1183,6 +1242,18 @@ struct TerminalView
                 auto painter = RaylibPainter(fonts, s.fontSize);
                 paintFrame(s, painter, GetScreenWidth(), GetScreenHeight());
             }
+        version (TerminalViewVulkan)
+        {
+            import sparkles.terminal_view.vulkan_painter : VulkanTerminalPainter;
+
+            static if (hasPixelCanvas!H)
+            {
+                auto painter = VulkanTerminalPainter!(typeof(*h.canvas))(h.canvas,
+                    &vulkanImages, s.fontSize);
+                scope (exit) painter.unbind(); // binds on its first image (`UVX11`)
+                paintFrame(s, painter, h.size.width * s.cellWidth, h.size.height * s.cellHeight);
+            }
+        }
     }
 
     /**
@@ -1191,7 +1262,7 @@ struct TerminalView
     application calls from its own `paint`, with the rect `keyedRects`
     reported for the pane it keyed. `rect` is in cells.
 
-    The pane's mouse arrives through 100 1 17 62 67 100 131 974 979 986 987 989 990 994 995 997 998LREF pointerInPane) in pane pixels;
+    The pane's mouse arrives through $(LREF pointerInPane) in pane pixels;
     the raylib bridge (`pollMouse`) reads it relative to where this put the
     pane.
     */
@@ -1212,10 +1283,21 @@ struct TerminalView
                 auto painter = RaylibPainter(fonts, s.fontSize);
                 paintAt(painter, px, py, pw, ph);
             }
+        version (TerminalViewVulkan)
+        {
+            import sparkles.terminal_view.vulkan_painter : VulkanTerminalPainter;
+
+            static if (hasPixelCanvas!H)
+            {
+                auto painter = VulkanTerminalPainter!(typeof(*h.canvas))(h.canvas, &vulkanImages, s.fontSize);
+                scope (exit) painter.unbind(); // binds on its first image (`UVX11`)
+                paintAt(painter, px, py, pw, ph);
+            }
+        }
     }
 
     /**
-    100 1 17 62 67 100 131 974 979 986 987 989 990 994 995 997 998LREF paintPanePx) through any painter (`isTerminalPainter`): what a
+    $(LREF paintPanePx) through any painter (`isTerminalPainter`): what a
     host whose canvas is not raylib's paints the pane with, and what a
     test records the renderer through.
     */
@@ -1394,16 +1476,50 @@ struct TerminalView
     */
     void pointerInPane(in PointerEvent p) @system nothrow @nogc
     {
-        if (beforePointer())
-            pointerEvent(s, pointer, p, pane);
+        if (!beforePointer())
+            return;
+        ensurePane();
+        pointerEvent(s, pointer, p, pane);
     }
 
     /// The wheel, likewise: reports to a tracking program, else the
     /// scrollback walks between rows on the next frame (`SCV12`).
     void wheelInPane(in WheelEvent w) @system nothrow @nogc
     {
-        if (beforePointer())
-            wheelEvent(s, w, wheelRows);
+        if (!beforePointer())
+            return;
+        ensurePane();
+        wheelEvent(s, w, wheelRows);
+    }
+
+    /**
+    The per-frame half of event-driven mouse, for an embedder that does not
+    call `frame`: a held selection's edge autoscroll, and a wheel's pending
+    rows (`SCV12`). No-op while raylib is polled — `frame` already did it.
+    True while a held selection wants another frame.
+    */
+    bool servicePointer(float dt) @system nothrow @nogc
+    {
+        if (!opened || pollsMouse())
+            return false;
+        ensurePane();
+        bool again;
+        if (!s.childExited)
+            again = pointerFrame(s, pointer, pane, dt);
+        if (wheelRows != 0)
+        {
+            scrollSmooth(WheelEvent(fdy: wheelRows));
+            wheelRows = 0;
+        }
+        return again;
+    }
+
+    // The grid's pixel size, so an embedder's events map to cells before
+    // `frame` has run (the gallery never calls it).
+    private void ensurePane() @safe pure nothrow @nogc
+    {
+        pane = PaneGeometry(s.cols * s.cellWidth, s.rows * s.cellHeight,
+            s.internalScrollbar);
     }
 
     // A key's ordering for the mouse too: the pty drained before the first
@@ -3073,6 +3189,19 @@ bool pasteNeedsConfirm(PasteConfirm policy, in char[] text) @safe pure nothrow @
     }
     assert(tv.s.childExited, "the last slave holder closing ends the session");
     assert(tv.s.childReaped, "and there is no child to reap");
+}
+
+@("terminal_view.openPixels.reportsTheHostCell")
+@system unittest
+{
+    TerminalView tv;
+    tv.opts = TerminalViewOptions(program: "/bin/sh",
+        argv: [cast(const(char)*) "sh", "-c", "exit 0", null],
+        exitBehavior: ExitBehavior.hold);
+    assert(tv.openPixels(20, 2, 8, 16));
+    scope (exit) tv.close();
+    assert(tv.s.drawsPixels);
+    assert(tv.s.cellWidth == 8 && tv.s.cellHeight == 16);
 }
 
 @("terminal_view.component.colorOverridesBecomeTheDefaults")

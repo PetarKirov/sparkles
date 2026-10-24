@@ -297,7 +297,12 @@
       # stamp, hence its sources. (The closure is read from the manifests, so
       # it can over-approximate — an unused copy, nothing more.)
       needsUiShaders = srcDirs: builtins.elem "libs/ui-raylib/src" srcDirs;
-      uiShaderDirs = srcDirs: lib.optional (needsUiShaders srcDirs) "apps/shader-compile/src";
+      # sparkles:ui-vulkan's canvas SPIR-V likewise (`ui-vulkan-shaders`), for
+      # every build that reaches the native canvas.
+      needsUiVulkanShaders = srcDirs: builtins.elem "libs/ui-vulkan/src" srcDirs;
+      uiShaderDirs =
+        srcDirs:
+        lib.optional (needsUiShaders srcDirs || needsUiVulkanShaders srcDirs) "apps/shader-compile/src";
       placeUiShaders =
         rootDir:
         lib.optionalString (config.packages ? ui-shaders) ''
@@ -308,6 +313,14 @@
         '';
       # The same for sparkles:vulkan-wsi's `gpu-shaders` configuration, which
       # the triangle examples select (`vulkan-wsi-shaders`).
+      placeUiVulkanShaders =
+        rootDir:
+        lib.optionalString (config.packages ? ui-vulkan-shaders) ''
+          chmod -R u+w "${rootDir}"
+          install -d "${rootDir}/libs/ui-vulkan/generated/shaders"
+          cp ${config.packages.ui-vulkan-shaders}/*.spv ${config.packages.ui-vulkan-shaders}/.stamp \
+            "${rootDir}/libs/ui-vulkan/generated/shaders/"
+        '';
       placeVulkanWsiShaders =
         rootDir:
         lib.optionalString (config.packages ? vulkan-wsi-shaders) ''
@@ -532,6 +545,8 @@
         inherit
           needsUiShaders
           uiShaderDirs
+          needsUiVulkanShaders
+          placeUiVulkanShaders
           placeUiShaders
           placeVulkanWsiShaders
           ;
@@ -586,9 +601,12 @@
           unstampedSparklesApp = lib.extendMkDerivation {
             constructDrv = pkgs.buildDubPackage;
 
-            # `sourceDirs` and `links` are consumed here, not mkDerivation attributes.
+            # `sourceDirs`, `appDir` and `links` are consumed here, not mkDerivation
+            # attributes.
             excludeDrvArgNames = [
               "sourceDirs"
+              "appDir"
+              "generatesShaders"
               "links"
               "stampBuildInfo"
               "checkBuildInfo"
@@ -597,8 +615,11 @@
             extendDrvArgs =
               finalAttrs: args:
               let
+                # The application's directory: `apps/<pname>` unless another
+                # configuration of an app is its own package (`terminal-vulkan`).
+                appDir = args.appDir or "apps/${finalAttrs.pname}";
                 # Explicit `sourceDirs` override, else the computed closure.
-                srcDirs = args.sourceDirs or (sparklesSrcClosure "apps/${finalAttrs.pname}");
+                srcDirs = args.sourceDirs or (sparklesSrcClosure appDir);
                 # ImportC's headers and the linked shaping libraries travel with
                 # every raylib-text consumer, including transitive UI consumers.
                 shapingInputs = lib.optionals (builtins.elem "libs/raylib-text/src" srcDirs) [
@@ -607,11 +628,31 @@
                   pkgs.harfbuzz
                   pkgs.harfbuzz.dev
                 ];
-                buildInputs = (args.buildInputs or [ ]) ++ shapingInputs;
+                # The window system's native libraries (`libs "wayland-client"
+                # "xcb" … "xkbcommon-x11"` in libs/wsi, Linux-only) and the Vulkan
+                # loader travel the same way, with every consumer of the native arm.
+                wsiInputs =
+                  lib.optionals (builtins.elem "libs/wsi/src" srcDirs && pkgs.stdenv.hostPlatform.isLinux)
+                    [
+                      pkgs.wayland
+                      pkgs.wayland.dev
+                      pkgs.libxkbcommon
+                      pkgs.libxkbcommon.dev
+                      pkgs.libxcb
+                      pkgs.libxcb.dev
+                      pkgs.xcb-imdkit
+                      pkgs.xorg.xcbutil
+                      pkgs.xorg.xcbutil.dev
+                    ];
+                vulkanInputs = lib.optionals (builtins.elem "libs/vulkan/src" srcDirs) [
+                  pkgs.vulkan-loader
+                  pkgs.vulkan-loader.dev
+                ];
+                buildInputs = (args.buildInputs or [ ]) ++ shapingInputs ++ wsiInputs ++ vulkanInputs;
                 dubBuildType = args.dubBuildType or "checked";
                 stamp = args.stampBuildInfo or false;
                 buildInfoComponents =
-                  inTreeComponents (shippedComponentNames "apps/${finalAttrs.pname}") // nativeComponents buildInputs;
+                  inTreeComponents (shippedComponentNames appDir) // nativeComponents buildInputs;
 
                 # Default leak set. `buildDubPackage` already scrubs the compiler
                 # itself in its `preFixup`, so this only adds the Phobos-baked paths
@@ -688,7 +729,7 @@
                 };
 
                 src = args.src or (sourceFor (srcDirs ++ uiShaderDirs srcDirs));
-                sourceRoot = args.sourceRoot or "${finalAttrs.src.name}/apps/${finalAttrs.pname}";
+                sourceRoot = args.sourceRoot or "${finalAttrs.src.name}/${appDir}";
 
                 nativeBuildInputs =
                   (args.nativeBuildInputs or [ ])
@@ -706,6 +747,10 @@
                   + "\n"
                   + lib.optionalString (needsUiShaders srcDirs) (
                     placeUiShaders "$NIX_BUILD_TOP/${finalAttrs.src.name}"
+                  )
+                  # Not into a build that generates them: that is their source.
+                  + lib.optionalString (needsUiVulkanShaders srcDirs && !(args.generatesShaders or false)) (
+                    placeUiVulkanShaders "$NIX_BUILD_TOP/${finalAttrs.src.name}"
                   );
 
                 installPhase =

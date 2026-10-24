@@ -181,11 +181,19 @@ struct DesktopIntegration
 /// Wayland compositor may only flag it as wanting attention.
 void raiseWindow() @system
 {
-    import raylib : IsWindowMinimized, IsWindowReady, RestoreWindow, SetWindowFocused;
+    version (TerminalVulkan)
+    {
+        // No raylib window to restore. The pane is focused by the caller;
+        // activation is the compositor's decision on this arm.
+    }
+    else
+    {
+        import raylib : IsWindowMinimized, IsWindowReady, RestoreWindow, SetWindowFocused;
 
-    if (!IsWindowReady())
-        return;
-    if (IsWindowMinimized())
-        RestoreWindow();
-    SetWindowFocused();
+        if (!IsWindowReady())
+            return;
+        if (IsWindowMinimized())
+            RestoreWindow();
+        SetWindowFocused();
+    }
 }

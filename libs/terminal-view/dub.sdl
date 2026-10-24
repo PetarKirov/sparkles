@@ -37,12 +37,22 @@ configuration "core" {
 // raylib (plan slice V5 of `docs/specs/ui-vulkan`).
 configuration "unittest" {
     excludedSourceFiles "src/sparkles/terminal_view/raylib_*.d"
+    // Compile the Vulkan component branches in tests (sources already exclude raylib).
+    versions "TerminalViewVulkan"
     dependency "sparkles:test-runner" path="../.."
     // The recording host the mouse scenarios run through (`pointer_test.d`).
     dependency "sparkles:ui-app" path="../.."
     subConfiguration "sparkles:ui-app" "tui"
 
     dflags "-checkaction=context" "-allinst"
+}
+
+// The core sources plus the Vulkan painter. A native host selects this so
+// `paintPanePx` draws through `VulkanTerminalPainter` (`UVX11`).
+configuration "vulkan" {
+    targetType "sourceLibrary"
+    excludedSourceFiles "src/sparkles/terminal_view/raylib_*.d"
+    versions "TerminalViewVulkan"
 }
 
 // BEGIN managed build types — apps/ci/tools/standardize-build-settings.d

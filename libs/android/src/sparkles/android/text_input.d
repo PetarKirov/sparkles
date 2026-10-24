@@ -146,7 +146,7 @@ void pushTypedRun(scope const(dchar)[] run) @trusted nothrow @nogc
 }
 
 /**
-Sets the function 100 1 17 62 67 100 131 974 979 986 987 989 990 994 995 997 998LREF pushTyped) calls after queueing, on whichever thread
+Sets the function $(LREF pushTyped) calls after queueing, on whichever thread
 queued: a consumer that does not poll every frame wakes its own loop there.
 It must be quick and must not block. `null` clears it.
 */

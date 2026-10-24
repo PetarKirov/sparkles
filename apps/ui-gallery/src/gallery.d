@@ -19,7 +19,7 @@ import std.conv : text;
 import sparkles.base.term_control : PointerShape;
 import sparkles.input : ColorSchemeEvent, Event, isDismiss, Key, KeyAction, KeyEvent, match,
     PasteEvent,
-    PointerAction, PointerEvent, ResizeEvent, WheelEvent;
+    PointerAction, PointerButton, PointerEvent, ResizeEvent, WheelEvent;
 import sparkles.terminal_view.cell_paint : paintCells;
 import sparkles.ui.components.dock : DockAxis, DockContainer, PaneId, RouteKind;
 import sparkles.ui.components.chrome : headerBar, scrollView;
@@ -49,7 +49,17 @@ import sparkles.ui.effect : applyThemeEffects, Builtin, EffectBinding,
     EffectParam, EffectRegistry, ThemeEffects;
 import sparkles.ui.image : ImageRegistry;
 import state;
-import sparkles.terminal_view.component : TerminalViewOptions;
+import sparkles.terminal_view.component : hasPixelCanvas, reportsCellPixels, TerminalViewOptions;
+
+// The native host keeps what the Terminal page paints a pane through: a
+// drift fails this build, not the page at run time (`UVX11`).
+version (UiAppGuiVulkan)
+{
+    import sparkles.ui_app.native_loop : NativeHost;
+
+    static assert(hasPixelCanvas!NativeHost && reportsCellPixels!NativeHost,
+        "the native host no longer offers what a terminal pane paints through");
+}
 import sparkles.terminal_view.input : ExitBehavior;
 import sparkles.terminal_view.pool : TerminalPool;
 
@@ -185,6 +195,8 @@ struct Gallery
     private enum PaneId paneInsp = 3;
 
     private bool prevTermFocus;
+    private bool termDragActive; // a left drag started in the terminal pane; it owns drag/release until release
+    private uint termDragPaneId; // the pane that drag started in — its release goes there, not to the active tab
     private int dbgFrame; // the UIG_SHOT self-verification hook's clock
 
     /**
@@ -533,6 +545,8 @@ struct Gallery
                 s.terms.paneY = cast(ushort) inner.y;
                 static if (__traits(compiles, { auto c_ = h.canvas; auto f_ = c_.fonts; }))
                     paintTermChrome(h, tv, inner); // padding fill + pane + rail
+                else static if (hasPixelCanvas!(typeof(h)))
+                    paintTermPixels(h, tv, inner);
                 else static if (__traits(compiles, paintCells(tv.s, h.canvas, inner)))
                     // An lvalue canvas (the recorder). The paint is C FFI over
                     // this instance's own live handles, hence the trust.
@@ -900,6 +914,40 @@ struct Gallery
         ));
     }
 
+    /// The native arm's terminal chrome: the same padding fill and rail as
+    /// $(LREF paintTermChrome), through the canvas's pixel fills. Text stays
+    /// blank until the font atlas (plan slice V3).
+    private void paintTermPixels(H, TV)(ref H h, TV tv, in Rect pane)
+    {
+        import sparkles.shaders : v4;
+        import sparkles.ui.canvas : RuleEdge, Scrollbar;
+
+        const cw = h.cellWidth;
+        const ch = h.cellHeight;
+        const bg = tv.background();
+        enum strokePx = 2;
+        h.canvas.fillPx(
+            (pane.x - 1) * cw + strokePx,
+            (pane.y - 1) * ch + strokePx,
+            (pane.width + gutterCells + 2) * cw - 2 * strokePx,
+            (pane.height + 2) * ch - 2 * strokePx,
+            v4(bg.r / 255.0f, bg.g / 255.0f, bg.b / 255.0f, 1));
+        tv.paintPane(h, pane);
+        if (s.terms.sbTotal <= s.terms.sbLen || s.terms.sbLen <= 0)
+            return;
+        const thumbFg = mixRgb(bg, theme().pageFg, 0.55f);
+        h.canvas.scrollbar(Scrollbar(
+            rect: Rect(pane.x + pane.width, pane.y, gutterCells, pane.height),
+            content: cast(int) s.terms.sbTotal,
+            viewport: cast(int) s.terms.sbLen,
+            offset: cast(int) s.termView.v.offset,
+            fg: thumbFg,
+            trackColor: mixRgb(bg, theme().pageFg, 0.25f),
+            expandPercent: cast(ubyte) s.termView.vAnim.percent,
+            edge: RuleEdge.right,
+        ));
+    }
+
     // ── the Terminal page's frame glue ──────────────────────────────────────
 
     /**
@@ -978,14 +1026,25 @@ struct Gallery
                 () @trusted {
                     if (s.terms.paneCols > 0 && s.terms.paneRows > 0)
                         tv.resize(s.terms.paneCols, s.terms.paneRows);
+                    if (s.backend == Backend.gui)
+                    {
+                        static if (__traits(compiles, { float f = h.frameSeconds; }))
+                            const dt = h.frameSeconds;
+                        else
+                            const dt = 0.0f;
+                        if (tv.servicePointer(dt))
+                            static if (__traits(compiles, h.requestFrame()))
+                                h.requestFrame();
+                    }
                     // The scrollback bar drives a ScrollView machine, but
                     // ghostty owns the real offset — apply the machine's
                     // intent as a viewport delta, then mirror the truth back
                     // into the machine and the page's numbers. Intent is
                     // measured against LAST frame's mirror, so a move ghostty
-                    // made itself (wheel, new output re-pinning the bottom)
-                    // never reads as a drag. Applied BEFORE the render-state
-                    // snapshot below, so the jump paints this frame.
+                    // made itself (a wheel just drained above, new output
+                    // re-pinning the bottom) never reads as a drag. Applied
+                    // BEFORE the render-state snapshot below, so the jump
+                    // paints this frame.
                     if (s.termView.v.offset != s.terms.sbOffset)
                         tv.scrollViewport(cast(int)
                             (s.termView.v.offset - s.terms.sbOffset));
@@ -1028,8 +1087,13 @@ struct Gallery
             return;
         // `hold`: the component must never quit the gallery — the exit policy
         // (and its toggle) is the tab model's; the gallery draws its own bar.
-        auto tv = store.create(id, TerminalViewOptions(exitBehavior: ExitBehavior.hold,
-            internalScrollbar: false));
+        TerminalViewOptions o;
+        o.exitBehavior = ExitBehavior.hold;
+        o.internalScrollbar = false;
+        // The GUI arm delivers pointer events; polling raylib as well would
+        // select twice. The terminal arm has no pixels to poll.
+        o.pollMouse = s.backend != Backend.gui;
+        auto tv = store.create(id, o);
         if (tv is null)
         {
             s.terms.close(s.terms.active);
@@ -1055,6 +1119,11 @@ struct Gallery
                 auto c = h.canvas;
                 return tv.open(c.fonts, cols, rows);
             }();
+        else static if (reportsCellPixels!(typeof(h)))
+            // Native arm: pixels, and `PointerUnit.pixels` is already the
+            // gallery's `RunConfig`, so `handle` feeds `pointerInPane` in
+            // the same unit. `pollMouse` is off because `backend` is gui.
+            ok = (() @trusted => tv.openPixels(cols, rows, h.cellWidth, h.cellHeight))();
         else
             ok = (() @trusted => tv.openCore(cols, rows, 1, 1))();
         if (!ok)
@@ -1190,6 +1259,31 @@ struct Gallery
         else
             s.guiPointerY = int.min;
 
+        // A terminal drag owns motion and release before the dock or the
+        // showing page can consume them, even after a page/tab change.
+        if (termDragActive && (p.action == PointerAction.drag || (p.action == PointerAction.release
+                && p.button == PointerButton.left) || p.action == PointerAction.leave))
+        {
+            if (auto tv = store.byId(termDragPaneId))
+            {
+                const origin = (() @trusted => tv.paneOrigin)();
+                auto rel = PointerEvent(action: device.action,
+                    button: device.button, mods: device.mods,
+                    pos: Point(device.pos.x - origin.x, device.pos.y - origin.y));
+                (() @trusted => tv.pointerInPane(rel))();
+            }
+            // Only the release ends it: a `leave` forgets the position, and the
+            // release that follows still belongs to the pane's selection.
+            if (p.action == PointerAction.release)
+            {
+                termDragActive = false;
+                termDragPaneId = 0;
+            }
+            s.hover.update(p, targets);
+            reportPointerShape(h);
+            return;
+        }
+
         // The dock's dividers first (`DCK13`): a press on the seam between
         // two panes starts a resize, and a live resize owns the pointer
         // wherever it strays. Every other event falls straight through —
@@ -1215,19 +1309,46 @@ struct Gallery
             return;
         }
 
-        // Inside the terminal pane, the pointer belongs to the application
-        // running there when it asked for mouse reporting (vim, htop): the
-        // event forwards pane-relative through the mode-aware encoder, and a
-        // forwarded press also focuses the pane — pointing into an app means
-        // working in it. When the application does not track the mouse the
-        // seam writes nothing and the shell's routing (click-to-focus,
-        // hover) continues below.
+        // Inside the terminal pane. The GUI arm forwards pane pixels to
+        // `pointerInPane` (selection, link hover, and a tracking program —
+        // one event, not also `sendPointer`). The terminal arm stays on
+        // `sendPointer`, in cells, which writes nothing unless the program
+        // asked for reporting, so click-to-focus and hover continue below.
         if (s.page == terminalPageIndex && s.terms.any)
         {
             const paneRect = rectOf(tree, frames, hitPane);
             if (paneRect.width > 0 && paneRect.contains(p.pos))
                 if (auto tv = store.byId(s.terms.tabs[s.terms.active].id))
                 {
+                    if (s.backend == Backend.gui && !tv.s.childExited)
+                    {
+                        const origin = (() @trusted => tv.paneOrigin)();
+                        auto rel = PointerEvent(action: device.action,
+                            button: device.button, mods: device.mods,
+                            pos: Point(device.pos.x - origin.x,
+                                device.pos.y - origin.y));
+                        (() @trusted => tv.pointerInPane(rel))();
+                        if (device.action == PointerAction.press)
+                        {
+                            s.terms.focused = true;
+                            if (device.button == PointerButton.left)
+                            {
+                                termDragActive = true;
+                                termDragPaneId = s.terms.tabs[s.terms.active].id;
+                            }
+                        }
+                        // Cleared only after forwarding, so the pane sees
+                        // the release that ends its selection even outside.
+                        if (device.action == PointerAction.release
+                            && device.button == PointerButton.left)
+                        {
+                            termDragActive = false;
+                            termDragPaneId = 0;
+                        }
+                        s.hover.update(p, targets);
+                        reportPointerShape(h);
+                        return;
+                    }
                     const rel = PointerEvent(action: p.action,
                         button: p.button, mods: p.mods,
                         pos: Point(p.pos.x - paneRect.x, p.pos.y - paneRect.y));
@@ -1325,14 +1446,26 @@ struct Gallery
                 device.pos.y / s.guiCellH);
 
         // Over the terminal pane the wheel belongs to the application when
-        // it tracks the mouse (the scroll buttons); otherwise it walks the
-        // shell's scrollback — either way, not the gallery's document.
+        // it tracks the mouse; otherwise it walks the scrollback — either
+        // way, not the gallery's document. The GUI arm does both through
+        // `wheelInPane`. The terminal arm stays on `sendWheel`, in cells.
         if (s.page == terminalPageIndex && s.terms.any && s.hover.isHot(hitPane))
         {
             if (auto tv = store.byId(s.terms.tabs[s.terms.active].id))
+            {
+                if (s.backend == Backend.gui && !tv.s.childExited)
+                {
+                    const origin = (() @trusted => tv.paneOrigin)();
+                    WheelEvent rel = device;
+                    rel.pos = Point(device.pos.x - origin.x,
+                        device.pos.y - origin.y);
+                    (() @trusted => tv.wheelInPane(rel))();
+                    return;
+                }
                 if ((() @trusted => tv.sendWheel(w.dy,
                         w.pos.x - s.terms.paneX, w.pos.y - s.terms.paneY))())
                     return;
+            }
             return scrollTerminal(w.dy);
         }
 

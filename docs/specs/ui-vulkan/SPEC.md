@@ -264,8 +264,11 @@ frame **must** ask for another.
 ## 5. Images
 
 **UVK23: Residency.** An image **must** be uploaded once per residency of
-its `(handle, generation)`: once when first drawn, and again only after its
-upload was released (`UVK32`) or the device was rebuilt.
+its `(registry, handle, generation)`: once when first drawn, and again only
+after its upload was released (`UVK32`) or the device was rebuilt. An image
+its registry no longer holds at that generation, removed or replaced,
+**must** be released as the next frame begins, so the cache holds only
+images that can still be drawn, however many a run shows.
 
 **UVK24: Placement.** An image **must** be placed by `fitRect`, clipped to
 its rectangle for `cover`, sampled through a linear-filtering sampler, and
@@ -322,3 +325,14 @@ new device afterwards **must** draw the same frame identically.
 frame, `endFrame` **must** abandon the frame, report `outOfDeviceMemory`,
 and release caches (`UVK32`); the host does not submit the abandoned frame,
 and the next frame starts from the released state.
+
+## 8. Pixel space
+
+**UVK35: Pixel operations.** Beside the cell operations, the canvas **must**
+draw a solid rectangle, a one-pixel outline, a clip, an offset, and an image
+quad from a source sub-rectangle, all in device pixels and through the same
+instance batcher. A pixel coordinate is not scaled by the cell size. A clip
+replaces the current pixel clip and is not moved by a later offset; offsets
+nest and move what is drawn after them. An image quad's texture coordinates
+are that source rectangle within the image. Text is not part of this
+requirement.

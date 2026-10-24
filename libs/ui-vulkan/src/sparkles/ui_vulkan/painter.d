@@ -161,15 +161,24 @@ if (isImageSource!Images)
     /// The frame's degradation report so far.
     FrameReport report;
 
+    private static struct ShiftEntry
+    {
+        int x;
+        int y;
+        bool pixel; // true: a device-pixel offset; false: a cell shift
+    }
+
     private FrameMetrics m_;
     private Size target_;
     private UniqueBuffer!Instance instances_;
     private UniqueBuffer!DrawRun runs_;
     private UniqueBuffer!ClipEntry clips_;
-    private UniqueBuffer!(int[2]) shifts_;
+    private UniqueBuffer!ShiftEntry shifts_;
     private int shiftX_, shiftY_;
     private ScissorBox scissor_;
     private bool clipped_; // nothing survives the clip stack
+    private bool hasPixelClip_;
+    private ScissorBox pixelClip_;
 
     @disable this(this);
 
@@ -183,6 +192,7 @@ if (isImageSource!Images)
         clips_.clear();
         shifts_.clear();
         shiftX_ = shiftY_ = 0;
+        hasPixelClip_ = false;
         report = FrameReport.init;
         updateScissor();
     }
@@ -364,20 +374,137 @@ if (isImageSource!Images)
     void pushShift(float dx, float dy)
     {
         const x = shiftPx(dx, m_.cellW), y = shiftPx(dy, m_.cellH);
-        shifts_.put([x, y]);
+        shifts_.put(ShiftEntry(x, y, false));
         shiftX_ += x;
         shiftY_ += y;
     }
 
-    /// ditto
+    /// ditto — removes the nearest enclosing cell shift, even under a
+    /// pixel offset: the entries above it keep their contribution, so a
+    /// crossed pop cannot unbalance the stack for the rest of the frame.
     void popShift()
     {
-        if (!shifts_.length)
+        popKind(false);
+    }
+
+    private void popKind(bool pixel)
+    {
+        auto all = shifts_[];
+        foreach_reverse (i, ref e; all)
+            if (e.pixel == pixel)
+            {
+                shiftX_ -= e.x;
+                shiftY_ -= e.y;
+                foreach (j; i + 1 .. all.length)
+                    all[j - 1] = all[j];
+                shifts_.popBack();
+                return;
+            }
+    }
+
+    // -------------------------------------------------------------------
+    // Pixel space, for a painter that already works in device pixels
+    // (the terminal). Reuses the instance batcher; does not scale by cells.
+    // -------------------------------------------------------------------
+
+    /// A solid rectangle in device pixels, blended over what is there.
+    /// `(x, y)` is relative to the frame origin plus any open pixel offset.
+    void fillPx(int x, int y, int w, int h, vec4 colour)
+    {
+        solid(Rect(m_.originX + shiftX_ + x, m_.originY + shiftY_ + y, w, h), colour);
+    }
+
+    /// The rectangle's one-pixel border, inside the box, corners drawn once.
+    void outlinePx(int x, int y, int w, int h, vec4 colour)
+    {
+        if (w <= 0 || h <= 0)
             return;
-        const s = shifts_[][$ - 1];
-        shifts_.popBack();
-        shiftX_ -= s[0];
-        shiftY_ -= s[1];
+        fillPx(x, y, w, 1, colour);
+        if (h > 1)
+            fillPx(x, y + h - 1, w, 1, colour);
+        if (h > 2 && w > 0)
+        {
+            fillPx(x, y + 1, 1, h - 2, colour);
+            if (w > 1)
+                fillPx(x + w - 1, y + 1, 1, h - 2, colour);
+        }
+    }
+
+    /// Replaces the pixel clip. Coordinates are target pixels, not moved by
+    /// a later offset — a pane's scissor stays put while its content shifts.
+    void clipPx(int x, int y, int w, int h)
+    {
+        pixelClip_ = ScissorBox(m_.originX + x, m_.originY + y, w, h);
+        hasPixelClip_ = true;
+        updateScissor();
+    }
+
+    /// ditto
+    void unclipPx()
+    {
+        hasPixelClip_ = false;
+        updateScissor();
+    }
+
+    /// Moves what follows by `dx` and `dy` device pixels. Nests with
+    /// `pushShift`.
+    void pushOffsetPx(int dx, int dy)
+    {
+        shifts_.put(ShiftEntry(dx, dy, true));
+        shiftX_ += dx;
+        shiftY_ += dy;
+    }
+
+    /// ditto — removes the nearest enclosing pixel offset, even under a
+    /// cell shift (see `popShift`).
+    void popOffsetPx()
+    {
+        popKind(true);
+    }
+
+    /**
+    An image quad in device pixels. `slot` is the bound image number;
+    `(sx, sy, sw, sh)` is the source rectangle in the image's pixels,
+    `imgW` × `imgH` the image's size. `tint.w` is the alpha.
+    */
+    void imageQuadPx(uint slot, int x, int y, int w, int h,
+        int sx, int sy, int sw, int sh, int imgW, int imgH, vec4 tint)
+    {
+        if (w <= 0 || h <= 0 || imgW <= 0 || imgH <= 0 || slot == 0)
+            return;
+        const u0 = sx / cast(float) imgW, v0 = sy / cast(float) imgH;
+        const u1 = (sx + sw) / cast(float) imgW, v1 = (sy + sh) / cast(float) imgH;
+        emit(record(v4(m_.originX + shiftX_ + x, m_.originY + shiftY_ + y, w, h),
+            tint, v4(0), v4(QuadKind.image, 0, 0, 0), v4(u0, v0, u1, v1)),
+            BoundImages(image: slot));
+    }
+
+    /**
+    An image the source resolves, drawn in device pixels from a source
+    sub-rectangle. A handle that is not resident counts the same way
+    `image` does and draws nothing.
+    */
+    void imageSourcePx(ImageHandle handle, int x, int y, int w, int h,
+        int sx, int sy, int sw, int sh)
+    {
+        uint slot;
+        Size size;
+        static if (is(Images == U*, U))
+            const outcome = images is null ? ImageOutcome.missing : images.resolve(handle, slot, size);
+        else
+            const outcome = images.resolve(handle, slot, size);
+        if (outcome != ImageOutcome.drawn)
+        {
+            if (outcome == ImageOutcome.tooLarge)
+                report.count(Degradation.imageTooLarge);
+            else if (outcome == ImageOutcome.deferred)
+            {
+                report.count(Degradation.imageDeferred);
+                report.anotherFrame = true;
+            }
+            return;
+        }
+        imageQuadPx(slot, x, y, w, h, sx, sy, sw, sh, size.width, size.height, v4(1, 1, 1, 1));
     }
 
     /// An effect bracket draws its contents unaffected and counts once
@@ -423,10 +550,25 @@ if (isImageSource!Images)
         {
             scissor_ = ScissorBox(0, 0, target_.width, target_.height);
             clipped_ = target_.width <= 0 || target_.height <= 0;
-            return;
         }
-        clipped_ = !scissorBoxOfStack(clips_[], m_.originX, m_.originY, m_.cellW, m_.cellH,
-            target_.width, target_.height, scissor_);
+        else
+            clipped_ = !scissorBoxOfStack(clips_[], m_.originX, m_.originY, m_.cellW, m_.cellH,
+                target_.width, target_.height, scissor_);
+        if (hasPixelClip_ && !clipped_)
+            clipped_ = !intersectScissor(scissor_, pixelClip_);
+    }
+
+    private static bool intersectScissor(ref ScissorBox box, in ScissorBox clip)
+        @safe pure nothrow @nogc
+    {
+        const x0 = box.x > clip.x ? box.x : clip.x;
+        const y0 = box.y > clip.y ? box.y : clip.y;
+        const x1 = box.x + box.w < clip.x + clip.w ? box.x + box.w : clip.x + clip.w;
+        const y1 = box.y + box.h < clip.y + clip.h ? box.y + box.h : clip.y + clip.h;
+        if (x1 <= x0 || y1 <= y0)
+            return false;
+        box = ScissorBox(x0, y0, x1 - x0, y1 - y0);
+        return true;
     }
 
     private void solid(in Rect r, vec4 colour)
@@ -526,6 +668,63 @@ unittest
 
     p.fillRect(Rect(0, 0, 1, 1), Visual.init);
     assert(p.instances.length == 1, "nothing to paint, nothing recorded");
+}
+
+@("ui_vulkan.painter.pixelFillsDoNotScaleByCells")
+@safe pure nothrow @nogc
+unittest
+{
+    // `UVK35`: a pixel fill is the rectangle given, plus the frame origin
+    // and any open pixel offset, not a cell rectangle.
+    Painter!NoImages p;
+    p.begin(Size(200, 100), metrics10x20);
+    const c = rgba(RgbColor(10, 20, 30), 128);
+    p.fillPx(4, 6, 3, 2, c);
+    assert(p.instances.length == 1);
+    assert(boxIs(p.instances[0], 9, 9, 3, 2), "origin (5, 3) plus (4, 6)");
+    assert(p.instances[0].fill.array[3] == 128 / 255.0f);
+
+    p.pushOffsetPx(10, 1);
+    p.fillPx(0, 0, 1, 1, c);
+    assert(boxIs(p.instances[1], 15, 4, 1, 1));
+    p.popOffsetPx();
+
+    p.outlinePx(4, 6, 5, 4, c);
+    assert(p.instances.length == 6, "four border rects, corners once");
+
+    p.clipPx(2, 2, 8, 6);
+    p.fillPx(0, 0, 1, 1, c);
+    assert(p.runs[$ - 1].scissor == ScissorBox(7, 5, 8, 6));
+    p.unclipPx();
+    p.fillPx(0, 0, 1, 1, c);
+    assert(p.runs[$ - 1].scissor == ScissorBox(0, 0, 200, 100));
+
+    p.imageQuadPx(3, 1, 2, 4, 5, 2, 1, 2, 2, 8, 4, v4(1, 1, 1, 1));
+    const q = p.instances[$ - 1];
+    assert(q.shape.array[0] == QuadKind.image);
+    assert(q.texRect.array == [2 / 8.0f, 1 / 4.0f, 4 / 8.0f, 3 / 4.0f]);
+    assert(p.runs[$ - 1].images.image == 3);
+}
+
+@("ui_vulkan.painter.pixelAndCellShiftsDoNotStealEachOther")
+@safe pure nothrow @nogc
+unittest
+{
+    // A cell shift and a pixel offset share one stack. A crossed pop
+    // takes the nearest entry of its own kind out from under the other:
+    // the pixel offset keeps contributing until its own pop.
+    Painter!NoImages p;
+    p.begin(Size(200, 100), metrics10x20);
+    const c = rgba(RgbColor(10, 20, 30), 128);
+    p.pushShift(1, 0); // one 10 px cell
+    p.pushOffsetPx(3, 0);
+    p.popShift(); // crossed: removes the cell shift under the pixel offset
+    p.fillPx(0, 0, 1, 1, c);
+    assert(boxIs(p.instances[0], 8, 3, 1, 1), "origin 5 + pixel 3 only");
+    p.popOffsetPx();
+    p.fillPx(0, 0, 1, 1, c);
+    assert(p.instances.length == 2);
+    assert(boxIs(p.instances[1], 5, 3, 1, 1), "both popped: the origin only");
 }
 
 @("ui_vulkan.painter.runsBreakWhereTheImageChangesAndNeverReorder")

@@ -1,7 +1,8 @@
 # Generated shaders, built once per package that generates them:
 #
 #   * `ui-shaders`: sparkles:ui's effect GLSL;
-#   * `vulkan-wsi-shaders`: sparkles:vulkan-wsi's triangle SPIR-V.
+#   * `vulkan-wsi-shaders`: sparkles:vulkan-wsi's triangle SPIR-V;
+#   * `ui-vulkan-shaders`: sparkles:ui-vulkan's canvas SPIR-V.
 #
 # Each package's opt-in configuration (`gpu-effects`, `gpu-shaders`)
 # generates its shaders at build time (a `preGenerateCommands` step running
@@ -47,6 +48,7 @@
           # entry points.
           sourceDirs = [ "apps/shader-compile/src" ] ++ extraDirs ++ libsClosure [ lib' ];
           sourceRoot = "${finalAttrs.src.name}/apps/shader-compile";
+          generatesShaders = true;
 
           env = config.legacyPackages.d-toolchain.env;
 
@@ -88,6 +90,12 @@
           pname = "vulkan-wsi-shaders";
           lib' = "vulkan-wsi";
           description = "sparkles:vulkan-wsi's triangle shaders, SPIR-V generated from their D";
+        };
+        ui-vulkan-shaders = prebuiltShaders {
+          pname = "ui-vulkan-shaders";
+          lib' = "ui-vulkan";
+          extraDirs = [ "libs/ui-vulkan/shaders" ];
+          description = "sparkles:ui-vulkan's canvas shaders, SPIR-V generated from their D";
         };
       };
     };

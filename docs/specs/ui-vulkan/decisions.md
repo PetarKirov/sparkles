@@ -208,6 +208,32 @@ swapchain image needs no new framebuffer. `sparkles:vulkan-wsi`'s device
 creation enables `VK_KHR_dynamic_rendering` whenever the device lacks Vulkan
 1.3 and has the extension, whatever version the application requested.
 
+## UVX11: Kitty images live in the toolkit's image registry
+
+**Status.** Accepted.
+
+**Context.** A Vulkan terminal has to show kitty graphics. The raylib painter
+keeps those textures in raylib's global table. A second GPU cache beside the
+canvas would upload outside the canvas's budget and retire on a different
+schedule.
+
+**Choice.** All panes of one terminal share one `ImageRegistry`.
+`TextureId.value` is the registry handle; the pane owns the RGBA bytes the
+registry borrows. The canvas uploads and retires those entries with every
+other image (`UVK23`): one the pane removed leaves the device as the next
+frame begins. Its cache is keyed by (registry, handle, generation): a
+handle names an image only within its registry, so a terminal pane and the
+embedding application may each bind their own registry to one canvas
+without aliasing each other's first image. The pane binds its registry
+for its own images only and puts back the one it found. Glyphs and labels draw nothing
+and count a miss until the font atlas exists. PNG images decode with
+the toolkit's codec, `sparkles.ui.png` — no window, no raylib — installed
+wherever a pane draws pixels, on both arms. It decodes as stb_image does
+(a differential test over PngSuite holds them to the same bytes), so the
+raylib arm's images did not change when it stopped using stb_image, and
+it inflates into a buffer sized by the header, so a hostile PNG cannot
+expand beyond the image it declares.
+
 ## Open questions
 
 **UVQ1: Effects.** Multi-pass effects (bloom, the CRT tube) need offscreen targets, multi-pass

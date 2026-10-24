@@ -354,6 +354,23 @@
         "url": "https://github.com/ldc-developers/ldc/releases/download/v1.42.0/ldc2-1.42.0-windows-x64.7z"
       }
     },
+    "libpng-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1726173884,
+        "narHash": "sha256-gBfHgGaqVYdmhWXoNKZzPyGzyw2rr3zp+DjWmfC41jk=",
+        "owner": "pnggroup",
+        "repo": "libpng",
+        "rev": "f5e92d76973a7a53f517579bc95d61483bf108c0",
+        "type": "github"
+      },
+      "original": {
+        "owner": "pnggroup",
+        "ref": "v1.6.44",
+        "repo": "libpng",
+        "type": "github"
+      }
+    },
     "maple-font": {
       "flake": false,
       "locked": {
@@ -721,6 +738,7 @@
         "glfw": "glfw",
         "json-test-suite": "json-test-suite",
         "ldc-windows-x64": "ldc-windows-x64",
+        "libpng-src": "libpng-src",
         "maple-font": "maple-font",
         "maple-font-cn-base": "maple-font-cn-base",
         "nativejson-benchmark": "nativejson-benchmark",

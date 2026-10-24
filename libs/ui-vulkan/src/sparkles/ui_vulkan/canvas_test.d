@@ -99,6 +99,39 @@ package immutable FrameMetrics[4] metricsUnderTest = [
         }
 }
 
+@("ui_vulkan.canvas.aPixelFillIsNotScaledByTheCell")
+@system unittest
+{
+    // `UVK35`: a 4×3 pixel fill at (10, 20) covers those pixels and no
+    // others, whatever the cell size is.
+    if (!readbackEnabled)
+        return skipTest(readbackSkipReason);
+    auto rig = new Rig;
+    rig.open("ui-vulkan-pixel-fill", 80, 40);
+    scope (success)
+        rig.close();
+
+    import sparkles.ui_vulkan.painter : rgba;
+
+    const colour = RgbColor(200, 100, 50);
+    const m = metricsUnderTest[0];
+    const box = Rect(m.originX + 10, m.originY + 20, 4, 3);
+    const frame = rig.draw((ref Canvas c) {
+        c.fillPx(10, 20, box.width, box.height, rgba(colour, 255));
+    }, m, ground);
+    const ubyte[4] g = [ground.r, ground.g, ground.b, 255];
+    foreach (y; 0 .. 40)
+        foreach (x; 0 .. 80)
+        {
+            const got = pixel(frame, 80, x, y);
+            if (box.contains(Point(x, y)))
+                assert(got[0] == colour.r && got[1] == colour.g && got[2] == colour.b,
+                    format("(%s, %s) inside: %s", x, y, got));
+            else
+                assert(got == g, format("(%s, %s) outside: %s", x, y, got));
+        }
+}
+
 // ── helpers for the scenarios ──
 
 private enum RgbColor white = RgbColor(255, 255, 255);
@@ -465,6 +498,65 @@ private ubyte[] solidImage(uint width, uint height, RgbColor c, ubyte alpha = 25
     assert(rig.canvas.cachedImages == 0);
     drawIt();
     assert(rig.canvas.imageUploads == 3 && rig.canvas.cachedImages == 1);
+}
+
+@("ui_vulkan.canvas.aRemovedImageLeavesTheDevice")
+@system unittest
+{
+    // `UVK23`: an image its registry removed is evicted as the next frame
+    // begins, so a stream of images (a terminal's kitty graphics) keeps a
+    // bounded cache however long it runs.
+    if (!readbackEnabled)
+        return skipTest(readbackSkipReason);
+    auto rig = new Rig;
+    rig.open("ui-vulkan-evict", 32, 32);
+    scope (success)
+        rig.close();
+
+    const kept = rig.images.register(solidImage(2, 2, RgbColor(0, 0, 255)), Size(2, 2));
+    foreach (i; 0 .. 200)
+    {
+        const shown = rig.images.register(solidImage(2, 2, RgbColor(cast(ubyte) i, 0, 0)),
+            Size(2, 2));
+        cast(void) rig.draw((ref Canvas c) {
+            c.image(Rect(0, 0, 1, 1), kept, ImageFit.fill, null, Visual.init);
+            c.image(Rect(1, 0, 1, 1), shown, ImageFit.fill, null, Visual.init);
+        }, FrameMetrics(cellW: 10, cellH: 20), black);
+        rig.images.remove(shown);
+    }
+    cast(void) rig.draw((ref Canvas c) {}, FrameMetrics(cellW: 10, cellH: 20), black);
+    assert(rig.canvas.cachedImages == 1,
+        format("only the image still registered stays: %s cached", rig.canvas.cachedImages));
+    assert(rig.canvas.imageUploads == 201, "and the kept one was never uploaded again");
+}
+
+@("ui_vulkan.canvas.registrySwitchKeepsDrawnImagesDistinct")
+@system unittest
+{
+    if (!readbackEnabled)
+        return skipTest(readbackSkipReason);
+    auto rig = new Rig;
+    rig.open("ui-vulkan-registries", 64, 64);
+    scope (success)
+        rig.close();
+
+    ImageRegistry other;
+    const red = rig.images.register(solidImage(4, 4, RgbColor(255, 0, 0)), Size(4, 4));
+    const green = other.register(solidImage(4, 4, RgbColor(0, 255, 0)), Size(4, 4));
+    assert(red.value == green.value, "handles are local to their registries");
+    foreach (_; 0 .. 2)
+    {
+        const frame = rig.draw((ref Canvas c) {
+            c.images(&rig.images);
+            c.image(Rect(0, 0, 2, 1), red, ImageFit.fill, null, Visual.init);
+            c.images(&other);
+            c.image(Rect(2, 0, 2, 1), green, ImageFit.fill, null, Visual.init);
+            c.images(&rig.images);
+        }, FrameMetrics(cellW: 10, cellH: 20), black);
+        assert(pixel(frame, 64, 5, 5)[0 .. 3] == [255, 0, 0]);
+        assert(pixel(frame, 64, 25, 5)[0 .. 3] == [0, 255, 0]);
+    }
+    assert(rig.canvas.imageUploads == 2, "switching registries preserves residency");
 }
 
 @("ui_vulkan.canvas.imagesOverTheLimitsDegrade")

@@ -101,6 +101,7 @@ struct VulkanCanvas(B)
     {
         uint handle;     // 0: a free entry
         uint generation;
+        const(ImageRegistry)* registry;
         GpuImage image;
     }
 
@@ -235,6 +236,7 @@ struct VulkanCanvas(B)
         // The host reuses a slot only after its fence has signalled.
         inFlight_[][slot] = 0;
         destroyRetired();
+        evictGone();
         buffers_.reset(slot);
         foreach (ref p; pools_[])
             if (p.slot == slot)
@@ -433,16 +435,21 @@ struct VulkanCanvas(B)
 
     /**
     Binds the image registry handles resolve against (`IMG3`), which must
-    outlive the canvas. The images cached from the previous one are released:
-    a handle names an image only within its registry.
+    outlive the canvas. Cached entries are keyed by (registry, handle,
+    generation), so switching registry evicts nothing; an entry goes when
+    its registry no longer holds it at that generation (checked as each
+    frame begins), or with `releaseCaches`.
     */
     void images(const(ImageRegistry)* registry) @system
     {
         if (registry is registry_)
             return;
-        releaseCaches();
         registry_ = registry;
     }
+
+    /// The registry bound now, so a component that binds its own for part
+    /// of a frame can put back the one it found (`UVX11`).
+    const(ImageRegistry)* boundImages() const @safe pure nothrow @nogc => registry_;
 
     /// Whether the device was lost (`UVK33`).
     bool lost() const => lost_;
@@ -469,7 +476,8 @@ struct VulkanCanvas(B)
 
     static foreach (name; ["fillRect", "textRun", "textRunIn", "glyph", "line", "rule",
             "scrollbar", "image", "pushClip", "popClip", "pushShift", "popShift", "pushEffect",
-            "popEffect"])
+            "popEffect", "fillPx", "outlinePx", "clipPx", "unclipPx", "pushOffsetPx",
+            "popOffsetPx", "imageQuadPx", "imageSourcePx"])
         mixin("/// Through `Painter." ~ name ~ "`; only between `beginFrame` and `endFrame`.\n"
             ~ "void " ~ name ~ "(Args...)(auto ref Args args) @system\n"
             ~ "in (inFrame_, \"drawing outside a frame\")\n"
@@ -494,7 +502,8 @@ struct VulkanCanvas(B)
         size_t free = size_t.max;
         foreach (i, ref e; images_[])
         {
-            if (e.handle == handle.value && e.generation == data.generation)
+            if (e.registry is registry_ && e.handle == handle.value
+                && e.generation == data.generation)
             {
                 slot = cast(uint) i + 1;
                 return ImageOutcome.drawn;
@@ -532,10 +541,10 @@ struct VulkanCanvas(B)
 
         // A replaced generation keeps its entry; the old image is retired.
         foreach (i, ref e; images_[])
-            if (e.handle == handle.value)
+            if (e.registry is registry_ && e.handle == handle.value)
             {
                 retire(e.image);
-                e = CachedImage(handle.value, data.generation, image);
+                e = CachedImage(handle.value, data.generation, registry_, image);
                 slot = cast(uint) i + 1;
                 return ImageOutcome.drawn;
             }
@@ -544,7 +553,7 @@ struct VulkanCanvas(B)
             free = images_.length;
             images_.put(CachedImage.init);
         }
-        images_[][free] = CachedImage(handle.value, data.generation, image);
+        images_[][free] = CachedImage(handle.value, data.generation, registry_, image);
         slot = cast(uint) free + 1;
         return ImageOutcome.drawn;
     }
@@ -586,6 +595,24 @@ struct VulkanCanvas(B)
         r.image.destroy(*device_, *memory_);
         if (r.framebuffer !is null)
             device_.destroyFramebuffer(device_.device, r.framebuffer, null);
+    }
+
+    // The cached images their registry no longer holds at the cached
+    // generation — removed, or replaced — retired before a frame binds
+    // anything, so the cache holds only what can still be drawn (`UVK23`).
+    // A registry outlives the canvas (`images`), so the pointer is valid.
+    private void evictGone() @system
+    {
+        foreach (ref e; images_[])
+        {
+            if (e.handle == 0 || e.registry is null)
+                continue;
+            const data = e.registry.lookup(ImageHandle(e.handle));
+            if (data !is null && data.rgba.length && data.generation == e.generation)
+                continue;
+            retire(e.image);
+            e = CachedImage.init;
+        }
     }
 
     private bool boundThisFrame(uint slot) const

@@ -81,7 +81,10 @@ one-finger drag that starts on a handle **must** move it and never scroll; a
 drag elsewhere scrolls and keeps the selection; a tap elsewhere clears it.
 Output that scrolls the selected text away keeps the selection on its text,
 since it is anchored in scrollback coordinates, and clearing the screen or
-the scrollback clears it.
+the scrollback clears it. Clearing the scrollback moves a selection's ends to
+the first cell left, so both ends moving to the screen's first cell reads as
+a clear; a selection the user placed there, or text rewritten under it with
+the same characters, is not one, and stays.
 
 **TSE5: The menu.** The menu **must** be, by `ui.selectionMenu`
 ([`TCF11`](./config.md)), a bottom sheet over the pane (mockup S2), an

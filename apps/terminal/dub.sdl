@@ -8,7 +8,6 @@ targetPath "build"
 
 dflags "-preview=in" "-preview=dip1000"
 
-dependency "raylib-d" version="~>6.0.1"
 dependency "expected" version="~>0.4.0"
 
 dependency "sparkles:android" path="../.."
@@ -27,10 +26,10 @@ dependency "sparkles:wired" path="../.."
 // The document viewer (`TDV`): files programs ask to open become panes.
 dependency "sparkles:doc-view" path="../.."
 
-libs "raylib"
-
 configuration "application" {
     targetType "executable"
+    dependency "raylib-d" version="~>6.0.1"
+    libs "raylib"
     subConfiguration "sparkles:ui-app" "gui"
     // Declared, not inherited through ui-app: the viewer's GPU pane compiles
     // where the consumer names sparkles:ui-raylib (`Have_sparkles_ui_raylib`).
@@ -43,6 +42,8 @@ configuration "application" {
 configuration "unittest" {
     targetType "library"
     excludedSourceFiles "src/app.d"
+    dependency "raylib-d" version="~>6.0.1"
+    libs "raylib"
 
     dependency "sparkles:test-runner" path="../.."
     dependency "sparkles:test-utils" path="../.."
@@ -50,6 +51,33 @@ configuration "unittest" {
     subConfiguration "sparkles:ui" "gpu-effects"
 
     dflags "-checkaction=context" "-allinst"
+}
+
+configuration "unittest-vulkan" {
+    targetType "library"
+    excludedSourceFiles "src/app.d"
+
+    dependency "sparkles:test-runner" path="../.."
+    dependency "sparkles:test-utils" path="../.."
+    dependency "sparkles:ui-vulkan" path="../.."
+    subConfiguration "sparkles:ui" "gpu-effects"
+    subConfiguration "sparkles:ui-app" "gui-vulkan"
+    subConfiguration "sparkles:terminal-view" "vulkan"
+    versions "TerminalVulkan"
+
+    dflags "-checkaction=context" "-allinst"
+}
+
+// The desktop terminal on the native arm. Text is blank until the font
+// atlas (plan slice V3). No document viewer: that pane paints with raylib.
+// Raylib stays on `application` and `unittest`, which Android's version list
+// still names `Have_raylib_d`.
+configuration "vulkan" {
+    targetType "executable"
+    subConfiguration "sparkles:ui-app" "gui-vulkan"
+    subConfiguration "sparkles:terminal-view" "vulkan"
+    dependency "sparkles:ui-vulkan" path="../.."
+    versions "TerminalVulkan"
 }
 
 // BEGIN managed build types — apps/ci/tools/standardize-build-settings.d
