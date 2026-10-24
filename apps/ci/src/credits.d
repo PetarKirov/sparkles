@@ -46,11 +46,16 @@ module credits;
 
 import std.algorithm : any, canFind, endsWith, filter, map, sort, startsWith, uniq;
 import std.array : array, join, split;
+import std.conv : text;
 import std.json : JSONType, parseJSON;
+import std.range : chain;
 import std.path : baseName, buildNormalizedPath, dirName, globMatch, stripExtension;
-import std.regex : ctRegex, matchAll, matchFirst, replaceAll;
+import std.regex : ctRegex, matchAll, matchFirst;
 import std.string : indexOf, lineSplitter, strip;
 import sparkles.base.text.case_text : asciiLower;
+import sparkles.base.text.readers : tryConsume;
+import sparkles.build_primitives.dub_manifest : DubBuildSettings, DubManifest,
+    parseDubManifest, valuesOf;
 
 /// An application with its own credits page, and where its inputs are named.
 struct CreditedApp
@@ -261,62 +266,42 @@ string[] dubPackagesIn(string json) @safe
     assert(dubPackagesIn(`{"fileVersion": 1, "versions": {"during": "0.5.0"}}`) == ["during"]);
 }
 
-/// A dub manifest up to its `unittest` configuration, which nothing ships.
-string shippedManifest(string sdl) @safe pure
-{
-    const at = sdl.indexOf(`configuration "unittest"`);
-    return at < 0 ? sdl : sdl[0 .. at];
-}
-
-/// Strips `//` line comments, so a manifest's prose is not read as recipe.
-private string withoutLineComments(string sdl) @safe pure
-    => sdl.lineSplitter
-        .map!((l) { const c = l.indexOf("//"); return c < 0 ? l : l[0 .. c]; })
-        .join("\n");
-
 /**
-The manifest as a build selecting `configurations` sees it: everything outside
-a `configuration` block, and the blocks of those configurations. With none
-selected, the whole manifest — every configuration a build might select.
+The build settings a build selecting `configurations` reads from `manifest`:
+its top level, and those configurations. With none selected, every
+configuration a build might select. The `unittest` configuration ships
+nothing, so it never counts.
 */
-string selectedManifest(string sdl, scope const string[] configurations) @safe
+const(DubBuildSettings)[] shippedSettings(const DubManifest manifest,
+    scope const string[] configurations) @safe pure nothrow
 {
-    if (!configurations.length)
-        return sdl;
-    string kept;
-    size_t at;
-    foreach (m; sdl.matchAll(ctRegex!`configuration "([^"]+)"\s*\{`))
-    {
-        const start = m.pre.length;
-        if (start < at)
-            continue;
-        // The block runs to the brace that closes the one it opens.
-        size_t end = start + m.hit.length;
-        for (int depth = 1; end < sdl.length && depth > 0; ++end)
-            depth += sdl[end] == '{' ? 1 : sdl[end] == '}' ? -1 : 0;
-        kept ~= sdl[at .. start];
-        if (configurations.canFind(m[1]))
-            kept ~= sdl[start .. end];
-        at = end;
-    }
-    return kept ~ sdl[at .. $];
+    const(DubBuildSettings)[] settings = [manifest.buildSettings];
+    foreach (ref config; manifest.configurations)
+        if (config.name != "unittest"
+            && (!configurations.length || configurations.canFind(config.name)))
+            settings ~= config.buildSettings;
+    return settings;
 }
 
-/// The configurations a manifest selects for its `sparkles:*` dependencies
+/// The configurations `settings` select for their `sparkles:*` dependencies
 /// (`subConfiguration "sparkles:<name>" "<configuration>"`), as name pairs.
-string[2][] sparklesSubConfigurations(string sdl) @safe
+string[2][] sparklesSubConfigurations(scope const(DubBuildSettings)[] settings) @safe pure nothrow
 {
-    const text = shippedManifest(sdl).withoutLineComments;
     string[2][] pairs;
-    foreach (m; text.matchAll(ctRegex!`subConfiguration "sparkles:([a-z0-9-]+)" "([^"]+)"`))
-        pairs ~= [m[1], m[2]];
+    foreach (ref s; settings)
+        foreach (sub; s.subConfigurations)
+        {
+            const(char)[] rest = sub.dependency;
+            if (tryConsume(rest, "sparkles:"))
+                pairs ~= [sub.dependency[$ - rest.length .. $], sub.configuration];
+        }
     return pairs;
 }
 
-@("credits.selectedManifest.keepsTheSelectedConfigurations")
-@safe unittest
+@("credits.shippedSettings.keepsTheSelectedConfigurations")
+@safe pure unittest
 {
-    const sdl = `dependency "sparkles:ui" path="../.."
+    const manifest = parseDubManifest(`dependency "sparkles:ui" path="../.."
 configuration "tui" {
     dependency "sparkles:ui-tui" path="../.."
 }
@@ -326,57 +311,77 @@ configuration "gui-vulkan" {
 }
 configuration "unittest" {
     dependency "sparkles:test-runner" path="../.."
-}`;
-    assert(sparklesEdges(selectedManifest(sdl, ["tui"])) == ["ui", "ui-tui"]);
-    assert(manifestTokens(selectedManifest(sdl, ["tui"])).length == 0);
-    assert(sparklesEdges(selectedManifest(sdl, null)) == ["ui", "ui-tui", "wsi"],
+}`).value;
+    assert(sparklesEdges(shippedSettings(manifest, ["tui"])) == ["ui", "ui-tui"]);
+    assert(manifestTokens(shippedSettings(manifest, ["tui"])).length == 0);
+    assert(sparklesEdges(shippedSettings(manifest, null)) == ["ui", "ui-tui", "wsi"],
         "nothing selected: every configuration a build might pick");
-    assert(sparklesSubConfigurations(`subConfiguration "sparkles:ui-app" "gui"
+    const selecting = parseDubManifest(`subConfiguration "sparkles:ui-app" "gui"
 configuration "unittest" {
     subConfiguration "sparkles:ui" "testing"
-}`) == [["ui-app", "gui"]], "the unittest configuration selects nothing that ships");
+}`).value;
+    assert(sparklesSubConfigurations(shippedSettings(selecting, null)) == [["ui-app", "gui"]],
+        "the unittest configuration selects nothing that ships");
 }
 
-/// The `sparkles:*` libraries a manifest pulls in: its dependencies and the
-/// sibling sources it includes directly (`../<name>/src`).
-string[] sparklesEdges(string sdl) @safe
+/// The `sparkles:*` libraries `settings` pull in: their dependencies and the
+/// sibling sources they include directly (`../<name>/src`).
+string[] sparklesEdges(scope const(DubBuildSettings)[] settings) @safe pure nothrow
 {
-    const text = shippedManifest(sdl).withoutLineComments;
     string[] names;
-    foreach (m; text.matchAll(ctRegex!`dependency "sparkles:([a-z0-9-]+)"`))
-        names ~= m[1];
-    foreach (m; text.matchAll(ctRegex!`"\.\./(?:\.\./libs/)?([a-z0-9-]+)/src"`))
-        names ~= m[1];
+    foreach (ref s; settings)
+        foreach (dependency; s.dependencies)
+            if (dependency.rootName == "sparkles" && dependency.subPackageName.length)
+                names ~= dependency.subPackageName;
+    foreach (ref s; settings)
+        foreach (path; chain(s.importPaths.valuesOf, s.sourcePaths.valuesOf))
+            if (const name = siblingLibrary(path))
+                names ~= name;
     return names;
 }
 
-/// The third-party dub packages (`dub:<name>`) and native libraries
-/// (`-l<name>`) a manifest links, from every configuration but `unittest`.
-string[] manifestTokens(string sdl) @safe
+/// The library a sibling source path names: `<name>` for `../<name>/src`
+/// (from `libs/`) or `../../libs/<name>/src` (from `apps/`); null otherwise.
+private string siblingLibrary(string path) @safe pure nothrow @nogc
 {
-    const text = shippedManifest(sdl).withoutLineComments;
+    const(char)[] rest = path;
+    if (!tryConsume(rest, "../"))
+        return null;
+    tryConsume(rest, "../libs/");
+    enum tail = "/src";
+    if (rest.length <= tail.length || rest[$ - tail.length .. $] != tail)
+        return null;
+    const name = path[$ - rest.length .. $ - tail.length];
+    foreach (c; name)
+        if (!(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-'))
+            return null;
+    return name;
+}
+
+/// The third-party dub packages (`dub:<name>`) and native libraries
+/// (`-l<name>`) that `settings` link.
+string[] manifestTokens(scope const(DubBuildSettings)[] settings) @safe pure nothrow
+{
     string[] tokens;
-    foreach (m; text.matchAll(ctRegex!`dependency "([a-z0-9][a-z0-9_-]*)(?::[a-z0-9_-]+)?"`))
-        if (m[1] != "sparkles")
-            tokens ~= "dub:" ~ m[1];
-    foreach (m; text.matchAll(ctRegex!`(?m)^\s*libs\s+([^\n]*)`))
-    {
-        // `platform="linux"` is an attribute, not a library.
-        const values = m[1].replaceAll(ctRegex!`[A-Za-z]+="[^"]*"`, "");
-        foreach (lib; values.matchAll(ctRegex!`"([^"]+)"`))
-            tokens ~= "-l" ~ lib[1];
-    }
+    foreach (ref s; settings)
+        foreach (dependency; s.dependencies)
+            if (dependency.rootName != "sparkles")
+                tokens ~= "dub:" ~ dependency.rootName;
+    foreach (ref s; settings)
+        foreach (lib; s.libs.valuesOf)
+            tokens ~= "-l" ~ lib;
     return tokens;
 }
 
 @("credits.manifestTokens.readsDependenciesAndLibs")
 @safe unittest
 {
-    const sdl = `dependency "raylib-d" version="~>6.0.1"
+    const manifest = parseDubManifest(`dependency "raylib-d" version="~>6.0.1"
 dependency "sparkles:base" path="../.."
 dependency "dmd:frontend" repository="git+https://example.org/dmd.git"
 // dependency "commented" version="1"
 libs "raylib" "freetype2"
+importPaths "src" "../math/src"
 configuration "application" {
     libs "curl"
     libs "kqueue" platform="linux"
@@ -384,11 +389,12 @@ configuration "application" {
 configuration "unittest" {
     dependency "silly" version="~>1.1"
     libs "never"
-}`;
-    assert(manifestTokens(sdl).sort.release == [
+}`).value;
+    const settings = shippedSettings(manifest, null);
+    assert(manifestTokens(settings).sort.release == [
         "-lcurl", "-lfreetype2", "-lkqueue", "-lraylib", "dub:dmd", "dub:raylib-d",
     ]);
-    assert(sparklesEdges(sdl) == ["base"]);
+    assert(sparklesEdges(settings) == ["base", "math"]);
 }
 
 /// The static archives an APK builder links (`lib/${abi}/libX.a`).
@@ -541,13 +547,19 @@ ShippedToken[] scanShipped(scope FileReader read, ref string[] problems) @safe
                     problems ~= "cannot read " ~ manifest;
                     continue;
                 }
+                const parsed = parseDubManifest(full, manifest);
+                if (parsed.hasError)
+                {
+                    problems ~= parsed.error.text;
+                    continue;
+                }
                 const name = dir.startsWith("libs/") ? dir["libs/".length .. $] : null;
-                const sdl = selectedManifest(full, chosen.get(name, null));
-                foreach (t; manifestTokens(sdl))
+                const settings = shippedSettings(parsed.value, chosen.get(name, null));
+                foreach (t; manifestTokens(settings))
                     closure ~= ShippedToken(t, app.name, manifest);
-                foreach (lib; sparklesEdges(sdl))
+                foreach (lib; sparklesEdges(settings))
                     frontier ~= "libs/" ~ lib;
-                foreach (pair; sparklesSubConfigurations(sdl))
+                foreach (pair; sparklesSubConfigurations(settings))
                 {
                     auto configs = pair[0] in chosen;
                     if (configs is null)

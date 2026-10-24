@@ -12,46 +12,24 @@
  */
 module example_manifest;
 
-import std.string : strip, startsWith, indexOf;
+import std.string : indexOf;
 import std.algorithm : canFind;
-import std.array : split;
+
+import sparkles.build_primitives.dub_manifest : embeddedDubRecipe, parseEmbeddedDubManifest;
 
 /**
  * Platform specifiers declared by an example's embedded `/+ dub.sdl: … +/`
  * manifest (the top-level `platforms "…"` directive). Returns an empty slice
- * when the example declares no platform restriction.
+ * when the example declares no platform restriction, or has no readable
+ * manifest: dub itself then reports the problem when it builds the example.
  */
-string[] exampleDeclaredPlatforms(const(char[])[] lines) @safe pure
+string[] exampleDeclaredPlatforms(scope const(char)[] source) @safe pure
 {
-    string[] platforms;
-    bool inManifest = false;
-
-    foreach (line; lines)
-    {
-        const s = line.strip;
-
-        if (!inManifest)
-        {
-            if (s.startsWith("/+ dub.sdl:"))
-                inManifest = true;
-            continue;
-        }
-
-        if (s.startsWith("+/"))
-            break;
-
-        enum kw = "platforms";
-        if (s.startsWith(kw) && (s.length == kw.length || s[kw.length] == ' ' || s[kw.length] == '"'))
-        {
-            // Collect every double-quoted token: `platforms "linux" "osx"`.
-            const parts = s.split('"');
-            for (size_t i = 1; i < parts.length; i += 2)
-                if (parts[i].length)
-                    platforms ~= parts[i].idup;
-        }
-    }
-
-    return platforms;
+    const embedded = embeddedDubRecipe(source);
+    if (!embedded.found || embedded.isJson)
+        return null;
+    auto manifest = parseEmbeddedDubManifest(embedded);
+    return manifest.hasValue ? manifest.value.platforms : null;
 }
 
 /// dub platform OS tokens describing the host this binary was built for.
@@ -93,39 +71,38 @@ bool platformsAllowHost(const(string)[] declared, const(string)[] hostTokens) @s
 }
 
 /// Whether a single-file example's manifest permits building on this host.
-bool exampleRunsOnHost(const(char[])[] lines) @safe pure
-{
-    return platformsAllowHost(exampleDeclaredPlatforms(lines), hostPlatformTokens());
-}
+bool exampleRunsOnHost(scope const(char)[] source) @safe pure
+    => platformsAllowHost(exampleDeclaredPlatforms(source), hostPlatformTokens());
 
 @("example_manifest.declaredPlatforms.single")
 @safe pure unittest
 {
-    const lines = [
-        "#!/usr/bin/env dub",
-        "/+ dub.sdl:",
-        `    name "x"`,
-        `    dependency "during" version="~>0.5.0"`,
-        `    platforms "linux"`,
-        `    targetPath "build"`,
-        "+/",
-        "void main() {}",
-    ];
-    assert(exampleDeclaredPlatforms(lines) == ["linux"]);
+    const source = "#!/usr/bin/env dub\n"
+        ~ "/+ dub.sdl:\n"
+        ~ "    name \"x\"\n"
+        ~ "    dependency \"during\" version=\"~>0.5.0\"\n"
+        ~ "    platforms \"linux\"\n"
+        ~ "    targetPath \"build\"\n"
+        ~ "+/\n"
+        ~ "void main() {}\n";
+    assert(exampleDeclaredPlatforms(source) == ["linux"]);
 }
 
 @("example_manifest.declaredPlatforms.none")
 @safe pure unittest
 {
-    const lines = ["/+ dub.sdl:", `    name "x"`, "+/", "void main() {}"];
-    assert(exampleDeclaredPlatforms(lines).length == 0);
+    assert(exampleDeclaredPlatforms("/+ dub.sdl:\n    name \"x\"\n+/\nvoid main() {}\n").length == 0);
+    // A configuration's restriction is not the package's.
+    assert(exampleDeclaredPlatforms("/+ dub.sdl:\n    configuration \"w\" {\n"
+        ~ "        platforms \"windows\"\n    }\n+/\n").length == 0);
+    assert(exampleDeclaredPlatforms("module m;\n").length == 0);
 }
 
 @("example_manifest.declaredPlatforms.multiple")
 @safe pure unittest
 {
-    const lines = ["/+ dub.sdl:", `    platforms "linux" "osx"`, "+/"];
-    assert(exampleDeclaredPlatforms(lines) == ["linux", "osx"]);
+    assert(exampleDeclaredPlatforms("/+ dub.sdl:\n    platforms \"linux\" \"osx\"\n+/\n")
+        == ["linux", "osx"]);
 }
 
 @("example_manifest.platformsAllowHost.matching")
