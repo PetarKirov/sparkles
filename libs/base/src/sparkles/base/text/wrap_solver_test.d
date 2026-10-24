@@ -798,6 +798,70 @@ version (unittest)
         cellWrapPlan("zzzzzzzzzz yyyy xx w", options);
         assert(first.lines.length == lines && render(first) == rendered && rendered == "aaa\nbb\ncc");
     }
+
+    // The pool's arenas are buffers it owns and frees, not GC arrays left
+    // for a collection to find.
+    @("text.wrap.cellWrapPoolArenasStayOffTheGcHeap")
+    @system unittest
+    {
+        import core.memory : GC;
+        import sparkles.base.text.wrap : cellWrapPoolTokenArena;
+
+        cellWrapPlan("aaa bb cc", WrapOptions(width: CellWidth.bounded(4),
+            whitespace: WhitespaceMode.collapse));
+        const arena = cellWrapPoolTokenArena();
+        assert(arena.ptr !is null, "the pool allocated its scratch");
+        assert(GC.addrOf(cast(void*) arena.ptr) is null, "pooled arenas are not GC allocations");
+    }
+
+    // Reuse is the pool's point: a warmed pool plans an equal-size text in
+    // the blocks it already holds, and a paragraph past the retained bound
+    // plans transiently without growing the pool.
+    @("text.wrap.cellWrapPoolReusesArenasAcrossCalls")
+    @system unittest
+    {
+        import std.array : replicate;
+        import sparkles.base.text.wrap : cellWrapPoolTokenArena;
+
+        const options = WrapOptions(width: CellWidth.bounded(8),
+            whitespace: WhitespaceMode.collapse, tabs: TabPolicy.expand);
+        const text = "aaa\tbb cc dd ee ff gg";
+        const warmed = cellWrapPlan(text, options);
+        const before = cellWrapPoolTokenArena();
+        const again = cellWrapPlan(text, options);
+        assert(cellWrapPoolTokenArena() is before, "a warmed pool reuses its arenas");
+        assert(render(again) == render(warmed));
+
+        const big = cellWrapPlan(replicate("word ", 1500), options);
+        assert(big.lines.length > 1);
+        assert(cellWrapPoolTokenArena() is before,
+            "a paragraph past the retained bound does not grow the pool");
+    }
+
+    // Each thread plans in its own pool; a thread that wraps and exits
+    // (freeing its arenas) does not disturb planning elsewhere.
+    @("text.wrap.cellWrapPlanPerThreadPools")
+    @system unittest
+    {
+        import core.thread : Thread;
+
+        const options = WrapOptions(width: CellWidth.bounded(4), whitespace: WhitespaceMode.collapse);
+        __gshared string workerRendered;
+        auto worker = new Thread({
+            const plan = cellWrapPlan("one two three", options);
+            workerRendered = render(plan);
+        });
+        worker.start();
+        const myPlan = cellWrapPlan("aaa bb cc", options);
+        const mine = render(myPlan);
+        worker.join();
+        const expected = cellWrapPlan("one two three", options);
+        assert(workerRendered == render(expected),
+            "the worker thread's pool plans what this thread's pool plans");
+        assert(mine == "aaa\nbb\ncc");
+        const after = cellWrapPlan("zz yy", options);
+        assert(render(after) == "zz\nyy");
+    }
 }
 version (OwnedWrapSmoke)
 {

@@ -4,6 +4,7 @@ module sparkles.base.text.wrap;
 public import sparkles.base.text.wrap_plan;
 public import sparkles.base.text.layout_units : CellExtent, LayoutUnit;
 import sparkles.base.text.wrap_solver;
+import sparkles.base.buffer : Buffer, HeapBuffer, Storage;
 import sparkles.base.text.layout_units : UnitStatus, checkedAdd;
 import sparkles.base.text.utf : UtfToken, UtfTokenKind, UtfMode, UtfStatus, decodeToken, utfStorageOverlaps;
 import sparkles.base.text.grapheme : GraphemeBreakState;
@@ -1615,24 +1616,52 @@ WrapResult tryFitCellsWithReplacement(SourceSnapshot source, CellExtent budget,
     return WrapResult.init;
 }
 
+/// One arena per slice field of `S`, recursing into struct fields: the
+/// pooled backing of a `CellWrapScratch` or a `WrapPlanStorage`.
+private struct CellWrapArenas(S)
+{
+    static foreach (i; 0 .. S.tupleof.length)
+    {
+        static if (is(typeof(S.tupleof[i]) == struct))
+            mixin("CellWrapArenas!(typeof(S.tupleof[i])) ", __traits(identifier, S.tupleof[i]), ";");
+        else static if (is(typeof(S.tupleof[i]) : const(void)[]))
+            mixin("HeapBuffer!(typeof(typeof(S.tupleof[i]).init[0]), Storage.unique) ",
+                __traits(identifier, S.tupleof[i]), ";");
+    }
+}
+
 /// Scratch and publication arenas one thread's `cellWrapPlan` calls reuse.
 /// They only grow, and each call slices them to the lengths it would have
 /// allocated: `tryWrapCells` writes every record before reading it, so a
-/// reused arena plans exactly as a fresh one.
+/// reused arena plans exactly as a fresh one. A grown arena starts as
+/// `T.init` records, as the GC arrays it replaces did.
+///
+/// Each arena is a `HeapBuffer`, so its block is freed with the pool (a
+/// transient pool at the end of its call, the thread's pool at thread
+/// exit) instead of waiting for a collection, and a block whose records
+/// carry references is a registered collector root wherever the pool
+/// itself lives.
 private struct CellWrapPool
 {
-    CellWrapScratch scratch;
-    WrapPlanStorage storage;
+    CellWrapArenas!CellWrapScratch scratch;
+    CellWrapArenas!WrapPlanStorage storage;
     bool busy;
 
-    CellWrapScratch slice(size_t records, size_t states, size_t fragments, size_t styles,
-        size_t geometryRecords, bool words) @safe
+    // The first `length` records of `arena`. Growth discards the old
+    // records rather than carrying them over: no call reads another's.
+    private static T[] take(T, size_t N, Storage s)(ref Buffer!(T, N, s) arena, size_t length)
     {
-        static T[] take(T)(ref T[] array, size_t length) @safe
+        if (arena.length < length)
         {
-            if (array.length < length) array = new T[](length);
-            return array[0 .. length];
+            arena.clear();
+            arena.length = length;
         }
+        return arena[][0 .. length];
+    }
+
+    CellWrapScratch slice(size_t records, size_t states, size_t fragments, size_t styles,
+        size_t geometryRecords, bool words) return @safe
+    {
         CellWrapScratch s;
         s.tokens = take(scratch.tokens, records);
         s.atoms = take(scratch.atoms, records);
@@ -1667,18 +1696,24 @@ private struct CellWrapPool
             take(scratch.solver.projection.styles, styles));
         return s;
     }
-    WrapPlanStorage sliceStorage(size_t records, size_t fragments, size_t styles) @safe
+    WrapPlanStorage sliceStorage(size_t records, size_t fragments, size_t styles) return @safe
     {
-        static T[] take(T)(ref T[] array, size_t length) @safe
-        {
-            if (array.length < length) array = new T[](length);
-            return array[0 .. length];
-        }
         return WrapPlanStorage(take(storage.lines, records), take(storage.fragments, fragments),
             take(storage.sourceRecords, records), take(storage.styles, styles));
     }
 }
 private CellWrapPool cellWrapPool;
+
+// A thread-local's destructor does not run at thread exit; this does, so
+// a thread that planned leaves no arena behind.
+static ~this()
+{
+    destroy(cellWrapPool);
+}
+
+/// Test seam: this thread's token arena, the pool's representative block.
+package(sparkles.base.text) const(void)[] cellWrapPoolTokenArena() @safe nothrow @nogc
+    => cellWrapPool.scratch.tokens[];
 
 /// Explicitly allocating adapter. Retried scratch allocation does not relax
 /// exactness, policies, or measurements; the caller-bounded operation above is
@@ -1707,6 +1742,8 @@ WrapPlan cellWrapPlan(const(char)[] text, WrapOptions options = WrapOptions.init
     // A measurer may wrap text of its own; a nested call plans in fresh
     // arenas. So does a paragraph past 4 KiB: its arenas (some 600 bytes
     // per source byte) are not worth keeping for the thread's lifetime.
+    // A transient pool's arenas are freed when it leaves scope, after the
+    // returned plan has copied its records out.
     enum retainedRecords = 4 * 1024;
     CellWrapPool transient;
     CellWrapPool* pool = cellWrapPool.busy || records > retainedRecords ? &transient : &cellWrapPool;
@@ -1724,7 +1761,11 @@ WrapPlan cellWrapPlan(const(char)[] text, WrapOptions options = WrapOptions.init
         WrapResult r;
         for (;;)
         {
-            r = tryWrapCells(SourceSnapshot(text), options, limits, scratch, storage, plan);
+            // `plan` slices `storage`, which dip1000 cannot say of a last
+            // parameter; both borrow the pool, which outlives the plan's
+            // copies made below.
+            r = (() @trusted => tryWrapCells(SourceSnapshot(text), options, limits, scratch, storage,
+                plan))();
             if (r.status != WrapStatus.needResults || measurePending is null) break;
             measurePending();
         }
