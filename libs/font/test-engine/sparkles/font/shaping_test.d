@@ -709,3 +709,78 @@ unittest
         assert(plain.hasValue && !plain.value.present);
     }
 }
+
+/**
+The face for `operationBudget`: sixteen `A`s each run one contextual rule
+whose `records` lookup records step the glyph id by one, so a glyph's id
+says how many records reached it.
+*/
+private const(ubyte)[] budgetFace(uint records, bool positioning = false) @safe
+{
+    import sparkles.font.fixtures : contextSubst1, coverage1, coverage2, FeatureSpec, featureList, hhea,
+        hmtx, layoutTable, LayoutLangSysSpec, LayoutScriptSpec, LookupSpec, lookupList, minimalTables,
+        RuleSpec, scriptList, sfnt, singleSubst1, TableData, u16;
+
+    auto steps = new uint[2][](records);
+    steps[] = [0, 0]; // sequence index 0, lookup 0
+    const step = LookupSpec(1, 0, [singleSubst1(coverage2([[1, records, 0]]), 1)]);
+    const context = LookupSpec(5, 0, [contextSubst1(coverage1([1]), [[RuleSpec(null, steps)]])]);
+    auto tables = minimalTables(records + 2);
+    tables ~= TableData("hhea", hhea(1));
+    tables ~= TableData("hmtx", hmtx([[500, 0]], new int[](records + 1)));
+    const scripts = scriptList([LayoutScriptSpec("DFLT", true, LayoutLangSysSpec("", 0xFFFF, [0]))]);
+    if (!positioning)
+    {
+        tables ~= TableData("GSUB", layoutTable(scripts, featureList([FeatureSpec("ccmp", [1])]),
+            lookupList([step, context])));
+        return sfnt(tables);
+    }
+    // The same rule in GPOS: each record adds one unit to the advance (SinglePos 1, XAdvance).
+    const nudge = LookupSpec(1, 0, [u16(1) ~ u16(8) ~ u16(4) ~ u16(1) ~ coverage1([1])]);
+    const contextPos = LookupSpec(7, 0, [contextSubst1(coverage1([1]), [[RuleSpec(null, steps)]])]);
+    tables ~= TableData("GPOS", layoutTable(scripts, featureList([FeatureSpec("kern", [1])]),
+        lookupList([nudge, contextPos])));
+    return sfnt(tables);
+}
+
+/**
+FTB3, FTS7: HarfBuzz's operation budget — 65,536 operations for this run of
+sixteen glyphs — either holds or fails the call with `engineBuffer`; it never
+stops applying lookups and returns the partial run as shaped. A substitution
+record costs two operations and a positioning one, so the budget ends past
+2,048 and 4,096 records. Unpatched, HarfBuzz returned the positioning runs
+from 4,097 records on as shaped, the last glyph short of its records
+(`nix/packages/harfbuzz-operation-budget.patch`).
+*/
+@("shaping.FTB3.operationBudget")
+@system
+unittest
+{
+    enum text16 = "AAAAAAAAAAAAAAAA";
+    static immutable uint[2][] cases = [[100, 0], [2_048, 0], [2_049, 0], [3_000, 0],
+        [100, 1], [4_096, 1], [4_097, 1], [5_000, 1]];
+    foreach (c; cases)
+    {
+        const records = c[0], positioning = c[1] != 0;
+        auto inst = instanceOf(budgetFace(records, positioning));
+        auto s = Shaper(inst);
+        Outputs o;
+        const info = o.shape(s, ShapeRequest(text16, 0, text16.length, latin, true, null, true, true));
+        const withinBudget = records <= (positioning ? 4_096 : 2_048);
+        if (!withinBudget)
+        {
+            assert(info.hasError && info.error.kind == FontErrorKind.limitExceeded
+                && info.error.limit == FontLimit.engineBuffer, text(c, " was returned as shaped"));
+            continue;
+        }
+        assert(info.hasValue && info.value.glyphCount == 16, text(c));
+        foreach (i, g; o.glyphs[0 .. 16])
+        {
+            // Every record reached every glyph.
+            if (positioning)
+                assert(g.glyphId == 1 && g.xAdvance.raw == (500L + records) << 16, text(c, " glyph ", i));
+            else
+                assert(g.glyphId == 1 + records, text(c, " glyph ", i));
+        }
+    }
+}

@@ -261,8 +261,10 @@ struct Shaper
     for a feature range outside the run or splitting a scalar; `badValue`
     for explicit properties without a script; `limitExceeded` naming
     `shapingFeatures` past 512 features, `engineBuffer` when HarfBuzz
-    cannot grow its buffer, or `callerStorage` with the length a short
-    output needs; an advance's own error.
+    cannot grow its buffer or the run spends its operation budget (the
+    lookups left unapplied, so no partial run is returned as shaped), or
+    `callerStorage` with the length a short output needs; an advance's own
+    error.
 
     Cost: O(c) to validate and decode a source of `c` bytes; HarfBuzz's
     shaping, which allocates its buffer (at most max(65,536, 256 × n)
