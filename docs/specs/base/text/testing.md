@@ -282,8 +282,9 @@ regional-indicator runs, ZWJ emoji sequences, Indic conjuncts, CR LF and
 malformed bytes, compute the whole-source boundary set once; then, at every
 offset, assert that the next and previous queries name the neighbouring
 members of that set, and that segment kinds and blank-delimited runs match a
-classification computed from the whole-source segments. Repeat over every
-partition of each source into chunks of one to four bytes. A deliberately
+classification computed from the whole-source segments. Repeat over chunkings
+of one to four bytes: every uniform width for every source, and seeded random
+cut sequences for the generated ones. A deliberately
 broken backward query that resumes at the nearest offset without
 resynchronising must fail the regional-indicator rows.
 

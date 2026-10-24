@@ -41,3 +41,4 @@ public import sparkles.base.text.lineindex;
 public import sparkles.base.text.analysis;
 public import sparkles.base.text.span;
 public import sparkles.base.text.scan;
+public import sparkles.base.text.seek;
