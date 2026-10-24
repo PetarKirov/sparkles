@@ -29,7 +29,7 @@ the detailed descriptions and the module map live there.
 | `wsi`, `vulkan`, `vulkan-wsi`, `raylib-text`, `ghostty`, `terminal-view`, `shaders` | windowing, GPU, fonts, VT engine, embeddable terminal, shader vocabulary                     |
 | `font`, `font-oracle`                                                               | font files parsed in D; its HarfBuzz differential tests                                      |
 | `wired`, `reflection`, `metadata`, `dql`, `fuzzy`                                   | serialization, reflection kernel, UDA vocabulary, query engine, fuzzy search                 |
-| `build-primitives`, `code-instrumentation`, `docs`, `nix`, `versions`, `math`       | gitignore/walk/`runGit`, coverage, SSG, Nix C API, versioning, vectors                       |
+| `build-primitives`, `code-instrumentation`, `docs`, `nix`, `versions`, `math`       | gitignore/walk/`runGit`/`dub.sdl` schema, coverage, SSG, Nix C API, versioning, vectors      |
 | `test-runner` (+ internal `test-runner-impl`), `test-utils`                         | the unittest runner; test helpers                                                            |
 
 Libraries are documented under `docs/libs/<name>/` as a [Diátaxis](https://diataxis.fr/)
