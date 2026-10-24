@@ -12,6 +12,7 @@ fontations oracle) needs a Rust tool and committed goldens and is not here.
 */
 module sparkles.font_oracle.variation_metrics;
 
+import std.conv : text;
 import std.file : read;
 import std.math : lround;
 import std.path : baseName;
@@ -20,7 +21,7 @@ import std.stdio : stderr;
 import sparkles.base.text.layout_units : LayoutUnit;
 import sparkles.base.unique : makeUnique;
 import sparkles.font;
-import sparkles.font_oracle.corpus : corpus, fontsDir, Oracle;
+import sparkles.font_oracle.corpus : corpus, fontsDir, Oracle, testCorpus, testFontsDir;
 import sparkles.font_oracle;
 import sparkles.font_oracle.harfbuzz_c : hb_direction_t;
 import sparkles.test_runner.skip : skipTest;
@@ -46,12 +47,17 @@ whole number of 1/65,536 units.
 */
 private int floatExact(long u) => cast(int) lround(cast(double) cast(float)(u / 65_536.0) * 65_536.0);
 
-/// The bundled faces with HarfBuzz scaled to font units; `skipTest` when unset.
-private void eachFace(scope void delegate(string file, const Face face, ref Oracle hb) @system body_)
+/**
+The bundled faces with HarfBuzz scaled to font units, then, `withTestCorpus`,
+the test corpus's (a collection's first face); `skipTest` when the bundle is
+unset.
+*/
+private void eachFace(scope void delegate(string file, const Face face, ref Oracle hb) @system body_,
+    bool withTestCorpus = false)
 {
     if (fontsDir is null)
         skipTest("SPARKLES_FONTS_PATH is unset");
-    foreach (path; corpus)
+    foreach (path; withTestCorpus ? corpus ~ testCorpus : corpus)
     {
         const bytes = cast(const(ubyte)[]) read(path);
         auto hb = Oracle(bytes, 0);
@@ -394,6 +400,13 @@ horizontal origin to the vertical one in the same y-up space: `y` is
 `x` is half the horizontal advance, which this page does not report. A face
 without `VVAR` varies its advances by the `gvar` phantom points on both
 sides; HarfBuzz rounds every varied advance to a whole unit.
+
+The bundle's variable faces vary no vertical advance, so the test corpus's
+faces join them: Adobe Blank VF, whose `HGHT` axis takes every advance from
+0 to 1,000 units (fractional ones at a third of the axis) in a `CFF2` face
+with `VORG` and a `glyf` face with `gvar`, and Source Han Sans VF, whose
+`VVAR` varies vertical origins. Each variable face is read at the default,
+with every axis at its maximum, and with every axis a third of the way up.
 */
 @("oracle.vertical.advancesAndOrigins")
 @system
@@ -401,6 +414,7 @@ unittest
 {
     auto ws = makeUnique!PointWorkspace();
     size_t vmtxFaces, vorgFaces, advances, origins, phantomOrigins, clamped, otherErrors;
+    size_t variedAdvances, fractionalAdvances, variedOrigins;
     eachFace((file, face, ref hb) {
         const hasVmtx = face.has(Tag("vhea")) && face.has(Tag("vmtx"));
         const hasVorg = face.has(Tag("VORG"));
@@ -409,9 +423,19 @@ unittest
             return;
         Instance[] insts = [at(face, null, file)];
         if (variable(face) && insts[0].recordedErrors == 0)
-            insts ~= extremes(face, axisRecords(face), file)[$ - 1 .. $];
+        {
+            const axes = axisRecords(face);
+            insts ~= extremes(face, axes, file)[$ - 1 .. $];
+            UserCoordinate[] third;
+            foreach (a; axes)
+                third ~= UserCoordinate(a.axisTag, cast(int)(a.minValue + (long(a.maxValue) - a.minValue) / 3));
+            insts ~= at(face, third, file);
+        }
         vmtxFaces += hasVmtx;
         vorgFaces += hasVorg;
+        // The default instance's values, which a varied one is counted against.
+        auto defaultAdvance = new long[face.numGlyphs];
+        auto defaultOrigin = new long[face.numGlyphs];
         foreach (inst; insts)
         {
             setCoords(hb, inst);
@@ -425,6 +449,7 @@ unittest
                     {
                         assert(ours.hasValue && ours.value.present, file);
                         assert(ours.value.advance.design.raw == theirs, file);
+                        defaultAdvance[gid] = theirs;
                         ++advances;
                     }
                     else if (ours.hasError)
@@ -433,7 +458,10 @@ unittest
                         ++clamped;
                     else
                     {
-                        assert(agrees(ours.value.advance.design.raw, theirs, false), file);
+                        const raw = ours.value.advance.design.raw;
+                        assert(agrees(raw, theirs, false), file);
+                        variedAdvances += raw != defaultAdvance[gid];
+                        fractionalAdvances += raw % unit != 0;
                         ++advances;
                     }
                 }
@@ -443,7 +471,12 @@ unittest
                     assert(ours.hasValue && ours.value.present, file);
                     hb_position_t x, y;
                     assert(hb_font_get_glyph_v_origin(hb.font, gid, &x, &y), file);
-                    assert(agrees(ours.value.y.design.raw, long(y) * unit, inst.allZero), file);
+                    const raw = ours.value.y.design.raw;
+                    assert(agrees(raw, long(y) * unit, inst.allZero), file);
+                    if (inst.allZero)
+                        defaultOrigin[gid] = raw;
+                    else
+                        variedOrigins += raw != defaultOrigin[gid];
                     if (hasVorg)
                         ++origins;
                     else
@@ -451,12 +484,21 @@ unittest
                 }
             }
         }
-    });
+    }, withTestCorpus: true);
     stderr.writefln("oracle.vertical.advancesAndOrigins: %s faces with vhea+vmtx, %s with VORG; "
-        ~ "%s advances, %s VORG and %s phantom-point origins agree; excluded: %s clamped at zero, "
-        ~ "%s other VVAR errors",
-        vmtxFaces, vorgFaces, advances, origins, phantomOrigins, clamped, otherErrors);
+        ~ "%s advances (%s varied, %s fractional), %s VORG and %s phantom-point origins (%s varied) "
+        ~ "agree; excluded: %s clamped at zero, %s other VVAR errors",
+        vmtxFaces, vorgFaces, advances, variedAdvances, fractionalAdvances, origins, phantomOrigins,
+        variedOrigins, clamped, otherErrors);
     assert(otherErrors == 0);
+    if (testFontsDir !is null)
+    {
+        // Adobe Blank VF's 2,048 spacing glyphs, in both faces, at both nondefault instances.
+        assert(variedAdvances >= 2 * 2 * 2_048 && fractionalAdvances >= 2 * 2_048,
+            text(variedAdvances, " varied and ", fractionalAdvances, " fractional advances"));
+        // Source Han Sans VF's 248 at both nondefault instances.
+        assert(variedOrigins >= 2 * 248, text(variedOrigins, " varied origins"));
+    }
     if (vmtxFaces == 0)
         skipTest("no bundled face has vhea and vmtx");
 }

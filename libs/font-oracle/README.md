@@ -12,10 +12,12 @@ describes.
 Other inputs, all exported by the dev shell:
 
 - `$SPARKLES_FONT_TEST_CORPUS`: faces tested against but not shipped
-  (`nix/packages/font-test-corpus.nix`): the variable `CFF2` faces and the
-  `JSTF` faces the bundle lacks, SIL's Scheherazade New and Lateef, whose
-  `JSTF` records `oracle.jstf.agreesWithFontTools` compares with
-  fontTools' reading in `test/goldens/jstf.txt`.
+  (`nix/packages/font-test-corpus.nix`), for what the bundle lacks: variable
+  `CFF2` faces; varied vertical metrics, from Adobe Blank VF and Source Han
+  Sans VF (a collection, of which the first face is read); and `JSTF` faces,
+  SIL's Scheherazade New and Lateef, whose `JSTF` records
+  `oracle.jstf.agreesWithFontTools` compares with fontTools' reading in
+  `test/goldens/jstf.txt`.
 - `$SPARKLES_FLAKE_INPUT_HARFBUZZ_SRC`: the pinned HarfBuzz source, whose
   generated tables the `FTS8` manifest check reads.
 - `$SPARKLES_HARFBUZZ_USE_UCD`: the older UCD release HarfBuzz's USE table was

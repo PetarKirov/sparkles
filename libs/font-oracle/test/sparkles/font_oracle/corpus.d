@@ -50,7 +50,7 @@ mixin StaticBlock!q{
     package immutable string[] corpus = listCorpus(fontsDir).idup;
     /// `$SPARKLES_FONT_TEST_CORPUS`: faces tested against but not shipped (the variable CFF2 and the `JSTF` faces).
     package immutable string testFontsDir = environment.get("SPARKLES_FONT_TEST_CORPUS");
-    /// The test-only faces in name order; empty when unset.
+    /// The test-only faces in name order, a collection standing for its first face; empty when unset.
     package immutable string[] testCorpus = listCorpus(testFontsDir).idup;
 };
 
@@ -59,6 +59,6 @@ private string[] listCorpus(string dir) @safe
     if (dir is null || !dir.exists)
         return null;
     return dirEntries(dir, SpanMode.shallow)
-        .filter!(e => e.name.endsWith(".ttf") || e.name.endsWith(".otf"))
+        .filter!(e => e.name.endsWith(".ttf") || e.name.endsWith(".otf") || e.name.endsWith(".ttc"))
         .map!(e => e.name).array.sort.release;
 }
