@@ -235,7 +235,8 @@ version (unittest)
 {
     private import std.path : buildPath;
 
-    import sparkles.test_utils.tmpfs : TmpFS;
+    // `TmpFS` is imported inside each test: a module-scope `version (unittest)`
+    // import would make every consumer's own `dub test` resolve test-utils.
 
     private static struct Inner
     {
@@ -289,6 +290,8 @@ version (unittest)
 @("wired.sdl.files.write.nestedParentsExactBytesNoOrphan")
 @system unittest
 {
+    import sparkles.test_utils.tmpfs : TmpFS;
+
     auto tmp = TmpFS.create();
     const path = buildPath(tmp.dir(), "nested", "deeper", "target.sdl");
     Doc document;
@@ -310,6 +313,8 @@ version (unittest)
 @("wired.sdl.files.roundTripTypedEquality")
 @system unittest
 {
+    import sparkles.test_utils.tmpfs : TmpFS;
+
     auto tmp = TmpFS.create();
     const path = buildPath(tmp.dir(), "recipe.sdl");
     Doc document;
@@ -330,6 +335,8 @@ version (unittest)
 @("wired.sdl.files.read.missingFile")
 @system unittest
 {
+    import sparkles.test_utils.tmpfs : TmpFS;
+
     auto tmp = TmpFS.create();
     const path = buildPath(tmp.dir(), "absent.sdl");
 
@@ -352,6 +359,8 @@ version (unittest)
 @("wired.sdl.files.read.parseAndDecodeErrorsCarryPath")
 @system unittest
 {
+    import sparkles.test_utils.tmpfs : TmpFS;
+
     import std.array : appender;
 
     auto tmp = TmpFS.create();
@@ -385,6 +394,8 @@ version (unittest)
 @("wired.sdl.files.write.encodeFailureTouchesNothing")
 @system unittest
 {
+    import sparkles.test_utils.tmpfs : TmpFS;
+
     static struct Broken
     {
         @SdlTagValue(0) double bad;
@@ -417,6 +428,8 @@ version (unittest)
 @("wired.sdl.files.write.renameFailureCleansUp")
 @system unittest
 {
+    import sparkles.test_utils.tmpfs : TmpFS;
+
     import std.file : exists, mkdirRecurse, readText, remove, write;
 
     auto tmp = TmpFS.create();
@@ -451,6 +464,8 @@ version (unittest)
 @("wired.sdl.files.write.unwritableDirectoryKeepsTarget")
 @system unittest
 {
+    import sparkles.test_utils.tmpfs : TmpFS;
+
     import sparkles.test_runner.skip : skipTest;
 
     version (Posix)
@@ -507,6 +522,8 @@ version (unittest)
 @("wired.sdl.files.write.replacesExistingTarget")
 @system unittest
 {
+    import sparkles.test_utils.tmpfs : TmpFS;
+
     version (Posix)
     {
         import std.file : readText, write;
@@ -532,6 +549,8 @@ version (unittest)
 @("wired.sdl.files.write.emptyDocumentStaysEmpty")
 @system unittest
 {
+    import sparkles.test_utils.tmpfs : TmpFS;
+
     import std.file : readText;
 
     import std.typecons : Nullable;
