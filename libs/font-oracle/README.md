@@ -18,6 +18,17 @@ Other inputs, all exported by the dev shell:
 - `$SPARKLES_HARFBUZZ_USE_UCD`: the older UCD release HarfBuzz's USE table was
   generated from, whose default ignorables that check compares with base's.
 
+One input is opt-in: `$SPARKLES_FONT_UNFREE_CORPUS`, Microsoft's core Arial
+and Times New Roman, the only faces found with a `JSTF` table. Their licence
+forbids redistributing them, so neither the dev shell nor CI's cache builds
+them (`nix/packages/font-unfree-corpus.nix`), and `oracle.jstf.agreesWithFontTools`
+skips without them:
+
+```bash
+SPARKLES_FONT_UNFREE_CORPUS=$(nix build --no-link --print-out-paths \
+  .#sparkles-font-unfree-corpus) dub test :font-oracle
+```
+
 `test/goldens/shaping.txt` records `hb-shape` output for the shaping wrapper
 check, with the engine version and each face's fingerprint: a SHA-256 of
 every table but `name`, which the Maple Mono build writes in an order that
