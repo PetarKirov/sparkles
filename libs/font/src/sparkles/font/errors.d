@@ -91,7 +91,9 @@ enum FontLimit : ubyte
     shapingFeatures,
     /**
     The shaping engine's own buffer (FTS7): HarfBuzz refused to grow it past
-    its length limit, or an allocation failed. It has no fixed value.
+    its length limit, the run spent the buffer's operation budget, or an
+    allocation failed. It has no fixed value: HarfBuzz sizes both budgets
+    from the run's length.
     */
     engineBuffer,
 }
