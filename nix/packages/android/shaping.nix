@@ -86,8 +86,9 @@ in
 
       harfbuzz = pkgs.stdenv.mkDerivation {
         pname = "harfbuzz-android";
-        # The release sparkles:font pins (nix/packages/harfbuzz.nix).
+        # The release sparkles:font pins, with its patch (nix/packages/harfbuzz.nix).
         inherit (config.packages.harfbuzz) version src;
+        patches = config.packages.harfbuzz.sparklesPatches;
         nativeBuildInputs = [ pkgs.cmake ];
         dontUseCmakeConfigure = true;
         dontStrip = true;
