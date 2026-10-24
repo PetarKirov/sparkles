@@ -167,11 +167,15 @@ occupy the same byte range in both operands.
 ## 3. Chunks, positions and conversion
 
 **TXB-POS1: Chunk iteration in both directions.** A text **must** expose
-its chunks as borrowed `const(char)[]` slices in either direction, starting
-from the chunk containing any position, with each chunk's start position.
-A borrowed slice **must not** outlive the text it came from
-(`-preview=dip1000` enforced). Starting a walk **must** cost O(log _n_)
-and each further step O(1) amortized.
+its chunks as `const(char)[]` slices in either direction, starting from the
+chunk containing any position, with each chunk's start position. A chunk
+range **must** hold a reference to the text it walks, so it stays valid
+however the variable it came from is reassigned. A slice from `chunkAt` or
+a range's `front` is borrowed: `-preview=dip1000` keeps it from escaping
+the text or range it came from, and, as for `sparkles.base.buffer`
+slices, reassigning or destroying that owner while the slice is held is
+the caller's error. Starting a walk **must** cost O(log _n_) and each
+further step O(1) amortized.
 
 _Rationale:_ This is the chunked-source capability the base text steppers
 consume ([`TXT-SEG8`](../base/text/SPEC.md#43-boundaries-from-an-arbitrary-position)),
@@ -183,7 +187,9 @@ position, scalar index, UTF-16 index and (line, byte-in-line) for every
 valid input, and report an error value for an out-of-range input.
 Converting a scalar or UTF-16 index that falls inside a sequence's
 encoding, or a byte position inside a sequence, **must** take an affinity
-and snap to that side's boundary.
+and snap to that side's boundary. A byte-in-line column may reach the
+line's line feed, so the position between a CR and its LF converts both
+ways.
 
 **TXB-POS3: Lines.** A text **must** answer `lineCount`, the start and end
 position of line _i_, and the line containing a position, within the
@@ -279,13 +285,15 @@ the history only needs an operation that extends the newest step.
 **TXB-HIS4: Chronological travel.** `earlier(steps)` and `later(steps)`
 **must** move that many revisions back or forward in creation order,
 regardless of branch, clamped to the oldest and newest. `earlier(d)`
-**must** move to the earliest revision whose timestamp is at least the
-current timestamp minus `d`, and `later(d)` to the latest revision whose
-timestamp is at most the current timestamp plus `d`; ties go to creation
-order. Each **must** return the change set that turns the current text
-into the target's text, composed through their lowest common ancestor, and
-the target's `after` state (the root's is the state the history was
-created with).
+**must** move to the revision with the smallest timestamp that is at least
+the current timestamp minus `d`, and `later(d)` to the revision with the
+largest timestamp that is at most the current timestamp plus `d`; among
+equal timestamps, `earlier` takes the first created and `later` the last.
+Because amending restamps a revision, timestamps need not rise in creation
+order, and travel by time chooses by timestamp. Each **must** return the
+change set that turns the current text into the target's text, composed
+through their lowest common ancestor, and the target's `after` state (the
+root's is the state the history was created with).
 
 **TXB-HIS5: Pruning.** The history **must** retain every revision until
 `prune(maxRevisions)` is called. Pruning **must** repeatedly remove the
@@ -331,36 +339,36 @@ in size.
 
 ## 7. Requirements and evidence
 
-| ID        | Requirement                     | Status      | Traces to                    |
-| --------- | ------------------------------- | ----------- | ---------------------------- |
-| TXB-TEXT1 | value semantics                 | not started | proposed `Text`              |
-| TXB-TEXT2 | persistence                     | not started | proposed `Text.replace`      |
-| TXB-TEXT3 | chunk boundaries                | not started | proposed chunker             |
-| TXB-TEXT4 | summaries                       | not started | proposed `TextSummary`       |
-| TXB-TEXT5 | complexity                      | not started | proposed tree                |
-| TXB-TEXT6 | sharing bound                   | not started | proposed node counters       |
-| TXB-TEXT7 | equality                        | not started | proposed `Text.opEquals`     |
-| TXB-POS1  | chunk iteration both directions | not started | proposed `Text.chunksFrom`   |
-| TXB-POS2  | coordinate conversion           | not started | proposed `Text.convert`      |
-| TXB-POS3  | lines                           | not started | proposed `Text.line`         |
-| TXB-CHG1  | change-set construction         | not started | proposed `ChangeSet.of`      |
-| TXB-CHG2  | apply                           | not started | proposed `ChangeSet.apply`   |
-| TXB-CHG3  | invert                          | not started | proposed `ChangeSet.invert`  |
-| TXB-CHG4  | compose                         | not started | proposed `ChangeSet.compose` |
-| TXB-CHG5  | position mapping                | not started | proposed `ChangeSet.mapPos`  |
-| TXB-CHG6  | mapping composes                | not started | proposed `ChangeSet.mapPos`  |
-| TXB-CHG7  | touched ranges                  | not started | proposed `ChangeSet.touched` |
-| TXB-HIS1  | commit keeps branches           | not started | proposed `History.commit`    |
-| TXB-HIS2  | undo and redo                   | not started | proposed `History.undo`      |
-| TXB-HIS3  | amend                           | not started | proposed `History.amend`     |
-| TXB-HIS4  | chronological travel            | not started | proposed `History.earlier`   |
-| TXB-HIS5  | pruning                         | not started | proposed `History.prune`     |
-| TXB-HIS6  | time is an input                | not started | proposed `History`           |
-| TXB-OWN1  | deterministic release           | not started | proposed node refcount       |
-| TXB-OWN2  | sharing across threads          | not started | proposed atomic refcount     |
-| TXB-OWN3  | allocation                      | not started | proposed node allocator      |
-| TXB-OWN4  | size limits                     | not started | proposed `Text`              |
-| TXB-OWN5  | attributes                      | not started | proposed `Text`              |
+| ID        | Requirement                     | Status  | Traces to                                                                                                                                      |
+| --------- | ------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| TXB-TEXT1 | value semantics                 | full    | `Text`, tests `Text.model.randomEdits`, `Text.equality.sharedAndUnshared`                                                                      |
+| TXB-TEXT2 | persistence                     | full    | `Text.replace`, `Text.slice`, `Text.append`, test `Text.model.randomEdits`                                                                     |
+| TXB-TEXT3 | chunk boundaries                | full    | `legalCut`, `build`, tests `Text.model.randomEdits`, `Text.boundaryExamples`                                                                   |
+| TXB-TEXT4 | summaries                       | full    | `TextSummary`, `measure`, tests `summary.concatenation`, `Text.model.randomEdits`                                                              |
+| TXB-TEXT5 | complexity                      | full    | `join`, `sliceLeaves`, `checkTree`, test `Text.model.randomEdits`                                                                              |
+| TXB-TEXT6 | sharing bound                   | full    | `allocatedNodes`, test `Text.sharingBound`                                                                                                     |
+| TXB-TEXT7 | equality                        | full    | `Text.opEquals`, tests `Text.equality.sharedAndUnshared`, `Text.equality.skipsSharedSubtrees`                                                  |
+| TXB-POS1  | chunk iteration both directions | full    | `Text.chunks`, `Text.chunksBackward`, `Text.chunkAt`, tests `Text.model.randomEdits`, `Text.chunks.outliveReassignment`                        |
+| TXB-POS2  | coordinate conversion           | full    | `Text.scalarIndexOf`, `Text.utf16IndexOf`, `Text.positionOfUtf16`, `Text.pointOf`, tests `Text.model.randomEdits`, `Text.point.betweenCrAndLf` |
+| TXB-POS3  | lines                           | full    | `Text.lineStart`, `Text.lineEnd`, `Text.lineOf`, test `Text.model.randomEdits`                                                                 |
+| TXB-CHG1  | change-set construction         | full    | `ChangeSet.of`, tests `ChangeSet.of.unionSemantics`, `ChangeSet.of.releasesOverwritten`                                                        |
+| TXB-CHG2  | apply                           | full    | `ChangeSet.apply`, test `ChangeSet.model.applyInvertComposeMap`                                                                                |
+| TXB-CHG3  | invert                          | full    | `ChangeSet.invert`, test `ChangeSet.model.applyInvertComposeMap`                                                                               |
+| TXB-CHG4  | compose                         | full    | `ChangeSet.compose`, test `ChangeSet.model.applyInvertComposeMap`                                                                              |
+| TXB-CHG5  | position mapping                | full    | `ChangeSet.mapPos`, `ChangeSet.mapPosTracking`, test `ChangeSet.model.applyInvertComposeMap`                                                   |
+| TXB-CHG6  | mapping composes                | full    | `ChangeSet.mapPos`, tests `ChangeSet.model.applyInvertComposeMap`, `ChangeSet.mapPos.composeOnlyAwayFromEdits`                                 |
+| TXB-CHG7  | touched ranges                  | full    | `ChangeSet.touched`, tests `ChangeSet.model.applyInvertComposeMap`, `ChangeSet.touched.outlivesReassignment`                                   |
+| TXB-HIS1  | commit keeps branches           | full    | `History.commit`, tests `History.commit.keepsBranches`, `History.model.randomNavigation`                                                       |
+| TXB-HIS2  | undo and redo                   | full    | `History.undo`, `History.redo`, test `History.model.randomNavigation`                                                                          |
+| TXB-HIS3  | amend                           | full    | `History.amend`, test `History.model.randomNavigation`                                                                                         |
+| TXB-HIS4  | chronological travel            | full    | `History.earlier`, `History.later`, tests `History.model.randomNavigation`, `History.travelByTime.afterAmend`                                  |
+| TXB-HIS5  | pruning                         | full    | `History.prune`, test `History.prune.oldestLeavesThenReroot`                                                                                   |
+| TXB-HIS6  | time is an input                | full    | `History`, test `History.model.randomNavigation`                                                                                               |
+| TXB-OWN1  | deterministic release           | full    | `release`, tests `Text.release.returnsToBaseline`, `History.release.everyNodeFreed`                                                            |
+| TXB-OWN2  | sharing across threads          | partial | `retain`, `RcArray`, test `Text.threads.sharedCounts`; no explicit transfer operation exists yet                                               |
+| TXB-OWN3  | allocation                      | full    | `allocate`, `Scratch`, tests `Text.release.returnsToBaseline`, `History.release.everyNodeFreed`                                                |
+| TXB-OWN4  | size limits                     | full    | `Text`, `TextSummary`                                                                                                                          |
+| TXB-OWN5  | attributes                      | full    | tests `Text.attributes`, `ChangeSet.attributes`, `History.attributes`                                                                          |
 
 The falsifying scenarios and oracles for each row are in
 [testing](./testing.md).
