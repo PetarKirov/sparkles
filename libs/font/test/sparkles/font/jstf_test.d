@@ -95,6 +95,15 @@ unittest
     uint[8] extenders;
     const n = jstfExtenderGlyphs(face, Tag("DFLT"), extenders[]);
     assert(n.hasValue && n.value == 2 && extenders[0] == 3 && extenders[1] == 5);
+    const script = jstfScript(face, Tag("DFLT")).value;
+    assert(script.present && script.hasExtenders && script.extenderCount == 2
+        && script.hasDefaultLanguage && script.languageCount == 1);
+    Tag[2] languages;
+    assert(jstfLanguages(face, Tag("DFLT"), languages[]).value == 1 && languages[0] == Tag("ROM "));
+    Tag[0] none;
+    const noRoom = jstfLanguages(face, Tag("DFLT"), none[]);
+    assert(noRoom.hasError && noRoom.error.limit == FontLimit.callerStorage && noRoom.error.needed == 1);
+    assert(!jstfScript(face, Tag("latn")).value.present && jstfLanguages(face, Tag("latn"), languages[]).value == 0);
 
     assert(jstfPriorityCount(face, Tag("DFLT"), Tag.init).value == 2);
     const first = jstfPriority(face, Tag("DFLT"), Tag.init).value;
@@ -178,6 +187,23 @@ unittest
     assert(!hasJstf(face).value);
     Tag[2] scripts;
     assert(jstfScripts(face, scripts[]).value == 0);
+    assert(!jstfScript(face, Tag("DFLT")).value.present);
     assert(jstfPriorityCount(face, Tag("DFLT"), Tag.init).value == 0);
     assert(!jstfPriority(face, Tag("DFLT"), Tag.init).value.present);
+}
+
+/// An extender table whose count runs past the table is `truncated` for the script record too.
+@("jstf.script.truncatedExtenders")
+@safe pure nothrow
+unittest
+{
+    auto table = jstfTable(null);
+    // The header (12 bytes) and the script header (12) precede the ExtenderGlyph count.
+    assert(table[24 .. 26] == u16(2));
+    table[24] = 0xFF;
+    const face = openFace(withJstf(table)).value;
+    const script = jstfScript(face, Tag("DFLT"));
+    assert(script.hasError && script.error.kind == FontErrorKind.truncated && script.error.tag == Tag("JSTF"));
+    uint[4] extenders;
+    assert(jstfExtenderGlyphs(face, Tag("DFLT"), extenders[]).error.kind == FontErrorKind.truncated);
 }

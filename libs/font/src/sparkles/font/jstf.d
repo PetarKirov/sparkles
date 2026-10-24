@@ -344,3 +344,79 @@ FontResult!size_t jstfExtenderGlyphs(return scope const Face face, Tag script,
         out_[i] = be16(d, at + 2 + 2 * i);
     return fontOk!size_t(count);
 }
+
+/**
+One script record of `JSTF` (FTS11): whether it is listed, whether it has
+an extender table and a default language system, and how many extender
+glyphs and tagged language systems it lists.
+*/
+struct JstfScriptInfo
+{
+    @safe pure nothrow @nogc:
+
+    /// Whether the table lists the script.
+    bool present;
+    /// Whether the script has an ExtenderGlyph table and a default language system.
+    bool hasExtenders, hasDefaultLanguage;
+    /// The extender glyphs and the tagged language systems the script lists.
+    size_t extenderCount, languageCount;
+}
+
+/**
+`script`'s record (FTS11). Absence of the table or the script is
+`present == false`; a record or extender table that does not fit the
+table is `truncated`. Costs O(s) for `s` scripts.
+*/
+FontResult!JstfScriptInfo jstfScript(return scope const Face face, Tag script)
+{
+    JstfScriptInfo info;
+    if (!face.has(jstfTag))
+        return fontOk(info);
+    const j = jstfHeader(face);
+    if (j.hasError)
+        return fontErr!JstfScriptInfo(j.error);
+    if (scriptOffset(j.value, script) == size_t.max)
+        return fontOk(info);
+    const view = scriptView(j.value, script);
+    if (view.hasError)
+        return fontErr!JstfScriptInfo(view.error);
+    info.present = true;
+    info.hasDefaultLanguage = view.value.defaultLangSysAt != 0;
+    info.languageCount = view.value.langSysCount;
+    if (view.value.extenderAt != 0)
+    {
+        const d = j.value.data;
+        const at = view.value.at + view.value.extenderAt;
+        if (!fits(d.length, at, 2) || !fits(d.length, at + 2, 2UL * be16(d, at)))
+            return fontErr!JstfScriptInfo(tableError(FontErrorKind.truncated, jstfTag, j.value.start, at));
+        info.hasExtenders = true;
+        info.extenderCount = be16(d, at);
+    }
+    return fontOk(info);
+}
+
+/**
+The tags of `script`'s language systems, in table order, written to `out`
+(FTS11): the count. The default language system has no tag; `jstfScript`
+says whether there is one. An absent table or script is a count of zero;
+`callerStorage` names the count in `needed` when `out` is shorter.
+*/
+FontResult!size_t jstfLanguages(return scope const Face face, Tag script, scope Tag[] out_)
+{
+    if (!face.has(jstfTag))
+        return fontOk!size_t(0);
+    const j = jstfHeader(face);
+    if (j.hasError)
+        return fontErr!size_t(j.error);
+    if (scriptOffset(j.value, script) == size_t.max)
+        return fontOk!size_t(0);
+    const view = scriptView(j.value, script);
+    if (view.hasError)
+        return fontErr!size_t(view.error);
+    const count = view.value.langSysCount;
+    if (count > out_.length)
+        return fontErr!size_t(callerStorageError(count, jstfTag, j.value.start, view.value.at + 4));
+    foreach (i; 0 .. count)
+        out_[i] = Tag(be32(j.value.data, view.value.at + 6 + 6 * i));
+    return fontOk!size_t(count);
+}
