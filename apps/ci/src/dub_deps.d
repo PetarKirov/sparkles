@@ -1,6 +1,7 @@
 /++
-Helpers for reading the repo's `dub.sdl` layout and rewriting in-tree
-`dependency "<pkg>" version="*"` lines in markdown example code blocks.
+Helpers for reading the repo's `dub.sdl` layout (through the
+`sparkles.build_primitives.dub_manifest` schema) and rewriting in-tree
+`dependency "<pkg>" version="*"` declarations in markdown examples' recipes.
 
 Split out from `app.d` so the parsers/rewriters are exercised by `dub test`
 — the main source file is excluded from the auto-generated test runner.
@@ -8,84 +9,26 @@ Split out from `app.d` so the parsers/rewriters are exercised by `dub test`
 module dub_deps;
 
 import std.algorithm : canFind, filter, map;
-import std.array : array, join;
-import std.conv : text;
-import std.file : exists, readText;
+import std.array : array;
 import std.path : buildPath, relativePath;
-import std.string : endsWith, indexOf, lineSplitter, startsWith, strip, stripLeft;
+import std.range.primitives : put;
+
+import sparkles.base.buffer : UniqueBuffer;
+import sparkles.build_primitives.dub_manifest : embeddedDubRecipe, readDubManifest;
+import sparkles.wired.sdl : parseSdlDocument, sdlDubRecipe, SdlNode, SdlQualifiedName,
+    SdlScalarKind;
 
 /// Parses sub-package paths from the root `dub.sdl`.
 @safe
 string[] parseSubPackages(string repoRoot)
 {
-    const dubSdlPath = repoRoot.buildPath("dub.sdl");
-    if (!dubSdlPath.exists)
+    auto manifest = readDubManifest(repoRoot.buildPath("dub.sdl"));
+    if (manifest.hasError)
         return [];
-
-    return dubSdlPath.readText
-        .lineSplitter
-        .map!(line => line.parseSdlStringField("subPackage"))
-        .filter!(pkg => pkg.length > 0)
+    return manifest.value.subPackages
+        .map!(sub => sub.path)
+        .filter!(path => path.length > 0)
         .array;
-}
-
-/// Extracts the value of a top-level SDL field of the form `<name> "<value>"`.
-/// Returns null when `line` doesn't open with that field. Used by
-/// `parseSubPackages` and `inTreePackageNames` so both share one parser.
-@safe pure
-private string parseSdlStringField(in char[] line, in char[] field)
-{
-    auto stripped = line.stripLeft;
-    if (!stripped.startsWith(field))
-        return null;
-
-    auto rest = stripped[field.length .. $];
-
-    // Skip all whitespace after the field name
-    import std.ascii : isWhite;
-    size_t i = 0;
-    while (i < rest.length && rest[i].isWhite)
-        i++;
-
-    rest = rest[i .. $];
-
-    if (!rest.startsWith('"'))
-        return null;
-
-    rest = rest[1 .. $];
-    auto end = rest.indexOf('"');
-    return end > 0 ? rest[0 .. end].idup : null;
-}
-
-@("dub_deps.parseSdlStringField")
-@safe pure
-unittest
-{
-    assert(parseSdlStringField(`name "sparkles"`, "name") == "sparkles");
-    assert(parseSdlStringField(`  name "sparkles"`, "name") == "sparkles");
-    assert(parseSdlStringField(`name  "sparkles"`, "name") == "sparkles");
-    assert(parseSdlStringField(`name	"sparkles"`, "name") == "sparkles");
-    assert(parseSdlStringField(`dependency "sparkles:core-cli" version="*"`, "dependency") == "sparkles:core-cli");
-    assert(parseSdlStringField(`other "value"`, "name") is null);
-    assert(parseSdlStringField(`name "no-closing-quote`, "name") is null);
-
-    // Empty input and field-only lines
-    assert(parseSdlStringField(``, "name") is null);
-    assert(parseSdlStringField(`name`, "name") is null);
-    assert(parseSdlStringField(`name `, "name") is null);
-
-    // Empty quoted value yields null (end > 0 guard)
-    assert(parseSdlStringField(`name ""`, "name") is null);
-
-    // Field is a prefix of another identifier — quote check rejects it
-    assert(parseSdlStringField(`names "foo"`, "name") is null);
-    assert(parseSdlStringField(`subPackages "x"`, "subPackage") is null);
-
-    // Real-world subPackage line from this repo
-    assert(parseSdlStringField(`subPackage "libs/core-cli"`, "subPackage") == "libs/core-cli");
-
-    // Surrounding noise after the value is ignored — we only need the first quoted token
-    assert(parseSdlStringField(`name "sparkles" // trailing`, "name") == "sparkles");
 }
 
 /// Names of all packages — root + subpackages — that live in this repo.
@@ -110,116 +53,82 @@ string[] inTreePackageNames(string repoRoot)
 @safe
 private string readPackageName(string dubSdlPath)
 {
-    if (!dubSdlPath.exists)
-        return null;
-    foreach (line; dubSdlPath.readText.lineSplitter)
-    {
-        auto name = line.parseSdlStringField("name");
-        if (name.length)
-            return name;
-    }
-    return null;
+    const manifest = readDubManifest(dubSdlPath);
+    return manifest.hasValue && manifest.value.name.length ? manifest.value.name : null;
 }
 
-/// Rewrites `dependency "<pkg>" version="*"` lines for any in-tree
-/// subpackage to `dependency "<pkg>" path="<rel>"`, where `<rel>` is
-/// the relative path from `fromDir` (the example's directory) up to
-/// the repo root. This lets `docs run`/`verify`/`update` exercise the
-/// local working copy of the new code, instead of dub silently
-/// resolving against an older registry-published version that may
-/// lack the API the example demonstrates.
+/// Writes `code` to `writer`, with the embedded recipe's
+/// `dependency "<pkg>" version="*"` declarations for any in-tree package
+/// rewritten to `dependency "<pkg>" path="<rel>"`, where `<rel>` is the
+/// relative path from `fromDir` (the example's directory) up to the repo
+/// root. This lets `docs run`/`verify`/`update` exercise the local working
+/// copy of the new code, instead of dub silently resolving against an older
+/// registry-published version that may lack the API the example demonstrates.
 ///
-/// Lines that don't match the exact `version="*"` form are left alone
-/// — examples that pin to a specific version do so deliberately.
-@safe
-string rewriteInTreeDeps(string code, string repoRoot, string fromDir)
+/// Only the `version="*"` attribute is replaced, in place: declarations that
+/// pin a specific version or carry other attributes do so deliberately, and
+/// everything else in `code` (layout, comments, line endings) is kept.
+void writeInTreeDeps(Writer)(ref Writer writer, string code, string repoRoot, string fromDir)
 {
     auto names = repoRoot.inTreePackageNames;
-    if (names.length == 0)
-        return code;
+    const embedded = embeddedDubRecipe(code);
+    if (names.length == 0 || !embedded.found || embedded.isJson)
+        return put(writer, code);
+    // Rendered at its source position, so spans are offsets into `code`.
+    UniqueBuffer!char positioned;
+    embedded.toString(positioned);
+    auto parsed = parseSdlDocument!sdlDubRecipe(positioned[]);
+    if (parsed.hasError)
+        return put(writer, code);
 
-    auto rel = repoRoot.relativePath(fromDir);
-
-    // Detect newline type from the first line break
-    const nl = code.indexOf("\r\n") >= 0 ? "\r\n" : "\n";
-
-    auto rewritten = code
-        .lineSplitter
-        .map!(line => line.rewriteDepLine(names, rel))
-        .join(nl);
-
-    return code.endsWith(nl) && !rewritten.endsWith(nl)
-        ? rewritten ~ nl
-        : rewritten;
-}
-
-@safe pure
-private string rewriteDepLine(in char[] line, in string[] names, string rel)
-{
-    auto leftStripped = line.stripLeft;
-    auto name = leftStripped.parseSdlStringField("dependency");
-    if (!names.canFind(name))
-        return line.idup;
-
-    // Only rewrite the version="*" form; other version specifiers and
-    // existing path="..." references are intentional and untouched.
-    auto firstQuote = leftStripped.indexOf('"');
-    if (firstQuote < 0) return line.idup;
-
-    auto closingQuote = leftStripped.indexOf('"', firstQuote + 1);
-    if (closingQuote < 0) return line.idup;
-
-    if (leftStripped[closingQuote + 1 .. $].strip != `version="*"`)
-        return line.idup;
-
-    auto indent = line[0 .. line.length - leftStripped.length];
-    return text(indent, `dependency "`, name, `" path="`, rel, `"`);
-}
-
-@("dub_deps.rewriteDepLine")
-@safe pure
-unittest
-{
-    const rel = "..";
-    const names = ["sparkles", "sparkles:core-cli"];
-
-    // Basic rewrite
-    assert(rewriteDepLine(`dependency "sparkles:core-cli" version="*"`, names, rel)
-        == `dependency "sparkles:core-cli" path=".."`);
-
-    // Indentation is preserved verbatim
-    assert(rewriteDepLine(`    dependency "sparkles" version="*"`, names, rel)
-        == `    dependency "sparkles" path=".."`);
-    assert(rewriteDepLine("\tdependency \"sparkles\" version=\"*\"", names, rel)
-        == "\tdependency \"sparkles\" path=\"..\"");
-
-    // Out-of-tree packages are not rewritten
-    assert(rewriteDepLine(`dependency "other" version="*"`, names, rel)
-        == `dependency "other" version="*"`);
-
-    // Pinned versions and existing path= lines are left alone
-    assert(rewriteDepLine(`dependency "sparkles" version="~>1.0.0"`, names, rel)
-        == `dependency "sparkles" version="~>1.0.0"`);
-    assert(rewriteDepLine(`dependency "sparkles" path="."`, names, rel)
-        == `dependency "sparkles" path="."`);
-
-    // Lines without a `dependency` field are passed through unchanged
-    assert(rewriteDepLine(`import sparkles;`, names, rel)
-        == `import sparkles;`);
-    assert(rewriteDepLine(``, names, rel) == ``);
-
-    // Different relative paths are inserted verbatim
-    assert(rewriteDepLine(`dependency "sparkles" version="*"`, names, "../../..")
-        == `dependency "sparkles" path="../../.."`);
+    const rel = repoRoot.relativePath(fromDir);
+    // The walk is preorder and attributes never nest, so replaced spans
+    // arrive in source order and `code` streams through once.
+    size_t at;
+    void rewrite(scope const SdlNode node)
+    {
+        foreach (child; node.byChild)
+        {
+            if (child.qualifiedName == SdlQualifiedName(null, "dependency")
+                && child.valueCount == 1 && child.attributeCount == 1)
+            {
+                const value = child.byValue.front;
+                const attribute = child.byAttribute.front;
+                if (value.kind == SdlScalarKind.string_ && names.canFind(value.stringValue)
+                    && attribute.qualifiedName == SdlQualifiedName(null, "version")
+                    && attribute.value.kind == SdlScalarKind.string_
+                    && attribute.value.stringValue == "*")
+                {
+                    put(writer, code[at .. attribute.span.start.byteOffset]);
+                    put(writer, `path="`);
+                    put(writer, rel);
+                    put(writer, `"`);
+                    at = attribute.span.end.byteOffset;
+                }
+            }
+            rewrite(child);
+        }
+    }
+    rewrite(parsed.document.root);
+    put(writer, code[at .. $]);
 }
 
 version (unittest)
 {
     import std.file : mkdirRecurse;
     import sparkles.test_utils.tmpfs : TmpFS;
+
+    private string rewritten(string code, string repoRoot, string fromDir) @safe
+    {
+        import std.array : appender;
+
+        auto writer = appender!string;
+        writeInTreeDeps(writer, code, repoRoot, fromDir);
+        return writer[];
+    }
 }
 
-@("dub_deps.rewriteInTreeDeps.no-in-tree-packages")
+@("dub_deps.writeInTreeDeps.no-in-tree-packages")
 @safe
 unittest
 {
@@ -227,11 +136,11 @@ unittest
     auto tmp = TmpFS.create();
     const root = tmp.dir();
 
-    const code = `dependency "sparkles" version="*"`;
-    assert(rewriteInTreeDeps(code, root, root) == code);
+    const code = "/+ dub.sdl:\n    dependency \"sparkles\" version=\"*\"\n+/\n";
+    assert(rewritten(code, root, root) == code);
 }
 
-@("dub_deps.rewriteInTreeDeps.rewrites-only-in-tree")
+@("dub_deps.writeInTreeDeps.rewrites-only-in-tree")
 @safe
 unittest
 {
@@ -258,25 +167,41 @@ unittest
     mkdirRecurse(fromDir);
     // relativePath("<root>", "<root>/examples") == ".."
     const code =
-        "name \"demo\"\n"
-        ~ "dependency \"sparkles\" version=\"*\"\n"
-        ~ "dependency \"sparkles:core-cli\" version=\"*\"\n"
-        ~ "dependency \"sparkles:test-utils\" version=\"*\"\n"
-        ~ "dependency \"other\" version=\"*\"\n"
-        ~ "dependency \"sparkles\" version=\"~>1.0\"\n";
+        "#!/usr/bin/env dub\n/+ dub.sdl:\n"
+        ~ "    name \"demo\"\n"
+        ~ "    dependency \"sparkles\" version=\"*\"\n"
+        ~ "    dependency \"sparkles:core-cli\"   version=\"*\" // spaced\n"
+        ~ "    // dependency \"sparkles:test-utils\" version=\"*\"\n"
+        ~ "    dependency \"other\" version=\"*\"\n"
+        ~ "    dependency \"sparkles\" version=\"~>1.0\"\n"
+        ~ "    dependency \"sparkles:core-cli\" version=\"*\" optional=true\n"
+        ~ "    configuration \"tests\" {\n"
+        ~ "        dependency \"sparkles:test-utils\" version=\"*\"\n"
+        ~ "    }\n"
+        ~ "+/\n"
+        ~ "enum s = `dependency \"sparkles\" version=\"*\"`;\n";
 
+    // Only in-tree `version="*"` declarations change, in place; the comment,
+    // the pinned and optional ones, and the D code after the recipe do not.
     const expected =
-        "name \"demo\"\n"
-        ~ "dependency \"sparkles\" path=\"..\"\n"
-        ~ "dependency \"sparkles:core-cli\" path=\"..\"\n"
-        ~ "dependency \"sparkles:test-utils\" path=\"..\"\n"
-        ~ "dependency \"other\" version=\"*\"\n"
-        ~ "dependency \"sparkles\" version=\"~>1.0\"\n";
+        "#!/usr/bin/env dub\n/+ dub.sdl:\n"
+        ~ "    name \"demo\"\n"
+        ~ "    dependency \"sparkles\" path=\"..\"\n"
+        ~ "    dependency \"sparkles:core-cli\"   path=\"..\" // spaced\n"
+        ~ "    // dependency \"sparkles:test-utils\" version=\"*\"\n"
+        ~ "    dependency \"other\" version=\"*\"\n"
+        ~ "    dependency \"sparkles\" version=\"~>1.0\"\n"
+        ~ "    dependency \"sparkles:core-cli\" version=\"*\" optional=true\n"
+        ~ "    configuration \"tests\" {\n"
+        ~ "        dependency \"sparkles:test-utils\" path=\"..\"\n"
+        ~ "    }\n"
+        ~ "+/\n"
+        ~ "enum s = `dependency \"sparkles\" version=\"*\"`;\n";
 
-    assert(rewriteInTreeDeps(code, root, fromDir) == expected);
+    assert(rewritten(code, root, fromDir) == expected);
 }
 
-@("dub_deps.rewriteInTreeDeps.preserves-crlf")
+@("dub_deps.writeInTreeDeps.preserves-crlf")
 @safe
 unittest
 {
@@ -284,9 +209,14 @@ unittest
     const root = tmp.dir();
     tmp.writeFileAt("dub.sdl", "name \"sparkles\"\n");
 
-    const code = "dependency \"sparkles\" version=\"*\"\r\nimport sparkles;\r\n";
-    const expected = "dependency \"sparkles\" path=\".\"\r\nimport sparkles;\r\n";
-    assert(rewriteInTreeDeps(code, root, root) == expected);
+    const code = "/+ dub.sdl:\r\n    dependency \"sparkles\" version=\"*\"\r\n+/\r\nimport sparkles;\r\n";
+    const expected = "/+ dub.sdl:\r\n    dependency \"sparkles\" path=\".\"\r\n+/\r\nimport sparkles;\r\n";
+    assert(rewritten(code, root, root) == expected);
+    // Code without a recipe, or with a malformed one, passes through.
+    assert(rewritten("dependency \"sparkles\" version=\"*\"\n", root, root)
+        == "dependency \"sparkles\" version=\"*\"\n");
+    assert(rewritten("/+ dub.sdl:\n    dependency \"sparkles\" version=\"*\" {\n+/\n", root, root)
+        == "/+ dub.sdl:\n    dependency \"sparkles\" version=\"*\" {\n+/\n");
 }
 
 @("dub_deps.readPackageName")
@@ -299,13 +229,17 @@ unittest
     // Missing file returns null
     assert(readPackageName(buildPath(root, "missing.sdl")) is null);
 
-    // First matching `name "..."` line wins, even when surrounded by other fields
+    // The recipe's `name`, wherever it sits; a `name` inside a block is not it
     const sdlPath = tmp.writeFileAt("dub.sdl",
         "// header comment\n"
         ~ "description \"a package\"\n"
-        ~ "name \"sparkles\"\n"
-        ~ "name \"ignored-second\"\n");
+        ~ "subPackage {\n    name \"inline\"\n}\n"
+        ~ "name \"sparkles\"\n");
     assert(readPackageName(sdlPath) == "sparkles");
+
+    // Two names are ambiguous, not first-one-wins
+    const twoNames = tmp.writeFileAt("two.sdl", "name \"a\"\nname \"b\"\n");
+    assert(readPackageName(twoNames) is null);
 
     // dub.sdl with no `name` field returns null
     const noNamePath = tmp.writeFileAt("no-name.sdl", "description \"missing name\"\n");
