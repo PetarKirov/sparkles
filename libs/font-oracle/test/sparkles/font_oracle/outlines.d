@@ -12,6 +12,7 @@ import std.conv : text;
 import std.math : fabs;
 import std.path : baseName;
 
+import sparkles.base.unique : makeUnique;
 import sparkles.font;
 import sparkles.font_oracle.corpus : corpus, fontsDir, Oracle, testCorpus, testFontsDir;
 import sparkles.font_oracle;
@@ -162,6 +163,7 @@ unittest
         hb_draw_funcs_make_immutable(funcs);
         // Heap-owned: the test workers have small stacks.
         auto points = new OutlinePoint[8192];
+        auto pws = makeUnique!PointWorkspace();
         auto onCurve = new bool[8192];
         auto ends = new ushort[1024];
         auto segments = new OutlineSegment[16_384];
@@ -175,10 +177,7 @@ unittest
             collector.overflow = false;
             hb_font_draw_glyph(hb.font, gid, funcs, collector);
             assert(!collector.overflow, file);
-            OutlineWorkspace ws;
-            ws.points = points[];
-            ws.onCurve = onCurve[];
-            ws.contourEnds = ends[];
+            auto ws = pws.get.outline;
             const ours = glyphOutline(inst, gid, segments[], ws);
             const label = text(file, " gid=", gid);
             assert(ours.hasValue, text(label, ": ", ours.hasError ? ours.error.text : ""));
@@ -224,6 +223,7 @@ unittest
     hb_draw_funcs_make_immutable(funcs);
     auto collector = new Collector;
     auto points = new OutlinePoint[8192];
+    auto pws = makeUnique!PointWorkspace();
     auto on = new bool[8192];
     auto ends = new ushort[1024];
     auto segments = new OutlineSegment[16_384];
@@ -242,7 +242,7 @@ unittest
             collector.overflow = false;
             hb_font_draw_glyph(hb.font, gid, funcs, collector);
             assert(!collector.overflow, label);
-            const ours = glyphOutline(inst, gid, segments[], OutlineWorkspace(points, on, ends));
+            const ours = glyphOutline(inst, gid, segments[], pws.get.outline);
             assert(ours.hasValue, text(label, " ", ours.hasError ? ours.error : FontError.init));
             assertMatches(segments[0 .. ours.value.segmentCount],
                 collector.segments[0 .. collector.count], label);
@@ -258,6 +258,7 @@ unittest
     if (fontsDir is null)
         return skipTest("SPARKLES_FONTS_PATH is unset");
     auto points = new OutlinePoint[65_536];
+    auto pws = makeUnique!PointWorkspace();
     auto onCurve = new bool[65_536];
     auto ends = new ushort[8192];
     auto atDefault = new OutlineSegment[65_536];
@@ -289,7 +290,7 @@ unittest
         instances ~= face.instance(size, allMin).value;
         instances ~= face.instance(size, allMax).value;
         const base = face.instance(size, null).value;
-        auto ws = OutlineWorkspace(points, onCurve, ends);
+        auto ws = pws.get.outline;
         foreach (gid; 0 .. face.numGlyphs)
         {
             const label = text(path.baseName, " gid=", gid);
@@ -329,6 +330,7 @@ unittest
     hb_draw_funcs_make_immutable(funcs);
     auto collector = new Collector;
     auto points = new OutlinePoint[8192];
+    auto pws = makeUnique!PointWorkspace();
     auto on = new bool[8192];
     auto ends = new ushort[1024];
     auto segments = new OutlineSegment[16_384];
@@ -362,7 +364,7 @@ unittest
                 collector.overflow = false;
                 hb_font_draw_glyph(hb.font, gid, funcs, collector);
                 assert(!collector.overflow, label);
-                const ours = glyphOutline(inst, gid, segments[], OutlineWorkspace(points, on, ends));
+                const ours = glyphOutline(inst, gid, segments[], pws.get.outline);
                 assert(ours.hasValue, text(label, " ", ours.hasError ? ours.error : FontError.init));
                 assertMatches(segments[0 .. ours.value.segmentCount],
                     collector.segments[0 .. collector.count], label);

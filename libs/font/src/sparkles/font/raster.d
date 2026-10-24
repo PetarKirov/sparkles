@@ -90,16 +90,16 @@ struct RasterWorkspace
     float[] accumulation;
     /// Supersampling strip for union rendering: `supersampleNeeded` bytes (four subpixel rows).
     ubyte[] supersample;
+    /// `gvar` scratch, as `OutlineWorkspace` describes it.
+    uint[] pointNumbers;
+    /// ditto
+    int[] deltaX, deltaY;
+    /// ditto
+    int[2][] referenced;
 
     /// The workspace as the outline decoder's workspace.
     OutlineWorkspace outline() return scope
-    {
-        OutlineWorkspace ws;
-        ws.points = points;
-        ws.onCurve = onCurve;
-        ws.contourEnds = contourEnds;
-        return ws;
-    }
+        => OutlineWorkspace(points, onCurve, contourEnds, pointNumbers, deltaX, deltaY, referenced);
 }
 
 /// A caller-owned coverage region: `height` rows of `stride` bytes.

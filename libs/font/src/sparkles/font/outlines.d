@@ -239,8 +239,11 @@ FontResult!GlyphOutline drawGlyph(Sink)(in Instance inst, uint gid,
 private enum glyfTag = Tag("glyf"), locaTag = Tag("loca"), gvarTag = Tag("gvar"),
     cffTag = Tag("CFF ");
 
-/// The most points a stack-resident point lookup decodes (see `glyphPoint`).
-enum maxStackPoints = 8_192;
+/**
+The points a `PointWorkspace` holds: every point of a well-formed glyph,
+whose point numbers are 16-bit.
+*/
+enum maxWorkspacePoints = 65_536;
 
 /// A point in font units, y-up, as counts of 1/65,536 unit (FTO3).
 struct OutlinePoint
@@ -295,6 +298,43 @@ struct OutlineWorkspace
     bool[] onCurve;
     /// The last point index of each contour.
     ushort[] contourEnds;
+    /**
+    Scratch for a `gvar` tuple that lists its points (FTO4): one entry per
+    listed point, so as long as a varied glyph's points plus its four
+    phantom points. A shorter array is `limitExceeded` naming
+    `callerStorage` with the length a glyph needs; `CFF` and default
+    instances never touch it.
+    */
+    uint[] pointNumbers;
+    /// ditto
+    int[] deltaX, deltaY;
+    /// ditto
+    int[2][] referenced;
+}
+
+/**
+Storage for every point of one glyph and its `gvar` scratch, about
+2.6 MiB: what the point lookups (`glyphPoint`, `phantomAdvance`,
+`glyphBounds`) and the metrics built on them decode into. It is too large
+for a stack, so hold it in a `sparkles.base.unique.Unique` made once,
+where the caller sets up, and pass it to each lookup; the lookups
+themselves never allocate (FTB4).
+*/
+struct PointWorkspace
+{
+    @safe pure nothrow @nogc:
+
+    OutlinePoint[maxWorkspacePoints] points;
+    bool[maxWorkspacePoints] onCurve;
+    ushort[maxWorkspacePoints] contourEnds;
+    uint[maxWorkspacePoints + 4] pointNumbers;
+    int[maxWorkspacePoints + 4] deltaX, deltaY;
+    int[2][maxWorkspacePoints + 4] referenced;
+
+    /// The workspace as the outline decoder's workspace.
+    OutlineWorkspace outline() return
+        => OutlineWorkspace(points[], onCurve[], contourEnds[], pointNumbers[], deltaX[], deltaY[],
+            referenced[]);
 }
 
 /// What decoding one glyph found, beside its segments (FTO2, FTO5).
@@ -572,7 +612,8 @@ private FontResult!bool expandGlyph(ref Expander e, uint gid, Transform transfor
         if (expanded.hasError)
             return expanded;
     }
-    const varied = applyGvar(e.face, e.inst, gid, e.ws.points[pointsBefore .. e.pointCount], phantom[]);
+    const varied = applyGvar(e.face, e.inst, gid, e.ws.points[pointsBefore .. e.pointCount], phantom[],
+        e.ws);
     if (varied.hasError)
         return varied;
     if (!transform.isIdentity)
@@ -743,7 +784,7 @@ private FontResult!bool expandComposite(ref Expander e, GlyphRange range, Transf
                 e.tables.glyfStart + range.begin));
         scanning = (flags & 0x20) != 0;
     }
-    const varied = applyGvar(e.face, e.inst, gid, placements[0 .. componentCount], phantom[]);
+    const varied = applyGvar(e.face, e.inst, gid, placements[0 .. componentCount], phantom[], e.ws);
     if (varied.hasError)
         return varied;
     size_t componentIndex;
@@ -915,7 +956,7 @@ private struct TupleInfoData
 }
 
 private FontResult!bool applyGvar(scope const Face face, in Instance inst, uint gid,
-    scope OutlinePoint[] points, scope OutlinePoint[] phantom)
+    scope OutlinePoint[] points, scope OutlinePoint[] phantom, scope OutlineWorkspace ws)
 {
     if (inst.allZero)
         return fontOk(true);
@@ -1044,7 +1085,7 @@ private FontResult!bool applyGvar(scope const Face face, in Instance inst, uint 
                 return fontErr!bool(list.error);
             const info = TupleInfoData(scalar, dataCursor + (privatePoints ? list.value.consumed : 0));
             const applied = applyTupleDeltas(face, gid, d, info, list.value, totalPoints, points, phantom,
-                start, tupleEnd);
+                start, tupleEnd, ws);
             if (applied.hasError)
                 return applied;
         }
@@ -1058,10 +1099,10 @@ private FontResult!bool applyGvar(scope const Face face, in Instance inst, uint 
 private FontResult!bool applyTupleDeltas(in Face face, uint gid,
     scope const(ubyte)[] d, in TupleInfoData info,
     in PointList list, size_t totalPoints, scope OutlinePoint[] points,
-    scope OutlinePoint[] phantom, ulong start, ulong limit)
+    scope OutlinePoint[] phantom, ulong start, ulong limit, scope OutlineWorkspace ws)
 {
     if (!list.all && points.length)
-        return applySparseTuple(face, gid, d, info, list, points, phantom, start, limit);
+        return applySparseTuple(face, gid, d, info, list, points, phantom, start, limit, ws);
     // Both series must lie inside the tuple's data before either applies.
     const count = listCount(list, totalPoints);
     const xEnd = skipDeltaSeries(d, info.pointDataAt, count, start, limit);
@@ -1071,11 +1112,11 @@ private FontResult!bool applyTupleDeltas(in Face face, uint gid,
     if (yEnd.hasError)
         return fontErr!bool(yEnd.error);
     const applied = applyDeltaSeries(d, info.pointDataAt, list, totalPoints, info.scalar, points, phantom,
-        start);
+        start, ws.pointNumbers);
     if (applied.hasError)
         return applied;
     return applyDeltaSeries(d, xEnd.value, list, totalPoints, info.scalar,
-        points, phantom, start, true);
+        points, phantom, start, ws.pointNumbers, true);
 }
 
 /// Replays validated simple-glyph coordinates without copying the whole outline.
@@ -1207,15 +1248,17 @@ private long inferredDelta(long coord, long a, long b, int da, int db)
 
 private FontResult!bool applySparseTuple(in Face face, uint gid, scope const(ubyte)[] d,
     in TupleInfoData info, in PointList list, scope OutlinePoint[] points,
-    scope OutlinePoint[] phantom, ulong start, ulong limit)
+    scope OutlinePoint[] phantom, ulong start, ulong limit, scope OutlineWorkspace ws)
 {
     const parsed = decodePointList(list.data, 0, points.length + phantom.length, start,
-        list.data.length);
+        list.data.length, ws.pointNumbers, true);
     if (parsed.hasError)
         return fontErr!bool(parsed.error);
     const count = parsed.value.count;
-    const indices = parsed.value.indices[0 .. count];
-    int[4096] dx, dy;
+    if (ws.deltaX.length < count || ws.deltaY.length < count || ws.referenced.length < count)
+        return fontErr!bool(callerStorageError(count, gvarTag, start));
+    const indices = ws.pointNumbers[0 .. count];
+    int[] dx = ws.deltaX, dy = ws.deltaY;
     const x = readSparseDeltas(d, info.pointDataAt, dx[0 .. count], start, limit);
     if (x.hasError)
         return fontErr!bool(x.error);
@@ -1247,7 +1290,7 @@ private FontResult!bool applySparseTuple(in Face face, uint gid, scope const(uby
     }
     // The stored coordinates of the referenced points, in font units: glyf
     // coordinates are 16-bit, so ints hold them in half an OutlinePoint.
-    int[2][4096] referenced;
+    int[2][] referenced = ws.referenced;
     auto reader = original.value;
     size_t refIndex;
     foreach (p; 0 .. points.length)
@@ -1322,7 +1365,7 @@ private FontResult!PointList parsePointNumbers(const(ubyte)[] d, size_t at, size
     if (first == 0)
         return fontOk(PointList(true, 1, d[at .. at + 1], 0, totalPoints, true));
     // Count and runs follow; validate by decoding.
-    const decoded = decodePointList(d, at, totalPoints, tableStart, limit);
+    const decoded = decodePointList(d, at, totalPoints, tableStart, limit, null, false);
     if (decoded.hasError)
         return fontErr!PointList(decoded.error);
     return fontOk(PointList(false, decoded.value.consumed,
@@ -1332,13 +1375,17 @@ private FontResult!PointList parsePointNumbers(const(ubyte)[] d, size_t at, size
 private struct DecodedPoints
 {
     size_t consumed;
-    uint[4096] indices;
     size_t count;
     bool all;
 }
 
+/**
+Decodes a packed point-number list at `at`, writing the numbers to
+`indices` when `store` is set (a short array is `callerStorage`) and only
+validating and counting them otherwise.
+*/
 private FontResult!DecodedPoints decodePointList(scope const(ubyte)[] d, size_t at,
-    size_t totalPoints, ulong tableStart, ulong limit)
+    size_t totalPoints, ulong tableStart, ulong limit, scope uint[] indices, bool store)
 {
     DecodedPoints result;
     if (at >= d.length)
@@ -1394,9 +1441,13 @@ private FontResult!DecodedPoints decodePointList(scope const(ubyte)[] d, size_t 
             if (current >= totalPoints && totalPoints != 0)
                 return fontErr!DecodedPoints(tableError(FontErrorKind.badValue, gvarTag,
                     tableStart, at));
-            if (result.count >= result.indices.length)
-                return fontErr!DecodedPoints(callerStorageError(count, gvarTag, tableStart + at, at));
-            result.indices[result.count++] = cast(uint) current;
+            if (store)
+            {
+                if (result.count >= indices.length)
+                    return fontErr!DecodedPoints(callerStorageError(count, gvarTag, tableStart + at, at));
+                indices[result.count] = cast(uint) current;
+            }
+            ++result.count;
             ++produced;
         }
     }
@@ -1408,8 +1459,7 @@ private size_t listCount(in PointList list, size_t totalPoints)
 {
     if (list.all)
         return totalPoints;
-    DecodedPoints decoded;
-    const r = decodePointList(list.data, 0, totalPoints, 0, 0);
+    const r = decodePointList(list.data, 0, totalPoints, 0, 0, null, false);
     return r.hasValue ? r.value.count : 0;
 }
 
@@ -1440,14 +1490,15 @@ private FontResult!size_t skipDeltaSeries(scope const(ubyte)[] d, size_t at, siz
 /// Applies one delta series (x when `isY` is false) to points and phantom.
 private FontResult!bool applyDeltaSeries(scope const(ubyte)[] d, size_t at, in PointList list,
     size_t totalPoints, long scalar, scope OutlinePoint[] points, scope OutlinePoint[] phantom,
-    ulong tableStart, bool isY = false)
+    ulong tableStart, scope uint[] scratch, bool isY = false)
 {
     // Decode the point indices.
     const allPoints = list.all;
-    const decoded = allPoints ? fontOk(DecodedPoints.init) : decodePointList(list.data, 0, totalPoints, tableStart, 0);
+    const decoded = allPoints ? fontOk(DecodedPoints.init)
+        : decodePointList(list.data, 0, totalPoints, tableStart, 0, scratch, true);
     if (decoded.hasError)
         return fontErr!bool(decoded.error);
-    scope const(uint)[] indices = decoded.value.indices[0 .. decoded.value.count];
+    scope const(uint)[] indices = scratch[0 .. decoded.value.count];
     const count = allPoints ? totalPoints : indices.length;
     size_t p = at;
     size_t produced;
@@ -1603,25 +1654,15 @@ FontResult!GlyphOutline glyphOutline(in Instance inst, uint gid, scope OutlineSe
 /**
 The decoded point `pointIndex` of glyph `gid` at `inst` (the outline-point
 primitive of FTM7/FTS10): points are counted in glyph order, on- and
-off-curve, phantom points excluded. Uses stack storage bounded by
-`maxStackPoints` points and 1,024 contours; a larger glyph is
-`limitExceeded` naming `callerStorage` — use `glyphOutline` with an owned
-workspace for those. That storage is about 140 KiB of stack, and applying
-`gvar` adds up to `glyphOutline`'s 100 KiB: 268 KiB measured over the
-bundled variable faces in a debug build. Costs as `glyphOutline`.
+off-curve, phantom points excluded. The points are decoded into `ws`.
+Costs as `glyphOutline`.
 */
-FontResult!OutlinePoint glyphPoint(in Instance inst, uint gid, size_t pointIndex)
+FontResult!OutlinePoint glyphPoint(in Instance inst, uint gid, size_t pointIndex,
+    return scope ref PointWorkspace ws)
 {
-    OutlinePoint[maxStackPoints] points;
-    bool[maxStackPoints] onCurve;
-    ushort[1024] ends;
-    OutlineWorkspace ws;
-    ws.points = points[];
-    ws.onCurve = onCurve[];
-    ws.contourEnds = ends[];
     SegmentWriter writer; // counting only: no buffer
     const result = inst.face.outlines == OutlineFormat.cff
-        ? cffOutline(inst, gid, writer) : expandGlyf(inst, gid, writer, ws);
+        ? cffOutline(inst, gid, writer) : expandGlyf(inst, gid, writer, ws.outline);
     if (result.hasError)
         return fontErr!OutlinePoint(result.error);
     if (inst.face.outlines == OutlineFormat.cff)
@@ -1634,44 +1675,37 @@ FontResult!OutlinePoint glyphPoint(in Instance inst, uint gid, size_t pointIndex
 /**
 The horizontal advance of glyph `gid` at `inst` from its phantom points
 (FTO5): the span between phantom points 0 and 1 after `gvar`. This is
-the advance a face without `HVAR` uses. Its stack storage and costs are
-`glyphPoint`'s.
+the advance a face without `HVAR` uses. Costs as `glyphPoint`.
 */
-FontResult!DesignValue phantomAdvance(in Instance inst, uint gid)
+FontResult!DesignValue phantomAdvance(in Instance inst, uint gid, scope ref PointWorkspace ws)
 {
-    OutlinePoint[maxStackPoints] points;
-    bool[maxStackPoints] onCurve;
-    ushort[1024] ends;
-    OutlineWorkspace ws;
-    ws.points = points[];
-    ws.onCurve = onCurve[];
-    ws.contourEnds = ends[];
+    const phantom = variedPhantom(inst, gid, ws);
+    if (phantom.hasError)
+        return fontErr!DesignValue(phantom.error);
+    return fontOk(DesignValue(phantom.value[1].x - phantom.value[0].x, inst.unitsPerEm));
+}
+
+private FontResult!(OutlinePoint[4]) variedPhantom(in Instance inst, uint gid,
+    scope ref PointWorkspace ws)
+{
     SegmentWriter writer;
-    const result = expandGlyf(inst, gid, writer, ws);
+    const result = expandGlyf(inst, gid, writer, ws.outline);
     if (result.hasError)
-        return fontErr!DesignValue(result.error);
+        return fontErr!(OutlinePoint[4])(result.error);
     if (!result.value.hasPhantom)
-        return fontErr!DesignValue(FontError(FontErrorKind.unsupportedCapability, glyfTag));
-    return fontOk(DesignValue(result.value.phantom[1].x - result.value.phantom[0].x,
-        inst.unitsPerEm));
+        return fontErr!(OutlinePoint[4])(FontError(FontErrorKind.unsupportedCapability, glyfTag));
+    return fontOk!(OutlinePoint[4])(result.value.phantom);
 }
 
 /**
 The point bounds of glyph `gid` at `inst`: the smallest axis-aligned box
 holding every decoded point, or an empty result for a glyph without
-points. Control points count, so this is the control box. Its stack
-storage and costs are `glyphPoint`'s.
+points. Control points count, so this is the control box. Costs as
+`glyphPoint`.
 */
-FontResult!GlyphBounds glyphBounds(in Instance inst, uint gid)
+FontResult!GlyphBounds glyphBounds(in Instance inst, uint gid, scope ref PointWorkspace storage)
 {
-    OutlinePoint[maxStackPoints] points;
-    bool[maxStackPoints] onCurve;
-    ushort[1024] ends;
-    OutlineWorkspace ws;
-    ws.points = points[];
-    ws.onCurve = onCurve[];
-    ws.contourEnds = ends[];
-    SegmentWriter writer;
+    auto ws = storage.outline;
     if (inst.face.outlines == OutlineFormat.cff)
     {
         // Bounds from segments: use a bounds writer over the interpreter.

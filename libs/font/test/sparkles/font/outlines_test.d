@@ -5,6 +5,7 @@ and `CFF` charstrings with a local subroutine.
 */
 module sparkles.font.outlines_test;
 
+import sparkles.base.unique : makeUnique;
 import sparkles.font;
 import sparkles.font.fixtures;
 
@@ -16,14 +17,13 @@ private Instance instanceOf(const(ubyte)[] bytes, int wght = 0) @safe pure nothr
         wght ? coords[] : null).value;
 }
 
+/// A workspace over the caller's point arrays, with `gvar` scratch for as many points.
 private OutlineWorkspace workspace(OutlinePoint[] points, bool[] onCurve, ushort[] ends)
-    @safe pure nothrow @nogc
+    @safe pure nothrow
 {
-    OutlineWorkspace ws;
-    ws.points = points;
-    ws.onCurve = onCurve;
-    ws.contourEnds = ends;
-    return ws;
+    const n = points.length + 4;
+    return OutlineWorkspace(points, onCurve, ends, new uint[](n), new int[](n), new int[](n),
+        new int[2][](n));
 }
 
 /// The font of `glyphs` (glyf/loca/hmtx around the minimal tables).
@@ -321,6 +321,7 @@ unittest
 @safe pure nothrow
 unittest
 {
+    auto pws = makeUnique!PointWorkspace();
     const glyph = simpleGlyph([[0, 0, 1], [100, 0, 1]]);
     // Points 0–1 move +10 in x; phantom point 1 (index 3) moves +40.
     const data = glyphVarData([16_384], [10, 10, 0, 40, 0, 0],
@@ -347,10 +348,10 @@ unittest
     // The varied advance is the phantom span: 500 + 40.
     const phantom = r.value.phantom;
     assert(phantom[1].x - phantom[0].x == 540L << 16);
-    const point = glyphPoint(inst, 0, 1);
+    const point = glyphPoint(inst, 0, 1, *pws);
     assert(point.hasValue && point.value == OutlinePoint.fromUnits(110, 0));
     // FTO5 through metrics: the no-HVAR advance is the phantom span.
-    assert(inst.advance(0).value.design.raw == 540L << 16);
+    assert(inst.advance(0, *pws).value.design.raw == 540L << 16);
     // FTO4: the segment kinds at the extreme equal the default's.
     assert(segmentCount(bytes, 0, 1) == segmentCount(bytes, 0, 0));
     const kindsDefault = segmentsOf(bytes, 0);
@@ -447,6 +448,7 @@ unittest
 @safe pure nothrow
 unittest
 {
+    auto pws = makeUnique!PointWorkspace();
     const glyph = simpleGlyph([[0, 0, 1], [100, 0, 1]]);
     // Six points, including the phantoms: 13 bytes per packed delta series.
     const data = u16(1) ~ u16(10) ~ u16(26) ~ u16(0x8000) ~ u16(16_384)
@@ -459,7 +461,7 @@ unittest
         ]);
         const segs = segmentsOf(bytes, 0, 1);
         assert(segs[0].end == OutlinePoint.fromUnits(10, 0));
-        assert(instanceOf(bytes, 1).advance(0).value.design.raw == 540L << 16);
+        assert(instanceOf(bytes, 1).advance(0, *pws).value.design.raw == 540L << 16);
     }
 }
 
@@ -517,6 +519,7 @@ unittest
 @safe pure nothrow
 unittest
 {
+    auto pws = makeUnique!PointWorkspace();
     const glyph = simpleGlyph([[0, 0, 1], [50, 100, 1], [100, 0, 1], [200, -100, 1]]);
     // Private packed list: two points, one byte run, point numbers 0 and 2.
     const list = [cast(ubyte) 2, cast(ubyte) 1, cast(ubyte) 0, cast(ubyte) 2];
@@ -534,7 +537,7 @@ unittest
     assert(segs[1].end == OutlinePoint.fromUnits(90, 100));
     assert(segs[2].end == OutlinePoint.fromUnits(140, 0));
     assert(segs[3].end == OutlinePoint.fromUnits(240, -100));
-    assert(instanceOf(bytes, 1).advance(0).value.design.raw == 500L << 16);
+    assert(instanceOf(bytes, 1).advance(0, *pws).value.design.raw == 500L << 16);
 }
 
 /// One touched point moves its whole contour, not untouched contours or phantom points.
@@ -542,6 +545,7 @@ unittest
 @safe pure nothrow
 unittest
 {
+    auto pws = makeUnique!PointWorkspace();
     const glyph = contourGlyph([
         [[0, 0, 1], [50, 50, 1], [100, 100, 1]],
         [[0, 200, 1], [50, 250, 1]],
@@ -559,8 +563,8 @@ unittest
     const expected = [OutlinePoint.fromUnits(10, 20), OutlinePoint.fromUnits(60, 70),
         OutlinePoint.fromUnits(110, 120), OutlinePoint.fromUnits(0, 200), OutlinePoint.fromUnits(50, 250)];
     foreach (i, point; expected)
-        assert(glyphPoint(inst, 0, cast(uint) i).value == point);
-    assert(inst.advance(0).value.design.raw == 540L << 16);
+        assert(glyphPoint(inst, 0, cast(uint) i, *pws).value == point);
+    assert(inst.advance(0, *pws).value.design.raw == 540L << 16);
 }
 
 /// Composite tuples move components; child tuples run before scaling and nested placement.
@@ -568,6 +572,7 @@ unittest
 @safe pure nothrow
 unittest
 {
+    auto pws = makeUnique!PointWorkspace();
     const base = simpleGlyph([[0, 0, 1], [100, 0, 1], [100, 100, 1]]);
     const composite = compositeGlyph([
         CompositePart(0, 0x0023, 0, 0),
@@ -588,12 +593,12 @@ unittest
         OutlinePoint.fromUnits(274, 30), OutlinePoint.fromUnits(276, 80)];
     foreach (i, point; expected)
     {
-        assert(glyphPoint(inst, 1, i).value == point);
-        assert(glyphPoint(inst, 2, i).value == OutlinePoint(point.x + (50L << 16), point.y));
+        assert(glyphPoint(inst, 1, i, *pws).value == point);
+        assert(glyphPoint(inst, 2, i, *pws).value == OutlinePoint(point.x + (50L << 16), point.y));
     }
-    assert(inst.advance(1).value.design.raw == 540L << 16);
-    assert(inst.advance(2).value.design.raw == 500L << 16);
-    const bounds = glyphBounds(inst, 1).value;
+    assert(inst.advance(1, *pws).value.design.raw == 540L << 16);
+    assert(inst.advance(2, *pws).value.design.raw == 500L << 16);
+    const bounds = glyphBounds(inst, 1, *pws).value;
     assert(bounds.xMin == 14L << 16 && bounds.xMax == 276L << 16 && bounds.yMax == 100L << 16);
 }
 
@@ -602,6 +607,7 @@ unittest
 @safe pure nothrow
 unittest
 {
+    auto pws = makeUnique!PointWorkspace();
     const base = simpleGlyph([[0, 0, 1], [100, 0, 1], [100, 100, 1]]);
     const composite = compositeGlyph([CompositePart(0, 0x0203, 0, 0)]);
     const childData = u16(1) ~ u16(10) ~ u16(30) ~ u16(0x8000) ~ u16(16_384)
@@ -612,7 +618,7 @@ unittest
         TableData("fvar", fvarTable([FvarAxis("wght", -65_536, 0, 65_536)])),
         TableData("gvar", variationTable([childData, parentData])),
     ]);
-    assert(instanceOf(bytes, 1).advance(1).value.design.raw == 540L << 16);
+    assert(instanceOf(bytes, 1).advance(1, *pws).value.design.raw == 540L << 16);
 }
 
 /// A charstring number in the 1-byte range, else the 28-form.
@@ -1188,6 +1194,7 @@ unittest
 /// Decodes every glyph of `bytes` at the default and at wght 1 through every outline entry point.
 private void exerciseOutlines(const(ubyte)[] bytes) @safe pure nothrow
 {
+    auto pws = makeUnique!PointWorkspace();
     static struct CountingSink
     {
         @safe pure nothrow @nogc:
@@ -1218,8 +1225,8 @@ private void exerciseOutlines(const(ubyte)[] bytes) @safe pure nothrow
             cast(void) glyphOutline(inst, gid, segments[], workspace(points[], onCurve[], ends[]));
             CountingSink sink;
             cast(void) drawGlyph(inst, gid, workspace(points[], onCurve[], ends[]), sink);
-            cast(void) glyphBounds(inst, gid);
-            cast(void) glyphPoint(inst, gid, 1);
+            cast(void) glyphBounds(inst, gid, *pws);
+            cast(void) glyphPoint(inst, gid, 1, *pws);
             cast(void) glyphOverlaps(face, gid);
         }
     }

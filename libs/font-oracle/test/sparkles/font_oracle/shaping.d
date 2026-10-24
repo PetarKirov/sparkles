@@ -19,6 +19,7 @@ import std.regex : matchAll, regex;
 import std.string : lineSplitter, split, startsWith, strip;
 
 import sparkles.base.text.unicode_tables : unicodeProperty, UnicodeProperty, unicodeVersion;
+import sparkles.base.unique : makeUnique;
 import sparkles.font;
 import sparkles.font_oracle;
 import sparkles.font_oracle.corpus : fontsDir;
@@ -346,6 +347,7 @@ positions per unit, and rounds variation deltas there.
 @system
 unittest
 {
+    auto ws = makeUnique!PointWorkspace();
     import sparkles.font_oracle.corpus : corpus, Oracle;
     import std.path : baseName;
 
@@ -381,7 +383,7 @@ unittest
                 uint count = theirs.length;
                 const total = hb_ot_layout_get_ligature_carets(hb.font, HB_DIRECTION_LTR, gid, 0, &count,
                     theirs.ptr);
-                const r = ligatureCarets(inst, gid, 0, true, ours[]);
+                const r = ligatureCarets(inst, gid, 0, true, ours[], *ws);
                 const label = text(path.baseName, " ", setting, " gid ", gid);
                 assert(r.hasValue, label);
                 assert(r.value.present == (total != 0) && (!r.value.present || r.value.count == total), label);

@@ -20,7 +20,7 @@ import sparkles.font.errors : FontError, FontErrorKind, FontResult, fontErr, fon
 import sparkles.font.face : Face;
 import sparkles.font.instance : Instance;
 import sparkles.font.metrics : Measurement, measured, MvarAt, MvarTag;
-import sparkles.font.outlines : glyphBounds;
+import sparkles.font.outlines : glyphBounds, PointWorkspace;
 import sparkles.font.tables : locate, shortTable;
 import sparkles.font.units : checkedAdd, DesignValue;
 import sparkles.font.variations : DeltaSetIndexMap, ItemVariationStore, NormalizedCoords;
@@ -370,9 +370,9 @@ coordinates the `VVAR` delta (FTV14).
 `unsupportedCapability` (phantom points are M3's) and an unreadable `VVAR` is
 its error, with no fallback; a negative varied advance is returned as
 computed. At the default the stored advance is returned and `VVAR` is not
-read (FTM14). Costs O(r · a).
+read (FTM14). `ws` is unused until phantom points apply. Costs O(r · a).
 */
-FontResult!VerticalAdvance verticalAdvance(in Instance inst, uint gid)
+FontResult!VerticalAdvance verticalAdvance(in Instance inst, uint gid, scope ref PointWorkspace ws)
 {
     const face = inst.face;
     if (gid >= face.numGlyphs)
@@ -446,15 +446,15 @@ $(UL
     $(LI `VORG` of another version: `unsupportedVersion`; a truncated one
         `truncated`.)
     $(LI No `VORG`, with `vmtx` and `glyf`: the origin is the top side bearing
-        plus the glyph's outline `yMax` at the instance, reported with
-        source `vmtxGlyph`; a glyph without points is absent.)
+        plus the glyph's outline `yMax` at the instance, decoded into `ws`,
+        reported with source `vmtxGlyph`; a glyph without points is absent.)
     $(LI Otherwise absent: nothing is synthesized.)
 )
 
 `gid ≥ numGlyphs` is `indexOutOfRange`, checked first. Costs
 O(log n + r · a).
 */
-FontResult!VerticalOrigin verticalOrigin(in Instance inst, uint gid)
+FontResult!VerticalOrigin verticalOrigin(in Instance inst, uint gid, scope ref PointWorkspace ws)
 {
     const face = inst.face;
     if (gid >= face.numGlyphs)
@@ -475,7 +475,7 @@ FontResult!VerticalOrigin verticalOrigin(in Instance inst, uint gid)
             const metric = vm.value.metric(gid);
             if (metric.hasError)
                 return fontErr!VerticalOrigin(metric.error);
-            const bounds = glyphBounds(inst, gid);
+            const bounds = glyphBounds(inst, gid, ws);
             if (bounds.hasError)
                 return fontErr!VerticalOrigin(bounds.error);
             if (!bounds.value.present)

@@ -13,6 +13,7 @@ module sparkles.font_oracle.raster;
 import std.file : read;
 import std.path : baseName;
 
+import sparkles.base.unique : makeUnique;
 import sparkles.font;
 import sparkles.font_oracle.corpus : corpus, fontsDir;
 import sparkles.font_oracle.freetype_c;
@@ -60,6 +61,7 @@ unittest
         const face = openFace(bytes).value;
 
         auto points = new OutlinePoint[8192];
+        auto pws = makeUnique!PointWorkspace();
         auto onCurve = new bool[8192];
         auto ends = new ushort[1024];
         auto segments = new OutlineSegment[16_384];
@@ -91,6 +93,10 @@ unittest
                 ws.contourEnds = ends;
                 ws.accumulation = accumulation;
                 ws.supersample = supersample;
+                ws.pointNumbers = pws.get.pointNumbers[];
+                ws.deltaX = pws.get.deltaX[];
+                ws.deltaY = pws.get.deltaY[];
+                ws.referenced = pws.get.referenced[];
                 auto region = RasterRegion(pixels, 0, 0, 0);
                 const size = rasterMeasure(inst, gid, Ppem.fromInteger(ppemSize).value,
                     ws, OverlapMode.perGlyphFlag);
@@ -191,6 +197,7 @@ unittest
         const bytes = cast(const(ubyte)[]) read(path);
         const face = openFace(bytes).value;
         auto points = new OutlinePoint[8192];
+        auto pws = makeUnique!PointWorkspace();
         auto onCurve = new bool[8192];
         auto ends = new ushort[1024];
         auto segments = new OutlineSegment[16_384];
@@ -215,6 +222,10 @@ unittest
                 ws.contourEnds = ends;
                 ws.accumulation = accumulation;
                 ws.supersample = supersample;
+                ws.pointNumbers = pws.get.pointNumbers[];
+                ws.deltaX = pws.get.deltaX[];
+                ws.deltaY = pws.get.deltaY[];
+                ws.referenced = pws.get.referenced[];
                 const size = rasterMeasure(inst, gid, ppem, ws);
                 assert(size.hasValue, name);
                 auto region = RasterRegion(standard, size.value.width,

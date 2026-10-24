@@ -40,6 +40,10 @@ import sparkles.font.errors : callerStorageError, FontError, FontErrorKind, Font
 import sparkles.font.harfbuzz;
 import sparkles.font.instance : Instance, InstanceSize;
 import sparkles.font.metrics : advance, Measurement;
+import sparkles.font.outlines : PointWorkspace;
+
+import sparkles.base.unique : makeUnique, Unique;
+import std.experimental.allocator.mallocator : Mallocator;
 import sparkles.font.units : DesignValue, designSubunits;
 
 /**
@@ -154,8 +158,8 @@ struct Shaper
     private hb_font_t* font_;
     private hb_font_funcs_t* fontFuncs_;
     private hb_unicode_funcs_t* unicodeFuncs_;
-    // Malloc'ed so that its address survives moves of the shaper.
-    private AdvanceState* advances_;
+    // Heap-owned so that its address survives moves of the shaper.
+    private Unique!(AdvanceState, Mallocator, false) advances_;
     private Instance instance_;
     private FontError status_ = FontError(FontErrorKind.unsupportedEngine);
 
@@ -189,18 +193,16 @@ struct Shaper
             hb_font_set_var_coords_normalized(parent_, coords.ptr, cast(uint) inst.coords.length);
         }();
 
-        advances_ = () @trusted {
-            import core.stdc.stdlib : calloc;
-
-            return cast(AdvanceState*) calloc(1, AdvanceState.sizeof);
-        }();
-        if (advances_ is null)
+        // The one allocation of the library's side, made here at setup:
+        // the advance callback decodes phantom points into its workspace.
+        advances_ = makeUnique!(AdvanceState, Mallocator, false)();
+        if (advances_.empty)
         {
             status_ = limitError(FontLimit.engineBuffer, Tag.init, 0);
             return;
         }
         // The state lives as long as the shaper, which cannot outlive `inst`.
-        () @trusted { advances_.instance = inst; }();
+        () @trusted { advances_.get.instance = inst; }();
         fontFuncs_ = () @trusted { return hb_font_funcs_create(); }();
         () @trusted {
             hb_font_funcs_set_glyph_h_advance_func(fontFuncs_, &advanceThunk, null, null);
@@ -209,7 +211,7 @@ struct Shaper
         // The sub-font inherits the scale and coordinates and defers every
         // function but the horizontal advance to HarfBuzz's own.
         font_ = () @trusted { return hb_font_create_sub_font(parent_); }();
-        () @trusted { hb_font_set_funcs(font_, fontFuncs_, advances_, null); }();
+        () @trusted { hb_font_set_funcs(font_, fontFuncs_, advances_.ptr, null); }();
 
         unicodeFuncs_ = () @trusted { return hb_unicode_funcs_create(null); }();
         () @trusted {
@@ -226,8 +228,6 @@ struct Shaper
 
     ~this() scope @trusted
     {
-        import core.stdc.stdlib : free;
-
         // Each handle was created by this shaper and is destroyed once.
         if (font_) hb_font_destroy(font_);
         if (parent_) hb_font_destroy(parent_);
@@ -235,7 +235,6 @@ struct Shaper
         if (unicodeFuncs_) hb_unicode_funcs_destroy(unicodeFuncs_);
         if (hbFace_) hb_face_destroy(hbFace_);
         if (blob_) hb_blob_destroy(blob_);
-        free(advances_);
     }
 
     /// The instance this shaper shapes with.
@@ -353,14 +352,15 @@ private FontResult!ShapeInfo runShape(scope ref Shaper shaper, in ShapeRequest r
             feature.hasRange ? cast(uint) feature.start : 0,
             feature.hasRange ? cast(uint) feature.end : uint.max);
     const featureCount = cast(uint) request.features.length;
-    shaper.advances_.error = FontError.init;
+    () @trusted { shaper.advances_.get.error = FontError.init; }();
     const shaped = () @trusted {
         return hb_shape_full(shaper.font_, buffer, featureCount ? features.ptr : null, featureCount, null);
     }();
     if (!shaped || !() @trusted { return hb_buffer_allocation_successful(buffer); }())
         return fontErr!ShapeInfo(limitError(FontLimit.engineBuffer, Tag.init, request.runStart));
-    if (shaper.advances_.error != FontError.init)
-        return fontErr!ShapeInfo(shaper.advances_.error);
+    const callbackError = () @trusted { return shaper.advances_.get.error; }();
+    if (callbackError != FontError.init)
+        return fontErr!ShapeInfo(callbackError);
 
     const infos = () @trusted {
         uint n;
@@ -749,13 +749,15 @@ private enum int positionsPerUnit = 1_024;
 private enum long rawPerPosition = designSubunits / positionsPerUnit;
 
 /**
-What the advance callback reads: the instance, and the first error an
-advance gave, which `shape` returns in place of the run.
+What the advance callback reads: the instance, the workspace phantom
+points decode into, and the first error an advance gave, which `shape`
+returns in place of the run.
 */
 private struct AdvanceState
 {
     Instance instance;
     FontError error;
+    PointWorkspace points;
 }
 
 /// `raw` design steps rounded to the nearest HarfBuzz position, ties away from zero.
@@ -766,7 +768,7 @@ private extern (C) hb_position_t advanceThunk(hb_font_t*, void* fontData, hb_cod
     @system nothrow @nogc
 {
     auto state = cast(AdvanceState*) fontData;
-    const a = advance(state.instance, glyph);
+    const a = advance(state.instance, glyph, state.points);
     if (a.hasError)
     {
         if (state.error == FontError.init)
