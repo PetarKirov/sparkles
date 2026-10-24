@@ -9,6 +9,7 @@ import sparkles.base.text.unicode_algorithm : UnicodeBoundary, UnicodeBoundaryKi
 import sparkles.text_conformance.config : Config;
 import sparkles.text_conformance.report : Divergence, LayerResult;
 import sparkles.text_conformance.ucd : ucdText;
+import sparkles.text_conformance.seek_corpus : wordSeekMismatches;
 
 struct BoundaryRecord
 {
@@ -106,7 +107,7 @@ LayerResult runWordSentenceCorpus(bool sentence)(in Config cfg)
     const text = ucdText(cfg.versionIdentity, path, cfg);
     LayerResult r;
     r.name = sentence ? "12: owned sentence boundaries" : "11: owned word boundaries";
-    size_t records, positions, lineNumber;
+    size_t records, positions, lineNumber, seekPassed;
     foreach (line; text.lineSplitter)
     {
         ++lineNumber;
@@ -156,9 +157,20 @@ LayerResult runWordSentenceCorpus(bool sentence)(in Config cfg)
                         format("kind=%s index=%s offset=%s", kind, i, offset), line);
             }
         }
+        static if (!sentence)
+        {
+            // TXT-SEG9: word segments queried from every offset, chunked.
+            const mismatches = wordSeekMismatches(bytes, byteOffsets, record.allowed);
+            foreach (m; mismatches)
+                r.divergences ~= Divergence(layer, format("%s:%s:seek", path, lineNumber),
+                    m, "the fixture's segments", line);
+            seekPassed += mismatches.length == 0;
+        }
         ++records;
     }
     if (!records) throw new Exception("no corpus records parsed: " ~ path);
     r.notes ~= format("%s: %s records, %s UTF-32/UTF-8 boundary checks", path, records, positions);
+    static if (!sentence)
+        r.notes ~= format("%s: %s of %s records agree when queried from every offset", path, seekPassed, records);
     return r;
 }
