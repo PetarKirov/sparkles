@@ -194,7 +194,9 @@ struct CowVector(T)
         const unique = header !is null && atomicLoad(header.refs) == 1;
         if (unique && header.capacity >= capacity)
             return;
-        size_t wanted = header ? 2 * header.capacity : 4;
+        // Grow a unique block by doubling; size a copy from its length, so
+        // repeated copy-on-write does not compound the capacity.
+        size_t wanted = !header ? 4 : unique ? 2 * header.capacity : 2 * header.length;
         if (wanted < capacity)
             wanted = capacity;
         if (unique)
