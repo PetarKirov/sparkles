@@ -117,6 +117,17 @@ bool tryConsume(ref scope const(char)[] s, char c)
     return true;
 }
 
+/// If `s` starts with `prefix`, advances past it and returns `true`;
+/// otherwise leaves `s` unchanged and returns `false`. Code units are compared,
+/// never decoded.
+bool tryConsume(ref scope const(char)[] s, scope const(char)[] prefix)
+{
+    if (s.length < prefix.length || s[0 .. prefix.length] != prefix)
+        return false;
+    s = s[prefix.length .. $];
+    return true;
+}
+
 /// If `s` starts with any character in `set`, advances past it and returns
 /// `true`; otherwise leaves `s` unchanged and returns `false`.
 bool tryConsumeAny(ref scope const(char)[] s, scope const(char)[] set)
@@ -587,6 +598,19 @@ unittest
     assert(s == "1");
     assert(!tryConsume(s, '='));
     assert(s == "1");
+}
+
+@("text.readers.tryConsume.prefix")
+@betterC
+unittest
+{
+    const(char)[] s = "dub.sdl: name";
+    assert(tryConsume(s, "dub.sdl:"));
+    assert(s == " name");
+    assert(!tryConsume(s, "dub.json:"));
+    assert(s == " name");
+    assert(!tryConsume(s, " name and more"), "a longer prefix never matches");
+    assert(tryConsume(s, ""));
 }
 
 @("text.readers.tryConsumeAny")
