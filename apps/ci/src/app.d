@@ -131,6 +131,7 @@ import sparkles.base.hw_caps :
 import std.path : baseName, buildPath, globMatch;
 import std.process : environment, execute;
 import std.range : iota;
+import std.range.primitives : put;
 import std.regex : ctRegex, matchFirst;
 import std.stdio : stderr, stdout, writeln;
 import std.string : endsWith, indexOf, lineSplitter, replace, strip, stripRight;
@@ -144,7 +145,7 @@ import sparkles.core_cli.process_utils :
     ChildStdin, executeMonitored, executeMonitoredLines,
     MonitoredLineRange, MonitoredResult, ResourceUsage,
     sampleThisProcessTree, selfAndChildrenCpuUsage, selfRssBytes, timedOutStatus;
-import sparkles.base.buffer : SharedBuffer;
+import sparkles.base.buffer : SharedBuffer, UniqueBuffer;
 import sparkles.base.styled_template : styledText, styledWritelnErr;
 import sparkles.base.text.writers : writeDuration;
 import sparkles.core_cli.term_unstyle : unstyle;
@@ -161,7 +162,8 @@ import sparkles.docs.glossary : checkGlossary, frontMatterOwner, glossaryDataPat
     glossaryReferences, GlossaryReference, loadGlossary;
 import spec_evidence : backlogPath, Citation, citationsIn, ratchet, renderBacklog,
     unresolvedCitations;
-import dub_deps : inTreePackageNames, parseSubPackages, rewriteInTreeDeps;
+import dub_deps : inTreePackageNames, parseSubPackages, writeInTreeDeps;
+import sparkles.build_primitives.dub_manifest : DubManifest;
 import coverage : collectCoverage, PackageCoverage;
 import example_manifest : exampleRunsOnHost;
 import fence_audit : AuditScope, FenceAuditOptions, runFenceAudit, wrapperFenceEnd;
@@ -2641,10 +2643,12 @@ ExecutionResult executeExample(in Example example, string repoRoot, size_t uniqu
     mkdirRecurse(exampleDir);
     auto tmpFile = buildPath(exampleDir, example.name ~ ".d");
 
-    auto code = repoRoot.length
-        ? rewriteInTreeDeps(example.code, repoRoot, exampleDir)
-        : example.code;
-    tmpFile.write(code);
+    UniqueBuffer!char code;
+    if (repoRoot.length)
+        writeInTreeDeps(code, example.code, repoRoot, exampleDir);
+    else
+        put(code, example.code);
+    tmpFile.write(code[]);
     scope(exit)
     {
         import std.file : rmdirRecurse;
@@ -2788,7 +2792,7 @@ private int runExampleFilesMode(string[] allExampleFiles, bool failFast)
     string[] skippedFiles;
     foreach (exampleFile; allExampleFiles)
     {
-        if (exampleFile.exists && !exampleRunsOnHost(exampleFile.readText.lineSplitter.array))
+        if (exampleFile.exists && !exampleRunsOnHost(exampleFile.readText))
             skippedFiles ~= exampleFile;
         else
             exampleFiles ~= exampleFile;
@@ -4587,36 +4591,18 @@ private bool isDubSingleFileBlock(const(char[])[] codeLines)
     return hasMain;
 }
 
-/// Extracts the example name from dub.sdl header lines.
+/// The example's name: its embedded recipe's `name`, or `unnamed`.
 @safe pure
 private string extractExampleName(const(char[])[] codeLines)
 {
-    foreach (line; codeLines[2 .. $])
-    {
-        auto stripped = line.strip;
-        if (stripped.startsWith("name "))
-            return parseQuotedName(stripped);
-        if (stripped.startsWith("+/"))
-            break;
-    }
-    return "unnamed";
-}
+    import std.array : join;
+    import sparkles.build_primitives.dub_manifest : embeddedDubRecipe, parseEmbeddedDubManifest;
 
-/// Parses a name from a line like: name "example-name"
-@safe pure
-private string parseQuotedName(const(char)[] line)
-in (line.length > 0, "Line cannot be empty")
-{
-    auto start = line.indexOf('"');
-    if (start < 0)
+    const embedded = embeddedDubRecipe(codeLines.join('\n'));
+    if (!embedded.found || embedded.isJson)
         return "unnamed";
-
-    auto rest = line[start + 1 .. $];
-    auto end = rest.indexOf('"');
-    if (end < 0)
-        return "unnamed";
-
-    return rest[0 .. end].idup;
+    const manifest = parseEmbeddedDubManifest(embedded);
+    return manifest.hasValue && manifest.value.name.length ? manifest.value.name : "unnamed";
 }
 
 private string detectRepoRoot()
@@ -4632,38 +4618,36 @@ private string detectRepoRoot()
 /// fails unless directed to its `unittest` configuration.
 private bool isSourceLibrary(string repoRoot, string packagePath)
 {
-    const sdl = buildPath(repoRoot, packagePath, "dub.sdl");
-    if (!sdl.exists)
-        return false;
-    return declaresSourceLibrary(sdl.readText);
+    import sparkles.build_primitives.dub_manifest : readDubManifest;
+
+    const manifest = readDubManifest(buildPath(repoRoot, packagePath, "dub.sdl"));
+    return manifest.hasValue && declaresSourceLibrary(manifest.value);
 }
 
-/// Whether recipe text sets `targetType "sourceLibrary"` on a line of its own.
-/// The word in a comment does not count: ui-gallery's recipe mentions a
-/// sourceLibrary it depends on, and treating it as one built its `unittest`
-/// configuration, which never compiles `main`, so `--build-each-commit`
-/// passed a commit whose executable did not build.
-bool declaresSourceLibrary(string recipe) @safe pure
+/// Whether a recipe sets `targetType "sourceLibrary"`, at the top level or in
+/// any configuration. Only the setting counts, never the word in a comment:
+/// ui-gallery's recipe mentions a sourceLibrary it depends on, and treating it
+/// as one built its `unittest` configuration, which never compiles `main`, so
+/// `--build-each-commit` passed a commit whose executable did not build.
+bool declaresSourceLibrary(in DubManifest manifest) @safe pure nothrow @nogc
 {
-    import std.algorithm.iteration : splitter;
-    import std.algorithm.searching : findSplitBefore;
+    import std.algorithm.searching : any;
 
-    foreach (line; recipe.splitter('\n'))
-    {
-        const code = line.findSplitBefore("//")[0].strip;
-        if (code.startsWith("targetType") && code.canFind(`"sourceLibrary"`))
-            return true;
-    }
-    return false;
+    return manifest.targetType == "sourceLibrary"
+        || manifest.configurations.any!(c => c.targetType == "sourceLibrary");
 }
 
 @("ci.declaresSourceLibrary.ignoresComments")
 @safe pure unittest
 {
-    assert(declaresSourceLibrary("name \"x\"\ntargetType \"sourceLibrary\"\n"));
-    assert(declaresSourceLibrary("configuration \"a\" {\n    targetType \"sourceLibrary\"\n}\n"));
-    assert(!declaresSourceLibrary("// A sourceLibrary: its sources compile here\ntargetType \"executable\"\n"));
-    assert(!declaresSourceLibrary("targetType \"library\" // not a sourceLibrary\n"));
+    import sparkles.build_primitives.dub_manifest : parseDubManifest;
+
+    bool declares(string recipe) => declaresSourceLibrary(parseDubManifest(recipe).value);
+
+    assert(declares("name \"x\"\ntargetType \"sourceLibrary\"\n"));
+    assert(declares("configuration \"a\" {\n    targetType \"sourceLibrary\"\n}\n"));
+    assert(!declares("// A sourceLibrary: its sources compile here\ntargetType \"executable\"\n"));
+    assert(!declares("targetType \"library\" // not a sourceLibrary\n"));
 }
 
 /// `dub build :pkg` argv, honouring `$DC` and stating dub's default `debug`

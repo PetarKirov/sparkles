@@ -178,3 +178,100 @@ Gate:
 The SDL backend is complete only after S10. Performance optimization follows as
 separate measured work and may not weaken source spans, ordering, scalar-kind
 fidelity, error structure, or any round-trip law.
+
+## S10 closure: 2026-10-23
+
+Every S10 gate holds on this branch, so the SDL backend is complete in the
+sense above.
+
+| Gate or audit                                   | Evidence                                                                                                                                                                                                                                      |
+| ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Full attributed DUB scalar/parser/recipe corpus | `sdl.conformance.pinnedDub`: every string literal in the `unittest` blocks of DUB's SDLang lexer, parser, AST, and token modules and its recipe module (570 unique inputs) plus 21 original fixtures, compared on tokens, payloads, and trees |
+| Fuzz and regression seeds                       | `sdl.reader.multiByteDeterministicFuzzSmoke`, `sdl.writer.laws.generatedDocuments`, `sdl.lexer.pinnedDubCorpusRegressions`                                                                                                                    |
+| Typed properties                                | `wired.sdl.codec.roundTripLaw.generated`, `wired.sdl.codec.audit.roundTripPredicate`                                                                                                                                                          |
+| `dub test :wired` (debug)                       | green, 275 tests; the full `ci --test` passes all 59 packages                                                                                                                                                                                 |
+| `dub build :wired -b checked`                   | green                                                                                                                                                                                                                                         |
+| Document and typed round-trip laws              | the law tests above and `sdl.writer.laws.canonicalTargetsFullProfile`                                                                                                                                                                         |
+| JSON conformance and byte goldens unchanged     | `conformance.jsonTestSuite` and `conformance.nativejsonBenchmark` run against `$JSON_TEST_SUITE`; JSON goldens pass unchanged                                                                                                                 |
+| Formatting and repository hooks                 | `prek run` over the branch is clean                                                                                                                                                                                                           |
+| Provenance manifest                             | [PROVENANCE.md](./PROVENANCE.md) lists every non-original test; the direct copy is byte-identical to upstream                                                                                                                                 |
+| API grep against SPEC §2/§11, no DUB type       | `sdl.conformance.publicSurface`; every public name is named in the SPEC, and the role projection is package-internal                                                                                                                          |
+| DDoc                                            | every public declaration and member is documented (compiler JSON audit)                                                                                                                                                                       |
+| Source attributes                               | no whole-function or whole-template `@trusted` remains; each trust wraps one operation; typed decode and encode are `@safe pure` (`wired.sdl.codec.safePure`)                                                                                 |
+| Allocator ownership                             | `sdl.reader.allocatorFailureRollbackEveryBlock`; the sanitizer suite (`ci --test-sanitize`) is clean                                                                                                                                          |
+| Library documentation                           | [tutorial](../../../libs/wired/tutorial/sdl-getting-started.md), four how-to guides, [reference](../../../libs/wired/reference/sdl.md), and [explanation](../../../libs/wired/explanation/sdl-design.md)                                      |
+
+Running the full corpus found three disagreements with DUB, all fixed: `-.5`
+was rejected, a DUB-profile string continuation kept the next line's
+indentation, and DUB's negative clock fraction needed normalizing in the
+oracle (the same instant, spelled differently). The API audit found that
+`SdlError.valuePath` was specified but never filled; both directions now
+fill it.
+
+## Audit follow-up — 2026-10-22
+
+The corrective branch adds whole-view lifetime rejection, missing-payload
+checks, unsigned bounds, initializer restoration, nested schema validation,
+qualified aliases, explicit defaults, checks, presence, structural adapters,
+bounded accumulation, and canonical-string law regressions. The shared schema
+cursor now supplies field policies to both codecs. S10's remaining gates were
+closed afterwards; see [S10 closure](#s10-closure-2026-10-23).
+
+### Static-array review
+
+| Site                                                  | Decision                                                                                                                  |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Lexer Base64 quartet and month-day table              | Keep: protocol-width scratch and immutable lookup data, not growable collections.                                         |
+| Writer UTF-8 scratch and seven fractional digits      | Keep: exact encoding bounds; no independent length/capacity policy is needed.                                             |
+| Writer decimal significand scratch                    | Keep: bounded by the shortest float kernel. A `UniqueBuffer!(char, 64)` replacement regressed the mixed-scalar benchmark. |
+| Parser depth/parent stacks                            | Keep: bounded by the compile-time parser profile; replacing them with heap growth would obscure the depth contract.       |
+| Typed static-array fields, presence words, seen masks | Keep: schema-sized value layouts, not dynamic storage.                                                                    |
+| Test input arrays and borrowed-view arrays            | Keep: fixed fixtures and ownership/lifetime probes intentionally exercise stack storage.                                  |
+| Writer temporary float spellings                      | Change `SharedBuffer` to `UniqueBuffer`: neither temporary is copied or shared.                                           |
+
+### Base text reuse candidates
+
+The owned-text spec is a target, not proof that every API has shipped. The
+following candidates were checked against existing modules:
+
+- `utf.decodeToken`, `utf.encodeScalar`, and `utf8.utf8SequenceLength`: the
+  lexer/writer already use the owned UTF kernels; preserve SDL-specific newline
+  and quoted-literal rules rather than substituting a generic quoted reader.
+- `unicode_properties.unicodeProperty`: already supplies identifier and
+  whitespace classification; normalization/case folding must not alter wire keys.
+- `float_conv.readDecimalFloat`, `writeShortest`: already underpin SDL floating
+  conversion; the new `Stringly` adapter reuses them rather than Phobos parsing.
+- `readers.readInteger`, `readEnumString`, and `writers.writeInteger`,
+  `writeEnumMemberName`: used by `Stringly`, with full-input consumption and
+  overflow rejection. Replacing the optimized existing SDL integer writer was
+  measured and rejected.
+- `base_codecs`: potentially useful for a later Base64 cutover, but SDL's
+  whitespace and padding acceptance must remain unchanged; no speculative
+  substitution was made.
+- Text provenance, normalization, graphemes, terminal cell width, wrapping,
+  hyphenation, and bidi are not needed for wire parsing. Source positions count
+  source units under the SDL contract, not terminal display cells.
+
+### Measured refactor decisions
+
+Linux x86-64, Ryzen 9 7940HX, LDC 1.42 / frontend 2.112, assertion-preserving
+`bench`, 2-second minimum sample time. Values are median nanoseconds per batch
+or operation, not cross-machine baselines.
+
+| Workload                        |    Before |     After | Interpretation                                                                          |
+| ------------------------------- | --------: | --------: | --------------------------------------------------------------------------------------- |
+| SDL mixed scalars (112 values)  |    23,516 |    23,706 | Within observed variation (90/120 ns reported deviations); retain single-owner buffers. |
+| SDL with growable digit scratch |    23,516 |    24,618 | Rejected, +4.7%.                                                                        |
+| JSON twitter parse              |   174,590 |   173,136 | No regression.                                                                          |
+| JSON mesh parse                 |   444,636 |   444,875 | No material change.                                                                     |
+| JSON twitter serialize          |   609,712 |   592,262 | No regression.                                                                          |
+| JSON mesh serialize             | 1,137,860 | 1,108,778 | No regression.                                                                          |
+| JSON twitter typed decode       |   204,939 |   200,791 | No regression.                                                                          |
+
+Reproduce the SDL comparison with `dub test :wired -b bench -- --bench
+--bench-min-time=2000 -i wired.sdl.writeScalars --bench-json=<path>`. For JSON,
+run the runtime harness with `WIRED_BENCH_ENGINES=wired-native`,
+`WIRED_BENCH_DATASETS=twitter,mesh`, and the `wired\.(parse|serialize|decode)$`
+filter. The JSON baseline precedes the shared metadata/presence changes; the
+SDL baseline precedes the scratch/text refactor. There is no SDL parser
+performance claim from a writer-only benchmark.

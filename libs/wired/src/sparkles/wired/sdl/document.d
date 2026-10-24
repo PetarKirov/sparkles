@@ -9,28 +9,28 @@ import std.experimental.allocator.mallocator : Mallocator;
 /// Exact semantic kind retained for every SDL scalar.
 enum SdlScalarKind : ubyte
 {
-    none,
-    null_,
-    boolean,
-    string_,
-    character,
-    integer,
-    longInteger,
-    float_,
-    double_,
-    decimal,
-    binary,
-    date,
-    dateTime,
-    zonedDateTime,
-    duration,
+    none, /// No payload; the `.init` of an unset scalar.
+    null_, /// `null`.
+    boolean, /// `bool`.
+    string_, /// Decoded UTF-8 text.
+    character, /// One Unicode scalar (`dchar`).
+    integer, /// `int`.
+    longInteger, /// `long` (`L` suffix).
+    float_, /// `float` (`F` suffix).
+    double_, /// `double` (no suffix or `D`).
+    decimal, /// `real` (`BD` suffix).
+    binary, /// Bytes from a Base64 literal.
+    date, /// `Date`.
+    dateTime, /// `SdlDateTime`.
+    zonedDateTime, /// `SdlZonedDateTime`.
+    duration, /// `Duration`.
 }
 
 /// A namespace plus local name. An empty namespace is an ordinary SDL name.
 struct SdlQualifiedName
 {
-    const(char)[] namespace_;
-    const(char)[] localName;
+    const(char)[] namespace_; /// Namespace prefix; empty for an unnamespaced name.
+    const(char)[] localName; /// Name after the prefix.
 
     /// Full identity equality; namespaces are never implicit wildcards.
     bool opEquals(scope const SdlQualifiedName rhs) const scope
@@ -41,8 +41,8 @@ struct SdlQualifiedName
 /// Namespace matching policy for a qualified-name query.
 enum SdlNamespaceMatch : ubyte
 {
-    exact,
-    wildcard,
+    exact, /// The namespace must match exactly, including empty.
+    wildcard, /// Any namespace matches.
 }
 
 /** A lookup-only qualified-name query.
@@ -52,8 +52,8 @@ query option and cannot be stored as an SDL qualified name.
 */
 struct SdlNameQuery
 {
-    SdlQualifiedName name;
-    SdlNamespaceMatch namespaceMatch;
+    SdlQualifiedName name; /// The name to look up.
+    SdlNamespaceMatch namespaceMatch; /// How `name.namespace_` is compared.
 
     /// Constructs an exact full-qualified-name query.
     this(return scope SdlQualifiedName name) @safe pure nothrow @nogc
@@ -80,16 +80,16 @@ struct SdlNameQuery
 /// One source position: zero-based byte offset and one-based display position.
 struct SdlPosition
 {
-    size_t byteOffset;
-    uint line = 1;
-    uint column = 1;
+    size_t byteOffset; /// Zero-based offset into the original source bytes.
+    uint line = 1; /// One-based line; each logical newline counts once.
+    uint column = 1; /// One-based column in Unicode scalars.
 }
 
 /// Half-open source range.
 struct SdlSpan
 {
-    SdlPosition start;
-    SdlPosition end;
+    SdlPosition start; /// First position inside the range.
+    SdlPosition end; /// First position after the range.
 }
 
 /** A local civil date-time with exact hectonanosecond fractional precision.
@@ -100,11 +100,11 @@ specified 1-3 decimal digits.
 */
 struct SdlDateTime
 {
-    Date date;
-    ubyte hour;
-    ubyte minute;
-    ubyte second;
-    uint fractionHnsecs;
+    Date date; /// Civil date.
+    ubyte hour; /// Hour, 0-23.
+    ubyte minute; /// Minute, 0-59.
+    ubyte second; /// Second, 0-59.
+    uint fractionHnsecs; /// Fraction of `second` in hectonanoseconds.
 }
 
 /** A local SDL date-time plus its original zone spelling.
@@ -115,10 +115,10 @@ it from `Duration.zero` as an unknown offset.
 */
 struct SdlZonedDateTime
 {
-    SdlDateTime local;
-    const(char)[] zone;
-    Duration utcOffset;
-    bool hasUtcOffset;
+    SdlDateTime local; /// Civil date-time in the zone.
+    const(char)[] zone; /// Zone exactly as spelled in the source.
+    Duration utcOffset; /// Offset from UTC; meaningful only when `hasUtcOffset`.
+    bool hasUtcOffset; /// Whether the zone resolved to a known offset.
 }
 
 /** One discriminated SDL scalar.
@@ -437,10 +437,16 @@ struct SdlDocument(Allocator = Mallocator)
     /// Whether this document contains its synthetic root.
     bool valid() const @safe pure nothrow @nogc => nodes.length != 0;
 
-    /// Borrowed synthetic root view.
-    SdlNode root() return scope const @safe pure nothrow @nogc
+    /** Borrowed synthetic root view, valid only while this document is.
+
+    `scope return` binds the view to the document object rather than to its
+    arenas, so no view outlives the owner that frees them. Narrow trust: the
+    arena slices are fields of a `scope` `this`, which dip1000 would only
+    let escape under `return scope`, the weaker arena-lifetime binding. */
+    SdlNode root() scope return const @safe pure nothrow @nogc
     in (valid, "empty document has no root")
-        => SdlNode(nodes[], values[], attributes[], childIndexes[], 0);
+        => (() @trusted => SdlNode(nodes[], values[], attributes[],
+            childIndexes[], 0))();
 
     /// Owned source label supplied to the parser.
     const(char)[] sourceName() const return scope @safe pure nothrow @nogc
@@ -545,8 +551,9 @@ struct SdlNode
         _cell = cell;
     }
 
-    private SdlNodeCell cell() const scope @trusted pure nothrow @nogc
-        => _nodes[_cell];
+    // Narrow trust: the cell copy outlives `scope this` only as a value.
+    private SdlNodeCell cell() const scope @safe pure nothrow @nogc
+        => (() @trusted => _nodes[_cell])();
 
     /// Full stored name. The synthetic root returns the empty/default name.
     SdlQualifiedName qualifiedName() const return scope @safe pure nothrow @nogc
@@ -630,8 +637,9 @@ struct SdlAttributeView
         _cell = cell;
     }
 
-    private SdlAttributeCell cell() const scope @trusted pure nothrow @nogc
-        => _cells[_cell];
+    // Narrow trust: as for `SdlNode.cell`.
+    private SdlAttributeCell cell() const scope @safe pure nothrow @nogc
+        => (() @trusted => _cells[_cell])();
 
     /// Full stored attribute name.
     SdlQualifiedName qualifiedName() const return scope @safe pure nothrow @nogc
@@ -654,11 +662,15 @@ struct SdlValueRange
     {
         _cells = cells;
     }
+    /// Forward-range primitives.
     bool empty() const scope @safe pure nothrow @nogc => _index >= _cells.length;
+    /// ditto
     SdlScalar front() const return scope @safe pure nothrow @nogc
     in (!empty) => (() @trusted => _cells[_index].value)();
+    /// ditto
     void popFront() scope @safe pure nothrow @nogc
     in (!empty) { _index++; }
+    /// ditto
     SdlValueRange save() const return scope @safe pure nothrow @nogc => this;
 }
 
@@ -672,11 +684,15 @@ struct SdlAttributeRange
     {
         _cells = cells;
     }
+    /// Forward-range primitives.
     bool empty() const scope @safe pure nothrow @nogc => _index >= _cells.length;
+    /// ditto
     SdlAttributeView front() const return scope @safe pure nothrow @nogc
     in (!empty) => SdlAttributeView(_cells, _index);
+    /// ditto
     void popFront() scope @safe pure nothrow @nogc
     in (!empty) { _index++; }
+    /// ditto
     SdlAttributeRange save() const return scope @safe pure nothrow @nogc => this;
 }
 
@@ -705,12 +721,16 @@ struct SdlChildRange
         _allIndexes = allIndexes;
         _window = window;
     }
+    /// Forward-range primitives.
     bool empty() const scope @safe pure nothrow @nogc => _index >= _window.length;
+    /// ditto
     SdlNode front() const return scope @safe pure nothrow @nogc
     in (!empty) => (() @trusted => SdlNode(_nodes, _values, _attributes,
         _allIndexes, _window[_index]))();
+    /// ditto
     void popFront() scope @safe pure nothrow @nogc
     in (!empty) { _index++; }
+    /// ditto
     SdlChildRange save() const return scope @safe pure nothrow @nogc => this;
 }
 
@@ -719,6 +739,7 @@ struct SdlFilteredAttributeRange
 {
     private SdlAttributeRange source;
     private SdlNameQuery query;
+    /// Positions the range on the first member matching `query`.
     this(return scope SdlAttributeRange source, return scope SdlNameQuery query)
         @safe pure nothrow @nogc
     {
@@ -726,11 +747,15 @@ struct SdlFilteredAttributeRange
         this.query = query;
         skip();
     }
+    /// Forward-range primitives.
     bool empty() const scope @safe pure nothrow @nogc => source.empty;
+    /// ditto
     SdlAttributeView front() const return scope @safe pure nothrow @nogc
     in (!empty) => source.front;
+    /// ditto
     void popFront() scope @safe pure nothrow @nogc
     in (!empty) { source.popFront(); skip(); }
+    /// ditto
     SdlFilteredAttributeRange save() const return scope @safe pure nothrow @nogc
         => this;
     private void skip() scope @safe pure nothrow @nogc
@@ -745,6 +770,7 @@ struct SdlFilteredChildRange
 {
     private SdlChildRange source;
     private SdlNameQuery query;
+    /// Positions the range on the first member matching `query`.
     this(return scope SdlChildRange source, return scope SdlNameQuery query)
         @safe pure nothrow @nogc
     {
@@ -752,11 +778,15 @@ struct SdlFilteredChildRange
         this.query = query;
         skip();
     }
+    /// Forward-range primitives.
     bool empty() const scope @safe pure nothrow @nogc => source.empty;
+    /// ditto
     SdlNode front() const return scope @safe pure nothrow @nogc
     in (!empty) => source.front;
+    /// ditto
     void popFront() scope @safe pure nothrow @nogc
     in (!empty) { source.popFront(); skip(); }
+    /// ditto
     SdlFilteredChildRange save() const return scope @safe pure nothrow @nogc
         => this;
     private void skip() scope @safe pure nothrow @nogc
@@ -1070,18 +1100,11 @@ unittest
 
     // Narrow trust: untracks one scalar copy for heap stashing in this
     // pooling test only (the pool owns the bytes afterwards).
-    static SdlScalar borrowAny(scope const ref SdlScalar s) @trusted
-    {
-        const ps = &s;
-        return *ps;
-    }
+    static SdlScalar borrowAny(scope const ref SdlScalar s) @safe
+        => (() @trusted { const ps = &s; return *ps; })();
 
-    static SdlQualifiedName borrowName(scope const ref SdlQualifiedName n)
-        @trusted
-    {
-        const pn = &n;
-        return *pn;
-    }
+    static SdlQualifiedName borrowName(scope const ref SdlQualifiedName n) @safe
+        => (() @trusted { const pn = &n; return *pn; })();
 
     OwnedSdlExtras owned;
     char[][] strings;

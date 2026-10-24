@@ -15,6 +15,51 @@ definitions, priorities, and provenance in move-only owners; see
 
 <InstallInstructions pkg="sparkles:wired" />
 
+## Decode SDL with defaults and presence
+
+SDL keeps positional values, attributes, and children as separate channels.
+Import `sparkles.wired.sdl` for its document and typed APIs. Unannotated fields
+map to children; use `SdlAttribute` and `SdlTagValue` to select other channels.
+New to it? Start with the [SDL tutorial](./tutorial/sdl-getting-started.md);
+the [how-to guides](./how-to/sdl-map-fields.md), [API
+reference](./reference/sdl.md), and [design notes](./explanation/sdl-design.md)
+cover the rest.
+
+```d
+import sparkles.wired : Decoded, WireAlias, WireDefault, WireCheck, isBetween;
+import sparkles.wired.sdl : Sdl, fromSDL, toSDL;
+
+struct Settings
+{
+    @WireAlias!Sdl("oldPort") @WireDefault!Sdl(8080)
+    @WireCheck!(isBetween!(1, 65535)) int port;
+}
+
+const decoded = fromSDL!(Decoded!Settings)("oldPort 443\n");
+assert(decoded.hasValue);
+assert(decoded.value.present.has!"port");
+const encoded = toSDL(decoded.value.value); // canonical "port 443\n"
+```
+
+See [Map fields to SDL](./how-to/sdl-map-fields.md#example) for a runnable example.
+
+`WireAlias` accepts legacy spellings only on decode; encode uses the canonical
+name. `WireDefault` overrides the declared initializer for missing input.
+`Decoded!T` records which top-level fields were supplied, including explicit
+defaults and nulls; it does not change the domain schema or emitted bytes.
+Checks run on decoded domain values and before encode conversion.
+
+`WireAs!Stringly` uses the base text readers/writers for arithmetic and enum
+text, spelling enum members with the active format's names (`@WireName!Sdl`).
+`Elements!Adapter` applies an adapter to sequence elements, and
+`Entries!(KeyAdapter, ValueAdapter)` composes map adapters. SDL currently
+supports identity map-key adapters; other key conversions are rejected at the
+schema boundary.
+Pass an error output range to `fromSDL!T(text, sink)` to accumulate independent
+decode failures, or use `FixedWireErrors!(SdlError, capacity)` from
+`sparkles.wired.walk` for bounded diagnostics: it keeps the first `capacity`
+failures, then one `errorSinkOverflow` marker.
+
 ## Decode JSON — `fromJSON`
 
 `fromJSON!T` parses JSON text with wired's native engine and reconstructs a

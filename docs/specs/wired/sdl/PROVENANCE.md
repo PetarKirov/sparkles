@@ -57,27 +57,50 @@ derived material lands.
 
 ## Fixture Classification
 
-Every SDL test added after S0 must identify one of these classes in its test
-comment when the source is not wholly original.
+Every SDL test that is not wholly original names its upstream path, the full
+revision, and one of these classes in its test comment. The S10 audit found
+exactly the following non-original material; every other SDL test is original.
 
-| Fixture family                                                              | Classification                                      | Planned use                                                                                                                                                                                                                   |
-| --------------------------------------------------------------------------- | --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Scalar-kind and canonical-writer matrix                                     | Original                                            | Derived from `SPEC.md` §§3.4 and 9; covers every scalar kind, boundaries, signed zero, escapes, Base64, civil time, zones, duration fractions, and non-finite rejection                                                       |
-| Lexer acceptance/rejection matrix                                           | Adapted                                             | Cases selected from `sdlang/lexer.d`, rewritten against `Expected`, stable error codes, and byte spans; each test cites the upstream path and revision                                                                        |
-| Parser regression cases for SDLang-D issues 16 and 31                       | Direct port if retained verbatim; otherwise adapted | Pins the anonymous/numeric parser regressions from `sdlang/parser.d`; direct ports carry an in-file zlib/libpng notice                                                                                                        |
-| Ordered arena and repeated-name fixtures                                    | Adapted                                             | Semantic shapes selected from `sdlang/ast.d`, rewritten for flat arenas and borrowed ranges                                                                                                                                   |
-| DUB recipe semantic snapshots                                               | Adapted                                             | Reduced cases selected from `recipe/sdl.d` for authors, dependencies, configurations, platform attributes, namespaces, and nested settings                                                                                    |
-| Pinned DUB recipe snapshot (`dub.sdl` @ `5efed360`)                         | Direct copy (unmodified)                            | Byte-exact `sdlDubRecipe` compatibility corpus; provenance and license identification sit beside the file in `libs/wired/src/sparkles/wired/sdl/fixtures/README.md`, with the MIT notice retained in `THIRD_PARTY_NOTICES.md` |
-| Typed defaults, strictness, hooks, and source paths                         | Adapted                                             | Behavioural cases selected from `configy/read.d` and `configy/dub_test.d`, expressed through wired policies rather than Configy's class interface                                                                             |
-| Error-code, allocator, lifetime, fuzz-smoke, and generated round-trip tests | Original                                            | Derived from the sparkles SDL specification and implementation invariants                                                                                                                                                     |
+| Material                                                     | Classification                  | Tests                                                                                                                           |
+| ------------------------------------------------------------ | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Pinned DUB recipe snapshot (`dub.sdl` @ `5efed360`)          | Direct copy (unmodified)        | `sdl.lexer.pinnedDubRecipeSnapshot`, `sdl.reader.allInTreeAndPinnedDubRecipes`, `sdl.writer.laws.dubCorpusRoundTrip`            |
+| Lexer case selection from `sdlang/lexer.d`                   | Adapted                         | `sdl.lexer.sparklesVsPinnedDubContinuation`, `sdl.lexer.pinnedDubTemporalCompatibility`, `sdl.lexer.pinnedDubCorpusRegressions` |
+| Recipe shapes from `recipe/sdl.d`                            | Adapted                         | `sdl.reader.pinnedDubRecipeSemanticSnapshot`                                                                                    |
+| String literals in the `unittest` blocks of the five modules | Not imported: read at test time | `sdl.conformance.pinnedDub`, through `libs/wired/test/sdl_dub_oracle.d`                                                         |
 
-The pinned DUB recipe snapshot is the only direct copy, and it is byte-exact
-(unaltered) upstream material with its notice retained. If implementation work
-later adds an altered direct port, the destination file must say that it is
-altered from the named upstream path, retain the applicable notice, and update
-this table before the port lands.
+The direct copy is byte-exact; provenance and license identification sit beside
+it in `libs/wired/src/sparkles/wired/sdl/fixtures/README.md`, with the MIT
+notice retained in `THIRD_PARTY_NOTICES.md`. Adapted tests rewrite a selected
+case against `Expected`, stable error codes, and spans; no upstream test body
+is reproduced. If later work adds an altered direct port, the destination file
+must say that it is altered from the named upstream path, retain the applicable
+notice, and update this table before the port lands.
+
+No Configy fixture was adapted: the typed default, strictness, hook, and path
+tests are original, derived from the specification. SDLite remains comparative
+evidence only.
 
 ## Audit Rule
+
+The `dub-sdl-src` flake input pins the same revision for the process-isolated
+`sdl.conformance.pinnedDub` test. Its helper, `libs/wired/test/sdl_dub_oracle.d`,
+is original Sparkles code. It compiles the unmodified upstream production lexer
+and parser, and at compile time reads every string literal inside a `unittest`
+block of `sdlang/lexer.d`, `sdlang/parser.d`, `sdlang/ast.d`, `sdlang/token.d`,
+and `recipe/sdl.d` from that checkout, letting the compiler evaluate each
+literal's escapes. Those literals are inputs only: nothing is copied into this
+repository, and the expected outcome of each comes from running DUB itself, not
+from upstream's assertions. The test compares lexer acceptance, token kinds,
+scalar payloads, parser acceptance, and the parsed tree under `sdlDubCompat`,
+and recipe-profile acceptance and trees under `sdlDubRecipe`. It is not part of
+the library import closure.
+
+The pinned upstream `sdlangUnittest` mode cannot compile: several
+`DateTimeFrac` fixtures omit the constructor's required fraction argument. The
+corpus test therefore runs upstream's inputs through the production
+implementation instead of upstream's assertions. DUB's negative clock keeps a
+negative fraction (`-34:65:77.123` is second 43 less 0.123 s); the oracle
+borrows one second to report the same instant in normalized form.
 
 S10 audits every adapted or ported fixture against this manifest. An upstream-
 inspired test without a path, full revision, and classification is incomplete;

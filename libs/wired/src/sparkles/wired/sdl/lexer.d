@@ -17,28 +17,28 @@ version (unittest) import core.exception : AssertError;
 /// Stable token vocabulary shared by every SDL profile.
 enum SdlTokenKind : ubyte
 {
-    eof,
-    newline,
-    semicolon,
-    colon,
-    equals,
-    openBrace,
-    closeBrace,
-    identifier,
-    null_,
-    boolean,
-    string_,
-    character,
-    integer,
-    longInteger,
-    float_,
-    double_,
-    decimal,
-    binary,
-    date,
-    dateTime,
-    zonedDateTime,
-    duration,
+    eof, /// End of input; always the final token.
+    newline, /// A logical newline, which terminates a tag.
+    semicolon, /// `;`, which terminates a tag.
+    colon, /// `:` between a namespace and a name.
+    equals, /// `=` between an attribute name and its value.
+    openBrace, /// `{` opening a child block.
+    closeBrace, /// `}` closing a child block.
+    identifier, /// A tag, namespace, or attribute name.
+    null_, /// `null`.
+    boolean, /// `true`, `false`, `on`, or `off`.
+    string_, /// A regular or raw string.
+    character, /// A character literal.
+    integer, /// An unsuffixed integer.
+    longInteger, /// An `L`-suffixed integer.
+    float_, /// An `F`-suffixed float.
+    double_, /// An unsuffixed or `D`-suffixed float.
+    decimal, /// A `BD`-suffixed decimal.
+    binary, /// A bracketed Base64 literal.
+    date, /// A date.
+    dateTime, /// A date with a clock.
+    zonedDateTime, /// A date with a clock and a zone.
+    duration, /// A duration.
 }
 
 /** One borrowed SDL token with an exact original-source slice.
@@ -49,9 +49,9 @@ $(LREF decodeSdlScalar) before using a scalar payload.
 */
 struct SdlToken
 {
-    SdlTokenKind kind;
-    const(char)[] raw;
-    SdlSpan span;
+    SdlTokenKind kind; /// Token class; scalars still need `decodeSdlScalar`.
+    const(char)[] raw; /// Exact source slice, borrowed from the lexed text.
+    SdlSpan span; /// Source range of `raw`.
 }
 
 /** Scratch ownership for deferred string and binary scalar decoding.
@@ -61,8 +61,8 @@ destruction. Scalar kinds without byte payloads do not use it.
 */
 struct SdlScalarStorage
 {
-    SharedBuffer!(char, 256) text;
-    SharedBuffer!(ubyte, 256) bytes;
+    SharedBuffer!(char, 256) text; /// Decoded string payload.
+    SharedBuffer!(ubyte, 256) bytes; /// Decoded binary payload.
 
     /// Discards the previous decoded payload while retaining capacity.
     void clear() @safe pure nothrow @nogc
@@ -104,7 +104,7 @@ private bool featureFor(SdlParserConfig config, SdlTokenKind kind)
 }
 
 /// Whether specialization `config` contains the semantic kernel for `kind`.
-enum bool sdlScalarKernelAvailable(SdlParserConfig config, SdlTokenKind kind) =
+package enum bool sdlScalarKernelAvailable(SdlParserConfig config, SdlTokenKind kind) =
     featureFor(config, kind);
 
 private SdlError lexicalError(SdlErrorCode code, SdlSpan span,
@@ -298,6 +298,9 @@ private bool scalarCandidateStart(scope const(char)[] source, size_t at)
         return false;
     if (cast(uint)(source[at] - '0') <= 9)
         return true;
+    // `-.5` omits the leading zero of a negative float, as `.5` does.
+    if (source[at] == '-' && at + 1 < source.length && source[at + 1] == '.')
+        at++;
     return (source[at] == '-' || source[at] == '.')
         && at + 1 < source.length && cast(uint)(source[at + 1] - '0') <= 9;
 }
@@ -615,7 +618,9 @@ struct SdlLexer(SdlParserConfig config = sdlFull)
         while (_at < _source.length)
         {
             size_t newlineWidth;
-            if (isLogicalNewline(_source, _at, newlineWidth))
+            if (isLogicalNewline(_source, _at, newlineWidth)
+                && (config.compatibility != SdlSyntaxCompatibility.sparkles
+                    || newlineWidth < 3))
             {
                 fail(SdlErrorCode.unterminatedString, start,
                     "newline before closing quote");
@@ -1104,6 +1109,15 @@ struct SdlLexer(SdlParserConfig config = sdlFull)
     }
 }
 
+/// Whether the entire spelling is one non-keyword SDL identifier.
+package bool isSdlIdentifier(scope const(char)[] name) @safe pure nothrow @nogc
+{
+    auto lexer = lexSDL(name);
+    const item = lexer.front;
+    return item.hasValue && item.valueOf.kind == SdlTokenKind.identifier
+        && item.valueOf.raw == name;
+}
+
 /// Constructs a borrowed lexer specialized for `config`.
 SdlLexer!config lexSDL(SdlParserConfig config = sdlFull)(
     return scope const(char)[] source,
@@ -1497,7 +1511,9 @@ package SdlExpected!SdlScalar decodeSdlScalarInto(
                     if (token.raw[at] != '\\')
                     {
                         size_t newlineWidth;
-                        if (isLogicalNewline(token.raw, at, newlineWidth))
+                        if (isLogicalNewline(token.raw, at, newlineWidth)
+                            && (config.compatibility != SdlSyntaxCompatibility.sparkles
+                                || newlineWidth < 3))
                             return sdlErr!SdlScalar(decodeError(
                                 SdlErrorCode.unterminatedString, token,
                                 "unescaped newline in string token"));
@@ -1522,6 +1538,15 @@ package SdlExpected!SdlScalar decodeSdlScalarInto(
                             return sdlErr!SdlScalar(decodeError(
                                 SdlErrorCode.invalidEscape, token,
                                 "invalid string escape"));
+                        // DUB also drops the next line's indentation and any
+                        // blank lines, as the scanner already accepted.
+                        static if (config.compatibility == SdlSyntaxCompatibility.dub5efed360)
+                            while (at + 1 < token.raw.length)
+                            {
+                                if (isAsciiSpace(token.raw[at])) at++;
+                                else if (isLogicalNewline(token.raw, at, width)) at += width;
+                                else break;
+                            }
                         break;
                     }
                 }
@@ -2405,6 +2430,37 @@ version (unittest)
     dub.popFront();
     assert(dub.front.value.kind == SdlTokenKind.identifier);
     assert(dub.front.value.raw == "value");
+}
+
+/// Reused storage holds only the latest payload of either kind.
+@("sdl.lexer.scalarStorageReuse")
+@system unittest
+{
+    SdlScalarStorage storage;
+    const first = decodeSdlScalar!sdlFull(oneToken!sdlFull("[YWJj]"), storage);
+    assert(first.hasValue && first.value.binary == cast(const(ubyte)[]) "abc");
+    const second = decodeSdlScalar!sdlFull(oneToken!sdlFull("[ZGVm]"), storage);
+    assert(second.hasValue && second.value.binary == cast(const(ubyte)[]) "def");
+}
+
+/// A negative float may omit its leading zero, and a DUB string continuation
+/// also drops the following indentation and blank lines.
+@("sdl.lexer.pinnedDubCorpusRegressions")
+@system unittest
+{
+    // Adapted case selection: source/dub/internal/sdlang/lexer.d at
+    // dlang/dub 5efed360e1c9342453bc5dd19339c75981526d83.
+    SdlScalarStorage storage;
+    static foreach (config; [sdlFull, sdlDubCompat])
+    {{
+        auto negative = decodeSdlScalar!config(oneToken!config("-.2F"), storage);
+        assert(negative.hasValue && negative.value.floatValue == -0.2f);
+    }}
+    assert(decodeSdlScalar!sdlDubCompat(oneToken!sdlDubCompat("\"a \\  \n\n  b\""),
+        storage).value.stringValue == "a b");
+    // `sdlFull` keeps the continued line's indentation and allows one newline.
+    assert(decodeSdlScalar!sdlFull(oneToken!sdlFull("\"a \\\n  b\""),
+        storage).value.stringValue == "a   b");
 }
 
 @("sdl.lexer.pinnedDubTemporalCompatibility")

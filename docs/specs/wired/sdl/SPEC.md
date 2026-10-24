@@ -57,6 +57,8 @@ SDL-only shadow schema is forbidden.
 | `sparkles.wired.sdl.files`              | File read/write helpers with path-carrying errors                  |
 | `sparkles.wired.sdl.schema_annotations` | The SDL format annotations for the shared schema                   |
 | `sparkles.wired.sdl.error`              | `SdlError`, stages, codes, paths, spans and rendering              |
+| `sparkles.wired.sdl.bench`              | Test-only: the writer regression benchmark                         |
+| `sparkles.wired.sdl.conformance`        | Test-only: public-surface and pinned-DUB differential tests        |
 
 The package module re-exports this consumer surface:
 
@@ -71,8 +73,30 @@ import sparkles.wired.sdl :
     SdlWriteOptions,
     SdlError, SdlErrorCode, SdlErrorStage, SdlString,
     parseSdlDocument, validateSDL, writeSdlDocument,
-    fromSDL, writeSDL, toSDL, readSDLFile, writeSDLFile;
+    fromSDL, writeSDL, toSDL, readSDLFile, writeSDLFile,
+    Decoded, WireFieldSet, isWireRoundTrippable;
 ```
+
+`Decoded`, `WireFieldSet`, and `isWireRoundTrippable` are the shared
+presence wrapper and round-trip predicate
+([expressiveness](../expressiveness/SPEC.md)), re-exported so an SDL consumer
+needs one import.
+
+The modules also export these names, each specified where it is used:
+
+| Names                                                                                                          | Section |
+| -------------------------------------------------------------------------------------------------------------- | ------- |
+| `SdlTokenKind`, `SdlToken`, `SdlLexer`, `lexSDL`, `SdlScalarStorage`, `decodeSdlScalar`                        | §11     |
+| `SdlNameQuery`, `SdlNamespaceMatch`, `SdlFilteredAttributeRange`, `SdlFilteredChildRange`                      | §4      |
+| `SdlValueRange`, `SdlAttributeRange`, `SdlChildRange`, `SdlAttributeView`, `SdlPosition`                       | §4      |
+| `SdlTagValueAttr`, `SdlAttributeAttr`, `SdlChildAttr`, `SdlTagNameAttr`, `SdlTagNamespaceAttr`, `SdlExtraAttr` | §5      |
+| `SdlExpected`, `sdlOk`, `sdlErr`                                                                               | §7      |
+| `OwnedSdlExtras`, `SdlOwnedExtraMember`, `SdlOwnedExtraNode`, `SdlOwnedExtraAttribute`, `SdlExtraChannel`      | §8      |
+| `writeSdlScalar`, `sdlParserConfigFor`                                                                         | §11     |
+
+No public declaration names a DUB type. The per-aggregate role projection that
+the codec reads (`sdlAggregateRoles` and its role records) is package-internal;
+`sdl.conformance.publicSurface` checks both claims.
 
 `sparkles.wired` may re-export the typed convenience API and policy UDAs, as it
 does for JSON. Document-engine names remain available from
@@ -265,7 +289,7 @@ the following table rather than converting every scalar through text:
 The numeric grammar deliberately follows SDL, not JSON: exponent notation and
 integer digit separators are rejected, as are an explicit `+` and a trailing
 decimal point (`1.`). A leading zero before the decimal point is optional for
-floating values (`.5`). Every float kind is read at its own width —
+floating values (`.5`, `-.5`). Every float kind is read at its own width —
 `F` as `float`, `D` as `double`, `BD` as `real` — through
 `sparkles.wired.sdl.decimal`, the grammar adapter over the correctly-rounded
 `readDecimalFloat!T` ([float_conv spec §3](../../base/text/float-conv.md#_3-parse-guarantees-prs)),
@@ -274,7 +298,13 @@ malformed suffixes are errors rather than trailing identifiers.
 
 Regular strings decode `\n`, `\r`, `\t`, `\"`, and `\\`. A backslash followed
 by whitespace and a newline is a continuation and contributes no character.
-Other backslash uses are rejected. Raw strings preserve all bytes between their
+Under the DUB profiles it also drops the next line's leading whitespace and any
+blank lines before the string resumes, as DUB does; `sdlFull` keeps that
+indentation and admits one newline per backslash.
+Other backslash uses are rejected. Under `sdlFull`, a regular string may hold
+an unescaped U+2028 or U+2029; the DUB profiles reject either as a newline
+before the closing quote, as DUB does. Every profile accepts an unescaped C0
+control other than LF and CR. Raw strings preserve all bytes between their
 backticks except that the delimiters are removed. Character literals contain
 exactly one Unicode scalar and support `\n`, `\r`, `\t`, `\'`, and `\\`.
 
@@ -289,18 +319,27 @@ does not depend on the host time-zone database: unknown named zones remain valid
 SDL values. Conversion to `SysTime` succeeds only when an offset is known;
 `GMT+HH[:MM]` and `GMT-HH[:MM]` are resolved directly.
 
+Typed integers map by width and signedness. Signed types up to 32 bits and
+unsigned types narrower than 32 bits encode as `integer`; `long`, `uint`, and
+`ulong` encode as `longInteger` (`L`), so every `uint` value is representable.
+A `ulong` above `long.max` is an encode-stage `valueOutOfRange`. Decode accepts
+either integer kind for any integral field and range-checks it against the
+field's type (`numberOutOfRange`).
+
 ## 4. Ordered arena document
 
 `parseSdlDocument` returns an owning, movable, non-copyable `SdlDocument` backed
 by contiguous arenas. `SdlNode`, `SdlAttributeView`, and `SdlScalar` are small,
 copyable borrowed views whose lifetime cannot exceed the document under
-`-preview=dip1000`.
+`-preview=dip1000`. `root()` is `scope return`: its view is bound to the
+document object itself, so a consumer must keep the document alive, and in
+scope, for as long as any view taken from it.
 
 ```d
 struct SdlDocument(Allocator = Mallocator)
 {
     bool valid() const;
-    SdlNode root() return scope const;
+    SdlNode root() scope return const;
     const(char)[] sourceName() return scope const;
 }
 
@@ -332,7 +371,10 @@ Order is normative within every channel:
 
 Lookup conveniences may return a range filtered by `SdlQualifiedName`, but may
 not return only the first occurrence or reorder matches. A wildcard namespace
-is a query option, not a representable SDL namespace.
+is a query option, not a representable SDL namespace. `SdlNameQuery` carries
+that option (`SdlNamespaceMatch.exact` or `.wildcard`), and
+`SdlFilteredAttributeRange` and `SdlFilteredChildRange` yield every match in
+source order.
 
 ### 4.1 Spans
 
@@ -375,7 +417,10 @@ string or integer role code:
 All are format-specific by type: they have no effect under JSON and do not take
 a format argument. Parentheses are mandatory, making UDA values uniform in the
 schema. Each role UDA is preserved in the schema's open annotation list and is
-also projected into the SDL format annotation consumed by the walker.
+also projected into the SDL format annotation consumed by the walker. The UDA
+values have the public types `SdlTagValueAttr`, `SdlAttributeAttr`,
+`SdlChildAttr`, `SdlTagNameAttr`, `SdlTagNamespaceAttr`, and `SdlExtraAttr`, so
+schema consumers can recognize them in the annotation list.
 
 ### 5.1 Default role and name resolution
 
@@ -456,7 +501,9 @@ per-variant errors.
 ## 7. Errors and source context
 
 All public operations return `Expected`; no throwing convenience API is
-provided. `SdlError` is a plain value with:
+provided. `SdlExpected!T` is `Expected!(T, SdlError)` with an allocation-free
+hook; `sdlOk` and `sdlErr` construct it, as a converter returning an SDL result
+may. `SdlError` is a plain value with:
 
 - `SdlErrorStage` (`lex`, `parse`, `decode`, `encode`, `fileRead`, `fileWrite`);
 - a stable `SdlErrorCode` suitable for tests and callers;
@@ -471,8 +518,8 @@ The stable code set includes at least `invalidUtf8`, `unsupportedBom`,
 `numberOutOfRange`, `invalidBase64`, `invalidDate`, `invalidDateTime`,
 `invalidDuration`, `depthExceeded`, `missingRole`, `duplicateRole`,
 `unexpectedKind`, `valueOutOfRange`, `unknownMember`, `conversionFailed`,
-`checkFailed`, `unsupportedFeature`, `allocationFailed`, `fileReadFailed`, and
-`fileWriteFailed`.
+`checkFailed`, `unsupportedFeature`, `allocationFailed`, `fileReadFailed`,
+`fileWriteFailed`, and `errorSinkOverflow`.
 Adding a code is source-compatible; changing the meaning of an existing code or
 collapsing two listed classes into an unstructured message is not.
 
@@ -482,7 +529,16 @@ SDL role paths extend the base `$` path notation:
 - `$.dependency[1]` for the second matching child occurrence;
 - `$@optional` for an unnamespaced attribute;
 - `$@x:platform` for a namespaced attribute;
+- `$.x:target[0]` for an occurrence of a namespaced child;
 - `$<name>` and `$<namespace>` for dynamic identity fields.
+
+A singular child carries its occurrence index; a check on a whole repeated or
+map role is reported at the role without one (`$.ports`).
+
+The D value path names the same site in the decoded type: fields by D
+identifier, sequence and static-array elements by index, and map entries by
+key. A bad `port` attribute on the second `items` child of `server` has value
+path `.server.items[1].port` and role path `.server[0].items[1]@port`.
 
 Nested paths compose, for example
 `$.dependency[1]@version` or `$.configuration[0]<value[0]>`. Diagnostics render
@@ -494,6 +550,11 @@ context.
 Errors from converters and checks are wrapped at the current role path without
 discarding their reason. Error accumulation and caller context follow
 [expressiveness §7](../expressiveness/SPEC.md#7-errors-accumulation-and-context).
+An accumulating decode skips an aggregate's own checks once one of its fields
+has failed, so a check never reports on a partially defaulted value.
+`FixedWireErrors!(SdlError, capacity)` retains the first `capacity` failures
+and then one `errorSinkOverflow` marker. A union's failure lists each trial
+decode's error, in declaration order, in `SdlError.variants`.
 
 ## 8. Unknown fields and passthrough
 
@@ -508,7 +569,10 @@ duplicate names, namespaces, positional values, or source order. It stores
 `SdlExtraMember` entries with channel (`value`, `attribute`, or `child`), the
 channel ordinal, qualified name where present, scalar/node payload, and span.
 Borrowed extras are valid only with their source document; an owned form is used
-when extras must outlive it.
+when extras must outlive it. That form is `OwnedSdlExtras`: its
+`SdlOwnedExtraMember` entries copy each payload, and a captured child is an
+`SdlOwnedExtraNode` tree whose attributes are `SdlOwnedExtraAttribute` values.
+Both forms tag each member with its `SdlExtraChannel`.
 
 On encode, extras are merged into their original channel ordinal. Declared
 members occupy their schema positions; a collision between an extra and a
@@ -538,6 +602,11 @@ whitespace. `writeSdlDocument` and typed `writeSDL` produce one canonical form:
 - no semicolons, comments, blank lines, or continuation backslashes.
 
 Strings always use double quotes and escape `\`, `"`, LF, CR, and tab.
+U+2028, U+2029, and other control characters are emitted unescaped, because
+SDL has no escape for them. Canonical output therefore targets `sdlFull`: a
+string holding U+2028 or U+2029 does not re-parse under `sdlDubCompat` or
+`sdlDubRecipe`, which reject both in a quoted string. A document meant for
+DUB spells such a payload as a raw string, which DUB keeps verbatim.
 Characters use single quotes and the analogous character escapes. Booleans are
 `true`/`false`; null is `null`; binary is one unbroken standard-Base64 literal.
 Integers use decimal and `L` for `long`. Finite floats use shortest
@@ -563,7 +632,8 @@ their canonical encoded key.
 
 ## 10. Round-trip laws
 
-Three different laws are explicit:
+Three different laws are explicit. Each parses under `sdlFull`, the profile
+the canonical writer targets (§9):
 
 1. **Document semantic law:** for every accepted document `s`,
    `parse(write(parse(s))) == parse(s)`, ignoring spans and source names.
@@ -611,6 +681,21 @@ Expected!(void, SdlError) validateSDL(
     scope const(char)[] sourceName = null,
 );
 
+SdlLexer!config lexSDL(SdlParserConfig config = sdlFull)(
+    return scope const(char)[] source,
+    return scope const(char)[] sourceName = null,
+);
+
+Expected!(SdlScalar, SdlError) decodeSdlScalar(SdlParserConfig config = sdlFull)(
+    in SdlToken token,
+    return ref SdlScalarStorage storage,
+);
+
+Expected!(void, SdlError) writeSdlScalar(Writer)(
+    scope const ref SdlScalar scalar,
+    ref Writer writer,
+);
+
 Expected!(void, SdlError) writeSdlDocument(Document, Writer)(
     return scope const ref Document document,
     ref Writer writer,
@@ -618,13 +703,32 @@ Expected!(void, SdlError) writeSdlDocument(Document, Writer)(
 );
 
 Expected!(T, SdlError) fromSDL(T,
-    SdlParserConfig config = sdlParserConfigFor!T)(scope const(char)[] text);
+    SdlParserConfig config = sdlParserConfigFor!T)(
+    scope const(char)[] text, scope const(char)[] sourceName = null);
+Expected!(T, SdlError) fromSDL(T, Sink,
+    SdlParserConfig config = sdlParserConfigFor!T)(
+    scope const(char)[] text, ref Sink sink, scope const(char)[] sourceName = null);
 Expected!(T, SdlError) fromSDL(T)(return scope SdlNode node);
+Expected!(T, SdlError) fromSDL(T, Sink)(return scope SdlNode node, ref Sink sink);
 Expected!(void, SdlError) writeSDL(T, Writer)(scope const ref T value, ref Writer writer);
 Expected!(SdlString, SdlError) toSDL(T)(scope const ref T value);
 Expected!(T, SdlError) readSDLFile(T)(scope const(char)[] path);
 Expected!(void, SdlError) writeSDLFile(T)(scope const ref T value, scope const(char)[] path);
 ```
+
+A node overload's result borrows from `node` only when `T` holds borrowed
+`SdlExtras`; otherwise the node is `scope` and the result is owned. The text
+overloads reject borrowed extras at compile time. A `Sink` overload puts every
+independent failure into `sink`, any output range of `SdlError`, and still
+returns the first. `T` may be `Decoded!U`, which also records the fields the
+input supplied.
+
+`lexSDL` yields `SdlToken`s (`kind`, the borrowed `raw` slice, and `span`) as a
+forward range of `Expected` ending in `eof`; a scalar token's value comes from
+`decodeSdlScalar`, which borrows `storage` for string and binary payloads until
+the next decode. `writeSdlScalar` writes one scalar in canonical form (§9).
+`sdlParserConfigFor!T` is the profile the text overloads of `fromSDL` default
+to, currently `sdlFull` for every `T`.
 
 `SdlParseResult!Allocator` is `Expected!(SdlDocument!Allocator, SdlError)` (or a
 layout-equivalent named wrapper exposing the same `Expected` operations). A
@@ -634,8 +738,10 @@ successful parse owns all decoded strings/binary data and does not borrow
 `SdlString` is `SharedBuffer!(char, 256)`. Writer templates infer safety and
 allocation attributes from the supplied writer. The default allocator path for
 the document engine is `@safe pure nothrow @nogc` after allocation is expressed
-through the allocator protocol; file helpers necessarily perform I/O and are
-not `pure`.
+through the allocator protocol. Typed serde is `@safe pure` too: every
+`fromSDL` overload, sink overloads included, and `toSDL`, `writeSDL`, and
+`writeSdlDocument` over a `@safe pure` writer such as `SdlString`. Only the
+file helpers perform I/O and are not `pure`.
 
 `readSDLFile` reads bytes without path expansion, uses the path as source name,
 parses, then decodes. `writeSDLFile` canonicalizes first, recursively creates

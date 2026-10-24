@@ -95,6 +95,23 @@
         "url": "https://code.dlang.org/packages/raylib-d/6.0.1.zip"
       }
     },
+    "dub-sdl-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1780213047,
+        "narHash": "sha256-mQgOKjdPk/0XG20ZknUvTnguWdMJcwF1xuHEqCdEWjQ=",
+        "owner": "dlang",
+        "repo": "dub",
+        "rev": "5efed360e1c9342453bc5dd19339c75981526d83",
+        "type": "github"
+      },
+      "original": {
+        "owner": "dlang",
+        "repo": "dub",
+        "rev": "5efed360e1c9342453bc5dd19339c75981526d83",
+        "type": "github"
+      }
+    },
     "flake-compat": {
       "flake": false,
       "locked": {
@@ -714,6 +731,7 @@
         "dub-expected": "dub-expected",
         "dub-optional": "dub-optional",
         "dub-raylib-d": "dub-raylib-d",
+        "dub-sdl-src": "dub-sdl-src",
         "flake-compat": "flake-compat",
         "flake-parts": "flake-parts",
         "ghostty": "ghostty",

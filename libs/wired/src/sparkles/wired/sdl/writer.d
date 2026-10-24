@@ -5,7 +5,7 @@ import core.time : Duration;
 import std.datetime.date : Date;
 import std.range.primitives : put;
 
-import sparkles.base.buffer : SharedBuffer, checkWriter;
+import sparkles.base.buffer : SharedBuffer, UniqueBuffer, checkWriter;
 import sparkles.wired.json.writer : writeJsonDouble, writeJsonLong;
 import sparkles.wired.sdl.document;
 import sparkles.wired.sdl.error;
@@ -27,8 +27,8 @@ top-level tags emits a single LF or nothing at all.
 */
 struct SdlWriteOptions
 {
-    string indent = "    ";
-    bool newlineForEmptyDocument;
+    string indent = "    "; /// One nesting level; must not be empty.
+    bool newlineForEmptyDocument; /// Emit one LF for a document with no tags.
 }
 
 private SdlError encodeError(SdlErrorCode code, string type, string reason)
@@ -79,18 +79,6 @@ private string scalarType(SdlScalarKind kind) @safe pure nothrow @nogc
     }
 }
 
-private bool containsUnquotedLineSeparator(scope const(char)[] value)
-    @safe pure nothrow @nogc
-{
-    foreach (i; 0 .. value.length)
-        if (i + 2 < value.length && cast(ubyte) value[i] == 0xE2
-            && cast(ubyte) value[i + 1] == 0x80
-            && (cast(ubyte) value[i + 2] == 0xA8
-                || cast(ubyte) value[i + 2] == 0xA9))
-            return true;
-    return false;
-}
-
 private SdlExpected!void validateString(scope const(char)[] value)
     @safe pure nothrow @nogc
 {
@@ -99,13 +87,6 @@ private SdlExpected!void validateString(scope const(char)[] value)
     if (indexOfInvalidUtf8(value) != value.length)
         return sdlErr!void(encodeError(SdlErrorCode.invalidUtf8, "string",
             "string is not well-formed UTF-8"));
-    if (containsUnquotedLineSeparator(value))
-        return sdlErr!void(encodeError(SdlErrorCode.valueOutOfRange, "string",
-            "U+2028 and U+2029 are not representable in canonical SDL strings"));
-    foreach (c; value)
-        if (c < 0x20 && c != '\n' && c != '\r' && c != '\t')
-            return sdlErr!void(encodeError(SdlErrorCode.valueOutOfRange,
-                "string", "control character has no canonical SDL escape"));
     return sdlOk();
 }
 
@@ -149,7 +130,7 @@ private SdlExpected!void writeSdlCharacter(Writer)(dchar value,
 {
     import sparkles.base.text.utf : encodeScalar, isUnicodeScalar;
 
-    if (!isUnicodeScalar(value) || value == 0x2028 || value == 0x2029)
+    if (!isUnicodeScalar(value))
         return sdlErr!void(encodeError(SdlErrorCode.valueOutOfRange, "dchar",
             "character is not representable in a canonical SDL literal"));
 
@@ -228,6 +209,8 @@ private void writeFixedDecimal(Writer)(ref Writer writer,
             break;
         }
 
+    // A shortest significand is bounded (including binary128). A Buffer here
+    // adds per-digit growth checks; the measured mixed-scalar workload regressed.
     char[64] digits = void;
     size_t digitCount;
     foreach (i; start .. expAt)
@@ -270,7 +253,7 @@ private SdlExpected!void writeDouble(Writer)(double value, ref Writer writer)
 
     // Reuse wired.json's measured shortest-binary64 emitter, then adapt its
     // notation only when JSON chose an exponent SDL cannot spell.
-    SharedBuffer!(char, 40) token;
+    UniqueBuffer!(char, 40) token;
     writeJsonDouble(token, value);
     writeFixedDecimal(writer, token[]);
     put(writer, 'D');
@@ -298,7 +281,7 @@ if (is(T == float) || is(T == real))
         return sdlErr!void(encodeError(SdlErrorCode.valueOutOfRange,
             T.stringof, "NaN and infinity are not representable in SDL"));
 
-    SharedBuffer!(char, 64) scientific;
+    UniqueBuffer!(char, 64) scientific;
     writeShortest(scientific, value);
     writeFixedDecimal(writer, scientific[]);
     put(writer, suffix);
@@ -532,9 +515,7 @@ the offending member, e.g. `$.child[2]@attr` or `$<value[0]>` (SPEC §7).
 Emission is incremental, so only the failures detected before any byte is
 written — an empty `indent`, an invalid document — leave the writer untouched.
 A scalar this canonical form cannot spell is found mid-document, and the tags
-before it have already been emitted. Such a scalar is not exotic: a raw
-`` `…` `` string may legally carry a control byte, and a `string` field may
-hold U+2028, neither of which has a canonical spelling. A caller that needs
+before it have already been emitted. A caller that needs
 all-or-nothing writes into a staging buffer and copies on success — which is
 what $(LREF sparkles.wired.sdl.codec.toSDL) and
 $(LREF sparkles.wired.sdl.files.writeSDLFile) already do, so both are atomic.
@@ -708,7 +689,10 @@ SdlExpected!void writeSdlDocument(Document, Writer)(
         return sdlOk();
     }
 
-    const root = document.root;
+    // Narrow trust: the root view borrows `document`, which the caller keeps
+    // alive past this call; dip1000 reads binding it to a local as taking the
+    // address of a `scope` parameter.
+    const root = (() @trusted => document.root)();
     auto topLevel = root.byChild;
     for (size_t position = 0; !topLevel.empty;
         topLevel.popFront(), position++)
@@ -1293,7 +1277,7 @@ version (unittest)
     assert(invalid.hasError && invalid.error.code == SdlErrorCode.invalidDateTime);
     assert(writer.length == 0);
 
-    auto separatorValue = SdlScalar("a\u2028b");
+    auto separatorValue = SdlScalar("a\xFFb");
     auto separator = writeSdlScalar(separatorValue, writer);
     assert(separator.hasError && writer.length == 0);
 
@@ -1569,20 +1553,21 @@ version (unittest)
 // The writer emits as it goes, so a mid-document failure has already written
 // the tags before it. `sdl.writer.pathedFailures` builds this exact shape but
 // only inspects the error, which is how the contract and the code drifted
-// apart. Reachable without hand-editing an arena: a raw string may legally
-// carry a control byte that canonical output cannot spell.
+// apart. A manually corrupted scalar must still retain its role path.
 @("sdl.writer.partialOutputOnMidDocumentFailure")
 @system unittest
 {
-    enum source = "first \"ok\"\nsecond \x60p\x01q\x60\nthird \"never\"\n";
+    enum source = "first \"ok\"\nsecond \"valid\"\nthird \"never\"\n";
     auto parsed = parseSdlDocument!sdlFull(source, "partial.sdl");
     assert(parsed.hasValue, parsed.error.toString);
+
+    parsed.document.values[1].value = SdlScalar("invalid\xFF");
 
     SharedBuffer!(char, 128) sink;
     sink ~= "PRE|";
     const written = writeSdlDocument(parsed.document, sink);
     assert(written.hasError);
-    assert(written.error.code == SdlErrorCode.valueOutOfRange);
+    assert(written.error.code == SdlErrorCode.invalidUtf8);
     assert(written.error.rolePath[] == ".second[0]<value[0]>",
         written.error.rolePath[].idup);
 
@@ -1640,6 +1625,64 @@ version (unittest)
     runLaws!false(0x1D0C_5EED, 400);
     runLaws!true(0xB0B5_CAFE, 200);
     assert(lawCase == 600);
+}
+
+/// Canonical quotes preserve every UTF-8 payload accepted by raw strings.
+@("sdl.writer.laws.rawUnicodeAndControls")
+@system unittest
+{
+    foreach (payload; ["a\u2028b", "a\u2029b", "a\x01b", "a\0b",
+        "both`quote\u2028and\"backslash\\"])
+    {
+        // The backtick case cannot use a raw literal; quoted input must
+        // support the same Unicode payload as the canonical writer.
+        SdlString literal;
+        const scalar = SdlScalar(payload);
+        assert(!writeSdlScalar(scalar, literal).hasError);
+        const source = "tag " ~ literal[].idup ~ "\n";
+        auto first = parseSdlDocument(source);
+        assert(first.hasValue, first.error.toString);
+        assert(first.document.root.byChild.front.byValue.front.stringValue == payload);
+        SdlString once;
+        assert(!writeSdlDocument(first.document, once).hasError);
+        auto second = parseSdlDocument(once[]);
+        assert(second.hasValue);
+        assert(sdlDocumentsSemanticallyEqual(first.document, second.document));
+        SdlString twice;
+        assert(!writeSdlDocument(second.document, twice).hasError);
+        assert(once[] == twice[]);
+    }
+    auto raw = parseSdlDocument("tag `a\u2028b\x01c`\n");
+    assert(raw.hasValue);
+    SdlString canonical;
+    assert(!writeSdlDocument(raw.document, canonical).hasError);
+    auto reparsed = parseSdlDocument(canonical[]);
+    assert(reparsed.hasValue);
+    assert(sdlDocumentsSemanticallyEqual(raw.document, reparsed.document));
+}
+
+/// Canonical output targets `sdlFull`: the DUB profiles reject a quoted
+/// U+2028/U+2029 as an unescaped newline. Their raw strings keep the payload
+/// verbatim, as DUB's own lexer does, so a DUB-bound document spells it raw
+/// (SPEC §9).
+@("sdl.writer.laws.canonicalTargetsFullProfile")
+@system unittest
+{
+    import sparkles.wired.sdl.config : sdlDubCompat, sdlDubRecipe;
+
+    foreach (payload; ["a\u2028b", "a\u2029b"])
+    {
+        SdlString literal;
+        const scalar = SdlScalar(payload);
+        assert(!writeSdlScalar(scalar, literal).hasError);
+        const source = "tag " ~ literal[].idup ~ "\n";
+        assert(parseSdlDocument(source).hasValue);
+        assert(parseSdlDocument!sdlDubCompat(source).hasError);
+        assert(parseSdlDocument!sdlDubRecipe(source).hasError);
+        auto raw = parseSdlDocument!sdlDubCompat("tag `" ~ payload ~ "`\n");
+        assert(raw.hasValue);
+        assert(raw.document.root.byChild.front.byValue.front.stringValue == payload);
+    }
 }
 
 @("sdl.writer.laws.dubCorpusRoundTrip")

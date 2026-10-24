@@ -11,8 +11,8 @@ questions that pick $(I which) describe to run — which subpackage owns a file
 device build — without paying a describe per candidate. It also locates the
 recipe that governs a file ($(LREF dubRecipeFor)).
 
-All three recipe forms are read: `dub.sdl` (through sparkles:wired's SDLang
-reader), `dub.json`, and the recipe a single-file package embeds in its
+All three recipe forms are read: `dub.sdl` (as a
+$(MREF sparkles,build_primitives,dub_manifest) schema), `dub.json`, and the recipe a single-file package embeds in its
 leading `/+ dub.sdl: … +/` or `/+ dub.json: … +/` comment (`PRJ17`).
 
 The module lives here rather than in sparkles:dmd-lsp so that a long-lived
@@ -21,6 +21,9 @@ configuration choices. Its API takes no `in` parameters: sparkles:dmd-lsp is
 built without `-preview=in` and would mangle them apart.
 */
 module sparkles.build_primitives.dub_recipe;
+
+import sparkles.base.buffer : UniqueBuffer;
+import sparkles.build_primitives.dub_manifest : DubManifest, embeddedDubRecipe, valuesOf;
 
 /// A configuration a recipe declares.
 struct RecipeConfiguration
@@ -72,10 +75,14 @@ DubRecipe readDubRecipe(string path) @safe
 
     if (path.endsWith(".d"))
     {
-        const embedded = embeddedRecipe(text);
+        const embedded = embeddedDubRecipe(text);
         if (!embedded.found)
             return DubRecipe.init;
-        return embedded.isJson ? parseJsonRecipe(embedded.text) : parseSdlRecipe(embedded.text, embedded.firstLine);
+        if (embedded.isJson)
+            return parseJsonRecipe(embedded.recipe);
+        UniqueBuffer!char positioned;
+        embedded.toString(positioned);
+        return parseSdlRecipe(positioned[]);
     }
     return path.endsWith(".json") ? parseJsonRecipe(text) : parseSdlRecipe(text);
 }
@@ -187,63 +194,34 @@ string dubRecipeFor(string startPath) @safe
 }
 
 
-/// Parses `dub.sdl` text.
-DubRecipe parseSdlRecipe(const(char)[] text, size_t firstLine = 1) @safe
+/// Parses `dub.sdl` text (`text` may be an embedded recipe as
+/// `EmbeddedDubRecipe.toString` writes it, whose lines are the source file's).
+DubRecipe parseSdlRecipe(const(char)[] text) @safe pure
 {
-    import sparkles.wired.sdl : parseSdlDocument, SdlNode, SdlQualifiedName, SdlScalarKind;
+    import sparkles.wired.sdl : fromSDL, parseSdlDocument, sdlDubRecipe, SdlQualifiedName;
 
-    static string firstString(const SdlNode node) @safe
-    {
-        if (!node.valueCount)
-            return null;
-        const value = node.byValue.front;
-        return value.kind == SdlScalarKind.string_ ? value.stringValue.idup : null;
-    }
-
-    static string[] strings(const SdlNode node) @safe
-    {
-        string[] items;
-        foreach (value; node.byValue)
-            if (value.kind == SdlScalarKind.string_)
-                items ~= value.stringValue.idup;
-        return items;
-    }
-
-    DubRecipe recipe;
-    auto parsed = parseSdlDocument(text);
+    auto parsed = parseSdlDocument!sdlDubRecipe(text);
     if (parsed.hasError)
-        return recipe;
-    recipe.valid = true;
+        return DubRecipe.init;
+    auto root = parsed.document.root;
+    const decoded = fromSDL!DubManifest(root);
+    if (decoded.hasError)
+        return DubRecipe.init;
+    const manifest = decoded.value;
 
-    foreach (tag; parsed.document.root.byChild)
+    auto recipe = DubRecipe(name: manifest.name, valid: true);
+    foreach (sub; manifest.subPackages)
+        recipe.subPackages ~= RecipeSubpackage(name: sub.name, path: sub.path);
+    // The schema decodes configurations in declaration order, which is also
+    // the order of their tags.
+    auto tags = root.byChild(SdlQualifiedName(null, "configuration"));
+    foreach (config; manifest.configurations)
     {
-        const tagName = tag.qualifiedName;
-        if (tagName.namespace_.length)
-            continue;
-        switch (tagName.localName)
-        {
-            case "name":
-                recipe.name = firstString(tag);
-                break;
-            case "subPackage":
-                if (const path = firstString(tag))
-                    recipe.subPackages ~= RecipeSubpackage(path: path);
-                else
-                    foreach (child; tag.byChild(SdlQualifiedName(null, "name")))
-                        recipe.subPackages ~= RecipeSubpackage(name: firstString(child));
-                break;
-            case "configuration":
-                auto config = RecipeConfiguration(firstString(tag),
-                    line: tag.nameSpan.start.line + firstLine - 1);
-                if (!config.name.length)
-                    break;
-                foreach (dflags; tag.byChild(SdlQualifiedName(null, "dflags")))
-                    config.dflags ~= strings(dflags);
-                recipe.configurations ~= config;
-                break;
-            default:
-                break;
-        }
+        auto parsedConfig = RecipeConfiguration(config.name, line: tags.front.nameSpan.start.line);
+        foreach (flag; config.dflags.valuesOf)
+            parsedConfig.dflags ~= flag;
+        recipe.configurations ~= parsedConfig;
+        tags.popFront;
     }
     return recipe;
 }
@@ -304,54 +282,6 @@ DubRecipe parseJsonRecipe(const(char)[] text) @safe
                 recipe.configurations ~= config;
             }
     return recipe;
-}
-
-private struct Embedded
-{
-    const(char)[] text;
-    size_t firstLine; /// the line of the source `text` starts on
-    bool isJson;
-    bool found;
-}
-
-/// The recipe inside a single-file package's leading `/+ dub.sdl: … +/`
-/// comment (`PRJ17`); empty when there is none.
-private Embedded embeddedRecipe(const(char)[] source) @safe pure nothrow @nogc
-{
-    import std.algorithm.searching : count, findSplitBefore, startsWith;
-    import std.string : stripLeft;
-    import std.utf : byCodeUnit;
-
-    auto rest = source;
-    if (rest.startsWith("#!"))
-    {
-        foreach (i, c; rest)
-            if (c == '\n')
-            {
-                rest = rest[i + 1 .. $];
-                break;
-            }
-    }
-    rest = rest.stripLeft;
-    if (!rest.startsWith("/+"))
-        return Embedded.init;
-    rest = rest[2 .. $].stripLeft;
-
-    bool isJson;
-    if (rest.startsWith("dub.sdl:"))
-        rest = rest["dub.sdl:".length .. $];
-    else if (rest.startsWith("dub.json:"))
-    {
-        rest = rest["dub.json:".length .. $];
-        isJson = true;
-    }
-    else
-        return Embedded.init;
-
-    if (auto split = rest.findSplitBefore("+/"))
-        return Embedded(text: split[0], isJson: isJson,
-            firstLine: 1 + source[0 .. $ - rest.length].byCodeUnit.count('\n'), found: true);
-    return Embedded.init;
 }
 
 @("build_primitives.dub_recipe.parseSdlRecipe.namesSubpackagesConfigurations")
