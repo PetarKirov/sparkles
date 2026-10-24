@@ -356,6 +356,80 @@ private FontResult!long cffSid(in CffNames c, uint gid)
     }
 }
 
+/**
+The glyph the `CFF` charset gives `sid`, or 0 when none does or the font has
+no names (CID-keyed, or not `CFF`): how a `seac` finds its base and accent
+glyphs, as HarfBuzz's `std_code_to_glyph` does. Costs O(n) for a charset
+of `n` glyphs or ranges.
+*/
+package FontResult!uint cffGlyphOfSid(return scope const Face face, uint sid)
+{
+    const names = cffNames(face);
+    if (names.hasError)
+        return fontErr!uint(names.error);
+    const c = names.value;
+    if (!c.present || sid == 0)
+        return fontOk(0u);
+    const n = face.numGlyphs;
+    uint found(size_t gid) => gid < n ? cast(uint) gid : 0;
+    uint scan(scope const(ushort)[] sids)
+    {
+        foreach (gid, s; sids)
+            if (s == sid)
+                return found(gid);
+        return 0;
+    }
+    switch (c.charset)
+    {
+        case 0:
+            return fontOk(sid <= 228 ? found(sid) : 0);
+        case 1:
+            return fontOk(scan(expertCharset[]));
+        case 2:
+            return fontOk(scan(expertSubsetCharset[]));
+        default:
+            break;
+    }
+    const d = c.data;
+    if (c.charset < 0 || !fits(d.length, c.charset, 1))
+        return fontErr!uint(tableError(FontErrorKind.badOffset, cffTag, c.start, 0));
+    const at = cast(size_t) c.charset;
+    switch (d[at])
+    {
+        case 0:
+            foreach (gid; 1 .. n)
+            {
+                const p = at + 1 + 2 * (gid - 1);
+                if (!fits(d.length, p, 2))
+                    return fontErr!uint(tableError(FontErrorKind.truncated, cffTag, c.start, p));
+                if (be16(d, p) == sid)
+                    return fontOk(cast(uint) gid);
+            }
+            return fontOk(0u);
+        case 1, 2:
+        {
+            const wide = d[at] == 2;
+            const step = wide ? 4 : 3;
+            size_t glyph = 1;
+            size_t r = at + 1;
+            while (glyph < n)
+            {
+                if (!fits(d.length, r, step))
+                    return fontErr!uint(tableError(FontErrorKind.truncated, cffTag, c.start, r));
+                const first = be16(d, r);
+                const left = wide ? be16(d, r + 2) : d[r + 2];
+                if (sid >= first && sid <= first + left)
+                    return fontOk(found(glyph + (sid - first)));
+                glyph += left + 1;
+                r += step;
+            }
+            return fontOk(0u);
+        }
+        default:
+            return fontErr!uint(tableError(FontErrorKind.unsupportedVersion, cffTag, c.start, at));
+    }
+}
+
 /// The text of `sid`, from the standard strings or the String INDEX.
 private FontResult!GlyphName sidName(return scope const(ubyte)[] d, in CffNames c, long sid)
 {

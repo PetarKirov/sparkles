@@ -284,6 +284,23 @@
         "type": "github"
       }
     },
+    "harfbuzz-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1791231094,
+        "narHash": "sha256-NKM9CNoDUEwCzs7kKOpve1hQmGuzjmUujCMD/h4p5bM=",
+        "owner": "harfbuzz",
+        "repo": "harfbuzz",
+        "rev": "c7a7457b7385f33178e8cf87615ca077a810bbe7",
+        "type": "github"
+      },
+      "original": {
+        "owner": "harfbuzz",
+        "ref": "14.6.0",
+        "repo": "harfbuzz",
+        "type": "github"
+      }
+    },
     "home-manager": {
       "inputs": {
         "nixpkgs": [
@@ -719,6 +736,7 @@
         "ghostty": "ghostty",
         "git-hooks-nix": "git-hooks-nix",
         "glfw": "glfw",
+        "harfbuzz-src": "harfbuzz-src",
         "json-test-suite": "json-test-suite",
         "ldc-windows-x64": "ldc-windows-x64",
         "maple-font": "maple-font",

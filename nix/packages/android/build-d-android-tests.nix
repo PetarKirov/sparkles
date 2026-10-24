@@ -50,6 +50,9 @@ in
           # dub-registry dependencies: `{ name; src; }` with `src` the
           # registry zip (a flake input). Their own unittests are not built.
           dubDeps ? [ ],
+          # Further link arguments for one ABI's target (`t`, an entry of
+          # `androidNdk.targets`): the static C libraries a configuration links.
+          linkFlags ? (_t: [ ]),
           description ? "D unittests as Android executables, per ABI",
         }:
         let
@@ -94,6 +97,7 @@ in
                 -i dub_test_root.d \
                 libs/test-runner/src/sparkles/test_runner/register.d \
                 libs/test-runner-impl/src/sparkles/test_runner/runner_impl.d \
+                ${toString (linkFlags t)} \
                 -link-defaultlib-shared=false -L-pie -L-llog -L-lm -L-ldl \
                 -L-Wl,--warn-unresolved-symbols \
                 -of=${exeName}-${t.abi}

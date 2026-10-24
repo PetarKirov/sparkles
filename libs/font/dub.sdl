@@ -29,6 +29,27 @@ configuration "unittest" {
     dflags "-checkaction=context" "-allinst"
 }
 
+// The shaping engine: HarfBuzz on the link line, hand-declared (FTA8).
+configuration "engine" {
+    targetType "library"
+    dependency "sparkles:base" path="../.."
+    sourcePaths "src" "src-engine"
+    importPaths "src" "src-engine"
+    libs "harfbuzz"
+    versions "SparklesFontEngine"
+}
+
+configuration "engine-unittest" {
+    dependency "sparkles:test-runner" path="../.."
+    dependency "sparkles:base" path="../.."
+    sourcePaths "src" "src-engine" "test" "test-engine"
+    importPaths "src" "src-engine" "test" "test-engine"
+    libs "harfbuzz"
+    versions "SparklesFontEngine"
+
+    dflags "-checkaction=context" "-allinst"
+}
+
 // BEGIN managed build types — apps/ci/tools/standardize-build-settings.d
 dflags "--linker=lld" platform="linux-ldc"
 dflags "-L-fuse-ld=lld" platform="linux-dmd"

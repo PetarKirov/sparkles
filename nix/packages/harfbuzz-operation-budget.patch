@@ -1,0 +1,53 @@
+--- a/src/hb-ot-layout-gsubgpos.hh
++++ b/src/hb-ot-layout-gsubgpos.hh
+@@ -2730,7 +2730,12 @@
+       break;
+
+     if (unlikely (buffer->max_ops <= 0))
++    {
++      /* The operation budget ran out: the lookups left are not applied,
++       * so the result is not the font's.  Say so. */
++      buffer->successful = false;
+       break;
++    }
+
+     if (HB_BUFFER_MESSAGE_MORE && c->buffer->messaging ())
+     {
+--- a/src/hb-aat-layout-morx-table.hh
++++ b/src/hb-aat-layout-morx-table.hh
+@@ -802,7 +802,7 @@
+       if (entry.data.markedInsertIndex != 0xFFFF)
+       {
+ 	unsigned int count = (flags & MarkedInsertCount);
+-	if (unlikely ((buffer->max_ops -= count) <= 0)) return;
++	if (unlikely ((buffer->max_ops -= count) <= 0)) { buffer->successful = false; return; }
+ 	unsigned int start = entry.data.markedInsertIndex;
+ 	const HBGlyphID16 *glyphs = &insertionAction[start];
+ 	if (unlikely (!c->sanitizer.check_array (glyphs, count))) count = 0;
+@@ -832,7 +832,7 @@
+       if (entry.data.currentInsertIndex != 0xFFFF)
+       {
+ 	unsigned int count = (flags & CurrentInsertCount) >> 5;
+-	if (unlikely ((buffer->max_ops -= count) <= 0)) return;
++	if (unlikely ((buffer->max_ops -= count) <= 0)) { buffer->successful = false; return; }
+ 	unsigned int start = entry.data.currentInsertIndex;
+ 	const HBGlyphID16 *glyphs = &insertionAction[start];
+ 	if (unlikely (!c->sanitizer.check_array (glyphs, count))) count = 0;
+--- a/src/hb-aat-layout-common.hh
++++ b/src/hb-aat-layout-common.hh
+@@ -1388,8 +1388,14 @@
+       if (buffer->idx == buffer->len)
+ 	break;
+
+-      if (is_not_epsilon_transition || buffer->max_ops-- <= 0)
++      if (is_not_epsilon_transition)
+ 	(void) buffer->next_glyph ();
++      else if (buffer->max_ops-- <= 0)
++      {
++	/* Out of budget: advancing breaks the font's own transitions. */
++	buffer->successful = false;
++	(void) buffer->next_glyph ();
++      }
+     }
+
+     if (!c->in_place)

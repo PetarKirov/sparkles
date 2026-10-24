@@ -140,6 +140,12 @@
       url = "github:simdjson/simdjson";
       flake = false;
     };
+    # The shaping engine sparkles:font pins (docs/specs/font/SPEC.md FTS8):
+    # the first release line whose Unicode data matches base's 18.0.0.
+    harfbuzz-src = {
+      url = "github:harfbuzz/harfbuzz/14.6.0";
+      flake = false;
+    };
     maple-font = {
       url = "github:subframe7536/maple-font/v7.9";
       flake = false;
@@ -230,6 +236,9 @@
         ./nix/packages/ldc-import-paths.nix
         ./nix/packages/dub-builder
         ./nix/packages/fonts.nix
+        ./nix/packages/font-test-corpus.nix
+        ./nix/packages/font-unfree-corpus.nix
+        ./nix/packages/harfbuzz.nix
         ./nix/packages/freebsd-vm.nix
         ./nix/packages/hue.nix
         ./nix/packages/libghostty-vt.nix

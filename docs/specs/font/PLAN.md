@@ -18,9 +18,9 @@ the gate each milestone must pass, and progress. Scenarios and oracles live in
 | [M1 Parse](#m1-parse)                                                     | done        |
 | [M2 Variation, metrics, inspection](#m2-variation-metrics-and-inspection) | in progress |
 | [MS Startup slice](#ms-startup-slice)                                     | planned     |
-| [M3 Outlines](#m3-outlines)                                               | not started |
-| [M4 Shaping](#m4-shaping)                                                 | not started |
-| [M5 Grayscale raster](#m5-grayscale-raster)                               | not started |
+| [M3 Outlines](#m3-outlines)                                               | done        |
+| [M4 Shaping](#m4-shaping)                                                 | done        |
+| [M5 Grayscale raster](#m5-grayscale-raster)                               | done        |
 | [M6 Colour glyphs](#m6-colour-glyphs)                                     | not started |
 | [M7 Discovery and fallback](#m7-discovery-and-fallback)                   | not started |
 | [M8 Consumer migration](#m8-consumer-migration)                           | not started |
@@ -319,9 +319,26 @@ normalization, variation deltas, design, physical and pixel measurements, line,
 decoration, cell and vertical metrics, `BASE`, `MATH`, layout inspection and
 colour capability, checked against HarfBuzz over the bundle and run on an
 arm64-v8a phone. Its gate stays open until these, recorded in the evidence
-ledger, are met: fontations' exact delta oracle; a verified `BASE` face and a
-math face with kerns, under the pinned corpus manifest; and the reference-point
-and `glyf` vertical-origin resolution, which need M3's outline points. Next
-action: the startup slice, MS ([`FTX14`](./decisions.md#ftx14-a-startup-slice-before-m3)),
-beginning with S0's measurement harness; then M3, whose outline points also close
-M2's `FTM7` gate.
+ledger, are met: fontations' exact delta oracle; and a verified `BASE` face and a
+math face with kerns, under the pinned corpus manifest. The reference-point
+and `glyf` vertical-origin resolution closed with M3.
+
+A review on 2026-10-23 reopened M3 (outlines), M4 (shaping) and M5
+(grayscale raster); all three meet their acceptance again. M3: the
+HarfBuzz differential for every `CFF` face of the bundle, the `glyf`
+reference faces and the variable `CFF2` test faces, `FTO4` over every
+variable face, and the limit and cycle fixtures. M5: the `FTR3` and
+`FTR8` differentials over all four raster faces, the overlap fixtures and
+determinism through a reused workspace. M4: an `FTS8` manifest that pins
+HarfBuzz 14.6.0, whose tables match base's Unicode 18.0.0 (shown against
+the pinned source and HarfBuzz's own callbacks), a memory-safe `Shaper`,
+base-decoded input, recorded `hb-shape` goldens and the scenarios of
+[`testing.md`](./testing.md). A follow-up the same day closed M4's
+remaining gaps: real `JSTF` records compared with fontTools (SIL's
+Scheherazade New and Lateef by default, Microsoft's core fonts in an opt-in
+unfree corpus), an
+operation budget that can no longer end a run silently, vertical advances
+and origins from the library, and the engine's tests passing on an Android
+phone; the point lookups decode into a caller's heap workspace instead of
+268 KiB of stack.
+The ledger lists each gap. Next action: M2's open gates.

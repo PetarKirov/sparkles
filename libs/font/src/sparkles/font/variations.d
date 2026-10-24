@@ -18,7 +18,8 @@ cannot fail a query. Nothing here allocates.
 module sparkles.font.variations;
 
 import sparkles.font.bytes : be16, be24, be32, bes16, bes32, fits;
-import sparkles.font.errors : FontError, FontErrorKind, FontResult, fontErr, fontOk, Tag, tableError;
+import sparkles.font.errors : callerStorageError, FontError, FontErrorKind, FontResult, fontErr, fontOk, Tag,
+    tableError;
 import sparkles.font.units : DesignValue, Ppem;
 
 @safe pure nothrow @nogc:
@@ -246,6 +247,73 @@ struct ItemVariationStore
         return fontOk(DesignValue(sum, unitsPerEm));
     }
 
+    /**
+    The region index count of item variation data `outer`: the `k` that a
+    `CFF2` `blend` under `vsindex outer` multiplies its operand count by. A
+    broken store is its error; `outer` past the data count, or a data
+    subtable past the table, is `badValue`/`badOffset`/`truncated`.
+    Costs O(1).
+    */
+    package FontResult!ushort regionIndexCount(ushort outer) const scope
+    {
+        const at = dataAt(outer);
+        if (at.hasError)
+            return fontErr!ushort(at.error);
+        return fontOk(be16(table_, cast(size_t) at.value + 4));
+    }
+
+    /**
+    The F16.16 scalar at `coords` of each region item variation data `outer`
+    lists, in its order, written to `scalars`: the per-region weights of a
+    `CFF2` `blend`. Returns how many were written. Errors are those of
+    `regionIndexCount`, a region index past the region count (`badValue`),
+    and `scalars` shorter than the count (`callerStorage`). Costs O(k · a)
+    for `k` regions and `a` axes; never allocates.
+    */
+    package FontResult!size_t dataScalars(ushort outer, scope NormalizedCoords coords,
+        scope int[] scalars) const scope
+    {
+        const at = dataAt(outer);
+        if (at.hasError)
+            return fontErr!size_t(at.error);
+        const t = table_;
+        const count = be16(t, cast(size_t) at.value + 4);
+        const indicesAt = at.value + 6;
+        if (!fits(t.length, indicesAt, 2UL * count))
+            return fontErr!size_t(errorAt(FontErrorKind.truncated, indicesAt));
+        if (count > scalars.length)
+            return fontErr!size_t(callerStorageError(count, tag_, tableStart_ + indicesAt));
+        foreach (j; 0 .. count)
+        {
+            const regionIndexAt = cast(size_t) indicesAt + 2 * j;
+            const region = be16(t, regionIndexAt);
+            if (region >= regionCount_)
+                return fontErr!size_t(errorAt(FontErrorKind.badValue, regionIndexAt));
+            scalars[j] = regionScalar(region, coords);
+        }
+        return fontOk!size_t(count);
+    }
+
+    /// Where item variation data `outer` starts, with its 6-byte header checked.
+    private FontResult!ulong dataAt(ushort outer) const scope
+    {
+        if (!present_)
+            return fontErr!ulong(FontError(FontErrorKind.badValue));
+        if (broken_)
+            return fontErr!ulong(error_);
+        const t = table_;
+        if (outer >= dataCount_)
+            return fontErr!ulong(errorAt(FontErrorKind.badValue, at_ + 6));
+        const offsetAt = at_ + 8 + 4UL * outer;
+        const dataOffset = be32(t, cast(size_t) offsetAt);
+        const at = at_ + dataOffset;
+        if (dataOffset == 0 || at >= t.length)
+            return fontErr!ulong(errorAt(FontErrorKind.badOffset, offsetAt));
+        if (!fits(t.length, at, 6))
+            return fontErr!ulong(errorAt(FontErrorKind.truncated, at));
+        return fontOk!ulong(at);
+    }
+
     /// The F16.16 scalar of region `region` at `coords` (FTV12's per-axis rows).
     private int regionScalar(ushort region, scope NormalizedCoords coords) const scope
     {
@@ -423,8 +491,10 @@ valid integer ppem inside `[startSize, endSize]`; design and physical queries
 pass no ppem (`Ppem.init`) and never apply one. A VariationIndex table (format
 `0x8000`) contributes `store`'s delta (FTV12) at `coords`: zero at all-zero
 coordinates (FTM14), `badValue` when `store` is not `present`. Another delta
-format is `unsupportedVersion`. Costs O(1) for a Device table and O(r · a) for
-a VariationIndex.
+format is `unsupportedVersion`. A Device table whose delta words for its whole
+`[startSize, endSize]` range do not fit is `truncated` at every size, whether
+or not the query's size needs them. Costs O(1) for a Device table and
+O(r · a) for a VariationIndex.
 */
 FontResult!DeviceDelta deviceDelta(scope const(ubyte)[] table, Tag tag, ulong tableStart, ulong offset,
     scope const ref ItemVariationStore store, scope NormalizedCoords coords, ushort unitsPerEm,
@@ -453,13 +523,16 @@ in (unitsPerEm != 0)
     if (format < 1 || format > 3)
         return fontErr!DeviceDelta(tableError(FontErrorKind.unsupportedVersion, tag, tableStart, offset + 4));
     const startSize = be16(table, p), endSize = be16(table, p + 2);
+    // Every declared size's value must fit, not only the one this query reads.
+    const sizes = endSize >= startSize ? endSize - startSize + 1UL : 0;
+    const perWord = 1UL << (4 - format);
+    if (!fits(table.length, offset + 6, 2 * ((sizes + perWord - 1) / perWord)))
+        return fontErr!DeviceDelta(tableError(FontErrorKind.truncated, tag, tableStart, offset));
     if (!ppem.valid || !ppem.isInteger || ppem.numerator < startSize || ppem.numerator > endSize)
         return fontOk(result);
     // Format f packs 2^f-bit signed values, 2^(4-f) to a big-endian word.
     const s = cast(uint)(ppem.numerator - startSize);
     const wordAt = offset + 6 + 2UL * (s >> (4 - format));
-    if (!fits(table.length, wordAt, 2))
-        return fontErr!DeviceDelta(tableError(FontErrorKind.truncated, tag, tableStart, wordAt));
     const word = be16(table, cast(size_t) wordAt);
     const bits = 1u << format;
     const slot = s & ((1u << (4 - format)) - 1);
@@ -484,4 +557,10 @@ unittest
     assert(at13.value.deviceApplied && at13.value.devicePixels == -2);
     const design = deviceDelta(device, Tag("GPOS"), 0, 0, none, null, 1_000);
     assert(!design.value.deviceApplied && design.value.devicePixels == 0);
+    // Sizes 12–20 need three words; one is truncated at every size, even 12.
+    static immutable ubyte[] short_ = [0, 12, 0, 20, 0, 2, 0x1E, 0x00];
+    foreach (size; [12, 13, 30])
+        assert(deviceDelta(short_, Tag("GPOS"), 0, 0, none, null, 1_000, Ppem.fromInteger(size).value)
+            .error.kind == FontErrorKind.truncated);
+    assert(deviceDelta(short_, Tag("GPOS"), 0, 0, none, null, 1_000).error.kind == FontErrorKind.truncated);
 }

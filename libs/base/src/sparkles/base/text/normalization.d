@@ -7,7 +7,8 @@ import sparkles.base.text.unicode_algorithm : UnicodeResult, UnicodeStatus, Unic
 import sparkles.base.text.utf : UtfTokenKind, isUnicodeScalar, utfStorageOverlaps;
 import sparkles.base.text.unicode_tables : canonicalDecomposition,
     canonicalDecompositionValue, compatibilityDecomposition,
-    compatibilityDecompositionValue, canonicalCombiningClass, canonicalComposition;
+    compatibilityDecompositionValue, canonicalCombiningClass, canonicalComposition,
+    canonicalMapping, canonicalMappingValue;
 
 enum UnicodeNormalization : ubyte { NFC, NFD, NFKC, NFKD }
 
@@ -490,4 +491,54 @@ unittest
     failure = normalizeText(input.output(), UnicodeNormalization.NFC, output, scratch);
     assert(failure.status == UnicodeStatus.overlap && !output.output().valid());
     assert(input.output().valid() && input.output().units[0].value == 'A');
+}
+
+/// `canonicalMapping` is the single-step canonical Decomposition_Mapping that
+/// `canonicalDecomposition` applies recursively: singletons and Hangul LV + T
+/// stay one step, and only the first element may decompose further.
+@("text.normalization.canonicalMapping")
+@safe pure nothrow @nogc
+unittest
+{
+    static dchar[2] step(dchar cp)
+    {
+        const m = canonicalMapping(cp);
+        dchar[2] r = 0;
+        foreach (i; 0 .. m.length)
+            r[i] = canonicalMappingValue(m.offset + i);
+        return r;
+    }
+
+    assert(step(0x1E09) == [dchar(0xE7), 0x301]);
+    assert(step(0x212B) == [dchar(0xC5), 0]);
+    assert(step(0x0958) == [dchar(0x915), 0x93C]);
+    assert(step(0xAC01) == [dchar(0xAC00), 0x11A8]);
+    assert(step(0xAC00) == [dchar(0x1100), 0x1161]);
+    assert(canonicalMapping(0x41).length == 0 && canonicalMapping(0xFB00).length == 0);
+
+    // Expanding the first element recursively reproduces the full decomposition.
+    foreach (dchar cp; 0 .. 0x110000)
+    {
+        if (cp >= 0xD800 && cp <= 0xDFFF)
+            continue;
+        const full = canonicalDecomposition(cp);
+        const m = canonicalMapping(cp);
+        assert((full.length == 0) == (m.length == 0));
+        if (m.length == 0)
+            continue;
+        assert(m.length <= 2);
+        const first = canonicalMappingValue(m.offset);
+        const prefix = canonicalDecomposition(first);
+        const prefixLength = prefix.length ? prefix.length : 1;
+        assert(full.length == prefixLength + m.length - 1);
+        foreach (i; 0 .. prefixLength)
+            assert(canonicalDecompositionValue(full.offset + i)
+                == (prefix.length ? canonicalDecompositionValue(prefix.offset + i) : first));
+        if (m.length == 2)
+        {
+            const second = canonicalMappingValue(m.offset + 1);
+            assert(canonicalDecomposition(second).length == 0, "the second element is final");
+            assert(canonicalDecompositionValue(full.offset + full.length - 1) == second);
+        }
+    }
 }

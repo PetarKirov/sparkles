@@ -19,10 +19,11 @@ instance whose coordinates are all zero, no item variation store is read
 module sparkles.font.baseline;
 
 import sparkles.font.bytes : be16, be32, bes16, fits, searchTag;
-import sparkles.font.errors : FontError, FontErrorKind, FontResult, fontErr, fontOk, Tag, tableError;
+import sparkles.font.errors : FontError, FontErrorKind, FontLimit, FontResult, fontErr, fontOk, Tag, tableError;
 import sparkles.font.face : Face;
 import sparkles.font.instance : Instance, InstanceSize;
 import sparkles.font.metrics : Measurement, measured;
+import sparkles.font.outlines : glyphPoint, PointWorkspace;
 import sparkles.font.tables : locate, shortTable;
 import sparkles.font.units : checkedAdd, DesignValue, Ppem;
 import sparkles.font.variations : deviceDelta, DeviceDelta, ItemVariationStore;
@@ -335,8 +336,9 @@ struct BaseCoord
     /// ditto
     ushort pointIndex;
     /**
-    Format 2: the point is not resolved, as that needs outlines (M3), so
-    `coordinate` is the stored fallback.
+    Format 2: set when the reference point could not be resolved (the
+    glyph's outline is unavailable, as on a `CFF` face); `coordinate`
+    is then the stored fallback instead of the resolved point.
     */
     bool unresolvedPoint;
     /// Format 3: whether a Device or VariationIndex table is attached.
@@ -365,9 +367,17 @@ private Ppem devicePpem(in Instance inst)
 /**
 The BaseCoord the offset field at `fieldAt` points to, at `coordAt`: an
 offset past the table is `badOffset` at the field; a coordinate of format 1,
-2 or 3 is resolved, another format is `unsupportedVersion`.
+2 or 3 is resolved, another format is `unsupportedVersion`. Format 2 is
+resolved against the reference glyph's outline point at the instance
+(FTM7): the point's y on the horizontal axis, its x on the vertical one.
+When the glyph has no outline this library resolves points on (no `glyf`,
+a `CFF` face, or a glyph past the workspace's storage) the stored
+coordinate stays as the fallback and `unresolvedPoint` is set; a missing
+point or malformed outline data is that error (FTM7 keeps malformed records
+apart from missing ones).
 */
-private FontResult!BaseCoord resolveCoord(scope const ref Base b, ulong fieldAt, ulong coordAt, in Instance inst)
+private FontResult!BaseCoord resolveCoord(scope const ref Base b, ulong fieldAt, ulong coordAt,
+    in Instance inst, BaselineAxis axis, scope ref PointWorkspace ws)
 {
     const d = b.data_;
     if (coordAt >= d.length)
@@ -387,7 +397,18 @@ private FontResult!BaseCoord resolveCoord(scope const ref Base b, ulong fieldAt,
                 return fontErr!BaseCoord(tableError(FontErrorKind.truncated, baseTag, b.start_, coordAt));
             c.referenceGlyph = be16(d, p + 4);
             c.pointIndex = be16(d, p + 6);
-            c.unresolvedPoint = true;
+            const point = glyphPoint(inst, c.referenceGlyph, c.pointIndex, ws);
+            if (point.hasValue)
+            {
+                value = DesignValue(axis == BaselineAxis.horizontal ? point.value.y
+                    : point.value.x, inst.unitsPerEm);
+            }
+            else if (point.error.kind == FontErrorKind.missingTable
+                || point.error.kind == FontErrorKind.unsupportedCapability
+                || point.error.limit == FontLimit.callerStorage)
+                c.unresolvedPoint = true;
+            else
+                return fontErr!BaseCoord(point.error);
             break;
         case 3:
             if (!fits(d.length, coordAt, 6))
@@ -504,8 +525,9 @@ $(UL
     $(LI no such axis, neither the script nor `DFLT` with a record, a script
         record without BaseValues, or `tag` not in the axis's tag list: absent;)
     $(LI the tag's index past the BaseValues coordinate count: `badValue`;)
-    $(LI otherwise the BaseCoord: format 1 its coordinate; format 2 its
-        coordinate, reference glyph and point index with `unresolvedPoint`;
+    $(LI otherwise the BaseCoord: format 1 its coordinate; format 2 the
+        resolved outline point of its reference glyph (the stored
+        coordinate, with `unresolvedPoint`, when it cannot resolve);
         format 3 its coordinate plus its VariationIndex delta (read from
         `BASE`'s own store), with a Device table's delta kept in `device`;
         another format `unsupportedVersion`.)
@@ -514,9 +536,11 @@ $(UL
 A Device table applies only at an instance sized in pixels at an integer
 ppem inside its range (FTM11). A script record whose offset lies outside the
 table is `badOffset`; truncated structures are `truncated`. A zero coordinate
-is a value. Costs O(log s + log t + r · a).
+is a value. A format 2 coordinate decodes its glyph into `ws`. Costs
+O(log s + log t + r · a), plus `glyphPoint`'s for format 2.
 */
-FontResult!Baseline baseline(in Instance inst, BaselineAxis axis, Tag script, Tag tag)
+FontResult!Baseline baseline(in Instance inst, BaselineAxis axis, Tag script, Tag tag,
+    scope ref PointWorkspace ws)
 {
     const b = base(inst.face, inst.axisCount);
     if (b.hasError)
@@ -556,7 +580,7 @@ FontResult!Baseline baseline(in Instance inst, BaselineAxis axis, Tag script, Ta
     const offset = be16(d, cast(size_t) fieldAt);
     if (offset == 0)
         return fontErr!Baseline(tableError(FontErrorKind.badOffset, baseTag, start, fieldAt));
-    const c = resolveCoord(view, fieldAt, valuesAt + offset, inst);
+    const c = resolveCoord(view, fieldAt, valuesAt + offset, inst, axis, ws);
     if (c.hasError)
         return fontErr!Baseline(c.error);
     r.present = true;
@@ -636,9 +660,11 @@ absent. A null minimum or maximum offset leaves that value absent, never zero;
 an offset outside the table is `badOffset` for that value, and each value is
 resolved by FTM23's coordinate rows on its own. A MinMax offset outside the
 table, or a truncated MinMax, is the query's error. Pass `Tag.init` for no
-language or feature. Costs O(log s + log l + log f + r · a).
+language or feature. `ws` is as for `baseline`. Costs
+O(log s + log l + log f + r · a).
 */
-FontResult!Extents extents(in Instance inst, BaselineAxis axis, Tag script, Tag language, Tag feature)
+FontResult!Extents extents(in Instance inst, BaselineAxis axis, Tag script, Tag language, Tag feature,
+    scope ref PointWorkspace ws)
 {
     const b = base(inst.face, inst.axisCount);
     if (b.hasError)
@@ -690,19 +716,20 @@ FontResult!Extents extents(in Instance inst, BaselineAxis axis, Tag script, Tag 
         minField = minMaxAt + 6 + 8 * feat + 4;
         maxField = minField + 2;
     }
-    r.min = extent(view, minField, minMaxAt, inst);
-    r.max = extent(view, maxField, minMaxAt, inst);
+    r.min = extent(view, minField, minMaxAt, inst, axis, ws);
+    r.max = extent(view, maxField, minMaxAt, inst, axis, ws);
     return fontOk(r);
 }
 
 /// The extent the offset field at `fieldAt` (from the MinMax at `minMaxAt`) points to.
-private Extent extent(scope const ref Base b, ulong fieldAt, ulong minMaxAt, in Instance inst)
+private Extent extent(scope const ref Base b, ulong fieldAt, ulong minMaxAt, in Instance inst,
+    BaselineAxis axis, scope ref PointWorkspace ws)
 {
     Extent e;
     const offset = be16(b.data_, cast(size_t) fieldAt);
     if (offset == 0)
         return e;
-    const c = resolveCoord(b, fieldAt, minMaxAt + offset, inst);
+    const c = resolveCoord(b, fieldAt, minMaxAt + offset, inst, axis, ws);
     if (c.hasError)
     {
         e.state_ = Extent.State.error;

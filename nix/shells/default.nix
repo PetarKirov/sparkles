@@ -209,8 +209,9 @@
         # raylib-text's ImportC shaping bridge and native runtime.
         pkgs.freetype
         pkgs.freetype.dev
-        pkgs.harfbuzz
-        pkgs.harfbuzz.dev
+        # The HarfBuzz sparkles:font pins (FTS8), not nixpkgs' (nix/packages/harfbuzz.nix).
+        config.packages.harfbuzz
+        config.packages.harfbuzz.dev
 
         # `libs "vulkan"` in libs/vulkan. The `.dev` output carries
         # `vulkan.pc`, whose `includedir` points at vulkan-headers — so one
@@ -419,6 +420,12 @@
         # The bundled fonts, the corpus for sparkles:font and its HarfBuzz
         # oracle (dub test :font / :font-oracle skip those tests when unset).
         export SPARKLES_FONTS_PATH=${config.packages.sparkles-fonts}/fonts
+        # Test-only faces (variable CFF2) the bundle does not ship.
+        export SPARKLES_FONT_TEST_CORPUS=${config.packages.sparkles-font-test-corpus}
+        # The UCD release HarfBuzz's USE table was generated from (14.6.0 reads
+        # DerivedCoreProperties-17.0.0): the FTS8 manifest check compares its
+        # Default_Ignorable_Code_Point set with base's 18.0.0.
+        export SPARKLES_HARFBUZZ_USE_UCD=${pkgs.unicode-character-database}/share/unicode
 
         # druntime/phobos sources matching the pinned dmd:frontend, for
         # sparkles:dmd-lsp semantic analysis (BLD3). Tests skip when unset.

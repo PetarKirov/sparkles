@@ -535,8 +535,15 @@ unittest
     assert(deviceDelta(padded, Tag("BASE"), 0, padded.length, none, null, upem).error.kind
         == FontErrorKind.badOffset);
     assert(deviceDelta(padded[0 .. 6], Tag("BASE"), 0, 2, none, null, upem).error.kind == FontErrorKind.truncated);
-    const past = deviceDelta(padded, Tag("BASE"), 0, 2, none, null, upem, px(12)).error;
-    assert(past.kind == FontErrorKind.truncated && past.tableOffset == 2 + 6 + 2);
-    // Within the stored values it applies.
-    assert(deviceDelta(padded, Tag("BASE"), 0, 2, none, null, upem, px(11)).value.devicePixels == 2);
+    // Sizes 10–30 at 8 bits need 11 words and only 1 is stored: malformed
+    // at every size (FTM12), including those whose value is stored.
+    foreach (size; [10, 11, 12, 40])
+    {
+        const past = deviceDelta(padded, Tag("BASE"), 0, 2, none, null, upem, px(size)).error;
+        assert(past.kind == FontErrorKind.truncated && past.tableOffset == 2);
+    }
+    assert(deviceDelta(padded, Tag("BASE"), 0, 2, none, null, upem).error.kind == FontErrorKind.truncated);
+    // A table holding its whole range applies.
+    const whole = new ubyte[2] ~ deviceTable(10, 11, 3, [1, 2]);
+    assert(deviceDelta(whole, Tag("BASE"), 0, 2, none, null, upem, px(11)).value.devicePixels == 2);
 }

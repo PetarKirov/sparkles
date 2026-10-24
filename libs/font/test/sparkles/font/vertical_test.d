@@ -13,6 +13,7 @@ import std.file : dirEntries, SpanMode;
 import std.path : baseName;
 
 import sparkles.base.text.layout_units : LayoutUnit;
+import sparkles.base.unique : makeUnique;
 import sparkles.test_runner.skip : skipTest;
 
 import sparkles.font.corpus : bundled, fontsPath;
@@ -21,6 +22,7 @@ import sparkles.font.face : Face, openFace;
 import sparkles.font.fixtures;
 import sparkles.font.instance : axes, Instance, instance, InstanceSize, UserCoordinate;
 import sparkles.font.metrics : MvarTag;
+import sparkles.font.outlines : PointWorkspace;
 import sparkles.font.tables : fvar;
 import sparkles.font.units : DesignValue;
 import sparkles.font.vertical;
@@ -66,7 +68,14 @@ private ubyte[] build(Spec s) @safe pure nothrow
     if (s.variable)
         tables ~= TableData("fvar", fvarTable([FvarAxis("TEST", -one, 0, one)]));
     if (s.glyf)
-        tables ~= TableData("glyf", [0, 0, 0, 0]);
+    {
+        // Glyph 1 has yMax 100; the others are single points at y 0.
+        const glyphs = [simpleGlyph([[0, 0, 1]]),
+            simpleGlyph([[0, 0, 1], [10, 100, 1]]),
+            simpleGlyph([[0, 0, 1]]), simpleGlyph([[0, 0, 1]])];
+        tables ~= TableData("loca", locaTable(glyphs));
+        tables ~= TableData("glyf", glyfTable(glyphs));
+    }
     return sfnt(tables);
 }
 
@@ -198,30 +207,32 @@ unittest
 @safe pure nothrow
 unittest
 {
+    auto ws = makeUnique!PointWorkspace();
     auto s = standard();
-    const a = at(build(s)).verticalAdvance(1).value;
+    const a = at(build(s)).verticalAdvance(1, *ws).value;
     assert(a.present && a.advance.design == du(900));
     // FTM14: at the default no VVAR is read, so a broken or missing one cannot fail it.
     s.vvar = vvarTable(store([1]), null, null, 2);
-    assert(at(build(s)).verticalAdvance(1).value.advance.design == du(900));
-    assert(at(build(standard())).verticalAdvance(4).error.kind == FontErrorKind.indexOutOfRange);
+    assert(at(build(s)).verticalAdvance(1, *ws).value.advance.design == du(900));
+    assert(at(build(standard())).verticalAdvance(4, *ws).error.kind == FontErrorKind.indexOutOfRange);
 }
 
 @("vertical.verticalAdvance.absent")
 @safe pure nothrow
 unittest
 {
+    auto ws = makeUnique!PointWorkspace();
     auto s = standard();
     s.vmtx = null;
-    const noVmtx = at(build(s), one).verticalAdvance(1);
+    const noVmtx = at(build(s), one).verticalAdvance(1, *ws);
     assert(noVmtx.hasValue && !noVmtx.value.present);
     s = standard();
     s.vhea = null;
-    assert(!at(build(s)).verticalAdvance(1).value.present);
+    assert(!at(build(s)).verticalAdvance(1, *ws).value.present);
     // A zero advance is a value.
     s = standard();
     s.vmtx = vmtxTable([[0, 0], [0, 0], [0, 0], [0, 0]]);
-    const zero = at(build(s)).verticalAdvance(2).value;
+    const zero = at(build(s)).verticalAdvance(2, *ws).value;
     assert(zero.present && zero.advance.design.raw == 0);
 }
 
@@ -229,32 +240,34 @@ unittest
 @safe pure nothrow
 unittest
 {
+    auto ws = makeUnique!PointWorkspace();
     auto s = standard();
     // Identity map: glyph g takes item g.
     s.vvar = vvarTable(store([0, 40, -80, -1_000]));
-    assert(at(build(s), one).verticalAdvance(1).value.advance.design == du(940));
-    assert(at(build(s), one / 2).verticalAdvance(2).value.advance.design == du(760));
+    assert(at(build(s), one).verticalAdvance(1, *ws).value.advance.design == du(940));
+    assert(at(build(s), one / 2).verticalAdvance(2, *ws).value.advance.design == du(760));
     // A varied advance below zero is kept.
-    assert(at(build(s), one).verticalAdvance(3).value.advance.design == du(-300));
+    assert(at(build(s), one).verticalAdvance(3, *ws).value.advance.design == du(-300));
     // An advance map: glyph 1 → item 2.
     s.vvar = vvarTable(store([0, 40, -80]), deltaSetIndexMap([[0, 0], [0, 2]], 4, 1));
-    assert(at(build(s), one).verticalAdvance(1).value.advance.design == du(820));
+    assert(at(build(s), one).verticalAdvance(1, *ws).value.advance.design == du(820));
 }
 
 @("vertical.verticalAdvance.vvarErrors")
 @safe pure nothrow
 unittest
 {
+    auto ws = makeUnique!PointWorkspace();
     auto s = standard();
-    // No VVAR at nonzero coordinates: phantom points are M3's.
-    const none = at(build(s), one).verticalAdvance(1).error;
-    assert(none.kind == FontErrorKind.unsupportedCapability && none.tag == Tag("VVAR"));
+    // No VVAR and no gvar at nonzero coordinates: the stored advance, as HarfBuzz.
+    const none = at(build(s), one).verticalAdvance(1, *ws).value;
+    assert(none.present && none.advance.design == du(900));
     s.vvar = vvarTable(store([1]), null, null, 2);
-    assert(at(build(s), one).verticalAdvance(1).error.kind == FontErrorKind.unsupportedVersion);
+    assert(at(build(s), one).verticalAdvance(1, *ws).error.kind == FontErrorKind.unsupportedVersion);
     s.vvar = vvarTable(null);
-    assert(at(build(s), one).verticalAdvance(1).error.kind == FontErrorKind.badValue);
+    assert(at(build(s), one).verticalAdvance(1, *ws).error.kind == FontErrorKind.badValue);
     s.vvar = vvarTable(store([1]))[0 .. 23];
-    assert(at(build(s), one).verticalAdvance(1).error.kind == FontErrorKind.truncated);
+    assert(at(build(s), one).verticalAdvance(1, *ws).error.kind == FontErrorKind.truncated);
 }
 
 // ---------------------------------------------------------------------------
@@ -265,18 +278,19 @@ unittest
 @safe pure nothrow
 unittest
 {
+    auto ws = makeUnique!PointWorkspace();
     auto s = standard();
     s.vorg = vorgTable(880, [[1, 900], [3, 0]]);
     const inst = at(build(s));
-    const hit = inst.verticalOrigin(1).value;
+    const hit = inst.verticalOrigin(1, *ws).value;
     assert(hit.source == VerticalOriginSource.vorgRecord && hit.y.design == du(900) && !hit.varied);
-    const miss = inst.verticalOrigin(2).value;
+    const miss = inst.verticalOrigin(2, *ws).value;
     assert(miss.source == VerticalOriginSource.vorgDefault && miss.y.design == du(880));
-    assert(inst.verticalOrigin(0).value.source == VerticalOriginSource.vorgDefault);
+    assert(inst.verticalOrigin(0, *ws).value.source == VerticalOriginSource.vorgDefault);
     // A record of zero is a value, not the default.
-    const zero = inst.verticalOrigin(3).value;
+    const zero = inst.verticalOrigin(3, *ws).value;
     assert(zero.present && zero.source == VerticalOriginSource.vorgRecord && zero.y.design.raw == 0);
-    assert(inst.verticalOrigin(4).error.kind == FontErrorKind.indexOutOfRange);
+    assert(inst.verticalOrigin(4, *ws).error.kind == FontErrorKind.indexOutOfRange);
     // The view itself.
     const v = vorg(inst.face).value;
     assert(v.defaultVertOriginY == 880 && v.numVertOriginYMetrics == 2);
@@ -287,60 +301,65 @@ unittest
 @safe pure nothrow
 unittest
 {
+    auto ws = makeUnique!PointWorkspace();
     auto s = standard();
     s.vorg = vorgTable(880, [[1, 900]], 1, 1);
-    assert(at(build(s)).verticalOrigin(1).error.kind == FontErrorKind.unsupportedVersion);
+    assert(at(build(s)).verticalOrigin(1, *ws).error.kind == FontErrorKind.unsupportedVersion);
     s.vorg = vorgTable(880, [[1, 900]], 2, 0);
-    assert(at(build(s)).verticalOrigin(1).error.kind == FontErrorKind.unsupportedVersion);
+    assert(at(build(s)).verticalOrigin(1, *ws).error.kind == FontErrorKind.unsupportedVersion);
     s.vorg = vorgTable(880, [[1, 900]])[0 .. 10];
-    assert(at(build(s)).verticalOrigin(1).error.kind == FontErrorKind.truncated);
+    assert(at(build(s)).verticalOrigin(1, *ws).error.kind == FontErrorKind.truncated);
     s.vorg = vorgTable(880, null)[0 .. 6];
-    assert(at(build(s)).verticalOrigin(1).error.kind == FontErrorKind.truncated);
+    assert(at(build(s)).verticalOrigin(1, *ws).error.kind == FontErrorKind.truncated);
 }
 
 @("vertical.verticalOrigin.noVorg")
 @safe pure nothrow
 unittest
 {
+    auto ws = makeUnique!PointWorkspace();
     auto s = standard();
-    // vmtx and glyf: the M3 rule, unsupported until then.
+    // vmtx and glyf: the top phantom point — yMax (100) plus top side bearing (20).
     s.glyf = true;
-    assert(at(build(s)).verticalOrigin(1).error.kind == FontErrorKind.unsupportedCapability);
+    const fallback = at(build(s)).verticalOrigin(1, *ws);
+    assert(fallback.hasValue && fallback.value.source == VerticalOriginSource.vmtxGlyph
+        && fallback.value.y.design == du(120));
     // vmtx without glyf (a CFF face), or glyf without vmtx: absent, never synthesized.
     s.glyf = false;
-    const cff = at(build(s)).verticalOrigin(1);
+    const cff = at(build(s)).verticalOrigin(1, *ws);
     assert(cff.hasValue && !cff.value.present && cff.value.source == VerticalOriginSource.none);
     s.glyf = true;
     s.vmtx = null;
-    assert(!at(build(s)).verticalOrigin(1).value.present);
+    assert(!at(build(s)).verticalOrigin(1, *ws).value.present);
 }
 
 @("vertical.verticalOrigin.vvar")
 @safe pure nothrow
 unittest
 {
+    auto ws = makeUnique!PointWorkspace();
     auto s = standard();
     s.vorg = vorgTable(880, [[1, 900]]);
     // Origin map: glyph g → item g of [0, 30, -50, 0].
     s.vvar = vvarTable(store([0, 30, -50, 0]), null, deltaSetIndexMap([[0, 0], [0, 1], [0, 2], [0, 3]], 4, 1));
-    const rec = at(build(s), one).verticalOrigin(1).value;
+    const rec = at(build(s), one).verticalOrigin(1, *ws).value;
     assert(rec.source == VerticalOriginSource.vorgRecord && rec.varied && rec.y.design == du(930));
-    const def = at(build(s), one / 2).verticalOrigin(2).value;
+    const def = at(build(s), one / 2).verticalOrigin(2, *ws).value;
     assert(def.source == VerticalOriginSource.vorgDefault && def.y.design == du(855));
     // FTM14: at the default nothing is read.
-    const flat = at(build(s)).verticalOrigin(1).value;
+    const flat = at(build(s)).verticalOrigin(1, *ws).value;
     assert(!flat.varied && flat.y.design == du(900));
     // A VVAR without an origin map adds nothing; nor does a missing VVAR.
     s.vvar = vvarTable(store([0, 30]));
-    const noMap = at(build(s), one).verticalOrigin(1).value;
+    const noMap = at(build(s), one).verticalOrigin(1, *ws).value;
     assert(!noMap.varied && noMap.y.design == du(900));
     s.vvar = null;
-    assert(at(build(s), one).verticalOrigin(1).value.y.design == du(900));
+    assert(at(build(s), one).verticalOrigin(1, *ws).value.y.design == du(900));
     // An unreadable VVAR is its error.
     s.vvar = vvarTable(store([0]), null, null, 3);
-    assert(at(build(s), one).verticalOrigin(1).error.kind == FontErrorKind.unsupportedVersion);
+    assert(at(build(s), one).verticalOrigin(1, *ws).error.kind == FontErrorKind.unsupportedVersion);
     s.vvar = vvarTable(null, null, deltaSetIndexMap([[0, 0]], 4, 1));
-    assert(at(build(s), one).verticalOrigin(1).error.kind == FontErrorKind.badValue);
+    assert(at(build(s), one).verticalOrigin(1, *ws).error.kind == FontErrorKind.badValue);
 }
 
 // ---------------------------------------------------------------------------
@@ -351,6 +370,7 @@ unittest
 @safe pure nothrow
 unittest
 {
+    auto ws = makeUnique!PointWorkspace();
     // Every prefix of every table: a value or an error, never an assertion.
     const fullVhea = vheaTable(4, 880, -120, 50);
     const fullVmtx = vmtxTable([[1000, 10], [900, 20], [800, 30], [700, 40]]);
@@ -382,8 +402,8 @@ unittest
                 cast(void) inst.verticalLineMetrics;
                 foreach (gid; 0 .. 5)
                 {
-                    cast(void) inst.verticalAdvance(gid);
-                    cast(void) inst.verticalOrigin(gid);
+                    cast(void) inst.verticalAdvance(gid, *ws);
+                    cast(void) inst.verticalOrigin(gid, *ws);
                 }
             }
         }
@@ -405,6 +425,7 @@ acquisition prerequisite (`testing.md`).
 @system
 unittest
 {
+    auto ws = makeUnique!PointWorkspace();
     if (fontsPath is null)
         return skipTest("SPARKLES_FONTS_PATH is unset");
     size_t faces, withVhea, withVorg, varied;
@@ -427,13 +448,16 @@ unittest
         const limit = face.numGlyphs < 300 ? face.numGlyphs : 300;
         foreach (gid; 0 .. limit)
         {
-            const a = inst.verticalAdvance(gid);
+            const a = inst.verticalAdvance(gid, *ws);
             assert(a.hasValue && a.value.present == hasVertical, entry.name);
-            const o = inst.verticalOrigin(gid);
+            const o = inst.verticalOrigin(gid, *ws);
             if (face.has(Tag("VORG")))
                 assert(o.hasValue && o.value.present, entry.name);
             else if (face.has(Tag("vmtx")) && face.has(Tag("glyf")))
-                assert(o.error.kind == FontErrorKind.unsupportedCapability, entry.name);
+                // The M3 fallback: an origin from the outline, present
+                // exactly when the glyph has points.
+                assert(o.hasValue && (o.value.present
+                    ? o.value.source == VerticalOriginSource.vmtxGlyph : true), entry.name);
             else
                 assert(o.hasValue && !o.value.present, entry.name);
         }
@@ -448,7 +472,7 @@ unittest
             continue;
         ++varied;
         foreach (gid; 0 .. limit)
-            assert(bold.verticalAdvance(gid).hasValue, entry.name);
+            assert(bold.verticalAdvance(gid, *ws).hasValue, entry.name);
     }
     assert(faces > 50 && withVhea > 0 && withVorg > 0 && varied > 0);
 }

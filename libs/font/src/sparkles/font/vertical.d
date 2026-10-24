@@ -5,13 +5,16 @@ FTV14, FTM20, FTM21).
 `vhea`, `vmtx`, `VORG` and `VVAR` views borrow the face's bytes.
 `verticalLineMetrics` reads `vhea` plus the `vasc`, `vdsc` and `vlgp` `MVAR`
 deltas; `verticalAdvance` reads `vmtx` with `FTP24`'s leniency plus the `VVAR`
-advance delta; `verticalOrigin` reads `VORG` plus the `VVAR` origin delta, and
-says which `VORG` value it used. Nothing is synthesized: without the tables a
-result is absent (FTM12), and a layout that needs a fallback chooses its own.
+advance delta, or without `VVAR` the `gvar` phantom points; `verticalOrigin`
+reads `VORG` plus the `VVAR` origin delta, or without `VORG` a `glyf` glyph's
+top phantom point, and says which it used. Nothing is synthesized: without
+the tables a result is absent (FTM12), and a layout that needs a fallback
+chooses its own.
 
 Views are built per query, each an O(1) header read; nothing is cached. At an
 instance whose coordinates are all zero, neither `VVAR` nor `MVAR` is read
-(FTM14). Nothing here allocates.
+(FTM14). Phantom points decode into a caller's `PointWorkspace`; nothing here
+allocates.
 */
 module sparkles.font.vertical;
 
@@ -20,6 +23,7 @@ import sparkles.font.errors : FontError, FontErrorKind, FontResult, fontErr, fon
 import sparkles.font.face : Face;
 import sparkles.font.instance : Instance;
 import sparkles.font.metrics : Measurement, measured, MvarAt, MvarTag;
+import sparkles.font.outlines : phantomTop, phantomVerticalAdvance, PointWorkspace;
 import sparkles.font.tables : locate, shortTable;
 import sparkles.font.units : checkedAdd, DesignValue;
 import sparkles.font.variations : DeltaSetIndexMap, ItemVariationStore, NormalizedCoords;
@@ -365,13 +369,15 @@ under FTP24's rules with `vhea`'s `numOfLongVerMetrics`, plus at nonzero
 coordinates the `VVAR` delta (FTV14).
 
 `gid ≥ numGlyphs` is `indexOutOfRange`, checked first. Without `vhea` or
-`vmtx` the advance is absent. At nonzero coordinates a face without `VVAR` is
-`unsupportedCapability` (phantom points are M3's) and an unreadable `VVAR` is
-its error, with no fallback; a negative varied advance is returned as
+`vmtx` the advance is absent. At nonzero coordinates a face without `VVAR`
+takes the span of its `gvar` phantom points (FTO5), decoded into `ws`, or
+the stored advance without `gvar`, as HarfBuzz does; an unreadable `VVAR`
+is its error, with no fallback. A negative varied advance is returned as
 computed. At the default the stored advance is returned and `VVAR` is not
-read (FTM14). Costs O(r · a).
+read (FTM14). Costs O(r · a), or `phantomVerticalAdvance`'s on the phantom
+path.
 */
-FontResult!VerticalAdvance verticalAdvance(in Instance inst, uint gid)
+FontResult!VerticalAdvance verticalAdvance(in Instance inst, uint gid, scope ref PointWorkspace ws)
 {
     const face = inst.face;
     if (gid >= face.numGlyphs)
@@ -389,9 +395,22 @@ FontResult!VerticalAdvance verticalAdvance(in Instance inst, uint gid)
     if (!inst.allZero)
     {
         const v = vvar(face, inst.axisCount);
+        if (v.hasError && v.error.kind != FontErrorKind.missingTable)
+            return fontErr!VerticalAdvance(v.error);
         if (v.hasError)
-            return fontErr!VerticalAdvance(v.error.kind == FontErrorKind.missingTable
-                ? FontError(FontErrorKind.unsupportedCapability, Tag("VVAR")) : v.error);
+        {
+            // No VVAR: the gvar phantom points, as for `advance` (FTO5).
+            if (face.has(Tag("gvar")) && face.has(Tag("glyf")))
+            {
+                const p = phantomVerticalAdvance(inst, gid, ws);
+                if (p.hasError)
+                    return fontErr!VerticalAdvance(p.error);
+                value = p.value;
+            }
+            r.present = true;
+            r.advance = measured(inst, value);
+            return fontOk(r);
+        }
         const d = v.value.advanceDelta(gid, inst.coords, inst.unitsPerEm);
         if (d.hasError)
             return fontErr!VerticalAdvance(d.error);
@@ -414,6 +433,11 @@ enum VerticalOriginSource : ubyte
     vorgRecord,
     /// `VORG.defaultVertOriginY`, as the glyph has no record.
     vorgDefault,
+    /**
+    No `VORG`: the glyph's top phantom point (FTO5), its stored `yMax` plus
+    the `vmtx` top side bearing, moved by `gvar`.
+    */
+    vmtxGlyph,
 }
 
 /**
@@ -442,16 +466,17 @@ $(UL
         an origin map adds nothing; an unreadable one is its error.)
     $(LI `VORG` of another version: `unsupportedVersion`; a truncated one
         `truncated`.)
-    $(LI No `VORG`, with `vmtx` and `glyf`: the origin is the top side bearing
-        plus the glyph's `yMax`, which needs M3; until then
-        `unsupportedCapability`.)
+    $(LI No `VORG`, with `vmtx` and `glyf`: the glyph's top phantom point
+        (FTO5), decoded into `ws` — the stored `yMax` (0 for a glyph without
+        points) plus the top side bearing, moved by `gvar` at the instance —
+        reported with source `vmtxGlyph`. This is HarfBuzz's origin.)
     $(LI Otherwise absent: nothing is synthesized.)
 )
 
 `gid ≥ numGlyphs` is `indexOutOfRange`, checked first. Costs
-O(log n + r · a).
+O(log n + r · a), or `phantomTop`'s on the phantom row.
 */
-FontResult!VerticalOrigin verticalOrigin(in Instance inst, uint gid)
+FontResult!VerticalOrigin verticalOrigin(in Instance inst, uint gid, scope ref PointWorkspace ws)
 {
     const face = inst.face;
     if (gid >= face.numGlyphs)
@@ -463,7 +488,22 @@ FontResult!VerticalOrigin verticalOrigin(in Instance inst, uint gid)
         if (o.error.kind != FontErrorKind.missingTable)
             return fontErr!VerticalOrigin(o.error);
         if (face.has(Tag("vmtx")) && face.has(Tag("glyf")))
-            return fontErr!VerticalOrigin(FontError(FontErrorKind.unsupportedCapability, Tag("VORG")));
+        {
+            // FTM21: the top phantom point, whose stored place reads the
+            // glyph's vmtx entry.
+            auto vm = vmtx(face);
+            if (vm.hasError)
+                return fontErr!VerticalOrigin(vm.error);
+            const metric = vm.value.metric(gid);
+            if (metric.hasError)
+                return fontErr!VerticalOrigin(metric.error);
+            const top = phantomTop(inst, gid, ws);
+            if (top.hasError)
+                return fontErr!VerticalOrigin(top.error);
+            r.source = VerticalOriginSource.vmtxGlyph;
+            r.y = measured(inst, top.value);
+            return fontOk(r);
+        }
         return fontOk(r);
     }
     const stored = o.value.originY(gid);
