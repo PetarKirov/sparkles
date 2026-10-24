@@ -105,3 +105,11 @@ dub.sdl(1:9): Cannot parse SDL: scalar family is disabled by this SDL profile
 written recipe still contains them, in their original positions.
 `WireSkip.whenDefault` keeps `optional=false` out of the output, as a hand-written
 recipe would.
+
+## In this repository
+
+Do not declare your own recipe types: the
+`sparkles.build_primitives.dub_manifest` module (in `sparkles:build-primitives`)
+is the shared schema, with `DubManifest`, its configurations and build types,
+and `readDubManifest`, which also reads the recipe a single-file package
+embeds.
