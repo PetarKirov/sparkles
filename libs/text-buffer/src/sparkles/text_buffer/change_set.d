@@ -76,6 +76,24 @@ struct ChangeSet
     private size_t source;
     private size_t result;
 
+    /// Copying shares the sections and the inserted text.
+    this(ref scope const ChangeSet other) @safe pure nothrow @nogc
+    {
+        sections = other.sections;
+        inserts = other.inserts;
+        source = other.source;
+        result = other.result;
+    }
+
+    /// ditto
+    this(ref scope const ChangeSet other) const @safe pure nothrow @nogc
+    {
+        sections = other.sections;
+        inserts = other.inserts;
+        source = other.source;
+        result = other.result;
+    }
+
     /// The identity change set on texts of `length` bytes.
     static ChangeSet identity(size_t length) @safe pure nothrow @nogc
     {
