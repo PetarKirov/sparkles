@@ -1,6 +1,7 @@
 #!/usr/bin/env dub
 /+ dub.sdl:
     name "compare_app_builds"
+    dependency "sparkles:build-primitives" path="../../.."
     targetPath "build"
     buildType "checked" {
         buildOptions "optimize" "inline" "debugInfo"
@@ -11,15 +12,17 @@ module compare_app_builds;
 
 import std.algorithm : any, sort;
 import std.array : array;
-import std.conv : to;
+import std.conv : text, to;
 import std.file : exists, mkdirRecurse, readText, write;
 import std.json : JSONOptions, JSONValue, parseJSON;
 import std.format : format;
 import std.path : absolutePath, buildPath;
 import std.process : Config, execute;
-import std.regex : matchAll;
 import std.stdio : writeln;
 import std.string : lineSplitter;
+
+import sparkles.base.text.readers : readUntil, tryConsume;
+import sparkles.build_primitives.dub_manifest : parseDubManifest;
 
 private double median(double[] values) @safe
 {
@@ -84,8 +87,16 @@ private int summarize(string output, string evidencePath = null) @system
 
 private string[] applications(string manifest) @safe
 {
+    const parsed = parseDubManifest(manifest);
+    assert(parsed.hasValue, parsed.error.text);
     string[] result;
-    foreach (m; manifest.matchAll(`(?m)^subPackage "apps/([^"/]+)"`)) result ~= m[1];
+    foreach (sub; parsed.value.subPackages)
+    {
+        // `apps/<name>`, not a fixture nested deeper.
+        const(char)[] rest = sub.path;
+        if (tryConsume(rest, "apps/") && readUntil(rest, "/").length && !rest.length)
+            result ~= sub.path["apps/".length .. $];
+    }
     return result.sort.array;
 }
 
