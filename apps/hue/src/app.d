@@ -155,7 +155,11 @@ int executeView(in HueCli root, in View view)
 
     bool forceTwoslash;
     string rawTarget = view.paths.length ? view.paths[0] : "";
-    if (rawTarget.length == 0 && backend.interactionTier >= InteractionTier.interactive)
+    // Android has no directory to browse by default: the process runs in `/`,
+    // and `runGuiSink` roots the explorer at the extracted sample docs only
+    // when no target names one (`AND8`).
+    version (Android) {}
+    else if (rawTarget.length == 0 && backend.interactionTier >= InteractionTier.interactive)
         rawTarget = ".";
 
     string coverageArtifact;
