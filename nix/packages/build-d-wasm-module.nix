@@ -1,21 +1,22 @@
 # Shared builder for the single-module wasm32-wasip1 artifacts behind the
 # interactive docs widgets (`text-wasm`, `table-wasm`). Compiles one entry
-# module with dlang.nix's `ldc-wasm` toolchain (the LDC WASI fork), shrinks
-# the result with `wasm-opt`, and guarantees a closure-free output: druntime/
-# phobos assert messages bake `__FILE__` strings pointing into the toolchain's
-# store path into the binary (LDC has no -ffile-prefix-map), so all store-path
-# references are zeroed with `nuke-refs` — targeted scrubbing is fragile here,
-# as the leaked path is the *unwrapped* inner ldc, not `ldc-wasm` itself — and
+# module with dlang.nix's `ldc-sparkles` (the project's LDC, `pkgs.ldc`, plus
+# its `wasm32-wasip1` runtime and wasi-sdk sysroot), shrinks the result with `wasm-opt`,
+# and guarantees a closure-free output: druntime/phobos assert messages bake
+# `__FILE__` strings pointing into the toolchain's store path into the binary
+# (LDC has no -ffile-prefix-map), so all store-path references are zeroed with
+# `nuke-refs` — targeted scrubbing is fragile here, as the leaked path is the
+# *unwrapped* inner ldc, not the wrapper — and
 # `allowedReferences = [ ]` enforces that the installed .wasm references
 # nothing at all.
 #
 # Exposed as `legacyPackages.buildDWasmModule` (flake-parts' escape hatch for
 # non-derivation values — see `d-toolchain` for precedent); internal consumers
 # call it via `config.legacyPackages.buildDWasmModule`.
-{ inputs, lib, ... }:
+{ lib, ... }:
 {
   perSystem =
-    { system, pkgs, ... }:
+    { inputs', pkgs, ... }:
     {
       legacyPackages.buildDWasmModule =
         {
@@ -46,7 +47,6 @@
           dubImports ? [ ],
         }:
         let
-          ldcWasm = inputs.dlang-nix.packages.${system}.ldc-wasm;
           fs = lib.fileset;
           root = ../..;
 
@@ -62,7 +62,7 @@
           inherit pname version src;
 
           nativeBuildInputs = [
-            ldcWasm
+            inputs'.dlang-nix.packages.ldc-sparkles
             pkgs.binaryen
             pkgs.nukeReferences
           ]

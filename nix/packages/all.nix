@@ -41,18 +41,12 @@
           # aggregate or it never reaches the binary cache, and every runner
           # rebuilds it from source.
           devshell-ci = config.devShells.ci;
-        }
-        # The wasm toolchain (dlang.nix's `ldc-wasm`: the LDC fork, its LLVM
-        # binutils, the wasi cross stdenv and `wasm-component-ld`). It is only
-        # a *build-time* dependency of `table-wasm`/`text-wasm`, so it is in no
-        # output's runtime closure, the `latest-<system>` release pins never
-        # retained it, and Cachix evicted it — after which every job that
-        # built a wasm module spent its whole time budget recompiling LDC and
-        # timed out. As an aggregate member it is pushed by every nix-build
-        # run and pinned with each release. Linux only: that is where
-        # dlang.nix defines it.
-        // lib.optionalAttrs (inputs'.dlang-nix.packages ? ldc-wasm) {
-          ldc-wasm-toolchain = inputs'.dlang-nix.packages.ldc-wasm;
+
+          # `pkgs.ldc` plus its WASI runtime and wasi-sdk sysroot. Only a
+          # *build-time* dependency of `table-wasm`/`text-wasm`, so no output's
+          # runtime closure keeps it; without this pin Cachix evicts it and
+          # every wasm build rebuilds the runtime.
+          ldc-sparkles = inputs'.dlang-nix.packages.ldc-sparkles;
         }
         // builtins.removeAttrs config.packages (
           [ "all-desktop" ] ++ androidNames ++ exclusions.excludedCiPackages

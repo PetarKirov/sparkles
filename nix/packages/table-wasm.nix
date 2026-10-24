@@ -11,7 +11,8 @@
 # can run the druntime initialization the GC needs. The base buffer's text
 # writers also require the dependency-free `sparkles:reflection` sources.
 #
-# x86_64-linux only (that is where the `ldc-wasm` toolchain is provided). The
+# x86_64-linux only, for now: the docs build there, and the WASI runtime of
+# dlang.nix's `ldc-sparkles` is verified there. The
 # result is copied to docs/public/spk-table.wasm (see the docs page).
 { inputs, lib, ... }:
 {

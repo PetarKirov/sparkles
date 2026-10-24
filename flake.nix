@@ -25,26 +25,18 @@
     systems.url = "github:nix-systems/triplet";
 
     dlang-nix = {
-      # feat/ldc-wasm: extends feat/ldc-android (the `ldc-android` aarch64 cross-
-      # compiler used by `devShells.android`) with the `ldc-wasm` wasm32-wasip2
-      # toolchain consumed by `packages.text-wasm`. Revert toward the default
-      # branch once these land upstream.
-      # `fix/wasm-component-ld-static-crates` is `feat/ldc-wasm` plus one
-      # commit: the WASI linker vendors its crates with `fetchCargoVendor`.
-      # crates.io answers 403 to Nix's `curl/…` user agent on the `/api/v1`
-      # download route that `importCargoLock` uses at dlang.nix's nixpkgs, so
-      # an uncached build of `wasm-component-ld` — and with it every wasm
-      # module here — failed in CI. Fold back into `feat/ldc-wasm` upstream.
-      # `feat/ldc-vulkan` is that plus `ldc-vulkan`: LDC with dcompute's
-      # Vulkan target and the `@fragment` shader stage
-      # (PetarKirov/ldc `sparkles/vulkan-shaders`, over ldc-developers/ldc#5132)
-      # against LLVM main with llvm/llvm-project#216919, which
-      # `nix/packages/shader-compile.nix` wraps. Fold back once both upstream
-      # PRs and the fork's shader-stage commits land.
-      # `feat/ldc-android-darwin` is that plus `ldc-vulkan` and `ldc-android`
-      # on macOS hosts (nix/packages/android/host.nix) and unstripped Android
-      # runtimes.
-      url = "github:PetarKirov/dlang.nix/feat/ldc-android-darwin";
+      # feat/ldc-sparkles: `ldc-sparkles`, the project's one LDC — the
+      # PetarKirov/ldc `sparkles/main` fork (LDC master, dcompute's Vulkan
+      # target from ldc-developers/ldc#5132 and its shader stages) against
+      # LLVM main with llvm/llvm-project#216919 (`llvm-spirv-vulkan`, with
+      # clang and lld), plus a `wasm32-wasip1` druntime/Phobos over wasi-sdk's
+      # sysroot. It is `pkgs.ldc` (nix/d-toolchain.nix), `ldc2-vulkan`
+      # (nix/packages/shader-compile.nix) and the wasm modules' compiler.
+      # It extends feat/ldc-android-darwin: `ldc-android` (the aarch64 cross-
+      # compiler of `devShells.android`) on Linux and macOS hosts, and
+      # unstripped Android runtimes. Fold back once the upstream PRs and the
+      # fork's commits land.
+      url = "github:PetarKirov/dlang.nix/feat/ldc-sparkles";
       inputs = {
         flake-compat.follows = "flake-compat";
         flake-parts.follows = "flake-parts";

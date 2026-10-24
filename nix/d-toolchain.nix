@@ -34,34 +34,24 @@
               inherit (prev.stdenv.hostPlatform) isDarwin;
               hostCpu = prev.stdenv.hostPlatform.parsed.cpu.name;
 
-              rawLdc = inputs'.dlang-nix.packages.ldc-1_42_0;
+              # dlang.nix's `ldc-vulkan`: the PetarKirov/ldc fork that also
+              # compiles the shaders (dcompute's Vulkan target) and, as
+              # `ldc-sparkles`, the wasm modules (nix/packages/build-d-wasm-module.nix).
+              # One compiler and one LLVM for the host, the shaders and WASI.
+              # The WASI runtime and sysroot stay out of this package's closure:
+              # only the wasm builds need them.
+              rawLdc = inputs'.dlang-nix.packages.ldc-vulkan;
 
-              cleanLdcConfig = prev.writeText "ldc2.conf" ''
-                default:
-                {
-                    switches = [
-                        "-defaultlib=phobos2-ldc,druntime-ldc",
-                    ];
-                    post-switches = [
-                        "-I=${rawLdc}/include/d",
-                    ];
-                    lib-dirs = [
-                        "${rawLdc}/lib",
-                    ];
-                    rpath = "${rawLdc}/lib";
-                };
-
-                "^wasm(32|64)-":
-                {
-                    switches = [
-                        "-defaultlib=",
-                        "-L-z", "-Lstack-size=1048576",
-                        "-L--stack-first",
-                        "-link-internally",
-                        "-L--export-dynamic",
-                    ];
-                    lib-dirs = [];
-                };
+              # The compiler's own `ldc2.conf/` drop-ins without dlang.nix's
+              # `50-nix.conf`: its `-link-defaultlib-shared` breaks standalone
+              # binaries once `buildDubPackage` scrubs compiler references. What
+              # remains links druntime/Phobos statically, and keeps upstream's
+              # wasm sections (bare `wasm32-unknown-unknown` for `--wasm` tests).
+              cleanLdcConfig = prev.runCommand "ldc2.conf" { } ''
+                mkdir $out
+                for f in ${rawLdc}/etc/ldc2.conf/*; do
+                  [ "$(basename "$f")" = 50-nix.conf ] || cp -L "$f" $out/
+                done
               '';
 
               # LDC still needs host ELF links pointed at stdenv's glibc dynamic

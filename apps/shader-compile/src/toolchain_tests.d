@@ -258,17 +258,27 @@ dflags "-mdcompute-targets=vulkan-999"`);
 {
     if (const tool = missingTool())
         return skipTest("the device toolchain is not on PATH (" ~ tool ~ ")");
-    if (!environment.get("PATH", "").split(pathSeparator)
-            .canFind!(dir => dir.length && dir.buildPath("ldc2").exists))
-        return skipTest("no stock `ldc2` on PATH to stand in for a wrong compiler");
 
     // An LDC without the Vulkan target or the fragment stage is a toolchain
     // problem (3), not a broken shader (1) — `SHP10` — told by what it cannot
-    // compile, not by what it says about the unit.
+    // compile, not by what it says about the unit. The `ldc2` on `PATH` is the
+    // fork too, so a stand-in rejects the fork's options, as stock LDC does.
     auto f = Fixture.create("stock");
-    const stock = f.run("--ldc=ldc2");
-    assert(stock.status == 3 && stock.diagnostics.canFind("cannot compile a `@fragment` shader"),
-        stock.diagnostics);
+    const stock = f.root.buildPath("ldc-stock");
+    stock.write(`#!/bin/sh
+for a in "$@"; do
+    case "$a" in
+    -mdcompute-manifest=*|-mdcompute-profile=*)
+        echo "ldc2: Unknown command line argument '$a'." >&2
+        exit 1;;
+    esac
+done
+exec ldc2-vulkan "$@"
+`);
+    stock.setAttributes(octal!755);
+    const r = f.run("--ldc=" ~ stock);
+    assert(r.status == 3 && r.diagnostics.canFind("cannot compile a `@fragment` shader"),
+        r.diagnostics);
 }
 
 /// Runs a good build, breaks the input with `breakIt`, and runs again with

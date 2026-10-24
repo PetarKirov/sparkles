@@ -55,8 +55,9 @@ jobs:
 
       # `yarn docs:build` first runs `build:wasm`, which invokes
       # `nix build .#table-wasm` to compile the drawTable playground module.
-      # Install Nix and wire up the binary cache so the ldc-wasm toolchain is
-      # pulled from the cache rather than built from source.
+      # Install Nix and wire up the binary cache so the toolchain (the
+      # project's LDC and its WASI runtime) is pulled from the cache rather
+      # than built from source.
       - name: Setup Nix
         uses: ./.github/actions/setup-nix
         with:

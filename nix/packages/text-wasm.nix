@@ -7,7 +7,8 @@
 # exported width/segmentation path does not allocate. Supply its source through
 # the shared builder's import-only dependency mechanism, not a runtime library.
 #
-# x86_64-linux only (that is where the `ldc-wasm` toolchain is provided). The
+# x86_64-linux only, for now: the docs build there, and the WASI runtime of
+# dlang.nix's `ldc-sparkles` is verified there. The
 # result is copied to docs/public/spk-text.wasm (see the docs page).
 { inputs, lib, ... }:
 {

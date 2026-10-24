@@ -39,7 +39,7 @@ one more with a stock LDC:
 > so any module (transitively) importing e.g. `core.time` fails to compile.
 > Because the module is compiled in by default, this bites sooner here than
 > under `--better-c`. Keep `@wasm` tests in modules with wasm-clean imports,
-> mark them `@wasm(selfContained: true)` to keep the module out entirely, or
-> point `--compiler` at a wasm-enabled LDC build with full druntime/Phobos
-> ported (e.g. the `dlang.nix` `ldc-wasm` toolchain), which lifts the
-> restriction.
+> or mark them `@wasm(selfContained: true)` to keep the module out entirely.
+> The mode always targets bare `wasm32-unknown-unknown` with `-betterC`, so
+> the restriction holds with any LDC, including the project's, whose
+> `wasm32-wasip1` runtime it does not use.
