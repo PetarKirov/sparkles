@@ -237,6 +237,7 @@
         ./nix/packages/dub-builder
         ./nix/packages/fonts.nix
         ./nix/packages/font-test-corpus.nix
+        ./nix/packages/font-unfree-corpus.nix
         ./nix/packages/harfbuzz.nix
         ./nix/packages/freebsd-vm.nix
         ./nix/packages/hue.nix

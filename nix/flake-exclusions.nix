@@ -23,5 +23,7 @@ in
     "run-wired-bench"
     # The FreeBSD image (~700 MiB), fetched only when the VM is wanted.
     "freebsd-vm"
+    # Unfree fonts whose licence forbids redistributing them (nix/packages/font-unfree-corpus.nix).
+    "sparkles-font-unfree-corpus"
   ];
 }
