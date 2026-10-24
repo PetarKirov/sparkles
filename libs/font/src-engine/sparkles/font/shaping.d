@@ -41,6 +41,7 @@ import sparkles.font.harfbuzz;
 import sparkles.font.instance : Instance, InstanceSize;
 import sparkles.font.metrics : advance, Measurement;
 import sparkles.font.outlines : PointWorkspace;
+import sparkles.font.vertical : verticalAdvance, verticalOrigin;
 
 import sparkles.base.unique : makeUnique, Unique;
 import std.experimental.allocator.mallocator : Mallocator;
@@ -194,7 +195,7 @@ struct Shaper
         }();
 
         // The one allocation of the library's side, made here at setup:
-        // the advance callback decodes phantom points into its workspace.
+        // the advance callbacks decode phantom points into its workspace.
         advances_ = makeUnique!(AdvanceState, Mallocator, false)();
         if (advances_.empty)
         {
@@ -202,14 +203,19 @@ struct Shaper
             return;
         }
         // The state lives as long as the shaper, which cannot outlive `inst`.
-        () @trusted { advances_.get.instance = inst; }();
+        () @trusted {
+            advances_.get.instance = inst;
+            advances_.get.parent = parent_;
+        }();
         fontFuncs_ = () @trusted { return hb_font_funcs_create(); }();
         () @trusted {
             hb_font_funcs_set_glyph_h_advance_func(fontFuncs_, &advanceThunk, null, null);
+            hb_font_funcs_set_glyph_v_advance_func(fontFuncs_, &verticalAdvanceThunk, null, null);
+            hb_font_funcs_set_glyph_v_origin_func(fontFuncs_, &verticalOriginThunk, null, null);
             hb_font_funcs_make_immutable(fontFuncs_);
         }();
         // The sub-font inherits the scale and coordinates and defers every
-        // function but the horizontal advance to HarfBuzz's own.
+        // function but the advances and the vertical origin to HarfBuzz's own.
         font_ = () @trusted { return hb_font_create_sub_font(parent_); }();
         () @trusted { hb_font_set_funcs(font_, fontFuncs_, advances_.ptr, null); }();
 
@@ -458,6 +464,127 @@ FontResult!ShapeInfo measureJustificationCandidate(scope ref Shaper shaper,
     if (mode != JustificationMode.featureSettings)
         return fontErr!ShapeInfo(FontError(FontErrorKind.unsupportedCapability));
     return shaper.shape(request, glyphs, spans, boundaries, languageOut);
+}
+
+// ---------------------------------------------------------------------------
+// Advances (FTS1)
+// ---------------------------------------------------------------------------
+
+/// HarfBuzz positions per font unit: the font's scale is `unitsPerEm` times this.
+private enum int positionsPerUnit = 1_024;
+/// `DesignValue.raw` steps per HarfBuzz position.
+private enum long rawPerPosition = designSubunits / positionsPerUnit;
+
+/**
+What the advance and origin callbacks read: the instance, the HarfBuzz
+font they defer to where the face defines no vertical metrics, the
+workspace phantom points decode into, and the first error a callback
+gave, which `shape` returns in place of the run.
+*/
+private struct AdvanceState
+{
+    Instance instance;
+    hb_font_t* parent;
+    FontError error;
+    PointWorkspace points;
+}
+
+/// Records `error` unless an earlier one is kept.
+private void keepFirst(AdvanceState* state, FontError error) @system nothrow @nogc
+{
+    if (state.error == FontError.init)
+        state.error = error;
+}
+
+/// `raw` design steps as HarfBuzz positions, or `arithmeticExhausted` past `int`.
+private bool toPosition(long raw, out hb_position_t position) @safe pure nothrow @nogc
+{
+    const p = toPositions(raw);
+    if (p < -int.max || p > int.max)
+        return false;
+    position = cast(hb_position_t) p;
+    return true;
+}
+
+/// `raw` design steps rounded to the nearest HarfBuzz position, ties away from zero.
+private long toPositions(long raw) @safe pure nothrow @nogc
+    => raw >= 0 ? (raw + rawPerPosition / 2) / rawPerPosition : -((-raw + rawPerPosition / 2) / rawPerPosition);
+
+private extern (C) hb_position_t advanceThunk(hb_font_t*, void* fontData, hb_codepoint_t glyph, void*)
+    @system nothrow @nogc
+{
+    auto state = cast(AdvanceState*) fontData;
+    const a = advance(state.instance, glyph, state.points);
+    if (a.hasError)
+    {
+        keepFirst(state, a.error);
+        return 0;
+    }
+    hb_position_t p;
+    if (!toPosition(a.value.design.raw, p))
+        keepFirst(state, FontError(FontErrorKind.arithmeticExhausted));
+    return p;
+}
+
+/**
+The vertical advance (FTM20), negated as HarfBuzz's y grows up. A face
+without `vhea` and `vmtx` has none, and HarfBuzz's synthesized advance —
+its line height — stands in: the engine's fallback, not the font's.
+*/
+private extern (C) hb_position_t verticalAdvanceThunk(hb_font_t*, void* fontData,
+    hb_codepoint_t glyph, void*) @system nothrow @nogc
+{
+    auto state = cast(AdvanceState*) fontData;
+    const a = verticalAdvance(state.instance, glyph, state.points);
+    if (a.hasError)
+    {
+        keepFirst(state, a.error);
+        return 0;
+    }
+    if (!a.value.present)
+        return hb_font_get_glyph_v_advance(state.parent, glyph);
+    hb_position_t p;
+    if (!toPosition(a.value.advance.design.raw, p))
+        keepFirst(state, FontError(FontErrorKind.arithmeticExhausted));
+    return -p;
+}
+
+/**
+The vertical origin (FTM21): x is half the horizontal advance, truncated
+as HarfBuzz halves it; y is the library's origin. A face with neither
+`VORG` nor `vmtx` with `glyf` has none, and HarfBuzz's synthesized y — the
+glyph centred on the line — stands in: the engine's fallback.
+*/
+private extern (C) hb_bool_t verticalOriginThunk(hb_font_t*, void* fontData, hb_codepoint_t glyph,
+    hb_position_t* x, hb_position_t* y, void*) @system nothrow @nogc
+{
+    auto state = cast(AdvanceState*) fontData;
+    *x = *y = 0;
+    const h = advance(state.instance, glyph, state.points);
+    if (h.hasError)
+    {
+        keepFirst(state, h.error);
+        return true;
+    }
+    hb_position_t half;
+    if (!toPosition(h.value.design.raw, half))
+        keepFirst(state, FontError(FontErrorKind.arithmeticExhausted));
+    *x = half / 2;
+    const o = verticalOrigin(state.instance, glyph, state.points);
+    if (o.hasError)
+    {
+        keepFirst(state, o.error);
+        return true;
+    }
+    if (!o.value.present)
+    {
+        hb_position_t ignored;
+        hb_font_get_glyph_v_origin(state.parent, glyph, &ignored, y);
+        return true;
+    }
+    if (!toPosition(o.value.y.design.raw, *y))
+        keepFirst(state, FontError(FontErrorKind.arithmeticExhausted));
+    return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -737,52 +864,6 @@ private extern (C) @system nothrow @nogc
         *b = parts[1];
         return 1;
     }
-}
-
-// ---------------------------------------------------------------------------
-// Advances (FTS1)
-// ---------------------------------------------------------------------------
-
-/// HarfBuzz positions per font unit: the font's scale is `unitsPerEm` times this.
-private enum int positionsPerUnit = 1_024;
-/// `DesignValue.raw` steps per HarfBuzz position.
-private enum long rawPerPosition = designSubunits / positionsPerUnit;
-
-/**
-What the advance callback reads: the instance, the workspace phantom
-points decode into, and the first error an advance gave, which `shape`
-returns in place of the run.
-*/
-private struct AdvanceState
-{
-    Instance instance;
-    FontError error;
-    PointWorkspace points;
-}
-
-/// `raw` design steps rounded to the nearest HarfBuzz position, ties away from zero.
-private long toPositions(long raw)
-    => raw >= 0 ? (raw + rawPerPosition / 2) / rawPerPosition : -((-raw + rawPerPosition / 2) / rawPerPosition);
-
-private extern (C) hb_position_t advanceThunk(hb_font_t*, void* fontData, hb_codepoint_t glyph, void*)
-    @system nothrow @nogc
-{
-    auto state = cast(AdvanceState*) fontData;
-    const a = advance(state.instance, glyph, state.points);
-    if (a.hasError)
-    {
-        if (state.error == FontError.init)
-            state.error = a.error;
-        return 0;
-    }
-    const p = toPositions(a.value.design.raw);
-    if (p < int.min || p > int.max)
-    {
-        if (state.error == FontError.init)
-            state.error = FontError(FontErrorKind.arithmeticExhausted);
-        return 0;
-    }
-    return cast(hb_position_t) p;
 }
 
 // ---------------------------------------------------------------------------

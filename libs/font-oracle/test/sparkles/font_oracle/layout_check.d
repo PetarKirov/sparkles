@@ -158,7 +158,9 @@ unittest
             "hb_font_create", "hb_font_create_sub_font", "hb_font_destroy", "hb_font_set_scale",
             "hb_font_set_var_coords_normalized", "hb_font_set_funcs", "hb_font_funcs_create",
             "hb_font_funcs_destroy", "hb_font_funcs_make_immutable",
-            "hb_font_funcs_set_glyph_h_advance_func", "hb_buffer_create", "hb_buffer_destroy",
+            "hb_font_funcs_set_glyph_h_advance_func", "hb_font_funcs_set_glyph_v_advance_func",
+            "hb_font_funcs_set_glyph_v_origin_func", "hb_font_get_glyph_v_advance",
+            "hb_font_get_glyph_v_origin", "hb_buffer_create", "hb_buffer_destroy",
             "hb_buffer_add", "hb_buffer_add_codepoints", "hb_buffer_allocation_successful",
             "hb_buffer_set_cluster_level", "hb_buffer_set_flags", "hb_buffer_set_direction",
             "hb_buffer_set_script", "hb_buffer_set_language", "hb_buffer_get_direction",
@@ -177,6 +179,10 @@ unittest
 
     static assert(sameShape!(hbdecl.hb_font_get_glyph_h_advance_func_t,
         Parameters!hb_font_funcs_set_glyph_h_advance_func[1]));
+    static assert(sameShape!(hbdecl.hb_font_get_glyph_v_advance_func_t,
+        Parameters!hb_font_funcs_set_glyph_v_advance_func[1]));
+    static assert(sameShape!(hbdecl.hb_font_get_glyph_v_origin_func_t,
+        Parameters!hb_font_funcs_set_glyph_v_origin_func[1]));
     static assert(sameShape!(hbdecl.hb_unicode_decompose_func_t,
         Parameters!hb_unicode_funcs_set_decompose_func[1]));
     static assert(sameShape!(hbdecl.hb_unicode_compose_func_t,

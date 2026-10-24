@@ -149,6 +149,12 @@ alias hb_destroy_func_t = extern (C) void function(void*) nothrow @nogc;
 /// `hb_font_get_glyph_h_advance_func_t`.
 alias hb_font_get_glyph_h_advance_func_t = extern (C) hb_position_t function(hb_font_t* font,
     void* fontData, hb_codepoint_t glyph, void* userData) nothrow @nogc;
+/// `hb_font_get_glyph_v_advance_func_t`, the same shape.
+alias hb_font_get_glyph_v_advance_func_t = hb_font_get_glyph_h_advance_func_t;
+/// `hb_font_get_glyph_v_origin_func_t`.
+alias hb_font_get_glyph_v_origin_func_t = extern (C) hb_bool_t function(hb_font_t* font,
+    void* fontData, hb_codepoint_t glyph, hb_position_t* x, hb_position_t* y,
+    void* userData) nothrow @nogc;
 /// `hb_unicode_general_category_func_t`.
 alias hb_unicode_general_category_func_t = extern (C) hb_unicode_general_category_t function(
     hb_unicode_funcs_t*, hb_codepoint_t, void*) nothrow @nogc;
@@ -190,6 +196,14 @@ extern (C) @system nothrow @nogc
     void hb_font_funcs_make_immutable(hb_font_funcs_t* ffuncs);
     void hb_font_funcs_set_glyph_h_advance_func(hb_font_funcs_t* ffuncs,
         hb_font_get_glyph_h_advance_func_t func, void* userData, hb_destroy_func_t destroy);
+    void hb_font_funcs_set_glyph_v_advance_func(hb_font_funcs_t* ffuncs,
+        hb_font_get_glyph_v_advance_func_t func, void* userData, hb_destroy_func_t destroy);
+    void hb_font_funcs_set_glyph_v_origin_func(hb_font_funcs_t* ffuncs,
+        hb_font_get_glyph_v_origin_func_t func, void* userData, hb_destroy_func_t destroy);
+    // The vertical metrics a face without `vmtx` or `VORG` takes from HarfBuzz.
+    hb_position_t hb_font_get_glyph_v_advance(hb_font_t* font, hb_codepoint_t glyph);
+    hb_bool_t hb_font_get_glyph_v_origin(hb_font_t* font, hb_codepoint_t glyph,
+        hb_position_t* x, hb_position_t* y);
 
     // Buffers and shaping.
     hb_buffer_t* hb_buffer_create();
