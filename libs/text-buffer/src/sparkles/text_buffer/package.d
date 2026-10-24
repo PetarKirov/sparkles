@@ -8,3 +8,4 @@ module sparkles.text_buffer;
 
 public import sparkles.text_buffer.summary;
 public import sparkles.text_buffer.text;
+public import sparkles.text_buffer.change_set;
