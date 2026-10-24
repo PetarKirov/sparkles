@@ -689,7 +689,10 @@ SdlExpected!void writeSdlDocument(Document, Writer)(
         return sdlOk();
     }
 
-    const root = document.root;
+    // Narrow trust: the root view borrows `document`, which the caller keeps
+    // alive past this call; dip1000 reads binding it to a local as taking the
+    // address of a `scope` parameter.
+    const root = (() @trusted => document.root)();
     auto topLevel = root.byChild;
     for (size_t position = 0; !topLevel.empty;
         topLevel.popFront(), position++)
