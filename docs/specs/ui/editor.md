@@ -335,7 +335,7 @@ never global state.
 
 **EDY1: The ring.** A `KillRing` **must** be a Regular value holding at
 most `killRingSize` entries (default 10, Readline's
-[fixed size](https://git.savannah.gnu.org/cgit/readline.git/tree/kill.c?id=f95e81428a77b37d83e56c0c7099956e8a7adfc8#n59)),
+[fixed size](https://cgit.git.savannah.gnu.org/cgit/readline.git/tree/kill.c?id=f95e81428a77b37d83e56c0c7099956e8a7adfc8#n59)),
 dropping the oldest when full. An entry holds one part per range, each part
 a [text](../text-buffer/SPEC.md#2-the-text-value) value, so a kill of any
 size is stored by sharing the killed slice of the document without copying
@@ -497,7 +497,7 @@ editor.
 
 **ED-D1: Two definitions of a word.** Readline kills with `Ctrl-W` back to
 whitespace
-([`rl_unix_word_rubout`](https://git.savannah.gnu.org/cgit/readline.git/tree/kill.c?id=f95e81428a77b37d83e56c0c7099956e8a7adfc8#n307))
+([`rl_unix_word_rubout`](https://cgit.git.savannah.gnu.org/cgit/readline.git/tree/kill.c?id=f95e81428a77b37d83e56c0c7099956e8a7adfc8#n307))
 but moves over alphanumeric words with `Alt-B`/`Alt-F`. The editor keeps
 both (EDC3), defined once in base (`TXT-SEG9`): as in a shell, `Ctrl-W`
 removes a whole path back to the previous space, while `Alt-Backspace`
@@ -584,7 +584,7 @@ pattern of `libs/diff/src/sparkles/diff/myers.d`.
 
 | Milestone | Scope                                                                                                                      | Status      | Requirements                                                                                                                             |
 | --------- | -------------------------------------------------------------------------------------------------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| E0        | Base steppers and the text buffer                                                                                          | not started | [`TXT-SEG7`–`9`](../base/text/PLAN.md), [TB0–TB3](../text-buffer/PLAN.md)                                                                |
+| E0        | Base steppers and the text buffer                                                                                          | delivered   | [`TXT-SEG7`–`9`](../base/text/PLAN.md), [TB0–TB3](../text-buffer/PLAN.md)                                                                |
 | E1        | The model, commands, kill ring, clipboard read, default keys, the view on every backend, and every existing field migrated | not started | EDT1–EDT10, EDC1–EDC11, EDK1–EDK5, EDY1–EDY5, EDI1, EDI2, EDI4, EDI5, EDR1, EDR2, EDR4, EDR5, EDU4, `INP25`, a target-aware `KBD3` check |
 | E2        | Composition, the SDL3 IME, the wsi conversion, input-method placement                                                      | not started | EDI3, EDI6, EDI7, EDI8, `INP24`, composition in EDR1                                                                                     |
 | E3        | Write-wave consumers                                                                                                       | not started | EDU1–EDU3, EDR3                                                                                                                          |
