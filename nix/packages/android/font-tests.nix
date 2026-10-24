@@ -34,5 +34,44 @@ in
         ];
         description = "sparkles:font unit tests as Android executables, per ABI";
       };
+
+      # The `engine-unittest` configuration: the shaper and its tests, linked
+      # against the pinned, patched HarfBuzz built for Android (shaping.nix),
+      # whose FreeType, PNG and zlib follow it on the static link line. Run
+      # with the bundle pushed, as SPARKLES_FONTS_PATH names it.
+      packages.font-engine-android-tests = config.legacyPackages.buildDAndroidTests {
+        pname = "font-engine-android-tests";
+        exeName = "font-engine-tests";
+        testedDirs = [
+          "libs/font/src"
+          "libs/font/src-engine"
+          "libs/font/test"
+          "libs/font/test-engine"
+        ];
+        versions = [
+          "Have_expected"
+          "Have_sparkles_base"
+          "SparklesFontEngine"
+        ];
+        dubDeps = [
+          {
+            name = "expected";
+            src = inputs.dub-expected;
+          }
+        ];
+        linkFlags =
+          t:
+          let
+            hb = config.packages.harfbuzz-android;
+            ft = config.packages.freetype-android;
+          in
+          map (lib: "-L${lib}") [
+            "${hb}/lib/${t.abi}/libharfbuzz.a"
+            "${ft}/lib/${t.abi}/libfreetype.a"
+            "${ft}/lib/${t.abi}/libpng16.a"
+            "${ft}/lib/${t.abi}/libz.a"
+          ];
+        description = "sparkles:font engine unit tests as Android executables, per ABI";
+      };
     };
 }

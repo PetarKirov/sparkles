@@ -81,6 +81,9 @@ in
         # sparkles:font's unit tests per ABI (FTA7), run by sparkles:test-runner;
         # building them keeps the library and the runner cross-compiling.
         font-android-tests = config.packages.font-android-tests;
+        # The engine configuration's tests per ABI, linked against the pinned
+        # HarfBuzz built for Android.
+        font-engine-android-tests = config.packages.font-engine-android-tests;
         # The terminal's plain-shell APK; the nix-on-droid variant is the same
         # closure with a different session.conf, built in that flake.
         terminal-apk = config.packages.terminal-apk;
@@ -99,6 +102,7 @@ in
       legacyPackages.androidPackageNames = [
         "all-android"
         "font-android-tests"
+        "font-engine-android-tests"
         "freetype-android"
         "harfbuzz-android"
         "hello-apk"
