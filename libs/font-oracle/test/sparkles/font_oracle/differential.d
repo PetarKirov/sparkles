@@ -13,10 +13,11 @@ import std.string : fromStringz;
 import sparkles.font;
 import sparkles.font_oracle.corpus : corpus, fontsDir, Oracle;
 import sparkles.font_oracle;
+import sparkles.test_runner.attributes : slow;
 import sparkles.test_runner.skip : skipTest;
 
 @("oracle.parsing.everyBundledFace")
-@system
+@slow @system
 unittest
 {
     if (fontsDir is null)
