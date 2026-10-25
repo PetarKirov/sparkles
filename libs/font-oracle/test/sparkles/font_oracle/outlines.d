@@ -16,6 +16,7 @@ import sparkles.base.unique : makeUnique;
 import sparkles.font;
 import sparkles.font_oracle.corpus : corpus, fontsDir, Oracle, testCorpus, testFontsDir;
 import sparkles.font_oracle;
+import sparkles.test_runner.attributes : slow;
 import sparkles.test_runner.skip : skipTest;
 
 private struct HbSegment
@@ -256,7 +257,7 @@ unittest
 
 /// FTO4 across the bundle: every glyph of every variable face keeps its default segment kinds at each axis extreme.
 @("oracle.outlines.variationKeepsTopology")
-@system
+@slow @system
 unittest
 {
     if (fontsDir is null)
@@ -318,7 +319,7 @@ unittest
 
 /// CFF2 blending (`vsindex`, `blend`) against HarfBuzz at the default and at each axis extreme.
 @("oracle.outlines.cff2Variable")
-@system
+@slow @system
 unittest
 {
     if (testFontsDir is null)

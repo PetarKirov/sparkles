@@ -17,6 +17,7 @@ import sparkles.base.unique : makeUnique;
 import sparkles.font;
 import sparkles.font_oracle.corpus : corpus, fontsDir;
 import sparkles.font_oracle.freetype_c;
+import sparkles.test_runner.attributes : slow;
 import sparkles.test_runner.skip : skipTest;
 
 private struct FtFace
@@ -41,7 +42,7 @@ private struct FtFace
 }
 
 @("oracle.raster.freeType")
-@system
+@slow @system
 unittest
 {
     if (fontsDir is null)
@@ -177,7 +178,7 @@ unittest
 }
 
 @("oracle.raster.flatteningAccuracy")
-@system
+@slow @system
 unittest
 {
     // FTR8: the default (0.02 px) flattening against the same
