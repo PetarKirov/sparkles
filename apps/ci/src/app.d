@@ -25,6 +25,8 @@ nix run .#ci -- --test --host-system x86_64-linux [--host-ci-rev REV] [--fail-fa
 nix run .#ci -- --linux-host-probe
 nix run .#ci -- --test-extracted [--fail-fast]
 nix run .#ci -- --test-sanitize [--fail-fast]
+nix run .#ci -- --list-slow-tests
+nix run .#ci -- --test-slow [--packages NAME...] [--tests NAME...] [--fail-fast]
 nix run .#ci -- [--dedup-reference-links|--fix-reference-links] [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]
 nix run .#ci -- --check-vcs-urls [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]
 nix run .#ci -- --check-docs-sidebar
@@ -42,7 +44,9 @@ $(LIST
     $(ITEM `--update` — rewrite the markdown file with actual example output (golden snapshot update))
     $(ITEM `--example-files` — build/run standalone example `.d` files, defaulting to `libs/base/examples/*.d`, `libs/build-primitives/examples/*.d`, `libs/core-cli/examples/*.d`, `libs/wired/examples/*.d`, `docs/research/async-io/io-uring/examples/*.d`, `docs/research/async-io/gcd/examples/*.d`, `docs/research/units-of-measure/examples/*.d`, `docs/research/cpu-pmu/examples/*.d`, `docs/research/sanitizers/examples/*.d`, `docs/research/manim/examples/*.d`, `docs/research/anchored-overlays/examples/*.d`, `docs/research/property-tree/examples/*.d`, `docs/research/algebraic-effects/durable-execution/examples/*.d`, the per-subject `examples/` directories under `docs/research/platform-ui-guidelines/`, and the per-subject `examples/` directories under `docs/research/autological-artifacts/`)
     $(ITEM `--build` — run `dub build` for each sub-package defined in the root `dub.sdl`)
-    $(ITEM `--test` — run `dub test` for each sub-package defined in the root `dub.sdl`, twice per package: `-t 1` then `-t N` (`N = max(2, hwParallelism())`) so a stack-heavy test cannot hide on the main thread)
+    $(ITEM `--test` — run `dub test` for each sub-package defined in the root `dub.sdl`, twice per package: `-t 1` then `-t N` (`N = max(2, hwParallelism())`) so a stack-heavy test cannot hide on the main thread. `@slow` tests are left out (`--skip-slow`); `--test-slow` runs them)
+    $(ITEM `--list-slow-tests` — print the `@slow` unittests found in the sub-packages' sources as the JSON array the `slow-tests` CI matrix expands (`[{"package":…,"test":…}]`), and append it to `$GITHUB_OUTPUT` as `matrix`. Fails on a `@slow` test without a `@("name")`, and when there is none at all)
+    $(ITEM `--test-slow` — run the `@slow` unittests, one `dub test` per package, narrowed by `--packages` and `--tests` (test names). First checks that the package's test binary lists exactly the slow tests its sources mark (`--list --only-slow`), so a test the source scan missed fails the job instead of going unrun)
     $(ITEM `--host-system aarch64-linux|x86_64-linux` — on macOS, re-exec the same mode inside an Apple `container` Linux VM, using the matching `packages.<system>.ci` store path bind-mounted from `/nix/store`. The Linux `ci` is realized from a git revision CI has built (`HEAD`, the merge-base with `origin/main`, then `origin/main`), never from the dirty tree; the tests run against the mounted working tree. See `docs/research/linux-on-macos/`)
     $(ITEM `--host-ci-rev REV` — with `--host-system`: realize the Linux `ci` from this revision instead of the default chain)
     $(ITEM `--linux-host-probe` — report which Linux-on-macOS backends are available (Determinate native builder, Apple container, nix-darwin linux-builder) and exit)
@@ -164,6 +168,7 @@ import spec_evidence : backlogPath, Citation, citationsIn, ratchet, renderBacklo
     unresolvedCitations;
 import dub_deps : inTreePackageNames, parseSubPackages, writeInTreeDeps;
 import sparkles.build_primitives.dub_manifest : DubManifest;
+import slow_tests : exactNamesPattern, matrixJson, SlowTestJob, slowTestsInListing, slowTestsInSource;
 import coverage : collectCoverage, PackageCoverage;
 import example_manifest : exampleRunsOnHost;
 import fence_audit : AuditScope, FenceAuditOptions, runFenceAudit, wrapperFenceEnd;
@@ -239,8 +244,22 @@ struct CliParams
     string base;
 
     @(Option(`packages`,
-        description: "With --build-each-commit: the sub-packages to build, by name."))
+        description: "With --build-each-commit: the sub-packages to build, by name. "
+        ~ "With --test-slow: the sub-packages whose slow tests to run."))
     string[] packages;
+
+    @(Option(`list-slow-tests`,
+        description: "Print the @slow unittests as the JSON matrix of the slow-tests CI job "
+        ~ "(also appended to $GITHUB_OUTPUT as `matrix`)."))
+    bool listSlowTests;
+
+    @(Option(`test-slow`,
+        description: "Run the @slow unittests (left out of --test), one dub test per package."))
+    bool testSlow;
+
+    @(Option(`tests`,
+        description: "With --test-slow: the slow tests to run, by name (default: all of them)."))
+    string[] tests;
 
     @(Option(`t|test`, description: "Run dub test for each sub-package defined in the root dub.sdl."))
     bool test;
@@ -468,6 +487,8 @@ enum ProgramMode
     runDubTests,
     runExtractedTests,
     runSanitizeTests,
+    listSlowTests,
+    runSlowTests,
     checkReferenceLinks,
     fixReferenceLinks,
     checkCommitScope,
@@ -593,7 +614,8 @@ int ciMain(string[] args)
     const mode = resolveProgramMode(cli);
     if (mode == ProgramMode.runExampleFiles || mode == ProgramMode.runDubBuild
             || mode == ProgramMode.runDubTests || mode == ProgramMode.runSanitizeTests
-            || mode == ProgramMode.runExtractedTests || mode == ProgramMode.buildEachCommit)
+            || mode == ProgramMode.runExtractedTests || mode == ProgramMode.buildEachCommit
+            || mode == ProgramMode.runSlowTests)
     {
         import dub_cache : seedBundledDubHome, userDubHome;
         seedBundledDubHome(userDubHome());
@@ -663,6 +685,12 @@ int ciMain(string[] args)
 
     if (mode == ProgramMode.runExtractedTests)
         return runExtractedTestsMode(cli.failFast);
+
+    if (mode == ProgramMode.listSlowTests)
+        return runListSlowTestsMode();
+
+    if (mode == ProgramMode.runSlowTests)
+        return runSlowTestsMode(cli.packages, cli.tests, cli.failFast);
 
     if (mode == ProgramMode.ciStats)
         return runCiStatsMode(cli);
@@ -792,6 +820,14 @@ private string validateCliMode(
             || cli.testExtracted || cli.dedupReferenceLinks || cli.fixReferenceLinks))
         return "--test-sanitize cannot be combined with other modes";
 
+    if ((cli.testSlow || cli.listSlowTests) && (cli.verify || cli.update || cli.exampleFiles
+            || cli.build || cli.test || cli.testExtracted || cli.testSanitize || cli.buildEachCommit
+            || cli.dedupReferenceLinks || cli.fixReferenceLinks || (cli.testSlow && cli.listSlowTests)))
+        return (cli.testSlow ? "--test-slow" : "--list-slow-tests") ~ " cannot be combined with other modes";
+
+    if (cli.tests.length && !cli.testSlow)
+        return "--tests needs --test-slow";
+
     if (cli.checkCommitScope && (cli.verify || cli.update || cli.exampleFiles || cli.build || cli.test || cli.testSanitize || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkVcsUrls || cli.checkDocsSidebar || cli.checkBlobPaths || cli.ciStats))
         return "--check-commit-scope cannot be combined with other modes";
 
@@ -893,6 +929,12 @@ private ProgramMode resolveProgramMode(in CliParams cli)
     if (cli.testSanitize)
         return ProgramMode.runSanitizeTests;
 
+    if (cli.listSlowTests)
+        return ProgramMode.listSlowTests;
+
+    if (cli.testSlow)
+        return ProgramMode.runSlowTests;
+
     if (cli.test)
         return ProgramMode.runDubTests;
 
@@ -951,6 +993,8 @@ private string programModeName(ProgramMode mode) @safe pure nothrow @nogc
         case ProgramMode.runDubTests:        return "--test";
         case ProgramMode.runExtractedTests:  return "--test-extracted";
         case ProgramMode.runSanitizeTests:   return "--test-sanitize";
+        case ProgramMode.listSlowTests:      return "--list-slow-tests";
+        case ProgramMode.runSlowTests:       return "--test-slow";
         case ProgramMode.checkReferenceLinks: return "--dedup-reference-links";
         case ProgramMode.fixReferenceLinks:  return "--fix-reference-links";
         case ProgramMode.checkCommitScope:   return "--check-commit-scope";
@@ -1530,6 +1574,8 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
             case ProgramMode.runDubTests:
             case ProgramMode.runExtractedTests:
             case ProgramMode.runSanitizeTests:
+            case ProgramMode.listSlowTests:
+            case ProgramMode.runSlowTests:
                 rc = 1;
                 break;
             case ProgramMode.checkReferenceLinks:
@@ -3517,11 +3563,13 @@ private int runDubTestsMode(bool failFast, bool coverage, bool sanitize = false)
     // exists to contrast with is off under ASan (see `stack_budget.d`), and
     // the runner sizes ASan workers at 4 MiB so a body cannot reach a guard
     // page. One leg also halves a job that rebuilds every package with ASan.
+    // The plain legs leave the `@slow` tests to `--test-slow`, which CI runs
+    // as jobs of their own; under ASan they still run, in the one leg.
     const legs = sanitize
         ? [TestLeg("sanitize -t " ~ parallelN.to!string, ["-t", parallelN.to!string])]
         : [
-            TestLeg("-t 1", ["-t", "1"]),
-            TestLeg("-t " ~ parallelN.to!string, ["-t", parallelN.to!string]),
+            TestLeg("-t 1", ["-t", "1", "--skip-slow"]),
+            TestLeg("-t " ~ parallelN.to!string, ["-t", parallelN.to!string, "--skip-slow"]),
         ];
     const extraEnv = sanitize ? sanitizeChildEnv() : (string[string]).init;
 
@@ -3855,6 +3903,195 @@ private int runExtractedTestsMode(bool failFast)
     // After a fail-fast break the untried jobs never ran, so report what was
     // actually attempted rather than the full list.
     displayTestRunSummary(monitor.finish(processed, jobs.length, failedJobs));
+    return failures > 0 ? 1 : 0;
+}
+
+/// The `@slow` tests that the sources of each sub-package integrating the
+/// runner mark (all of them, or those of `packageNames`), in package and then
+/// file order. A slow test without a name, or two with one name in a package,
+/// is a `problem`: its CI job could not select it.
+private SlowTestJob[] collectSlowTests(string repoRoot, in string[] packageNames,
+    ref string[] problems)
+{
+    import std.file : dirEntries, SpanMode;
+    import std.path : extension, relativePath;
+
+    SlowTestJob[] jobs;
+    foreach (pkg; parseSubPackages(repoRoot))
+    {
+        const name = pkg.baseName;
+        if (packageNames.length && !packageNames.canFind(name))
+            continue;
+        const root = buildPath(repoRoot, pkg);
+        const dubConfig = buildPath(root, "dub.sdl");
+        if (!dubConfig.exists || !integratesTestRunner(dubConfig.readText))
+            continue;
+
+        string[] files;
+        foreach (entry; dirEntries(root, SpanMode.depth))
+            if (entry.isFile && entry.name.extension == ".d")
+                files ~= entry.name;
+        files.sort();
+        foreach (file; files)
+            foreach (test; slowTestsInSource(file.readText))
+            {
+                const where = i"$(file.relativePath(repoRoot)):$(test.line)".text;
+                if (!test.name.length)
+                    problems ~= where ~ ": a @slow test needs a @(\"name\") for its CI job to select it";
+                else if (jobs.canFind(SlowTestJob(name, test.name)))
+                    problems ~= where ~ ": a second @slow test named " ~ test.name ~ " in :" ~ name;
+                else
+                    jobs ~= SlowTestJob(name, test.name);
+            }
+    }
+    return jobs;
+}
+
+/// `--list-slow-tests`: the `slow-tests` CI job's matrix, on stdout and in
+/// `$GITHUB_OUTPUT`.
+private int runListSlowTestsMode()
+{
+    import std.stdio : File;
+
+    const repoRoot = detectRepoRoot();
+    if (repoRoot is null)
+    {
+        error(i"Could not detect repository root");
+        return 1;
+    }
+
+    string[] problems;
+    const jobs = collectSlowTests(repoRoot, null, problems);
+    foreach (problem; problems)
+        error(i"$(problem)");
+    if (problems.length)
+        return 1;
+    if (jobs.length == 0)
+    {
+        // As for `--test-extracted`: the job exists for these tests, so an
+        // empty list means the scan (or the attribute) regressed.
+        error(i"No @slow test found — the slow-tests matrix would be empty");
+        return 1;
+    }
+
+    const json = matrixJson(jobs);
+    info(i"$(jobs.length) slow test(s)");
+    stdout.writeln(json);
+    const output = environment.get("GITHUB_OUTPUT", "");
+    if (output.length)
+        File(output, "a").write("matrix=" ~ json ~ "\n");
+    return 0;
+}
+
+/// `--test-slow`: run the `@slow` tests of each selected package, after
+/// checking that its test binary agrees with the source scan about which
+/// tests those are.
+private int runSlowTestsMode(in string[] packageNames, in string[] testNames, bool failFast)
+{
+    const repoRoot = detectRepoRoot();
+    if (repoRoot is null)
+    {
+        error(i"Could not detect repository root");
+        return 1;
+    }
+
+    string[] problems;
+    auto all = collectSlowTests(repoRoot, packageNames, problems);
+    foreach (problem; problems)
+        error(i"$(problem)");
+    if (problems.length)
+        return 1;
+    foreach (name; testNames)
+        if (!all.canFind!(job => job.test == name))
+        {
+            error(i"--tests: no @slow test is named $(name)");
+            return 1;
+        }
+    if (all.length == 0)
+    {
+        error(i"No @slow test found in the selected packages");
+        return 1;
+    }
+
+    string[] packages;
+    foreach (job; all)
+        if (!packages.canFind(job.packageName))
+            packages ~= job.packageName;
+
+    i"Running the slow tests of $(packages.length) package(s)".text
+        .drawHeader(HeaderProps(style: HeaderStyle.banner, width: uiWidth()))
+        .writeln("\n");
+    flushStdout();
+
+    auto monitor = RunMonitor.start();
+    void onSample(in ResourceUsage) @safe
+    {
+        monitor.sample();
+    }
+
+    int failures = 0;
+    size_t processed = 0;
+    string[] failedPackages;
+    foreach (i, pkg; packages)
+    {
+        auto marked = all.filter!(job => job.packageName == pkg).map!(job => job.test).array;
+        const selected = testNames.length
+            ? marked.filter!(name => testNames.canFind(name)).array
+            : marked;
+        processed = i + 1;
+        if (selected.length == 0)
+            continue;
+        foreach (path; parseSubPackages(repoRoot))
+            if (path.baseName == pkg)
+                mkdirRecurse(buildPath(repoRoot, path, "build"));
+
+        // The listing builds the test binary, so its output is dub's too; only
+        // the `@slow` lines are the runner's.
+        info(i"building :$(pkg) and listing its slow tests");
+        const listed = execute(
+            dubTestCommand(repoRoot, pkg, testBuildType(false), ["--list", "--only-slow", "--no-colors"]),
+            withLdcDflags(null));
+        auto binaryNames = slowTestsInListing(listed.output);
+        binaryNames.sort();
+        marked.sort();
+        if (listed.status != 0 || binaryNames != marked)
+        {
+            if (listed.status != 0)
+            {
+                stderr.write(listed.output);
+                error(i":$(pkg) did not build or list its tests");
+            }
+            else
+                error(i"the sources of :$(pkg) mark $(marked) @slow, but its test binary lists $(binaryNames): mark each test directly (`@slow` before `unittest`) and give it a @(\"name\")");
+            failures++;
+            failedPackages ~= pkg ~ " (listing)";
+            if (failFast)
+                break;
+            continue;
+        }
+
+        const runnerArgs = ["--only-slow", "-i", exactNamesPattern(selected)];
+        const header = styledText(
+            i"{dim [$(i + 1)/$(packages.length)]} {cyan $(pkg)} {dim › $(selected.length) slow test(s)}");
+        auto lines = executeMonitoredLines(
+            dubTestCommand(repoRoot, pkg, testBuildType(false), runnerArgs),
+            250.msecs, &onSample, ChildStdin.empty, Duration.zero, withLdcDflags(null));
+        streamResultBox(header, lines,
+            () => resultVerdict(lines.result.status == 0),
+            (LogDelta d) => resultFooterRight(lines.result.usage, d));
+        monitor.sample();
+        writeln();
+
+        if (lines.result.status != 0)
+        {
+            failures++;
+            failedPackages ~= pkg;
+            if (failFast)
+                break;
+        }
+    }
+
+    displayTestRunSummary(monitor.finish(processed, packages.length, failedPackages));
     return failures > 0 ? 1 : 0;
 }
 
@@ -4848,6 +5085,32 @@ unittest
     params.dedupReferenceLinks = true;
     assert(validateCliMode(params, null)
         == "--build cannot be combined with reference deduplication modes (--dedup-reference-links/--fix-reference-links)");
+}
+
+@("ci.validateCliMode.slowTestModes")
+unittest
+{
+    CliParams params;
+    params.testSlow = true;
+    params.packages = ["font-oracle"];
+    params.tests = ["oracle.raster.freeType"];
+    assert(validateCliMode(params, null) is null);
+    assert(resolveProgramMode(params) == ProgramMode.runSlowTests);
+    assert(programModeName(ProgramMode.runSlowTests) == "--test-slow");
+
+    params.test = true;
+    assert(validateCliMode(params, null) == "--test-slow cannot be combined with other modes");
+
+    params.test = false;
+    params.listSlowTests = true;
+    assert(validateCliMode(params, null) == "--test-slow cannot be combined with other modes");
+
+    // `--tests` names tests for `--test-slow` to run, and means nothing alone.
+    params.testSlow = false;
+    assert(validateCliMode(params, null) == "--tests needs --test-slow");
+    params.tests = null;
+    assert(validateCliMode(params, null) is null);
+    assert(resolveProgramMode(params) == ProgramMode.listSlowTests);
 }
 
 @("ci.validateCliMode.sanitizeExclusions")
