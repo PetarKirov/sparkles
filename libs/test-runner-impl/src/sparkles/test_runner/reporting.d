@@ -543,6 +543,7 @@ struct RunTotals
     size_t ctfePassed;
     size_t benchSkipped;
     size_t workloadSkipped;
+    size_t slowSkipped; /// `@slow` tests `--skip-slow` left out
 }
 
 /// The final summary line.
@@ -566,6 +567,9 @@ string formatSummary(in RunTotals totals, Duration elapsed, bool colored) @safe
     if (totals.workloadSkipped)
         line ~= render(colored,
             i", {dim $(totals.workloadSkipped) workloads (run with --bench)}");
+    if (totals.slowSkipped)
+        line ~= render(colored,
+            i", {dim $(totals.slowSkipped) slow (run with --only-slow)}");
 
     line ~= render(colored, i" in $(took)");
     return line;
@@ -589,6 +593,8 @@ unittest
             12.msecs, false) ==
         "Summary: 1 passed, 0 failed, 2 benchmarks (run with --bench), "
         ~ "1 workloads (run with --bench) in 12ms");
+    assert(formatSummary(RunTotals(passed: 4, failed: 0, slowSkipped: 2), 12.msecs, false) ==
+        "Summary: 4 passed, 0 failed, 2 slow (run with --only-slow) in 12ms");
 }
 
 /// A recap of every failed test, printed after the summary so a long parallel

@@ -27,7 +27,7 @@ import sparkles.test_runner.capability : Capability, capabilityName, CapabilityR
 import sparkles.test_runner.driver : detectCompiler, DriverOptions, runCtfeTests;
 import sparkles.test_runner.stack_budget : installStackBudgetHandler;
 import sparkles.test_runner.workers : joinTestWorkers, startTestWorkers;
-import sparkles.test_runner.filter : matchesFilter;
+import sparkles.test_runner.filter : matchesFilter, matchesSlowSelection, SlowSelection;
 import sparkles.test_runner.model : Test, TestResult;
 import sparkles.base.text.writers : formatted;
 import sparkles.test_runner.reporting : BenchProgress, detectTerminalWidth,
@@ -70,6 +70,8 @@ private struct RunnerOptions
     uint threads;
     bool noColors;
     bool list;
+    bool skipSlow;
+    bool onlySlow;
     bool bench;
     bool perf;
     bool perfScaled; /// keep the full group when it multiplexes; label estimates
@@ -251,6 +253,12 @@ private auto parseInto(ref string[] args, ref RunnerOptions options)
         "l|list",
             "List discovered tests without running them",
             &options.list,
+        "skip-slow",
+            "Leave out @slow tests (the summary counts them)",
+            &options.skipSlow,
+        "only-slow",
+            "Run only @slow tests",
+            &options.onlySlow,
         "bench",
             "Run @benchmark tests (ns/iter statistics) and @workload tests " ~
             "(single-pass window deltas + wall decomposition) instead of regular tests",
@@ -363,6 +371,9 @@ unittest
     assert(ds.options.datasets == "twitter,canada");
     assert(ds.options.listDatasets);
 
+    auto slow = parseRunnerOptions(["prog", "--skip-slow", "--only-slow"]);
+    assert(!slow.error.length && slow.options.skipSlow && slow.options.onlySlow);
+
     auto help = parseRunnerOptions(["prog", "--help"]);
     assert(!help.error.length && help.helpWanted && help.helpOptions.length);
 }
@@ -427,6 +438,14 @@ private UnitTestResult runnerMain(Test[] discovered, bool hostIsRunner)
         return UnitTestResult(1, 0, false, false);
     }
 
+    if (options.skipSlow && options.onlySlow)
+    {
+        stderr.writeln("error: --skip-slow and --only-slow exclude each other");
+        return UnitTestResult(1, 0, false, false);
+    }
+    const slowSelection = options.skipSlow ? SlowSelection.skip
+        : options.onlySlow ? SlowSelection.only : SlowSelection.run;
+
     const colored = prepareConsole(options.noColors);
     // Cells available for the compact result lines; `0` (unknown / piped) skips
     // truncation so redirected output stays byte-identical.
@@ -458,9 +477,15 @@ private UnitTestResult runnerMain(Test[] discovered, bool hostIsRunner)
         }
     }
 
-    auto tests = discovered
+    auto selected = discovered
         .filter!(t => t.matchesFilter(options.include, options.exclude))
         .array;
+    auto tests = selected
+        .filter!(t => t.matchesSlowSelection(slowSelection))
+        .array;
+    // What `--skip-slow` left out, for the summary — a filter that drops tests
+    // without a word would let a run that skipped everything read as a pass.
+    const slowSkipped = selected.length - tests.length;
 
     if (options.list)
         return listTests(tests, colored);
@@ -474,7 +499,7 @@ private UnitTestResult runnerMain(Test[] discovered, bool hostIsRunner)
         return runCtfeTraceMode(tests, options, colored);
     if (options.betterC || options.wasm)
         return runDriverModes(tests, options);
-    return runDefaultMode(tests, options, colored, width);
+    return runDefaultMode(tests, options, colored, width, slowSkipped);
 }
 
 /// The driver options shared by the @ctfe, `--better-c`, and `--wasm` modes.
@@ -655,6 +680,8 @@ private UnitTestResult listTests(Test[] tests, bool colored)
             markers ~= " @betterC";
         if (test.traits.isWasm)
             markers ~= " @wasm";
+        if (test.traits.isSlow)
+            markers ~= " @slow";
         writer.put(render(colored,
             i" {dim $(moduleName)} $(test.name){cyan $(markers)}\n"));
     }
@@ -662,8 +689,10 @@ private UnitTestResult listTests(Test[] tests, bool colored)
 }
 
 /// The default mode: evaluate the selected `@ctfe` tests through the probe
-/// compile, run every regular test in parallel, and count skipped benchmarks.
-private UnitTestResult runDefaultMode(Test[] tests, in RunnerOptions options, bool colored, uint width)
+/// compile, run every regular test in parallel, and count skipped benchmarks
+/// (and the `slowSkipped` tests `--skip-slow` left out before this point).
+private UnitTestResult runDefaultMode(Test[] tests, in RunnerOptions options, bool colored, uint width,
+    size_t slowSkipped)
 {
     import core.atomic : atomicOp;
     import std.algorithm.iteration : filter;
@@ -672,6 +701,7 @@ private UnitTestResult runDefaultMode(Test[] tests, in RunnerOptions options, bo
     import std.stdio : stdout;
 
     RunTotals totals;
+    totals.slowSkipped = slowSkipped;
     const started = MonoTime.currTime;
     TestResult[] failures;
 

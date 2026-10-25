@@ -17,6 +17,10 @@
  * @("SharedBuffer.append.bench")
  * @benchmark @safe
  * unittest { /+ timed with auto-scaling iterations via `--bench` +/ }
+ *
+ * @("oracle.raster.freeType")
+ * @slow @system
+ * unittest { /+ left out by `--skip-slow`, run alone by `--only-slow` +/ }
  * ---
  *
  * All attributes are plain marker types — the runner discovers them with
@@ -120,6 +124,19 @@ struct workload
     /// The page-cache regime applied to files named by in-body
     /// `workloadFiles` calls (overridable per call).
     CacheRegime regime = CacheRegime.steadyState;
+}
+
+/// Marks a `unittest` as slow: one that takes minutes rather than
+/// milliseconds, such as a sweep over a whole font corpus. A slow test runs
+/// like any other unless the run asks otherwise: `--skip-slow` leaves it out
+/// (the summary counts what it left out) and `--only-slow` runs nothing else.
+///
+/// The marker exists for CI, where `ci --test` passes `--skip-slow` and
+/// `ci --test-slow` runs each slow test as a job of its own. That needs every
+/// slow test to have a string name (`@("…")`): it is what the job is called,
+/// and what `ci` selects it by.
+struct slow
+{
 }
 
 @("attributes.selfContained.wasm")

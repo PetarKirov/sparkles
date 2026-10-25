@@ -12,7 +12,7 @@ import std.meta : Alias, AliasSeq, staticMap;
 import std.traits : fullyQualifiedName, getUDAs, hasUDA;
 
 import sparkles.test_runner.attributes : benchmark, betterC, CacheRegime, ctfe,
-    wasm, workload;
+    slow, wasm, workload;
 import sparkles.test_runner.model : Test, TestLocation, TestTraits;
 
 /// The module containing `m`: `m` itself when it is a module, or its parent
@@ -65,6 +65,7 @@ TestTraits testTraits(alias test)()
     traits.isBetterC = hasUDA!(test, betterC);
     traits.isCtfe = hasUDA!(test, ctfe);
     traits.isWasm = hasUDA!(test, wasm);
+    traits.isSlow = hasUDA!(test, slow);
     static if (hasUDA!(test, betterC) || hasUDA!(test, wasm))
     {
         traits.functionAttributes = functionAttributesOf!test;
@@ -199,6 +200,7 @@ version (unittest)
     @workload private void workloadBareFixture() {}
     @workload(reps: 0) private void workloadZeroFixture() {}
     @workload(reps: 2, regime: CacheRegime.cold) private void workloadColdFixture() {}
+    @slow private void slowFixture() {}
     @benchmark @workload private void benchmarkWorkloadClashFixture() {}
 }
 
@@ -210,6 +212,12 @@ unittest
     static assert(reps3.isWorkload);
     static assert(reps3.workloadReps == 3);
     static assert(!reps3.isBenchmark);
+    static assert(!reps3.isSlow);
+
+    // `@slow` is a plain marker; it changes nothing else about the test.
+    enum slowTraits = testTraits!slowFixture();
+    static assert(slowTraits.isSlow);
+    static assert(!slowTraits.isBenchmark && !slowTraits.isWorkload);
 
     enum bare = testTraits!workloadBareFixture();
     static assert(bare.isWorkload);
