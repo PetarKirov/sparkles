@@ -340,6 +340,93 @@ jobs:
             echo "::endgroup::"
           done
 
+  # The `@slow` unittests (sparkles:test-runner's marker for tests that take
+  # minutes, such as the font oracle's corpus sweeps). `ci --test` leaves them
+  # out (`--skip-slow`), and they run here instead: one job per test and per
+  # `test` leg, so a sweep runs beside the suite rather than adding its minutes
+  # to every leg of it. Before this, `:font-oracle` alone took ~35 of the
+  # aarch64-linux leg's 120 minutes and pushed macOS past its 90.
+  #
+  # The matrix comes from the sources (`ci --list-slow-tests`), so it exists
+  # before anything is built; `.#ci-minimal` suffices for that scan. Each job
+  # then checks that its package's test binary lists the same slow tests as
+  # the scan did, so a test the scan misses fails here instead of going unrun.
+  slow-tests-list:
+    name: List the slow tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      matrix: ${{ steps.list.outputs.matrix }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Nix
+        uses: ./.github/actions/setup-nix
+        with:
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
+          use-nix-cache: false
+
+      - name: Scan the sources for @slow tests
+        id: list
+        run: nix run .#ci-minimal -- --list-slow-tests
+
+  slow-tests:
+    name: slow (${{ matrix.leg.system }}, ${{ matrix.leg.DC }}, ${{ matrix.slow.test }})
+    needs: slow-tests-list
+    strategy:
+      fail-fast: false
+      matrix:
+        # The `test` job's Nix legs. Windows is left out as it is from
+        # `ci --test`: ci/test-windows.sh runs its own package list.
+        leg:
+          - { runner: ubuntu-latest, system: x86_64-linux, DC: ldc2 }
+          - { runner: ubuntu-latest, system: x86_64-linux, DC: dmd }
+          - { runner: macos-latest, system: aarch64-darwin, DC: ldc2 }
+          - { runner: ubuntu-24.04-arm, system: aarch64-linux, DC: ldc2 }
+        slow: ${{ fromJSON(needs.slow-tests-list.outputs.matrix) }}
+    runs-on: ${{ matrix.leg.runner }}
+    # Most of a job is fetching the dev shell and building one package's
+    # tests; the slowest test takes about a minute locally.
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # The dev shell comes from cachix, where `test` pushes it. No GHA
+      # `/nix` cache: twenty short jobs saving under the `test` legs' keys
+      # would race those legs for them, and their own keys would crowd the
+      # repository's cache quota.
+      - name: Setup Nix
+        uses: ./.github/actions/setup-nix
+        with:
+          push-to-cache: true
+          cachix-cache: ${{ vars.CACHIX_CACHE }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
+          devshell: ci
+          use-nix-cache: false
+
+      # Restore only, from the `test` legs' key, for the same reason.
+      - name: Restore DUB packages
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.dub
+            ~/.local/share/dub
+          key: ${{ matrix.leg.system }}-dub-${{ hashFiles('**/dub.sdl', '**/dub.selections.json') }}
+          restore-keys: |
+            ${{ matrix.leg.system }}-dub-
+
+      - name: Run the slow test
+        run: ci --test-slow --packages "$SLOW_PACKAGE" --tests "$SLOW_TEST"
+        env:
+          DC: ${{ matrix.leg.DC }}
+          SLOW_PACKAGE: ${{ matrix.slow.package }}
+          SLOW_TEST: ${{ matrix.slow.test }}
+
   # The test runner's extracted-test modes. `--test` does not cover these: a
   # @betterC test runs as an ordinary unittest there, and only `--better-c`
   # additionally extracts it, compiles it without druntime, and runs the
@@ -997,6 +1084,8 @@ jobs:
     name: CI
     needs:
       - test
+      - slow-tests-list
+      - slow-tests
       - extracted-tests
       - sanitize
       - nix-build
