@@ -174,7 +174,9 @@ The project's own runner (silly's successor, same core CLI; `dub test :x -- --he
 lists every flag, [docs](../libs/test-runner/index.md)). Beyond `-i`/`-e`/`-v`/
 `-t`/`-l`, it runs special modes selected by marker UDAs from
 `sparkles.test_runner.attributes` — `@ctfe`, `@betterC` (`--better-c`), `@wasm`
-(`--wasm`), `@benchmark`/`@workload` (`--bench`). Import the attributes
+(`--wasm`), `@benchmark`/`@workload` (`--bench`), `@slow` (`--skip-slow`/
+`--only-slow`). Mark a test that takes minutes `@slow`, with a `@("name")`:
+`ci --test` skips it and CI runs it as a job of its own. Import the attributes
 **unconditionally**, never under `version (unittest)`
 ([reference](../libs/test-runner/reference/attributes.md)). `@ctfe` tests are
 evaluated by a separate `-o- -unittest` probe after filtering, so a failing one
@@ -211,6 +213,7 @@ two ways:
 nix run .#ci -- --test --fail-fast                   # dub test, every sub-package
 DC=ldc2 nix run .#ci -- --test-sanitize --fail-fast  # Linux: AddressSanitizer
 nix run .#ci -- --test-extracted                     # --better-c/--wasm where used
+nix run .#ci -- --test-slow                          # the @slow tests --test skips
 nix run .#ci -- --verify --files README.md           # markdown examples
 nix run .#ci -- --check-vcs-urls                     # unpinned GitHub URLs
 nix run .#ci -- --check-docs-sidebar                 # sidebar ↔ pages
@@ -234,7 +237,7 @@ workflow. Rehearse it with
 
 - **Jobs that only talk to an API use `.#ci-minimal`** — the same binary without
   the compiler toolchain in its runtime closure (121 MiB vs 2.4 GiB).
-  `--test`, `--test-extracted`, and `--example-files` need `.#ci`.
+  `--test`, `--test-extracted`, `--test-slow`, and `--example-files` need `.#ci`.
 - **Every `ci.yml` job runs on every trigger; select work through the trigger
   list.** A called workflow sees the _caller's_ event (`push` on the rebuild
   path), and the merge-queue run is the only one that sees the batched result —
