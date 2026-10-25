@@ -672,6 +672,9 @@ DriverOutcome runWasmTests(Test[] wasmTests, Test[] allTests, in DriverOptions o
         [compiler, "-mtriple=wasm32-unknown-unknown-wasm", "-betterC",
             // reactor-style module: no _start, tests are individual exports
             "-L--no-entry",
+            // `export` alone does not make wasm-ld export a symbol; only some
+            // LDC configurations add this switch themselves
+            "-L--export-dynamic",
             "-of=" ~ wasmFile]
             ~ autoIncludeFlags(wasmTests, options) ~ includeFlags(options)
             ~ importFlags ~ [sourceFile],
