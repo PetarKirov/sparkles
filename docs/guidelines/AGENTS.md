@@ -209,7 +209,7 @@ two ways:
 
 ```bash
 nix run .#ci -- --test --fail-fast                   # dub test, every sub-package
-DC=ldc2 nix run .#ci -- --test-sanitize --fail-fast  # Linux: ASan + stackovf
+DC=ldc2 nix run .#ci -- --test-sanitize --fail-fast  # Linux: AddressSanitizer
 nix run .#ci -- --test-extracted                     # --better-c/--wasm where used
 nix run .#ci -- --verify --files README.md           # markdown examples
 nix run .#ci -- --check-vcs-urls                     # unpinned GitHub URLs

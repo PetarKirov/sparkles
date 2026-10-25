@@ -448,7 +448,7 @@ jobs:
           restore-keys: |
             x86_64-linux-asan-dub-
 
-      - name: Run tests under ASan / stackovf
+      - name: Run tests under ASan
         run: ci --test-sanitize --fail-fast
         env:
           DC: ldc2

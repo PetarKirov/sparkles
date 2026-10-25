@@ -262,7 +262,7 @@ struct CliParams
     @(Option(`test-extracted`, description: "Run the test runner's --better-c and --wasm modes for each sub-package that uses the matching marker attribute. Fails if a mode's toolchain is missing rather than skipping."))
     bool testExtracted;
 
-    @(Option(`test-sanitize`, description: "Linux LDC only (DC=ldc2): run each sub-package's tests under AddressSanitizer and LDC --enable-stackovf-sanitizer."))
+    @(Option(`test-sanitize`, description: "Linux LDC only (DC=ldc2): run each sub-package's tests under AddressSanitizer."))
     bool testSanitize;
 
     @(Option(`F|fail-fast`, description: "Stop on the first failing example and replay its output at the end."))
@@ -3484,7 +3484,7 @@ private int runDubTestsMode(bool failFast, bool coverage, bool sanitize = false)
     }
     info(i"$(subPackages.length) sub-package(s) to test");
     if (sanitize)
-        info(i"sanitize: ASan + LDC stackovf; one -t $(parallelTestThreads(hwParallelism())) leg on 4 MiB workers");
+        info(i"sanitize: ASan; one -t $(parallelTestThreads(hwParallelism())) leg on 4 MiB workers");
 
     if (coverage)
         info(i"preparing coverage (dub describe + listings dir)");
@@ -4898,10 +4898,12 @@ bool sanitizePlatformSupported() @safe pure nothrow @nogc
 ///
 /// $(LIST
 ///     $(ITEM `-fsanitize=address` — LDC IR pass; Linux links gcc `libasan`)
-///     $(ITEM `--enable-stackovf-sanitizer` — LDC's stack-overflow probes, the
-///           D equivalent of clang `-fstack-clash-protection` which LDC
-///           does not accept)
 /// )
+///
+/// `--enable-stackovf-sanitizer` used to sit beside it. It is an LLVM option
+/// of the Hexagon backend's frame lowering, so it probed nothing on x86_64 or
+/// aarch64; a stock LDC accepted it only because its LLVM builds every target,
+/// and an LDC whose LLVM lacks Hexagon rejects it.
 ///
 /// There is deliberately no UBSan here. LDC rejects `-fsanitize=undefined`
 /// for D, and `-Xcc=-fsanitize=undefined` does not reach ImportC either:
@@ -4911,7 +4913,7 @@ bool sanitizePlatformSupported() @safe pure nothrow @nogc
 /// call sites through LDC against 6 through clang. All it did was link
 /// `libubsan` into every test binary — see
 /// `docs/research/sanitizers/ubsan.md`.
-enum string sanitizeCompilerFlags = "-fsanitize=address --enable-stackovf-sanitizer";
+enum string sanitizeCompilerFlags = "-fsanitize=address";
 
 /// ASan runtime options.
 ///
@@ -4954,12 +4956,13 @@ unittest
         assert(!sanitizePlatformSupported());
 }
 
-@("ci.sanitizeCompilerFlags.coverTheTwoTools")
+@("ci.sanitizeCompilerFlags.addressOnly")
 @safe pure nothrow @nogc
 unittest
 {
     assert(sanitizeCompilerFlags.canFind("-fsanitize=address"));
-    assert(sanitizeCompilerFlags.canFind("--enable-stackovf-sanitizer"));
+    // A Hexagon-only LLVM option, which an LDC without that target rejects.
+    assert(!sanitizeCompilerFlags.canFind("stackovf"));
     // No UBSan: LDC rejects `-fsanitize=undefined` for D, and `-Xcc` never
     // reaches ImportC codegen, so the flag instruments nothing.
     assert(!sanitizeCompilerFlags.canFind("undefined"));
