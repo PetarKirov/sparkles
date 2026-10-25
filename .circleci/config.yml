@@ -324,7 +324,7 @@ jobs:
           cache_suffix: devshell-ci
       - restore_asan_dub_cache
       - run:
-          name: Run tests under ASan / stackovf
+          name: Run tests under ASan
           command: ci/run-batch.sh 45m ci --test-sanitize --fail-fast
           no_output_timeout: 45m
       - save_asan_dub_cache
