@@ -1122,6 +1122,508 @@ private uint fenceVTrack(ref Builder b, MdViewOptions opt,
     ), shownRows);
 }
 
+// A fenced code block: the bordered panel, its body lines, the scrollbars and
+// the copy affordance. Out of `viewBlock` so its locals stay out of the frame
+// every level of that recursion pays for: an unoptimized build does not share
+// stack slots, so they cost each list and quote level as much as the fence.
+private uint viewCodeFence(ref Builder b, ref const MdBlock blk,
+    const(char)[] src, MdViewOptions opt)
+{
+    // A bordered code panel. The body's lines come from the nested
+    // pipeline when a fenceRenderer is supplied (syntax highlighting,
+    // a twoslash sub-view); plain pre-formatted code otherwise.
+    auto rows = new uint[](0);
+    // The body as CODE: a quoted fence's `> ` continuation prefixes
+    // dropped, `fb.srcAt` keeping the identity channel exact.
+    const fb = fenceBody(blk, src);
+    const code = fb.text;
+
+    TextSpan[][] styled;
+    if (opt.fenceRenderer !is null)
+        styled = opt.fenceRenderer(blk.infoLang, code);
+
+    // The in-panel number gutter (COD): 1-based, right-aligned over
+    // the body's digit width, muted, synthetic (no identity).
+    size_t bodyLines = 1;
+    foreach (char c; code)
+        if (c == '\n')
+            ++bodyLines;
+
+    // `DVN6`: a fence is diffed by LINE, and its rows do not go
+    // through the prose path, so a changed line is tinted as a whole
+    // row. Offsets come from the body itself rather than from the
+    // spans, which a fence renderer may leave unanchored.
+    Slot rowSlot(size_t li) @safe
+    {
+        if (opt.diffEmphasis.spans.length == 0)
+            return Slot.code;
+        size_t at, n;
+        foreach (i, char c; code)
+        {
+            if (c != '\n')
+                continue;
+            if (n++ == li)
+                return lineTouched(opt, fb.srcAt(at), fb.srcAt(i));
+            at = i + 1;
+        }
+        return n == li
+            ? lineTouched(opt, fb.srcAt(at), fb.srcAt(code.length))
+            : Slot.code;
+    }
+    int numW;
+    // The gutter width follows the tallest GROUP sibling too, so a
+    // tab switch cannot shift the code column sideways.
+    for (auto n = bodyLines > opt.groupMinLines ? bodyLines
+            : opt.groupMinLines; n; n /= 10)
+        ++numW;
+    TextSpan numberSpan(size_t lineNo) @safe
+    {
+        import sparkles.base.buffer : SharedBuffer;
+        import sparkles.base.text.writers : writeInteger;
+
+        SharedBuffer!(char, 24) t;
+        writeInteger(t, lineNo);
+        char[] cell;
+        foreach (_; t[].length .. numW)
+            cell ~= ' ';
+        cell ~= t[];
+        cell ~= ' ';
+        return TextSpan(cell.idup, Slot.gutter, codeStyle(opt),
+            noBreak: true);
+    }
+
+    // Per-line span lists + their (diff-tinted) slots, mode-agnostic.
+    TextSpan[][] lineSpans;
+    Slot[] lineSlots;
+    if (styled.length)
+    {
+        foreach (li, line; styled)
+        {
+            // Renderer offsets are body-relative; anchor them to the
+            // fence body's source position (the identity channel).
+            foreach (ref s; line)
+                if (s.srcStart != size_t.max)
+                {
+                    s.srcStart = fb.srcAt(s.srcStart);
+                    s.srcEnd = fb.srcAt(s.srcEnd);
+                }
+            lineSpans ~= line.length ? line
+                : [TextSpan(" ", Slot.code, codeStyle(opt))];
+            lineSlots ~= rowSlot(li);
+        }
+    }
+    else
+    {
+        size_t start = 0;
+        void line(const(char)[] t, size_t at) @safe
+        {
+            lineSpans ~= [
+                TextSpan(t.length ? t : " ", Slot.code, codeStyle(opt),
+                    srcStart: fb.srcAt(at),
+                    srcEnd: fb.srcAt(at + t.length))];
+            lineSlots ~= lineTouched(opt, fb.srcAt(at),
+                fb.srcAt(at + t.length));
+        }
+
+        foreach (i, char c; code)
+            if (c == '\n')
+            {
+                line(code[start .. i], start);
+                start = i + 1;
+            }
+        if (start < code.length)
+            line(code[start .. $], start);
+    }
+
+    import sparkles.base.text.grapheme : visibleWidth;
+
+    // Group height stability (`MDP22`): the showing fence pads its
+    // body to the tallest sibling with blank rows — the number
+    // gutter finishes at the REAL line count, never numbering the
+    // padding — so a tab switch cannot reflow the document below.
+    const realLines = cast(int) lineSpans.length;
+    while (cast(int) lineSpans.length < opt.groupMinLines)
+    {
+        lineSpans ~= [TextSpan(" ", Slot.code, codeStyle(opt))];
+        lineSlots ~= Slot.code;
+    }
+
+    // ── The integrated-border chrome (COD1/COD2/COD6) ─────────────
+    // Geometry first: the box is glyph-composed, so its width must
+    // be exact — which it is, because `opt.indentCols` tracked every
+    // ancestor's left padding. Unbounded (a popup's docs): the box
+    // shrink-wraps to its content.
+    const gutterW = opt.codeLineNumbers ? numW + 1 : 0;
+
+    // `wrap-at:N` pre-wraps the body to N's interior and then rides
+    // the scroll structure over the wrapped lines: the box caps at N,
+    // the h bar appears only when N exceeds the panel, and
+    // `codeMaxLines` counts visual lines. `srcLineOf` keeps the
+    // gutter numbering on first lines; continuations blank.
+    const wrapAtW = wrapAtWidth(opt.codeOverflow);
+    int[] srcLineOf;
+    if (wrapAtW > 0)
+    {
+        import sparkles.ui.wrap : wrapSpans;
+
+        const wrapW = wrapAtW - 4 - gutterW > 1
+            ? wrapAtW - 4 - gutterW : 1;
+        TextSpan[][] visual;
+        Slot[] visualSlots;
+        foreach (li, spans; lineSpans)
+        {
+            auto wl = wrapSpans(spans, wrapW);
+            if (!wl.length)
+                wl = [spans];
+            foreach (k, line; wl)
+            {
+                visual ~= line;
+                visualSlots ~= lineSlots[li];
+                srcLineOf ~= k == 0 ? cast(int) li : -1;
+            }
+        }
+        lineSpans = visual;
+        lineSlots = visualSlots;
+    }
+
+    int widest;
+    foreach (spans; lineSpans)
+    {
+        int w;
+        foreach (ref const s; spans)
+            w += cast(int) visibleWidth(s.text);
+        if (w > widest)
+            widest = w;
+    }
+    const bounded = opt.maxWidth > 0;
+    int boxW = bounded ? opt.maxWidth - opt.indentCols
+        : widest + gutterW + 4;
+    if (wrapAtW > 0 && wrapAtW < boxW)
+        boxW = wrapAtW;
+    const innerW = boxW - 4 - gutterW; // border + pad each side
+    const lines = cast(int) lineSpans.length;
+    const scrolling = !isWrap(opt.codeOverflow);
+    const shownRows = scrolling && opt.codeMaxLines > 0
+        && lines > opt.codeMaxLines ? opt.codeMaxLines : lines;
+    const vOver = shownRows < lines;
+    const hOver = scrolling && bounded && innerW > 0
+        && widest > innerW;
+    const fs = fenceScrollOf(opt, blk.codeBody.start);
+
+    uint body_;
+    if (scrolling)
+    {
+        // The body is a horizontal — and, past `codeMaxLines`, a
+        // vertical — VIEWPORT (`LAY7`): lines keep their natural
+        // extent; `clipX`/`clipY` scissor them, `childOffset` is
+        // this fence's scroll. The number gutter is a twin viewport
+        // scrolling y only, pinned in x — like every code view
+        // worth reading.
+        foreach (li, spans; lineSpans)
+            rows ~= b.add(Widget(kind: WidgetKind.rich,
+                spans: spans, slot: lineSlots[li],
+                hitId: opt.hitId, paintBackground: true,
+                textStyle: codeStyle(opt)));
+        Widget vp = Widget(kind: WidgetKind.column, children: rows,
+            clipX: true, clipY: vOver,
+            childOffset: Point(fs.x, vOver ? fs.y : 0),
+            width: SizeSpec.grow());
+        // Scrolled between cells (`LAY7`), on a target that can —
+        // keyed, so a painter sets the fraction without a rebuild.
+        vp.childOffsetFracX = fs.fx;
+        vp.childOffsetFracY = vOver ? fs.fy : 0;
+        vp.key = fenceShiftKey(fs.bodyStart);
+        vp.shiftBracket = true;
+        if (vOver)
+            vp.height = SizeSpec.fixed(shownRows);
+        const viewport = b.add(vp);
+
+        uint[] parts;
+        if (opt.codeLineNumbers)
+        {
+            auto nums = new uint[](0);
+            foreach (li; 0 .. lineSpans.length)
+            {
+                // Under wrap-at, continuations carry no number.
+                const srcLi = wrapAtW > 0 ? srcLineOf[li]
+                    : cast(int) li;
+                nums ~= b.add(Widget(kind: WidgetKind.rich,
+                    spans: [srcLi >= 0 && srcLi < realLines
+                        ? numberSpan(srcLi + 1)
+                        : TextSpan(repGlyph(" ", numW + 1),
+                            Slot.gutter, codeStyle(opt),
+                            noBreak: true)],
+                    slot: Slot.gutter, textStyle: codeStyle(opt)));
+            }
+            // Fixed, not fit: the viewport's natural width is its
+            // widest (overflowing) line, and the row's deficit
+            // would otherwise squeeze the gutter's trailing space.
+            Widget nc = Widget(kind: WidgetKind.column,
+                children: nums, width: SizeSpec.fixed(numW + 1),
+                clipY: vOver,
+                childOffset: Point(0, vOver ? fs.y : 0));
+            nc.childOffsetFracY = vOver ? fs.fy : 0;
+            nc.key = fenceShiftKey(fs.bodyStart);
+            nc.shiftBracket = vOver;
+            if (vOver)
+                nc.height = SizeSpec.fixed(shownRows);
+            parts ~= b.add(nc);
+        }
+        parts ~= viewport;
+        if (vOver)
+        {
+            // The track IS the right border (like the bottom-border
+            // h bar): a 1-cell gap where the padding was, then the
+            // `│/┃` column sitting on the panel's right edge — the
+            // decoration drops its right side to make room.
+            parts ~= b.add(Widget(kind: WidgetKind.column,
+                width: SizeSpec.fixed(1)));
+            parts ~= fenceVTrack(b, opt, blk, lines, shownRows,
+                fs.y);
+        }
+        body_ = b.add(Widget(kind: WidgetKind.row, children: parts,
+            width: SizeSpec.grow()));
+    }
+    else
+    {
+        // In-panel greedy wrapping; continuations hang past the
+        // number gutter (which therefore blanks on them, like the
+        // old preview's wrapped code rows). The rows carry the
+        // interior as their width MAXIMUM — the measure pass sizes
+        // wrapped heights against it; without the bound it measures
+        // the unwrapped line (one row) and the continuations would
+        // overflow the panel onto the bottom border.
+        foreach (li, spans; lineSpans)
+        {
+            if (opt.codeLineNumbers && cast(int) li < realLines)
+                spans = numberSpan(li + 1) ~ spans;
+            Widget w = Widget(kind: WidgetKind.rich,
+                spans: spans, slot: lineSlots[li],
+                hitId: opt.hitId, paintBackground: true,
+                wrap: TextWrap.greedy,
+                hangIndent: opt.codeLineNumbers ? numW + 1 : 0,
+                textStyle: codeStyle(opt));
+            w.width.max = innerW + gutterW;
+            rows ~= b.add(w);
+        }
+        body_ = b.container(WidgetKind.column, rows);
+    }
+
+    // The sides are paint-time decoration, so a wrap-mode body of
+    // any wrapped height still gets them; the top and bottom borders
+    // are glyph rows in BOTH modes — corners, row-center alignment,
+    // and an empty body's closing line come for free, and scroll
+    // mode's bottom row doubles as the scrollbar.
+    Widget panel = Widget(kind: WidgetKind.panel, children: [body_],
+        slot: Slot.surface, paintBackground: true,
+        padding: vOver ? Insets(0, 0, 0, 2) : Insets(0, 2, 0, 2),
+        hitId: opt.hitId,
+        width: SizeSpec.fixed(boxW),
+        decoration: Decoration(
+            borderWidth: vOver ? Insets(0, 0, 0, 1)
+                : Insets(0, 1, 0, 1),
+            borderStyle: BorderStyle.solid,
+            borderSlot: Slot.border));
+    if (opt.theme.present)
+    {
+        panel.bgOverride = opt.theme.codePanelBg;
+        panel.hasBgOverride = true;
+        panel.borderOverride = opt.theme.ruleFg;
+        panel.hasBorderOverride = true;
+    }
+
+    return b.add(Widget(kind: WidgetKind.column, children: [
+            fenceTopBorder(b, blk, opt, boxW), b.add(panel),
+            fenceBottomBorder(b, opt, blk, boxW, widest, innerW,
+                fs.x, hOver)],
+        width: SizeSpec.fixed(boxW)));
+}
+
+// A table, out of `viewBlock` for the same reason as `viewCodeFence`.
+private uint viewTable(ref Builder b, ref const MdBlock blk,
+    const(char)[] src, MdViewOptions opt)
+{
+    import sparkles.base.text.width : Align;
+    import sparkles.ui.components.table : TableProps;
+    import sparkles.ui.components.table.widgets : buildTableWidgets,
+        SpanCell, TableCutout, TableViewportSpec, TableWidgetStyle;
+
+    // The table is the shared span-capable component's widget view
+    // (`MDP10` via `sparkles.ui.components.table`): this arm only
+    // assembles styled cell spans from the AST — measurement, track
+    // sizing, the grid glyphs, the header rule and the copy cutout
+    // all live in `buildTableWidgets`. Rows may be ragged (missing
+    // trailing cells render as blank fillers, unkeyed).
+    size_t cols;
+    foreach (ref const row; blk.children)
+        if (row.children.length > cols)
+            cols = row.children.length;
+    if (cols == 0)
+        return b.container(WidgetKind.column, null);
+
+    auto cells = new SpanCell[][](blk.children.length);
+    foreach (ri, ref const row; blk.children)
+    {
+        // `DVN6` twice, because a table has two levels a verdict can
+        // land on and neither reaches `viewBlock`: a whole ROW added
+        // or removed, and a CELL edited inside a row that survived.
+        // Resolving only the cell loses the added row entirely — the
+        // exact case a re-wrapped table with one new row produces.
+        MdViewOptions rowOpt = decorated(opt, row.span.start);
+        cells[ri] = new SpanCell[](row.children.length);
+        foreach (ci, ref const cell; row.children)
+        {
+            TextSpan[] spans;
+            // The row's verdict flows into its cells, so an added row
+            // tints across; a cell's own verdict refines within it.
+            const cellOpt = decorated(rowOpt, cell.span.start);
+            TextStyle style = cellOpt.baseStyle;
+            style.bold = ri == 0; // the header row
+            inlinesToSpans(cell.inlines, src, style, cellOpt.proseSlot,
+                spans, opt.theme.present ? &opt.theme : null,
+                cellOpt.emph, opt.linkTable, &opt.glyphs);
+            fillDiffTints(spans); // the cell path is not a prose row
+            trimCellEdges(spans); // measured text sizes the track
+            // The sort-rank badge (`DSS1`): chrome, not content —
+            // no srcStart, so it neither selects nor copies.
+            if (ri == 0 && ci < opt.tableExtras.headerBadges.length
+                && opt.tableExtras.headerBadges[ci].length)
+                spans ~= TextSpan(opt.tableExtras.headerBadges[ci],
+                    Slot.info, noBreak: true);
+            // Stub columns are chrome (`DSG5`): unkeyed — a drag
+            // cannot anchor a grid selection there — and stripped of
+            // source identity, so text-regime selection skips them
+            // (`SEL2`) and copies never include them.
+            const isStub = ci < opt.tableExtras.headerCols;
+            if (isStub)
+                foreach (ref sp; spans)
+                {
+                    sp.srcStart = size_t.max;
+                    sp.srcEnd = size_t.max;
+                }
+            // An extras entry owns the column: the cell defers to
+            // `TableProps.columnAligns` (which is how `decimal`
+            // reaches the core's pad solver); otherwise markdown's
+            // own `ColAlign` maps per cell as before.
+            const overridden = ci < opt.tableExtras.columnAligns.length
+                && opt.tableExtras.columnAligns[ci] != Align.inherit;
+            const a = ci < blk.aligns.length ? blk.aligns[ci]
+                : ColAlign.none;
+            cells[ri][ci] = SpanCell(spans,
+                halign: overridden ? Align.inherit
+                    : a == ColAlign.right ? Align.right
+                    : a == ColAlign.center ? Align.center
+                    : Align.left,
+                // Source-anchored cell identity for interactive
+                // backends; stub cells stay anonymous (`DSG5`).
+                key: opt.tableKeyBase != 0 && !isStub
+                    ? opt.tableKeyBase + cell.span.start : 0);
+        }
+    }
+
+    // `TBL6`: the whole-table copy button in the top border,
+    // mirroring the fence header's affordance (the component skips it
+    // for too-narrow tables).
+    const copied = opt.copiedTable == blk.span.start;
+    TableProps props = {
+        headerRows: 1,
+        rowSeparators: opt.tableRowRules,
+        headerCols: opt.tableExtras.headerCols,
+        columnAligns: opt.tableExtras.columnAligns.dup,
+    };
+    if (opt.tableExtras.columnMaxWidth > 0)
+    {
+        auto caps = new size_t[](cols);
+        caps[] = opt.tableExtras.columnMaxWidth;
+        props.columnMaxWidths = caps;
+    }
+    if (opt.tableExtras.columnWidths.length)
+    {
+        // Pinned geometry (`DSN3`): both bounds from one array, so a
+        // windowed table keeps exactly one width per column however
+        // wide the rows it happens to be showing are.
+        auto pinned = new size_t[](cols);
+        auto capped = new size_t[](cols);
+        const given = opt.tableExtras.columnWidths;
+        foreach (i; 0 .. cols)
+        {
+            pinned[i] = i < given.length ? given[i] : 0;
+            // A pinned column keeps its own cap; an unpinned one
+            // keeps whatever the uniform cap said.
+            capped[i] = pinned[i] != 0 ? pinned[i]
+                : (props.columnMaxWidths.length > i
+                    ? props.columnMaxWidths[i] : 0);
+        }
+        props.columnMinWidths = pinned;
+        props.columnMaxWidths = capped;
+    }
+
+    // `TBL7`/`TBL8`: the overflow policy. The available box is
+    // `maxWidth - indentCols` — the fence convention, so a nested
+    // table respects its ancestors' left indentation. Wrap modes hand
+    // the core a total-width cap; scroll and wrap-at additionally arm
+    // the framed viewport (which engages only on real overflow).
+    const boxW = opt.maxWidth > 0
+        ? cast(int) opt.maxWidth - opt.indentCols : 0;
+    const wrapAtW = wrapAtWidth(opt.tableOverflow);
+    if (isWrap(opt.tableOverflow) && boxW > 0)
+        props.maxWidth = boxW;
+    else if (wrapAtW > 0)
+        props.maxWidth = wrapAtW;
+    TableViewportSpec vps;
+    if (!isWrap(opt.tableOverflow))
+    {
+        const ts = tableScrollOf(opt, blk.span.start);
+        const availW = wrapAtW > 0 && (boxW == 0 || wrapAtW < boxW)
+            ? wrapAtW : boxW;
+        vps = TableViewportSpec(
+            availWidth: availW,
+            maxLines: opt.tableMaxLines > 0 ? opt.tableMaxLines : 0,
+            x: ts.x,
+            fx: ts.fx,
+            shiftKey: tableShiftKey(blk.span.start),
+            fy: opt.tableExtras.virtualRows > 0 ? 0 : ts.fy,
+            // `DSN4`: a windowed table was handed exactly the rows
+            // its viewport shows, so the scroll already happened —
+            // applying it again inside the table would skip past the
+            // window's own head and run off its end.
+            y: opt.tableExtras.virtualRows > 0 ? 0 : ts.y,
+            virtualLines: opt.tableExtras.virtualRows,
+            virtualOffset: opt.tableExtras.virtualRowOffset,
+            hBarHitId: opt.tableHBarHitBase != 0
+                ? opt.tableHBarHitBase + blk.span.start : 0,
+            vBarHitId: opt.tableVBarHitBase != 0
+                ? opt.tableVBarHitBase + blk.span.start : 0,
+            hThumbFg: opt.hotTableHBar == blk.span.start
+                ? opt.theme.accentBlue : opt.theme.codeFg,
+            hasHThumbFg: opt.theme.present,
+            vThumbFg: opt.hotTableVBar == blk.span.start
+                ? opt.theme.accentBlue : opt.theme.codeFg,
+            hasVThumbFg: opt.theme.present,
+            pinHeader: opt.tableExtras.pinHeader,
+            freezeTopRows: opt.tableExtras.freezeTopRows,
+            freezeBottomRows: opt.tableExtras.freezeBottomRows,
+            freezeLeftColumns: opt.tableExtras.freezeLeftColumns,
+            freezeRightColumns: opt.tableExtras.freezeRightColumns);
+    }
+    TableWidgetStyle st = {
+        hitId: opt.hitId,
+        baseStyle: opt.baseStyle,
+        cellSlot: opt.proseSlot,
+        ruleFg: opt.theme.ruleFg,
+        hasRuleFg: opt.theme.present,
+        cutout: TableCutout(
+            present: opt.tableCopyHitBase != 0,
+            hitId: opt.tableCopyHitBase + blk.span.start,
+            icon: TextSpan(" " ~ (copied ? opt.glyphs.copiedIcon
+                : opt.glyphs.copyIcon) ~ " ", Slot.gutter,
+                opt.baseStyle, noBreak: true),
+            fg: copied ? opt.theme.accentGreen : opt.theme.ruleFg,
+            hasFg: opt.theme.present),
+    };
+    return buildTableWidgets(b, cells, props, st, vps).root;
+}
+
 private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
     MdViewOptions opt, int listDepth = 0, int quoteDepth = 0)
 {
@@ -1283,316 +1785,7 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
         }
 
         case codeFence:
-        {
-            // A bordered code panel. The body's lines come from the nested
-            // pipeline when a fenceRenderer is supplied (syntax highlighting,
-            // a twoslash sub-view); plain pre-formatted code otherwise.
-            auto rows = new uint[](0);
-            // The body as CODE: a quoted fence's `> ` continuation prefixes
-            // dropped, `fb.srcAt` keeping the identity channel exact.
-            const fb = fenceBody(blk, src);
-            const code = fb.text;
-
-            TextSpan[][] styled;
-            if (opt.fenceRenderer !is null)
-                styled = opt.fenceRenderer(blk.infoLang, code);
-
-            // The in-panel number gutter (COD): 1-based, right-aligned over
-            // the body's digit width, muted, synthetic (no identity).
-            size_t bodyLines = 1;
-            foreach (char c; code)
-                if (c == '\n')
-                    ++bodyLines;
-
-            // `DVN6`: a fence is diffed by LINE, and its rows do not go
-            // through the prose path, so a changed line is tinted as a whole
-            // row. Offsets come from the body itself rather than from the
-            // spans, which a fence renderer may leave unanchored.
-            Slot rowSlot(size_t li) @safe
-            {
-                if (opt.diffEmphasis.spans.length == 0)
-                    return Slot.code;
-                size_t at, n;
-                foreach (i, char c; code)
-                {
-                    if (c != '\n')
-                        continue;
-                    if (n++ == li)
-                        return lineTouched(opt, fb.srcAt(at), fb.srcAt(i));
-                    at = i + 1;
-                }
-                return n == li
-                    ? lineTouched(opt, fb.srcAt(at), fb.srcAt(code.length))
-                    : Slot.code;
-            }
-            int numW;
-            // The gutter width follows the tallest GROUP sibling too, so a
-            // tab switch cannot shift the code column sideways.
-            for (auto n = bodyLines > opt.groupMinLines ? bodyLines
-                    : opt.groupMinLines; n; n /= 10)
-                ++numW;
-            TextSpan numberSpan(size_t lineNo) @safe
-            {
-                import sparkles.base.buffer : SharedBuffer;
-                import sparkles.base.text.writers : writeInteger;
-
-                SharedBuffer!(char, 24) t;
-                writeInteger(t, lineNo);
-                char[] cell;
-                foreach (_; t[].length .. numW)
-                    cell ~= ' ';
-                cell ~= t[];
-                cell ~= ' ';
-                return TextSpan(cell.idup, Slot.gutter, codeStyle(opt),
-                    noBreak: true);
-            }
-
-            // Per-line span lists + their (diff-tinted) slots, mode-agnostic.
-            TextSpan[][] lineSpans;
-            Slot[] lineSlots;
-            if (styled.length)
-            {
-                foreach (li, line; styled)
-                {
-                    // Renderer offsets are body-relative; anchor them to the
-                    // fence body's source position (the identity channel).
-                    foreach (ref s; line)
-                        if (s.srcStart != size_t.max)
-                        {
-                            s.srcStart = fb.srcAt(s.srcStart);
-                            s.srcEnd = fb.srcAt(s.srcEnd);
-                        }
-                    lineSpans ~= line.length ? line
-                        : [TextSpan(" ", Slot.code, codeStyle(opt))];
-                    lineSlots ~= rowSlot(li);
-                }
-            }
-            else
-            {
-                size_t start = 0;
-                void line(const(char)[] t, size_t at) @safe
-                {
-                    lineSpans ~= [
-                        TextSpan(t.length ? t : " ", Slot.code, codeStyle(opt),
-                            srcStart: fb.srcAt(at),
-                            srcEnd: fb.srcAt(at + t.length))];
-                    lineSlots ~= lineTouched(opt, fb.srcAt(at),
-                        fb.srcAt(at + t.length));
-                }
-
-                foreach (i, char c; code)
-                    if (c == '\n')
-                    {
-                        line(code[start .. i], start);
-                        start = i + 1;
-                    }
-                if (start < code.length)
-                    line(code[start .. $], start);
-            }
-
-            import sparkles.base.text.grapheme : visibleWidth;
-
-            // Group height stability (`MDP22`): the showing fence pads its
-            // body to the tallest sibling with blank rows — the number
-            // gutter finishes at the REAL line count, never numbering the
-            // padding — so a tab switch cannot reflow the document below.
-            const realLines = cast(int) lineSpans.length;
-            while (cast(int) lineSpans.length < opt.groupMinLines)
-            {
-                lineSpans ~= [TextSpan(" ", Slot.code, codeStyle(opt))];
-                lineSlots ~= Slot.code;
-            }
-
-            // ── The integrated-border chrome (COD1/COD2/COD6) ─────────────
-            // Geometry first: the box is glyph-composed, so its width must
-            // be exact — which it is, because `opt.indentCols` tracked every
-            // ancestor's left padding. Unbounded (a popup's docs): the box
-            // shrink-wraps to its content.
-            const gutterW = opt.codeLineNumbers ? numW + 1 : 0;
-
-            // `wrap-at:N` pre-wraps the body to N's interior and then rides
-            // the scroll structure over the wrapped lines: the box caps at N,
-            // the h bar appears only when N exceeds the panel, and
-            // `codeMaxLines` counts visual lines. `srcLineOf` keeps the
-            // gutter numbering on first lines; continuations blank.
-            const wrapAtW = wrapAtWidth(opt.codeOverflow);
-            int[] srcLineOf;
-            if (wrapAtW > 0)
-            {
-                import sparkles.ui.wrap : wrapSpans;
-
-                const wrapW = wrapAtW - 4 - gutterW > 1
-                    ? wrapAtW - 4 - gutterW : 1;
-                TextSpan[][] visual;
-                Slot[] visualSlots;
-                foreach (li, spans; lineSpans)
-                {
-                    auto wl = wrapSpans(spans, wrapW);
-                    if (!wl.length)
-                        wl = [spans];
-                    foreach (k, line; wl)
-                    {
-                        visual ~= line;
-                        visualSlots ~= lineSlots[li];
-                        srcLineOf ~= k == 0 ? cast(int) li : -1;
-                    }
-                }
-                lineSpans = visual;
-                lineSlots = visualSlots;
-            }
-
-            int widest;
-            foreach (spans; lineSpans)
-            {
-                int w;
-                foreach (ref const s; spans)
-                    w += cast(int) visibleWidth(s.text);
-                if (w > widest)
-                    widest = w;
-            }
-            const bounded = opt.maxWidth > 0;
-            int boxW = bounded ? opt.maxWidth - opt.indentCols
-                : widest + gutterW + 4;
-            if (wrapAtW > 0 && wrapAtW < boxW)
-                boxW = wrapAtW;
-            const innerW = boxW - 4 - gutterW; // border + pad each side
-            const lines = cast(int) lineSpans.length;
-            const scrolling = !isWrap(opt.codeOverflow);
-            const shownRows = scrolling && opt.codeMaxLines > 0
-                && lines > opt.codeMaxLines ? opt.codeMaxLines : lines;
-            const vOver = shownRows < lines;
-            const hOver = scrolling && bounded && innerW > 0
-                && widest > innerW;
-            const fs = fenceScrollOf(opt, blk.codeBody.start);
-
-            uint body_;
-            if (scrolling)
-            {
-                // The body is a horizontal — and, past `codeMaxLines`, a
-                // vertical — VIEWPORT (`LAY7`): lines keep their natural
-                // extent; `clipX`/`clipY` scissor them, `childOffset` is
-                // this fence's scroll. The number gutter is a twin viewport
-                // scrolling y only, pinned in x — like every code view
-                // worth reading.
-                foreach (li, spans; lineSpans)
-                    rows ~= b.add(Widget(kind: WidgetKind.rich,
-                        spans: spans, slot: lineSlots[li],
-                        hitId: opt.hitId, paintBackground: true,
-                        textStyle: codeStyle(opt)));
-                Widget vp = Widget(kind: WidgetKind.column, children: rows,
-                    clipX: true, clipY: vOver,
-                    childOffset: Point(fs.x, vOver ? fs.y : 0),
-                    width: SizeSpec.grow());
-                // Scrolled between cells (`LAY7`), on a target that can —
-                // keyed, so a painter sets the fraction without a rebuild.
-                vp.childOffsetFracX = fs.fx;
-                vp.childOffsetFracY = vOver ? fs.fy : 0;
-                vp.key = fenceShiftKey(fs.bodyStart);
-                vp.shiftBracket = true;
-                if (vOver)
-                    vp.height = SizeSpec.fixed(shownRows);
-                const viewport = b.add(vp);
-
-                uint[] parts;
-                if (opt.codeLineNumbers)
-                {
-                    auto nums = new uint[](0);
-                    foreach (li; 0 .. lineSpans.length)
-                    {
-                        // Under wrap-at, continuations carry no number.
-                        const srcLi = wrapAtW > 0 ? srcLineOf[li]
-                            : cast(int) li;
-                        nums ~= b.add(Widget(kind: WidgetKind.rich,
-                            spans: [srcLi >= 0 && srcLi < realLines
-                                ? numberSpan(srcLi + 1)
-                                : TextSpan(repGlyph(" ", numW + 1),
-                                    Slot.gutter, codeStyle(opt),
-                                    noBreak: true)],
-                            slot: Slot.gutter, textStyle: codeStyle(opt)));
-                    }
-                    // Fixed, not fit: the viewport's natural width is its
-                    // widest (overflowing) line, and the row's deficit
-                    // would otherwise squeeze the gutter's trailing space.
-                    Widget nc = Widget(kind: WidgetKind.column,
-                        children: nums, width: SizeSpec.fixed(numW + 1),
-                        clipY: vOver,
-                        childOffset: Point(0, vOver ? fs.y : 0));
-                    nc.childOffsetFracY = vOver ? fs.fy : 0;
-                    nc.key = fenceShiftKey(fs.bodyStart);
-                    nc.shiftBracket = vOver;
-                    if (vOver)
-                        nc.height = SizeSpec.fixed(shownRows);
-                    parts ~= b.add(nc);
-                }
-                parts ~= viewport;
-                if (vOver)
-                {
-                    // The track IS the right border (like the bottom-border
-                    // h bar): a 1-cell gap where the padding was, then the
-                    // `│/┃` column sitting on the panel's right edge — the
-                    // decoration drops its right side to make room.
-                    parts ~= b.add(Widget(kind: WidgetKind.column,
-                        width: SizeSpec.fixed(1)));
-                    parts ~= fenceVTrack(b, opt, blk, lines, shownRows,
-                        fs.y);
-                }
-                body_ = b.add(Widget(kind: WidgetKind.row, children: parts,
-                    width: SizeSpec.grow()));
-            }
-            else
-            {
-                // In-panel greedy wrapping; continuations hang past the
-                // number gutter (which therefore blanks on them, like the
-                // old preview's wrapped code rows). The rows carry the
-                // interior as their width MAXIMUM — the measure pass sizes
-                // wrapped heights against it; without the bound it measures
-                // the unwrapped line (one row) and the continuations would
-                // overflow the panel onto the bottom border.
-                foreach (li, spans; lineSpans)
-                {
-                    if (opt.codeLineNumbers && cast(int) li < realLines)
-                        spans = numberSpan(li + 1) ~ spans;
-                    Widget w = Widget(kind: WidgetKind.rich,
-                        spans: spans, slot: lineSlots[li],
-                        hitId: opt.hitId, paintBackground: true,
-                        wrap: TextWrap.greedy,
-                        hangIndent: opt.codeLineNumbers ? numW + 1 : 0,
-                        textStyle: codeStyle(opt));
-                    w.width.max = innerW + gutterW;
-                    rows ~= b.add(w);
-                }
-                body_ = b.container(WidgetKind.column, rows);
-            }
-
-            // The sides are paint-time decoration, so a wrap-mode body of
-            // any wrapped height still gets them; the top and bottom borders
-            // are glyph rows in BOTH modes — corners, row-center alignment,
-            // and an empty body's closing line come for free, and scroll
-            // mode's bottom row doubles as the scrollbar.
-            Widget panel = Widget(kind: WidgetKind.panel, children: [body_],
-                slot: Slot.surface, paintBackground: true,
-                padding: vOver ? Insets(0, 0, 0, 2) : Insets(0, 2, 0, 2),
-                hitId: opt.hitId,
-                width: SizeSpec.fixed(boxW),
-                decoration: Decoration(
-                    borderWidth: vOver ? Insets(0, 0, 0, 1)
-                        : Insets(0, 1, 0, 1),
-                    borderStyle: BorderStyle.solid,
-                    borderSlot: Slot.border));
-            if (opt.theme.present)
-            {
-                panel.bgOverride = opt.theme.codePanelBg;
-                panel.hasBgOverride = true;
-                panel.borderOverride = opt.theme.ruleFg;
-                panel.hasBorderOverride = true;
-            }
-
-            return b.add(Widget(kind: WidgetKind.column, children: [
-                    fenceTopBorder(b, blk, opt, boxW), b.add(panel),
-                    fenceBottomBorder(b, opt, blk, boxW, widest, innerW,
-                        fs.x, hOver)],
-                width: SizeSpec.fixed(boxW)));
-        }
+            return viewCodeFence(b, blk, src, opt);
 
         case thematicBreak:
         {
@@ -1610,187 +1803,7 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
         }
 
         case table:
-        {
-            import sparkles.base.text.width : Align;
-            import sparkles.ui.components.table : TableProps;
-            import sparkles.ui.components.table.widgets : buildTableWidgets,
-                SpanCell, TableCutout, TableViewportSpec, TableWidgetStyle;
-
-            // The table is the shared span-capable component's widget view
-            // (`MDP10` via `sparkles.ui.components.table`): this arm only
-            // assembles styled cell spans from the AST — measurement, track
-            // sizing, the grid glyphs, the header rule and the copy cutout
-            // all live in `buildTableWidgets`. Rows may be ragged (missing
-            // trailing cells render as blank fillers, unkeyed).
-            size_t cols;
-            foreach (ref const row; blk.children)
-                if (row.children.length > cols)
-                    cols = row.children.length;
-            if (cols == 0)
-                return b.container(WidgetKind.column, null);
-
-            auto cells = new SpanCell[][](blk.children.length);
-            foreach (ri, ref const row; blk.children)
-            {
-                // `DVN6` twice, because a table has two levels a verdict can
-                // land on and neither reaches `viewBlock`: a whole ROW added
-                // or removed, and a CELL edited inside a row that survived.
-                // Resolving only the cell loses the added row entirely — the
-                // exact case a re-wrapped table with one new row produces.
-                MdViewOptions rowOpt = decorated(opt, row.span.start);
-                cells[ri] = new SpanCell[](row.children.length);
-                foreach (ci, ref const cell; row.children)
-                {
-                    TextSpan[] spans;
-                    // The row's verdict flows into its cells, so an added row
-                    // tints across; a cell's own verdict refines within it.
-                    const cellOpt = decorated(rowOpt, cell.span.start);
-                    TextStyle style = cellOpt.baseStyle;
-                    style.bold = ri == 0; // the header row
-                    inlinesToSpans(cell.inlines, src, style, cellOpt.proseSlot,
-                        spans, opt.theme.present ? &opt.theme : null,
-                        cellOpt.emph, opt.linkTable, &opt.glyphs);
-                    fillDiffTints(spans); // the cell path is not a prose row
-                    trimCellEdges(spans); // measured text sizes the track
-                    // The sort-rank badge (`DSS1`): chrome, not content —
-                    // no srcStart, so it neither selects nor copies.
-                    if (ri == 0 && ci < opt.tableExtras.headerBadges.length
-                        && opt.tableExtras.headerBadges[ci].length)
-                        spans ~= TextSpan(opt.tableExtras.headerBadges[ci],
-                            Slot.info, noBreak: true);
-                    // Stub columns are chrome (`DSG5`): unkeyed — a drag
-                    // cannot anchor a grid selection there — and stripped of
-                    // source identity, so text-regime selection skips them
-                    // (`SEL2`) and copies never include them.
-                    const isStub = ci < opt.tableExtras.headerCols;
-                    if (isStub)
-                        foreach (ref sp; spans)
-                        {
-                            sp.srcStart = size_t.max;
-                            sp.srcEnd = size_t.max;
-                        }
-                    // An extras entry owns the column: the cell defers to
-                    // `TableProps.columnAligns` (which is how `decimal`
-                    // reaches the core's pad solver); otherwise markdown's
-                    // own `ColAlign` maps per cell as before.
-                    const overridden = ci < opt.tableExtras.columnAligns.length
-                        && opt.tableExtras.columnAligns[ci] != Align.inherit;
-                    const a = ci < blk.aligns.length ? blk.aligns[ci]
-                        : ColAlign.none;
-                    cells[ri][ci] = SpanCell(spans,
-                        halign: overridden ? Align.inherit
-                            : a == ColAlign.right ? Align.right
-                            : a == ColAlign.center ? Align.center
-                            : Align.left,
-                        // Source-anchored cell identity for interactive
-                        // backends; stub cells stay anonymous (`DSG5`).
-                        key: opt.tableKeyBase != 0 && !isStub
-                            ? opt.tableKeyBase + cell.span.start : 0);
-                }
-            }
-
-            // `TBL6`: the whole-table copy button in the top border,
-            // mirroring the fence header's affordance (the component skips it
-            // for too-narrow tables).
-            const copied = opt.copiedTable == blk.span.start;
-            TableProps props = {
-                headerRows: 1,
-                rowSeparators: opt.tableRowRules,
-                headerCols: opt.tableExtras.headerCols,
-                columnAligns: opt.tableExtras.columnAligns.dup,
-            };
-            if (opt.tableExtras.columnMaxWidth > 0)
-            {
-                auto caps = new size_t[](cols);
-                caps[] = opt.tableExtras.columnMaxWidth;
-                props.columnMaxWidths = caps;
-            }
-            if (opt.tableExtras.columnWidths.length)
-            {
-                // Pinned geometry (`DSN3`): both bounds from one array, so a
-                // windowed table keeps exactly one width per column however
-                // wide the rows it happens to be showing are.
-                auto pinned = new size_t[](cols);
-                auto capped = new size_t[](cols);
-                const given = opt.tableExtras.columnWidths;
-                foreach (i; 0 .. cols)
-                {
-                    pinned[i] = i < given.length ? given[i] : 0;
-                    // A pinned column keeps its own cap; an unpinned one
-                    // keeps whatever the uniform cap said.
-                    capped[i] = pinned[i] != 0 ? pinned[i]
-                        : (props.columnMaxWidths.length > i
-                            ? props.columnMaxWidths[i] : 0);
-                }
-                props.columnMinWidths = pinned;
-                props.columnMaxWidths = capped;
-            }
-
-            // `TBL7`/`TBL8`: the overflow policy. The available box is
-            // `maxWidth - indentCols` — the fence convention, so a nested
-            // table respects its ancestors' left indentation. Wrap modes hand
-            // the core a total-width cap; scroll and wrap-at additionally arm
-            // the framed viewport (which engages only on real overflow).
-            const boxW = opt.maxWidth > 0
-                ? cast(int) opt.maxWidth - opt.indentCols : 0;
-            const wrapAtW = wrapAtWidth(opt.tableOverflow);
-            if (isWrap(opt.tableOverflow) && boxW > 0)
-                props.maxWidth = boxW;
-            else if (wrapAtW > 0)
-                props.maxWidth = wrapAtW;
-            TableViewportSpec vps;
-            if (!isWrap(opt.tableOverflow))
-            {
-                const ts = tableScrollOf(opt, blk.span.start);
-                const availW = wrapAtW > 0 && (boxW == 0 || wrapAtW < boxW)
-                    ? wrapAtW : boxW;
-                vps = TableViewportSpec(
-                    availWidth: availW,
-                    maxLines: opt.tableMaxLines > 0 ? opt.tableMaxLines : 0,
-                    x: ts.x,
-                    fx: ts.fx,
-                    shiftKey: tableShiftKey(blk.span.start),
-                    fy: opt.tableExtras.virtualRows > 0 ? 0 : ts.fy,
-                    // `DSN4`: a windowed table was handed exactly the rows
-                    // its viewport shows, so the scroll already happened —
-                    // applying it again inside the table would skip past the
-                    // window's own head and run off its end.
-                    y: opt.tableExtras.virtualRows > 0 ? 0 : ts.y,
-                    virtualLines: opt.tableExtras.virtualRows,
-                    virtualOffset: opt.tableExtras.virtualRowOffset,
-                    hBarHitId: opt.tableHBarHitBase != 0
-                        ? opt.tableHBarHitBase + blk.span.start : 0,
-                    vBarHitId: opt.tableVBarHitBase != 0
-                        ? opt.tableVBarHitBase + blk.span.start : 0,
-                    hThumbFg: opt.hotTableHBar == blk.span.start
-                        ? opt.theme.accentBlue : opt.theme.codeFg,
-                    hasHThumbFg: opt.theme.present,
-                    vThumbFg: opt.hotTableVBar == blk.span.start
-                        ? opt.theme.accentBlue : opt.theme.codeFg,
-                    hasVThumbFg: opt.theme.present,
-                    pinHeader: opt.tableExtras.pinHeader,
-                    freezeTopRows: opt.tableExtras.freezeTopRows,
-                    freezeBottomRows: opt.tableExtras.freezeBottomRows,
-                    freezeLeftColumns: opt.tableExtras.freezeLeftColumns,
-                    freezeRightColumns: opt.tableExtras.freezeRightColumns);
-            }
-            TableWidgetStyle st = {
-                hitId: opt.hitId,
-                baseStyle: opt.baseStyle,
-                cellSlot: opt.proseSlot,
-                ruleFg: opt.theme.ruleFg,
-                hasRuleFg: opt.theme.present,
-                cutout: TableCutout(
-                    present: opt.tableCopyHitBase != 0,
-                    hitId: opt.tableCopyHitBase + blk.span.start,
-                    icon: TextSpan(" " ~ (copied ? opt.glyphs.copiedIcon
-                        : opt.glyphs.copyIcon) ~ " ", Slot.gutter,
-                        opt.baseStyle, noBreak: true),
-                    fg: copied ? opt.theme.accentGreen : opt.theme.ruleFg,
-                    hasFg: opt.theme.present),
-            };
-            return buildTableWidgets(b, cells, props, st, vps).root;
-        }
+            return viewTable(b, blk, src, opt);
 
         case listItem, tableRow, tableCell:
             // Handled by their parents; standalone appearance degrades.
