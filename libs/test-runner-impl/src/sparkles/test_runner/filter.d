@@ -33,3 +33,38 @@ unittest
     // Matches include and not excluded → run.
     assert(t.matchesFilter("SharedBuffer", "Buffer.remove"));
 }
+
+/// Which tests a run keeps by their `@slow` marker: all of them (the
+/// default), none of them (`--skip-slow`), or only them (`--only-slow`).
+enum SlowSelection
+{
+    run,
+    skip,
+    only,
+}
+
+/// Whether `test` is kept under `selection`.
+bool matchesSlowSelection(in Test test, SlowSelection selection) @safe pure nothrow @nogc
+{
+    final switch (selection)
+    {
+        case SlowSelection.run:  return true;
+        case SlowSelection.skip: return !test.traits.isSlow;
+        case SlowSelection.only: return test.traits.isSlow;
+    }
+}
+
+@("matchesSlowSelection.basic") @safe pure nothrow @nogc
+unittest
+{
+    import sparkles.test_runner.model : TestTraits;
+
+    const fast = Test(name: "fast");
+    const slow = Test(name: "slow", traits: TestTraits(isSlow: true));
+    assert(fast.matchesSlowSelection(SlowSelection.run));
+    assert(slow.matchesSlowSelection(SlowSelection.run));
+    assert(fast.matchesSlowSelection(SlowSelection.skip));
+    assert(!slow.matchesSlowSelection(SlowSelection.skip));
+    assert(!fast.matchesSlowSelection(SlowSelection.only));
+    assert(slow.matchesSlowSelection(SlowSelection.only));
+}

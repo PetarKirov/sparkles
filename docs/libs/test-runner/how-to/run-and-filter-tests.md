@@ -9,6 +9,8 @@ dub test :base -- -e "slow"          # skip tests matching a regex
 dub test :base -- -v                 # durations, locations, full traces
 dub test :base -- -t 1               # single-threaded (main thread, 8 MiB stack)
 dub test :base -- -l                 # list tests without running them
+dub test :font-oracle -- --skip-slow # leave out the @slow tests
+dub test :font-oracle -- --only-slow # run only them
 ```
 
 ## Filtering

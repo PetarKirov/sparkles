@@ -90,6 +90,21 @@ to `@benchmark`'s per-iteration statistics.
 
 See [Measure workloads](../how-to/measure-workloads.md).
 
+## `@slow`
+
+The test takes minutes rather than milliseconds — a sweep over a whole
+corpus, say.
+
+- Runs normally under `dub test`.
+- `--skip-slow` leaves it out (the summary counts it:
+  `5 slow (run with --only-slow)`); `--only-slow` runs nothing else. The two
+  exclude each other, and both combine with `-i`/`-e`.
+- `ci --test` passes `--skip-slow`; CI runs each slow test as a job of its
+  own through `ci --test-slow`, which selects it by name. So a slow test
+  needs a `@("name")`, and `@slow` goes on the `unittest` itself, not on a
+  `@slow:` label or block: `ci` finds slow tests by reading the source, and
+  fails a job whose test binary lists slow tests the source scan did not.
+
 ## Combining
 
 Attributes compose freely — e.g. `@betterC @wasm` opts one test into both

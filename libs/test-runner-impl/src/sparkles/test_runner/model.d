@@ -30,6 +30,10 @@ struct TestTraits
     bool isBenchmark;
     bool isWorkload;
 
+    /// The test is `@slow`: `--skip-slow` leaves it out, `--only-slow` keeps
+    /// only such tests.
+    bool isSlow;
+
     /// The test asserts it needs nothing linked from its own module, so the
     /// extracted `--better-c` / `--wasm` program leaves that module out
     /// (see `betterC.selfContained`). One flag covers both modes: a test
