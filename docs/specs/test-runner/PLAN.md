@@ -77,22 +77,23 @@ Carried from the original roadmap, amended by the research:
 Interleaved by value; B-track numbers alias
 [backend-proposal.md](../../research/cpu-pmu/backend-proposal.md) §2–§7.
 
-| #   | ID  | Milestone                                                                | Gate / permissions                           |
-| --- | --- | ------------------------------------------------------------------------ | -------------------------------------------- |
-| 1   | B1  | Capability seam (`Capability`/`CapabilityReport`, backend trait)         | none                                         |
-| 2   | B2  | Linux counting depth (raw events, naming, labeled scaling, rdpmc)        | none (soft libpfm4)                          |
-| 3   | M4  | `@workload` window mode + wall decomposition                             | none                                         |
-| 4   | M5  | PSI stall integrals                                                      | `CONFIG_PSI`                                 |
-| 5   | B3  | macOS floor (`proc_pid_rusage` counting tier)                            | none (Apple MacBook Pro M4 Max verification) |
-| 6   | M6  | Page-cache regime control + residency verify                             | `drop_caches` = root                         |
-| 7   | M7  | Storage provenance fingerprint                                           | none                                         |
-| 8   | M8  | cgroup-v2 isolation + `memory.max` sweep                                 | root / systemd delegation                    |
-| 9   | B5  | Precise memory tier (IBS-first) + NUMA oracles + `LatencyHistogram`      | paranoid; IBS hardware                       |
-| 10  | B6  | Sampling & symbolization (`--bench-profile`)                             | paranoid; `perf_event_mlock_kb`; soft libdw  |
-| 11  | M9  | Off-CPU profiler (rebuilt on B6) + biolatency floor                      | tracefs root (Tier B)                        |
-| 12  | M10 | CO-safe open-loop load generator                                         | none                                         |
-| —   | B4  | Windows floor (`CycleTime`; ETW elevated tier)                           | **blocked: no Windows hardware**             |
-| —   | M11 | Gated spikes (eBPF, block tracepoints, SCHED_FIFO, ARM SPE/BRBE, RISC-V) | caps / hardware                              |
+| #   | ID  | Milestone                                                                      | Gate / permissions                           |
+| --- | --- | ------------------------------------------------------------------------------ | -------------------------------------------- |
+| 1   | B1  | Capability seam (`Capability`/`CapabilityReport`, backend trait)               | none                                         |
+| 2   | B2  | Linux counting depth (raw events, naming, labeled scaling, rdpmc)              | none (soft libpfm4)                          |
+| 3   | M4  | `@workload` window mode + wall decomposition                                   | none                                         |
+| 4   | M5  | PSI stall integrals                                                            | `CONFIG_PSI`                                 |
+| 5   | B3  | macOS floor (`proc_pid_rusage` counting tier)                                  | none (Apple MacBook Pro M4 Max verification) |
+| 6   | M6  | Page-cache regime control + residency verify                                   | `drop_caches` = root                         |
+| 7   | M7  | Storage provenance fingerprint                                                 | none                                         |
+| 8   | M8  | cgroup-v2 isolation + `memory.max` sweep                                       | root / systemd delegation                    |
+| 9   | B5  | Precise memory tier (IBS-first) + NUMA oracles + `LatencyHistogram`            | paranoid; IBS hardware                       |
+| 10  | B6  | Sampling & symbolization (`--bench-profile`)                                   | paranoid; `perf_event_mlock_kb`; soft libdw  |
+| 11  | M9  | Off-CPU profiler (rebuilt on B6) + biolatency floor                            | tracefs root (Tier B)                        |
+| 12  | M10 | CO-safe open-loop load generator                                               | none                                         |
+| 13  | W1  | `@wasm` on WASI: full runtime under `wasmtime`; `--wasm-bare` keeps `-betterC` | [toolchain TC-M5](../toolchain/PLAN.md)      |
+| —   | B4  | Windows floor (`CycleTime`; ETW elevated tier)                                 | **blocked: no Windows hardware**             |
+| —   | M11 | Gated spikes (eBPF, block tracepoints, SCHED_FIFO, ARM SPE/BRBE, RISC-V)       | caps / hardware                              |
 
 Sequencing rationale: B1 is pure reporting value and gives every later
 milestone one absence vocabulary; B2 deepens the mode the harness lives in
@@ -107,6 +108,18 @@ needed. Each milestone gets a detailed re-plan when reached.
 Milestones that cite SPEC sections make those `(target)` passages true;
 milestones without a citation (M7, M8, M10, M11) fold their surface into
 SPEC as new sections when they land.
+
+## W1 — `@wasm` on WASI
+
+Makes the `@wasm` bullet of [SPEC §3](./SPEC.md#_3-attribute-and-in-body-surface)
+true. `--wasm` compiles the extracted tests for `wasm32-unknown-wasip1` with
+the toolchain's WASI druntime and Phobos, links them through the runtime's WASI
+compiler driver, and runs them under `wasmtime`; the bare `-betterC` path
+moves to `--wasm-bare`, linked by the compiler's internal linker. Prerequisite: the WASI runtime of the
+[toolchain plan's TC-M5](../toolchain/PLAN.md). Gate: `ci --test-extracted`
+runs every `@wasm` test under `wasmtime` in CI, and a `@wasm` test that
+throws and catches an exception, runs a module constructor, and allocates
+with the GC passes.
 
 ## B1 — Capability seam
 

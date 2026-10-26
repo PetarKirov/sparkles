@@ -178,6 +178,16 @@ unconditionally (not under `version (unittest)`).
   separator) — violation is a registration-time error.
 - **`blackBox(x)`** — identity the optimizer cannot see through; route
   measured inputs and results through it.
+- **`@wasm`** _(target, [W1](./PLAN.md#w1--wasm-on-wasi))_ — the test also
+  runs as WebAssembly under `--wasm`. It is compiled for
+  `wasm32-unknown-wasip1` with the full druntime and Phobos of the
+  [toolchain's WASI runtime](../toolchain/wasi.md), linked through that
+  runtime's compiler driver, and run under `wasmtime`; a test that fails
+  there fails the run. **`@wasm(selfContained: true)`** keeps the test from
+  pulling in its owning module, as for `@betterC`. Bare `wasm32` without a
+  runtime is the separate `--wasm-bare` mode, which compiles with
+  `-betterC`, links with the compiler's internal linker, and runs under a
+  JavaScript host.
 - **`skipTest(reason)`** (`sparkles.test_runner.skip`, `@safe pure nothrow
 @nogc`) — skip the enclosing test at runtime: a yellow `⊘` line plus an
   `N skipped` summary segment; never fails the run. Under `--bench` a
@@ -494,10 +504,15 @@ The authoritative option list lives in the
 [CLI reference](../../libs/test-runner/reference/cli.md); this section pins
 the contracts.
 
-- **Mode exclusivity** — `--bench`, `--ctfe-trace`, and `--better-c`/`--wasm`
-  are mutually exclusive (hard error); `--better-c` with `--wasm` is one
-  extraction family; `--list`/`--list-metrics` are queries that win over any
-  mode.
+- **Mode exclusivity** — `--bench`, `--ctfe-trace`, and
+  `--better-c`/`--wasm` are mutually exclusive (hard error); `--better-c`
+  with `--wasm` is one extraction family; `--list`/`--list-metrics` are
+  queries that win over any mode. _(Target, [W1](./PLAN.md#w1--wasm-on-wasi):)_
+  `--wasm-bare` joins the extraction family and is mutually exclusive with
+  `--wasm`.
+- **Missing toolchain** _(target, [W1](./PLAN.md#w1--wasm-on-wasi))_ — when
+  `--wasm` lacks the WASI runtime or `wasmtime`, it skips with the missing
+  piece named; under `--require-toolchain` the skip is a failure.
 - **Readable failures** — malformed options, unknown flags, and stray
   positionals produce one-line errors, never stack traces.
 - **Warn, don't drop** — unknown `--metrics`, `--sort-by`, and `--syscalls`
