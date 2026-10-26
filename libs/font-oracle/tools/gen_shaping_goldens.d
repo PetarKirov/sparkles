@@ -43,6 +43,10 @@ immutable Case[] cases = [
     Case("MapleMono-NF-CN-Regular.ttf", "", "ltr", "latn", "en", "a != b -> c ==> www"),
     Case("NotoSans.ttf", "wght=300", "ltr", "latn", "en", "office Wavy AVA Ta fi"),
     Case("NotoSans.ttf", "wght=800", "ltr", "latn", "en", "office Wavy AVA Ta fi"),
+    // FTM6: a variable face at its minimum, default and maximum, with kerning and a mark's offset.
+    Case("NotoSans.ttf", "wght=100", "ltr", "latn", "en", "AV Ta Wavy q́ fi"),
+    Case("NotoSans.ttf", "", "ltr", "latn", "en", "AV Ta Wavy q́ fi"),
+    Case("NotoSans.ttf", "wght=900", "ltr", "latn", "en", "AV Ta Wavy q́ fi"),
     Case("NotoSansArabic.ttf", "", "rtl", "arab", "ar", "سلام عليكم"),
     Case("NotoSansDevanagari.ttf", "", "ltr", "deva", "hi", "क्षत्रिय हिन्दी"),
 ];

@@ -16,7 +16,10 @@ import std.json : parseJSON;
 import std.path : buildPath, dirName;
 import std.process : environment;
 import std.regex : matchAll, regex;
+import std.stdio : stderr;
 import std.string : lineSplitter, split, startsWith, strip;
+
+import sparkles.base.text.layout_units : LayoutUnit;
 
 import sparkles.base.text.unicode_tables : unicodeProperty, UnicodeProperty, unicodeVersion;
 import sparkles.base.unique : makeUnique;
@@ -315,7 +318,148 @@ unittest
         }
         ++cases;
     }
-    assert(cases == 5 && glyphsCompared > 50, text(cases, " cases, ", glyphsCompared, " glyphs"));
+    assert(cases == 8 && glyphsCompared > 80, text(cases, " cases, ", glyphsCompared, " glyphs"));
+}
+
+/// `raw` 1/65,536 units of a `unitsPerEm` face at an em of `em` ticks, rounded once, ties to even: FTM6 by hand.
+private long handTicks(long raw, long em, long unitsPerEm)
+{
+    const num = raw * em, den = unitsPerEm * designSubunits;
+    long q = num / den, r = num % den;
+    if (r < 0)
+    {
+        q -= 1;
+        r += den;
+    }
+    if (2 * r > den || (2 * r == den && (q & 1)))
+        q += 1;
+    return q;
+}
+
+/**
+FTM6 on real shaped runs: Noto Sans at its minimum, default and maximum
+weights, shaped at a 12-point physical em, with kerning and a mark's
+offset (`q` and U+0301). The design advances and offsets equal the
+recorded `hb-shape` result at upem scale (exactly at the default, within
+HarfBuzz's whole-unit rounding elsewhere); each physical value equals a
+hand-computed conversion, rounded once with ties to even, and a run's
+total converts its design sum once. Shaping the same run at 16 and 32 ppem
+gives the same design values, so no device size reaches a physical value,
+while the explicit pixel scale doubles from 96 to 192 dpi. Ink and advance
+stay distinct: the space advances with no ink, the mark has ink with no
+advance, and Maple Mono's `[ERROR]` ligature inks far past its cell.
+*/
+@("oracle.shaping.FTM6.physicalMeasurement")
+@system
+unittest
+{
+    if (fontsDir is null)
+        return skipTest("SPARKLES_FONTS_PATH is unset");
+    auto ws = makeUnique!PointWorkspace();
+    const golden = readText(buildPath(__FILE_FULL_PATH__.dirName.dirName.dirName, "goldens", "shaping.txt"));
+    string[] lines;
+    foreach (line; golden.lineSplitter)
+        lines ~= line;
+    enum source = "AV Ta Wavy q́ fi";
+    const twelvePoints = LayoutUnit(12 * LayoutUnit.ticksPerPoint);
+    const bytes = cast(const(ubyte)[]) read(buildPath(fontsDir, "NotoSans.ttf"));
+    const face = openFace(bytes).value;
+    const props = SegmentProperties(ShapingDirection.leftToRight, Tag("Latn"), "en");
+    size_t runs, values, roundedSumDiffers;
+
+    /// The run shaped at `size`.
+    ShapedGlyph[] shapeAt(const(UserCoordinate)[] coords, InstanceSize size, out ShapeInfo info)
+    {
+        auto inst = face.instance(size, coords).value;
+        auto s = Shaper(inst);
+        auto glyphs = new ShapedGlyph[64];
+        auto spans = new SourceSpan[64];
+        const r = s.shape(ShapeRequest(source, 0, source.length, props, true, null, true, true), glyphs, spans,
+            null, null);
+        assert(r.hasValue);
+        info = r.value;
+        return glyphs[0 .. r.value.glyphCount];
+    }
+
+    foreach (variations; ["wght=100", "-", "wght=900"])
+    {
+        const(UserCoordinate)[] coords = variations == "-" ? null
+            : [UserCoordinate(Tag("wght"), variations["wght=".length .. $].to!int << 16)];
+        ShapeInfo info, info16, info32;
+        const glyphs = shapeAt(coords, InstanceSize.physical(twelvePoints), info);
+        const at16 = shapeAt(coords, InstanceSize.pixels(Ppem.fromInteger(16).value), info16);
+        const at32 = shapeAt(coords, InstanceSize.pixels(Ppem.fromInteger(32).value), info32);
+        assert(glyphs == at16 && glyphs == at32, variations ~ ": a device size changed a design value");
+
+        size_t at = size_t.max;
+        foreach (i, line; lines)
+            if (line == "case\tNotoSans.ttf\t" ~ variations ~ "\tltr\tlatn\ten\t" ~ source)
+                at = i + 1;
+        assert(at != size_t.max, variations ~ ": no recorded hb-shape case");
+        const expected = parseJSON(lines[at]).array;
+        assert(glyphs.length == expected.length, variations);
+
+        long sum, roundedSum;
+        foreach (k, g; glyphs)
+        {
+            foreach (pair; [[g.xAdvance.raw, expected[k]["ax"].integer], [g.xOffset.raw, expected[k]["dx"].integer]])
+            {
+                const want = pair[1] * designSubunits;
+                const diff = pair[0] > want ? pair[0] - want : want - pair[0];
+                assert(variations == "-" ? diff == 0 : diff <= designSubunits, text(variations, " glyph ", k));
+            }
+            foreach (v; [g.xAdvance, g.xOffset])
+            {
+                const m = info.measured(v);
+                assert(m.physical.value.raw == handTicks(v.raw, twelvePoints.raw, face.unitsPerEm),
+                    text(variations, " glyph ", k));
+                // 12 pt at 96 dpi is 16 ppem; at 192, 32.
+                assert(m.pixels(96).value == m.pixelsAt(Ppem.fromInteger(16).value));
+                assert(m.pixels(192).value == 2 * m.pixels(96).value);
+                ++values;
+            }
+            sum += g.xAdvance.raw;
+            roundedSum += handTicks(g.xAdvance.raw, twelvePoints.raw, face.unitsPerEm);
+        }
+        // A run total converts its design sum once.
+        const total = info.measured(DesignValue(sum, face.unitsPerEm)).physical.value.raw;
+        assert(total == handTicks(sum, twelvePoints.raw, face.unitsPerEm), variations);
+        roundedSumDiffers += total != roundedSum;
+        ++runs;
+
+        // Ink and advance are distinct results.
+        auto inst = face.instance(InstanceSize.physical(twelvePoints), coords).value;
+        // The space after `AV`, and U+0301, the mark at byte 12.
+        const space = glyphs[2];
+        ShapedGlyph mark;
+        foreach (g; glyphs)
+            if (g.cluster == 12)
+                mark = g;
+        assert(space.xAdvance.raw > 0 && !glyphBounds(inst, space.glyphId, *ws).value.present, variations);
+        const ink = glyphBounds(inst, mark.glyphId, *ws).value;
+        assert(mark.xAdvance.raw == 0 && ink.present && ink.xMax > ink.xMin, variations);
+    }
+
+    // An audited programming ligature: one cell of advance, ink well past it (FTX7).
+    const maple = cast(const(ubyte)[]) read(buildPath(fontsDir, "MapleMono-NF-CN-Regular.ttf"));
+    const mapleFace = openFace(maple).value;
+    auto inst = mapleFace.instance(InstanceSize.physical(twelvePoints), null).value;
+    auto s = Shaper(inst);
+    auto glyphs = new ShapedGlyph[64];
+    auto spans = new SourceSpan[64];
+    const r = s.shape(ShapeRequest("[ERROR]", 0, 7, props, true, null, true, true), glyphs, spans, null, null);
+    assert(r.hasValue && r.value.glyphCount == 7);
+    long widest;
+    foreach (g; glyphs[0 .. 7])
+    {
+        assert(g.xAdvance == advance(inst, g.glyphId, *ws).value.design, "every glyph advances one cell");
+        const ink = glyphBounds(inst, g.glyphId, *ws).value;
+        if (ink.present)
+            widest = ink.xMax - ink.xMin > widest ? ink.xMax - ink.xMin : widest;
+    }
+    assert(widest > 2 * glyphs[0].xAdvance.raw, "the ligature's ink stays inside a cell");
+    stderr.writefln("oracle.shaping.FTM6.physicalMeasurement: %s runs, %s physical values equal the hand conversion; "
+        ~ "in %s of them the run total differs from the sum of rounded advances", runs, values, roundedSumDiffers);
 }
 
 /// The goldens' face fingerprint ignores `name` and `head.checkSumAdjustment`, and nothing else in `head`.
