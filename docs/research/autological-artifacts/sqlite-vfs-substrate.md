@@ -344,7 +344,7 @@ The trust surface follows from that locality, and it has three distinct parts.
 One further trust-relevant detail is a beautiful small violation of the layering. Both OPFS import paths write two bytes into the format header before releasing the file:
 
 ```js
-sah.write(new Uint8Array([1, 1]), { at: 18 }) /* force db out of WAL mode */;
+sah.write(new Uint8Array([1, 1]), { at: 18 }); /* force db out of WAL mode */
 ```
 
 Offsets 18 and 19 are the file-format _write_ and _read_ version bytes — `1` meaning legacy rollback journal, `2` meaning WAL ([`src/btree.c`][btree] sets both in `sqlite3BtreeSetVersion`). The substrate reaches _up_ into the format and rewrites it, because [WAL][wal] needs shared memory (`xShmMap`) and the WASM build has none. WAL is available on OPFS only from 3.47 and only under `pragma locking_mode=exclusive`, which — the docs say flatly — "eliminates all concurrency support from the `opfs` VFS." So the honest version of thesis 5 is not that the format is untouched by the substrate. It is that the substrate's demands on the format are **two bytes and one journalling mode**, against APE's six simultaneous loader parses. That is the size of the difference the thesis is about.

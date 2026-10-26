@@ -129,13 +129,13 @@ this solution unfortunate."
 
 ## Key design decisions and trade-offs
 
-| Decision                                         | Rationale                                                       | Trade-off                                                    |
+| Decision | Rationale | Trade-off |
 | ------------------------------------------------ | --------------------------------------------------------------- | ------------------------------------------------------------ | ---------- | ----------------------------------------- |
-| Flat, whole-repository listing                   | Simplest possible manifest; excellent delta compression         | `O(                                                          | repo files | )` parse cost; forced a redesign at scale |
-| Identity includes parent ids                     | Fits Mercurial's revlog/DAG model, where everything has parents | Identical trees get different ids — no cross-history dedup   |
-| One flag character for the node model            | Minimal format; easy to extend                                  | Executable and symlink only; everything else is out of scope |
-| Bootstrap trees from the flat format, adding `t` | Reuses the parser and storage machinery                         | Inherits revlog-per-path storage, i.e. `O(                   | files      | )` entries                                |
-| Text, not binary                                 | Debuggable, greppable                                           | Parsing cost is exactly the thing that did not scale         |
+| Flat, whole-repository listing | Simplest possible manifest; excellent delta compression | `O(                                                          | repo files | )` parse cost; forced a redesign at scale |
+| Identity includes parent ids | Fits Mercurial's revlog/DAG model, where everything has parents | Identical trees get different ids — no cross-history dedup |
+| One flag character for the node model | Minimal format; easy to extend | Executable and symlink only; everything else is out of scope |
+| Bootstrap trees from the flat format, adding `t` | Reuses the parser and storage machinery | Inherits revlog-per-path storage, i.e. `O(                   | files      | )` entries |
+| Text, not binary | Debuggable, greppable | Parsing cost is exactly the thing that did not scale |
 
 ## Sources
 

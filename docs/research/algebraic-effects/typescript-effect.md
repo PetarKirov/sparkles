@@ -94,8 +94,7 @@ export interface Primitive {
   readonly [contA]: ((value, fiber, exit?) => Primitive | Yield) | undefined;
   readonly [contE]: ((cause, fiber, exit?) => Primitive | Yield) | undefined;
   readonly [contAll]:
-    | ((fiber) => ((value, fiber) => Primitive | Yield) | undefined)
-    | undefined;
+    ((fiber) => ((value, fiber) => Primitive | Yield) | undefined) | undefined;
   [evaluate](fiber: FiberImpl): Primitive | Yield;
 }
 // built via makePrimitive / makePrimitiveProto — each op IS a tiny prototype object

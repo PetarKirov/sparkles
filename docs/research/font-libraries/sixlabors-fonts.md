@@ -141,6 +141,7 @@ All paths verified at the pinned revision with `git cat-file -e`.
 - Variation — [`FontVariation.cs`][variation], [`KnownVariationAxes.cs`][knownaxes], [`Tables/AdvancedTypographic/Variations/VariationAxis.cs`][axis], [`FVarTable.cs`][fvar], [`GlyphVariationProcessor.cs`][gvp].
 - Outlines, hinting, rendering — [`Rendering/IGlyphRenderer.cs`][iglyphrenderer], [`Rendering/TextRenderer.cs`][renderer], [`Rendering/GlyphRendererParameters.cs`][params], [`HintingMode.cs`][hinting], [`ColorFontSupport.cs`][colorsupport], [`Tables/TrueType/Hinting/TrueTypeInterpreter.cs`][interp], [`Tables/TrueType/TrueTypeGlyphMetrics.cs`][ttgm], [`Tables/TrueType/Glyphs/GlyphVector.cs`][glyphvector], [`TextMeasurer.cs`][measurer].
 - Project — [`README.md`][readme], [`LICENSE`][license], [`SixLabors.Fonts.csproj`][csproj].
+
 <!-- References -->
 
 [repo]: https://github.com/SixLabors/Fonts

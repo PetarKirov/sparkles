@@ -373,7 +373,7 @@ body atomically ([`diesel/src/connection/mod.rs`][connection]):
 > _"This function executes the provided closure `f` inside a database transaction. If there is
 > already an open transaction for the current connection savepoints will be used instead. The
 > connection is committed if the closure returns `Ok(_)`, it will be rolled back if it returns
-`Err(_)`."_
+> `Err(_)`."_
 
 So **nesting is real, via savepoints** — a nested `transaction` opens a `SAVEPOINT` rather than a
 second `BEGIN`. The `AnsiTransactionManager` makes the SQL explicit

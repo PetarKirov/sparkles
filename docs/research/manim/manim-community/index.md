@@ -358,7 +358,7 @@ the animations, and the current mobjects. The docstring defines the key exactly:
 
 > _"A string concatenation of the respective hashes of `camera_object`,
 > `animations_list` and `current_mobjects_list`, separated by `_`."_ —
-[`hashing.py:358`][hashing]
+> [`hashing.py:358`][hashing]
 
 Each component is a `zlib.crc32` of a custom JSON serialization
 ([`hashing.py:366`][hashing]); run-dependent fields are stripped via

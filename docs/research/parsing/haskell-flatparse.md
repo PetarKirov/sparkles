@@ -110,13 +110,13 @@ Ordered choice is defined directly on the three-way result. `<|>` retries the ri
 
 This is the exact mirror of [`nom`][nom]'s `Err::Error` (recoverable, `alt` retries) vs `Err::Failure` (unrecoverable, `alt` gives up). The bridging operations live in [`src/FlatParse/Basic/Base.hs`][flat-repo]:
 
-| Operation                         | Effect                                                                    | `nom` analogue           |
+| Operation | Effect | `nom` analogue |
 | --------------------------------- | ------------------------------------------------------------------------- | ------------------------ | -------------- |
-| `failed` / `empty`                | Produce `Fail#` (backtrackable)                                           | `Err::Error`             |
-| `err :: e -> ParserT st e a`      | Produce `Err#` — short-circuits past `<                                   | >` to the top            | `Err::Failure` |
-| `try`                             | Convert an `Err#` **back** into a `Fail#` (make it recoverable)           | (no direct nom equiv.)   |
-| `cut :: ParserT st e a -> e -> …` | Convert a `Fail#` **into** an `Err#` — commit to this branch              | `cut()`                  |
-| `cutting`                         | Like `cut`, but merges a new error into an existing one via `e -> e -> e` | error-accumulating `cut` |
+| `failed` / `empty` | Produce `Fail#` (backtrackable) | `Err::Error` |
+| `err :: e -> ParserT st e a` | Produce `Err#` — short-circuits past `<                                   | >` to the top | `Err::Failure` |
+| `try` | Convert an `Err#` **back** into a `Fail#` (make it recoverable) | (no direct nom equiv.) |
+| `cut :: ParserT st e a -> e -> …` | Convert a `Fail#` **into** an `Err#` — commit to this branch | `cut()` |
+| `cutting` | Like `cut`, but merges a new error into an existing one via `e -> e -> e` | error-accumulating `cut` |
 
 ```haskell
 err  e = ParserT \_fp _eob _s st -> Err# st e         -- throw an unrecoverable error
@@ -239,16 +239,16 @@ flatparse is younger and more niche than the [Parsec lineage][parsec] — the ch
 
 ## Key design decisions and trade-offs
 
-| Decision                                                            | Rationale                                                                              | Trade-off                                                                                |
+| Decision | Rationale | Trade-off |
 | ------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| Parse strict `ByteString` as a raw `Addr#`, under `unsafePerformIO` | No bounds-checked indexing, no stream abstraction — maximal throughput                 | `Text`/`String` need conversion; unsafe internals; crash-not-fail on misuse              |
-| Unboxed three-way result (`OK#`/`Fail#`/`Err#`)                     | No heap cell per step → zero allocation for pure validators                            | Requires `UnboxedTuples`/primops; results must be forced/CPS'd to stay unboxed           |
-| Failure/error split (à la `nom`), **not** Parsec's consumed/empty   | Simpler, clearer model that scales; `<                                                 | >` always backtracks on failure                                                          | No automatic expected-set errors; author must place `cut`/`err` by hand |
-| Drop the `ParsecT` monad-transformer stack                          | Removes indirection the benchmarks attribute the 2–10× gap to                          | Fewer ergonomics; effects handled via the zero-cost state-token modes instead            |
-| Zero-width state token selects pure/`IO`/`ST` mode                  | One parser type serves three effect regimes at no runtime cost                         | `ZeroBitType`/`Proxy#` machinery; `runParser` is `noinline` to keep coercions sound      |
-| `Basic` vs `Stateful` split                                         | Pay for `Int` state + reader env only when indentation parsing needs it                | Two APIs to learn; moderate overhead when `Stateful` is used                             |
-| Low-level primitives, "batteries not included"                      | Bundled batteries elsewhere carry unavoidable overhead; users build faster custom ones | Expected-sets, recovery, indentation, pretty errors are all user-written                 |
-| `switch` via Template Haskell → decision trie                       | Keyword branching with vectorized reads and grouped input checks; longest-match        | Requires TH; stage restriction (a `switch'` helper can't be used in its defining module) |
+| Parse strict `ByteString` as a raw `Addr#`, under `unsafePerformIO` | No bounds-checked indexing, no stream abstraction — maximal throughput | `Text`/`String` need conversion; unsafe internals; crash-not-fail on misuse |
+| Unboxed three-way result (`OK#`/`Fail#`/`Err#`) | No heap cell per step → zero allocation for pure validators | Requires `UnboxedTuples`/primops; results must be forced/CPS'd to stay unboxed |
+| Failure/error split (à la `nom`), **not** Parsec's consumed/empty | Simpler, clearer model that scales; `<                                                 | >` always backtracks on failure | No automatic expected-set errors; author must place `cut`/`err` by hand |
+| Drop the `ParsecT` monad-transformer stack | Removes indirection the benchmarks attribute the 2–10× gap to | Fewer ergonomics; effects handled via the zero-cost state-token modes instead |
+| Zero-width state token selects pure/`IO`/`ST` mode | One parser type serves three effect regimes at no runtime cost | `ZeroBitType`/`Proxy#` machinery; `runParser` is `noinline` to keep coercions sound |
+| `Basic` vs `Stateful` split | Pay for `Int` state + reader env only when indentation parsing needs it | Two APIs to learn; moderate overhead when `Stateful` is used |
+| Low-level primitives, "batteries not included" | Bundled batteries elsewhere carry unavoidable overhead; users build faster custom ones | Expected-sets, recovery, indentation, pretty errors are all user-written |
+| `switch` via Template Haskell → decision trie | Keyword branching with vectorized reads and grouped input checks; longest-match | Requires TH; stage restriction (a `switch'` helper can't be used in its defining module) |
 
 ## Sparkles relevance
 

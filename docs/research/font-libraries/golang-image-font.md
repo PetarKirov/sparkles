@@ -141,6 +141,7 @@ All paths verified at the pinned revision with `git cat-file -e`.
 - Decoder — [`font/sfnt/sfnt.go`][sfnt], [`font/sfnt/cmap.go`][cmap], [`font/sfnt/gpos.go`][gpos], [`font/sfnt/truetype.go`][truetype], [`font/sfnt/postscript.go`][postscript].
 - Face and rasterizer — [`font/opentype/opentype.go`][opentype], [`font/opentype/opentype_test.go`][otest], [`vector/vector.go`][vector], [`vector/raster_fixed.go`][rfixed], [`vector/raster_floating.go`][rfloat], [`vector/acc_amd64.s`][acc].
 - Project — [`LICENSE`][license].
+
 <!-- References -->
 
 [repo]: https://github.com/golang/image

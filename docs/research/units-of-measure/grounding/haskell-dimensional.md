@@ -16,6 +16,8 @@ Status: ✓ verified · ⚠ discrepancy · ◯ web-fallback.
 
 ## Claims
 
+<!-- prettier-ignore-start -->
+
 | #   | Claim                                                                                                                                                                                                                                     | Type     | Source (local + locator)                                                                             | Evidence                                                                                                                                                     | Status       |
 | --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------ | ------------------------------------------------------------------------------------------------------------ | ------------ |
 | 1   | License BSD3; repo bjornbm/dimensional; GHC-only; `DataKinds`/`TypeFamilies`/`TypeOperators`                                                                                                                                              | fact     | `dimensional.cabal:3`; `Dimensional.hs:1-17,26`                                                      | `license: BSD3`; `Portability: GHC only`; pragmas present                                                                                                    | ✓            |
@@ -88,6 +90,8 @@ Status: ✓ verified · ⚠ discrepancy · ◯ web-fallback.
 | 68  | `*~~`/`/~~` over functors                                                                                                                                                                                                                 | fact     | `Dimensional.hs:530-534`                                                                             | signatures confirmed                                                                                                                                         | ✓            |
 | 69  | Hackage pages for `numtype-dk`/`exact-pi`; NIST SP 811 landing page; Gundry ACM DOI                                                                                                                                                       | ◯        | external references                                                                                  | bibliographic; deps themselves attested in `dimensional.cabal:60-62`                                                                                         | ◯            |
 | 70  | "ExactPi — an exact rational multiple of a power of π"                                                                                                                                                                                    | fact     | `exact-pi` package (dep); usage in `Internal.hs`                                                     | characterization matches the package's model (`Exact z q` ⇒ q·π^z); package internals are outside the pinned clones                                          | ◯ (near-L)   |
+
+<!-- prettier-ignore-end -->
 
 ## Discrepancies
 

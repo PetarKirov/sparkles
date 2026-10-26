@@ -470,7 +470,7 @@ transaction"_, and a background `awaitDone` goroutine performs that rollback on 
 **Errors are ordinary `error` values, checked by sentinel or `errors.Is`.** Go has no
 exceptions; a failure is a returned `error`. The load-bearing sentinels are
 `sql.ErrNoRows` (from `Row.Scan` when a `QueryRow` matched nothing — _"QueryRow returns a
-placeholder [*Row] value that defers this error until a Scan"_), `sql.ErrTxDone` (any op on
+placeholder [\*Row] value that defers this error until a Scan"_), `sql.ErrTxDone` (any op on
 a finished `Tx`), and the driver-facing `driver.ErrBadConn`, which signals the pool to
 **transparently retry the operation on a fresh connection** — _"the [database/sql] package
 should retry on a new connection"_ — but a driver must _"NOT"_ return it _"if there's a

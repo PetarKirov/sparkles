@@ -300,8 +300,9 @@ All paths verified at the pinned revision with `git cat-file -e`.
 - **CLI** — [`fc-list/fc-list.c`][fclist-c], [`fc-match/fc-match.c`][fcmatch-c],
   [`fc-query/fc-query.c`][fcquery-c].
 - **Documentation** — [`doc/fontconfig-user.sgml`][user],
-[`doc/fontconfig-devel.sgml`][devel], [`doc/fcconfig.fncs`][fncs-config],
-[`doc/fcfontset.fncs`][fncs-fontset].
+  [`doc/fontconfig-devel.sgml`][devel], [`doc/fcconfig.fncs`][fncs-config],
+  [`doc/fcfontset.fncs`][fncs-fontset].
+
 <!-- References -->
 
 [repo]: https://gitlab.freedesktop.org/fontconfig/fontconfig

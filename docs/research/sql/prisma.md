@@ -541,23 +541,17 @@ export type MappedError =
   | {
       kind: 'UniqueConstraintViolation';
       constraint?:
-        | { fields: string[] }
-        | { index: string }
-        | { foreignKey: {} };
+        { fields: string[] } | { index: string } | { foreignKey: {} };
     }
   | {
       kind: 'ForeignKeyConstraintViolation';
       constraint?:
-        | { fields: string[] }
-        | { index: string }
-        | { foreignKey: {} };
+        { fields: string[] } | { index: string } | { foreignKey: {} };
     }
   | {
       kind: 'NullConstraintViolation';
       constraint?:
-        | { fields: string[] }
-        | { index: string }
-        | { foreignKey: {} };
+        { fields: string[] } | { index: string } | { foreignKey: {} };
     }
   | { kind: 'TransactionWriteConflict' }
   | { kind: 'DatabaseNotReachable'; host?: string; port?: number };

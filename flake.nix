@@ -11,7 +11,7 @@
   };
 
   inputs = {
-    nixpkgs.url = "github:PetarKirov/nixpkgs?ref=glfw3-3.5.1";
+    nixpkgs.url = "github:PetarKirov/nixpkgs?ref=glfw3-3.5.1-nixos-unstable";
     flake-parts.url = "github:hercules-ci/flake-parts";
 
     git-hooks-nix = {
@@ -38,6 +38,9 @@
       # fork's commits land.
       url = "github:PetarKirov/dlang.nix/feat/ldc-sparkles";
       inputs = {
+        # One nixpkgs for the toolchain and everything it builds: one glibc
+        # and one GCC runtime in every closure (toolchain spec TC4).
+        nixpkgs.follows = "nixpkgs";
         flake-compat.follows = "flake-compat";
         flake-parts.follows = "flake-parts";
         git-hooks-nix.follows = "git-hooks-nix";
@@ -62,16 +65,6 @@
       flake = false;
     };
 
-    # Nix itself — provides the C API libraries (nix-{util,store,expr,
-    # fetchers,flake,main}-c) that `sparkles:nix` binds via ImportC. Pinned to
-    # the same revision nix-bindings-rust uses, so it is already in the store /
-    # binary cache (no source build) and matches the headers the bindings were
-    # written against.
-    nix = {
-      url = "github:NixOS/nix/1506565ef191621de91d71aaead8a5b66a26c0d4";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
-
     # --- third-party sources (flake = false; the locked rev is in flake.lock) ---
 
     glfw = {
@@ -83,7 +76,7 @@
     # instead, so raylib's GLFW (and every other consumer's) stays the one
     # cache.nixos.org already built. Keep it at the fork's merge base.
     nixpkgs-upstream-glfw = {
-      url = "github:NixOS/nixpkgs/05eca18e9c130fa5288b1fa3d250065c0cd1de66";
+      url = "github:NixOS/nixpkgs/3ec636362e1816bc2f0888fa0fa2c69f1bc9e504";
       flake = false;
     };
     tree-sitter-d-src = {

@@ -119,10 +119,9 @@ export interface Connection {
     params: ReadonlyArray<unknown>,
   ) => Effect<unknown, SqlError>;
   readonly executeStream: (/* … */) => Stream<any, SqlError>;
-  readonly executeValues: (/* … */) => Effect<
-    ReadonlyArray<ReadonlyArray<unknown>>,
-    SqlError
-  >;
+  readonly executeValues: (
+    /* … */
+  ) => Effect<ReadonlyArray<ReadonlyArray<unknown>>, SqlError>;
   readonly executeUnprepared: (/* … */) => Effect<ReadonlyArray<any>, SqlError>;
 }
 ```

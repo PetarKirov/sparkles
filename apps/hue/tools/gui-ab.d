@@ -3,7 +3,7 @@
     name "gui_ab"
     dependency "sparkles:core-cli" path="../../.."
     dependency "sparkles:base" path="../../.."
-    dependency "raylib-d" version="~>6.0.1"
+    dependency "raylib-d" version="~>6.2.0"
     // raylib-d's `library` config does not declare it; the image API is
     // CPU-side, so no window is opened.
     libs "raylib"

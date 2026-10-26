@@ -28,7 +28,7 @@ dependency "sparkles:doc-view" path="../.."
 
 configuration "application" {
     targetType "executable"
-    dependency "raylib-d" version="~>6.0.1"
+    dependency "raylib-d" version="~>6.2.0"
     libs "raylib"
     subConfiguration "sparkles:ui-app" "gui"
     // Declared, not inherited through ui-app: the viewer's GPU pane compiles
@@ -42,7 +42,7 @@ configuration "application" {
 configuration "unittest" {
     targetType "library"
     excludedSourceFiles "src/app.d"
-    dependency "raylib-d" version="~>6.0.1"
+    dependency "raylib-d" version="~>6.2.0"
     libs "raylib"
 
     dependency "sparkles:test-runner" path="../.."

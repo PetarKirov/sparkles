@@ -601,7 +601,8 @@ All paths verified to exist at the pinned revision with `git cat-file -e`.
   selection, the `internationalization/rendering/text_driver` setting),
   [`editor_settings.cpp`][ed-settings] (locales skipped on missing features).
 - **Official documentation** — [`doc/classes/TextServer.xml`][ts-xml], the
-source of the published class reference and of the silent-ignore contract.
+  source of the published class reference and of the silent-ignore contract.
+
 <!-- References -->
 
 [rev]: https://github.com/godotengine/godot/tree/944a3c6cbbbb88284feebcb0603464cb175fa18e

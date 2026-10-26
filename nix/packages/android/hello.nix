@@ -5,7 +5,7 @@
 # EGL/GLES2, aapt2/zipalign/apksigner output, 16 KB page alignment) before any
 # hue code rides on it.
 #
-# The D `import raylib;` resolves against the raylib-d 6.0.1 bindings fetched
+# The D `import raylib;` resolves against the raylib-d 6.2.0 bindings fetched
 # straight from the dub registry (same coordinates + sha as nix/dub-lock.json)
 # — compiled in via `-i=raylib`, the same way the wasm builder handles
 # registry deps.

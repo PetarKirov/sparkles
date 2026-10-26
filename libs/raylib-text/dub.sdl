@@ -15,7 +15,7 @@ dflags "-preview=in" "-preview=dip1000"
 // the linker. raylib-d's `library` config does NOT declare `libs "raylib"`, so
 // this package owns it; both propagate transitively to consuming executables
 // (each still needs the native raylib present at link/run time).
-dependency "raylib-d" version="~>6.0.1"
+dependency "raylib-d" version="~>6.2.0"
 // Cluster shaping and rasterization are native dependencies. Nix supplies
 // their development headers to ImportC and their libraries to the linker.
 libs "raylib" "freetype2" "harfbuzz"

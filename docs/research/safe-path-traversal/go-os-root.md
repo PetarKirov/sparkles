@@ -357,16 +357,16 @@ makes `ReadDir` `lstatat` each entry through the parent fd instead of lazily
 
 ## Key design decisions and trade-offs
 
-| Decision                                                  | Rationale                                                                                                    | Trade-off                                                                             |
+| Decision | Rationale | Trade-off |
 | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| Follow in-root symlinks; refuse absolute or escaping ones | Archives and real trees contain symlinks; `RESOLVE_NO_SYMLINKS` "is not actually usable […] for most people" | User-space resolution: `readlinkat` + splice + 8-hop cap on every platform            |
-| Resolve `..` by restart-from-root, never `openat("..")`   | A renamed ancestor cannot be climbed out of; needs no `/proc`                                                | Re-walks prefixes; `maxSteps=255 && maxRestarts=8` DoS bound                          |
-| Platform-native path semantics (no `Clean` on Unix)       | `a/../b` ≠ `b` when `a` is a symlink; "interpret paths in exactly the same way as the local platform does"   | Unix and Windows give different answers for `dotdot after symlink`                    |
-| Symlinks and `..` only; mounts, `/proc`, devices excluded | Those need root to create; "not trying to defend against an attacker who already has root access"            | Not a container-runtime primitive; `libpathrs` still needed there                     |
-| One `Root` type, options on the type                      | "put all the 'safety' stuff on one type"; two policies = two `Root`s                                         | No per-call `RESOLVE_*`; `O_NOFOLLOW_ANY` and `RESOLVE_IN_ROOT` deferred indefinitely |
-| Degraded but present on js/Plan 9                         | "Not supporting os.Root on some platforms will give users a reason not to use it at all"                     | Same API, weaker guarantee; documented, not enforced                                  |
-| `RemoveAll` shares `removeAllFrom` with `os.RemoveAll`    | Fix #52745 once; `O_NOFOLLOW                                                                                 | O_DIRECTORY` open is the only check needed                                            | No inode re-verification; reopen-per-batch cost from issue 20841 |
-| Ship 1.24 on plain `openat`, defer `openat2`              | "Linux is the only platform with openat2, so we need an openat-based implementation anyway"                  | Still deferred at the pinned SHA (2026-05); Linux pays the emulated walk              |
+| Follow in-root symlinks; refuse absolute or escaping ones | Archives and real trees contain symlinks; `RESOLVE_NO_SYMLINKS` "is not actually usable […] for most people" | User-space resolution: `readlinkat` + splice + 8-hop cap on every platform |
+| Resolve `..` by restart-from-root, never `openat("..")` | A renamed ancestor cannot be climbed out of; needs no `/proc` | Re-walks prefixes; `maxSteps=255 && maxRestarts=8` DoS bound |
+| Platform-native path semantics (no `Clean` on Unix) | `a/../b` ≠ `b` when `a` is a symlink; "interpret paths in exactly the same way as the local platform does" | Unix and Windows give different answers for `dotdot after symlink` |
+| Symlinks and `..` only; mounts, `/proc`, devices excluded | Those need root to create; "not trying to defend against an attacker who already has root access" | Not a container-runtime primitive; `libpathrs` still needed there |
+| One `Root` type, options on the type | "put all the 'safety' stuff on one type"; two policies = two `Root`s | No per-call `RESOLVE_*`; `O_NOFOLLOW_ANY` and `RESOLVE_IN_ROOT` deferred indefinitely |
+| Degraded but present on js/Plan 9 | "Not supporting os.Root on some platforms will give users a reason not to use it at all" | Same API, weaker guarantee; documented, not enforced |
+| `RemoveAll` shares `removeAllFrom` with `os.RemoveAll` | Fix #52745 once; `O_NOFOLLOW                                                                                 | O_DIRECTORY` open is the only check needed | No inode re-verification; reopen-per-batch cost from issue 20841 |
+| Ship 1.24 on plain `openat`, defer `openat2` | "Linux is the only platform with openat2, so we need an openat-based implementation anyway" | Still deferred at the pinned SHA (2026-05); Linux pays the emulated walk |
 
 ## Sources
 

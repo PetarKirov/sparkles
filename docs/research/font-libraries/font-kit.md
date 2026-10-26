@@ -331,7 +331,8 @@ All paths verified at the pinned revision with `git cat-file -e`.
   [`src/sources/core_text.rs`][ct-src] — the databases and their directory
   lists.
 - [`Cargo.toml`][cargo], [`README.md`][readme], [`src/lib.rs`][lib] — features,
-backend table, the source/loader quote.
+  backend table, the source/loader quote.
+
 <!-- References -->
 
 [repo]: https://github.com/servo/font-kit
