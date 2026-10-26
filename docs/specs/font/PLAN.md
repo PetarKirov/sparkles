@@ -16,7 +16,7 @@ the gate each milestone must pass, and progress. Scenarios and oracles live in
 | ------------------------------------------------------------------------- | ----------- |
 | [Stage 0](#stage-0-specification-and-spikes)                              | done        |
 | [M1 Parse](#m1-parse)                                                     | done        |
-| [M2 Variation, metrics, inspection](#m2-variation-metrics-and-inspection) | in progress |
+| [M2 Variation, metrics, inspection](#m2-variation-metrics-and-inspection) | done        |
 | [MS Startup slice](#ms-startup-slice)                                     | planned     |
 | [M3 Outlines](#m3-outlines)                                               | done        |
 | [M4 Shaping](#m4-shaping)                                                 | done        |
@@ -116,6 +116,9 @@ conversion and exhaustion scenarios pass. Real math and vertical-font data are
 checked under the pinned corpus manifest described in `testing.md`; absence of
 such fonts is an unmet gate, not successful skipping. The baseline reference-point
 gate cannot be marked complete until the outline-point primitive is delivered.
+
+**State.** Done on 2026-10-26; the evidence and its remaining gaps are in
+[`testing.md`](./testing.md#evidence-ledger).
 
 ## MS Startup slice
 
@@ -318,10 +321,15 @@ M2 is implemented against the contracts the owner accepted on 2026-10-14
 normalization, variation deltas, design, physical and pixel measurements, line,
 decoration, cell and vertical metrics, `BASE`, `MATH`, layout inspection and
 colour capability, checked against HarfBuzz over the bundle and run on an
-arm64-v8a phone. Its gate stays open until these, recorded in the evidence
-ledger, are met: fontations' exact delta oracle; and a verified `BASE` face and a
-math face with kerns, under the pinned corpus manifest. The reference-point
-and `glyf` vertical-origin resolution closed with M3.
+arm64-v8a phone. Its gate also required, in the evidence ledger, fontations'
+exact delta oracle, and a verified `BASE` face and a math face with kerns
+under the pinned corpus manifest. The reference-point and `glyf`
+vertical-origin resolution closed with M3, and the gate closed on
+2026-10-26: the test corpus gained real `BASE` faces (Adobe's CJK template,
+Noto CJK, M+, IPAex) and `MATH` faces with kerns (STIX Two Math, KpMath,
+Garamond-Math, Asana Math), pinned in its manifest, and fontations' exact
+deltas, fontTools' `BASE` records and HarfBuzz agree with the library over
+them; FTM6 measures real shaped runs of a variable face.
 
 A review on 2026-10-23 reopened M3 (outlines), M4 (shaping) and M5
 (grayscale raster); all three meet their acceptance again. M3: the
@@ -341,4 +349,4 @@ operation budget that can no longer end a run silently, vertical advances
 and origins from the library, and the engine's tests passing on an Android
 phone; the point lookups decode into a caller's heap workspace instead of
 268 KiB of stack.
-The ledger lists each gap. Next action: M2's open gates.
+The ledger lists each gap. Next action: the MS startup slice, M6 or M7.

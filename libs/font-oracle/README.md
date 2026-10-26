@@ -17,7 +17,13 @@ Other inputs, all exported by the dev shell:
   Sans VF (a collection, of which the first face is read); and `JSTF` faces,
   SIL's Scheherazade New and Lateef, whose `JSTF` records
   `oracle.jstf.agreesWithFontTools` compares with fontTools' reading in
-  `test/goldens/jstf.txt`.
+  `test/goldens/jstf.txt`. Three directories hold M2's corpus gates: `base/`,
+  real `BASE` tables (Adobe's CJK template, Noto Serif JP VF's variable
+  `BASE`, M+, IPAex, Simon Cozens's baseline test); `math/`, `MATH` faces
+  with math kerns (STIX Two Math, KpMath, Garamond-Math, Asana Math) and
+  Latin Modern Math; and `harfbuzz/`, HarfBuzz's own API test fonts.
+  `test/goldens/manifest.txt` pins every face by SHA-256, with its licence,
+  source and table inventory, and `oracle.corpus.manifest` checks it.
 - `$SPARKLES_FLAKE_INPUT_HARFBUZZ_SRC`: the pinned HarfBuzz source, whose
   generated tables the `FTS8` manifest check reads.
 - `$SPARKLES_HARFBUZZ_USE_UCD`: the older UCD release HarfBuzz's USE table was
@@ -40,3 +46,16 @@ every table but `name`, which the Maple Mono build writes in an order that
 varies between builds. Regenerate it inside the dev shell with
 `dub run --single libs/font-oracle/tools/gen_shaping_goldens.d` whenever the
 pin or a face changes (the check names which).
+
+Two more goldens come from readers written apart from this library, on
+developer machines only:
+
+- `test/goldens/base.txt`: fontTools' reading of every `BASE` table, from
+  `tools/gen_base_goldens.d` (run under
+  `nix shell --inputs-from . nixpkgs#python3Packages.fonttools`).
+- `test/goldens/fontations.txt`: fontations' variation deltas, `BASE`
+  coordinates and `MATH` glyph values, which `read-fonts` computes in integer
+  fixed point as this library does, so they compare exactly. The Rust driver
+  in `tools/fontations` prints them and `tools/gen_fontations_goldens.d`
+  digests them (run under
+  `nix shell --inputs-from . nixpkgs#cargo nixpkgs#rustc nixpkgs#gcc`).
