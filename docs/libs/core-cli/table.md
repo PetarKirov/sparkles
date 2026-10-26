@@ -10,7 +10,7 @@ documented in the [text spec](../../specs/base/text/)), so CJK, emoji, combining
 marks, and ANSI-styled content all stay aligned.
 
 The widget below is the **real `drawTable`** compiled to WebAssembly by
-`nix build .#table-wasm` (full Phobos via the LDC WASI fork) and driven from your
+`nix build .#table-wasm` (full Phobos on the project LDC's WASI runtime) and driven from your
 browser — not a re-implementation. Tweak the Storybook-style controls and watch
 the output re-render live.
 
