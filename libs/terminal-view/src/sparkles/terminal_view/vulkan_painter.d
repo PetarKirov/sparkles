@@ -108,7 +108,7 @@ struct VulkanTerminalPainter(C)
     void drawTexture(TextureId t, in ImageRect source, in ImageRect destination)
     {
         bind();
-        canvas.imageSourcePx(ImageHandle(t.value),
+        canvas.imageSourcePx(images.handleOf(t),
             cast(int) destination.x, cast(int) destination.y,
             cast(int) destination.width, cast(int) destination.height,
             cast(int) source.x, cast(int) source.y,
@@ -145,7 +145,7 @@ private struct RecCanvas
 static assert(isTerminalPainter!(VulkanTerminalPainter!RecCanvas));
 
 @("terminal_view.vulkan_painter.glyphsMissAndImagesAreHandles")
-@system pure nothrow
+@system nothrow
 unittest
 {
     RecCanvas canvas;
@@ -163,7 +163,7 @@ unittest
 }
 
 @("terminal_view.vulkan_painter.unbindRestoresTheEmbeddersRegistry")
-@system pure nothrow
+@system nothrow
 unittest
 {
     // `UVX11`: the pane binds its registry to draw a kitty image; what the

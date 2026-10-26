@@ -36,7 +36,7 @@ expresses `contain` and `cover`.
 struct ImagePlacement
 {
     uint image;              /// the caller's stable id for these pixels (non-zero)
-    uint generation;         /// bumped when the pixels under `image` change
+    ulong generation;        /// changes whenever the pixels under `image` do
     const(ubyte)[] rgba;     /// 8-bit RGBA, row-major, `width * height * 4` bytes
     ushort width, height;    /// the pixels' extent
     ushort x, y;             /// the top-left cell
@@ -68,14 +68,14 @@ struct KittyImages
         static struct Sent
         {
             uint image;
-            uint generation;
+            ulong generation;
         }
         Placed[] _placed;        // last frame's placements
         Sent[] _sent;            // what the terminal holds: a frame has few images
     }
 
     // The generation (plus one) the terminal holds for `image`, `0` for none.
-    private uint heldGeneration(uint image) const @safe pure nothrow @nogc
+    private ulong heldGeneration(uint image) const @safe pure nothrow @nogc
     {
         foreach (ref e; _sent)
             if (e.image == image)
@@ -83,7 +83,7 @@ struct KittyImages
         return 0;
     }
 
-    private void hold(uint image, uint generation) @safe pure nothrow
+    private void hold(uint image, ulong generation) @safe pure nothrow
     {
         foreach (ref e; _sent)
             if (e.image == image)
@@ -257,7 +257,7 @@ version (unittest)
 
     private static immutable ubyte[8] twoPixels = [255, 0, 0, 255, 0, 0, 255, 255];
 
-    private ImagePlacement at(ushort x, ushort y, uint generation = 0) @safe pure nothrow
+    private ImagePlacement at(ushort x, ushort y, ulong generation = 0) @safe pure nothrow
         => ImagePlacement(image: 7, generation: generation, rgba: twoPixels[],
             width: 1, height: 2, x: x, y: y, cols: 4, rows: 2);
 

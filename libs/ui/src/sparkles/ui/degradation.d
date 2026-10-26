@@ -572,7 +572,7 @@ unittest
     import sparkles.ui.tokens : capabilitiesOf, meet, Profile;
 
     // GLY9: one image, three documented targets, three rungs.
-    const DrawOp[1] ops = [imageOp(Rect(0, 0, 8, 4), ImageHandle(1), ImageFit.contain, "logo")];
+    const DrawOp[1] ops = [imageOp(Rect(0, 0, 8, 4), ImageHandle(1, 1), ImageFit.contain, "logo")];
 
     const b = degradationsOf(ops[], capabilitiesOf(Profile.baseline));
     assert(b[Substitution.imageAsAlt] == 1 && b[Substitution.imageRastered] == 0);
