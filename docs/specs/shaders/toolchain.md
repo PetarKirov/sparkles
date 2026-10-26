@@ -1,24 +1,25 @@
 ---
 status: accepted
 owner: sparkles:shaders
-reviewed: 2026-10-20
+reviewed: 2026-10-26
 ---
 
 # `sparkles:shaders` — Toolchain and platforms
 
 The pinned compiler and tools, and where they run. The requirements are the
-accepted contract of 2026-10-16, with `SHT1` naming the pins of #659. This page
-is part of the [specification](./SPEC.md).
+accepted contract of 2026-10-16; the compiler pin itself belongs to the
+[toolchain specification](../toolchain/SPEC.md), which every Sparkles target
+shares. This page is part of the [specification](./SPEC.md).
 
-**SHT1: Pinned compiler.** The device compiler is LDC with dcompute's Vulkan
-target ([ldc-developers/ldc#5132](https://github.com/ldc-developers/ldc/pull/5132))
-and the stages of [Entry points](./entry-points.md), at
-[`PetarKirov/ldc@64104a9a`](https://github.com/PetarKirov/ldc/tree/64104a9a6da522730d6b661b85adfdfd2e7e25e7).
-It is built against LLVM at
-[`27ba4937`](https://github.com/llvm/llvm-project/tree/27ba493781215910f560b36cd5b3b2f6c93ec5a3),
-with the SPIR-V backend, the Vulkan fixes of
-[llvm/llvm-project#216919](https://github.com/llvm/llvm-project/pull/216919),
-and this project's patches (signed integers by module flag with struct
+**SHT1: Pinned compiler.** The device compiler is the LDC of the toolchain's
+[`TC1`](../toolchain/SPEC.md#_2-pins-and-provenance), built on the LLVM of
+[`TC2`](../toolchain/SPEC.md#_2-pins-and-provenance). It **must** provide
+dcompute's Vulkan target
+([ldc-developers/ldc#5132](https://github.com/ldc-developers/ldc/pull/5132))
+and the stages of [Entry points](./entry-points.md), and its LLVM **must**
+carry the SPIR-V backend with the Vulkan fixes of
+[llvm/llvm-project#216919](https://github.com/llvm/llvm-project/pull/216919)
+and this project's changes (signed integers by module flag with struct
 member names; 32-bit access-chain indices; buffer device addresses by module
 flag, with the access chains, strides and alignment Vulkan requires; no
 `Int8` for a resource's name; a terminating `discard`; and merge blocks for
