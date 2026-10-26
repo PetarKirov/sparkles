@@ -59,7 +59,7 @@
               v = field name text;
             in
             if v == null then throw "docs/credits/parts/${id}.md: no `${name}` field" else v;
-          source = builtins.match "(flake input|nixpkgs|dub package|grammar bundle) `([^`]+)`.*" (
+          source = builtins.match "(flake input|nixpkgs|dub package|grammar bundle|operating system) `([^`]+)`.*" (
             required "Version source"
           );
           heading = firstMatch "### (.*)" text;
@@ -124,7 +124,11 @@
 
       stagePart =
         p:
-        if p.kind == "grammar bundle" then
+        # A library the operating system provides: nothing of it ships, so
+        # there is no licence text to stage.
+        if p.kind == "operating system" then
+          ""
+        else if p.kind == "grammar bundle" then
           ''
             mkdir -p "$out/licenses/${p.id}"
             {
