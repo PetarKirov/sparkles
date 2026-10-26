@@ -1,0 +1,197 @@
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "gen_fontations_goldens"
+    dependency "sparkles:font-oracle" path="../../.."
+    buildType "checked" {
+        buildOptions "optimize" "inline" "debugInfo"
+    }
++/
+/**
+Records fontations' reading of every variable, `BASE` and `MATH` face of
+the bundle and the test corpus, which `oracle.fontations.agrees` compares
+the library's with (testing.md, the fontations oracle): `read-fonts`
+evaluates item variation deltas in integer fixed point and sums them
+exactly, as this library does, so variation deltas compare exactly where
+HarfBuzz, which rounds them to whole units, can only bound them; and its
+`MATH` reader reports an uncovered glyph as absent and walks math-kern
+heights in stored order, as this library does, where HarfBuzz does not.
+
+`tools/fontations` holds the Rust driver: it prints fontations' values,
+and this tool digests them into `test/goldens/fontations.txt`. Run it in
+the dev shell with a Rust toolchain on `PATH`:
+
+    nix shell --inputs-from . nixpkgs#cargo nixpkgs#rustc nixpkgs#gcc \
+        -c dub run --single libs/font-oracle/tools/gen_fontations_goldens.d
+
+The golden holds a header naming the crates, then per face its corpus
+name and fingerprint (`shapingFingerprint`), and per instance (`default`,
+each axis at its minimum and maximum, every axis at its minimum and at
+its maximum) its normalized coordinates and one line per table:
+
+$(UL
+    $(LI `hadv`, `vadv`, `vorg`: the `HVAR` advance and `VVAR` advance and
+        origin deltas of every glyph, as `count present digest`, or `none`
+        without the table;)
+    $(LI `mvar`: each `MVAR` value record's delta, literally;)
+    $(LI `base H|V`: the coordinate of every pair of a script (the axis's,
+        then `DFLT`, `arab` and `zzzz`) and a baseline (the axis's, then
+        `hang`, `math` and `zzzz`), as `count present digest`;)
+    $(LI `math italics|accent|kern0`–`kern3`, at the default only: each
+        glyph's italics correction, top accent attachment and kern table
+        per corner (its heights, values and its kern at each height less
+        one, the height, the height plus one, and at -2³⁰ and 2³⁰).)
+)
+
+A value is the bits of fontations' `F48Dot16` (1/65,536 unit) or, for
+`MATH`, whole design units; `x` where fontations answers none. A digest
+is the SHA-256 of the values joined by single spaces, as the driver
+prints them; `present` counts the values that are not `x`. A face this
+library cannot open is listed in the header and left out.
+*/
+module gen_fontations_goldens;
+
+import std.algorithm : canFind, count, endsWith, filter, map, sort, startsWith;
+import std.array : appender, array, join, split;
+import std.digest : LetterCase, toHexString;
+import std.digest.sha : sha256Of;
+import std.exception : enforce;
+import std.file : dirEntries, exists, read, readText, SpanMode, tempDir, write;
+import std.format : formattedWrite;
+import std.path : baseName, buildPath, dirName;
+import std.process : environment, execute;
+import std.string : indexOf, lineSplitter, strip;
+
+import sparkles.font : openFace;
+import sparkles.font_oracle.fingerprint : shapingFingerprint;
+
+enum golden = "libs/font-oracle/test/goldens/fontations.txt";
+enum driver = "libs/font-oracle/tools/fontations";
+
+void main()
+{
+    const bundle = environment.get("SPARKLES_FONTS_PATH");
+    const test = environment.get("SPARKLES_FONT_TEST_CORPUS");
+    enforce(bundle !is null && test !is null,
+        "SPARKLES_FONTS_PATH or SPARKLES_FONT_TEST_CORPUS is unset: enter the dev shell");
+
+    // name in the golden -> path
+    string[string] files;
+    void add(string prefix, string dir)
+    {
+        if (!dir.exists)
+            return;
+        foreach (e; dirEntries(dir, SpanMode.shallow))
+            if (e.name.endsWith(".ttf") || e.name.endsWith(".otf") || e.name.endsWith(".ttc"))
+                files[prefix ~ e.name.baseName] = e.name;
+    }
+    add("bundle/", bundle);
+    add("test/", test);
+    foreach (sub; ["base", "math", "harfbuzz"])
+        add("test/" ~ sub ~ "/", buildPath(test, sub));
+
+    string[] unopened;
+    string[string] nameOf; // path -> name, for the faces this library opens
+    foreach (name, path; files)
+    {
+        if (openFace(cast(const(ubyte)[]) read(path)).hasValue)
+            nameOf[path] = name;
+        else
+            unopened ~= name;
+    }
+    unopened.sort;
+
+    const rustc = execute(["rustc", "--version"]);
+    enforce(rustc.status == 0, "rustc is not on PATH: run under nix shell nixpkgs#cargo nixpkgs#rustc nixpkgs#gcc");
+    auto paths = nameOf.keys;
+    paths.sort!((a, b) => nameOf[a] < nameOf[b]);
+    const run = execute(["cargo", "run", "--quiet", "--release", "--locked",
+        "--manifest-path", buildPath(driver, "Cargo.toml"),
+        "--target-dir", buildPath(tempDir, "sparkles-fontations-oracle"), "--"] ~ paths);
+    enforce(run.status == 0, "the fontations driver failed:\n" ~ run.output);
+
+    auto out_ = appender!string;
+    out_.put("# Generated by libs/font-oracle/tools/gen_fontations_goldens.d; do not edit.\n");
+    out_.formattedWrite("# reader %s, %s (%s)\n", crate("read-fonts"), crate("skrifa"), rustc.output.strip);
+    out_.formattedWrite("# not opened by sparkles:font: %s\n", unopened.length ? unopened.join(" ") : "none");
+
+    // Buffer each face, and keep it only when it has axes, BASE or MATH.
+    auto face = appender!string;
+    bool relevant;
+    void flush()
+    {
+        if (relevant)
+            out_.put(face.data);
+        face = appender!string;
+        relevant = false;
+    }
+    foreach (line; run.output.lineSplitter)
+    {
+        const space = line.indexOf(' ');
+        const key = space < 0 ? line : line[0 .. space];
+        const rest = space < 0 ? "" : line[space + 1 .. $];
+        switch (key)
+        {
+            case "face":
+                flush();
+                const bytes = cast(const(ubyte)[]) read(rest);
+                face.formattedWrite("face %s %s\n", nameOf[rest], shapingFingerprint(bytes));
+                break;
+            case "glyphs":
+                break;
+            case "axis":
+                relevant = true;
+                break;
+            case "instance":
+                // The default's coordinates are empty: `-`, so no line ends in a space.
+                face.formattedWrite("%s\n", line.endsWith(" ") ? line ~ "-" : line);
+                break;
+            case "hadv", "vadv", "vorg":
+                face.formattedWrite("%s %s\n", key, digest(rest));
+                break;
+            case "mvar":
+                face.formattedWrite("%s\n", line);
+                break;
+            case "base":
+                if (rest != "none")
+                {
+                    relevant = true;
+                    face.formattedWrite("base %s %s\n", rest[0 .. 1], digest(rest[2 .. $]));
+                }
+                break;
+            case "math":
+                if (rest == "none")
+                    break;
+                relevant = true;
+                const kind = rest[0 .. rest.indexOf(' ')];
+                face.formattedWrite("math %s %s\n", kind, digest(rest[kind.length + 1 .. $]));
+                break;
+            default:
+                enforce(false, "unexpected driver output: " ~ line);
+        }
+    }
+    flush();
+    write(golden, out_.data);
+}
+
+/// `count present digest` of space-separated values, or `none`.
+string digest(string values)
+{
+    if (values == "none")
+        return "none";
+    const items = values.split(' ');
+    auto r = appender!string;
+    r.formattedWrite("%s %s %s", items.length, items.count!(v => v != "x"),
+        toHexString!(LetterCase.lower)(sha256Of(values)));
+    return r.data;
+}
+
+/// `name version` of a crate in the driver's lock file.
+string crate(string name)
+{
+    const lock = readText(buildPath(driver, "Cargo.lock"));
+    const needle = "name = \"" ~ name ~ "\"\nversion = \"";
+    const at = lock.indexOf(needle);
+    enforce(at >= 0, name ~ " is not in the lock file");
+    const v = lock[at + needle.length .. $];
+    return name ~ " " ~ v[0 .. v.indexOf('"')];
+}
