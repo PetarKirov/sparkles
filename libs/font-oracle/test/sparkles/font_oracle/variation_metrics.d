@@ -1,27 +1,36 @@
 /**
 The M2 variation and metrics differentials (`variation-metrics.md` § 9): for
 every bundled face, normalized coordinates (FTV5), advances (FTV12–FTV14,
-FTM18), line metrics and decorations (FTM15–FTM17), vertical advances and
-origins (FTM20, FTM21), `MATH` values (FTP34–FTP38) and the absence of
-`BASE`, against HarfBuzz at a scale of one unit per font unit. Only cases
-where the contract and HarfBuzz agree are compared; each listed divergence is
-excluded where it arises and counted, and each test prints its counts.
+FTM18), line metrics and decorations (FTM15–FTM17) and vertical advances and
+origins (FTM20, FTM21), and over the bundle and every test-corpus directory,
+`MATH` values (FTP34–FTP38) and `BASE` baselines and extents (FTM22–FTM24),
+against HarfBuzz at a scale of one unit per font unit; and every `BASE`
+record against fontTools' reading. Only cases where the contract and
+HarfBuzz agree are compared; each listed divergence is excluded where it
+arises and counted, and each test prints its counts.
 
-The fontations-exact comparison of variation deltas (`testing.md`'s
-fontations oracle) needs a Rust tool and committed goldens and is not here.
+The fontations-exact comparison of variation deltas, `BASE` coordinates and
+`MATH` glyph values is `sparkles.font_oracle.fontations`.
 */
 module sparkles.font_oracle.variation_metrics;
 
-import std.conv : text;
-import std.file : read;
+import std.algorithm : startsWith;
+import std.array : join, replace, split;
+import std.conv : text, to;
+import std.digest : LetterCase, toHexString;
+import std.digest.sha : sha256Of;
+import std.file : read, readText;
+import std.format : format;
 import std.math : lround;
-import std.path : baseName;
+import std.path : baseName, buildPath, dirName;
 import std.stdio : stderr;
+import std.string : indexOf, lineSplitter;
 
 import sparkles.base.text.layout_units : LayoutUnit;
 import sparkles.base.unique : makeUnique;
 import sparkles.font;
-import sparkles.font_oracle.corpus : corpus, fontsDir, Oracle, testCorpus, testFontsDir;
+import sparkles.font_oracle.corpus : baseCorpus, corpus, fontsDir, harfbuzzCorpus, mathCorpus, Oracle, testCorpus,
+    testFontsDir, withEmptyCmap;
 import sparkles.font_oracle;
 import sparkles.font_oracle.harfbuzz_c : hb_direction_t;
 import sparkles.test_runner.skip : skipTest;
@@ -514,10 +523,17 @@ private hb_direction_t hbDirection(MathDirection d)
 
 /**
 FTP34–FTP38 against `hb_ot_math_get_*` at the default instance and a scale
-of one unit per font unit, where no Device table applies. Every face's
-absence agrees; on a `MATH` face every constant, and per glyph the italics
-correction, top accent, extended shape, kerns at each corner, variants and
-assembly in both directions. Excluded (§ 9 FTP divergence 1): an uncovered
+of one unit per font unit, where no Device table applies, over the bundle
+and every test-corpus directory: Noto Sans Math; STIX Two Math, KpMath,
+Garamond-Math and Asana Math, whose math kerns include sparse corners and
+corners sharing one MathKern; Latin Modern Math, which has no MathKernInfo;
+and HarfBuzz's `MathTestFont*` fixtures. Every face's absence agrees; on a
+`MATH` face every constant, and per glyph the italics correction, top
+accent, extended shape, kerns at each corner (each step below, at and above
+every correction height, and past both ends), variants and assembly in both
+directions. The excluded cases are compared with fontations, which reads
+them as this page does (`oracle.fontations.agrees`). Excluded (§ 9 FTP
+divergence 1): an uncovered
 glyph, which HarfBuzz gives a top accent of half its advance and an italics
 correction and kern of 0 where this page reports absence; and a kern whose
 heights do not strictly ascend, where HarfBuzz's binary search and this
@@ -529,8 +545,9 @@ unittest
 {
     size_t faces, mathFaces, constants, italics, accents, shapes, kernTables, kerns, variants,
         assemblies, overlaps;
-    size_t uncoveredItalics, uncoveredAccents, absentKerns, unsortedKerns;
-    eachFace((file, face, ref hb) {
+    size_t uncoveredItalics, uncoveredAccents, absentKerns, unsortedKerns, unopened, absentConstants,
+        cambriaSwaps;
+    eachCorpusFace((file, face, ref hb) {
         ++faces;
         const ours = face.mathTable;
         const theirs = hb_ot_math_has_data(hb.face) != 0;
@@ -544,14 +561,34 @@ unittest
         const inst = at(face, null, file);
 
         const cs = inst.mathConstants;
-        assert(cs.hasValue && cs.value.present, file);
+        assert(cs.hasValue, file);
         foreach (c; HB_OT_MATH_CONSTANT_SCRIPT_PERCENT_SCALE_DOWN .. hbMathConstantCount)
         {
+            // A null MathConstants is absent here (FTP35); HarfBuzz reads every constant as 0.
+            if (!cs.value.present)
+            {
+                assert(hb_ot_math_get_constant(hb.font, c) == 0, file);
+                ++absentConstants;
+                continue;
+            }
             const v = cs.value[cast(MathConstant) c];
             assert(v.hasValue && v.value.present, file);
             const h = hb_ot_math_get_constant(hb.font, c);
             if (v.value.kind == MathValueKind.percentage)
                 assert(v.value.percentage == h, file);
+            else if (v.value.value.design.raw != long(h) * unit
+                && (c == HB_OT_MATH_CONSTANT_DELIMITED_SUB_FORMULA_MIN_HEIGHT
+                    || c == HB_OT_MATH_CONSTANT_DISPLAY_OPERATOR_MIN_HEIGHT))
+            {
+                // HarfBuzz swaps these two for a face it takes for Cambria Math,
+                // whose values are known to be swapped (harfbuzz#4653); this
+                // page reports the stored values.
+                const other = cs.value[c == HB_OT_MATH_CONSTANT_DISPLAY_OPERATOR_MIN_HEIGHT
+                    ? MathConstant.delimitedSubFormulaMinHeight : MathConstant.displayOperatorMinHeight];
+                assert(other.value.value.design.raw == long(h) * unit, file);
+                ++cambriaSwaps;
+                continue;
+            }
             else
                 assert(v.value.value.design.raw == long(h) * unit, file);
             ++constants;
@@ -687,53 +724,329 @@ unittest
                 ++assemblies;
             }
         }
-    });
-    stderr.writefln("oracle.math.values: %s faces, %s with MATH; agree: %s constants, %s italics "
+    }, unopened);
+    stderr.writefln("oracle.math.values: %s faces (%s not opened), %s with MATH; agree: %s constants, %s italics "
         ~ "corrections, %s top accents, %s extended-shape flags, %s kern tables (%s kern lookups), "
         ~ "%s variants, %s assemblies, %s connector overlaps; excluded: %s uncovered italics, "
-        ~ "%s uncovered top accents, %s absent kern corners, %s kern tables not strictly ascending",
-        faces, mathFaces, constants, italics, accents, shapes, kernTables, kerns, variants, assemblies,
-        overlaps, uncoveredItalics, uncoveredAccents, absentKerns, unsortedKerns);
-    if (mathFaces == 0)
-        skipTest("no bundled face has MATH: the value differential needs a math face such as "
-            ~ "STIX Two Math or Noto Sans Math in the bundle (absence agreed on every face)");
+        ~ "%s uncovered top accents, %s absent kern corners, %s kern tables not strictly ascending, "
+        ~ "%s constants of a null MathConstants, %s constants HarfBuzz swaps for Cambria Math",
+        faces, unopened, mathFaces, constants, italics, accents, shapes, kernTables, kerns, variants, assemblies,
+        overlaps, uncoveredItalics, uncoveredAccents, absentKerns, unsortedKerns, absentConstants, cambriaSwaps);
+    if (fontsDir is null)
+        skipTest("SPARKLES_FONTS_PATH is unset");
+    assert(testFontsDir is null || (mathFaces >= 6 && kernTables > 1_000), "the math corpus is missing");
 }
 
-@("oracle.baseline.absenceAgrees")
+/**
+The bundle, then every test-corpus directory (the top level, `base/`,
+`math/` and `harfbuzz/`), each with HarfBuzz scaled to font units. A face
+`openFace` refuses for want of a `cmap` alone is read with an empty one
+added (`withEmptyCmap`), as HarfBuzz's `base-minmax.ttf` is; another face
+that does not open is counted in `unopened` and skipped.
+*/
+private void eachCorpusFace(scope void delegate(string name, const Face face, ref Oracle hb) @system body_,
+    ref size_t unopened)
+{
+    static string[] named(string prefix, const(string)[] paths)
+    {
+        string[] r;
+        foreach (p; paths)
+            r ~= prefix ~ p.baseName ~ "\0" ~ p;
+        return r;
+    }
+    foreach (entry; named("bundle/", corpus) ~ named("test/", testCorpus) ~ named("test/base/", baseCorpus)
+        ~ named("test/math/", mathCorpus) ~ named("test/harfbuzz/", harfbuzzCorpus))
+    {
+        const cut = entry.indexOf('\0');
+        const name = entry[0 .. cut];
+        const(ubyte)[] bytes = cast(const(ubyte)[]) read(entry[cut + 1 .. $]);
+        auto opened = openFace(bytes);
+        if (opened.hasError && opened.error.kind == FontErrorKind.missingTable && opened.error.tag == Tag("cmap"))
+        {
+            bytes = withEmptyCmap(bytes);
+            opened = openFace(bytes);
+        }
+        if (opened.hasError)
+        {
+            ++unopened;
+            continue;
+        }
+        auto hb = Oracle(bytes, 0);
+        const face = opened.value;
+        hb_font_set_scale(hb.font, face.unitsPerEm, face.unitsPerEm);
+        body_(name, face, hb);
+    }
+}
+
+/// HarfBuzz's direction for a baseline axis.
+private hb_direction_t hbDirection(BaselineAxis axis)
+    => axis == BaselineAxis.horizontal ? hb_direction_t.HB_DIRECTION_LTR : hb_direction_t.HB_DIRECTION_TTB;
+
+/// The probes of `axis`: its scripts and `DFLT`, `arab`, `zzzz`; its baseline tags and `hang`, `math`, `zzzz`.
+private void probes(in Instance inst, BaselineAxis axis, out Tag[] scripts, out Tag[] tags)
+{
+    scripts = [Tag("DFLT"), Tag("arab"), Tag("zzzz")];
+    tags = [Tag("hang"), Tag("math"), Tag("zzzz")];
+    const b = inst.face.base(inst.axisCount).value.axis(axis).value;
+    if (!b.scripts.hasError)
+        foreach (s; b.scripts.value)
+            if (s.hasValue)
+                scripts ~= s.value;
+    if (!b.tags.hasError)
+        foreach (t; b.tags.value)
+            tags ~= t;
+}
+
+/**
+Every baseline and extent of every corpus face agrees with HarfBuzz's
+`hb_ot_layout_get_baseline` and `hb_ot_layout_get_font_extents`, at the
+default and, for a variable face, at each axis extreme and all minima and
+all maxima: present exactly when HarfBuzz finds a coordinate, equal at the
+default and within half a unit elsewhere (HarfBuzz rounds a VariationIndex
+delta to whole units; fontations' exact deltas are `oracle.fontations.agrees`).
+The probes are each axis's scripts, `DFLT`, the absent `arab` and `zzzz`
+(which fall back to `DFLT`), and each axis's baselines with the absent
+`hang`, `math` and `zzzz`. A face without `BASE` agrees that every probe is
+absent.
+
+Excluded (§ 9 FTM divergences): a format 2 coordinate this library resolves
+against its reference glyph's outline point, which HarfBuzz reads as the
+stored coordinate; and a null minimum or maximum, which HarfBuzz reads as 0
+where this page reports absence, and a script whose MinMax record is
+missing for the language, which HarfBuzz answers with a null record (0 and
+0) where this page reports none. Both are counted, never compared.
+*/
+@("oracle.baseline.agreesWithHarfBuzz")
 @system
 unittest
 {
+    if (fontsDir is null)
+        skipTest("SPARKLES_FONTS_PATH is unset");
     auto ws = makeUnique!PointWorkspace();
-    size_t faces, baseFaces, queries;
-    eachFace((file, face, ref hb) {
+    size_t faces, unopened, baseFaces, instances, baselines, absences, extents, absentExtents,
+        resolvedPoints, nullExtents;
+    eachCorpusFace((file, face, ref hb) {
         ++faces;
-        const ours = face.base(0);
-        if (ours.hasValue || ours.error.kind != FontErrorKind.missingTable)
-        {
+        const has = face.base(0);
+        Instance[] insts = [at(face, null, file)];
+        if (has.hasValue && variable(face) && insts[0].recordedErrors == 0)
+            insts = extremes(face, axisRecords(face), file);
+        if (has.hasValue)
             ++baseFaces;
-            return;
-        }
-        const inst = at(face, null, file);
-        static immutable cases = [
-            ["romn", "latn"], ["hang", "deva"], ["ideo", "hani"], ["icft", "hani"], ["idtp", "kana"]];
-        foreach (c; cases)
+        else
+            assert(has.error.kind == FontErrorKind.missingTable, file);
+        foreach (inst; insts)
+        {
+            ++instances;
+            setCoords(hb, inst);
             foreach (axis; [BaselineAxis.horizontal, BaselineAxis.vertical])
             {
-                const b = inst.baseline(axis, Tag(c[1]), Tag(c[0]), *ws);
-                assert(b.hasError && b.error.kind == FontErrorKind.missingTable, file);
-                const direction = axis == BaselineAxis.horizontal
-                    ? hb_direction_t.HB_DIRECTION_LTR : hb_direction_t.HB_DIRECTION_TTB;
-                hb_position_t coord;
-                assert(!hb_ot_layout_get_baseline(hb.font, hbTag!hb_ot_layout_baseline_tag_t(c[0]), direction,
-                    hbTag(c[1]), 0, &coord),
-                    file);
-                ++queries;
+                Tag[] scripts, tags;
+                if (has.hasValue)
+                    probes(inst, axis, scripts, tags);
+                else
+                {
+                    scripts = [Tag("latn"), Tag("hani"), Tag("kana"), Tag("deva")];
+                    tags = [Tag("romn"), Tag("ideo"), Tag("icft"), Tag("hang"), Tag("idtp")];
+                }
+                foreach (s; scripts)
+                {
+                    foreach (t; tags)
+                    {
+                        const ours = inst.baseline(axis, s, t, *ws);
+                        hb_position_t coord;
+                        const found = hb_ot_layout_get_baseline(hb.font, cast(hb_ot_layout_baseline_tag_t) t.value,
+                            hbDirection(axis), s.value, 0, &coord) != 0;
+                        if (!has.hasValue)
+                        {
+                            assert(ours.hasError && ours.error.kind == FontErrorKind.missingTable, file);
+                            assert(!found, file);
+                            ++absences;
+                            continue;
+                        }
+                        assert(ours.hasValue, text(file, " ", s.chars, "/", t.chars, ": ", ours.error));
+                        const b = ours.value;
+                        assert(b.present == found, text(file, " ", s.chars, "/", t.chars));
+                        if (!b.present)
+                        {
+                            ++absences;
+                            continue;
+                        }
+                        if (b.value.format == 2 && !b.value.unresolvedPoint)
+                        {
+                            ++resolvedPoints;
+                            continue;
+                        }
+                        assert(agrees(b.value.coordinate.design.raw, long(coord) * unit, inst.allZero),
+                            text(file, " ", s.chars, "/", t.chars));
+                        ++baselines;
+                    }
+                    if (!has.hasValue)
+                        continue;
+                    foreach (language; [Tag.init, Tag("DEU "), Tag("JAN ")])
+                    {
+                        const ours = inst.extents(axis, s, language, Tag.init, *ws);
+                        assert(ours.hasValue, file);
+                        hb_font_extents_t e;
+                        const found = hb_ot_layout_get_font_extents(hb.font, hbDirection(axis), s.value,
+                            language.value, &e) != 0;
+                        const r = ours.value;
+                        if (!r.present)
+                        {
+                            // HarfBuzz answers a missing language record with a null one.
+                            assert(!found || (e.ascender == 0 && e.descender == 0), file);
+                            ++absentExtents;
+                            continue;
+                        }
+                        assert(found, file);
+                        foreach (i, x; [r.min, r.max])
+                        {
+                            const theirs = long(i == 0 ? e.descender : e.ascender) * unit;
+                            if (x.absent)
+                            {
+                                assert(theirs == 0, file);
+                                ++nullExtents;
+                                continue;
+                            }
+                            assert(x.hasValue, file);
+                            assert(agrees(x.value.coordinate.design.raw, theirs, inst.allZero), file);
+                            ++extents;
+                        }
+                    }
+                }
             }
-    });
-    stderr.writefln("oracle.baseline.absenceAgrees: %s faces, %s with BASE, %s absent baselines agree",
-        faces, baseFaces, queries);
-    if (baseFaces == 0)
-        skipTest("no bundled face has BASE: the FTM22–FTM24 value differential needs a verified BASE "
-            ~ "face acquired into the bundle (absence agreed on every face)");
-    assert(false, "a BASE face is bundled: write the FTM22–FTM24 hb_ot_layout_get_baseline differential");
+        }
+    }, unopened);
+    stderr.writefln("oracle.baseline.agreesWithHarfBuzz: %s faces (%s not opened), %s with BASE, %s instances; "
+        ~ "agree: %s baselines, %s absent baselines, %s extents, %s absent extent records; excluded: "
+        ~ "%s resolved format 2 points, %s null extents", faces, unopened, baseFaces, instances, baselines,
+        absences, extents, absentExtents, resolvedPoints, nullExtents);
+    assert(baseFaces >= 20 && baselines > 1_000 && extents > 0);
+}
+
+/// A coordinate as the fontTools golden spells it.
+private string goldenCoord(in BaseCoord c)
+{
+    const raw = c.coordinate.design.raw;
+    assert(raw % unit == 0, "a BASE coordinate with a fraction at the default");
+    auto r = text(c.format, ":", raw / unit);
+    if (c.format == 2)
+        r ~= text(":", c.referenceGlyph, ":", c.pointIndex);
+    return c.hasDevice ? r ~ "+d" : r;
+}
+
+/// An extent as the fontTools golden spells it: `-` when absent.
+private string goldenExtent(in Extent e)
+{
+    assert(!e.hasError, "a malformed extent");
+    return e.absent ? "-" : goldenCoord(e.value);
+}
+
+/// A golden tag: `_` stands for a space.
+private Tag goldenTag(string s) => Tag(s.replace("_", " "));
+
+/// A tag as the golden spells it.
+private string goldenName(Tag t) => t.chars.idup.replace(" ", "_");
+
+/**
+Every `BASE` record fontTools reads, as `tools/gen_base_goldens.d` recorded
+them in `test/goldens/base.txt`, equals this library's reading at the
+default: each axis's baseline tags, each script's default index and
+coordinates (format, value, reference point and whether a Device or
+VariationIndex table is attached) or the absence of its BaseValues, and
+each MinMax record, default or a language's, with each FeatMinMax record
+under it. The faces span Adobe's CJK template on both axes, a horizontal
+axis alone, the variable `BASE` 1.1 of Noto Serif JP VF and Source Han
+Sans VF, script lists without `DFLT` (M+, IPAex), an axis without a tag
+list and HarfBuzz's MinMax font.
+*/
+@("oracle.baseline.agreesWithFontTools")
+@system
+unittest
+{
+    if (testFontsDir is null)
+        skipTest("SPARKLES_FONT_TEST_CORPUS is unset");
+    auto ws = makeUnique!PointWorkspace();
+    const golden = readText(buildPath(__FILE_FULL_PATH__.dirName.dirName.dirName, "goldens", "base.txt"));
+    size_t faces, axes, scripts, coords, records;
+    Instance inst;
+    string file;
+    foreach (line; golden.lineSplitter)
+    {
+        if (line.startsWith("#"))
+            continue;
+        const w = line.split(' ');
+        const axis = w.length > 1 && w[1] == "V" ? BaselineAxis.vertical : BaselineAxis.horizontal;
+        switch (w[0])
+        {
+            case "face":
+                file = w[1];
+                const path = file.startsWith("bundle/") ? buildPath(fontsDir, file["bundle/".length .. $])
+                    : buildPath(testFontsDir, file["test/".length .. $]);
+                const(ubyte)[] bytes = cast(const(ubyte)[]) read(path);
+                assert(toHexString!(LetterCase.lower)(sha256Of(bytes)) == w[3],
+                    file ~ " changed since the goldens were recorded: regenerate them");
+                auto opened = openFace(bytes);
+                if (opened.hasError && opened.error.kind == FontErrorKind.missingTable)
+                    opened = openFace(withEmptyCmap(bytes));
+                assert(opened.hasValue, file);
+                const b = opened.value.base(0);
+                assert(b.hasValue, file);
+                assert(format("0x%04X%04X", b.value.majorVersion, b.value.minorVersion) == w[5], file);
+                inst = at(opened.value, null, file);
+                ++faces;
+                break;
+            case "axis":
+                const tags = inst.baselineTags(axis);
+                assert(tags.hasValue && tags.value.axisPresent, file);
+                string[] ours;
+                foreach (t; tags.value.save)
+                    ours ~= goldenName(t);
+                assert((ours.length ? "tags " ~ ours.join(" ") : "notags") == w[2 .. $].join(" "),
+                    text(file, " axis ", w[1], ": ", ours));
+                ++axes;
+                break;
+            case "script":
+                const script = goldenTag(w[2]);
+                auto tags = inst.baselineTags(axis).value;
+                if (w[3] == "novalues")
+                {
+                    const b = inst.baseline(axis, script, tags.empty ? Tag("romn") : tags.front, *ws);
+                    assert(b.hasValue && b.value.script == ScriptSource.requested && !b.value.hasBaseValues, file);
+                    ++scripts;
+                    break;
+                }
+                string[] ours;
+                foreach (t; tags)
+                {
+                    const b = inst.baseline(axis, script, t, *ws);
+                    assert(b.hasValue && b.value.script == ScriptSource.requested && b.value.hasBaseValues, file);
+                    assert(b.value.defaultIndex == w[4].to!ushort, file);
+                    ours ~= b.value.present ? goldenCoord(b.value.value) : "absent";
+                    ++coords;
+                }
+                assert(ours == w[5 .. $], text(file, " ", line, ": ours ", ours));
+                ++scripts;
+                break;
+            case "minmax":
+                const script = goldenTag(w[2]);
+                const language = w[3] == "language" ? goldenTag(w[4]) : Tag.init;
+                const rest = w[w[3] == "language" ? 5 : 4 .. $];
+                const feature = rest[0] == "feature" ? goldenTag(rest[1]) : Tag.init;
+                const e = inst.extents(axis, script, language, feature, *ws);
+                assert(e.hasValue && e.value.script == ScriptSource.requested, file);
+                const r = e.value;
+                assert(r.record == (w[3] == "language" ? MinMaxSource.language : MinMaxSource.scriptDefault), file);
+                assert(r.fromFeature == (rest[0] == "feature"), file);
+                assert(["min", goldenExtent(r.min), "max", goldenExtent(r.max)] == rest[$ - 4 .. $],
+                    text(file, " ", line));
+                ++records;
+                break;
+            default:
+                assert(0, line);
+        }
+    }
+    stderr.writefln("oracle.baseline.agreesWithFontTools: %s faces; agree: %s axes, %s scripts, %s coordinates, "
+        ~ "%s MinMax records", faces, axes, scripts, coords, records);
+    assert(faces >= 20 && coords > 400 && records > 0);
 }
