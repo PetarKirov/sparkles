@@ -1890,6 +1890,36 @@
         ]
       },
       {
+        "text": "Toolchain",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Specification",
+            "link": "/specs/toolchain/SPEC"
+          },
+          {
+            "text": "WASI",
+            "link": "/specs/toolchain/wasi"
+          },
+          {
+            "text": "WebAssembly modules",
+            "link": "/specs/toolchain/wasm-modules"
+          },
+          {
+            "text": "Delivery plan",
+            "link": "/specs/toolchain/PLAN"
+          },
+          {
+            "text": "Acceptance and evidence",
+            "link": "/specs/toolchain/testing"
+          },
+          {
+            "text": "Decisions",
+            "link": "/specs/toolchain/decisions"
+          }
+        ]
+      },
+      {
         "text": "TUI",
         "collapsed": true,
         "items": [
