@@ -249,16 +249,21 @@ filter types pass.
 
 ## M7 Discovery and fallback
 
-**Obligations.** `FTD1`–`FTD7`.
+**Obligations.** `FTD1`–`FTD12`.
 
 **Prerequisites.** [`FTX8`](decisions.md#ftx8-the-catalog-builds-synchronously-over-a-worker-pool);
 M1 face records and M4 contextual whole-span shaping. Public catalog, chain and
-trial-shape operation contracts refined in `SPEC.md` § 13 before work starts.
+trial-shape operation contracts refined in `SPEC.md` § 13 before work starts,
+the quirk registry's ([`FTX15`](decisions.md#ftx15-compatibility-quirks-the-engines-apply-applied-visibly))
+among them.
 
 **Acceptance.** CSS matching traces, cache replace/delete/stale-format scenarios
 and whole-span fallback trials in `testing.md` pass. A real emoji/mark/RTL span
 must retain cluster coverage and selection provenance when the primary face fails;
-an all-faces-fail span must remain explicitly unresolved.
+an all-faces-fail span must remain explicitly unresolved. Each quirk of
+`FTD9`–`FTD12` agrees with the engine it follows on a face that triggers it,
+reports its identifier, and is absent with quirks disabled and on a face one
+signature value away.
 
 ## M8 Consumer migration
 

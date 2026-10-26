@@ -339,6 +339,39 @@ policy. The secondary must remain in the whole-span trial list and succeed even
 if the scalar-lookup coverage index prunes it; assert the actual selected face,
 glyphs, source coverage and policy outcome, not merely candidate-list membership.
 
+### Compatibility quirks (`FTD8`–`FTD12`)
+
+Each quirk is checked against the engine it follows, on a face that triggers
+it and on near misses. The fonts most of them recognize may not be
+redistributed, so their signatures are rebuilt by the fixture byte builder:
+tables padded to the listed lengths, values set to the listed values, and
+for `FTD12` table checksums brought to the listed ones by a final word.
+
+- `FTD9`: HarfBuzz's own `MathTestFontPretendToBeCambria.ttf` (the test
+  corpus's `harfbuzz/`) reports the two minimum heights as
+  `hb_ot_math_get_constant` does, with the quirk's identifier; with quirks
+  disabled it reports them as stored. A fixture one byte off the length, or
+  one unit off either value, triggers nothing.
+- `FTD10`: for a fixture per blocklisted length triple (or a sample of them
+  with the full list checked against the pinned source's), every glyph's
+  class and caret equals HarfBuzz's (`hb_ot_layout_get_glyph_class`,
+  `hb_ot_layout_get_ligature_carets`): absent, with the identifier; a triple
+  one byte away reads the stored `GDEF`. The Microsoft faces in the opt-in
+  unfree corpus are checked when a version there matches a listed triple.
+- `FTD11`: a fixture with a symbol `cmap` over the private-use codes of each
+  page and an `OS/2` version 0 `fsSelection` of `0xB200` and `0xB300` maps
+  every Arabic scalar of the page as `hb_font_get_nominal_glyph` does, and
+  its character coverage lists them; `OS/2` version 1, or another high byte,
+  falls back to the ordinary symbol mapping.
+- `FTD12`: fixtures named after each tricky family, and fixtures whose
+  `cvt `, `fpgm` and `prep` match a listed face, are recorded as requiring
+  bytecode exactly when FreeType's `FT_IS_TRICKY` says so; the rasterizer
+  refuses them with `unsupportedCapability`, and a fallback trial shows the
+  requirement in the candidate's record.
+- `FTD8`: every entry's results carry its identifier and its face records
+  list it; the registry's signatures are read in O(1) per entry at open
+  (counted through a recording byte source), and no entry reads a file hash.
+
 ### Consumer migration (`FTA12`–`FTA14`, `FTA16`)
 
 - `FTA12`: grep checks over `libs/raylib-text/` for `.c` files and for imports

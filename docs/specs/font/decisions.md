@@ -439,6 +439,80 @@ so the first gains show in the `vulkan-wsi` spike.
 
 ---
 
+## FTX15: Compatibility quirks the engines apply, applied visibly
+
+**State:** accepted 2026-10-26 (owner) · **Affects:** [M7](./PLAN.md#m7-discovery-and-fallback), `FTD8`–`FTD12`
+
+**Question.** HarfBuzz and FreeType recognize particular broken fonts and read
+them as the fonts' authors meant, not as they are stored. This library reads
+what is stored. Which of those corrections should it apply too, and how
+should a caller see that it did?
+
+**Evidence.** The pinned HarfBuzz 14.6.0 and FreeType 2.14.3 sources, read on
+2026-10-26, and the M2 corpus run that met the first of them:
+
+- `hb_ot_math_get_constant` swaps `displayOperatorMinHeight` and
+  `delimitedSubFormulaMinHeight` for Cambria Math, whose two values are
+  stored swapped (harfbuzz#4653), recognized by its `MATH` length (25,722)
+  and those two stored values (2,500 and 3,000). HarfBuzz's own
+  `MathTestFontPretendToBeCambria.ttf` triggers it in the corpus.
+- `OT::GDEF::is_blocklisted` (`hb-ot-layout.cc`) ignores the whole `GDEF` of
+  about forty faces, recognized by the lengths of their `GDEF`, `GSUB` and
+  `GPOS`: Times New Roman Italic and Bold Italic, Tahoma, Microsoft
+  Himalaya, Cantarell 0.0.21, Padauk 2.5 to 3.0 and Courier New, from
+  Windows 7 to 10 and macOS 10.9 to 15. Their `GDEF` classes spacing glyphs
+  (`"`, IPA letters) as marks, which the shaper would zero.
+- `cmap`'s symbol path (`hb-ot-cmap-table.hh`) maps Arabic text into the
+  private-use glyphs of old Windows Arabic fonts, which have only a symbol
+  `cmap` and name their code page in an `OS/2` version 0 `fsSelection` high
+  byte (`0xB2` Simplified Arabic, `0xB3` Traditional Arabic), through tables
+  generated from Microsoft's legacy Arabic font documentation
+  (`hb-ot-shaper-arabic-pua.hh`); its Arabic fallback shaper then shapes
+  them.
+- `tt_check_trickyness` (`ttobjs.c`) marks about thirty CJK faces, by 20
+  family names (DynaLab's `DF` and `DLC` families, `MingLiU`, `PMingLiU`,
+  `HuaTian`) or by the lengths and checksums of 31 faces' `cvt `, `fpgm` and
+  `prep`, whose glyphs are assembled from components only their bytecode
+  positions; FreeType always hints them.
+- Considered and left out: `morx`'s blocklist (one face, in Apple's layout
+  tables, which this library does not read); FreeType's padding of hinting
+  limits (Rubik Italic, Keystrokes MT) and its repair of zeroed checksums,
+  which serve a bytecode interpreter; HarfBuzz's shaping fallbacks (Arabic
+  forms without `GSUB`, mark positioning, the `kern` table, space widths,
+  synthesized glyph classes), which this library inherits through the
+  shaper (`FTX1`); and the line-metric fallbacks `FTM16` already specifies.
+  FreeType's repair of a bitmap strike whose ascender is zero belongs to
+  `FTR7` and M6.
+
+**Choice.**
+
+- One registry holds every correction this library applies, each with an
+  identifier, the signature that triggers it, its effect and the engine and
+  revision it follows (`FTD8`). A signature is read from the face's own
+  bytes (table lengths, stored values, table checksums, names), as the
+  engines' are, never from a file hash, which differs between operating
+  system builds of the same font.
+- The four corrections above are its first entries (`FTD9`–`FTD12`): they
+  change what layout, the explorer and fallback see, and in each case the
+  shaper already applies the same correction, so leaving it out makes this
+  library disagree with the text it shapes.
+- A correction is applied by default and reported where it applies: every
+  result it changes says so, and a face record lists the corrections its
+  face triggers. A caller can open a face with corrections off and read the
+  stored values.
+- The registry is part of M7, because the face record carries it, and two of
+  its entries decide fallback: legacy Arabic code pages change a face's
+  character coverage, and a tricky face cannot be drawn by this library's
+  rasterizer.
+
+**Trade-off.** Each entry follows one engine's judgement about one font and
+can go stale when the font is fixed; the signature, not the family name,
+keeps a fixed version from triggering it, and the engine revision recorded
+with each entry says which list to compare against when the pin moves. A
+reader who wants the bytes as stored must ask for them.
+
+---
+
 ## Open questions
 
 ### FTQ1: Raster tolerance for `FTR3`

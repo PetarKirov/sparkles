@@ -689,6 +689,62 @@ Layout owns span boundaries and any retry after examining base grapheme boundari
 and shaping safety. No usable face **must** be an explicit outcome with the
 unresolved source span, not a fabricated successful shape.
 
+### Compatibility quirks
+
+Some widely installed fonts store values their authors did not mean, and the
+engines this library sits beside correct them on recognizing the font
+([`FTX15`](./decisions.md#ftx15-compatibility-quirks-the-engines-apply-applied-visibly)).
+These requirements apply the same corrections, visibly, so that what this
+library reports agrees with what the shaper draws.
+
+**FTD8: One quirk registry.** Every correction of a stored value **must** come
+from one registry whose entries each name an identifier, a signature, the
+values it changes and the engine and revision whose behaviour it follows. A
+signature **must** be read from the face's own bytes (table lengths, stored
+values, table checksums, names) and **must not** be a hash of the file. A
+face **must** be openable with quirks disabled, and then every result is the
+stored value. With quirks enabled, a result an entry changed **must** carry
+that entry's identifier, and a [face record](../../glossary.md#face-record)
+**must** list the entries its face triggers. Recognizing a face's entries
+**must** cost O(1) per entry at open, from values the table directory and
+the tables' headers already hold.
+
+**FTD9: Cambria Math's minimum heights.** For a face whose `MATH` table is
+25,722 bytes long and whose stored `delimitedSubFormulaMinHeight` and
+`displayOperatorMinHeight` are 3,000 and 2,500, the two constants **must** be
+reported swapped, as `hb_ot_math_get_constant` reports them (HarfBuzz 14.6.0,
+harfbuzz#4653).
+
+**FTD10: `GDEF` tables the shaper ignores.** For a face whose `GDEF`, `GSUB`
+and `GPOS` lengths match an entry of HarfBuzz's `GDEF` blocklist
+(`OT::GDEF::is_blocklisted`, HarfBuzz 14.6.0), every `GDEF` reading (glyph
+classes, mark attachment classes, mark glyph sets and ligature carets)
+**must** report the table absent, with the quirk's identifier, because the
+shaper shapes the face as if it had none.
+
+**FTD11: Legacy Arabic code pages.** For a face with a symbol `cmap`
+(platform 3, encoding 0) and an `OS/2` table of version 0 whose
+`fsSelection` high byte is `0xB2` (Simplified Arabic) or `0xB3` (Traditional
+Arabic), a character lookup **must** map an Arabic scalar to the code that
+page assigns it, as HarfBuzz's symbol `cmap` path does, and the face's
+character coverage **must** include every scalar so mapped to a glyph. The
+mapping tables are generated from the same Microsoft source as HarfBuzz's,
+with that source's revision recorded.
+
+**FTD12: Faces that only their bytecode can draw.** A face whose family name
+matches FreeType's tricky-font names, or whose `cvt `, `fpgm` and `prep`
+lengths and checksums match one of its tricky faces (`tt_check_trickyness`,
+FreeType 2.14.3), **must** be recorded as requiring hinting bytecode. The
+rasterizer of `FTR1` **must** refuse such a face with `unsupportedCapability`
+rather than draw its unhinted outlines, and fallback **must** see the
+requirement in the face record, so a renderer with a bytecode interpreter
+can be chosen for it or the face passed over.
+
+_Rationale:_ Each of these corrections is one the shaper already applies,
+so without it the library reports one thing about a font and draws
+another; the signature keeps a fixed release of the same font from
+triggering it.
+
 ## 14. Inspection
 
 [`variation-metrics.md`](./variation-metrics.md) refines this section to
