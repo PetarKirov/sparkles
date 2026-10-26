@@ -99,7 +99,7 @@ struct VulkanCanvas(B)
 {
     private static struct CachedImage
     {
-        uint handle;     // 0: a free entry
+        ImageHandle handle; // `ImageHandle.init`: a free entry
         uint generation;
         const(ImageRegistry)* registry;
         GpuImage image;
@@ -380,7 +380,7 @@ struct VulkanCanvas(B)
     {
         foreach (i, ref e; images_[])
         {
-            if (e.handle == 0)
+            if (!e.handle.valid)
                 continue;
             if (inFrame_ && boundThisFrame(cast(uint) i + 1))
                 continue;
@@ -419,7 +419,7 @@ struct VulkanCanvas(B)
             device_.destroyFramebuffer(device_.device, f.framebuffer, null);
         framebuffers_.clear();
         foreach (ref e; images_[])
-            if (e.handle != 0)
+            if (e.handle.valid)
                 e.image.destroy(*device_, *memory_);
         images_.clear();
         placeholder_.destroy(*device_, *memory_);
@@ -459,7 +459,7 @@ struct VulkanCanvas(B)
     {
         size_t n;
         foreach (ref e; images_[])
-            n += e.handle != 0;
+            n += e.handle.valid;
         return n;
     }
 
@@ -502,13 +502,13 @@ struct VulkanCanvas(B)
         size_t free = size_t.max;
         foreach (i, ref e; images_[])
         {
-            if (e.registry is registry_ && e.handle == handle.value
+            if (e.registry is registry_ && e.handle == handle
                 && e.generation == data.generation)
             {
                 slot = cast(uint) i + 1;
                 return ImageOutcome.drawn;
             }
-            if (e.handle == 0 && free == size_t.max)
+            if (!e.handle.valid && free == size_t.max)
                 free = i;
         }
         // An upload: within the frame's budget, unless it is the frame's
@@ -541,10 +541,10 @@ struct VulkanCanvas(B)
 
         // A replaced generation keeps its entry; the old image is retired.
         foreach (i, ref e; images_[])
-            if (e.registry is registry_ && e.handle == handle.value)
+            if (e.registry is registry_ && e.handle == handle)
             {
                 retire(e.image);
-                e = CachedImage(handle.value, data.generation, registry_, image);
+                e = CachedImage(handle, data.generation, registry_, image);
                 slot = cast(uint) i + 1;
                 return ImageOutcome.drawn;
             }
@@ -553,7 +553,7 @@ struct VulkanCanvas(B)
             free = images_.length;
             images_.put(CachedImage.init);
         }
-        images_[][free] = CachedImage(handle.value, data.generation, registry_, image);
+        images_[][free] = CachedImage(handle, data.generation, registry_, image);
         slot = cast(uint) free + 1;
         return ImageOutcome.drawn;
     }
@@ -605,9 +605,9 @@ struct VulkanCanvas(B)
     {
         foreach (ref e; images_[])
         {
-            if (e.handle == 0 || e.registry is null)
+            if (!e.handle.valid || e.registry is null)
                 continue;
-            const data = e.registry.lookup(ImageHandle(e.handle));
+            const data = e.registry.lookup(e.handle);
             if (data !is null && data.rgba.length && data.generation == e.generation)
                 continue;
             retire(e.image);
@@ -813,7 +813,7 @@ struct VulkanCanvas(B)
         {
             // Nothing of this frame will be submitted, so nothing is bound.
             foreach (ref e; images_[])
-                if (e.handle != 0)
+                if (e.handle.valid)
                 {
                     retire(e.image);
                     e = CachedImage.init;

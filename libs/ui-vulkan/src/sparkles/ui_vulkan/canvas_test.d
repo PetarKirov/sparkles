@@ -530,6 +530,35 @@ private ubyte[] solidImage(uint width, uint height, RgbColor c, ubyte alpha = 25
     assert(rig.canvas.imageUploads == 201, "and the kept one was never uploaded again");
 }
 
+@("ui_vulkan.canvas.aReusedSlotDrawsItsNewImage")
+@system unittest
+{
+    // `IMG3`: the registry reuses a removed image's slot under a new
+    // generation. The canvas must draw the new image there, never the upload
+    // it holds for the old one — even when the slot is reused mid-frame,
+    // before the next frame's sweep could evict that upload.
+    if (!readbackEnabled)
+        return skipTest(readbackSkipReason);
+    auto rig = new Rig;
+    rig.open("ui-vulkan-reused-slot", 32, 32);
+    scope (success)
+        rig.close();
+
+    const red = rig.images.register(solidImage(2, 2, RgbColor(255, 0, 0)), Size(2, 2));
+    ImageHandle green;
+    const frame = rig.draw((ref Canvas c) {
+        c.image(Rect(0, 0, 1, 1), red, ImageFit.fill, null, Visual.init);
+        rig.images.remove(red);
+        green = rig.images.register(solidImage(2, 2, RgbColor(0, 255, 0)), Size(2, 2));
+        c.image(Rect(1, 0, 1, 1), green, ImageFit.fill, null, Visual.init);
+        c.image(Rect(2, 0, 1, 1), red, ImageFit.fill, null, Visual.init); // stale
+    }, FrameMetrics(cellW: 10, cellH: 20), black);
+    assert(green.index == red.index && green != red, "the slot is reused under a new generation");
+    assert(pixel(frame, 32, 5, 5)[0 .. 3] == [255, 0, 0], "drawn before the removal");
+    assert(pixel(frame, 32, 15, 5)[0 .. 3] == [0, 255, 0], "the new image, not the old upload");
+    assert(pixel(frame, 32, 25, 5)[0 .. 3] == [0, 0, 0], "the stale handle draws nothing");
+}
+
 @("ui_vulkan.canvas.registrySwitchKeepsDrawnImagesDistinct")
 @system unittest
 {
@@ -543,7 +572,7 @@ private ubyte[] solidImage(uint width, uint height, RgbColor c, ubyte alpha = 25
     ImageRegistry other;
     const red = rig.images.register(solidImage(4, 4, RgbColor(255, 0, 0)), Size(4, 4));
     const green = other.register(solidImage(4, 4, RgbColor(0, 255, 0)), Size(4, 4));
-    assert(red.value == green.value, "handles are local to their registries");
+    assert(red == green, "handles are local to their registries");
     foreach (_; 0 .. 2)
     {
         const frame = rig.draw((ref Canvas c) {

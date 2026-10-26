@@ -218,8 +218,11 @@ canvas would upload outside the canvas's budget and retire on a different
 schedule.
 
 **Choice.** All panes of one terminal share one `ImageRegistry`.
-`TextureId.value` is the registry handle; the pane owns the RGBA bytes the
-registry borrows. The canvas uploads and retires those entries with every
+`TextureId.value` is an id the pane issues (unique across a thread's panes),
+mapped to the image's registry handle; the pane owns the RGBA bytes the
+registry borrows. The registry reuses a removed image's slot under a new
+generation (`IMG3`), so neither a pane nor the canvas can mistake the next
+image in a slot for the last. The canvas uploads and retires those entries with every
 other image (`UVK23`): one the pane removed leaves the device as the next
 frame begins. Its cache is keyed by (registry, handle, generation): a
 handle names an image only within its registry, so a terminal pane and the

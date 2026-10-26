@@ -382,7 +382,7 @@ private void paintScrollbarCells(Canvas)(ref Canvas canvas, in Scrollbar bar)
     static assert(!__traits(compiles, (ref NoRasters c) => c.image));
 
     NoRasters c;
-    paint(c, [imageOp(Rect(2, 3, 15, 5), ImageHandle(1), ImageFit.contain,
+    paint(c, [imageOp(Rect(2, 3, 15, 5), ImageHandle(1, 1), ImageFit.contain,
         "a bar chart")]);
 
     assert(c.ops.length == 4, "a fill plus the bracketed alt");
@@ -397,14 +397,14 @@ private void paintScrollbarCells(Canvas)(ref Canvas canvas, in Scrollbar bar)
 
     // Narrower than the alt: truncated to the box, never spilling past it.
     NoRasters narrow;
-    paint(narrow, [imageOp(Rect(0, 0, 6, 1), ImageHandle(1), ImageFit.contain,
+    paint(narrow, [imageOp(Rect(0, 0, 6, 1), ImageHandle(1, 1), ImageFit.contain,
         "a bar chart")]);
     assert(narrow.ops[2].text == "a ba");
     assert(narrow.ops[3].rect.origin.x == 5);
 
     // A canvas that CAN draw rasters gets the op itself, not the placeholder.
     RecordingCanvas real_;
-    paint(real_, [imageOp(Rect(2, 3, 12, 5), ImageHandle(1), ImageFit.cover,
+    paint(real_, [imageOp(Rect(2, 3, 12, 5), ImageHandle(1, 1), ImageFit.cover,
         "a bar chart")]);
     assert(real_.ops.length == 1 && real_.ops[0].kind == OpKind.image);
     assert(real_.ops[0].imageFit == ImageFit.cover);

@@ -1145,11 +1145,11 @@ unittest
 {
     // `IMG1`: the op names the image, states the fit, and carries the text a
     // canvas without rasters shows instead — no pixels, no registry.
-    const op = imageOp(Rect(4, 2, 20, 10), ImageHandle(7), ImageFit.cover,
+    const op = imageOp(Rect(4, 2, 20, 10), ImageHandle(7, 1), ImageFit.cover,
         "a bar chart", Slot.surface);
     assert(op.kind == OpKind.image);
     assert(op.rect == Rect(4, 2, 20, 10));
-    assert(op.imageHandle == ImageHandle(7));
+    assert(op.imageHandle == ImageHandle(7, 1));
     assert(op.imageFit == ImageFit.cover);
     assert(op.imageAlt == "a bar chart");
     assert(op.slot == Slot.surface);
@@ -1172,7 +1172,7 @@ unittest
     RecordingCanvas c;
     {
         char[8] scratch = "logo   \0";
-        c.image(Rect(0, 0, 4, 2), ImageHandle(1), ImageFit.contain,
+        c.image(Rect(0, 0, 4, 2), ImageHandle(1, 1), ImageFit.contain,
             scratch[0 .. 4], Visual.init);
         scratch[] = '?';
     }

@@ -13,8 +13,11 @@ import sparkles.terminal_view.painter : channels, ImagePixels, ImageRect, PixelL
     TextureId;
 
 /**
-The terminal's image residency. `TextureId.value` is the registry handle.
-Not a second GPU cache: the canvas uploads and retires these entries.
+The terminal's image residency. `TextureId.value` is an id this module
+issues, one per image across every pane of the thread, so a pane never
+mistakes another's texture for its own; it maps to the registry handle and
+the bytes. Not a second GPU cache: the canvas uploads and retires these
+entries.
 */
 struct VulkanImages
 {
@@ -22,9 +25,24 @@ struct VulkanImages
     ImageRegistry ownRegistry;
     /// Registry shared by all panes (a `TerminalView` static), or null.
     ImageRegistry* sharedRegistry;
-    private ubyte[][uint] owned; // by handle, live images only (`UVK23`)
 
-    @safe pure nothrow:
+    private static struct Owned
+    {
+        ImageHandle handle;
+        ubyte[] rgba;
+    }
+    private Owned[uint] owned; // by texture id, live images only (`UVK23`)
+    private static uint lastId; // the thread's last issued id; 0 is none
+
+    @safe nothrow:
+
+    /// The registry handle texture `t` draws, or `ImageHandle.init` when it
+    /// is not this pane's.
+    ImageHandle handleOf(TextureId t) const
+    {
+        const o = t.valid ? t.value in owned : null;
+        return o is null ? ImageHandle.init : o.handle;
+    }
 
     /// The registry the canvas borrows: the shared one when set.
     ImageRegistry* registryRef() return
@@ -38,14 +56,18 @@ struct VulkanImages
         if (rgba.length == 0)
             return TextureId.init;
         const handle = registryRef.register(rgba, Size(image.width, image.height));
-        owned[handle.value] = rgba;
-        return TextureId(handle.value, image.width, image.height, image.layout);
+        const id = ++lastId;
+        owned[id] = Owned(handle, rgba);
+        return TextureId(id, image.width, image.height, image.layout);
     }
 
     void updateTextureRows(TextureId t, in ImagePixels image, size_t first, size_t count)
     {
-        auto buf = bytesOf(t);
-        if (buf is null || (*buf).length == 0 || image.width != t.width
+        auto o = t.valid ? t.value in owned : null;
+        if (o is null)
+            return;
+        auto buf = &o.rgba;
+        if ((*buf).length == 0 || image.width != t.width
                 || t.width == 0 || count == 0)
             return;
         const ulong dstRow = cast(ulong) t.width * 4;
@@ -61,28 +83,24 @@ struct VulkanImages
             const src = image.pixels[srcOff .. srcOff + cast(size_t) srcRow];
             writeRow(dst, src, image.layout);
         }
-        registryRef.replace(ImageHandle(t.value), ImageData((*buf)[], Size(t.width, t.height)));
+        registryRef.replace(o.handle, ImageData((*buf)[], Size(t.width, t.height)));
     }
     void releaseTexture(TextureId t)
     {
         if (!t.valid)
             return;
-        // Only the pane that owns the bytes may retire the handle: with a
-        // shared registry, another pane's handle is meaningful here, and
-        // removing it would kill that pane's live image.
-        auto buf = bytesOf(t);
-        if (buf is null || (*buf).length == 0)
+        // Only the pane that owns the image may remove it: with a shared
+        // registry, removing another pane's would kill its live image.
+        auto o = t.value in owned;
+        if (o is null)
             return;
-        registryRef.remove(ImageHandle(t.value));
+        registryRef.remove(o.handle);
         owned.remove(t.value);
     }
 
     void drawTexture(TextureId, in ImageRect, in ImageRect) const @safe pure nothrow @nogc
     {
     }
-
-    private ubyte[]* bytesOf(TextureId t) @safe pure nothrow return
-        => t.valid ? t.value in owned : null;
 }
 
 private ubyte[] toRgba(in ImagePixels image) @safe pure nothrow
@@ -131,59 +149,62 @@ private void writeRow(ubyte[] dst, scope const(ubyte)[] src, PixelLayout layout)
 }
 
 @("terminal_view.vulkan_images.aRowUpdateBumpsTheGeneration")
-@safe pure nothrow
+@safe nothrow
 unittest
 {
     VulkanImages images;
     immutable ubyte[12] pixels = [10, 0, 0, 0, 20, 0, 0, 0, 30, 0, 0, 40];
     const t = images.createTexture(ImagePixels(2, 2, PixelLayout.rgb, pixels));
-    assert(t.valid && t.value == 1);
-    const stored = images.registryRef.lookup(ImageHandle(t.value));
+    const h = images.handleOf(t);
+    assert(t.valid && h.valid);
+    const stored = images.registryRef.lookup(h);
     assert(stored !is null && stored.rgba[0] == 10 && stored.rgba[3] == 255);
     assert(stored.rgba[4] == 0 && stored.rgba[7] == 255);
 
     immutable ubyte[12] next = [9, 9, 9, 1, 1, 1, 0, 0, 30, 0, 0, 40];
     images.updateTextureRows(t, ImagePixels(2, 2, PixelLayout.rgb, next), 0, 1);
-    const again = images.registryRef.lookup(ImageHandle(t.value));
+    const again = images.registryRef.lookup(h);
     assert(again.generation == 1);
     assert(again.rgba[0] == 9 && again.rgba[4] == 1);
     assert(again.rgba[8] == 0);
 
     images.releaseTexture(t);
-    assert(images.registryRef.lookup(ImageHandle(t.value)).rgba.length == 0);
+    assert(images.registryRef.lookup(h) is null && !images.handleOf(t).valid);
 }
 
 @("terminal_view.vulkan_images.mismatchedOrStaleUpdateIsIgnored")
-@safe pure nothrow
+@safe nothrow
 unittest
 {
     VulkanImages images;
     immutable ubyte[12] pixels = [10, 0, 0, 0, 20, 0, 0, 0, 30, 0, 0, 40];
     const t = images.createTexture(ImagePixels(2, 2, PixelLayout.rgb, pixels));
-    assert(t.valid && t.value == 1);
-    const before = images.registryRef.lookup(ImageHandle(t.value));
+    const h = images.handleOf(t);
+    const before = images.registryRef.lookup(h);
     assert(before !is null);
-    const beforeRgba = before.rgba.dup;
+    const beforeRgba = before.rgba.idup;
     const beforeGeneration = before.generation;
 
     immutable ubyte[24] wide = [
         1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5, 6, 6, 6, 7, 7, 7, 8, 8, 8
     ];
     images.updateTextureRows(t, ImagePixels(4, 2, PixelLayout.rgb, wide), 0, 1);
-    const afterMismatch = images.registryRef.lookup(ImageHandle(t.value));
+    const afterMismatch = images.registryRef.lookup(h);
     assert(afterMismatch !is null && afterMismatch.rgba == beforeRgba);
     assert(afterMismatch.generation == beforeGeneration);
 
+    // Released, its slot reused by the next image: an update through the
+    // old texture must not reach the new one.
     images.releaseTexture(t);
-    const releasedGeneration = images.registryRef.lookup(ImageHandle(t.value)).generation;
+    const u = images.createTexture(ImagePixels(2, 2, PixelLayout.rgb, wide[0 .. 12]));
+    const reused = images.handleOf(u);
+    assert(reused.index == h.index && reused != h);
     images.updateTextureRows(t, ImagePixels(2, 2, PixelLayout.rgb, pixels), 0, 1);
-    const afterRelease = images.registryRef.lookup(ImageHandle(t.value));
-    assert(afterRelease !is null && afterRelease.rgba.length == 0);
-    assert(afterRelease.generation == releasedGeneration);
+    assert(images.registryRef.lookup(reused).rgba[0] == 1, "the new image is untouched");
 }
 
 @("terminal_view.vulkan_images.sharedRegistryKeepsPaneOwnership")
-@system pure nothrow
+@system nothrow
 unittest
 {
     ImageRegistry registry;
@@ -194,13 +215,14 @@ unittest
     immutable ubyte[4] green = [0, 255, 0, 255];
     const a = first.createTexture(ImagePixels(1, 1, PixelLayout.rgba, red));
     const b = second.createTexture(ImagePixels(1, 1, PixelLayout.rgba, green));
-    assert(a.valid && b.valid && a.value != b.value);
+    assert(a.valid && b.valid && a.value != b.value, "ids are unique across panes");
+    const ha = first.handleOf(a), hb = second.handleOf(b);
     first.releaseTexture(b);
     first.updateTextureRows(b, ImagePixels(1, 1, PixelLayout.rgba, red), 0, 1);
-    assert(registry.lookup(ImageHandle(b.value)).rgba == green[]);
+    assert(registry.lookup(hb).rgba == green[], "another pane's image is not this pane's to change");
     first.releaseTexture(a);
-    assert(registry.lookup(ImageHandle(a.value)).rgba.length == 0);
-    assert(registry.lookup(ImageHandle(b.value)).rgba == green[]);
+    assert(registry.lookup(ha) is null);
+    assert(registry.lookup(hb).rgba == green[]);
     second.releaseTexture(b);
-    assert(registry.lookup(ImageHandle(b.value)).rgba.length == 0);
+    assert(registry.lookup(hb) is null);
 }

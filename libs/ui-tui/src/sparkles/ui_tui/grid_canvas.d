@@ -36,7 +36,8 @@ import sparkles.ui.geometry : Point, Rect, Size;
 import sparkles.ui.glyphs : projectGlyph, replacementGlyph;
 import sparkles.ui.interp.cells : accentGlyph, blend;
 import sparkles.ui.effect : EffectId, EffectRegistry, Tier0Fn, Tier0Input;
-import sparkles.ui.image : defaultCellPixels, fitRect, ImageData, ImageFit, ImageRegistry;
+import sparkles.ui.image : defaultCellPixels, fitRect, ImageData, ImageFit, ImageHandle,
+    ImageRegistry;
 import sparkles.ui.image_raster : ImageRung, imageRungOf, paintImageRaster;
 import sparkles.ui.interp.immediate : paintImagePlaceholder;
 import sparkles.ui.style : BorderStyle, Visual;
@@ -59,8 +60,23 @@ cells is stretched to the next one — at most a cell's worth.
 */
 ImagePlacement kittyPlacement(uint id, const ImageData img, in Rect rect, ImageFit fit,
     in Size cell) @safe pure nothrow @nogc
+    => kittyPlacement(id, img.generation, img, rect, fit, cell);
+
+/**
+ditto, for the image `handle` names: its kitty id is the registry slot's,
+so the terminal holds no more images than the registry has slots, and its
+generation joins the slot's with the pixels', so an image that reuses a slot
+is transmitted rather than shown from the terminal's copy of the last one.
+*/
+ImagePlacement kittyPlacement(ImageHandle handle, const ImageData img, in Rect rect,
+    ImageFit fit, in Size cell) @safe pure nothrow @nogc
+    => kittyPlacement(handle.index + 1, (ulong(handle.generation) << 32) | img.generation,
+        img, rect, fit, cell);
+
+private ImagePlacement kittyPlacement(uint id, ulong generation, const ImageData img,
+    in Rect rect, ImageFit fit, in Size cell) @safe pure nothrow @nogc
 {
-    auto p = ImagePlacement(image: id, generation: img.generation, rgba: img.rgba,
+    auto p = ImagePlacement(image: id, generation: generation, rgba: img.rgba,
         width: cast(ushort) img.size.width, height: cast(ushort) img.size.height,
         x: cast(ushort) rect.x, y: cast(ushort) rect.y,
         cols: cast(ushort) rect.width, rows: cast(ushort) rect.height);
@@ -364,7 +380,7 @@ struct GridCanvas
             blank.bg = backdrop;
             blank.hasBg = true;
             fillRect(op.rect, blank);
-            *placements ~= kittyPlacement(op.imageHandle.value, *data,
+            *placements ~= kittyPlacement(op.imageHandle, *data,
                 Rect(op.rect.x + originX, op.rect.y + originY, op.rect.width, op.rect.height),
                 op.imageFit, cellPixels);
             return;
@@ -1849,7 +1865,7 @@ static assert(isCanvas!GridCanvas);
     paintGrid(g, RgbColor(0, 0, 0), [op], 0, 1, Rect.init, caps: kitty, images: &reg,
         placements: &placed);
     assert(placed.length == 1);
-    assert(placed[0].image == h.value && placed[0].x == 1 && placed[0].y == 1);
+    assert(placed[0].image == h.index + 1 && placed[0].x == 1 && placed[0].y == 1);
     assert(placed[0].cols == 2 && placed[0].rows == 1);
     assert(g[1, 1].grapheme == " ", "the cells under a placement are blank");
 
@@ -1891,6 +1907,28 @@ static assert(isCanvas!GridCanvas);
     const o = kittyPlacement(1, img, rect, ImageFit.cover, cell);
     assert(o.cols == 4 && o.rows == 4);
     assert(o.cropW == 5 && o.cropH == 10 && o.cropX == 7 && o.cropY == 0);
+}
+
+@("ui_tui.grid_canvas.anImageReusingASlotIsTransmittedAgain")
+@safe pure nothrow unittest
+{
+    import sparkles.ui.image : ImageRegistry;
+
+    // `IMG3`: the registry reuses a removed image's slot. The kitty id stays
+    // the slot's (the terminal holds no more images than the registry has
+    // slots), and the generation changes, so the terminal is sent the new
+    // pixels rather than showing its copy of the old ones.
+    ImageRegistry reg;
+    static immutable ubyte[4] red = [255, 0, 0, 255], green = [0, 255, 0, 255];
+    const a = reg.register(red[], Size(1, 1));
+    const before = kittyPlacement(a, *reg.lookup(a), Rect(0, 0, 1, 1), ImageFit.fill,
+        Size(8, 16));
+    reg.remove(a);
+    const b = reg.register(green[], Size(1, 1));
+    const after = kittyPlacement(b, *reg.lookup(b), Rect(0, 0, 1, 1), ImageFit.fill,
+        Size(8, 16));
+    assert(b.index == a.index && after.image == before.image);
+    assert(after.generation != before.generation);
 }
 
 @("ui_tui.grid_canvas.sixelIsPlacedButNotOnTheLastRow")

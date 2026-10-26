@@ -10,8 +10,8 @@ the registry holds the decoded pixels under that handle, and a backend resolves
 the handle when it paints. Three consequences, each of which is a requirement:
 
 $(UL
-    $(LI $(B The arena stays flat) (`IMG3`). A handle is four bytes; the pixels
-    live outside the widget tree, so a relayout re-reads a `uint` and never
+    $(LI $(B The arena stays flat) (`IMG3`). A handle is eight bytes; the pixels
+    live outside the widget tree, so a relayout re-reads a handle and never
     re-decodes a megabyte.)
     $(LI $(B Layout needs no registry) (`IMG2`). The widget carries the image's
     $(I pixel size) — which the view knows, having registered it — and layout
@@ -24,23 +24,26 @@ $(UL
 */
 module sparkles.ui.image;
 
+import sparkles.base.pool.handle : Handle;
 import sparkles.ui.geometry : Rect, Size;
 
+/// The tag that keeps image handles apart from every other pool's.
+struct ImageTag
+{
+}
+
 /**
-An image's identity, stable for the life of the registry that issued it.
+An image's identity: a slot in the registry that issued it and the slot's
+generation when it was issued, as $(REF Handle, sparkles,base,pool,handle)
+gives every pool.
 
 Opaque on purpose: the toolkit never looks inside, and a backend uses it as a
-cache key. `0` is the null handle — $(LREF ImageRegistry) never issues it, so a
-default-constructed widget names no image.
+cache key. `ImageHandle.init` is the null handle — its generation is 0, which
+$(LREF ImageRegistry) never issues, so a default-constructed widget names no
+image. A slot is reused after $(LREF ImageRegistry.remove), but under a new
+generation: a handle to what was removed never resolves to what came next.
 */
-struct ImageHandle
-{
-    /// The registry's index, biased by one so `0` is the null handle.
-    uint value;
-
-    /// Whether this names an image at all.
-    bool valid() const @safe pure nothrow @nogc => value != 0;
-}
+alias ImageHandle = Handle!ImageTag;
 
 /// How an image fills a destination rect that is not its own aspect ratio.
 enum ImageFit : ubyte
@@ -88,21 +91,44 @@ Lives beside the widget tree, never inside it. An application registers once —
 at startup, or when a document loads — and the tree it rebuilds every frame
 carries only handles.
 
-$(B Handles are never reused) (the `IMG3` twin of `EFX14`): $(LREF remove)
-clears an entry's data but keeps its slot, so a stale handle resolves to
-nothing rather than to whatever was registered next.
+$(B A stale handle never aliases) (the `IMG3` twin of `EFX14`): $(LREF remove)
+frees the slot for the next $(LREF register), but bumps its generation first,
+so a handle to the removed image resolves to nothing rather than to whatever
+was registered next. Slots are reused, so a registry that images come and go
+through (a terminal's kitty graphics) holds as many slots as it ever held live
+images, not one per image it has seen. A slot whose generation would wrap is
+retired instead of reused.
 */
 struct ImageRegistry
 {
     private ImageData[] _entries;
+    private uint[] _generations; // per slot, ≥ 1
+    private bool[] _live;
+    private uint[] _free;        // freed slots, reused last-freed first
+    private size_t _liveCount;
 
 @safe:
 
     /// Registers `data`, returning the handle that addresses it.
     ImageHandle register(ImageData data) pure nothrow
     {
-        _entries ~= data;
-        return ImageHandle(cast(uint) _entries.length);
+        uint i;
+        if (_free.length)
+        {
+            i = _free[$ - 1];
+            _free.length -= 1;
+            _entries[i] = data;
+        }
+        else
+        {
+            i = cast(uint) _entries.length;
+            _entries ~= data;
+            _generations ~= 1;
+            _live ~= false;
+        }
+        _live[i] = true;
+        ++_liveCount;
+        return ImageHandle(i, _generations[i]);
     }
 
     /// ditto
@@ -124,23 +150,32 @@ struct ImageRegistry
         }
     }
 
-    /// Forgets `h`'s pixels. The slot is kept, so the handle is never reissued.
-    void remove(ImageHandle h) pure nothrow @nogc
+    /**
+    Forgets `h`'s image and frees its slot for the next `register`, under a
+    new generation: `h` and every copy of it resolve to nothing from here on.
+    A stale or null `h` changes nothing.
+    */
+    void remove(ImageHandle h) pure nothrow
     {
-        if (auto e = slotOf(h))
-        {
-            const gen = e.generation;
-            *e = ImageData.init;
-            e.generation = gen + 1;
-        }
+        if (slotOf(h) is null)
+            return;
+        const i = h.index;
+        _entries[i] = ImageData.init;
+        _live[i] = false;
+        --_liveCount;
+        if (_generations[i] == uint.max)
+            return; // retired: a wrapped generation could alias an old handle
+        ++_generations[i];
+        _free ~= i;
     }
 
     /// The image `h` addresses, or `null` for a null, stale or removed handle.
     const(ImageData)* lookup(ImageHandle h) const pure nothrow @nogc return
     {
-        if (!h.valid || h.value > _entries.length)
+        if (!h.valid || h.index >= _entries.length || !_live[h.index]
+            || _generations[h.index] != h.generation)
             return null;
-        return &_entries[h.value - 1];
+        return &_entries[h.index];
     }
 
     /// The registered extent of `h`, or `Size.init`.
@@ -150,11 +185,15 @@ struct ImageRegistry
         return e is null ? Size.init : e.size;
     }
 
-    /// How many handles have been issued (including removed ones).
-    size_t length() const pure nothrow @nogc => _entries.length;
+    /// How many images are registered now.
+    size_t length() const pure nothrow @nogc => _liveCount;
+
+    /// How many slots the registry holds, live or free: the most images it
+    /// has held at once, plus any retired slots.
+    size_t slotCount() const pure nothrow @nogc => _entries.length;
 
     private ImageData* slotOf(ImageHandle h) pure nothrow @nogc return
-        => !h.valid || h.value > _entries.length ? null : &_entries[h.value - 1];
+        => lookup(h) is null ? null : &_entries[h.index];
 }
 
 /**
@@ -240,7 +279,7 @@ Rect fitRect(in Rect dest, in Size pixels, ImageFit fit)
         w, h);
 }
 
-@("ui.image.registry.handlesAreStableAndNeverReused")
+@("ui.image.registry.aStaleHandleNeverAliasesTheSlotsNextImage")
 @safe pure nothrow unittest
 {
     ImageRegistry reg;
@@ -253,12 +292,16 @@ Rect fitRect(in Rect dest, in Size pixels, ImageFit fit)
     assert(reg.sizeOf(a) == Size(32, 16));
     assert(reg.lookup(a).alt == "a chart");
 
-    // Removing keeps the slot: the stale handle resolves to nothing, and the
-    // next registration gets an id of its own rather than inheriting `a`'s.
+    // Removing frees the slot for reuse, under a new generation: the next
+    // registration takes `a`'s slot, and `a` itself resolves to nothing.
     reg.remove(a);
     assert(reg.sizeOf(a) == Size.init);
     const c = reg.register(null, Size(4, 4), "later");
-    assert(c != a && reg.sizeOf(c) == Size(4, 4));
+    assert(c.index == a.index && c != a, "the slot is reused, the handle is not");
+    assert(reg.sizeOf(c) == Size(4, 4));
+    assert(reg.lookup(a) is null, "a stale handle does not see the slot's new image");
+    reg.remove(a);
+    assert(reg.sizeOf(c) == Size(4, 4), "removing through a stale handle changes nothing");
 
     // Replacing bumps the generation, which is how a backend's cached upload
     // learns it is stale without the toolkit knowing what an upload is.
@@ -268,7 +311,26 @@ Rect fitRect(in Rect dest, in Size pixels, ImageFit fit)
     assert(reg.sizeOf(b) == Size(16, 16));
 
     // A handle from beyond the end is not a crash.
-    assert(reg.lookup(ImageHandle(9999)) is null);
+    assert(reg.lookup(ImageHandle(9999, 1)) is null);
+}
+
+@("ui.image.registry.churnKeepsTheSlotCountBounded")
+@safe pure nothrow unittest
+{
+    // A stream of images (a terminal's kitty graphics) holds as many slots
+    // as it ever held live images, however many it has seen.
+    ImageRegistry reg;
+    const kept = reg.register(null, Size(1, 1), "kept");
+    ImageHandle[3] shown;
+    foreach (i; 0 .. 1000)
+    {
+        foreach (ref h; shown)
+            h = reg.register(null, Size(2, 2), "shown");
+        foreach (h; shown)
+            reg.remove(h);
+    }
+    assert(reg.slotCount == 4, "one kept image plus three at a time");
+    assert(reg.length == 1 && reg.sizeOf(kept) == Size(1, 1));
 }
 
 @("ui.image.cells.roundsUpAndNeverVanishes")

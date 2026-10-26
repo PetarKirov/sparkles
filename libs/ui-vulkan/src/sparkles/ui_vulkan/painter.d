@@ -634,14 +634,14 @@ version (unittest)
         ImageOutcome resolve(ImageHandle h, out uint slot, out Size size) const
             @safe pure nothrow @nogc
         {
-            if (h.value == 1)
+            if (h.index == 1)
             {
                 slot = 7;
                 size = Size(40, 20);
                 return ImageOutcome.drawn;
             }
-            return h.value == 2 ? ImageOutcome.tooLarge
-                : h.value == 3 ? ImageOutcome.deferred : ImageOutcome.missing;
+            return h.index == 2 ? ImageOutcome.tooLarge
+                : h.index == 3 ? ImageOutcome.deferred : ImageOutcome.missing;
         }
     }
 
@@ -736,9 +736,9 @@ unittest
     Painter!TwoImages p;
     p.begin(Size(400, 300), metrics10x20);
     const v = Visual(bg: RgbColor(255, 0, 0), hasBg: true);
-    p.image(Rect(0, 0, 4, 1), ImageHandle(1), ImageFit.fill, "a", Visual.init);
+    p.image(Rect(0, 0, 4, 1), ImageHandle(1, 1), ImageFit.fill, "a", Visual.init);
     p.fillRect(Rect(1, 0, 4, 1), v);
-    p.image(Rect(2, 0, 4, 1), ImageHandle(1), ImageFit.fill, "a", Visual.init);
+    p.image(Rect(2, 0, 4, 1), ImageHandle(1, 1), ImageFit.fill, "a", Visual.init);
     assert(p.instances.length == 3 && p.runs.length == 3);
     assert(p.runs[0].images.image == 7 && p.runs[1].images.image == 0 && p.runs[2].images.image == 7);
     assert(p.instances[0].shape.array[0] == QuadKind.image);
@@ -857,20 +857,20 @@ unittest
     p.begin(Size(400, 300), metrics10x20);
 
     // `UVK24`: `contain` letterboxes a 40 × 20 image into a 60 × 20 rect.
-    p.image(Rect(0, 0, 6, 1), ImageHandle(1), ImageFit.contain, null, Visual(fgAlpha: 128));
+    p.image(Rect(0, 0, 6, 1), ImageHandle(1, 1), ImageFit.contain, null, Visual(fgAlpha: 128));
     assert(boxIs(p.instances[0], 15, 3, 40, 20));
     assert(p.instances[0].fill.array[3] == 128 / 255.0f);
     assert(p.instances[0].texRect.array == [0, 0, 1, 1]);
 
     // `cover` is clipped to its rect.
-    p.image(Rect(0, 1, 1, 1), ImageHandle(1), ImageFit.cover, null, Visual.init);
+    p.image(Rect(0, 1, 1, 1), ImageHandle(1, 1), ImageFit.cover, null, Visual.init);
     assert(p.runs[$ - 1].scissor == ScissorBox(5, 23, 10, 20));
 
     // `UVK25`: too large and deferred draw the placeholder and count.
     const n = p.instances.length;
     const bg = Visual(bg: RgbColor(1, 1, 1), hasBg: true);
-    p.image(Rect(0, 2, 6, 3), ImageHandle(2), ImageFit.contain, "big", bg);
-    p.image(Rect(0, 5, 6, 3), ImageHandle(3), ImageFit.contain, "later", bg);
+    p.image(Rect(0, 2, 6, 3), ImageHandle(2, 1), ImageFit.contain, "big", bg);
+    p.image(Rect(0, 5, 6, 3), ImageHandle(3, 1), ImageFit.contain, "later", bg);
     assert(p.instances.length == n + 2, "each placeholder's box");
     assert(p.report[Degradation.imageTooLarge] == 1 && p.report[Degradation.imageDeferred] == 1);
     assert(p.report.anotherFrame, "a deferred image asks for the frame that uploads it");

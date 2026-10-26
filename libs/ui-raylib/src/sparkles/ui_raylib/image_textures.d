@@ -28,12 +28,13 @@ struct ImageTextures
         struct Entry
         {
             Texture2D texture;
+            ImageHandle handle; // the slot's occupant it was uploaded for
             uint generation;
             bool uploaded;
         }
 
         const(ImageRegistry)* _registry;
-        Entry[uint] _cache;
+        Entry[uint] _cache; // by slot: a reissued slot replaces its upload
     }
 
     /// Binds this cache to `registry`. Borrowed, not owned.
@@ -65,21 +66,22 @@ struct ImageTextures
             || data.size.width <= 0 || data.size.height <= 0)
             return null;
 
-        if (auto e = handle.value in _cache)
+        if (auto e = handle.index in _cache)
         {
-            if (e.uploaded && e.generation == data.generation)
+            if (e.uploaded && e.handle == handle && e.generation == data.generation)
                 return &e.texture;
-            // Stale: the registry replaced the pixels under this handle.
+            // Stale: the registry replaced the pixels under this handle, or
+            // reissued the slot to another image.
             if (e.uploaded)
                 UnloadTexture(e.texture);
-            _cache.remove(handle.value);
+            _cache.remove(handle.index);
         }
 
-        auto entry = Entry(generation: data.generation);
+        auto entry = Entry(handle: handle, generation: data.generation);
         if (upload(*data, entry.texture))
             entry.uploaded = true;
-        _cache[handle.value] = entry;
-        auto stored = handle.value in _cache;
+        _cache[handle.index] = entry;
+        auto stored = handle.index in _cache;
         return stored.uploaded ? &stored.texture : null;
     }
 
@@ -92,7 +94,7 @@ struct ImageTextures
         _cache = null;
     }
 
-    /// How many handles this cache currently holds an entry for.
+    /// How many slots this cache currently holds an upload for.
     size_t length() const @safe pure nothrow @nogc => _cache.length;
 }
 
