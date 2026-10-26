@@ -21,7 +21,7 @@ import sparkles.terminal_view.notification_log : NotificationRoute;
 import sparkles.terminal_view.osc_scan : Notification;
 import sparkles.terminal_view.core : logBuildInfo;
 import sparkles.terminal_view.log : routeTraceLog;
-import sparkles.ui_app.host : RunConfig;
+import sparkles.ui_app.host : PointerUnit, RunConfig;
 import sparkles.ui_app.run : RunOutcome;
 import sparkles.ui_app.run_app : runApp;
 
@@ -108,16 +108,12 @@ int launchDesktop(ref CommandNode!TerminalCli node)
         fractionalScroll: true, // scrolled between cells (`LAY7`)
         traceSink: &routeTraceLog, // raylib's own log joins ours (TPG7)
     };
-    version (TerminalVulkan)
-    {
-        import sparkles.ui_app.host : PointerUnit;
-        cfg.pointerUnit = PointerUnit.pixels;
-    }
+    // The panes and the chrome take the mouse as events, in pixels
+    // (`WorkspaceHost.notePointer`), on every arm.
+    cfg.pointerUnit = PointerUnit.pixels;
 
     // Stack-pinned: the panes' delegates hold pointers into the workspace.
     DesktopTerminal app;
-    version (TerminalVulkan)
-        app.host.pollPointer = false;
     // The session bus first: the portal's light/dark preference picks the
     // scheme the panes open in (`TPR13`).
     app.desktop.start(lc.effective, lc.warnings);

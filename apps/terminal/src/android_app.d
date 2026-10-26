@@ -119,7 +119,7 @@ int androidMain()
         openPage(app.host, page);
     };
     app.loadSettings(); // the options every pane starts from
-    app.host.pollPointer = false; // touch arrives as gestures
+    app.host.mousePointer = false; // touch arrives as gestures
     app.statePath = buildPath(paths.files, "state", "workspace.json");
 
     // The first pane is the session (`NOD4`–`NOD7`): the installer while the
