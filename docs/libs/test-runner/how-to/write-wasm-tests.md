@@ -7,7 +7,7 @@ runs them with the first available WebAssembly-capable runtime:
 
 ```console
 $ dub test :test-runner -- --wasm
- ✓ attributes.selfContained.wasm [libs/test-runner/src/sparkles/test_runner/attributes.d:71]
+ ✓ attributes.selfContained.wasm [libs/test-runner/src/sparkles/test_runner/attributes.d:144]
 1 @wasm tests passed
 ```
 
