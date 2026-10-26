@@ -44,7 +44,9 @@ _State: accepted._
 **Choice.** After the terminal, hue, font-explorer and the shaders packaged
 for other projects ship on the toolchain, so the changes arrive with
 real-world validation. Until then each change stays an atomic commit with a
-regression test (TC3), ready to submit.
+regression test (TC3), ready to submit. The dlang.nix packages stay on a
+feature branch that Sparkles pins, for the same reason: they are proposed
+for dlang.nix's `main` together with the fork commits they build.
 
 **Revisit when** an upstream release would make a fork commit redundant, or a
 maintainer asks for one of the changes.
