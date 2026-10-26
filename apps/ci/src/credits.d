@@ -178,9 +178,9 @@ CreditPart parsePart(string id, string text) @safe
     if (!part.versionSource.length)
         part.errors ~= "no `Version source` field";
     else if (part.versionSource.matchFirst(
-            ctRegex!"^(flake input|nixpkgs|dub package|grammar bundle) `[^`]+`").empty)
+            ctRegex!"^(flake input|nixpkgs|dub package|grammar bundle|operating system) `[^`]+`").empty)
         part.errors ~= "`Version source` is not one of: flake input `…`, nixpkgs `…`, "
-            ~ "dub package `…`, grammar bundle `…`";
+            ~ "dub package `…`, grammar bundle `…`, operating system `…`";
     if (!backticked(part.licence).length)
         part.errors ~= "no `Licence` field with a backticked SPDX expression";
     if (!part.home.startsWith("https://") && !part.home.startsWith("<https://"))
@@ -188,8 +188,11 @@ CreditPart parsePart(string id, string text) @safe
     if (!part.shipsAs.length && !dubPackageOf(part.versionSource).length)
         part.errors ~= "no `Ships as` field naming what ships";
 
+    // A library the operating system provides ships nothing of its own, so
+    // it carries no licence text.
+    const fromTheSystem = part.versionSource.startsWith("operating system ");
     const own = "../licenses/" ~ id ~ "/";
-    if (!part.includes.any!(t => t.startsWith(own)))
+    if (!fromTheSystem && !part.includes.any!(t => t.startsWith(own)))
         part.errors ~= "includes no licence text from `" ~ own ~ "…`";
     foreach (t; part.includes)
         if (!t.startsWith(own))
@@ -225,6 +228,23 @@ CreditPart parsePart(string id, string text) @safe
     const part = parsePart("bolts", text);
     assert(part.errors.length == 0, part.errors.join("; "));
     assert(part.provides == ["dub:bolts"]);
+}
+
+@("credits.parsePart.aSystemLibraryCarriesNoLicenceText")
+@safe unittest
+{
+    // A library the operating system provides (Windows' IMM32) ships nothing
+    // of its own: no licence text is staged for it, and none is required.
+    const system = parsePart("imm32", "### IMM32\n\n| Field | Value |\n| - | - |\n"
+        ~ "| Version source | operating system `Windows` |\n"
+        ~ "| Licence | `LicenseRef-Windows-System-Library` |\n"
+        ~ "| Home | https://learn.microsoft.com |\n| Ships as | `-limm32` |\n");
+    assert(system.errors.length == 0, system.errors.join("; "));
+    // Any other source still needs its licence text.
+    const shipped = parsePart("x", "### X\n\n| Field | Value |\n| - | - |\n"
+        ~ "| Version source | nixpkgs `x` |\n| Licence | `MIT` |\n"
+        ~ "| Home | https://example.org |\n| Ships as | `-lx` |\n");
+    assert(shipped.errors.canFind!(e => e.canFind("no licence text")));
 }
 
 @("credits.parsePart.reportsWhatIsMissing")

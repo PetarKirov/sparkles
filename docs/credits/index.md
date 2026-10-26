@@ -31,6 +31,18 @@ names something nothing ships.
 
 <!-- @include: ./parts/libkqueue.md -->
 
+<!-- @include: ./parts/vulkan-loader.md -->
+
+<!-- @include: ./parts/wayland.md -->
+
+<!-- @include: ./parts/libxcb.md -->
+
+<!-- @include: ./parts/xcb-imdkit.md -->
+
+<!-- @include: ./parts/libxkbcommon.md -->
+
+<!-- @include: ./parts/windows-imm32.md -->
+
 <!-- @include: ./parts/tree-sitter.md -->
 
 <!-- @include: ./parts/tree-sitter-grammars.md -->
