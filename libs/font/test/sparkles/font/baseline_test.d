@@ -211,6 +211,36 @@ unittest
     assert(zero.present && zero.value.coordinate.design.raw == 0);
 }
 
+@("baseline.FTM23.unsortedRecords")
+@safe pure nothrow
+unittest
+{
+    // The script records must be sorted by tag; out of order, the binary
+    // search misses `latn` (stored first, after `DFLT`'s probe) and the query
+    // falls back to `DFLT`, as HarfBuzz's and fontations' searches do. Never
+    // an error, never a read outside the list.
+    auto ws = makeUnique!PointWorkspace();
+    const axis = BaseAxisSpec(["ideo", "romn"], [
+        BaseScriptSpec("latn", true, 1, [c1(-100), c1(0)]),
+        BaseScriptSpec("DFLT", true, 0, [c1(-120), c1(5)]),
+        BaseScriptSpec("cyrl", true, 1, [c1(-130), c1(6)]),
+    ]);
+    const inst = at(build(baseTable([axis], null)));
+    const missed = inst.baseline(horizontal, latn, romn, *ws).value;
+    assert(missed.present && missed.script == ScriptSource.defaultScript && missed.value.coordinate.design == du(5));
+    const found = inst.baseline(horizontal, dflt, romn, *ws).value;
+    assert(found.script == ScriptSource.requested && found.value.coordinate.design == du(5));
+    // The same for a tag list out of order: `romn` and `hang` miss, `ideo`, probed first, is found.
+    const tags = BaseAxisSpec(["romn", "ideo", "hang"], [BaseScriptSpec("DFLT", true, 0, [c1(1), c1(2), c1(3)])]);
+    const tagged = at(build(baseTable([tags], null)));
+    foreach (tag; [romn, hang])
+    {
+        const t = tagged.baseline(horizontal, latn, tag, *ws).value;
+        assert(t.hasBaseValues && !t.present);
+    }
+    assert(tagged.baseline(horizontal, latn, ideo, *ws).value.value.coordinate.design == du(2));
+}
+
 @("baseline.FTM23.indexPastCoordinates")
 @safe pure nothrow
 unittest

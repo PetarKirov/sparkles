@@ -446,6 +446,53 @@ unittest
     assert(at(bytes).mathKern(5, topRight, du(250)).value.value.design == du(3));
 }
 
+@("math.FTP36.sharedMathKern")
+@safe pure nothrow
+unittest
+{
+    // Compilers store one MathKern once and point every corner that uses it
+    // there: glyph 5's top right and glyph 6's top right and bottom left
+    // share one table; glyph 6's top left has its own; the rest are null.
+    const shared_ = mathKernData(MathKernSpec(true, [v(100)], [v(-7), v(9)]));
+    const own = mathKernData(MathKernSpec(true, null, [v(3)]));
+    enum fixedLength = 4 + 8 * 2;
+    const sharedAt = fixedLength, ownAt = fixedLength + cast(uint) shared_.length;
+    const coverageAt = ownAt + cast(uint) own.length;
+    const info = u16(coverageAt) ~ u16(2) ~ u16(sharedAt) ~ u16(0) ~ u16(0) ~ u16(0)
+        ~ u16(sharedAt) ~ u16(ownAt) ~ u16(0) ~ u16(sharedAt) ~ shared_ ~ own ~ coverage1([5, 6]);
+    const inst = at(build(mathTableData(null, mathGlyphInfoTable(MathGlyphInfoSpec(null, null, null, info)), null)));
+    foreach (k; [inst.mathKernTable(5, topRight), inst.mathKernTable(6, topRight),
+            inst.mathKernTable(6, bottomLeft)])
+    {
+        assert(k.value.present && k.value.heightCount == 1);
+        assert(k.value.lookup(du(99)).value.value.design == du(-7));
+        assert(k.value.lookup(du(100)).value.value.design == du(9));
+    }
+    assert(inst.mathKern(6, topLeft, du(0)).value.value.design == du(3));
+    // A null corner is absent, beside a shared one.
+    assert(!inst.mathKernTable(5, bottomLeft).value.present);
+    assert(!inst.mathKernTable(6, MathKernCorner.bottomRight).value.present);
+}
+
+@("math.FTP37.heightCountPastTable")
+@safe pure nothrow
+unittest
+{
+    // A heightCount whose 4 + 8 · n footprint runs past the table: truncated,
+    // never a read past it, however large the count.
+    foreach (count; [2u, 0x100u, 0xFFFFu])
+    {
+        const kern = u16(count) ~ u16(100) ~ u16(0) ~ u16(1) ~ u16(0);
+        const info = u16(4 + 8 + cast(uint) kern.length) ~ u16(1) ~ u16(4 + 8) ~ u16(0) ~ u16(0) ~ u16(0)
+            ~ kern ~ coverage1([5]);
+        const inst = at(build(mathTableData(null, mathGlyphInfoTable(MathGlyphInfoSpec(null, null, null, info)),
+            null)));
+        const t = inst.mathKernTable(5, topRight);
+        assert(t.hasError && t.error.kind == FontErrorKind.truncated);
+        assert(inst.mathKern(5, topRight, du(0)).error.kind == FontErrorKind.truncated);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Variants and assemblies (FTP38)
 // ---------------------------------------------------------------------------
