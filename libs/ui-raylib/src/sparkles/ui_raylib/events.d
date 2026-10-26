@@ -122,11 +122,15 @@ struct RaylibEvents
 
         // The explicit raylib→toolkit button map (never an index cast:
         // PointerButton's `none` sits mid-enum, and raylib's back/forward
-        // ids are not contiguous with the first three) — M14.
+        // ids are not contiguous with the first three) — M14. A mouse's side
+        // buttons arrive as raylib's `SIDE` and `EXTRA` (GLFW's buttons 4 and
+        // 5: X11's 8 and 9), so those are back and forward too.
         static immutable buttons = [
             [MouseButton.MOUSE_BUTTON_LEFT, PointerButton.left],
             [MouseButton.MOUSE_BUTTON_MIDDLE, PointerButton.middle],
             [MouseButton.MOUSE_BUTTON_RIGHT, PointerButton.right],
+            [MouseButton.MOUSE_BUTTON_SIDE, PointerButton.back],
+            [MouseButton.MOUSE_BUTTON_EXTRA, PointerButton.forward],
             [MouseButton.MOUSE_BUTTON_BACK, PointerButton.back],
             [MouseButton.MOUSE_BUTTON_FORWARD, PointerButton.forward],
         ];

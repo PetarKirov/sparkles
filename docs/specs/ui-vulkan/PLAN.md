@@ -207,8 +207,10 @@ placeholder (a byte count times the font size) until V3 measures text.
 It presented the test scene under Weston on lavapipe; text was blank, as
 expected until V3, while the pane, scrollbar and kitty image drew. A file
 open reports that this arm has no document viewer. The raylib desktop
-configuration keeps its poll and its screenshot is byte-identical to
-`origin/main`.
+configuration takes its mouse from host events too, in pixels, through the
+same routine (`WorkspaceHost.notePointer`): nothing in `apps/terminal`
+polls raylib's mouse, and the panes' bridge is off. Its screenshot and
+mouse run are byte-identical to before.
 
 **Gate.** The terminal runs on Wayland and X11 through the native host;
 screenshots match the raylib terminal within the tolerances of

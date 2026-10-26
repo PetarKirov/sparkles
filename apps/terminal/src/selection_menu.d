@@ -1387,26 +1387,6 @@ struct SelectionUi
         shortcuts = shortcutsFrom(table);
     }
 
-    /**
-    The desktop's per-frame half (`TSE7`), before the workspace's frame: a
-    right-click on a pane opens the menu at the pointer — Shift lets it
-    through a program that tracks the mouse.
-    */
-    void pollDesktop(H)(ref H h, ref WorkspaceHost ws, in Rect area) @system
-    {
-        import raylib : GetMousePosition, IsKeyDown, IsMouseButtonPressed, KeyboardKey,
-            MouseButton;
-
-        frame(h, ws);
-        if (!IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_RIGHT))
-            return;
-        auto c = h.canvas;
-        const cw = c.fonts.cellW() > 0 ? c.fonts.cellW() : 1;
-        const ch = c.fonts.cellH() > 0 ? c.fonts.cellH() : 1;
-        const m = GetMousePosition();
-        const shift = IsKeyDown(KeyboardKey.KEY_LEFT_SHIFT) || IsKeyDown(KeyboardKey.KEY_RIGHT_SHIFT);
-        cast(void) rightClick(ws, area, cw, ch, Point(cast(int) m.x, cast(int) m.y), shift);
-    }
 
     version (Android)
     {

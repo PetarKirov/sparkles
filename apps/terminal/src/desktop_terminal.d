@@ -113,10 +113,7 @@ struct DesktopTerminal
             host.setViewerColors(chromeFg, chromeBg); // `TDV7`
         }
         host.theme = ChromeTheme.of(chromeFg, chromeBg);
-        version (TerminalVulkan)
-            selection.frame(h, host);
-        else
-            selection.pollDesktop(h, host, Rect(0, 0, screenW, screenH));
+        selection.frame(h, host);
         host.frame(h, Rect(0, 0, screenW, screenH));
         if (host.takeDirty())
             save();
@@ -155,14 +152,14 @@ struct DesktopTerminal
                 const surfaced = host.scrollSurface(w);
                 const bannered = !surfaced && w.dy != 0
                     && host.scrollBanner(w.pos.x, w.pos.y, w.dy);
-                // Only a wheel nothing above consumed reaches the pane, and
-                // only where nothing polls the mouse instead (the native arm).
-                if (!host.pollPointer && !surfaced && !bannered)
+                // Only a wheel nothing above consumed reaches the panes.
+                if (host.mousePointer && !surfaced && !bannered)
                     host.applyWheel(w);
             },
             (in PointerEvent p) {
-                // Where raylib is not polled, the host's events are the mouse.
-                if (!host.pollPointer)
+                // The host's events are the mouse, for the chrome and the
+                // panes alike, and a right press opens the selection menu.
+                if (host.mousePointer)
                 {
                     host.notePointer(p);
                     if (p.action == PointerAction.press && p.button == PointerButton.right)

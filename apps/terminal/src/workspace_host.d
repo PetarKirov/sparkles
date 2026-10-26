@@ -132,10 +132,11 @@ struct WorkspaceHost
     OverlayStyle overlayStyle;
     /// What shows over the panes: confirmations, menus, pages and toasts.
     Surfaces surfaces;
-    /// Poll the mouse for the pane under it (the desktop). A touch embedder
-    /// turns it off and routes its gestures itself (`tapPane`, the wheel).
-    bool pollPointer = true;
-    bool pointerLeft;    /// left button held (left press sets, left release/leave clears)
+    /// A desktop mouse drives the panes and the chrome, through the host's
+    /// events (`notePointer`, `applyWheel`). A touch embedder turns it off
+    /// and routes its gestures itself (`tapPane`, the wheel).
+    bool mousePointer = true;
+    bool pointerLeft;    /// left button held (a left press sets it, a left release clears it)
     // Left-press edges not yet consumed by a frame, with their positions:
     // two presses between frames are two taps at their own positions, not
     // one replayed at wherever the pointer ended up.
@@ -621,10 +622,6 @@ struct WorkspaceHost
     */
     void frame(H)(ref H h, in Rect area) @system
     {
-        version (TerminalVulkan) {}
-        else
-            import raylib : GetMousePosition, IsMouseButtonDown, IsMouseButtonPressed,
-                MouseButton;
         import core.time : msecs;
 
         // Files programs asked to open (`TDV1`) become panes before the layout
@@ -656,10 +653,9 @@ struct WorkspaceHost
         layout(area);
 
         // The pointer belongs to the pane under it — or, during a drag, to the
-        // pane the drag began in (`TSS9`). A press there also focuses it. One
-        // routine for both arms: raylib's polled state, or the events the
-        // host delivered (`notePointer`).
-        version (TerminalVulkan)
+        // pane the drag began in (`TSS9`). A press there also focuses it. The
+        // host's events say where it is (`notePointer`), on every arm.
+        if (mousePointer)
         {
             if (pressQueueCount > 0)
             {
@@ -676,40 +672,6 @@ struct WorkspaceHost
             else
                 cast(void) applyPointer(h, hoverX, hoverY, pointerLeft, false);
         }
-        else
-        {
-            static if (__traits(compiles, GetMousePosition()))
-            if (pollPointer)
-            {
-                const m = GetMousePosition();
-                const mx = cast(int) m.x, my = cast(int) m.y;
-                const under = applyPointer(h, mx, my,
-                    IsMouseButtonDown(MouseButton.MOUSE_BUTTON_LEFT),
-                    IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT));
-                // A viewer pane scrolls with the wheel over it; a terminal pane
-                // polls its own (`pollMouse`). The native arm's wheel arrives as
-                // an event (`applyWheel`).
-                if (auto v = surfaces.modal ? null : viewer(under))
-                {
-                    import raylib : GetMouseWheelMoveV;
-                    import sparkles.input.events : linesPerNotch;
-
-                    // A notch eases, between rows (`SCV12`); shift scrolls sideways.
-                    const wm = GetMouseWheelMoveV();
-                    if (wm.x != 0 || wm.y != 0)
-                    {
-                        import sparkles.input.events : Mods;
-                        import raylib : IsKeyDown, KeyboardKey;
-
-                        const shift = IsKeyDown(KeyboardKey.KEY_LEFT_SHIFT)
-                            || IsKeyDown(KeyboardKey.KEY_RIGHT_SHIFT);
-                        if (v.wheel(mx, my, WheelEvent(fdx: -wm.x * linesPerNotch,
-                                fdy: -wm.y * linesPerNotch, mods: Mods(shift: shift))))
-                            repaint = true;
-                    }
-                }
-            }
-        }
 
         bool any = repaint || dirty || ws.focused != lastFocused;
         repaint = false;
@@ -718,8 +680,7 @@ struct WorkspaceHost
         {
             const b = boxOf(id);
             tv.opts.visible = b !is null;
-            tv.opts.pollMouse = pollPointer && b !is null && id == pointerOwner
-                && !surfaces.modal;
+            tv.opts.pollMouse = false; // its mouse arrives as events (`notePointer`)
             if (b !is null)
                 any |= tv.frame(h, b.cols, b.rows);
             else if (tv.s.terminal !is null)
@@ -879,19 +840,18 @@ struct WorkspaceHost
         const leftRelease = p.action == PointerAction.release && p.button == PointerButton.left;
         if (leftPress)
             pointerLeft = true;
-        else if (leftRelease || p.action == PointerAction.leave)
+        else if (leftRelease)
             pointerLeft = false;
+        // A `leave` only says where the pointer went: a button held then is
+        // still held, and its release arrives (the button holds a grab).
         // A drag carries no reliable button here: it must not set
         // `pointerLeft` by itself, only preserve the press's state.
 
         // A modal surface owns the pointer: record state (above) only,
-        // and drop any capture so it cannot leak past the modal. Note
-        // `pollPointer` is deliberately NOT a gate here: on the Vulkan
-        // desktop it is false precisely because events arrive through
-        // this function instead of a raylib poll (`app.d`).
+        // and drop any capture so it cannot leak past the modal.
         if (surfaces.modal)
         {
-            if (leftRelease || p.action == PointerAction.leave)
+            if (leftRelease)
                 pointerCapture = 0;
             return;
         }
@@ -933,7 +893,7 @@ struct WorkspaceHost
                 }
         if (target == 0)
         {
-            if (leftRelease || p.action == PointerAction.leave)
+            if (leftRelease)
                 pointerCapture = 0;
             return;
         }
@@ -946,7 +906,8 @@ struct WorkspaceHost
                 pointerCapture = target;
         }
         // Forward first, then drop the capture, so the pane sees its release.
-        if (leftRelease || p.action == PointerAction.leave)
+        // A `leave` keeps it: the release that ends the drag is still to come.
+        if (leftRelease)
             pointerCapture = 0;
     }
 
@@ -1043,7 +1004,7 @@ struct WorkspaceHost
 
     /**
     The touch half of a divider drag (`TSS10`), for an embedder that polls
-    the raw contact (`pollPointer` off): `down` while one finger is on the
+    the raw contact (`mousePointer` off): `down` while one finger is on the
     screen at (`x`, `y`), `slop` the target's widening (a finger: about
     16 dp). True while a divider is held — the embedder then keeps the
     contact from scrolling or tapping the panes.
@@ -2416,11 +2377,9 @@ import sparkles.input : KeyEvent, PointerEvent, WheelEvent;
 {
     import sparkles.input.events : Point, PointerAction, PointerButton;
 
-    // The production Vulkan configuration: `pollPointer` is false because
-    // events arrive through `notePointer`. It must still record the
+    // The desktop: events arrive through `notePointer`. It must record the
     // button and queue the press edge for the frame's chrome arbitration.
     auto h = new WorkspaceHost;
-    h.pollPointer = false;
     h.notePointer(PointerEvent(action: PointerAction.press,
         button: PointerButton.left, pos: Point(5, 6)));
     assert(h.pointerLeft, "a left press is recorded without polling");
