@@ -395,15 +395,15 @@ caller-declared cull rect.
 The invariant is property-tested, not merely intended
 ([`tests/programs/VerifyImageOps.hs`][verify]):
 
-| Property                        | What it pins                                                         |
+| Property | What it pins |
 | ------------------------------- | -------------------------------------------------------------------- | ------ | ---------- | ------ | ---------------------------------------- |
-| `manySwHorizConcat`             | `imageWidth (horizCat cs) == length cs` for single-column characters |
-| `manyDwHorizConcat`             | …`== 2 * length cs` for double-column characters                     |
-| `horizConcatSwAssoc`            | `(a <                                                                | > b) < | > c == a < | > (b < | > c)` — associativity, by value equality |
-| `disjointHeightHorizJoinBgFill` | both `HorizJoin` parts really are the join's height after padding    |
-| `translationIsLinearOnOutSize`  | `imageWidth (translate x y i) == imageWidth i + x`                   |
-| `paddingIsLinearOnOutSize`      | `pad l t r b` is linear on both axes                                 |
-| `cropLeftLimitsWidth`           | `v >= imageWidth (cropLeft v i)`                                     |
+| `manySwHorizConcat` | `imageWidth (horizCat cs) == length cs` for single-column characters |
+| `manyDwHorizConcat` | …`== 2 * length cs` for double-column characters |
+| `horizConcatSwAssoc` | `(a <                                                                | > b) < | > c == a < | > (b < | > c)` — associativity, by value equality |
+| `disjointHeightHorizJoinBgFill` | both `HorizJoin` parts really are the join's height after padding |
+| `translationIsLinearOnOutSize` | `imageWidth (translate x y i) == imageWidth i + x` |
+| `paddingIsLinearOnOutSize` | `pad l t r b` is linear on both axes |
+| `cropLeftLimitsWidth` | `v >= imageWidth (cropLeft v i)` |
 
 And crucially, the **surface declares its extent too, independently**: `displayBounds
 :: IO DisplayRegion` on `Output`, and `displayOpsForPic pic r` takes the region as an

@@ -197,8 +197,9 @@ chain.
 - [sluglibrary.com][site] — product description, supported formats, `.slug`
   contents, platform list, licensing (fetched 2026-10-02).
 - Context: [servo/pathfinder README][pathfinder] — a tile-based GPU rasterizer
-claiming "exact fractional trapezoidal area coverage on a per-pixel basis";
-Loop & Blinn 2005 as cited by the paper.
+  claiming "exact fractional trapezoidal area coverage on a per-pixel basis";
+  Loop & Blinn 2005 as cited by the paper.
+
 <!-- References -->
 
 [site]: https://sluglibrary.com/

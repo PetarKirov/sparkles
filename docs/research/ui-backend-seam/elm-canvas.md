@@ -518,9 +518,10 @@ Float` carry what they need and nothing else — the variable-width encoding
   and [device-pixel-ratio handling][dpr]. Plus [`TODO.md`][todomd],
   [`elm.json`][elmjson], [`LICENSE`][license].
 - Elm platform kernels, for the boundary's actual cost: [elm/json][jsonkernel]
-(`_Json_wrap` is identity in production), [elm/virtual-dom][vdprop]
-(properties pass through `__Json_unwrap`) and its [property diff][vdprop]
-(reference equality), [elm/core `_Utils_eqHelp`][utils].
+  (`_Json_wrap` is identity in production), [elm/virtual-dom][vdprop]
+  (properties pass through `__Json_unwrap`) and its [property diff][vdprop]
+  (reference equality), [elm/core `_Utils_eqHelp`][utils].
+
 <!-- References -->
 
 [rev]: https://github.com/joakin/elm-canvas/tree/4b8b07ebb92521a5937c11198caf437f5c0f7501

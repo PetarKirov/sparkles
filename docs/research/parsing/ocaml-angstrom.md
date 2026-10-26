@@ -241,16 +241,16 @@ Angstrom is a mature, widely-depended-upon library in the OCaml ecosystem and th
 
 ## Key design decisions and trade-offs
 
-| Decision                                                            | Rationale                                                                  | Trade-off                                                                     |
+| Decision | Rationale | Trade-off |
 | ------------------------------------------------------------------- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------- | --------------------------------------------------------- |
-| Backtracking by default (`<                                         | >` always rewinds)                                                         | No `try` ceremony; matches the attoparsec model and suits protocol grammars   | Unbounded rescanning possible; no memoization to bound it |
-| `commit` to _narrow_ backtracking (dual of Parsec's `try`)          | Bounds memory in streams — lets the buffer manager reclaim consumed bytes  | Manual placement; forgetting it can hold unbounded uncommitted input          |
-| CPS core with **two** continuations (not four)                      | No consumed/empty tag needed → simpler, faster core                        | Cannot reconstruct Parsec-quality expected-sets from the control flow         |
-| `Bigstringaf` zero-copy input + `Unsafe` allocation-free primitives | Tight-loop scanning and no-copy IO for high throughput                     | `Unsafe` exposes the raw buffer — caller must not leak or mutate it           |
-| Buffered **and** unbuffered incremental interfaces                  | One easy path, one total-control zero-copy path                            | Unbuffered logic is intricate and OS-coupled                                  |
-| Drop rich errors (marks + message only, no line numbers)            | Avoids per-branch error book-keeping → speed                               | Weak diagnostics; caller derives line/column and readable messages            |
-| Monadic sequencing (`>>=`), plus `liftn` fast paths                 | Context-sensitive grammars; `liftn` cuts allocation vs. applicative chains | Cannot statically analyse the grammar; precludes generator-style optimisation |
-| No built-in infix/precedence combinators                            | Keeps the core focused on protocols/formats; `chainl1` is easy to define   | Expression grammars need hand-written helpers                                 |
+| Backtracking by default (`<                                         | >` always rewinds) | No `try` ceremony; matches the attoparsec model and suits protocol grammars | Unbounded rescanning possible; no memoization to bound it |
+| `commit` to _narrow_ backtracking (dual of Parsec's `try`) | Bounds memory in streams — lets the buffer manager reclaim consumed bytes | Manual placement; forgetting it can hold unbounded uncommitted input |
+| CPS core with **two** continuations (not four) | No consumed/empty tag needed → simpler, faster core | Cannot reconstruct Parsec-quality expected-sets from the control flow |
+| `Bigstringaf` zero-copy input + `Unsafe` allocation-free primitives | Tight-loop scanning and no-copy IO for high throughput | `Unsafe` exposes the raw buffer — caller must not leak or mutate it |
+| Buffered **and** unbuffered incremental interfaces | One easy path, one total-control zero-copy path | Unbuffered logic is intricate and OS-coupled |
+| Drop rich errors (marks + message only, no line numbers) | Avoids per-branch error book-keeping → speed | Weak diagnostics; caller derives line/column and readable messages |
+| Monadic sequencing (`>>=`), plus `liftn` fast paths | Context-sensitive grammars; `liftn` cuts allocation vs. applicative chains | Cannot statically analyse the grammar; precludes generator-style optimisation |
+| No built-in infix/precedence combinators | Keeps the core focused on protocols/formats; `chainl1` is easy to define | Expression grammars need hand-written helpers |
 
 ---
 

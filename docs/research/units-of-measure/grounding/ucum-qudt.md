@@ -106,7 +106,7 @@ Claim **Types:** `quote` · `fact` · `figure` · `behavior` · `exposition` · 
   tail. **Fix:** cite `L511` (or `L504–511` for the whole `isConvertible`).
 
 - **#D4 ⚠ (minor off-by-one) — `ucum-qudt.md:220,223.**`The indriya`getConverterToAny`throw block is labeled`AbstractUnit.java`**L400–401**;
-the method declaration is L400 but the shown`if (!isCompatible(that))`/`throw new IncommensurableException(...)`are **L401–402**. **Fix:** cite`L401–402`.
+  the method declaration is L400 but the shown`if (!isCompatible(that))`/`throw new IncommensurableException(...)`are **L401–402**. **Fix:** cite`L401–402`.
 
 - **#D5 ⚠ (minor — Builder vs Unit fields) — `ucum-qudt.md:163`.** "A `Unit`
   carries a `conversionMultiplier` and `conversionOffset` (both `BigDecimal`)

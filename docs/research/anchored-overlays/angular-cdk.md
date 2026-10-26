@@ -1296,9 +1296,7 @@ interface PositionStrategy {
   detach?(): void;
   dispose(): void;
   getPopoverInsertionPoint?():
-    | Element
-    | null
-    | { type: 'parent'; element: Element };
+    Element | null | { type: 'parent'; element: Element };
 }
 
 interface ScrollStrategy {

@@ -8,13 +8,7 @@ import { tpgKey } from './tpg-store';
 import TpgNumber from './TpgNumber.vue';
 
 type Section =
-  | 'separators'
-  | 'style'
-  | 'percol'
-  | 'data'
-  | 'rawspec'
-  | 'output'
-  | 'dcode';
+  'separators' | 'style' | 'percol' | 'data' | 'rawspec' | 'output' | 'dcode';
 
 // dockview-vue wraps a panel's own params one level deep: the `params` prop it
 // passes is `{ params: <what we set in addPanel>, api, containerApi, tabLocation }`.

@@ -293,7 +293,8 @@ All paths verified at the pinned revision with `git cat-file -e`.
 - [`stb_rect_pack.h`][rectpack] — the skyline packer `stbtt_PackBegin` uses.
 - [`tests/oversample/README.md`][oversample] — the oversampling rationale.
 - In-tree consumers: [`font_coretext.d`][sp-ct], [`font_discovery.d`][sp-disc],
-[`font.d`][sp-font], [`font_set.d`][sp-fs], [`docs/specs/hue/gui.md`][sp-gui].
+  [`font.d`][sp-font], [`font_set.d`][sp-fs], [`docs/specs/hue/gui.md`][sp-gui].
+
 <!-- References -->
 
 [repo]: https://github.com/nothings/stb

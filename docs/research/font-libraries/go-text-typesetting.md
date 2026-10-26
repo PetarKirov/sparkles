@@ -147,6 +147,7 @@ All paths verified at the pinned revision with `git cat-file -e`.
 - Shaping — [`harfbuzz/harfbuzz.go`][hbgo], [`harfbuzz/font.go`][hbfont], [`harfbuzz/LICENSE`][hblicense], [`shaping/input.go`][input], [`shaping/shaping.go`][shaping], [`shaping/output.go`][output], [`shaping/lru.go`][lru].
 - Discovery — [`fontscan/readme.md`][scanreadme], [`fontscan/fontmap.go`][fontmap], [`fontscan/match.go`][match], [`fontscan/footprint.go`][footprint], [`fontscan/scan.go`][scan], [`fontscan/fontconfig.go`][fcgo], [`fontscan/substitutions.go`][subs], [`fontscan/substitutions_table.go`][substable].
 - Consumer — Gio [`text/gotext.go`][gio] at `3397eb8f4df4d59eab121f64975173ea0d3fdb38` (2026-09-29).
+
 <!-- References -->
 
 [repo]: https://github.com/go-text/typesetting

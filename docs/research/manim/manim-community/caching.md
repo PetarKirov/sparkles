@@ -54,7 +54,7 @@ independently and concatenates them. Its docstring defines the key exactly:
 
 > _"A string concatenation of the respective hashes of `camera_object`,
 > `animations_list` and `current_mobjects_list`, separated by `_`."_ —
-[`hashing.py:358`][hashing]
+> [`hashing.py:358`][hashing]
 
 ```python
 # hashing.py:363 — serialize each input to JSON, crc32 it, join with "_"

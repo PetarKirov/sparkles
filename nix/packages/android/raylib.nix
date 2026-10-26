@@ -21,7 +21,7 @@
 # links nixpkgs' compiled `pkgs.raylib`, so taking the source from anywhere
 # else would let the two raylibs drift apart —
 # a worse failure than the one pinning would prevent, because the D bindings
-# (raylib-d 6.0.1, hash-pinned) are shared by both.
+# (raylib-d 6.2.0, hash-pinned) are shared by both.
 #
 # What that costs is a version assertion, below. Following an input means a
 # routine `nix flake update` can move the source under a hand-written patch
@@ -45,11 +45,11 @@ in
     let
       ndk = config.legacyPackages.androidNdk;
 
-      # The snapshot this build's patch and the raylib-d 6.0.1 bindings were
+      # The snapshot this build's patch and the raylib-d 6.2.0 bindings were
       # both written against. Bump deliberately: re-check that
       # raylib-android-in-place-resize.patch still applies to rcore_android.c,
       # and that raylib.h's RAYLIB_VERSION still matches the bindings.
-      expectedRaylib = "6.0";
+      expectedRaylib = "6.2";
 
       raylib-android =
         assert lib.assertMsg (pkgs.raylib.version == expectedRaylib) ''
@@ -57,7 +57,7 @@ in
           ${expectedRaylib}, found ${pkgs.raylib.version}.
 
           The Android build patches rcore_android.c by offset and shares
-          hash-pinned raylib-d 6.0.1 bindings with the desktop build, so a
+          hash-pinned raylib-d 6.2.0 bindings with the desktop build, so a
           raylib bump needs both re-checked. Update `expectedRaylib` once it is.
         '';
         pkgs.stdenv.mkDerivation {
@@ -65,7 +65,7 @@ in
           version = pkgs.raylib.version;
           src = pkgs.raylib.src;
 
-          # Upstream raylib — the 6.0 line, verified identical in the released 6.0
+          # Upstream raylib — the 6.0 line and 6.2, verified identical in the released 6.0
           # tag — never resizes on Android: APP_CMD_CONFIG_CHANGED is an
           # empty stub ("Check screen orientation here!"), APP_CMD_WINDOW_RESIZED
           # is unhandled, and the pause/resume rebind pins the buffer geometry to

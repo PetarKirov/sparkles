@@ -21,7 +21,7 @@ dependency "sparkles:ui" path="../.."
 // terminal and the gallery build today.
 configuration "library" {
     targetType "sourceLibrary"
-    dependency "raylib-d" version="~>6.0.1"
+    dependency "raylib-d" version="~>6.2.0"
     dependency "sparkles:raylib-text" path="../.."
     libs "raylib"
     versions "TerminalViewRaylib"

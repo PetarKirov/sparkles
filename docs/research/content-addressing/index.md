@@ -93,14 +93,14 @@ defined once in [concepts][concepts].
 
 ## By level-1 composition
 
-| Composition             | Systems                                                                                                                            | Consequence                                                                                  |
+| Composition | Systems | Consequence |
 | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- | ---------- | ------------------------------------------------------- |
-| Serial serialization    | [NAR][nar], [casync][casync]                                                                                                       | No subtree values; sharing must be recovered _below_ the tree, at chunk level, or not at all |
-| Flat whole-tree listing | [Mercurial][hg]                                                                                                                    | `O(                                                                                          | repo files | )` to parse — the failure that forced the move to trees |
-| Merkle DAG              | [git][git], [Nix `git-hashing`][nixgit], [Snix][castore], [REAPI][reapi], [OSTree][ostree], [SWH][swh], [bup][bup], [unixfs][ipfs] | Subtree identity, `O(depth)` rehash, object-granular verification                            |
-| Chain, not tree         | [OCI][oci]                                                                                                                         | `O(n)` invalidation in the layer count; order-dependent semantics                            |
-| None — level 2 only     | [Bao][bao], [dm-verity][apk]                                                                                                       | Proof the two levels are independent                                                         |
-| Level 2 _is_ level 1    | [Venti][venti]                                                                                                                     | The sharpest proof of the same point: one machine run twice                                  |
+| Serial serialization | [NAR][nar], [casync][casync] | No subtree values; sharing must be recovered _below_ the tree, at chunk level, or not at all |
+| Flat whole-tree listing | [Mercurial][hg] | `O(                                                                                          | repo files | )` to parse — the failure that forced the move to trees |
+| Merkle DAG | [git][git], [Nix `git-hashing`][nixgit], [Snix][castore], [REAPI][reapi], [OSTree][ostree], [SWH][swh], [bup][bup], [unixfs][ipfs] | Subtree identity, `O(depth)` rehash, object-granular verification |
+| Chain, not tree | [OCI][oci] | `O(n)` invalidation in the layer count; order-dependent semantics |
+| None — level 2 only | [Bao][bao], [dm-verity][apk] | Proof the two levels are independent |
+| Level 2 _is_ level 1 | [Venti][venti] | The sharpest proof of the same point: one machine run twice |
 
 ## By entry ordering
 
@@ -143,23 +143,23 @@ defined once in [concepts][concepts].
 
 ## Milestones
 
-| Year       | Event                                                                                                           |
+| Year | Event |
 | ---------- | --------------------------------------------------------------------------------------------------------------- | ---------- | ------ | ------------- | ----------- |
-| 1980       | Merkle publishes hash trees (IEEE S&P) — cited by [Venti][venti] as its ancestor                                |
-| 1998       | Stanford Archival Vault: a write-once object log, with "no way to share data between objects"                   |
-| 2000       | SFSRO (OSDI): SHA-1 blocks "applied recursively"                                                                |
-| 2001-10    | LBFS (SOSP): content-defined chunking                                                                           |
-| 2002-01    | **[Venti][venti]** (FAST '02): a block-level content-addressed store; directories are files of `VtEntry` scores |
-| 2003       | NAR appears in the Nix tree — `archive.cc`'s history begins 2003-11-18                                          |
-| 2005-04    | Git's object model ships (first commit 2005-04-07)                                                              |
-| 2011-10    | [OSTree][ostree] begins — git's model plus uid/gid/mode/xattrs, minus timestamps                                |
-| 2018–2019  | [REAPI][reapi] v2 stabilizes the `Directory`/`Digest` canonical form                                            |
-| 2019-10    | Sapling's [retrospective][hg] states the `O(                                                                    | repo files | )`→`O( | changed files | )` argument |
-| 2020       | BLAKE3 published — a tree hash by construction, making verified streaming practical                             |
-| 2021-04    | SWHID v1.6 — SHA-1 welded into the identifier grammar                                                           |
-| 2022-05    | Nix's [git-hashing][nixgit] implementation lands — approximate                                                  |
-| 2023-03-14 | [REAPI][reapi] adds `SHA256TREE`, "a version of SHA-256 that supports chunking" (PR #235)                       |
-| 2024–2025  | [iroh][bao] settles on 16 KiB chunk groups; [Snix][castore] ships BLAKE3 identity with NAR at the boundary      |
+| 1980 | Merkle publishes hash trees (IEEE S&P) — cited by [Venti][venti] as its ancestor |
+| 1998 | Stanford Archival Vault: a write-once object log, with "no way to share data between objects" |
+| 2000 | SFSRO (OSDI): SHA-1 blocks "applied recursively" |
+| 2001-10 | LBFS (SOSP): content-defined chunking |
+| 2002-01 | **[Venti][venti]** (FAST '02): a block-level content-addressed store; directories are files of `VtEntry` scores |
+| 2003 | NAR appears in the Nix tree — `archive.cc`'s history begins 2003-11-18 |
+| 2005-04 | Git's object model ships (first commit 2005-04-07) |
+| 2011-10 | [OSTree][ostree] begins — git's model plus uid/gid/mode/xattrs, minus timestamps |
+| 2018–2019 | [REAPI][reapi] v2 stabilizes the `Directory`/`Digest` canonical form |
+| 2019-10 | Sapling's [retrospective][hg] states the `O(                                                                    | repo files | )`→`O( | changed files | )` argument |
+| 2020 | BLAKE3 published — a tree hash by construction, making verified streaming practical |
+| 2021-04 | SWHID v1.6 — SHA-1 welded into the identifier grammar |
+| 2022-05 | Nix's [git-hashing][nixgit] implementation lands — approximate |
+| 2023-03-14 | [REAPI][reapi] adds `SHA256TREE`, "a version of SHA-256 that supports chunking" (PR #235) |
+| 2024–2025 | [iroh][bao] settles on 16 KiB chunk groups; [Snix][castore] ships BLAKE3 identity with NAR at the boundary |
 
 > [!NOTE]
 > Dates come from the repositories' own histories where a local clone or forge

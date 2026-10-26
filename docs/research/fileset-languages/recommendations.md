@@ -274,24 +274,24 @@ POSIX permits every byte but `/` and NUL in a filename — `find(1)` states it
 plainly: "File names are a potential problem since they can contain any
 character except `\0` and `/`". Each is reachable:
 
-| Real filename         | Bare?   | How to write it                                      |
+| Real filename | Bare? | How to write it |
 | --------------------- | ------- | ---------------------------------------------------- | --- |
-| `report 2026.md`      | no      | `"report 2026.md"` or `report\ 2026.md`              |
-| `a\|b`                | no      | `"a\|b"` or `a\\                                     | b`  |
-| `a&b`                 | no      | `"a&b"` or `a\&b`                                    |
-| `main.d~`             | no      | `main.d\~` or `"main.d~"`                            |
-| `(draft)`             | no      | `"(draft)"`                                          |
-| `!important!.txt`     | **yes** | `!important!.txt`                                    |
-| `#notes`              | **yes** | `#notes`                                             |
-| `-n`                  | **yes** | `-n`                                                 |
-| `a"b`                 | no      | `'a"b'`                                              |
-| `a'b`                 | no      | `"a'b"`                                              |
-| `a\b`                 | no      | `'a\b'` or `a\\b`                                    |
-| a literal `*`         | no      | `\*`                                                 |
-| `foo:bar`             | no      | `"foo:bar"` (quoting suppresses the kind)            |
-| `C:/data`             | **yes** | `C:/data` — `C` is one character, so not kind-shaped |
-| `résumé.md`           | **yes** | bytes ≥ 0x80 are bare                                |
-| a name with a newline | no      | **not representable** in the surface syntax          |
+| `report 2026.md` | no | `"report 2026.md"` or `report\ 2026.md` |
+| `a\|b` | no | `"a\|b"` or `a\\                                     | b` |
+| `a&b` | no | `"a&b"` or `a\&b` |
+| `main.d~` | no | `main.d\~` or `"main.d~"` |
+| `(draft)` | no | `"(draft)"` |
+| `!important!.txt` | **yes** | `!important!.txt` |
+| `#notes` | **yes** | `#notes` |
+| `-n` | **yes** | `-n` |
+| `a"b` | no | `'a"b'` |
+| `a'b` | no | `"a'b"` |
+| `a\b` | no | `'a\b'` or `a\\b` |
+| a literal `*` | no | `\*` |
+| `foo:bar` | no | `"foo:bar"` (quoting suppresses the kind) |
+| `C:/data` | **yes** | `C:/data` — `C` is one character, so not kind-shaped |
+| `résumé.md` | **yes** | bytes ≥ 0x80 are bare |
+| a name with a newline | no | **not representable** in the surface syntax |
 
 The last row is honest rather than a gap to close: a newline cannot be typed
 into a picker prompt and cannot appear in a shell word without quoting the

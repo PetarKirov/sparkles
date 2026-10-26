@@ -314,7 +314,8 @@ All paths verified at the pinned revision with `git cat-file -e`.
 - [`src/directwrite/mod.rs`][dw] — DirectWrite backend, `IDWriteFontFallback`,
   `DWRITE_TEXTURE_CLEARTYPE_3x1`.
 - [`Cargo.toml`][cargo], [`README.md`][readme], [`CHANGELOG.md`][changelog],
-[`LICENSE`][license].
+  [`LICENSE`][license].
+
 <!-- References -->
 
 [repo]: https://github.com/alacritty/crossfont
