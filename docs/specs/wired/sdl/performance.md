@@ -1,7 +1,7 @@
 ---
-status: draft
+status: accepted
 owner: sparkles:wired
-reviewed: 2026-10-24
+reviewed: 2026-10-27
 ---
 
 # `sparkles.wired.sdl` — Performance architecture
@@ -182,7 +182,7 @@ invalid-UTF-8 columns.
 
 ## 5. Decisions
 
-| Question                 | Choice (proposed)                                                            | Alternative and why not                                                                                                                                |
+| Question                 | Choice                                                                       | Alternative and why not                                                                                                                                |
 | ------------------------ | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Who owns the source      | the document, as in JSON (SDP3)                                              | the caller: decode and editing would need the source passed alongside, and positions could not be computed                                             |
 | Where positions live     | byte spans; positions on demand, eager in errors                             | eager everywhere: 24 bytes more per span, and the per-byte position update is the lexer's hottest loop                                                 |
