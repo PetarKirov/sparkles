@@ -56,7 +56,7 @@ import std.typecons : Nullable, Ternary;
 import optional : Optional, some;
 
 import sparkles.base.text.errors : valueOf;
-import sparkles.base.buffer : SharedBuffer;
+import sparkles.base.buffer : SharedBuffer, UniqueBuffer;
 import std.experimental.allocator.mallocator : Mallocator;
 import sparkles.base.text.case_style : CaseStyle;
 import sparkles.wired.policy : ConvertedWire, Repr, WireInvalid, WireTarget, convertOf,
@@ -778,24 +778,10 @@ private bool decodeSingular(alias Parent, size_t i, V, alias Conv = void)(
 
 // ── Channel collection ───────────────────────────────────────────────────────
 
-/// Matching direct children in source order, by full qualified identity.
-private size_t collectChildren(scope const ref SdlNode node,
-    scope const SdlFieldRole role,
-    ref SharedBuffer!(SdlNode, 4) matches) @safe pure
-{
-    matches.clear();
-    foreach (child; node.byChild)
-    {
-        const name = child.qualifiedName;
-        if (roleMatches(role, name))
-            () @trusted { matches ~= child; }();
-    }
-    return matches.length;
-}
-
 private bool roleMatches(scope const SdlFieldRole role,
     scope const SdlQualifiedName name) @safe pure nothrow @nogc
 {
+    debug sdlNameComparisons++;
     if (name.namespace_ == role.namespace_ && name.localName == role.localName)
         return true;
     foreach (alias_; role.aliases)
@@ -847,34 +833,14 @@ private void assignField(T)(ref T slot, T value)
 
 // ── Aggregate walk ───────────────────────────────────────────────────────────
 
-private size_t collectAttributes(scope const ref SdlNode node,
-    scope const SdlFieldRole role,
-    ref SharedBuffer!(SdlAttributeView, 4) matches) @safe pure
-{
-    matches.clear();
-    foreach (attribute; node.byAttribute)
-    {
-        const name = attribute.qualifiedName;
-        if (roleMatches(role, name))
-            () @trusted { matches ~= attribute; }();
-    }
-    return matches.length;
-}
-
 private SdlScalar valueAt(scope const ref SdlNode node, size_t index,
     ref bool found) @safe pure
 {
-    size_t seen;
-    found = false;
-    foreach (value; node.byValue)
-    {
-        if (seen++ == index)
-        {
-            found = true;
-            return copyBorrowedScalar(value);
-        }
-    }
-    return SdlScalar.init;
+    found = index < node.valueCount;
+    if (!found)
+        return SdlScalar.init;
+    const value = node.valueAt(index);
+    return copyBorrowedScalar(value);
 }
 
 /// Collection-element decode: converters/enums/unions without the singular
@@ -913,124 +879,208 @@ private bool slotConsumesValue(scope const SdlFieldRole r, size_t pos)
         && pos < r.positionalIndex + (r.staticCount ? r.staticCount : 1);
 }
 
-/** Runtime matching tables for one aggregate's unknown occurrences.
+// ── Linear channel dispatch (SDP5) ───────────────────────────────────────────
 
-Built once per aggregate walk: which attribute/child identities are declared,
-which namespaces a map-shaped child field consumes, which singular children
-own their names outright, and the positional-slot facts (kept as a slice of
-the aggregate's projected roles). The same tables drive both the strict
-first-error scan and the preserve capture, guaranteeing the two policies agree
-on what "unmatched" means.
-*/
-private struct UnknownMatcher
-{
-    const(SdlFieldRole)[] roles;
-    string[] attrNamespaces;
-    string[] attrLocals;
-    string[] childNamespaces;
-    string[] childLocals;
-    string[] mapNamespaces;
-    string[] claimedLocals;
-    SdlQualifiedName[] childSingles;
+/// Name comparisons `roleMatches` made, counted in debug builds: the SDP5
+/// oracle that typed decode visits each child and attribute a bounded number
+/// of times.
+debug package size_t sdlNameComparisons;
 
-    /// Whether positional occurrence `pos` is consumed by a declared slot.
-    bool valueConsumed(size_t pos) const scope @safe pure nothrow @nogc
+/// The local names, aliases included, that `U`'s non-map `kind` fields claim.
+private enum string[] claimLocals(U, SdlRoleKind kind) = () {
+    alias roles = sdlAggregateRoles!(U).sdlFieldRoles;
+    string[] locals;
+    void add(string local)
     {
-        foreach (r; roles)
-            if (slotConsumesValue(r, pos))
-                return true;
-        return false;
+        foreach (existing; locals)
+            if (existing == local)
+                return;
+        locals ~= local;
     }
-
-    /// Whether an attribute matches any declared attribute field.
-    bool attributeKnown(scope const SdlQualifiedName name) const scope
-        @safe pure nothrow @nogc
-    {
-        foreach (i; 0 .. attrLocals.length)
-            if (name.namespace_ == attrNamespaces[i]
-                && name.localName == attrLocals[i])
-                return true;
-        return false;
-    }
-
-    /// Whether a child tag is consumed by a named field or a same-namespace
-    /// map field (which claims every unclaimed sibling, mirroring decode).
-    bool childKnown(scope const SdlQualifiedName name) const scope
-        @safe pure nothrow @nogc
-    {
-        foreach (i; 0 .. childLocals.length)
-            if (name.namespace_ == childNamespaces[i]
-                && name.localName == childLocals[i])
-                return true;
-        foreach (ns; mapNamespaces)
-            if (name.namespace_ == ns && !contains(claimedLocals,
-                    name.localName))
-                return true;
-        return false;
-    }
-
-    private static bool contains(scope const(string)[] haystack,
-        scope const(char)[] needle) @safe pure nothrow @nogc
-    {
-        foreach (s; haystack)
-            if (s == needle)
-                return true;
-        return false;
-    }
-}
-
-private UnknownMatcher unknownMatcher(T)()
-    @safe pure nothrow
-if (is(T == struct))
-{
-    import std.traits : isDynamicArray;
-
-    alias projected = sdlAggregateRoles!(Unqual!T).sdlFieldRoles;
-    UnknownMatcher m;
-    m.roles = projected.roles;
-    static foreach (j; 0 .. T.tupleof.length)
-    {{
-        enum RJ = projected.roles[j];
-        static if (RJ.role == SdlRoleKind.attribute)
+    foreach (role; roles.roles)
+        if (role.role == kind && role.childShape != SdlChildShape.map)
         {
-            m.attrNamespaces ~= RJ.namespace_;
-            m.attrLocals ~= RJ.localName;
-            foreach (name; RJ.aliases)
-            {
-                m.attrNamespaces ~= name.namespace_.idup;
-                m.attrLocals ~= name.localName.idup;
-            }
+            add(role.localName);
+            foreach (alias_; role.aliases)
+                add(alias_.localName.idup);
         }
-        else static if (RJ.role == SdlRoleKind.child)
-        {{
-            static foreach (k; 0 .. T.tupleof.length)
-                static if (k != j && projected.roles[k].role
-                    == SdlRoleKind.child)
-                    m.claimedLocals ~= projected.roles[k].localName;
-            static if (RJ.childShape == SdlChildShape.map)
-                m.mapNamespaces ~= RJ.namespace_;
-            else
-            {
-                m.childNamespaces ~= RJ.namespace_;
-                m.childLocals ~= RJ.localName;
-                foreach (name; RJ.aliases)
-                {
-                    m.childNamespaces ~= name.namespace_.idup;
-                    m.childLocals ~= name.localName.idup;
-                }
-                static if (RJ.childShape == SdlChildShape.scalarSingle
-                    || RJ.childShape == SdlChildShape.aggregateSingle)
-                    m.childSingles ~= SdlQualifiedName(RJ.namespace_,
-                        RJ.localName);
-            }
-        }}
-    }}
-    return m;
+    return locals;
+}();
+
+/// Whether `role` claims local name `local` (its own or an alias's).
+private bool claimsLocal(in SdlFieldRole role, string local) @safe pure nothrow
+{
+    if (role.localName == local)
+        return true;
+    foreach (alias_; role.aliases)
+        if (alias_.localName == local)
+            return true;
+    return false;
 }
+
+/** The field of `U` whose `kind` channel claims `name`, or `size_t.max`.
+
+Dispatch is a compile-time `switch` over the claimed local names, then a full
+comparison against only the fields that claim that local name, so the cost
+does not grow with the number of fields. */
+private size_t claimantOf(U, SdlRoleKind kind)(scope const SdlQualifiedName name)
+    @safe pure nothrow @nogc
+{
+    alias roles = sdlAggregateRoles!(U).sdlFieldRoles;
+    switch (name.localName)
+    {
+        static foreach (local; claimLocals!(U, kind))
+        {
+        case local:
+            static foreach (j; 0 .. roles.roles.length)
+                static if (roles.roles[j].role == kind
+                    && roles.roles[j].childShape != SdlChildShape.map
+                    && claimsLocal(roles.roles[j], local))
+                    if (roleMatches(roles.roles[j], name))
+                        return j;
+            return size_t.max;
+        }
+        default:
+            return size_t.max;
+    }
+}
+
+/// Whether `local` is the local name of a child field of `U` other than
+/// field `field` — the names a map field leaves to them.
+private bool isOtherChildLocal(U, size_t field)(scope const(char)[] local)
+    @safe pure nothrow @nogc
+{
+    alias roles = sdlAggregateRoles!(U).sdlFieldRoles;
+    enum string[] others = () {
+        string[] r;
+        foreach (j, role; roles.roles)
+            if (role.role == SdlRoleKind.child && j != field)
+                r ~= role.localName;
+        return r;
+    }();
+    switch (local)
+    {
+        static foreach (name; others)
+        {
+        case name:
+            return true;
+        }
+        default:
+            return false;
+    }
+}
+
+/// Whether a map-shaped child field of `U` takes an unclaimed child `name`:
+/// its namespace, and a local name no other child field holds.
+private bool mapClaims(U)(scope const SdlQualifiedName name) @safe pure nothrow @nogc
+{
+    alias roles = sdlAggregateRoles!(U).sdlFieldRoles;
+    static foreach (j; 0 .. roles.roles.length)
+        static if (roles.roles[j].role == SdlRoleKind.child
+            && roles.roles[j].childShape == SdlChildShape.map)
+            if (name.namespace_ == roles.roles[j].namespace_
+                && !isOtherChildLocal!(U, j)(name.localName))
+                return true;
+    return false;
+}
+
+/// Whether positional occurrence `pos` is consumed by a declared slot of `U`.
+private bool valueConsumed(U)(size_t pos) @safe pure nothrow @nogc
+{
+    alias roles = sdlAggregateRoles!(U).sdlFieldRoles;
+    static foreach (j; 0 .. roles.roles.length)
+        static if (roles.roles[j].role == SdlRoleKind.tagValue)
+            if (slotConsumesValue(roles.roles[j], pos))
+                return true;
+    return false;
+}
+
+/** One node's children and attributes, grouped by the field of `U` that
+claims each, in source order — built in one pass over each channel (SDP5).
+
+`childOwner` and `attributeOwner` give each occurrence's claimant, or
+`size_t.max`; field `f`'s claims are `children[childStart[f] ..
+childStart[f + 1]]` (cell indexes), and likewise for attributes. */
+private struct ClaimIndex(U)
+{
+    enum fieldCount = sdlAggregateRoles!(U).sdlFieldRoles.roles.length;
+    UniqueBuffer!(size_t, 16) childOwner, attributeOwner;
+    UniqueBuffer!(size_t, 16) children, attributes;
+    size_t[fieldCount + 1] childStart, attributeStart;
+
+    /// Field `f`'s claimed children, as views, into `matches`.
+    size_t childrenOf(size_t f, scope const ref SdlNode node,
+        ref SharedBuffer!(SdlNode, 4) matches) const @safe pure
+    {
+        matches.clear();
+        foreach (cell; children[childStart[f] .. childStart[f + 1]])
+            () @trusted { matches ~= SdlNode(node.core, cell); }();
+        return matches.length;
+    }
+
+    /// Field `f`'s claimed attributes, as views, into `matches`.
+    size_t attributesOf(size_t f, scope const ref SdlNode node,
+        ref SharedBuffer!(SdlAttributeView, 4) matches) const @safe pure
+    {
+        matches.clear();
+        foreach (cell; attributes[attributeStart[f] .. attributeStart[f + 1]])
+            () @trusted { matches ~= SdlAttributeView(node.core, cell); }();
+        return matches.length;
+    }
+}
+
+private void buildClaims(U)(scope const ref SdlNode node, ref ClaimIndex!U claims)
+    @safe pure
+{
+    enum none = size_t.max;
+    size_t[ClaimIndex!U.fieldCount] childCounts, attributeCounts;
+    foreach (child; node.byChild)
+    {
+        const f = claimantOf!(U, SdlRoleKind.child)(child.qualifiedName);
+        claims.childOwner ~= f;
+        if (f != none)
+            childCounts[f]++;
+    }
+    foreach (attribute; node.byAttribute)
+    {
+        const f = claimantOf!(U, SdlRoleKind.attribute)(attribute.qualifiedName);
+        claims.attributeOwner ~= f;
+        if (f != none)
+            attributeCounts[f]++;
+    }
+    foreach (f; 0 .. ClaimIndex!U.fieldCount)
+    {
+        claims.childStart[f + 1] = claims.childStart[f] + childCounts[f];
+        claims.attributeStart[f + 1] = claims.attributeStart[f] + attributeCounts[f];
+    }
+    claims.children.length = claims.childStart[$ - 1];
+    claims.attributes.length = claims.attributeStart[$ - 1];
+    size_t[ClaimIndex!U.fieldCount] childNext, attributeNext;
+    size_t position;
+    foreach (child; node.byChild)
+    {
+        const f = claims.childOwner[position++];
+        if (f != none)
+            claims.children[claims.childStart[f] + childNext[f]++] = child.cellIndex;
+    }
+    position = 0;
+    foreach (attribute; node.byAttribute)
+    {
+        const f = claims.attributeOwner[position++];
+        if (f != none)
+            claims.attributes[claims.attributeStart[f] + attributeNext[f]++] = attribute.cellIndex;
+    }
+}
+
+/// Whether the child at channel position `position` is claimed: by a named
+/// field, or by a map field that takes the unclaimed remainder.
+private bool childKnown(U)(scope const ref ClaimIndex!U claims, size_t position,
+    scope const SdlQualifiedName name) @safe pure nothrow @nogc
+    => claims.childOwner[position] != size_t.max || mapClaims!U(name);
 
 /** Reports unmatched occurrences in value/attribute/child channel order.
 The fail-fast specialization stops at the first; an accumulating walk records all. */
-private bool reportFirstUnknown(Sink)(scope const ref UnknownMatcher m,
+private bool reportFirstUnknown(U, Sink)(scope const ref ClaimIndex!U claims,
     scope const ref SdlNode node, ref WalkPath path,
     ref SdlError failure, ref WireErrors!(Sink, SdlError) errors)
 {
@@ -1038,7 +1088,7 @@ private bool reportFirstUnknown(Sink)(scope const ref UnknownMatcher m,
     size_t index;
     foreach (v; node.byValue)
     {
-        if (!m.valueConsumed(index))
+        if (!valueConsumed!U(index))
         {
             const mark = path.text.length;
             path.text ~= "<value[" ~ index.to!string ~ "]>";
@@ -1061,7 +1111,7 @@ private bool reportFirstUnknown(Sink)(scope const ref UnknownMatcher m,
     foreach (a; node.byAttribute)
     {
         const name = a.qualifiedName;
-        if (!m.attributeKnown(name))
+        if (claims.attributeOwner[index] == size_t.max)
         {
             const mark = path.text.length;
             path.text ~= "@" ~ qualifiedKey(name.namespace_, name.localName);
@@ -1084,7 +1134,7 @@ private bool reportFirstUnknown(Sink)(scope const ref UnknownMatcher m,
     foreach (c; node.byChild)
     {
         const name = c.qualifiedName;
-        if (!m.childKnown(name))
+        if (!childKnown(claims, index, name))
         {
             const mark = path.text.length;
             path.text ~= "." ~ qualifiedKey(name.namespace_, name.localName)
@@ -1138,13 +1188,13 @@ in (position < node.childCount)
 /** Captures every unmatched occurrence of the containing tag into `captured`,
 in canonical grammar order: values by position, then attributes, then children
 in occurrence order. */
-private void captureUnknowns(scope const ref UnknownMatcher m,
+private void captureUnknowns(U)(scope const ref ClaimIndex!U claims,
     scope const ref SdlNode node, ref SdlExtraMember[] captured) @safe pure
 {
     size_t index;
     foreach (v; node.byValue)
     {
-        if (!m.valueConsumed(index))
+        if (!valueConsumed!U(index))
             captured ~= SdlExtraMember(SdlExtraChannel.value, index,
                 SdlQualifiedName(null, null), copyBorrowedScalar(v),
                 SdlNode.init, v.span());
@@ -1154,7 +1204,7 @@ private void captureUnknowns(scope const ref UnknownMatcher m,
     index = 0;
     foreach (a; node.byAttribute)
     {
-        if (!m.attributeKnown(copyQualifiedName(a)))
+        if (claims.attributeOwner[index] == size_t.max)
         {
             const attrScalar = a.value;
             captured ~= SdlExtraMember(SdlExtraChannel.attribute, index,
@@ -1167,7 +1217,7 @@ private void captureUnknowns(scope const ref UnknownMatcher m,
     index = 0;
     foreach (c; node.byChild)
     {
-        if (!m.childKnown(copyQualifiedName(c)))
+        if (!childKnown(claims, index, copyQualifiedName(c)))
             captured ~= SdlExtraMember(SdlExtraChannel.child, index,
                 copyQualifiedName(c), SdlScalar.invalidScalar(),
                 copyBorrowedNode(c), c.span());
@@ -1248,6 +1298,9 @@ if (is(T == struct))
     alias policies = WireWalk!(Sdl, U).childPolicies!0;
     U result;
     const initialErrors = errors.count;
+    // Each child and attribute is dispatched to its field once (SDP5).
+    ClaimIndex!U claims;
+    buildClaims(node, claims);
 
     // SPEC §8 forbid policy: the first unmatched occurrence — scanned values
     // by position, then attributes, then children — fails the walk before any
@@ -1256,8 +1309,7 @@ if (is(T == struct))
     // exclusive at compile time.
     static if (roles.strictUnknown)
     {
-        auto strictMatcher = unknownMatcher!(U);
-        if (reportFirstUnknown(strictMatcher, node, path, failure, errors))
+        if (reportFirstUnknown(claims, node, path, failure, errors))
         {
             static if (is(Sink == FailFast))
                 return DRes!(U)(true);
@@ -1283,8 +1335,7 @@ if (is(T == struct))
         static if (R.role == SdlRoleKind.child)
         {
             SharedBuffer!(SdlNode, 4) matches;
-            const count = collectChildren(node, R,
-                matches);
+            const count = claims.childrenOf(i, node, matches);
 
             static if (R.childShape == SdlChildShape.scalarSingle
                 || R.childShape == SdlChildShape.aggregateSingle)
@@ -1460,33 +1511,14 @@ if (is(T == struct))
                 static if (!(is(K == string) || is(K == enum)))
                     static assert(false, "wired.sdl: unreachable AA key kind");
 
-                // Compile-time set of local names claimed by *other* child
-                // fields; the AA consumes every remaining same-namespace
-                // sibling so its tags may be arbitrarily named.
-                static immutable string[] claimedNames = () {
-                    string[] r;
-                    static foreach (j; 0 .. roles.roles.length)
-                        static if (roles.roles[j].role == SdlRoleKind.child
-                            && j != i)
-                            r ~= roles.roles[j].localName;
-                    return r;
-                }();
-
+                // The AA consumes every same-namespace sibling whose local name
+                // no other child field holds, so its tags may be arbitrarily
+                // named; the local-name test is a compile-time switch.
                 SharedBuffer!(SdlNode, 4) aaMatches;
                 foreach (child; node.byChild)
-                {
-                    if (child.qualifiedName.namespace_ != R.namespace_)
-                        continue;
-                    bool taken;
-                    foreach (cn; claimedNames)
-                        if (cn == child.qualifiedName.localName)
-                        {
-                            taken = true;
-                            break;
-                        }
-                    if (!taken)
+                    if (child.qualifiedName.namespace_ == R.namespace_
+                        && !isOtherChildLocal!(U, i)(child.qualifiedName.localName))
                         () @trusted { aaMatches ~= child; }();
-                }
 
                 K[] seenKeys;
                 M[string] table;
@@ -1549,8 +1581,7 @@ if (is(T == struct))
         else static if (R.role == SdlRoleKind.attribute)
         {
             SharedBuffer!(SdlAttributeView, 4) attrs;
-            const acount = collectAttributes(node, R,
-                attrs);
+            const acount = claims.attributesOf(i, node, attrs);
 
             // NOTE: string is a dynamic array in D but a *scalar* channel
             // value; only genuine array types mean "repeated attribute".
@@ -1709,9 +1740,8 @@ if (is(T == struct))
             // SPEC §8 preserve: capture every unmatched occurrence in
             // canonical grammar order (values by position, then attributes,
             // then children).
-            auto preserveMatcher = unknownMatcher!(U);
             SdlExtraMember[] captured;
-            captureUnknowns(preserveMatcher, node, captured);
+            captureUnknowns(claims, node, captured);
             static if (is(V == OwnedSdlExtras))
                 assignField(result.tupleof[i], ownCaptures(captured));
             else static if (is(V == SdlExtras))
@@ -1944,22 +1974,25 @@ private WireFieldSet!T suppliedSdlFields(T)(scope SdlNode node) @safe
 {
     WireFieldSet!T supplied;
     alias roles = sdlAggregateRoles!T.sdlFieldRoles;
+    ClaimIndex!T claims;
+    buildClaims(node, claims);
     static foreach (i; 0 .. roles.roles.length)
     {{
         enum role = roles.roles[i];
         bool found;
         static if (role.role == SdlRoleKind.child)
         {
-            foreach (child; node.byChild)
-                if (roleMatches(role, child.qualifiedName))
-                    found = true;
+            static if (role.childShape == SdlChildShape.map)
+            {
+                foreach (child; node.byChild)
+                    found |= child.qualifiedName.namespace_ == role.namespace_
+                        && !isOtherChildLocal!(T, i)(child.qualifiedName.localName);
+            }
+            else
+                found = claims.childStart[i + 1] > claims.childStart[i];
         }
         else static if (role.role == SdlRoleKind.attribute)
-        {
-            foreach (attribute; node.byAttribute)
-                if (roleMatches(role, attribute.qualifiedName))
-                    found = true;
-        }
+            found = claims.attributeStart[i + 1] > claims.attributeStart[i];
         else static if (role.role == SdlRoleKind.tagValue)
             found = node.valueCount > role.positionalIndex;
         else static if (role.role == SdlRoleKind.tagName)
@@ -1968,14 +2001,13 @@ private WireFieldSet!T suppliedSdlFields(T)(scope SdlNode node) @safe
             found = node.qualifiedName.namespace_.length != 0;
         else static if (role.role == SdlRoleKind.extra)
         {
-            auto matcher = unknownMatcher!T();
-            size_t index;
-            foreach (_; node.byValue)
-                found |= !matcher.valueConsumed(index++);
-            foreach (attribute; node.byAttribute)
-                found |= !matcher.attributeKnown(attribute.qualifiedName);
+            foreach (index; 0 .. node.valueCount)
+                found |= !valueConsumed!T(index);
+            foreach (owner; claims.attributeOwner[])
+                found |= owner == size_t.max;
+            size_t position;
             foreach (child; node.byChild)
-                found |= !matcher.childKnown(child.qualifiedName);
+                found |= !childKnown(claims, position++, child.qualifiedName);
         }
         if (found)
             supplied.include(i);
@@ -5387,4 +5419,53 @@ version (unittest)
     assert(back.hasValue, back.error.toString);
     assert(!back.value.maybe.isNull && back.value.maybe.get == 7
         && back.value.label == some("hi"));
+}
+
+@("wired.sdl.codec.linearDecode.nameComparisons")
+@safe unittest
+{
+    // SDP5: decoding visits each child and attribute a bounded number of
+    // times, whatever the number of fields. Thirty-two fields, 256 children
+    // and 64 attributes, half of them unknown: a fields × children walk
+    // makes over 10,000 name comparisons; a linear one about one per
+    // occurrence.
+    static string fields()
+    {
+        import std.conv : to;
+
+        string text;
+        foreach (i; 0 .. 32)
+            text ~= "@SdlChild() int[] c" ~ i.to!string ~ "; @SdlAttribute() @WireOptional() int a"
+                ~ i.to!string ~ ";\n";
+        return text;
+    }
+
+    static struct Wide
+    {
+        import sparkles.wired : WireOptional;
+
+        mixin(fields());
+    }
+
+    import std.conv : to;
+
+    string source = "w";
+    foreach (i; 0 .. 64)
+        source ~= " " ~ (i % 2 ? "a" ~ (i / 2 % 32).to!string : "z" ~ i.to!string) ~ "=1";
+    source ~= " {\n";
+    foreach (i; 0 .. 256)
+        source ~= (i % 2 ? "c" ~ (i % 32).to!string : "u" ~ i.to!string) ~ " 1\n";
+    source ~= "}\n";
+    auto parsed = parseSdlDocument!sdlFull(source);
+    assert(parsed.hasValue);
+
+    debug
+    {
+        const before = sdlNameComparisons;
+        const decoded = fromSDL!Wide(parsed.document.root.byChild.front);
+        assert(decoded.hasValue, decoded.error.toString);
+        const comparisons = sdlNameComparisons - before;
+        assert(comparisons >= 128 && comparisons <= 2 * (256 + 64), comparisons.to!string);
+        assert(decoded.value.c1.length == 8 && decoded.value.a1 == 1);
+    }
 }
