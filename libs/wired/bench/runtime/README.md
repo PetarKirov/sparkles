@@ -303,7 +303,7 @@ All three come from `$WIRED_BENCH_DATA/sdl/`, built by
 | selector             | path                         | shape                                                                                   |
 | -------------------- | ---------------------------- | --------------------------------------------------------------------------------------- |
 | `dub_recipes`        | `sdl/dub-recipes/`           | the repository's 151 `dub.sdl` files at `020926d5c`, 535 KB, one document each          |
-| `dub_recipes_concat` | `sdl/dub-recipes-concat.sdl` | the same recipes as inline `subPackage { … }` blocks of one recipe, names made unique   |
+| `dub_recipes_concat` | `sdl/dub-recipes-concat.sdl` | the same recipes, copied unread into inline `subPackage { … }` blocks of one recipe     |
 | `deep_wide`          | `sdl/deep-wide.sdl`          | 1.47 MB generated: four 200-level chains, 64 tags × (64 values, 256 attributes), a tree |
 
 The snapshot is a fixed-output fetch of
