@@ -280,8 +280,8 @@ the row instead of producing a throughput number.
 ## SDL rows
 
 The SDL backend's benchmark ([performance SDP1](../../../../docs/specs/wired/sdl/performance.md#1-measurement))
-lives in `src/sparkles/wired_bench/sdl.d`: three `@benchmark` tests,
-`sdl.parse`, `sdl.decode` and `sdl.encode`, written against the public
+lives in `src/sparkles/wired_bench/sdl.d`: four `@benchmark` tests,
+`sdl.parse`, `sdl.decode`, `sdl.encode` and `sdl.edit`, written against the public
 `sparkles.wired.sdl` API only, so they compile unchanged across changes to
 the backend's internal representation.
 
@@ -291,10 +291,9 @@ the backend's internal representation.
 | `parse`  | `dub-sdlang` | the same bytes through DUB's own pinned SDLang parser (`parseSource`): an external reference point, not a target. `unittest-foreign` only. |
 | `decode` | `wired`      | bytes → the `dub.sdl` schema (`parseDubManifest` from `sparkles:build-primitives`), parse included. Recipe datasets only.                  |
 | `encode` | `wired`      | a parsed document (untimed `setup`) → canonical SDL text (`writeSdlDocument`), into one retained buffer per document.                      |
+| `edit`   | `wired`      | a parsed document (untimed `setup`) → one lossless change through `SdlEditor` (a `probe` attribute on the first tag), re-parse included.   |
 
-Throughput is normalized over the dataset's input bytes for every row. The
-`edit` row (resolve and write one attribute change) joins with the editor;
-it registers like `encode`, from documents parsed in `setup`.
+Throughput is normalized over the dataset's input bytes for every row.
 
 ### SDL datasets
 
@@ -326,6 +325,8 @@ committed beside its dataset in `sdl.d`:
 - `decode` — a SHA-256 over the decoded values themselves, field by field.
   `writeSDL` cannot write the `dub.sdl` schema back today (it rejects
   `DubBuildType`), so the typed round trip cannot be hashed;
+- `edit` — the SHA-256 of every edited document, each preceded by its file
+  name;
 - `dub-sdlang` — the tag, value and attribute counts, which DUB's tree
   reproduces independently. It skips `deep_wide`: DUB's pull parser runs on
   a fiber with the default 16 KiB stack and overflows beyond about ten
