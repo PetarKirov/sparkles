@@ -75,8 +75,8 @@ import sparkles.wired.sdl.document : OwnedSdlExtras, SdlDocument,
     SdlOwnedExtraNode, poolName, poolScalar;
 import sparkles.wired.policy : MatchStrategy, WireSkip;
 import sparkles.wired.sdl.document : SdlAttributeView, SdlSpan;
-import sparkles.wired.sdl.error : SdlError, SdlErrorCode, SdlErrorStage,
-    SdlExpected, sdlErr, sdlOk;
+import sparkles.wired.sdl.error : resolvePositions, SdlError, SdlErrorCode,
+    SdlErrorStage, SdlExpected, sdlErr, sdlOk;
 import sparkles.wired.sdl.schema_annotations : SdlFieldRole,
     hasBorrowedSdlExtras;
 import sparkles.wired.sdl.reader : parseSdlDocument;
@@ -190,8 +190,8 @@ private SdlError typedError(T)(SdlErrorCode code, SdlSpan span,
 /// Zero-width span at a tag's terminator — the SPEC §6 missing-member site.
 private SdlSpan endSpan(scope const ref SdlNode node) @safe pure
 {
-    const end = node.span.end;
-    return SdlSpan(end, end);
+    const span = node.span;
+    return span.isValid ? SdlSpan.at(span.endOffset) : SdlSpan.init;
 }
 
 private string roleSegment(scope const SdlFieldRole role) @safe pure
@@ -1997,6 +1997,24 @@ private struct SdlSourceSink(Sink)
     }
 }
 
+/// Resolves each error's positions against the decoded document's core
+/// before handing it to the caller's sink.
+private struct SdlLocatingSink(Sink)
+{
+    import sparkles.wired.sdl.document : SdlCore;
+
+    Sink* target;
+    const(SdlCore)* core;
+
+    void put(SdlError error)
+    {
+        import std.range.primitives : put;
+
+        resolvePositions(error, core);
+        put(*target, error);
+    }
+}
+
 // One root decode, fail-fast or accumulating. The result borrows from `node`
 // exactly as far as `T` does; the public overloads below decide that.
 private SdlExpected!T decodeRootNode(T, Sink)(return scope SdlNode node,
@@ -2008,7 +2026,10 @@ private SdlExpected!T decodeRootNode(T, Sink)(return scope SdlNode node,
         SdlError failure;
         auto r = decodeAggregate!(Value, Sink)(node, path, failure, errors);
         if (r.failed)
+        {
+            resolvePositions(failure, node.core);
             return sdlErr!T(failure);
+        }
         return sdlOk(T(r.value, suppliedSdlFields!Value(node)));
     }
     else
@@ -2017,7 +2038,10 @@ private SdlExpected!T decodeRootNode(T, Sink)(return scope SdlNode node,
         SdlError failure;
         auto r = decodeAggregate!(T, Sink)(node, path, failure, errors);
         if (r.failed)
+        {
+            resolvePositions(failure, node.core);
             return sdlErr!T(failure);
+        }
         return sdlOk(r.value);
     }
 }
@@ -2060,22 +2084,26 @@ the first. */
 SdlExpected!T fromSDL(T, Sink)(return scope SdlNode node, ref Sink sink)
 if (is(T == struct) && hasBorrowedSdlExtras!(Unqual!T))
 {
-    WireErrors!(Sink, SdlError) errors;
-    // Narrow trust: `errors` is local to this call, so the pointer to the
-    // caller's sink cannot outlive it.
-    errors.sink = (() @trusted => &sink)();
-    return decodeRootNode!(T, Sink)(node, errors);
+    SdlLocatingSink!Sink locating;
+    WireErrors!(SdlLocatingSink!Sink, SdlError) errors;
+    // Narrow trust: `errors` and `locating` are local to this call, so the
+    // pointers to the caller's sink and to `locating` cannot outlive it.
+    locating = SdlLocatingSink!Sink((() @trusted => &sink)(), node.core);
+    errors.sink = (() @trusted => &locating)();
+    return decodeRootNode!(T, SdlLocatingSink!Sink)(node, errors);
 }
 
 /// ditto
 SdlExpected!T fromSDL(T, Sink)(scope SdlNode node, ref Sink sink)
 if (is(T == struct) && !hasBorrowedSdlExtras!(Unqual!T))
 {
-    WireErrors!(Sink, SdlError) errors;
-    // Narrow trust: `errors` is local to this call, so the pointer to the
-    // caller's sink cannot outlive it.
-    errors.sink = (() @trusted => &sink)();
-    auto result = decodeRootNode!(T, Sink)(node, errors);
+    SdlLocatingSink!Sink locating;
+    WireErrors!(SdlLocatingSink!Sink, SdlError) errors;
+    // Narrow trust: `errors` and `locating` are local to this call, so the
+    // pointers to the caller's sink and to `locating` cannot outlive it.
+    locating = SdlLocatingSink!Sink((() @trusted => &sink)(), node.core);
+    errors.sink = (() @trusted => &locating)();
+    auto result = decodeRootNode!(T, SdlLocatingSink!Sink)(node, errors);
     // Narrow trust: as for the fail-fast owned overload.
     return (() @trusted => result)();
 }
@@ -2289,7 +2317,7 @@ if (is(T == struct))
     assert(bad.hasError && bad.error.code == SdlErrorCode.checkFailed);
     assert(bad.error.rolePath[] == ".settings[0]@low");
     assert(bad.error.sourceName[] == "check.sdl");
-    assert(bad.error.span.start.byteOffset == 13);
+    assert(bad.error.span.startOffset == 13);
     Doc invalid = good.value;
     invalid.settings.high = 1;
     const encoded = toSDL(invalid);
@@ -2618,7 +2646,7 @@ private enum fullSource =
     assert(dup.hasError, "expected duplicate");
     assert(dup.error.code == SdlErrorCode.duplicateRole);
     assert(dup.error.rolePath[] == ".dep[1]");
-    assert(dup.error.span.start.byteOffset > 0);
+    assert(dup.error.span.startOffset > 0);
 
     static struct AADoc
     {
@@ -2630,14 +2658,14 @@ private enum fullSource =
     assert(dupKey.hasError);
     assert(dupKey.error.code == SdlErrorCode.duplicateRole);
     assert(dupKey.error.rolePath[] == ".k[k]");
-    assert(dupKey.error.span.start.byteOffset > 0);
+    assert(dupKey.error.span.startOffset > 0);
 
     // Missing required singular child reports at the root terminator.
     auto missingChild = fromSDL!(DupChildDoc, sdlFull)("");
     assert(missingChild.hasError
         && missingChild.error.code == SdlErrorCode.missingRole);
     assert(missingChild.error.rolePath[] == ".dep[0]");
-    assert(missingChild.error.span.start.byteOffset == 0);
+    assert(missingChild.error.span.startOffset == 0);
 
     static struct AttrReq
     {
@@ -2653,7 +2681,7 @@ private enum fullSource =
     assert(missingAttr.hasError
         && missingAttr.error.code == SdlErrorCode.missingRole);
     assert(missingAttr.error.rolePath[] == ".a[0]@verbose");
-    assert(missingAttr.error.span.start.byteOffset == 2);
+    assert(missingAttr.error.span.startOffset == 2);
 
     static struct SlotsDoc
     {
@@ -3050,7 +3078,7 @@ private enum fullSource =
     assert(halted.hasError);
     assert(halted.error.stage == SdlErrorStage.decode);
     assert(halted.error.code == SdlErrorCode.unknownMember);
-    assert(halted.error.span.start.byteOffset == 0);
+    assert(halted.error.span.startOffset == 0);
 }
 
 @("wired.sdl.codec.namespacedChildrenAndTextPropagation")
@@ -3095,12 +3123,26 @@ private enum fullSource =
 /** Builds a temporary ordered arena from a D value, mirroring the decode
 walk field-for-field so `writeSDL` can reuse $(LREF writeSdlDocument)'s
 canonical-form kernels verbatim. */
+private struct EncDocument
+{
+    import sparkles.wired.sdl.document : SdlCore;
+
+    SdlCore core; /// GC-owned cells; no source, so every span is invalid.
+
+    bool valid() const scope @safe pure nothrow @nogc => core.nodes.length != 0;
+
+    // Narrow trust: the root refers to `core`, which lives in the builder
+    // for the whole synchronous build-and-write.
+    SdlNode root() const return scope @safe pure nothrow @nogc
+        => (() @trusted => SdlNode(&core, 0))();
+}
+
 private struct EncBuilder
 {
-    import sparkles.wired.sdl.document : SdlAttributeCell, SdlDocument,
-        SdlNodeCell, SdlValueCell;
+    import sparkles.wired.sdl.document : SdlAttributeCell, SdlNodeCell,
+        SdlValueCell;
 
-    SdlDocument!(Mallocator) doc;
+    EncDocument doc;
     size_t[][] kids;            // child arena indices per node, in order
     SdlValueCell[][] vals;      // positional values per node
     SdlAttributeCell[][] attrs; // attributes per node
@@ -3119,11 +3161,11 @@ private size_t encAppendNode(ref EncBuilder b, scope const(char)[] ns,
     cell.depth = depth;
     // Narrow trust: the cell aliases caller-owned name bytes that stay alive
     // for the whole synchronous build-and-write.
-    () @trusted { b.doc.nodes ~= cell; }();
-    b.kids.length = b.doc.nodes.length;
-    b.vals.length = b.doc.nodes.length;
-    b.attrs.length = b.doc.nodes.length;
-    return b.doc.nodes.length - 1;
+    () @trusted { b.doc.core.nodes ~= cell; }();
+    b.kids.length = b.doc.core.nodes.length;
+    b.vals.length = b.doc.core.nodes.length;
+    b.attrs.length = b.doc.core.nodes.length;
+    return b.doc.core.nodes.length - 1;
 }
 
 private void encAddValue(ref EncBuilder b, size_t node, scope SdlScalar s) @safe pure
@@ -3167,25 +3209,25 @@ private string encOwn(ref EncBuilder b, scope const(char)[] s) @safe pure
 private void encFinish(ref EncBuilder b) @safe pure
 {
     size_t valueCursor;
-    foreach (i, ref node; b.doc.nodes)
+    foreach (i, ref node; b.doc.core.nodes)
     {
         node.valueStart = valueCursor;
         node.valueCount = b.vals[i].length;
         foreach (cell; b.vals[i])
-            b.doc.values ~= cell;
+            b.doc.core.values ~= cell;
         valueCursor += b.vals[i].length;
     }
     size_t attrCursor;
-    foreach (i, ref node; b.doc.nodes)
+    foreach (i, ref node; b.doc.core.nodes)
     {
         node.attributeStart = attrCursor;
         node.attributeCount = b.attrs[i].length;
         foreach (cell; b.attrs[i])
-            b.doc.attributes ~= cell;
+            b.doc.core.attributes ~= cell;
         attrCursor += b.attrs[i].length;
     }
     size_t childCursor;
-    foreach (i, ref node; b.doc.nodes)
+    foreach (i, ref node; b.doc.core.nodes)
     {
         node.childStart = childCursor;
         node.childCount = b.kids[i].length;
@@ -3194,16 +3236,16 @@ private void encFinish(ref EncBuilder b) @safe pure
         node.hasBlock = b.kids[i].length != 0 || node.hasBlock;
         childCursor += b.kids[i].length;
     }
-    b.doc.childIndexes.length = childCursor;
+    b.doc.core.childIndexes.length = childCursor;
     foreach (i, kids; b.kids)
         foreach (pos, child; kids)
-            b.doc.childIndexes[b.doc.nodes[i].childStart + pos] = child;
+            b.doc.core.childIndexes[b.doc.core.nodes[i].childStart + pos] = child;
 
     // The arena is exactly the nodes' extents: every cell belongs to one node
     // and every node's window lands inside it.
-    assert(b.doc.values.length == valueCursor);
-    assert(b.doc.attributes.length == attrCursor);
-    assert(b.doc.childIndexes.length == childCursor);
+    assert(b.doc.core.values.length == valueCursor);
+    assert(b.doc.core.attributes.length == attrCursor);
+    assert(b.doc.core.childIndexes.length == childCursor);
 }
 
 /// Builds the canonical $(LREF SdlScalar) payload for one wire value.
@@ -3451,9 +3493,9 @@ private size_t copyExtraSubtree(ref EncBuilder b, return scope const SdlNode n,
     const name = n.qualifiedName;
     const idx = encAppendNode(b, name.namespace_, name.localName, depth);
     {
-        auto cell = b.doc.nodes[idx];
+        auto cell = b.doc.core.nodes[idx];
         cell.hasBlock = n.hasBlock();
-        b.doc.nodes[idx] = cell;
+        b.doc.core.nodes[idx] = cell;
     }
     foreach (v; n.byValue)
         encAddValue(b, idx, copyBorrowedScalar(v));
@@ -3479,9 +3521,9 @@ private size_t appendOwnedSubtree(ref EncBuilder b,
     const idx = encAppendNode(b, tree.name.namespace_, tree.name.localName,
         depth);
     {
-        auto cell = b.doc.nodes[idx];
+        auto cell = b.doc.core.nodes[idx];
         cell.hasBlock = tree.hasBlock;
-        b.doc.nodes[idx] = cell;
+        b.doc.core.nodes[idx] = cell;
     }
     foreach (v; tree.values)
         encAddValue(b, idx, v);
@@ -3948,7 +3990,7 @@ if (is(T == struct))
         static if (R.role == SdlRoleKind.child)
         {
             const childDepth = nodeIdx == 0 ? 0u
-                : cast(uint) (b.doc.nodes[nodeIdx].depth + 1);
+                : cast(uint) (b.doc.core.nodes[nodeIdx].depth + 1);
 
             static if (isNullAwareType!(V))
             {
@@ -4156,7 +4198,7 @@ if (is(T == struct))
         alias Extras = typeof(T.tupleof[sdlExtrasIndex!T]);
         const extras = value.tupleof[sdlExtrasIndex!T];
         const extraDepth = nodeIdx == 0 ? 0u
-            : cast(uint) (b.doc.nodes[nodeIdx].depth + 1);
+            : cast(uint) (b.doc.core.nodes[nodeIdx].depth + 1);
 
         static immutable string[] singularChildNames = () {
             string[] names;
@@ -4868,7 +4910,7 @@ version (unittest)
     assert(forbidden.error.code == SdlErrorCode.unknownMember);
     // The value channel is scanned first even though attributes appear later.
     assert(forbidden.error.rolePath[] == ".config[0]<value[1]>");
-    assert(forbidden.error.span.start.byteOffset == matrixSource.indexOf("99"));
+    assert(forbidden.error.span.startOffset == matrixSource.indexOf("99"));
 
     // Attributes only: the first unknown attribute is reported.
     @WireStrict!Sdl
@@ -4885,7 +4927,7 @@ version (unittest)
     assert(attrCase.hasError && attrCase.error.code
         == SdlErrorCode.unknownMember);
     assert(attrCase.error.rolePath[] == ".t[0]@ghost");
-    assert(attrCase.error.span.start.byteOffset
+    assert(attrCase.error.span.startOffset
         == `t known=true ghost=1 {`.indexOf("ghost"));
 
     // Children only: the first unknown child is reported with its same-name
@@ -4904,7 +4946,7 @@ version (unittest)
     assert(childCase.hasError && childCase.error.code
         == SdlErrorCode.unknownMember);
     assert(childCase.error.rolePath[] == ".p[0].stray[0]");
-    assert(childCase.error.span.start.byteOffset
+    assert(childCase.error.span.startOffset
         == childSource.indexOf("stray"));
 }
 
@@ -4927,7 +4969,7 @@ version (unittest)
     assert(v.name().namespace_.length == 0 && v.name().localName.length == 0);
     assert(v.scalar().kind == SdlScalarKind.integer && v.scalar().integer
         == 99);
-    assert(v.span().start.byteOffset == matrixSource.indexOf("99"));
+    assert(v.span().startOffset == matrixSource.indexOf("99"));
 
     // Attributes in occurrence order with full ordinals among ALL attributes.
     const a1 = extras.at(1);
@@ -4939,7 +4981,7 @@ version (unittest)
     assert(a2.name().namespace_ == "x" && a2.name().localName == "opt");
     assert(a2.scalar().kind == SdlScalarKind.string_
         && a2.scalar().stringValue == "y");
-    assert(a2.span().start.byteOffset == matrixSource.indexOf("x:opt"));
+    assert(a2.span().startOffset == matrixSource.indexOf("x:opt"));
 
     // Child capture carries the whole borrowed subtree view.
     const c = extras.at(3);
@@ -4997,7 +5039,7 @@ version (unittest)
     assert(forbidden.hasError && forbidden.error.code
         == SdlErrorCode.unknownMember);
     assert(forbidden.error.rolePath[] == ".m[0]@x:a");
-    assert(forbidden.error.span.start.byteOffset == src.indexOf("x:a"));
+    assert(forbidden.error.span.startOffset == src.indexOf("x:a"));
 
     auto parsed = parseSdlDocument!sdlFull(src, "dup.sdl");
     assert(parsed.hasValue);
@@ -5033,7 +5075,7 @@ version (unittest)
     assert(forbidden.hasError && forbidden.error.code
         == SdlErrorCode.unknownMember);
     assert(forbidden.error.rolePath[] == ".p[0].zz[0]");
-    assert(forbidden.error.span.start.byteOffset == src.indexOf("zz"));
+    assert(forbidden.error.span.startOffset == src.indexOf("zz"));
 
     auto parsed = parseSdlDocument!sdlFull(src, "kids.sdl");
     assert(parsed.hasValue);

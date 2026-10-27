@@ -217,7 +217,8 @@ DubRecipe parseSdlRecipe(const(char)[] text) @safe pure
     auto tags = root.byChild(SdlQualifiedName(null, "configuration"));
     foreach (config; manifest.configurations)
     {
-        auto parsedConfig = RecipeConfiguration(config.name, line: tags.front.nameSpan.start.line);
+        const line = parsed.document.position(tags.front.nameSpan.startOffset).line;
+        auto parsedConfig = RecipeConfiguration(config.name, line: line);
         foreach (flag; config.dflags.valuesOf)
             parsedConfig.dflags ~= flag;
         recipe.configurations ~= parsedConfig;

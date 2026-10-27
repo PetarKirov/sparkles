@@ -137,7 +137,7 @@ private string[] oracleKind(SdlTokenKind kind) @safe pure nothrow
         SdlChildAttr, SdlTagNameAttr, SdlTagNamespaceAttr, SdlExtraAttr,
         SdlExpected, sdlOk, sdlErr, OwnedSdlExtras, SdlOwnedExtraMember,
         SdlOwnedExtraNode, SdlOwnedExtraAttribute, SdlExtraChannel,
-        writeSdlScalar, sdlParserConfigFor;
+        writeSdlScalar, sdlParserConfigFor, SdlComment, SdlCommentKind;
 
     static struct Doc { @SdlAttribute() int port; }
     static struct Sink
@@ -153,7 +153,13 @@ private string[] oracleKind(SdlTokenKind kind) @safe pure nothrow
         auto parsed = parseSdlDocument!sdlDubCompat(text, name);
         SdlExpected!void valid = validateSDL!sdlDubRecipe(text, name);
         valid = writeSdlDocument(parsed.document, buffer, SdlWriteOptions.init);
-        auto token = lexSDL!sdlFull(text, name).front;
+        auto lexer = lexSDL!sdlFull(text, name);
+        auto token = lexer.front;
+        SdlPosition at = lexer.position(token.value.span.startOffset);
+        at = parsed.document.position(parsed.document.root.span.startOffset);
+        const(char)[] source = parsed.document.source;
+        const(SdlComment)[] comments = parsed.document.comments;
+        SdlSpan extent = parsed.document.root.extent;
         SdlScalarStorage storage;
         SdlExpected!SdlScalar scalar = decodeSdlScalar!sdlFull(token.value, storage);
         valid = writeSdlScalar(scalar.value, buffer);

@@ -99,11 +99,11 @@ void writeInTreeDeps(Writer)(ref Writer writer, string code, string repoRoot, st
                     && attribute.value.kind == SdlScalarKind.string_
                     && attribute.value.stringValue == "*")
                 {
-                    put(writer, code[at .. attribute.span.start.byteOffset]);
+                    put(writer, code[at .. attribute.span.startOffset]);
                     put(writer, `path="`);
                     put(writer, rel);
                     put(writer, `"`);
-                    at = attribute.span.end.byteOffset;
+                    at = attribute.span.endOffset;
                 }
             }
             rewrite(child);

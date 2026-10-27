@@ -5,7 +5,7 @@ import expected : Expected, err, ok;
 
 import sparkles.base.buffer : SharedBuffer, checkWriter;
 import sparkles.base.text.errors : NoGcHook;
-import sparkles.wired.sdl.document : SdlSpan;
+import sparkles.wired.sdl.document : SdlCore, SdlPosition, SdlSpan;
 
 /// Processing stage that produced an SDL error.
 enum SdlErrorStage : ubyte
@@ -67,7 +67,11 @@ struct SdlError
     SdlErrorStage stage; /// Where the failure happened.
     SdlErrorCode code; /// What failed, as a stable code.
     SharedBuffer!(char, 40) sourceName; /// Source label, such as the file path.
-    SdlSpan span; /// Offending source range, when input caused the failure.
+    SdlSpan span; /// Offending source byte range, when input caused the failure.
+    /// Line and column of `span`'s start and end, filled when the error is
+    /// made, so rendering needs no document.
+    SdlPosition startPosition;
+    SdlPosition endPosition; /// ditto
     SdlSpan relatedSpan; /// Secondary context, such as an unclosed opener.
     bool hasRelatedSpan; /// Whether `relatedSpan` is set.
     SharedBuffer!(char, 48) valuePath; /// D value path, such as `$.deps[1].name`.
@@ -92,9 +96,9 @@ struct SdlError
         {
             put(w, sourceName[]);
             put(w, '(');
-            writeInteger(w, span.start.line);
+            writeInteger(w, startPosition.line);
             put(w, ':');
-            writeInteger(w, span.start.column);
+            writeInteger(w, startPosition.column);
             put(w, "): ");
         }
 
@@ -154,6 +158,31 @@ struct SdlError
     }
 }
 
+/** Fills `error`'s positions, and its variants', from the document core its
+spans index. Decode errors are made from views, which reach the core; this
+runs where such an error leaves the library. */
+package void resolvePositions(ref SdlError error, scope const(SdlCore)* core)
+    @safe pure
+{
+    if (core is null || core.source.length == 0)
+        return;
+    if (error.span.isValid)
+    {
+        error.startPosition = core.position(error.span.startOffset);
+        error.endPosition = core.position(error.span.endOffset);
+    }
+    if (error.variants.length)
+    {
+        auto resolved = new SdlError[error.variants.length];
+        foreach (i, ref variant; error.variants)
+        {
+            resolved[i] = variant;
+            resolvePositions(resolved[i], core);
+        }
+        error.variants = resolved;
+    }
+}
+
 /// SDL operation result with an allocation-free explicit state.
 alias SdlExpected(T) = Expected!(T, SdlError, NoGcHook);
 
@@ -174,13 +203,13 @@ SdlExpected!T sdlErr(T)(SdlError error) @safe pure nothrow @nogc
 unittest
 {
     import sparkles.base.buffer : SharedBuffer, checkWriter;
-    import sparkles.wired.sdl.document : SdlPosition;
 
     SdlError failure;
     failure.stage = SdlErrorStage.decode;
     failure.code = SdlErrorCode.unexpectedKind;
     failure.sourceName ~= "dub.sdl";
-    failure.span.start = SdlPosition(12, 2, 5);
+    failure.span = SdlSpan(12, 13);
+    failure.startPosition = SdlPosition(12, 2, 5);
     failure.targetType = "Dependency";
     failure.rolePath ~= ".dependency[1]@version";
     failure.reason ~= "expected a string";

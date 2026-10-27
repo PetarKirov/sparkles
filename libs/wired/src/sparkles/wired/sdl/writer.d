@@ -1481,9 +1481,9 @@ version (unittest)
         if (!parsed.hasValue)
             throw new AssertError(parsed.error.toString);
         if (valueIndex != size_t.max)
-            parsed.document.values[valueIndex].value = replacement;
+            parsed.document.core.values[valueIndex].value = replacement;
         else
-            parsed.document.attributes[attributeIndex].value = replacement;
+            parsed.document.core.attributes[attributeIndex].value = replacement;
 
         SharedBuffer!(char, 128) sink;
         const failure = writeSdlDocument(parsed.document, sink);
@@ -1561,7 +1561,7 @@ version (unittest)
     auto parsed = parseSdlDocument!sdlFull(source, "partial.sdl");
     assert(parsed.hasValue, parsed.error.toString);
 
-    parsed.document.values[1].value = SdlScalar("invalid\xFF");
+    parsed.document.core.values[1].value = SdlScalar("invalid\xFF");
 
     SharedBuffer!(char, 128) sink;
     sink ~= "PRE|";

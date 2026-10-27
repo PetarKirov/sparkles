@@ -36,9 +36,10 @@ A node has three ranges, each in source order:
 `byChild(SdlNameQuery.anyNamespace("filter"))` yields `filter` in any
 namespace.
 
-Each node, value, and attribute has a `span`, whose `start` and `end` give
-the byte offset, line, and column in the original text, so a tool can point
-at the exact place it is talking about.
+Each node, value, and attribute has a `span`, a byte range of the document's
+own copy of the text (`parsed.document.source`). `parsed.document.position`
+turns an offset into a line and column, so a tool can point at the exact
+place it is talking about.
 
 ## Example
 
@@ -75,7 +76,7 @@ void main()
         foreach (attribute; dependency.byAttribute)
             writeln(name.stringValue, " ", attribute.qualifiedName.localName,
                 "=", attribute.value.stringValue, " at line ",
-                attribute.span.start.line);
+                parsed.document.position(attribute.span.startOffset).line);
     }
     foreach (filter; root.byChild(SdlNameQuery.anyNamespace("filter")))
         writeln("filter ", filter.byValue.front.stringValue, " in namespace '",
