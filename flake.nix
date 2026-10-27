@@ -29,8 +29,8 @@
       # PetarKirov/ldc `sparkles/main` fork (LDC master, dcompute's Vulkan
       # target from ldc-developers/ldc#5132 and its shader stages) against
       # LLVM main with llvm/llvm-project#216919 (`llvm-spirv-vulkan`, with
-      # clang and lld), plus a `wasm32-wasip1` druntime/Phobos over wasi-sdk's
-      # sysroot. It is `pkgs.ldc` (nix/d-toolchain.nix), `ldc2-vulkan`
+      # clang and lld), plus a druntime/Phobos and a sysroot built from source
+      # for each production WASI preview (`wasm32-wasip1`, `wasm32-wasip2`). It is `pkgs.ldc` (nix/d-toolchain.nix), `ldc2-vulkan`
       # (nix/packages/shader-compile.nix) and the wasm modules' compiler.
       # It extends feat/ldc-android-darwin: `ldc-android` (the aarch64 cross-
       # compiler of `devShells.android`) on Linux and macOS hosts, and

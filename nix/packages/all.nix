@@ -42,7 +42,7 @@
           # rebuilds it from source.
           devshell-ci = config.devShells.ci;
 
-          # `pkgs.ldc` plus its WASI runtime and wasi-sdk sysroot. Only a
+          # `pkgs.ldc` plus its WASI runtimes and sysroots. Only a
           # *build-time* dependency of `table-wasm`/`text-wasm`, so no output's
           # runtime closure keeps it; without this pin Cachix evicts it and
           # every wasm build rebuilds the runtime.

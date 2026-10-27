@@ -50,9 +50,14 @@
         # DMD, whose test suite runs on every build.
         toolchain-dmd = pkgs.dmd;
         toolchain-ldc-android = toolchain.ldc-android;
-        # The WebAssembly modules' D runtime. The compiler around it and
-        # wasi-sdk only wrap and copy the pinned LLVM, so they stay unpinned.
-        toolchain-ldc-sparkles-wasi-runtime = toolchain.ldc-sparkles-wasi-runtime;
+        # The WebAssembly modules' toolchain, per WASI preview: the drivers
+        # (whose closures hold the sysroots: wasi-libc, libc++ and their LTO
+        # builds) and the D runtimes. The `ldc-sparkles` around them only wraps
+        # the pinned compiler, so it stays unpinned.
+        toolchain-wasi-wasip1 = toolchain.wasi-wasip1;
+        toolchain-wasi-wasip2 = toolchain.wasi-wasip2;
+        toolchain-ldc-sparkles-wasi-runtime-wasip1 = toolchain.ldc-sparkles-wasi-runtime-wasip1;
+        toolchain-ldc-sparkles-wasi-runtime-wasip2 = toolchain.ldc-sparkles-wasi-runtime-wasip2;
 
         # The Android cross libraries the APKs link.
         inherit (config.packages)
