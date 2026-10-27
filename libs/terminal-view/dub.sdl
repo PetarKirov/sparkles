@@ -13,6 +13,7 @@ dependency "sparkles:android" path="../.."
 dependency "sparkles:base" path="../.."
 dependency "sparkles:event-horizon" path="../.."
 dependency "sparkles:ghostty" path="../.."
+dependency "sparkles:image" path="../.."
 dependency "sparkles:input" path="../.."
 dependency "sparkles:ui" path="../.."
 

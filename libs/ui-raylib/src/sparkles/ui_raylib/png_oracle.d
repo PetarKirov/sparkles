@@ -1,5 +1,5 @@
 /**
-The toolkit's PNG decoder (`sparkles.ui.png`) against stb_image, which raylib
+The PNG decoder (`sparkles.image.png`) against stb_image, which raylib
 links: PngSuite and libpng's test images, decoded both ways, byte for byte.
 stb_image is the oracle because it is what the raylib arm decoded kitty
 graphics with before the toolkit had a decoder of its own; the two must
@@ -18,7 +18,7 @@ import std.process : environment;
 
 import raylib : Image, ImageFormat, LoadImageFromMemory, PixelFormat, UnloadImage;
 
-import sparkles.ui.png : decodePng;
+import sparkles.image.png : decodePngAlloc;
 
 // The corpus: libpng's sources, a flake input the dev shell exports.
 private string corpusRoot() @safe
@@ -66,8 +66,9 @@ private ubyte[] stbDecode(in ubyte[] data, out int w, out int h) @trusted
         const data = cast(const(ubyte)[]) read(f);
         int sw, sh;
         const theirs = stbDecode(data, sw, sh);
-        uint w, h;
-        const ours = decodePng(data, w, h);
+        const decoded = decodePngAlloc(data);
+        const ours = decoded.hasValue ? decoded.value.rgba : null;
+        const w = decoded.hasValue ? decoded.value.width : 0, h = decoded.hasValue ? decoded.value.height : 0;
         if (theirs is null && ours is null)
             ++bothRefused;
         else if (theirs is null || ours is null)
@@ -96,7 +97,6 @@ private ubyte[] stbDecode(in ubyte[] data, out int w, out int h) @trusted
     foreach (f; pngsIn(root.buildPath("contrib/testpngs/crashers"))
             ~ pngsIn(root.buildPath("contrib/testpngs/badpal")))
     {
-        uint w, h;
-        cast(void) decodePng(cast(const(ubyte)[]) read(f), w, h);
+        cast(void) decodePngAlloc(cast(const(ubyte)[]) read(f));
     }
 }
