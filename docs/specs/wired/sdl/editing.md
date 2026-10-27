@@ -373,6 +373,19 @@ Each site below states its operation through the shared API after
 migration. The inventory was taken on 2026-10-24 at `ef61d5b66` and checked
 by an independent review.
 
+**Re-inventory, 2026-10-27 (S15 gate).** An independent reviewer swept the
+repository again — D sources, tests and tools, and the Nix, shell, workflow
+and docs tooling — after the migration. Every row below is migrated, and the
+audit's allowlist reasons are accurate. It found one site the table lacked:
+the SDL benchmark's dataset generator
+(`libs/wired/bench/runtime/tools/gen-sdl-datasets.d`), which renamed each
+recipe's `name` line by its text prefix. It now copies each recipe's bytes
+into the concatenated dataset unread, so it does no SDL work. Outside the
+table, `sparkles.build_primitives.dub_recipe` is a second, smaller recipe
+model built on the document API and the embedded-recipe parser, and its
+readers (`dmd-lsp`, `hue`, `apps/ci`) go through it; no shell, Python,
+TypeScript, workflow or docs tooling parses or edits SDL.
+
 | Site                                                                       | Today                                                                                                                                                                                                  | Moves to                                                                                                                                                                                                                                                        |
 | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `apps/ci/tools/standardize-build-settings.d` (`normalize`)                 | regex removal of the managed region, a legacy three-line comment, and eight named `buildType` blocks; a line filter dropping four legacy `dflags`/`lflags` settings; `strip`, then the region appended | replace or remove the region by its marker comments; remove the legacy comment's lines; remove `buildType` and setting nodes matched by full content outside the region and outside `buildType`/`configuration "offline"`; append the region at the end of root |
@@ -389,7 +402,11 @@ being asked, and the S15 fixtures pin those differences.
 
 **Accepted exception — Nix evaluation.** `nix/packages/build-sparkles-app.nix`
 and `nix/packages/examples.nix` read recipes with regular expressions and
-hand brace matching during evaluation, where D cannot run. They are outside
+hand brace matching during evaluation, where D cannot run; so do the Nix
+files that call their readers (`ui-shaders.nix`, `default.nix`,
+`android-dev-env-probe.nix`, `android/build-d-android-tests.nix`, and
+`android/examples.nix`, which runs the dependency pattern over a whole `.d`
+example, its comments and strings included). They are outside
 SDE9 by decision (2026-10-24): a generated index or import-from-derivation
 was judged not worth its cost. A recipe construct those readers misread is a
 Nix bug to fix in Nix, and this table is the record that the exception

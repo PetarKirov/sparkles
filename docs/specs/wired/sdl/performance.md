@@ -68,11 +68,14 @@ fast wrong answer fails. Results are committed under the harness's
 is. The pinned DUB SDLang parser is measured alongside as an external
 reference point, not a target.
 
-**SDP2 — Gate.** An optimization lands with its before/after medians on
-every SDL row and on the JSON rows it could affect, using `-b bench`
-(assertions live). A regression beyond the observed variation on any row
-rejects or reworks the change, and the measured rejection is recorded, as
-the plan already does for the scalar-scratch decision.
+**SDP2 — Gate.** An optimization lands with its before/after retired
+instructions per input byte (the runner's `--perf` counters, `-b bench`,
+assertions live) on every SDL row and on the JSON rows it could affect, as
+the JSON baseline measures its parser. Instructions do not move with the
+host's load, which wall time does by more than the effects being measured; the
+medians are recorded beside them. A regression on any row rejects or
+reworks the change, and the measured rejection is recorded, as the plan
+already does for the scalar-scratch decision.
 
 ## 2. Architecture
 
