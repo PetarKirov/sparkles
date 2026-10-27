@@ -22,8 +22,8 @@ built without `-preview=in` and would mangle them apart.
 */
 module sparkles.build_primitives.dub_recipe;
 
-import sparkles.base.buffer : UniqueBuffer;
-import sparkles.build_primitives.dub_manifest : DubManifest, embeddedDubRecipe, valuesOf;
+import sparkles.build_primitives.dub_manifest : DubManifest, valuesOf;
+import sparkles.wired.sdl : SdlDocument;
 
 /// A configuration a recipe declares.
 struct RecipeConfiguration
@@ -75,14 +75,14 @@ DubRecipe readDubRecipe(string path) @safe
 
     if (path.endsWith(".d"))
     {
-        const embedded = embeddedDubRecipe(text);
-        if (!embedded.found)
+        import sparkles.wired.sdl : parseEmbeddedSdlDocument, sdlDubRecipe;
+
+        auto embedded = parseEmbeddedSdlDocument!sdlDubRecipe(text);
+        if (!embedded.recipe.found)
             return DubRecipe.init;
-        if (embedded.isJson)
-            return parseJsonRecipe(embedded.recipe);
-        UniqueBuffer!char positioned;
-        embedded.toString(positioned);
-        return parseSdlRecipe(positioned[]);
+        if (embedded.recipe.isJson)
+            return parseJsonRecipe(embedded.recipe.recipe(text));
+        return embedded.parsed.hasValue ? recipeOf(embedded.parsed.document) : DubRecipe.init;
     }
     return path.endsWith(".json") ? parseJsonRecipe(text) : parseSdlRecipe(text);
 }
@@ -148,10 +148,9 @@ after an optional shebang.
 */
 bool isSingleFileDubPackage(string path) @safe
 {
-    import std.algorithm.iteration : splitter;
-    import std.algorithm.searching : endsWith, startsWith;
+    import std.algorithm.searching : endsWith;
     import std.stdio : File;
-    import std.string : strip, stripLeft;
+    import sparkles.wired.sdl : hasEmbeddedRecipeHeader;
 
     if (!path.endsWith(".d"))
         return false;
@@ -166,20 +165,9 @@ bool isSingleFileDubPackage(string path) @safe
     catch (Exception)
         return false;
 
-    // The recipe opens the file, so the first line that is neither blank nor
-    // the shebang decides — scanning further would match an unrelated `/+ +/`
-    // comment somewhere down the file.
-    foreach (rawLine; head.splitter('\n'))
-    {
-        const line = rawLine.strip;
-        if (!line.length || line.startsWith("#!"))
-            continue;
-        if (!line.startsWith("/+"))
-            return false;
-        const rest = line[2 .. $].stripLeft;
-        return rest.startsWith("dub.sdl:") || rest.startsWith("dub.json:");
-    }
-    return false;
+    // The recipe opens the file, so the shared locator's header test
+    // decides; an unrelated `/+ +/` further down never matches.
+    return hasEmbeddedRecipeHeader(head);
 }
 
 /// The recipe governing `startPath`: its own, when it is a single-file package
@@ -194,16 +182,20 @@ string dubRecipeFor(string startPath) @safe
 }
 
 
-/// Parses `dub.sdl` text (`text` may be an embedded recipe as
-/// `EmbeddedDubRecipe.toString` writes it, whose lines are the source file's).
+/// Parses `dub.sdl` text.
 DubRecipe parseSdlRecipe(const(char)[] text) @safe pure
 {
-    import sparkles.wired.sdl : fromSDL, parseSdlDocument, sdlDubRecipe, SdlQualifiedName;
+    import sparkles.wired.sdl : parseSdlDocument, sdlDubRecipe;
 
     auto parsed = parseSdlDocument!sdlDubRecipe(text);
-    if (parsed.hasError)
-        return DubRecipe.init;
-    auto root = parsed.document.root;
+    return parsed.hasValue ? recipeOf(parsed.document) : DubRecipe.init;
+}
+
+private DubRecipe recipeOf(Allocator)(ref const SdlDocument!Allocator document)
+{
+    import sparkles.wired.sdl : fromSDL, SdlQualifiedName;
+
+    auto root = document.root;
     const decoded = fromSDL!DubManifest(root);
     if (decoded.hasError)
         return DubRecipe.init;
@@ -217,7 +209,7 @@ DubRecipe parseSdlRecipe(const(char)[] text) @safe pure
     auto tags = root.byChild(SdlQualifiedName(null, "configuration"));
     foreach (config; manifest.configurations)
     {
-        const line = parsed.document.position(tags.front.nameSpan.startOffset).line;
+        const line = document.position(tags.front.nameSpan.startOffset).line;
         auto parsedConfig = RecipeConfiguration(config.name, line: line);
         foreach (flag; config.dflags.valuesOf)
             parsedConfig.dflags ~= flag;
