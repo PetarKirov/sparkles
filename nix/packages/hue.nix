@@ -71,12 +71,13 @@
         # types (LIV1-LIV4) work out of the box: opening a `.d` file spawns
         # `twoslash-extract --dub --serve`, which hue finds via
         # $SPARKLES_TWOSLASH_EXTRACT before falling back to PATH. hue never links
-        # the analyzer (PRJ13) — the flake-built extractor carries its own
-        # druntime/phobos import paths and `dub`, so the pair composes.
+        # the analyzer (PRJ13). Its extractor carries its own druntime/phobos
+        # import paths but no toolchain (TC13): `--dub` runs the `dub` and
+        # compiler on the user's PATH, and without them says why (PRJ7).
         postFixup = ''
           wrapProgram $out/bin/${finalAttrs.pname} \
             --set-default SPARKLES_TS_GRAMMAR_PATH ${config.packages.ts-grammars} \
-            --set-default SPARKLES_TWOSLASH_EXTRACT ${lib.getExe config.packages.twoslash-extract} \
+            --set-default SPARKLES_TWOSLASH_EXTRACT ${lib.getExe config.packages.twoslash-extract.oracle} \
             --prefix PATH : ${lib.makeBinPath [ pkgs.fontconfig ]}
         '';
 

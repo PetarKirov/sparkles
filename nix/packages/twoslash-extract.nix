@@ -10,10 +10,14 @@
 #     enclosing project's import paths/versions/dflags — PRJ2; dub probes the
 #     compiler it defaults to, so one must be on PATH as well).
 #
-# The wrapper carries both (`--set-default` for the paths, `--prefix` for the
-# tools), so `nix run .#twoslash-extract` — and `hue`'s live-types oracle,
-# which spawns this binary (see hue.nix) — work outside the devshell, while a
-# caller who exports their own import paths still wins.
+# One build, two wrappers over it. `.#twoslash-extract`, the developer tool,
+# carries both (`--set-default` for the paths, `--prefix` for the tools), so
+# `nix run .#twoslash-extract` works outside the devshell. `passthru.oracle`,
+# the extractor `hue` spawns for live types (see hue.nix), carries only the
+# import paths: `hue` is a shipped program, whose closure holds no toolchain
+# (docs/specs/toolchain/SPEC.md, TC13), and its `--dub` uses the `dub` and
+# compiler the user's project builds with. Either way a caller who exports
+# their own import paths still wins.
 { lib, ... }:
 {
   perSystem =
@@ -26,9 +30,8 @@
       # the `ci` package's reasoning; DMD only targets x86_64/i686-linux and
       # x86_64-darwin, so keep LDC elsewhere.
       dubCompiler = if pkgs.stdenv.hostPlatform.system == "x86_64-linux" then pkgs.dmd else pkgs.ldc;
-    in
-    {
-      packages.twoslash-extract = config.legacyPackages.buildSparklesApp (finalAttrs: {
+
+      unwrapped = config.legacyPackages.buildSparklesApp (finalAttrs: {
         pname = "twoslash-extract";
         version = "0.1.0";
 
@@ -49,38 +52,53 @@
         # the fetched source has no `.git`.
         nativeBuildInputs = [ pkgs.gitMinimal ];
 
-        # A genuine runtime reference (see postFixup), so buildSparklesApp
-        # subtracts it from the disallowed-leak set instead of rejecting it —
-        # this matters where `dubCompiler` *is* the build compiler (LDC).
-        buildInputs = [ dubCompiler ];
-
         env = d-toolchain.env;
-
-        postFixup =
-          let
-            path = lib.makeBinPath [
-              dubCompiler
-              pkgs.dub
-              pkgs.gitMinimal
-            ];
-            importPaths = "${config.packages.dmd-import-paths}/druntime:${config.packages.dmd-import-paths}/phobos";
-            # The device side of a `@compute` module (TGT3), where `ldc-vulkan` exists.
-            ldcImportPaths =
-              lib.optionalString (config.packages ? ldc-import-paths)
-                "--set-default SPARKLES_LDC_IMPORT_PATH ${config.packages.ldc-import-paths}/druntime:${config.packages.ldc-import-paths}/phobos";
-          in
-          ''
-            wrapProgram $out/bin/${finalAttrs.pname} \
-              --set-default SPARKLES_DMD_IMPORT_PATH ${importPaths} \
-              ${ldcImportPaths} \
-              --prefix PATH : ${path}
-          '';
 
         meta = {
           description = "Extract a twoslash node payload from an annotated D sample via DMD-as-a-library";
           mainProgram = finalAttrs.pname;
         };
       });
+
+      importPaths = "${config.packages.dmd-import-paths}/druntime:${config.packages.dmd-import-paths}/phobos";
+      # The device side of a `@compute` module (TGT3), where `ldc-vulkan` exists.
+      ldcImportPaths =
+        lib.optionalString (config.packages ? ldc-import-paths)
+          "--set-default SPARKLES_LDC_IMPORT_PATH ${config.packages.ldc-import-paths}/druntime:${config.packages.ldc-import-paths}/phobos";
+
+      wrap =
+        { name, tools }:
+        pkgs.runCommand name
+          {
+            nativeBuildInputs = [ pkgs.makeWrapper ];
+            inherit (unwrapped) version meta;
+            passthru = { inherit unwrapped; };
+          }
+          ''
+            makeWrapper ${lib.getExe unwrapped} $out/bin/${unwrapped.pname} \
+              --set-default SPARKLES_DMD_IMPORT_PATH ${importPaths} \
+              ${ldcImportPaths} \
+              ${lib.optionalString (tools != [ ]) "--prefix PATH : ${lib.makeBinPath tools}"}
+          '';
+    in
+    {
+      packages.twoslash-extract =
+        (wrap {
+          name = "twoslash-extract-${unwrapped.version}";
+          tools = [
+            dubCompiler
+            pkgs.dub
+            pkgs.gitMinimal
+          ];
+        }).overrideAttrs
+          (old: {
+            passthru = old.passthru // {
+              oracle = wrap {
+                name = "twoslash-extract-oracle-${unwrapped.version}";
+                tools = [ ];
+              };
+            };
+          });
 
       apps.twoslash-extract = {
         type = "app";
