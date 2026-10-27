@@ -26,7 +26,8 @@ import std.traits : EnumMembers;
 
 import sparkles.base.buffer : UniqueBuffer;
 import sparkles.base.term_color : RgbColor;
-import sparkles.base.text.grapheme : visibleWidth;
+import sparkles.base.term_style : TextAttr, UnderlineStyle;
+import sparkles.base.text.grapheme : byGraphemeCluster, visibleWidth;
 import sparkles.shaders : v4, vec4;
 import sparkles.ui.canvas : isCanvas, LineStyle, RuleEdge, Scrollbar;
 import sparkles.ui.effect : EffectId;
@@ -46,6 +47,7 @@ enum Degradation : ubyte
     missingFace,     /// a text run's font role had no face (`UVK17`)
     glyphMiss,       /// a glyph was not available in time (`UVK22`)
     unshapedCluster, /// a cluster needing shaping drew its first codepoint (`UVK19`)
+    noGlyph,         /// the cell font has no glyph for a codepoint; fallback faces wait (`UVX12`)
     imageDeferred,   /// an image waited for a later frame's upload budget (`UVK25`)
     imageTooLarge,   /// an image exceeded the device's largest image (`UVK25`)
     srgbBlending,    /// the target is sRGB: partial coverage blends in linear light (`UVK7`)
@@ -129,6 +131,67 @@ enum bool isImageSource(S) = is(typeof((ref S s, ImageHandle h) {
     ImageOutcome o = s.resolve(h, slot, size);
 }));
 
+
+/// What became of a glyph a painter asked for.
+enum GlyphOutcome : ubyte
+{
+    drawn,   /// in an atlas page: draw it from the `GlyphQuad`
+    blank,   /// no ink (a space): nothing to draw, nothing to count
+    noGlyph, /// the cell font has no glyph for the codepoint (`noGlyph`)
+    refused, /// the rasterizer refused it (`glyphMiss`)
+    full,    /// the atlas is full this frame; it starts over (`glyphMiss`, another frame)
+}
+
+/// A glyph drawn from an atlas page: where its texels are, and where its box
+/// sits from the pen and the baseline.
+struct GlyphQuad
+{
+    uint page;             /// the coverage page, numbered from 1 as draw runs bind it
+    vec4 texRect;          /// its texels' (u0, v0, u1, v1) in the page
+    int width, height;     /// its box, in pixels
+    int bearingX;          /// pixels from the pen to the box's left edge
+    int bearingY;          /// pixels from the baseline up to the box's top edge
+}
+
+/// The cell font's vertical metrics, in pixels from a cell's top.
+struct TextMetrics
+{
+    bool present;          /// a cell font is bound; without one, text misses
+    int ascent;            /// the baseline
+    int underlineY;        /// the underline's top
+    int underlineHeight;   /// its thickness
+    int strikeY;           /// the strikethrough's top
+}
+
+/// Which of the cell font's faces a run draws in, from its bold and italic bits.
+enum FaceStyle : ubyte
+{
+    regular,    ///
+    bold,       ///
+    italic,     ///
+    boldItalic, ///
+}
+
+/// The face `v` asks for.
+FaceStyle faceStyleOf(in Visual v) @safe pure nothrow @nogc
+    => faceStyle((v.styleBits & TextAttr.bold.bits) != 0, (v.styleBits & TextAttr.italic.bits) != 0);
+
+/// ditto, from the two flags
+FaceStyle faceStyle(bool bold, bool italic) @safe pure nothrow @nogc
+    => bold ? (italic ? FaceStyle.boldItalic : FaceStyle.bold)
+        : italic ? FaceStyle.italic : FaceStyle.regular;
+
+/**
+Whether `S` supplies glyphs too: `resolveGlyph(cp, style, quad)` for a
+codepoint in the cell font's face of that style, and `textMetrics` for where it sits in a cell. A source
+without them draws no text (every run counts `glyphMiss`).
+*/
+enum bool isGlyphSource(S) = is(typeof((ref S s) {
+    GlyphQuad q;
+    GlyphOutcome o = s.resolveGlyph(dchar('a'), FaceStyle.regular, q);
+    TextMetrics m = s.textMetrics;
+}));
+
 /// An image source with no images: every image is the placeholder.
 struct NoImages
 {
@@ -154,6 +217,12 @@ if (isImageSource!Images)
     /// Where image draws are resolved: the source itself, or a pointer to
     /// one, which may be null for none.
     Images images;
+
+    // Whether the source supplies glyphs too (`isGlyphSource`).
+    static if (is(Images == U*, U))
+        private enum bool drawsText = isGlyphSource!U;
+    else
+        private enum bool drawsText = isGlyphSource!Images;
 
     /// The shortest a scrollbar's thumb is drawn, in device pixels (`SCV13`).
     int minThumbPx = scrollbarMinExtentPx;
@@ -262,11 +331,17 @@ if (isImageSource!Images)
         }
     }
 
-    /// Text draws nothing until glyphs arrive, and counts as `glyphMiss`.
+    /**
+    A cell text run from cell `at`: each grapheme cluster takes the cells its
+    display width gives and draws its first codepoint's glyph from the cell
+    font (`UVK19`, `UVK21`); a cluster of several codepoints counts as
+    `unshapedCluster` until the font library shapes. Underline and
+    strikethrough are rules at the cell font's positions. Without a glyph
+    source, the run draws nothing and counts as `glyphMiss`.
+    */
     void textRun(in Point at, scope const(char)[] text, in Visual v)
     {
-        if (text.length)
-            report.count(Degradation.glyphMiss);
+        cellText(px(at.x), py(at.y), text, v);
     }
 
     /// ditto — an interface run has no face of its own here, so it also
@@ -279,11 +354,145 @@ if (isImageSource!Images)
         textRun(r.origin, text, v);
     }
 
-    /// ditto
+    /// One glyph at cell `at`, in the cell font.
     void glyph(in Point at, dchar g, in Visual v)
     {
-        if (g != ' ')
+        static if (drawsText)
+        {
+            if (!textReady)
+                return report.count(Degradation.glyphMiss);
+            glyphAt(px(at.x), py(at.y), g, faceStyleOf(v), rgba(v.fg, v.fgAlpha));
+        }
+        else if (g != ' ')
             report.count(Degradation.glyphMiss);
+    }
+
+    /**
+    A cluster in device pixels, for a painter that lays out its own cells
+    (the terminal): `cps` drawn in the box at (`x`, `y`) `w` × `h`, its glyph
+    on the box's baseline. Offsets apply; clips are the caller's.
+    */
+    void clusterPx(scope const(uint)[] cps, bool bold, bool italic, int x, int y, int w, int h,
+        vec4 colour)
+    {
+        if (!cps.length)
+            return;
+        static if (drawsText)
+        {
+            if (!textReady)
+                return report.count(Degradation.glyphMiss);
+            if (cps.length > 1)
+                report.count(Degradation.unshapedCluster);
+            glyphAt(m_.originX + shiftX_ + x, m_.originY + shiftY_ + y, cast(dchar) cps[0],
+                faceStyle(bold, italic), colour);
+        }
+        else
+            report.count(Degradation.glyphMiss);
+    }
+
+    /// A label in device pixels from (`x`, `y`), one cell per cluster.
+    void labelPx(scope const(char)[] text, int x, int y, vec4 colour)
+    {
+        static if (drawsText)
+        {
+            if (!textReady)
+                return report.count(Degradation.glyphMiss);
+            int pen = m_.originX + shiftX_ + x;
+            foreach (c; byGraphemeCluster(text))
+            {
+                if (c.isEscape)
+                    continue;
+                if (c.codepoints > 1)
+                    report.count(Degradation.unshapedCluster);
+                glyphAt(pen, m_.originY + shiftY_ + y, c.first, FaceStyle.regular, colour);
+                pen += (c.width > 0 ? c.width : 1) * m_.cellW;
+            }
+        }
+        else if (text.length)
+            report.count(Degradation.glyphMiss);
+    }
+
+    /// The label's size in device pixels, as `labelPx` lays it out.
+    int[2] labelSizePx(scope const(char)[] text) const
+    {
+        int cells;
+        foreach (c; byGraphemeCluster(text))
+            if (!c.isEscape)
+                cells += c.width > 0 ? c.width : 1;
+        return [cells * m_.cellW, m_.cellH];
+    }
+
+    // A run of cells from the pixel (`x`, `y`) of its first cell's top-left.
+    private void cellText(int x, int y, scope const(char)[] text, in Visual v)
+    {
+        if (!text.length)
+            return;
+        static if (drawsText)
+        {
+            if (!textReady)
+                return report.count(Degradation.glyphMiss);
+            const colour = rgba(v.fg, v.fgAlpha);
+            const style = faceStyleOf(v);
+            int cells;
+            foreach (c; byGraphemeCluster(text))
+            {
+                if (c.isEscape)
+                    continue;
+                if (c.codepoints > 1)
+                    report.count(Degradation.unshapedCluster);
+                glyphAt(x + cells * m_.cellW, y, c.first, style, colour);
+                cells += c.width > 0 ? c.width : 0;
+            }
+            const metrics = images.textMetrics;
+            if (v.underline != UnderlineStyle.none)
+                solid(Rect(x, y + metrics.underlineY, cells * m_.cellW, metrics.underlineHeight),
+                    colour);
+            if (v.styleBits & TextAttr.strikethrough.bits)
+                solid(Rect(x, y + metrics.strikeY, cells * m_.cellW, metrics.underlineHeight),
+                    colour);
+        }
+        else
+            report.count(Degradation.glyphMiss);
+    }
+
+    static if (drawsText)
+    {
+        // Whether the source has a cell font to draw with.
+        private bool textReady()
+        {
+            static if (is(Images == U*, U))
+                if (images is null)
+                    return false;
+            return images.textMetrics.present;
+        }
+
+        // One codepoint's glyph with its pen at `penX` in a cell whose top is
+        // `top`, its bitmap's origin on whole pixels (`UVK21`).
+        private void glyphAt(int penX, int top, dchar cp, FaceStyle style, vec4 colour)
+        {
+            GlyphQuad q;
+            final switch (images.resolveGlyph(cp, style, q))
+            {
+                case GlyphOutcome.drawn:
+                    const baseline = top + images.textMetrics.ascent;
+                    emit(record(v4(penX + q.bearingX, baseline - q.bearingY, q.width, q.height),
+                        colour, v4(0), v4(QuadKind.coverageGlyph, 0, 0, 0), q.texRect),
+                        BoundImages(coveragePage: q.page));
+                    break;
+                case GlyphOutcome.blank:
+                    break;
+                case GlyphOutcome.noGlyph:
+                    report.count(Degradation.noGlyph);
+                    break;
+                case GlyphOutcome.refused:
+                    report.count(Degradation.glyphMiss);
+                    break;
+                case GlyphOutcome.full:
+                    report.count(Degradation.glyphMiss);
+                    report.anotherFrame = true;
+                    break;
+            }
+        }
     }
 
     /// A line's pixels, from `lineRects`.
@@ -874,4 +1083,72 @@ unittest
     assert(p.instances.length == n + 2, "each placeholder's box");
     assert(p.report[Degradation.imageTooLarge] == 1 && p.report[Degradation.imageDeferred] == 1);
     assert(p.report.anotherFrame, "a deferred image asks for the frame that uploads it");
+}
+
+version (unittest)
+{
+    // A glyph source whose every glyph is a 4 × 6 box with bearings (1, 5),
+    // on page 2; `x` has no glyph; the face style chosen is recorded.
+    private struct FakeGlyphs
+    {
+        FaceStyle lastStyle;
+
+        ImageOutcome resolve(ImageHandle, out uint, out Size) const @safe pure nothrow @nogc
+            => ImageOutcome.missing;
+
+        GlyphOutcome resolveGlyph(dchar cp, FaceStyle style, out GlyphQuad q) @safe pure nothrow @nogc
+        {
+            lastStyle = style;
+            if (cp == 'x')
+                return GlyphOutcome.noGlyph;
+            if (cp == ' ')
+                return GlyphOutcome.blank;
+            q = GlyphQuad(2, v4(0, 0, 0.25f, 0.25f), 4, 6, 1, 5);
+            return GlyphOutcome.drawn;
+        }
+
+        TextMetrics textMetrics() const @safe pure nothrow @nogc
+            => TextMetrics(present: true, ascent: 15, underlineY: 17, underlineHeight: 1,
+                strikeY: 10);
+    }
+}
+
+@("ui_vulkan.painter.aRunPlacesEachClusterInItsCells")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.base.term_style : TextAttr;
+
+    // `UVK19`, `UVK21`: clusters advance by their display width; each glyph's
+    // box sits at the pen plus its bearing, up from the cell's baseline.
+    Painter!FakeGlyphs p;
+    p.begin(Size(200, 100), metrics10x20); // origin (5, 3), 10 × 20 cells
+    const v = Visual(fg: RgbColor(255, 255, 255), fgAlpha: 255);
+    p.textRun(Point(1, 1), "a一b x", v);
+    // 'a' at cell 1, the wide CJK at cells 2–3, 'b' at cell 4, ' ' blank, 'x' none.
+    assert(p.instances.length == 3);
+    assert(boxIs(p.instances[0], 5 + 10 + 1, 3 + 20 + 15 - 5, 4, 6));
+    assert(boxIs(p.instances[1], 5 + 20 + 1, 3 + 20 + 15 - 5, 4, 6));
+    assert(boxIs(p.instances[2], 5 + 40 + 1, 3 + 20 + 15 - 5, 4, 6), "the wide one took two cells");
+    assert(p.instances[0].shape.array[0] == QuadKind.coverageGlyph);
+    assert(p.runs[$ - 1].images.coveragePage == 2);
+    assert(p.report[Degradation.noGlyph] == 1, "'x' has no glyph");
+
+    Visual bold = v;
+    bold.styleBits = TextAttr.bold.bits;
+    bold.underline = UnderlineStyle.single;
+    p.textRun(Point(0, 0), "ab", bold);
+    assert(p.images.lastStyle == FaceStyle.bold, "the run's attributes pick the face");
+    const underline = p.instances[$ - 1];
+    assert(boxIs(underline, 5, 3 + 17, 20, 1), "the underline spans the run's cells");
+}
+
+@("ui_vulkan.painter.textWithoutAGlyphSourceCountsAMiss")
+@safe pure nothrow @nogc
+unittest
+{
+    Painter!NoImages p;
+    p.begin(Size(200, 100), metrics10x20);
+    p.textRun(Point(0, 0), "abc", Visual.init);
+    assert(p.instances.length == 0 && p.report[Degradation.glyphMiss] == 1);
 }
