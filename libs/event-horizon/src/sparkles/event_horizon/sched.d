@@ -147,9 +147,10 @@ wakes through an inbox.
 */
 enum FiberPark : ubyte
 {
-    /// The ring path where the backend has the futex operations and §7's
-    /// recorded decision chooses it; until FB1–FB7 are recorded, wherever
-    /// it is supported.
+    /// The path §7's recorded decision chooses for each operation: on
+    /// Linux 6.18 x86-64, FB1–FB7 put the inbox path ahead for the sleep,
+    /// its cancellation and the bucket wait (fiber-parker.md §7), so the
+    /// inbox path.
     auto_,
     ring,  /// the ring path wherever the backend has the futex operations
     inbox, /// the inbox path on every backend
@@ -190,7 +191,7 @@ struct Sched
         // The ring path holds one op slot per task for its park, beyond the
         // caller's budget, and needs room for a wait and its linked timeout
         // (fiber-parker.md EFP22).
-        const mayRing = ringParkLowerable && opts.fiberPark != FiberPark.inbox;
+        const mayRing = ringParkLowerable && opts.fiberPark == FiberPark.ring;
         if (opts.fiberPark == FiberPark.ring && loopCfg.backend.sqEntries < 2)
             return ioErr!void(EINVAL, OpKind.none, IoErrorStage.setup,
                 "the ring path needs two submission entries");

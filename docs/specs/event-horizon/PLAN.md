@@ -407,10 +407,12 @@ on both paths; benchmarks FB1–FB7 are recorded for both paths in
 S4 migration of event-horizon's own users (`blocking_pool`, `raw_pool`,
 `pool`) builds on it.
 
-Status (October 23, 2026): both paths shipped. `Sched` installs the parker
+Status (October 27, 2026): both paths shipped. `Sched` installs the parker
 around every resume; the ring futex operations lower on io_uring; a ring sleep
 waits in the kernel on its park word, and an interruptible one on its node's
 cancel word too, written at the tick's submission point;
-`fiberPark` chooses the path. The
-[ledger](./fiber-parker.md#evidence-ledger) records what is verified. EFP21's
-timed-out shutdown and FB1–FB7 remain.
+`fiberPark` chooses the path, and `auto` the inbox path, as FB1–FB7 record. A
+shutdown requested during a run cancels every scope and leaks a worker that
+outlives the grace period. `raw_pool` locks with base.sync. The
+[ledger](./fiber-parker.md#evidence-ledger) records what is verified; the
+bucket waits (EFP11, EFP15) lack a test hook in base.sync.
