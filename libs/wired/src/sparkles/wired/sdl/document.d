@@ -565,9 +565,11 @@ struct SdlDocument(Allocator = Mallocator)
         release();
     }
 
-    package bool acquire(size_t nodeCount, size_t valueCount,
-        size_t attributeCount, size_t childCount, size_t commentCount,
-        size_t poolBytes)
+    /** Allocates the core, the pool, and first capacities for the node,
+    value and attribute arrays; the parser grows those (`grow`) and trims
+    them (`finish`). */
+    package bool acquire(size_t nodeCapacity, size_t valueCapacity,
+        size_t attributeCapacity, size_t poolBytes)
     {
         SdlCore[] coreSlot;
         if (!acquireBlock(coreSlot, coreBlock, 1))
@@ -578,16 +580,54 @@ struct SdlDocument(Allocator = Mallocator)
             emplace(&coreSlot[0]);
             core = &coreSlot[0];
         }();
-        if (!acquireBlock(core.nodes, nodeBlock, nodeCount)
-            || !acquireBlock(core.values, valueBlock, valueCount)
-            || !acquireBlock(core.attributes, attributeBlock, attributeCount)
-            || !acquireBlock(core.childIndexes, childBlock, childCount)
-            || !acquireBlock(core.comments, commentBlock, commentCount)
-            || !acquireBlock(pool, poolBlock, poolBytes))
+        if (!acquireBlock(pool, poolBlock, poolBytes)
+            || !acquireBlock(core.nodes, nodeBlock, nodeCapacity)
+            || !acquireBlock(core.values, valueBlock, valueCapacity)
+            || !acquireBlock(core.attributes, attributeBlock, attributeCapacity))
         {
             release();
             return false;
         }
+        return true;
+    }
+
+    /// Doubles `field`'s array, keeping its first `used` cells.
+    package bool grow(string field)(size_t used)
+    {
+        static if (field == "nodes")
+            alias block = nodeBlock;
+        else static if (field == "values")
+            alias block = valueBlock;
+        else
+            alias block = attributeBlock;
+        alias T = typeof(__traits(getMember, *core, field)[0]);
+
+        const capacity = __traits(getMember, *core, field).length;
+        const wanted = capacity < 8 ? 16 : capacity * 2;
+        T[] grown;
+        void[] grownBlock;
+        if (wanted <= capacity || !acquireBlock(grown, grownBlock, wanted))
+            return false;
+        grown[0 .. used] = __traits(getMember, *core, field)[0 .. used];
+        releaseBlock(block);
+        block = grownBlock;
+        __traits(getMember, *core, field) = grown;
+        return true;
+    }
+
+    /** Trims the grown arrays to the cells the parser filled, and allocates
+    the child-index arena (one entry per node below the root) and the exact
+    comment array. */
+    package bool finish(size_t nodeCount, size_t valueCount, size_t attributeCount,
+        scope const(SdlComment)[] comments)
+    {
+        core.nodes = core.nodes[0 .. nodeCount];
+        core.values = core.values[0 .. valueCount];
+        core.attributes = core.attributes[0 .. attributeCount];
+        if (!acquireBlock(core.childIndexes, childBlock, nodeCount - 1)
+            || !acquireBlock(core.comments, commentBlock, comments.length))
+            return false;
+        core.comments[] = comments[];
         return true;
     }
 

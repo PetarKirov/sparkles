@@ -216,20 +216,16 @@ package SdlPosition sdlScanPosition(scope const(char)[] source, size_t offset)
 }
 
 /** Where the lexer reports layout while it lexes (editing §2, SDP3): every
-logical line start after the first, and every comment, in source order.
-`comments` may be `null`, in which case comments are only counted. */
+logical line start after the first, and every comment, in source order. */
 package struct SdlLexerLayout
 {
     HeapBuffer!size_t lineStarts;
-    bool recordLines; /// Whether to collect `lineStarts`, or only comments.
-    SdlComment[] comments;
-    size_t commentCount;
+    bool recordLines; /// Whether to collect `lineStarts`.
+    HeapBuffer!SdlComment comments;
 
     void comment(SdlSpan span, SdlCommentKind kind) @safe pure nothrow @nogc
     {
-        if (comments.length)
-            comments[commentCount] = SdlComment(span, kind);
-        commentCount++;
+        comments ~= SdlComment(span, kind);
     }
 }
 
