@@ -1,9 +1,10 @@
 /**
 A terminal painter over a canvas that draws in device pixels (`UVX11`).
 
-Glyphs and labels draw nothing and count a miss — the canvas's `glyph` and
-`textRun` already do, and there is no atlas until the font slice. Kitty
-images are handles in $(LREF VulkanImages); the canvas uploads them.
+Clusters and labels draw through the canvas's pixel text (`clusterPx`,
+`labelPx`): the cell font's glyphs from its atlas, one cell per cluster
+(`UVK19`). Kitty images are handles in $(LREF VulkanImages); the canvas
+uploads them.
 */
 module sparkles.terminal_view.vulkan_painter;
 
@@ -55,22 +56,26 @@ struct VulkanTerminalPainter(C)
         canvas.outlinePx(x, y, w, h, rgba(c));
     }
 
-    void cluster(scope const(uint)[] cps, bool, bool, int, int, int, int, Rgba)
+    /// A cell's cluster in its box, in the cell font's face for `bold`
+    /// and `italic` (`UVK19`).
+    void cluster(scope const(uint)[] cps, bool bold, bool italic, int x, int y, int w, int h,
+        Rgba c)
     {
-        if (cps.length)
-            canvas.glyph(Point.init, cast(dchar) cps[0], Visual.init);
+        canvas.clusterPx(cps, bold, italic, x, y, w, h, rgba(c));
     }
 
-    void label(scope const(char)[] text, float, float, Rgba)
+    /// A line of text from (`x`, `y`), one cell per cluster.
+    void label(scope const(char)[] text, float x, float y, Rgba c)
     {
-        if (text.length)
-            canvas.textRun(Point.init, text, Visual.init);
+        canvas.labelPx(text, cast(int) x, cast(int) y, rgba(c));
     }
 
-    /// A placeholder until the font atlas (V3) measures text: a byte count
-    /// times the font size, wide enough to lay a label out without overlap.
-    float[2] labelSize(scope const(char)[] text) const @safe pure nothrow @nogc
-        => [fontSize * text.length, fontSize];
+    /// The label's size as `label` lays it out.
+    float[2] labelSize(scope const(char)[] text) const
+    {
+        const s = canvas.labelSizePx(text);
+        return [s[0], s[1]];
+    }
 
     void clip(int x, int y, int w, int h)
     {
@@ -134,8 +139,13 @@ private struct RecCanvas
     void popOffsetPx() @safe pure nothrow @nogc {}
     void images(const(ImageRegistry)* r) @safe pure nothrow @nogc { bound = r; }
     const(ImageRegistry)* boundImages() const @safe pure nothrow @nogc => bound;
-    void glyph(in Point, dchar, in Visual) @safe pure nothrow @nogc { ++glyphs; }
-    void textRun(in Point, scope const(char)[], in Visual) @safe pure nothrow @nogc { ++texts; }
+    void clusterPx(scope const(uint)[], bool, bool, int, int, int, int, vec4) @safe pure nothrow @nogc
+    {
+        ++glyphs;
+    }
+    void labelPx(scope const(char)[], int, int, vec4) @safe pure nothrow @nogc { ++texts; }
+    int[2] labelSizePx(scope const(char)[] text) const @safe pure nothrow @nogc
+        => [cast(int) text.length * 10, 20];
     void imageSourcePx(ImageHandle, int, int, int, int, int, int, int, int) @safe pure nothrow @nogc
     {
         ++quads;
@@ -144,7 +154,7 @@ private struct RecCanvas
 
 static assert(isTerminalPainter!(VulkanTerminalPainter!RecCanvas));
 
-@("terminal_view.vulkan_painter.glyphsMissAndImagesAreHandles")
+@("terminal_view.vulkan_painter.textGoesToTheCanvasAndImagesAreHandles")
 @system nothrow
 unittest
 {

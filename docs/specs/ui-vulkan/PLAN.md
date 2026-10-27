@@ -20,7 +20,7 @@ Requirement identifiers refer to [SPEC.md](./SPEC.md) (`UVK`) and
 | [V0 Specification](#v0-specification)                             | done        |
 | [V1 Device memory and resources](#v1-device-memory-and-resources) | done        |
 | [V2 The canvas](#v2-the-canvas)                                   | done        |
-| [V3 Glyphs](#v3-glyphs)                                           | not started |
+| [V3 Glyphs](#v3-glyphs)                                           | in progress |
 | [V4 The native host](#v4-the-native-host)                         | done        |
 | [V5 The terminal's seams](#v5-the-terminal-s-seams)               | done        |
 | [V6 The terminal on Vulkan](#v6-the-terminal-on-vulkan)           | in progress |
@@ -121,6 +121,17 @@ shapes, clusters that need it count as `unshapedCluster` (`UVK19`).
 coverage and colour atlas pages, regions uploaded before the frame's pass,
 glyph instances placed by `UVK21`.
 
+**Progress.** Coverage glyphs draw from an interim atlas in the canvas
+(decision `UVX12`), rasterized by `sparkles:font` in the cell font's four
+faces at the raylib arm's scale. Cell runs, single glyphs and the terminal
+painter's clusters and labels all draw through it. Canvas scenario 21
+passes, a glyph reading back exactly as the library rasterizes it. Against
+the raylib canvas, gallery text is within the glyph tolerance. The
+remaining differences are image filtering, effects, and the reference's
+own rasterizer (stb_truetype). Colour glyphs, fallback faces and shaping
+wait on the font library; clusters that need them count `noGlyph` or
+`unshapedCluster`.
+
 **Gate.** Canvas scenario 21; glyph scenarios against the font library's own rasterization (the
 cache's bitmaps, read back after the round trip through the atlas); the
 gallery's text pages within the glyph tolerance of the raylib canvas.
@@ -194,7 +205,7 @@ application's own raylib calls replaced by host and canvas calls; a
 
 **Progress.** The canvas draws in device pixels (`UVK35`). The terminal
 painter maps kitty images onto a pane-owned `ImageRegistry` (`UVX11`);
-glyphs and labels count a miss until V3. A native host opens a pane with
+clusters and labels draw from the canvas's glyph atlas (V3). A native host opens a pane with
 `openPixels` at its cell metrics and paints through that painter.
 `apps/terminal` has a `vulkan` configuration: the native host, pixel
 positions, and no raylib poll; it still links raylib, through the cell-font
@@ -202,10 +213,11 @@ resolver ui-app borrows from `sparkles:raylib-text` until the font
 library's catalog replaces it. Both arms share the chrome's pointer
 routine and fills. CI builds the native gallery and terminal
 (`ui-gallery-vulkan`, `terminal-vulkan`) and runs the terminal's
-`unittest-vulkan` tests. The terminal painter's `labelSize` is a
-placeholder (a byte count times the font size) until V3 measures text.
-It presented the test scene under Weston on lavapipe; text was blank, as
-expected until V3, while the pane, scrollbar and kitty image drew. A file
+`unittest-vulkan` tests. Under Xvfb on lavapipe the V5 test scene draws
+its text, decorations, block graphics, scrollbar and kitty images. It
+matches the raylib terminal but for a combining accent drawn as its base
+letter (`unshapedCluster`), the rail's icon from a Nerd Font fallback face
+(`noGlyph`), and the images' filtering. A file
 open reports that this arm has no document viewer. The raylib desktop
 configuration takes its mouse from host events too, in pixels, through the
 same routine (`WorkspaceHost.notePointer`): nothing in `apps/terminal`
