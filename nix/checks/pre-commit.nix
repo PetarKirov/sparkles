@@ -434,6 +434,22 @@ in
                 pass_filenames = false;
                 require_serial = true;
               };
+
+              # No D source matches SDL text by hand (apps/ci --check-adhoc-sdl,
+              # lossless editing SDE9): SDL is read through sparkles.wired.sdl or
+              # the dub.sdl schema, and the reviewed exceptions sit in
+              # apps/ci/sdl-audit-allowlist.txt. Whole-tree, like the evidence
+              # check; runs in CI through the lint job's `prek run --all-files`.
+              check-adhoc-sdl = {
+                enable = true;
+                name = "check-adhoc-sdl";
+                files = "(\\.d$|^apps/ci/sdl-audit-allowlist\\.txt$)";
+                entry = lib.getExe config.packages.ci;
+                args = [ "--check-adhoc-sdl" ];
+                language = "system";
+                pass_filenames = false;
+                require_serial = true;
+              };
             };
 
           # Prek built-in hooks:

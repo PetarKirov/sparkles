@@ -1,0 +1,11 @@
+# Reviewed exceptions to `ci --check-adhoc-sdl` (lossless editing SDE9,
+# docs/specs/wired/sdl/editing.md): text-matching calls whose argument holds an
+# SDL marker but that do no SDL work. One per line: `path | literal | reason`,
+# the literal as the audit reports it. An entry that matches nothing fails the
+# audit, so delete it when its site goes.
+apps/ci/src/app.d | test-runner/src | matches a `sourcePaths` value decoded through the dub.sdl schema, not recipe text
+libs/build-primitives/src/sparkles/build_primitives/dub_recipe.d | dflags- | the dub.json reader's platform-suffixed keys (`dflags-ldc`); JSON, not SDL
+libs/test-runner-impl/src/sparkles/test_runner/reporting.d | libs/test-runner | the test runner recognizing its own source path in a stack frame
+libs/test-runner-impl/src/sparkles/test_runner/runner_impl.d | test-runner | the test runner recognizing its own executable name
+apps/ci/src/app.d | largeBareScopes | commit-message scopes (`test-runner`, …), checked by the detailed-scope hook; not SDL
+apps/ci/tools/standardize-build-settings.d | legacySettings | compares a node's own source text, located through the parsed document, with the exact legacy settings it removes through the editor
