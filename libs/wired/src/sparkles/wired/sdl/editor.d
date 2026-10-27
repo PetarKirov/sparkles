@@ -325,6 +325,83 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
         record(SdlSpan(bodyStart, bodyEnd), start, op);
     }
 
+    /** Replaces `node`'s positional values with `values`, canonically
+    spelled: the range from its first value to its last, or the point after
+    its name when it has none; values removed take the spaces before them. */
+    void setValues(scope SdlNode node, scope const SdlScalar[] values)
+    {
+        const op = begin();
+        if (!owns(node.core) || !isNonRoot(node))
+            return;
+        size_t first = size_t.max, last;
+        foreach (value; node.byValue)
+        {
+            if (first == size_t.max)
+                first = value.span.startOffset;
+            last = value.span.endOffset;
+        }
+        const start = _text.length;
+        foreach (i, ref value; values)
+        {
+            if (i || first == size_t.max)
+                put(_text, " ");
+            if (!renderScalar(value, node.nameSpan))
+                return;
+        }
+        if (first == size_t.max)
+            record(SdlSpan.at(node.nameSpan.endOffset), start, op);
+        else if (values.length)
+            record(SdlSpan(first, last), start, op);
+        else
+            record(SdlSpan(node.nameSpan.endOffset, last), start, op);
+    }
+
+    /// Inserts ` name=value` after `node`'s last value, attribute or name,
+    /// whatever attributes it already has of that name.
+    void insertAttribute(scope SdlNode node, SdlQualifiedName name, in SdlScalar value)
+    {
+        const op = begin();
+        if (!owns(node.core) || !isNonRoot(node))
+            return;
+        const start = _text.length;
+        put(_text, " ");
+        if (!renderAttribute(name, value, node.nameSpan))
+            return;
+        record(SdlSpan.at(lastItemEnd(node)), start, op);
+    }
+
+    /** Replaces `node` — its extent when it is alone on its lines, else its
+    declaration up to its terminator — with `fragment`, re-indented like it. */
+    void replaceNode(scope SdlNode node, scope const(char)[] fragment)
+    {
+        const op = begin();
+        if (!owns(node.core) || !isNonRoot(node))
+            return;
+        const cell = cellOf(node);
+        const shape = analyze(fragment, op);
+        if (!shape.valid)
+            return;
+        _nodeDelta += cast(long) shape.nodes - cast(long) subtreeSize(node.cellIndex);
+        const start = _text.length;
+        if (cell.aloneOnLines)
+        {
+            const newline = newlineFor(cell.span.startOffset);
+            reindent(fragment, Indent(lineIndent(cell.span.startOffset)), newline, op);
+            if (!(cell.extent.endOffset == _host.length && !endsWithNewline(_host)))
+                put(_text, newline);
+            return record(cell.extent, start, op);
+        }
+        if (shape.topLevel != 1 || shape.hasBlock || shape.multiLine)
+            return fail(SdlErrorCode.editUnsupportedLayout, cell.span,
+                "an inline node takes one single-line node without a block", op);
+        const node_ = trimNode(fragment);
+        put(_text, node_);
+        _fragments ~= FragmentCheck(cast(uint) start, cast(uint) node_.length, op);
+        // Through its last token, so a trailing comment and the terminator stay.
+        const end = cell.hasBlock ? cell.closeBrace.endOffset : lastItemEnd(node);
+        record(SdlSpan(cell.span.startOffset, end), start, op);
+    }
+
     /** Replaces `region` — a span of the content the caller derived from the
     document, such as the lines between two marker comments — with `text`. */
     void replaceRegion(TextSpan region, scope const(char)[] text)
@@ -390,6 +467,19 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
         put(writer, output[]);
         return sdlOk();
     }
+
+    /// Package seam: records `error` as the editor's failure, for layers
+    /// built on the editor (the typed write-back) whose own steps fail.
+    package void failWith(SdlError error)
+    {
+        if (_failed)
+            return;
+        _failure = error;
+        _failed = true;
+    }
+
+    /// Package seam: whether `node` belongs to the editor's document.
+    package bool edits(scope SdlNode node) const => node.core is _core;
 
     // ── Resolution helpers ─────────────────────────────────────────────
 
