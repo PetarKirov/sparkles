@@ -10,9 +10,11 @@ targetName "shader-compile"
 
 dflags "-preview=in" "-preview=dip1000"
 
-// Phobos and the dependency-free shader vocabulary alone (for `computeModeOf`):
-// sparkles:ui's build runs this tool, and `core-cli` depends on sparkles:ui.
+// The shader vocabulary (for `computeModeOf`), and `base` and `wired`, which
+// sit below sparkles:ui; not `core-cli`: sparkles:ui's build runs this tool,
+// and `core-cli` depends on sparkles:ui.
 dependency "sparkles:shaders" path="../.."
+dependency "sparkles:wired" path="../.."
 
 
 configuration "application" {
