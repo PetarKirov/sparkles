@@ -16,6 +16,7 @@ enum SdlErrorStage : ubyte
     encode, /// Writing a value or document.
     fileRead, /// Reading a file.
     fileWrite, /// Writing a file.
+    edit, /// Resolving or writing a lossless edit (`SdlEditor`).
 }
 
 /// Stable machine-readable SDL failure vocabulary.
@@ -49,6 +50,12 @@ enum SdlErrorCode : ubyte
     fileReadFailed, /// The file could not be read.
     fileWriteFailed, /// The file could not be written or renamed into place.
     errorSinkOverflow, /// A bounded error sink dropped further errors.
+    editConflict, /// Two edits overlap, or one leaves the content (editing SDE3).
+    editAmbiguousTarget, /// A set names an attribute that occurs more than once.
+    editUnsupportedLayout, /// The layout around a target has no lossless edit.
+    editFragmentInvalid, /// A fragment is not whole nodes, or an embedded recipe broke.
+    editTargetMissing, /// A view from another document, or a host that does not match it.
+    editResultInvalid, /// The edited text failed its re-parse check (editing SDE2).
 }
 
 /// One SDL operation failure, carried by value through `Expected`.
@@ -125,6 +132,9 @@ struct SdlError
             put(w, "Cannot write SDL file '");
             put(w, filePath[]);
             put(w, "'");
+            break;
+        case SdlErrorStage.edit:
+            put(w, "Cannot edit SDL");
             break;
         }
 

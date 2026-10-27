@@ -4,6 +4,8 @@ module sparkles.wired.sdl;
 public import sparkles.wired.sdl.codec;
 public import sparkles.wired.sdl.config;
 public import sparkles.wired.sdl.document;
+public import sparkles.wired.sdl.editor;
+public import sparkles.wired.sdl.embedded;
 public import sparkles.wired.sdl.error;
 public import sparkles.wired.sdl.files;
 public import sparkles.wired.sdl.lexer;

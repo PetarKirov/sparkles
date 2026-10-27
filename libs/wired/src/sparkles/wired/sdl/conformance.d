@@ -137,7 +137,10 @@ private string[] oracleKind(SdlTokenKind kind) @safe pure nothrow
         SdlChildAttr, SdlTagNameAttr, SdlTagNamespaceAttr, SdlExtraAttr,
         SdlExpected, sdlOk, sdlErr, OwnedSdlExtras, SdlOwnedExtraMember,
         SdlOwnedExtraNode, SdlOwnedExtraAttribute, SdlExtraChannel,
-        writeSdlScalar, sdlParserConfigFor, SdlComment, SdlCommentKind;
+        writeSdlScalar, sdlParserConfigFor, SdlComment, SdlCommentKind,
+        SdlEditor, sdlEditor, SdlAttachedComments, SdlEmbeddedRecipe, locateEmbeddedRecipe,
+        hasEmbeddedRecipeHeader, embeddedRecipeHeaderEnd, writeEmbeddedRendering,
+        SdlEmbeddedParse, parseEmbeddedSdlDocument;
 
     static struct Doc { @SdlAttribute() int port; }
     static struct Sink
@@ -160,6 +163,13 @@ private string[] oracleKind(SdlTokenKind kind) @safe pure nothrow
         const(char)[] source = parsed.document.source;
         const(SdlComment)[] comments = parsed.document.comments;
         SdlSpan extent = parsed.document.root.extent;
+        auto editor = sdlEditor!sdlDubCompat(parsed.document, text);
+        editor.setAttribute(parsed.document.root.byChild.front, SdlQualifiedName(null, "x"),
+            SdlScalar(true));
+        import std.experimental.allocator.mallocator : Mallocator;
+        Mallocator allocator;
+        valid = editor.write(buffer, allocator);
+        auto embedded = parseEmbeddedSdlDocument!sdlDubRecipe(text, name);
         SdlScalarStorage storage;
         SdlExpected!SdlScalar scalar = decodeSdlScalar!sdlFull(token.value, storage);
         valid = writeSdlScalar(scalar.value, buffer);

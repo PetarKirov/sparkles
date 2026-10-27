@@ -84,15 +84,17 @@ needs one import.
 
 The modules also export these names, each specified where it is used:
 
-| Names                                                                                                                    | Section |
-| ------------------------------------------------------------------------------------------------------------------------ | ------- |
-| `SdlTokenKind`, `SdlToken`, `SdlLexer`, `lexSDL`, `SdlScalarStorage`, `decodeSdlScalar`                                  | §11     |
-| `SdlNameQuery`, `SdlNamespaceMatch`, `SdlFilteredAttributeRange`, `SdlFilteredChildRange`                                | §4      |
-| `SdlValueRange`, `SdlAttributeRange`, `SdlChildRange`, `SdlAttributeView`, `SdlPosition`, `SdlComment`, `SdlCommentKind` | §4      |
-| `SdlTagValueAttr`, `SdlAttributeAttr`, `SdlChildAttr`, `SdlTagNameAttr`, `SdlTagNamespaceAttr`, `SdlExtraAttr`           | §5      |
-| `SdlExpected`, `sdlOk`, `sdlErr`                                                                                         | §7      |
-| `OwnedSdlExtras`, `SdlOwnedExtraMember`, `SdlOwnedExtraNode`, `SdlOwnedExtraAttribute`, `SdlExtraChannel`                | §8      |
-| `writeSdlScalar`, `sdlParserConfigFor`                                                                                   | §11     |
+| Names                                                                                                                                                                       | Section |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `SdlTokenKind`, `SdlToken`, `SdlLexer`, `lexSDL`, `SdlScalarStorage`, `decodeSdlScalar`                                                                                     | §11     |
+| `SdlNameQuery`, `SdlNamespaceMatch`, `SdlFilteredAttributeRange`, `SdlFilteredChildRange`                                                                                   | §4      |
+| `SdlValueRange`, `SdlAttributeRange`, `SdlChildRange`, `SdlAttributeView`, `SdlPosition`, `SdlComment`, `SdlCommentKind`                                                    | §4      |
+| `SdlTagValueAttr`, `SdlAttributeAttr`, `SdlChildAttr`, `SdlTagNameAttr`, `SdlTagNamespaceAttr`, `SdlExtraAttr`                                                              | §5      |
+| `SdlExpected`, `sdlOk`, `sdlErr`                                                                                                                                            | §7      |
+| `OwnedSdlExtras`, `SdlOwnedExtraMember`, `SdlOwnedExtraNode`, `SdlOwnedExtraAttribute`, `SdlExtraChannel`                                                                   | §8      |
+| `writeSdlScalar`, `sdlParserConfigFor`                                                                                                                                      | §11     |
+| `SdlEditor`, `sdlEditor`, `SdlAttachedComments`                                                                                                                             | §11     |
+| `SdlEmbeddedRecipe`, `locateEmbeddedRecipe`, `hasEmbeddedRecipeHeader`, `embeddedRecipeHeaderEnd`, `writeEmbeddedRendering`, `SdlEmbeddedParse`, `parseEmbeddedSdlDocument` | §11     |
 
 No public declaration names a DUB type. The per-aggregate role projection that
 the codec reads (`sdlAggregateRoles` and its role records) is package-internal;
@@ -692,6 +694,9 @@ struct SdlWriteOptions
     bool newlineForEmptyDocument = false;
 }
 ```
+
+Lossless editing — `SdlEditor`, and the embedded-recipe locator that it and
+every recipe reader share — is specified in [editing](./editing.md#5-interface).
 
 `SdlParserConfig` is the compile-time value from §3.1. Disabling its
 `validateUtf8` skips a separate validation pass but does not permit
