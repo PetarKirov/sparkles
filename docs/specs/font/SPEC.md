@@ -497,19 +497,22 @@ documented transfer function maps it for display, chosen by the consumer.
 
 **FTR5: Layered colour glyphs.** `COLR` version 0 glyphs **must** render as
 `CPAL`-coloured layers into a premultiplied RGBA target. The foreground
-palette index `0xFFFF` takes a colour the caller supplies.
+palette index `0xFFFF` takes a colour the caller supplies. A glyph with both
+layers and a bitmap strike (`FTR7`) renders from its layers.
 
 **FTR6: Deterministic glyph keys.** Rasterizations with equal glyph keys
 **must** produce byte-identical output.
 
 **FTR7: Bitmap colour strikes.** `CBDT`/`CBLC` and `sbix` glyphs **must**
-decode from their embedded PNG data in 8-bit greyscale, RGB, RGBA or indexed
-colour, without interlacing. Other PNG forms yield `unsupportedVersion`. The
-strike chosen is the smallest at least as large as the requested size, else
-the largest, scaled to the requested size.
+decode from their embedded PNG data in 8-bit greyscale, greyscale with alpha,
+RGB or RGBA, or indexed colour at 1, 2, 4 or 8 bits, without interlacing.
+Other PNG forms yield `unsupportedVersion`. The strike chosen is the smallest
+at least as large as the requested size, else the largest, scaled to the
+requested size.
 
 _Rationale:_ The emoji font Sparkles bundles is a `CBDT` font with no
-outlines, so this is the only way emoji render without FreeType.
+outlines, so this is the only way emoji render without FreeType. Its PNGs are
+indexed: 3,908 at 8 bits and 76 at 4 bits, beside one RGBA.
 
 **FTR8: Flattening accuracy.** With the default flattening, coverage for every
 glyph of the test corpus at 12, 16, 24 and 48 pixels per em **must** be within
