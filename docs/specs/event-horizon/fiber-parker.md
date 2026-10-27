@@ -215,17 +215,31 @@ checkpoint.
 
 **EFP12: Delivery.** `deliverWake` **must** perform EFP3's swap. From a fiber
 of the owner, a winning swap **must** enqueue the fiber at the tail of the
-ready queue. From anywhere else — another thread, or the owner's thread
+ready queue if it is asleep; a fiber not yet asleep — between `prepare` and
+its sleep, or yielding there for a bucket — returns the wake from the sleep
+itself (EFP3). From anywhere else — another thread, or the owner's thread
 outside its fibers, as in a loop callback — it **must** push the task onto
-the owner's wake inbox and then, if the push found the inbox empty, call the owner's
-`Waker.wake()` (SPEC §5.6); a push onto a non-empty inbox follows one whose
-wake has not yet been drained. It **must not** touch other scheduler state.
+the owner's wake inbox unless the task is already there, and then, if the push
+found the inbox empty, call the owner's `Waker.wake()` (SPEC §5.6); a push onto
+a non-empty inbox follows one whose wake has not yet been drained. It **must
+not** touch other scheduler state.
 
 **EFP13: Inbox drain.** The owner **must** drain its wake inbox at every
 point where it drains the blocking-completion inbox, enqueueing the drained
 tasks at the tail of the ready queue in the order they were pushed. Each task
-**must** use one inbox link, which a winning swap alone may push, so a task is
-in the inbox at most once.
+**must** use one inbox link and a flag that a push claims and the drain clears
+before it checks the task, so a task is in the inbox at most once. A drained
+task **must** be enqueued only if it is asleep and its word is out of
+sleeping: an entry may be stale, left by a wake its sleep returned at once,
+and the fiber may since have slept again, in a generation nobody has woken,
+or have ended.
+
+_Rationale:_ A winning swap happens once per generation, not once per entry.
+A wake that lands between `prepare` and the sleep wins its swap and pushes the
+task, and the sleep then returns it without parking; the entry is still
+undrained when the fiber next sleeps. Taken as a wake, it would resume that
+sleep while its word is sleeping, and a delivery for the new generation would
+push the task a second time over its own link.
 
 **EFP14: Deadlines and cancellation.** A deadline **must** arm a scheduler
 timer whose expiry is a resumption of the sleep's generation; an

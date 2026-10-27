@@ -210,6 +210,54 @@ unittest
     }
 }
 
+@("fiberPark.semaphore.crossWorkerPingPongLosesNoWake")
+@system
+unittest
+{
+    // EFP12, EFP13 under load: every handoff wakes a fiber on the other
+    // worker, often between its `prepare` and its sleep. A wake lost, or a
+    // stale one taken for a later sleep, ends a bounded wait or the run.
+    enum handoffs = 50_000;
+    foreach (path; parkPaths)
+    {
+        {
+            Sched probe;
+            schedOrSkip(probe, SchedOptions(fiberPark: path));
+            probe.destroy();
+        }
+        LoopGroup group;
+        LoopGroupConfig cfg;
+        cfg.topology = Topology.threadPerCore;
+        cfg.workers = 2;
+        cfg.pinToCpu = No.pinToCpu;
+        cfg.fiberPark = path;
+        auto started = LoopGroup.start(group, cfg);
+        if (started.hasError)
+            skipTest(skipReason(started.error));
+
+        auto ping = new Semaphore, pong = new Semaphore;
+        shared uint done, failed;
+        group.runEach((uint id, ref RootScope root, ref env) {
+            scope (exit)
+                atomicOp!"+="(done, 1);
+            foreach (_; 0 .. handoffs)
+            {
+                auto give = id == 0 ? ping : pong, take = id == 0 ? pong : ping;
+                give.release();
+                if (take.acquireUntil(bound()) != WaitStatus.ok)
+                {
+                    atomicOp!"+="(failed, 1);
+                    // Unblock the other worker, which then fails too.
+                    give.release(2);
+                    return;
+                }
+            }
+        });
+        assert(atomicLoad(done) == 2, "a worker died");
+        assert(atomicLoad(failed) == 0, "a wake was lost");
+    }
+}
+
 @("fiberPark.mutex.blockingPoolThreadHandsTheLockToAFiber")
 @system
 unittest

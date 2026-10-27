@@ -37,7 +37,8 @@ import sparkles.event_horizon.capability : SpawnOptions;
 import sparkles.event_horizon.cause : CancelContext, FiberContext, Interrupt,
     InterruptKind, cancelTree, interruptRequested;
 import sparkles.event_horizon.errors;
-import sparkles.event_horizon.fiber_park : FiberParkState, fiberParker, writeRingSleep;
+import sparkles.event_horizon.fiber_park : FiberParkState, fiberParker, resumeIfAsleep,
+    writeRingSleep;
 import sparkles.event_horizon.loop : DefaultLoop, LoopConfig, RunStatus;
 import sparkles.event_horizon.op;
 
@@ -227,11 +228,13 @@ struct Sched
     /// Tears down the loop; every fiber must have finished.
     void destroy() @safe nothrow @nogc
     in (_liveFibers == 0, "destroy with live fibers")
-    in (_wakeInbox is null, "destroy with tasks in the wake inbox")
     in (_armedDeadlines is null, "destroy with armed deadlines")
     in (_armedAlarms is null, "destroy with armed alarms")
     {
         awaitDeliveries();
+        // With no fiber left, an entry still in the wake inbox is stale
+        // (EFP13): draining it resumes nothing.
+        cast(void) drainWakeInbox();
         _loop.destroy();
         _destroyed = true;
     }
@@ -995,7 +998,7 @@ private:
     /// the order the pushes landed (EFP13).
     bool drainWakeInbox() @trusted nothrow @nogc
     {
-        import core.atomic : atomicExchange;
+        import core.atomic : atomicExchange, atomicStore;
 
         auto head = cast(FiberTask) atomicExchange(&_wakeInbox, cast(shared(FiberTask)) null);
         if (head is null)
@@ -1013,7 +1016,10 @@ private:
         {
             auto next = cast(FiberTask) ordered.park.nextWake;
             ordered.park.nextWake = null;
-            resumeParked(ordered);
+            // Cleared before the task is checked: a delivery that then finds
+            // the flag clear pushes the task again (EFP13).
+            atomicStore(ordered.park.inInbox, false);
+            resumeIfAsleep(ordered);
             ordered = next;
         }
         return true;

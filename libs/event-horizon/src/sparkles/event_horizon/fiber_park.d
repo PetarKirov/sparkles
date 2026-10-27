@@ -83,9 +83,15 @@ package struct FiberParkState
 {
     WaitRecord!P record;
     shared uint word;
-    /// Wake-inbox link; only the winning resumption pushes the task, so it is
-    /// in the inbox at most once (EFP13).
+    /// Wake-inbox link (EFP13).
     shared(FiberTask) nextWake;
+    /// The task is in its owner's wake inbox: a push claims it, the drain
+    /// clears it, so the task is there at most once (EFP13).
+    shared bool inInbox;
+    /// The fiber is suspended in a sleep; owner thread only. A wake found
+    /// before the sleep began is returned by the sleep itself (EFP3), so
+    /// only an asleep fiber is resumed (EFP12, EFP13).
+    bool asleep;
     /// The deadline of the current sleep (EFP14).
     Alarm deadline;
     /// The generation the armed deadline names.
@@ -205,7 +211,9 @@ private SleepResult fpSleep(void* ctx, WaitRecord!P* rec, Deadline d, bool inter
     // Asleep, or already resumed by another thread whose push the drain
     // will deliver: either way exactly one enqueue resumes this fiber.
     s.noteLotSleep(true);
+    t.park.asleep = true;
     s.park();
+    t.park.asleep = false;
     s.noteLotSleep(false);
     // A winner on this thread resumes a sleep the submission point has not
     // written yet.
@@ -316,11 +324,26 @@ private void deliver(size_t a, size_t b) @trusted nothrow @nogc
                 s.resumeParkedOnce(t);
         }
         else if (current !is null && current.owner is s)
-            s.resumeParked(t);
-        else if (wakeInboxPush(s, t))
+            resumeIfAsleep(t);
+        // A task still in the inbox is checked when that entry is drained.
+        else if (cas(&t.park.inInbox, false, true) && wakeInboxPush(s, t))
             s.waker.wake();
     }
     atomicOp!"-="(s._pendingDeliveries, 1);
+}
+
+/**
+Resumes `t` on its owner, from the owner's thread, if it is asleep and a
+resumption has resolved its sleep (EFP12, EFP13). A fiber the wake found
+not yet asleep — between `prepare` and `sleep`, or in a yield there — returns
+the wake from the sleep itself (EFP3), and an inbox entry the drain finds
+may be stale: the fiber may since have slept again, in a generation nobody
+has woken, or have ended.
+*/
+package void resumeIfAsleep(FiberTask t) @trusted nothrow @nogc
+{
+    if (t.park.asleep && stateOf(atomicLoad(t.park.word)) != ParkState.sleeping)
+        t.owner.resumeParkedOnce(t);
 }
 
 /// Records a committed wake for generation `generation`; whether it resumed
@@ -696,6 +719,27 @@ unittest
         th.join();
         assert(r == SleepResult.woken);
         assert(atomicLoad(t.park.word) == wordOf(g, ParkState.woken));
+    });
+}
+
+@("fiberPark.deliver.beforeTheSleepLeavesNoStaleResume")
+@system
+unittest
+{
+    import core.time : MonoTime, msecs;
+
+    // EFP12, EFP13: a delivery from another thread lands between `prepare`
+    // and `sleep`, so the sleep returns the wake at once. The inbox entry the
+    // delivery left must not resume the fiber's next sleep, which nobody wakes.
+    onTask((ref s, t) {
+        cast(void) beginPark(t);
+        deliverFromAnotherThread(fpCommitWake(cast(void*) t, &t.park.record));
+        assert(fpSleep(cast(void*) t, &t.park.record, Deadline.never, false) == SleepResult.woken);
+        cast(void) beginPark(t);
+        const r = fpSleep(cast(void*) t, &t.park.record,
+            Deadline.at(MonoTime.currTime + 50.msecs), false);
+        assert(r == SleepResult.timedOut, "a stale inbox entry resumed the next sleep");
+        assert(!takeWakeInbox(s));
     });
 }
 
