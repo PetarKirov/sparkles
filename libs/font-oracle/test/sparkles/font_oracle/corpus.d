@@ -6,11 +6,13 @@ module sparkles.font_oracle.corpus;
 
 import std.algorithm : endsWith, filter, map, sort;
 import std.array : array;
-import std.file : dirEntries, exists, SpanMode;
-import std.path : buildPath;
+import std.file : dirEntries, exists, read, SpanMode;
+import std.path : baseName, buildPath;
+import std.string : indexOf;
 import std.process : environment;
 
 import sparkles.base.static_init : StaticBlock;
+import sparkles.font : Face, FontErrorKind, openFace, Tag;
 import sparkles.font_oracle;
 
 /**
@@ -114,4 +116,45 @@ private string[] listCorpus(string dir) @safe
     return dirEntries(dir, SpanMode.shallow)
         .filter!(e => e.name.endsWith(".ttf") || e.name.endsWith(".otf") || e.name.endsWith(".ttc"))
         .map!(e => e.name).array.sort.release;
+}
+
+/**
+The bundle, then every test-corpus directory (the top level, `base/`,
+`math/` and `harfbuzz/`), each with HarfBuzz scaled to font units. A face
+`openFace` refuses for want of a `cmap` alone is read with an empty one
+added (`withEmptyCmap`), as HarfBuzz's `base-minmax.ttf` is; another face
+that does not open is counted in `unopened` and skipped.
+*/
+package void eachCorpusFace(scope void delegate(string name, const Face face, ref Oracle hb) @system body_,
+    ref size_t unopened)
+{
+    static string[] named(string prefix, const(string)[] paths)
+    {
+        string[] r;
+        foreach (p; paths)
+            r ~= prefix ~ p.baseName ~ "\0" ~ p;
+        return r;
+    }
+    foreach (entry; named("bundle/", corpus) ~ named("test/", testCorpus) ~ named("test/base/", baseCorpus)
+        ~ named("test/math/", mathCorpus) ~ named("test/harfbuzz/", harfbuzzCorpus))
+    {
+        const cut = entry.indexOf('\0');
+        const name = entry[0 .. cut];
+        const(ubyte)[] bytes = cast(const(ubyte)[]) read(entry[cut + 1 .. $]);
+        auto opened = openFace(bytes);
+        if (opened.hasError && opened.error.kind == FontErrorKind.missingTable && opened.error.tag == Tag("cmap"))
+        {
+            bytes = withEmptyCmap(bytes);
+            opened = openFace(bytes);
+        }
+        if (opened.hasError)
+        {
+            ++unopened;
+            continue;
+        }
+        auto hb = Oracle(bytes, 0);
+        const face = opened.value;
+        hb_font_set_scale(hb.font, face.unitsPerEm, face.unitsPerEm);
+        body_(name, face, hb);
+    }
 }
