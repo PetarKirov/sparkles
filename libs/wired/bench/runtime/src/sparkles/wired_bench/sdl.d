@@ -30,9 +30,10 @@ reason there is no typed `encode` row yet.
 Only the public `sparkles.wired.sdl` API is used, so the rows measure the
 same calls before and after the backend's internal representation changes.
 
-The `edit` row (resolve and write one attribute change) joins once the editor
-exists: it registers like `encode`, from a parsed document in `setup`, and
-needs its own committed fingerprint for the edited document's canonical form.
+`edit` resolves and writes one lossless change per document through
+`SdlEditor` — setting a `probe` attribute on its first tag, or appending a tag
+to an empty document — re-parse included, and is held to the SHA-256 of the
+edited texts.
 */
 module sparkles.wired_bench.sdl;
 
@@ -52,8 +53,9 @@ import sparkles.build_primitives.dub_manifest : DubManifest, parseDubManifest;
 import sparkles.test_runner.attributes : benchmark;
 import sparkles.test_runner.bench : benchCase, Metric, Unit;
 import sparkles.wired : WireName, WireOptional;
-import sparkles.wired.sdl : fromSDL, parseSdlDocument, Sdl, SdlExpected, SdlNode,
-    SdlParseResult, SdlString, sdlDubRecipe, sdlFull, writeSdlDocument;
+import sparkles.wired.sdl : fromSDL, parseSdlDocument, Sdl, sdlEditor, SdlExpected, SdlNode,
+    SdlParseResult, SdlQualifiedName, SdlScalar, SdlString, sdlDubRecipe, sdlFull,
+    writeSdlDocument;
 import sparkles.wired_bench.data : resolveDataDir;
 
 /// How an SDL dataset is laid out and which schema decodes it.
@@ -77,6 +79,9 @@ struct SdlFingerprint
     /// order, lengths before contents ($(LREF digestValue)); empty for a
     /// dataset with no schema.
     string typed;
+    /// Hex SHA-256 of each document after the `edit` row's change, each
+    /// preceded by its file name and an LF.
+    string edited;
 }
 
 /// One pinned SDL dataset: where it lives under `$WIRED_BENCH_DATA` and what
@@ -104,14 +109,17 @@ immutable SdlDatasetSource[] sdlDatasetSources = [
     SdlDatasetSource("dub_recipes", "sdl/dub-recipes", SdlDatasetKind.recipes,
         SdlFingerprint(8966, 13_281, 4816,
             "12940eda2aa15e31d5561cea33b3e9fe7942e5db95d4d6e1185485dc357006a7",
-            "71a3534e57d6ae2923ecd6ef9b802c7344a9013b6b9e3fb66f39218a2a10be6d")),
+            "71a3534e57d6ae2923ecd6ef9b802c7344a9013b6b9e3fb66f39218a2a10be6d",
+            "baa3aaa4e3ea34906a657285d3e67a4be79a7fb8dde97cd3b6bd93ae4a33f59b")),
     SdlDatasetSource("dub_recipes_concat", "sdl/dub-recipes-concat.sdl",
         SdlDatasetKind.recipeSet, SdlFingerprint(9119, 13_283, 4816,
             "a86bbeadfad542854d17b93acf76e7cbcc3343fbe1ebe7c978a8b1e889129574",
-            "e11a8b2ee662fac2c83b5d403777362b60fd76a7d8e9786a010cd7c312261a70")),
+            "e11a8b2ee662fac2c83b5d403777362b60fd76a7d8e9786a010cd7c312261a70",
+            "d59fdc99b303343fe8fdf05ed9093de0b5fc667350375371df7ea2a729f84737")),
     SdlDatasetSource("deep_wide", "sdl/deep-wide.sdl", SdlDatasetKind.document,
         SdlFingerprint(6329, 16_601, 23_463,
-            "ae04b1de64b7eed6a1d5f49bdaf7ebfebe4eb5ebd98c3374376982e4643c86b8", null),
+            "ae04b1de64b7eed6a1d5f49bdaf7ebfebe4eb5ebd98c3374376982e4643c86b8", null,
+            "3e42a0fc43425de73e9212935d82dbf6095cbcfa16a72fdd4a6ce320f4258911"),
         dubReadable: false),
 ];
 
@@ -210,6 +218,8 @@ private string diffSdl(in SdlFingerprint expected, in SdlFingerprint actual,
         field("canonical", expected.canonical, actual.canonical);
     if (typed)
         field("typed", expected.typed, actual.typed);
+    if (actual.edited.length)
+        field("edited", expected.edited, actual.edited);
     return s;
 }
 
@@ -439,6 +449,21 @@ unittest
     skipIfEmpty(registered, "decode");
 }
 
+@("sdl.edit")
+@benchmark
+@system
+unittest
+{
+    size_t registered;
+    if (sdlEngineEnabled("wired"))
+        foreach (corpus; selectedCorpora)
+        {
+            registerEdit(corpus);
+            registered++;
+        }
+    skipIfEmpty(registered, "edit");
+}
+
 @("sdl.encode")
 @benchmark
 @system
@@ -554,6 +579,76 @@ private void registerEncode(SdlCorpus corpus)
         },
         metrics: [inputBytes(corpus.bytes)],
         labels: labelsFor(corpus, "encode"),
+        setup: () {
+            foreach (i, text; corpus.texts)
+            {
+                docs[i] = parseFor(corpus.kind, text);
+                if (docs[i].hasError)
+                    failed = true;
+            }
+        },
+        teardown: () {
+            foreach (ref doc; docs)
+                doc = Doc.init;
+        },
+    );
+}
+
+/// The `edit` row's change to one document, written into `output`.
+private bool editOnce(SdlDatasetKind kind)(ref Doc doc, scope const(char)[] text,
+    ref SdlString output)
+{
+    enum config = kind == SdlDatasetKind.document ? sdlFull : sdlDubRecipe;
+    auto editor = sdlEditor!config(doc.document, text);
+    auto root = doc.document.root;
+    if (root.childCount)
+        editor.setAttribute(root.byChild.front, SdlQualifiedName(null, "probe"), SdlScalar("edit"));
+    else
+        editor.append(root, "probe \"edit\"");
+    Mallocator allocator;
+    return !editor.write(output, allocator).hasError;
+}
+
+/// edit — parsed documents (untimed `setup`) → one lossless change each,
+/// resolved, re-parsed and written; the first iteration's output must hash
+/// to the committed edited fingerprint.
+private void registerEdit(SdlCorpus corpus)
+{
+    auto docs = new Doc[corpus.texts.length];
+    auto outputs = new SdlString[corpus.texts.length];
+    bool verified, failed;
+    benchCase(
+        name: "wired",
+        timed: () {
+            foreach (i, ref doc; docs)
+            {
+                outputs[i].clear(releaseStorage: false);
+                const done = corpus.kind == SdlDatasetKind.document
+                    ? editOnce!(SdlDatasetKind.document)(doc, corpus.texts[i], outputs[i])
+                    : editOnce!(SdlDatasetKind.recipes)(doc, corpus.texts[i], outputs[i]);
+                if (!done)
+                    failed = true;
+            }
+        },
+        after: () {
+            string error;
+            if (!verified)
+            {
+                verified = true;
+                SHA256 sha;
+                sha.start();
+                foreach (i, ref text; outputs)
+                    putDocument(sha, corpus.files[i], text[]);
+                SdlFingerprint actual;
+                actual.edited = failed ? "a parse or edit failed" : hexOf(sha);
+                error = diffSdl(corpus.expected, actual, false, false, false);
+                if (error.length)
+                    error = "edit fingerprint mismatch:" ~ error;
+            }
+            return verdict(error);
+        },
+        metrics: [inputBytes(corpus.bytes)],
+        labels: labelsFor(corpus, "edit"),
         setup: () {
             foreach (i, text; corpus.texts)
             {
