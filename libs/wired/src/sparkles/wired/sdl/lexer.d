@@ -1276,6 +1276,29 @@ private uint monthDays(SdlParserConfig config)(long year, ulong month)
     return month == 2 && leapYear!config(year) ? 29 : days[month - 1];
 }
 
+/** The `Date` of a validated proleptic Gregorian civil date, without the
+throwing field constructor: Hinnant's days-from-civil, shifted to `Date`'s
+day 1 (January 1 of year 1). */
+private Date civilDate(long year, ulong month, ulong day) @safe pure nothrow @nogc
+{
+    const y = month <= 2 ? year - 1 : year;
+    const era = (y >= 0 ? y : y - 399) / 400;
+    const yearOfEra = y - era * 400;
+    const dayOfYear = (153 * (month > 2 ? month - 3 : month + 9) + 2) / 5 + day - 1;
+    const dayOfEra = yearOfEra * 365 + yearOfEra / 4 - yearOfEra / 100 + dayOfYear;
+    const daysFrom1970 = era * 146_097 + dayOfEra - 719_468;
+    return Date(cast(int)(daysFrom1970 + 719_163));
+}
+
+@("sdl.lexer.civilDate.matchesPhobos")
+@safe pure unittest
+{
+    static immutable int[3][8] dates = [[2024, 2, 29], [1970, 1, 1], [1, 1, 1], [0, 3, 1],
+        [-1, 12, 31], [-400, 2, 29], [32_767, 12, 31], [-32_768, 1, 1]];
+    foreach (d; dates)
+        assert(civilDate(d[0], d[1], d[2]) == Date(d[0], d[1], d[2]));
+}
+
 private SdlExpected!Date decodeDatePart(SdlParserConfig config)(
     scope const(char)[] raw,
     in SdlToken token) @safe pure nothrow
@@ -1292,12 +1315,11 @@ private SdlExpected!Date decodeDatePart(SdlParserConfig config)(
             negativeYear ? -cast(long) year : cast(long) year, month))
         return sdlErr!Date(decodeError(SdlErrorCode.invalidDate, token,
             "date fields are invalid"));
-    try
-        return sdlOk(Date(negativeYear ? -cast(int) year : cast(int) year,
-            cast(int) month, cast(int) day));
-    catch (Exception)
+    const signedYear = negativeYear ? -cast(long) year : cast(long) year;
+    if (signedYear < short.min || signedYear > short.max)
         return sdlErr!Date(decodeError(SdlErrorCode.invalidDate, token,
             "date is outside the representable Date range"));
+    return sdlOk(civilDate(signedYear, month, day));
 }
 
 private SdlExpected!SdlDateTime decodeDateTimePart(SdlParserConfig config)(
