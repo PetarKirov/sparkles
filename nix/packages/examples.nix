@@ -358,6 +358,15 @@
         artifacts: examplePath:
         let
           info = exampleInfo examplePath;
+          leaks = [
+            pkgs.ldc
+          ]
+          ++ lib.optionals (pkgs.ldc ? unwrapped) [ pkgs.ldc.unwrapped ]
+          ++ lib.optionals (pkgs.ldc ? include) [ pkgs.ldc.include ]
+          ++ [
+            pkgs.curl.out
+            pkgs.tzdata
+          ];
         in
         mkDubDerivation (
           commonExampleArgs
@@ -383,19 +392,12 @@
             # run-all-examples runner exercises them all — so scrub and
             # disallow all three. NB: `pkgs.curl.out` — libcurl's output; bare
             # `pkgs.curl` coerces to the `-bin` output.
-            disallowedReferences = [
-              pkgs.ldc
-            ]
-            ++ lib.optionals (pkgs.ldc ? include) [ pkgs.ldc.include ]
-            ++ [
-              pkgs.curl.out
-              pkgs.tzdata
-            ];
+            # The compiler underneath the `pkgs.ldc` join goes too: druntime's
+            # asserts name *its* path, not the join's (build-sparkles-app.nix).
+            disallowedReferences = leaks;
             preFixup = ''
               find "$out" -type f -exec remove-references-to \
-                -t ${pkgs.ldc} ${
-                  lib.optionalString (pkgs.ldc ? include) "-t ${pkgs.ldc.include}"
-                } -t ${pkgs.curl.out} -t ${pkgs.tzdata} '{}' +
+                ${lib.concatMapStringsSep " " (r: "-t ${r}") leaks} '{}' +
             '';
 
             # The example carries its own inline `dub.sdl` block, so this is
