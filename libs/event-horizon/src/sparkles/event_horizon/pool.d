@@ -27,7 +27,6 @@ version (Posix)  :  // rides Sched; CPU pinning is linux-guarded internally
 
 import core.atomic : atomicFence, atomicFetchAdd, atomicFetchSub, atomicLoad,
     atomicOp, atomicStore, cas, MemoryOrder;
-import core.sync.mutex : Mutex;
 import core.thread : Thread;
 import core.time : Duration, usecs;
 

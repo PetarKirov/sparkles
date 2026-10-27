@@ -8,11 +8,11 @@ execution, completion polling, and shutdown use fixed rings.
 */
 module sparkles.event_horizon.raw_pool;
 
-import core.sync.condition : Condition;
-import core.sync.mutex : Mutex;
 import core.thread : Thread;
 
 import std.parallelism : totalCPUs;
+
+import sparkles.base.sync : Condition, Mutex;
 
 /// Work callback. The context remains caller-owned and address-stable.
 alias RawJobFn = void function(void*) @safe nothrow @nogc;
@@ -95,8 +95,7 @@ if (QueueCapacity > 0 && CompletionCapacity > 0)
         size_t startedThreads;
         try
         {
-            pool._mutex = new Mutex;
-            pool._available = new Condition(pool._mutex);
+            pool._started = true;
             pool._workers = workers != 0 ? workers : cast(uint) totalCPUs;
             if (pool._workers == 0)
                 pool._workers = 1;
@@ -115,19 +114,17 @@ if (QueueCapacity > 0 && CompletionCapacity > 0)
         }
         catch (Throwable)
         {
-            if (pool._mutex !is null)
             {
-                pool._mutex.lock_nothrow();
+                auto g = pool._mutex.guard();
                 pool._state = RawPoolState.cancelling;
-                if (pool._available !is null)
-                    notifyAllNoThrow(pool._available);
-                pool._mutex.unlock_nothrow();
+                pool._available.notifyAll();
             }
             foreach (i; 0 .. startedThreads)
                 joinNoThrow(pool._threads[i]);
             pool._threads = null;
             pool._workers = 0;
             pool._state = RawPoolState.stopped;
+            pool._started = false;
             return RawPoolResult.startFailed;
         }
     }
@@ -140,11 +137,10 @@ if (QueueCapacity > 0 && CompletionCapacity > 0)
     {
         if (job.run is null)
             return RawPoolResult.invalidJob;
-        if (_mutex is null)
+        if (!_started)
             return RawPoolResult.notStarted;
 
-        _mutex.lock_nothrow();
-        scope (exit) _mutex.unlock_nothrow();
+        auto g = _mutex.guard();
         final switch (_state)
         {
         case RawPoolState.stopped:
@@ -166,7 +162,7 @@ if (QueueCapacity > 0 && CompletionCapacity > 0)
         ++_jobCount;
         if (job.complete !is null)
             ++_completionReserved;
-        notifyOneNoThrow(_available);
+        _available.notifyOne();
         return RawPoolResult.accepted;
     }
 
@@ -178,10 +174,9 @@ if (QueueCapacity > 0 && CompletionCapacity > 0)
         @trusted nothrow @nogc
     {
         completion = RawCompletion.init;
-        if (_mutex is null)
+        if (!_started)
             return RawPoolResult.notStarted;
-        _mutex.lock_nothrow();
-        scope (exit) _mutex.unlock_nothrow();
+        auto g = _mutex.guard();
         if (_completionCount == 0)
             return RawPoolResult.noCompletion;
         completion = _completions[_completionHead];
@@ -199,47 +194,37 @@ if (QueueCapacity > 0 && CompletionCapacity > 0)
     */
     RawPoolResult shutdown(bool drain = true) @trusted nothrow @nogc
     {
-        if (_mutex is null)
-            return RawPoolResult.accepted;
-        _mutex.lock_nothrow();
-        if (_state == RawPoolState.stopped)
         {
-            _mutex.unlock_nothrow();
-            return RawPoolResult.accepted;
-        }
-        _state = drain ? RawPoolState.draining : RawPoolState.cancelling;
-        if (!drain)
-        {
-            while (_jobCount != 0)
+            auto g = _mutex.guard();
+            if (_state == RawPoolState.stopped)
+                return RawPoolResult.accepted;
+            _state = drain ? RawPoolState.draining : RawPoolState.cancelling;
+            if (!drain)
             {
-                auto job = popJobLocked();
-                publishCompletionLocked(job, true);
+                while (_jobCount != 0)
+                {
+                    auto job = popJobLocked();
+                    publishCompletionLocked(job, true);
+                }
             }
+            _available.notifyAll();
         }
-        notifyAllNoThrow(_available);
-        _mutex.unlock_nothrow();
 
         foreach (thread; _threads)
             joinNoThrow(thread);
 
-        _mutex.lock_nothrow();
+        auto g = _mutex.guard();
         _state = RawPoolState.stopped;
         _threads = null;
         _workers = 0;
-        _mutex.unlock_nothrow();
         return RawPoolResult.accepted;
     }
 
     ~this() @trusted nothrow
     {
-        // A destructor can run during GC finalization (a heap owner swept at
-        // `gc_term`), where the pool's Mutex/Condition class instances may
-        // already have been finalized — finalization order is unspecified —
-        // and locking a dead mutex crashes. A pool the owner already stopped
-        // has nothing left to do, so it must not touch its sync objects
-        // again; `_state` is safely `stopped` here because `shutdown` joined
-        // every worker before storing it.
-        if (_state == RawPoolState.stopped || _mutex is null)
+        // `_state` is safely `stopped` here once `shutdown` has joined every
+        // worker; a stopped pool has nothing left to do.
+        if (_state == RawPoolState.stopped)
             return;
         cast(void) shutdown(true);
     }
@@ -249,26 +234,24 @@ private:
     {
         for (;;)
         {
-            pool._mutex.lock_nothrow();
-            while (pool._jobCount == 0
-                && pool._state == RawPoolState.running)
-                waitNoThrow(pool._available);
-            if (pool._jobCount == 0
-                && pool._state != RawPoolState.running)
+            RawJob job;
             {
-                pool._mutex.unlock_nothrow();
-                return;
+                auto g = pool._mutex.guard();
+                while (pool._jobCount == 0
+                    && pool._state == RawPoolState.running)
+                    pool._available.wait(g);
+                if (pool._jobCount == 0
+                    && pool._state != RawPoolState.running)
+                    return;
+                job = pool.popJobLocked();
             }
-            auto job = pool.popJobLocked();
-            pool._mutex.unlock_nothrow();
 
             job.run(job.context);
 
             if (job.complete !is null)
             {
-                pool._mutex.lock_nothrow();
+                auto g = pool._mutex.guard();
                 pool.publishCompletionLocked(job, false);
-                pool._mutex.unlock_nothrow();
             }
         }
     }
@@ -295,6 +278,8 @@ private:
 
     Mutex _mutex;
     Condition _available;
+    /// `start` has run once; completions stay pollable after a shutdown.
+    bool _started;
     Thread[] _threads;
     uint _workers;
     RawPoolState _state;
@@ -311,38 +296,15 @@ private:
     size_t _completionReserved;
 }
 
-// DRuntime's synchronization methods conservatively expose throwing/GC
-// signatures because they construct a SyncError on an impossible OS failure.
-// The underlying successful calls neither throw nor allocate. These wrappers
-// narrow the attributes at the one reviewed system seam; an actual primitive
-// failure terminates rather than escaping a public `nothrow` operation.
-private void notifyOneNoThrow(Condition condition) @trusted nothrow @nogc
-{
-    alias Notify = void function(Condition) nothrow @nogc;
-    (cast(Notify) &notifyOne)(condition);
-}
-
-private void notifyAllNoThrow(Condition condition) @trusted nothrow @nogc
-{
-    alias Notify = void function(Condition) nothrow @nogc;
-    (cast(Notify) &notifyAll)(condition);
-}
-
-private void waitNoThrow(Condition condition) @trusted nothrow
-{
-    alias Wait = void function(Condition) nothrow;
-    (cast(Wait) &waitOne)(condition);
-}
-
+// `Thread.join` conservatively exposes a throwing, GC-allocating signature;
+// with `rethrow = false` it neither throws nor allocates. This wrapper narrows
+// the attributes at that one reviewed seam.
 private void joinNoThrow(Thread thread) @trusted nothrow @nogc
 {
     alias Join = Throwable function(Thread, bool) nothrow @nogc;
     cast(void)(cast(Join) &joinOne)(thread, false);
 }
 
-private void notifyOne(Condition condition) => condition.notify();
-private void notifyAll(Condition condition) => condition.notifyAll();
-private void waitOne(Condition condition) => condition.wait();
 private Throwable joinOne(Thread thread, bool rethrow_) => thread.join(rethrow_);
 
 @("rawPool.executesAndCompletesExactlyOnce")
