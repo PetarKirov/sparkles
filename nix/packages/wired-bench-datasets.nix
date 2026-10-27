@@ -129,9 +129,28 @@ let
       decompress = "none";
     }
   ];
+
+  # The SDL rows' corpus (libs/wired/bench/runtime, `sdl.*` tests): the
+  # repository's own `dub.sdl` recipes at one pinned commit of `main`, fetched
+  # as a fixed-output derivation that keeps only those files. The other two
+  # SDL datasets are derived from it (and from nothing else) by
+  # libs/wired/bench/runtime/tools/gen-sdl-datasets.d. Moving the pin changes
+  # every SDL dataset: regenerate the fingerprints in
+  # libs/wired/bench/runtime/src/sparkles/wired_bench/sdl.d with it.
+  sdlRecipes = {
+    owner = "PetarKirov";
+    repo = "sparkles";
+    rev = "020926d5c76a43b786f3b81658338a3b224393c6";
+    hash = "sha256-0hXh618BFO09vbffRJ8de4fBGutfW+NojhFtz8ujb5g=";
+  };
 in
 {
-  inherit light medium huge;
+  inherit
+    light
+    medium
+    huge
+    sdlRecipes
+    ;
   bundled = light;
   external = medium ++ huge;
   all = light ++ medium ++ huge;
