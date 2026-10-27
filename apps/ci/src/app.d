@@ -3748,21 +3748,42 @@ unittest
 /// ignores the flag, runs the ordinary unittests and exits 0 — a green that
 /// means nothing. Better to leave such a package out than to report success
 /// for a mode that never ran.
-bool integratesTestRunner(scope const(char)[] dubConfig) @safe pure nothrow
+///
+/// The recipe is read through the `dub.sdl` schema, in every scope that can
+/// declare either: the top level, each configuration and each build type. A
+/// comment that mentions the runner does not count.
+bool integratesTestRunner(scope const(char)[] dubConfig) @safe pure
 {
-    import std.algorithm.searching : canFind;
+    import std.algorithm.searching : any, canFind, endsWith;
+    import sparkles.build_primitives.dub_manifest : DubBuildSettings, parseDubManifest,
+        valuesOf;
 
-    return dubConfig.canFind("test-runner");
+    static bool wires(scope const DubBuildSettings settings)
+        => settings.dependencies.any!(d => d.name == "sparkles:test-runner")
+            || settings.sourcePaths.valuesOf.any!(p => p.endsWith("test-runner/src"));
+
+    const parsed = parseDubManifest(dubConfig);
+    if (parsed.hasError)
+        return false;
+    const manifest = parsed.value;
+    return wires(manifest.buildSettings)
+        || manifest.configurations.any!(c => wires(c.buildSettings))
+        || manifest.buildTypes.any!(b => wires(b.buildSettings));
 }
 
 @("ci.integratesTestRunner")
-@safe pure nothrow
+@safe pure
 unittest
 {
     assert(integratesTestRunner(`    dependency "sparkles:test-runner" path="../.."`));
-    assert(integratesTestRunner(`    sourcePaths "../test-runner/src" "../test-runner-impl/src"`));
+    assert(integratesTestRunner(`configuration "unittest" {
+    sourcePaths "../test-runner/src" "../test-runner-impl/src"
+}`));
     assert(!integratesTestRunner(`dependency "sparkles:base" path="../.."`));
     assert(!integratesTestRunner(""));
+    // A comment, or a package merely named like it, is not the runner.
+    assert(!integratesTestRunner("// test-runner comes later\nname \"x\"\n"));
+    assert(!integratesTestRunner(`dependency "test-runner-extras" version="*"`));
 }
 
 /// The modes any `.d` file under `packagePath` opts into — empty for a
@@ -4801,15 +4822,18 @@ private bool precededBySkipDirective(const(char[])[] lines, size_t codeStart)
     return s.startsWith(openTag) && s.endsWith(closeTag);
 }
 
-/// Checks if code lines represent a dub single-file program.
-@safe pure nothrow @nogc
+/// Checks if code lines represent a dub single-file program: a `dub`
+/// shebang, an embedded SDL recipe (the shared locator), and a `main`.
+@safe pure
 private bool isDubSingleFileBlock(const(char[])[] codeLines)
 {
-    if (codeLines.length < 4)
+    import std.array : join;
+    import sparkles.wired.sdl : locateEmbeddedRecipe;
+
+    if (codeLines.length < 2 || !codeLines[0].strip.startsWith("#!/usr/bin/env dub"))
         return false;
-    if (!codeLines[0].strip.startsWith("#!/usr/bin/env dub"))
-        return false;
-    if (!codeLines[1].strip.startsWith("/+ dub.sdl:"))
+    const recipe = locateEmbeddedRecipe(codeLines.join('\n'));
+    if (!recipe.found || recipe.isJson)
         return false;
 
     bool hasMain = false;
@@ -5375,11 +5399,18 @@ private StandaloneExampleSpec detectStandaloneExampleSpec(string filePath)
 @safe pure
 private StandaloneExampleSpec parseStandaloneExampleSpec(const(char[])[] lines)
 {
+    import std.array : join;
+    import sparkles.wired.sdl : locateEmbeddedRecipe;
+
     enum metadataPrefixes = ["// ci:", "// run_md_examples:"];
 
-    bool insideDubSdl = false;
+    // The directives follow the embedded recipe, which the shared locator
+    // finds and ends at its first `+/`, as DUB does.
+    const text = lines.join('\n');
+    const recipe = locateEmbeddedRecipe(text);
+    const rest = recipe.found ? text[recipe.close.endOffset .. $] : text;
 
-    foreach (line; lines)
+    foreach (line; rest.lineSplitter)
     {
         const stripped = line.strip;
 
@@ -5388,19 +5419,6 @@ private StandaloneExampleSpec parseStandaloneExampleSpec(const(char[])[] lines)
 
         if (stripped.startsWith("#!"))
             continue;
-
-        if (insideDubSdl)
-        {
-            if (stripped.startsWith("+/"))
-                insideDubSdl = false;
-            continue;
-        }
-
-        if (stripped.startsWith("/+ dub.sdl:"))
-        {
-            insideDubSdl = true;
-            continue;
-        }
 
         // A `module …;` declaration may sit between the recipe and the
         // directive. It is not a comment, so without this the scan would stop
