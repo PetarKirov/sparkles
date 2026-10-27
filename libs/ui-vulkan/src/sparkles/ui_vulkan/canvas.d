@@ -26,17 +26,19 @@ import expected : err, ok;
 
 import sparkles.base.buffer : UniqueBuffer;
 import sparkles.base.term_color : RgbColor;
-import sparkles.shaders : v2;
+import sparkles.shaders : v2, v4;
 import sparkles.shaders.layout : Rule, writeLayout;
 import sparkles.ui.canvas : isCanvas;
 import sparkles.ui.geometry : Size;
 import sparkles.ui.image : ImageHandle, ImageRegistry;
 import sparkles.ui_vulkan.frame_buffers : BufferSlice, FrameBuffers;
+import sparkles.ui_vulkan.glyph_atlas : AtlasGlyph, AtlasOutcome, DirtyRegion, GlyphAtlas;
 import sparkles.ui_vulkan.painter;
 import sparkles.ui_vulkan.pipelines;
 import sparkles.ui_vulkan.resources : GpuImage;
 import sparkles.ui_vulkan.shading : Binding, CanvasView, Instance, srgbToLinear;
 import sparkles.ui_vulkan.upload : transition, Uploads;
+import sparkles.font : Ppem;
 import sparkles.vulkan;
 
 /// The space a canvas composites in (`UVK6`, `UVX6`).
@@ -85,11 +87,22 @@ static assert(vertex13[0] == spirvMagic && fragment13[0] == spirvMagic
 struct CanvasImages
 {
     private ImageOutcome delegate(ImageHandle, out uint, out Size) @system resolve_;
+    private GlyphOutcome delegate(dchar, FaceStyle, out GlyphQuad) @system glyph_;
+    private const(TextMetrics)* metrics_;
 
     /// See `isImageSource`.
     ImageOutcome resolve(ImageHandle handle, out uint slot, out Size size) @system
         => resolve_(handle, slot, size);
+
+    /// See `isGlyphSource`.
+    GlyphOutcome resolveGlyph(dchar cp, FaceStyle style, out GlyphQuad quad) @system
+        => glyph_ is null ? GlyphOutcome.noGlyph : glyph_(cp, style, quad);
+
+    /// ditto
+    TextMetrics textMetrics() const @system => metrics_ is null ? TextMetrics.init : *metrics_;
 }
+
+static assert(isGlyphSource!CanvasImages);
 
 /**
 The canvas. Create it with $(LREF create); it is address-pinned and not
@@ -155,6 +168,13 @@ struct VulkanCanvas(B)
     private ulong serial_ = 1;
     private Painter!CanvasImages painter_;
 
+    // The cell font text draws in, and its glyphs (`UVK18`; interim, `UVX12`).
+    private GlyphAtlas atlas_;
+    private CellFace[FaceStyle.max + 1] faces_; // by `FaceStyle`; a missing style draws regular
+    private TextMetrics textMetrics_;
+    private uint faceSerial_;
+    private UniqueBuffer!GpuImage atlasImages_;
+
     private bool inFrame_, lost_;
     private CanvasTarget target_;
     private VkCommandBuffer commands_;
@@ -185,7 +205,7 @@ struct VulkanCanvas(B)
         c.facts_ = facts;
         c.config_ = config;
         c.registry_ = registry;
-        c.painter_.images = CanvasImages(&c.resolveImage);
+        c.painter_.images = CanvasImages(&c.resolveImage, &c.resolveGlyph, &c.textMetrics_);
         foreach (_; 0 .. config.frameSlots)
             c.inFlight_.put(0);
         auto made = c.createAll();
@@ -237,6 +257,9 @@ struct VulkanCanvas(B)
         inFlight_[][slot] = 0;
         destroyRetired();
         evictGone();
+        // A full atlas starts over: what this frame draws rasterizes again.
+        if (atlas_.overflowed)
+            atlas_.reset();
         buffers_.reset(slot);
         foreach (ref p; pools_[])
             if (p.slot == slot)
@@ -303,6 +326,13 @@ struct VulkanCanvas(B)
             auto flushed = memory_.flush(vertices.region);
             if (flushed.hasError)
                 return fail!FrameReport(flushed.error);
+        }
+        // The atlas's pages on the device, and what was rasterized into them
+        // this frame, staged before the draws that read it.
+        {
+            const r = stageAtlas();
+            if (r < 0)
+                return fail!FrameReport(r);
         }
         UniqueBuffer!VkDescriptorSet sets;
         foreach (ref run; painter_.runs)
@@ -387,7 +417,135 @@ struct VulkanCanvas(B)
             retire(e.image);
             e = CachedImage.init;
         }
+        // The glyph atlas too, between frames: its glyphs rasterize again as
+        // they are drawn.
+        if (!inFrame_)
+        {
+            foreach (ref page; atlasImages_[])
+                retire(page);
+            atlasImages_.clear();
+            atlas_.reset();
+        }
     }
+
+    /**
+    Binds the cell font text draws in (`UVK18`; interim, `UVX12`): its faces
+    by `FaceStyle` — the regular one required, a missing style drawing in it —
+    each `faces[s]`'s bytes outliving the canvas or the next call, at `ppem`
+    pixels per em, placed in a cell by `metrics`. False, with text drawing
+    nothing, when the regular face cannot be opened.
+    */
+    bool cellFont(const(ubyte)[][FaceStyle.max + 1] faces, Ppem ppem, in TextMetrics metrics)
+        @system
+    {
+        textMetrics_ = TextMetrics.init;
+        foreach (style, bytes; faces)
+        {
+            auto bound = CellFace.open(bytes, ppem);
+            if (!bound.bytes.length && style == FaceStyle.regular)
+            {
+                faces_[] = CellFace.init;
+                return false;
+            }
+            // A face's glyphs keep their atlas entries across a size change;
+            // other bytes are another face.
+            if (bytes.ptr !is faces_[style].bytes.ptr || bytes.length != faces_[style].bytes.length)
+                bound.serial = ++faceSerial_;
+            else
+                bound.serial = faces_[style].serial;
+            faces_[style] = bound;
+        }
+        textMetrics_ = metrics;
+        textMetrics_.present = true;
+        return true;
+    }
+
+    /// ditto, the regular face alone at a whole number of pixels per em
+    bool cellFont(const(ubyte)[] regular, uint ppem, in TextMetrics metrics) @system
+    {
+        const(ubyte)[][FaceStyle.max + 1] faces;
+        faces[FaceStyle.regular] = regular;
+        const em = Ppem.fromInteger(ppem);
+        return em.hasValue && cellFont(faces, em.value, metrics);
+    }
+
+    // A codepoint's glyph in the cell font's face of `style`, from the atlas
+    // (`isGlyphSource`).
+    private GlyphOutcome resolveGlyph(dchar cp, FaceStyle style, out GlyphQuad quad) @system
+    {
+        if (!textMetrics_.present)
+            return GlyphOutcome.noGlyph;
+        auto face = &faces_[faces_[style].bytes.length ? style : FaceStyle.regular];
+        const gid = face.map.glyph(cp);
+        if (gid == 0)
+            return cp == ' ' ? GlyphOutcome.blank : GlyphOutcome.noGlyph;
+        AtlasGlyph g;
+        final switch (atlas_.get(face.inst, face.serial, gid, face.ppem, g))
+        {
+            case AtlasOutcome.placed:
+                enum float side = GlyphAtlas.pageSize;
+                quad = GlyphQuad(g.page + 1, v4(g.x / side, g.y / side,
+                    (g.x + g.width) / side, (g.y + g.height) / side),
+                    g.width, g.height, g.bearingX, g.bearingY);
+                return GlyphOutcome.drawn;
+            case AtlasOutcome.blank:
+                return GlyphOutcome.blank;
+            case AtlasOutcome.refused:
+                return GlyphOutcome.refused;
+            case AtlasOutcome.full:
+                return GlyphOutcome.full;
+        }
+    }
+
+    // The atlas's pages made on the device, and the regions rasterized since
+    // the last frame staged into them.
+    private VkResult stageAtlas() @system
+    {
+        enum side = GlyphAtlas.pageSize;
+        while (atlasImages_.length < atlas_.pageCount)
+        {
+            GpuImage page;
+            auto made = GpuImage.create(page, *device_, *memory_, VkFormat.VK_FORMAT_R8_UNORM,
+                VkExtent2D(side, side), VkImageUsageFlagBits.VK_IMAGE_USAGE_SAMPLED_BIT
+                | VkImageUsageFlagBits.VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+            if (made.hasError)
+                return made.error;
+            atlasImages_.put(page);
+        }
+        VkResult result = VkResult.VK_SUCCESS;
+        ubyte[] rows;
+        atlas_.takeDirty((in DirtyRegion d) {
+            if (result < 0)
+                return;
+            const pixels = atlas_.page(d.page);
+            const(ubyte)[] data = pixels;
+            if (!d.whole)
+            {
+                rows.length = size_t(d.width) * d.height;
+                foreach (y; 0 .. d.height)
+                {
+                    const from = size_t(d.y + y) * side + d.x;
+                    rows[size_t(y) * d.width .. size_t(y + 1) * d.width] =
+                        pixels[from .. from + d.width];
+                }
+                data = rows;
+            }
+            auto staged = uploads_.stage(slot_, atlasImages_[][d.page].handle,
+                d.whole ? VkImageLayout.VK_IMAGE_LAYOUT_UNDEFINED
+                    : VkImageLayout.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                data, 1, VkOffset2D(d.x, d.y), VkExtent2D(d.width, d.height));
+            if (staged.hasError)
+                result = staged.error;
+        });
+        return result;
+    }
+
+    /// A label's size in device pixels, as `labelPx` lays it out in the
+    /// cell of the last frame begun.
+    int[2] labelSizePx(scope const(char)[] text) const @system => painter_.labelSizePx(text);
+
+    /// How many glyph atlas pages are on the device.
+    size_t atlasPages() const => atlasImages_.length;
 
     /**
     Forgets the framebuffers made for the target views handed in so far,
@@ -422,6 +580,9 @@ struct VulkanCanvas(B)
             if (e.handle.valid)
                 e.image.destroy(*device_, *memory_);
         images_.clear();
+        foreach (ref page; atlasImages_[])
+            page.destroy(*device_, *memory_);
+        atlasImages_.clear();
         placeholder_.destroy(*device_, *memory_);
         foreach (ref p; pools_[])
             device_.destroyDescriptorPool(device_.device, p.pool, null);
@@ -477,7 +638,7 @@ struct VulkanCanvas(B)
     static foreach (name; ["fillRect", "textRun", "textRunIn", "glyph", "line", "rule",
             "scrollbar", "image", "pushClip", "popClip", "pushShift", "popShift", "pushEffect",
             "popEffect", "fillPx", "outlinePx", "clipPx", "unclipPx", "pushOffsetPx",
-            "popOffsetPx", "imageQuadPx", "imageSourcePx"])
+            "popOffsetPx", "imageQuadPx", "imageSourcePx", "clusterPx", "labelPx"])
         mixin("/// Through `Painter." ~ name ~ "`; only between `beginFrame` and `endFrame`.\n"
             ~ "void " ~ name ~ "(Args...)(auto ref Args args) @system\n"
             ~ "in (inFrame_, \"drawing outside a frame\")\n"
@@ -728,7 +889,8 @@ struct VulkanCanvas(B)
         VkDescriptorImageInfo[5] infos;
         // Atlas pages arrive with glyphs (plan slice V3); until then both
         // read the placeholder.
-        infos[0] = sampled(placeholder_.view);
+        infos[0] = sampled(images.coveragePage == 0 ? placeholder_.view
+            : atlasImages_[][images.coveragePage - 1].view);
         infos[1] = sampled(placeholder_.view);
         infos[2] = sampled(images.image == 0 ? placeholder_.view
             : images_[][images.image - 1].image.view);
@@ -855,3 +1017,36 @@ static assert(isCanvas!(VulkanCanvas!DeviceMemoryBackend));
 static foreach (method; ["textRunIn", "rule", "scrollbar", "image", "pushClip", "popClip",
         "pushShift", "popShift", "pushEffect", "popEffect"])
     static assert(__traits(hasMember, VulkanCanvas!DeviceMemoryBackend, method));
+
+// The cell font as the canvas draws with it: the bytes it borrows, the face,
+// its character map, and the instance at the cell size.
+private struct CellFace
+{
+    import sparkles.font : CharMap, Face, Instance, Ppem;
+
+    const(ubyte)[] bytes;
+    Face face;
+    CharMap map;
+    Instance inst;
+    Ppem ppem;
+    uint serial; // the atlas's key for this face
+
+    // `bytes` at `ppem`, or `CellFace.init` when they hold no usable face.
+    static CellFace open(const(ubyte)[] bytes, Ppem size) @system
+    {
+        import sparkles.font : charMap, instance, InstanceSize, openFace;
+
+        if (!bytes.length)
+            return CellFace.init;
+        auto face = openFace(bytes);
+        if (face.hasError)
+            return CellFace.init;
+        auto map = charMap(face.value);
+        if (map.hasError)
+            return CellFace.init;
+        auto inst = instance(face.value, InstanceSize.pixels(size), null);
+        if (inst.hasError)
+            return CellFace.init;
+        return CellFace(bytes, face.value, map.value, inst.value, size);
+    }
+}

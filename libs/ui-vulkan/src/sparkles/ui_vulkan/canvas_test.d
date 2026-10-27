@@ -981,3 +981,92 @@ private ubyte[] twoColourImage()
         rig.close();
     }
 }
+
+@("ui_vulkan.canvas.aGlyphReadsBackAsTheFontRasterizesIt")
+@system unittest
+{
+    // Canvas scenario 21 (`UVK18`, `UVK21`): a glyph drawn at a whole-pixel
+    // position through the atlas reads back exactly as `sparkles:font`
+    // rasterizes it — the oracle is the library's own `rasterizeGlyph`, called
+    // here, not the atlas — placed by its bearings from the cell's baseline.
+    if (!readbackEnabled)
+        return skipTest(readbackSkipReason);
+    import std.file : read;
+    import std.path : buildPath;
+    import std.process : environment;
+    import sparkles.font : charMap, instance, InstanceSize, openFace, Ppem, RasterRegion,
+        RasterWorkspace, rasterizeGlyph, rasterMeasure;
+    import sparkles.font : OutlinePoint, OutlineSegment;
+    import sparkles.ui_vulkan.painter : TextMetrics;
+
+    const dir = environment.get("SPARKLES_FONTS_PATH");
+    assert(dir !is null, "SPARKLES_FONTS_PATH is unset: run inside `nix develop`");
+    const bytes = cast(const(ubyte)[]) read(dir.buildPath("DejaVuSansMono.ttf"));
+
+    enum ppem = 24, ascent = 22;
+    auto rig = new Rig;
+    rig.open("ui-vulkan-glyph", 80, 60);
+    scope (success)
+        rig.close();
+    assert(rig.canvas.cellFont(bytes, ppem, TextMetrics(ascent: ascent, underlineY: 24,
+        underlineHeight: 1, strikeY: 14)));
+
+    // The oracle: glyph 'A' at 24 ppem, from the library.
+    auto face = openFace(bytes).value;
+    const size = Ppem.fromInteger(ppem).value;
+    auto inst = instance(face, InstanceSize.pixels(size), null).value;
+    const gid = charMap(face).value.glyph('A');
+    auto segments = new OutlineSegment[4096];
+    auto points = new OutlinePoint[4096];
+    auto onCurve = new bool[4096];
+    auto ends = new ushort[1024];
+    auto ws = RasterWorkspace(segments, points, onCurve, ends, new float[1 << 16],
+        new ubyte[1 << 16]);
+    const m = rasterMeasure(inst, gid, size, ws).value;
+    auto coverage = new ubyte[m.width * m.height];
+    cast(void) rasterizeGlyph(inst, gid, size, RasterRegion(coverage, m.width, m.width, m.height), ws);
+
+    const metrics = FrameMetrics(cellW: 14, cellH: 28);
+    const frame = rig.draw((ref Canvas c) {
+        c.glyph(Point(1, 1), 'A', Visual(fg: white, fgAlpha: 255));
+    }, metrics, black);
+    // Pen at cell (1, 1)'s left edge; the box's top at the baseline less the bearing.
+    const left = metrics.cellW + m.bearingX, top = metrics.cellH + ascent - m.bearingY;
+    foreach (y; 0 .. 60)
+        foreach (x; 0 .. 80)
+        {
+            const inBox = x >= left && x < left + m.width && y >= top && y < top + m.height;
+            const want = inBox ? coverage[(y - top) * m.width + (x - left)] : 0;
+            const got = pixel(frame, 80, x, y)[0];
+            assert(got == want, format("(%s, %s): %s, the rasterizer has %s", x, y, got, want));
+        }
+}
+
+@("ui_vulkan.canvas.textCountsWhatItCannotDraw")
+@system unittest
+{
+    // A codepoint the cell font lacks is `noGlyph`; a cluster of several
+    // codepoints draws its first and counts `unshapedCluster` (`UVK19`).
+    if (!readbackEnabled)
+        return skipTest(readbackSkipReason);
+    import std.file : read;
+    import std.path : buildPath;
+    import std.process : environment;
+    import sparkles.ui_vulkan.painter : Degradation, TextMetrics;
+
+    const bytes = cast(const(ubyte)[]) read(
+        environment.get("SPARKLES_FONTS_PATH").buildPath("DejaVuSansMono.ttf"));
+    auto rig = new Rig;
+    rig.open("ui-vulkan-text-counts", 64, 32);
+    scope (success)
+        rig.close();
+    assert(rig.canvas.cellFont(bytes, 18, TextMetrics(ascent: 14, underlineY: 16,
+        underlineHeight: 1, strikeY: 10)));
+    FrameReport report;
+    cast(void) rig.draw((ref Canvas c) {
+        c.textRun(Point(0, 0), "a一é", Visual(fg: white, fgAlpha: 255));
+    }, FrameMetrics(cellW: 10, cellH: 20), black, report);
+    assert(report[Degradation.noGlyph] == 1, "DejaVu has no CJK");
+    assert(report[Degradation.unshapedCluster] == 1, "e + combining acute");
+    assert(report[Degradation.glyphMiss] == 0);
+}

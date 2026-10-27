@@ -238,7 +238,8 @@ in the cell font and count as `missingFace`, as the reference canvas does.
 **UVK18: Glyph source.** Glyph pixels **must** come from `sparkles:font`'s
 glyph cache: coverage glyphs as single-channel atlas pages, colour glyphs as
 premultiplied RGBA pages. The canvas uploads the regions the cache reports
-written and owns no rasterizer.
+written and owns no rasterizer. Until the font library's cache exists, the canvas's
+interim atlas holds them, rasterized by `sparkles:font` (decision [`UVX12`](./decisions.md)).
 
 **UVK19: Clusters.** In a cell text run, each grapheme cluster **must**
 occupy the cells its display width gives. A cluster that one glyph of the
@@ -246,7 +247,9 @@ font's character map represents **must** draw that glyph. A cluster that
 needs shaping — a multi-codepoint emoji sequence, or a combining mark the
 face has no precomposed glyph for — **must** draw the glyph of its first
 codepoint and count as `unshapedCluster`, until the font library offers
-shaping.
+shaping. A codepoint none of the cell font's faces maps **must** draw nothing
+and count as `noGlyph`, until fallback faces arrive with the font library's
+catalog.
 
 **UVK20: Proportional text.** `textRunIn` **must** place glyphs by the
 face's advances, aligned within its rectangle as the operation's alignment

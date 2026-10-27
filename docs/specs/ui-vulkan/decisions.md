@@ -237,6 +237,43 @@ raylib arm's images did not change when it stopped using stb_image, and
 it inflates into a buffer sized by the header, so a hostile PNG cannot
 expand beyond the image it declares.
 
+## UVX12: An interim glyph atlas in the canvas until the font library's cache
+
+**Status.** Accepted (2026-10-27), interim.
+
+**Context.** V3 was planned on `sparkles:font`'s glyph cache and atlas, its
+startup slice S3, with the canvas implementing that cache's upload callback
+(`UVK18`). The font library's rasterizer landed with its M5, but S3 has not
+started, and other font work is in flight beside it.
+
+**Choice.** The canvas owns one glyph atlas, `sparkles.ui_vulkan.glyph_atlas`,
+until S3 replaces it:
+
+- **Pages and key.** Coverage glyphs are rasterized by `sparkles:font`'s
+  `rasterizeGlyph` into single-channel 1024² pages, at most four, packed in
+  shelves. They are keyed by face, exact `Ppem` (`FTM10`) and glyph, the key
+  S3 will use, so the canvas keeps its upload path when the source moves.
+- **Uploads.** Each frame uploads only the regions written since the last
+  one, and a page's first upload covers all of it.
+- **Exhaustion and refusals.** A full atlas starts over on the next frame,
+  counting `glyphMiss` and asking for another frame. A glyph the rasterizer
+  refuses is remembered, so it is not retried every frame.
+- **Faces.** The cell font's four faces (regular, bold, italic,
+  bold-italic) are found by their sibling files. A codepoint none of them
+  maps counts as `noGlyph`; fallback faces wait on the font library's
+  catalog.
+- **Size.** Glyphs draw at the em that gives the requested line height over
+  the face's `hhea` span: the scale the raylib arm's fonts use, so the two
+  arms' glyphs are one size. The cells stay as `sparkles:font` measured them.
+
+The canvas still owns no rasterizer of its own; it asks `sparkles:font` for
+every pixel.
+
+**Consequences.** Colour glyphs (emoji) wait on the font library's colour
+rasterization, and shaped clusters on its shaping (`UVK19`). Moving to S3
+replaces `glyph_atlas.d` and keeps the painter, the upload path and the
+scenarios.
+
 ## Open questions
 
 **UVQ1: Effects.** Multi-pass effects (bloom, the CRT tube) need offscreen targets, multi-pass
