@@ -543,7 +543,12 @@ static if (ringOps)
                 cast(void) resolve(t, g, ParkState.cancelled);
             else if (done.res >= 0 || done.res == -EAGAIN)
             {
-                submitRingWait(t);
+                // Written again at the next submission point: a dispatch
+                // cannot reap, so a submission from it could wait forever
+                // for a free entry (EFP22). Unwritten meanwhile, the sleep
+                // is the submission point's to resume (EFP8).
+                atomicStore(t.park.waitWritten, false);
+                t.owner.queueRingSleep(t);
                 return;
             }
             else
