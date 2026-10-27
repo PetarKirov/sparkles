@@ -359,9 +359,10 @@
         # terminal benchmarking: the third-party tools the harness pairs
         # with (see apps/terminal-benchmark/README.md)
         config.packages.vtebench
-        config.packages.termbench
         pkgs.cmatrix
       ]
+      # Not on Linux arm64 (nix/packages/bench-tools.nix).
+      ++ lib.optional (config.packages ? termbench) config.packages.termbench
       ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [
         # Headless Chromium for the sparkles:twoslash visual-regression check
         # (libs/twoslash/examples/visual-check.mjs): it lays out the rendered
