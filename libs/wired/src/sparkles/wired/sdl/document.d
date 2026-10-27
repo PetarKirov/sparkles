@@ -743,6 +743,11 @@ struct SdlNode
     bool hasBlock() const scope @safe pure nothrow @nogc
         => this.cell.hasBlock;
 
+    /// Positional value `index`, by index rather than by walking the range.
+    package SdlScalar valueAt(size_t index) const return scope @safe pure nothrow @nogc
+    in (index < valueCount, "no such value")
+        => (() @trusted => _core.values[_core.nodes[_cell].valueStart + index].value)();
+
     /// Forward range over positional values in source order.
     SdlValueRange byValue() const return scope @safe pure nothrow @nogc
     {
