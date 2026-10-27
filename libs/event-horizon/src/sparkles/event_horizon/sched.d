@@ -16,8 +16,9 @@ version (Posix) version = EhSchedStack;
 version (Windows) version = EhSchedStack;
 version (EhSchedStack)  :  // rides DefaultLoop; peer backends via backend.select
 
+import core.atomic : atomicLoad, atomicStore, cas, MemoryOrder;
 import core.lifetime : move;
-import core.stdc.errno : EAGAIN, EINVAL, ENOBUFS;
+import core.stdc.errno : EAGAIN, EINVAL, ENOBUFS, ETIMEDOUT;
 // druntime declares ENOTRECOVERABLE only where its C runtime does; macOS's
 // and FreeBSD's <sys/errno.h> have it too.
 version (OSX) private enum ENOTRECOVERABLE = 104;
@@ -35,7 +36,7 @@ import sparkles.event_horizon.backend.select : DefaultBackend;
 import sparkles.event_horizon.buffer : Buf;
 import sparkles.event_horizon.capability : SpawnOptions;
 import sparkles.event_horizon.cause : CancelContext, FiberContext, Interrupt,
-    InterruptKind, cancelTree, interruptRequested;
+    InterruptKind, cancelTree, interruptFiber, interruptRequested;
 import sparkles.event_horizon.errors;
 import sparkles.event_horizon.fiber_park : FiberParkState, fiberParker, resumeIfAsleep,
     writeRingSleep;
@@ -241,7 +242,7 @@ struct Sched
 
     ~this() @safe nothrow @nogc
     {
-        if (_destroyed)
+        if (_destroyed || _leaked)
             return;
         if (_liveFibers == 0)
             destroy();
@@ -513,26 +514,102 @@ struct Sched
         auto spawned = spawn(root);
         if (spawned.hasError)
             return spawned;
+        // A request names the run it reaches; the next run starts afresh,
+        // however this one ends — unless it ends leaked, never to run again.
+        scope (exit)
+            if (!_leaked)
+            {
+                _shutdownBegun = false;
+                atomicStore(_shutdownState, ShutdownState.none);
+            }
 
         while (_liveFibers > 0 || _loop.inFlight > 0)
         {
+            if (!_shutdownBegun
+                && atomicLoad!(MemoryOrder.acq)(_shutdownState) == ShutdownState.requested)
+                beginShutdown();
+            Duration timeout = Duration.max;
+            if (_shutdownBegun)
+            {
+                const now = MonoTime.currTime;
+                if (now >= _shutdownBy)
+                {
+                    // EFP21: what is still live may yet be woken from any
+                    // thread, so nothing of this scheduler may be freed.
+                    _leaked = true;
+                    return ioErr!void(ETIMEDOUT, OpKind.none, IoErrorStage.cancel,
+                        "the shutdown's grace period expired with fibers or operations live");
+                }
+                timeout = _shutdownBy - now;
+            }
             if (_readyHead is null && _liveFibers > 0 && _loop.inFlight == 0
                 && !_externalWakeUsed && _lotSleepers == 0
                 && _armedDeadlines is null && _armedAlarms is null)
                 assert(0, "deadlock: parked fibers with nothing in flight");
-            auto r = tickRecordingDefect();
+            auto r = tickRecordingDefect(timeout);
             if (r.hasError)
                 return ioErr!void(r.error);
         }
         return ioOk();
     }
 
+    /**
+    Asks this scheduler's `run` to shut down; callable from any thread, and
+    before the run starts (SPEC §11, fiber-parker.md EFP21). At its next
+    tick the owner cancels the outermost scope of every live fiber with
+    `InterruptKind.shutdown`, or interrupts a fiber no scope holds, so each
+    ends at its next cancellation point (SPEC §8.4). If fibers or
+    operations outlive `grace`, `run` returns `ETIMEDOUT` and the scheduler
+    is `leaked`: its storage must then never be freed, since a fiber still
+    parked can be woken later from any thread. So a scheduler that may be
+    asked to shut down must not live in a frame that ends while it runs:
+    `LoopGroup` keeps its schedulers on the GC heap and roots a leaked one.
+    The first request's grace counts; later ones only repeat the wake. A run
+    that ends resets the request. The scheduler must not have been destroyed.
+    */
+    void requestShutdown(Duration grace) @trusted nothrow @nogc
+    {
+        if (cas(&_shutdownState, ShutdownState.none, ShutdownState.claimed))
+        {
+            _shutdownGrace = grace;
+            atomicStore!(MemoryOrder.rel)(_shutdownState, ShutdownState.requested);
+        }
+        _waker.wake();
+    }
+
+    /// Whether a shutdown's grace period expired during `run`: the
+    /// scheduler, its task slab, its inbox and its loop must be leaked.
+    bool leaked() const @safe pure nothrow @nogc => _leaked;
+
+    /// Begins a requested shutdown on the owner thread.
+    private void beginShutdown() @trusted nothrow @nogc
+    {
+        _shutdownBegun = true;
+        const now = MonoTime.currTime;
+        _shutdownBy = _shutdownGrace >= Duration.max / 2 ? MonoTime.max : now + _shutdownGrace;
+        const why = Interrupt(InterruptKind.shutdown);
+        foreach (t; _tasks)
+        {
+            if (t._body is null)
+                continue; // free
+            auto node = t.ectx.cancelContext;
+            if (node is null)
+            {
+                interruptFiber(&t.ectx, why);
+                continue;
+            }
+            while (node.parent !is null)
+                node = node.parent;
+            cancelTree(node, why);
+        }
+    }
+
     /// `tick` for `run`, keeping the `Throwable` that ends the run early so
     /// that a teardown unable to leak the run can report it (`abandon`).
-    private IoResult!RunStatus tickRecordingDefect() @system
+    private IoResult!RunStatus tickRecordingDefect(Duration timeout) @system
     {
         try
-            return tick(Duration.max);
+            return tick(timeout);
         catch (Throwable t)
         {
             _abortedBy = t;
@@ -1172,6 +1249,24 @@ private:
     FiberTask _ringSleeps;
     /// Ring waits written and not yet completed.
     uint _ringWaits;
+    /// A shutdown requested from any thread (`requestShutdown`).
+    shared ShutdownState _shutdownState;
+    /// The first request's grace, published by its state's release.
+    Duration _shutdownGrace;
+    /// The owner has begun the requested shutdown.
+    bool _shutdownBegun;
+    /// When the shutdown's grace period ends.
+    MonoTime _shutdownBy;
+    /// The grace period expired: nothing of this scheduler may be freed.
+    bool _leaked;
+}
+
+/// The progress of a requested shutdown.
+private enum ShutdownState : ubyte
+{
+    none,      /// no request
+    claimed,   /// a request is publishing its grace
+    requested, /// the grace is published
 }
 
 /**

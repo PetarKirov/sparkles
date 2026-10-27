@@ -12,13 +12,14 @@ module sparkles.event_horizon.group;
 version (Posix)  :  // rides Sched; CPU pinning is linux-guarded internally
 
 import core.lifetime : move;
-import core.stdc.errno : EINVAL;
+import core.stdc.errno : EINVAL, ETIMEDOUT;
 import core.time : Duration, seconds;
 
 import std.experimental.allocator.mallocator : Mallocator;
 import std.typecons : Flag, No, Yes;
 
 import sparkles.base.hw_caps : hwParallelism, nthAllowedCpu;
+import sparkles.base.sync : Mutex;
 import sparkles.event_horizon.cause : Cause, Interrupt, InterruptKind, Outcome,
     outcomeErr, outcomeOk;
 import sparkles.event_horizon.errors : ioError, IoError, IoErrorStage, IoResult, OpKind, ioErr, ioOk;
@@ -108,10 +109,14 @@ struct LoopGroup
             opts.maxFibers = cfg.maxFibers;
             opts.fiberPark = cfg.fiberPark;
             auto loopCfg = loopConfigOf(cfg);
-            auto r = Sched.create(group._sched, opts, loopCfg);
+            // On the heap: a shutdown that outlives its grace leaks it (EFP21).
+            group._sched = new Sched;
+            auto r = Sched.create(*group._sched, opts, loopCfg);
             if (r.hasError)
                 return r;
         }
+        // `runEach` runs a scheduler per worker on any topology.
+        group._workerScheds = new Sched*[group._workers];
         group._started = true;
         return ioOk();
     }
@@ -119,20 +124,74 @@ struct LoopGroup
     /// Worker threads for the thread-per-core topology (0 = one per online CPU).
     uint workerCount() const @safe pure nothrow @nogc => _workers;
 
-    /// Tears down the group's workers.
-    void shutdown(Duration grace = 5.seconds) @safe nothrow
+    /**
+    Tears down the group's workers. A worker whose run a requested
+    shutdown's grace period outlived (`requestShutdown`) was leaked, not
+    freed (fiber-parker.md EFP21), and shutdown then returns `ETIMEDOUT`.
+    Idempotent.
+    */
+    IoResult!void shutdown(Duration grace = 5.seconds) @trusted nothrow
     {
-        if (_started)
+        if (!_started)
+            return ioOk();
+        _started = false;
+        bool leaked;
+        Sched* single;
         {
-            if (_cfg.topology == Topology.single)
-                _sched.destroy();
-            _started = false;
+            // Forgotten under the requests' lock, so that no later request
+            // reaches it, and then destroyed outside it: `destroy` waits out
+            // the committed deliveries, which no requester should wait for.
+            auto g = _requests.guard();
+            leaked = _leakedWorkers > 0 || (_sched !is null && _sched.leaked);
+            single = _sched;
+            _sched = null;
         }
+        if (single !is null && !single.leaked)
+            single.destroy();
+        if (leaked)
+            return ioErr!void(ETIMEDOUT, OpKind.none, IoErrorStage.cancel,
+                "a shutdown's grace period expired; its workers were leaked");
+        return ioOk();
+    }
+
+    /**
+    Asks a running `run` or `runEach` to shut down; callable from any thread
+    (SPEC §11). Every worker cancels its fibers' scopes with
+    `InterruptKind.shutdown` and gives them `grace` to finish
+    (`Sched.requestShutdown`); one that outlives it is leaked, so that a
+    fiber still parked can be woken later without touching freed memory,
+    and `run` reports `ETIMEDOUT`. A worker that has not started yet shuts
+    down as soon as it does. The first request's grace counts; a run that
+    ends without a leak resets the request.
+    */
+    void requestShutdown(Duration grace = 5.seconds) @trusted nothrow @nogc
+    {
+        // Under the lock a worker publishes and withdraws its scheduler by,
+        // so a request reaches every running worker, and none mid-destroy.
+        auto g = _requests.guard();
+        if (!_shutdownRequested)
+        {
+            _shutdownRequested = true;
+            _shutdownGrace = grace;
+        }
+        if (_sched !is null)
+            _sched.requestShutdown(_shutdownGrace);
+        foreach (w; _workerScheds)
+            if (w !is null)
+                w.requestShutdown(_shutdownGrace);
+    }
+
+    /// Forgets a request whose run has ended without a leak.
+    private void resetShutdownRequest() @trusted nothrow @nogc
+    {
+        auto g = _requests.guard();
+        if (_leakedWorkers == 0 && (_sched is null || !_sched.leaked))
+            _shutdownRequested = false;
     }
 
     ~this()
     {
-        shutdown();
+        cast(void) shutdown();
     }
 
     /**
@@ -186,7 +245,7 @@ struct LoopGroup
     */
     Outcome!T run(T)(scope T delegate(ref RootScope root, ref Env env) main)
     {
-        auto env = liveEnv(&_sched);
+        auto env = liveEnv(_sched);
 
         // The Outcome cannot be default-constructed (NoGcHook), so record the
         // result field-by-field from inside the root fiber and rebuild after.
@@ -195,13 +254,13 @@ struct LoopGroup
         static if (!is(T == void))
             T value;
 
-        _sched.run(() {
+        auto ran = _sched.run(() {
             auto outcome = withScope!((ref RootScope sc) {
                 static if (is(T == void))
                     main(sc, env);
                 else
                     return main(sc, env);
-            }, IoError)(_sched);
+            }, IoError)(*_sched);
 
             if (outcome.hasError)
             {
@@ -215,6 +274,14 @@ struct LoopGroup
             }
         });
 
+        // A run a shutdown's grace period outlived never joined its root,
+        // and its scheduler is kept, never freed: a fiber still parked may
+        // be woken later, from any thread.
+        if (_sched.leaked)
+            (() @trusted { import core.memory : GC; GC.addRoot(_sched); })();
+        resetShutdownRequest();
+        if (ran.hasError)
+            return outcomeErr!(T, IoError)(Cause!IoError.fromFailure(ran.error));
         if (isErr)
             return outcomeErr!(T, IoError)(cause);
         static if (is(T == void))
@@ -247,20 +314,41 @@ struct LoopGroup
             opts.maxFibers = cfg.maxFibers;
             opts.fiberPark = cfg.fiberPark;
             auto loopCfg = loopConfigOf(cfg);
-            Sched sched;
-            if (Sched.create(sched, opts, loopCfg).hasError)
+            // On the heap: a shutdown that outlives its grace leaks it (EFP21).
+            auto sched = new Sched;
+            if (Sched.create(*sched, opts, loopCfg).hasError)
                 return; // a worker whose ring won't open is silently skipped
-            scope (success) sched.destroy(); // a defect abandons the run instead (EFP21)
 
             if (cfg.pinToCpu)
                 pinToCpu(id);
 
-            auto env = liveEnv(&sched);
-            sched.run(() {
+            // Published for `requestShutdown`, and withdrawn before the
+            // scheduler is destroyed; a request that came first is honoured.
+            {
+                auto g = _requests.guard();
+                _workerScheds[id] = sched;
+                if (_shutdownRequested)
+                    sched.requestShutdown(_shutdownGrace);
+            }
+            auto env = liveEnv(sched);
+            cast(void) sched.run(() {
                 cast(void) withScope!((ref RootScope sc) {
                     main(id, sc, env);
-                }, IoError)(sched);
+                }, IoError)(*sched);
             });
+            {
+                auto g = _requests.guard();
+                _workerScheds[id] = null;
+                if (sched.leaked)
+                    ++_leakedWorkers;
+            }
+            if (sched.leaked)
+            {
+                // Kept, never freed: a fiber still parked may be woken later.
+                (() @trusted { import core.memory : GC; GC.addRoot(sched); })();
+                return;
+            }
+            sched.destroy(); // a defect abandons the run instead (EFP21)
         }
 
         // A by-value factory: `id` is a fresh function parameter per call, so
@@ -283,10 +371,14 @@ struct LoopGroup
         runWorker(0);
         foreach (t; threads)
             t.join();
+        resetShutdownRequest();
     }
 
-    /// The worker's scheduler (single topology: the only one).
-    ref Sched worker() return @safe nothrow @nogc => _sched;
+    /// The worker's scheduler (single topology: the only one), from `start`
+    /// until `shutdown`.
+    ref Sched worker() return @safe nothrow @nogc
+    in (_sched !is null, "the group is not started, or has shut down")
+        => *_sched;
 
 private:
     static void pinToCpu(uint cpu) @trusted nothrow @nogc
@@ -303,7 +395,19 @@ private:
         // the topology still works, just unpinned.
     }
 
-    Sched _sched;
+    /// The single topology's worker, on the heap so that it can be leaked.
+    Sched* _sched;
+    /// Guards the shutdown request, the workers' schedulers and the leak
+    /// count, between the requesting thread and the workers.
+    Mutex _requests;
+    /// The `runEach` workers' schedulers while each runs.
+    Sched*[] _workerScheds;
+    /// A shutdown was requested, with this grace.
+    bool _shutdownRequested;
+    /// ditto
+    Duration _shutdownGrace;
+    /// Workers a shutdown's grace period outlived.
+    uint _leakedWorkers;
     LoopGroupConfig _cfg;
     uint _workers;
     bool _started;
