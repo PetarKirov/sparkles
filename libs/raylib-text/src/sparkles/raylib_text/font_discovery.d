@@ -320,7 +320,7 @@ primary face's path, the styled variants are `<Base>-Bold`, `-Italic` (or
 is the primary's stem minus a trailing `-Regular`. Nerd-Font and DejaVu
 releases both follow it. Out-params are `""` when the file does not exist.
 */
-package void fontVariantPaths(string primaryPath,
+void fontVariantPaths(string primaryPath,
     out string bold, out string italic, out string boldItalic) @safe
 {
     import std.file : exists;
