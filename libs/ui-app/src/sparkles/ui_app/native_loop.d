@@ -1053,7 +1053,7 @@ private void recordCapture(ref Gpu gpu, VkCommandBuffer cmd, VkImage image,
 private void writeCapture(ref Gpu gpu, ref GpuBuffer buffer, string path) @system
 {
     import std.file : write;
-    import sparkles.ui.png : encodePng;
+    import sparkles.image.png : encodePng;
 
     scope (exit)
         buffer.destroy(gpu.vk.device, gpu.memory);

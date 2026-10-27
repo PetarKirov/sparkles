@@ -20,6 +20,7 @@ dependency "sparkles:core-cli" path="../.."
 // blocking loops (SPEC §15.3) — the dependency is unconditional, the ring
 // is not.
 dependency "sparkles:event-horizon" path="../.."
+dependency "sparkles:image" path="../.."
 
 // ── Configurations (APP3) ───────────────────────────────────────────────────
 //

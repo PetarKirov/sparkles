@@ -12,6 +12,10 @@ dflags "-preview=in" "-preview=dip1000"
 
 dependency "sparkles:android" path="../.."
 dependency "sparkles:ui" path="../.."
+// The PNG oracle (`png_oracle.d`) holds `sparkles:image` to stb_image. It is a
+// `version (unittest)` module of this source library, so it compiles in every
+// consumer's test build too: the dependency cannot be the unittest configuration's alone.
+dependency "sparkles:image" path="../.."
 // This backend runs the built-in effects' GPU halves, which sparkles:ui builds
 // only in its `gpu-effects` configuration (generating them takes the
 // dcompute-enabled LDC, `ldc2-vulkan`). Every configuration that adds this
