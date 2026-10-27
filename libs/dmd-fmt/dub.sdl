@@ -16,6 +16,8 @@ importPaths "src"
 // see docs/specs/dmd-lsp/ (BLD1/BLD2) for the pin and upgrade procedure.
 dependency "dmd:lexer" repository="git+https://github.com/PetarKirov/dmd.git" \
     version="e0be436ba491e506552e529a6a10983a436898e5"
+// The edit vocabulary (`sparkles.base.text.edits`) the formatter reports in.
+dependency "sparkles:base" path="../.."
 dependency "sparkles:diff" path="../.."
 // The case runner's failure report only: `drawBox` frames each pane and
 // `hjoin` puts them in columns (cases.d). The formatter itself never draws.
