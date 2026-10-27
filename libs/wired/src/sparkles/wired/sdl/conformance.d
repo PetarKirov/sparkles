@@ -140,7 +140,7 @@ private string[] oracleKind(SdlTokenKind kind) @safe pure nothrow
         writeSdlScalar, sdlParserConfigFor, SdlComment, SdlCommentKind,
         SdlEditor, sdlEditor, SdlAttachedComments, SdlEmbeddedRecipe, locateEmbeddedRecipe,
         hasEmbeddedRecipeHeader, embeddedRecipeHeaderEnd, writeEmbeddedRendering,
-        SdlEmbeddedParse, parseEmbeddedSdlDocument;
+        SdlEmbeddedParse, parseEmbeddedSdlDocument, updateSDL;
 
     static struct Doc { @SdlAttribute() int port; }
     static struct Sink
@@ -168,6 +168,8 @@ private string[] oracleKind(SdlTokenKind kind) @safe pure nothrow
             SdlScalar(true));
         import std.experimental.allocator.mallocator : Mallocator;
         Mallocator allocator;
+        const port = Doc(1);
+        updateSDL(editor, parsed.document.root, port);
         valid = editor.write(buffer, allocator);
         auto embedded = parseEmbeddedSdlDocument!sdlDubRecipe(text, name);
         SdlScalarStorage storage;

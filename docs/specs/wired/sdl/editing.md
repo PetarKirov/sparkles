@@ -142,6 +142,10 @@ normative: it is what SDE1 checks.
 | remove a node               | the node's extent, plus its attached comments when asked, plus the one blank line or newline SDE5 names                                                                                         | deletion                                                                                                   |
 | replace a node's block body | the bytes strictly between its `{` terminator and the start of its `}` line                                                                                                                     | the fragment, re-indented                                                                                  |
 | replace a region            | a span of the content the caller derives from the document, such as the lines from one comment through another (a managed region)                                                               | the caller's text                                                                                          |
+| set a node's values         | from its first value to its last, or the point after its name when it has none                                                                                                                  | the canonical spellings, space-separated                                                                   |
+| insert an attribute         | the point after the node's last value, attribute or name                                                                                                                                        | ` name=value`, whatever attributes of that name exist                                                      |
+| replace a node              | the node's extent when it is alone on its lines; else from its first byte through its last token                                                                                                | the fragment, re-indented; at an inline node, one single-line node                                         |
+| update from a typed value   | the union of the ranges of the operations above that it resolves to                                                                                                                             | the operations that make the node decode as the value (§3.1)                                               |
 
 Fragments are SDL source text, not typed values. The editor parses a
 fragment under the document's profile and rejects it unless it is a
@@ -156,6 +160,21 @@ writer; a caller with a typed value renders it with `writeSDL` first.
 
 Set-style operations are idempotent: setting an attribute to the value it
 already has produces no edit.
+
+### 3.1 Typed write-back
+
+`updateSDL(editor, node, value)` encodes `value` canonically and walks `node`
+beside the encoding, field by field of the schema: positional values that
+differ become one value replacement; a field's attributes pair by position
+and change in place, or are removed and inserted when their count changes; a
+field's children pair by position (a map's by key) — a plain aggregate is
+updated recursively, a scalar child changes its values, anything else is
+replaced whole — and surplus children are removed while missing ones are
+inserted after the field's last child, or appended to the node in one block.
+A scalar sequence compares its values flattened across occurrences, since the
+typed value keeps no boundary between them. Members the schema does not claim
+are never touched, and scalars compare by canonical spelling, so `` `a` ``
+stays `` `a` `` when the value is `"a"`.
 
 ## 4. Requirements
 
@@ -295,6 +314,9 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
     void remove(SdlNode node, SdlAttachedComments comments = SdlAttachedComments.keep);
     void replaceBody(SdlNode node, scope const(char)[] fragment);
     void replaceRegion(TextSpan region, scope const(char)[] text);
+    void setValues(SdlNode node, scope const SdlScalar[] values);
+    void insertAttribute(SdlNode node, SdlQualifiedName name, in SdlScalar value);
+    void replaceNode(SdlNode node, scope const(char)[] fragment);
 
     /// Renders, re-parses with `allocator` (SDE2), then copies to `writer`;
     /// nothing on failure.
@@ -303,6 +325,9 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
 
 auto sdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator)(
     ref const SdlDocument!DocumentAllocator document, const(char)[] host);
+
+// sparkles.wired.sdl.typed_edit — §3.1
+void updateSDL(T, Editor)(ref Editor editor, SdlNode node, const ref T value);
 
 SdlEmbeddedRecipe locateEmbeddedRecipe(const(char)[] host);   // content, close, isJson, found
 bool hasEmbeddedRecipeHeader(const(char)[] head);             // the header alone

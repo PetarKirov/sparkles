@@ -923,7 +923,7 @@ private bool claimsLocal(in SdlFieldRole role, string local) @safe pure nothrow
 Dispatch is a compile-time `switch` over the claimed local names, then a full
 comparison against only the fields that claim that local name, so the cost
 does not grow with the number of fields. */
-private size_t claimantOf(U, SdlRoleKind kind)(scope const SdlQualifiedName name)
+package size_t claimantOf(U, SdlRoleKind kind)(scope const SdlQualifiedName name)
     @safe pure nothrow @nogc
 {
     alias roles = sdlAggregateRoles!(U).sdlFieldRoles;
@@ -947,7 +947,7 @@ private size_t claimantOf(U, SdlRoleKind kind)(scope const SdlQualifiedName name
 
 /// Whether `local` is the local name of a child field of `U` other than
 /// field `field` — the names a map field leaves to them.
-private bool isOtherChildLocal(U, size_t field)(scope const(char)[] local)
+package bool isOtherChildLocal(U, size_t field)(scope const(char)[] local)
     @safe pure nothrow @nogc
 {
     alias roles = sdlAggregateRoles!(U).sdlFieldRoles;
@@ -4358,6 +4358,34 @@ if (is(T == struct))
     encFinish(b);
     return writeSdlDocument(b.doc, writer);
     }
+}
+
+/** Package seam: `value`'s canonical tree, built as `writeSDL` builds it,
+for the lossless typed write-back (`sparkles.wired.sdl.typed_edit`) to walk
+beside the parsed document. The tree refers to storage inside `tree`, so the
+caller holds it in place while it uses `root`. */
+package struct SdlEncodedTree
+{
+    private EncBuilder builder;
+
+    @disable this(this);
+
+    /// The encode failure, when `failed`.
+    SdlError failure() const @safe pure nothrow @nogc => builder.failure;
+    /// Whether encoding failed.
+    bool failed() const @safe pure nothrow @nogc => builder.failure.reason.length != 0;
+    /// The encoded root, valid while `this` stays where it is.
+    SdlNode root() const return scope @safe pure nothrow @nogc => builder.doc.root;
+}
+
+/// ditto
+package void encodeSdlTree(T)(scope const ref T value, ref SdlEncodedTree tree)
+if (is(T == struct))
+{
+    const root = encAppendNode(tree.builder, null, null, uint.max);
+    encodeAggregate!(T)(tree.builder, value, root);
+    if (!tree.failed)
+        encFinish(tree.builder);
 }
 
 /// ditto — renders into an owned $(LREF SdlString). A non-empty document

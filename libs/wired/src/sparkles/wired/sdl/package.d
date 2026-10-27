@@ -12,4 +12,5 @@ public import sparkles.wired.sdl.lexer;
 public import sparkles.wired.sdl.policy;
 public import sparkles.wired.sdl.reader;
 public import sparkles.wired.sdl.schema_annotations;
+public import sparkles.wired.sdl.typed_edit;
 public import sparkles.wired.sdl.writer;

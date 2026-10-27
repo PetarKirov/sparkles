@@ -93,7 +93,7 @@ The modules also export these names, each specified where it is used:
 | `SdlExpected`, `sdlOk`, `sdlErr`                                                                                                                                            | §7      |
 | `OwnedSdlExtras`, `SdlOwnedExtraMember`, `SdlOwnedExtraNode`, `SdlOwnedExtraAttribute`, `SdlExtraChannel`                                                                   | §8      |
 | `writeSdlScalar`, `sdlParserConfigFor`                                                                                                                                      | §11     |
-| `SdlEditor`, `sdlEditor`, `SdlAttachedComments`                                                                                                                             | §11     |
+| `SdlEditor`, `sdlEditor`, `SdlAttachedComments`, `updateSDL`                                                                                                                | §11     |
 | `SdlEmbeddedRecipe`, `locateEmbeddedRecipe`, `hasEmbeddedRecipeHeader`, `embeddedRecipeHeaderEnd`, `writeEmbeddedRendering`, `SdlEmbeddedParse`, `parseEmbeddedSdlDocument` | §11     |
 
 No public declaration names a DUB type. The per-aggregate role projection that
@@ -680,10 +680,28 @@ the canonical writer targets (§9):
    `fromSDL!T(toSDL(value)) == value`, modulo the asymmetries already declared
    by the shared schema contract.
 
-Textual identity with the input is not promised. The writer may turn `on` into
-`true`, a raw string into a quoted string, comments into nothing, and semicolons
-into newlines. Unknown ignored input cannot satisfy a typed text round-trip;
-`@SdlExtra` is required when preservation is part of the type's law.
+These are the **format** round trip: the canonical writer is a formatter whose
+output parses to the same tree. Textual identity with the input is not
+promised by it. The writer may turn `on` into `true`, a raw string into a
+quoted string, comments into nothing, and semicolons into newlines. Unknown
+ignored input cannot satisfy a typed text round-trip; `@SdlExtra` is required
+when preservation is part of the type's law.
+
+The **lossless** round trip goes through the lossless editor
+([editing](./editing.md)) and keeps the text:
+
+4. **Lossless document law:** for every accepted document `s` and its host
+   `h`, an `SdlEditor` with no operation writes `h` byte for byte.
+5. **Lossless typed law:** for every `T` the document decodes as,
+   `updateSDL(editor, root, fromSDL!T(root))` makes no edit, so the editor
+   writes `h` byte for byte; for any other value `v`, the output decodes as
+   `v`, and bytes outside the values, attributes and children whose meaning
+   changed — comments, layout, spellings of equal scalars, members the schema
+   does not claim — are kept.
+
+`build_primitives.dub_manifest.roundTrip.format` and `.lossless` check laws 1–5
+over every recipe in the repository, embedded recipes included, under the
+`dub.sdl` schema.
 
 ## 11. Reader, writer, and file APIs
 
