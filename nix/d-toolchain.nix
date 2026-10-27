@@ -116,15 +116,29 @@
               # inputs.glfw — glfw#2679 rewritten on 3.5.1. The fix is
               # Wayland's, so only Linux raylib gets it: a global `glfw3`
               # override would rebuild every other GLFW consumer too.
+              #
+              # nixpkgs' raylib has one output, so the library shares a store
+              # path with its CMake package files, and on macOS those name the
+              # Apple SDK, whose tools wrap clang: every program loading
+              # `libraylib.dylib` carried the C toolchain (TC13). A `dev`
+              # output takes the headers, CMake and pkg-config files.
               raylib =
-                if isDarwin then
-                  prev.raylib
-                else
-                  prev.raylib.override {
-                    glfw = prev.glfw3.overrideAttrs (_old: {
-                      src = inputs.glfw;
-                    });
-                  };
+                (
+                  if isDarwin then
+                    prev.raylib
+                  else
+                    prev.raylib.override {
+                      glfw = prev.glfw3.overrideAttrs (_old: {
+                        src = inputs.glfw;
+                      });
+                    }
+                ).overrideAttrs
+                  (_old: {
+                    outputs = [
+                      "out"
+                      "dev"
+                    ];
+                  });
             }
             // lib.optionalAttrs isDarwin {
               # The fork's glfw 3.5.1 bump buys Darwin nothing, yet makes
