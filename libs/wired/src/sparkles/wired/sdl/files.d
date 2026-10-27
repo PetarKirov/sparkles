@@ -19,7 +19,7 @@ module sparkles.wired.sdl.files;
 
 import std.traits : Unqual;
 
-import sparkles.base.buffer : SharedBuffer, checkWriter;
+import sparkles.base.buffer : SharedBuffer, UniqueBuffer, checkWriter;
 import sparkles.wired.sdl.codec : fromSDL, sdlParserConfigFor, toSDL;
 import sparkles.wired.sdl.error : SdlError, SdlErrorCode, SdlErrorStage,
     SdlExpected, sdlErr, sdlOk;
@@ -108,7 +108,7 @@ if (is(T == struct))
         return sdlErr!void(rendered.error);
 
     // Exactly one LF on non-empty output; empty documents stay empty.
-    SharedBuffer!(char, 256) payload;
+    UniqueBuffer!(char, 256) payload;
     payload ~= rendered.value[];
     if (payload.length && payload[$ - 1] != '\n')
         payload ~= '\n';

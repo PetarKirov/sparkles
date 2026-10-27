@@ -4,7 +4,7 @@ module sparkles.wired.sdl.lexer;
 import core.time : Duration, hnsecs, hours, minutes;
 import std.datetime.date : Date;
 
-import sparkles.base.buffer : HeapBuffer, SharedBuffer, Storage;
+import sparkles.base.buffer : HeapBuffer, SharedBuffer, Storage, UniqueBuffer;
 import sparkles.base.text.errors : valueOf;
 import sparkles.base.text.unicode_tables : generalCategory, GeneralCategory,
     unicodeProperty, UnicodeProperty;
@@ -1321,7 +1321,7 @@ private SdlExpected!Date decodeDatePart(SdlParserConfig config)(
 private SdlExpected!SdlDateTime decodeDateTimePart(SdlParserConfig config)(
     scope const(char)[] raw, in SdlToken token) @safe pure nothrow
 {
-    SharedBuffer!(char, 128) normalized;
+    UniqueBuffer!(char, 128) normalized;
     const firstSlash = indexOf(raw, '/');
     if (firstSlash == raw.length)
         return sdlErr!SdlDateTime(decodeError(SdlErrorCode.invalidDateTime,
