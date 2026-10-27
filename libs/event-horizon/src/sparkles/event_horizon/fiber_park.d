@@ -321,7 +321,7 @@ private void deliver(size_t a, size_t b) @trusted nothrow @nogc
                     return; // its completion finishes the delivery
             }
             else if (current !is null && current.owner is s)
-                s.resumeParkedOnce(t);
+                resumeIfAsleep(t);
         }
         else if (current !is null && current.owner is s)
             resumeIfAsleep(t);
