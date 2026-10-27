@@ -340,7 +340,9 @@ comparison allow DUB one ulp where Phobos's parse is inexact. */
         "tag 2026/10/22 01:02:03-GMT+02:00\n", "tag \"unterminated",
         "tag [!bad]\n", "tag {", "tag =\n", "tag 1 2\n",
         "tag \"a b\"\n", "tag `a b c`\n", "tag \"a\x01b\"\n",
-        "x:a 1 y:b=2 c=3 {\n  y:d\n  e\n  x:f\n}\n", "\"anonymous\" k=1\n"];
+        "x:a 1 y:b=2 c=3 {\n  y:d\n  e\n  x:f\n}\n", "\"anonymous\" k=1\n",
+        // A date takes one clock; a value after it is a value of its own.
+        "tag 2018/10/22 20:17:10-GMT+02:00 14:51:24\n", "tag 2018/10/22 20:17 1:02:03\n"];
     const inputs = buildPath(tmp.dir(), "inputs.json");
     write(inputs, JSONValue(fixtures).toString);
     const run = execute([oracle, inputs]);

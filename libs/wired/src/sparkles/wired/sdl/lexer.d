@@ -900,6 +900,9 @@ struct SdlLexer(SdlParserConfig config = sdlFull)
         const startAt = _at;
         const start = _at;
         bool sawSlash;
+        // A date joins at most one clock, across trivia: once a `:` is in the
+        // token, trivia ends it, and what follows is a value of its own.
+        bool sawColon;
         while (_at < _source.length)
         {
             size_t newlineWidth;
@@ -912,7 +915,7 @@ struct SdlLexer(SdlParserConfig config = sdlFull)
                 break;
             if (isAsciiSpace(_source[_at]))
             {
-                if (!sawSlash)
+                if (!sawSlash || sawColon)
                     break;
                 const clockAt = dateTimeClockAt!config(_source, _at);
                 if (clockAt == size_t.max)
@@ -922,7 +925,7 @@ struct SdlLexer(SdlParserConfig config = sdlFull)
                     return;
                 continue;
             }
-            if (sawSlash && (_source[_at] == '\\' || (_at + 1 < _source.length
+            if (sawSlash && !sawColon && (_source[_at] == '\\' || (_at + 1 < _source.length
                 && _source[_at .. _at + 2] == "/*")))
             {
                 const clockAt = dateTimeClockAt!config(_source, _at);
@@ -935,6 +938,8 @@ struct SdlLexer(SdlParserConfig config = sdlFull)
             }
             if (_source[_at] == '/')
                 sawSlash = true;
+            else if (_source[_at] == ':')
+                sawColon = true;
             if (_source[_at] == ';' || _source[_at] == '{' || _source[_at] == '}'
                 || _source[_at] == '=' || _source[_at] == ',')
             {
