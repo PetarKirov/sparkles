@@ -83,6 +83,8 @@
                     # `__FILE__` strings naming *this* store path into every
                     # assert, and scrubbing the join is scrubbing the wrong one.
                     unwrapped = rawLdc;
+                    # The C compiler `ldc2` links through (the macOS shell's `CC`).
+                    inherit (rawLdc) linkCc;
                   };
                 meta = rawLdc.meta // {
                   mainProgram = "ldc2";
@@ -155,8 +157,6 @@
         let
           inherit (pkgs) lib;
           inherit (pkgs.stdenv.hostPlatform) isDarwin isx86_64;
-
-          clangUnwrapped = pkgs.clangStdenv.cc.cc;
         in
         {
           packages = [
@@ -169,9 +169,12 @@
             pkgs.dmd
           ];
 
+          # The shell's stdenv exports its own `CC`, which `ldc2` would link
+          # with; name the wrapped `clang-sparkles` its wrapper defaults to
+          # (TC6, TC8).
           env = lib.optionalAttrs isDarwin {
-            CC = "${clangUnwrapped}/bin/clang";
-            CXX = "${clangUnwrapped}/bin/clang++";
+            CC = "${pkgs.ldc.linkCc}/bin/cc";
+            CXX = "${pkgs.ldc.linkCc}/bin/c++";
             SDKROOT = "${pkgs.apple-sdk}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk";
             MACOSX_DEPLOYMENT_TARGET = "14.0";
           };
