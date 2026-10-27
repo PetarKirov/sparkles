@@ -7,17 +7,17 @@ model, and cursor mapping rides the same edits.
 */
 module sparkles.dmd_fmt.edits;
 
+import std.array : appender;
+
+import sparkles.base.text.edits : mapOffset, writeEdited;
+import sparkles.base.text.span : TextSpan;
+import sparkles.diff.myers : diffLines, splitDiffLines;
 import sparkles.dmd_fmt.config : FormatConfig;
 import sparkles.dmd_fmt.printer : formatText;
 
-/// One replacement: `[start, end)` byte range of the original becomes
-/// `newText`. The LSP `TextEdit` shape, in byte offsets.
-struct TextEdit
-{
-    uint start;
-    uint end;
-    string newText;
-}
+/// The formatter's edit: `sparkles.base.text.edits`' byte-range replacement.
+/// Its replacements are GC slices the edit list keeps alive.
+public import sparkles.base.text.edits : TextEdit;
 
 /**
 The minimal line-level edits turning `original` into `formatted`.
@@ -28,8 +28,6 @@ diff to one whole-region edit — still correct, just coarser.
 */
 TextEdit[] minimalEdits(const(char)[] original, const(char)[] formatted) @safe
 {
-    import sparkles.diff.myers : diffLines, splitDiffLines;
-
     if (original == formatted)
         return null;
 
@@ -63,7 +61,7 @@ TextEdit[] minimalEdits(const(char)[] original, const(char)[] formatted) @safe
             oi++;
         while (ni < newLines.length && diff.newInserted[][ni])
             ni++;
-        edits ~= TextEdit(oldBound(oStart), oldBound(oi),
+        edits ~= TextEdit(TextSpan(oldBound(oStart), oldBound(oi)),
             formatted[newBound(nStart) .. newBound(ni)].idup);
     }
     return edits;
@@ -73,17 +71,8 @@ TextEdit[] minimalEdits(const(char)[] original, const(char)[] formatted) @safe
 /// `original`.
 string applyEdits(const(char)[] original, const TextEdit[] edits) @safe
 {
-    import std.array : appender;
-
     auto sink = appender!string;
-    uint cursor;
-    foreach (edit; edits)
-    {
-        sink.put(original[cursor .. edit.start]);
-        sink.put(edit.newText);
-        cursor = edit.end;
-    }
-    sink.put(original[cursor .. $]);
+    writeEdited(sink, original, edits);
     return sink[];
 }
 
@@ -91,26 +80,10 @@ string applyEdits(const(char)[] original, const TextEdit[] edits) @safe
 Map a byte offset in the original through `edits` to the formatted text —
 M6's cursor preservation (`clang-format --cursor`'s contract). An offset
 inside a replaced region clamps to the corresponding position within the
-replacement.
+replacement; at an insertion the cursor lands after the inserted text.
 */
 uint mapCursor(const TextEdit[] edits, uint offset) @safe pure nothrow @nogc
-{
-    int delta;
-    foreach (edit; edits)
-    {
-        if (offset < edit.start)
-            break;
-        const oldLen = edit.end - edit.start;
-        const newLen = cast(uint) edit.newText.length;
-        if (offset < edit.end)
-        {
-            const into = offset - edit.start;
-            return edit.start + delta + (into < newLen ? into : newLen);
-        }
-        delta += cast(int) newLen - cast(int) oldLen;
-    }
-    return cast(uint) (cast(int) offset + delta);
-}
+    => mapOffset(edits, offset);
 
 /// Format and return the edit list (empty = already formatted).
 TextEdit[] formatEdits(const(char)[] source,
@@ -127,7 +100,7 @@ TextEdit[] formatRange(const(char)[] source, uint selStart, uint selEnd,
 {
     TextEdit[] kept;
     foreach (edit; formatEdits(source, cfg))
-        if (edit.start < selEnd && selStart < edit.end)
+        if (edit.range.startOffset < selEnd && selStart < edit.range.endOffset)
             kept ~= edit;
     return kept;
 }
@@ -178,7 +151,7 @@ bool checkFormatted(const(char)[] source, FormatConfig cfg = FormatConfig()) @sy
     enum original = "int  a;\nint b;\nint    c;\n";
     // Select only the first line: the c-line's edit must not leak in.
     const first = formatRange(original, 0, 7);
-    assert(first.length == 1 && first[0].start < 7);
+    assert(first.length == 1 && first[0].range.startOffset < 7);
     const none = formatRange(original, 8, 14); // the already-clean b line
     assert(none.length == 0);
 }
