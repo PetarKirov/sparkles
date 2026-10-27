@@ -36,6 +36,7 @@ $(UL
     $(LI `sparkles.font.outlines` — glyph outlines as segments or to a sink: `glyf` composites and `gvar`, `CFF` charstrings, phantom points and overlap flags.)
     $(LI `sparkles.font.layout` — `GSUB` and `GPOS` scripts, language systems, features, feature variations, lookups and substitutions.)
     $(LI `sparkles.font.colour` — `colourCapability`: the colour formats a face holds.)
+    $(LI `sparkles.font.png` — the PNG decoder of bitmap strikes.)
     $(LI `sparkles.font.coverage` — Coverage tables: binary-search lookup and covered-glyph iteration.)
     $(LI `sparkles.font.gdef` — the `GDEF` header and the item variation store `MATH` and `GPOS` resolve against.)
     $(LI `sparkles.font.errors` — `FontError`, `FontResult` and `Tag`.)
@@ -59,6 +60,7 @@ public import sparkles.font.math_table;
 public import sparkles.font.metrics;
 public import sparkles.font.names;
 public import sparkles.font.outlines;
+public import sparkles.font.png;
 public import sparkles.font.raster;
 public import sparkles.font.tables;
 public import sparkles.font.units;
