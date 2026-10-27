@@ -606,6 +606,10 @@
         ]
       },
       {
+        "text": "image",
+        "link": "/libs/image/"
+      },
+      {
         "text": "font",
         "link": "/libs/font/",
         "collapsed": true,
