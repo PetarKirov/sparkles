@@ -4829,12 +4829,9 @@ private bool isDubSingleFileBlock(const(char[])[] codeLines)
 private string extractExampleName(const(char[])[] codeLines)
 {
     import std.array : join;
-    import sparkles.build_primitives.dub_manifest : embeddedDubRecipe, parseEmbeddedDubManifest;
+    import sparkles.build_primitives.dub_manifest : parseEmbeddedDubManifest;
 
-    const embedded = embeddedDubRecipe(codeLines.join('\n'));
-    if (!embedded.found || embedded.isJson)
-        return "unnamed";
-    const manifest = parseEmbeddedDubManifest(embedded);
+    const manifest = parseEmbeddedDubManifest(codeLines.join('\n'));
     return manifest.hasValue && manifest.value.name.length ? manifest.value.name : "unnamed";
 }
 

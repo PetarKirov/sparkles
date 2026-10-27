@@ -129,7 +129,7 @@ sparkles/
 │   │   ├── dir_walk.d              # DbI-hook directory walker; walkGitRepository / GitRepositoryFilter
 │   │   ├── glob_walk.d             # include/exclude globs over the gitignore walk (GitGlobFilter)
 │   │   ├── git_env.d               # runGit / gitChildEnvironment: a git child never inherits GIT_DIR
-│   │   ├── dub_manifest.d          # dub.sdl as a wired schema: DubManifest, DubBuildSettings, embeddedDubRecipe
+│   │   ├── dub_manifest.d          # dub.sdl as a wired schema: DubManifest, DubBuildSettings, parseEmbeddedDubManifest
 │   │   └── dub_recipe.d            # recipe lookup + cross-format summary (names, subpackages, configurations)
 │   ├── code-instrumentation/src/sparkles/code_instrumentation/
 │   │   └── coverage/               # models, record scanner, formats (dmd, gcov, lcov, v8, llvm), ingest, overlay
