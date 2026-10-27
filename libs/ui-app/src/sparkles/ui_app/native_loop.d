@@ -67,6 +67,23 @@ struct CellFont
     int px;            /// the pixel size it is measured at
     int cellW = 1;     ///
     int cellH = 1;     ///
+    /// The face's bytes, and the pixels per em its cells were measured at:
+    /// what the canvas draws text with (`UVK18`).
+    const(ubyte)[] bytes;
+    /// Its bold, italic and bold-italic siblings' bytes, empty where the
+    /// family has none (text in that style then draws in `bytes`).
+    const(ubyte)[] bold, italic, boldItalic;
+    uint ppem;         /// ditto
+    /// The em the glyphs draw at, exactly: the line height over the face's
+    /// `hhea` ascender-to-descender span, the scale the raylib arm's fonts
+    /// draw at (`ScaleForPixelHeight`), so both arms' glyphs are one size.
+    ulong emNumerator, emDenominator = 1;
+    /// Pixels from a cell's top: the baseline, the underline (and its
+    /// thickness) and the strikethrough.
+    int ascent;
+    int underlineY;    /// ditto
+    int underlineHeight = 1; /// ditto
+    int strikeY;       /// ditto
 }
 
 /**
@@ -81,7 +98,7 @@ bool measureCellFont(in FontRequest request, in string[] extraSources, int px,
 {
     import std.file : read;
     import sparkles.base.unique : makeUnique;
-    import sparkles.font : cellMetrics, CellMetrics, charMap, fontErr, instance, InstanceSize,
+    import sparkles.font : cellMetrics, CellMetrics, charMap, fontErr, hhea, instance, InstanceSize,
         openFace, PointWorkspace, Ppem;
     import sparkles.raylib_text.font_discovery : FontSources;
     import sparkles.raylib_text.font_set : resolveFontPath;
@@ -117,11 +134,36 @@ bool measureCellFont(in FontRequest request, in string[] extraSources, int px,
     if (probe.hasError)
         return false;
     const line = probe.value.ascent + probe.value.descent;
-    const metrics = at(line > 0 ? cast(int)((long(px) * px + line / 2) / line) : px);
+    const em = line > 0 ? cast(int)((long(px) * px + line / 2) / line) : px;
+    const metrics = at(em);
     if (metrics.hasError)
         return false;
-    cell = CellFont(path, px, cast(int)(metrics.value.width < 1 ? 1 : metrics.value.width),
-        cast(int)(metrics.value.height < 1 ? 1 : metrics.value.height));
+    const m = metrics.value;
+    const cellH = cast(int)(m.height < 1 ? 1 : m.height);
+    // Both measured down from the cell's top (`FTM19`); without `post`, the
+    // underline a pixel under the baseline. Kept inside the cell.
+    const ascent = cast(int) m.baseline;
+    const thickness = cast(int)(m.hasUnderline && m.underlineThickness > 0 ? m.underlineThickness : 1);
+    int underlineY = m.hasUnderline ? cast(int) m.underlinePosition : ascent + 1;
+    if (underlineY + thickness > cellH)
+        underlineY = cellH - thickness;
+    // The family's styled faces, found as the raylib arm finds them without
+    // fontconfig: by their sibling files.
+    import sparkles.raylib_text.font_discovery : fontVariantPaths;
+
+    string boldPath, italicPath, boldItalicPath;
+    fontVariantPaths(path, boldPath, italicPath, boldItalicPath);
+    static const(ubyte)[] load(string p)
+        => p.length ? cast(const(ubyte)[]) read(p) : null;
+    const hh = hhea(face.value);
+    const span = hh.hasValue ? long(hh.value.ascender) - hh.value.descender : 0;
+    const upem = face.value.unitsPerEm;
+    cell = CellFont(path, px, cast(int)(m.width < 1 ? 1 : m.width), cellH, bytes,
+        load(boldPath), load(italicPath), load(boldItalicPath),
+        cast(uint)(em < 1 ? 1 : em),
+        span > 0 ? ulong(px) * upem : cast(ulong)(em < 1 ? 1 : em), span > 0 ? cast(ulong) span : 1,
+        ascent, underlineY, thickness,
+        ascent - (em * 28 + 50) / 100); // about half the x-height
     return true;
 }
 
@@ -446,6 +488,25 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
     scope (exit)
         gpu.destroy();
 
+    // The cell font the canvas draws text with, at the size just measured
+    // (`UVK18`).
+    void bindFont()
+    {
+        if (!gpu.up)
+            return;
+        const f = session.font;
+        const(ubyte)[][FaceStyle.max + 1] faces = [f.bytes, f.bold, f.italic, f.boldItalic];
+        import sparkles.base.text.layout_units : I128, Rational, U128;
+        import sparkles.font : Ppem;
+
+        auto em = Ppem.fromRational(Rational(I128(U128(f.emNumerator, 0)),
+            U128(f.emDenominator ? f.emDenominator : 1, 0)));
+        if (em.hasError)
+            em = Ppem.fromInteger(f.ppem ? f.ppem : 1);
+        cast(void) gpu.canvas.cellFont(faces, em.value, TextMetrics(ascent: f.ascent,
+            underlineY: f.underlineY, underlineHeight: f.underlineHeight, strikeY: f.strikeY));
+    }
+
     bool nativeIo(bool delegate() @system work)
     {
         static if (__traits(hasMember, Wsi, "beginNativeIo"))
@@ -557,6 +618,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                 DeviceFacts.of(gpu.vk.base), canvasConfig).hasError)
             return false;
         session.canvas = &gpu.canvas;
+        bindFont();
         return true;
     }
 
@@ -584,7 +646,10 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
     };
     // The user's size: kept by the machine across later scale changes
     // (`RES55`).
-    session.setFontSize = (int px) { measure(lc.fontSize(px)); };
+    session.setFontSize = (int px) {
+        measure(lc.fontSize(px));
+        bindFont();
+    };
 
     scope (exit)
         shutdown(host);
@@ -630,7 +695,10 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                 takeMetrics();
                 input.scale = m.scale.value;
                 if (const px = lc.metrics(surfaceOf(m)))
+                    {
                     measure(px);
+                    bindFont();
+                }
             }
             e.payload.match!(
                 (in ReadyEvent r) { onMetrics(r.metrics); },
