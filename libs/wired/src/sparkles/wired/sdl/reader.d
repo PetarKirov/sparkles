@@ -1,10 +1,10 @@
-/** Deterministic two-pass iterative SDL parser and ordered arena builder. */
+/** Deterministic one-pass iterative SDL parser and ordered arena builder. */
 module sparkles.wired.sdl.reader;
 
 import std.experimental.allocator.common : stateSize;
 
 import sparkles.base.text.errors : valueOf;
-import sparkles.base.buffer : SharedBuffer;
+import sparkles.base.buffer : SharedBuffer, UniqueBuffer;
 import sparkles.base.text.lineindex : LineIndex;
 import std.experimental.allocator.mallocator : Mallocator;
 
@@ -12,43 +12,6 @@ import sparkles.wired.sdl.config;
 import sparkles.wired.sdl.document;
 import sparkles.wired.sdl.error;
 import sparkles.wired.sdl.lexer;
-
-private struct ParseTotals
-{
-    size_t nodes = 1; // synthetic root
-    size_t values;
-    size_t attributes;
-    size_t children;
-    size_t comments;
-    size_t poolBytes;
-}
-
-private struct CountBuffer(T)
-{
-    size_t length;
-    void clear() @safe pure nothrow @nogc { length = 0; }
-    void opOpAssign(string op : "~")(scope const(T)[] value)
-        @safe pure nothrow @nogc
-    {
-        length += value.length;
-    }
-    void opOpAssign(string op : "~")(T value) @safe pure nothrow @nogc
-    {
-        length++;
-    }
-    const(T)[] opSlice() const @safe pure nothrow @nogc => null;
-}
-
-private struct CountStorage
-{
-    CountBuffer!char text;
-    CountBuffer!ubyte bytes;
-    void clear() @safe pure nothrow @nogc
-    {
-        text.clear();
-        bytes.clear();
-    }
-}
 
 private struct ExactTextBuffer
 {
@@ -332,33 +295,6 @@ private SdlError startError(SdlErrorCode code, scope const(char)[] source,
     return error;
 }
 
-private SdlSpan unmatchedOpener(SdlParserConfig config)(
-    scope const(char)[] source, scope const(char)[] sourceName,
-    uint targetDepth) @safe pure nothrow @nogc
-{
-    auto lexer = lexSDL!config(source, sourceName);
-    uint depth;
-    SdlSpan result;
-    while (!lexer.empty)
-    {
-        auto item = lexer.front;
-        if (item.hasError)
-            break;
-        // `item` is `scope`: a token borrows the source.
-        const kind = item.valueOf.kind;
-        if (kind == SdlTokenKind.openBrace)
-        {
-            if (depth == targetDepth)
-                result = item.valueOf.span;
-            depth++;
-        }
-        else if (kind == SdlTokenKind.closeBrace && depth)
-            depth--;
-        lexer.popFront();
-    }
-    return result;
-}
-
 private void parseInto(SdlParserConfig config, Allocator)(
     ref SdlParseResult!Allocator result, scope const(char)[] text,
     scope const(char)[] sourceName, SdlSpan content = SdlSpan.init)
@@ -370,32 +306,21 @@ private void parseInto(SdlParserConfig config, Allocator)(
             "SDL source is too long for 32-bit spans");
         return;
     }
+    if (!content.isValid)
+        content = SdlSpan(contentStart(text), text.length);
 
-    ParseTotals totals;
-    if (!checkedAdd(totals.poolBytes, sourceName.length)
-        || !checkedAdd(totals.poolBytes, text.length))
+    // One pool, sized before lexing (SDP4): the source name, the source copy,
+    // and room for every decoded payload, which never exceeds the source.
+    size_t poolBytes = sourceName.length;
+    if (!checkedAdd(poolBytes, text.length) || !checkedAdd(poolBytes, text.length))
     {
         result.error = startError(SdlErrorCode.allocationFailed, text, sourceName,
             "SDL arena size overflows size_t");
         return;
     }
-
-    if (!content.isValid)
-        content = SdlSpan(contentStart(text), text.length);
-
-    SdlError failure;
-    SdlLexerLayout counted;
-    if (!runPass!(config, false)(text, sourceName, content, totals,
-        result.document, counted, failure))
-    {
-        ensureSourceName(failure, sourceName);
-        result.error = failure;
-        return;
-    }
-    totals.comments = counted.commentCount;
-
-    if (!result.document.acquire(totals.nodes, totals.values,
-        totals.attributes, totals.children, totals.comments, totals.poolBytes))
+    // Cheap first capacities; the arrays double when a document outgrows them.
+    const guess = text.length / 32 + 8;
+    if (!result.document.acquire(guess, guess, guess / 2, poolBytes))
     {
         result.error = startError(SdlErrorCode.allocationFailed, text, sourceName,
             "allocator rejected an SDL arena block");
@@ -403,7 +328,7 @@ private void parseInto(SdlParserConfig config, Allocator)(
     }
 
     // The document owns its source: the copy follows the source name in the
-    // pool, and the fill pass lexes the copy.
+    // pool, and the pass lexes the copy.
     auto core = result.document.core;
     auto pool = result.document.pool;
     pool[sourceName.length .. sourceName.length + text.length] = cast(const(ubyte)[]) text[];
@@ -412,26 +337,50 @@ private void parseInto(SdlParserConfig config, Allocator)(
     }();
     core.content = content;
 
-    ParseTotals filled;
-    filled.poolBytes = sourceName.length + text.length;
+    SdlError failure;
+    PassCounts counts;
     SdlLexerLayout layout;
-    layout.comments = core.comments;
     layout.recordLines = true;
-    if (!runPass!(config, true)(core.source, sourceName, content, filled,
-        result.document, layout, failure))
+    if (!runPass!config(core.source, sourceName, content, counts, result.document,
+        layout, failure))
     {
         result.document = SdlDocument!Allocator.init;
         ensureSourceName(failure, sourceName);
         result.error = failure;
         return;
     }
+    if (!result.document.finish(counts.nodes, counts.values, counts.attributes,
+        layout.comments[]))
+    {
+        result.document = SdlDocument!Allocator.init;
+        result.error = startError(SdlErrorCode.allocationFailed, text, sourceName,
+            "allocator rejected an SDL arena block");
+        return;
+    }
     core.lines = LineIndex(layout.lineStarts[], text.length, contentStart(text));
     finalizeChildren(result.document);
 }
 
-private bool runPass(SdlParserConfig config, bool fill, Allocator)(
+/// How many cells the pass filled; the arrays may be longer.
+private struct PassCounts
+{
+    size_t nodes = 1; // the synthetic root
+    size_t values;
+    size_t attributes;
+}
+
+/**
+Parses `text` — the document's own copy, in its pool — in one pass (SDP4).
+
+The pool already holds the source name and the copy, and has room for every
+decoded payload after them (they never exceed the source); names slice the
+copy itself. The node, value and attribute arrays grow geometrically through
+the document's allocator; nothing holds a pointer into them across a growth,
+since every access goes through `document.core`.
+*/
+private bool runPass(SdlParserConfig config, Allocator)(
     scope const(char)[] text, scope const(char)[] sourceName, SdlSpan content,
-    ref ParseTotals totals, ref SdlDocument!Allocator document,
+    ref PassCounts counts, ref SdlDocument!Allocator document,
     ref SdlLexerLayout layout, ref SdlError failure)
 {
     auto cursor = TokenCursor!config(text, sourceName, &layout);
@@ -447,31 +396,27 @@ private bool runPass(SdlParserConfig config, bool fill, Allocator)(
         return false;
     }
 
-    size_t nodeIndex = 1;
-    size_t valueIndex;
-    size_t attributeIndex;
-    size_t poolAt = sourceName.length + (fill ? text.length : 0);
+    size_t poolAt = sourceName.length + text.length;
     uint contextDepth;
+    // The node that owns each open block, innermost last.
+    UniqueBuffer!(size_t, 32) openBlocks;
 
-    static if (fill)
+    auto core = document.core;
+    const rootSpan = rootStartSpan(text);
+    core.nodes[0] = SdlNodeCell(
+        qualifiedName: SdlQualifiedName.init,
+        nameSpan: rootSpan,
+        span: rootSpan,
+        depth: uint.max,
+        extent: content,
+        aloneOnLines: true,
+    );
+    if (sourceName.length)
     {
-        const rootSpan = rootStartSpan(text);
-        auto nodes = document.core.nodes;
-        nodes[0] = SdlNodeCell(
-            qualifiedName: SdlQualifiedName.init,
-            nameSpan: rootSpan,
-            span: rootSpan,
-            depth: uint.max,
-            extent: content,
-            aloneOnLines: true,
-        );
-        if (sourceName.length)
-        {
-            document.pool[0 .. sourceName.length] = cast(const(ubyte)[]) sourceName[];
-            document.ownedSourceName = () @trusted {
-                return (cast(const(char)*) document.pool.ptr)[0 .. sourceName.length];
-            }();
-        }
+        document.pool[0 .. sourceName.length] = cast(const(ubyte)[]) sourceName[];
+        document.ownedSourceName = () @trusted {
+            return (cast(const(char)*) document.pool.ptr)[0 .. sourceName.length];
+        }();
     }
 
     bool fail(SdlErrorCode code, SdlSpan span, string reason)
@@ -481,74 +426,38 @@ private bool runPass(SdlParserConfig config, bool fill, Allocator)(
         return false;
     }
 
+    bool room(string field)(size_t used, SdlSpan at)
+    {
+        if (used < __traits(getMember, core, field).length
+            || document.grow!field(used))
+            return true;
+        return fail(SdlErrorCode.allocationFailed, at, "allocator rejected an SDL arena block");
+    }
+
     /** Records a node's terminator and its extent (editing §2), once its
     terminator — for a block, the one after `}` — is known. */
     void finishLayout(size_t node, SdlTokenKind terminatorKind,
         SdlSpan terminatorSpan, in SdlToken next)
     {
-        static if (fill)
-        {
-            nodes[node].terminator = terminatorSpan;
-            nodeExtent(text, content, nodes[node], terminatorKind, next.kind, next.span);
-        }
-    }
-
-    bool addPool(size_t amount, SdlSpan span)
-    {
-        if (!checkedAdd(totals.poolBytes, amount))
-            return fail(SdlErrorCode.allocationFailed, span,
-                "SDL arena size overflows size_t");
-        return true;
-    }
-
-    const(char)[] ownText(scope const(char)[] value)
-    {
-        static if (fill)
-        {
-            const start = poolAt;
-            document.pool[start .. start + value.length]
-                = cast(const(ubyte)[]) value[];
-            poolAt += value.length;
-            return () @trusted {
-                return (cast(const(char)*) document.pool.ptr + start)[0 .. value.length];
-            }();
-        }
-        else
-            return null;
+        core.nodes[node].terminator = terminatorSpan;
+        nodeExtent(text, content, core.nodes[node], terminatorKind, next.kind, next.span);
     }
 
     bool decodeValue(SdlToken token, out SdlScalar scalar)
     {
-        static if (fill)
+        ExactStorage storage;
+        storage.text.target = document.pool[poolAt .. $];
+        storage.bytes.target = document.pool[poolAt .. $];
+        auto decoded = decodeSdlScalarInto!config(token, storage);
+        if (decoded.hasError)
         {
-            ExactStorage storage;
-            storage.text.target = document.pool[poolAt .. $];
-            storage.bytes.target = document.pool[poolAt .. $];
-            auto decoded = decodeSdlScalarInto!config(token, storage);
-            if (decoded.hasError)
-            {
-                failure = (() @trusted { return copyError(decoded.error); })();
-                cursor.locate(failure);
-                return false;
-            }
-            () @trusted { scalar = decoded.value; }();
-            scalar.setSpan(token.span);
-            poolAt += storage.text.length + storage.bytes.length;
+            failure = (() @trusted { return copyError(decoded.error); })();
+            cursor.locate(failure);
+            return false;
         }
-        else
-        {
-            CountStorage storage;
-            auto decoded = decodeSdlScalarInto!config(token, storage);
-            if (decoded.hasError)
-            {
-                failure = (() @trusted { return copyError(decoded.error); })();
-                cursor.locate(failure);
-                return false;
-            }
-            if (!addPool(storage.text.length + storage.bytes.length,
-                token.span))
-                return false;
-        }
+        () @trusted { scalar = decoded.value; }();
+        scalar.setSpan(token.span);
+        poolAt += storage.text.length + storage.bytes.length;
         return true;
     }
 
@@ -557,6 +466,7 @@ private bool runPass(SdlParserConfig config, bool fill, Allocator)(
         if (cursor.token.kind != SdlTokenKind.identifier)
             return fail(SdlErrorCode.unexpectedToken, cursor.token.span,
                 "expected an SDL identifier");
+        // `text` is the pool's copy (`core.source`), so a name slices it.
         const first = cursor.token;
         cursor.pop();
         if (cursor.failed) { takeCursorError(); return false; }
@@ -571,19 +481,11 @@ private bool runPass(SdlParserConfig config, bool fill, Allocator)(
                     cursor.token.span, "qualified name requires a local name after ':'");
             const second = cursor.token;
             nameSpan = SdlSpan(first.span.startOffset, second.span.endOffset);
-            static if (fill)
-                name = SdlQualifiedName(ownText(first.raw), ownText(second.raw));
-            else if (!addPool(first.raw.length + second.raw.length, nameSpan))
-                return false;
+            name = SdlQualifiedName(first.span.sliceOf(core.source), second.span.sliceOf(core.source));
             cursor.pop();
         }
         else
-        {
-            static if (fill)
-                name = SdlQualifiedName(null, ownText(first.raw));
-            else if (!addPool(first.raw.length, nameSpan))
-                return false;
-        }
+            name = SdlQualifiedName(null, first.span.sliceOf(core.source));
         if (cursor.failed) { takeCursorError(); return false; }
         return true;
     }
@@ -603,8 +505,7 @@ private bool runPass(SdlParserConfig config, bool fill, Allocator)(
                 failure = parseError(SdlErrorCode.unexpectedEof,
                     cursor.token.span, sourceName, "missing closing '}'");
                 cursor.locate(failure);
-                failure.relatedSpan = unmatchedOpener!config(text, sourceName,
-                    contextDepth - 1);
+                failure.relatedSpan = core.nodes[openBlocks[$ - 1]].openBrace;
                 failure.hasRelatedSpan = true;
                 return false;
             }
@@ -634,22 +535,11 @@ private bool runPass(SdlParserConfig config, bool fill, Allocator)(
                 return fail(SdlErrorCode.unexpectedToken, cursor.token.span,
                     "child block must be followed by a terminator");
             contextDepth--;
-            static if (fill)
-            {
-                size_t owner = nodeIndex;
-                while (owner > 1)
-                {
-                    owner--;
-                    if (nodes[owner].depth == contextDepth)
-                    {
-                        nodes[owner].span = SdlSpan(nodes[owner].span.startOffset, end);
-                        nodes[owner].closeBrace = close.span;
-                        finishLayout(owner, closeTerminator, closeTerminatorSpan,
-                            cursor.token);
-                        break;
-                    }
-                }
-            }
+            const owner = openBlocks[$ - 1];
+            openBlocks.popBack();
+            core.nodes[owner].span = SdlSpan(core.nodes[owner].span.startOffset, end);
+            core.nodes[owner].closeBrace = close.span;
+            finishLayout(owner, closeTerminator, closeTerminatorSpan, cursor.token);
             continue;
         }
 
@@ -674,42 +564,31 @@ private bool runPass(SdlParserConfig config, bool fill, Allocator)(
             return fail(SdlErrorCode.unsupportedFeature, cursor.token.span,
                 "anonymous tags are disabled by this SDL profile");
 
-        const thisNode = nodeIndex++;
-        static if (fill)
-            nodes[thisNode] = SdlNodeCell(
-                qualifiedName: tagName,
-                nameSpan: tagNameSpan,
-                span: SdlSpan.at(tagStart),
-                valueStart: valueIndex,
-                attributeStart: attributeIndex,
-                depth: contextDepth,
-                // Provisional: `nodeExtent` reads these back as the start
-                // candidates, then replaces `extent`.
-                extent: SdlSpan(lineStart, tagStart),
-                aloneOnLines: startsLine,
-            );
-        else
-        {
-            if (!checkedAdd(totals.nodes, 1)
-                || !checkedAdd(totals.children, 1))
-                return fail(SdlErrorCode.allocationFailed, SdlSpan.at(tagStart),
-                    "SDL arena size overflows size_t");
-        }
+        const thisNode = counts.nodes++;
+        if (!room!"nodes"(thisNode, SdlSpan.at(tagStart)))
+            return false;
+        core.nodes[thisNode] = SdlNodeCell(
+            qualifiedName: tagName,
+            nameSpan: tagNameSpan,
+            span: SdlSpan.at(tagStart),
+            valueStart: counts.values,
+            attributeStart: counts.attributes,
+            depth: contextDepth,
+            // Provisional: `nodeExtent` reads these back as the start
+            // candidates, then replaces `extent`.
+            extent: SdlSpan(lineStart, tagStart),
+            aloneOnLines: startsLine,
+        );
 
         size_t tagValues;
         while (scalarToken(cursor.token.kind))
         {
             SdlScalar scalar;
-            if (!decodeValue(cursor.token, scalar))
+            if (!decodeValue(cursor.token, scalar)
+                || !room!"values"(counts.values, cursor.token.span))
                 return false;
-            static if (fill)
-                document.core.values[valueIndex] = SdlValueCell(scalar);
-            valueIndex++;
+            core.values[counts.values++] = SdlValueCell(scalar);
             tagValues++;
-            static if (!fill)
-                if (!checkedAdd(totals.values, 1))
-                    return fail(SdlErrorCode.allocationFailed, cursor.token.span,
-                        "SDL arena size overflows size_t");
             cursor.pop();
             if (cursor.failed) { takeCursorError(); return false; }
         }
@@ -735,27 +614,19 @@ private bool runPass(SdlParserConfig config, bool fill, Allocator)(
                     cursor.token.span, "attribute requires one scalar value");
             const valueToken = cursor.token;
             SdlScalar scalar;
-            if (!decodeValue(valueToken, scalar))
+            if (!decodeValue(valueToken, scalar)
+                || !room!"attributes"(counts.attributes, valueToken.span))
                 return false;
-            static if (fill)
-                document.core.attributes[attributeIndex] = SdlAttributeCell(
-                    attributeName, attributeNameSpan,
-                    SdlSpan(attributeNameSpan.startOffset, valueToken.span.endOffset), scalar);
-            attributeIndex++;
+            core.attributes[counts.attributes++] = SdlAttributeCell(
+                attributeName, attributeNameSpan,
+                SdlSpan(attributeNameSpan.startOffset, valueToken.span.endOffset), scalar);
             tagAttributes++;
-            static if (!fill)
-                if (!checkedAdd(totals.attributes, 1))
-                    return fail(SdlErrorCode.allocationFailed, valueToken.span,
-                        "SDL arena size overflows size_t");
             cursor.pop();
             if (cursor.failed) { takeCursorError(); return false; }
         }
 
-        static if (fill)
-        {
-            nodes[thisNode].valueCount = tagValues;
-            nodes[thisNode].attributeCount = tagAttributes;
-        }
+        core.nodes[thisNode].valueCount = tagValues;
+        core.nodes[thisNode].attributeCount = tagAttributes;
 
         if (cursor.token.kind == SdlTokenKind.openBrace)
         {
@@ -777,11 +648,9 @@ private bool runPass(SdlParserConfig config, bool fill, Allocator)(
             }
             while (terminator(cursor.token.kind));
             contextDepth++;
-            static if (fill)
-            {
-                nodes[thisNode].hasBlock = true;
-                nodes[thisNode].openBrace = opener.span;
-            }
+            openBlocks ~= thisNode;
+            core.nodes[thisNode].hasBlock = true;
+            core.nodes[thisNode].openBrace = opener.span;
             continue;
         }
 
@@ -794,18 +663,9 @@ private bool runPass(SdlParserConfig config, bool fill, Allocator)(
         else if (cursor.token.kind != SdlTokenKind.eof)
             return fail(SdlErrorCode.unexpectedToken, cursor.token.span,
                 "tag declaration requires a newline, semicolon, or document EOF");
-        static if (fill)
-            nodes[thisNode].span = SdlSpan(tagStart, terminatorToken.span.endOffset);
+        core.nodes[thisNode].span = SdlSpan(tagStart, terminatorToken.span.endOffset);
         finishLayout(thisNode, terminatorToken.kind, terminatorToken.span,
             cursor.token);
-    }
-
-    static if (fill)
-    {
-        assert(nodeIndex == nodes.length);
-        assert(valueIndex == document.core.values.length);
-        assert(attributeIndex == document.core.attributes.length);
-        assert(poolAt == document.pool.length);
     }
     return true;
 }
@@ -1278,37 +1138,41 @@ unittest
         }
     }
 
-    // Every block: core, nodes, values, attributes, children, comments, pool.
-    enum source = "a [TQ==] x=\"v\" { # c\nb\n}\n";
+    // Enough nodes, values and attributes to outgrow the first capacities,
+    // and a comment, so every block — core, pool, nodes, values, attributes,
+    // their growths, children and comments — is requested.
+    string source = "# c\n";
+    foreach (i; 0 .. 40)
+        source ~= "a [TQ==] 1 2 x=\"v\" y=true {\n    b\n}\n";
     {
         size_t attempts;
         size_t liveBlocks;
         auto empty = parseSdlDocument!sdlFull("", null,
             FailingAllocator(size_t.max, &attempts, &liveBlocks));
-        assert(empty.hasValue && attempts == 2 && liveBlocks == 2); // core, nodes
+        assert(empty.hasValue && liveBlocks == attempts);
     }
-    foreach (failAt; 0 .. 7)
+    // Fail each request in turn until a parse needs no more than it got.
+    size_t failAt;
+    for (;; failAt++)
     {
         size_t attempts;
         size_t liveBlocks;
+        bool succeeded;
         {
             auto parsed = parseSdlDocument!sdlFull(source, "alloc.sdl",
                 FailingAllocator(failAt, &attempts, &liveBlocks));
-            assert(parsed.hasError
-                && parsed.error.code == SdlErrorCode.allocationFailed);
+            succeeded = parsed.hasValue;
+            if (!succeeded)
+                assert(parsed.error.code == SdlErrorCode.allocationFailed
+                    && attempts == failAt + 1, parsed.error.toString);
+            else
+                assert(liveBlocks == 7, "a grown array left its old block behind");
         }
-        assert(attempts == failAt + 1);
         assert(liveBlocks == 0);
+        if (succeeded)
+            break;
     }
-
-    size_t attempts;
-    size_t liveBlocks;
-    {
-        auto parsed = parseSdlDocument!sdlFull(source, "alloc.sdl",
-            FailingAllocator(size_t.max, &attempts, &liveBlocks));
-        assert(parsed.hasValue && attempts == 7 && liveBlocks == 7);
-    }
-    assert(liveBlocks == 0);
+    assert(failAt > 7, "the source did not outgrow the first capacities");
 }
 
 @("sdl.reader.namedProfilesArbitraryByteSmoke")
