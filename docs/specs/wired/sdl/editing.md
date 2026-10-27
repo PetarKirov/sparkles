@@ -1,7 +1,7 @@
 ---
-status: draft
+status: accepted
 owner: sparkles:wired
-reviewed: 2026-10-24
+reviewed: 2026-10-27
 ---
 
 # `sparkles.wired.sdl` — Lossless editing
@@ -269,7 +269,7 @@ invalidates an edit made earlier. _Oracle:_ a test that makes enough edits
 to force several buffer growths, moves the editor, and writes.
 _Violation:_ output containing stale or reallocated text.
 
-## 5. Interface (proposed)
+## 5. Interface
 
 Names are provisional; the contract above is what binds.
 
