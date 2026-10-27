@@ -12,58 +12,64 @@
   perSystem =
     { pkgs, ... }:
     {
-      packages.vtebench = pkgs.rustPlatform.buildRustPackage {
-        pname = "vtebench";
-        version = "0.3.1-unstable-2025-01-20";
+      packages = {
+        vtebench = pkgs.rustPlatform.buildRustPackage {
+          pname = "vtebench";
+          version = "0.3.1-unstable-2025-01-20";
 
-        src = inputs.vtebench-src;
+          src = inputs.vtebench-src;
 
-        # Use the vendored lockfile (fetched per-crate via fetchurl) instead of
-        # cargoHash: the cargo-vendor fetcher hits the crates.io API without a
-        # User-Agent and gets a 403, whereas fetchurl's curl UA is accepted.
-        # The lockfile is pinned to the same revision as `src` above.
-        cargoLock.lockFile = ./vtebench-Cargo.lock;
+          # Use the vendored lockfile (fetched per-crate via fetchurl) instead of
+          # cargoHash: the cargo-vendor fetcher hits the crates.io API without a
+          # User-Agent and gets a 403, whereas fetchurl's curl UA is accepted.
+          # The lockfile is pinned to the same revision as `src` above.
+          cargoLock.lockFile = ./vtebench-Cargo.lock;
 
-        # The benchmark definitions under `benchmarks/` are data the runtime
-        # `--benchmarks` flag points at; install them alongside the binary so a
-        # packaged vtebench is self-contained.
-        postInstall = ''
-          mkdir -p $out/share/vtebench
-          cp -r benchmarks extra_benchmarks $out/share/vtebench/
-        '';
+          # The benchmark definitions under `benchmarks/` are data the runtime
+          # `--benchmarks` flag points at; install them alongside the binary so a
+          # packaged vtebench is self-contained.
+          postInstall = ''
+            mkdir -p $out/share/vtebench
+            cp -r benchmarks extra_benchmarks $out/share/vtebench/
+          '';
 
-        meta = {
-          description = "Terminal emulator benchmark (alacritty/vtebench)";
-          homepage = "https://github.com/alacritty/vtebench";
-          mainProgram = "vtebench";
+          meta = {
+            description = "Terminal emulator benchmark (alacritty/vtebench)";
+            homepage = "https://github.com/alacritty/vtebench";
+            mainProgram = "vtebench";
+          };
         };
-      };
 
-      packages.termbench = pkgs.stdenv.mkDerivation {
-        pname = "termbench";
-        version = "2-unstable-2024-03-19";
+      }
+      # termbench includes `<cpuid.h>` everywhere but on Apple arm64 (which
+      # reads `sysctl` instead), so it builds on x86 and on arm64 macOS only.
+      // pkgs.lib.optionalAttrs (with pkgs.stdenv.hostPlatform; isx86 || (isDarwin && isAarch64)) {
+        termbench = pkgs.stdenv.mkDerivation {
+          pname = "termbench";
+          version = "2-unstable-2024-03-19";
 
-        src = inputs.termbench-src;
+          src = inputs.termbench-src;
 
-        # Single translation unit; the repo's build.sh just invokes the
-        # compiler with -O3. -Ofast is upstream's flag but adds nothing for a
-        # plain output sink, so stick to -O3.
-        buildPhase = ''
-          runHook preBuild
-          $CXX -O3 -o termbench termbench.cpp
-          runHook postBuild
-        '';
+          # Single translation unit; the repo's build.sh just invokes the
+          # compiler with -O3. -Ofast is upstream's flag but adds nothing for a
+          # plain output sink, so stick to -O3.
+          buildPhase = ''
+            runHook preBuild
+            $CXX -O3 -o termbench termbench.cpp
+            runHook postBuild
+          '';
 
-        installPhase = ''
-          runHook preInstall
-          install -Dm755 termbench $out/bin/termbench
-          runHook postInstall
-        '';
+          installPhase = ''
+            runHook preInstall
+            install -Dm755 termbench $out/bin/termbench
+            runHook postInstall
+          '';
 
-        meta = {
-          description = "Terminal output throughput benchmark (cmuratori/termbench)";
-          homepage = "https://github.com/cmuratori/termbench";
-          mainProgram = "termbench";
+          meta = {
+            description = "Terminal output throughput benchmark (cmuratori/termbench)";
+            homepage = "https://github.com/cmuratori/termbench";
+            mainProgram = "termbench";
+          };
         };
       };
     };
