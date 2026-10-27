@@ -1773,3 +1773,185 @@ ubyte[] solidPng(uint width, uint height, ubyte[4] rgba)
     }
     return pngFile(PngSpec(width, height, 8, 6, rows));
 }
+
+// ---------------------------------------------------------------------------
+// Colour glyphs (M6): COLR/CPAL with content, CBDT/CBLC and sbix
+// ---------------------------------------------------------------------------
+
+/**
+A `COLR` version 0 table: `bases` are (glyph, first layer, layer count)
+records, sorted by glyph, and `layers` (glyph, palette entry) records.
+*/
+ubyte[] colrV0(const(uint[3])[] bases, const(uint[2])[] layers)
+{
+    const baseAt = 14, layerAt = baseAt + 6 * bases.length;
+    ubyte[] t = u16(0) ~ u16(cast(uint) bases.length) ~ u32(baseAt) ~ u32(cast(uint) layerAt)
+        ~ u16(cast(uint) layers.length);
+    foreach (b; bases) t ~= u16(b[0]) ~ u16(b[1]) ~ u16(b[2]);
+    foreach (l; layers) t ~= u16(l[0]) ~ u16(l[1]);
+    return t;
+}
+
+/// A `CPAL` version 0 table of `palettes`, each a list of RGBA colours (stored BGRA).
+ubyte[] cpalColours(const(ubyte[4][])[] palettes)
+{
+    const entries = palettes.length ? palettes[0].length : 0;
+    const records = entries * palettes.length;
+    ubyte[] t = u16(0) ~ u16(cast(uint) entries) ~ u16(cast(uint) palettes.length) ~ u16(cast(uint) records)
+        ~ u32(cast(uint)(12 + 2 * palettes.length));
+    foreach (i; 0 .. palettes.length) t ~= u16(cast(uint)(i * entries));
+    foreach (p; palettes)
+        foreach (c; p)
+            t ~= [c[2], c[1], c[0], c[3]];
+    return t;
+}
+
+/// One glyph of a bitmap strike: its metrics in strike pixels and its PNG.
+struct GlyphBitmap
+{
+    uint glyph;
+    int bearingX, bearingY;
+    uint width, height;
+    const(ubyte)[] png;
+}
+
+/**
+A `CBLC` strike: its ppem, index subtable format (1–5) and image format
+(17–19), and its glyphs in glyph order. Formats 1–3 need consecutive
+glyphs (a `png` of null leaves a glyph without a bitmap); formats 2, 5
+and 19 share the first glyph's metrics.
+*/
+struct CbdtStrike
+{
+    uint ppem;
+    uint indexFormat = 1, imageFormat = 17;
+    const(GlyphBitmap)[] glyphs;
+}
+
+/// The `CBLC` and `CBDT` tables of `strikes` (version 3.0).
+TableData[] cbdtTables(const(CbdtStrike)[] strikes)
+{
+    ubyte[] data = u16(3) ~ u16(0);
+    ubyte[] sizes, subtables;
+    const subtablesAt = 8 + 48 * strikes.length;
+    foreach (s; strikes)
+    {
+        const g0 = s.glyphs[0];
+        ubyte[] bigMetrics() => [cast(ubyte) g0.height, cast(ubyte) g0.width, cast(ubyte) g0.bearingX,
+            cast(ubyte) g0.bearingY, cast(ubyte) g0.width, 0, 0, 0];
+        // The glyph records, each padded to the longest for the fixed-size formats.
+        ubyte[][] records;
+        size_t longest;
+        foreach (g; s.glyphs)
+        {
+            ubyte[] r;
+            if (g.png !is null)
+            {
+                if (s.imageFormat == 17)
+                    r = [cast(ubyte) g.height, cast(ubyte) g.width, cast(ubyte) g.bearingX, cast(ubyte) g.bearingY,
+                        cast(ubyte) g.width];
+                else if (s.imageFormat == 18)
+                    r = [cast(ubyte) g.height, cast(ubyte) g.width, cast(ubyte) g.bearingX, cast(ubyte) g.bearingY,
+                        cast(ubyte) g.width, 0, 0, 0];
+                r ~= u32(cast(uint) g.png.length) ~ g.png;
+            }
+            records ~= r;
+            longest = r.length > longest ? r.length : longest;
+        }
+        if (s.indexFormat == 2 || s.indexFormat == 5)
+            foreach (ref r; records) r.length = longest;
+        const imageAt = data.length;
+        const first = s.glyphs[0].glyph, last = s.glyphs[$ - 1].glyph;
+        ubyte[] sub = u16(s.indexFormat) ~ u16(s.imageFormat) ~ u32(cast(uint) imageAt);
+        switch (s.indexFormat)
+        {
+            case 1, 3:
+            {
+                uint offset;
+                foreach (r; records)
+                {
+                    sub ~= s.indexFormat == 1 ? u32(offset) : u16(offset);
+                    offset += r.length;
+                }
+                sub ~= s.indexFormat == 1 ? u32(offset) : u16(offset);
+                if (sub.length % 4) sub ~= u16(0);
+                break;
+            }
+            case 2:
+                sub ~= u32(cast(uint) longest) ~ bigMetrics();
+                break;
+            case 4:
+            {
+                sub ~= u32(cast(uint) s.glyphs.length);
+                uint offset;
+                foreach (i, g; s.glyphs)
+                {
+                    sub ~= u16(g.glyph) ~ u16(offset);
+                    offset += records[i].length;
+                }
+                sub ~= u16(0) ~ u16(offset);
+                break;
+            }
+            case 5:
+                sub ~= u32(cast(uint) longest) ~ bigMetrics() ~ u32(cast(uint) s.glyphs.length);
+                foreach (g; s.glyphs) sub ~= u16(g.glyph);
+                if (sub.length % 4) sub ~= u16(0);
+                break;
+            default:
+                assert(0);
+        }
+        foreach (r; records) data ~= r;
+        // One IndexSubTableArray record, then the subtable.
+        const arrayAt = subtablesAt + subtables.length;
+        subtables ~= u16(first) ~ u16(last) ~ u32(8) ~ sub;
+        sizes ~= u32(cast(uint) arrayAt) ~ u32(cast(uint)(8 + sub.length)) ~ u32(1) ~ u32(0);
+        sizes.length += 24;
+        sizes ~= u16(first) ~ u16(last) ~ [cast(ubyte) s.ppem, cast(ubyte) s.ppem, ubyte(32), ubyte(1)];
+    }
+    return [TableData("CBDT", data),
+        TableData("CBLC", u16(3) ~ u16(0) ~ u32(cast(uint) strikes.length) ~ sizes ~ subtables)];
+}
+
+/// One `sbix` glyph record: origin offsets, graphic type and data; a null `data` leaves the glyph empty.
+struct SbixRecord
+{
+    int originX, originY;
+    string type = "png ";
+    const(ubyte)[] data;
+}
+
+/// An `sbix` strike: its ppem and one record per glyph of the face.
+struct SbixStrike
+{
+    uint ppem;
+    const(SbixRecord)[] glyphs;
+}
+
+/// An `sbix` version 1 table of `strikes`, each holding a record for all of the face's glyphs.
+ubyte[] sbixStrikes(const(SbixStrike)[] strikes)
+{
+    ubyte[] t = u16(1) ~ u16(1) ~ u32(cast(uint) strikes.length);
+    ubyte[][] bodies;
+    foreach (s; strikes)
+    {
+        ubyte[] body = u16(s.ppem) ~ u16(72);
+        ubyte[] records;
+        const tableAt = 4 + 4 * (s.glyphs.length + 1);
+        foreach (g; s.glyphs)
+        {
+            body ~= u32(cast(uint)(tableAt + records.length));
+            if (g.data !is null)
+                records ~= u16(cast(uint) g.originX) ~ u16(cast(uint) g.originY) ~ cast(const(ubyte)[]) g.type ~ g.data;
+        }
+        body ~= u32(cast(uint)(tableAt + records.length));
+        bodies ~= body ~ records;
+    }
+    size_t at = t.length + 4 * strikes.length;
+    foreach (b; bodies)
+    {
+        t ~= u32(cast(uint) at);
+        at += b.length;
+    }
+    foreach (b; bodies) t ~= b;
+    return t;
+}

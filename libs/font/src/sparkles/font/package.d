@@ -19,7 +19,9 @@ Milestone M3: glyph outlines (FTO1–FTO5). Milestone M4: shaping lives in
 the `engine` configuration only — `sparkles.font.shaping` is public
 there (its HarfBuzz declarations in `sparkles.font.harfbuzz` are
 imported explicitly) and both are absent from the pure-D `library`
-configuration (FTA7).
+configuration (FTA7). Milestone M5: grayscale rasterization. Milestone M6:
+colour glyphs, `COLR` version 0 layers coloured from `CPAL` and the PNGs of
+`CBDT` and `sbix` strikes, into premultiplied RGBA.
 
 $(UL
     $(LI `sparkles.font.face` — `openFace`, `openCollection`, `Face`, table lookup and inspection.)
@@ -35,7 +37,11 @@ $(UL
     $(LI `sparkles.font.baseline` — the `BASE` view, baseline tags, baselines and extents.)
     $(LI `sparkles.font.outlines` — glyph outlines as segments or to a sink: `glyf` composites and `gvar`, `CFF` charstrings, phantom points and overlap flags.)
     $(LI `sparkles.font.layout` — `GSUB` and `GPOS` scripts, language systems, features, feature variations, lookups and substitutions.)
+    $(LI `sparkles.font.raster` — grayscale coverage of one glyph into a caller-owned region.)
     $(LI `sparkles.font.colour` — `colourCapability`: the colour formats a face holds.)
+    $(LI `sparkles.font.colour_raster` — `colourMeasure` and `rasterizeColourGlyph`: a glyph's colour form into premultiplied RGBA.)
+    $(LI `sparkles.font.colr` — `COLR` version 0 layers, `CPAL` palettes, and layered rendering.)
+    $(LI `sparkles.font.bitmap` — `CBDT`/`CBLC` and `sbix` strikes: strike choice, lookup and scaled rendering.)
     $(LI `sparkles.font.png` — the PNG decoder of bitmap strikes.)
     $(LI `sparkles.font.coverage` — Coverage tables: binary-search lookup and covered-glyph iteration.)
     $(LI `sparkles.font.gdef` — the `GDEF` header and the item variation store `MATH` and `GPOS` resolve against.)
@@ -45,9 +51,12 @@ $(UL
 module sparkles.font;
 
 public import sparkles.font.baseline;
+public import sparkles.font.bitmap;
 public import sparkles.font.cmap;
 public import sparkles.font.carets;
 public import sparkles.font.colour;
+public import sparkles.font.colour_raster;
+public import sparkles.font.colr;
 public import sparkles.font.coverage;
 public import sparkles.font.errors;
 public import sparkles.font.face;
