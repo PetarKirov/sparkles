@@ -21,7 +21,9 @@ Other inputs, all exported by the dev shell:
   real `BASE` tables (Adobe's CJK template, Noto Serif JP VF's variable
   `BASE`, M+, IPAex, Simon Cozens's baseline test); `math/`, `MATH` faces
   with math kerns (STIX Two Math, KpMath, Garamond-Math, Asana Math) and
-  Latin Modern Math; and `harfbuzz/`, HarfBuzz's own API test fonts.
+  Latin Modern Math; and `harfbuzz/`, HarfBuzz's own API test fonts, whose
+  `COLR` version 0, `sbix` and `CBDT` faces are the colour oracles' corpus
+  beside the bundled emoji font.
   `test/goldens/manifest.txt` pins every face by SHA-256, with its licence,
   source and table inventory, and `oracle.corpus.manifest` checks it.
 - `$SPARKLES_FLAKE_INPUT_HARFBUZZ_SRC`: the pinned HarfBuzz source, whose

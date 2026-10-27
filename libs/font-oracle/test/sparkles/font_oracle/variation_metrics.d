@@ -24,13 +24,13 @@ import std.format : format;
 import std.math : lround;
 import std.path : baseName, buildPath, dirName;
 import std.stdio : stderr;
-import std.string : indexOf, lineSplitter;
+import std.string : lineSplitter;
 
 import sparkles.base.text.layout_units : LayoutUnit;
 import sparkles.base.unique : makeUnique;
 import sparkles.font;
-import sparkles.font_oracle.corpus : baseCorpus, corpus, fontsDir, harfbuzzCorpus, mathCorpus, Oracle, testCorpus,
-    testFontsDir, withEmptyCmap;
+import sparkles.font_oracle.corpus : baseCorpus, corpus, eachCorpusFace, fontsDir, harfbuzzCorpus, mathCorpus,
+    Oracle, testCorpus, testFontsDir, withEmptyCmap;
 import sparkles.font_oracle;
 import sparkles.font_oracle.harfbuzz_c : hb_direction_t;
 import sparkles.test_runner.skip : skipTest;
@@ -735,47 +735,6 @@ unittest
     if (fontsDir is null)
         skipTest("SPARKLES_FONTS_PATH is unset");
     assert(testFontsDir is null || (mathFaces >= 6 && kernTables > 1_000), "the math corpus is missing");
-}
-
-/**
-The bundle, then every test-corpus directory (the top level, `base/`,
-`math/` and `harfbuzz/`), each with HarfBuzz scaled to font units. A face
-`openFace` refuses for want of a `cmap` alone is read with an empty one
-added (`withEmptyCmap`), as HarfBuzz's `base-minmax.ttf` is; another face
-that does not open is counted in `unopened` and skipped.
-*/
-private void eachCorpusFace(scope void delegate(string name, const Face face, ref Oracle hb) @system body_,
-    ref size_t unopened)
-{
-    static string[] named(string prefix, const(string)[] paths)
-    {
-        string[] r;
-        foreach (p; paths)
-            r ~= prefix ~ p.baseName ~ "\0" ~ p;
-        return r;
-    }
-    foreach (entry; named("bundle/", corpus) ~ named("test/", testCorpus) ~ named("test/base/", baseCorpus)
-        ~ named("test/math/", mathCorpus) ~ named("test/harfbuzz/", harfbuzzCorpus))
-    {
-        const cut = entry.indexOf('\0');
-        const name = entry[0 .. cut];
-        const(ubyte)[] bytes = cast(const(ubyte)[]) read(entry[cut + 1 .. $]);
-        auto opened = openFace(bytes);
-        if (opened.hasError && opened.error.kind == FontErrorKind.missingTable && opened.error.tag == Tag("cmap"))
-        {
-            bytes = withEmptyCmap(bytes);
-            opened = openFace(bytes);
-        }
-        if (opened.hasError)
-        {
-            ++unopened;
-            continue;
-        }
-        auto hb = Oracle(bytes, 0);
-        const face = opened.value;
-        hb_font_set_scale(hb.font, face.unitsPerEm, face.unitsPerEm);
-        body_(name, face, hb);
-    }
 }
 
 /// HarfBuzz's direction for a baseline axis.
