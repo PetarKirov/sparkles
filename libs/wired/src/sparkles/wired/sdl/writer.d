@@ -541,7 +541,7 @@ SdlExpected!void writeSdlDocument(Document, Writer)(
         return sdlErr!void(encodeError(SdlErrorCode.checkFailed, "indent",
             "indent must be a non-empty string"));
 
-    SharedBuffer!(char, 96) rolePath;
+    UniqueBuffer!(char, 96) rolePath;
 
     /// Stamps the role path composed during the unwind onto the failure.
     SdlExpected!void attach(SdlError error)
@@ -612,7 +612,7 @@ SdlExpected!void writeSdlDocument(Document, Writer)(
     {
         import sparkles.base.text.writers : writeInteger;
 
-        SharedBuffer!(char, 96) composed;
+        UniqueBuffer!(char, 96) composed;
         composed ~= ".";
         putName(composed, childNameAt(node, position));
         composed ~= "[";
@@ -719,16 +719,16 @@ while preserving every ordered channel, scalar kind, and payload byte.
 package bool sdlDocumentsSemanticallyEqual(A, B)(
     return scope const ref A left, return scope const ref B right)
 {
-    import sparkles.base.buffer : SharedBuffer, checkWriter;
+    import sparkles.base.buffer : UniqueBuffer;
 
     static bool canonical(D)(scope const ref D document,
-        ref SharedBuffer!(char, 512) bytes)
+        ref UniqueBuffer!(char, 512) bytes)
     {
         return !writeSdlDocument(document, bytes).hasError;
     }
 
-    SharedBuffer!(char, 512) leftBytes;
-    SharedBuffer!(char, 512) rightBytes;
+    UniqueBuffer!(char, 512) leftBytes;
+    UniqueBuffer!(char, 512) rightBytes;
     if (!canonical(left, leftBytes) || !canonical(right, rightBytes))
         return false;
     return leftBytes[] == rightBytes[];

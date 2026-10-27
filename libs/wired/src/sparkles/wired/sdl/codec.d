@@ -136,8 +136,8 @@ private DRes!T dFail(T)(ref SdlError failure, SdlError e)
 /// The SDL role path and the D value path shared across one walk (SPEC §7).
 private struct WalkPath
 {
-    SharedBuffer!(char, 96) text;
-    SharedBuffer!(char, 96) value;
+    UniqueBuffer!(char, 96) text;
+    UniqueBuffer!(char, 96) value;
 }
 
 private void popSegment(ref WalkPath p, size_t mark) @safe pure
@@ -1010,7 +1010,7 @@ private struct ClaimIndex(U)
 
     /// Field `f`'s claimed children, as views, into `matches`.
     size_t childrenOf(size_t f, scope const ref SdlNode node,
-        ref SharedBuffer!(SdlNode, 4) matches) const @safe pure
+        ref UniqueBuffer!(SdlNode, 4) matches) const @safe pure
     {
         matches.clear();
         foreach (cell; children[childStart[f] .. childStart[f + 1]])
@@ -1020,7 +1020,7 @@ private struct ClaimIndex(U)
 
     /// Field `f`'s claimed attributes, as views, into `matches`.
     size_t attributesOf(size_t f, scope const ref SdlNode node,
-        ref SharedBuffer!(SdlAttributeView, 4) matches) const @safe pure
+        ref UniqueBuffer!(SdlAttributeView, 4) matches) const @safe pure
     {
         matches.clear();
         foreach (cell; attributes[attributeStart[f] .. attributeStart[f + 1]])
@@ -1334,7 +1334,7 @@ if (is(T == struct))
 
         static if (R.role == SdlRoleKind.child)
         {
-            SharedBuffer!(SdlNode, 4) matches;
+            UniqueBuffer!(SdlNode, 4) matches;
             const count = claims.childrenOf(i, node, matches);
 
             static if (R.childShape == SdlChildShape.scalarSingle
@@ -1514,7 +1514,7 @@ if (is(T == struct))
                 // The AA consumes every same-namespace sibling whose local name
                 // no other child field holds, so its tags may be arbitrarily
                 // named; the local-name test is a compile-time switch.
-                SharedBuffer!(SdlNode, 4) aaMatches;
+                UniqueBuffer!(SdlNode, 4) aaMatches;
                 foreach (child; node.byChild)
                     if (child.qualifiedName.namespace_ == R.namespace_
                         && !isOtherChildLocal!(U, i)(child.qualifiedName.localName))
@@ -1580,7 +1580,7 @@ if (is(T == struct))
         }
         else static if (R.role == SdlRoleKind.attribute)
         {
-            SharedBuffer!(SdlAttributeView, 4) attrs;
+            UniqueBuffer!(SdlAttributeView, 4) attrs;
             const acount = claims.attributesOf(i, node, attrs);
 
             // NOTE: string is a dynamic array in D but a *scalar* channel

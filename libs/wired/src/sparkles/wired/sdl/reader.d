@@ -748,7 +748,7 @@ private void finalizeChildren(Allocator)(ref SdlDocument!Allocator document)
             && document.core.nodes[i].depth > deepest)
             deepest = document.core.nodes[i].depth;
 
-    auto lastAtDepth = SharedBuffer!(size_t, 32)();
+    auto lastAtDepth = UniqueBuffer!(size_t, 32)();
     foreach (_; 0 .. cast(size_t) deepest + 1)
         lastAtDepth ~= 0;
 
