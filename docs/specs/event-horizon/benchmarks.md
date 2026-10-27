@@ -352,3 +352,62 @@ competitor devshells are the remaining M14 work; the walker above is the one
 cross-runtime workload wired end-to-end today, and it races directly against
 the polyglot-walks rust-rayon/go/tokio/node walkers via that repo's
 `nix run .#benchmark`.
+
+## 4. The fiber parker's two paths (FB1–FB7)
+
+`libs/event-horizon/bench/suite/src/sparkles/event_horizon_bench/fiber_park.d`
+runs each workload of [fiber-parker.md](./fiber-parker.md) §7 twice, with
+`fiberPark` forced to the ring path and to the inbox path, as two rows of one
+group:
+
+```bash
+cd libs/event-horizon/bench/suite
+dub test -b bench -- --bench -i fiberPark --group-by=bench
+```
+
+Measured on 2026-10-27: AMD Ryzen 9 7940HX (16 cores, 32 threads), Linux
+6.18.26, LDC 1.42, `-b bench`. Another session's tests held the load average
+at 10–12 throughout; each comparison is between two rows of one run. FB5 was
+measured again once its ring rows waited for every wait to be written.
+
+| Bench                          | ring                      | inbox                     | Reading                                                |
+| ------------------------------ | ------------------------- | ------------------------- | ------------------------------------------------------ |
+| FB1 same-worker handoff        | 1.80 µs                   | 0.26 µs                   | inbox ~7× faster                                       |
+| FB2 cross-worker handoff       | 4.8 µs                    | 4.3 µs                    | inbox ~12% faster                                      |
+| FB3 unregistered-thread wake   | 3.1 µs median, 7.2 µs p99 | 3.2 µs median, 7.3 µs p99 | equal                                                  |
+| FB4 `Event` fan-out, n = 1     | 1.6 µs                    | 1.3 µs                    | close                                                  |
+| FB4, n = 16                    | 19 µs                     | 9.1 µs                    | inbox ~2× faster                                       |
+| FB4, n = 256                   | 147 µs                    | 39 µs                     | inbox ~4× faster                                       |
+| FB5 scope cancellation, n = 1  | 1.9 µs                    | < 1 µs                    | inbox faster                                           |
+| FB5, n = 64                    | 27 µs                     | 11 µs                     | inbox ~2× faster                                       |
+| FB5, n = 1024                  | 0.59 ms                   | 1.9 ms                    | ring ~3× faster                                        |
+| FB6 shared-bucket contention   | 193 ms CPU, 1.14 M turns  | 398 ms CPU, 2.68 M turns  | ring halves the CPU and the other fibers' turns        |
+| FB7 same-worker, 100 µs waits  | 2.3 µs                    | 0.35 µs                   | inbox ~7× faster                                       |
+| FB7 cross-worker, 100 µs waits | 4.9 µs                    | 4.0 µs                    | inbox ~20% faster; a few waits per 20 k expire on both |
+
+Handoffs are per handoff (an iteration's median over its 20 000 handoffs); FB3
+to FB5 time from the release, set or cancellation to the last resumption; FB6
+sums eight workers' CPU time per 50 ms window, and counts the turns of a fiber
+on each worker that contends for nothing.
+
+Readings:
+
+- **A ring sleep costs a kernel round trip that a same-worker wake does not
+  need.** A fiber that sleeps is written to the ring at the tick's submission
+  point; when the fiber that wakes it runs on the same worker one tick later,
+  the wake is a `futex` call and the resumption a reaped completion, where the
+  inbox path only enqueues (FB1, FB7). A fan-out pays it once per fiber (FB4).
+- **Only a large cancellation favours the ring.** One wake of the node's
+  cancel word ends every written wait (EFP10), while the inbox path resumes
+  1 024 fibers one by one; at 64 fibers that is still cheaper than the waits
+  the ring path had to write.
+- **FB6 does not isolate the bucket wait.** Its contenders mostly wait as
+  mutex sleepers, not on a held bucket, so the ring row's lower CPU and fewer
+  turns of the other fibers mix the sleep path with the bucket path. The
+  bucket wait follows the sleep until a test hook can hold a bucket lock
+  (fiber-parker.md EFP11, EFP15).
+- `--syscalls` needs readable tracefs event ids, which this host grants only
+  to root, so the system calls per handoff are unmeasured.
+
+`auto` therefore chooses the inbox path for all three operations
+(fiber-parker.md §7); `fiberPark = ring` still selects the kernel path.
