@@ -379,7 +379,7 @@ buildType "checked" {
         "                  \n           \n    name \"s\"\n    bad =\n");
     const parsed = parseEmbeddedDubManifest(embedded, "x.d");
     assert(parsed.hasError);
-    assert(parsed.error.span.start.line == 4, parsed.error.text);
+    assert(parsed.error.startPosition.line == 4, parsed.error.text);
 
     assert(embeddedDubRecipe("/+dub.json: {} +/").isJson);
     assert(!embeddedDubRecipe("module m;\n/+ dub.sdl: +/").found);

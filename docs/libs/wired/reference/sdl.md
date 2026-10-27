@@ -45,9 +45,12 @@ See [SPEC §5](../../../specs/wired/sdl/SPEC.md#_5-typed-sdl-roles) and
 | `validateSDL!config(text, sourceName)`        | Whether `text` parses, without keeping a document.                   |
 | `writeSdlDocument(document, writer, options)` | The document's canonical text.                                       |
 | `SdlNode`                                     | A tag: `qualifiedName`, `byValue`, `byAttribute`, `byChild`, `span`. |
+| `SdlDocument`                                 | `root`, its owned `source`, `position(offset)`, and `comments`.      |
+| `SdlNode.extent`                              | The bytes the node owns: whole lines, or its inline range.           |
+| `SdlComment`, `SdlCommentKind`                | A comment's span and whether it is a line or a block comment.        |
 | `SdlScalar`                                   | One value: `kind`, then the payload accessor for that kind.          |
 | `SdlNameQuery`                                | A name to filter `byChild`/`byAttribute`, optionally any namespace.  |
-| `SdlSpan`, `SdlPosition`                      | Byte offset, line, and column of a source range.                     |
+| `SdlSpan`, `SdlPosition`                      | A source byte range; the line and column of an offset.               |
 
 See [SPEC §4](../../../specs/wired/sdl/SPEC.md#_4-ordered-arena-document).
 
