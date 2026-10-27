@@ -182,8 +182,7 @@ fidelity, error structure, or any round-trip law.
 ## After S10: editing, migration, and performance
 
 These milestones deliver [lossless editing](./editing.md) and the
-[performance architecture](./performance.md). Both contracts are drafts;
-S11 starts only once they are accepted. Measurement comes first so every
+[performance architecture](./performance.md). Measurement comes first so every
 later change has a baseline, and the shared primitives land in
 `sparkles:base` before the SDL code that uses them.
 
@@ -194,7 +193,13 @@ findings) 4 majors; every finding was fixed. The round-3 repairs — the SDE4
 separator rule, views referring to the document's core, the SDE9
 allowlist, the block-less append point, whitespace before a removed
 continuation, and the constructor's host check — have not been reviewed.
-The usual second, fresh reviewer did not run. Acceptance is the owner's.
+The usual second, fresh reviewer did not run.
+
+Accepted by the owner, 2026-10-27: span-patch editing rather than a
+concrete syntax tree; the `SdlSpan` break, with the document owning its
+source, views referring to its core, and the SPEC amended; and no
+persistent node handles in the first slice. S11–S18 are delivered as one
+pull request, one or more commits per milestone.
 
 ### S11 — Benchmark baseline
 

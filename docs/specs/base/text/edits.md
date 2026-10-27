@@ -1,7 +1,7 @@
 ---
-status: draft
+status: accepted
 owner: sparkles:base
-reviewed: 2026-10-24
+reviewed: 2026-10-27
 ---
 
 # `sparkles.base.text.edits` — Text edits
