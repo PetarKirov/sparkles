@@ -271,17 +271,20 @@ _Violation:_ output containing stale or reallocated text.
 
 ## 5. Interface
 
-Names are provisional; the contract above is what binds.
+`sparkles.wired.sdl.editor` delivers this contract;
+`sparkles.wired.sdl.embedded` locates, renders and parses embedded recipes.
 
 ```d
-struct SdlEditor(Document)
+struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocator)
 {
     /// `host` is the document's source, or the D program it was rendered from.
-    this(return scope ref const Document document, return scope const(char)[] host);
+    this(return scope ref const SdlDocument!DocumentAllocator document,
+        return scope const(char)[] host);
 
-    void replaceValue(SdlNode node, size_t index, SdlScalar value);
-    void replaceAttribute(SdlAttributeView attribute, SdlQualifiedName name, SdlScalar value);
-    void setAttribute(SdlNode node, SdlQualifiedName name, SdlScalar value);
+    bool ok() const;                 // no operation has failed yet
+    void replaceValue(SdlNode node, size_t index, in SdlScalar value);
+    void replaceAttribute(SdlAttributeView attribute, SdlQualifiedName name, in SdlScalar value);
+    void setAttribute(SdlNode node, SdlQualifiedName name, in SdlScalar value);
     void removeAttribute(SdlAttributeView attribute);
     void insertBefore(SdlNode sibling, scope const(char)[] fragment);
     void insertAfter(SdlNode sibling, scope const(char)[] fragment);
@@ -294,19 +297,36 @@ struct SdlEditor(Document)
     /// nothing on failure.
     SdlExpected!void write(Writer, Allocator)(ref Writer writer, ref Allocator allocator);
 }
+
+auto sdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator)(
+    ref const SdlDocument!DocumentAllocator document, const(char)[] host);
+
+SdlEmbeddedRecipe locateEmbeddedRecipe(const(char)[] host);   // content, close, isJson, found
+bool hasEmbeddedRecipeHeader(const(char)[] head);             // the header alone
+void writeEmbeddedRendering(Writer)(ref Writer writer, const(char)[] host, in SdlEmbeddedRecipe recipe);
+SdlEmbeddedParse!Allocator parseEmbeddedSdlDocument(SdlParserConfig config = sdlDubRecipe,
+    Allocator = Mallocator)(const(char)[] host, const(char)[] sourceName = null);
 ```
 
-The constructor checks that the host's bytes are the document's source
-or, for an embedded recipe, that the rendering of the host is; otherwise every operation fails with `editTargetMissing`. Each
-operation records its first failure in the editor; `write` reports it.
-Selection uses the existing document API — filtered child and attribute
-ranges, `SdlNameQuery`, and comment spans — so the editor adds no query
-language.
+`config` is the profile the document was parsed with, which the editor needs
+to re-parse fragments and its result. The constructor checks that the host's
+bytes are the document's source or, for an embedded recipe, that the
+rendering of the host is; otherwise every operation fails with
+`editTargetMissing`. Each operation records its first failure in the
+editor; `write` reports it. Selection uses the existing document API —
+filtered child and attribute ranges, `SdlNameQuery`, extents and comment
+spans — so the editor adds no query language.
+
+Writing checks SDE2 by re-parsing the output under `config` and comparing its
+node count with the count the operations imply (a region replacement makes
+that count unknown, and only the parse is checked); the reference model of
+SDE2's oracle — the full semantic comparison — runs in the tests.
 
 ## 6. Failure behaviour
 
-Every failure is an `SdlError` with a stable code, the source name, and the
-span of the operation that failed; nothing is written. The codes added are:
+Every failure is an `SdlError` of stage `edit` with a stable code, the source
+name, the span of the operation that failed and its number in the reason;
+nothing is written. The codes added are:
 
 - `editConflict` (SDE3);
 - `editAmbiguousTarget` (a set on a repeated attribute);
