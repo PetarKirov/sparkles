@@ -541,6 +541,25 @@ SdlExpected!void writeSdlDocument(Document, Writer)(
         return sdlErr!void(encodeError(SdlErrorCode.checkFailed, "indent",
             "indent must be a non-empty string"));
 
+    // Narrow trust: the root view borrows `document`, which the caller keeps
+    // alive past this call; dip1000 reads binding it to a local as taking the
+    // address of a `scope` parameter.
+    const root = (() @trusted => document.root)();
+    return writeSdlChildren(root, writer, options);
+}
+
+/** Package seam: writes the children of `parent` canonically, as
+`writeSdlDocument` writes the root's — or only the child at position `only`,
+which renders one node's subtree (the lossless editor's typed write-back
+inserts it). Child depths start at `depth`. */
+package SdlExpected!void writeSdlChildren(Writer)(SdlNode parent, ref Writer writer,
+    SdlWriteOptions options = SdlWriteOptions.init, size_t only = size_t.max,
+    size_t depth = 0)
+{
+    if (options.indent.length == 0)
+        return sdlErr!void(encodeError(SdlErrorCode.checkFailed, "indent",
+            "indent must be a non-empty string"));
+
     UniqueBuffer!(char, 96) rolePath;
 
     /// Stamps the role path composed during the unwind onto the failure.
@@ -689,21 +708,19 @@ SdlExpected!void writeSdlDocument(Document, Writer)(
         return sdlOk();
     }
 
-    // Narrow trust: the root view borrows `document`, which the caller keeps
-    // alive past this call; dip1000 reads binding it to a local as taking the
-    // address of a `scope` parameter.
-    const root = (() @trusted => document.root)();
-    auto topLevel = root.byChild;
+    auto topLevel = parent.byChild;
     for (size_t position = 0; !topLevel.empty;
         topLevel.popFront(), position++)
     {
+        if (only != size_t.max && position != only)
+            continue;
         const child = topLevel.front;
-        const written = writeNode(writer, child, 0,
+        const written = writeNode(writer, child, depth,
             child.qualifiedName.localName.length != 0
                 || child.qualifiedName.namespace_.length != 0);
         if (written.hasError)
         {
-            prependChildSegment(root, position);
+            prependChildSegment(parent, position);
             return attach(written.error);
         }
     }
