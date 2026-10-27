@@ -286,6 +286,45 @@ SDP6 for scratch, keeping the allocator parameter.
 
 Gate: SDP7; S11 rows; the recorded fixed-width scratch decisions re-measured.
 
+## S11–S18 closure: 2026-10-27
+
+Every gate from S11 to S18 holds on this branch, delivered as one pull request.
+
+| Milestone | Gate                                                                                           | Evidence                                                                                                                                                                                                                                                           |
+| --------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| S11       | three rows under `-b bench`, verified against committed fingerprints; first results committed  | `sdl.parse`, `sdl.decode`, `sdl.encode` in `libs/wired/bench/runtime/src/sparkles/wired_bench/sdl.d`; datasets pinned in `nix/packages/wired-bench-datasets.nix`; `results/2026-10-27-ryzen9-7940hx-x86-64-v4-sdl-baseline.json`                                   |
+| S12       | TXE oracles; dmd-fmt tests unchanged; line-index tests unchanged plus SDL newlines and columns | `sparkles.base.text.edits` (concatenation reference, pairwise validity, monotonic mapping, `@nogc`); dmd-fmt's `mapCursor` tests; `sparkles.base.text.lineindex`                                                                                                   |
+| S13       | positions, errors and conformance unchanged; extents and comments against annotated fixtures   | `sdl.reader.layout.positionsMatchTheScan`, `.extentFixtures`, `.commentsInSourceOrder`; `sdl.conformance.pinnedDub`; SPEC §4.1, §4.2 and §7 amended                                                                                                                |
+| S14       | SDE1–SDE5, SDE7, SDE8, SDE10; `edit` row; host lines past a lone CR or U+2028                  | `sdl.editor.*`, including `properties.repositoryRecipes` (SDE1 and SDE2 over every recipe, mutation-checked), `nogc`, `replacementsSurviveGrowthAndMoves`, `embeddedRecipe`; `sdl.edit`; `readDubManifest.hostLinesPastLoneCrAndU2028`                             |
+| S15       | tools report no change on the tree; old-tool defects pinned; SDE9 audit and re-inventory       | `standardize-build-settings --check`: 0 of 152; `add-checked-buildtype`: 0 of 119; `buildSettings.normalize.lossless`, `addChecked.withChecked`; `ci --check-adhoc-sdl` with six reviewed exceptions; [editing §7](./editing.md#7-migration-coverage) re-inventory |
+| S16–S18   | each optimization's before and after on every row; no regression                               | the table below; SDP7 suites green throughout                                                                                                                                                                                                                      |
+
+Retired instructions per input byte (`--perf`, `-b bench`, Ryzen 9 7940HX,
+LDC 1.42), the SDP2 metric. The S11 column precedes S13; S13 changed no row.
+
+| Dataset       | Row    |   S11 | pre-S16 |   S16 |   S17 |   S18 |
+| ------------- | ------ | ----: | ------: | ----: | ----: | ----: |
+| `dub_recipes` | parse  | 341.4 |   341.4 | 184.6 | 184.6 | 184.6 |
+| `dub_recipes` | decode | 546.5 |   547.1 | 390.4 | 373.0 | 366.7 |
+| `dub_recipes` | encode |  37.8 |    37.8 |  37.8 |  37.8 |  37.8 |
+| `dub_recipes` | edit   |     — |   344.4 | 186.4 | 186.4 | 186.4 |
+| `deep_wide`   | parse  | 291.7 |   291.9 | 148.2 | 148.2 | 146.5 |
+| `deep_wide`   | encode |  80.9 |    80.9 |  80.9 |  80.9 |  80.9 |
+| `deep_wide`   | edit   |     — |   291.7 | 148.5 | 148.4 | 146.8 |
+
+S16's single pass removed the counting lex (parse −46%, decode −29%); S17's
+dispatch shows −4.5% on decode here because recipe aggregates are narrow —
+`wired.sdl.codec.linearDecode.nameComparisons` pins the complexity bound on
+a wide one; S18 is within a percent. Wall-time medians, recorded in the
+results file, moved by the host's load more than these effects during the
+measurement, which is why the gate reads instructions.
+
+Beyond the plan, the work also fixed a lexer disagreement with DUB (a date
+followed by a duration lexed as one token; now in the pinned DUB fixtures),
+two encode bugs that kept `toSDL` from writing the `dub.sdl` schema, and
+added the lossless typed write-back (`updateSDL`, [editing §3.1](./editing.md#3-1-typed-write-back))
+with the format and lossless round-trip suites of SPEC §10 over every recipe.
+
 ## S10 closure: 2026-10-23
 
 Every S10 gate holds on this branch, so the SDL backend is complete in the
