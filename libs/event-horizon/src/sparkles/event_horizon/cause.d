@@ -8,6 +8,7 @@ mechanical. The scheduler participates through plain function pointers
 */
 module sparkles.event_horizon.cause;
 
+import core.atomic : atomicOp;
 import core.time : MonoTime;
 
 import expected : Expected, err, ok;
@@ -155,6 +156,10 @@ struct FiberContext
     uint protectDepth;            /// > 0 defers cancel-fn firing (`protect`)
     FiberContext* prevSibling;    /// intrusive membership list links
     FiberContext* nextSibling;    /// ditto
+    /// The node whose sweep is firing this fiber's cancel function, while
+    /// one is (fiber-parker.md EFP10): a wait on that node's cancel word
+    /// ends through the sweep's own wake.
+    CancelContext* sweeping;
 }
 
 /**
@@ -192,6 +197,15 @@ struct CancelContext
     CancelContext* prevArmed;     /// intrusive armed-deadline-list links,
     CancelContext* nextArmed;     /// owned by the arming scheduler
     bool deadlineArmed;           /// membership in the armed list
+
+    /// Changed, and then woken, when a sweep cancels this node, so that
+    /// every member's interruptible ring wait on it ends with one wake
+    /// (fiber-parker.md EFP10).
+    shared uint cancelWord;
+    /// Members whose ring wait on `cancelWord` is written. The sweep wakes
+    /// the word only while one is, with a call that has returned before the
+    /// sweep does: nothing asynchronous ever names the node (EFP23).
+    uint ringWaiters;
 
     /// Links `child` under this node. (`@trusted`: the intrusive tree
     /// stores addresses of scope-frame-pinned nodes — the owning scope's
@@ -273,11 +287,37 @@ void cancelTree(scope CancelContext* root, Interrupt reason) @trusted nothrow @n
     root.cause = reason;
 
     for (auto f = root.firstFiber; f !is null; f = f.nextSibling)
+    {
+        f.sweeping = root;
         interruptFiber(f, reason);
+        f.sweeping = null;
+    }
+    // Every member's interrupt is latched before the word changes (EFP10).
+    atomicOp!"+="(root.cancelWord, 1);
+    if (root.ringWaiters > 0)
+        wakeCancelWord(root);
 
     for (auto c = root.firstChild; c !is null; c = c.nextSibling)
         if (!c.isProtected)
             cancelTree(c, reason);
+}
+
+/// Wakes every ring wait on `node`'s cancel word, with one `futex` call.
+private void wakeCancelWord(CancelContext* node) @trusted nothrow @nogc
+{
+    import sparkles.base.sync.platform : NativePlatform;
+    import sparkles.base.sync.seam : WakeCount, hasNativeSeam;
+
+    static if (hasNativeSeam)
+        NativePlatform.seamWake(node.cancelWord, WakeCount.all);
+    version (unittest)
+        ++cancelWordWakes;
+}
+
+version (unittest)
+{
+    /// Cancel-word wakes `cancelTree` has made, for the fiber parker's tests.
+    package uint cancelWordWakes;
 }
 
 /// Latches the interrupt on one fiber and fires its one-shot cancel

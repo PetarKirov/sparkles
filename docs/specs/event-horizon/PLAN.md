@@ -409,8 +409,8 @@ S4 migration of event-horizon's own users (`blocking_pool`, `raw_pool`,
 
 Status (October 23, 2026): both paths shipped. `Sched` installs the parker
 around every resume; the ring futex operations lower on io_uring; a ring sleep
-waits in the kernel on its park word, written at the tick's submission point,
-and `fiberPark` chooses the path. The
-[ledger](./fiber-parker.md#evidence-ledger) records what is verified. EFP10's
-node-cancellation route through `FUTEX_WAITV` with EFP23, EFP21's timed-out
-shutdown, and FB1–FB7 remain.
+waits in the kernel on its park word, and an interruptible one on its node's
+cancel word too, written at the tick's submission point;
+`fiberPark` chooses the path. The
+[ledger](./fiber-parker.md#evidence-ledger) records what is verified. EFP21's
+timed-out shutdown and FB1–FB7 remain.
