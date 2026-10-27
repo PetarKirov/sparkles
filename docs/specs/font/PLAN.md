@@ -21,7 +21,7 @@ the gate each milestone must pass, and progress. Scenarios and oracles live in
 | [M3 Outlines](#m3-outlines)                                               | done        |
 | [M4 Shaping](#m4-shaping)                                                 | done        |
 | [M5 Grayscale raster](#m5-grayscale-raster)                               | done        |
-| [M6 Colour glyphs](#m6-colour-glyphs)                                     | not started |
+| [M6 Colour glyphs](#m6-colour-glyphs)                                     | done        |
 | [M7 Discovery and fallback](#m7-discovery-and-fallback)                   | not started |
 | [M8 Consumer migration](#m8-consumer-migration)                           | not started |
 
@@ -250,6 +250,9 @@ correctly against hand-derived expectations; every glyph of the bundled
 Noto Color Emoji decodes at three sizes, and PNG filter fixtures for all five
 filter types pass.
 
+**State.** Done on 2026-10-27; the evidence and its remaining gaps are in
+[`testing.md`](./testing.md#evidence-ledger).
+
 ## M7 Discovery and fallback
 
 **Obligations.** `FTD1`–`FTD12`.
@@ -354,4 +357,9 @@ operation budget that can no longer end a run silently, vertical advances
 and origins from the library, and the engine's tests passing on an Android
 phone; the point lookups decode into a caller's heap workspace instead of
 268 KiB of stack.
-The ledger lists each gap. Next action: the MS startup slice, M6 or M7.
+M6 (colour glyphs) followed on 2026-10-27: `COLR` version 0 layers and
+`CPAL` palettes composited into premultiplied RGBA, and the PNGs of `CBDT`
+and `sbix` strikes decoded in D and scaled to the requested size, with every
+glyph of the bundled Noto Color Emoji decoding at three sizes and HarfBuzz
+agreeing on layers, palettes and the strike each PNG comes from.
+The ledger lists each gap. Next action: the MS startup slice or M7.

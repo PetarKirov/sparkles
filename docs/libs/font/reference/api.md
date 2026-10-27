@@ -420,6 +420,32 @@ pixels from the pen — an extreme ppem or outline — is `arithmeticExhausted`.
 `rasterizeGlyph` decodes the outline once and documents its worst-case cost
 (FTB3) in terms of the box, which the caller's storage bounds.
 
+## Colour glyphs — `sparkles.font.colour_raster`, `colr`, `bitmap`, `png`
+
+| Operation                                                               | Result                                                                                                            |
+| ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `inst.colourMeasure(gid, ppem, ws)`                                     | the glyph's `ColourGlyph`: its source (layers, `CBDT`, `sbix` or none), box, bearings and storage needs           |
+| `inst.rasterizeColourGlyph(gid, ppem, palette, foreground, region, ws)` | premultiplied RGBA written into the caller's `ColourRegion`, four bytes a pixel; the same `ColourGlyph`           |
+| `face.colrLayers(gid, layers)`                                          | the glyph's `COLR` version 0 layers, bottom first, into the caller's array; their count                           |
+| `face.paletteCount`, `face.paletteColour(palette, entry)`               | `CPAL`'s palettes and one straight-alpha sRGB `Colour`                                                            |
+| `face.bitmapGlyph(gid, ppem)`                                           | the glyph's PNG in the strike FTR7 chooses, borrowed from the face, with its strike ppem and box in strike pixels |
+| `pngHeader(png)`, `decodePng(png, rgba, inflated, zlibScratch)`         | a PNG's form and storage needs; its pixels as premultiplied RGBA                                                  |
+
+A glyph with `COLR` layers renders from them: each layer's outline is
+rasterized in grayscale and composited source-over in its palette colour,
+or in the caller's foreground for entry `0xFFFF`. Otherwise a `CBDT` or
+`sbix` glyph renders from the smallest strike at least the requested size,
+else the largest, each output pixel the area-weighted mean of the image
+pixels it covers; at the strike's own size that is an exact copy. A glyph
+with neither reports `ColourSource.none`, and the caller renders its
+outline in grayscale.
+
+The decoder handles 8-bit greyscale (with or without alpha), RGB and
+RGBA, and indexed colour at 1, 2, 4 or 8 bits, with all five filters and
+`tRNS`; other forms are `unsupportedVersion`. Inflation is Phobos's zlib
+over the caller's `pngZlibScratch` bytes, so nothing allocates. A glyph
+has at most 1,024 layers (FTB3).
+
 ## Carets — `sparkles.font.carets`
 
 `inst.ligatureCarets(gid, cluster, horizontal, out, ws)` returns the `GDEF`
