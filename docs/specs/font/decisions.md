@@ -143,6 +143,11 @@ before the terminal migration so emoji do not regress.
 **Trade-off.** Interlaced or 16-bit PNGs in a font are refused rather than
 decoded; no surveyed emoji font uses them, and the refusal is a reported error.
 
+**Amended 2026-10-27.** The decoder is now `sparkles:image`'s, the one the
+terminal's kitty graphics use, held to stb_image over PngSuite;
+`sparkles.font.png` maps its refusals to `FontError`s. It decodes every form
+the format defines, so the trade-off above no longer holds.
+
 ## FTX5: Platform services list files; the library describes faces
 
 **State:** accepted 2026-10-06 · **Affects:** `FTD1`–`FTD3`

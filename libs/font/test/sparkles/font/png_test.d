@@ -156,13 +156,13 @@ unittest
     const good = pngFile(PngSpec(2, 2, 8, 6, rows));
     assert(decode(good).ok);
 
-    // Forms outside FTR7: interlacing, 16 bits, sub-byte greyscale.
-    auto spec = PngSpec(2, 2, 8, 6, rows);
-    spec.interlace = 1;
-    assert(decode(pngFile(spec)).kind == FontErrorKind.unsupportedVersion);
-    assert(decode(pngFile(PngSpec(1, 1, 16, 0, [[0, 0]]))).kind == FontErrorKind.unsupportedVersion);
-    assert(decode(pngFile(PngSpec(2, 1, 4, 0, [[0]]))).kind == FontErrorKind.unsupportedVersion);
+    // Every form the format defines decodes, 16 bits and sub-byte greyscale too; an undefined one does not.
+    auto d16 = decode(pngFile(PngSpec(1, 1, 16, 0, [[0x80, 0]])));
+    assert(d16.ok && d16.rgba == [128, 128, 128, 255]);
+    auto d4 = decode(pngFile(PngSpec(2, 1, 4, 0, [[0xF0]])));
+    assert(d4.ok && d4.rgba == [255, 255, 255, 255, 0, 0, 0, 255]);
     assert(decode(pngFile(PngSpec(1, 1, 8, 5, [[0]]))).kind == FontErrorKind.unsupportedVersion);
+    auto spec = PngSpec(2, 2, 8, 6, rows);
 
     // Not a PNG, or cut short.
     auto bad = good.dup;

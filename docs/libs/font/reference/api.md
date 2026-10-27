@@ -440,10 +440,11 @@ pixels it covers; at the strike's own size that is an exact copy. A glyph
 with neither reports `ColourSource.none`, and the caller renders its
 outline in grayscale.
 
-The decoder handles 8-bit greyscale (with or without alpha), RGB and
-RGBA, and indexed colour at 1, 2, 4 or 8 bits, with all five filters and
-`tRNS`; other forms are `unsupportedVersion`. Inflation is Phobos's zlib
-over the caller's `pngZlibScratch` bytes, so nothing allocates. A glyph
+The decoder is [`sparkles:image`](../../image/index.md)'s, with its refusals
+mapped to `FontError`s: every colour type and bit depth, all five filters,
+`tRNS` and Adam7; a form the format does not define is `unsupportedVersion`.
+Inflation is Phobos's zlib over the caller's `pngZlibScratch` bytes, so
+nothing allocates. A glyph
 has at most 1,024 layers (FTB3).
 
 ## Carets — `sparkles.font.carets`

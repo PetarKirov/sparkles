@@ -11,6 +11,8 @@ importPaths "src"
 dflags "-preview=in" "-preview=dip1000"
 
 dependency "expected" version="~>0.4.1"
+// PNG strikes decode through the project's codec (FTX4), pure D over Phobos's zlib.
+dependency "sparkles:image" path="../.."
 
 // The pure-D library: no C library on the link line (FTA7).
 configuration "library" {

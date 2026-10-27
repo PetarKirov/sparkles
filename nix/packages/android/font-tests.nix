@@ -22,9 +22,11 @@ in
           "libs/font/src"
           "libs/font/test"
         ];
+        srcDirs = [ "libs/image/src" ];
         versions = [
           "Have_expected"
           "Have_sparkles_base"
+          "Have_sparkles_image"
         ];
         dubDeps = [
           {
@@ -48,9 +50,11 @@ in
           "libs/font/test"
           "libs/font/test-engine"
         ];
+        srcDirs = [ "libs/image/src" ];
         versions = [
           "Have_expected"
           "Have_sparkles_base"
+          "Have_sparkles_image"
           "SparklesFontEngine"
         ];
         dubDeps = [

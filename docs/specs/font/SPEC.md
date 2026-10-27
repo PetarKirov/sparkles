@@ -504,9 +504,9 @@ layers and a bitmap strike (`FTR7`) renders from its layers.
 **must** produce byte-identical output.
 
 **FTR7: Bitmap colour strikes.** `CBDT`/`CBLC` and `sbix` glyphs **must**
-decode from their embedded PNG data in 8-bit greyscale, greyscale with alpha,
-RGB or RGBA, or indexed colour at 1, 2, 4 or 8 bits, without interlacing.
-Other PNG forms yield `unsupportedVersion`. The strike chosen is the smallest
+decode from their embedded PNG data in every form the PNG format defines:
+every colour type and bit depth, `tRNS` transparency and Adam7 interlacing.
+A form the format does not define yields `unsupportedVersion`. The strike chosen is the smallest
 at least as large as the requested size, else the largest, scaled to the
 requested size.
 
