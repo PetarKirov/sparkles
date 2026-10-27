@@ -1,7 +1,7 @@
 # Shared builder for the single-module wasm32-wasip1 artifacts behind the
 # interactive docs widgets (`text-wasm`, `table-wasm`). Compiles one entry
 # module with dlang.nix's `ldc-sparkles` (the project's LDC, `pkgs.ldc`, plus
-# its `wasm32-wasip1` runtime and wasi-sdk sysroot), shrinks the result with `wasm-opt`,
+# its `wasm32-wasip1` runtime and sysroot), shrinks the result with `wasm-opt`,
 # and guarantees a closure-free output: druntime/phobos assert messages bake
 # `__FILE__` strings pointing into the toolchain's store path into the binary
 # (LDC has no -ffile-prefix-map), so all store-path references are zeroed with
