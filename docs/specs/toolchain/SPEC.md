@@ -93,7 +93,8 @@ the catalogue of known WebAssembly shortcuts being repaid,
 6. Each toolchain output has a test that Nix runs; a build that is not tested
    is not supported.
 7. The toolchain is built and cached for every supported host before Sparkles
-   depends on a new revision of it.
+   depends on a new revision of it, and the outputs costliest to rebuild stay
+   pinned in that cache, one revision each.
 
 Bold **must**, **must not**, **should** and **may** carry the meanings of
 [BCP 14](https://www.rfc-editor.org/info/bcp14); **should** names its
@@ -292,3 +293,19 @@ output's store path. Experimental outputs (the preview 3 sysroot of
 
 _Rationale:_ A cold toolchain build exceeds Sparkles' CI job limits, and a
 cancelled build publishes nothing, so every retry starts cold.
+
+**TC24: Pinned outputs.** The pin set **must** be the flake output
+`legacyPackages.<system>.pinTargets` (`nix/pin-targets.nix`), an attribute
+set from pin name to derivation: each entry the derivation Sparkles' builds
+use, absent from cache.nixos.org, and expensive to rebuild. An entry is pinned
+in Sparkles' Cachix cache as `<name>-<system>`, keeping exactly one revision.
+The cache **must not** hold a pin outside the set. A package that can be
+fetched or copied rather than compiled, such as a binary release or a copy of a
+pinned output, **must not** be an entry.
+
+_Rationale:_ The cache holds 10 GiB and evicts the paths accessed least
+recently, so an unpinned output survives only while the cache has room. The
+toolchain for three hosts and its heaviest dependents take a large share of
+that, which leaves room for one revision of each and for CI's working set.
+[TC23](#_8-platforms-tests-and-caches) needs the toolchain present when the lock
+moves; TC24 keeps it present between moves.
