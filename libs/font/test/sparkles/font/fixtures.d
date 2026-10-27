@@ -1654,3 +1654,122 @@ ubyte[] cffOutlineTable(const(ubyte)[][] charstrings, const(ubyte)[] privateDict
         ~ globalSubrs ~ charStrings ~ privateDict ~ subrs;
     return t;
 }
+
+// ---------------------------------------------------------------------------
+// PNG files (M6)
+// ---------------------------------------------------------------------------
+
+/// The CRC-32 of PNG chunks (ISO 3309), bit by bit.
+uint crc32(scope const(ubyte)[] data)
+{
+    uint c = 0xFFFF_FFFF;
+    foreach (b; data)
+    {
+        c ^= b;
+        foreach (_; 0 .. 8)
+            c = c & 1 ? 0xEDB8_8320 ^ (c >> 1) : c >> 1;
+    }
+    return ~c;
+}
+
+/// A zlib stream holding `data` in stored (uncompressed) deflate blocks.
+ubyte[] zlibStored(scope const(ubyte)[] data)
+{
+    ubyte[] z = [0x78, 0x01];
+    size_t at;
+    do
+    {
+        const n = data.length - at > 65_535 ? 65_535 : data.length - at;
+        const last = at + n == data.length;
+        z ~= cast(ubyte)(last ? 1 : 0);
+        z ~= [cast(ubyte) n, cast(ubyte)(n >> 8), cast(ubyte) ~n, cast(ubyte)(~n >> 8)];
+        z ~= data[at .. at + n];
+        at += n;
+    } while (at < data.length);
+    uint a = 1, b = 0;
+    foreach (v; data)
+    {
+        a = (a + v) % 65_521;
+        b = (b + a) % 65_521;
+    }
+    return z ~ u32((b << 16) | a);
+}
+
+/// A PNG to encode: unfiltered rows of packed samples, each filtered by its entry of `filters`.
+struct PngSpec
+{
+    uint width, height;
+    ubyte bitDepth = 8, colourType = 6;
+    const(ubyte[])[] rows;
+    /// Each row's filter type; missing entries are 0.
+    const(ubyte)[] filters;
+    /// `PLTE` (RGB triples) and `tRNS` bodies; null for none.
+    const(ubyte)[] palette, transparency;
+    ubyte interlace;
+    /// Split the zlib stream into `IDAT` chunks of this many bytes; 0 for one chunk.
+    size_t idatSize;
+}
+
+private ubyte[] chunk(string tag, scope const(ubyte)[] body)
+{
+    const typed = cast(const(ubyte)[]) tag ~ body;
+    return u32(cast(uint) body.length) ~ typed ~ u32(crc32(typed));
+}
+
+/// The PNG file `s` describes.
+ubyte[] pngFile(in PngSpec s)
+{
+    const channels = s.colourType == 2 ? 3 : s.colourType == 4 ? 2 : s.colourType == 6 ? 4 : 1;
+    const bpp = (channels * s.bitDepth + 7) / 8;
+    ubyte[] raw;
+    foreach (y, row; s.rows)
+    {
+        const filter = y < s.filters.length ? s.filters[y] : 0;
+        const(ubyte)[] up = y > 0 ? s.rows[y - 1] : new ubyte[row.length];
+        raw ~= filter;
+        foreach (i, v; row)
+        {
+            const int a = i >= bpp ? row[i - bpp] : 0, b = up[i], c = i >= bpp ? up[i - bpp] : 0;
+            int predictor;
+            switch (filter)
+            {
+                case 1: predictor = a; break;
+                case 2: predictor = b; break;
+                case 3: predictor = (a + b) / 2; break;
+                case 4:
+                {
+                    const p = a + b - c;
+                    const pa = p > a ? p - a : a - p, pb = p > b ? p - b : b - p, pc = p > c ? p - c : c - p;
+                    predictor = pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+                    break;
+                }
+                default: predictor = 0;
+            }
+            raw ~= cast(ubyte)(v - predictor);
+        }
+    }
+    const z = zlibStored(raw);
+    ubyte[] png = [0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'];
+    png ~= chunk("IHDR", u32(s.width) ~ u32(s.height) ~ u8(s.bitDepth) ~ u8(s.colourType) ~ u8(0) ~ u8(0) ~ u8(s.interlace));
+    if (s.palette.length)
+        png ~= chunk("PLTE", s.palette);
+    if (s.transparency.length)
+        png ~= chunk("tRNS", s.transparency);
+    const step = s.idatSize ? s.idatSize : z.length;
+    for (size_t at = 0; at < z.length; at += step)
+        png ~= chunk("IDAT", z[at .. at + step < z.length ? at + step : z.length]);
+    return png ~ chunk("IEND", null);
+}
+
+/// A `width` × `height` RGBA PNG whose every pixel is `rgba`.
+ubyte[] solidPng(uint width, uint height, ubyte[4] rgba)
+{
+    const(ubyte)[][] rows;
+    foreach (_; 0 .. height)
+    {
+        ubyte[] row;
+        foreach (__; 0 .. width) row ~= rgba[];
+        rows ~= row;
+    }
+    return pngFile(PngSpec(width, height, 8, 6, rows));
+}
