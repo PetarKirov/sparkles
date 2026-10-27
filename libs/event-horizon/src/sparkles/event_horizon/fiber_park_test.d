@@ -726,6 +726,199 @@ unittest
     assert(r.output.canFind("the defect: the defect at "), r.output);
 }
 
+// ── a shutdown requested during a run (EFP21) ───────────────────────────────
+
+@("fiberPark.shutdown.aRequestEndsInterruptibleWaitsWithinTheGrace")
+@system
+unittest
+{
+    foreach (path; parkPaths)
+    {
+        LoopGroup group;
+        auto started = LoopGroup.start(group, LoopGroupConfig(fiberPark: path));
+        if (started.hasError)
+            skipTest(skipReason(started.error));
+
+        Semaphore sem;
+        shared bool parked;
+        WaitStatus st;
+        InterruptKind kind;
+        auto requester = foreign(() {
+            while (!atomicLoad(parked))
+                Thread.sleep(1.msecs);
+            group.requestShutdown(5.seconds);
+        });
+        const t0 = MonoTime.currTime;
+        cast(void) group.run((ref RootScope root, ref env) {
+            root.spawn(() {
+                atomicStore(parked, true);
+                st = sem.acquireUntil(bound(), true);
+                kind = currentScheduler().currentContext().pendingInterrupt.kind;
+            });
+        });
+        requester.join();
+        assert(st == WaitStatus.cancelled);
+        assert(kind == InterruptKind.shutdown, "the scope was cancelled by the shutdown");
+        assertPrompt(t0);
+        assert(!group.worker().leaked);
+        assert(!group.shutdown().hasError);
+    }
+}
+
+@("fiberPark.shutdown.aRunAfterARequestedShutdownStartsAfresh")
+@system
+unittest
+{
+    foreach (path; parkPaths)
+    {
+        LoopGroup group;
+        auto started = LoopGroup.start(group, LoopGroupConfig(fiberPark: path));
+        if (started.hasError)
+            skipTest(skipReason(started.error));
+
+        // A shutdown ends the first run well within its grace...
+        Semaphore sem;
+        shared bool parked;
+        auto requester = foreign(() {
+            while (!atomicLoad(parked))
+                Thread.sleep(1.msecs);
+            group.requestShutdown(100.msecs);
+        });
+        cast(void) group.run((ref RootScope root, ref env) {
+            root.spawn(() {
+                atomicStore(parked, true);
+                cast(void) sem.acquireUntil(bound(), true);
+            });
+        });
+        requester.join();
+
+        // ...and the next run outlives that grace untouched.
+        WaitStatus st = WaitStatus.cancelled;
+        auto second = group.run((ref RootScope root, ref env) {
+            root.spawn(() { st = sem.acquireUntil(MonoTime.currTime + 300.msecs, true); });
+        });
+        assert(!second.hasError, "the second run inherited the first one's shutdown");
+        assert(st == WaitStatus.timedOut, "the second run's wait was cancelled");
+        assert(!group.worker().leaked);
+        assert(!group.shutdown().hasError);
+    }
+}
+
+@("fiberPark.shutdown.aParkOutlivingTheGraceLeaksTheSchedulerForALaterWake")
+@system
+unittest
+{
+    import core.stdc.errno : ETIMEDOUT;
+
+    foreach (path; parkPaths)
+    {
+        LoopGroup group;
+        auto started = LoopGroup.start(group, LoopGroupConfig(fiberPark: path));
+        if (started.hasError)
+            skipTest(skipReason(started.error));
+
+        // Outlives the run: the stranded fiber's record stays queued on it.
+        auto ev = new ManualResetEvent;
+        Semaphore sem;
+        shared bool parked;
+        WaitStatus st;
+        shared bool returned;
+        auto requester = foreign(() {
+            while (!atomicLoad(parked))
+                Thread.sleep(1.msecs);
+            group.requestShutdown(50.msecs);
+            unstrandAfter(ev, &returned);
+        });
+        const t0 = MonoTime.currTime;
+        auto outcome = group.run((ref RootScope root, ref env) {
+            auto s = &currentScheduler();
+            root.spawn(() { ev.wait(); }); // not interruptible, never set
+            root.spawn(() { st = sem.acquireUntil(bound(), true); });
+            yieldUntil(*s, () => s.lotSleepers == 2);
+            atomicStore(parked, true);
+        });
+        atomicStore(returned, true);
+        requester.join();
+        assert(MonoTime.currTime - t0 < 2.seconds, "the grace period bounded the run");
+        assert(outcome.hasError && outcome.error.kind == outcome.error.Kind.fail
+            && outcome.error.failure.code == ETIMEDOUT, "run reported the expired grace");
+        assert(st == WaitStatus.cancelled, "the interruptible wait still ended");
+        auto leaked = &group.worker();
+        assert(leaked.leaked);
+        assert(leaked.lotSleepers == 1);
+        const down = group.shutdown();
+        assert(down.hasError && down.error.code == ETIMEDOUT);
+        group.requestShutdown(); // reaches nothing once the group is down
+
+        // The stranded fiber's wake now lands in the leaked scheduler.
+        foreign(() { ev.set(); }).join();
+        if (path == FiberPark.inbox || !leaked.ringPark)
+            assert(atomicLoad(leaked._wakeInbox) !is null, "the wake reached the inbox");
+    }
+}
+
+@("fiberPark.shutdown.aThreadPerCoreWorkerOutlivingTheGraceIsLeaked")
+@system
+unittest
+{
+    import core.stdc.errno : ETIMEDOUT;
+
+    foreach (path; parkPaths)
+    {
+        LoopGroup group;
+        LoopGroupConfig cfg;
+        cfg.topology = Topology.threadPerCore;
+        cfg.workers = 2;
+        cfg.pinToCpu = No.pinToCpu;
+        cfg.fiberPark = path;
+        auto started = LoopGroup.start(group, cfg);
+        if (started.hasError)
+            skipTest(skipReason(started.error));
+
+        auto ev = new ManualResetEvent;
+        shared uint parked;
+        shared bool returned;
+        auto requester = foreign(() {
+            while (atomicLoad(parked) < 2)
+                Thread.sleep(1.msecs);
+            group.requestShutdown(50.msecs);
+            unstrandAfter(ev, &returned);
+        });
+        const t0 = MonoTime.currTime;
+        group.runEach((uint id, ref RootScope root, ref env) {
+            atomicOp!"+="(parked, 1);
+            if (id == 1)
+                ev.wait(); // not interruptible, never set: worker 1 is leaked
+            else
+                assert(sleepUntilCancelled(), "worker 0 ended at the request");
+        });
+        atomicStore(returned, true);
+        requester.join();
+        assert(MonoTime.currTime - t0 < 2.seconds, "the grace period bounded the run");
+        const down = group.shutdown();
+        assert(down.hasError && down.error.code == ETIMEDOUT, "a worker was leaked");
+        foreign(() { ev.set(); }).join();
+    }
+}
+
+/// Sets `ev` if the run has not returned 5 s after a shutdown request, so
+/// that a shutdown that leaks nothing fails its test rather than hanging it.
+void unstrandAfter(ManualResetEvent* ev, shared(bool)* returned) @system
+{
+    const until = MonoTime.currTime + 5.seconds;
+    while (!atomicLoad(*returned) && MonoTime.currTime < until)
+        Thread.sleep(1.msecs);
+    if (!atomicLoad(*returned))
+        ev.set();
+}
+
+/// Sleeps interruptibly until the fiber's scope is cancelled.
+bool sleepUntilCancelled() @system
+{
+    Semaphore never;
+    return never.acquireUntil(bound(), true) == WaitStatus.cancelled;
+}
+
 // ── the ring path (EFP6–EFP8, EFP22) ────────────────────────────────────────
 
 @("fiberPark.ring.aParkWaitsInTheKernelOnlyOnTheRingPath")

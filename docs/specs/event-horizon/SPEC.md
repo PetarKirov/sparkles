@@ -1537,6 +1537,7 @@ struct LoopGroup
     Outcome!T run(T)(scope T delegate(ref RootScope root, ref Env env) main);
     IoResult!void postTo(size_t i, void function(void*) @nogc nothrow fn, void* ctx);
     ref DefaultLoop workerLoop(size_t i) return; // tier-A access, owner thread only
+    void requestShutdown(Duration grace = 5.seconds); // any thread, during a run
     IoResult!void shutdown(Duration grace = 5.seconds);
 }
 
@@ -1558,6 +1559,18 @@ ops still in flight, `shutdown` returns `IoError(ETIMEDOUT, OpKind.none,
 IoErrorStage.cancel)` and **intentionally leaks the affected ring and its
 slab** rather than freeing kernel-visible memory — the §4.3 invariant
 outranks the deadline.
+
+**Shutdown during a run.** `requestShutdown` may be called from any thread
+while `run` or `runEach` blocks, and before a worker starts. Each worker, at
+its next tick, cancels the outermost scope of every live fiber with
+`InterruptKind.shutdown` (a fiber no scope holds is interrupted directly), so
+each fiber ends at its next cancellation point (§8.4). A fiber that reaches
+none — parked non-interruptibly, or computing — outlives the grace period:
+that worker's run then returns `ETIMEDOUT`, and its scheduler, task slab,
+wake inbox and loop are leaked, never freed, since a fiber still parked on a
+`sparkles.base.sync` primitive can be woken later from any thread
+([fiber-parker.md](./fiber-parker.md) EFP21). `run` reports the expiry as a
+failure cause, and `shutdown` returns `ETIMEDOUT`.
 
 **The spawn × topology contract.**
 
