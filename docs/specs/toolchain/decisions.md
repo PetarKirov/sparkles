@@ -140,7 +140,7 @@ with, and its link-time-optimization libraries cannot be used with LLVM 24.
 
 ## TCD8: LLVM assertions
 
-_State: proposed; decided in TC-M3._
+_State: accepted._
 
 **Question.** Should the toolchain's LLVM keep its internal assertions?
 
@@ -156,7 +156,17 @@ debugging the SPIR-V backend.
 **Decision rule.** Adopt the pair only if the checked variant can be kept
 out of every default closure and the two variants share no build step that
 would pull both into one closure; otherwise keep one assertions-enabled
-toolchain (TC17). TC-M3 records the measurement and the outcome here.
+toolchain (TC17).
+
+**Outcome.** One assertions-enabled toolchain. The two variants would share
+no artifact: every LLVM library, clang, compiler-rt and LDC itself differ
+between them, so the pair doubles the toolchain's cache pins (about
+2.4 GiB compressed per host, against a 10 GiB cache for three hosts), and the
+shader build, a default step, would have to move to the release variant
+while SPIR-V backend work goes on in the checked one.
+
+**Revisit when** the cache limit grows, or the SPIR-V backend's defects stop
+being found by its assertions.
 
 ## TCD9: Target set
 
@@ -182,11 +192,26 @@ hashes the commit's tree, with the same result on both.
 
 **Choice.** TC5.
 
+## TCD11: Runtimes built beside LLVM, not inside it
+
+_State: accepted._
+
+**Question.** Build compiler-rt, libunwind and libc++ inside the LLVM build
+(`LLVM_ENABLE_RUNTIMES`) or as separate derivations against it?
+
+**Evidence.** The LLVM build is the toolchain's longest step, and the
+runtimes change more often than LLVM does. As separate derivations against
+LLVM's development view, compiler-rt and every WASI library rebuilt without
+LLVM; three LLVM fork commits the WASI sysroots needed were applied to them
+as patches, with no LLVM rebuild.
+
+**Choice.** Separate derivations from the LLVM fork's source: compiler-rt
+(TC10), the WASI sysroots (TCW1), and the all-LLVM profile's libunwind and
+libc++ (TC18). Fork commits that only the runtimes need are applied to them
+until the next LLVM rebuild takes them in (WTD36).
+
 ## Open questions
 
-- **Q1: Runtimes in or out of the LLVM build.** Build compiler-rt, libunwind
-  and libc++ inside the LLVM build or as separate derivations against it;
-  decided by measured build time in TC-M3. Affects TC9–TC10, TC18.
 - **Q2: musl.** Whether the static builds of TC20 also target musl, which
   needs a druntime build for musl and dependencies from nixpkgs' musl set.
   Decided after TC-M4.
