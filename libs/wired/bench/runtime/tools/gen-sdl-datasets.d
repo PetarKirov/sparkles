@@ -14,9 +14,9 @@ its arguments: the same input tree gives the same bytes.
 $(UL
 $(LI `concat <recipes-dir> <out>` — every `dub.sdl` under `<recipes-dir>`, in
     byte order of its relative path, wrapped as an inline `subPackage { … }`
-    block of one root recipe. Each block's top-level `name` is replaced by its
-    directory path (`libs/base` → `libs-base`, the root → `root`), so the
-    subpackage names are unique and the file is one valid DUB recipe.)
+    block of one root recipe. The recipes' bytes are not read, only copied,
+    so the generator does no SDL work of its own (lossless editing SDE9); their
+    subpackage names may repeat, which the benchmark's schema does not mind.)
 $(LI `deep-wide <out>` — a deep and wide SDL document over every scalar kind
     DUB's pinned SDLang parser shares with `sdlFull`: chains nested 200 levels
     deep, tags with 256 attributes and 64 values, and a balanced tree of
@@ -29,14 +29,13 @@ in `src/sparkles/wired_bench/sdl.d` in the same commit.
 */
 module gen_sdl_datasets;
 
-import std.algorithm.iteration : map, splitter;
-import std.algorithm.searching : startsWith;
+import std.algorithm.iteration : map;
 import std.algorithm.sorting : sort;
-import std.array : appender, array, replace;
+import std.array : appender, array;
 import std.conv : to;
 import std.file : dirEntries, readText, SpanMode, write;
 import std.format : format;
-import std.path : dirName, relativePath;
+import std.path : relativePath;
 import std.stdio : stderr;
 
 int main(string[] args)
@@ -54,7 +53,9 @@ int main(string[] args)
     return 0;
 }
 
-/// The recipes under `root` as one recipe of inline subpackages.
+/// The recipes under `root` as one recipe of inline subpackages: each
+/// recipe's bytes, unread, inside `subPackage { … }`. Their names may repeat;
+/// DUB would reject that, but the benchmark's schema does not ask.
 string concatRecipes(string root)
 {
     auto paths = dirEntries(root, "dub.sdl", SpanMode.depth)
@@ -67,24 +68,9 @@ string concatRecipes(string root)
     o ~= "description \"Every dub.sdl of the snapshot, as inline subpackages\"\n";
     foreach (path; paths)
     {
-        const dir = path.dirName;
-        const slug = dir == "." ? "root" : dir.replace("/", "-");
         o ~= "subPackage {\n";
-        bool renamed;
-        foreach (line; readText(root ~ "/" ~ path).splitter('\n'))
-        {
-            if (!renamed && line.startsWith("name \""))
-            {
-                o ~= format!"name \"%s\"\n"(slug);
-                renamed = true;
-            }
-            else
-            {
-                o ~= line;
-                o ~= '\n';
-            }
-        }
-        o ~= "}\n";
+        o ~= readText(root ~ "/" ~ path);
+        o ~= "\n}\n";
     }
     return o.data;
 }
