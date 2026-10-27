@@ -3785,7 +3785,9 @@ if (is(T == struct))
         foreach (slot; 0 .. maxFixed + 1)
             if ((slot in slotScalars) is null)
                 gap = true;
-    if (gap || haveSuffix && suffixStart != maxFixed + 1)
+    // With no fixed slot the suffix starts at 0.
+    const fixedCount = slotScalars.length ? maxFixed + 1 : 0;
+    if (gap || haveSuffix && suffixStart != fixedCount)
     {
         b.failure = attachPath(b.path, encBaseError(
             SdlErrorCode.valueOutOfRange,
@@ -4069,41 +4071,50 @@ if (is(T == struct))
             static if ((!isDynamicArray!(Unqual!V) || is(V == string))
                 && !isAssociativeArray!(Unqual!V))
             {
-                // Scalar or aggregate single child.
-                static if (__traits(hasMember, typeof(value.tupleof[i]),
-                        "init") && HasIdentity!(typeof(value.tupleof[i])))
-                    const name = encChildName(value.tupleof[i], R.namespace_, R.localName);
+                // An optional field at its declared default is omitted when
+                // its policy says so, as for attributes.
+                static if (policies[i].optional && policies[i].skip == WireSkip.whenDefault)
+                    const emitChild = !(value.tupleof[i] == declaredDefault!(T, i));
                 else
-                    const name = EncName(R.namespace_, R.localName);
-
-                const mark = b.path.text.length;
-                b.path.text ~= "." ~ qualifiedKey(name.namespace_, name.localName) ~ "[0]";
-                const cIdx = encAppendNode(b, name.namespace_, name.localName, childDepth);
-                scope (exit) popSegment(b.path, mark);
-
-                static if (is(Unqual!(EncPayload!V) == struct)
-                    && !is(EncPayload!V == bool) && !isSomeChar!(EncPayload!V)
-                    && !is(EncPayload!V == string))
+                    enum emitChild = true;
+                if (emitChild)
                 {
-                    alias P = EncPayload!(V);
-                    const P payload = encPayload(value.tupleof[i]);
-                    encodeAggregate!(P)(b, payload, cIdx);
+                    // Scalar or aggregate single child.
+                    static if (__traits(hasMember, typeof(value.tupleof[i]),
+                            "init") && HasIdentity!(typeof(value.tupleof[i])))
+                        const name = encChildName(value.tupleof[i], R.namespace_, R.localName);
+                    else
+                        const name = EncName(R.namespace_, R.localName);
+
+                    const mark = b.path.text.length;
+                    b.path.text ~= "." ~ qualifiedKey(name.namespace_, name.localName) ~ "[0]";
+                    const cIdx = encAppendNode(b, name.namespace_, name.localName, childDepth);
+                    scope (exit) popSegment(b.path, mark);
+
+                    static if (is(Unqual!(EncPayload!V) == struct)
+                        && !is(EncPayload!V == bool) && !isSomeChar!(EncPayload!V)
+                        && !is(EncPayload!V == string))
+                    {
+                        alias P = EncPayload!(V);
+                        const P payload = encPayload(value.tupleof[i]);
+                        encodeAggregate!(P)(b, payload, cIdx);
+                    }
+                    else
+                    {
+                        // An lvalue: `encConverted` borrows the payload by `ref`,
+                        // and a plain scalar's payload is the scalar itself.
+                        auto payload = encPayload(value.tupleof[i]);
+                        auto wire = encConverted!(FC3, EncPayload!(V))(payload, b,
+                            "." ~ qualifiedKey(name.namespace_, name.localName) ~ "[0]");
+                        if (wire.failed)
+                            return;
+                        auto singleScalar = encScalar(wire.value, b);
+                        encAddValue(b, cIdx, singleScalar);
+                        if (b.failure.reason.length)
+                            return;
+                    }
+                    kidOrder ~= cIdx;
                 }
-                else
-                {
-                    // An lvalue: `encConverted` borrows the payload by `ref`,
-                    // and a plain scalar's payload is the scalar itself.
-                    auto payload = encPayload(value.tupleof[i]);
-                    auto wire = encConverted!(FC3, EncPayload!(V))(payload, b,
-                        "." ~ qualifiedKey(name.namespace_, name.localName) ~ "[0]");
-                    if (wire.failed)
-                        return;
-                    auto singleScalar = encScalar(wire.value, b);
-                    encAddValue(b, cIdx, singleScalar);
-                    if (b.failure.reason.length)
-                        return;
-                }
-                kidOrder ~= cIdx;
             }
             else static if (isDynamicArray!(Unqual!V) && !is(V == string)
                 && !isAssociativeArray!(Unqual!V))
@@ -5468,4 +5479,28 @@ version (unittest)
         assert(comparisons >= 128 && comparisons <= 2 * (256 + 64), comparisons.to!string);
         assert(decoded.value.c1.length == 8 && decoded.value.a1 == 1);
     }
+}
+
+@("wired.sdl.codec.writeSDL.suffixOnlyAndSkippedChildren")
+@safe unittest
+{
+    import sparkles.wired : WireName, WireOptional, WireSkip;
+
+    // A child whose only positional field is a dynamic suffix at 0, and an
+    // optional scalar child at its default, which `whenDefault` omits.
+    static struct Values
+    {
+        @SdlTagValue(0) string[] values;
+    }
+
+    static struct Holder
+    {
+        @WireName!Sdl("flags") Values[] flags;
+        @WireOptional(WireSkip.whenDefault) string note;
+    }
+
+    const encoded = toSDL(Holder([Values(["-a", "-b"])]));
+    assert(encoded.hasValue, encoded.error.toString);
+    assert(encoded.value[] == "flags \"-a\" \"-b\"\n", encoded.value[]);
+    assert(fromSDL!Holder(encoded.value[]).value == Holder([Values(["-a", "-b"])]));
 }
