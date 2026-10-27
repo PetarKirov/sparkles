@@ -45,10 +45,10 @@ import sparkles.base.sync.seam : Deadline, WakeCount;
 
 import sparkles.event_horizon.backend.concept : canSubmitOp;
 import sparkles.event_horizon.backend.select : DefaultBackend;
-import sparkles.event_horizon.cause : Interrupt, interruptRequested;
+import sparkles.event_horizon.cause : CancelContext, Interrupt, interruptRequested;
 import sparkles.event_horizon.errors : IoErrorStage, ioError, OpKind;
-import sparkles.event_horizon.op : Completion, FutexDeadline, KernelTimespec, OpFutexWait,
-    OpFutexWake;
+import sparkles.event_horizon.op : Completion, FutexDeadline, FutexWaitvEntry, futexWaitvFlags,
+    KernelTimespec, OpFutexWait, OpFutexWaitv, OpFutexWake;
 import sparkles.event_horizon.sched : Alarm, FiberTask, Sched;
 
 private alias P = NativePlatform;
@@ -106,6 +106,11 @@ package struct FiberParkState
     bool ringInterruptible;
     /// ditto
     uint ringGeneration;
+    /// An interruptible ring sleep's written wait also names its node's
+    /// cancel word (EFP10): the node, and the kernel-stable entries.
+    CancelContext* ringNode;
+    /// ditto
+    FutexWaitvEntry[2] waitv;
 }
 
 /// The parker to install while `t` runs (EFP1).
@@ -252,6 +257,12 @@ private void onDeadline(void* ctx) nothrow @nogc
 private void onCancel(void* ctx, Interrupt) nothrow @nogc
 {
     auto t = taskOf(ctx);
+    // A sweep of the node this fiber's written wait names ends that wait
+    // with its own wake of the cancel word, and the completion resolves it
+    // (EFP10): the park word is not woken.
+    if (t.ectx.sweeping !is null && t.ectx.sweeping is t.park.ringNode
+        && atomicLoad(t.park.waitWritten))
+        return;
     const word = atomicLoad!(MemoryOrder.acq)(t.park.word);
     if (!resolve(t, generationOf(word), ParkState.cancelled))
         return;
@@ -434,15 +445,41 @@ package bool writeRingSleep(FiberTask t) @trusted nothrow @nogc
     }
 }
 
+version (unittest)
+{
+    /// Park-word wakes by `futex` call, for the tests.
+    package uint parkWordWakes;
+}
+
 static if (ringOps)
 {
-    /// Writes `t`'s wait on its park word, on its held op slot (EFP7, EFP22).
+    /**
+    Writes `t`'s wait on its held op slot (EFP7, EFP22): on its park word,
+    and for an interruptible sleep in a cancellation node also on that
+    node's cancel word, expecting the value it holds now (EFP10). The node
+    cannot be cancelling here: the owner's sweeps and this write share its
+    thread, and a cancelling node has latched the interrupt the caller
+    checked.
+    */
     private void submitRingWait(FiberTask t) @trusted nothrow @nogc
     {
+        const sleeping = wordOf(t.park.ringGeneration, ParkState.sleeping);
+        const deadline = futexDeadlineOf(t.park.ringDeadline);
+        auto node = t.park.ringInterruptible ? t.ectx.cancelContext : null;
+        t.park.ringNode = node;
         t.owner.noteRingWait(true);
-        cast(void) t.owner.loop.submitHeld(OpFutexWait(cast(shared(uint)*) &t.park.word,
-            wordOf(t.park.ringGeneration, ParkState.sleeping),
-            deadline: futexDeadlineOf(t.park.ringDeadline)), &onRingWait, cast(void*) t);
+        if (node is null)
+        {
+            cast(void) t.owner.loop.submitHeld(OpFutexWait(cast(shared(uint)*) &t.park.word,
+                sleeping, deadline: deadline), &onRingWait, cast(void*) t);
+            return;
+        }
+        ++node.ringWaiters;
+        t.park.waitv[0] = FutexWaitvEntry(sleeping, cast(ulong) &t.park.word, futexWaitvFlags);
+        t.park.waitv[1] = FutexWaitvEntry(atomicLoad(node.cancelWord), cast(ulong) &node.cancelWord,
+            futexWaitvFlags);
+        cast(void) t.owner.loop.submitHeld(OpFutexWaitv(t.park.waitv.ptr, 2, deadline),
+            &onRingWait, cast(void*) t);
     }
 
     /// A base.sync deadline as the linked timeout's: an instant on
@@ -469,10 +506,18 @@ static if (ringOps)
         auto t = taskOf(ctx);
         const g = t.park.ringGeneration;
         t.owner.noteRingWait(false);
+        auto node = t.park.ringNode;
+        t.park.ringNode = null;
+        if (node !is null)
+            --node.ringWaiters;
         if (atomicLoad(t.park.word) == wordOf(g, ParkState.sleeping))
         {
             if (done.res == -ETIME)
                 cast(void) resolve(t, g, ParkState.timedOut);
+            // The cancel word's wake, or its value already changed: a
+            // cancellation only while the node is cancelling (EFP10).
+            else if (node !is null && node.state == CancelContext.State.cancelling)
+                cast(void) resolve(t, g, ParkState.cancelled);
             else if (done.res >= 0 || done.res == -EAGAIN)
             {
                 submitRingWait(t);
@@ -534,6 +579,8 @@ private bool wakeParkWord(Sched* owner, FiberTask t, bool counted) @trusted noth
                 return true;
         }
         P.seamWake(t.park.word, WakeCount.one);
+        version (unittest)
+            ++parkWordWakes;
         return false;
     }
 }

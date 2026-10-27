@@ -829,3 +829,47 @@ unittest
     assert(got);
     assert(s.loop.heldSubmitted == 0, "the resolved sleep's wait was written");
 }
+
+@("fiberPark.ring.aScopeCancellationWakesEachNodeOnce")
+@system
+unittest
+{
+    import sparkles.event_horizon.cause : cancelWordWakes;
+    import sparkles.event_horizon.fiber_park : parkWordWakes;
+
+    // EFP10: interruptible ring waits also wait on their node's cancel
+    // word, so cancelling the scope ends all of them with one wake of that
+    // word, none of a park word, and no wait written again.
+    Sched s;
+    schedOrSkip(s, SchedOptions(fiberPark: FiberPark.ring));
+    scope (success) s.destroy(); // a failed run is abandoned instead
+    if (!s.ringPark)
+        skipTest("the ring path needs the futex operations (Linux 6.7)");
+
+    enum n = 4;
+    Semaphore sem;
+    WaitStatus[n] got;
+    uint nodeWakes, parkWakes, rewrites;
+    auto r = s.run(() {
+        cast(void) withScope!((ref sc) {
+            foreach (i; 0 .. n)
+                sc.spawn(((size_t i) => () {
+                    got[i] = sem.acquireUntil(bound(), true);
+                })(i));
+            yieldUntil(s, () => s.loop.inFlight == n); // every wait is written
+            const node0 = cancelWordWakes, park0 = parkWordWakes;
+            const written = s.loop.heldSubmitted;
+            sc.cancel();
+            yieldUntil(s, () => s.lotSleepers == 0);
+            nodeWakes = cancelWordWakes - node0;
+            parkWakes = parkWordWakes - park0;
+            rewrites = s.loop.heldSubmitted - written;
+        })(s);
+    });
+    assert(!r.hasError);
+    foreach (st; got)
+        assert(st == WaitStatus.cancelled);
+    assert(nodeWakes == 1, "one wake of the node's cancel word");
+    assert(parkWakes == 0, "a park word was woken");
+    assert(rewrites == 0, "a cancelled wait was written again");
+}
