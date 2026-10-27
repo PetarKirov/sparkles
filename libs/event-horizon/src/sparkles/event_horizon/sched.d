@@ -891,10 +891,13 @@ struct Sched
     package Waker waker() @safe pure nothrow @nogc => _waker;
 
     /// Fibers asleep on the fiber parker right now.
-    package uint lotSleepers() const @safe pure nothrow @nogc => _lotSleepers;
+    uint lotSleepers() const @safe pure nothrow @nogc => _lotSleepers;
 
     /// Whether this scheduler's fibers park on the ring path (EFP6).
-    package bool ringPark() const @safe pure nothrow @nogc => _ringPark;
+    bool ringPark() const @safe pure nothrow @nogc => _ringPark;
+
+    /// Ring waits written and not yet completed (EFP8).
+    uint ringWaits() const @safe pure nothrow @nogc => _ringWaits;
 
     /// Queues a ring sleep for the submission point (EFP8).
     package void queueRingSleep(FiberTask t) @safe nothrow @nogc
