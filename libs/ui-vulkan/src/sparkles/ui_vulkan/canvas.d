@@ -203,6 +203,9 @@ struct VulkanCanvas(B)
         private ShaperSlot[16] shapers_;
 
     private bool inFrame_, lost_;
+    // A hinting change asked for mid-frame: the atlas starts over at the
+    // next frame, not under the quads this one already recorded.
+    private bool atlasStale_;
     private CanvasTarget target_;
     private VkCommandBuffer commands_;
     private uint slot_;
@@ -284,9 +287,11 @@ struct VulkanCanvas(B)
         inFlight_[][slot] = 0;
         destroyRetired();
         evictGone();
-        // A full atlas starts over: what this frame draws rasterizes again.
-        if (atlas_.overflowed)
+        // A full atlas, or one a hinting change made stale, starts over:
+        // what this frame draws rasterizes again.
+        if (atlas_.overflowed || atlasStale_)
             atlas_.reset();
+        atlasStale_ = false;
         buffers_.reset(slot);
         foreach (ref p; pools_[])
             if (p.slot == slot)
@@ -750,12 +755,19 @@ struct VulkanCanvas(B)
         return result;
     }
 
-    /// How text is rendered from the next frame on. A change that alters
-    /// glyph pixels (hinting) starts the glyph atlas over.
+    /// How text is rendered from here on. A change that alters glyph pixels
+    /// (hinting) starts the glyph atlas over — at the next frame when one is
+    /// open, whose recorded quads still point into it. Hinted and unhinted
+    /// glyphs are cached apart, so a frame may hold both.
     void textRendering(in TextRendering settings) @system
     {
         if (settings.hinting != textRendering_.hinting)
-            atlas_.reset();
+        {
+            if (inFrame_)
+                atlasStale_ = true;
+            else
+                atlas_.reset();
+        }
         textRendering_ = settings;
     }
 
