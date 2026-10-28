@@ -15,7 +15,7 @@ module sparkles.ui.editor.field;
 import core.time : MonoTime;
 
 import sparkles.base.pool.text_pool : TextPool;
-import sparkles.input.events : InputTextTag, KeyEvent, TextId;
+import sparkles.input.events : CompositionEvent, InputTextTag, KeyEvent, TextId;
 import sparkles.text_buffer.text : Text;
 import sparkles.ui.editor.command : EditCommand, EditKind;
 import sparkles.ui.editor.context : LogicalContext;
@@ -131,6 +131,23 @@ struct EditorField
     FieldResult paste(scope const(char)[] text, uint request = 0, MonoTime now = MonoTime.init)
         @safe pure nothrow @nogc
         => request ? pasteAnswer(request, text, now) : insert(text, true, now);
+
+    /**
+    An input method's composition update (`EDI3`), with its preedit already
+    read from the host's pool (`CompositionEvent.preedit` names it only until
+    the host's next poll); an empty `preedit` ends the composition. The
+    committed text arrives afterwards as typed text, through `key` or
+    `insert`.
+    */
+    FieldResult compose(in CompositionEvent update, scope const(char)[] preedit,
+        MonoTime now = MonoTime.init) @safe pure nothrow @nogc
+    {
+        auto source = Given(preedit);
+        CompositionEvent served = update;
+        // `Given` serves `preedit` for any id; only a valid one says there is one.
+        served.preedit = preedit.length ? TextId(0, 1) : TextId.init;
+        return runWith(EditCommand.compose(served), source, now);
+    }
 
     /// Answer clipboard request `request` with `text` (`EDY5`).
     FieldResult pasteAnswer(uint request, scope const(char)[] text, MonoTime now = MonoTime.init)
@@ -456,4 +473,26 @@ unittest
     assert(host.written == "abc" && host.asked != 0);
     assert(field.paste("xyz", host.asked).changed && field.text == "xyz");
     assert(!field.paste("late", host.asked).changed, "an answer counts once");
+}
+
+/// EDI3 through a field: the host reads the preedit from its pool and the
+/// committed text arrives as typed text.
+@("editor.field.compose")
+@safe pure nothrow
+unittest
+{
+    import sparkles.input.events : Key;
+
+    auto field = EditorField.singleLine("a");
+    CompositionEvent update;
+    update.cursor = 3;
+    const r = field.compose(update, "に");
+    assert(r.handled && !r.changed && field.state.composition.active);
+    assert(r.effects.has(EffectKind.imeArea));
+    KeyEvent typed = KeyEvent(Key.char_, '日');
+    typed.text = "日";
+    assert(field.key(typed).changed && field.text == "a日" && !field.state.composition.active);
+    field.compose(update, "x");
+    assert(field.key(KeyEvent(Key.escape)).effects.has(EffectKind.cancelComposition));
+    assert(field.text == "a日" && !field.state.composition.active);
 }

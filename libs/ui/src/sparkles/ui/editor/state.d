@@ -8,6 +8,7 @@ module sparkles.ui.editor.state;
 import core.time : Duration, MonoTime, msecs;
 
 import sparkles.base.buffer : SharedBuffer;
+import sparkles.input.events : CompositionRun, maxCompositionRuns;
 import sparkles.text_buffer.history : History;
 import sparkles.text_buffer.text : Text;
 import sparkles.ui.editor.command : EditKind;
@@ -64,6 +65,30 @@ struct CommandRecord
     uint nextRequest = 1;
 }
 
+/**
+An input method's composition in progress (`EDI3`): shown in place of each
+range and not part of the text until committed. The preedit is a copy; the
+event that carried it names text only until the host's next poll.
+*/
+struct Composition
+{
+    /// The preedit; empty when no composition is in progress.
+    Text preedit;
+    /// The preedit cursor, in bytes from its start.
+    size_t cursor;
+    /// The preedit's styled runs, in bytes from its start.
+    CompositionRun[maxCompositionRuns] runs;
+    /// ditto
+    ubyte runCount;
+
+    /// A composition is in progress.
+    bool active() const scope @safe pure nothrow @nogc => preedit.length != 0;
+
+    /// The styled runs.
+    const(CompositionRun)[] styled() const return @safe pure nothrow @nogc
+        => runs[0 .. runCount];
+}
+
 /// The editor's whole state.
 struct EditorState
 {
@@ -71,6 +96,7 @@ struct EditorState
     SelectionSet selection;
     History!SelectionSet history;
     SharedBuffer!(ReadOnlySpan, 1) readOnly;
+    Composition composition;
     EditorOptions options;
     CommandRecord record;
 
