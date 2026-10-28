@@ -59,9 +59,9 @@ struct VulkanTerminalPainter(C)
     /// A cell's cluster in its box, in the cell font's face for `bold`
     /// and `italic` (`UVK19`).
     void cluster(scope const(uint)[] cps, bool bold, bool italic, int x, int y, int w, int h,
-        Rgba c)
+        Rgba c, Rgba background)
     {
-        canvas.clusterPx(cps, bold, italic, x, y, w, h, rgba(c));
+        canvas.clusterPx(cps, bold, italic, x, y, w, h, rgba(c), rgba(background));
     }
 
     /// A line of text from (`x`, `y`), one cell per cluster.
@@ -139,7 +139,7 @@ private struct RecCanvas
     void popOffsetPx() @safe pure nothrow @nogc {}
     void images(const(ImageRegistry)* r) @safe pure nothrow @nogc { bound = r; }
     const(ImageRegistry)* boundImages() const @safe pure nothrow @nogc => bound;
-    void clusterPx(scope const(uint)[], bool, bool, int, int, int, int, vec4) @safe pure nothrow @nogc
+    void clusterPx(scope const(uint)[], bool, bool, int, int, int, int, vec4, vec4) @safe pure nothrow @nogc
     {
         ++glyphs;
     }
@@ -161,7 +161,7 @@ unittest
     RecCanvas canvas;
     VulkanImages images;
     auto painter = VulkanTerminalPainter!RecCanvas(&canvas, &images, 16);
-    painter.cluster([uint('A')], false, false, 0, 0, 8, 16, Rgba.init);
+    painter.cluster([uint('A')], false, false, 0, 0, 8, 16, Rgba.init, Rgba.init);
     painter.label("x", 0, 0, Rgba.init);
     assert(canvas.glyphs == 1 && canvas.texts == 1);
 

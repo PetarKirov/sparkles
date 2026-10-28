@@ -295,6 +295,7 @@ struct VulkanCanvas(B)
             placeholderStaged_ = !staged.hasError;
         }
 
+        painter_.textRendering = textRendering_;
         painter_.begin(Size(target.extent.width, target.extent.height), metrics);
         if (isSrgb(target.format))
             painter_.report.count(Degradation.srgbBlending);

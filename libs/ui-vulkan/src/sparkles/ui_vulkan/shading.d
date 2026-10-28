@@ -228,6 +228,56 @@ vec4 over(vec4 c, vec4 under) => c + under * (1.0f - c.w);
 float srgbToLinear(float c)
     => c <= 0.04045f ? c / 12.92f : pow((c + 0.055f) / 1.055f, 2.4f);
 
+/// A channel in linear light, encoded to sRGB.
+float linearToSrgb(float c)
+    => c <= 0.0031308f ? c * 12.92f : 1.055f * pow(c, 1.0f / 2.4f) - 0.055f;
+
+/// The relative luminance (Rec. 709) of a linear-light colour.
+float luminance(float r, float g, float b) => 0.2126f * r + 0.7152f * g + 0.0722f * b;
+
+/**
+A coverage glyph of straight colour `fill` covering `coverage` of a pixel
+whose background is the straight colour `background` (`background.w` 1 when
+the painter knows it, else 0), as premultiplied colour for the canvas's
+gamma-space blending, by `mode` — a `Compositing`:
+
+$(UL
+    $(LI `gamma` (0): coverage as alpha, blended as encoded.)
+    $(LI `linear` (1): the blend in linear light, re-encoded. The colour
+    returned leaves exactly that over the background: it is the linear
+    result less what blending keeps of the background.)
+    $(LI `linearCorrected` (2): linear, with the coverage pushed towards an
+    S-curve by `contrast` (0–1), which sharpens stems, then chosen to give
+    the luminance gamma blending would — the weight the face looks designed
+    at, whichever way round the colours are.)
+)
+
+Without a known background, or on an sRGB target (which blends in linear
+light itself), it is `gamma`'s.
+*/
+vec4 glyphColour(vec4 fill, vec4 background, float coverage, float mode, float contrast, float srgb)
+{
+    if (mode < 0.5f || background.w < 0.5f || srgb > 0.5f)
+        return premultiplied(fill, coverage, srgb);
+    const fr = srgbToLinear(fill.x), fg = srgbToLinear(fill.y), fb = srgbToLinear(fill.z);
+    const br = srgbToLinear(background.x), bg = srgbToLinear(background.y), bb = srgbToLinear(background.z);
+    float a = coverage * fill.w;
+    if (mode > 1.5f)
+    {
+        a = a + (a * a * (3.0f - 2.0f * a) - a) * contrast;
+        const fy = luminance(fr, fg, fb), by = luminance(br, bg, bb);
+        if (abs(fy - by) > 0.0001f)
+        {
+            const want = srgbToLinear(linearToSrgb(by) + (linearToSrgb(fy) - linearToSrgb(by)) * a);
+            a = clamp((want - by) / (fy - by), 0.0f, 1.0f);
+        }
+    }
+    const keep = 1.0f - a;
+    return v4(linearToSrgb(br + (fr - br) * a) - background.x * keep,
+        linearToSrgb(bg + (fg - bg) * a) - background.y * keep,
+        linearToSrgb(bb + (fb - bb) * a) - background.z * keep, a);
+}
+
 /// The straight colour `c` covering `coverage` of a pixel, premultiplied,
 /// decoded to linear first on an sRGB target.
 vec4 premultiplied(vec4 c, float coverage, float srgb)
@@ -271,7 +321,7 @@ vec4 shade(vec2 p, vec4 box, vec4 fill, vec4 edge, vec4 shape, vec4 coverageTexe
             premultiplied(fill, arrowCoverage(p, box), srgb));
     }
     if (kind < 3.5f)
-        return premultiplied(fill, coverageTexel.x, srgb);
+        return glyphColour(fill, edge, coverageTexel.x, shape.y, shape.z, srgb);
     if (kind < 4.5f)
     {
         // Premultiplied already; straightened only to decode.

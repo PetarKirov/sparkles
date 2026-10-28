@@ -41,6 +41,7 @@ import sparkles.ui.pixel_geometry : arrowTriangle, borderRects, centredSpan, Cli
     scissorBoxOfStack, scrollbarMinExtentPx, scrollbarRail, shadowRect, shiftPx;
 import sparkles.ui.style : FontRole, Visual;
 import sparkles.ui_vulkan.shading : Instance, QuadKind;
+import sparkles.ui_vulkan.text_rendering : TextRendering;
 
 /// Why an operation was drawn differently from its specification (`UVK16`).
 enum Degradation : ubyte
@@ -193,6 +194,9 @@ struct GlyphRequest
     FaceStyle style;    ///
     bool emoji;         /// the cluster presents as an emoji: an emoji face first
     vec4 colour = v4(1, 1, 1, 1); ///
+    /// What is under the text, straight RGBA, `w` 1 when the painter knows it:
+    /// coverage glyphs composite against it (`Compositing`).
+    vec4 background = v4(0, 0, 0, 0);
     /// The cells the cluster takes, in pixels: a colour glyph larger than them
     /// is drawn smaller to fit, as the raylib arm fits it. 0 fits nothing.
     int fitWidth, fitHeight;
@@ -235,6 +239,9 @@ if (isImageSource!Images)
     /// Where image draws are resolved: the source itself, or a pointer to
     /// one, which may be null for none.
     Images images;
+
+    /// How coverage glyphs composite (`Compositing`), and their contrast.
+    TextRendering textRendering;
 
     // Whether the source supplies glyphs too (`isGlyphSource`).
     static if (is(Images == U*, U))
@@ -380,7 +387,7 @@ if (isImageSource!Images)
             if (!textReady)
                 return report.count(Degradation.glyphMiss);
             uint[1] cps = [g];
-            clusterAt(px(at.x), py(at.y), cps[], faceStyleOf(v), rgba(v.fg, v.fgAlpha),
+            clusterAt(px(at.x), py(at.y), cps[], faceStyleOf(v), rgba(v.fg, v.fgAlpha), backgroundOf(v),
                 (codepointWidth(g) > 1 ? 2 : 1) * m_.cellW, m_.cellH);
         }
         else if (g != ' ')
@@ -393,7 +400,7 @@ if (isImageSource!Images)
     on the box's baseline. Offsets apply; clips are the caller's.
     */
     void clusterPx(scope const(uint)[] cps, bool bold, bool italic, int x, int y, int w, int h,
-        vec4 colour)
+        vec4 colour, vec4 background = v4(0, 0, 0, 0))
     {
         if (!cps.length)
             return;
@@ -402,14 +409,14 @@ if (isImageSource!Images)
             if (!textReady)
                 return report.count(Degradation.glyphMiss);
             clusterAt(m_.originX + shiftX_ + x, m_.originY + shiftY_ + y, cps, faceStyle(bold, italic),
-                colour, w, h);
+                colour, background, w, h);
         }
         else
             report.count(Degradation.glyphMiss);
     }
 
     /// A label in device pixels from (`x`, `y`), one cell per cluster.
-    void labelPx(scope const(char)[] text, int x, int y, vec4 colour)
+    void labelPx(scope const(char)[] text, int x, int y, vec4 colour, vec4 background = v4(0, 0, 0, 0))
     {
         static if (drawsText)
         {
@@ -420,7 +427,7 @@ if (isImageSource!Images)
             {
                 if (c.isEscape)
                     continue;
-                textCluster(pen, m_.originY + shiftY_ + y, c, FaceStyle.regular, colour);
+                textCluster(pen, m_.originY + shiftY_ + y, c, FaceStyle.regular, colour, background);
                 pen += (c.width > 0 ? c.width : 1) * m_.cellW;
             }
         }
@@ -449,12 +456,13 @@ if (isImageSource!Images)
                 return report.count(Degradation.glyphMiss);
             const colour = rgba(v.fg, v.fgAlpha);
             const style = faceStyleOf(v);
+            const background = backgroundOf(v);
             int cells;
             foreach (c; byGraphemeCluster(text))
             {
                 if (c.isEscape)
                     continue;
-                textCluster(x + cells * m_.cellW, y, c, style, colour);
+                textCluster(x + cells * m_.cellW, y, c, style, colour, background);
                 cells += c.width > 0 ? c.width : 0;
             }
             const metrics = images.textMetrics;
@@ -481,11 +489,12 @@ if (isImageSource!Images)
         }
 
         // A cluster of text at its cell's top-left.
-        private void textCluster(int penX, int top, in ClusterMeasure c, FaceStyle style, vec4 colour)
+        private void textCluster(int penX, int top, in ClusterMeasure c, FaceStyle style, vec4 colour,
+            vec4 background)
         {
             dchar[16] cps; // a longer cluster draws its first glyph all the same
             const decoded = convertPrefix(c.slice, cps[], UtfMode.replacement);
-            clusterAt(penX, top, cast(const(uint)[]) cps[0 .. decoded.written], style, colour,
+            clusterAt(penX, top, cast(const(uint)[]) cps[0 .. decoded.written], style, colour, background,
                 (c.width > 0 ? c.width : 1) * m_.cellW, m_.cellH);
         }
 
@@ -497,7 +506,7 @@ if (isImageSource!Images)
         shaping, only the face it picks.
         */
         private void clusterAt(int penX, int top, scope const(uint)[] cps, FaceStyle style, vec4 colour,
-            int boxW, int boxH)
+            vec4 background, int boxW, int boxH)
         {
             if (!cps.length)
                 return;
@@ -508,7 +517,7 @@ if (isImageSource!Images)
                     break;
                 }
             glyphAt(penX, top, boxH, GlyphRequest(cast(dchar) cps[0], style, emojiPresentation(cps), colour,
-                boxW, boxH));
+                background, boxW, boxH));
         }
 
         // One glyph with its pen at `penX` in cells whose top is `top` and
@@ -529,8 +538,9 @@ if (isImageSource!Images)
                         emit(record(box, request.colour, v4(0), v4(QuadKind.colourGlyph, 0, 0, 0), q.texRect),
                             BoundImages(colourPage: q.page));
                     else
-                        emit(record(box, request.colour, v4(0), v4(QuadKind.coverageGlyph, 0, 0, 0),
-                            q.texRect), BoundImages(coveragePage: q.page));
+                        emit(record(box, request.colour, request.background, v4(QuadKind.coverageGlyph,
+                            textRendering.compositing, textRendering.contrast, 0), q.texRect),
+                            BoundImages(coveragePage: q.page));
                     break;
                 case GlyphOutcome.blank:
                     break;
@@ -1228,3 +1238,7 @@ unittest
     p.textRun(Point(0, 0), "abc", Visual.init);
     assert(p.instances.length == 0 && p.report[Degradation.glyphMiss] == 1);
 }
+
+/// What is under text drawn with `v`: its background, when it paints one.
+vec4 backgroundOf(in Visual v) @safe pure nothrow @nogc
+    => v.hasBg && v.bgAlpha == 255 ? rgba(v.bg, 255) : v4(0, 0, 0, 0);
