@@ -708,9 +708,18 @@ unittest
     auto v = es.value.eval("builtins.nixPath");
     assert(v.hasValue, v.hasError ? v.error.message : "");
     auto list = es.value.requireList(v.value).value;
-    assert(list.length == 1);
+    assert(list.length >= 1);
     auto prefix = es.value.requireAttr(list[0], "prefix").value;
     assert(es.value.requireString(prefix).value == "mytest");
     auto path = es.value.requireAttr(list[0], "path").value;
     assert(es.value.requireString(path).value == "/tmp");
+
+    // Nix appends its default entries that exist on the host (such as root's
+    // channels directory), which have no prefix; no ambient `NIX_PATH` entry,
+    // which would have one, may follow.
+    foreach (entry; list[1 .. $])
+    {
+        auto entryPrefix = es.value.requireAttr(entry, "prefix").value;
+        assert(es.value.requireString(entryPrefix).value == "");
+    }
 }
