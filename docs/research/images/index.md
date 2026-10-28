@@ -9,7 +9,8 @@ and a round of experiments, not this page.
 
 > [!IMPORTANT]
 > This tree is under construction. Wave 0 delivered the Sparkles [baseline](#sparkles-baseline)
-> (what the repository already has or has specified) and the [papers](#papers). The
+> (what the repository already has or has specified), the [papers](#papers) and the
+> [hardware matrix](#hardware). The
 > subject deep-dives, the shared concepts and the comparison arrive in later waves; this
 > page lists them as planned rather than linking to files that do not exist yet.
 
@@ -69,6 +70,17 @@ with a synthesis. The PDFs live outside the repository, under
 | Hostile input and safety      | LangSec, verified parsers, fuzzing, image-codec exploit analyses, Wuffs            | [Papers][p-hostile]    |
 | Storage-to-GPU and GPU decode | `io_uring`, DirectStorage/GDeflate, GPU Huffman/ANS/DEFLATE/JPEG, Vulkan Video     | [Papers][p-gpu-decode] |
 
+## Hardware
+
+What the machines available to this work expose, measured with one read-only
+probe: CPU SIMD, `io_uring`, Vulkan formats, Vulkan Video profiles, compute
+features and the platform media API. Every cell is verified on a device.
+
+| Page                   | Covers                                                             | Link                   |
+| ---------------------- | ------------------------------------------------------------------ | ---------------------- |
+| Hardware matrix        | two AMD Linux desktops, an Apple M4 Max and a Snapdragon 888 phone | [Matrix][hw-matrix]    |
+| Run the hardware probe | the `media-hw-probe` flake app, for adding a machine               | [Contribute][hw-probe] |
+
 ## Planned contents
 
 Not yet written; each is delivered in a later wave.
@@ -86,6 +98,7 @@ Not yet written; each is delivered in a later wave.
 - The five baseline documents above, which cite the specifications and source files
   they were read from.
 - The seven paper threads above, which cite each paper by DOI or arXiv identifier.
+- The four hardware reports, produced by the probe at the commit the matrix names.
 
 <!-- References -->
 
@@ -101,3 +114,5 @@ Not yet written; each is delivered in a later wave.
 [p-texture]: ./papers/gpu-texture-compression.md
 [p-hostile]: ./papers/hostile-input-safety.md
 [p-gpu-decode]: ./papers/gpu-decode-streaming.md
+[hw-matrix]: ./hardware/index.md
+[hw-probe]: ./hardware/contributing.md

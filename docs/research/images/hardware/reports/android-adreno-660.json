@@ -1,0 +1,1513 @@
+{
+  "android": {
+    "board": "lahaina",
+    "mediaCodecVariant": "_lahaina",
+    "sdk": "34",
+    "soc": "QTI SM8350",
+    "vulkanHardware": "adreno"
+  },
+  "cpu": {
+    "coreTypes": [
+      "CPU part 0xd05",
+      "CPU part 0xd41",
+      "CPU part 0xd44"
+    ],
+    "logicalCpus": 8,
+    "model": "Odin based on Qualcomm Technologies, Inc SM8350",
+    "simd": [
+      "fp",
+      "asimd",
+      "evtstrm",
+      "aes",
+      "pmull",
+      "sha1",
+      "sha2",
+      "crc32",
+      "atomics",
+      "fphp",
+      "asimdhp",
+      "cpuid",
+      "asimdrdm",
+      "lrcpc",
+      "dcpop",
+      "asimddp"
+    ]
+  },
+  "host": {
+    "arch": "arm64-v8a",
+    "collectedVia": "adb",
+    "kernel": "5.4.289-qgki-g7dd106e6c847",
+    "memoryBytes": 7570821120,
+    "model": "Xiaomi 2107113SG",
+    "os": "android",
+    "osVersion": "14"
+  },
+  "io": {
+    "backend": "io_uring",
+    "status": "not probed over adb; needs a run in the app's own context",
+    "uringFeatures": [],
+    "uringOpcodes": []
+  },
+  "media": {
+    "api": "MediaCodec",
+    "codecs": [
+      {
+        "direction": "decode",
+        "features": [
+          "adaptive-playback"
+        ],
+        "kind": "hardware",
+        "maxSize": "4096x2176",
+        "mime": "video/avc",
+        "name": "c2.qti.avc.decoder",
+        "source": "/vendor/etc/media_codecs_lahaina.xml"
+      },
+      {
+        "direction": "decode",
+        "features": [
+          "adaptive-playback",
+          "low-latency"
+        ],
+        "kind": "hardware",
+        "maxSize": "4096x2176",
+        "mime": "video/avc",
+        "name": "c2.qti.avc.decoder.low_latency",
+        "source": "/vendor/etc/media_codecs_lahaina.xml"
+      },
+      {
+        "direction": "decode",
+        "features": [
+          "adaptive-playback",
+          "secure-playback",
+          "low-latency"
+        ],
+        "kind": "hardware",
+        "maxSize": "4096x2176",
+        "mime": "video/avc",
+        "name": "c2.qti.avc.decoder.secure",
+        "source": "/vendor/etc/media_codecs_lahaina.xml"
+      },
+      {
+        "direction": "decode",
+        "features": [
+          "adaptive-playback"
+        ],
+        "kind": "hardware",
+        "maxSize": "4096x2176",
+        "mime": "video/hevc",
+        "name": "c2.qti.hevc.decoder",
+        "source": "/vendor/etc/media_codecs_lahaina.xml"
+      },
+      {
+        "direction": "decode",
+        "features": [
+          "adaptive-playback",
+          "low-latency"
+        ],
+        "kind": "hardware",
+        "maxSize": "4096x2176",
+        "mime": "video/hevc",
+        "name": "c2.qti.hevc.decoder.low_latency",
+        "source": "/vendor/etc/media_codecs_lahaina.xml"
+      },
+      {
+        "direction": "decode",
+        "features": [
+          "adaptive-playback",
+          "secure-playback",
+          "low-latency"
+        ],
+        "kind": "hardware",
+        "maxSize": "4096x2176",
+        "mime": "video/hevc",
+        "name": "c2.qti.hevc.decoder.secure",
+        "source": "/vendor/etc/media_codecs_lahaina.xml"
+      },
+      {
+        "direction": "decode",
+        "features": [
+          "adaptive-playback"
+        ],
+        "kind": "hardware",
+        "maxSize": "4096x2176",
+        "mime": "video/x-vnd.on2.vp9",
+        "name": "c2.qti.vp9.decoder",
+        "source": "/vendor/etc/media_codecs_lahaina.xml"
+      },
+      {
+        "direction": "decode",
+        "features": [
+          "adaptive-playback",
+          "secure-playback"
+        ],
+        "kind": "hardware",
+        "maxSize": "4096x2176",
+        "mime": "video/x-vnd.on2.vp9",
+        "name": "c2.qti.vp9.decoder.secure",
+        "source": "/vendor/etc/media_codecs_lahaina.xml"
+      },
+      {
+        "direction": "decode",
+        "features": [
+          "adaptive-playback"
+        ],
+        "kind": "hardware",
+        "maxSize": "1920x1088",
+        "mime": "video/mpeg2",
+        "name": "c2.qti.mpeg2.decoder",
+        "source": "/vendor/etc/media_codecs_lahaina.xml"
+      },
+      {
+        "direction": "encode",
+        "features": [
+          "bitrate-modes"
+        ],
+        "kind": "hardware",
+        "maxSize": "4096x2176",
+        "mime": "video/avc",
+        "name": "c2.qti.avc.encoder",
+        "source": "/vendor/etc/media_codecs_lahaina.xml"
+      },
+      {
+        "direction": "encode",
+        "features": [
+          "bitrate-modes"
+        ],
+        "kind": "hardware",
+        "maxSize": "4096x2176",
+        "mime": "video/hevc",
+        "name": "c2.qti.hevc.encoder",
+        "source": "/vendor/etc/media_codecs_lahaina.xml"
+      },
+      {
+        "direction": "encode",
+        "features": [
+          "bitrate-modes"
+        ],
+        "kind": "hardware",
+        "maxSize": "512x512",
+        "mime": "video/hevc",
+        "name": "c2.qti.hevc.encoder.cq",
+        "source": "/vendor/etc/media_codecs_lahaina.xml"
+      },
+      {
+        "direction": "encode",
+        "features": [
+          "bitrate-modes"
+        ],
+        "kind": "hardware",
+        "maxSize": "16384x16384",
+        "mime": "image/vnd.android.heic",
+        "name": "c2.qti.heic.encoder",
+        "source": "/vendor/etc/media_codecs_lahaina.xml"
+      },
+      {
+        "direction": "decode",
+        "features": [
+          "adaptive-playback"
+        ],
+        "kind": "software",
+        "maxSize": "1920x1920",
+        "mime": "video/mp4v-es",
+        "name": "c2.android.mpeg4.decoder",
+        "source": "/apex/com.android.media.swcodec/etc/media_codecs.xml"
+      },
+      {
+        "direction": "decode",
+        "features": [
+          "adaptive-playback"
+        ],
+        "kind": "software",
+        "maxSize": "352x288",
+        "mime": "video/3gpp",
+        "name": "c2.android.h263.decoder",
+        "source": "/apex/com.android.media.swcodec/etc/media_codecs.xml"
+      },
+      {
+        "direction": "decode",
+        "features": [
+          "adaptive-playback",
+          "dynamic-color-aspects"
+        ],
+        "kind": "software",
+        "maxSize": "4096x4096",
+        "mime": "video/avc",
+        "name": "c2.android.avc.decoder",
+        "source": "/apex/com.android.media.swcodec/etc/media_codecs.xml"
+      },
+      {
+        "direction": "decode",
+        "features": [
+          "adaptive-playback",
+          "dynamic-color-aspects"
+        ],
+        "kind": "software",
+        "maxSize": "4096x4096",
+        "mime": "video/hevc",
+        "name": "c2.android.hevc.decoder",
+        "source": "/apex/com.android.media.swcodec/etc/media_codecs.xml"
+      },
+      {
+        "direction": "decode",
+        "features": [
+          "adaptive-playback",
+          "dynamic-color-aspects"
+        ],
+        "kind": "software",
+        "maxSize": "2048x2048",
+        "mime": "video/x-vnd.on2.vp8",
+        "name": "c2.android.vp8.decoder",
+        "source": "/apex/com.android.media.swcodec/etc/media_codecs.xml"
+      },
+      {
+        "direction": "decode",
+        "features": [
+          "adaptive-playback",
+          "dynamic-color-aspects"
+        ],
+        "kind": "software",
+        "maxSize": "2048x2048",
+        "mime": "video/x-vnd.on2.vp9",
+        "name": "c2.android.vp9.decoder",
+        "source": "/apex/com.android.media.swcodec/etc/media_codecs.xml"
+      },
+      {
+        "direction": "decode",
+        "features": [
+          "adaptive-playback",
+          "dynamic-color-aspects",
+          "low-latency"
+        ],
+        "kind": "software",
+        "maxSize": "2048x2048",
+        "mime": "video/av01",
+        "name": "c2.android.av1-dav1d.decoder",
+        "source": "/apex/com.android.media.swcodec/etc/media_codecs.xml"
+      },
+      {
+        "direction": "decode",
+        "features": [
+          "adaptive-playback",
+          "dynamic-color-aspects",
+          "low-latency"
+        ],
+        "kind": "software",
+        "maxSize": "2048x2048",
+        "mime": "video/av01",
+        "name": "c2.android.av1.decoder",
+        "source": "/apex/com.android.media.swcodec/etc/media_codecs.xml"
+      },
+      {
+        "direction": "decode",
+        "features": [
+          "adaptive-playback"
+        ],
+        "kind": "software",
+        "maxSize": "1920x1088",
+        "mime": "video/mpeg2",
+        "name": "c2.android.mpeg2.decoder",
+        "source": "/apex/com.android.media.swcodec/etc/media_codecs.xml"
+      },
+      {
+        "direction": "decode",
+        "features": [
+          "adaptive-playback",
+          "dynamic-color-aspects"
+        ],
+        "kind": "software",
+        "maxSize": "1920x1920",
+        "mime": "video/apv",
+        "name": "c2.android.apv.decoder",
+        "source": "/apex/com.android.media.swcodec/etc/media_codecs.xml"
+      },
+      {
+        "direction": "encode",
+        "features": [],
+        "kind": "software",
+        "maxSize": "176x144",
+        "mime": "video/3gpp",
+        "name": "c2.android.h263.encoder",
+        "source": "/apex/com.android.media.swcodec/etc/media_codecs.xml"
+      },
+      {
+        "direction": "encode",
+        "features": [],
+        "kind": "software",
+        "maxSize": "176x144",
+        "mime": "video/mp4v-es",
+        "name": "c2.android.mpeg4.encoder",
+        "source": "/apex/com.android.media.swcodec/etc/media_codecs.xml"
+      },
+      {
+        "direction": "encode",
+        "features": [
+          "intra-refresh",
+          "qp-bounds",
+          "bitrate-modes"
+        ],
+        "kind": "software",
+        "maxSize": "2048x2048",
+        "mime": "video/avc",
+        "name": "c2.android.avc.encoder",
+        "source": "/apex/com.android.media.swcodec/etc/media_codecs.xml"
+      },
+      {
+        "direction": "encode",
+        "features": [
+          "bitrate-modes",
+          "qp-bounds"
+        ],
+        "kind": "software",
+        "maxSize": "2048x2048",
+        "mime": "video/x-vnd.on2.vp8",
+        "name": "c2.android.vp8.encoder",
+        "source": "/apex/com.android.media.swcodec/etc/media_codecs.xml"
+      },
+      {
+        "direction": "encode",
+        "features": [
+          "bitrate-modes",
+          "qp-bounds"
+        ],
+        "kind": "software",
+        "maxSize": "512x512",
+        "mime": "video/hevc",
+        "name": "c2.android.hevc.encoder",
+        "source": "/apex/com.android.media.swcodec/etc/media_codecs.xml"
+      },
+      {
+        "direction": "encode",
+        "features": [
+          "bitrate-modes",
+          "qp-bounds"
+        ],
+        "kind": "software",
+        "maxSize": "2048x2048",
+        "mime": "video/x-vnd.on2.vp9",
+        "name": "c2.android.vp9.encoder",
+        "source": "/apex/com.android.media.swcodec/etc/media_codecs.xml"
+      },
+      {
+        "direction": "encode",
+        "features": [
+          "bitrate-modes",
+          "qp-bounds"
+        ],
+        "kind": "software",
+        "maxSize": "1920x1920",
+        "mime": "video/av01",
+        "name": "c2.android.av1.encoder",
+        "source": "/apex/com.android.media.swcodec/etc/media_codecs.xml"
+      },
+      {
+        "direction": "encode",
+        "features": [
+          "bitrate-modes"
+        ],
+        "kind": "software",
+        "maxSize": "1920x1920",
+        "mime": "video/apv",
+        "name": "c2.android.apv.encoder",
+        "source": "/apex/com.android.media.swcodec/etc/media_codecs.xml"
+      },
+      {
+        "direction": "decode",
+        "features": [
+          "adaptive-playback"
+        ],
+        "kind": "software",
+        "maxSize": "352x288",
+        "mime": "video/mp4v-es",
+        "name": "c2.android.mpeg4.decoder",
+        "source": "/vendor/etc/media_codecs_google_c2_video.xml"
+      },
+      {
+        "direction": "decode",
+        "features": [
+          "adaptive-playback"
+        ],
+        "kind": "software",
+        "maxSize": "352x288",
+        "mime": "video/3gpp",
+        "name": "c2.android.h263.decoder",
+        "source": "/vendor/etc/media_codecs_google_c2_video.xml"
+      },
+      {
+        "direction": "decode",
+        "features": [
+          "adaptive-playback"
+        ],
+        "kind": "software",
+        "maxSize": "4080x4080",
+        "mime": "video/avc",
+        "name": "c2.android.avc.decoder",
+        "source": "/vendor/etc/media_codecs_google_c2_video.xml"
+      },
+      {
+        "direction": "decode",
+        "features": [
+          "adaptive-playback"
+        ],
+        "kind": "software",
+        "maxSize": "4096x4096",
+        "mime": "video/hevc",
+        "name": "c2.android.hevc.decoder",
+        "source": "/vendor/etc/media_codecs_google_c2_video.xml"
+      },
+      {
+        "direction": "decode",
+        "features": [
+          "adaptive-playback"
+        ],
+        "kind": "software",
+        "maxSize": "2048x2048",
+        "mime": "video/x-vnd.on2.vp8",
+        "name": "c2.android.vp8.decoder",
+        "source": "/vendor/etc/media_codecs_google_c2_video.xml"
+      },
+      {
+        "direction": "decode",
+        "features": [
+          "adaptive-playback"
+        ],
+        "kind": "software",
+        "maxSize": "2048x2048",
+        "mime": "video/x-vnd.on2.vp9",
+        "name": "c2.android.vp9.decoder",
+        "source": "/vendor/etc/media_codecs_google_c2_video.xml"
+      },
+      {
+        "direction": "encode",
+        "features": [],
+        "kind": "software",
+        "maxSize": "176x144",
+        "mime": "video/3gpp",
+        "name": "c2.android.h263.encoder",
+        "source": "/vendor/etc/media_codecs_google_c2_video.xml"
+      },
+      {
+        "direction": "encode",
+        "features": [
+          "intra-refresh"
+        ],
+        "kind": "software",
+        "maxSize": "2048x2048",
+        "mime": "video/avc",
+        "name": "c2.android.avc.encoder",
+        "source": "/vendor/etc/media_codecs_google_c2_video.xml"
+      },
+      {
+        "direction": "encode",
+        "features": [
+          "bitrate-modes"
+        ],
+        "kind": "software",
+        "maxSize": "512x512",
+        "mime": "video/hevc",
+        "name": "c2.android.hevc.encoder",
+        "source": "/vendor/etc/media_codecs_google_c2_video.xml"
+      },
+      {
+        "direction": "encode",
+        "features": [],
+        "kind": "software",
+        "maxSize": "176x144",
+        "mime": "video/mp4v-es",
+        "name": "c2.android.mpeg4.encoder",
+        "source": "/vendor/etc/media_codecs_google_c2_video.xml"
+      },
+      {
+        "direction": "encode",
+        "features": [
+          "bitrate-modes"
+        ],
+        "kind": "software",
+        "maxSize": "2048x2048",
+        "mime": "video/x-vnd.on2.vp8",
+        "name": "c2.android.vp8.encoder",
+        "source": "/vendor/etc/media_codecs_google_c2_video.xml"
+      },
+      {
+        "direction": "encode",
+        "features": [
+          "bitrate-modes"
+        ],
+        "kind": "software",
+        "maxSize": "2048x2048",
+        "mime": "video/x-vnd.on2.vp9",
+        "name": "c2.android.vp9.encoder",
+        "source": "/vendor/etc/media_codecs_google_c2_video.xml"
+      }
+    ],
+    "devices": [],
+    "nvidia": ""
+  },
+  "notes": [
+    "codec list missing: /vendor/etc/media_codecs_c2_audio.xml"
+  ],
+  "probe": {
+    "commit": "0ef4564",
+    "schema": "sparkles.media-hw-probe/1",
+    "version_": "1"
+  },
+  "vulkan": {
+    "devices": [
+      {
+        "apiVersion": "1.1.128",
+        "conformanceVersion": "",
+        "cooperativeMatrix": [],
+        "deviceId": "0x6060001",
+        "driverId": "qualcomm-proprietary",
+        "driverInfo": "Driver Build: 329cf4c2a7, I63533b1e29, 1675175164\nDate: 01/31/23\nCompiler Version: EV031.35.01.12\nDriver Branch: \n",
+        "driverName": "Qualcomm Technologies Inc. Adreno Vulkan Driver",
+        "extensions": [
+          "VK_ANDROID_external_memory_android_hardware_buffer",
+          "VK_EXT_astc_decode_mode",
+          "VK_EXT_blend_operation_advanced",
+          "VK_EXT_descriptor_indexing",
+          "VK_EXT_device_memory_report",
+          "VK_EXT_extended_dynamic_state",
+          "VK_EXT_filter_cubic",
+          "VK_EXT_fragment_density_map",
+          "VK_EXT_fragment_density_map2",
+          "VK_EXT_global_priority",
+          "VK_EXT_hdr_metadata",
+          "VK_EXT_host_query_reset",
+          "VK_EXT_image_robustness",
+          "VK_EXT_index_type_uint8",
+          "VK_EXT_line_rasterization",
+          "VK_EXT_pipeline_creation_cache_control",
+          "VK_EXT_pipeline_creation_feedback",
+          "VK_EXT_private_data",
+          "VK_EXT_queue_family_foreign",
+          "VK_EXT_sample_locations",
+          "VK_EXT_sampler_filter_minmax",
+          "VK_EXT_scalar_block_layout",
+          "VK_EXT_separate_stencil_usage",
+          "VK_EXT_shader_demote_to_helper_invocation",
+          "VK_EXT_subgroup_size_control",
+          "VK_EXT_swapchain_maintenance1",
+          "VK_EXT_texture_compression_astc_hdr",
+          "VK_EXT_transform_feedback",
+          "VK_EXT_vertex_attribute_divisor",
+          "VK_GOOGLE_display_timing",
+          "VK_IMG_filter_cubic",
+          "VK_KHR_16bit_storage",
+          "VK_KHR_bind_memory2",
+          "VK_KHR_buffer_device_address",
+          "VK_KHR_create_renderpass2",
+          "VK_KHR_dedicated_allocation",
+          "VK_KHR_depth_stencil_resolve",
+          "VK_KHR_descriptor_update_template",
+          "VK_KHR_device_group",
+          "VK_KHR_draw_indirect_count",
+          "VK_KHR_driver_properties",
+          "VK_KHR_external_fence",
+          "VK_KHR_external_fence_fd",
+          "VK_KHR_external_memory",
+          "VK_KHR_external_memory_fd",
+          "VK_KHR_external_semaphore",
+          "VK_KHR_external_semaphore_fd",
+          "VK_KHR_get_memory_requirements2",
+          "VK_KHR_image_format_list",
+          "VK_KHR_imageless_framebuffer",
+          "VK_KHR_incremental_present",
+          "VK_KHR_maintenance1",
+          "VK_KHR_maintenance2",
+          "VK_KHR_maintenance3",
+          "VK_KHR_multiview",
+          "VK_KHR_push_descriptor",
+          "VK_KHR_relaxed_block_layout",
+          "VK_KHR_sampler_mirror_clamp_to_edge",
+          "VK_KHR_sampler_ycbcr_conversion",
+          "VK_KHR_separate_depth_stencil_layouts",
+          "VK_KHR_shader_draw_parameters",
+          "VK_KHR_shader_float16_int8",
+          "VK_KHR_shader_float_controls",
+          "VK_KHR_shader_subgroup_extended_types",
+          "VK_KHR_shared_presentable_image",
+          "VK_KHR_spirv_1_4",
+          "VK_KHR_storage_buffer_storage_class",
+          "VK_KHR_swapchain",
+          "VK_KHR_timeline_semaphore",
+          "VK_KHR_uniform_buffer_standard_layout",
+          "VK_KHR_variable_pointers",
+          "VK_KHR_vulkan_memory_model",
+          "VK_QCOM_render_pass_shader_resolve",
+          "VK_QCOM_render_pass_store_ops",
+          "VK_QCOM_render_pass_transform"
+        ],
+        "features": [
+          {
+            "enabled": [
+              "alphaToOne",
+              "depthBiasClamp",
+              "depthBounds",
+              "depthClamp",
+              "drawIndirectFirstInstance",
+              "dualSrcBlend",
+              "fillModeNonSolid",
+              "fragmentStoresAndAtomics",
+              "fullDrawIndexUint32",
+              "geometryShader",
+              "imageCubeArray",
+              "independentBlend",
+              "inheritedQueries",
+              "largePoints",
+              "multiDrawIndirect",
+              "occlusionQueryPrecise",
+              "pipelineStatisticsQuery",
+              "robustBufferAccess",
+              "sampleRateShading",
+              "samplerAnisotropy",
+              "shaderClipDistance",
+              "shaderCullDistance",
+              "shaderImageGatherExtended",
+              "shaderInt16",
+              "shaderSampledImageArrayDynamicIndexing",
+              "shaderStorageBufferArrayDynamicIndexing",
+              "shaderStorageImageArrayDynamicIndexing",
+              "shaderStorageImageExtendedFormats",
+              "shaderStorageImageReadWithoutFormat",
+              "shaderStorageImageWriteWithoutFormat",
+              "shaderUniformBufferArrayDynamicIndexing",
+              "tessellationShader",
+              "textureCompressionASTC_LDR",
+              "textureCompressionETC2",
+              "vertexPipelineStoresAndAtomics"
+            ],
+            "struct_": "VkPhysicalDeviceFeatures"
+          }
+        ],
+        "formats": [
+          {
+            "buffer": [
+              "UNIFORM_TEXEL_BUFFER",
+              "STORAGE_TEXEL_BUFFER",
+              "VERTEX_BUFFER"
+            ],
+            "format": "R8_UNORM",
+            "linear": [
+              "SAMPLED_IMAGE",
+              "STORAGE_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "SAMPLED_IMAGE_FILTER_MINMAX",
+              "SAMPLED_IMAGE_FILTER_CUBIC_EXT"
+            ],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "STORAGE_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "SAMPLED_IMAGE_FILTER_MINMAX",
+              "SAMPLED_IMAGE_FILTER_CUBIC_EXT"
+            ]
+          },
+          {
+            "buffer": [
+              "UNIFORM_TEXEL_BUFFER",
+              "STORAGE_TEXEL_BUFFER",
+              "VERTEX_BUFFER"
+            ],
+            "format": "R8G8_UNORM",
+            "linear": [
+              "SAMPLED_IMAGE",
+              "STORAGE_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "SAMPLED_IMAGE_FILTER_MINMAX",
+              "SAMPLED_IMAGE_FILTER_CUBIC_EXT",
+              "FRAGMENT_DENSITY_MAP_EXT"
+            ],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "STORAGE_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "SAMPLED_IMAGE_FILTER_MINMAX",
+              "SAMPLED_IMAGE_FILTER_CUBIC_EXT",
+              "FRAGMENT_DENSITY_MAP_EXT"
+            ]
+          },
+          {
+            "buffer": [
+              "UNIFORM_TEXEL_BUFFER",
+              "STORAGE_TEXEL_BUFFER",
+              "VERTEX_BUFFER"
+            ],
+            "format": "R8G8B8A8_UNORM",
+            "linear": [
+              "SAMPLED_IMAGE",
+              "STORAGE_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "MIDPOINT_CHROMA_SAMPLES",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_LINEAR_FILTER",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_SEPARATE_RECONSTRUCTION_FILTER",
+              "SAMPLED_IMAGE_FILTER_MINMAX",
+              "SAMPLED_IMAGE_FILTER_CUBIC_EXT"
+            ],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "STORAGE_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "MIDPOINT_CHROMA_SAMPLES",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_LINEAR_FILTER",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_SEPARATE_RECONSTRUCTION_FILTER",
+              "SAMPLED_IMAGE_FILTER_MINMAX",
+              "SAMPLED_IMAGE_FILTER_CUBIC_EXT"
+            ]
+          },
+          {
+            "buffer": [],
+            "format": "R8G8B8A8_SRGB",
+            "linear": [
+              "SAMPLED_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "SAMPLED_IMAGE_FILTER_MINMAX",
+              "SAMPLED_IMAGE_FILTER_CUBIC_EXT"
+            ],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "SAMPLED_IMAGE_FILTER_MINMAX",
+              "SAMPLED_IMAGE_FILTER_CUBIC_EXT"
+            ]
+          },
+          {
+            "buffer": [
+              "UNIFORM_TEXEL_BUFFER",
+              "VERTEX_BUFFER"
+            ],
+            "format": "B8G8R8A8_UNORM",
+            "linear": [
+              "SAMPLED_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "SAMPLED_IMAGE_FILTER_MINMAX",
+              "SAMPLED_IMAGE_FILTER_CUBIC_EXT"
+            ],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "SAMPLED_IMAGE_FILTER_MINMAX",
+              "SAMPLED_IMAGE_FILTER_CUBIC_EXT"
+            ]
+          },
+          {
+            "buffer": [],
+            "format": "B8G8R8A8_SRGB",
+            "linear": [
+              "SAMPLED_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "SAMPLED_IMAGE_FILTER_MINMAX",
+              "SAMPLED_IMAGE_FILTER_CUBIC_EXT"
+            ],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "SAMPLED_IMAGE_FILTER_MINMAX",
+              "SAMPLED_IMAGE_FILTER_CUBIC_EXT"
+            ]
+          },
+          {
+            "buffer": [
+              "UNIFORM_TEXEL_BUFFER",
+              "STORAGE_TEXEL_BUFFER",
+              "VERTEX_BUFFER"
+            ],
+            "format": "A2B10G10R10_UNORM_PACK32",
+            "linear": [
+              "SAMPLED_IMAGE",
+              "STORAGE_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "SAMPLED_IMAGE_FILTER_MINMAX",
+              "SAMPLED_IMAGE_FILTER_CUBIC_EXT"
+            ],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "STORAGE_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "SAMPLED_IMAGE_FILTER_MINMAX",
+              "SAMPLED_IMAGE_FILTER_CUBIC_EXT"
+            ]
+          },
+          {
+            "buffer": [
+              "UNIFORM_TEXEL_BUFFER",
+              "STORAGE_TEXEL_BUFFER",
+              "VERTEX_BUFFER"
+            ],
+            "format": "R16_UNORM",
+            "linear": [
+              "SAMPLED_IMAGE",
+              "STORAGE_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "SAMPLED_IMAGE_FILTER_MINMAX",
+              "SAMPLED_IMAGE_FILTER_CUBIC_EXT"
+            ],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "STORAGE_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "SAMPLED_IMAGE_FILTER_MINMAX",
+              "SAMPLED_IMAGE_FILTER_CUBIC_EXT"
+            ]
+          },
+          {
+            "buffer": [
+              "UNIFORM_TEXEL_BUFFER",
+              "STORAGE_TEXEL_BUFFER",
+              "VERTEX_BUFFER"
+            ],
+            "format": "R16G16_UNORM",
+            "linear": [
+              "SAMPLED_IMAGE",
+              "STORAGE_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "SAMPLED_IMAGE_FILTER_MINMAX",
+              "SAMPLED_IMAGE_FILTER_CUBIC_EXT"
+            ],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "STORAGE_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "SAMPLED_IMAGE_FILTER_MINMAX",
+              "SAMPLED_IMAGE_FILTER_CUBIC_EXT"
+            ]
+          },
+          {
+            "buffer": [
+              "UNIFORM_TEXEL_BUFFER",
+              "STORAGE_TEXEL_BUFFER",
+              "VERTEX_BUFFER"
+            ],
+            "format": "R16G16B16A16_UNORM",
+            "linear": [
+              "SAMPLED_IMAGE",
+              "STORAGE_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "SAMPLED_IMAGE_FILTER_MINMAX",
+              "SAMPLED_IMAGE_FILTER_CUBIC_EXT"
+            ],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "STORAGE_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "SAMPLED_IMAGE_FILTER_MINMAX",
+              "SAMPLED_IMAGE_FILTER_CUBIC_EXT"
+            ]
+          },
+          {
+            "buffer": [
+              "UNIFORM_TEXEL_BUFFER",
+              "STORAGE_TEXEL_BUFFER",
+              "VERTEX_BUFFER"
+            ],
+            "format": "R16G16B16A16_SFLOAT",
+            "linear": [
+              "SAMPLED_IMAGE",
+              "STORAGE_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "SAMPLED_IMAGE_FILTER_MINMAX",
+              "SAMPLED_IMAGE_FILTER_CUBIC_EXT"
+            ],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "STORAGE_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "SAMPLED_IMAGE_FILTER_MINMAX",
+              "SAMPLED_IMAGE_FILTER_CUBIC_EXT"
+            ]
+          },
+          {
+            "buffer": [
+              "UNIFORM_TEXEL_BUFFER",
+              "STORAGE_TEXEL_BUFFER",
+              "VERTEX_BUFFER"
+            ],
+            "format": "R32G32B32A32_SFLOAT",
+            "linear": [
+              "SAMPLED_IMAGE",
+              "STORAGE_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "SAMPLED_IMAGE_FILTER_MINMAX"
+            ],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "STORAGE_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "SAMPLED_IMAGE_FILTER_MINMAX"
+            ]
+          },
+          {
+            "buffer": [
+              "UNIFORM_TEXEL_BUFFER",
+              "STORAGE_TEXEL_BUFFER",
+              "VERTEX_BUFFER"
+            ],
+            "format": "B10G11R11_UFLOAT_PACK32",
+            "linear": [
+              "SAMPLED_IMAGE",
+              "STORAGE_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "SAMPLED_IMAGE_FILTER_MINMAX",
+              "SAMPLED_IMAGE_FILTER_CUBIC_EXT"
+            ],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "STORAGE_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "SAMPLED_IMAGE_FILTER_MINMAX",
+              "SAMPLED_IMAGE_FILTER_CUBIC_EXT"
+            ]
+          },
+          {
+            "buffer": [],
+            "format": "E5B9G9R9_UFLOAT_PACK32",
+            "linear": [
+              "SAMPLED_IMAGE",
+              "BLIT_SRC",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "SAMPLED_IMAGE_FILTER_MINMAX",
+              "SAMPLED_IMAGE_FILTER_CUBIC_EXT"
+            ],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "BLIT_SRC",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "SAMPLED_IMAGE_FILTER_MINMAX",
+              "SAMPLED_IMAGE_FILTER_CUBIC_EXT"
+            ]
+          },
+          {
+            "buffer": [
+              "UNIFORM_TEXEL_BUFFER"
+            ],
+            "format": "BC1_RGBA_UNORM_BLOCK",
+            "linear": [],
+            "optimal": []
+          },
+          {
+            "buffer": [
+              "UNIFORM_TEXEL_BUFFER"
+            ],
+            "format": "BC3_UNORM_BLOCK",
+            "linear": [],
+            "optimal": []
+          },
+          {
+            "buffer": [
+              "UNIFORM_TEXEL_BUFFER"
+            ],
+            "format": "BC4_UNORM_BLOCK",
+            "linear": [],
+            "optimal": []
+          },
+          {
+            "buffer": [
+              "UNIFORM_TEXEL_BUFFER"
+            ],
+            "format": "BC5_UNORM_BLOCK",
+            "linear": [],
+            "optimal": []
+          },
+          {
+            "buffer": [
+              "UNIFORM_TEXEL_BUFFER"
+            ],
+            "format": "BC6H_UFLOAT_BLOCK",
+            "linear": [],
+            "optimal": []
+          },
+          {
+            "buffer": [
+              "UNIFORM_TEXEL_BUFFER"
+            ],
+            "format": "BC7_UNORM_BLOCK",
+            "linear": [],
+            "optimal": []
+          },
+          {
+            "buffer": [],
+            "format": "ETC2_R8G8B8A8_UNORM_BLOCK",
+            "linear": [
+              "SAMPLED_IMAGE",
+              "BLIT_SRC",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "SAMPLED_IMAGE_FILTER_MINMAX",
+              "SAMPLED_IMAGE_FILTER_CUBIC_EXT"
+            ],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "BLIT_SRC",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "SAMPLED_IMAGE_FILTER_MINMAX",
+              "SAMPLED_IMAGE_FILTER_CUBIC_EXT"
+            ]
+          },
+          {
+            "buffer": [],
+            "format": "EAC_R11G11_UNORM_BLOCK",
+            "linear": [
+              "SAMPLED_IMAGE",
+              "BLIT_SRC",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "SAMPLED_IMAGE_FILTER_MINMAX",
+              "SAMPLED_IMAGE_FILTER_CUBIC_EXT"
+            ],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "BLIT_SRC",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "SAMPLED_IMAGE_FILTER_MINMAX",
+              "SAMPLED_IMAGE_FILTER_CUBIC_EXT"
+            ]
+          },
+          {
+            "buffer": [
+              "UNIFORM_TEXEL_BUFFER"
+            ],
+            "format": "ASTC_4x4_UNORM_BLOCK",
+            "linear": [
+              "SAMPLED_IMAGE",
+              "BLIT_SRC",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "SAMPLED_IMAGE_FILTER_MINMAX",
+              "SAMPLED_IMAGE_FILTER_CUBIC_EXT"
+            ],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "BLIT_SRC",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "SAMPLED_IMAGE_FILTER_MINMAX",
+              "SAMPLED_IMAGE_FILTER_CUBIC_EXT"
+            ]
+          },
+          {
+            "buffer": [],
+            "format": "ASTC_4x4_SRGB_BLOCK",
+            "linear": [
+              "SAMPLED_IMAGE",
+              "BLIT_SRC",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "SAMPLED_IMAGE_FILTER_MINMAX",
+              "SAMPLED_IMAGE_FILTER_CUBIC_EXT"
+            ],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "BLIT_SRC",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "SAMPLED_IMAGE_FILTER_MINMAX",
+              "SAMPLED_IMAGE_FILTER_CUBIC_EXT"
+            ]
+          },
+          {
+            "buffer": [
+              "UNIFORM_TEXEL_BUFFER"
+            ],
+            "format": "ASTC_8x8_UNORM_BLOCK",
+            "linear": [
+              "SAMPLED_IMAGE",
+              "BLIT_SRC",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "SAMPLED_IMAGE_FILTER_MINMAX",
+              "SAMPLED_IMAGE_FILTER_CUBIC_EXT"
+            ],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "BLIT_SRC",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "SAMPLED_IMAGE_FILTER_MINMAX",
+              "SAMPLED_IMAGE_FILTER_CUBIC_EXT"
+            ]
+          },
+          {
+            "buffer": [
+              "UNIFORM_TEXEL_BUFFER"
+            ],
+            "format": "ASTC_12x12_UNORM_BLOCK",
+            "linear": [
+              "SAMPLED_IMAGE",
+              "BLIT_SRC",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "SAMPLED_IMAGE_FILTER_MINMAX",
+              "SAMPLED_IMAGE_FILTER_CUBIC_EXT"
+            ],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "BLIT_SRC",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "SAMPLED_IMAGE_FILTER_MINMAX",
+              "SAMPLED_IMAGE_FILTER_CUBIC_EXT"
+            ]
+          },
+          {
+            "buffer": [],
+            "format": "G8B8G8R8_422_UNORM",
+            "linear": [
+              "SAMPLED_IMAGE",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "MIDPOINT_CHROMA_SAMPLES",
+              "SAMPLED_IMAGE_FILTER_MINMAX"
+            ],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "MIDPOINT_CHROMA_SAMPLES",
+              "SAMPLED_IMAGE_FILTER_MINMAX"
+            ]
+          },
+          {
+            "buffer": [],
+            "format": "G8_B8_R8_3PLANE_420_UNORM",
+            "linear": [
+              "SAMPLED_IMAGE",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "MIDPOINT_CHROMA_SAMPLES",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_LINEAR_FILTER",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_SEPARATE_RECONSTRUCTION_FILTER",
+              "DISJOINT",
+              "COSITED_CHROMA_SAMPLES",
+              "SAMPLED_IMAGE_FILTER_MINMAX",
+              "SAMPLED_IMAGE_FILTER_CUBIC_EXT"
+            ],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "MIDPOINT_CHROMA_SAMPLES",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_LINEAR_FILTER",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_SEPARATE_RECONSTRUCTION_FILTER",
+              "DISJOINT",
+              "COSITED_CHROMA_SAMPLES",
+              "SAMPLED_IMAGE_FILTER_MINMAX",
+              "SAMPLED_IMAGE_FILTER_CUBIC_EXT"
+            ]
+          },
+          {
+            "buffer": [],
+            "format": "G8_B8R8_2PLANE_420_UNORM",
+            "linear": [
+              "SAMPLED_IMAGE",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "MIDPOINT_CHROMA_SAMPLES",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_LINEAR_FILTER",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_SEPARATE_RECONSTRUCTION_FILTER",
+              "DISJOINT",
+              "COSITED_CHROMA_SAMPLES",
+              "SAMPLED_IMAGE_FILTER_MINMAX",
+              "SAMPLED_IMAGE_FILTER_CUBIC_EXT"
+            ],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "MIDPOINT_CHROMA_SAMPLES",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_LINEAR_FILTER",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_SEPARATE_RECONSTRUCTION_FILTER",
+              "DISJOINT",
+              "COSITED_CHROMA_SAMPLES",
+              "SAMPLED_IMAGE_FILTER_MINMAX",
+              "SAMPLED_IMAGE_FILTER_CUBIC_EXT"
+            ]
+          },
+          {
+            "buffer": [],
+            "format": "G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16",
+            "linear": [
+              "DISJOINT"
+            ],
+            "optimal": [
+              "DISJOINT"
+            ]
+          }
+        ],
+        "limits": {
+          "maxComputeSharedMemorySize": 32768,
+          "maxComputeWorkGroupCount": [
+            65535,
+            65535,
+            65535
+          ],
+          "maxComputeWorkGroupInvocations": 1024,
+          "maxComputeWorkGroupSize": [
+            1024,
+            1024,
+            64
+          ],
+          "maxImageArrayLayers": 2048,
+          "maxImageDimension2D": 16384,
+          "maxImageDimension3D": 2048,
+          "maxPushConstantsSize": 128,
+          "maxSamplerAnisotropy": 16,
+          "maxStorageBufferRange": 536870912,
+          "minMemoryMapAlignment": 64,
+          "minStorageBufferOffsetAlignment": 64,
+          "nonCoherentAtomSize": 1,
+          "optimalBufferCopyOffsetAlignment": 64,
+          "optimalBufferCopyRowPitchAlignment": 64,
+          "timestampPeriod": 52.08333206176758
+        },
+        "memoryDecompression": {
+          "extension": "",
+          "maxIndirectCount": 0,
+          "methods": []
+        },
+        "memoryHeaps": [
+          {
+            "flags": [
+              "DEVICE_LOCAL"
+            ],
+            "size": 7570821120,
+            "typeFlags": []
+          },
+          {
+            "flags": [
+              "DEVICE_LOCAL"
+            ],
+            "size": 268435456,
+            "typeFlags": []
+          }
+        ],
+        "minImportedHostPointerAlignment": 0,
+        "name": "Adreno (TM) 660",
+        "queueFamilies": [
+          {
+            "count": 3,
+            "flags": [
+              "GRAPHICS",
+              "COMPUTE",
+              "PROTECTED"
+            ],
+            "index": 0,
+            "videoCodecs": []
+          }
+        ],
+        "subgroup": {
+          "maxSize": 0,
+          "minSize": 0,
+          "operations": [
+            "BASIC",
+            "VOTE",
+            "ARITHMETIC",
+            "BALLOT",
+            "SHUFFLE",
+            "SHUFFLE_RELATIVE",
+            "QUAD"
+          ],
+          "size": 64,
+          "stages": [
+            "FRAGMENT",
+            "COMPUTE"
+          ]
+        },
+        "type": "integrated-gpu",
+        "vendor": "Qualcomm",
+        "video": []
+      }
+    ],
+    "instanceExtensions": [
+      "VK_EXT_debug_report",
+      "VK_EXT_surface_maintenance1",
+      "VK_EXT_swapchain_colorspace",
+      "VK_GOOGLE_surfaceless_query",
+      "VK_KHR_android_surface",
+      "VK_KHR_device_group_creation",
+      "VK_KHR_external_fence_capabilities",
+      "VK_KHR_external_memory_capabilities",
+      "VK_KHR_external_semaphore_capabilities",
+      "VK_KHR_get_physical_device_properties2",
+      "VK_KHR_get_surface_capabilities2",
+      "VK_KHR_surface",
+      "VK_KHR_surface_protected_capabilities"
+    ],
+    "loaderVersion": "1.3.0",
+    "status": "available (cmd gpu vkjson)"
+  }
+}

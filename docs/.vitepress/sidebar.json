@@ -8118,6 +8118,20 @@
                 "link": "/research/images/papers/gpu-decode-streaming"
               }
             ]
+          },
+          {
+            "text": "Hardware",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Hardware matrix",
+                "link": "/research/images/hardware/"
+              },
+              {
+                "text": "Run the probe",
+                "link": "/research/images/hardware/contributing"
+              }
+            ]
           }
         ]
       }
