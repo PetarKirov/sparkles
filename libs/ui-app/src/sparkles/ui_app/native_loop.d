@@ -112,7 +112,7 @@ bool measureCellFont(in FontRequest request, in string[] extraSources, int px,
     import sparkles.font : cellMetrics, CellMetrics, charMap, fontErr, hhea, instance, InstanceSize,
         openFace, PointWorkspace, Ppem;
     import sparkles.raylib_text.font_discovery : FontSources;
-    import sparkles.raylib_text.font_set : resolveFontPath;
+    import sparkles.raylib_text.font_resolve : resolveFontPath;
 
     FontSources sources;
     sources.dirs = request.searchDirs.dup ~ extraSources.dup;
@@ -177,7 +177,7 @@ bool measureCellFont(in FontRequest request, in string[] extraSources, int px,
         ascent - (em * 28 + 50) / 100); // about half the x-height
     // Icons, text the face lacks, and emoji, from the faces the raylib arm
     // falls back to.
-    import sparkles.raylib_text.font_set : systemFallbackFacePaths;
+    import sparkles.raylib_text.font_resolve : systemFallbackFacePaths;
 
     string nerdPath, regularPath, emojiPath;
     systemFallbackFacePaths(path, sources, nerdPath, regularPath, emojiPath);
@@ -197,14 +197,25 @@ bool measureCellFont(in FontRequest request, in string[] extraSources, int px,
     return true;
 }
 
-/// Why the native arm did not open, on standard error: the run reports only
-/// that it failed, and an application need not have set up a logger.
+/// Why the native arm did not open, on standard error — logcat on Android,
+/// where standard error goes nowhere: the run reports only that it failed,
+/// and an application need not have set up a logger.
 private void whyNot(Args...)(Args args) @system
 {
     import std.conv : text;
-    import std.stdio : stderr;
 
-    stderr.writeln(text(args));
+    version (Android)
+    {
+        import sparkles.wsi.platform.android : logFailure;
+
+        logFailure(text(args));
+    }
+    else
+    {
+        import std.stdio : stderr;
+
+        stderr.writeln(text(args));
+    }
 }
 
 /// The canvas the native arm draws with.
@@ -220,6 +231,9 @@ struct NativeSession
 {
     uint pixelW, pixelH;     /// the surface, in device pixels
     double scale = 1;        /// device pixels per logical unit
+    /// The edges system bars or cutouts cover, in device pixels: the cells
+    /// start inside them (an Android window is edge to edge).
+    PhysicalInsets insets;
     CellFont font;           ///
     NativeCanvas* canvas;    ///
     float frameSeconds = 0;  /// how long the last frame took to build and submit
@@ -241,8 +255,7 @@ struct NativeHost
 
     /// The surface, in cells.
     Size size() const @safe pure nothrow @nogc
-        => Size(cast(int)(session_.pixelW / session_.font.cellW),
-            cast(int)(session_.pixelH / session_.font.cellH));
+        => Size(pixels.width / session_.font.cellW, pixels.height / session_.font.cellH);
 
     /// ditto
     Backend backend() const @safe pure nothrow @nogc => Backend.gui;
@@ -254,9 +267,16 @@ struct NativeHost
     /// the cells are measured again, so `size` changes on its next read.
     int fontSizePx() const @safe pure nothrow @nogc => session_.font.px;
 
-    /// The surface, in device pixels: what an application sizes chrome it
-    /// paints in pixels by, remainder of a cell included.
-    Size pixels() const @safe pure nothrow @nogc => Size(session_.pixelW, session_.pixelH);
+    /// The surface inside its safe insets, in device pixels: what an
+    /// application sizes chrome it paints in pixels by, remainder of a cell
+    /// included.
+    Size pixels() const @safe pure nothrow @nogc
+    {
+        static int inside(uint whole, uint a, uint b) => whole > a + b ? cast(int)(whole - a - b) : 0;
+
+        with (session_.insets)
+            return Size(inside(session_.pixelW, left, right), inside(session_.pixelH, top, bottom));
+    }
 
     /// One cell, in device pixels. A terminal pane opens with these
     /// (`openPixels`) and needs `PointerUnit.pixels` so pointer events
@@ -338,7 +358,20 @@ bool runNative(alias present, alias handle, alias draw = noDraw, alias setup = n
         whyNot(i"the native arm could not open an event loop");
         return false;
     }
-    version (linux)
+    // Before `linux`, which Android also is: it has neither Wayland nor X11.
+    // The window is the activity's, its frames paced by `AChoreographer`.
+    version (Android)
+    {
+        AndroidWsi wsi;
+        if (AndroidWsi.open(wsi).hasError || wsi.attach(loop).hasError)
+        {
+            whyNot(i"the native arm has no activity: start the app through AndroidWsiMain");
+            return false;
+        }
+        return drive!(present, handle, draw, setup, shutdown)(wsi, loop, cfg, request,
+            paced: true);
+    }
+    else version (linux)
     {
         if (getenv("WAYLAND_DISPLAY") !is null)
         {
@@ -517,6 +550,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         session.scale = metrics.scale.value;
         session.pixelW = metrics.physicalSize.width;
         session.pixelH = metrics.physicalSize.height;
+        session.insets = metrics.safeInsets;
     }
     Surface surfaceOf(in SurfaceMetrics m)
         => Surface(m.physicalSize.width, m.physicalSize.height, m.scale.value);
@@ -630,16 +664,21 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
             return false;
         gpu.views.create(gpu.vk, gpu.swapchain);
         const images = cast(uint) gpu.swapchain.images.length;
-        return gpu.sync.imageCount == 0
-            ? !FrameSync.create(gpu.sync, gpu.vk, images).hasError
-            : !gpu.sync.replaceImages(gpu.vk, images).hasError;
+        const synced = gpu.sync.imageCount == 0 ? FrameSync.create(gpu.sync, gpu.vk, images)
+            : gpu.sync.replaceImages(gpu.vk, images);
+        if (synced.hasError)
+            whyNot(i"the native arm could not synchronize its frames: $(synced.error)");
+        return !synced.hasError;
     }
 
     bool bringUp()
     {
         auto handles = wsi.nativeHandles(window);
         if (handles.hasError)
+        {
+            whyNot(i"the native arm found no native handles for the window: $(handles.error.diagnostic[])");
             return false;
+        }
         import core.stdc.stdlib : getenv;
 
         bool made;
@@ -659,13 +698,21 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         gpu.up = true;
         if (!rebuildSwapchain(true))
             return false;
-        if (CommandPool.create(gpu.commands, gpu.vk, gpu.sync.framesInFlight).hasError)
+        const pool = CommandPool.create(gpu.commands, gpu.vk, gpu.sync.framesInFlight);
+        if (pool.hasError)
+        {
+            whyNot(i"the native arm could not create its command pool: $(pool.error)");
             return false;
+        }
         CanvasConfig canvasConfig;
         canvasConfig.frameSlots = gpu.sync.framesInFlight;
-        if (NativeCanvas.create(gpu.canvas, gpu.vk.device, gpu.memory,
-                DeviceFacts.of(gpu.vk.base), canvasConfig).hasError)
+        const canvasMade = NativeCanvas.create(gpu.canvas, gpu.vk.device, gpu.memory,
+            DeviceFacts.of(gpu.vk.base), canvasConfig);
+        if (canvasMade.hasError)
+        {
+            whyNot(i"the native arm could not create its canvas: $(canvasMade.error)");
             return false;
+        }
         session.canvas = &gpu.canvas;
         bindFont();
         return true;
@@ -687,6 +734,8 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
     input.capabilities = host.capabilities;
     input.fractionalScroll = cfg.fractionalScroll;
     input.scale = metrics.scale.value;
+    input.originX = metrics.safeInsets.left;
+    input.originY = metrics.safeInsets.top;
 
     session.setCursor = (PointerShape s) { cast(void) wsi.setCursor(window, s); };
     session.setClipboard = (scope const(char)[] text) {
@@ -740,9 +789,17 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
             bool input_ = true;
             void onMetrics(in SurfaceMetrics m)
             {
+                // A lost surface goes before this drain returns, which is
+                // what acknowledges the loss (`RES12`): Android destroys the
+                // native window then. The machine's later release finds
+                // nothing left to do.
+                if (m.suspended)
+                    releaseSurface();
                 metrics = m;
                 takeMetrics();
                 input.scale = m.scale.value;
+                input.originX = m.safeInsets.left;
+                input.originY = m.safeInsets.top;
                 if (const px = lc.metrics(surfaceOf(m)))
                     {
                     measure(px);
@@ -870,6 +927,12 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
             }
             continue;
         }
+
+        // A frame waits for its opportunity: ask for one where the window
+        // system gives them only on request (Android).
+        static if (__traits(hasMember, Wsi, "requestFrame"))
+            if (plan.askFrame)
+                cast(void) wsi.requestFrame(window);
 
         // Park until the window system has something, or the application's
         // next deadline.
@@ -1014,6 +1077,7 @@ private FrameOutcome drawFrame(alias draw)(ref Gpu gpu, ref NativeHost host,
         format: gpu.swapchain.format, extent: gpu.swapchain.extent, usage: gpu.swapchain.usage,
         finalLayout: VkImageLayout.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR), cmd, gpu.sync.frame,
         FrameMetrics(cellW: session.font.cellW, cellH: session.font.cellH,
+            originX: session.insets.left, originY: session.insets.top,
             density: cast(float) session.scale), ground);
     paint(gpu.canvas, host.ops()[]);
     draw(host);
