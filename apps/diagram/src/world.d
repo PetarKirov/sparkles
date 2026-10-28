@@ -26,6 +26,9 @@ import lantern : LanternState;
 import sparkles.base.unique : makeUnique, Unique;
 import settings : DiagramSettings;
 import sparkles.ui.components.grid_backdrop : GridConfig;
+import sparkles.input.events : KeyEvent;
+import sparkles.ui.editor.field : EditorField, FieldResult;
+import sparkles.ui.editor.keys : windowTarget;
 import sparkles.ui.geometry : Point, Rect;
 
 /// The board's caps. A few thousand nodes is past what a diagram stays
@@ -138,13 +141,18 @@ struct World
     Point menuAt;                    /// …anchored here, in screen cells
     Entity editing = noEntity;       /// the entity whose label is being edited
     /**
-    In-progress label text (`IXN5`). Same contract as the toolkit's
-    $(REF LineEditState, sparkles,ui,state) — type / erase / accept / cancel —
-    but over a fixed slot so the frame stays allocation-free (`DIA5`).
+    The label draft (`IXN5`): the toolkit's editor (`EDU4`), capped at the
+    label slot's `labelCap` bytes. After every edit its text and caret are
+    copied into `editBuf`, so the frame reads a fixed slot and stays
+    allocation-free (`DIA5`).
     */
+    EditorField editField;
+    /// ditto
     char[labelCap] editBuf;
     /// ditto
     ubyte editLen;
+    /// The draft's caret, as a byte offset into `editBuf`.
+    ubyte editCaret;
     /**
     Everything the settings pane edits (`SET4`): the backdrop configuration
     (`GRD7`) and the board preferences that are also runtime toggles.
@@ -289,54 +297,46 @@ struct World
         => isEditing ? editBuf[0 .. editLen] : null;
 
     /**
-    Opens a label edit on `e`, seeding the buffer from its current label.
+    Opens a label edit on `e`, seeding the draft from its current label.
 
     Closes any prior edit without committing — switching targets mid-edit
-    discards the draft, which matches a cancelled LineEditState.
+    discards the draft, as a cancelled edit does.
     */
-    void beginEdit(Entity e) scope
+    void beginEdit(Entity e)
     {
         if (!alive(e))
             return;
         editing = e;
-        editLen = labelLen[e];
-        if (editLen)
-            editBuf[0 .. editLen] = label[e][0 .. editLen];
+        editField = EditorField.singleLine(label[e][0 .. labelLen[e]], windowTarget);
+        editField.state.options.maxLength = labelCap;
+        editMirror();
     }
 
-    /// Appends a printable code point (ASCII for the MVP slot). Controls ignored.
-    void editType(dchar c) scope
-    {
-        if (!isEditing || c < 0x20 || c == 0x7f || c > 0x7e)
-            return;
-        if (editLen >= labelCap)
-            return;
-        editBuf[editLen++] = cast(char) c;
-    }
-
-    /// Backspace: drops the last byte (ASCII labels only in the MVP).
-    void editErase() scope
-    {
-        if (!isEditing || editLen == 0)
-            return;
-        --editLen;
-    }
-
-    /// Enter: commit the buffer to the entity's label slot and stop editing.
-    void editCommit() scope
+    /// Enter: commit the draft to the entity's label slot and stop editing.
+    void editCommit()
     {
         if (!isEditing)
             return;
         setLabel(editing, editBuf[0 .. editLen]);
-        editing = noEntity;
-        editLen = 0;
+        editCancel();
     }
 
     /// Esc / cancel: discard the draft and stop editing.
-    void editCancel() scope
+    void editCancel()
     {
         editing = noEntity;
+        editField = EditorField.init;
         editLen = 0;
+        editCaret = 0;
+    }
+
+    /// Copy the draft's text and caret into the fixed slot the frame reads.
+    package void editMirror()
+    {
+        const text = editField.state.text;
+        editLen = cast(ubyte) text.length;
+        text.copyTo(0, editLen, editBuf[0 .. editLen]);
+        editCaret = cast(ubyte) editField.state.selection.primary.head;
     }
 
     // ── groups (`WLD2`) ─────────────────────────────────────────────────────
@@ -579,6 +579,20 @@ struct World
         const y1 = dragStart.y > dragNow.y ? dragStart.y : dragNow.y;
         return Rect(x0, y0, x1 - x0 + 1, y1 - y0 + 1);
     }
+}
+
+/**
+One key for the label draft's editor (`IXN5`, `EDU4`): Backspace, words,
+kills, yanks and motion. Input, not the frame, so it may allocate; the
+draft the frame draws is mirrored into `World.editBuf`.
+*/
+FieldResult editKey(ref World w, in KeyEvent k) @safe pure nothrow @nogc
+{
+    if (!w.isEditing)
+        return FieldResult.init;
+    auto result = w.editField.key(k);
+    w.editMirror();
+    return result;
 }
 
 /// Every live entity's rectangle, into `sink` — what `contentBounds` and the
@@ -853,25 +867,31 @@ unittest
 }
 
 @("diagram.world.labelEditCommitAndCancel")
-@safe pure nothrow @nogc
+@safe pure nothrow
 unittest
 {
-    // `IXN5`: LineEditState contract over a fixed slot — type, erase, accept,
-    // cancel — without allocating.
+    import sparkles.input.events : Key, Mods;
+
+    // `IXN5`: the draft is an editor field — type, erase, kill, accept,
+    // cancel — and the frame reads its fixed mirror.
     auto wOwner = World.create();
     ref World w() => wOwner.get();
     const e = w.spawn(Rect(0, 0, 8, 2));
     w.setLabel(e, "ab");
     w.beginEdit(e);
-    assert(w.isEditing && w.editText == "ab");
-    w.editType('c');
-    w.editErase(); // drop c
-    w.editType('x');
+    assert(w.isEditing && w.editText == "ab" && w.editCaret == 2);
+    editKey(w, KeyEvent(Key.char_, 'c'));
+    editKey(w, KeyEvent(Key.backspace)); // drop c
+    editKey(w, KeyEvent(Key.char_, 'x'));
+    editKey(w, KeyEvent(Key.left));
+    assert(w.editText == "abx" && w.editCaret == 2, "the caret moves inside the draft");
     w.editCommit();
     assert(!w.isEditing && w.labelOf(e) == "abx");
 
     w.beginEdit(e);
-    w.editType('z');
+    editKey(w, KeyEvent(Key.char_, 'w', Mods(ctrl: true)));
+    assert(w.editText == "", "Ctrl-W kills the word");
+    editKey(w, KeyEvent(Key.char_, 'z'));
     w.editCancel();
     assert(!w.isEditing && w.labelOf(e) == "abx", "cancel discards the draft");
 }
