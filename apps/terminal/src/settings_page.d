@@ -42,6 +42,8 @@ import sparkles.ui.components.property_sections : choiceLabel, decodeSectionHit,
     sectionItems, SectionPart, sectionRow, SectionsOptions, sectionSummary, sentenceCase,
     naturalCells, unquoted;
 import sparkles.ui.components.settings_pane : LeafProvenance, SettingsResult, SettingsToast;
+import sparkles.ui.components.editor : EditorViewOptions, editorLineSpans;
+import sparkles.ui.editor.keys : EditorTarget, editorBinds;
 import sparkles.ui.geometry : Constraints, Insets, Point, SizeSpec;
 import sparkles.ui.keymap : acceptsTyped, Chord, ShiftReq;
 import sparkles.ui.layout : layout;
@@ -473,10 +475,12 @@ final class SettingsPage : Surface, Scrollable
             return true;
         }
 
-        // A text field owns the keys while open.
+        // A text field owns the keys while open; a chord its editor does not
+        // bind (Ctrl-C) goes back to the host.
         if (pane.textEditing)
         {
-            if (k.mods.ctrl || k.mods.alt || k.mods.super_)
+            if ((k.mods.ctrl || k.mods.alt || k.mods.super_)
+                && !editorBinds(k, EditorTarget.terminal))
                 return false;
             note(pane.handleKey(k));
             return true;
@@ -694,7 +698,11 @@ final class SettingsPage : Surface, Scrollable
             st.open = openDropdown == n.path;
             st.editing = pane.textEditing && pane.textPath == n.path;
             if (st.editing)
-                st.editText = pane.textBuf;
+            {
+                EditorViewOptions fieldView;
+                fieldView.textSlot = Slot.code;
+                st.editSpans = editorLineSpans(pane.textField.state, 0, fieldView);
+            }
             const rf = pane.edits.refusalFor(n.path);
             if (rf.refused)
             {

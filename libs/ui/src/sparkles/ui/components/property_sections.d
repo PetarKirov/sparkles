@@ -310,7 +310,7 @@ struct RowState
     bool focused;     /// the keyboard cursor is here
     bool open;        /// its dropdown is open
     bool editing;     /// the line editor is open on it
-    string editText;  /// ditto: the text so far
+    TextSpan[] editSpans; /// ditto: the text so far, as the editor draws it, caret included
     string refusal;   /// the edit's refusal, inline (`PRT21`)
 }
 
@@ -548,9 +548,8 @@ uint sectionRow(ref Builder b, ref const TreeData!PropertyNode data, ref const S
     // The line editor: the text so far, the caret, ✓ and ✕ on touch.
     if (st.editing)
     {
-        uint[] field = [b.add(Widget(kind: WidgetKind.rich, spans: [
-            TextSpan(text: st.editText, slot: Slot.code),
-            TextSpan(text: "▏", slot: Slot.caret)], width: SizeSpec.grow(), clipX: true))];
+        uint[] field = [b.add(Widget(kind: WidgetKind.rich, spans: st.editSpans.dup,
+            width: SizeSpec.grow(), clipX: true))];
         if (opt.touch)
         {
             field ~= pill(b, "✓", Slot.textPrimary, hit(SectionPart.accept), true, true, rows);
