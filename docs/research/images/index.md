@@ -52,6 +52,23 @@ questions above, and lists the open decisions for the design review.
 | `sparkles:shaders`, math, host SIMD | graphics-only shaders, compute milestones, SIMD precedents and dispatch                | [Baseline][bl-shaders]  |
 | Existing image code and consumers   | the two PNG decoders, alpha conventions, terminal images, oracles, explorer template   | [Baseline][bl-existing] |
 
+## Papers
+
+Seven annotated bibliographies. Each entry gives a claim, a verbatim quote checked
+against the paper's text, its relevance to Sparkles and its caveats; each thread ends
+with a synthesis. The PDFs live outside the repository, under
+`~/code/repos/papers/image-video/<thread>/`.
+
+| Thread                        | Covers                                                                             | Link                   |
+| ----------------------------- | ---------------------------------------------------------------------------------- | ---------------------- |
+| DSLs and scheduling           | algorithm/schedule separation, fusion and tiling, autoschedulers, hardware targets | [Papers][p-dsl]        |
+| Generic image programming     | pixel and view concepts, N-D arrays, functional image models                       | [Papers][p-generic]    |
+| Resampling and colour         | reconstruction filters, compositing, colour appearance, HDR transfer, ICC, CICP    | [Papers][p-colour]     |
+| Entropy coding and codecs     | ANS and Huffman decoding speed, context modelling, JPEG XL, AV1, WebP, HEVC        | [Papers][p-entropy]    |
+| GPU texture compression       | BCn, ETC2, ASTC, Basis/UASTC, KTX2, neural texture compression                     | [Papers][p-texture]    |
+| Hostile input and safety      | LangSec, verified parsers, fuzzing, image-codec exploit analyses, Wuffs            | [Papers][p-hostile]    |
+| Storage-to-GPU and GPU decode | `io_uring`, DirectStorage/GDeflate, GPU Huffman/ANS/DEFLATE/JPEG, Vulkan Video     | [Papers][p-gpu-decode] |
+
 ## Planned contents
 
 Not yet written; each is delivered in a later wave.
@@ -60,7 +77,6 @@ Not yet written; each is delivered in a later wave.
   tiers, taxonomy tables and a milestone timeline.
 - Deep-dives by cluster: D landscape (mir, dcv, color, gamut), generic image
   libraries, GPU and SIMD, image formats, colour, safety (Wuffs), and storage-to-GPU I/O.
-- `papers/<thread>.md`: seven themed annotated bibliographies.
 - `wired-flat-fit.md` and `wired-requirements.md`: the binary-description experiment
   and the non-binding requirements it yields for wired.
 - `comparison.md`: the capstone, with a delta table against the baseline.
@@ -69,6 +85,7 @@ Not yet written; each is delivered in a later wave.
 
 - The five baseline documents above, which cite the specifications and source files
   they were read from.
+- The seven paper threads above, which cite each paper by DOI or arXiv identifier.
 
 <!-- References -->
 
@@ -77,3 +94,10 @@ Not yet written; each is delivered in a later wave.
 [bl-vk]: ./baseline/vulkan.md
 [bl-shaders]: ./baseline/shaders-simd.md
 [bl-existing]: ./baseline/existing-code.md
+[p-dsl]: ./papers/dsl-scheduling.md
+[p-generic]: ./papers/generic-image-programming.md
+[p-colour]: ./papers/resampling-colour.md
+[p-entropy]: ./papers/entropy-codecs.md
+[p-texture]: ./papers/gpu-texture-compression.md
+[p-hostile]: ./papers/hostile-input-safety.md
+[p-gpu-decode]: ./papers/gpu-decode-streaming.md
