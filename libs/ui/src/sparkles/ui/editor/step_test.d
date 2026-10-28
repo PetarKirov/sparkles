@@ -255,6 +255,7 @@ unittest
 unittest
 {
     auto h = Harness("a[bc]d");
+    h.context.clipboardRead = true; // this host answers reads
     h(K.copy);
     assert(h.effects.has(EffectKind.writeClipboard)
         && h.effects.first(EffectKind.writeClipboard).text == "bc");
@@ -375,4 +376,16 @@ unittest
     assert(h.shown == "abcde|");
     h.run(C.grapheme(-1, true)).type("XY");
     assert(h.shown == "abcd]e[", "a replacement that would grow past the limit is refused too");
+}
+
+/// EDI5: without a host that answers reads, paste says so instead of waiting.
+@("editor.clipboard.absentIsExplicit")
+@safe pure nothrow
+unittest
+{
+    auto h = Harness("ab|");
+    h(K.paste);
+    assert(h.effects.has(EffectKind.noop)
+        && h.effects.first(EffectKind.noop).reason == NoopReason.capabilityAbsent);
+    assert(!h.effects.has(EffectKind.readClipboard));
 }
