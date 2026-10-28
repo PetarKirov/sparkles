@@ -176,6 +176,37 @@ struct CommentThread
     Comment[] comments;
 }
 
+/// One inline comment of a review submission (`DCM6`).
+struct ReviewComment
+{
+    string path;
+    /// 1-based line on its side.
+    uint line;
+    ThreadSide side;
+    /// Markdown, a suggestion fence included.
+    string body_;
+}
+
+/**
+A draft review (`DCM6`): the reviewer's queued comments, submitted in one
+request so the forge holds all of them or none.
+*/
+struct ReviewDraft
+{
+    /// The head commit the comments were written against.
+    string commitSha;
+    /// The review's own text; may be empty.
+    string body_;
+    ReviewComment[] comments;
+}
+
+/// What the forge made of a submitted review.
+struct SubmittedReview
+{
+    /// Where it can be read.
+    string url;
+}
+
 // ── The adapter vocabulary ──────────────────────────────────────────────────
 
 /// Is `T` a forge adapter? The core surface every adapter owes: which hosts

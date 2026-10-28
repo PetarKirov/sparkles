@@ -41,7 +41,8 @@ import keymap : Binding, bindingsAt, Chord, Command, commandFor, InputMode,
 import dub_config_picker : dubConfigurationPick;
 import picker_grep : PickerSource;
 import picker_host : OwnedPicker, PickerAction, PickerHost;
-import review_store : applySuggestionAtCursor, persistFolds, postComment,
+import forge : ReviewDraft;
+import review_store : applySuggestionAtCursor, persistFolds, postComment, refreshLocalThreads,
     resolveCommentAtCursor, ReviewSession,
     toggleViewedAtCursor;
 import picker_sources : ChoiceFinder;
@@ -1095,6 +1096,7 @@ int runGui(GuiArgs guiArgs) @system
     // The modal settings pane (`SET*`) — the same component the workspace
     // mounts, over the same shared store.
     SettingsPane settingsPane;
+    bool submitArmed; // `DCM6`: a review submission waits for `y`
     version (Android)
     {
         import sparkles.ui.editor.soft_keyboard : SoftKeyboard;
@@ -3263,6 +3265,21 @@ int runGui(GuiArgs guiArgs) @system
 
             foreach (kev; keyBuf)
             {
+                // `DCM6`: an armed submission takes `y`; any other key
+                // disarms it, as a discard does in the terminal.
+                if (submitArmed)
+                {
+                    submitArmed = false;
+                    if (kev.key == Key.char_ && kev.ch == 'y')
+                    {
+                        import forge_client : submitPullRequestReview;
+
+                        showToast(review.submit((string target, in ReviewDraft draft)
+                            => submitPullRequestReview(target, draft)), true);
+                        refreshLocalThreads(vm, review);
+                        continue;
+                    }
+                }
                 // `lantern` owns the pending key path (`LTN2`): a prefix
                 // descends and nothing runs, a leaf resolves. Only `execute`
                 // reaches the dispatch below, so the arms are unchanged.
@@ -3516,6 +3533,20 @@ int runGui(GuiArgs guiArgs) @system
                         vm.setDocument(reloadDiff());
                     break;
                 }
+                case Command.diffSubmitReview:
+                    if (review is null || review.target.length == 0)
+                        showToast("only a forge's pull request takes a review");
+                    else if (review.drafts == 0)
+                        showToast("no drafts to submit");
+                    else
+                    {
+                        import std.conv : text;
+
+                        submitArmed = true;
+                        showToast(text("submit ", review.drafts, " draft comments to ",
+                            review.target, "? press y to send"));
+                    }
+                    break;
                 case Command.diffResolve:
                     if (const said = resolveCommentAtCursor(vm, review))
                         showToast(said);
