@@ -43,8 +43,9 @@ import sparkles.base.text.utf : decodeToken, UtfMode;
 import sparkles.input;
 import sparkles.wsi.events : CloseRequestedEvent, FocusChangedEvent, KeyboardEvent,
     LogicalKeyKind, PointerPhase, ReadyEvent, ScrollEvent, ScrollUnit,
-    SurfaceMetricsChangedEvent, TextCommittedEvent, TextId, WindowEvent;
+    SurfaceMetricsChangedEvent, TextCommittedEvent, TextId, TouchEvent, TouchPhase, WindowEvent;
 static import sparkles.wsi.events;
+import sparkles.wsi.types : PointerId;
 
 /// A pause longer than this between two scroll events starts a new gesture
 /// (`WheelEvent.begins`).
@@ -67,11 +68,18 @@ struct WsiInput
     /// scroll measured in logical units is scaled by.
     double scale = 1;
 
+    /// Where the cells start in the surface, in device pixels (its safe
+    /// insets' top-left): pointer positions are measured from here, as the
+    /// canvas draws from here.
+    int originX, originY;
+
     private Mods mods_;
     private bool[PointerButton.max + 1] held_;
     private float scrollX_ = 0, scrollY_ = 0;
     private MonoTime lastScroll_;
     private bool scrolled_;
+    private bool touching_;
+    private PointerId touchContact_;
     private KeyEvent pending_;
     private bool hasPending_;
 
@@ -107,6 +115,7 @@ struct WsiInput
             },
             (in sparkles.wsi.events.PointerEvent p) { pointer(p, cellW, cellH, sink); },
             (in ScrollEvent s) { scroll(s, event.timestamp, cellW, cellH, sink); },
+            (in TouchEvent t) { touch(t, cellW, cellH, sink); },
             (in KeyboardEvent k) { key(k, sink); },
             (in TextCommittedEvent t)
             {
@@ -139,11 +148,44 @@ struct WsiInput
         return event.payload.match!((in TextCommittedEvent _) => true, (in _) => false);
     }
 
+    // The first finger down is the left button: it presses, drags while it
+    // moves, and releases when it lifts or the system cancels it, so an
+    // application written for a mouse works by touch. Other fingers are not
+    // a pointer.
+    private void touch(Sink)(in TouchEvent t, int cellW, int cellH, scope Sink sink)
+    {
+        const pos = cellAt(t.physicalPosition.x - originX, t.physicalPosition.y - originY, cellW, cellH);
+        final switch (t.phase)
+        {
+            case TouchPhase.began:
+                if (touching_)
+                    return;
+                touching_ = true;
+                touchContact_ = t.contact;
+                held_[PointerButton.left] = true;
+                return sink(Event(PointerEvent(action: PointerAction.press, button: PointerButton.left,
+                    pos: pos, mods: mods_)));
+            case TouchPhase.moved:
+                if (!touching_ || t.contact != touchContact_)
+                    return;
+                return sink(Event(PointerEvent(action: PointerAction.drag, button: PointerButton.left,
+                    pos: pos, mods: mods_)));
+            case TouchPhase.ended:
+            case TouchPhase.cancelled:
+                if (!touching_ || t.contact != touchContact_)
+                    return;
+                touching_ = false;
+                held_[PointerButton.left] = false;
+                return sink(Event(PointerEvent(action: PointerAction.release, button: PointerButton.left,
+                    pos: pos, mods: mods_)));
+        }
+    }
+
     private void pointer(Sink)(in sparkles.wsi.events.PointerEvent p, int cellW, int cellH,
         scope Sink sink)
     {
         mods_ = p.modifiers;
-        const pos = cellAt(p.physicalPosition.x, p.physicalPosition.y, cellW, cellH);
+        const pos = cellAt(p.physicalPosition.x - originX, p.physicalPosition.y - originY, cellW, cellH);
         final switch (p.phase)
         {
             case PointerPhase.entered:
@@ -186,7 +228,7 @@ struct WsiInput
         import sparkles.wsi.events : ScrollPhase;
 
         mods_ = s.modifiers;
-        const pos = cellAt(s.physicalPosition.x, s.physicalPosition.y, cellW, cellH);
+        const pos = cellAt(s.physicalPosition.x - originX, s.physicalPosition.y - originY, cellW, cellH);
         const begins = s.phase == ScrollPhase.began || !scrolled_
             || (s.phase == ScrollPhase.none && at - lastScroll_ > scrollGesturePause);
         scrolled_ = true;
@@ -310,8 +352,41 @@ Key namedKey(in sparkles.wsi.events.LogicalKey logical) @safe pure nothrow @nogc
         return Key.none;
     version (Windows)
         return virtualKey(logical.nativeCode);
+    else version (Android)
+        return androidKey(logical.nativeCode);
     else
         return keysymKey(logical.nativeCode);
+}
+
+/// An Android key code's (`AKEYCODE_*`) named key: what `AndroidWsi` names a
+/// key with.
+Key androidKey(uint keyCode) @safe pure nothrow @nogc
+{
+    switch (keyCode)
+    {
+        case 4: return Key.back;
+        case 19: return Key.up;
+        case 20: return Key.down;
+        case 21: return Key.left;
+        case 22: return Key.right;
+        case 57, 58: return Key.alt;
+        case 59, 60: return Key.shift;
+        case 61: return Key.tab;
+        case 66, 160: return Key.enter; // ENTER, NUMPAD_ENTER
+        case 67: return Key.backspace; // DEL
+        case 82: return Key.menu;
+        case 92: return Key.pageUp;
+        case 93: return Key.pageDown;
+        case 111: return Key.escape;
+        case 112: return Key.delete_; // FORWARD_DEL
+        case 113, 114: return Key.ctrl;
+        case 117, 118: return Key.super_; // META
+        case 122: return Key.home; // MOVE_HOME
+        case 123: return Key.end;
+        case 124: return Key.insert;
+        default:
+            return keyCode >= 131 && keyCode <= 142 ? cast(Key)(Key.f1 + (keyCode - 131)) : Key.none;
+    }
 }
 
 /// An xkb keysym's named key (Wayland, X11).
@@ -456,6 +531,37 @@ version (unittest)
     ], "the entry is silent; a negative pixel floors to a negative cell");
 }
 
+@("ui_app.wsi_input.theFirstFingerIsTheLeftButton")
+@system unittest
+{
+    // A phone has no mouse: the first contact presses, drags and releases as
+    // the left button would; a second finger meanwhile is no pointer.
+    static WindowEvent touch(TouchPhase phase, uint contact, int x, int y)
+    {
+        TouchEvent t;
+        t.contact = PointerId(contact);
+        t.phase = phase;
+        t.physicalPosition = PhysicalPosition(x, y);
+        return ev(t);
+    }
+
+    WsiInput input;
+    FakeTexts wsi;
+    const got = translated(input, wsi, [
+        touch(TouchPhase.began, 1, 25, 45),
+        touch(TouchPhase.began, 2, 5, 5),
+        touch(TouchPhase.moved, 2, 9, 9),
+        touch(TouchPhase.moved, 1, 39, 61),
+        touch(TouchPhase.ended, 2, 9, 9),
+        touch(TouchPhase.cancelled, 1, 39, 61),
+    ]);
+    assert(got == [
+        Event(PointerEvent(action: PointerAction.press, button: PointerButton.left, pos: Point(2, 2))),
+        Event(PointerEvent(action: PointerAction.drag, button: PointerButton.left, pos: Point(3, 3))),
+        Event(PointerEvent(action: PointerAction.release, button: PointerButton.left, pos: Point(3, 3))),
+    ]);
+}
+
 @("ui_app.wsi_input.pixelsWithAOneByOneCell")
 @system unittest
 {
@@ -597,4 +703,6 @@ version (unittest)
     assert(keysymKey(0xFE20) == Key.tab && keysymKey(0xFF9F) == Key.delete_);
     assert(keysymKey(0x61) == Key.none);
     assert(virtualKey(0x70) == Key.f1 && virtualKey(0x26) == Key.up && virtualKey(0x41) == Key.none);
+    assert(androidKey(4) == Key.back && androidKey(66) == Key.enter && androidKey(67) == Key.backspace);
+    assert(androidKey(131) == Key.f1 && androidKey(142) == Key.f12 && androidKey(29) == Key.none);
 }
