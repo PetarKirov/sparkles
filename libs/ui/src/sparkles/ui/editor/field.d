@@ -276,3 +276,75 @@ unittest
     assert(field.insert(big, true).changed);
     assert(field.state.text.length == big.length);
 }
+
+/**
+What a host's clipboard can do, for a host that reads it at once (`EDY5`).
+Either member may be null; the field then reports that capability absent
+(`EDI5`). `useClipboard` declares it to a field and `serveClipboard` does a
+result's clipboard work.
+*/
+struct FieldClipboard(Write, Read)
+{
+    /// Puts text on the clipboard.
+    Write write;
+    /// Returns the clipboard's text.
+    Read read;
+}
+
+/// ditto
+FieldClipboard!(Write, Read) fieldClipboard(Write, Read)(Write write, Read read)
+    => FieldClipboard!(Write, Read)(write, read);
+
+/// Declare what `clipboard` can do to `field`, so paste, copy and cut are
+/// offered only when the host carries them out.
+void useClipboard(Clipboard)(ref EditorField field, in Clipboard clipboard)
+{
+    field.context.clipboardWrite = clipboard.write !is null;
+    field.context.clipboardRead = clipboard.read !is null;
+}
+
+/**
+Do `result`'s clipboard work: write the text it copied and answer the read
+it asked for with the clipboard's text. Returns the result with the
+answer's change folded in.
+*/
+FieldResult serveClipboard(Clipboard)(ref EditorField field, FieldResult result,
+    in Clipboard clipboard)
+{
+    if (result.clipboardWrite.length && clipboard.write !is null)
+    {
+        auto bytes = new char[result.clipboardWrite.length];
+        result.clipboardWrite.copyTo(0, bytes.length, bytes);
+        clipboard.write(bytes);
+    }
+    if (result.clipboardRequest && clipboard.read !is null)
+    {
+        const answer = field.pasteAnswer(result.clipboardRequest, clipboard.read());
+        result.changed = result.changed || answer.changed;
+        result.clipboardRequest = 0;
+    }
+    return result;
+}
+
+/// A host serving a field's clipboard.
+@("editor.field.serveClipboard")
+@safe pure nothrow
+unittest
+{
+    import sparkles.input.events : Key, Mods;
+    import sparkles.ui.editor.keys : EditorTarget;
+
+    string board = "pasted";
+    auto clipboard = fieldClipboard((scope const(char)[] t) { board = t.idup; },
+        () => board);
+    auto field = EditorField.singleLine("abc", EditorTarget.window);
+    assert(field.key(KeyEvent(Key.char_, 'v', Mods(ctrl: true))).effects.has(EffectKind.noop),
+        "undeclared, paste is absent");
+
+    useClipboard(field, clipboard);
+    field.key(KeyEvent(Key.char_, 'a', Mods(ctrl: true))); // select all
+    serveClipboard(field, field.key(KeyEvent(Key.char_, 'x', Mods(ctrl: true))), clipboard);
+    assert(board == "abc" && field.empty, "cut puts the text on the board");
+    const r = serveClipboard(field, field.key(KeyEvent(Key.char_, 'v', Mods(ctrl: true))), clipboard);
+    assert(r.changed && field.text == "abc", "paste reads it back");
+}

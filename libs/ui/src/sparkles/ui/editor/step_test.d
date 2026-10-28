@@ -256,6 +256,7 @@ unittest
 {
     auto h = Harness("a[bc]d");
     h.context.clipboardRead = true; // this host answers reads
+    h.context.clipboardWrite = true;
     h(K.copy);
     assert(h.effects.has(EffectKind.writeClipboard)
         && h.effects.first(EffectKind.writeClipboard).text == "bc");
@@ -388,4 +389,16 @@ unittest
     assert(h.effects.has(EffectKind.noop)
         && h.effects.first(EffectKind.noop).reason == NoopReason.capabilityAbsent);
     assert(!h.effects.has(EffectKind.readClipboard));
+}
+
+/// EDI5: without a host that writes the clipboard, cut keeps the text.
+@("editor.clipboard.cutWithoutWriterKeepsText")
+@safe pure nothrow
+unittest
+{
+    auto h = Harness("a[bc]d");
+    h(K.cut);
+    assert(h.shown == "a[bc]d");
+    assert(h.effects.has(EffectKind.noop)
+        && h.effects.first(EffectKind.noop).reason == NoopReason.capabilityAbsent);
 }

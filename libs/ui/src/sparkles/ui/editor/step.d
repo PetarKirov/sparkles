@@ -1240,9 +1240,16 @@ struct Stepper(Texts, Context)
         return true;
     }
 
-    /// Put the ranges' text on the clipboard; `false` when every range is empty.
+    /// Put the ranges' text on the clipboard; `false` when every range is
+    /// empty or no host writes the clipboard, so a cut never loses text.
     bool copy()
     {
+        static if (__traits(hasMember, Context, "clipboardWrite"))
+            if (!context.clipboardWrite)
+            {
+                effects.put(noop(NoopReason.capabilityAbsent));
+                return false;
+            }
         Text joined;
         bool any;
         foreach (i, r; state.selection.ranges)
