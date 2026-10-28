@@ -54,7 +54,7 @@ version (EventHorizonKqueue)  :
 import core.stdc.errno : EAGAIN, ECANCELED, EINPROGRESS, errno, ESRCH;
 import core.sys.posix.sys.socket : accept, connect, recv, send;
 
-import sparkles.event_horizon.backend.concept : BackendConfig, RawCompletion, Waker;
+import sparkles.event_horizon.backend.concept : BackendConfig, RawCompletion, WakeTarget;
 import sparkles.event_horizon.backend.probe : BackendCaps, BackendId, LoopMode;
 import sparkles.event_horizon.errors;
 import sparkles.event_horizon.op : KernelTimespec, OpAccept, OpConnect, OpNop,
@@ -249,22 +249,22 @@ struct KqueueBackend
     no payload. The ADD is flushed before the handle is handed out so a
     wake-before-wait is not `ENOENT`.
     */
-    Waker nativeWaker(OpToken token) @trusted nothrow @nogc
+    WakeTarget nativeWaker(OpToken token) @trusted nothrow @nogc
     {
         auto op = acquire();
         if (op is null)
-            return Waker.init;
+            return WakeTarget.init;
         *op = KqOp(token.raw, wakeIdent, null, 0, OpKindLocal.wake,
             EVFILT_USER, uint.max);
         if (!armFilter(op, EVFILT_USER, cast(ushort)(EV_ADD | EV_CLEAR)))
-            return Waker.init;
+            return WakeTarget.init;
         auto flushed = flush();
         if (flushed.hasError)
         {
             release(op, true);
-            return Waker.init;
+            return WakeTarget.init;
         }
-        Waker w;
+        WakeTarget w;
         w.fd = _kq;
         w.ident = wakeIdent;
         return w;

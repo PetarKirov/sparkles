@@ -11,7 +11,7 @@ door, obtained via `waker()`.
 */
 module sparkles.event_horizon.loop;
 
-import core.stdc.errno : EAGAIN, ECANCELED, EINTR, ENOBUFS, ETIME;
+import core.stdc.errno : EAGAIN, ECANCELED, EINTR, ENOBUFS, ENOMEM, ETIME;
 import core.lifetime : move;
 import core.time : Duration, MonoTime;
 
@@ -712,15 +712,25 @@ if (isCompletionBackend!Backend)
                     "the backend's wake cannot arm on this host");
         }
 
-        private Waker armedWaker()
+        private Waker armedWaker() => Waker(_wakeCell);
+
+        /// The cell comes first, so running out of memory leaves nothing
+        /// armed. The arming paths fill in its target once they succeed.
+        private IoResult!(WakeCell*) newWakeCell()
         {
-            static if (hasNativeWake!Backend)
-                if (_wakeNative)
-                    return _nativeWaker;
-            static if (fdWaker)
-                return Waker(_wakeWriteFd);
-            else
-                assert(0, "an armed waker that is not native");
+            auto cell = WakeCell.create(WakeTarget.init);
+            if (cell is null)
+                return ioErr!(WakeCell*)(ENOMEM, OpKind.nop, IoErrorStage.setup,
+                    "waker cell allocation failed");
+            return ioOk(cell);
+        }
+
+        /// Frees a cell no `Waker` was ever made from.
+        private static void dropWakeCell(WakeCell* cell) @trusted nothrow @nogc
+        {
+            import core.memory : pureFree;
+
+            pureFree(cell);
         }
     }
 
@@ -728,22 +738,30 @@ if (isCompletionBackend!Backend)
     {
         private IoResult!Waker armNativeWaker()
         {
+            auto cell = newWakeCell();
+            if (cell.hasError)
+                return ioErr!Waker(cell.error);
             const token = _slab.acquire(OpKind.nop, OpClass.wake, null, null);
             if (!token)
+            {
+                dropWakeCell(cell.value);
                 return ioErr!Waker(ENOBUFS, OpKind.nop, IoErrorStage.submit,
                     "op slab full");
-            auto w = _backend.nativeWaker(token);
-            if (!w)
+            }
+            auto target = _backend.nativeWaker(token);
+            if (!target)
             {
                 _slab.release(token);
+                dropWakeCell(cell.value);
                 return ioErr!Waker(ENOBUFS, OpKind.nop, IoErrorStage.submit,
                     "backend wake-op slab full");
             }
+            cell.value.target = target;
             _wakeToken = token;
-            _nativeWaker = w;
+            _wakeCell = cell.value;
             _wakeNative = true;
             _wakeArmed = true;
-            return ioOk(w);
+            return ioOk(Waker(_wakeCell));
         }
     }
 
@@ -757,10 +775,16 @@ if (isCompletionBackend!Backend)
                 if (opened.hasError)
                     return ioErr!Waker(opened.error);
             }
+            auto cell = newWakeCell();
+            if (cell.hasError)
+                return ioErr!Waker(cell.error);
             const token = _slab.acquire(OpKind.read, OpClass.wake, null, null);
             if (!token)
+            {
+                dropWakeCell(cell.value);
                 return ioErr!Waker(ENOBUFS, OpKind.read, IoErrorStage.submit,
                     "op slab full");
+            }
             auto slot = _slab.resolve(token);
             // The drain target lives in the slot's operand store — slab
             // memory, address-stable for the loop's whole life (§4.1).
@@ -769,11 +793,14 @@ if (isCompletionBackend!Backend)
                     token, *slot))
             {
                 _slab.release(token);
+                dropWakeCell(cell.value);
                 return ioErr!Waker(EAGAIN, OpKind.read, IoErrorStage.submit,
                     "submission queue full");
             }
+            cell.value.target = WakeTarget(_wakeWriteFd);
+            _wakeCell = cell.value;
             _wakeArmed = true;
-            return ioOk(Waker(_wakeWriteFd));
+            return ioOk(Waker(_wakeCell));
         }
     }
 
@@ -988,7 +1015,7 @@ private:
             if (_wakeArmed)
             {
                 _wakeShutdown = true;
-                Waker(_wakeWriteFd).wake();
+                WakeTarget(_wakeWriteFd).wake();
                 while (_wakeArmed)
                 {
                     auto waited = _backend.submitAndWait(1, null);
@@ -1024,7 +1051,6 @@ private:
                 return;
             _slab.release(_wakeToken);
             _wakeToken = OpToken.init;
-            _nativeWaker = Waker.init;
             _wakeNative = false;
             _wakeArmed = false;
         }
@@ -1041,6 +1067,13 @@ private:
 
     void disarmWaker()
     {
+        // Before anything the wake touches is closed: a `Waker` copy may
+        // outlive the loop, and from here on it does nothing.
+        if (_wakeCell !is null)
+        {
+            _wakeCell.retire();
+            _wakeCell = null;
+        }
         static if (hasNativeWake!Backend)
             if (_wakeNative)
                 disarmNativeWaker();
@@ -1061,6 +1094,8 @@ private:
     bool _dispatching;
     bool _stopRequested;
     bool _wakeArmed;
+    /// The armed waker's cell; never freed, retired by `disarmWaker`.
+    WakeCell* _wakeCell;
     bool _nativeWakeAllowed = true;
     bool _wakeShutdown;
     uint _cancelInFlight;
@@ -1082,7 +1117,6 @@ private:
     static if (hasNativeWake!Backend)
     {
         OpToken _wakeToken;
-        Waker _nativeWaker;
         bool _wakeNative; /// the armed waker is the native one
     }
 }
@@ -1607,6 +1641,56 @@ unittest
     // immediately: an armed waker alone is not work.
     assert(!loop.run().hasError);
     assert(loop.inFlight == 0);
+}
+
+/// A `Waker` may outlive its loop. `destroy` waits out a wake already
+/// running on another thread, and once it returns a wake does nothing, even
+/// when a new descriptor takes the number of the closed wake channel.
+@("loop.waker.outlivesItsLoop")
+@system
+unittest
+{
+    import core.atomic : atomicLoad, atomicStore;
+    import core.stdc.errno : EAGAIN, errno;
+    import core.sys.linux.sys.eventfd : EFD_NONBLOCK, eventfd;
+    import core.sys.posix.unistd : close, read;
+    import core.thread : Thread;
+
+    foreach (native; [true, false])
+    {
+        LoopConfig cfg;
+        cfg.nativeWake = native;
+        DefaultLoop loop;
+        createOrSkip(loop, cfg);
+        auto armed = loop.waker();
+        assert(armed.hasValue);
+        const w = armed.value;
+
+        shared bool stop;
+        auto waking = new Thread({
+            while (!atomicLoad(stop))
+                w.wake();
+        }).start();
+        loop.destroy();
+        atomicStore(stop, true);
+        waking.join();
+
+        // The loop closed its ring and its wake channel; new descriptors
+        // take the lowest free numbers, so these cover both.
+        int[4] reused;
+        foreach (ref fd; reused)
+            assert((fd = eventfd(0, EFD_NONBLOCK)) >= 0);
+        scope (exit)
+            foreach (fd; reused)
+                close(fd);
+        w.wake();
+        foreach (fd; reused)
+        {
+            ulong count;
+            assert(read(fd, &count, count.sizeof) < 0 && errno == EAGAIN,
+                "a retired waker wrote to a reused descriptor");
+        }
+    }
 }
 
 @("loop.pollAdd.multishotReadinessStream")

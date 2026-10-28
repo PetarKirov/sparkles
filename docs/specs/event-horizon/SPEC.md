@@ -744,6 +744,13 @@ also async-signal-safe; native `kevent`/`futex` triggers are not promised
 signal-safe. N wakes before the loop runs deliver at least one wake
 completion, not N.
 
+**Lifetime.** A `Waker` may outlive its loop. It names a small cell that the
+loop allocates when it arms the waker and never frees. `destroy` retires the
+cell before it closes anything the wake would touch: it marks the cell
+retired, then waits until no `wake()` is running. After that, `wake()` does
+nothing, so a copy held by another thread can neither write to a reused
+descriptor nor post to a reused completion port.
+
 **Accounting.** The armed wake op is `OpClass.wake` and is **excluded from
 drain accounting**: `inFlight()` and the `RunStatus.drained` decision count
 user and timer ops only, so a loop whose only live op is its waker still

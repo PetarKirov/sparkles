@@ -42,7 +42,7 @@ import during : AcceptFlags, CancelFlags, CQE_BUFFER_SHIFT, CQEFlags, FsyncFlags
     setup;
 import during : DuringTimespec = KernelTimespec, DuringPollEvents = PollEvents;
 
-import sparkles.event_horizon.backend.concept : BackendConfig, RawCompletion, Waker;
+import sparkles.event_horizon.backend.concept : BackendConfig, RawCompletion, WakeTarget;
 import sparkles.event_horizon.backend.probe;
 import sparkles.event_horizon.errors;
 import sparkles.event_horizon.op : CompletionFlags, FutexDeadline, FutexWaitvEntry,
@@ -150,12 +150,12 @@ struct UringBackend
     `FUTEX_WAKE` — thread-safe, coalescing, no payload. The wait is
     re-armed from `reap` so the loop's native dispatch has nothing to do.
     */
-    Waker nativeWaker(OpToken token) @trusted nothrow @nogc
+    WakeTarget nativeWaker(OpToken token) @trusted nothrow @nogc
     in (nativeWakeUsable, "the in-ring FUTEX_WAIT needs the futex operations (Linux 6.7)")
     {
         if (_wakeTokenRaw != 0)
         {
-            Waker w;
+            WakeTarget w;
             w.futex = cast(shared(uint)*) &_wakeWord;
             return w;
         }
@@ -164,9 +164,9 @@ struct UringBackend
         if (!submitFutexWait())
         {
             _wakeTokenRaw = 0;
-            return Waker.init;
+            return WakeTarget.init;
         }
-        Waker w;
+        WakeTarget w;
         w.futex = cast(shared(uint)*) &_wakeWord;
         return w;
     }

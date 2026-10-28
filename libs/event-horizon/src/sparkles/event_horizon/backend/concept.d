@@ -150,11 +150,81 @@ coalescing; it is not promised async-signal-safe (`kevent`/`futex` are
 not in the POSIX signal-safe set). Wakes coalesce; a wake before the
 loop waits makes the next wait return immediately.
 
-The handle borrows loop-owned resources: `wake()` after the loop's
-`destroy()` is harmless (an `EBADF` write / a post to a closed port is
-ignored) but delivers nothing.
+A handle may outlive its loop: `wake()` after the loop's `destroy()` does
+nothing. The handle names a $(LREF WakeCell) that is never freed, and
+`destroy` retires the cell, waiting out any wake already running, before it
+closes the descriptors, port or memory the wake would touch.
 */
 struct Waker
+{
+    package(sparkles.event_horizon) WakeCell* cell;
+
+    /// `false` for a default (never-armed) handle.
+    bool opCast(T : bool)() const @safe pure nothrow @nogc => cell !is null;
+
+    /// Wakes the loop's wait. Callable from any thread. Coalescing; never
+    /// blocks. The fd-write fallback is also async-signal-safe.
+    void wake() const @trusted nothrow @nogc
+    {
+        import core.atomic : atomicOp;
+
+        if (cell is null)
+            return;
+        auto c = cast(WakeCell*) cell;
+        // Entering before testing `retired` is what lets `retire` wait for
+        // this wake: both are read-modify-writes of one word.
+        if (!(atomicOp!"+="(c.state, 1) & WakeCell.retired))
+            c.target.wake();
+        atomicOp!"-="(c.state, 1);
+    }
+}
+
+/**
+What a $(LREF Waker) reaches: a loop's wake source, and whether the loop is
+still alive. A loop allocates one when it arms its waker and never frees it,
+because copies of the handle may outlive the loop. That costs one small
+allocation per armed loop.
+*/
+package(sparkles.event_horizon) struct WakeCell
+{
+    package enum uint retired = 1u << 31;
+
+    WakeTarget target;
+    /// `retired`, plus the count of `wake` calls currently running.
+    shared uint state;
+
+    /// A cell for `target`, or `null` when allocation fails.
+    static WakeCell* create(WakeTarget target) @trusted nothrow @nogc
+    {
+        import core.memory : pureMalloc;
+
+        auto cell = cast(WakeCell*) pureMalloc(WakeCell.sizeof);
+        if (cell !is null)
+        {
+            cell.target = target;
+            cell.state = 0;
+        }
+        return cell;
+    }
+
+    /// Stops later wakes and returns once none is running, so the caller
+    /// may close what `target` names. The cell itself stays allocated.
+    void retire() @trusted nothrow @nogc
+    {
+        import core.atomic : atomicLoad, atomicOp, pause;
+
+        atomicOp!"|="(state, retired);
+        while ((atomicLoad(state) & ~retired) != 0)
+            pause();
+    }
+}
+
+/**
+The raw wake source a backend arms (SPEC §5.6): what $(LREF Waker.wake)
+fires while the loop lives. It borrows loop-owned resources, so only the
+loop holds one; callers get a $(LREF Waker).
+*/
+struct WakeTarget
 {
     version (Windows)
     {
@@ -169,7 +239,7 @@ struct Waker
         package shared(uint)* futex;      /// if set, `FUTEX_WAKE` this word (uring)
     }
 
-    /// `false` for a default (never-armed) handle.
+    /// `false` for a target no backend armed.
     bool opCast(T : bool)() const @safe pure nothrow @nogc
     {
         version (Windows)
@@ -178,8 +248,8 @@ struct Waker
             return futex !is null || fd >= 0;
     }
 
-    /// Wakes the loop's wait. Callable from any thread. Coalescing; never
-    /// blocks. The fd-write fallback is also async-signal-safe.
+    /// Fires the wake source. Thread-safe, coalescing and non-blocking; the
+    /// fd-write fallback is also async-signal-safe.
     void wake() const @trusted nothrow @nogc
     {
         version (Windows)
@@ -236,7 +306,7 @@ struct Waker
 /// completion with no armed read op. The loop prefers this over the
 /// portable fd path (O29).
 enum bool hasNativeWake(B) = __traits(compiles, {
-    Waker w = lvalueOf!B.nativeWaker(OpToken.init);
+    WakeTarget w = lvalueOf!B.nativeWaker(OpToken.init);
 });
 
 /// Whether `b`'s native wake can arm now: a backend whose wake rests on a
