@@ -50,6 +50,7 @@ $(UL
     $(LI `sparkles.font.face_record` — face records: `FaceRecord`, `RecordPools`, `describeFace` (FTD19).)
     $(LI `sparkles.font.catalog` — `buildCatalog` over a capability VFS: sources, the `Catalog`, its family index and build report.)
     $(LI `sparkles.font.catalog_cache` — the on-disk catalog's format (FTD23).)
+    $(LI `sparkles.font.matching` — `matchFont`: CSS Fonts Level 4 matching over a catalog, with score and synthesis (FTD25–FTD30).)
     $(LI `sparkles.font.corrections` — the correction registry: `Correction`, `CorrectionPolicy`, and what each entry follows and changes.)
     $(LI `sparkles.font.errors` — `FontError`, `FontResult` and `Tag`.)
 )
@@ -76,6 +77,7 @@ public import sparkles.font.glyph_names;
 public import sparkles.font.instance;
 public import sparkles.font.jstf;
 public import sparkles.font.layout;
+public import sparkles.font.matching;
 public import sparkles.font.math_table;
 public import sparkles.font.metrics;
 public import sparkles.font.names;

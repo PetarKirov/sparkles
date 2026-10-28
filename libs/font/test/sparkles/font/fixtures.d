@@ -1955,3 +1955,53 @@ ubyte[] sbixStrikes(const(SbixStrike)[] strikes)
     foreach (b; bodies) t ~= b;
     return t;
 }
+
+// ---------------------------------------------------------------------------
+// Styled faces for the catalog and matching (M7)
+// ---------------------------------------------------------------------------
+
+/// What `styledFont` builds: a family's name, `OS/2` style fields, `post` angle and coverage.
+struct StyledFace
+{
+    string family;
+    string style = "Regular";
+    uint weight = 400;
+    /// `usWidthClass`, 1–9.
+    uint width = 5;
+    uint fsSelection;
+    /// `post.italicAngle` in whole degrees, counterclockwise as stored.
+    int italicAngle;
+    dchar first = 'A', last = 'Z';
+    /// Extra tables, such as `fvar`.
+    TableData[] extra;
+}
+
+/// A face with `s`'s names, `OS/2` (version 4) weight, width and selection flags, `post` and coverage.
+TableData[] styledTables(const StyledFace s) @safe pure nothrow
+{
+    Os2Fields f;
+    f.fsSelection = s.fsSelection;
+    auto os2 = os2Table(f);
+    os2[4 .. 6] = u16(s.weight);
+    os2[6 .. 8] = u16(s.width);
+    auto post = postHeader(-100, 50);
+    post[4 .. 8] = u32(cast(uint)(s.italicAngle * 65_536));
+    const glyphs = cast(uint)(s.last - s.first + 2);
+    TableData[] t = [TableData("OS/2", os2),
+        TableData("cmap", cmap([CmapRecord(3, 1, cmapFormat4([Segment(s.first, s.last, 1 - cast(int) s.first)]))])),
+        TableData("head", head(1000)), TableData("hhea", hhea(1)), TableData("hmtx", hmtx([[600, 0]], new int[glyphs - 1])),
+        TableData("maxp", maxp(glyphs)),
+        TableData("name", name([NameEntry(3, 1, 0x409, 1, utf16be(s.family)),
+            NameEntry(3, 1, 0x409, 2, utf16be(s.style)),
+            NameEntry(3, 1, 0x409, 4, utf16be(s.family ~ " " ~ s.style))])),
+        TableData("post", post)];
+    foreach (e; s.extra)
+        t ~= e;
+    import std.algorithm : sort;
+
+    t.sort!((a, b) => a.tag < b.tag);
+    return t;
+}
+
+/// `styledTables` as a font file.
+ubyte[] styledFont(const StyledFace s) @safe pure nothrow => sfnt(styledTables(s));

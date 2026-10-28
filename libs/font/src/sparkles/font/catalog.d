@@ -198,7 +198,7 @@ struct CatalogSource
 }
 
 /// An alias of a record in the family index, sorted by ASCII-folded text.
-private struct FamilyEntry
+package struct FamilyEntry
 {
     StringRef alias_;
     uint record;
@@ -236,6 +236,16 @@ struct Catalog
     */
     size_t family(scope const(char)[] family, scope uint[] into) const scope pure
     {
+        const f = familyEntries(family);
+        foreach (i, e; f)
+            if (i < into.length)
+                into[i] = e.record;
+        return f.length;
+    }
+
+    /// The family index's entries for `family`, in catalog order. Costs O(log a).
+    package const(FamilyEntry)[] familyEntries(scope const(char)[] family) const return scope pure
+    {
         const f = families_[];
         size_t lo = 0, hi = f.length;
         while (lo < hi)
@@ -246,14 +256,10 @@ struct Catalog
             else
                 hi = mid;
         }
-        size_t n;
-        for (size_t i = lo; i < f.length && compareFolded(text(f[i].alias_), family) == 0; ++i)
-        {
-            if (n < into.length)
-                into[n] = f[i].record;
-            ++n;
-        }
-        return n;
+        size_t end = lo;
+        while (end < f.length && compareFolded(text(f[end].alias_), family) == 0)
+            ++end;
+        return f[lo .. end];
     }
 
     /// The family names in ASCII-folded order, each once, through `sink(name, firstRecord)`.
