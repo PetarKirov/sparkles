@@ -32,6 +32,7 @@ in
     ./sdk.nix
     ./shaping.nix
     ./terminal.nix
+    ./text-lab.nix
     ./examples.nix
     ./terminal-nix.nix
     ./tree-sitter.nix
@@ -122,9 +123,13 @@ in
         "libhue-android"
         "libkqueue-android"
         "libterminal-android"
+        "libtext-lab-android"
         "raylib-android"
         "terminal-apk"
         "terminal-icon"
+        "text-lab-apk"
+        "text-lab-apk-debug"
+        "text-lab-assets"
         "tree-sitter-android"
         "ts-grammars-android"
       ];
