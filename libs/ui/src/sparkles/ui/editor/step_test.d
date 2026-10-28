@@ -402,3 +402,108 @@ unittest
     assert(h.effects.has(EffectKind.noop)
         && h.effects.first(EffectKind.noop).reason == NoopReason.capabilityAbsent);
 }
+
+private EditCommand composing(ref Harness h, string preedit, ushort cursor) @safe pure nothrow
+{
+    import sparkles.input.events : CompositionEvent, CompositionRun, CompositionStyle;
+
+    CompositionEvent update;
+    update.preedit = h.intern(preedit);
+    update.cursor = cursor;
+    update.runs[0] = CompositionRun(0, cast(ushort) preedit.length, CompositionStyle.underline);
+    update.runCount = 1;
+    return EditCommand.compose(update);
+}
+
+/// EDI3: a preedit is shown, not inserted; the commit is one revision.
+@("editor.composition.shownThenCommitted")
+@safe pure nothrow
+unittest
+{
+    auto h = Harness("a|b");
+    h.run(composing(h, "にほ", 6));
+    assert(h.shown == "a|b", "the text does not change while composing");
+    assert(h.state.composition.active && h.state.composition.cursor == 6);
+    assert(!h.effects.has(EffectKind.noop) && h.effects.has(EffectKind.imeArea));
+    h.run(composing(h, "日本", 6));
+    h.type("日本");
+    assert(h.shown == "a日本|b" && !h.state.composition.active,
+        "typed text during a composition is its commit");
+    h(K.undo);
+    assert(h.shown == "a|b", "the commit is one revision");
+}
+
+/// EDI3: an empty update ends the composition with no edit.
+@("editor.composition.emptyUpdateEnds")
+@safe pure nothrow
+unittest
+{
+    import sparkles.input.events : CompositionEvent;
+
+    auto h = Harness("a|b");
+    h.run(composing(h, "x", 1));
+    h.run(EditCommand.compose(CompositionEvent.init));
+    assert(h.shown == "a|b" && !h.state.composition.active);
+    assert(!h.effects.has(EffectKind.changed));
+}
+
+/// EDI3: any other command commits the preedit as typed, then runs.
+@("editor.composition.otherCommandsCommitFirst")
+@safe pure nothrow
+unittest
+{
+    auto h = Harness("a|b");
+    h.run(composing(h, "xy", 2));
+    h.run(C.lineBoundary(Boundary.end));
+    assert(h.shown == "axyb|", "the preedit went in, then the caret moved");
+    assert(!h.state.composition.active);
+
+    auto m = Harness("|a|b");
+    m.run(composing(m, "z", 1));
+    m.run(C.commitComposition(m.intern("Z")));
+    assert(m.shown == "Z|aZ|b", "the commit replaces every range");
+}
+
+/// EDI3: grapheme motion stays within the preedit.
+@("editor.composition.motionWithinPreedit")
+@safe pure nothrow
+unittest
+{
+    auto h = Harness("a|b");
+    h.run(composing(h, "xé", 3));
+    h.run(C.grapheme(-1));
+    assert(h.state.composition.cursor == 1 && h.shown == "a|b");
+    h.run(C.grapheme(-1));
+    h.run(C.grapheme(-1));
+    assert(h.state.composition.cursor == 0, "clamped at the preedit's start");
+}
+
+/// EDC11 and EDK2: Escape cancels the composition and tells the input method.
+@("editor.composition.escapeCancels")
+@safe pure nothrow
+unittest
+{
+    auto h = Harness("a[b]c");
+    h.run(composing(h, "x", 1));
+    h(K.escape);
+    assert(h.shown == "a[b]c", "nothing else changes, the selection stays");
+    assert(h.effects.has(EffectKind.cancelComposition) && !h.effects.has(EffectKind.cancel));
+    h(K.escape);
+    assert(h.shown == "ab|c", "the next Escape collapses as usual");
+}
+
+/// EDI6: the input method follows the primary caret, or the preedit's cursor.
+@("editor.composition.imeAreaFollowsTheCaret")
+@safe pure nothrow
+unittest
+{
+    import sparkles.ui.geometry : Rect;
+
+    auto h = Harness("ab\nc|d");
+    h.run(C.grapheme(1));
+    assert(h.effects.first(EffectKind.imeArea).area == Rect(2, 1, 1, 1));
+    h.run(composing(h, "日本", 3)); // after 日, two cells wide
+    assert(h.effects.first(EffectKind.imeArea).area == Rect(4, 1, 1, 1));
+    h(K.selectAll);
+    assert(h.effects.has(EffectKind.imeArea), "the commit and the selection moved it");
+}

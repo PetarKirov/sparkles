@@ -10,7 +10,7 @@ Specification: `docs/specs/ui/editor.md` §3.
 */
 module sparkles.ui.editor.command;
 
-import sparkles.input.events : TextId;
+import sparkles.input.events : CompositionEvent, TextId;
 
 /// What a command does.
 enum EditKind : ubyte
@@ -100,8 +100,10 @@ struct EditCommand
     size_t b;
     /// `pasteAnswer`: the clipboard request answered.
     uint request;
-    /// `insertText`, `pasteAnswer`, `commitComposition`: the text.
+    /// `insertText`, `pasteAnswer`, `compose`, `commitComposition`: the text.
     TextId text;
+    /// `compose`: the preedit's cursor and styled runs (its text is `text`).
+    CompositionEvent composition;
 
 @safe pure nothrow @nogc:
 
@@ -157,4 +159,10 @@ struct EditCommand
 
     static EditCommand pasteAnswer(uint request, TextId text)
         => EditCommand(EditKind.pasteAnswer, request: request, text: text);
+
+    static EditCommand compose(in CompositionEvent update)
+        => EditCommand(EditKind.compose, text: update.preedit, composition: update);
+
+    static EditCommand commitComposition(TextId text)
+        => EditCommand(EditKind.commitComposition, text: text);
 }

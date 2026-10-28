@@ -8,6 +8,7 @@ module sparkles.ui.editor.effect;
 
 import sparkles.text_buffer.change_set : ChangeSet;
 import sparkles.text_buffer.text : Text;
+import sparkles.ui.geometry : Rect;
 
 /// The kind of a request to the host.
 enum EffectKind : ubyte
@@ -30,6 +31,9 @@ enum EffectKind : ubyte
     killRingFull,
     /// Bring the primary caret into view.
     scrollToPrimary,
+    /// The primary caret, or the composition's cursor, moved: show the input
+    /// method's candidates at `area`, in the layout's unit (`EDI6`).
+    imeArea,
 }
 
 /// Why a command changed nothing.
@@ -61,12 +65,14 @@ struct EditEffect
     Text text;
     /// `readClipboard`: the request number the answer must carry.
     uint request;
+    /// `imeArea`: the caret's rectangle.
+    Rect area;
 }
 
 /// The requests one step makes, in order.
 struct EditEffects
 {
-    private EditEffect[6] items;
+    private EditEffect[8] items;
     private size_t count;
 
 @safe pure nothrow @nogc:

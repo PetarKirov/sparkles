@@ -14,6 +14,8 @@ Specification: `docs/specs/ui/editor.md` §7.
 */
 module sparkles.ui.components.editor;
 
+import sparkles.base.term_style : UnderlineStyle;
+import sparkles.input.events : CompositionStyle;
 import sparkles.text_buffer.text : Text;
 import sparkles.ui.editor.selection : EditRange;
 import sparkles.ui.editor.state : EditorState, ReadOnlySpan;
@@ -66,20 +68,29 @@ TextSpan[] editorLineSpans(in EditorState state, size_t line, in EditorViewOptio
             inLine ~= c;
     sortUnique(inLine);
 
+    // EDI3: while composing, each range shows the preedit in its place, and
+    // the caret is the preedit's cursor.
+    const composing = state.composition.active;
     TextSpan[] spans;
     foreach (i, at; inLine)
     {
-        if (options.caretVisible)
-            foreach (j, r; ranges)
-                if (r.head == at && (several || j == state.selection.primaryIndex))
-                {
-                    spans ~= TextSpan(text: caretGlyph, slot: Slot.caret);
-                    break;
-                }
+        foreach (j, r; ranges)
+            if (composing && r.start == at)
+            {
+                const caret = options.caretVisible && (several || j == state.selection.primaryIndex);
+                preeditSpans(state, options, caret, spans);
+                break;
+            }
+            else if (!composing && options.caretVisible && r.head == at
+                && (several || j == state.selection.primaryIndex))
+            {
+                spans ~= TextSpan(text: caretGlyph, slot: Slot.caret);
+                break;
+            }
         if (i + 1 == inLine.length)
             break;
         const next = inLine[i + 1];
-        if (next == at)
+        if (next == at || composing && insideRange(ranges, at, next))
             continue;
         auto bytes = new char[next - at];
         text.copyTo(at, next, bytes);
@@ -96,6 +107,61 @@ TextSpan[] editorLineSpans(in EditorState state, size_t line, in EditorViewOptio
         spans ~= span;
     }
     return spans;
+}
+
+/// Whether `[from, to)` lies inside a non-empty range: text a composition
+/// shows its preedit in place of.
+private bool insideRange(scope const(EditRange)[] ranges, size_t from, size_t to)
+    @safe pure nothrow @nogc
+{
+    foreach (r; ranges)
+        if (!r.empty && from >= r.start && to <= r.end)
+            return true;
+    return false;
+}
+
+/**
+The preedit's spans (`EDR1`), cut at its styled runs and its cursor: an
+`underline` run is underlined, a `converted` one underlined twice, and a
+`selected` one painted as a selection.
+*/
+private void preeditSpans(in EditorState state, in EditorViewOptions options, bool caret,
+    ref TextSpan[] spans) @safe pure nothrow
+{
+    const composition = state.composition;
+    size_t[] cuts = [0, composition.preedit.length, composition.cursor];
+    foreach (run; composition.styled)
+        cuts ~= [run.start, run.start + run.length];
+    sortUnique(cuts);
+    foreach (i, at; cuts)
+    {
+        if (caret && at == composition.cursor)
+            spans ~= TextSpan(text: caretGlyph, slot: Slot.caret);
+        if (i + 1 == cuts.length)
+            break;
+        const next = cuts[i + 1];
+        auto bytes = new char[next - at];
+        composition.preedit.copyTo(at, next, bytes);
+        auto span = TextSpan(text: bytes, slot: options.textSlot);
+        foreach (run; composition.styled)
+            if (at >= run.start && next <= run.start + run.length)
+                final switch (run.style)
+                {
+                case CompositionStyle.none:
+                    break;
+                case CompositionStyle.underline:
+                    span.textStyle.underline = UnderlineStyle.single;
+                    break;
+                case CompositionStyle.converted:
+                    span.textStyle.underline = UnderlineStyle.double_;
+                    break;
+                case CompositionStyle.selected:
+                    span.slot = Slot.selection;
+                    span.paintBackground = true;
+                    break;
+                }
+        spans ~= span;
+    }
 }
 
 /// The editor as one node: a rich run for a single line, else a column of
@@ -247,4 +313,32 @@ unittest
     assert(scrollToPrimary(state, 0, 3) == 2);
     assert(scrollToPrimary(state, 2, 3) == 2);
     assert(scrollToPrimary(state, 5, 3) == 4);
+}
+
+/// EDR1 and EDI3: a preedit shows in place of each range, styled by its runs,
+/// with the caret at its cursor; the hidden selection is not drawn.
+@("editor.view.composition")
+@safe pure nothrow
+unittest
+{
+    import sparkles.base.term_style : UnderlineStyle;
+    import sparkles.input.events : CompositionRun, CompositionStyle;
+    import sparkles.ui.editor.testing : parse;
+
+    auto state = parse("a[bc]d");
+    state.composition.preedit = Text("にほ");
+    state.composition.cursor = 3;
+    state.composition.runs[0] = CompositionRun(0, 3, CompositionStyle.selected);
+    state.composition.runs[1] = CompositionRun(3, 3, CompositionStyle.underline);
+    state.composition.runCount = 2;
+    string shown;
+    UnderlineStyle[] underlines;
+    foreach (s; editorLineSpans(state, 0, EditorViewOptions.init))
+    {
+        shown ~= s.text;
+        shown ~= s.slot == Slot.selection ? "#sel " : s.slot == Slot.caret ? "#caret " : " ";
+        underlines ~= s.textStyle.underline;
+    }
+    assert(shown == "a に#sel ▏#caret ほ d ", shown);
+    assert(underlines[3] == UnderlineStyle.single);
 }
