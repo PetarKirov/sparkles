@@ -288,7 +288,10 @@ default table **must** bind: `Ctrl-A`/`Ctrl-E` line start/end,
 start/end, `Ctrl-W` kill blank-delimited word back, `Alt-B`/`Alt-F` word
 back/forward, `Alt-Backspace`/`Alt-D` kill word back/forward, `Ctrl-H`
 delete back, `Ctrl-Y` yank and `Alt-Y` yank-pop
-([`KBD5`](../design-system/keyboard.md)).
+([`KBD5`](../design-system/keyboard.md)). One exception follows the
+platform: in a window on Linux or Windows, `Ctrl-A` selects all, as every
+other text field there does, and line start is `Home` (EDK3, ED-D2). In a
+terminal, `Ctrl-D` deletes forward, as Readline's `delete-char` does.
 
 **EDK2: The common keys.** Arrows, `Home`/`End`, `PageUp`/`PageDown`,
 `Backspace`/`Delete`, `Enter` and `Tab` **must** keep their conventional
@@ -301,14 +304,15 @@ range, else cancel the field.
 
 | Command              | macOS                   | Linux and Windows, windowed | Terminal                     |
 | -------------------- | ----------------------- | --------------------------- | ---------------------------- |
-| select all           | `Cmd-A`                 | `Ctrl-Shift-A`              | `Ctrl-Shift-A` where encoded |
+| select all           | `Cmd-A`                 | `Ctrl-A`                    | `Ctrl-Shift-A` where encoded |
 | copy / cut / paste   | `Cmd-C`/`Cmd-X`/`Cmd-V` | `Ctrl-C`/`Ctrl-X`/`Ctrl-V`  | the terminal's own paste     |
 | undo / redo          | `Cmd-Z`/`Cmd-Shift-Z`   | `Ctrl-Z`/`Ctrl-Shift-Z`     | `Ctrl-_` / `Alt-_`           |
 | word motion          | `Opt-Left`/`Opt-Right`  | `Ctrl-Left`/`Ctrl-Right`    | both                         |
 | line start / end     | `Cmd-Left`/`Cmd-Right`  | `Home`/`End`                | `Home`/`End`                 |
 | kill word back       | `Opt-Backspace`         | `Ctrl-Backspace`            | `Alt-Backspace`              |
-| add next occurrence  | `Cmd-D`                 | `Ctrl-D`                    | `Ctrl-D`                     |
-| cursor above / below | `Opt-Cmd-Up`/`Down`     | `Ctrl-Alt-Up`/`Down`        | `Ctrl-Alt-Up`/`Down`         |
+| delete forward       | `Delete`                | `Delete`                    | `Delete`, `Ctrl-D`           |
+| add next occurrence  | `Cmd-D`                 | `Ctrl-D`                    | unbound; rebind (`KEY12`)    |
+| cursor above / below | `Opt-Cmd-Up`/`Down`     | `Alt-Shift-Up`/`Down`       | `Alt-Shift-Up`/`Down`        |
 | split into lines     | `Shift-Opt-I`           | `Shift-Alt-I`               | `Shift-Alt-I`                |
 | add / remove cursor  | `Opt-click`             | `Alt-click`                 | `Alt-click`                  |
 | column select        | `Opt-drag`              | `Alt-drag`                  | `Alt-drag`                   |
@@ -503,10 +507,15 @@ both (EDC3), defined once in base (`TXT-SEG9`): as in a shell, `Ctrl-W`
 removes a whole path back to the previous space, while `Alt-Backspace`
 removes one component.
 
-**ED-D2: Readline keys plus a platform layer.** `Ctrl-A` means line start
-everywhere, as it does in macOS text fields; native platform chords are
-bound beside it (EDK3). The alternative, platform-native keys in windows
-and Readline only in terminals, would give one application two editors.
+**ED-D2: Readline keys plus a platform layer.** The Readline keys are bound
+on every target, and native platform chords beside them (EDK3), so one
+application has one editor wherever it runs. Where the two collide, the
+platform wins in a window and Readline in a terminal: `Ctrl-A` selects all
+in a window on Linux or Windows and moves to line start in a terminal and
+on macOS, whose text fields already treat it as line start; `Ctrl-D` adds
+the next occurrence in a window and deletes forward in a terminal. The
+owner chose this split ([EDQ2, EDQ3](#resolved-questions)): a window user
+expects the platform's select-all, and a shell user expects Readline.
 
 **ED-D3: Several cursors from the start.** The selection is a set of ranges
 with a primary one, as in CodeMirror, Helix, Kakoune and Zed, and every
@@ -527,17 +536,19 @@ holds counted pointers ([text-buffer TXD-2](../text-buffer/decisions.md#txd-2)).
 ([text-buffer TXD-3](../text-buffer/decisions.md#txd-3)); `earlier`/`later`
 reach abandoned branches.
 
-### Open questions
+### Resolved questions
 
 - **EDQ1 — terminal undo and redo keys.** `Ctrl-Z` is reserved in a
-  terminal; Readline's undo is `Ctrl-_`, and it has no redo. `Alt-_` for
-  redo is a proposal. Owner decision before E1.
-- **EDQ2 — `Ctrl-D`.** Readline binds it to delete-forward (and end of
-  input on an empty line); EDK3 binds it to add-next-occurrence, following
-  VS Code. Owner decision before E1.
-- **EDQ3 — desktop conflicts.** GNOME binds `Ctrl-Alt-Up`/`Down` to
-  workspace switching, and `Ctrl-Shift-A` is uncommon for select-all.
-  Owner decision before E1.
+  terminal and Readline has no redo. Decided: `Ctrl-_` undoes, as in
+  Readline, and `Alt-_` redoes.
+- **EDQ2 — `Ctrl-D`.** Readline deletes forward with it; VS Code adds the
+  next occurrence. Decided: delete forward in a terminal, add the next
+  occurrence in a window (`Cmd-D` on macOS). Add-next-occurrence is unbound
+  in a terminal and reachable by rebinding.
+- **EDQ3 — desktop conflicts.** GNOME takes `Ctrl-Alt-Up`/`Down` for
+  workspace switching. Decided: adding a cursor above or below is
+  `Alt-Shift-Up`/`Down` off macOS, and `Ctrl-A` selects all in a window on
+  Linux and Windows (ED-D2).
 
 ## Requirements and evidence
 

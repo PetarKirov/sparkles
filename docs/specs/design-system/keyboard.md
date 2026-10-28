@@ -78,7 +78,9 @@ disagree.
 
 **KBD5 notes.** The Readline keys move to the line ends (`Ctrl-A`/`Ctrl-E`), kill
 to the start or end (`Ctrl-U`/`Ctrl-K`), kill a word (`Ctrl-W`) and move by word
-(`Alt-B`/`Alt-F`). `keyRelease` is the kitty keyboard protocol.
+(`Alt-B`/`Alt-F`). In a window on Linux or Windows the platform keeps
+`Ctrl-A` for select-all and line start is `Home` ([editor ED-D2](../ui/editor.md#decisions)).
+`keyRelease` is the kitty keyboard protocol.
 
 **KBD6 notes.** Because the table is printed from the keymap itself, the guide,
 the docs and the binary agree by construction.
