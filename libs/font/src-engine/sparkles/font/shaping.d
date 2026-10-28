@@ -880,7 +880,7 @@ private extern (C) @system nothrow @nogc
 private bool isBoundary(scope const(char)[] source, size_t at)
     => at == 0 || at == source.length || (cast(ubyte) source[at] & 0xC0) != 0x80;
 
-private FontError validateRequest(in ShapeRequest request)
+package FontError validateRequest(in ShapeRequest request)
 {
     const source = request.source;
     const invalidAt = indexOfInvalidUtf8(source);

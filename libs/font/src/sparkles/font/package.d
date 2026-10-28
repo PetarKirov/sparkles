@@ -93,6 +93,7 @@ public import sparkles.font.variations;
 
 version (SparklesFontEngine)
 {
+    public import sparkles.font.fallback_trial;
     public import sparkles.font.shaping;
 }
 public import sparkles.font.vertical;
