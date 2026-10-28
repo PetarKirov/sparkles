@@ -43,7 +43,8 @@ import sparkles.raylib_text.font_fontconfig : fcRun;
 version (OSX)
     import sparkles.raylib_text.font_coretext;
 import sparkles.raylib_text.metrics_dpi : DisplayMetrics;
-import sparkles.raylib_text.shaping : ClusterCache, emojiPresentation;
+import sparkles.base.text.grapheme : emojiPresentation;
+import sparkles.raylib_text.shaping : ClusterCache;
 
 /// The face chosen for a cell's bold/italic attributes, plus whether the missing
 /// axis must still be faked (a synthetic slant / a double-strike thickening)

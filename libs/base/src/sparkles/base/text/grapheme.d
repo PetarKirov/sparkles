@@ -908,3 +908,45 @@ unittest
     assert(clusters.empty);
     assert(visibleWidth(text[]) == 130);
 }
+
+/**
+Whether the grapheme cluster `cps` presents as an emoji, the way a font
+stack picks a colour emoji face for it: a wide pictograph or regional
+indicator, a VS16-selected emoji base, or a keycap sequence. An explicit
+text presentation selector (VS15) wins; a text-default symbol stays text
+until VS16 asks for emoji.
+*/
+bool emojiPresentation(scope const(uint)[] cps)
+{
+    import sparkles.base.text.unicode_tables : isEastAsianWide, isEmojiVsBase;
+
+    if (!cps.length)
+        return false;
+    bool emoji = (cps[0] >= 0x1f000 && cps[0] <= 0x1faff && isEastAsianWide(cast(dchar) cps[0]))
+        || (isEmojiVsBase(cast(dchar) cps[0]) && isEastAsianWide(cast(dchar) cps[0]))
+        || (cps[0] >= 0x1f1e6 && cps[0] <= 0x1f1ff);
+    foreach (cp; cps)
+    {
+        if (cp == 0xfe0e)
+            emoji = false;
+        if (cp == 0xfe0f && isEmojiVsBase(cast(dchar) cps[0]))
+            emoji = true;
+        if (cp == 0x20e3 && (cps[0] == '#' || cps[0] == '*' || (cps[0] >= '0' && cps[0] <= '9')))
+            emoji = true;
+    }
+    return emoji;
+}
+
+///
+@("grapheme.emojiPresentation.selectorsAndSequences")
+@safe pure nothrow @nogc unittest
+{
+    assert(!emojiPresentation([0x2764u]));
+    assert(emojiPresentation([0x2764u, 0xfe0f]));
+    assert(!emojiPresentation([0x2764u, 0xfe0f, 0xfe0e]));
+    assert(!emojiPresentation([cast(uint) 'A', 0xfe0f]));
+    assert(emojiPresentation([0x1f1fau, 0x1f1f8]));
+    assert(emojiPresentation([0x1f469u, 0x200d, 0x1f4bb]));
+    assert(emojiPresentation([cast(uint) '1', 0xfe0f, 0x20e3]));
+    assert(!emojiPresentation([cast(uint) 'e', 0x301]));
+}
