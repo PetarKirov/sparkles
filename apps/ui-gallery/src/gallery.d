@@ -30,6 +30,8 @@ import sparkles.ui.state : hoverTargets, keyedRects, ScrollState,
 import sparkles.ui.style : BorderStyle, Decoration, Slot, TextStyle, Visual;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 
+import sparkles.ui.components.tree_view : TreeStep;
+import sparkles.ui.editor.field : FieldSetup;
 import sparkles.ui_app.backend : Backend;
 import sparkles.ui_app.run_app : AppTheme;
 import inspector : inspectorActivate, inspectorBody, inspectorInnerWidth;
@@ -507,14 +509,47 @@ struct Gallery
     }
 
     /// A paste belongs where the keys go: into the focused shell, which the
-    /// pane hands to the program in it as a paste (`INP21`). The gallery has
-    /// no text field of its own, so anywhere else it is dropped.
+    /// pane hands to the program in it as a paste (`INP21`), or into the
+    /// Property page's filter while it is typed into, whole (`EDI4`) — the
+    /// answer to the filter's own clipboard read among them (`EDY5`).
+    /// Anywhere else it is dropped.
     private void onPaste(in PasteEvent p) @safe
     {
-        if (!terminalCaptures)
+        if (terminalCaptures)
+        {
+            if (auto tv = store.byId(s.terms.tabs[s.terms.active].id))
+                (() @trusted => tv.onPaste(p))();
             return;
-        if (auto tv = store.byId(s.terms.tabs[s.terms.active].id))
-            (() @trusted => tv.onPaste(p))();
+        }
+        if (s.page != propertyPageIndex || !s.prop.built || !s.prop.tv.searching)
+        {
+            pasteBuf = null;
+            return;
+        }
+        pasteBuf ~= p.text[];
+        if (!p.last)
+            return;
+        if (s.prop.tv.filterPaste(pasteBuf, p.request) == TreeStep.rebuild)
+            s.prop.refresh();
+        pasteBuf = null;
+    }
+
+    /// A paste's chunks so far, for the Property page's filter.
+    private char[] pasteBuf;
+
+    /// How `h`'s fields edit: its backend's key table and what it does with
+    /// the clipboard (`EDK1`, `EDY5`).
+    private static FieldSetup fieldSetupFor(H)(ref H h)
+    {
+        import sparkles.ui.editor.keys : EditorTarget, windowTarget;
+        import sparkles.ui_app.host : canReadClipboard;
+
+        FieldSetup setup;
+        setup.target = h.backend == Backend.gui ? windowTarget : EditorTarget.terminal;
+        setup.clipboardWrite = __traits(compiles, h.clipboard(""));
+        static if (canReadClipboard!H)
+            setup.clipboardRead = h.capabilities.clipboardRead;
+        return setup;
     }
 
     /**
@@ -619,8 +654,16 @@ struct Gallery
         if (s.page == propertyPageIndex && s.prop.built && s.prop.tv.searching)
         {
             import pages.property_page : propertyFilterKey = handleFilterKey;
+            import sparkles.ui.editor.field : forwardClipboard;
 
-            if (propertyFilterKey(s, k))
+            // The backend's key table and what its host does with the
+            // clipboard (`EDK1`, `EDY5`): a window's copy, cut and paste
+            // chords, with the read answered later by a paste.
+            s.prop.tv.filterSetup = fieldSetupFor(h);
+            s.prop.tv.filterSetup.applyTo(s.prop.tv.filter);
+            const used = propertyFilterKey(s, k);
+            forwardClipboard(s.prop.tv.filter, h);
+            if (used)
                 return;
         }
 
@@ -2985,4 +3028,26 @@ version (unittest)
     drive(d, [Event(ColorSchemeEvent(dark: false))]);
     assert(d.s.themeName == "tokyo-night");
     assert(d.s.toastText == "tokyo-night has no light sibling");
+}
+
+@("ui_gallery.gallery.propertyFilterUsesTheWindowClipboard")
+@safe unittest
+{
+    import sparkles.input : pasteChunks;
+    import sparkles.ui_app.backend : Backend;
+
+    // `EDY5`: in a window, Ctrl-V in the Property filter asks the host to
+    // read; the paste that answers it becomes the query.
+    Gallery g;
+    RecordingHost h;
+    h.backend = Backend.gui;
+    h.capabilities.clipboardRead = true;
+    h.size = sizeOf(80, 24);
+    g.s.page = propertyPageIndex;
+    g.s.prop.ensure();
+    g.s.prop.tv.filterStart();
+    g.handle(h, charEvent('v', Mods(ctrl: true)));
+    assert(h.clipboardReads.length == 1);
+    pasteChunks("theme", (Event ev) { g.handle(h, ev); }, h.clipboardReads[0]);
+    assert(g.s.prop.tv.filterQuery == "theme");
 }
