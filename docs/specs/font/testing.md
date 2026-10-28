@@ -264,6 +264,19 @@ Arabic and 82 of Maple Mono NF CN differ by more than 32 steps; the CFF face
 has none. These are the glyphs `FTR2` lets render with doubled edges, and the
 font explorer's overlap check lists them.
 
+**Light hinting (`FTR9`).** `oracle.hinting.lightAgainstFreeTypeAutohint`
+rasterizes the letters and digits of DejaVu Sans Mono and Fira Code Nerd Font
+Mono at 11 to 16 px unhinted and light-hinted, and compares each with
+FreeType's auto-hinter in its light mode (`FT_LOAD_FORCE_AUTOHINT |
+FT_LOAD_TARGET_LIGHT`), aligned on pen and baseline. The mean per-pixel
+difference hinted **must** be at most half the unhinted one, and the rows
+where a lowercase letter's x-height and baseline land (its first and last
+rows over half the fullest row's ink) **must** match FreeType's in nineteen
+of twenty. Measured on 2026-10-28: 6.9 against 21.6, and 614 of 624 rows (543
+unhinted). `hinting_test` checks the zones, the whole-pixel x-height, that
+hinted `z`, `H`, `T` and `E` end in rows as dark as the rows inside them
+(some do not unhinted), and that nothing horizontal moves.
+
 ### Colour glyphs (`FTR5`, `FTR7`)
 
 - **Layers.** A fixture face's base glyph layers a 5 × 5 px square in palette

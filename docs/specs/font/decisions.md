@@ -15,20 +15,20 @@ decision is `proposed` until the specification is accepted.
 Each capability below is outside the specification. An entry condition says
 what evidence would bring it back; without one, the item is not planned.
 
-| Excluded                                | Why                                                                                            | Entry condition                                                                                                     |
-| --------------------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| Line breaking, bidi, paragraph layout   | Base owns analysis/opportunities and generic solving; text-layout owns contextual composition. | None in this library; link their owning contracts.                                                                  |
-| Hinting, bytecode or automatic          | The largest single part of every rasterizer that has it.                                       | A measured legibility gap at terminal sizes on a low-DPI panel that gamma-corrected unhinted coverage cannot close. |
-| LCD subpixel anti-aliasing              | Colour fringes off RGB-stripe panels; cannot composite over arbitrary backgrounds.             | None.                                                                                                               |
-| `COLR` version 1 rendering              | A paint graph with gradients and compositing, a small renderer of its own.                     | After `COLR` version 0 ships, when a consumer needs it.                                                             |
-| `SVG ` glyphs                           | Needs an SVG renderer.                                                                         | None.                                                                                                               |
-| WOFF and WOFF2                          | Web containers; WOFF2 needs a Brotli decoder and table reconstruction.                         | A consumer that must open web fonts.                                                                                |
-| Type 1 and `dfont`                      | Legacy formats.                                                                                | None.                                                                                                               |
-| Writing, subsetting or instancing files | No consumer writes fonts.                                                                      | None.                                                                                                               |
-| A D OpenType shaping engine             | See `FTX1`.                                                                                    | A target that must shape and cannot link HarfBuzz.                                                                  |
-| GPU rasterization                       | Bitmap specimens and cell glyphs do not need it.                                               | A consumer drawing transformed or continuously zoomed text.                                                         |
-| Font activation, network catalogs       | Application features, not library features.                                                    | None in this library.                                                                                               |
-| Math composition, pagination and export | Font supplies `MATH`/baseline/justification resources, not formula or page policy.             | None in this library; composition and frontends remain above font.                                                  |
+| Excluded                                  | Why                                                                                            | Entry condition                                                                                                                                                              |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Line breaking, bidi, paragraph layout     | Base owns analysis/opportunities and generic solving; text-layout owns contextual composition. | None in this library; link their owning contracts.                                                                                                                           |
+| Bytecode hinting; horizontal grid fitting | The largest single part of every rasterizer that has it; horizontal fitting distorts widths.   | A face that draws wrongly without its bytecode (`FTD12`) and a consumer that must show it. Light vertical fitting is in: [`FTX17`](#ftx17-light-hinting-vertical-only-in-d). |
+| LCD subpixel anti-aliasing                | Colour fringes off RGB-stripe panels; cannot composite over arbitrary backgrounds.             | None.                                                                                                                                                                        |
+| `COLR` version 1 rendering                | A paint graph with gradients and compositing, a small renderer of its own.                     | After `COLR` version 0 ships, when a consumer needs it.                                                                                                                      |
+| `SVG ` glyphs                             | Needs an SVG renderer.                                                                         | None.                                                                                                                                                                        |
+| WOFF and WOFF2                            | Web containers; WOFF2 needs a Brotli decoder and table reconstruction.                         | A consumer that must open web fonts.                                                                                                                                         |
+| Type 1 and `dfont`                        | Legacy formats.                                                                                | None.                                                                                                                                                                        |
+| Writing, subsetting or instancing files   | No consumer writes fonts.                                                                      | None.                                                                                                                                                                        |
+| A D OpenType shaping engine               | See `FTX1`.                                                                                    | A target that must shape and cannot link HarfBuzz.                                                                                                                           |
+| GPU rasterization                         | Bitmap specimens and cell glyphs do not need it.                                               | A consumer drawing transformed or continuously zoomed text.                                                                                                                  |
+| Font activation, network catalogs         | Application features, not library features.                                                    | None in this library.                                                                                                                                                        |
+| Math composition, pagination and export   | Font supplies `MATH`/baseline/justification resources, not formula or page policy.             | None in this library; composition and frontends remain above font.                                                                                                           |
 
 ---
 
@@ -570,6 +570,38 @@ routes lose nothing; a user who routes a script loses cross-boundary
 shaping inside it, which is what routing that script asks for.
 
 ---
+
+## FTX17: Light hinting, vertical only, in D
+
+**State:** accepted 2026-10-28 (owner) · **Affects:** `FTR9`, the exclusions above
+
+**Question.** Hinting was excluded until a measured legibility gap at
+terminal sizes that gamma-corrected unhinted coverage could not close. Has
+that gap been measured, and how much hinting closes it?
+
+**Evidence.** The Vulkan canvas's text, composited in linear light with a
+contrast correction, set beside ghostty, kitty and Chromium at 13.7 px:
+the composited text matched Chromium's weight but stayed softer than the
+terminals', whose baselines, x-heights and crossbars sit on single pixel
+rows. All three draw through FreeType with light (vertical-only) hinting on
+Linux. Against FreeType's auto-hinter in light mode, DejaVu Sans Mono and
+Fira Code letters and digits at 11–16 px differ by 21.6 coverage steps on
+average unhinted; a vertical-only fitter in D (blue zones from reference
+glyphs, the x-height's overshoot rounded up from three eighths, stems moved
+but not resized, every other point interpolated) brings that to 6.9, with
+the x-height and baseline rows matching in 614 of 624 letters.
+
+**Choice.** Light hinting in `sparkles.font.hinting`, applied to decoded
+outline segments before rasterization when the caller passes hints, and
+nothing more: no bytecode interpreter, no horizontal fitting, no stem
+widening. The rasterizer, its accumulation and its FreeType differential
+are unchanged; the hinted outline is still measured in font units.
+
+**Trade-off.** It follows the Latin model of FreeType's auto-hinter, so
+scripts whose zones `x`, `H`, `o`, `O`, `d` and `p` do not describe fit
+only their edges to the nearest row. Fira Code at 11 px comes out slightly
+further from FreeType than unhinted; every other measured size is three to
+five times closer.
 
 ## Open questions
 

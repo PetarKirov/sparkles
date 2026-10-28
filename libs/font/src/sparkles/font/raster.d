@@ -36,6 +36,7 @@ import sparkles.font.corrections : Correction;
 import sparkles.font.errors : callerStorageError, FontError, FontErrorKind, FontResult,
     fontErr, fontOk, Tag;
 import sparkles.font.face : Face, OutlineFormat;
+import sparkles.font.hinting : hintSegments, LightHints;
 import sparkles.font.instance : Instance;
 import sparkles.font.outlines : glyphOutline, GlyphOutline, OutlinePoint, OutlineSegment,
     OutlineWorkspace, SegmentKind;
@@ -159,7 +160,8 @@ An invalid `ppem` is `badValue`; a box reaching past
 over its segments.
 */
 FontResult!RasterGlyph rasterMeasure(in Instance inst, uint gid, Ppem ppem,
-    return scope RasterWorkspace ws, OverlapMode overlap = OverlapMode.perGlyphFlag)
+    return scope RasterWorkspace ws, OverlapMode overlap = OverlapMode.perGlyphFlag,
+    const(LightHints)* hints = null)
 {
     if (!ppem.valid)
         return fontErr!RasterGlyph(FontError(FontErrorKind.badValue));
@@ -169,6 +171,8 @@ FontResult!RasterGlyph rasterMeasure(in Instance inst, uint gid, Ppem ppem,
     const result = glyphOutline(inst, gid, ws.segments, outlineWs);
     if (result.hasError)
         return fontErr!RasterGlyph(result.error);
+    if (hints !is null)
+        hintSegments(ws.segments[0 .. result.value.segmentCount], *hints);
     return measureSegments(inst, ws.segments[0 .. result.value.segmentCount], result.value.overlap,
         ppem, overlap);
 }
@@ -213,9 +217,13 @@ private FontResult!RasterGlyph measureSegments(in Instance inst, scope const(Out
     enum double limit = maxRasterCoordinate;
     if (!(xMin >= -limit && xMax <= limit && yMin >= -limit && yMax <= limit))
         return fontErr!RasterGlyph(FontError(FontErrorKind.arithmeticExhausted));
-    const left = cast(int) floor(xMin), top = cast(int) ceil(yMax);
+    // A row an outline reaches less than 1/1024 px into (a hinted edge a
+    // rounding error past its pixel boundary) holds no coverage a byte can
+    // show, so it is not part of the box; the accumulator clips to the box.
+    enum double sliver = 1.0 / 1024;
+    const left = cast(int) floor(xMin), top = cast(int) ceil(yMax - sliver);
     size.width = cast(int) ceil(xMax) - left;
-    size.height = top - cast(int) floor(yMin);
+    size.height = top - cast(int) floor(yMin + sliver);
     size.bearingX = left;
     size.bearingY = top;
     const ss = rendersUnion(overlap, flagged) ? 4 : 1;
@@ -458,7 +466,7 @@ box, which the caller's storage bounds.
 FontResult!RasterGlyph rasterizeGlyph(in Instance inst, uint gid, Ppem ppem,
     scope RasterRegion region, return scope RasterWorkspace ws,
     FlattenPolicy policy = FlattenPolicy.standard,
-    OverlapMode overlap = OverlapMode.perGlyphFlag)
+    OverlapMode overlap = OverlapMode.perGlyphFlag, const(LightHints)* hints = null)
 {
     if (!ppem.valid)
         return fontErr!RasterGlyph(FontError(FontErrorKind.badValue));
@@ -468,6 +476,8 @@ FontResult!RasterGlyph rasterizeGlyph(in Instance inst, uint gid, Ppem ppem,
     const drawn = glyphOutline(inst, gid, ws.segments, outlineWs);
     if (drawn.hasError)
         return fontErr!RasterGlyph(drawn.error);
+    if (hints !is null)
+        hintSegments(ws.segments[0 .. drawn.value.segmentCount], *hints);
     const segments = ws.segments[0 .. drawn.value.segmentCount];
     const measured = measureSegments(inst, segments, drawn.value.overlap, ppem, overlap);
     if (measured.hasError)
