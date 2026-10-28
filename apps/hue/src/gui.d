@@ -42,6 +42,8 @@ import dub_config_picker : dubConfigurationPick;
 import picker_grep : PickerSource;
 import picker_host : OwnedPicker, PickerAction, PickerHost;
 import forge : ReviewDraft;
+import sparkles.doc_view.conflict_view : Pick;
+import staging : stageResolvedFile;
 import review_store : applySuggestionAtCursor, persistFolds, postComment, refreshLocalThreads,
     resolveCommentAtCursor, ReviewSession,
     toggleViewedAtCursor;
@@ -1097,6 +1099,7 @@ int runGui(GuiArgs guiArgs) @system
     // mounts, over the same shared store.
     SettingsPane settingsPane;
     bool submitArmed; // `DCM6`: a review submission waits for `y`
+    bool conflictSaved; // `CFV4`: the resolved file was saved
     version (Android)
     {
         import sparkles.ui.editor.soft_keyboard : SoftKeyboard;
@@ -1549,6 +1552,14 @@ int runGui(GuiArgs guiArgs) @system
     {
         const failure = vm.diffEditSave();
         showToast(failure is null ? "saved " ~ vm.diffEdit.newPath : failure, failure is null);
+    }
+
+    /// `CFV4`: writes the resolved file, saying how it went.
+    void saveConflict() @system
+    {
+        const failure = vm.conflictSave();
+        conflictSaved = failure is null;
+        showToast(failure is null ? "saved " ~ vm.conflict.path : failure, failure is null);
     }
 
     // Where an accepted dub configuration is recorded; set while the choices
@@ -2603,6 +2614,7 @@ int runGui(GuiArgs guiArgs) @system
             import sparkles.ui.editor.soft_keyboard : KeyboardAsk;
 
             const editing = inp.mode != Mode.normal || pn.tree.searching || vm.diffEditing
+                || vm.composing || vm.conflictOpen && vm.conflict.editing
                 || !filePicker.empty && filePicker.get.state.active
                 || settingsPane.active && (settingsPane.textEditing || settingsPane.tv.searching);
             final switch (fieldKeyboard.update(editing))
@@ -3122,21 +3134,29 @@ int runGui(GuiArgs guiArgs) @system
                     pn.tree.filterServe(fieldClip);
                 }
         }
-        else if (vm.diffEditing || vm.composing)
+        else if (vm.diffEditing || vm.composing || vm.conflictOpen && vm.conflict.editing)
         {
-            // `DST5`/`DCM2`: the diff's editor or the comment composer has the
-            // keyboard. Its clipboard is the window's; Ctrl-S (Cmd-S on
-            // macOS) or Alt-S saves the edit or posts the comment, and Escape
-            // gives the keyboard back.
-            if (vm.composing)
+            // `DST5`/`DCM2`/`CFV4`: the diff's editor, the comment composer or
+            // the conflict's editor has the keyboard. Its clipboard is the
+            // window's; Ctrl-S (Cmd-S on macOS) or Alt-S saves the edit, posts
+            // the comment or saves the resolved file, and Escape gives the
+            // keyboard back.
+            const resolving = vm.conflictOpen && vm.conflict.editing;
+            if (resolving)
+                fieldSetup.applyTo(vm.conflict.result);
+            else if (vm.composing)
                 fieldSetup.applyTo(vm.composer);
             else
                 fieldSetup.applyTo(vm.diffEdit.field);
             foreach (k; keyBuf)
             {
-                if (vm.composing ? vm.commentKey(k) : vm.diffEditKey(k))
+                const taken = resolving ? vm.conflictKey(k)
+                    : vm.composing ? vm.commentKey(k) : vm.diffEditKey(k);
+                if (taken)
                 {
-                    if (vm.composing)
+                    if (resolving)
+                        cast(void) serveClipboard(vm.conflict.result, fieldClip);
+                    else if (vm.composing)
                         cast(void) serveClipboard(vm.composer, fieldClip);
                     else
                         vm.diffEditServe(fieldClip);
@@ -3148,7 +3168,9 @@ int runGui(GuiArgs guiArgs) @system
                     const saveChord = k.mods.ctrl || k.mods.alt;
                 if (k.key == Key.char_ && k.ch == 's' && saveChord)
                 {
-                    if (vm.composing)
+                    if (resolving)
+                        saveConflict();
+                    else if (vm.composing)
                         showToast(postComment(vm, review));
                     else
                         saveDiffEdit();
@@ -3250,7 +3272,8 @@ int runGui(GuiArgs guiArgs) @system
                 hasDocSet: set !is null && !set.empty && loadDoc !is null,
                 // Only while the diff view is actually showing: Tab drops to
                 // the raw patch text, where files are not a navigable unit.
-                hasDiffSession: vm.showPreview && !vm.diffSession.empty,
+                hasDiffSession: vm.showPreview && !vm.diffSession.empty && !vm.conflictOpen,
+                conflictOpen: vm.conflictOpen,
                 showPreview: vm.showPreview,
                 formatPreviewActive: formatPreviewActive(vm),
                 hasDsvGrid: vm.showPreview && dsvCopy.present,
@@ -3265,6 +3288,12 @@ int runGui(GuiArgs guiArgs) @system
 
             foreach (kev; keyBuf)
             {
+                // `CFV3`: Escape leaves the conflict view first.
+                if (vm.conflictOpen && kev.key == Key.escape)
+                {
+                    vm.conflictClose();
+                    continue;
+                }
                 // `DCM6`: an armed submission takes `y`; any other key
                 // disarms it, as a discard does in the terminal.
                 if (submitArmed)
@@ -3533,6 +3562,27 @@ int runGui(GuiArgs guiArgs) @system
                         vm.setDocument(reloadDiff());
                     break;
                 }
+                case Command.conflictResolve:
+                    if (const why = vm.conflictStart(windowTarget))
+                        showToast(why);
+                    else
+                    {
+                        vm.conflictHint = "} { move · o t b B take · u undo · E edit · Ctrl-S save · space stage · Esc leave";
+                        vm.rebuild();
+                    }
+                    break;
+                case Command.conflictNext:  cast(void) vm.conflictMove(1); break;
+                case Command.conflictPrev:  cast(void) vm.conflictMove(-1); break;
+                case Command.conflictOurs:  cast(void) vm.conflictPick(Pick.ours); break;
+                case Command.conflictTheirs: cast(void) vm.conflictPick(Pick.theirs); break;
+                case Command.conflictBoth:  cast(void) vm.conflictPick(Pick.both); break;
+                case Command.conflictBothReversed: cast(void) vm.conflictPick(Pick.bothReversed); break;
+                case Command.conflictUndo:  cast(void) vm.conflictUndo(); break;
+                case Command.conflictEdit:  vm.conflictEdit(); break;
+                case Command.conflictSave:  saveConflict(); break;
+                case Command.conflictStage:
+                    showToast(stageResolvedFile(vm.conflict.path, conflictSaved, null));
+                    break;
                 case Command.diffSubmitReview:
                     if (review is null || review.target.length == 0)
                         showToast("only a forge's pull request takes a review");
