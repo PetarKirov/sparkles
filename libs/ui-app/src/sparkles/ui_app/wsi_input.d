@@ -44,6 +44,7 @@ version (UiAppGuiVulkan):
 
 import core.time : MonoTime, msecs;
 
+import sparkles.base.pool.text_pool : retain;
 import sparkles.base.text.utf : decodeToken, UtfMode;
 import sparkles.input;
 import sparkles.input.gesture : GestureRecognizer;
@@ -126,6 +127,9 @@ struct WsiInput
     private PointerId touchContact_;
     private KeyEvent pending_;
     private bool hasPending_;
+    private InputTextPool* texts_;
+    private sparkles.input.events.TextId[] issued_;
+    private bool drained_;
 
     /// The modifiers the last event reported held (`HST17`).
     Mods modifiers() const @safe pure nothrow @nogc => mods_;
@@ -165,6 +169,15 @@ struct WsiInput
     {
         import sparkles.wsi.events : match;
 
+        // The previous drain's preedits stop resolving as this one starts.
+        if (drained_)
+        {
+            foreach (id; issued_)
+                cast(void) texts.release(id);
+            issued_.length = 0;
+            drained_ = false;
+        }
+
         // A keystroke waits only for the text that immediately follows it.
         if (hasPending_ && !isText(event))
             flush(sink);
@@ -203,6 +216,21 @@ struct WsiInput
                 });
                 typed(text, sink);
             },
+            (in sparkles.wsi.events.CompositionEvent c)
+            {
+                // `EDI7`: the preedit leaves the WSI's queue for this
+                // adapter's pool, where it resolves until the next drain.
+                sparkles.input.events.TextId preedit;
+                if (c.preedit != TextId.init)
+                {
+                    auto kept = retain(wsi, c.preedit, texts);
+                    if (!kept.hasValue)
+                        return; // stale or full: the next update replaces it
+                    preedit = kept.value;
+                    issued_ ~= preedit;
+                }
+                sink(Event(inputComposition(c, preedit)));
+            },
             (in _) {},
         );
     }
@@ -227,6 +255,28 @@ struct WsiInput
         gestures.cancel();
         gestures.setContacts(0, PointF(), PointF());
         while (!isNoEvent(gestures.next())) {}
+    }
+
+    /**
+    The pool this adapter's `CompositionEvent`s name their preedits in
+    (`INP24`): read one here before the next drain begins.
+    */
+    ref InputTextPool texts() return @safe
+    {
+        if (texts_ is null)
+            texts_ = new InputTextPool;
+        return *texts_;
+    }
+
+    /**
+    The end of a drain: delivers a keystroke still waiting for text, as
+    `flush` does, and lets go of this drain's preedits, which stop resolving
+    when the next drain starts.
+    */
+    void endDrain(Sink)(scope Sink sink)
+    {
+        flush(sink);
+        drained_ = true;
     }
 
     /// Delivers a keystroke still waiting for text. The host calls it at the
@@ -641,6 +691,66 @@ Key virtualKey(uint vk) @safe pure nothrow @nogc
     }
 }
 
+/**
+A window system's composition as the toolkit's (`EDI7`, `INP24`), its
+preedit already re-interned as `preedit`.
+
+Styles map one to one. A selection that no segment marks becomes a
+`selected` run: Wayland's text-input-v3 reports its cursor span only as the
+selection, beside a whole-preedit underline. Of more segments than
+`maxCompositionRuns`, the first are kept, and a `selected` one always.
+*/
+CompositionEvent inputComposition(in sparkles.wsi.events.CompositionEvent c,
+    sparkles.input.events.TextId preedit) @safe pure nothrow @nogc
+{
+    import sparkles.wsi.events : CompositionSegmentStyle;
+
+    static CompositionStyle styleOf(CompositionSegmentStyle s)
+    {
+        final switch (s)
+        {
+            case CompositionSegmentStyle.none: return CompositionStyle.none;
+            case CompositionSegmentStyle.underline: return CompositionStyle.underline;
+            case CompositionSegmentStyle.selected: return CompositionStyle.selected;
+            case CompositionSegmentStyle.converted: return CompositionStyle.converted;
+        }
+    }
+
+    CompositionEvent result;
+    if (!preedit.valid)
+        return result;
+    result.preedit = preedit;
+    result.cursor = c.cursor;
+
+    CompositionRun[c.segments.length + 1] all;
+    ubyte count;
+    bool marked;
+    foreach (s; c.segments[0 .. c.segmentCount])
+    {
+        all[count++] = CompositionRun(s.start, s.length, styleOf(s.style));
+        marked = marked || s.style == CompositionSegmentStyle.selected;
+    }
+    if (!marked && c.selectionLength)
+        all[count++] = CompositionRun(c.selectionStart, c.selectionLength,
+            CompositionStyle.selected);
+
+    bool keptSelected;
+    foreach (run; all[0 .. count])
+    {
+        if (result.runCount < result.runs.length)
+        {
+            result.runs[result.runCount++] = run;
+            keptSelected = keptSelected || run.style == CompositionStyle.selected;
+        }
+        else if (run.style == CompositionStyle.selected && !keptSelected)
+        {
+            result.runs[$ - 1] = run;
+            keptSelected = true;
+        }
+    }
+    return result;
+}
+
 // ── tests ─────────────────────────────────────────────────────────────────────
 
 version (unittest)
@@ -654,7 +764,13 @@ version (unittest)
     {
         string[] texts;
 
-        void withText(Fn)(TextId id, scope Fn fn) => fn(texts[id.index], false);
+        auto withText(Fn)(TextId id, scope Fn fn)
+        {
+            import sparkles.wsi.types : wsiOk;
+
+            fn(texts[id.index], false);
+            return wsiOk();
+        }
     }
 
     // Everything `events` translate to, in order, the drain flushed after.
@@ -1042,4 +1158,103 @@ version (unittest)
     assert(virtualKey(0x70) == Key.f1 && virtualKey(0x26) == Key.up && virtualKey(0x41) == Key.none);
     assert(androidKey(4) == Key.back && androidKey(66) == Key.enter && androidKey(67) == Key.backspace);
     assert(androidKey(131) == Key.f1 && androidKey(142) == Key.f12 && androidKey(29) == Key.none);
+}
+
+version (unittest)
+{
+    import sparkles.wsi.events : CompositionSegment, CompositionSegmentStyle;
+
+    alias WsiComposition = sparkles.wsi.events.CompositionEvent;
+
+    // What each backend emits while composing にほん with ほん the clause
+    // being converted, its preedit text id 0 — recorded from each mapping:
+    // Wayland's `compositionFromPreedit`, AppKit's `appKitComposition`,
+    // Win32's `emitComposition` over IMM32 clause attributes.
+    private WsiComposition recorded(string backend)
+    {
+        WsiComposition c;
+        c.preedit = TextId(0, 1);
+        c.cursor = 3;
+        c.selectionStart = 3;
+        c.selectionLength = 6;
+        final switch (backend)
+        {
+            case "wayland": // the cursor span, beside a whole underline
+                c.segments[0] = CompositionSegment(0, 9, CompositionSegmentStyle.underline);
+                c.segmentCount = 1;
+                break;
+            case "appkit": // the selection also marked as a segment
+                c.segments[0] = CompositionSegment(0, 9, CompositionSegmentStyle.underline);
+                c.segments[1] = CompositionSegment(3, 6, CompositionSegmentStyle.selected);
+                c.segmentCount = 2;
+                break;
+            case "win32": // one segment per IMM32 clause
+                c.segments[0] = CompositionSegment(0, 3, CompositionSegmentStyle.converted);
+                c.segments[1] = CompositionSegment(3, 6, CompositionSegmentStyle.selected);
+                c.segmentCount = 2;
+                break;
+        }
+        return c;
+    }
+}
+
+version (linux)
+@("ui_app.wsi_input.waylandRecordingMatchesItsMapping")
+@safe unittest
+{
+    import sparkles.wsi.platform.wayland : compositionFromPreedit;
+
+    auto mapped = compositionFromPreedit("にほん", 3, 9);
+    mapped.preedit = TextId(0, 1);
+    assert(mapped == (() @trusted => recorded("wayland"))());
+}
+
+@("ui_app.wsi_input.compositionFromEachBackend")
+@system unittest
+{
+    // `EDI7`: every backend's composition reaches the toolkit in one shape;
+    // its preedit resolves in the adapter's pool until the next drain, and
+    // the commit arrives as typed text.
+    foreach (backend; ["wayland", "appkit", "win32"])
+    {
+        WsiInput input;
+        auto wsi = FakeTexts(["にほん", "日本"]);
+        Event[] got;
+        foreach (e; [ev(recorded(backend)), ev(textNo(1)), ev(WsiComposition.init)])
+            input.translate(wsi, e, 10, 20, (Event x) { got ~= x; });
+
+        assert(got.length == 4, backend);
+        const update = got[0].match!((CompositionEvent c) => c, _ => CompositionEvent.init);
+        assert(update.cursor == 3, backend);
+        const style = backend == "win32" ? CompositionStyle.converted : CompositionStyle.underline;
+        const width = backend == "win32" ? 3 : 9;
+        assert(update.runs[0 .. update.runCount] == [CompositionRun(0, cast(ushort) width, style),
+            CompositionRun(3, 6, CompositionStyle.selected)], backend);
+        string preedit;
+        input.texts.withText(update.preedit, (scope const(char)[] s) { preedit = s.idup; });
+        assert(preedit == "にほん", backend);
+        assert(got[1] == Event(KeyEvent(Key.char_, '日')) && got[2] == Event(KeyEvent(Key.char_, '本')),
+            backend);
+        assert(got[3].match!((CompositionEvent c) => c.ends, _ => false), backend);
+
+        input.endDrain((Event x) { got ~= x; });
+        input.translate(wsi, ev(WsiComposition.init), 10, 20, (Event x) {});
+        assert(input.texts.withText(update.preedit, (scope const(char)[] s) {}).hasError,
+            "the preedit stops resolving when the next drain starts");
+    }
+}
+
+@("ui_app.wsi_input.compositionKeepsTheSelectedRun")
+@safe pure nothrow @nogc
+unittest
+{
+    // More segments than the toolkit carries: the selected one survives.
+    WsiComposition c;
+    foreach (i; 0 .. 6)
+        c.segments[i] = CompositionSegment(cast(ushort) i, 1, i == 5
+            ? CompositionSegmentStyle.selected : CompositionSegmentStyle.underline);
+    c.segmentCount = 6;
+    const converted = inputComposition(c, sparkles.input.events.TextId(0, 1));
+    assert(converted.runCount == 4);
+    assert(converted.runs[3] == CompositionRun(5, 1, CompositionStyle.selected));
 }
