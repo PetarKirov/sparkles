@@ -56,7 +56,9 @@ struct EditorField
     KillRing* sessionRing;
     /// Which default key table applies.
     EditorTarget target = EditorTarget.terminal;
-    /// The layout's answers; a field without wrapping uses logical lines.
+    /// The layout's answers; a field without wrapping uses logical lines. Set
+    /// `context.clipboardRead` when the host answers the field's clipboard
+    /// requests (`EDY5`).
     LogicalContext context;
 
     private KillRing ownRing;

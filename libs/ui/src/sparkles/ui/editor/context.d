@@ -59,6 +59,9 @@ struct LogicalContext
 {
     MonoTime now;
     size_t viewportLines = 24;
+    /// The host answers clipboard reads (`INP25`); absent, paste is a
+    /// `noop(capabilityAbsent)` the field reports (`EDI5`).
+    bool clipboardRead;
 
 @safe pure nothrow @nogc:
 
