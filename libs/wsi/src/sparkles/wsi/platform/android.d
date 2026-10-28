@@ -61,6 +61,7 @@ import sparkles.android.window_metrics : displayDensity, layOutEdgeToEdge,
 import sparkles.android.text_input : imeBackspace, imeEnter, keyCharacter,
     onTyped, popTypedChar;
 import sparkles.base.buffer : UniqueBuffer;
+import sparkles.input.pointer : PointerShape;
 import sparkles.base.pool.pool : Pool, PoolError;
 import sparkles.base.sync.condition : Condition;
 import sparkles.base.sync.mutex : Mutex;
@@ -1000,6 +1001,35 @@ struct AndroidWsi
             return androidFailure!void(WsiOperation.command,
                 "frame requests need the activity's main thread", WsiErrorKind.unavailable);
         }
+        return wsiOk();
+    }
+
+    /**
+    Shows `shape` for a mouse or stylus over the window: the system pointer
+    icon of that kind (`View.setPointerIcon`, Android 7 and later), applied
+    on the main thread. A touch has no pointer to shape.
+    */
+    WsiResult!void setCursor(WindowId id, PointerShape shape)
+    {
+        import sparkles.android.pointer_icon : PointerIconType, setPointerIcon;
+
+        auto checked = checkedSlot(id, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!void(checked.error);
+        PointerIconType type;
+        final switch (shape)
+        {
+            case PointerShape.default_: type = PointerIconType.arrow; break;
+            case PointerShape.text: type = PointerIconType.text; break;
+            case PointerShape.pointer: type = PointerIconType.hand; break;
+            case PointerShape.ewResize: type = PointerIconType.horizontalDoubleArrow; break;
+            case PointerShape.nsResize: type = PointerIconType.verticalDoubleArrow; break;
+            case PointerShape.grab: type = PointerIconType.grab; break;
+            case PointerShape.grabbing: type = PointerIconType.grabbing; break;
+        }
+        if (!setPointerIcon(type))
+            return androidFailure!void(WsiOperation.command,
+                "pointer icons need the activity's main thread", WsiErrorKind.unavailable);
         return wsiOk();
     }
 
