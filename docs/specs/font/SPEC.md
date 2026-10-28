@@ -641,8 +641,9 @@ source or a guarantee of the width of an insertion.
 
 ## 13. Discovery, matching and fallback
 
-The requirements in this section are stated at contract level. Their
-operation contracts are added to this section before they are implemented.
+[`discovery.md`](./discovery.md) refines this section to operation level
+(`FTD13`–`FTD46`): sources and records, the persistent catalog, matching,
+chains, the box-drawing face, whole-span trials and the correction registry.
 
 **FTD1: One catalog.** A font catalog **must** be built from [font sources](../../glossary.md#font-source) into [face
 records](../../glossary.md#face-record) produced by this library's parser. No record's content **may** come
@@ -650,7 +651,8 @@ from a platform service's description of a font.
 
 **FTD2: Platforms list files.** The platform source **must** list font files:
 through fontconfig on Linux, Core Text on macOS, the system and per-user font
-directories on Windows, and `/system/fonts` plus the application's assets on
+directories on Windows, and `/system/fonts` plus the application's assets,
+passed to the catalog as memory sources ([`FTD16`](./discovery.md#_2-sources-and-records)), on
 Android. When a platform service is missing, the catalog **must** build from the
 remaining sources and report why.
 
@@ -665,7 +667,8 @@ weight. The result carries the chosen record, a comparable score, and the
 synthesis needed to approximate the request.
 
 **FTD5: Fallback chains.** A [fallback chain](../../glossary.md#fallback-chain)
-**must** begin with the match and retain the ordered candidate records, including
+**must** begin with the routes the user chose (`FTD6`), then the match, and
+retain the ordered candidate records, including
 faces with identical or subset `cmap` coverage that may add shaping capability.
 A separate character-lookup index **may** prune redundant coverage, but that
 index **must not** restrict `FTD7` whole-span trials. Coverage pruning may reject
@@ -710,7 +713,9 @@ stored value. With quirks enabled, a result an entry changed **must** carry
 that entry's identifier, and a [face record](../../glossary.md#face-record)
 **must** list the entries its face triggers. Recognizing a face's entries
 **must** cost O(1) per entry at open, from values the table directory and
-the tables' headers already hold.
+the tables' headers already hold, except that `FTD12`'s checksums are
+computed from a table whose length equals a listed one, as FreeType
+computes them ([`FTD44`](./discovery.md#_8-the-correction-registry)).
 
 **FTD9: Cambria Math's minimum heights.** For a face whose `MATH` table is
 25,722 bytes long and whose stored `delimitedSubFormulaMinHeight` and

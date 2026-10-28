@@ -349,9 +349,51 @@ font explorer's overlap check lists them.
 ### Discovery and fallback (`FTD1`–`FTD7`)
 
 Matching steps are checked against hand-derived traces of CSS Fonts Level 4 §5.2
-over a synthetic family of nine weights and two widths. Chain/cache scenarios use
-a temporary directory of committed faces with known coverage: touch, delete and
-replace files between builds; an unknown cache version is discarded.
+over a synthetic family of nine weights and two widths, plus a variable family
+whose ranges must give the same answers as its expanded static faces
+(`FTD27`); each step's search order has a trace, and the score and synthesis
+of `FTD28`–`FTD29` are asserted with it.
+
+Records (`FTD16`–`FTD21`) are built from fixture faces whose `name`, `OS/2`,
+`fvar` and `cmap` are chosen per field, and from the bundle, whose family,
+style, weight, width and coverage are compared with `fc-scan`. The same
+sources built on 1, 2 and 8 workers give identical records. A platform source
+on Linux lists what `fc-list` lists; a missing library path is reported and
+the other sources still build.
+
+Cache scenarios (`FTD22`–`FTD24`) run on `MemVfs`, whose modification times
+are exact: a second build reads no font file; touching, replacing, adding and
+deleting a file re-describes or drops exactly that file; a foreign magic, an
+unknown version, a wrong length and a wrong hash each discard the whole cache;
+an unwritable cache leaves the build successful and reported.
+
+Chains (`FTD31`–`FTD34`) are checked with fixtures of known coverage: entry
+order, a route answering only in its ranges, a repeated record kept as a route,
+emoji and text presentation choices, and a chain identity that changes with any
+input. The box-drawing face (`FTD35`–`FTD38`) opens with `openFace`, shapes
+through HarfBuzz, and rasterizes each glyph at 8, 16 and 24 px to the coverage
+its rule gives, by hand-computed pixel counts for the lines, blocks and shades.
+
+Pruning (`FTD40`) is checked as a property against shaping: for every bundled
+face and every scalar the rule prunes it for, alone and in sampled sequences
+(followed by a mark, a variation selector, a second scalar), in both
+horizontal directions, `hb_shape` gives glyph 0. The review's counterexamples
+are fixtures: `e` U+0323 U+0302 against a face with only U+1EB9 and U+1EC7,
+Thai U+0E33 against a face with U+0E4D and U+0E32, a base with a format-14
+variant outside the character map's ranges, and a face whose `ccmp` single
+substitution maps glyph 0 to a drawn glyph are each not pruned and shape.
+Trial keys (`FTD43`) differ when any context byte the shaper reads or the
+run's offset differs, and agree when a byte beyond five scalars differs.
+
+Boundaries and failures with their own scenario: a request value outside its
+range (`badValue`), a primary that matches nothing (no box-drawing entry), a
+file replaced after the build (`stale` on first open), a store whose box face
+is rebuilt at a new ppem while a result borrows the old one, a ppem of 16,384
+and 16,385, a name of 1,024 and 1,025 bytes, a symbolic link to a font outside
+the source's directory with and without ambient authority, a 41-link chain,
+and a platform library path that does not exist. A Regular and Italic pair
+requested `normal`, and a family with only a −10° oblique requested `italic`,
+are traced for `FTD27`.
 
 For `FTD7`, use primary/fallback real faces with inspected coverage of a mark
 sequence, an emoji variation/ZWJ sequence and an RTL word. Force a failed primary

@@ -259,7 +259,7 @@
     "id": "fallback-chain",
     "term": "fallback chain",
     "summary": "The ordered list of fonts consulted, character by character, when the preferred font cannot draw a character.",
-    "definition": "In `sparkles:font`, an ordered list of [face records](/glossary#face-record) beginning with the matched face and keeping only faces that add character coverage. A face opens on first use, and each character's answer is remembered.",
+    "definition": "In `sparkles:font`, an ordered list of [face records](/glossary#face-record) beginning with the matched face. It keeps faces whose character coverage repeats an earlier face's, because they may still shape a sequence the earlier one cannot; coverage only answers single characters and skips faces that provably cannot map a span. A face opens on first use, and each character's answer is remembered beside the chain.",
     "authority": [
       {
         "text": "sparkles:font specification §13",
