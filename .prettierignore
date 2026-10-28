@@ -11,6 +11,9 @@ docs/research/monorepo-tooling/*/sample/**/*.json
 # Benchmark snapshots use pretty-format-json's sorted canonical form.
 libs/wired/bench/runtime/results/*.json
 
+# Hardware probe reports, likewise: data in pretty-format-json's canonical form.
+docs/research/images/hardware/reports/*.json
+
 # Markdown rendering fixtures are byte-exact test inputs: they deliberately
 # exercise syntax variants Prettier normalizes away (`*em*` vs `_em_`, `***`
 # rules, setext headings, ragged tables), and the goldens beside them are
