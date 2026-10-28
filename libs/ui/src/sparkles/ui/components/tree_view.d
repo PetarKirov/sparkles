@@ -45,7 +45,7 @@ rebuilding, the state only reports that it is needed.
 module sparkles.ui.components.tree_view;
 
 import sparkles.base.term_color : RgbColor;
-import sparkles.input : InputCapabilities, InputKey = Key, KeyEvent,
+import sparkles.input : CompositionEvent, InputCapabilities, InputKey = Key, KeyEvent,
     PointerAction, PointerButton, PointerEvent;
 import sparkles.ui.components.scroll_view : scrollLayout, ScrollArea,
     ScrollAreaAxis, ScrollLayout, ScrollView;
@@ -357,6 +357,16 @@ struct TreeViewState(Key)
             return TreeStep.none;
         const result = filter.paste(text, request);
         return filterResult(result.handled, result.changed, result.submitted, result.cancelled);
+    }
+
+    /// An input method's composition while the filter owns the keyboard
+    /// (`EDI3`), its preedit read from the host's pool.
+    TreeStep filterCompose(in CompositionEvent update, scope const(char)[] preedit) pure nothrow
+    {
+        if (!filtering)
+            return TreeStep.none;
+        const result = filter.compose(update, preedit);
+        return result.handled ? TreeStep.handled : TreeStep.none;
     }
 
     /// Leave filter mode and clear the query.
