@@ -22,6 +22,13 @@ blocklist triple and three near misses each against
 legacy Arabic pages against `hb_font_get_nominal_glyph`; and the tricky faces,
 by name and by `cvt `/`fpgm`/`prep`, against FreeType 2.14.3's `FT_IS_TRICKY`.
 
+The discovery oracles
+([`discovery.md` § 9](../../docs/specs/font/discovery.md#_9-oracles)) compare
+the catalog's record of every bundled face with `fc-scan`'s pattern (family,
+weight on fontconfig's scale, width, slant and coverage), and render and shape
+the generated box-drawing face with FreeType and HarfBuzz, whose line, block
+and shade glyphs must match our rasterizer's pixels exactly.
+
 Other inputs, all exported by the dev shell:
 
 - `$SPARKLES_FONT_TEST_CORPUS`: faces tested against but not shipped
@@ -43,6 +50,9 @@ Other inputs, all exported by the dev shell:
   generated tables the `FTS8` manifest check reads.
 - `$SPARKLES_HARFBUZZ_USE_UCD`: the older UCD release HarfBuzz's USE table was
   generated from, whose default ignorables that check compares with base's.
+- `$SPARKLES_FONTCONFIG_LIB`, with `fc-scan` on `PATH`: the fontconfig whose
+  `FcWeightFromOpenTypeDouble` maps our weights onto its scale for
+  `oracle.discovery.fontconfigRecords`.
 
 One input is opt-in: `$SPARKLES_FONT_UNFREE_CORPUS`, Microsoft's core Arial
 and Times New Roman, which hold `JSTF` tables too. Their licence forbids

@@ -28,6 +28,8 @@ configuration "unittest" {
     subConfiguration "sparkles:font" "engine"
     libs "freetype2"
     dependency "sparkles:base" path="../.."
+    // The catalog differential reads the bundle through the VFS's blocking backend.
+    dependency "sparkles:event-horizon-sys" path="../.."
 
     // The differential suite exists only for tests. It reuses sparkles:font's
     // fixture byte builder: that module alone, none of font's tests.
