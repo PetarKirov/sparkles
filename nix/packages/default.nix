@@ -369,6 +369,27 @@
         };
       });
 
+      # The Vulkan canvas's text lab (`apps/text-lab`): the native arm only.
+      packages.text-lab = config.legacyPackages.buildSparklesApp (finalAttrs: {
+        pname = "text-lab";
+        version = "0.1.0";
+        appDir = "apps/text-lab";
+
+        nativeBuildInputs = [ pkgs.pkg-config ];
+        buildInputs = [ pkgs.raylib ];
+
+        env = d-toolchain.env;
+
+        installPhase = ''
+          install -Dm755 build/text-lab $out/bin/${finalAttrs.pname}
+        '';
+
+        meta = {
+          description = "The Vulkan canvas's text rendering, switched live and seen through a loupe";
+          mainProgram = finalAttrs.pname;
+        };
+      });
+
       packages.terminal-vulkan = config.legacyPackages.buildSparklesApp (finalAttrs: {
         pname = "terminal-vulkan";
         version = "0.1.0";
@@ -491,6 +512,11 @@
       apps.ui-gallery = {
         type = "app";
         program = lib.getExe config.packages.ui-gallery;
+      };
+
+      apps.text-lab = {
+        type = "app";
+        program = lib.getExe config.packages.text-lab;
       };
     };
 }
