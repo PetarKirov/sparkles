@@ -100,6 +100,58 @@ string resolveFontPath(string nameOrPath, FontSources sources = FontSources.init
     return fontPath.length && fontPath.exists ? fontPath : null;
 }
 
+/**
+The faces text falls back to where the cell font at `primaryPath` has no
+glyph, found as `FontSet` finds them: from the system font database —
+fontconfig's `monospace` order, its first Nerd Font and its first common
+monospace face, or Core Text's on macOS — or, when the request names its
+own directories, the best of `sources.dirs` (`fallbackFacePaths`). With
+them a colour emoji face: fontconfig's, or the directories'. Empty where
+there is none; `primaryPath` is never its own fallback.
+
+Raylib-free, like `resolveFontPath`, so every arm falls back to the same faces.
+*/
+void systemFallbackFacePaths(string primaryPath, FontSources sources, out string nerd,
+    out string regular, out string emoji) @system
+{
+    if (!sources.useSystemFontDb)
+        return fallbackFacePaths(primaryPath, sources.dirs, nerd, regular, emoji);
+    version (OSX)
+    {
+        // The `fc-match monospace -s` analog, over Core Text's family
+        // enumeration. Apple Color Emoji is a collection, which is skipped.
+        fallbackFaces(primaryPath, nerd, regular);
+    }
+    else
+    {
+        import std.string : splitLines;
+
+        auto fbRes = fcRun(["fc-match", "-f", "%{file}\\n", "monospace", "-s"]);
+        if (fbRes.status == 0)
+        {
+            foreach (line; fbRes.output.splitLines)
+            {
+                string path = line.strip.idup;
+                if (path.length == 0 || path == primaryPath)
+                    continue;
+                const isNerd = path.canFind("NerdFont") || path.canFind("Nerd Font");
+                if (isNerd && nerd is null)
+                    nerd = path;
+                else if (!isNerd && regular is null
+                    && (path.canFind("DejaVu") || path.canFind("FreeMono")
+                        || path.canFind("LiberationMono")))
+                    regular = path;
+                if (nerd !is null && regular !is null)
+                    break;
+            }
+        }
+        auto emojiRes = fcRun(["fc-match", "-f", "%{file}", "emoji:color=true"]);
+        const found = emojiRes.status == 0 ? emojiRes.output.strip.idup : null;
+        if (found.canFind("Emoji") && !found.endsWith(".ttc"))
+            emoji = found;
+    }
+}
+
 /// The multi-face font resource. See the module header.
 struct FontSet
 {
@@ -240,59 +292,22 @@ struct FontSet
         // Optional --font-codepoint-map fonts.
         fs.parseCodepointMaps(codepointMapOpt, sources);
 
-        if (sources.useSystemFontDb)
+        // The fallbacks every arm shares (`systemFallbackFacePaths`); the
+        // emoji face is shaped through `ClusterCache`, not loaded here.
         {
-            version (OSX)
+            string nerd, regular, emoji;
+            systemFallbackFacePaths(fontPath, sources, nerd, regular, emoji);
+            if (nerd.length != 0)
             {
-                // The `fc-match monospace -s` analog, over CoreText's family
-                // enumeration.
-                string nerdPath, regularPath;
-                fallbackFaces(fontPath, nerdPath, regularPath);
-                if (nerdPath.length != 0)
-                {
-                    fs.nerdFallback.pathZ = nerdPath.toStringz;
-                    fs.nerdFallback.deferred = true;
-                }
-                if (regularPath.length != 0)
-                {
-                    fs.regularFallback.pathZ = regularPath.toStringz;
-                    fs.regularFallback.deferred = true;
-                }
+                fs.nerdFallback.pathZ = nerd.toStringz;
+                fs.nerdFallback.deferred = true;
             }
-            else
+            if (regular.length != 0)
             {
-                // Fallbacks: the first Nerd Font and first common regular
-                // monospace.
-                auto fbRes = fcRun(["fc-match", "-f", "%{file}\\n", "monospace", "-s"]);
-                if (fbRes.status == 0)
-                {
-                    foreach (line; fbRes.output.splitLines)
-                    {
-                        string path = line.strip.idup;
-                        if (path.length == 0 || path == fontPath)
-                            continue;
-                        const isNerd = path.canFind("NerdFont")
-                            || path.canFind("Nerd Font");
-                        if (isNerd && fs.nerdFallback.pathZ is null)
-                        {
-                            fs.nerdFallback.pathZ = path.toStringz;
-                            fs.nerdFallback.deferred = true;
-                        }
-                        else if (!isNerd && fs.regularFallback.pathZ is null
-                            && (path.canFind("DejaVu") || path.canFind("FreeMono")
-                                || path.canFind("LiberationMono")))
-                        {
-                            fs.regularFallback.pathZ = path.toStringz;
-                            fs.regularFallback.deferred = true;
-                        }
-                        if (fs.nerdFallback.pathZ !is null && fs.regularFallback.pathZ !is null)
-                            break;
-                    }
-                }
+                fs.regularFallback.pathZ = regular.toStringz;
+                fs.regularFallback.deferred = true;
             }
         }
-        else
-            fs.loadFallbacksFromDirs(fontPath, sources.dirs);
 
         fs.measure();
         const(char)*[4 + MAX_CODEPOINT_MAPS] shapePaths;
@@ -680,51 +695,6 @@ struct FontSet
     // Fallback faces without fontconfig: the best-ranked Nerd-Font file in
     // `dirs` that is not the primary, and the first family of a fixed
     // common-mono preference list (the stand-in for `fc-match monospace -s`).
-    private void loadFallbacksFromDirs(string fontPath, const(string)[] dirs) @system
-    {
-        import std.string : toStringz;
-
-        // RANKED, not first-hit. `fontFilesInDirs` sorts within a directory,
-        // so taking the first Nerd-named file picked whatever sorted first —
-        // and with `FiraCodeNerdFontMono-{Bold,Regular}.ttf` both shipped,
-        // 'B' < 'R' meant every fallback icon glyph rendered BOLD. The
-        // fontconfig path cannot do this: `fc-match monospace -s` returns
-        // regular faces in preference order.
-        string bestNerd;
-        int bestNerdRank = int.max;
-        foreach (path; fontFilesInDirs(dirs))
-        {
-            if (path == fontPath)
-                continue;
-            if (!path.canFind("NerdFont") && !path.canFind("Nerd Font"))
-                continue;
-            // A fallback supplies glyphs the primary lacks, so it wants the
-            // plainest face available: an explicit Regular, else anything
-            // undecorated, else a styled face as a last resort.
-            const rank = isRegularFace(path) ? 0 : (isUndecoratedFace(path) ? 1 : 2);
-            if (rank < bestNerdRank)
-            {
-                bestNerd = path;
-                bestNerdRank = rank;
-            }
-        }
-        // Keep trying on a failed load rather than giving up on the fallback
-        // entirely — the fontconfig loop re-tests `present` for this reason.
-        if (bestNerd.length != 0 && nerdFallback.pathZ is null)
-        {
-            nerdFallback.pathZ = bestNerd.toStringz;
-            nerdFallback.deferred = true;
-        }
-        const regular = resolveFontInDirs(
-            "DejaVu Sans Mono,Roboto Mono,Droid Sans Mono,Liberation Mono,Cousine",
-            dirs);
-        if (regular.length != 0 && regular != fontPath && regularFallback.pathZ is null)
-        {
-            regularFallback.pathZ = regular.toStringz;
-            regularFallback.deferred = true;
-        }
-    }
-
     // Parse `--font-codepoint-map` entries (`<ranges>=<family>`) and load each
     // mapped font, accepting only families fontconfig actually has installed
     // (without fontconfig: only families the directory scan resolves).
