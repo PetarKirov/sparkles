@@ -38,6 +38,7 @@ import autofill_chip : AutofillChip;
 import chrome : ChromeTheme;
 import droid_platform : DroidPlatform;
 import key_router : KeyRouter, paintGuide, Route;
+import page_kit : pageClipboard;
 import touch_guide : TouchGuide;
 import keymap : KeyCommand, TermCommand, TermContext;
 import screen_oracle : ScreenOracle;
@@ -778,6 +779,7 @@ struct DroidTerminal
         auto self = &this;
         auto guide = new TouchGuide(router.table, context, router.leader,
             (KeyCommand c) { self.pendingCommand = c; self.hasPending = true; });
+        guide.clipboard(pageClipboard((string text) { self.host.setClipboard(text); }));
         guide.onSearch = () {
             import sparkles.android.soft_input : showSoftKeyboard;
 

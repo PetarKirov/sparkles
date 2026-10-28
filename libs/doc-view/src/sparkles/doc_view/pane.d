@@ -27,7 +27,7 @@ import sparkles.syntax : GrammarRegistry, LabelSet, TsConfigCache;
 import sparkles.ui.canvas : DrawOp, fillRectOp, popClipOp, pushClipOp,
     RuleEdge, Scrollbar;
 import sparkles.ui.components.editor : EditorViewOptions, editorLineSpans;
-import sparkles.ui.editor.field : EditorField;
+import sparkles.ui.editor.field : EditorField, FieldClipboard, serveClipboard, useClipboard;
 import sparkles.ui.editor.keys : windowTarget;
 import sparkles.ui.geometry : Rect;
 import sparkles.ui.style : ColorScheme, schemeForBackground, Slot, Visual;
@@ -135,6 +135,9 @@ struct DocViewPane
     private bool searching;
     /// The search line's editor (`EDU4`), and its text as of the last edit.
     private EditorField queryField;
+    /// Where the search line copies to and pastes from (`EDY5`); unset, it
+    /// offers neither.
+    FieldClipboard!(void delegate(scope const(char)[]) @system, const(char)[] delegate() @system) clipboard;
     /// ditto
     private string query;
     private dchar pending; // `g` or `z`, awaiting its second key
@@ -548,6 +551,7 @@ struct DocViewPane
             case '/':
                 searching = true;
                 queryField = EditorField.singleLine("", windowTarget);
+                useClipboard(queryField, clipboard);
                 query = null;
                 vm.clearSearch();
                 return PaneKey.handled;
@@ -633,7 +637,7 @@ struct DocViewPane
         // The search line is an editor field (`EDU4`): it takes the keys,
         // Enter keeps the matches, Esc clears them. A chord the editor
         // declines is still the search line's while it is open.
-        const r = queryField.key(k);
+        const r = serveClipboard(queryField, queryField.key(k), clipboard);
         if (r.cancelled)
         {
             searching = false;

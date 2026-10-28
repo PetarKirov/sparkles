@@ -21,7 +21,8 @@ module page_kit;
 
 import sparkles.ui.glyphs : ActionIcon, iconText;
 import sparkles.input.events : Key, KeyEvent, WheelEvent;
-import sparkles.ui.editor.field : EditorField, FieldResult;
+import sparkles.ui.editor.field : EditorField, FieldClipboard, FieldResult, serveClipboard,
+    useClipboard;
 import sparkles.ui.editor.keys : editorBinds, windowTarget;
 import sparkles.base.text.grapheme : visibleWidth;
 import sparkles.ui.geometry : Constraints, Insets, Point, Rect, SizeSpec;
@@ -65,11 +66,22 @@ enum PageHit : size_t
 /// ditto
 enum size_t firstOwnHit = 0x9A6E_0100;
 
-/**
-The base of every page: header, scrolling, search editing. A page builds its
-body in `buildPage`, answers its own hits in `onHit` and its own keys in
-`onKey`.
-*/
+/// The clipboard a page's field copies to and pastes from (`EDY5`).
+alias PageClipboard = FieldClipboard!(void delegate(scope const(char)[]) @system,
+    const(char)[] delegate() @system);
+
+/// The system clipboard as the workspace `host` writes and the platform
+/// reads it.
+PageClipboard pageClipboard(void delegate(string) @system write) @system
+{
+    import sparkles.terminal_view.component : systemClipboardText;
+
+    if (write is null)
+        return PageClipboard.init;
+    return PageClipboard((scope const(char)[] text) { write(text.idup); },
+        () => systemClipboardText());
+}
+
 /**
 A search query typed straight into a page (`EDU4`): the toolkit's editor in
 single-line mode, with the window's key table, and the text a page reads.
@@ -81,6 +93,7 @@ struct QueryField
     private EditorField field;
     private bool started;
     private string text_;
+    private PageClipboard clipboard_;
 
     /// The query.
     string text() const @safe pure nothrow @nogc => text_;
@@ -88,9 +101,18 @@ struct QueryField
     /// Whether the query is empty.
     bool empty() const @safe pure nothrow @nogc => text_.length == 0;
 
+    /// Copy and paste through `clipboard`; without one the field offers
+    /// neither (`EDI5`).
+    void clipboard(PageClipboard clipboard) @safe pure nothrow
+    {
+        clipboard_ = clipboard;
+        useClipboard(field, clipboard_);
+    }
+
     /// One key; `handled` is `false` for a key the field declines,
     /// `changed` when the query changed.
-    FieldResult key(in KeyEvent k) @safe pure nothrow => synced(ensure().key(k));
+    FieldResult key(in KeyEvent k) @system
+        => synced(serveClipboard(ensure(), ensure().key(k), clipboard_));
 
     /// A paste (`EDI4`).
     FieldResult paste(scope const(char)[] text) @safe pure nothrow
@@ -119,6 +141,7 @@ struct QueryField
         if (!started)
         {
             field = EditorField.singleLine("", windowTarget);
+            useClipboard(field, clipboard_);
             started = true;
         }
         return field;
@@ -132,6 +155,11 @@ struct QueryField
     }
 }
 
+/**
+The base of every page: header, scrolling, search editing. A page builds its
+body in `buildPage`, answers its own hits in `onHit` and its own keys in
+`onKey`.
+*/
 abstract class Page : Surface, Scrollable, Pasteable
 {
     protected PageServices services;
@@ -139,6 +167,7 @@ abstract class Page : Surface, Scrollable, Pasteable
     ScrollBody scrollBody;
     /// The search field (`EDU4`), its text, and whether it has the keyboard.
     protected QueryField queryField;
+    private bool clipboardReady;
     /// ditto
     protected string query;
     /// ditto
@@ -258,13 +287,19 @@ abstract class Page : Surface, Scrollable, Pasteable
     }
 
     /// Typing into the focused field: the editor takes the keys; Esc, Enter
-    /// and Back leave the field, keeping its text.
-    private bool editQuery(in KeyEvent k) @safe
+    /// and Back leave the field, keeping its text. Copy and paste go
+    /// through the page's services (`EDY5`).
+    private bool editQuery(in KeyEvent k) @system
     {
         if (k.key == Key.back)
         {
             searching = false;
             return true;
+        }
+        if (!clipboardReady)
+        {
+            queryField.clipboard(pageClipboard(services.copy));
+            clipboardReady = true;
         }
         const r = queryField.key(k);
         if (r.submitted || r.cancelled)
@@ -914,4 +949,25 @@ version (unittest)
     assert(p.key(KeyEvent(Key.char_, 'w', Mods(ctrl: true))), "Ctrl-W is the field's");
     assert(p.query == "cd ");
     assert(!p.key(KeyEvent(Key.char_, 'g', Mods(ctrl: true))), "an unbound chord is not");
+}
+
+@("page_kit.QueryField.copiesAndPastesThroughItsClipboard")
+@system unittest
+{
+    import sparkles.input.events : Mods;
+
+    string board = "board";
+    QueryField q;
+    assert(!q.key(KeyEvent(Key.char_, 'v', Mods(ctrl: true))).changed, "no clipboard, no paste");
+    q.clipboard(PageClipboard((scope const(char)[] t) { board = t.idup; }, () => board));
+    q.set("abc");
+    q.key(KeyEvent(Key.char_, 'a', Mods(ctrl: true)));
+    assert(q.key(KeyEvent(Key.char_, 'x', Mods(ctrl: true))).changed && q.empty);
+    assert(board == "abc", "cut copies");
+    q.key(KeyEvent(Key.char_, 'v', Mods(ctrl: true)));
+    q.key(KeyEvent(Key.char_, 'v', Mods(ctrl: true)));
+    assert(q.text == "abcabc", "paste reads the clipboard");
+    q.clear();
+    q.key(KeyEvent(Key.char_, 'v', Mods(ctrl: true)));
+    assert(q.text == "abc", "the clipboard survives a cleared field");
 }

@@ -23,7 +23,7 @@ import sparkles.ui.style : Slot;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 
 import chrome : band, label, row, uiLabel;
-import page_kit : QueryField, ScrollBody, searchRow;
+import page_kit : PageClipboard, QueryField, ScrollBody, searchRow;
 import sparkles.ui.editor.keys : editorBinds, windowTarget;
 import keymap : Binding, Chord, KeyCommand, TermCommand, TermContext;
 import surfaces : Pasteable, Placement, Scrollable, Surface, SurfaceContext;
@@ -44,6 +44,9 @@ final class TouchGuide : Surface, Scrollable, Pasteable
     private Chord[] path; // the levels entered, the leader first
     private void delegate(KeyCommand) run;
     private QueryField queryField; // the search, typed straight in (`EDU4`)
+
+    /// Copy and paste for the search (`EDY5`).
+    void clipboard(PageClipboard c) @safe pure nothrow => queryField.clipboard(c);
     private string query() const @safe pure nothrow @nogc => queryField.text;
     private Binding[] shown; // the rows built, for the hits
     private KeyCommand[] found; // the search results

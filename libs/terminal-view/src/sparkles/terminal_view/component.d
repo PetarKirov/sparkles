@@ -144,7 +144,7 @@ private void applyColorOverrides(GhosttyTerminal terminal, in ColorOverrides c) 
 
 /// The system clipboard's text (see the module comment: reads bypass the
 /// host); empty when it holds none.
-private const(char)[] readClipboard() @system
+const(char)[] systemClipboardText() @system
 {
     version (Android)
     {
@@ -2175,7 +2175,7 @@ struct TerminalView
         if (s.childExited)
             return;
         const text = opts.hooks.clipboardText !is null
-            ? opts.hooks.clipboardText() : readClipboard();
+            ? opts.hooks.clipboardText() : systemClipboardText();
         auto w = appender!(char[]);
         w.put("\x1b]52;");
         w.put(readSelectors[0 .. readSelectorsLen]);
@@ -2513,7 +2513,7 @@ struct TerminalView
                 return;
             if (k.unshifted == 'v')
             {
-                sendPaste(readClipboard());
+                sendPaste(systemClipboardText());
                 return;
             }
         }
@@ -2670,7 +2670,7 @@ struct TerminalView
     void pasteClipboard() @system
     {
         sendPaste(opts.hooks.clipboardText !is null
-            ? opts.hooks.clipboardText() : readClipboard());
+            ? opts.hooks.clipboardText() : systemClipboardText());
     }
 
     private bool copySelection(H)(ref H h)

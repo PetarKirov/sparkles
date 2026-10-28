@@ -33,6 +33,7 @@ import chrome : ChromeTheme, Layer, paintLayer, place, Place;
 import opener : OpenerHit, pillBand, rail, usesPill;
 import pane_chrome : PaneBox, paneBoxes, paneFrame, paneHeader, paneToolbar, ToolAction,
     toolHit;
+import page_kit : pageClipboard;
 import tab_tree : TabTree, TreePane, TreeTab;
 import confirmations : ClipboardRead, PasteConfirm;
 import sparkles.terminal_view.notification_log : NotificationLog, NotificationRoute;
@@ -455,6 +456,8 @@ struct WorkspaceHost
             // Read on the pane's second paint: never before the window's first
             // frame, and a hidden tab's document only once its tab is shown.
             p.deferLoad = true;
+            auto self = &this;
+            p.clipboard = pageClipboard((string text) { self.setClipboard(text); });
             cast(void) p.open(docEnv, path, chromeTheme(viewerFg, viewerBg));
             viewers[id] = p;
             dirty = true;
@@ -1573,7 +1576,7 @@ struct WorkspaceHost
             return;
         }
         auto self = &this;
-        surfaces.push(new TabTree(() => self.treeTabs(), (size_t tab, PaneId pane) {
+        auto tree = new TabTree(() => self.treeTabs(), (size_t tab, PaneId pane) {
             if (pane)
                 cast(void) self.ws.focusPane(pane);
             else
@@ -1587,7 +1590,9 @@ struct WorkspaceHost
             if (id)
                 cast(void) self.create(id);
             self.repaint = true;
-        }));
+        });
+        tree.clipboard(pageClipboard((string text) { self.setClipboard(text); }));
+        surfaces.push(tree);
     }
 
     /**

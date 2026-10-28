@@ -35,7 +35,7 @@ import sparkles.ui.geometry : SizeSpec;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 
 import chrome : band, uiLabel;
-import page_kit : fitCells, QueryField, ScrollBody, scrollViewport, searchRow, settleViewport;
+import page_kit : fitCells, PageClipboard, QueryField, ScrollBody, scrollViewport, searchRow, settleViewport;
 import sparkles.ui.editor.keys : editorBinds, windowTarget;
 import surfaces : Pasteable, Placement, Scrollable, Surface, SurfaceContext;
 
@@ -94,6 +94,9 @@ final class TabTree : Surface, Scrollable, Pasteable
     private void delegate(size_t tab, PaneId pane) pick;
     private void delegate() newTab;
     private QueryField queryField; // the search, typed straight in (`EDU4`)
+
+    /// Copy and paste for the search (`EDY5`).
+    void clipboard(PageClipboard c) @safe pure nothrow => queryField.clipboard(c);
     private string query() const @safe pure nothrow @nogc => queryField.text;
     private TreeData!TabNode data;
     private TreeViewState!ulong tv;
