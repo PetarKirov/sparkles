@@ -679,7 +679,9 @@ context-complete memoization keys.
 
 **FTD6: Explicit routes.** Codepoint-range routes chosen by the user and a
 procedural face for box-drawing and block characters **must** take part in
-the chain as ordinary entries.
+the chain as ordinary entries. A route overrides the match for the scalars it
+holds and its face covers, and layout splits spans at route boundaries
+([`FTX16`](./decisions.md#ftx16-codepoint-routes-override-the-primary)).
 
 _Rationale:_ Treating procedural glyphs as a face lets them share shaping,
 caching and fallback with real fonts, instead of being a renderer special

@@ -8,7 +8,7 @@ a face are free functions callable as methods (`face.charMap`).
 
 | Symbol          | Meaning                                                                                                                                                                                                                                            |
 | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `FontError`     | `kind`, `tag` (or none), `offset` (absolute), `tableOffset` (inside `tag`, when readable), `limit`, `limitValue` and `needed`                                                                                                                      |
+| `FontError`     | `kind`, `tag` (or none), `offset` (absolute), `tableOffset` (inside `tag`, when readable), `limit`, `limitValue`, `needed` and the `correction` behind it                                                                                          |
 | `FontErrorKind` | `notAFont`, `truncated`, `badOffset`, `badValue`, `unsupportedVersion`, `missingTable`, `limitExceeded`, `indexOutOfRange`, `invalidEncoding`, `unsupportedCapability`, and kinds later milestones use                                             |
 | `FontLimit`     | the limits of `FTB3`: `tableRecords` (4,096), `cmapSubtables` (64), `variationAxes` (64), `shapingFeatures` (512), and the outline and colour limits; `callerStorage` with `needed`; `engineBuffer` when the shaping engine cannot grow its buffer |
 | `Tag`           | a four-byte table tag: `Tag("head")`, `.chars`                                                                                                                                                                                                     |
@@ -17,7 +17,8 @@ a face are free functions callable as methods (`face.charMap`).
 
 | Operation                                 | Result                                                                                     |
 | ----------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `openFace(bytes, index = 0)`              | a `Face`; checks the container, directory, `head`, `maxp` and the `cmap` header; O(tables) |
+| `openFace(bytes, index = 0, policy)`      | a `Face`; checks the container, directory, `head`, `maxp` and the `cmap` header; O(tables) |
+| `face.corrections`, `requiresBytecode`    | the correction registry's entries the face triggers                                        |
 | `openCollection(bytes)`                   | a `Collection`: `count`, `face(i)`; a single font is a collection of one                   |
 | `face.table(tag)`                         | the table's bytes, borrowed; `missingTable` or `badOffset`                                 |
 | `face.unitsPerEm`, `numGlyphs`            | from `head` and `maxp`                                                                     |
@@ -239,7 +240,9 @@ variation store from 1.3). `face.gdefVariationStore(fvarAxes)` is the store
 `MATH` and `GPOS` VariationIndex tables resolve against: not `present` without
 `GDEF`, before 1.3, or with a null offset; any other `GDEF` problem is recorded
 as a `broken` store, so only a delta that reads it at nonzero coordinates
-reports it.
+reports it. `face.glyphClass(gid)`, `markAttachmentClass(gid)` and
+`inMarkGlyphSet(set, gid)` read the class definitions; for a face whose
+`GDEF` HarfBuzz ignores, every reading is absent and names the correction.
 
 ## Math — `sparkles.font.math_table`
 
@@ -473,6 +476,88 @@ are attached; `face.jstfPriorityLookups(script, language, index, list, out)`
 copies one list whole into caller storage. Absence is `present` false or a
 count of zero; a list or record that does not fit is `truncated`. A maximum
 record's lookups are `JSTF`'s own, which the engine cannot apply.
+
+## Corrections — `sparkles.font.corrections`
+
+`openFace(bytes, index, policy)` takes a `CorrectionPolicy`, `off` by
+default: corrections are opt-in here, and the GUI stack asks for them
+(FTX15). Under `apply` a face records the registry entries its signature
+matches, from its directory and table headers (FTD44); under `off` every
+result is the stored value. A result an entry changes carries its
+`Correction`, as do the `FontError` of a table it hides.
+
+| Entry                                           | Follows                        | Effect                                                                                |
+| ----------------------------------------------- | ------------------------------ | ------------------------------------------------------------------------------------- |
+| `cambriaMathMinHeights`                         | HarfBuzz `is_bad_cambria`      | `MATH`'s two minimum heights reported swapped (`MathValue.correction`)                |
+| `blocklistedGdef`                               | HarfBuzz `GDEF` blocklist      | `GDEF` read as absent: classes, mark sets and carets carry the correction             |
+| `arabicSimplifiedPage`, `arabicTraditionalPage` | HarfBuzz's Arabic PUA maps     | a symbol `cmap` maps Arabic scalars through the code page (`CharMap.lookup`)          |
+| `requiresBytecode`                              | FreeType `tt_check_trickyness` | `face.requiresBytecode`; the rasterizer refuses the face with `unsupportedCapability` |
+
+`correctionInfo(c)` gives an entry's identifier, engine, signature and
+effect; `face.corrections` lists a face's. The data is generated from the
+pinned HarfBuzz and FreeType sources by `libs/font/tools/gen_correction_data.d`.
+
+## The catalog — `sparkles.font.catalog`, `face_record`, `catalog_cache`, `platform_fonts`
+
+| Operation                                                         | Result                                                                                                                       |
+| ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `buildCatalog(vfs, sources, options, authority, catalog, report)` | records of every face of every listed file, over any capability VFS backend; problems as outcomes in the `BuildReport`       |
+| `FontSource.files`, `directory`, `bundle`, `memory`, `platform`   | the sources; each has a unique label, and `map` or `read` access (`map` for bundle and platform files by default)            |
+| `catalog.records`, `catalog.pools`, `catalog.text(s)`             | the `FaceRecord`s in source, identity and index order, and the strings, aliases, coverage and axes they refer into           |
+| `catalog.family(name, into)`                                      | the records having `name` among their aliases, ignoring ASCII case                                                           |
+| `describeFace(face, pools, record)`                               | one face's record: names, weight, width and style ranges, spacing, coverage, colour formats, axes, corrections, field errors |
+| `listPlatformFonts(options)`                                      | the files fontconfig or Core Text lists, loaded at run time, or the Windows and Android font directories                     |
+
+`BuildOptions.workers` sets the parsing threads (0: one per processor);
+the result does not depend on it. With `cacheDirectory` set, a build reuses
+the records of every file whose label, identity, size and modification time
+are unchanged, and rewrites the cache atomically when anything changed; a
+cache of another version, policy, length, hash or structure is discarded
+whole (FTD22–FTD24). Symbolic links are followed under the authority the
+build is given, at most 40.
+
+## Matching — `sparkles.font.matching`
+
+`matchFont(catalog, request)` implements CSS Fonts Level 4 §5.2 step 4: the
+first requested family a record answers to, then width, style and weight,
+each searched phase by phase over the values the records support (a
+variable face supports its whole ranges). A `MatchRequest` holds family
+names, weight (1–1,000), width (50–200 %), `normal`, `italic` or `oblique`
+at an angle, and whether to synthesize; values are F16.16. The `Match`
+carries the record, the values found, the `wdth`, `wght`, `slnt` and `ital`
+coordinates, a `MatchScore` of (phase, distance) per step, and the
+`Synthesis` still needed (emboldening at 1/24 em from weight 600 on a face
+below 600; a slant for an italic or oblique request an upright face
+answers). `found` is false when no family matches.
+
+## Fallback chains — `sparkles.font.fallback`, `box_face`
+
+| Operation                                             | Result                                                                                                                 |
+| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `buildChain(catalog, primary, items, chain)`          | entries from `ChainItem.route`s, `primary`, then `family`, `boxDrawing` and `everything`; `badValue` for another order |
+| `chain.characterEntry(cp, presentation)`              | the first entry covering `cp` (a route: in its ranges), preferring coloured faces for emoji presentation; or `noEntry` |
+| `chain.routeEntry(cp)`                                | the route that claims `cp`: its ranges hold it and its face covers it; layout splits spans at routes (FTX16)           |
+| `chain.identity`                                      | 128 bits of BLAKE3 over the catalog's keys and policy, the requests, the items and the entries                         |
+| `CharacterCache!N.characterEntry(chain, cp, p)`       | the same, memoized under the chain's identity                                                                          |
+| `FaceStore!V(vfs, chain, authority).face(i, outcome)` | entry `i`'s face, opened on first use; `stale` when its file changed since the build                                   |
+| `store.boxFace(ppem)`                                 | the generated box-drawing face at that ppem, built from the primary's cell metrics and kept for the store's life       |
+| `boxFaceMeasure(cell)`, `buildBoxFace(cell, storage)` | a TrueType font of U+0020 and U+2500–U+259F drawn on whole pixels of the cell, into caller storage                     |
+
+A record appears once per coordinates and synthesis, so faces whose coverage
+repeats an earlier one's stay in the chain for shaping. A catalog and a chain
+may be read from any thread; a store and a cache belong to one.
+
+## Whole-span trials — `sparkles.font.fallback_trial` (the `engine` configuration)
+
+`trySpan(chain, store, request, size, policy, attempts, glyphs, spans,
+boundaries, language)` shapes the run of an `FTS7` request whole, with its
+context, through the chain's candidates in order, and returns the first that
+gives no `.notdef` and, by default, shapes each RGI emoji sequence to one
+visible glyph; otherwise an unresolved outcome with the exact run. Each
+`Attempt` says why a candidate failed: `outsideRoute`, `pruned` (with the
+scalar that proves `.notdef`), `bytecodeRequired`, `unopened`, `notdef` or
+`unligated`. `pruningScalar` and `provesNotdef` are the pruning rule;
+`trialKey` is the 128-bit key an outcome may be cached under.
 
 ## Shaping — `sparkles.font.shaping` (the `engine` configuration)
 
