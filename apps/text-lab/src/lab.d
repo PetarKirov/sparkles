@@ -337,12 +337,17 @@ struct Lab
         const destBottom = overDark ? size.height * ch : lightTop;
         enum margin = 8;
         const s = l.scale > 0 ? l.scale : 1;
-        l.sourceWidth = (room - 2 * margin) / s;
+        // A wide window (a tablet) gives it half the width, on the pointer's
+        // side, straight above or below what it magnifies.
+        const halfWidth = side && room >= 2 * px.width / 3;
+        const width = halfWidth ? room / 2 : room;
+        const left = halfWidth && pointer.x >= room / 2 ? room / 2 : 0;
+        l.sourceWidth = (width - 2 * margin) / s;
         l.sourceHeight = (destBottom - destTop - 2 * margin) / s;
         static int clamp(int v, int lo, int hi) => v < lo ? lo : v > hi ? hi : v;
         l.sourceX = clamp(pointer.x - l.sourceWidth / 2, 0, room - l.sourceWidth);
         l.sourceY = clamp(pointer.y - l.sourceHeight / 2, sourceTop, sourceBottom - l.sourceHeight);
-        l.x = margin;
+        l.x = left + margin;
         l.y = destTop + margin;
         h.loupe(l);
     }
@@ -851,4 +856,15 @@ version (unittest) private struct SettingsHost
     assert(!lab.pointing, "a lifted finger hides it");
     lab.handle(h, Event(PointerEvent(action: PointerAction.press, pos: Point(20, 1))));
     assert(lab.pointer == Point(20, 30), "the header does not aim the loupe");
+
+    // A tablet (100 cells): half the width, on the pointer's side.
+    h.rec.size = Size(100, 78);
+    lab.pointAt(Point(20, 20));
+    frame();
+    l = h.shownLoupe;
+    assert(l.x == 8 && l.sourceWidth * l.scale <= 50 - 16, "the left half, under the pointer");
+    lab.pointAt(Point(80, 20));
+    frame();
+    l = h.shownLoupe;
+    assert(l.x == 58 && l.x + l.sourceWidth * l.scale <= 100 - 8, "the right half");
 }
