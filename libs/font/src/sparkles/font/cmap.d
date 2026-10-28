@@ -16,6 +16,7 @@ import sparkles.font.corrections : arabicPuaCode, Correction;
 import sparkles.font.errors : FontError, FontErrorKind, FontResult, fontErr, fontOk, Tag, tableError;
 import sparkles.font.face : Face;
 import sparkles.font.mac_roman : macRomanByUnicode, unicodeToMacRoman;
+import sparkles.font.tables : os2;
 
 @safe pure nothrow @nogc:
 
@@ -463,6 +464,19 @@ private FontResult!CharMap build(scope const Face face, return scope const(ubyte
     m.platform_ = be16(cmap, 4 + 8 * i);
     m.encoding_ = be16(cmap, 6 + 8 * i);
     m.lookup_ = lookupFor(m.platform_, m.encoding_);
+    // HarfBuzz duplicates U+0000–00FF at U+F000 only when OS/2 names no code
+    // page: under version 0 with another high byte of `fsSelection`, it looks
+    // codepoints up directly (FTP25).
+    if (m.lookup_ == CmapLookup.symbol)
+    {
+        const o = os2(face);
+        if (o.hasValue && o.value.version_ == 0)
+        {
+            const page = o.value.fsSelection >> 8;
+            if (page != 0 && page != 0xB2 && page != 0xB3)
+                m.lookup_ = CmapLookup.direct;
+        }
+    }
     static immutable Correction[2] pages = [Correction.arabicSimplifiedPage, Correction.arabicTraditionalPage];
     if (m.lookup_ == CmapLookup.symbol)
         foreach (page; pages)

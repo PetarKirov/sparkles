@@ -431,8 +431,9 @@ for `FTD12` table checksums brought to the listed ones by a final word.
 - `FTD11`: a fixture with a symbol `cmap` over the private-use codes of each
   page and an `OS/2` version 0 `fsSelection` of `0xB200` and `0xB300` maps
   every Arabic scalar of the page as `hb_font_get_nominal_glyph` does, and
-  its character coverage lists them; `OS/2` version 1, or another high byte,
-  falls back to the ordinary symbol mapping.
+  its character coverage lists them; `OS/2` version 1 falls back to the
+  ordinary symbol mapping, and another high byte to direct lookups without
+  the U+F000 duplication, as `hb_font_get_nominal_glyph` does.
 - `FTD12`: fixtures named after each tricky family, and fixtures whose
   `cvt `, `fpgm` and `prep` match a listed face, are recorded as requiring
   bytecode exactly when FreeType's `FT_IS_TRICKY` says so; the rasterizer
