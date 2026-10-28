@@ -100,6 +100,8 @@ the catalog build; `describeFace` fills the rest.
 */
 struct FaceRecord
 {
+    @safe pure nothrow @nogc:
+
     /// The source's position in the build's list.
     uint source;
     /// The file's identity within its source (FTD17).
@@ -140,7 +142,7 @@ struct FaceRecord
     PoolSpan errors;
 
     /// Whether the face requires hinting bytecode to draw (FTD12).
-    bool requiresBytecode() const pure => corrections.has(Correction.requiresBytecode);
+    bool requiresBytecode() const => corrections.has(Correction.requiresBytecode);
 }
 
 

@@ -429,7 +429,7 @@ private struct Listed
 }
 
 /// A file read for parsing, with what is known of it.
-private struct FileJob(V)
+package struct FileJob(V)
 {
     uint source;
     StringRef identity;
@@ -459,7 +459,7 @@ private struct FileJob(V)
 }
 
 /// A job on the C heap, as jobs own mappings and buffers and are never copied.
-private FileJob!V* newJob(V)() @trusted
+package FileJob!V* newJob(V)() @trusted
 {
     import core.lifetime : emplace;
     import core.memory : pureMalloc;
@@ -471,7 +471,7 @@ private FileJob!V* newJob(V)() @trusted
 }
 
 /// Destroys and frees a job of `newJob`.
-private void freeJob(V)(FileJob!V* p) @trusted
+package void freeJob(V)(FileJob!V* p) @trusted
 {
     import core.memory : pureFree;
 
@@ -1334,4 +1334,73 @@ private void writeCache(V)(V* vfs, in BuildOptions options, AmbientAuthority aut
         o.io = w.error;
         report.add(o, options.cacheName);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Reopening a record's file (FTD32)
+// ---------------------------------------------------------------------------
+
+/**
+Opens the file of record `r` for a face store (FTD32): resolves its links,
+stats it, and maps or reads it by its source's mode; a memory source's bytes
+are borrowed. A size or time unlike the record's, or a memory source whose
+content no longer hashes to its identity, is `stale`. Returns the job owning
+the bytes (`job.bytes`), to be released with `freeJob`, or null with
+`outcome` set.
+*/
+package FileJob!V* openRecordFile(V)(V* vfs, ref const Catalog catalog, in FaceRecord r,
+    AmbientAuthority authority, out BuildOutcome outcome)
+{
+    const source = catalog.sources[r.source];
+    outcome.source = r.source;
+    auto job = newJob!V();
+    if (source.kind == SourceKind.memory)
+    {
+        static immutable hex = "0123456789abcdef";
+        const hash = blake3(source.bytes);
+        char[64] text;
+        foreach (i, b; hash)
+        {
+            text[2 * i] = hex[b >> 4];
+            text[2 * i + 1] = hex[b & 15];
+        }
+        if (text[] != catalog.text(r.identity))
+        {
+            outcome.kind = OutcomeKind.stale;
+            freeJob(job);
+            return null;
+        }
+        job.bytes = source.bytes;
+        return job;
+    }
+    UniqueBuffer!char path, scratch;
+    const id = catalog.text(r.identity);
+    if (source.kind == SourceKind.platform)
+        path.put(id);
+    else
+        joinPath(path, catalog.text(source.path), id);
+    PathSet seen;
+    const resolved = resolveFile(vfs, path[], authority, *job, scratch, seen);
+    if (resolved == Load.failed)
+    {
+        outcome.kind = job.linkLimited ? OutcomeKind.linkLimit : OutcomeKind.io;
+        outcome.io = job.ioError;
+        freeJob(job);
+        return null;
+    }
+    if (job.size != r.fileSize || job.hasModified != r.hasModified
+            || r.hasModified && job.modifiedNs != r.modifiedNs)
+    {
+        outcome.kind = OutcomeKind.stale;
+        freeJob(job);
+        return null;
+    }
+    if (!readFile(vfs, authority, source.maps, *job))
+    {
+        outcome.kind = OutcomeKind.io;
+        outcome.io = job.ioError;
+        freeJob(job);
+        return null;
+    }
+    return job;
 }

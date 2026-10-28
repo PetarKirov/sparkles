@@ -83,6 +83,8 @@ struct MatchScore
 /// The result of `matchFont` (FTD28).
 struct Match
 {
+    @safe pure nothrow @nogc:
+
     /// False when no requested family names a record (`noMatch`).
     bool found;
     /// The record's index in the catalog.
