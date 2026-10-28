@@ -255,7 +255,10 @@ filter types pass.
 
 ## M7 Discovery and fallback
 
-**Obligations.** `FTD1`–`FTD12`.
+**Obligations.** `FTD1`–`FTD12`, refined to operation level by
+[`discovery.md`](./discovery.md) (`FTD13`–`FTD46`); base's VFS mapping
+([`VFO11`](../base/vfs/SPEC.md#vfo11-mapping)), which the catalog reads faces
+through.
 
 **Prerequisites.** [`FTX8`](decisions.md#ftx8-the-catalog-builds-synchronously-over-a-worker-pool);
 M1 face records and M4 contextual whole-span shaping. Public catalog, chain and

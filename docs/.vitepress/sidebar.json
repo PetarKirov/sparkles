@@ -1410,6 +1410,10 @@
             "link": "/specs/font/variation-metrics"
           },
           {
+            "text": "Discovery, Matching, Fallback (M7)",
+            "link": "/specs/font/discovery"
+          },
+          {
             "text": "Delivery Plan",
             "link": "/specs/font/PLAN"
           },
