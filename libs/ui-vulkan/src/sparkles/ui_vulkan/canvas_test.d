@@ -1172,6 +1172,53 @@ private ubyte[] twoColourImage()
     assert(accentInk(shaped) > accentInk(unshaped) + 255 * 3, format("the accent adds ink only shaped: %s unshaped, %s shaped", accentInk(unshaped), accentInk(shaped)));
 }
 
+@("ui_vulkan.canvas.aHintingChangeMidFrameKeepsWhatItDrew")
+@system unittest
+{
+    // Text drawn before a hinting change in the same frame keeps its glyphs:
+    // the atlas starts over at the next frame, not under quads already
+    // recorded (which once scrambled the text lab's header).
+    if (!readbackEnabled)
+        return skipTest(readbackSkipReason);
+    import std.file : read;
+    import std.path : buildPath;
+    import std.process : environment;
+    import sparkles.ui_vulkan.painter : TextMetrics;
+    import sparkles.ui_vulkan.text_rendering : Hinting, TextRendering;
+
+    const bytes = cast(const(ubyte)[]) read(
+        environment.get("SPARKLES_FONTS_PATH").buildPath("DejaVuSansMono.ttf"));
+    auto rig = new Rig;
+    rig.open("ui-vulkan-hinting-mid-frame", 80, 40);
+    scope (success)
+        rig.close();
+    assert(rig.canvas.cellFont(bytes, 13, TextMetrics(ascent: 12, underlineY: 14,
+        underlineHeight: 1, strikeY: 8)));
+    const metrics = FrameMetrics(cellW: 8, cellH: 20);
+    TextRendering light, none;
+    light.hinting = Hinting.light;
+    none.hinting = Hinting.none;
+    const ink = Visual(fg: white, fgAlpha: 255);
+
+    rig.canvas.textRendering(light);
+    const hinted = rig.draw((ref Canvas c) { c.textRun(Point(0, 0), "zHTEaxe", ink); }, metrics, black);
+    rig.canvas.textRendering(none);
+    const unhinted = rig.draw((ref Canvas c) {
+        c.textRun(Point(0, 0), "zHTEaxe", ink);
+        c.textRun(Point(0, 1), "zHTEaxe", ink);
+    }, metrics, black);
+    rig.canvas.textRendering(light);
+    const mixed = rig.draw((ref Canvas c) {
+        c.textRun(Point(0, 0), "zHTEaxe", ink);
+        c.textRendering(none);
+        c.textRun(Point(0, 1), "zHTEaxe", ink);
+    }, metrics, black);
+    enum row = 80 * 20 * 4;
+    assert(hinted[0 .. row] != unhinted[0 .. row], "hinting changes these glyphs at 13 px");
+    assert(mixed[0 .. row] == hinted[0 .. row], "the row drawn before the change");
+    assert(mixed[row .. $] == unhinted[row .. $], "the row drawn after it");
+}
+
 @("ui_vulkan.canvas.aLoupeRedrawsItsSourceAsBlocks")
 @system unittest
 {
