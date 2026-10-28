@@ -32,6 +32,13 @@ when the input fell inside a unit and moved by its affinity, or `outOfRange`.
 Malformed UTF-8 is stored unchanged and counted as `UtfMode.replacement`
 reads it: one scalar and one UTF-16 unit per maximal subpart.
 
+> [!WARNING]
+> Never keep a `Text`, or anything holding one (`Edit`, `ChangeSet`), in a
+> GC-allocated array: an array literal or `~=`. druntime fills such an array
+> by blitting, without the copy that counts the reference, and the collector
+> later releases the elements again. Use a `sparkles.base.buffer` buffer or a
+> static array.
+
 ## `TextSummary`
 
 Module `sparkles.text_buffer.summary`. The measures of a byte sequence:
