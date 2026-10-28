@@ -3,7 +3,9 @@ The text lab: one specimen of everything the canvas draws text with — weights
 and styles, digits and punctuation, scripts, combining marks, CJK, emoji and
 their sequences, icons, box drawing — on a dark panel and a light one, with
 the canvas's text-rendering settings switched live and a loupe that shows
-the window's pixels exactly as they were composited.
+the window's pixels exactly as they were composited: what the pointer is
+over in one panel, magnified to fill the other, with a crosshair (`x`) on
+the pixel it aims at while a mouse hovers or a finger is down.
 
 The layout holds from a phone held upright (about 49 cells) to a desktop
 window: a three-row header — the status and a Settings button, each row
@@ -28,6 +30,7 @@ import sparkles.input : Event, isEndOfInput, Key, KeyEvent, match, PointerAction
 import sparkles.ui.geometry : Insets, Point, Rect, Size;
 import sparkles.ui.style : BorderStyle, BoxBorder, Visual;
 import sparkles.ui.widget : Builder, WidgetKind, WidgetTree;
+import sparkles.ui_vulkan.painter : rgba;
 import sparkles.ui_vulkan.text_rendering : Compositing, Hinting, Loupe, TextRendering;
 
 /// The specimen, line by line: what each line shows, and the text.
@@ -65,8 +68,12 @@ struct Lab
     string screenshotDir;
     /// Whether the settings sheet is open.
     bool sheetOpen;
+    /// Whether lines cross at the pointer while it hovers or a finger is
+    /// down: what the loupe magnifies, aimed to the pixel.
+    bool crosshair;
     private int framesToShot = 3; // the font atlas and the window settle first
     private Point pointer = Point(-1, -1);
+    private bool pointing; // a mouse hovers, or a finger is down
     private bool sentSettings;
     // What the last frame laid out, for a tap or click: the Settings
     // button, the sheet, and the sheet's buttons.
@@ -116,6 +123,9 @@ struct Lab
         const half = (size.height - headerRows) / 2;
         panel(canvas, Rect(0, headerRows, size.width, half), dark);
         panel(canvas, Rect(0, headerRows + half, size.width, size.height - headerRows - half), light);
+        static if (__traits(compiles, canvas.fillPx(0, 0, 1, 1, rgba(accent, 255))))
+            if (crosshair && pointing)
+                drawCrosshair(h, canvas);
         buttons_ = null;
         sheet_ = Rect.init;
         static if (offersSettings!H)
@@ -184,7 +194,7 @@ struct Lab
     private void sheet(H, C)(ref H h, C canvas, in Size size)
     {
         const side = size.width >= sideSheetMinWidth;
-        enum contentRows = 37;
+        enum contentRows = 42;
         const avail = size.height - headerRows;
         sheet_ = side ? Rect(size.width - sideSheetWidth, headerRows, sideSheetWidth, avail)
             : Rect(0, size.height - (contentRows < avail ? contentRows : avail), size.width,
@@ -256,6 +266,10 @@ struct Lab
             Segment("×8", Act(ActKind.key, '3'), loupe.shown && loupe.scale == 8),
             Segment("×12", Act(ActKind.key, '4'), loupe.shown && loupe.scale == 12),
         ]);
+        group("x  Crosshair", [
+            Segment("off", Act(ActKind.key, 'x'), !crosshair),
+            Segment("on", Act(ActKind.key, 'x'), crosshair),
+        ]);
         group("+ -  Size", [
             Segment("A−", Act(ActKind.key, '-'), false, 8),
             Segment(format("%s px", h.fontSizePx)),
@@ -296,23 +310,62 @@ struct Lab
         canvas.textRun(Point(r.x + (r.width - w) / 2, r.y + r.height / 2), shown, v);
     }
 
-    // The loupe follows the pointer, magnifying the pixels around it into
-    // the top-right corner of the panels, or their top-left when the pointer
-    // is there — clear of an open side sheet.
+    // The loupe magnifies the pixels around the pointer into the whole of
+    // the other panel — the light one for a pointer over the dark, the dark
+    // one otherwise — so it is as large as the window allows and never hides
+    // what it shows. Its source is that panel's size over the zoom, kept
+    // inside the panel the pointer is over. Clear of an open side sheet; a
+    // bottom sheet covers the panels, and the loupe hides under it.
     private void placeLoupe(H)(ref H h)
     {
-        const px = h.pixels;
+        const px = h.pixels, size = h.size, cw = h.cellWidth, ch = h.cellHeight;
         if (pointer.x < 0)
             pointer = Point(px.width / 4, px.height / 3);
-        const sideOpen = sheetOpen && h.size.width >= sideSheetMinWidth;
-        const room = sideOpen ? (h.size.width - sideSheetWidth) * h.cellWidth : px.width;
         Loupe l = loupe;
-        l.sourceX = pointer.x - l.sourceWidth / 2;
-        l.sourceY = pointer.y - l.sourceHeight / 2;
-        const w = l.sourceWidth * l.scale;
-        l.x = pointer.x > room / 2 ? 8 : room - w - 8;
-        l.y = headerRows * h.cellHeight + 8;
+        const side = size.width >= sideSheetMinWidth;
+        if (sheetOpen && !side)
+            l.shown = false;
+        const room = sheetOpen && side ? (size.width - sideSheetWidth) * cw : px.width;
+        const half = (size.height - headerRows) / 2;
+        const darkTop = headerRows * ch, lightTop = (headerRows + half) * ch;
+        const overDark = pointer.y < lightTop;
+        // The panels' pixel rows: the dark one's, then the light one's, which
+        // ends at the window's last whole cell.
+        const sourceTop = overDark ? darkTop : lightTop;
+        const sourceBottom = overDark ? lightTop : size.height * ch;
+        const destTop = overDark ? lightTop : darkTop;
+        const destBottom = overDark ? size.height * ch : lightTop;
+        enum margin = 8;
+        const s = l.scale > 0 ? l.scale : 1;
+        l.sourceWidth = (room - 2 * margin) / s;
+        l.sourceHeight = (destBottom - destTop - 2 * margin) / s;
+        static int clamp(int v, int lo, int hi) => v < lo ? lo : v > hi ? hi : v;
+        l.sourceX = clamp(pointer.x - l.sourceWidth / 2, 0, room - l.sourceWidth);
+        l.sourceY = clamp(pointer.y - l.sourceHeight / 2, sourceTop, sourceBottom - l.sourceHeight);
+        l.x = margin;
+        l.y = destTop + margin;
         h.loupe(l);
+    }
+
+    // Lines through the pointer across the panels, broken around the pixel it
+    // aims at, so the loupe shows that pixel exactly as it was drawn.
+    private void drawCrosshair(H, C)(ref H h, C canvas)
+    {
+        const cw = h.cellWidth, ch = h.cellHeight, size = h.size;
+        const room = sheetOpen && size.width >= sideSheetMinWidth ? (size.width - sideSheetWidth) * cw
+            : h.pixels.width;
+        const top = headerRows * ch, bottom = size.height * ch;
+        enum gap = 3;
+        const c = rgba(accent, 200);
+        const x = pointer.x, y = pointer.y;
+        if (x - gap > 0)
+            canvas.fillPx(0, y, x - gap, 1, c);
+        if (x + gap + 1 < room)
+            canvas.fillPx(x + gap + 1, y, room - x - gap - 1, 1, c);
+        if (y - gap > top)
+            canvas.fillPx(x, top, 1, y - gap - top, c);
+        if (y + gap + 1 < bottom)
+            canvas.fillPx(x, y + gap + 1, 1, bottom - y - gap - 1, c);
     }
 
     /// Points the loupe at pixel `p`, as the pointer would.
@@ -359,14 +412,19 @@ struct Lab
                     if (sheetOpen && sheet_.width == h.size.width)
                         return toggleSheet(h);
                 }
-                if (sheetOpen && sheet_.contains(cell))
-                    return;
-                if (p.action == PointerAction.move || p.action == PointerAction.press
-                    || p.action == PointerAction.drag)
+                if (p.action == PointerAction.release || p.action == PointerAction.leave)
                 {
-                    pointer = p.pos;
-                    h.requestFrame();
+                    if (pointing)
+                        h.requestFrame();
+                    pointing = false;
+                    return;
                 }
+                // Only the panels aim the loupe: not the header, not the sheet.
+                if (cell.y < headerRows || (sheetOpen && sheet_.contains(cell)))
+                    return;
+                pointer = p.pos;
+                pointing = true;
+                h.requestFrame();
             },
             (in _) {},
         );
@@ -432,6 +490,9 @@ struct Lab
                 break;
             case 'm':
                 loupe.shown = !loupe.shown;
+                break;
+            case 'x':
+                crosshair = !crosshair;
                 break;
             case '1': .. case '4':
                 static immutable int[4] scales = [4, 6, 8, 12];
@@ -751,4 +812,43 @@ version (unittest) private struct SettingsHost
     assert(lab.sheet_.x == 100 - sideSheetWidth && lab.sheet_.y == headerRows, "a side sheet");
     assert(h.shownLoupe.x + h.shownLoupe.sourceWidth * h.shownLoupe.scale <= lab.sheet_.x,
         "the loupe stays clear of it");
+}
+
+@("text_lab.theLoupeFillsTheOtherPanel")
+@system unittest
+{
+    // A phone's 49×51 cells, one pixel each here: the panels are rows 3–26
+    // (dark) and 27–50 (light). What the pointer is over in one is magnified
+    // across the whole width of the other, never over itself.
+    Lab lab;
+    SettingsHost h;
+    h.rec.size = Size(49, 51);
+    void frame()
+    {
+        auto tree = lab.view(h);
+        lab.paint(h, tree, null);
+    }
+
+    lab.pointAt(Point(12, 17)); // over the dark panel
+    frame();
+    auto l = h.shownLoupe;
+    assert(l.y >= 27 && l.y + l.sourceHeight * l.scale <= 51, "drawn in the light panel");
+    assert(l.sourceY >= 3 && l.sourceY + l.sourceHeight <= 27, "taken from the dark one");
+    assert(l.x == 8 && l.x + l.sourceWidth * l.scale > 49 - 8 - l.scale, "as wide as the window allows");
+
+    lab.pointAt(Point(10, 40)); // over the light panel
+    frame();
+    l = h.shownLoupe;
+    assert(l.y >= 3 && l.y + l.sourceHeight * l.scale <= 27, "drawn in the dark panel");
+    assert(l.sourceY >= 27, "taken from the light one");
+
+    // The crosshair is an option, `x`, shown while pointing.
+    lab.handle(h, Event(KeyEvent(ch: 'x')));
+    assert(lab.crosshair);
+    lab.handle(h, Event(PointerEvent(action: PointerAction.press, pos: Point(20, 30))));
+    assert(lab.pointing && lab.pointer == Point(20, 30));
+    lab.handle(h, Event(PointerEvent(action: PointerAction.release, pos: Point(20, 30))));
+    assert(!lab.pointing, "a lifted finger hides it");
+    lab.handle(h, Event(PointerEvent(action: PointerAction.press, pos: Point(20, 1))));
+    assert(lab.pointer == Point(20, 30), "the header does not aim the loupe");
 }
