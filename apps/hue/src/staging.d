@@ -80,19 +80,21 @@ StageResult applyPatch(string patch, StageAction action, string workDir = null)
             break;
     }
 
-    const checked = run(base ~ "--check", patch, workDir);
+    const checked = runWithInput(base ~ "--check", patch, workDir);
     if (checked.status != 0)
         return err!bool(StageError("the selection does not apply: "
             ~ checked.output.strip));
 
-    const applied = run(base, patch, workDir);
+    const applied = runWithInput(base, patch, workDir);
     if (applied.status != 0)
         return err!bool(StageError("git apply failed: "
             ~ applied.output.strip));
     return StageResult(true);
 }
 
-private auto run(string[] argv, string input, string workDir) @safe
+/// Runs `argv` in `workDir` with `input` on its standard input, through the
+/// environment every repository-naming git call uses; its status and output.
+auto runWithInput(string[] argv, string input, string workDir) @safe
 {
     import sparkles.build_primitives.git_env : gitChildEnvironment;
     import std.process : Config, pipeProcess, Redirect, wait;

@@ -44,6 +44,7 @@ import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.term_caps : isTerminal, StdStream;
 
 import sparkles.doc_view.ansi_model : BackgroundMode, backgroundOptions;
+import review_store : ReviewSession;
 import sparkles.doc_view.document : ContentKind, DiffSource, Document, DocumentPipeline,
     hueFenceRenderer;
 import sparkles.doc_view.viewer_model : GutterSelection;
@@ -1279,6 +1280,39 @@ private Document delegate() @system diffReloader(DocumentPipeline* pipeline,
     const source = doc.diffSource;
     return delegate Document() @system => pl.reloadDiff(source);
 }
+
+/**
+`DCM5`: opens the review state of `doc`'s repository and applies it to
+`doc`: its comments, folds and viewed marks. `reload` is wrapped so every
+document it produces again gets them too. `null` when `doc` is no git diff.
+*/
+private ReviewSession openReview(ref Document doc, DocumentPipeline* pipeline,
+    ref Document delegate() @system reload) @system
+{
+    import sparkles.base.logger : warning;
+    import sparkles.syntax.md.model : extractMarkdown, MdDoc;
+
+    if (pipeline is null)
+        return null;
+    auto pl = pipeline;
+    auto review = ReviewSession.open(doc,
+        (string md) => md.length ? extractMarkdown(*pl.registry, md) : MdDoc.init);
+    if (review is null)
+        return null;
+    if (review.error.length)
+        warning(i"review state: $(review.error)");
+    review.apply(doc);
+    if (reload !is null)
+    {
+        auto inner = reload;
+        reload = delegate Document() @system {
+            auto fresh = inner();
+            review.apply(fresh);
+            return fresh;
+        };
+    }
+    return review;
+}
 int main(string[] args)
 {
     version (Android)
@@ -1734,6 +1768,7 @@ private int runTuiSink(in ViewRenderOptions opt, ref Document doc, in LabelSet l
                 => pl.load(path);
         }
         auto reloadDiff = diffReloader(pipeline, doc);
+        auto review = openReview(doc, pipeline, reloadDiff);
         const exit = runWorkspace(doc.path, isDir: false, doc,
             loader, themeSet.names, themeSet.themes, themeSet.idx, labels,
             &cache, opt.include.dup, opt.exclude.dup, opt.treeWidth,
@@ -1744,6 +1779,7 @@ private int runTuiSink(in ViewRenderOptions opt, ref Document doc, in LabelSet l
             tableOverflow: parseOverflow(opt.tableOverflow, "--table-overflow"),
             tableMaxLines: opt.tableMaxLines,
             reloadDiff: reloadDiff,
+            review: review,
             formatPreview: opt.formatPreview,
             formatWidth: opt.formatWidth,
             formatterName: opt.formatter,
@@ -1826,6 +1862,8 @@ private int runGuiSink(in ViewRenderOptions opt, ref Document doc, in LabelSet l
                 capture.screenshotPath = androidDataDir() ~ "/" ~ capture.screenshotPath;
         }
 
+        auto guiReload = diffReloader(pipeline, doc);
+        auto guiReview = openReview(doc, pipeline, guiReload);
         return runGui(GuiArgs(
             title: doc.title,
             source: doc.source,
@@ -1852,7 +1890,8 @@ private int runGuiSink(in ViewRenderOptions opt, ref Document doc, in LabelSet l
             tableMaxLines: opt.tableMaxLines,
             set: docSet,
             loadDoc: &loadDoc,
-            reloadDiff: diffReloader(pipeline, doc),
+            reloadDiff: guiReload,
+            review: guiReview,
             tsCache: &cache,
             twoslash: doc.twoslash,
             docPath: doc.path,

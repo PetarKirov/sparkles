@@ -30,6 +30,8 @@ import sparkles.ui.components.lantern_view : BoxLayout, LabelArena,
     LanternStyle, Placement,
     viewLantern;
 import sparkles.doc_view.document : DiffEmphasis, DiffSides;
+import review_store : persistFolds, postComment, resolveCommentAtCursor, ReviewSession,
+    toggleViewedAtCursor;
 import staging : StageAction;
 import sparkles.ui.editor.keys : EditorTarget;
 import sparkles.base.text.writers : writeInteger;
@@ -1293,6 +1295,7 @@ struct PreviewTui
         {
             // A diff has no CST fold ranges; its fold unit is the file.
             vm.diffToggleFile();
+            notice = persistFolds(vm, review);
             clampTop();
             return;
         }
@@ -1308,7 +1311,10 @@ struct PreviewTui
     private void setAllFolds(bool folded) @system
     {
         if (diffNav())
+        {
             vm.diffSetAllFiles(folded);
+            notice = persistFolds(vm, review);
+        }
         else
             vm.setAllFolds(folded);
         clampTop();
@@ -1410,6 +1416,13 @@ struct PreviewTui
             onStaged(); // the diff changed underneath us
     }
 
+
+    // ── `DCM1`/`DCM2`/`DCM5`: local review comments ──────────────────────
+
+    /// The review state of the repository this diff is in; `null` when it
+    /// is in none, and comments are then kept for this run only.
+    ReviewSession review;
+
     /// A paste's chunks so far, for the diff editor (`EDI4`).
     private char[] editPaste;
 
@@ -1487,18 +1500,24 @@ struct PreviewTui
             return handleSearch(e);
         if (filtering)
             return handleFilterPrompt(e);
-        // `DST5`: while the editor has the keyboard it sees keys and pastes
-        // first; what it declines (a save) goes on to the table.
-        if (vm.diffEditing)
+        // `DST5`/`DCM2`: while the file's editor or the comment composer has
+        // the keyboard it sees keys and pastes first; what it declines (a
+        // save, a post) goes on to the table.
+        if (vm.diffEditing || vm.composing)
         {
             bool taken;
             e.match!(
-                (in KeyEvent k) { taken = vm.diffEditKey(k); },
+                (in KeyEvent k) {
+                    taken = vm.composing ? vm.commentKey(k) : vm.diffEditKey(k);
+                },
                 (in PasteEvent p) {
                     editPaste ~= p.text[];
                     if (p.last)
                     {
-                        cast(void) vm.diffEditPaste(editPaste, p.request);
+                        if (vm.composing)
+                            cast(void) vm.commentPaste(editPaste, p.request);
+                        else
+                            cast(void) vm.diffEditPaste(editPaste, p.request);
                         editPaste = null;
                     }
                     taken = true;
@@ -1749,8 +1768,34 @@ struct PreviewTui
                 if (diffNav())
                     notice = vm.diffEditStart(EditorTarget.terminal);
                 break;
+            case Command.diffRowDown:
+                if (diffNav())
+                    cast(void) vm.diffMoveRow(1);
+                break;
+            case Command.diffRowUp:
+                if (diffNav())
+                    cast(void) vm.diffMoveRow(-1);
+                break;
+            case Command.diffComment:
+                if (diffNav())
+                {
+                    notice = vm.commentStart(EditorTarget.terminal);
+                    vm.composerHint = "Alt-S posts · Esc drops it";
+                    vm.rebuild();
+                }
+                break;
+            case Command.diffResolve:
+                if (diffNav())
+                    notice = resolveCommentAtCursor(vm, review);
+                break;
+            case Command.diffMarkViewed:
+                if (diffNav())
+                    notice = toggleViewedAtCursor(vm, review);
+                break;
             case Command.diffSave:
-                if (!vm.diffEditOpen)
+                if (vm.composing)
+                    notice = postComment(vm, review);
+                else if (!vm.diffEditOpen)
                     notice = "nothing is being edited";
                 else if (const failure = vm.diffEditSave())
                     notice = failure;
@@ -3260,4 +3305,64 @@ unittest
     assert(!reloaded, "the edit is still open");
     t.handle(Event(KeyEvent(Key.escape)));
     assert(!t.vm.diffEditing && reloaded, "closing a saved edit reloads the diff");
+}
+
+@("tui.diff.commentsPersistInTheReviewRef")
+@system
+unittest
+{
+    import review_store : readReview, ReviewData;
+    import sparkles.build_primitives.testing : gitAvailable, TmpGitRepo;
+    import sparkles.diff : diffText;
+    import sparkles.doc_view.diff_session : buildDiffSession;
+    import sparkles.input.events : Mods;
+    import sparkles.syntax : HighlightEvent, LabelSet;
+    import sparkles.syntax.md.model : MdDoc;
+    import sparkles.test_runner.skip : skipTest;
+
+    // `DCM1`/`DCM2`/`DCM5`: `a` opens a comment on the cursor's row, `Alt-S`
+    // posts it to `refs/hue/data`, `d` resolves it and `m` marks the file
+    // viewed, each saved as it happens.
+    if (!gitAvailable)
+        return skipTest("git is not installed");
+    auto repo = TmpGitRepo.create();
+    auto review = new ReviewSession;
+    review.root = repo.dir;
+    review.author = "me";
+    review.parse = (string md) => MdDoc.init;
+
+    enum before = "a\nb\nc\n", after = "a\nB\nc\n";
+    static immutable(Theme)[1] themes = [builtinDark];
+    static immutable string[1] names = ["dark"];
+    auto dd = diffText(before, after, "f.txt", "f.txt");
+    PreviewTui t;
+    t.labels = LabelSet.standard();
+    t.names = names[];
+    t.themes = themes[];
+    t.resize(60, 20);
+    t.setDocument("diff", "", [HighlightEvent.sourceSpan(0, 0)], PreviewModel.init,
+        startPreview: true, TwoslashReturn.init, "diff", dd,
+        [DiffSides("", before, after)], buildDiffSession(dd));
+    t.relayout();
+    t.review = review;
+
+    t.handle(Event(KeyEvent(Key.char_, 'a')));
+    assert(t.vm.composing, t.notice);
+    foreach (ch; "why?")
+        t.handle(Event(KeyEvent(Key.char_, ch)));
+    t.handle(Event(KeyEvent(Key.char_, 's', Mods(alt: true))));
+    assert(!t.vm.composing, t.notice);
+    ReviewData stored;
+    assert(readReview(repo.dir, stored) is null);
+    assert(stored.comments.length == 1 && stored.comments[0].body_ == "why?");
+    size_t local;
+    foreach (ref th; t.vm.diffSession.threads)
+        local += th.localId.length != 0;
+    assert(local == 1, "the comment hangs in the diff");
+
+    t.handle(Event(KeyEvent(Key.char_, 'd')));
+    assert(readReview(repo.dir, stored) is null && stored.comments[0].resolved, t.notice);
+    t.handle(Event(KeyEvent(Key.char_, 'm')));
+    assert(t.vm.diffSession.entries[0].viewed);
+    assert(readReview(repo.dir, stored) is null && stored.viewed.length == 1);
 }

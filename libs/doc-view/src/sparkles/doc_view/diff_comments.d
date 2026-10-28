@@ -136,8 +136,8 @@ The comments on `path` as thread blocks for the diff view (`DCM2`), each
 re-located in its side's text. An outdated one hangs where it was written,
 clamped to the text, and is marked so; its body is parsed by `parse`.
 */
-AnchoredThread[] threadsOf(in LocalComment[] comments, string path, string oldText,
-    string newText, scope MdDoc delegate(string markdown) @safe parse) @safe
+AnchoredThread[] threadsOf(Parse)(in LocalComment[] comments, string path, string oldText,
+    string newText, scope Parse parse)
 {
     AnchoredThread[] threads;
     foreach (ref c; comments)
@@ -155,6 +155,7 @@ AnchoredThread[] threadsOf(in LocalComment[] comments, string path, string oldTe
         t.line = found != 0 ? found
             : cast(uint)(c.line <= lineCount ? c.line : lineCount);
         t.comments = [ThreadComment(c.author, createdText(c.created), parse(bodyWithSuggestion(c)))];
+        t.localId = c.id;
         threads ~= t;
     }
     return threads;

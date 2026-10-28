@@ -211,8 +211,9 @@ version (unittest)
     // warning; the shared quit row still resolves from the tree.
     assert(over(merged, 'q', tree) == over(hueBindings, 'q', tree));
 
-    // Row count: j dropped one and added one; q touched nothing.
-    assert(merged.length == hueBindings.length);
+    // Row count: j dropped two, the shifted J (the comment cursor) being
+    // in its family, and added one; q touched nothing.
+    assert(merged.length == hueBindings.length - 1);
     import std.algorithm.searching : canFind;
     assert(warnings.length == 1 && warnings[0].canFind("unbinds nothing"),
         warnings.length ? warnings[0] : "no warning");
