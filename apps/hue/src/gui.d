@@ -328,6 +328,23 @@ private struct ClipboardSeam
     string read() @system => (**window).clipboardText();
 }
 
+/**
+The window's height above the soft keyboard while an editor has it up
+(`EDI9`). hue's window is full-screen, so the input method does not resize
+it; its inset says how much of the bottom it covers.
+*/
+version (Android)
+private int visibleHeight(int windowHeight, bool keyboardUp) @trusted nothrow
+{
+    import sparkles.android.window_metrics : windowInsets;
+
+    if (!keyboardUp)
+        return windowHeight;
+    const insets = windowInsets();
+    const covered = insets.known ? insets.keyboard[3] : 0;
+    return covered > 0 && covered < windowHeight ? windowHeight - covered : windowHeight;
+}
+
 /// The frame's geometry (`P2.B4` third slice): every per-frame value the view
 /// half computes and the paint half reads. The list is not an estimate — hoisting
 /// `paintWindowFrame` out of the loop turned each captured local into an
@@ -1071,6 +1088,12 @@ int runGui(GuiArgs guiArgs) @system
     // The modal settings pane (`SET*`) — the same component the workspace
     // mounts, over the same shared store.
     SettingsPane settingsPane;
+    version (Android)
+    {
+        import sparkles.ui.editor.soft_keyboard : SoftKeyboard;
+
+        SoftKeyboard fieldKeyboard; // editor focus, for the soft keyboard's edges (`EDI9`)
+    }
 
     void openSettingsPane() @system
     {
@@ -2543,6 +2566,32 @@ int runGui(GuiArgs guiArgs) @system
         foreach (e; evBuf)
             e.match!((in KeyEvent k) { keyBuf ~= k; }, (in _) {});
 
+        // The soft keyboard follows an editor's focus (`EDI9`): the search,
+        // goto and filter bar, the explorer's filter, the picker's prompt and
+        // the settings pane's fields. Only the edges act, so a keyboard the
+        // user put away stays away; its text arrives through the IME field
+        // the window installed, as key events like any other.
+        version (Android)
+        {
+            import sparkles.android.soft_input : hideSoftKeyboard, showSoftKeyboard;
+            import sparkles.ui.editor.soft_keyboard : KeyboardAsk;
+
+            const editing = inp.mode != Mode.normal || pn.tree.searching
+                || !filePicker.empty && filePicker.get.state.active
+                || settingsPane.active && (settingsPane.textEditing || settingsPane.tv.searching);
+            final switch (fieldKeyboard.update(editing))
+            {
+                case KeyboardAsk.none:
+                    break;
+                case KeyboardAsk.show:
+                    cast(void) showSoftKeyboard();
+                    break;
+                case KeyboardAsk.hide:
+                    hideSoftKeyboard();
+                    break;
+            }
+        }
+
         // `HUE_GUI_POINTER` parks the PHYSICAL pointer. It stands in for a
         // window-system event nobody sent, so it is SYNTHESIZED as one and put
         // through `admitEvent` like any other — routing included, not just the
@@ -2644,7 +2693,13 @@ int runGui(GuiArgs guiArgs) @system
         const cellW = fonts.cellW();
         const cellH = fonts.cellH();
         const screenW = window.width;
-        const screenH = window.height;
+        // On Android the soft keyboard covers the window's bottom; the layout
+        // ends above it, so the input bar stays in view
+        // (`EDI9`).
+        version (Android)
+            const screenH = visibleHeight(window.height, fieldKeyboard.editing);
+        else
+            const screenH = window.height;
         // The same surface in the toolkit's unit: chrome that names cells
         // and edges (UIA2) rather than pixels reads these.
         const screenCols = screenW / cellW;
