@@ -13,7 +13,7 @@ module input_line;
 
 import sparkles.input.events : KeyEvent;
 import sparkles.input.frame : InputFrame;
-import sparkles.ui.editor.field : EditorField, FieldResult;
+import sparkles.ui.editor.field : EditorField, FieldResult, FieldSetup, serveClipboard;
 import sparkles.ui.state : CaptureState;
 
 /// The interactive input mode (M4): normal keys, or typing a search / goto line.
@@ -49,6 +49,8 @@ struct InputState
     Mode mode = Mode.normal;
     /// The bar's editor; `query` is its text.
     EditorField field;
+    /// The bar's key table and clipboard, applied each time it opens.
+    FieldSetup setup;
     CaptureState capture;
     InputFrame fin;
     private string text_;
@@ -74,7 +76,7 @@ struct InputState
     void open(Mode mode) @safe pure nothrow
     {
         this.mode = mode;
-        field = EditorField.singleLine();
+        field = setup.singleLine();
         if (mode == Mode.gotoLine)
             field.state.options.accepts = (dchar c) => c >= '0' && c <= '9';
         text_ = null;
@@ -84,7 +86,7 @@ struct InputState
     void close() @safe pure nothrow
     {
         mode = Mode.normal;
-        field = EditorField.singleLine();
+        field = setup.singleLine();
         text_ = null;
     }
 
@@ -98,6 +100,11 @@ struct InputState
     /// Text typed into the bar at once (a debug seed, a test).
     LineStep type(scope const(char)[] text) @safe pure nothrow
         => outcome(field.insert(text));
+
+    /// Do the clipboard work the bar asked for (`EDY5`): a copy, and a
+    /// paste answered with `clipboard`'s text.
+    LineStep serve(Clipboard)(in Clipboard clipboard)
+        => outcome(serveClipboard(field, clipboard));
 
     private LineStep outcome(in FieldResult r) @safe pure nothrow
     {
@@ -167,4 +174,25 @@ unittest
     inp.key(KeyEvent(Key.left));
     assert(inp.shown == "ab▏c");
     assert(inp.shown(false) == "abc");
+}
+
+@("input_line.InputState.servesItsClipboard")
+@safe pure nothrow
+unittest
+{
+    import sparkles.input.events : Key, Mods;
+    import sparkles.ui.editor.field : fieldClipboard, FieldSetup;
+    import sparkles.ui.editor.keys : EditorTarget;
+
+    string board = "needle";
+    auto clipboard = fieldClipboard((scope const(char)[] t) { board = t.idup; }, () => board);
+    InputState inp;
+    inp.setup = FieldSetup.of(EditorTarget.window, clipboard);
+    inp.open(Mode.search);
+    assert(inp.key(KeyEvent(Key.char_, 'v', Mods(ctrl: true))) == LineStep.handled);
+    assert(inp.serve(clipboard) == LineStep.edited && inp.query == "needle");
+    inp.key(KeyEvent(Key.char_, 'a', Mods(ctrl: true)));
+    inp.key(KeyEvent(Key.char_, 'x', Mods(ctrl: true)));
+    assert(inp.serve(clipboard) == LineStep.none, "a copy changes nothing here");
+    assert(board == "needle" && inp.field.empty);
 }
