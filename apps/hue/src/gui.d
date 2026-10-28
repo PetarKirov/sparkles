@@ -915,8 +915,7 @@ int runGui(GuiArgs guiArgs) @system
         dsvBrowser = DsvBrowser.init; // a new document starts unprojected (DSB2)
         dsvPalOpen = false;
         cm.tableFmt = resolveTableCopy(tableCopyFlag, doc.dsvInfo.present);
-        inp.query.clear();
-        inp.mode = Mode.normal;
+        inp.close();
         window.title(text(i"sparkles:hue — $(name)"));
         pn.tree.reveal(path); // the explorer follows the open document (XPL3/4)
         startLive(path, vm.tw.code.length != 0);
@@ -2220,10 +2219,10 @@ int runGui(GuiArgs guiArgs) @system
         {
             const barY = screenH - cellH;
             auto lineText = inp.mode == Mode.search
-                ? text("/", inp.query[], "   ", vm.matches.length, " matches")
+                ? text("/", inp.shown, "   ", vm.matches.length, " matches")
                 : inp.mode == Mode.dsvFilter
-                ? text("⌕ ", inp.query[], "▏")
-                : text(":", inp.query[]);
+                ? text("⌕ ", inp.shown)
+                : text(":", inp.shown);
             chromeOps.reset();
             chromeOps.fillRect(Rect(0, 0, (screenW + cellW - 1) / cellW, 1),
                 Slot.inherit, Visual(bg: vm.gutterFg, hasBg: true));
@@ -3003,20 +3002,10 @@ int runGui(GuiArgs guiArgs) @system
         }
         else if (inputMode)
         {
-            // Typing a search query or a goto-line number — the acceptance
-            // rules live on the state (`gui_state`, tested); what stays here
-            // is the live re-search, which is the view model's.
-            foreach (k; keyBuf)
-            {
-                if (k.key != Key.char_)
-                    continue;
-                if (inp.typeChar(k.ch) && inp.mode == Mode.search)
-                    vm.search(inp.query[]);
-            }
-            if (keyBuf.hasKey(Key.backspace) && inp.backspace()
-                && inp.mode == Mode.search)
-                vm.search(inp.query[]);
-            if (keyBuf.hasKey(Key.enter))
+            // Typing a search query or a goto-line number: the bar's editor
+            // takes the keys (`input_line`, tested); what stays here is the
+            // live re-search, which is the view model's, and each mode's Enter.
+            void submitPrompt()
             {
                 if (inp.mode == Mode.search)
                 {
@@ -3025,25 +3014,23 @@ int runGui(GuiArgs guiArgs) @system
                     jumpToMatch(firstMatchAtOrAfter!(
                         i => vm.visualOfMatch(vm.matches[i]))(
                         vm.matches.length, vm.top), visibleRows);
+                    inp.mode = Mode.normal; // the query and its matches stay
+                    return;
                 }
-                else if (inp.mode == Mode.dsvFilter)
+                if (inp.mode == Mode.dsvFilter)
                 {
                     // `DSF1`/`DSF5`: apply through the browser; a parse error
                     // keeps the previous filter and surfaces as a toast.
-                    if (dsvBrowser.setFilter(inp.query[].idup,
-                            dsvCopy.headerNames))
+                    if (dsvBrowser.setFilter(inp.query.idup, dsvCopy.headerNames))
                         applyDsvBrowser();
                     else
-                    {
                         showToast("filter: " ~ dsvBrowser.filterError);
-                    }
-                    inp.query.clear();
                 }
                 else if (inp.query.length) // gotoLine → the source line's visual row
                 {
                     // The parse half is the tested `parseGotoLine`; the jump
                     // half stays here with the view model.
-                    const parsed = parseGotoLine(inp.query[]);
+                    const parsed = parseGotoLine(inp.query);
                     try
                     {
                         if (parsed >= 0)
@@ -3053,16 +3040,35 @@ int runGui(GuiArgs guiArgs) @system
                     {
                     }
                 }
-                inp.mode = Mode.normal;
+                inp.close();
             }
-            if (keyBuf.hasKey(Key.escape))
+
+            foreach (k; keyBuf)
             {
-                inp.mode = Mode.normal;
-                inp.query.clear(); // cancelling clears the query (and search highlights)
-                // `clearSearch` drops the RECTS too. Nulling `matches` alone
-                // left `matchRects` populated, and the overlay below paints
-                // from the rects — so Esc cleared the count and kept the tint.
-                vm.clearSearch();
+                final switch (inp.key(k))
+                {
+                    case LineStep.none:
+                    case LineStep.handled:
+                        break;
+                    case LineStep.edited:
+                        if (inp.mode == Mode.search)
+                            vm.search(inp.query);
+                        break;
+                    case LineStep.submitted:
+                        submitPrompt();
+                        break;
+                    case LineStep.cancelled:
+                        // Cancelling clears the query and the search
+                        // highlights: `clearSearch` drops the RECTS too.
+                        // Nulling `matches` alone left `matchRects` populated,
+                        // and the overlay paints from the rects — so Esc
+                        // cleared the count and kept the tint.
+                        inp.close();
+                        vm.clearSearch();
+                        break;
+                }
+                if (inp.mode == Mode.normal)
+                    break; // the rest of this frame's keys are not the bar's
             }
         }
         else
@@ -3419,8 +3425,7 @@ int runGui(GuiArgs guiArgs) @system
                         ? "table-copy: markdown" : "table-copy: source");
                     break;
                 case Command.dsvFilter:
-                    inp.mode = Mode.dsvFilter;
-                    inp.query.clear();
+                    inp.open(Mode.dsvFilter);
                     break;
                 case Command.dsvReset:
                     dsvBrowser.reset();
@@ -3476,13 +3481,11 @@ int runGui(GuiArgs guiArgs) @system
                     dsvPalOpen = false;
                     break;
                 case Command.startSearch:
-                    inp.mode = Mode.search;
-                    inp.query.clear();
+                    inp.open(Mode.search);
                     vm.clearSearch();
                     break;
                 case Command.startGoto:
-                    inp.mode = Mode.gotoLine;
-                    inp.query.clear();
+                    inp.open(Mode.gotoLine);
                     break;
                 case Command.lanternAll:
                     // `lantern` shows the panel itself and never hands this
@@ -4342,11 +4345,16 @@ int runGui(GuiArgs guiArgs) @system
 
         // Debug/CI: a preselected search (highlights + jump to the first match)
         // so a golden capture exercises the match overlay.
-        foreach (ch; capture.search)
-            inp.query ~= ch;
+        if (capture.search.length)
+        {
+            // The query is set with the bar closed, as a golden expects.
+            inp.open(Mode.search);
+            cast(void) inp.type(capture.search);
+            inp.mode = Mode.normal;
+        }
         if (inp.query.length)
         {
-            vm.search(inp.query[]);
+            vm.search(inp.query);
             if (vm.matches.length)
                 vm.scrollTo(vm.visualOfMatch(vm.matches[0]));
         }

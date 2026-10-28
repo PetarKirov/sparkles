@@ -2,19 +2,18 @@
 The document viewer's line-input bar — the `/` search, the `:` goto and the
 DSV filter prompt.
 
-Backend-neutral by construction: a mode, a bounded query buffer, and the two
-acceptance rules that decide what a keystroke does to it. It lives in its own
-module rather than in `gui_state` because the terminal drives the same bar,
-and it reached the same feature by hand — a raw `char[256]` written with
-`cast(char) e.ch`, which truncates any non-ASCII code point into a stray byte
-and leaves the query invalid UTF-8. Two hosts feeding one matcher different
-queries is the `UIA13` defect the search unification exists to end; sharing
-the matcher is necessary and not sufficient, so the INPUT is shared too.
+Backend-neutral by construction: a mode and one editor field that both hosts
+drive with the same key events, so the terminal and the window reach the
+matcher with the same query (`UIA13`). The field is the toolkit's editor
+(`EDU4`): it edits by grapheme cluster and word, kills and yanks, undoes,
+and takes pastes whole, where the bar it replaced appended printable ASCII
+one byte at a time.
 */
 module input_line;
 
-import sparkles.base.buffer : SharedBuffer;
+import sparkles.input.events : KeyEvent;
 import sparkles.input.frame : InputFrame;
+import sparkles.ui.editor.field : EditorField, FieldResult;
 import sparkles.ui.state : CaptureState;
 
 /// The interactive input mode (M4): normal keys, or typing a search / goto line.
@@ -26,95 +25,146 @@ enum Mode
     dsvFilter, // the DSV grid's filter bar (`DSF1`)
 }
 
+/// What one input did to the bar.
+enum LineStep : ubyte
+{
+    /// Not the bar's: the key falls through.
+    none,
+    /// Consumed; the query did not change.
+    handled,
+    /// The query changed (the search mode's cue to re-run it).
+    edited,
+    /// Enter.
+    submitted,
+    /// Escape with nothing left to collapse.
+    cancelled,
+}
 
 /// The input-routing state (M15 GROUP-I of the GuiState hoist): which
 /// line-input surface owns the keyboard ('/' search, ':' goto) and its
-/// typed query, pointer-capture ownership (STM11), and the per-frame
+/// query, pointer-capture ownership (STM11), and the per-frame
 /// `FrameInput` fold carry (IXB7 — the button level lives across frames).
 struct InputState
 {
     Mode mode = Mode.normal;
-    SharedBuffer!(char, 256) query;
+    /// The bar's editor; `query` is its text.
+    EditorField field;
     CaptureState capture;
     InputFrame fin;
+    private string text_;
 
-    /**
-    Feeds one typed code point into the query under the mode's acceptance
-    rules — printable ASCII only, goto-line takes digits only, and the query
-    caps at 255. Returns `true` when the character was $(B accepted) (the
-    search mode's cue to re-run the query) — deliberately not "appended":
-    at the cap an accepted character still re-runs the search with the
-    unchanged query, exactly as the inline version did.
-    */
-    bool typeChar(dchar c) @safe pure nothrow
+    /// The query, as of the last edit.
+    const(char)[] query() const return @safe pure nothrow @nogc => text_;
+
+    /// The query as the bar shows it: the caret glyph where the editor has
+    /// its caret, and nothing else marked (`EDR1`).
+    string shown(bool caret = true) const @safe pure nothrow
     {
-        if (c < 32 || c >= 127)
-            return false;
-        if (mode == Mode.gotoLine && (c < '0' || c > '9'))
-            return false;
-        if (query.length < 255)
-            query ~= cast(char) c;
-        return true;
+        import sparkles.ui.components.editor : EditorViewOptions, editorLineSpans;
+
+        EditorViewOptions options;
+        options.caretVisible = caret;
+        string result;
+        foreach (span; editorLineSpans(field.state, 0, options))
+            result ~= span.text;
+        return result;
     }
 
-    /// Deletes the last typed character: `true` when something was deleted —
-    /// the same re-search cue.
-    bool backspace() @safe pure nothrow @nogc
+    /// Opens the bar in `mode` with an empty query. Goto-line takes digits.
+    void open(Mode mode) @safe pure nothrow
     {
-        if (query.length == 0)
-            return false;
-        query.popBack();
-        return true;
+        this.mode = mode;
+        field = EditorField.singleLine();
+        if (mode == Mode.gotoLine)
+            field.state.options.accepts = (dchar c) => c >= '0' && c <= '9';
+        text_ = null;
+    }
+
+    /// Closes the bar and clears the query.
+    void close() @safe pure nothrow
+    {
+        mode = Mode.normal;
+        field = EditorField.singleLine();
+        text_ = null;
+    }
+
+    /// One key for the bar's editor.
+    LineStep key(in KeyEvent e) @safe pure nothrow => outcome(field.key(e));
+
+    /// Text pasted into the bar (`EDI4`).
+    LineStep paste(scope const(char)[] text) @safe pure nothrow
+        => outcome(field.insert(text, true));
+
+    /// Text typed into the bar at once (a debug seed, a test).
+    LineStep type(scope const(char)[] text) @safe pure nothrow
+        => outcome(field.insert(text));
+
+    private LineStep outcome(in FieldResult r) @safe pure nothrow
+    {
+        if (!r.handled)
+            return LineStep.none;
+        if (r.cancelled)
+            return LineStep.cancelled;
+        if (r.submitted)
+            return LineStep.submitted;
+        if (!r.changed)
+            return LineStep.handled;
+        text_ = field.text;
+        return LineStep.edited;
     }
 }
 
-@("input_line.InputState.typeCharAcceptanceRules")
+@("input_line.InputState.editsLikeAnEditor")
 @safe pure nothrow
 unittest
 {
-    InputState inp;
-    inp.mode = Mode.search;
-    assert(inp.typeChar('a'));
-    assert(inp.typeChar('3'));
-    assert(!inp.typeChar('\x1b'), "control characters never type");
-    assert(!inp.typeChar('é'), "the query is ASCII");
-    assert(inp.query[] == "a3");
+    import sparkles.input.events : Key, Mods;
 
-    inp.mode = Mode.gotoLine;
-    assert(!inp.typeChar('a'), "goto-line takes digits only");
-    assert(inp.typeChar('7'));
-    InputState flt;
-    flt.mode = Mode.dsvFilter;
-    assert(flt.typeChar('q'), "the filter bar takes printable ASCII");
-    assert(flt.typeChar('>'), "operators type through");
-    assert(!flt.typeChar('\x1b'), "control characters still never type");
-    assert(flt.query[] == "q>");
-    assert(inp.query[] == "a37");
+    InputState inp;
+    inp.open(Mode.search);
+    assert(inp.type("foo bar") == LineStep.edited);
+    assert(inp.key(KeyEvent(Key.char_, 'w', Mods(ctrl: true))) == LineStep.edited);
+    assert(inp.query == "foo ", "Ctrl-W kills back to the blank");
+    assert(inp.type("é") == LineStep.edited && inp.query == "foo é", "the query is Unicode");
+    assert(inp.key(KeyEvent(Key.enter)) == LineStep.submitted);
+    assert(inp.key(KeyEvent(Key.escape)) == LineStep.cancelled);
+    assert(inp.key(KeyEvent(Key.f5)) == LineStep.none, "keys the editor declines fall through");
 }
 
-@("input_line.InputState.typeCharCapStillReSearches")
+@("input_line.InputState.gotoLineTakesDigits")
 @safe pure nothrow
 unittest
 {
-    // At the cap the character is accepted (the caller re-searches) but not
-    // appended — the inline behavior, preserved on purpose.
     InputState inp;
-    inp.mode = Mode.search;
-    foreach (i; 0 .. 255)
-        cast(void) inp.typeChar('x');
-    assert(inp.query.length == 255);
-    assert(inp.typeChar('y'), "accepted at the cap");
-    assert(inp.query.length == 255, "but not appended");
+    inp.open(Mode.gotoLine);
+    inp.type("12");
+    assert(inp.type("x") == LineStep.handled, "a letter is refused, not inserted");
+    inp.type("3");
+    assert(inp.query == "123");
+    inp.close();
+    assert(inp.mode == Mode.normal && inp.query.length == 0);
 }
 
-
-@("input_line.InputState.backspaceDeletesOrDeclines")
+@("input_line.InputState.pastesAreOneLine")
 @safe pure nothrow
 unittest
 {
     InputState inp;
-    assert(!inp.backspace(), "nothing to delete");
-    cast(void) inp.typeChar('q');
-    assert(inp.backspace());
-    assert(inp.query.length == 0);
+    inp.open(Mode.dsvFilter);
+    assert(inp.paste("a > 1\n") == LineStep.edited);
+    assert(inp.query == "a > 1 ", "a pasted line break becomes a space");
+}
+
+@("input_line.InputState.shownPlacesTheCaret")
+@safe pure nothrow
+unittest
+{
+    import sparkles.input.events : Key;
+
+    InputState inp;
+    inp.open(Mode.search);
+    inp.type("abc");
+    inp.key(KeyEvent(Key.left));
+    assert(inp.shown == "ab▏c");
+    assert(inp.shown(false) == "abc");
 }
