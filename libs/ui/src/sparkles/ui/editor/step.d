@@ -17,17 +17,18 @@ import sparkles.base.buffer : SharedBuffer, UniqueBuffer;
 import sparkles.base.text.seek : WordSegmentKind, isGraphemeBoundary, nextGraphemeBoundary,
     nextWordSegment, previousBlankDelimited, previousGraphemeBoundary, previousWordSegment;
 import sparkles.base.text.unicode_tables : UnicodeProperty, unicodeProperty;
-import sparkles.input.events : TextId;
+import sparkles.input.events : CompositionRun, TextId;
 import sparkles.text_buffer.change_set : ChangeSet, ChangeSetStatus, Edit;
 import sparkles.text_buffer.history : HistoryStatus, HistoryStep;
 import sparkles.text_buffer.summary : Affinity, tokenAt;
 import sparkles.text_buffer.text : Text;
 import sparkles.ui.editor.command : Boundary, EditCommand, EditKind;
-import sparkles.ui.editor.context : VisualLine, isEditContext;
+import sparkles.ui.editor.context : clusterCells, VisualLine, isEditContext;
 import sparkles.ui.editor.effect : EditEffect, EditEffects, EffectKind, NoopReason;
 import sparkles.ui.editor.kill_ring : KillEntry, KillRing;
 import sparkles.ui.editor.selection : EditRange, SelectionSet;
-import sparkles.ui.editor.state : EditorState, ReadOnlySpan;
+import sparkles.ui.editor.state : Composition, EditorState, ReadOnlySpan;
+import sparkles.ui.geometry : Rect;
 
 /// What one step returns.
 struct StepResult
@@ -170,18 +171,28 @@ struct Stepper(Texts, Context)
         cmd = c;
         const textBefore = state.text;
         const selectionBefore = state.selection;
+        const compositionBefore = state.composition;
         const last = state.record.last;
         const lastDirection = state.record.lastDirection;
         bool keepKillRun;
         bool keepYank;
+
+        // EDI3: any command but composition, motion within the preedit or
+        // cancel commits the preedit as typed first.
+        if (state.composition.active && !keepsComposition(c))
+            commitComposition(state.composition.preedit, last);
 
         final switch (c.kind)
         {
         case EditKind.none:
             break;
         case EditKind.insertText:
-            insertText(resolve(c.text), c.paste,
-                c.paste ? Coalesce.none : Coalesce.typing, last);
+            // Typed text during a composition is the input method's commit.
+            if (state.composition.active)
+                commitComposition(resolve(c.text), last);
+            else
+                insertText(resolve(c.text), c.paste,
+                    c.paste ? Coalesce.none : Coalesce.typing, last);
             break;
         case EditKind.insertNewline:
             if (state.options.singleLine)
@@ -194,7 +205,10 @@ struct Stepper(Texts, Context)
                 insertText(Text("\t"), false, Coalesce.none, last);
             break;
         case EditKind.moveGrapheme:
-            moveEach(Motion.grapheme, c.extend);
+            if (state.composition.active)
+                movePreeditCursor(c.direction);
+            else
+                moveEach(Motion.grapheme, c.extend);
             break;
         case EditKind.deleteGrapheme:
             deleteGrapheme(c.direction, last, lastDirection);
@@ -303,22 +317,27 @@ struct Stepper(Texts, Context)
             pasteAnswer(c.request, c.text, last);
             break;
         case EditKind.compose:
+            compose(c);
+            break;
         case EditKind.commitComposition:
-            // Composition arrives with E2; until then a target declares it
-            // absent (`EDI5`).
-            effects.put(noop(NoopReason.capabilityAbsent));
+            commitComposition(resolve(c.text), last);
             break;
         case EditKind.submit:
             effects.put(EditEffect(EffectKind.submit));
             break;
         case EditKind.escape:
-            if (state.selection.length > 1 || !state.selection.primary.empty)
+            if (state.composition.active)
+                cancelComposition();
+            else if (state.selection.length > 1 || !state.selection.primary.empty)
                 collapseToPrimary();
             else
                 effects.put(EditEffect(EffectKind.cancel));
             break;
         case EditKind.cancel:
-            effects.put(EditEffect(EffectKind.cancel));
+            if (state.composition.active)
+                cancelComposition();
+            else
+                effects.put(EditEffect(EffectKind.cancel));
             break;
         case EditKind.blur:
             state.record.pendingRequest = 0;
@@ -326,9 +345,15 @@ struct Stepper(Texts, Context)
         }
 
         // EDT5: a command that changed nothing says why.
+        const composed = state.composition != compositionBefore;
         if (effects.length == 0 && state.text == textBefore && state.selection == selectionBefore
-            && c.kind != EditKind.blur && c.kind != EditKind.none)
+            && !composed && c.kind != EditKind.blur && c.kind != EditKind.none)
             effects.put(noop(NoopReason.nothingToDo));
+
+        // EDI6: the input method's candidates follow the caret.
+        static if (__traits(hasMember, Context, "caretArea"))
+            if (composed || state.selection.primary != selectionBefore.primary)
+                effects.put(EditEffect(EffectKind.imeArea, area: imeArea()));
 
         state.record.last = c.kind;
         state.record.lastDirection = c.direction;
@@ -1287,6 +1312,101 @@ struct Stepper(Texts, Context)
         }
         state.record.pendingRequest = 0;
         insertText(resolve(id), true, Coalesce.none, last);
+    }
+
+    // ---------------------------------------------------------- composition
+
+    /// Commands a composition survives (`EDI3`): its own, typed text (the
+    /// input method's commit), grapheme motion within the preedit, cancel.
+    static bool keepsComposition(in EditCommand c)
+    {
+        switch (c.kind)
+        {
+        case EditKind.none:
+        case EditKind.compose:
+        case EditKind.commitComposition:
+        case EditKind.escape:
+        case EditKind.cancel:
+            return true;
+        case EditKind.insertText:
+            return !c.paste;
+        case EditKind.moveGrapheme:
+            return !c.extend;
+        default:
+            return false;
+        }
+    }
+
+    /// Record the preedit at each range; the text does not change. An empty
+    /// preedit ends the composition with no edit.
+    void compose(in EditCommand c)
+    {
+        Composition next;
+        if (c.text.valid)
+            next.preedit = resolve(c.text);
+        if (!next.preedit.length)
+        {
+            state.composition = Composition.init;
+            return;
+        }
+        const length = next.preedit.length;
+        next.cursor = c.composition.cursor < length ? c.composition.cursor : length;
+        const count = c.composition.runCount < next.runs.length
+            ? c.composition.runCount : next.runs.length;
+        foreach (run; c.composition.runs[0 .. count])
+        {
+            if (run.start >= length)
+                continue;
+            const end = run.start + run.length < length ? run.start + run.length : length;
+            next.runs[next.runCount++] = CompositionRun(run.start,
+                cast(ushort)(end - run.start), run.style);
+        }
+        state.composition = next;
+    }
+
+    /// Replace every range with `committed` as one revision and end the
+    /// composition; empty, it only ends it.
+    void commitComposition(Text committed, EditKind last)
+    {
+        state.composition = Composition.init;
+        if (committed.length)
+            insertText(committed, false, Coalesce.none, last);
+    }
+
+    /// Drop the composition and tell the input method (`EDC11`).
+    void cancelComposition()
+    {
+        state.composition = Composition.init;
+        effects.put(EditEffect(EffectKind.cancelComposition));
+    }
+
+    /// Move the preedit's cursor by one grapheme within it.
+    void movePreeditCursor(int direction)
+    {
+        auto c = &state.composition;
+        if (direction < 0)
+            c.cursor = c.cursor == 0 ? 0 : previousGraphemeBoundary(c.preedit, c.cursor);
+        else
+            c.cursor = c.cursor >= c.preedit.length ? c.preedit.length
+                : nextGraphemeBoundary(c.preedit, c.cursor);
+    }
+
+    /// Where the input method's candidates go (`EDI6`): the primary caret, or
+    /// the composition's cursor within the preedit shown at the primary range.
+    Rect imeArea()
+    {
+        const primary = state.selection.primary;
+        if (!state.composition.active)
+            return context.caretArea(text, primary.head, 0);
+        size_t cells;
+        const preedit = state.composition.preedit;
+        for (size_t at; at < state.composition.cursor;)
+        {
+            const next = nextGraphemeBoundary(preedit, at);
+            cells += clusterCells(preedit, at, next);
+            at = next;
+        }
+        return context.caretArea(text, primary.start, cells);
     }
 
     // -------------------------------------------------------------- history

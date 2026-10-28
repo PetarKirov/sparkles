@@ -17,6 +17,7 @@ import sparkles.base.text.utf : UtfMode, decodeToken;
 import sparkles.base.text.width : ClusterWidthState;
 import sparkles.text_buffer.summary : Affinity;
 import sparkles.text_buffer.text : Text;
+import sparkles.ui.geometry : Rect;
 
 /// One line of the laid-out text: `[start, end)`, `end` before any line break.
 struct VisualLine
@@ -119,6 +120,18 @@ struct LogicalContext
             at = next;
         }
         return line.end;
+    }
+
+    /**
+    The caret at `position`, `extra` cells further right (a preedit's cursor),
+    as a one-cell rectangle in lines and columns from the text's start: what
+    `imeArea` reports (`EDI6`). The view offsets it by its own origin.
+    */
+    Rect caretArea(in Text text, size_t position, size_t extra) const scope
+    {
+        const line = lineAt(text, position, Affinity.before);
+        const column = columnOf(text, line, position) + extra;
+        return Rect(cast(int) column, cast(int) text.lineOf(position), 1, 1);
     }
 }
 
