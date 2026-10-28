@@ -175,6 +175,21 @@ struct Window
     }
 
     /**
+    Where the input method shows its candidates (`EDI8`, the editor's
+    `imeArea`): the caret's rectangle in window coordinates, the cursor
+    `cursor` pixels from its left edge.
+    */
+    SdlExpected!() textInputArea(int x, int y, int width, int height, int cursor = 0)
+        @trusted nothrow
+    {
+        if (_handle is null)
+            return err!void("Window.textInputArea: window is not open");
+
+        auto rect = SDL_Rect(x, y, width, height);
+        return check(SDL_SetTextInputArea(_handle, &rect, cursor), "SDL_SetTextInputArea");
+    }
+
+    /**
     The drawable size in pixels.
 
     Not the same as the requested size on a HiDPI display, which is the whole
