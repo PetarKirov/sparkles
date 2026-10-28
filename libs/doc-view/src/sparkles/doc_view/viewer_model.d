@@ -14,9 +14,11 @@ import sparkles.base.term_style : UnderlineStyle;
 import sparkles.code_instrumentation : CoverageGutterItem, CoveragePlan, LineState;
 import core.time : MonoTime;
 
-import sparkles.diff.model : DiffDoc;
+import sparkles.diff.model : DiffDoc, RowKind;
 import sparkles.input.events : KeyEvent;
+import sparkles.ui.editor.field : EditorField;
 import sparkles.ui.editor.keys : EditorTarget;
+import sparkles.ui.editor.state : EditorOptions;
 import sparkles.syntax : HighlightEvent, LabelSet, ResolvedTheme, resolveTheme,
     RgbColor, toRgb;
 import sparkles.ui.theme : Theme;
@@ -50,9 +52,10 @@ import sparkles.ui.style : defaultTwoslashPalette, FontRole, Palette,
 import sparkles.ui.widget : Builder, TextSpan, WidgetKind, WidgetTree;
 
 import sparkles.doc_view.ansi_model : anchorAnsiLines, AnsiLine, Attr;
+import sparkles.doc_view.diff_comments : LocalComment;
 import sparkles.doc_view.diff_edit : DiffEdit, writeFileAtomically;
 import sparkles.doc_view.diff_session : DiffSession;
-import sparkles.doc_view.diff_view : diffCaretKey, diffFileKey, diffGapKeyBase, diffHunkIndexOf, DiffLayout,
+import sparkles.doc_view.diff_view : diffCaretKey, diffFileKey, diffRowCursorKey, diffGapKeyBase, diffHunkIndexOf, DiffLayout,
     FileTypes, isDiffGapKey, isDiffHunkKey, viewDiffDoc;
 import sparkles.doc_view.document : coverageChannel, coverageChannelId, coverageTintedRanges, DiffEmphasis,
     DiffSides, Document, hueFenceRenderer;
@@ -637,6 +640,8 @@ struct ViewerModel
         diffSession = diffSession_;
         // `DST5`: an edit belongs to the document it was opened on.
         diffEditOpen = diffEditing = diffEditSaved = false;
+        diffRowCursor = size_t.max;
+        composing = false;
         diffEmphasis = diffEmphasis_;
         coverage = coverage_;
         hasCoverage = hasCoverage_;
@@ -1142,6 +1147,15 @@ struct ViewerModel
             DiffViewOptions dopt;
             dopt.foldFormattingOnly = !showFormattingHunks;
             dopt.layout = diffLayout;
+            // `DCM1`/`DCM2`: the comment cursor, once moved, and a comment being
+            // written under its row.
+            dopt.cursorRow = diffRowCursor;
+            if (composing)
+            {
+                dopt.composer = &composer.state;
+                dopt.composerRow = composerRow;
+                dopt.composerHint = composerHint;
+            }
             dopt.expandContext = expandContext;
             dopt.expandedGaps = expandedGaps;
             // The SIDES always go in; only the re-highlighting renderer is
@@ -2774,6 +2788,183 @@ struct ViewerModel
                 return;
             }
     }
+
+    // ── `DCM1`/`DCM2`: the row cursor and the comment composer ───────────
+
+    /// The row a comment anchors to, as a document-global row index, once
+    /// the reviewer has moved it; `size_t.max` follows the hunk in view.
+    size_t diffRowCursor = size_t.max;
+    /// A comment is being written, under row `composerRow`.
+    bool composing;
+    /// ditto
+    EditorField composer;
+    /// ditto
+    size_t composerRow;
+    /// The composer's keys, said under it; the host knows them.
+    string composerHint;
+
+    /// The row the cursor is on: its own, or the first change of the hunk
+    /// in view.
+    size_t diffCursorRow()
+    {
+        import sparkles.diff.model : RowKind;
+
+        if (diffRowCursor < diff.rows.length)
+            return diffRowCursor;
+        const hi = diffCursorHunk();
+        if (hi >= diff.hunks.length)
+            return size_t.max;
+        const h = diff.hunks[hi];
+        foreach (i, ref row; diff.hunkRows(h))
+            if (row.kind != RowKind.context)
+                return h.rowsStart + i;
+        return h.rowsStart;
+    }
+
+    /// The rows in the order they are shown: every hunk of every file the
+    /// reviewer has not collapsed.
+    private size_t[] shownRows()
+    {
+        size_t[] rows;
+        foreach (fi, ref f; diff.files[])
+        {
+            if (fi < diffSession.entries.length && diffSession.entries[fi].collapsed)
+                continue;
+            foreach (hi; f.hunksStart .. f.hunksStart + f.hunksCount)
+                foreach (i; 0 .. diff.hunks[hi].rowsCount)
+                    rows ~= diff.hunks[hi].rowsStart + i;
+        }
+        return rows;
+    }
+
+    /// Moves the row cursor `delta` rows through the shown ones, keeping it
+    /// in view; `false` at either end.
+    bool diffMoveRow(int delta)
+    {
+        const rows = shownRows();
+        if (rows.length == 0)
+            return false;
+        const at = diffCursorRow();
+        size_t index;
+        foreach (i, r; rows)
+            if (r == at)
+                index = i;
+        const target = cast(long) index + delta;
+        if (target < 0 || target >= cast(long) rows.length)
+            return false;
+        diffRowCursor = rows[cast(size_t) target];
+        rebuild();
+        keepKeyInView(diffRowCursorKey);
+        return true;
+    }
+
+    /// The file a document-global row belongs to.
+    size_t fileOfRow(size_t row)
+    {
+        foreach (fi, ref f; diff.files[])
+            foreach (hi; f.hunksStart .. f.hunksStart + f.hunksCount)
+            {
+                const h = diff.hunks[hi];
+                if (row >= h.rowsStart && row < h.rowsStart + h.rowsCount)
+                    return fi;
+            }
+        return size_t.max;
+    }
+
+    /**
+    Opens a comment under the cursor's row (`DCM2`). Returns why it cannot
+    be written there, or `null`.
+    */
+    string commentStart(EditorTarget target = EditorTarget.terminal)
+    {
+        if (diffEditOpen)
+            return "save or close the edit first";
+        const row = diffCursorRow();
+        if (row >= diff.rows.length || fileOfRow(row) >= diffSides.length)
+            return "no line to comment on here";
+        diffRowCursor = row;
+        composer = EditorField.make("", EditorOptions.init, target);
+        composerRow = row;
+        composing = true;
+        rebuild();
+        keepKeyInView(diffRowCursorKey);
+        return null;
+    }
+
+    /**
+    One key for the composer; `false` for a key it declines, such as the one
+    the host posts with. Escape drops the comment.
+    */
+    bool commentKey(in KeyEvent k)
+    {
+        if (!composing)
+            return false;
+        const r = composer.key(k);
+        if (r.cancelled)
+        {
+            composing = false;
+            rebuild();
+            return true;
+        }
+        if (!r.handled)
+            return false;
+        rebuild();
+        return true;
+    }
+
+    /// A paste into the composer (`EDI4`).
+    bool commentPaste(scope const(char)[] text, uint request = 0)
+    {
+        if (!composing)
+            return false;
+        cast(void) composer.paste(text, request);
+        rebuild();
+        return true;
+    }
+
+    /**
+    Takes the comment written so far, anchored by content to its row
+    (`DCM1`), and closes the composer. `false`, leaving it open, when
+    nothing has been written.
+    */
+    bool commentTake(out LocalComment taken, string author = null, long created = 0)
+    {
+        import sparkles.diff.model : RowKind;
+        import sparkles.doc_view.diff_comments : captureAnchor;
+
+        if (!composing || composer.empty)
+            return false;
+        const fi = fileOfRow(composerRow);
+        const row = diff.rows[composerRow];
+        const file = diff.files[fi];
+        const newPath = diff.pathText(file.newPath).idup;
+        taken.path = newPath == "/dev/null" ? diff.pathText(file.oldPath).idup : newPath;
+        taken.oldSide = row.kind == RowKind.removed;
+        taken.body_ = composer.text;
+        taken.author = author;
+        taken.created = created;
+        const sideText = taken.oldSide ? diffSides[fi].oldText : diffSides[fi].newText;
+        if (!captureAnchor(taken, sideText, taken.oldSide ? row.oldLine : row.newLine))
+            return false;
+        composing = false;
+        rebuild();
+        return true;
+    }
+
+    /// Scrolls just enough to keep the row keyed `key` in view.
+    private void keepKeyInView(size_t key)
+    {
+        foreach (ref kr; cells)
+            if (kr.key == key)
+            {
+                const y = cast(long) kr.rect.y;
+                if (y < top)
+                    scrollTo(y);
+                else if (viewRows > 0 && y >= top + viewRows)
+                    scrollTo(y - viewRows + 1);
+                return;
+            }
+    }
 }
 
 
@@ -4349,4 +4540,46 @@ unittest
     assert(readText(buildPath(dir, "dst5.txt")) == "a\nB!\nc\n");
     assert(vm.diffEditKey(KeyEvent(Key.escape)) && !vm.diffEditing && !vm.diffEditOpen,
         "Escape leaves a clean edit");
+}
+
+@("viewer_model.comment.writtenUnderTheCursorRowAnchoredByContent")
+@system unittest
+{
+    import sparkles.diff : diffText;
+    import sparkles.doc_view.diff_comments : relocate;
+    import sparkles.doc_view.diff_session : buildDiffSession;
+    import sparkles.doc_view.document : DiffSides;
+    import sparkles.input.events : Key;
+
+    // `DCM1`/`DCM2`: the cursor starts on the hunk's first change and moves
+    // row by row; a comment written under it is anchored to that line's
+    // content and taken when posted.
+    enum before = "a\nb\nc\nd\n", after = "a\nB\nc\nd\n";
+    auto dd = diffText(before, after, "f.txt", "f.txt");
+    ViewerModel vm;
+    vm.themes = [builtinDark];
+    vm.names = ["dark"];
+    vm.widthCols = 80;
+    vm.viewRows = 20;
+    vm.applyTheme(0);
+    vm.setDocument("diff", "", "", null, PreviewModel.init, TwoslashReturn.init, "diff",
+        dd, [DiffSides("", before, after)], buildDiffSession(dd));
+    const first = vm.diffCursorRow();
+    assert(dd.rows[first].kind != RowKind.context, "the hunk's first change");
+    assert(vm.diffMoveRow(1) && vm.diffCursorRow() == first + 1);
+    assert(vm.commentStart() is null && vm.composing);
+    bool drawn;
+    foreach (ref kr; vm.cells)
+        drawn = drawn || kr.key == diffRowCursorKey;
+    assert(drawn, "the cursor row is in the tree");
+
+    LocalComment c;
+    assert(!vm.commentTake(c), "nothing written yet");
+    foreach (ch; "why?")
+        vm.commentKey(KeyEvent(Key.char_, ch));
+    assert(vm.commentTake(c, "me", 1));
+    assert(!vm.composing && c.body_ == "why?" && c.path == "f.txt");
+    const row = dd.rows[first + 1];
+    assert(c.oldSide == (row.kind == RowKind.removed));
+    assert(relocate(c, c.oldSide ? before : after) == (c.oldSide ? row.oldLine : row.newLine));
 }

@@ -106,6 +106,16 @@ struct DiffViewOptions
     /// caret's row is keyed $(LREF diffCaretKey). `null` when the new side is
     /// read-only, which is every side but a worktree file's.
     const(EditorState)* editing;
+    /// `DCM1`: the document-global index of the row a comment would anchor
+    /// to, marked in its gutter; `size_t.max` marks none.
+    size_t cursorRow = size_t.max;
+    /// `DCM2`: a comment being written under row `composerRow` (global), or
+    /// `null`.
+    const(EditorState)* composer;
+    /// ditto
+    size_t composerRow = size_t.max;
+    /// ditto: the composer's keys, said under it.
+    string composerHint;
 }
 
 /**
@@ -420,6 +430,10 @@ bool isDiffGapKey(size_t key) @safe pure nothrow @nogc => key >= diffGapKeyBase;
 /// host keeps it in view. Between the file keys and the hunk keys.
 enum size_t diffCaretKey = size_t.max / 4;
 
+/// `DCM1`: the key of the row the comment cursor is on, so the host keeps it
+/// in view. Beside $(LREF diffCaretKey).
+enum size_t diffRowCursorKey = diffCaretKey + 1;
+
 /// `DST5`: line `line` (0-based) of the edited text has a caret, a selection
 /// or a preedit on it, so its row draws through the editor.
 private bool editorOnLine(in EditorState state, size_t line) @safe pure nothrow @nogc
@@ -561,6 +575,33 @@ private bool anchoredHere(in AnchoredThread t, in Row row) @safe pure nothrow @n
     return t.oldSide ? row.oldLine == t.line : row.newLine == t.line;
 }
 
+
+/**
+`DCM2`: the comment being written, under its row: the editor drawn like a
+thread's body, with a line saying how to post it or leave.
+*/
+private uint composerBlock(ref Builder b, const(GutterChannel)[] chans, in DiffViewOptions opt)
+    @safe
+{
+    import sparkles.ui.components.editor : editorView;
+    import sparkles.ui.geometry : Insets;
+    import sparkles.ui.style : TextStyle;
+
+    EditorViewOptions eopt;
+    eopt.placeholder = "Write a comment (markdown)";
+    auto rows = [
+        b.add(Widget(kind: WidgetKind.rich, spans: [
+            TextSpan("▌ ", slot: Slot.chromeAccent),
+            TextSpan("new comment", slot: Slot.chromeAccent, textStyle: TextStyle(bold: true)),
+        ])),
+        b.add(Widget(kind: WidgetKind.column, children: [editorView(b, *opt.composer, eopt)],
+            padding: Insets(0, 0, 0, 2))),
+    ];
+    if (opt.composerHint.length)
+        rows ~= b.add(Widget(kind: WidgetKind.rich,
+            spans: [TextSpan("  " ~ opt.composerHint, slot: Slot.muted)]));
+    return withGutterCells(b, chans, null, b.container(WidgetKind.column, rows), 0);
+}
 /**
 `DPR3`/`DCM2`: one review conversation, rendered under its anchor line.
 
@@ -651,8 +692,17 @@ private GutterChannel[] diffChannels(int digits, bool split) @safe
 }
 
 /// The marker cell for `kind`: the `+`/`-`/context band that runs into the code.
-private GutterCell markerCell(RowKind kind) @safe
+private GutterCell markerCell(RowKind kind, bool cursor = false) @safe
 {
+    // `DCM1`: the row a comment would anchor to keeps its sign and gains a
+    // pointer, in the accent, so the tier still reads.
+    if (cursor)
+        final switch (kind) with (RowKind)
+        {
+            case context: return cellOf("▶ ", 2, Slot.chromeAccent, alignEnd: false);
+            case removed: return cellOf("▶-", 2, Slot.chromeAccent, alignEnd: false);
+            case added:   return cellOf("▶+", 2, Slot.chromeAccent, alignEnd: false);
+        }
     final switch (kind) with (RowKind)
     {
         case context:
@@ -669,7 +719,7 @@ private GutterCell markerCell(RowKind kind) @safe
 }
 
 /// A row's cells for the unified channels: both line numbers, then the marker.
-private GutterCell[] unifiedCells(in Row row, int digits) @safe
+private GutterCell[] unifiedCells(in Row row, int digits, bool cursor = false) @safe
 {
     GutterCell[] cells;
     if (digits > 0)
@@ -677,7 +727,7 @@ private GutterCell[] unifiedCells(in Row row, int digits) @safe
         cells ~= numberCell(row.oldLine, digits);
         cells ~= numberCell(row.newLine, digits);
     }
-    return cells ~ markerCell(row.kind);
+    return cells ~ markerCell(row.kind, cursor);
 }
 
 /// A line number, or a blank strip when the side has none.
@@ -888,16 +938,32 @@ private uint viewHunkSplit(ref Builder b, const ref DiffDoc doc, in Hunk hunk,
         rows ~= hunkHeader(b, hunk);
 
     const hunkRows = doc.hunkRows(hunk);
+    const base = hunk.rowsStart;
     foreach (pair; alignSplitRows(hunkRows))
     {
         const left = splitHalf(b, doc, hunkRows, pair.old_, true,
-            chans, digits, opt);
+            chans, digits, opt, base);
         const right = splitHalf(b, doc, hunkRows, pair.new_, false,
-            chans, digits, opt);
+            chans, digits, opt, base);
         // The row itself must fill the pane, or its two `grow` halves have no
         // remaining space to divide and both shrink-wrap their text.
         // The row fills the pane; its two halves each take exactly 50% of it.
         rows ~= grown(b, b.container(WidgetKind.row, [left, right]));
+
+        // `DPR3`/`DCM2`: the conversations on either half, across the pane
+        // under the pair, and a comment being written on one of them. A
+        // context row is both halves; it is visited once.
+        foreach (idx; [pair.old_, pair.new_ == pair.old_ ? -1 : pair.new_])
+        {
+            if (idx < 0)
+                continue;
+            const row = hunkRows[cast(size_t) idx];
+            foreach (ref t; opt.threads)
+                if (anchoredHere(t, row))
+                    rows ~= threadBlock(b, t, chans, opt);
+            if (opt.composer !is null && base + idx == opt.composerRow)
+                rows ~= composerBlock(b, chans, opt);
+        }
     }
     // Every container between the panes and the viewport must fill the width,
     // or `percent(50)` resolves against a shrink-wrapped ancestor and the
@@ -915,7 +981,7 @@ as "unchanged and short".
 */
 private uint splitHalf(ref Builder b, const ref DiffDoc doc,
     const(Row)[] hunkRows, int idx, bool oldSide,
-    const(GutterChannel)[] chans, int digits, DiffViewOptions opt) @safe
+    const(GutterChannel)[] chans, int digits, DiffViewOptions opt, size_t base = 0) @safe
 {
     if (idx < 0)
     {
@@ -928,7 +994,7 @@ private uint splitHalf(ref Builder b, const ref DiffDoc doc,
     GutterCell[] cells;
     if (digits > 0)
         cells ~= numberCell(oldSide ? row.oldLine : row.newLine, digits);
-    cells ~= markerCell(row.kind);
+    cells ~= markerCell(row.kind, base + idx == opt.cursorRow);
     TextSpan[] spans;
 
     const rowText = doc.rowText(row);
@@ -975,22 +1041,26 @@ private uint viewHunk(ref Builder b, const ref DiffDoc doc, in Hunk hunk,
     if (opt.chrome)
         rows ~= hunkHeader(b, hunk);
 
-    foreach (ref row; doc.hunkRows(hunk))
+    foreach (i, ref row; doc.hunkRows(hunk))
     {
-        rows ~= viewRow(b, doc, row, chans, digits, opt);
+        const global = hunk.rowsStart + i;
+        rows ~= viewRow(b, doc, row, chans, digits, opt, global == opt.cursorRow);
         // `DPR3`: the conversation goes UNDER the line it is about, the way
         // a reviewer reads it — not in a margin, and not in a separate pane
         // where the code it refers to is no longer on screen.
         foreach (ref t; opt.threads)
             if (anchoredHere(t, row))
                 rows ~= threadBlock(b, t, chans, opt);
+        // `DCM2`: a comment being written goes where it will hang.
+        if (opt.composer !is null && global == opt.composerRow)
+            rows ~= composerBlock(b, chans, opt);
     }
 
     return grown(b, b.container(WidgetKind.column, rows));
 }
 
 private uint viewRow(ref Builder b, const ref DiffDoc doc, in Row row,
-    const(GutterChannel)[] chans, int digits, DiffViewOptions opt) @safe
+    const(GutterChannel)[] chans, int digits, DiffViewOptions opt, bool cursor = false) @safe
 {
     TextSpan[] spans;
     const rowText = doc.rowText(row);
@@ -1018,14 +1088,15 @@ private uint viewRow(ref Builder b, const ref DiffDoc doc, in Row row,
                 Slot.diffEmphAdded, true);
             break;
         }
+    const rowKey = editedKey(opt, row);
     const code = keyed(b, b.add(Widget(kind: WidgetKind.rich, spans: spans)),
-        editedKey(opt, row));
+        rowKey != 0 ? rowKey : cursor ? diffRowCursorKey : 0);
 
     // `DVT1`: the side's type overlay decorates this row. The decorations are
     // `stack` children of the code and the chrome is its sibling, so the
     // layout places both — nothing here has to know how wide the gutter is,
     // which is what an underline two cells off its token used to cost.
-    const cells = unifiedCells(row, digits);
+    const cells = unifiedCells(row, digits, cursor);
     const side = row.kind == RowKind.added ? opt.newTypes : opt.oldTypes;
     const line = row.kind == RowKind.added ? row.newLine : row.oldLine;
     const composed = !side.live || line == 0
