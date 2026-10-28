@@ -12,7 +12,11 @@ import sparkles.doc_view.document_session : DocumentSession;
 import sparkles.base.term_color : mix;
 import sparkles.base.term_style : UnderlineStyle;
 import sparkles.code_instrumentation : CoverageGutterItem, CoveragePlan, LineState;
+import core.time : MonoTime;
+
 import sparkles.diff.model : DiffDoc;
+import sparkles.input.events : KeyEvent;
+import sparkles.ui.editor.keys : EditorTarget;
 import sparkles.syntax : HighlightEvent, LabelSet, ResolvedTheme, resolveTheme,
     RgbColor, toRgb;
 import sparkles.ui.theme : Theme;
@@ -46,8 +50,9 @@ import sparkles.ui.style : defaultTwoslashPalette, FontRole, Palette,
 import sparkles.ui.widget : Builder, TextSpan, WidgetKind, WidgetTree;
 
 import sparkles.doc_view.ansi_model : anchorAnsiLines, AnsiLine, Attr;
+import sparkles.doc_view.diff_edit : DiffEdit, writeFileAtomically;
 import sparkles.doc_view.diff_session : DiffSession;
-import sparkles.doc_view.diff_view : diffFileKey, diffGapKeyBase, diffHunkIndexOf, DiffLayout,
+import sparkles.doc_view.diff_view : diffCaretKey, diffFileKey, diffGapKeyBase, diffHunkIndexOf, DiffLayout,
     FileTypes, isDiffGapKey, isDiffHunkKey, viewDiffDoc;
 import sparkles.doc_view.document : coverageChannel, coverageChannelId, coverageTintedRanges, DiffEmphasis,
     DiffSides, Document, hueFenceRenderer;
@@ -630,6 +635,8 @@ struct ViewerModel
         diff = diff_;
         diffSides = diffSides_;
         diffSession = diffSession_;
+        // `DST5`: an edit belongs to the document it was opened on.
+        diffEditOpen = diffEditing = diffEditSaved = false;
         diffEmphasis = diffEmphasis_;
         coverage = coverage_;
         hasCoverage = hasCoverage_;
@@ -1141,10 +1148,33 @@ struct ViewerModel
             // conditional. They carry the texts `DVG2` expands an unchanged
             // region from, which needs no grammar — passing null here cost
             // expansion its source whenever no cache was configured.
-            tree = viewDiffDoc(diff, dopt, diffSides,
-                cache !is null
-                    ? highlightedFenceRenderer(cache, &current, pageFg) : null,
-                diffSession, diffTypes, widthCols);
+            if (diffEditOpen)
+            {
+                // `DST5`: the edited file alone, its new side the editor's
+                // text, every line shown so the caret is never in a fold.
+                // Highlighting waits until the edit settles (`EDR3`).
+                import sparkles.doc_view.diff_session : buildDiffSession;
+                import sparkles.doc_view.document : DiffSides;
+
+                auto live = buildDiffSession(diffEdit.doc);
+                live.threads = diffSession.threads;
+                if (live.entries.length && diffEdit.dirty)
+                    live.entries[0].display ~= " · edited";
+                dopt.expandContext = true;
+                if (diffEditing)
+                    dopt.editing = &diffEdit.state();
+                const lang = diffEdit.entry < diffSides.length ? diffSides[diffEdit.entry].lang : null;
+                const sides = [DiffSides(lang, diffEdit.oldText, diffEdit.text)];
+                tree = viewDiffDoc(diffEdit.doc, dopt, sides,
+                    cache !is null && diffEdit.styled
+                        ? highlightedFenceRenderer(cache, &current, pageFg) : null,
+                    live, null, widthCols);
+            }
+            else
+                tree = viewDiffDoc(diff, dopt, diffSides,
+                    cache !is null
+                        ? highlightedFenceRenderer(cache, &current, pageFg) : null,
+                    diffSession, diffTypes, widthCols);
             // Scrolled sideways by this model, like every document (`LAY16`).
             tree.nodes[tree.root].scrollsX = true;
             frames = layoutDoc(tree, Constraints(maxW: widthCols));
@@ -2569,6 +2599,180 @@ struct ViewerModel
         if (row >= 0)
             scrollTo(row);
         return true;
+    }
+
+    // ── `DST5`: inline editing of the new side ──────────────────────────
+
+    /// The file whose new side is being edited, while `diffEditOpen`.
+    DiffEdit diffEdit;
+    /// ditto
+    bool diffEditOpen;
+    /// The editor has the keyboard.
+    bool diffEditing;
+    /// A save happened since the session was last loaded: the host reloads
+    /// it once the editor closes.
+    bool diffEditSaved;
+
+    /// The file the cursor's hunk is in, or `size_t.max` with no diff.
+    size_t diffCursorFile()
+    {
+        if (diff.files.length == 0)
+            return size_t.max;
+        const hi = diffCursorHunk();
+        foreach (fi, ref f; diff.files[])
+            if (hi >= f.hunksStart && hi < f.hunksStart + f.hunksCount)
+                return fi;
+        return diffSession.index < diff.files.length ? diffSession.index : 0;
+    }
+
+    /**
+    Opens the cursor's file for editing (`DST5`), the caret at the start of
+    its hunk on the new side, or gives the keyboard back to an edit already
+    open. Returns why the file cannot be edited, or `null`.
+    */
+    string diffEditStart(EditorTarget target = EditorTarget.terminal)
+    {
+        import std.path : buildPath;
+
+        if (diffEditOpen)
+        {
+            diffEditing = true;
+            rebuild();
+            keepCaretInView();
+            return null;
+        }
+        if (!diffSession.editable)
+            return "only a working-tree file can be edited";
+        const fi = diffCursorFile();
+        if (fi >= diff.files.length)
+            return "nothing to edit";
+        const file = diff.files[fi];
+        const newPath = diff.pathText(file.newPath).idup;
+        if (file.binary)
+            return "a binary file cannot be edited";
+        if (newPath == "/dev/null")
+            return "the file was deleted";
+        if (fi >= diffSides.length || diffSides[fi].newText is null && diffSides[fi].oldText is null)
+            return "this file's text is not available";
+        // The caret goes to the hunk's first change on the new side: the row
+        // after the context a hunk opens with.
+        const hi = diffCursorHunk();
+        size_t caret = 1;
+        if (hi < diff.hunks.length)
+        {
+            import sparkles.diff.model : RowKind;
+
+            uint line = diff.hunks[hi].newStart;
+            foreach (ref row; diff.hunkRows(diff.hunks[hi]))
+            {
+                if (row.kind != RowKind.context)
+                    break;
+                line = row.newLine + 1;
+            }
+            caret = line;
+        }
+        const root = diffSession.editRoot;
+        diffEdit = DiffEdit.open(fi, root.length ? buildPath(root, newPath) : newPath,
+            diff.pathText(file.oldPath).idup, newPath, diffSides[fi].oldText,
+            diffSides[fi].newText, target, caret);
+        diffEditOpen = diffEditing = true;
+        rebuild();
+        keepCaretInView();
+        return null;
+    }
+
+    /**
+    One key while the editor has the keyboard; `false` for a key it declines,
+    which the host may bind. Escape takes the keyboard back: clean, the edit
+    closes; with unsaved edits it stays open, drawn, until saved or dropped.
+    */
+    bool diffEditKey(in KeyEvent k)
+    {
+        if (!diffEditing)
+            return false;
+        const r = diffEdit.key(k);
+        if (r.cancelled)
+        {
+            diffEditing = false;
+            diffEditOpen = diffEdit.dirty;
+            rebuild();
+            return true;
+        }
+        if (!r.handled)
+            return false;
+        rebuild();
+        keepCaretInView();
+        return true;
+    }
+
+    /// A paste, or a clipboard read's answer, while the editor has the
+    /// keyboard (`EDI4`, `EDY5`).
+    bool diffEditPaste(scope const(char)[] text, uint request = 0)
+    {
+        if (!diffEditing)
+            return false;
+        cast(void) diffEdit.paste(text, request);
+        rebuild();
+        keepCaretInView();
+        return true;
+    }
+
+    /// Does the editor's clipboard work through `clipboard` (`EDY5`).
+    void diffEditServe(Clipboard)(in Clipboard clipboard)
+    {
+        if (!diffEditOpen)
+            return;
+        if (diffEdit.serve(clipboard).changed)
+        {
+            rebuild();
+            keepCaretInView();
+        }
+    }
+
+    /// Catches the diff and its highlighting up once typing pauses (`EDR3`);
+    /// `true` when the view rebuilt.
+    bool diffEditTick(MonoTime now = MonoTime.currTime)
+    {
+        if (!diffEditOpen || !diffEdit.tick(now))
+            return false;
+        rebuild();
+        return true;
+    }
+
+    /// Writes the edited file. Returns why it could not, or `null`.
+    string diffEditSave()
+    {
+        if (!diffEditOpen)
+            return "nothing is being edited";
+        if (const failure = diffEdit.save((string path, string text) => writeFileAtomically(path, text)))
+            return failure;
+        diffEditSaved = true;
+        rebuild();
+        return null;
+    }
+
+    /// Drops the edit, saved or not.
+    void diffEditClose()
+    {
+        diffEditOpen = diffEditing = false;
+        rebuild();
+    }
+
+    /// Scrolls just enough to keep the edited side's primary caret in view.
+    private void keepCaretInView()
+    {
+        import sparkles.doc_view.diff_view : diffCaretKey;
+
+        foreach (ref kr; cells)
+            if (kr.key == diffCaretKey)
+            {
+                const y = cast(long) kr.rect.y;
+                if (y < top)
+                    scrollTo(y);
+                else if (viewRows > 0 && y >= top + viewRows)
+                    scrollTo(y - viewRows + 1);
+                return;
+            }
     }
 }
 
@@ -4097,4 +4301,52 @@ unittest
     assert(vm.captureAnchor() == keep);
     vm.relayout(40);
     assert(vm.rows[cast(size_t) vm.top].srcStart == keep.src);
+}
+
+@("viewer_model.diffEdit.editsTheWorktreeSideAndSaves")
+@system unittest
+{
+    import sparkles.diff : diffText;
+    import sparkles.doc_view.diff_session : buildDiffSession;
+    import sparkles.doc_view.document : DiffSides;
+    import sparkles.input.events : Key, Mods;
+    import std.file : readText, remove, tempDir, write;
+    import std.path : buildPath;
+
+    // `DST5`: the worktree side opens in the editor at the hunk, re-diffs as
+    // it is edited, draws its caret, and an explicit save writes the file.
+    enum before = "a\nb\nc\n", after = "a\nB\nc\n";
+    const dir = tempDir;
+    write(buildPath(dir, "dst5.txt"), after);
+    scope (exit)
+        remove(buildPath(dir, "dst5.txt"));
+    auto dd = diffText(before, after, "dst5.txt", "dst5.txt");
+    ViewerModel vm;
+    vm.themes = [builtinDark];
+    vm.names = ["dark"];
+    vm.widthCols = 80;
+    vm.viewRows = 20;
+    vm.applyTheme(0);
+    auto session = buildDiffSession(dd);
+    vm.setDocument("diff", "", "", null, PreviewModel.init, TwoslashReturn.init, "diff",
+        dd, [DiffSides("", before, after)], session);
+    assert(vm.diffEditStart() !is null, "a read-only new side refuses");
+
+    session.editable = true;
+    session.editRoot = dir;
+    vm.setDocument("diff", "", "", null, PreviewModel.init, TwoslashReturn.init, "diff",
+        dd, [DiffSides("", before, after)], session);
+    assert(vm.diffEditStart(EditorTarget.window) is null);
+    assert(vm.diffEditing && vm.diffEdit.caretLine == 2, "the caret is at the hunk");
+    assert(vm.diffEditKey(KeyEvent(Key.end)));
+    assert(vm.diffEditKey(KeyEvent(Key.char_, '!')));
+    assert(vm.diffEdit.text == "a\nB!\nc\n");
+    bool caretDrawn;
+    foreach (ref kr; vm.cells)
+        caretDrawn = caretDrawn || kr.key == diffCaretKey;
+    assert(caretDrawn, "the caret's row is in the tree");
+    assert(vm.diffEditSave() is null && vm.diffEditSaved);
+    assert(readText(buildPath(dir, "dst5.txt")) == "a\nB!\nc\n");
+    assert(vm.diffEditKey(KeyEvent(Key.escape)) && !vm.diffEditing && !vm.diffEditOpen,
+        "Escape leaves a clean edit");
 }

@@ -254,6 +254,8 @@ struct GuiArgs
     int tableMaxLines = -1;              // --table-max-lines (TBL8; -1 = auto)
     SourceSet* set = null;               // the document set to navigate (GNV1)
     DocLoader loadDoc = null;            // loads a set entry (supplied by app.d)
+    /// `DST2`/`DST5`: produces the diff on screen again after a save.
+    Document delegate() @system reloadDiff = null;
     TsConfigCache* tsCache = null;       // fence highlighting for the widget view
     TwoslashReturn twoslash = TwoslashReturn.init; // twoslash document payload
     string docPath = null;               // on-disk path (reveal in the tree)
@@ -1535,6 +1537,13 @@ int runGui(GuiArgs guiArgs) @system
         flash.toast = Timeline.triggered(toastCfg);
     }
 
+    /// `DST5`: writes the edited file, saying how it went.
+    void saveDiffEdit() @system
+    {
+        const failure = vm.diffEditSave();
+        showToast(failure is null ? "saved " ~ vm.diffEdit.newPath : failure, failure is null);
+    }
+
     // Where an accepted dub configuration is recorded; set while the choices
     // picker is open for one (`LIV10`).
     PackageSlot dubPickSlot;
@@ -2566,6 +2575,16 @@ int runGui(GuiArgs guiArgs) @system
         foreach (e; evBuf)
             e.match!((in KeyEvent k) { keyBuf ~= k; }, (in _) {});
 
+        // `DST5`: an edit catches its diff and highlighting up once typing
+        // pauses (`EDR3`); once a saved edit closes, the session on screen is
+        // stale and is produced again from its source.
+        cast(void) vm.diffEditTick();
+        if (!vm.diffEditOpen && vm.diffEditSaved && reloadDiff !is null)
+        {
+            vm.diffEditSaved = false;
+            vm.setDocument(reloadDiff());
+        }
+
         // The soft keyboard follows an editor's focus (`EDI9`): the search,
         // goto and filter bar, the explorer's filter, the picker's prompt and
         // the settings pane's fields. Only the edges act, so a keyboard the
@@ -2576,7 +2595,7 @@ int runGui(GuiArgs guiArgs) @system
             import sparkles.android.soft_input : hideSoftKeyboard, showSoftKeyboard;
             import sparkles.ui.editor.soft_keyboard : KeyboardAsk;
 
-            const editing = inp.mode != Mode.normal || pn.tree.searching
+            const editing = inp.mode != Mode.normal || pn.tree.searching || vm.diffEditing
                 || !filePicker.empty && filePicker.get.state.active
                 || settingsPane.active && (settingsPane.textEditing || settingsPane.tv.searching);
             final switch (fieldKeyboard.update(editing))
@@ -3096,6 +3115,27 @@ int runGui(GuiArgs guiArgs) @system
                     pn.tree.filterServe(fieldClip);
                 }
         }
+        else if (vm.diffEditing)
+        {
+            // `DST5`: the diff's editor has the keyboard. Its clipboard is the
+            // window's; Ctrl-S (Cmd-S on macOS) saves, and Escape gives the
+            // keyboard back.
+            fieldSetup.applyTo(vm.diffEdit.field);
+            foreach (k; keyBuf)
+            {
+                if (vm.diffEditKey(k))
+                {
+                    vm.diffEditServe(fieldClip);
+                    continue;
+                }
+                version (OSX)
+                    const saveChord = k.mods.super_;
+                else
+                    const saveChord = k.mods.ctrl;
+                if (k.key == Key.char_ && k.ch == 's' && saveChord)
+                    saveDiffEdit();
+            }
+        }
         else if (inputMode)
         {
             // Typing a search query or a goto-line number: the bar's editor
@@ -3421,6 +3461,13 @@ int runGui(GuiArgs guiArgs) @system
                 // `DST2`/`DST4`: the write surface is terminal-only for now —
                 // the GUI has no place to put a discard confirmation yet, and
                 // offering stage without it would be lopsided.
+                case Command.diffEdit:
+                    if (const why = vm.diffEditStart(windowTarget))
+                        showToast(why);
+                    break;
+                case Command.diffSave:
+                    saveDiffEdit();
+                    break;
                 case Command.diffStage:
                 case Command.diffUnstage:
                 case Command.diffDiscard:

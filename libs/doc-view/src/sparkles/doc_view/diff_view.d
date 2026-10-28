@@ -30,6 +30,8 @@ import sparkles.twoslash.render_widgets : decorateCodeRow;
 import sparkles.ui.geometry : SizeSpec;
 import sparkles.ui.components.gutter : blankCell, cellOf, GutterCell,
     GutterChannel, withGutterCells;
+import sparkles.ui.components.editor : EditorViewOptions, editorLineSpans;
+import sparkles.ui.editor.state : EditorState;
 import sparkles.ui.style : Slot;
 import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind, WidgetTree;
 
@@ -99,6 +101,11 @@ struct DiffViewOptions
     /// whose spans don't cover its text) falls back to plain rows.
     TextSpan[][] oldStyled;
     TextSpan[][] newStyled;
+    /// `DST5`: the new side being edited. Its rows that hold a caret, a
+    /// selection or a preedit draw through the editor's view, and the primary
+    /// caret's row is keyed $(LREF diffCaretKey). `null` when the new side is
+    /// read-only, which is every side but a worktree file's.
+    const(EditorState)* editing;
 }
 
 /**
@@ -408,6 +415,47 @@ size_t diffGapKey(size_t gapIndex) @safe pure nothrow @nogc
 
 /// `true` for a key produced by $(LREF diffGapKey).
 bool isDiffGapKey(size_t key) @safe pure nothrow @nogc => key >= diffGapKeyBase;
+
+/// `DST5`: the key of the row holding the edited side's primary caret, so the
+/// host keeps it in view. Between the file keys and the hunk keys.
+enum size_t diffCaretKey = size_t.max / 4;
+
+/// `DST5`: line `line` (0-based) of the edited text has a caret, a selection
+/// or a preedit on it, so its row draws through the editor.
+private bool editorOnLine(in EditorState state, size_t line) @safe pure nothrow @nogc
+{
+    const text = state.text;
+    if (line >= text.lineCount)
+        return false;
+    const start = text.lineStart(line);
+    const end = text.lineEnd(line);
+    foreach (r; state.selection.ranges)
+        if (r.head >= start && r.head <= end || r.start < end && r.end > start)
+            return true;
+    return false;
+}
+
+/// ditto: the primary caret is on it.
+private bool primaryOnLine(in EditorState state, size_t line) @safe pure nothrow @nogc
+    => line < state.text.lineCount
+        && state.text.lineOf(state.selection.primary.head) == line;
+
+/**
+`DST5`: the spans of an edited new-side row, through the editor's view, or
+`null` when the row has no caret, selection or preedit on it.
+*/
+private TextSpan[] editedSpans(in DiffViewOptions opt, in Row row) @safe
+{
+    if (opt.editing is null || row.kind == RowKind.removed || row.newLine == 0
+        || !editorOnLine(*opt.editing, row.newLine - 1))
+        return null;
+    return editorLineSpans(*opt.editing, row.newLine - 1, EditorViewOptions.init);
+}
+
+/// The key an edited row carries: $(LREF diffCaretKey) on the primary caret's.
+private size_t editedKey(in DiffViewOptions opt, in Row row) @safe pure nothrow @nogc
+    => opt.editing !is null && row.kind != RowKind.removed && row.newLine != 0
+        && primaryOnLine(*opt.editing, row.newLine - 1) ? diffCaretKey : 0;
 
 /// Marks a node as filling its parent's remaining width.
 private uint grown(ref Builder b, uint node) @safe
@@ -889,23 +937,29 @@ private uint splitHalf(ref Builder b, const ref DiffDoc doc,
         ? styledLine(opt.newStyled, row.newLine)
         : styledLine(opt.oldStyled, row.oldLine);
 
-    final switch (row.kind) with (RowKind)
-    {
-        case context:
-            spans ~= composedSpans(styled, rowText, emph, Slot.inherit,
-                Slot.inherit, false);
-            break;
-        case removed:
-            spans ~= composedSpans(styled, rowText, emph, Slot.diffRemoved,
-                Slot.diffEmphRemoved, true);
-            break;
-        case added:
-            spans ~= composedSpans(styled, rowText, emph, Slot.diffAdded,
-                Slot.diffEmphAdded, true);
-            break;
-    }
+    // `DST5`: on the new side, a row the editor is on draws through it.
+    auto edited = oldSide ? null : editedSpans(opt, row);
+    if (edited !is null)
+        spans = edited;
+    else
+        final switch (row.kind) with (RowKind)
+        {
+            case context:
+                spans ~= composedSpans(styled, rowText, emph, Slot.inherit,
+                    Slot.inherit, false);
+                break;
+            case removed:
+                spans ~= composedSpans(styled, rowText, emph, Slot.diffRemoved,
+                    Slot.diffEmphRemoved, true);
+                break;
+            case added:
+                spans ~= composedSpans(styled, rowText, emph, Slot.diffAdded,
+                    Slot.diffEmphAdded, true);
+                break;
+        }
     const text = withGutterCells(b, chans, cells,
-        b.add(Widget(kind: WidgetKind.rich, spans: spans)), 0);
+        keyed(b, b.add(Widget(kind: WidgetKind.rich, spans: spans)),
+            oldSide ? 0 : editedKey(opt, row)), 0);
     // `DVL9`: the half already spans its pane, so it is the container that
     // carries the row tint — same rule as the unified row.
     return halfWidth(b, b.container(WidgetKind.column, [text],
@@ -945,22 +999,27 @@ private uint viewRow(ref Builder b, const ref DiffDoc doc, in Row row,
     const styled = row.kind == RowKind.added
         ? styledLine(opt.newStyled, row.newLine)
         : styledLine(opt.oldStyled, row.oldLine);
-    final switch (row.kind)
-    {
-    case RowKind.context:
-        spans ~= composedSpans(styled, rowText, emph, Slot.inherit,
-            Slot.inherit, false);
-        break;
-    case RowKind.removed:
-        spans ~= composedSpans(styled, rowText, emph, Slot.diffRemoved,
-            Slot.diffEmphRemoved, true);
-        break;
-    case RowKind.added:
-        spans ~= composedSpans(styled, rowText, emph, Slot.diffAdded,
-            Slot.diffEmphAdded, true);
-        break;
-    }
-    const code = b.add(Widget(kind: WidgetKind.rich, spans: spans));
+    // `DST5`: a row the editor's caret or selection is on draws through it.
+    if (auto edited = editedSpans(opt, row))
+        spans = edited;
+    else
+        final switch (row.kind)
+        {
+        case RowKind.context:
+            spans ~= composedSpans(styled, rowText, emph, Slot.inherit,
+                Slot.inherit, false);
+            break;
+        case RowKind.removed:
+            spans ~= composedSpans(styled, rowText, emph, Slot.diffRemoved,
+                Slot.diffEmphRemoved, true);
+            break;
+        case RowKind.added:
+            spans ~= composedSpans(styled, rowText, emph, Slot.diffAdded,
+                Slot.diffEmphAdded, true);
+            break;
+        }
+    const code = keyed(b, b.add(Widget(kind: WidgetKind.rich, spans: spans)),
+        editedKey(opt, row));
 
     // `DVT1`: the side's type overlay decorates this row. The decorations are
     // `stack` children of the code and the chrome is its sibling, so the
@@ -1464,6 +1523,8 @@ version (unittest)
 {
     import sparkles.twoslash.protocol : Node, NodeType;
     import sparkles.ui.geometry : SizeSpec;
+import sparkles.ui.components.editor : EditorViewOptions, editorLineSpans;
+import sparkles.ui.editor.state : EditorState;
 import sparkles.ui.style : Slot;
 
     // One changed line: the old side gets a hover span, the new side none.
