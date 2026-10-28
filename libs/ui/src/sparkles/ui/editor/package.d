@@ -10,6 +10,7 @@ module sparkles.ui.editor;
 public import sparkles.ui.editor.command;
 public import sparkles.ui.editor.context;
 public import sparkles.ui.editor.effect;
+public import sparkles.ui.editor.field;
 public import sparkles.ui.editor.keys;
 public import sparkles.ui.editor.kill_ring;
 public import sparkles.ui.editor.selection;

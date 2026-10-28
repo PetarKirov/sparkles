@@ -45,7 +45,7 @@ enum bool isTextSource(T) = is(typeof((ref T texts, TextId id) {
 }));
 
 /// Apply `command` to `state` (`EDT2`).
-StepResult step(Texts, Context)(EditorState state, KillRing ring, ref Texts texts,
+StepResult step(Texts, Context)(EditorState state, KillRing ring, ref scope Texts texts,
     in EditCommand command, ref Context context)
 if (isTextSource!Texts && isEditContext!Context)
 {
@@ -67,7 +67,7 @@ this, or pass `move(state)` to `step`: a copy shares the history, and the
 step's first commit then clones it.
 */
 EditEffects stepInPlace(Texts, Context)(ref EditorState state, ref KillRing ring,
-    ref Texts texts, in EditCommand command, ref Context context)
+    ref scope Texts texts, in EditCommand command, ref Context context)
 if (isTextSource!Texts && isEditContext!Context)
 {
     import core.lifetime : move;
