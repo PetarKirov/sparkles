@@ -44,7 +44,8 @@ import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.term_caps : isTerminal, StdStream;
 
 import sparkles.doc_view.ansi_model : BackgroundMode, backgroundOptions;
-import sparkles.doc_view.document : ContentKind, Document, DocumentPipeline, hueFenceRenderer;
+import sparkles.doc_view.document : ContentKind, DiffSource, Document, DocumentPipeline,
+    hueFenceRenderer;
 import sparkles.doc_view.viewer_model : GutterSelection;
 import sparkles.doc_view.diff_commutative : CommutativeKind;
 import sparkles.doc_view.diff_session : AnchoredThread, SessionHeader, ThreadComment;
@@ -1262,6 +1263,22 @@ ref const(LoadedConfig) loadedConfig() @safe nothrow @nogc => gConfig;
 /// ditto
 ref const(HueConfig) effectiveConfig() @safe nothrow @nogc => gConfig.effective;
 
+
+/**
+`DST2`/`DST5`: produces the diff on screen again once a stage or a save has
+changed the working tree under it, from the source it was produced from.
+`null` when it cannot be: a piped patch, a forge's, or no pipeline.
+*/
+private Document delegate() @system diffReloader(DocumentPipeline* pipeline,
+    in Document doc) @system
+{
+    if (pipeline is null || !(doc.diffSession.stageable || doc.diffSession.editable)
+        || doc.diffSource.kind == DiffSource.Kind.none)
+        return null;
+    auto pl = pipeline;
+    const source = doc.diffSource;
+    return delegate Document() @system => pl.reloadDiff(source);
+}
 int main(string[] args)
 {
     version (Android)
@@ -1716,14 +1733,7 @@ private int runTuiSink(in ViewRenderOptions opt, ref Document doc, in LabelSet l
             loader = delegate WorkspaceDoc(string path) @system
                 => pl.load(path);
         }
-        WorkspaceDoc delegate() @system reloadDiff;
-        if (pipeline !is null && doc.diffSession.stageable)
-        {
-            auto pl = pipeline;
-            auto paths = doc.diffPaths.dup;
-            reloadDiff = delegate WorkspaceDoc() @system
-                => pl.loadGitDiff(null, false, paths.dup);
-        }
+        auto reloadDiff = diffReloader(pipeline, doc);
         const exit = runWorkspace(doc.path, isDir: false, doc,
             loader, themeSet.names, themeSet.themes, themeSet.idx, labels,
             &cache, opt.include.dup, opt.exclude.dup, opt.treeWidth,
@@ -1842,6 +1852,7 @@ private int runGuiSink(in ViewRenderOptions opt, ref Document doc, in LabelSet l
             tableMaxLines: opt.tableMaxLines,
             set: docSet,
             loadDoc: &loadDoc,
+            reloadDiff: diffReloader(pipeline, doc),
             tsCache: &cache,
             twoslash: doc.twoslash,
             docPath: doc.path,

@@ -31,6 +31,7 @@ import sparkles.ui.components.lantern_view : BoxLayout, LabelArena,
     viewLantern;
 import sparkles.doc_view.document : DiffEmphasis, DiffSides;
 import staging : StageAction;
+import sparkles.ui.editor.keys : EditorTarget;
 import sparkles.base.text.writers : writeInteger;
 
 import sparkles.syntax : ColorDepth, HighlightEvent, LabelSet, ResolvedTheme,
@@ -1409,6 +1410,22 @@ struct PreviewTui
             onStaged(); // the diff changed underneath us
     }
 
+    /// A paste's chunks so far, for the diff editor (`EDI4`).
+    private char[] editPaste;
+
+    /**
+    `DST5`: once an edit that was saved closes, the diff on screen is stale,
+    as after a stage, so the host produces it again.
+    */
+    private void reloadAfterEdit() @system
+    {
+        if (vm.diffEditOpen || !vm.diffEditSaved)
+            return;
+        vm.diffEditSaved = false;
+        if (onStaged !is null)
+            onStaged();
+    }
+
     /// `DVG2`: expand or re-fold the one unchanged region in view.
     void toggleDiffGap() @system
     {
@@ -1470,6 +1487,30 @@ struct PreviewTui
             return handleSearch(e);
         if (filtering)
             return handleFilterPrompt(e);
+        // `DST5`: while the editor has the keyboard it sees keys and pastes
+        // first; what it declines (a save) goes on to the table.
+        if (vm.diffEditing)
+        {
+            bool taken;
+            e.match!(
+                (in KeyEvent k) { taken = vm.diffEditKey(k); },
+                (in PasteEvent p) {
+                    editPaste ~= p.text[];
+                    if (p.last)
+                    {
+                        cast(void) vm.diffEditPaste(editPaste, p.request);
+                        editPaste = null;
+                    }
+                    taken = true;
+                },
+                (in _) {},
+            );
+            if (taken)
+            {
+                reloadAfterEdit();
+                return true;
+            }
+        }
         return e.match!(
             (in PointerEvent p) => handlePointer(p),
             (in WheelEvent w) => handleWheel(w),
@@ -1704,6 +1745,18 @@ struct PreviewTui
             case Command.diffStage:   applyStaging(StageAction.stage); break;
             case Command.diffUnstage: applyStaging(StageAction.unstage); break;
             case Command.diffDiscard: applyStaging(StageAction.discard); break;
+            case Command.diffEdit:
+                if (diffNav())
+                    notice = vm.diffEditStart(EditorTarget.terminal);
+                break;
+            case Command.diffSave:
+                if (!vm.diffEditOpen)
+                    notice = "nothing is being edited";
+                else if (const failure = vm.diffEditSave())
+                    notice = failure;
+                else
+                    notice = "saved " ~ vm.diffEdit.newPath;
+                break;
 
             // The picker's modal surface answers these; its scopes are
             // unreachable while a pane dispatches.
@@ -3157,4 +3210,54 @@ unittest
         g.resize(30, 6);
         t.paint(g); // out-of-bounds here before the fix
     }
+}
+
+@("tui.diff.editTheWorktreeSideAndSave")
+@system
+unittest
+{
+    import sparkles.diff : diffText;
+    import sparkles.doc_view.diff_session : buildDiffSession;
+    import sparkles.input.events : Mods;
+    import sparkles.syntax : HighlightEvent, LabelSet;
+    import std.file : readText, remove, tempDir, write;
+    import std.path : buildPath;
+
+    // `DST5`: `Shift-E` opens the worktree side in the editor, keys edit it,
+    // `Alt-S` saves it, and Escape closes the clean edit and reloads.
+    enum before = "a\nb\nc\n", after = "a\nB\nc\n";
+    const path = buildPath(tempDir, "tui-dst5.txt");
+    write(path, after);
+    scope (exit)
+        remove(path);
+    static immutable(Theme)[1] themes = [builtinDark];
+    static immutable string[1] names = ["dark"];
+    auto dd = diffText(before, after, "tui-dst5.txt", "tui-dst5.txt");
+    auto session = buildDiffSession(dd);
+    session.editable = true;
+    session.editRoot = tempDir;
+
+    PreviewTui t;
+    t.labels = LabelSet.standard();
+    t.names = names[];
+    t.themes = themes[];
+    t.resize(60, 20);
+    t.setDocument("diff", "", [HighlightEvent.sourceSpan(0, 0)], PreviewModel.init,
+        startPreview: true, TwoslashReturn.init, "diff", dd,
+        [DiffSides("", before, after)], session);
+    t.relayout();
+    bool reloaded;
+    t.onStaged = () { reloaded = true; };
+
+    assert(t.handle(Event(KeyEvent(Key.char_, 'E', Mods(shift: true)))));
+    assert(t.vm.diffEditing, t.notice);
+    t.handle(Event(KeyEvent(Key.end)));
+    t.handle(Event(KeyEvent(Key.char_, '!')));
+    assert(t.vm.diffEdit.text == "a\nB!\nc\n");
+    const ks = KeyEvent(Key.char_, 's', Mods(alt: true));
+    t.handle(Event(ks));
+    assert(readText(path) == "a\nB!\nc\n", t.notice);
+    assert(!reloaded, "the edit is still open");
+    t.handle(Event(KeyEvent(Key.escape)));
+    assert(!t.vm.diffEditing && reloaded, "closing a saved edit reloads the diff");
 }

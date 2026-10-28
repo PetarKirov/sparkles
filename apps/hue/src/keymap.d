@@ -305,6 +305,8 @@ enum Command : ubyte
     diffStage,                         /// `space` — stage the hunk in view
     diffUnstage,                       /// `u` — take it back out of the index
     diffDiscard,                       /// `Shift-X` — throw the change away
+    diffEdit,                          /// `Shift-E` — edit the file in place (`DST5`)
+    diffSave,                          /// `Alt-S` — write the edited file
 
     // The fuzzy picker's modal surface (`PKL7`): its keys are table rows so
     // the guide can list them (`PKL3`), gated on `pickerActive` + pane focus.
@@ -624,6 +626,13 @@ immutable Binding[] hueBindings = [
         require: CtxFlag.hasDiffSession),
     bind(Scope_.viewer, chord('}'), Command.diffNextHunk, "next hunk",
         require: CtxFlag.hasDiffSession),
+    // `DST5`: the worktree side edits in place; a save is always explicit.
+    // Alt-S, because a terminal reserves Ctrl-S for flow control (`KBD3`);
+    // the window also takes Ctrl-S (Cmd-S on macOS) while the editor is open.
+    bind(Scope_.viewer, chord('e', ShiftReq.yes), Command.diffEdit,
+        "edit this file", require: CtxFlag.hasDiffSession),
+    bind(Scope_.viewer, Chord(key: Key.char_, ch: 's', alt: true), Command.diffSave,
+        "save the edited file", require: CtxFlag.hasDiffSession),
     bind(Scope_.viewer, chord('s', ShiftReq.no), Command.diffToggleLayout,
         "unified / split", require: CtxFlag.hasDiffSession),
     // `DVN3`'s view is NOT part of the `z` family: `z` means "things this

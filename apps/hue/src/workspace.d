@@ -44,6 +44,7 @@ import sparkles.ui.geometry : Point, Rect, Size;
 import sparkles.ui.style : Slot;
 
 import sparkles.doc_view.ansi_model : BackgroundMode;
+import sparkles.doc_view.diff_edit : DiffEdit;
 import sparkles.doc_view.diff_view : DiffLayout;
 import sparkles.doc_view.document : Document;
 import dsv_browser : DsvBrowser, PaletteRow, paletteRows, rowMaskFor;
@@ -2502,6 +2503,11 @@ private Duration waitDeadline(ref WorkspaceTui w, bool eventDriven = false)
         if (untilPreview < deadline)
             deadline = untilPreview;
     }
+    // `DST5`: an edit catches its diff and highlighting up once typing
+    // pauses (`EDR3`), which needs a wake with no key.
+    if (w.viewer.vm.diffEditOpen && !w.viewer.vm.diffEdit.styled
+        && deadline > DiffEdit.settle)
+        deadline = DiffEdit.settle;
     if (w.viewer.toastVisible && deadline > 50.msecs)
         deadline = 50.msecs;
     return deadline;
@@ -2526,6 +2532,8 @@ private bool onWaitExpired(ref WorkspaceTui w, Duration waited) @system
     // clock so the panel opens on time — and the settings pane's scrollbar
     // easing with it (the same cadence, the same look as every tree view).
     w.tickLantern(waited);
+    if (w.viewer.vm.diffEditTick())
+        repainted = true;
     if (w.settings.active)
         w.settings.tickAnims(waited);
     return w.tickDock(waited) || repainted;
