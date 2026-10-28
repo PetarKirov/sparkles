@@ -40,7 +40,7 @@ struct RaylibPainter
     // from the face that covers it, emboldened by a second pass a pixel
     // over when the face has no bold.
     void cluster(scope const(uint)[] cps, bool bold, bool italic, int x, int y, int w, int h,
-        Rgba ink)
+        Rgba ink, Rgba)
     {
         const tint = rl(ink);
         if (fonts.drawCluster(cps, bold, italic, cast(float) x, cast(float) y, w, h, tint))

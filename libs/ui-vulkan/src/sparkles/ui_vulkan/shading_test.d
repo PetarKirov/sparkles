@@ -208,3 +208,59 @@ unittest
     static assert(Instance.sizeof == 80);
     static assert(Instance.box.offsetof == 0 && Instance.texRect.offsetof == 64);
 }
+
+// What blending a premultiplied `src` over the straight background `bg`
+// leaves: the canvas's fixed-function `src + dst·(1 − α)`.
+private float[3] over(vec4 src, vec4 bg) @safe pure nothrow @nogc
+    => [src.x + bg.x * (1 - src.w), src.y + bg.y * (1 - src.w), src.z + bg.z * (1 - src.w)];
+
+@("ui_vulkan.shading.glyphColour.gammaIsCoverageAsAlpha")
+@safe pure nothrow @nogc unittest
+{
+    // Without a known background every mode is the encoded blend it always was.
+    const white = v4(1, 1, 1, 1), black = v4(0, 0, 0, 0);
+    foreach (mode; [0.0f, 1.0f, 2.0f])
+        assert(glyphColour(white, black, 0.5f, mode, 0, 0) == premultiplied(white, 0.5f, 0));
+    assert(glyphColour(white, v4(0, 0, 0, 1), 0.5f, 0, 0, 0) == premultiplied(white, 0.5f, 0));
+}
+
+@("ui_vulkan.shading.glyphColour.linearBlendsInLinearLight")
+@safe pure nothrow @nogc unittest
+{
+    // Half coverage of white on black is half the light: 0.5 linear, 0.735
+    // encoded — not the 0.5 encoded gamma blending leaves.
+    const bg = v4(0, 0, 0, 1);
+    auto r = over(glyphColour(v4(1, 1, 1, 1), bg, 0.5f, 1, 0, 0), bg);
+    assert(fabs(r[0] - linearToSrgb(0.5f)) < 1e-4f && fabs(r[0] - 0.7354f) < 1e-3f);
+    // And black on white is half the light the other way: 0.735 again.
+    const paper = v4(1, 1, 1, 1);
+    r = over(glyphColour(v4(0, 0, 0, 1), paper, 0.5f, 1, 0, 0), paper);
+    assert(fabs(r[0] - 0.7354f) < 1e-3f, "dark text loses weight in linear light");
+    // Full and no coverage leave the text's and the background's own colour.
+    const red = v4(0.8f, 0.1f, 0.2f, 1), blue = v4(0.1f, 0.2f, 0.9f, 1);
+    r = over(glyphColour(red, blue, 1, 1, 0, 0), blue);
+    assert(fabs(r[0] - 0.8f) < 1e-4f && fabs(r[2] - 0.2f) < 1e-4f);
+    r = over(glyphColour(red, blue, 0, 1, 0, 0), blue);
+    assert(fabs(r[0] - 0.1f) < 1e-4f && fabs(r[2] - 0.9f) < 1e-4f);
+}
+
+@("ui_vulkan.shading.glyphColour.correctedKeepsTheEncodedWeight")
+@safe pure nothrow @nogc unittest
+{
+    // Linear-corrected blends in linear light but at the coverage that gives
+    // the luminance encoded blending gives: grey text keeps its weight.
+    const fg = v4(1, 1, 1, 1), bg = v4(0, 0, 0, 1);
+    foreach (c; [0.1f, 0.25f, 0.5f, 0.75f, 0.9f])
+    {
+        const r = over(glyphColour(fg, bg, c, 2, 0, 0), bg);
+        assert(fabs(r[0] - c) < 1e-3f, "white on black at the encoded weight");
+    }
+    // Contrast pushes coverage from mid-grey: up above it, down below.
+    const hi = over(glyphColour(fg, bg, 0.75f, 2, 1, 0), bg)[0];
+    const lo = over(glyphColour(fg, bg, 0.25f, 2, 1, 0), bg)[0];
+    assert(hi > 0.75f + 0.05f && lo < 0.25f - 0.05f);
+    // A colour on a colour of equal luminance is plain linear blending.
+    const a = over(glyphColour(v4(0.5f, 0.5f, 0.5f, 1), v4(0.5f, 0.5f, 0.5f, 1), 0.3f, 2, 0, 0),
+        v4(0.5f, 0.5f, 0.5f, 1));
+    assert(fabs(a[0] - 0.5f) < 1e-4f);
+}

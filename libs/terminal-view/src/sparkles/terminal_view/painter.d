@@ -106,9 +106,10 @@ $(LI `fill(x, y, w, h, colour)`: a solid rectangle, blended over what is
     there.)
 $(LI `outline(x, y, w, h, colour)`: the rectangle's one-pixel border (the
     hollow cursor).)
-$(LI `cluster(codepoints, bold, italic, x, y, w, h, ink)`: a grapheme
-    cluster in a run of cells `w` × `h` pixels, at the cell's top-left
-    corner.)
+$(LI `cluster(codepoints, bold, italic, x, y, w, h, ink, background)`: a
+    grapheme cluster in a run of cells `w` × `h` pixels, at the cell's
+    top-left corner, over the cell's `background`, which a painter that
+    composites in linear light blends against.)
 $(LI `labelSize(text)` and `label(text, x, y, colour)`: a line of text in
     the terminal's primary face, measured and drawn (the exit banner).)
 $(LI `clip`/`unclip` and `pushOffset`/`popOffset`: where an embedded pane
@@ -119,7 +120,7 @@ $(LI the image operations of $(LREF isTextureSink).)
 enum isTerminalPainter(P) = isTextureSink!P && is(typeof((ref P p) {
     p.fill(0, 0, 1, 1, Rgba.init);
     p.outline(0, 0, 1, 1, Rgba.init);
-    p.cluster((const(uint)[]).init, false, false, 0, 0, 1, 1, Rgba.init);
+    p.cluster((const(uint)[]).init, false, false, 0, 0, 1, 1, Rgba.init, Rgba.init);
     float[2] size = p.labelSize((const(char)[]).init);
     p.label((const(char)[]).init, 0.0f, 0.0f, Rgba.init);
     p.clip(0, 0, 1, 1);
@@ -171,7 +172,7 @@ struct RecordingPainter
     }
 
     void cluster(scope const(uint)[] cps, bool bold, bool italic, int x, int y, int w, int h,
-        Rgba ink) @safe pure nothrow
+        Rgba ink, Rgba) @safe pure nothrow
     {
         calls ~= Call(op: Op.cluster, x: x, y: y, width: w, height: h, colour: ink,
             codepoints: cps.dup, bold: bold, italic: italic);

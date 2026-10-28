@@ -787,7 +787,7 @@ if (isTerminalPainter!P)
                         if (rc.graphemeLen > 1)
                             cluster = cellGrapheme(s.cells, s.grapheme);
                         painter.cluster(cluster, rc.style.bold, rc.style.italic, x, y,
-                            cast(int) rc.width * s.cellWidth, s.cellHeight, ink);
+                            cast(int) rc.width * s.cellWidth, s.cellHeight, ink, Rgba.opaque(rc.bgCol));
                     }
                     drawCellDecorations(painter, rc, x, y,
                         cast(int) rc.width * s.cellWidth, s.cellHeight);
