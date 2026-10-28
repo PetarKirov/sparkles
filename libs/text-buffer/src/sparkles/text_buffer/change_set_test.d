@@ -8,6 +8,7 @@ module sparkles.text_buffer.change_set_test;
 
 version (unittest):
 
+import sparkles.base.buffer : UniqueBuffer;
 import sparkles.text_buffer.change_set : ChangeSet, ChangeSetStatus, Edit, TouchedRange;
 import sparkles.text_buffer.summary : Affinity;
 import sparkles.text_buffer.text : Text;
@@ -24,7 +25,9 @@ char[] bytesOf(in Text text) @safe pure nothrow
 /// Disjoint edits in random order, and the model's result of applying them.
 struct Generated
 {
-    Edit[] edits;
+    // A buffer, not a GC array: druntime fills a GC array of `Edit` by
+    // blitting, without the copy that counts its text's reference.
+    UniqueBuffer!(Edit, 4) edits;
     char[] result;
     /// Per source position, the model's mapping under each affinity.
     size_t[] before;
@@ -94,7 +97,7 @@ Generated generate(ref Xorshift random, const(char)[] source) @safe pure nothrow
         raw[j] = t;
     }
     foreach (r; raw)
-        g.edits ~= Edit(r.from, r.to, r.inserted);
+        g.edits.put(Edit(r.from, r.to, r.inserted));
     return g;
 }
 
@@ -118,7 +121,7 @@ unittest
         const text = Text(source);
         auto first = generate(random, source);
         ChangeSet a;
-        assert(ChangeSet.of(source.length, first.edits, a) == ChangeSetStatus.ok);
+        assert(ChangeSet.of(source.length, first.edits[], a) == ChangeSetStatus.ok);
         assert(a.sourceLength == source.length && a.resultLength == first.result.length);
 
         // TXB-CHG2: apply.
@@ -151,7 +154,7 @@ unittest
         // TXB-CHG4 and TXB-CHG6: compose with a second edit of the result.
         auto second = generate(random, first.result);
         ChangeSet b;
-        assert(ChangeSet.of(first.result.length, second.edits, b) == ChangeSetStatus.ok);
+        assert(ChangeSet.of(first.result.length, second.edits[], b) == ChangeSetStatus.ok);
         const composed = a.compose(b);
         assert(composed.apply(text) == second.result);
         assert(composed.apply(text) == b.apply(a.apply(text)));
@@ -167,6 +170,12 @@ unittest
     }
 }
 
+
+/// `ChangeSet.of` over edits written as a literal. A static array: a GC
+/// array literal of `Edit` is filled by blitting, without the copy that
+/// counts its text's reference, and the collector later releases it again.
+private ChangeSetStatus ofEdits(size_t n)(size_t length, const Edit[n] edits, ref ChangeSet c)
+    => ChangeSet.of(length, edits[], c);
 /// Overlapping and same-position edits from several cursors (TXB-CHG1).
 @("ChangeSet.of.unionSemantics")
 @safe pure nothrow
@@ -175,24 +184,24 @@ unittest
     const text = Text("one two three");
     ChangeSet c;
     // Two word kills that overlap delete the union once.
-    assert(ChangeSet.of(text.length, [Edit(4, 8, ""), Edit(6, 13, "")], c) == ChangeSetStatus.ok);
+    assert(ofEdits(text.length, [Edit(4, 8, ""), Edit(6, 13, "")], c) == ChangeSetStatus.ok);
     assert(c.apply(text) == "one ");
     // Overlapping replacements concatenate their insertions in order of `from`.
-    assert(ChangeSet.of(text.length, [Edit(6, 13, "B"), Edit(4, 8, "A")], c) == ChangeSetStatus.ok);
+    assert(ofEdits(text.length, [Edit(6, 13, "B"), Edit(4, 8, "A")], c) == ChangeSetStatus.ok);
     assert(c.apply(text) == "one AB");
     // An insertion strictly inside a replaced range joins its group.
-    assert(ChangeSet.of(text.length, [Edit(4, 7, "X"), Edit(5, 5, "y")], c) == ChangeSetStatus.ok);
+    assert(ofEdits(text.length, [Edit(4, 7, "X"), Edit(5, 5, "y")], c) == ChangeSetStatus.ok);
     assert(c.apply(text) == "one Xy three");
     // Insertions at one position keep the order given.
-    assert(ChangeSet.of(text.length, [Edit(3, 3, "1"), Edit(3, 3, "2"), Edit(3, 3, "3")], c)
+    assert(ofEdits(text.length, [Edit(3, 3, "1"), Edit(3, 3, "2"), Edit(3, 3, "3")], c)
         == ChangeSetStatus.ok);
     assert(c.apply(text) == "one123 two three");
     // A deletion and an insertion at its start: ties in the order given.
-    assert(ChangeSet.of(text.length, [Edit(4, 7, "T"), Edit(4, 4, "<")], c) == ChangeSetStatus.ok);
+    assert(ofEdits(text.length, [Edit(4, 7, "T"), Edit(4, 4, "<")], c) == ChangeSetStatus.ok);
     assert(c.apply(text) == "one T< three");
     // Invalid edits are rejected.
-    assert(ChangeSet.of(text.length, [Edit(5, 4, "")], c) == ChangeSetStatus.invalidEdit);
-    assert(ChangeSet.of(text.length, [Edit(3, 14, "")], c) == ChangeSetStatus.invalidEdit);
+    assert(ofEdits(text.length, [Edit(5, 4, "")], c) == ChangeSetStatus.invalidEdit);
+    assert(ofEdits(text.length, [Edit(3, 14, "")], c) == ChangeSetStatus.invalidEdit);
 }
 
 /// Composition forgets how an edit was split, so mapping does not compose at
