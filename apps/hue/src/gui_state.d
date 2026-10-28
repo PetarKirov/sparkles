@@ -13,7 +13,7 @@ import sparkles.base.buffer : SharedBuffer;
 // The line-input bar moved to its own module so the terminal can drive the
 // same one (`UIA13`); re-exported here because every GUI call site names it
 // through `gui_state`.
-public import input_line : InputState, Mode;
+public import input_line : InputState, LineStep, Mode;
 import sparkles.input.frame : InputFrame;
 import sparkles.input.gesture : PointF;
 import sparkles.twoslash.signature_layout : ExpandedRegions;

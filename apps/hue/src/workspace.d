@@ -4114,15 +4114,15 @@ unittest
     // it with the SAME query. The terminal used to append `cast(char) e.ch`,
     // so a non-ASCII keystroke truncated a code point into a stray byte —
     // `é` (U+00E9) became the lone byte 0xE9, which is not valid UTF-8 and
-    // which the window's `typeChar` gate would never have admitted. Both now
-    // run the same gate, so the terminal cannot build a query the window
-    // could not.
+    // which the window's ASCII gate then refused instead. Both now drive the
+    // same editor field (`input_line`), which keeps every code point whole,
+    // so the terminal builds exactly the query the window does.
     assert(w.handle(Event(KeyEvent(key: Key.char_, ch: '/'))));
     foreach (dchar c; "féo")
         w.handle(Event(KeyEvent(key: Key.char_, ch: c)));
     const typed = w.viewer.inputQuery.idup;
-    assert(typed == "fo",
-        "the terminal admitted a non-ASCII keystroke into the query: " ~ typed);
+    assert(typed == "féo",
+        "the terminal did not keep a non-ASCII keystroke whole: " ~ typed);
     w.handle(Event(KeyEvent(key: Key.escape)));
 }
 
