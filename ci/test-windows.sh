@@ -34,11 +34,6 @@
 #       ui-app and its two consumers also reach ui-tui.
 #   ui-tui       sparkles.tui's `PosixEvents`/`Terminal` are POSIX-only
 #                (ui_tui/session.d:33).
-#   event-horizon
-#                the IOCP backend builds — wsi and http link it — but its own
-#                suite drives POSIX pipes (io.d:385) and an `OpWrite` submit
-#                the IOCP path lacks (sched.d:501): a port, not a flag.
-#   wired        sdl/files.d calls `chmod`, undefined on Windows.
 #   core-cli     9 of 98: process_utils spawns POSIX shells; common_dirs
 #                expects XDG directories.
 #   release      3 of 102: agents.resolveBinary / runAgent assume a POSIX
@@ -56,7 +51,9 @@ default_packages=(
   metadata
   reflection
   base
+  wired
   event-horizon-sys
+  event-horizon
   math
   input
   test-runner
