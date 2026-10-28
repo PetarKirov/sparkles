@@ -218,13 +218,15 @@ private ubyte[] arabicFace(const(uint)[] codes, Os2Fields os2) @safe pure nothro
             covered[cast(dchar) cp] = true;
     assert('ب' in covered && '‍' in covered && 'A' !in covered);
 
-    // Version 1, another high byte, or corrections off: the ordinary symbol mapping.
+    // Version 1, or corrections off: the ordinary symbol mapping.
     Os2Fields v1 = v0;
     v1.version_ = 1;
     Os2Fields other = v0;
     other.fsSelection = 0xB100;
-    foreach (f; [open(arabicFace([beh, zwj], v1)), open(arabicFace([beh, zwj], other)),
-            open(arabicFace([beh, zwj], v0), CorrectionPolicy.off)])
+    // Another code page: direct lookups only, without the U+F000 duplication, as HarfBuzz (FTP25).
+    const direct = charMap(open(arabicFace([beh, zwj], other))).value;
+    assert(direct.lookup == CmapLookup.direct && direct.glyph('\u0628') == 0 && direct.glyph(cast(dchar) beh) == 1);
+    foreach (f; [open(arabicFace([beh, zwj], v1)), open(arabicFace([beh, zwj], v0), CorrectionPolicy.off)])
     {
         const m = charMap(f).value;
         assert(m.lookup == CmapLookup.symbol && m.glyph('ب') == 0 && m.glyph(cast(dchar) beh) == 1);

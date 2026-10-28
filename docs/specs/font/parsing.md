@@ -193,13 +193,13 @@ own left side bearing. A glyph whose entry lies past the end of the table
 records in this order and return a `CharMap` value for the first whose
 subtable passes the checks of `FTP26`:
 
-| Order | Platform and encoding        | How codepoints are looked up                                                                                    |
-| ----- | ---------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| 1     | 3/0 (symbol)                 | directly; a codepoint up to U+00FF that is not mapped directly is looked up again at U+F000 plus the codepoint  |
-| 2     | 3/10, then 0/6, then 0/4     | directly                                                                                                        |
-| 3     | 3/1, then 0/3, 0/2, 0/1, 0/0 | directly                                                                                                        |
-| 4     | 1/0 (Macintosh Roman)        | the codepoint is converted to its Mac Roman byte, which is looked up; codepoints outside Mac Roman are unmapped |
-| 5     | any other platform-1 record  | codepoints up to U+007F only                                                                                    |
+| Order | Platform and encoding        | How codepoints are looked up                                                                                                                                                                         |
+| ----- | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1     | 3/0 (symbol)                 | directly; a codepoint up to U+00FF that is not mapped directly is looked up again at U+F000 plus the codepoint, unless `OS/2` version 0 names a code page in its `fsSelection` high byte (see below) |
+| 2     | 3/10, then 0/6, then 0/4     | directly                                                                                                                                                                                             |
+| 3     | 3/1, then 0/3, 0/2, 0/1, 0/0 | directly                                                                                                                                                                                             |
+| 4     | 1/0 (Macintosh Roman)        | the codepoint is converted to its Mac Roman byte, which is looked up; codepoints outside Mac Roman are unmapped                                                                                      |
+| 5     | any other platform-1 record  | codepoints up to U+007F only                                                                                                                                                                         |
 
 When a record fails its checks, `charMap()` **must** move to the next and
 record the failure: the value carries the number of rejected records and the
@@ -215,7 +215,11 @@ one, and a renderer that refused the face would show nothing where both
 engines show text. Counting and keeping the rejection is what makes the
 fallback visible to an inspector. Symbol fonts put their glyphs at
 U+F000–U+F0FF; Windows also reaches them at U+0000–U+00FF, which is why
-HarfBuzz does.
+HarfBuzz does. HarfBuzz does so only when `OS/2` names no code page: under
+`OS/2` version 0 whose `fsSelection` high byte is neither 0 nor one of the
+legacy Arabic pages (`0xB2`, `0xB3`, which `FTD11` maps), it looks codepoints
+up directly, and so does this library (amended in M7, after the oracle found
+the difference).
 
 **FTP26: Subtable checks.** Building a `CharMap` **must** check its subtable
 as follows and **must not** allocate. A subtable's `length` field **must** be
