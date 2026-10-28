@@ -112,13 +112,14 @@ struct BlockingPool
     /// Runs `call(context)` on a worker; parks the caller until it completes.
     /// `EAGAIN` when the public queue is full, `EPIPE` after `shutdown`,
     /// `ECANCELED` when the caller was already interrupted (entry only).
-    IoResult!void run(ref Sched s, BlockingCall call, void* context) @trusted
+    /// `@system`: the pool cannot check what `call` does with `context`.
+    IoResult!void run(ref Sched s, BlockingCall call, void* context) @system
         => submit(s, call, context, false);
 
     /// The termination-critical lane: never `EAGAIN` (intrusive, frame-
     /// resident admission), reserved-worker serviced. Reap/teardown only.
     package IoResult!void runMandatory(ref Sched s, BlockingCall call,
-        void* context) @trusted
+        void* context) @system
         => submit(s, call, context, true);
 
     /// Refuses new jobs, finishes and posts every accepted one, joins the
@@ -134,7 +135,7 @@ struct BlockingPool
 
 private:
     IoResult!void submit(ref Sched s, BlockingCall call, void* context,
-        bool mandatory) @trusted
+        bool mandatory) @system
     {
         auto waiter = s.currentContext();
         // The entry checkpoint: the ONLY cancellation point (SPEC §13.8).
