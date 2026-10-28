@@ -11,6 +11,7 @@ import sparkles.base.text.seek : nextGraphemeBoundary, previousGraphemeBoundary;
 
 import sparkles.text_buffer.node : allocatedNodes, liveNodes, maxChunk, minChunk;
 import sparkles.text_buffer.summary : Affinity, measure, tokenAt, utf16Units;
+import sparkles.base.buffer : UniqueBuffer;
 import sparkles.text_buffer.text : ConversionStatus, LinePoint, Text;
 
 /// A deterministic generator; failures print the seed and step through the
@@ -194,7 +195,9 @@ unittest
         Text text;
         char[] model;
         // Every version, kept alive, must keep its contents (TXB-TEXT2).
-        Text[] versions;
+        // A buffer, not a GC array: druntime fills a GC array of `Text` by
+        // blitting, without the copy that counts the reference.
+        UniqueBuffer!(Text, 8) versions;
         char[][] models;
         foreach (step; 0 .. 120)
         {
@@ -241,11 +244,11 @@ unittest
             checkAgainst(text, model);
             if (step % 10 == 0)
             {
-                versions ~= text;
+                versions.put(text);
                 models ~= model.dup;
             }
         }
-        foreach (i, v; versions)
+        foreach (i, ref v; versions[])
         {
             assert(v == models[i]);
             v.checkInvariants();

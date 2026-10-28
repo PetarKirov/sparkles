@@ -6,6 +6,12 @@ returns a new text that shares all untouched subtrees with its arguments.
 Positions are byte offsets. Lines end before their line feed, or before the
 CR of a CR LF pair.
 
+$(B Never in a GC-allocated array.) A text counts its references, and
+druntime fills a GC array, from an array literal or by appending with `~=`,
+by blitting its elements without the copy that counts one; the collector
+later releases them again. Keep texts, and anything holding one (`Edit`,
+`ChangeSet`), in a `sparkles.base.buffer` buffer or a static array.
+
 Specification: `docs/specs/text-buffer/SPEC.md` §2–3.
 */
 module sparkles.text_buffer.text;
