@@ -18,7 +18,7 @@ the detailed descriptions and the module map live there.
 | `release`                                                                              | tag scanning, bump suggestion, notes, publishing                                             |
 | `shader-compile`                                                                       | D shaders → SPIR-V → GLSL, built by `sparkles:ui`'s `gpu-effects` build                      |
 | `terminal`, `terminal-benchmark`                                                       | raylib terminal emulator on libghostty-vt; its render-CPU benchmark                          |
-| `ui-gallery`, `diagram`                                                                | `sparkles:ui-app` apps: the toolkit catalog; a camera-driven diagram board                   |
+| `ui-gallery`, `diagram`, `text-lab`                                                    | `sparkles:ui-app` apps: the toolkit catalog; a diagram board; the Vulkan text lab            |
 | `nix-eval`, `twoslash-extract`                                                         | `sparkles:nix` demo; batch D twoslash extractor                                              |
 | `base`                                                                                 | `Buffer`, `@nogc` text, lifetime, logging, `term_caps`, `hw_caps`                            |
 | `core-cli`                                                                             | argument parsing, help, prompts, process utilities                                           |

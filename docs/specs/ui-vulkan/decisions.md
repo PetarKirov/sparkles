@@ -286,6 +286,32 @@ the device. Moving to S3
 replaces `glyph_atlas.d` and keeps the painter, the upload path and the
 scenarios.
 
+## UVX13: Text is measured against quality oracles
+
+**Status.** Accepted (2026-10-28), by the owner.
+
+**Context.** V3's gate compared the canvas's glyphs with the raylib
+canvas's within 48/255 a pixel. Escaping raylib's text rendering
+(stb_truetype: unhinted, blended as encoded) is one of the reasons this
+canvas exists, so agreeing with it is the wrong bar. Set beside ghostty,
+kitty and Chromium — all FreeType with light hinting — the canvas's text
+was as soft and thin as raylib's.
+
+**Choice.** Glyphs are held to the font library's raster exactly, and the
+font library to FreeType (font `FTR3`, `FTR9`); quality is judged beside
+ghostty, kitty and Chromium in `apps/text-lab`, which switches every
+setting live and magnifies the composited pixels. The raylib canvas stays
+the reference for geometry, fills and images only. The text rendering
+that met this bar: linear-light compositing with a contrast correction
+(`UVK36`), light hinting (`UVK37`, font `FTX17`) and HarfBuzz shaping
+(`UVK19`).
+
+**Consequences.** Text differs from the raylib arm's on purpose; a
+screenshot differential of text between the arms is no longer a gate.
+Colour glyphs differ from the raylib arm's by resampling too: the font
+library takes an area mean of a bitmap strike, the reference scales it on
+the device.
+
 ## Open questions
 
 **UVQ1: Effects.** Multi-pass effects (bloom, the CRT tube) need offscreen targets, multi-pass

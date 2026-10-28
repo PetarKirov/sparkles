@@ -20,16 +20,17 @@ Requirement identifiers refer to [SPEC.md](./SPEC.md) (`UVK`) and
 | [V0 Specification](#v0-specification)                             | done        |
 | [V1 Device memory and resources](#v1-device-memory-and-resources) | done        |
 | [V2 The canvas](#v2-the-canvas)                                   | done        |
-| [V3 Glyphs](#v3-glyphs)                                           | in progress |
+| [V3 Glyphs](#v3-glyphs)                                           | done        |
 | [V4 The native host](#v4-the-native-host)                         | done        |
 | [V5 The terminal's seams](#v5-the-terminal-s-seams)               | done        |
-| [V6 The terminal on Vulkan](#v6-the-terminal-on-vulkan)           | in progress |
+| [V6 The terminal on Vulkan](#v6-the-terminal-on-vulkan)           | done        |
 | [V7 The phone terminal](#v7-the-phone-terminal)                   | not started |
 
 ## Dependencies
 
-One slice waits on work another plan owns: V3, on the font library. The
-shader capabilities V2 and V7 needed have landed.
+V3 waited on the font library's rasterizer, which landed; its interim atlas
+(`UVX12`) stands in for the font library's glyph cache. The shader
+capabilities V2 and V7 needed have landed.
 
 | Slice | Waits on                                                                                                                    |
 | ----- | --------------------------------------------------------------------------------------------------------------------------- |
@@ -121,20 +122,31 @@ shapes, clusters that need it count as `unshapedCluster` (`UVK19`).
 coverage and colour atlas pages, regions uploaded before the frame's pass,
 glyph instances placed by `UVK21`.
 
-**Progress.** Coverage glyphs draw from an interim atlas in the canvas
-(decision `UVX12`), rasterized by `sparkles:font` in the cell font's four
-faces at the raylib arm's scale. Cell runs, single glyphs and the terminal
-painter's clusters and labels all draw through it. Canvas scenario 21
-passes, a glyph reading back exactly as the library rasterizes it. Against
-the raylib canvas, gallery text is within the glyph tolerance. The
-remaining differences are image filtering, effects, and the reference's
-own rasterizer (stb_truetype). Colour glyphs, fallback faces and shaping
-wait on the font library; clusters that need them count `noGlyph` or
-`unshapedCluster`.
+**Gate.** Canvas scenario 21; glyph scenarios against the font library's
+own rasterization (the cache's bitmaps, read back after the round trip
+through the atlas); text measured against the quality oracles (decision
+[`UVX13`](./decisions.md#uvx13-text-is-measured-against-quality-oracles)).
 
-**Gate.** Canvas scenario 21; glyph scenarios against the font library's own rasterization (the
-cache's bitmaps, read back after the round trip through the atlas); the
-gallery's text pages within the glyph tolerance of the raylib canvas.
+**Outcome.** The gate is met with the canvas's interim atlas (decision
+`UVX12`): coverage pages, and premultiplied RGBA pages for colour glyphs —
+`COLR` layers and `CBDT`/`sbix` bitmaps from the font library's colour
+rasterizer. Text falls back from the cell font's four faces to the faces the
+raylib arm falls back to (a monospace face, a Nerd Font, a colour emoji
+face), found by `systemFallbackFacePaths`, which the two arms now share. The
+first gate compared glyphs with the raylib canvas; set beside ghostty, kitty
+and Chromium, both were as soft as stb_truetype, and the owner moved the bar
+(`UVX13`). Meeting it took three techniques, each measured: compositing in
+linear light with a contrast correction (`UVK36`), which matches
+Chromium's weight both ways round; light, vertical-only hinting in the font
+library (font `FTR9`, `FTX17`), 6.9 coverage steps from FreeType's light
+auto-hinter against 21.6 unhinted; and HarfBuzz shaping of clusters
+(`UVK19`), which composes combining marks and draws joiner sequences,
+flags, keycaps and skin tones as their fonts mean them. `apps/text-lab`
+shows all of it, switched live, through a loupe that magnifies the
+composited pixels (`UVK38`). Shaping through the engine beside the Vulkan
+binding found a compiler defect: the frontend can list a `ModuleInfo` for
+an ImportC module, which never has one; the font library's narrow
+`cluster_shaping` interface keeps the engine out of a renderer's build.
 
 ## V4: The native host
 
@@ -203,9 +215,11 @@ application's own raylib calls replaced by host and canvas calls; a
 
 **Obligations.** `UVK35`; the `UVX11` decision.
 
-**Progress.** The canvas draws in device pixels (`UVK35`). The terminal
+**Outcome.** The canvas draws in device pixels (`UVK35`). The terminal
 painter maps kitty images onto a pane-owned `ImageRegistry` (`UVX11`);
-clusters and labels draw from the canvas's glyph atlas (V3). A native host opens a pane with
+clusters and labels draw from the canvas's glyph atlas (V3), each
+cluster over its cell's background, which the painter interface now
+carries for compositing in linear light. A native host opens a pane with
 `openPixels` at its cell metrics and paints through that painter.
 `apps/terminal` has a `vulkan` configuration: the native host, pixel
 positions, and no raylib poll; it still links raylib, through the cell-font
@@ -214,11 +228,17 @@ library's catalog replaces it. Both arms share the chrome's pointer
 routine and fills. CI builds the native gallery and terminal
 (`ui-gallery-vulkan`, `terminal-vulkan`) and runs the terminal's
 `unittest-vulkan` tests. Under Xvfb on lavapipe the V5 test scene draws
-its text, decorations, block graphics, scrollbar and kitty images. It
-matches the raylib terminal but for a combining accent drawn as its base
-letter (`unshapedCluster`), the rail's icon from a Nerd Font fallback face
-(`noGlyph`), and the images' filtering. A file
-open reports that this arm has no document viewer. The raylib desktop
+its text, decorations, block graphics, scrollbar and kitty images, and
+under headless Weston the same frame to within 1/255. Fills, decorations,
+block graphics, the scrollbar and the images agree with the raylib
+terminal — the images once the raylib arm stopped sampling them with
+OpenGL's repeating wrap — and the text is measured against the quality
+oracles instead (`UVX13`): combining accents are shaped, the rail's icon
+and emoji come from fallback faces. Joiner sequences and flags still split
+across cells, as libghostty reports them without grapheme-cluster width
+(mode 2027). An idle terminal presents its first frames in 379 ms and none
+in the next 15 s. A file open reports that this arm has no document
+viewer. The raylib desktop
 configuration takes its mouse from host events too, in pixels, through the
 same routine (`WorkspaceHost.notePointer`): nothing in `apps/terminal`
 polls raylib's mouse, and the panes' bridge is off. Its screenshot and
@@ -226,9 +246,9 @@ mouse run are byte-identical to before.
 
 **Gate.** The terminal runs on Wayland and X11 through the native host;
 screenshots match the raylib terminal within the tolerances of
-[testing.md](./testing.md#tolerances), apart from clusters counted as
-`unshapedCluster`, which are listed until the font library shapes them; the
-input conformance suite passes; an idle terminal draws no frame.
+[testing.md](./testing.md#tolerances) — its text against the quality
+oracles (`UVX13`); the input conformance suite passes; an idle terminal
+draws no frame. Met (testing.md's evidence ledger).
 
 ## V7: The phone terminal
 
