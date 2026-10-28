@@ -247,9 +247,10 @@ font's character map represents **must** draw that glyph. A cluster that
 needs shaping — a multi-codepoint emoji sequence, or a combining mark the
 face has no precomposed glyph for — **must** draw the glyph of its first
 codepoint and count as `unshapedCluster`, until the font library offers
-shaping. A codepoint none of the cell font's faces maps **must** draw nothing
-and count as `noGlyph`, until fallback faces arrive with the font library's
-catalog.
+shaping; a variation selector needs none, and only picks the face. A cluster
+that presents as an emoji **must** be drawn from a colour emoji face first. A
+codepoint neither the cell font's faces nor its fallback faces map **must**
+draw nothing and count as `noGlyph`.
 
 **UVK20: Proportional text.** `textRunIn` **must** place glyphs by the
 face's advances, aligned within its rectangle as the operation's alignment
@@ -257,7 +258,9 @@ says. `measure` **must** return cell widths, as the reference canvas does.
 
 **UVK21: Placement.** A glyph **must** be drawn with its bitmap's origin at
 the pen position plus its bearing, rounded to whole pixels, sampled one
-texel per pixel through a nearest-filtering sampler.
+texel per pixel through a nearest-filtering sampler. A colour glyph larger
+than the cells its cluster takes **must** be drawn at the size that fits them,
+centred in their height.
 
 **UVK22: Misses.** _Status: planned._ The policy for a glyph the cache cannot
 supply in time is decided with the font library's first-frame budget. Until

@@ -249,28 +249,40 @@ started, and other font work is in flight beside it.
 **Choice.** The canvas owns one glyph atlas, `sparkles.ui_vulkan.glyph_atlas`,
 until S3 replaces it:
 
-- **Pages and key.** Coverage glyphs are rasterized by `sparkles:font`'s
-  `rasterizeGlyph` into single-channel 1024² pages, at most four, packed in
-  shelves. They are keyed by face, exact `Ppem` (`FTM10`) and glyph, the key
-  S3 will use, so the canvas keeps its upload path when the source moves.
+- **Pages and key.** Two sheets of 1024² pages, at most four each, packed in
+  shelves. Coverage glyphs are rasterized by `sparkles:font`'s
+  `rasterizeGlyph` into single-channel pages. A glyph's colour form — `COLR`
+  layers or a `CBDT`/`sbix` bitmap, from `rasterizeColourGlyph` — goes into
+  premultiplied RGBA pages, and draws in its own colours. They are keyed by
+  face, exact `Ppem` (`FTM10`) and glyph, the key S3 will use, so the canvas
+  keeps its upload path when the source moves; a face with `COLR` layers
+  adds the foreground its layers may take.
 - **Uploads.** Each frame uploads only the regions written since the last
   one, and a page's first upload covers all of it.
 - **Exhaustion and refusals.** A full atlas starts over on the next frame,
   counting `glyphMiss` and asking for another frame. A glyph the rasterizer
   refuses is remembered, so it is not retried every frame.
 - **Faces.** The cell font's four faces (regular, bold, italic,
-  bold-italic) are found by their sibling files. A codepoint none of them
-  maps counts as `noGlyph`; fallback faces wait on the font library's
-  catalog.
-- **Size.** Glyphs draw at the em that gives the requested line height over
-  the face's `hhea` span: the scale the raylib arm's fonts use, so the two
-  arms' glyphs are one size. The cells stay as `sparkles:font` measured them.
+  bold-italic) are found by their sibling files. Behind them stand the faces
+  the raylib arm falls back to (`systemFallbackFacePaths`): a common
+  monospace face, a Nerd Font for icons, and a colour emoji face, which a
+  cluster with emoji presentation tries first. A codepoint none of them maps
+  counts as `noGlyph`. The font library's catalog replaces this list.
+- **Size.** Every face draws at the em that gives the requested line height
+  over its own `hhea` span: the scale the raylib arm's fonts use, so the two
+  arms' glyphs are one size. A colour glyph wider or taller than its
+  cluster's cells is rasterized again at the exact smaller size that fits
+  them, rather than scaled on the device. The cells stay as `sparkles:font`
+  measured them.
 
 The canvas still owns no rasterizer of its own; it asks `sparkles:font` for
 every pixel.
 
-**Consequences.** Colour glyphs (emoji) wait on the font library's colour
-rasterization, and shaped clusters on its shaping (`UVK19`). Moving to S3
+**Consequences.** Shaped clusters — joiner sequences, flags, keycaps,
+combining marks without a precomposed glyph — wait on the font library's
+shaping (`UVK19`). Colour glyphs differ from the raylib arm's by resampling:
+the font library takes an area mean of the strike, the reference scales it on
+the device. Moving to S3
 replaces `glyph_atlas.d` and keeps the painter, the upload path and the
 scenarios.
 

@@ -1042,6 +1042,77 @@ private ubyte[] twoColourImage()
         }
 }
 
+@("ui_vulkan.canvas.anEmojiReadsBackInItsOwnColours")
+@system unittest
+{
+    // A colour glyph from a fallback face (`UVX12`): an emoji the cell font
+    // lacks draws from the colour emoji face, through the colour sheet, as
+    // `sparkles:font` draws its colour form — the oracle is the library's own
+    // `rasterizeColourGlyph` — composited over black, whatever the text colour.
+    if (!readbackEnabled)
+        return skipTest(readbackSkipReason);
+    import std.file : read;
+    import std.math : abs;
+    import std.path : buildPath;
+    import std.process : environment;
+    import sparkles.font : charMap, Colour, ColourRegion, ColourWorkspace, colourMeasure, instance,
+        InstanceSize, openFace, OutlinePoint, OutlineSegment, Ppem, RasterWorkspace, rasterizeColourGlyph;
+    import sparkles.ui_vulkan.canvas : FallbackFace;
+    import sparkles.ui_vulkan.painter : Degradation, TextMetrics;
+
+    const dir = environment.get("SPARKLES_FONTS_PATH");
+    assert(dir !is null, "SPARKLES_FONTS_PATH is unset: run inside `nix develop`");
+    const mono = cast(const(ubyte)[]) read(dir.buildPath("DejaVuSansMono.ttf"));
+    const emoji = cast(const(ubyte)[]) read(dir.buildPath("NotoColorEmoji.ttf"));
+
+    enum ascent = 22;
+    const size = Ppem.fromInteger(20).value; // about 25 × 24: within two 16 × 28 cells
+    auto rig = new Rig;
+    rig.open("ui-vulkan-emoji", 80, 60);
+    scope (success)
+        rig.close();
+    const(ubyte)[][4] faces;
+    faces[0] = mono;
+    assert(rig.canvas.cellFont(faces, size, TextMetrics(ascent: ascent, underlineY: 24,
+        underlineHeight: 1, strikeY: 14), [FallbackFace(emoji, size)]));
+
+    // The oracle: U+1F600 at 20 ppem, from the library.
+    auto face = openFace(emoji).value;
+    auto inst = instance(face, InstanceSize.pixels(size), null).value;
+    const gid = charMap(face).value.glyph('\U0001F600');
+    auto ws = ColourWorkspace(RasterWorkspace(new OutlineSegment[4096], new OutlinePoint[4096],
+        new bool[4096], new ushort[1024], new float[1 << 16], new ubyte[1 << 16]), new ubyte[1 << 16],
+        new ubyte[1 << 22], new ubyte[1 << 22], new ubyte[1 << 16]);
+    const m = colourMeasure(inst, gid, size, ws).value;
+    auto rgba = new ubyte[4 * m.width * m.height];
+    assert(rasterizeColourGlyph(inst, gid, size, 0, Colour(255, 255, 255, 255),
+        ColourRegion(rgba, 4 * m.width, m.width, m.height), ws).hasValue);
+
+    const metrics = FrameMetrics(cellW: 16, cellH: 28);
+    FrameReport report;
+    const frame = rig.draw((ref Canvas c) {
+        c.glyph(Point(1, 1), '\U0001F600', Visual(fg: RgbColor(0, 200, 0), fgAlpha: 255));
+    }, metrics, black, report);
+    assert(report[Degradation.noGlyph] == 0);
+    assert(rig.canvas.atlasPages(true) == 1, "one colour page on the device");
+    // It fits its two cells, so it draws at its size, centred in the cell's height.
+    assert(m.bearingX + m.width <= 2 * metrics.cellW && m.height <= metrics.cellH,
+        format("bearing %s, box %s × %s", m.bearingX, m.width, m.height));
+    const left = metrics.cellW + m.bearingX, top = metrics.cellH + (metrics.cellH - m.height) / 2;
+    foreach (y; 0 .. 60)
+        foreach (x; 0 .. 80)
+        {
+            const inBox = x >= left && x < left + m.width && y >= top && y < top + m.height;
+            foreach (ch; 0 .. 3)
+            {
+                const want = inBox ? rgba[4 * ((y - top) * m.width + (x - left)) + ch] : 0;
+                const got = pixel(frame, 80, x, y)[ch];
+                assert(abs(int(got) - want) <= 1,
+                    format("(%s, %s) channel %s: %s, the rasterizer has %s", x, y, ch, got, want));
+            }
+        }
+}
+
 @("ui_vulkan.canvas.textCountsWhatItCannotDraw")
 @system unittest
 {
