@@ -30,7 +30,8 @@ import sparkles.ui.components.lantern_view : BoxLayout, LabelArena,
     LanternStyle, Placement,
     viewLantern;
 import sparkles.doc_view.document : DiffEmphasis, DiffSides;
-import review_store : persistFolds, postComment, resolveCommentAtCursor, ReviewSession,
+import review_store : applySuggestionAtCursor, persistFolds, postComment,
+    resolveCommentAtCursor, ReviewSession,
     toggleViewedAtCursor;
 import staging : StageAction;
 import sparkles.ui.editor.keys : EditorTarget;
@@ -1784,6 +1785,24 @@ struct PreviewTui
                     vm.rebuild();
                 }
                 break;
+            case Command.diffSuggest:
+                if (diffNav())
+                {
+                    notice = vm.commentStart(EditorTarget.terminal, suggest: true);
+                    vm.composerHint = "edit the line · Alt-S posts the suggestion · Esc drops it";
+                    vm.rebuild();
+                }
+                break;
+            case Command.diffApplySuggestion:
+                if (diffNav())
+                {
+                    string said;
+                    const applied = applySuggestionAtCursor(vm, review, said);
+                    notice = said;
+                    if (applied && onStaged !is null)
+                        onStaged(); // the working tree changed under the diff
+                }
+                break;
             case Command.diffResolve:
                 if (diffNav())
                     notice = resolveCommentAtCursor(vm, review);
@@ -3365,4 +3384,70 @@ unittest
     t.handle(Event(KeyEvent(Key.char_, 'm')));
     assert(t.vm.diffSession.entries[0].viewed);
     assert(readReview(repo.dir, stored) is null && stored.viewed.length == 1);
+}
+
+@("tui.diff.suggestionAppliesToTheWorktree")
+@system
+unittest
+{
+    import sparkles.build_primitives.testing : gitAvailable, TmpGitRepo;
+    import sparkles.diff : diffText;
+    import sparkles.doc_view.diff_session : buildDiffSession;
+    import sparkles.input.events : Mods;
+    import sparkles.syntax : HighlightEvent, LabelSet;
+    import sparkles.syntax.md.model : MdDoc;
+    import sparkles.test_runner.skip : skipTest;
+    import std.file : readText;
+    import std.path : buildPath;
+
+    // `DCM3`/`DCM4`: `Shift-A` edits the cursor's line as a suggestion,
+    // `Alt-S` posts it, and `Alt-A` applies it to the working tree.
+    if (!gitAvailable)
+        return skipTest("git is not installed");
+    enum before = "a\nb\nc\n", after = "a\nB\nc\n";
+    auto repo = TmpGitRepo.create();
+    repo.writeFile("f.txt", before);
+    repo.commitAll();
+    repo.writeFile("f.txt", after);
+    auto review = new ReviewSession;
+    review.root = repo.dir;
+    review.author = "me";
+    review.parse = (string md) => MdDoc.init;
+
+    static immutable(Theme)[1] themes = [builtinDark];
+    static immutable string[1] names = ["dark"];
+    auto dd = diffText(before, after, "f.txt", "f.txt");
+    auto session = buildDiffSession(dd);
+    session.editable = true;
+    session.editRoot = repo.dir;
+    PreviewTui t;
+    t.labels = LabelSet.standard();
+    t.names = names[];
+    t.themes = themes[];
+    t.resize(60, 20);
+    t.setDocument("diff", "", [HighlightEvent.sourceSpan(0, 0)], PreviewModel.init,
+        startPreview: true, TwoslashReturn.init, "diff", dd,
+        [DiffSides("", before, after)], session);
+    t.relayout();
+    t.review = review;
+    bool reloaded;
+    t.onStaged = () { reloaded = true; };
+
+    // The cursor starts on the hunk's first change, the removed `b`; the
+    // suggestion goes on the line that replaced it.
+    t.handle(Event(KeyEvent(Key.char_, 'J', Mods(shift: true))));
+    t.handle(Event(KeyEvent(Key.char_, 'A', Mods(shift: true))));
+    assert(t.vm.composing && t.vm.composer.text == "B", t.notice);
+    t.handle(Event(KeyEvent(Key.char_, '!')));
+    t.handle(Event(KeyEvent(Key.char_, 's', Mods(alt: true))));
+    assert(review.data.comments.length == 1 && review.data.comments[0].suggestion.text == "B!",
+        t.notice);
+    bool drawn;
+    foreach (ref th; t.vm.diffSession.threads)
+        drawn = drawn || th.hasSuggestion && th.suggestedFrom == "B" && th.suggestedTo == "B!";
+    assert(drawn, "the thread carries its mini-diff");
+
+    t.handle(Event(KeyEvent(Key.char_, 'a', Mods(alt: true))));
+    assert(readText(buildPath(repo.dir, "f.txt")) == "a\nB!\nc\n", t.notice);
+    assert(reloaded, "the diff is produced again");
 }

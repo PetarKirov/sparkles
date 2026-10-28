@@ -154,8 +154,14 @@ AnchoredThread[] threadsOf(Parse)(in LocalComment[] comments, string path, strin
         t.outdated = found == 0;
         t.line = found != 0 ? found
             : cast(uint)(c.line <= lineCount ? c.line : lineCount);
-        t.comments = [ThreadComment(c.author, createdText(c.created), parse(bodyWithSuggestion(c)))];
+        t.comments = [ThreadComment(c.author, createdText(c.created), parse(c.body_))];
         t.localId = c.id;
+        if (c.hasSuggestion && found != 0)
+        {
+            t.hasSuggestion = true;
+            t.suggestedFrom = suggestedLines(c, text);
+            t.suggestedTo = c.suggestion.text;
+        }
         threads ~= t;
     }
     return threads;
@@ -163,8 +169,68 @@ AnchoredThread[] threadsOf(Parse)(in LocalComment[] comments, string path, strin
 
 /// The comment's body, with its suggestion as a fence a reader recognizes.
 string bodyWithSuggestion(const ref LocalComment c) @safe pure nothrow
-    => c.hasSuggestion ? c.body_ ~ "\n\n```suggestion\n" ~ c.suggestion.text ~ "\n```\n" : c.body_;
+    => c.hasSuggestion ? c.body_ ~ "\n\n" ~ suggestionFence(c.suggestion) ~ "\n" : c.body_;
 
+
+/**
+`DCM4`, the forge's emitter: the suggestion as GitHub writes one, a
+` ```suggestion ` fence whose body replaces the anchored lines when the
+author accepts it.
+*/
+string suggestionFence(in Suggestion s) @safe pure nothrow
+    => "```suggestion\n" ~ s.text ~ "\n```";
+
+/**
+The lines `c`'s suggestion replaces in `sideText` (`DCM3`): from its
+re-located anchor, `lines` of them, joined; `null` when the anchor is gone.
+*/
+string suggestedLines(in LocalComment c, string sideText) @safe pure nothrow
+{
+    const at = relocate(c, sideText);
+    const lines = linesOf(sideText);
+    if (at == 0)
+        return null;
+    const to = at - 1 + c.suggestion.lines < lines.length
+        ? at - 1 + c.suggestion.lines : lines.length;
+    string joined;
+    foreach (i, l; lines[at - 1 .. to])
+        joined ~= (i ? "\n" : "") ~ l;
+    return joined;
+}
+
+/**
+`DCM4`, the local emitter: `c`'s suggestion as a unified patch against
+`sideText`, the file it is anchored in, which `git apply` takes. `null`
+when the anchor is gone, so a stale suggestion is never applied somewhere
+else.
+*/
+string suggestionPatch(in LocalComment c, string sideText) @safe
+{
+    import sparkles.base.buffer : SharedBuffer;
+    import sparkles.diff.engine : diffText;
+    import sparkles.diff.patch : emitPatch;
+
+    if (!c.hasSuggestion || c.oldSide)
+        return null;
+    const at = relocate(c, sideText);
+    if (at == 0)
+        return null;
+    const lines = linesOf(sideText);
+    const to = at - 1 + c.suggestion.lines < lines.length
+        ? at - 1 + c.suggestion.lines : lines.length;
+    string changed;
+    foreach (l; lines[0 .. at - 1])
+        changed ~= l ~ "\n";
+    changed ~= c.suggestion.text ~ "\n";
+    foreach (l; lines[to .. $])
+        changed ~= l ~ "\n";
+    if (sideText.length && sideText[$ - 1] != '\n')
+        changed = changed[0 .. $ - 1];
+    auto doc = diffText(sideText, changed, c.path, c.path);
+    SharedBuffer!char patch;
+    emitPatch(doc, patch);
+    return patch[].idup;
+}
 /// `created` as `YYYY-MM-DD HH:MM` UTC, or empty when unknown.
 string createdText(long created) @safe
 {
@@ -213,4 +279,24 @@ string createdText(long created) @safe
     assert(threads.length == 2);
     assert(threads[0].line == 2 && !threads[0].outdated);
     assert(threads[1].line == 3 && threads[1].outdated, "it hangs where it was");
+}
+
+@("diff_comments.suggestion.emitsAFenceAndAPatchGitTakes")
+@safe unittest
+{
+    import sparkles.diff.patch : parsePatch;
+    import std.algorithm.searching : canFind;
+
+    // `DCM4`: one model, two emitters.
+    enum text = "a\nb\nc\n";
+    LocalComment c;
+    c.path = "f.txt";
+    assert(captureAnchor(c, text, 2));
+    c.hasSuggestion = true;
+    c.suggestion = Suggestion(1, "B");
+    assert(suggestionFence(c.suggestion) == "```suggestion\nB\n```");
+    assert(suggestedLines(c, text) == "b");
+    const patch = suggestionPatch(c, text);
+    assert(!parsePatch(patch).hasError && patch.canFind("-b\n") && patch.canFind("+B\n"));
+    assert(suggestionPatch(c, "a\nc\n") is null, "a stale anchor applies nowhere");
 }

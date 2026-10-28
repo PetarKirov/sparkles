@@ -309,6 +309,8 @@ enum Command : ubyte
     diffSave,                          /// `Alt-S` — write the edited file, or post the comment
     diffRowDown, diffRowUp,            /// `Shift-J` / `Shift-K` — the comment cursor (`DCM1`)
     diffComment,                       /// `a` — comment on the cursor's row (`DCM2`)
+    diffSuggest,                       /// `Shift-A` — suggest a change to its line (`DCM3`)
+    diffApplySuggestion,               /// `Alt-A` — apply the suggestion on it (`DCM4`)
     diffResolve,                       /// `d` — resolve or reopen the comment on it
     diffMarkViewed,                    /// `m` — mark the file viewed (`DCM5`)
 
@@ -644,6 +646,12 @@ immutable Binding[] hueBindings = [
     bind(Scope_.viewer, Chord(key: Key.char_, ch: 's', alt: true), Command.diffSave,
         "save the edit or post the comment", require: CtxFlag.hasDiffSession),
     // `DCM2`/`DCM5`: local review comments and viewed marks.
+    // `DCM3`/`DCM4`: above `a`, which ignores Shift and Alt and would take
+    // these too.
+    bind(Scope_.viewer, chord('a', ShiftReq.yes), Command.diffSuggest,
+        "suggest a change here", require: CtxFlag.hasDiffSession),
+    bind(Scope_.viewer, Chord(key: Key.char_, ch: 'a', alt: true), Command.diffApplySuggestion,
+        "apply the suggestion here", require: CtxFlag.hasDiffSession),
     bind(Scope_.viewer, chord('a'), Command.diffComment,
         "comment on this row", require: CtxFlag.hasDiffSession),
     bind(Scope_.viewer, chord('d'), Command.diffResolve,

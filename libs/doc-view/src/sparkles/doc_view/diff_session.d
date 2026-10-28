@@ -112,6 +112,11 @@ struct AnchoredThread
     ThreadComment[] comments;
     /// `DCM1`: the local comment this thread shows, or empty for a forge's.
     string localId;
+    /// `DCM3`: the lines a suggestion replaces, and what it proposes; drawn
+    /// as a mini-diff under the comment.
+    bool hasSuggestion;
+    /// ditto
+    string suggestedFrom, suggestedTo;
 }
 
 struct DiffSession

@@ -2800,6 +2800,9 @@ struct ViewerModel
     EditorField composer;
     /// ditto
     size_t composerRow;
+    /// `DCM3`: the composer holds a suggestion, the row's line edited in
+    /// place, rather than a comment.
+    bool composingSuggestion;
     /// The composer's keys, said under it; the host knows them.
     string composerHint;
 
@@ -2875,15 +2878,25 @@ struct ViewerModel
     Opens a comment under the cursor's row (`DCM2`). Returns why it cannot
     be written there, or `null`.
     */
-    string commentStart(EditorTarget target = EditorTarget.terminal)
+    string commentStart(EditorTarget target = EditorTarget.terminal, bool suggest = false)
     {
         if (diffEditOpen)
             return "save or close the edit first";
         const row = diffCursorRow();
         if (row >= diff.rows.length || fileOfRow(row) >= diffSides.length)
             return "no line to comment on here";
+        string prefill;
+        if (suggest)
+        {
+            // `DCM3`: a suggestion edits the row's own line, on the side the
+            // change would land on.
+            if (diff.rows[row].kind == RowKind.removed)
+                return "suggest on the new side: a removed line cannot change";
+            prefill = diff.rowText(diff.rows[row]).idup;
+        }
+        composingSuggestion = suggest;
         diffRowCursor = row;
-        composer = EditorField.make("", EditorOptions.init, target);
+        composer = EditorField.make(prefill, EditorOptions.init, target);
         composerRow = row;
         composing = true;
         rebuild();
@@ -2932,7 +2945,7 @@ struct ViewerModel
         import sparkles.diff.model : RowKind;
         import sparkles.doc_view.diff_comments : captureAnchor;
 
-        if (!composing || composer.empty)
+        if (!composing || composer.empty && !composingSuggestion)
             return false;
         const fi = fileOfRow(composerRow);
         const row = diff.rows[composerRow];
@@ -2941,6 +2954,14 @@ struct ViewerModel
         taken.path = newPath == "/dev/null" ? diff.pathText(file.oldPath).idup : newPath;
         taken.oldSide = row.kind == RowKind.removed;
         taken.body_ = composer.text;
+        if (composingSuggestion)
+        {
+            import sparkles.doc_view.diff_comments : Suggestion;
+
+            taken.hasSuggestion = true;
+            taken.suggestion = Suggestion(1, composer.text);
+            taken.body_ = null;
+        }
         taken.author = author;
         taken.created = created;
         const sideText = taken.oldSide ? diffSides[fi].oldText : diffSides[fi].newText;

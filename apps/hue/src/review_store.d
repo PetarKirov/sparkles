@@ -472,3 +472,61 @@ string persistFolds(ref ViewerModel vm, ReviewSession review) @system
     review.syncFolds(paths, collapsed);
     return review.error;
 }
+
+/**
+`DCM4`: applies the local suggestion on the cursor's row to the working
+tree with `git apply`, a dry run first. `true` once applied, when the host
+must produce the diff again; `said` is what to tell the user.
+*/
+bool applySuggestionAtCursor(ref ViewerModel vm, ReviewSession review, out string said) @system
+{
+    import sparkles.doc_view.diff_comments : suggestionPatch;
+    import staging : runWithInput;
+    import std.string : strip;
+
+    if (review is null || !vm.diffSession.editable)
+    {
+        said = "suggestions apply to a working-tree diff";
+        return false;
+    }
+    const at = vm.diffCursorRow();
+    if (at >= vm.diff.rows.length)
+    {
+        said = "no suggestion here";
+        return false;
+    }
+    const fi = vm.fileOfRow(at);
+    const row = vm.diff.rows[at];
+    foreach (ref t; vm.diffSession.threads)
+    {
+        if (!t.hasSuggestion || t.oldSide || row.newLine == 0 || t.line != row.newLine)
+            continue;
+        foreach (ref c; review.data.comments)
+        {
+            if (c.id != t.localId)
+                continue;
+            const patch = suggestionPatch(c, vm.diffSides[fi].newText);
+            if (patch is null)
+            {
+                said = "the suggested lines changed since";
+                return false;
+            }
+            const checked = runWithInput(["git", "apply", "--check", "-"], patch, review.root);
+            if (checked.status != 0)
+            {
+                said = "the suggestion no longer applies: " ~ checked.output.strip;
+                return false;
+            }
+            const applied = runWithInput(["git", "apply", "-"], patch, review.root);
+            if (applied.status != 0)
+            {
+                said = "git apply failed: " ~ applied.output.strip;
+                return false;
+            }
+            said = "applied the suggestion to " ~ c.path;
+            return true;
+        }
+    }
+    said = "no suggestion on this row";
+    return false;
+}

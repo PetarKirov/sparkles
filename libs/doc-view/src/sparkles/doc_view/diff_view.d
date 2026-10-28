@@ -579,6 +579,24 @@ private bool anchoredHere(in AnchoredThread t, in Row row) @safe pure nothrow @n
 }
 
 
+
+/// `DCM3`: a suggestion's mini-diff, the lines it replaces over what it
+/// proposes, tinted like the diff's own rows.
+private uint suggestionBlock(ref Builder b, in AnchoredThread t) @safe
+{
+    import sparkles.doc_view.diff_comments : linesOf;
+    import sparkles.ui.geometry : Insets;
+
+    auto rows = [b.add(Widget(kind: WidgetKind.rich,
+        spans: [TextSpan("suggested change", slot: Slot.muted)]))];
+    foreach (line; linesOf(t.suggestedFrom ~ "\n"))
+        rows ~= tinted(b, b.add(Widget(kind: WidgetKind.rich,
+            spans: [TextSpan("- " ~ line, slot: Slot.diffRemoved)])), RowKind.removed);
+    foreach (line; linesOf(t.suggestedTo ~ "\n"))
+        rows ~= tinted(b, b.add(Widget(kind: WidgetKind.rich,
+            spans: [TextSpan("+ " ~ line, slot: Slot.diffAdded)])), RowKind.added);
+    return b.add(Widget(kind: WidgetKind.column, children: rows, padding: Insets(0, 0, 0, 2)));
+}
 /**
 `DCM2`: the comment being written, under its row: the editor drawn like a
 thread's body, with a line saying how to post it or leave.
@@ -660,6 +678,10 @@ private uint threadBlock(ref Builder b, in AnchoredThread t,
                 children: [viewMarkdownInto(b, c.body_, mopt)],
                 padding: Insets(0, 0, 0, 2)));
         }
+        // `DCM3`: a suggestion is its own mini-diff, the anchored lines
+        // against what it proposes.
+        if (i == 0 && t.hasSuggestion)
+            rows ~= suggestionBlock(b, t);
     }
     return withGutterCells(b, chans, null,
         b.container(WidgetKind.column, rows), 0);
