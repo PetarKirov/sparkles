@@ -105,7 +105,12 @@ struct Lab
     private void panel(H)(ref H h, in Rect r, RgbColor bg, RgbColor fg, RgbColor red, RgbColor green,
         RgbColor blue)
     {
-        auto canvas = h.canvas;
+        // The host's own canvas: the native host hands out a pointer, a
+        // recorder its field, which a copy would record into instead.
+        static if (is(typeof(h.canvas()) == C*, C))
+            auto canvas = h.canvas();
+        else
+            auto canvas = &h.canvas;
         canvas.fillRect(r, Visual(bg: bg, hasBg: true));
         Visual ink(RgbColor c, ushort style = 0, UnderlineStyle underline = UnderlineStyle.none)
             => Visual(fg: c, bg: bg, hasBg: true, styleBits: style, underline: underline);
@@ -161,6 +166,12 @@ struct Lab
         l.x = pointer.x > px.width / 2 ? 8 : px.width - w - 8;
         l.y = top + 8;
         h.loupe(l);
+    }
+
+    /// Points the loupe at pixel `p`, as the pointer would.
+    void pointAt(Point p) @safe pure nothrow @nogc
+    {
+        pointer = p;
     }
 
     /// Keys switch the settings; pointer motion moves the loupe.
@@ -234,3 +245,36 @@ enum bool offersSettings(H) = __traits(compiles, (ref H h) {
     h.textRendering(TextRendering.init);
     h.loupe(Loupe.init);
 });
+
+version (unittest)
+{
+    import sparkles.input : charEvent;
+    import sparkles.ui_app.host : RunConfig;
+    import sparkles.ui_app.record : RecordingHost;
+    import sparkles.ui_app.run_app : runAppRecorded;
+}
+
+@("text_lab.keysSwitchTheSettings")
+@system unittest
+{
+    Lab lab;
+    const before = lab.settings;
+    cast(void) runAppRecorded(lab, RunConfig.init, [charEvent('c'), charEvent('h'), charEvent('s'),
+        charEvent(']'), charEvent('m'), charEvent('2')]);
+    assert(lab.settings.compositing != before.compositing, "c cycles the compositing");
+    assert(lab.settings.hinting != before.hinting, "h toggles hinting");
+    assert(lab.settings.shaping != before.shaping, "s toggles shaping");
+    assert(lab.settings.contrast > before.contrast, "] raises the contrast");
+    assert(!lab.loupe.shown && lab.loupe.scale == 6, "m hides the loupe, 2 picks its zoom");
+}
+
+@("text_lab.aHostWithoutTheSettingsStillDrawsTheSpecimen")
+@system unittest
+{
+    // The recorder has no text-rendering errands: the header says so, and
+    // the specimen is still painted on its canvas.
+    static assert(!offersSettings!RecordingHost);
+    Lab lab;
+    auto rec = runAppRecorded(lab, RunConfig.init, []);
+    assert(rec.canvas.ops.length > specimen.length, "both panels' lines were drawn");
+}

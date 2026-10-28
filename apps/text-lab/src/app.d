@@ -20,6 +20,16 @@ struct LabOptions
     mixin GuiCliFields;
     @(Option("shot", description: "Capture a frame into this PNG, then exit.", placeholder: "PATH"))
     string shot;
+    @(Option("compositing", description: "gamma, linear or linearCorrected."))
+    string compositing = "linearCorrected";
+    @(Option("contrast", description: "Coverage contrast for linearCorrected, 0–1."))
+    float contrast = 0.25f;
+    @(Option("hinting", description: "none or light."))
+    string hinting = "light";
+    @(Option("no-shaping", description: "Draw each cluster's first glyph, unshaped."))
+    bool noShaping;
+    @(Option("loupe-at", description: "Point the loupe at this pixel (x,y) instead of the pointer.", placeholder: "X,Y"))
+    string loupeAt;
 }
 
 int main(string[] args)
@@ -43,14 +53,32 @@ int main(string[] args)
         gui.fontSize = 12;
     if (gui.windowHeight == defaultWindowRows)
         gui.windowHeight = 40;
+    // The lab has no terminal form: its window is the point, so it opens one
+    // without being asked.
+    if (!gui.noGui && !gui.tui)
+        gui.gui = true;
     RunConfig cfg = {
         title: "text lab",
         gui: gui,
         motion: true, // the loupe follows the pointer
         pointerUnit: PointerUnit.pixels,
     };
+    import std.conv : to;
+    import std.string : split;
+    import sparkles.ui.geometry : Point;
+    import sparkles.ui_vulkan.text_rendering : Compositing, Hinting;
+
     Lab lab;
     lab.shotPath = parsed.value.shot;
+    lab.settings.compositing = parsed.value.compositing.to!Compositing;
+    lab.settings.contrast = parsed.value.contrast;
+    lab.settings.hinting = parsed.value.hinting.to!Hinting;
+    lab.settings.shaping = !parsed.value.noShaping;
+    if (parsed.value.loupeAt.length)
+    {
+        const xy = parsed.value.loupeAt.split(",");
+        lab.pointAt(Point(xy[0].to!int, xy[1].to!int));
+    }
     final switch (runApp(lab, cfg))
     {
         case RunOutcome.ok:
