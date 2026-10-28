@@ -1,0 +1,57 @@
+# TEMPORARY: hunts event-horizon's arm64 exit SIGSEGV with core dumps.
+# Lives only on scratch/arm64-segv; never merged.
+name: arm64 exit SEGV hunt
+on:
+  push:
+    branches: [scratch/arm64-segv]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  hunt:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v7
+      - name: Setup Nix
+        uses: ./.github/actions/setup-nix
+        with:
+          cachix-cache: ${{ vars.CACHIX_CACHE }}
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
+          devshell: ci
+          use-nix-cache: true
+          nix-cache-key: nix-v2-aarch64-linux-ldc2-${{ hashFiles('**/flake.lock') }}
+          nix-cache-restore-prefixes: |
+            nix-v2-aarch64-linux-ldc2-
+            nix-v2-aarch64-linux-
+      - name: Build the coverage test binary as ci --test does
+        env:
+          DFLAGS: --cov-increment=atomic
+        run: |
+          mkdir -p build/coverage
+          dub test :event-horizon -b unittest-cov --compiler=ldc2 -- -t 3 \
+            --DRT-covopt=merge:1 --DRT-covopt=dstpath:build/coverage || true
+          ls -la libs/event-horizon/build/
+      - name: Run until it crashes, with core dumps
+        run: |
+          sudo sysctl -w kernel.core_pattern=/tmp/cores/core.%e.%p
+          mkdir -p /tmp/cores
+          ulimit -c unlimited
+          bin=libs/event-horizon/build/sparkles-event-horizon-test-unittest
+          for i in $(seq 1 60); do
+            "$bin" -t 3 --DRT-covopt=merge:1 --DRT-covopt=dstpath:build/coverage > run.log 2>&1
+            rc=$?
+            echo "run $i rc=$rc"
+            if [ $rc -ne 0 ]; then tail -20 run.log; break; fi
+          done
+          ls -la /tmp/cores || true
+      - name: Backtrace every core
+        if: always()
+        run: |
+          bin=libs/event-horizon/build/sparkles-event-horizon-test-unittest
+          for c in /tmp/cores/core.*; do
+            [ -e "$c" ] || continue
+            echo "=== $c"
+            nix run nixpkgs#gdb -- -batch -ex "info threads" -ex "thread apply all bt 40" "$bin" "$c" 2>&1 | head -400
+          done
