@@ -32,7 +32,7 @@ import sparkles.input : EndOfInput, Event, isEndOfInput, Key, KeyEvent,
     match, PasteEvent, Point, PointerAction, PointerButton, PointerEvent, ResizeEvent,
     WheelEvent;
 import sparkles.ui.components.chrome : headerBar;
-import sparkles.ui.components.tree_view : jumpMatching, measureContent,
+import sparkles.ui.components.tree_view : filterServe, jumpMatching, measureContent,
     treeActivate = activate, treeCollapseOrUp = collapseOrUp, TreeStep,
     TreeViewState, viewSlice;
 import sparkles.ui.components.tree_widget : FlatTreeRow, flatten, TreeData,
@@ -309,6 +309,13 @@ struct ExplorerTui
     void filterKey(in KeyEvent e) @system
     {
         if (tv.filterKey(e) == TreeStep.rebuild)
+            rebuild();
+    }
+
+    /// Do the clipboard work the filter asked for (`EDY5`).
+    void filterServe(Clipboard)(in Clipboard clipboard)
+    {
+        if (tv.filterServe(clipboard) == TreeStep.rebuild)
             rebuild();
     }
 
