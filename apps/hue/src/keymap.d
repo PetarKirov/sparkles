@@ -124,6 +124,8 @@ struct KeyContext
     /// `reachable`, this one gates individual rows, so it needs a
     /// `CtxFlag` bit — which is the bit the enum had run out of.
     bool grepActive;
+    /// The conflict view is open (`CFV2`).
+    bool conflictOpen;
 
 @safe pure nothrow @nogc const:
 
@@ -143,6 +145,7 @@ struct KeyContext
         if (pickerActive)   b |= CtxFlag.pickerActive;
         if (settingsActive) b |= CtxFlag.settingsActive;
         if (grepActive)     b |= CtxFlag.grepActive;
+        if (conflictOpen)   b |= CtxFlag.conflictOpen;
         return b;
     }
 
@@ -315,6 +318,16 @@ enum Command : ubyte
     diffMarkViewed,                    /// `m` — mark the file viewed (`DCM5`)
     diffSubmitReview,                  /// `<leader>ds` — submit the drafts to the forge (`DCM6`)
 
+    // The conflict view (`CFV1`–`CFV4`).
+    conflictResolve,                   /// `<leader>x` — open it on this file
+    conflictNext, conflictPrev,        /// `}` / `{`
+    conflictOurs, conflictTheirs,      /// `o` / `t`
+    conflictBoth, conflictBothReversed,/// `b` / `Shift-B`: ours then theirs, or theirs then ours
+    conflictUndo,                      /// `u`
+    conflictEdit,                      /// `Shift-E` — edit freely, markers read-only
+    conflictSave,                      /// `Alt-S`
+    conflictStage,                     /// `space` — `git add` the saved file
+
     // The fuzzy picker's modal surface (`PKL7`): its keys are table rows so
     // the guide can list them (`PKL3`), gated on `pickerActive` + pane focus.
     // Only the hosts' picker branch answers these; every other dispatch
@@ -421,6 +434,8 @@ enum CtxFlag : ushort
     /// This is the flag the widening to `ushort` was reserved for — eight
     /// more remain before the next one is needed.
     grepActive     = 1 << 8,
+    /// The conflict view is open (`CFV2`): its keys replace the viewer's.
+    conflictOpen   = 1 << 9,
 }
 
 /// The framework's row builders, with hue's command type pinned so the table
@@ -525,6 +540,28 @@ immutable Binding[] hueBindings = [
     bind(Scope_.viewer, chord(Key.up), Command.viewUp, "up"),
     bind(Scope_.viewer, chord(Key.home, ShiftReq.no), Command.viewHome, "top"),
     bind(Scope_.viewer, chord(Key.end, ShiftReq.no), Command.viewEnd, "bottom"),
+    // ── the conflict view (`CFV1`–`CFV4`), first so its keys win while
+    // it is open; each row requires it ────────────────────────────────────
+    bind(Scope_.viewer, chord('}'), Command.conflictNext, "next conflict",
+        require: CtxFlag.conflictOpen),
+    bind(Scope_.viewer, chord('{'), Command.conflictPrev, "previous conflict",
+        require: CtxFlag.conflictOpen),
+    bind(Scope_.viewer, chord('o'), Command.conflictOurs, "take ours",
+        require: CtxFlag.conflictOpen),
+    bind(Scope_.viewer, chord('t'), Command.conflictTheirs, "take theirs",
+        require: CtxFlag.conflictOpen),
+    bind(Scope_.viewer, chord('b', ShiftReq.yes), Command.conflictBothReversed,
+        "take theirs, then ours", require: CtxFlag.conflictOpen),
+    bind(Scope_.viewer, chord('b'), Command.conflictBoth, "take ours, then theirs",
+        require: CtxFlag.conflictOpen),
+    bind(Scope_.viewer, chord('u'), Command.conflictUndo, "undo the last pick",
+        require: CtxFlag.conflictOpen),
+    bind(Scope_.viewer, chord('e', ShiftReq.yes), Command.conflictEdit, "edit the file",
+        require: CtxFlag.conflictOpen),
+    bind(Scope_.viewer, Chord(key: Key.char_, ch: 's', alt: true), Command.conflictSave,
+        "save the resolved file", require: CtxFlag.conflictOpen),
+    bind(Scope_.viewer, chord(' '), Command.conflictStage, "stage the saved file",
+        require: CtxFlag.conflictOpen),
     // `DCM1`: the comment cursor walks rows; above `j`/`k`, which ignore
     // Shift and would take these too.
     bind(Scope_.viewer, chord('j', ShiftReq.yes), Command.diffRowDown,
@@ -805,6 +842,8 @@ immutable Binding[] hueBindings = [
         Command.diffPrevFile, "prev file", require: CtxFlag.hasDiffSession),
     bind(Scope_.shared_, chord(leader), chord('d'), chord('f'),
         Command.diffToggleFile, "toggle file", require: CtxFlag.hasDiffSession),
+    bind(Scope_.shared_, chord(leader), chord('x'), Command.conflictResolve,
+        "resolve conflicts"),
     bind(Scope_.shared_, chord(leader), chord('d'), chord('s'),
         Command.diffSubmitReview, "submit the review", require: CtxFlag.hasDiffSession),
 
