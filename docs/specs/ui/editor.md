@@ -222,7 +222,7 @@ range deletes the range.
 **EDC3: Word motion and deletion.** `moveWord(±1)` **must** skip every
 segment that is not of kind `word`, then one `word` segment
 ([`TXT-SEG9`](../base/text/SPEC.md#43-boundaries-from-an-arbitrary-position)),
-as Readline's `forward-word` does: from the start of `foo.bar` it stops
+as Readline's `forward-word` does: from the start of `foo/bar` it stops
 after `foo`, then after `bar`. `killWord(±1)` **must** kill the same span. `killBlankWord(-1)` **must**
 kill back over trailing whitespace and then one blank-delimited run.
 
@@ -505,7 +505,9 @@ whitespace
 but moves over alphanumeric words with `Alt-B`/`Alt-F`. The editor keeps
 both (EDC3), defined once in base (`TXT-SEG9`): as in a shell, `Ctrl-W`
 removes a whole path back to the previous space, while `Alt-Backspace`
-removes one component.
+removes one component. Words are UAX #29's, not Readline's runs of
+alphanumerics, so `foo.bar` and `e.g.` are one word each: `.` between
+letters is MidNumLet and joins them.
 
 **ED-D2: Readline keys plus a platform layer.** The Readline keys are bound
 on every target, and native platform chords beside them (EDK3), so one
