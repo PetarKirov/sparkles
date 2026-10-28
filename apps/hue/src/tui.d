@@ -22,7 +22,7 @@ import sparkles.doc_view.table_select : serializeTable, TableCopyFormat, TableRe
 import sparkles.doc_view.scroll_latch : LatchTarget, ScrollLatch;
 import sparkles.doc_view.dsv_view : DsvCopy, serializeGridCopy;
 import core.time : Duration, msecs;
-import input_line : InputState, Mode;
+import input_line : InputState, LineStep, Mode;
 import keymap : Binding, bindingsAt, Command, InputMode, KeyContext;
 import lantern : defaultDelay, LanternState, ltnStep = step, ltnTick = tick,
     untilShown, LtnStepKind = StepKind;
@@ -46,7 +46,7 @@ import sparkles.twoslash.signature_layout : ExpandedRegions;
 
 import sparkles.base.term_style : TextAttr, UnderlineStyle;
 import sparkles.input : EndOfInput, Event, isEndOfInput, Key, KeyEvent,
-    match, PointerAction, PointerButton, PointerEvent, ResizeEvent, WheelEvent;
+    match, PasteEvent, PointerAction, PointerButton, PointerEvent, ResizeEvent, WheelEvent;
 import sparkles.ui.canvas : DrawOp;
 import sparkles.ui.components.chrome : headerBar;
 import sparkles.ui.display_list : buildDisplayList;
@@ -354,13 +354,13 @@ struct PreviewTui
     private enum size_t tableHBarHitBase = ViewerModel.tableHBarHitBase;
     private enum size_t tableVBarHitBase = ViewerModel.tableVBarHitBase;
 
-    private const(char)[] query() const return @safe pure nothrow @nogc => inp.query[];
+    private const(char)[] query() const return @safe pure nothrow @nogc => inp.query;
 
     /// What the line-input bar currently holds — the query as the shared
     /// matcher will see it. Public so a parity test can assert that both
     /// hosts reach `findMatches` with the same bytes, not merely the same
     /// function.
-    const(char)[] inputQuery() const return @safe pure nothrow @nogc => inp.query[];
+    const(char)[] inputQuery() const return @safe pure nothrow @nogc => inp.query;
     private bool searching() const @safe pure nothrow @nogc => inp.mode == Mode.search;
     /// The filter prompt (`DSF1`) — the search prompt's twin, same bar.
     private bool filtering() const @safe pure nothrow @nogc => inp.mode == Mode.dsvFilter;
@@ -676,8 +676,7 @@ struct PreviewTui
         tableFmt = TableCopyFormat.tsv;
         hoverSel = -1;
         sel = Selection!long.cleared;
-        inp.mode = Mode.normal;
-        inp.query.clear();
+        inp.close();
         vm.inlineFoldMarker = true;
         vm.widthCols = width < 9 ? 8 : width - 1;
         vm.viewRows = bodyRows();
@@ -1092,8 +1091,8 @@ struct PreviewTui
         // preview's formatter · width · error chip (`FMV7`), then the hints.
         const fchip = formatPreviewChip(vm);
         const line = b.add(Widget(kind: WidgetKind.text,
-            text: filtering ? text("⌕ ", query, "▏")
-                : searching ? text("/", query, "▏")
+            text: filtering ? text("⌕ ", inp.shown)
+                : searching ? text("/", inp.shown)
                 : notice.length ? notice
                 : fchip.length ? fchip
                 : "scroll ↑↓ · ←→ theme · Tab raw/preview · / search · za fold · drag+y copy · q quit",
@@ -1647,13 +1646,11 @@ struct PreviewTui
             // Opening the bar starts from nothing — query AND matches, so a
             // fresh `/` never shows the previous search's tint (`FND5`).
             case Command.startSearch:
-                inp.mode = Mode.search;
-                inp.query.clear();
+                inp.open(Mode.search);
                 vm.clearSearch();
                 break;
             case Command.dsvFilter:
-                inp.mode = Mode.dsvFilter;
-                inp.query.clear();
+                inp.open(Mode.dsvFilter);
                 break;
             case Command.dsvReset:
                 if (onDsvReset !is null)
@@ -2026,13 +2023,16 @@ struct PreviewTui
         return false;
     }
 
-    // Key handling while typing a search query (`/…`): printable keys extend it,
-    // backspace trims, Enter commits, Esc cancels; the view live-jumps to the
-    // first match as the query changes.
+    // Key handling while typing a search query (`/…`): the bar's editor takes
+    // the keys and pastes, Enter commits, Esc cancels; the view live-jumps to
+    // the first match as the query changes.
     private bool handleSearch(in Event ev) @system
     {
-        return ev.match!((in KeyEvent e) {
-            searchKey(e);
+        return ev.match!((in PasteEvent p) {
+            searchStep(inp.paste(p.text[]));
+            return true;
+        }, (in KeyEvent e) {
+            searchStep(inp.key(e));
             return true;
         }, (in EndOfInput _) => false, _ => true);
     }
@@ -2041,64 +2041,53 @@ struct PreviewTui
     /// workspace hook (`DSF5` errors surface as a notice there), Esc cancels.
     private bool handleFilterPrompt(in Event ev) @system
     {
-        return ev.match!((in KeyEvent e) {
-            switch (e.key)
+        void step(LineStep s)
+        {
+            if (s == LineStep.submitted)
             {
-                case Key.char_:
-                    cast(void) inp.typeChar(e.ch);
-                    break;
-                case Key.backspace:
-                    cast(void) inp.backspace();
-                    break;
-                case Key.enter:
-                    inp.mode = Mode.normal;
-                    if (onDsvFilterApply !is null)
-                        onDsvFilterApply(query.idup);
-                    inp.query.clear();
-                    break;
-                case Key.escape:
-                    inp.mode = Mode.normal;
-                    inp.query.clear();
-                    break;
-                default: break;
+                const q = query.idup;
+                inp.close();
+                if (onDsvFilterApply !is null)
+                    onDsvFilterApply(q);
             }
+            else if (s == LineStep.cancelled)
+                inp.close();
+        }
+
+        return ev.match!((in PasteEvent p) {
+            step(inp.paste(p.text[]));
+            return true;
+        }, (in KeyEvent e) {
+            step(inp.key(e));
             return true;
         }, (in EndOfInput _) => false, _ => true);
     }
 
-    private void searchKey(in KeyEvent e) @system
+    private void searchKey(in KeyEvent e) @system => searchStep(inp.key(e));
+
+    private void searchStep(LineStep s) @system
     {
-        switch (e.key)
+        final switch (s)
         {
-            case Key.char_:
-                // `typeChar` decides what a keystroke is worth (printable
-                // ASCII, capped) — the same gate the window applies, so both
-                // reach the matcher with the same query.
-                if (!inp.typeChar(e.ch))
-                    break;
+            case LineStep.none:
+            case LineStep.handled:
+                break;
+            case LineStep.edited:
                 vm.search(query); // the one matcher (`UIA13`)
                 jumpMatch(top, true);
                 break;
-            case Key.backspace:
-                if (!inp.backspace())
-                    break;
-                vm.search(query);
-                jumpMatch(top, true);
-                break;
-            case Key.enter:
-                inp.mode = Mode.normal;
+            case LineStep.submitted:
+                inp.mode = Mode.normal; // the query and its matches stay
                 jumpMatch(top + 1, true); // move off the current match
                 break;
-            case Key.escape:
-                inp.mode = Mode.normal;
-                inp.query.clear();
+            case LineStep.cancelled:
+                inp.close();
                 // Cancelling drops the matches, not just the query (`FND5`).
                 // Clearing `qlen` alone left `vm.matches` populated, so `n`
                 // kept cycling a search the reviewer had already abandoned —
                 // and the count in the status bar outlived its query.
                 vm.clearSearch();
                 break;
-            default: break;
         }
     }
 }
@@ -2433,14 +2422,14 @@ unittest
     // Search runs the SHARED matcher and jumps to a match's row (shrink the
     // viewport so the document overflows and the jump sticks). `vm.search` is
     // the step that used to be a private per-row scan in this module.
-    foreach (char c; "y = 2")
-        cast(void) t.inp.typeChar(c);
+    t.inp.open(Mode.search);
+    cast(void) t.inp.type("y = 2");
     t.height = 5;
     t.vm.search(t.query);
     t.jumpMatch(0, true);
     assert(t.top > 0, "search did not jump to the fence's second line");
     t.top = 0;
-    t.inp.query.clear();
+    t.inp.close();
     t.height = 12;
 
     // A click on the top-border copy cutout (` ⧉ ` before the corner)
