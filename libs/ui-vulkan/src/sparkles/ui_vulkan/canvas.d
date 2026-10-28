@@ -90,6 +90,7 @@ struct CanvasImages
     private ImageOutcome delegate(ImageHandle, out uint, out Size) @system resolve_;
     private GlyphOutcome delegate(in GlyphRequest, out GlyphQuad) @system glyph_;
     private const(TextMetrics)* metrics_;
+    private GlyphOutcome delegate(in ClusterRequest, scope GlyphQuad[], out size_t) @system cluster_;
 
     /// See `isImageSource`.
     ImageOutcome resolve(ImageHandle handle, out uint slot, out Size size) @system
@@ -101,9 +102,18 @@ struct CanvasImages
 
     /// ditto
     TextMetrics textMetrics() const @system => metrics_ is null ? TextMetrics.init : *metrics_;
+
+    /// See `shapesClusters`.
+    GlyphOutcome resolveCluster(in ClusterRequest r, scope GlyphQuad[] quads, out size_t count) @system
+        => cluster_ is null ? GlyphOutcome.noGlyph : cluster_(r, quads, count);
 }
 
 static assert(isGlyphSource!CanvasImages);
+static assert(shapesClusters!CanvasImages);
+
+// Whether the font library's shaping engine (HarfBuzz, its `engine`
+// configuration) is linked: clusters are shaped where it is.
+private enum bool canShape = __traits(compiles, { import sparkles.font.cluster_shaping : ClusterShaper; });
 
 /// A face text falls back to where the cell font has no glyph, at its own size
 /// (`UVX12`): its bytes, which outlive the canvas or the next `cellFont`.
@@ -188,6 +198,9 @@ struct VulkanCanvas(B)
     private TextMetrics textMetrics_;
     private uint faceSerial_;
     private UniqueBuffer!GpuImage[2] atlasImages_; // the coverage sheet's pages, the colour sheet's
+    // Shapers by face serial, made on demand (`ShaperSlot`).
+    static if (canShape)
+        private ShaperSlot[16] shapers_;
 
     private bool inFrame_, lost_;
     private CanvasTarget target_;
@@ -219,7 +232,7 @@ struct VulkanCanvas(B)
         c.facts_ = facts;
         c.config_ = config;
         c.registry_ = registry;
-        c.painter_.images = CanvasImages(&c.resolveImage, &c.resolveGlyph, &c.textMetrics_);
+        c.painter_.images = CanvasImages(&c.resolveImage, &c.resolveGlyph, &c.textMetrics_, &c.resolveCluster);
         foreach (_; 0 .. config.frameSlots)
             c.inFlight_.put(0);
         auto made = c.createAll();
@@ -504,16 +517,12 @@ struct VulkanCanvas(B)
         return em.hasValue && cellFont(faces, em.value, metrics);
     }
 
-    // A cluster's glyph (`isGlyphSource`): from the cell font's face of the
-    // run's style, else the fallback faces in order — an emoji face first
-    // when the cluster presents as one — in colour where the face has a
-    // colour form for it.
-    private GlyphOutcome resolveGlyph(in GlyphRequest r, out GlyphQuad quad) @system
+    // The faces a cluster is looked up in, in order: the cell font's face of
+    // the run's style, then the fallbacks — a colour face first when the
+    // cluster presents as an emoji.
+    private size_t faceOrder(in GlyphRequest r, ref CellFace*[8] order) @system
     {
-        if (!textMetrics_.present)
-            return GlyphOutcome.noGlyph;
         auto styled = &faces_[faces_[r.style].bytes.length ? r.style : FaceStyle.regular];
-        CellFace*[8] order;
         size_t n;
         if (r.emoji)
             foreach (ref f; fallbacks_)
@@ -524,61 +533,174 @@ struct VulkanCanvas(B)
         foreach (ref f; fallbacks_)
             if ((!r.emoji || !f.colour) && n < order.length)
                 order[n++] = &f;
-        foreach (face; order[0 .. n])
+        return n;
+    }
+
+    // Glyph `gid` of `face` from the atlas: in colour where the face has a
+    // colour form for it — refitted at the exact smaller size when it is
+    // larger than the cells `r` names — else its outline, hinted as the text
+    // rendering asks.
+    private GlyphOutcome glyphFrom(CellFace* face, uint gid, in GlyphRequest r, out GlyphQuad quad) @system
+    {
+        AtlasGlyph g;
+        auto outcome = AtlasOutcome.noColour;
+        if (face.colour)
         {
-            const gid = face.map.glyph(r.cp);
-            if (gid == 0)
-                continue;
-            AtlasGlyph g;
-            auto outcome = AtlasOutcome.noColour;
-            if (face.colour)
+            const fg = foregroundOf(r.colour);
+            outcome = atlas_.getColour(face.inst, face.serial, gid, face.ppem, fg, g);
+            ulong a = 1, b = 1;
+            const right = g.bearingX + g.width;
+            if (r.fitWidth > 0 && right > r.fitWidth)
             {
-                const fg = foregroundOf(r.colour);
-                outcome = atlas_.getColour(face.inst, face.serial, gid, face.ppem, fg, g);
-                // Larger than the cells it takes: drawn again at the size that
-                // fits them, as the raylib arm fits it, rather than squeezed.
-                ulong a = 1, b = 1;
-                const right = g.bearingX + g.width;
-                if (r.fitWidth > 0 && right > r.fitWidth)
-                {
-                    a = r.fitWidth;
-                    b = right;
-                }
-                if (r.fitHeight > 0 && ulong(g.height) * a > ulong(r.fitHeight) * b)
-                {
-                    a = r.fitHeight;
-                    b = g.height;
-                }
-                if (outcome == AtlasOutcome.placed && a != b)
-                {
-                    const smaller = scaledPpem(face.ppem, a, b);
-                    AtlasGlyph fitted;
-                    if (smaller.hasValue && atlas_.getColour(face.inst, face.serial, gid, smaller.value, fg,
-                            fitted) == AtlasOutcome.placed)
-                        g = fitted;
-                }
+                a = r.fitWidth;
+                b = right;
             }
-            if (outcome == AtlasOutcome.noColour)
-                outcome = atlas_.get(face.inst, face.serial, gid, face.ppem, g,
-                    textRendering_.hinting == Hinting.light ? &face.hints : null);
-            final switch (outcome)
+            if (r.fitHeight > 0 && ulong(g.height) * a > ulong(r.fitHeight) * b)
             {
-                case AtlasOutcome.placed:
-                    enum float side = GlyphAtlas.pageSize;
-                    quad = GlyphQuad(g.page + 1, g.colour, v4(g.x / side, g.y / side,
-                        (g.x + g.width) / side, (g.y + g.height) / side),
-                        g.width, g.height, g.bearingX, g.bearingY);
-                    return GlyphOutcome.drawn;
-                case AtlasOutcome.blank:
-                case AtlasOutcome.noColour:
-                    return GlyphOutcome.blank;
-                case AtlasOutcome.refused:
-                    return GlyphOutcome.refused;
-                case AtlasOutcome.full:
-                    return GlyphOutcome.full;
+                a = r.fitHeight;
+                b = g.height;
+            }
+            if (outcome == AtlasOutcome.placed && a != b)
+            {
+                const smaller = scaledPpem(face.ppem, a, b);
+                AtlasGlyph fitted;
+                if (smaller.hasValue && atlas_.getColour(face.inst, face.serial, gid, smaller.value, fg,
+                        fitted) == AtlasOutcome.placed)
+                    g = fitted;
             }
         }
+        if (outcome == AtlasOutcome.noColour)
+            outcome = atlas_.get(face.inst, face.serial, gid, face.ppem, g,
+                textRendering_.hinting == Hinting.light ? &face.hints : null);
+        final switch (outcome)
+        {
+            case AtlasOutcome.placed:
+                enum float side = GlyphAtlas.pageSize;
+                quad = GlyphQuad(g.page + 1, g.colour, v4(g.x / side, g.y / side,
+                    (g.x + g.width) / side, (g.y + g.height) / side),
+                    g.width, g.height, g.bearingX, g.bearingY);
+                return GlyphOutcome.drawn;
+            case AtlasOutcome.blank:
+            case AtlasOutcome.noColour:
+                return GlyphOutcome.blank;
+            case AtlasOutcome.refused:
+                return GlyphOutcome.refused;
+            case AtlasOutcome.full:
+                return GlyphOutcome.full;
+        }
+    }
+
+    // A codepoint's glyph (`isGlyphSource`), from the first face in
+    // `faceOrder` that maps it.
+    private GlyphOutcome resolveGlyph(in GlyphRequest r, out GlyphQuad quad) @system
+    {
+        if (!textMetrics_.present)
+            return GlyphOutcome.noGlyph;
+        CellFace*[8] order;
+        foreach (face; order[0 .. faceOrder(r, order)])
+        {
+            const gid = face.map.glyph(r.cp);
+            if (gid != 0)
+                return glyphFrom(face, gid, r, quad);
+        }
         return r.cp == ' ' ? GlyphOutcome.blank : GlyphOutcome.noGlyph;
+    }
+
+    /*
+    A cluster shaped by HarfBuzz (`shapesClusters`, T3), where the font
+    library's shaping engine is linked and the text rendering asks for it:
+    in the first face of `faceOrder` that maps every codepoint the cluster
+    shows (joiners and variation selectors aside), each shaped glyph from the
+    atlas, placed by its advance and offsets. Anything else — no such face,
+    an engine that is not available, a glyph the face does not have — is
+    left to the painter to draw unshaped.
+    */
+    private GlyphOutcome resolveCluster(in ClusterRequest r, scope GlyphQuad[] quads, out size_t count) @system
+    {
+        static if (!canShape)
+            return GlyphOutcome.noGlyph;
+        else
+        {
+            import sparkles.base.text.utf : convertPrefix, UtfMode;
+            import sparkles.font.cluster_shaping : ClusterGlyph, shapeCluster;
+
+            if (!textMetrics_.present || !textRendering_.shaping || !r.cps.length)
+                return GlyphOutcome.noGlyph;
+            static bool shown(uint cp)
+                => cp != 0x200D && cp != 0xFE0E && cp != 0xFE0F && !(cp >= 0xE0020 && cp <= 0xE007F);
+            CellFace*[8] order;
+            CellFace* face;
+            foreach (f; order[0 .. faceOrder(r.first, order)])
+            {
+                bool all = true;
+                foreach (cp; r.cps)
+                    all &= !shown(cp) || f.map.glyph(cast(dchar) cp) != 0;
+                if (all)
+                {
+                    face = f;
+                    break;
+                }
+            }
+            if (face is null)
+                return GlyphOutcome.noGlyph;
+            auto shaper = shaperFor(face);
+            if (shaper is null)
+                return GlyphOutcome.noGlyph;
+
+            char[128] text;
+            const encoded = convertPrefix(cast(const(dchar)[]) r.cps, text[], UtfMode.replacement);
+            const source = text[0 .. encoded.written];
+            ClusterGlyph[16] glyphs;
+            const shaped = shapeCluster(shaper, source, face.ppem.numerator, face.ppem.denominator, glyphs[]);
+            if (shaped == 0)
+                return GlyphOutcome.noGlyph;
+            double pen = 0;
+            static int nearest(double v) => cast(int)(v >= 0 ? v + 0.5 : v - 0.5);
+            foreach (g; glyphs[0 .. shaped])
+            {
+                if (g.glyph == 0)
+                    return GlyphOutcome.noGlyph;
+                GlyphQuad q;
+                const outcome = glyphFrom(face, g.glyph, r.first, q);
+                if (outcome == GlyphOutcome.drawn)
+                {
+                    q.dx = nearest(pen + g.xOffset);
+                    q.dy = nearest(g.yOffset);
+                    if (count < quads.length)
+                        quads[count++] = q;
+                }
+                else if (outcome != GlyphOutcome.blank)
+                    return outcome;
+                pen += g.advance;
+            }
+            return GlyphOutcome.drawn;
+        }
+    }
+
+    static if (canShape)
+    {
+        // The shaper of `face`, made the first time a cluster needs it and
+        // kept for the canvas's life: it borrows the face's bytes, which
+        // outlive the canvas (`cellFont`).
+        private imported!"sparkles.font.cluster_shaping".ClusterShaper* shaperFor(CellFace* face) @system
+        {
+            foreach (ref slot; shapers_)
+                if (slot.tried && slot.serial == face.serial)
+                    return slot.handle;
+            // The first free slot, else the oldest face's (the table is small,
+            // and a face no longer bound is not shaped with again).
+            size_t pick;
+            foreach (i, ref slot; shapers_)
+                if (!slot.tried || slot.serial < shapers_[pick].serial)
+                {
+                    pick = i;
+                    if (!slot.tried)
+                        break;
+                }
+            shapers_[pick].release();
+            shapers_[pick].make(face.serial, face.inst);
+            return shapers_[pick].handle;
+        }
     }
 
     // The atlas's pages made on the device — one byte a texel for coverage,
@@ -745,6 +867,9 @@ struct VulkanCanvas(B)
         pools_.clear();
         uploads_.discard();
         buffers_.destroy();
+        static if (canShape)
+            foreach (ref slot; shapers_)
+                slot.release();
         arena_.destroy();
         pipelines_.destroy(*device_);
         device_ = null;
@@ -1229,4 +1354,33 @@ private auto scaledPpem(Ppem ppem, ulong a, ulong b) @safe pure nothrow @nogc
     import sparkles.base.text.layout_units : I128, Rational, U128;
 
     return Ppem.fromRational(Rational(I128(U128(ppem.numerator * a, 0)), U128(ppem.denominator * b, 0)));
+}
+
+static if (canShape)
+{
+    // One face's shaper, through `sparkles.font.cluster_shaping`, whose narrow
+    // interface keeps the engine's modules out of this build (see there).
+    private struct ShaperSlot
+    {
+        import sparkles.font : Instance;
+        import sparkles.font.cluster_shaping : closeClusterShaper, ClusterShaper, openClusterShaper;
+
+        uint serial;
+        ClusterShaper* handle;
+        bool tried; // made, or found the engine unable to shape this face
+
+        void make(uint s, in Instance inst) @system
+        {
+            handle = openClusterShaper(&inst);
+            serial = s;
+            tried = true;
+        }
+
+        void release() @system
+        {
+            closeClusterShaper(handle);
+            handle = null;
+            tried = false;
+        }
+    }
 }

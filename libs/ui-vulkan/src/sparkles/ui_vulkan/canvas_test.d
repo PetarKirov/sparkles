@@ -1123,8 +1123,10 @@ private ubyte[] twoColourImage()
 @("ui_vulkan.canvas.textCountsWhatItCannotDraw")
 @system unittest
 {
-    // A codepoint the cell font lacks is `noGlyph`; a cluster of several
-    // codepoints draws its first and counts `unshapedCluster` (`UVK19`).
+    // A codepoint no face has is `noGlyph`. A cluster of several codepoints
+    // is shaped by HarfBuzz — `e` and a combining acute become the base and a
+    // positioned mark, two glyphs — and with shaping off draws its first and
+    // counts `unshapedCluster` (`UVK19`, T3).
     if (!readbackEnabled)
         return skipTest(readbackSkipReason);
     import std.file : read;
@@ -1140,11 +1142,32 @@ private ubyte[] twoColourImage()
         rig.close();
     assert(rig.canvas.cellFont(bytes, 18, TextMetrics(ascent: 14, underlineY: 16,
         underlineHeight: 1, strikeY: 10)));
+    import sparkles.ui_vulkan.text_rendering : TextRendering;
+
+    // The ink in the `e` cell's top rows, which the accent adds to.
+    static size_t accentInk(in ubyte[] frame)
+    {
+        size_t ink;
+        foreach (y; 0 .. 8)
+            foreach (x; 30 .. 40)
+                ink += pixel(frame, 64, x, y)[0];
+        return ink;
+    }
+
     FrameReport report;
-    cast(void) rig.draw((ref Canvas c) {
+    const shaped = rig.draw((ref Canvas c) {
         c.textRun(Point(0, 0), "a一é", Visual(fg: white, fgAlpha: 255));
     }, FrameMetrics(cellW: 10, cellH: 20), black, report);
     assert(report[Degradation.noGlyph] == 1, "DejaVu has no CJK");
-    assert(report[Degradation.unshapedCluster] == 1, "e + combining acute");
+    assert(report[Degradation.unshapedCluster] == 0, "e + combining acute, shaped");
     assert(report[Degradation.glyphMiss] == 0);
+
+    TextRendering unshapedText;
+    unshapedText.shaping = false;
+    rig.canvas.textRendering(unshapedText);
+    const unshaped = rig.draw((ref Canvas c) {
+        c.textRun(Point(0, 0), "a一é", Visual(fg: white, fgAlpha: 255));
+    }, FrameMetrics(cellW: 10, cellH: 20), black, report);
+    assert(report[Degradation.unshapedCluster] == 1, "e + combining acute, unshaped");
+    assert(accentInk(shaped) > accentInk(unshaped) + 255 * 3, format("the accent adds ink only shaped: %s unshaped, %s shaped", accentInk(unshaped), accentInk(shaped)));
 }
