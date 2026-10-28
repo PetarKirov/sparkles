@@ -64,7 +64,7 @@ struct EditorField
 
     /// A field holding `text`, caret at its end.
     static EditorField make(scope const(char)[] text = "", EditorOptions options = EditorOptions.init,
-        EditorTarget target = EditorTarget.terminal) @safe pure nothrow
+        EditorTarget target = EditorTarget.terminal) @safe pure nothrow @nogc
     {
         EditorField field;
         field.state = EditorState.create(text, options);
@@ -74,7 +74,7 @@ struct EditorField
 
     /// A single-line field (`EDT8`).
     static EditorField singleLine(scope const(char)[] text = "",
-        EditorTarget target = EditorTarget.terminal) @safe pure nothrow
+        EditorTarget target = EditorTarget.terminal) @safe pure nothrow @nogc
     {
         EditorOptions options;
         options.singleLine = true;
