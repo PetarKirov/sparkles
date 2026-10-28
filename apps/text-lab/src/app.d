@@ -32,7 +32,8 @@ struct LabOptions
     string loupeAt;
 }
 
-int main(string[] args)
+/// The lab from `args`, as `main` receives them; the process's exit status.
+int run(string[] args)
 {
     auto parsed = parseCli!LabOptions(args, HelpInfo("text-lab",
         "The Vulkan canvas's text rendering, switched live and seen through a loupe.", null));
@@ -70,6 +71,12 @@ int main(string[] args)
 
     Lab lab;
     lab.shotPath = parsed.value.shot;
+    version (Android)
+    {
+        import sparkles.android.activity : internalDataPath;
+
+        lab.screenshotDir = internalDataPath;
+    }
     lab.settings.compositing = parsed.value.compositing.to!Compositing;
     lab.settings.contrast = parsed.value.contrast;
     lab.settings.hinting = parsed.value.hinting.to!Hinting;
@@ -92,3 +99,32 @@ int main(string[] args)
             return 1;
     }
 }
+
+version (Android)
+{
+    import sparkles.wsi.platform.android : AndroidWsiMain;
+
+    /*
+    The activity's entry: the APK's fonts, extracted into the app's data
+    directory on the first launch (and again when they change), are the
+    only ones the lab draws with — the same specimen face and fallbacks as
+    on the desktop, not whatever the phone ships.
+    */
+    mixin AndroidWsiMain!androidMain;
+
+    void androidMain()
+    {
+        import std.path : buildPath;
+        import sparkles.android.activity : internalDataPath;
+        import sparkles.android.assets : extractAssetBundle;
+        import sparkles.wsi.platform.android : logFailure;
+
+        const data = internalDataPath;
+        if (!extractAssetBundle(data, ["fonts"], buildPath(data, "assets-ready")))
+            logFailure("text-lab: the APK's fonts could not be extracted");
+        const fonts = buildPath(data, "fonts");
+        cast(void) run(["text-lab", "--font-dir", fonts, "--font", buildPath(fonts, "DejaVuSansMono.ttf")]);
+    }
+}
+else
+    int main(string[] args) => run(args);
