@@ -41,7 +41,7 @@ import core.sys.windows.basetsd : ULONG_PTR;
 import core.stdc.errno : ECANCELED, EINVAL, EIO, ENOENT, ENOMEM, EOPNOTSUPP, EOVERFLOW;
 import core.time : MonoTime, Duration, msecs, nsecs, seconds;
 
-import sparkles.event_horizon.backend.concept : BackendConfig, RawCompletion, Waker;
+import sparkles.event_horizon.backend.concept : BackendConfig, RawCompletion, WakeTarget;
 import sparkles.event_horizon.backend.probe : BackendCaps, BackendId, LoopMode;
 import sparkles.event_horizon.errors;
 import sparkles.event_horizon.op : KernelTimespec, OpAccept, OpConnect, OpNop,
@@ -540,18 +540,19 @@ struct IocpBackend
 
     /**
     The native wake capability (SPEC §5.6): binds one persistent op context
-    to `token` and hands out a `Waker` whose `wake()` posts to the port —
+    to `token` and returns the target a `Waker` posts to the port —
     IOCP needs no armed op, and `PostQueuedCompletionStatus` is thread-safe
-    by contract. The context lives until `close()` frees the slab.
+    by contract. The context lives until `close()` frees the slab, which
+    the loop does only after retiring every `Waker` copy.
     */
-    Waker nativeWaker(OpToken token) @trusted nothrow @nogc
+    WakeTarget nativeWaker(OpToken token) @trusted nothrow @nogc
     {
         auto op = acquire();
         if (op is null)
-            return Waker.init;
+            return WakeTarget.init;
         op.token = token.raw;
         op.kind = IoKind.wake;
-        Waker w = {port: cast(void*) _port, ov: cast(void*) &op.ov,
+        WakeTarget w = {port: cast(void*) _port, ov: cast(void*) &op.ov,
             event: cast(void*) _hostEvent};
         return w;
     }
