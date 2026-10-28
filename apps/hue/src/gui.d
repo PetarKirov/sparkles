@@ -41,7 +41,8 @@ import keymap : Binding, bindingsAt, Chord, Command, commandFor, InputMode,
 import dub_config_picker : dubConfigurationPick;
 import picker_grep : PickerSource;
 import picker_host : OwnedPicker, PickerAction, PickerHost;
-import review_store : persistFolds, postComment, resolveCommentAtCursor, ReviewSession,
+import review_store : applySuggestionAtCursor, persistFolds, postComment,
+    resolveCommentAtCursor, ReviewSession,
     toggleViewedAtCursor;
 import picker_sources : ChoiceFinder;
 import picker_preview : PickerDocPane;
@@ -3497,6 +3498,24 @@ int runGui(GuiArgs guiArgs) @system
                         vm.rebuild();
                     }
                     break;
+                case Command.diffSuggest:
+                    if (const why = vm.commentStart(windowTarget, suggest: true))
+                        showToast(why);
+                    else
+                    {
+                        vm.composerHint = "edit the line · Ctrl-S posts the suggestion · Esc drops it";
+                        vm.rebuild();
+                    }
+                    break;
+                case Command.diffApplySuggestion:
+                {
+                    string said;
+                    const applied = applySuggestionAtCursor(vm, review, said);
+                    showToast(said, applied);
+                    if (applied && reloadDiff !is null)
+                        vm.setDocument(reloadDiff());
+                    break;
+                }
                 case Command.diffResolve:
                     if (const said = resolveCommentAtCursor(vm, review))
                         showToast(said);
