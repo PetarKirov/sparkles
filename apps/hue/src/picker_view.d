@@ -6,6 +6,7 @@ import std.conv : text;
 import sparkles.fuzzy : CandidateSnapshot, RankedResult, TextRange;
 import sparkles.ui.geometry : Insets, Rect, SizeSpec;
 import sparkles.ui.layout : Frame;
+import sparkles.ui.components.editor : EditorViewOptions, editorLineSpans;
 import sparkles.ui.components.chrome : scrollbar,
     ScrollbarSpec;
 import sparkles.ui.state : ScrollAxis;
@@ -230,12 +231,11 @@ WidgetTree pickerView(size_t Capacity, size_t PromptCapacity)(
     TextSpan[] promptSpans;
     promptSpans ~= TextSpan(text: "› ", slot: Slot.chromeAccent,
         textStyle: TextStyle(bold: true));
-    // Copied, not borrowed: the prompt accessor is `return scope` into the
-    // caller's state, which the tree must not capture.
-    promptSpans ~= TextSpan(text: state.prompt.text.idup);
-    // The caret lives where the keys go: only the prompt pane shows it.
-    if (focus == Scope_.pickerInput)
-        promptSpans ~= TextSpan(text: "▏", slot: Slot.caret);
+    // The query as the editor draws it: copied spans, and the caret at the
+    // editor's caret — only where the keys go, in the prompt pane (`EDR1`).
+    EditorViewOptions promptView;
+    promptView.caretVisible = focus == Scope_.pickerInput;
+    promptSpans ~= editorLineSpans(state.prompt.field.state, 0, promptView);
     if (state.searching)
         promptSpans ~= TextSpan(text: " …", slot: Slot.muted);
     const promptText = builder.add(Widget(kind: WidgetKind.rich,
