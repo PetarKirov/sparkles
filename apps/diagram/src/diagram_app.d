@@ -20,7 +20,8 @@ module diagram_app;
 import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.unique : makeUnique, Unique;
 import sparkles.input : EndOfInput, Event, isEndOfInput, KeyAction, KeyEvent,
-    match, Point, PointerAction, PointerEvent, WheelEvent;
+    match, PasteEvent, Point, PointerAction, PointerEvent, WheelEvent;
+import sparkles.text_buffer.text : Text;
 import sparkles.ui.components.lantern_view : BoxLayout, LabelArena, LanternStyle,
     Placement, viewLantern;
 import sparkles.ui.display_list : buildDisplayListInto;
@@ -30,6 +31,7 @@ import sparkles.ui.layout : Frame, layout;
 import sparkles.ui.state : CaptureState;
 import sparkles.ui.widget : Builder, WidgetTree;
 import sparkles.ui_app.backend : Backend;
+import sparkles.ui_app.host : canReadClipboard;
 import sparkles.ui_app.run_app : AppTheme;
 
 import camera : Camera;
@@ -38,7 +40,7 @@ import keymap : Binding, bindingsAt, DiagramContext;
 import settings_pane : PaneGeometry, paneGeometryFor, PaneOutcome, SettingsPane;
 import systems.input : InputView, surfaceCell, systemInput;
 import systems.render : FrameOps, systemRender;
-import world : World;
+import world : editPaste, World;
 
 /// How many rows the key guide may list at once (`LTN`). The board's whole
 /// table is smaller than this, so the panel never scrolls today.
@@ -167,8 +169,48 @@ struct DiagramApp
             return;
         }
 
+        // The label draft's clipboard (`EDY5`): what this host can do, a
+        // paste assembled from its chunks, and the work the draft asked for.
+        world.clipboardWrite = __traits(compiles, h.clipboard(""));
+        static if (canReadClipboard!H)
+            world.clipboardRead = h.capabilities.clipboardRead;
+        if (e.match!((in PasteEvent p) {
+                pasteBuf ~= p.text[];
+                if (p.last)
+                {
+                    editPaste(world, pasteBuf, p.request);
+                    pasteBuf = null;
+                }
+                return true;
+            }, _ => false))
+            return;
+        scope (exit)
+            serveDraftClipboard(h);
+
         if (systemInput(world, camera, capture, e, view))
             h.quit();
+    }
+
+    /// A paste's chunks so far (`EDI4`).
+    private char[] pasteBuf;
+
+    /// Hands the label draft's clipboard work to the host (`EDY5`).
+    private void serveDraftClipboard(H)(ref H h)
+    {
+        if (world.editCopy.length)
+        {
+            auto bytes = new char[world.editCopy.length];
+            world.editCopy.copyTo(0, bytes.length, bytes);
+            static if (__traits(compiles, h.clipboard(bytes)))
+                h.clipboard(bytes);
+            world.editCopy = Text.init;
+        }
+        if (world.editRead)
+        {
+            static if (canReadClipboard!H)
+                h.readClipboard(world.editRead);
+            world.editRead = 0;
+        }
     }
 
     /// Feeds one event to the open pane, in the pane's own coordinates.
@@ -694,4 +736,30 @@ unittest
     assert(loadGridConfigFile(app.settingsPath, loaded, pal, err), err);
     assert(loaded.minorStyle.markKind == MarkKind.dots);
     assert(loaded == app.world.gridConfig);
+}
+
+@("diagram.app.labelDraftUsesTheClipboard")
+@safe
+unittest
+{
+    import sparkles.input : pasteChunks;
+
+    // `EDY5`: the draft's copy reaches the host, its paste asks the host to
+    // read, and the answering paste lands in the draft.
+    auto appOwner = themedApp();
+    ref DiagramApp app() => appOwner.get();
+    RecordingHost h;
+    h.capabilities.clipboardRead = true;
+    const e = app.world.spawn(Rect(0, 0, 8, 2));
+    app.world.setLabel(e, "ab");
+    app.world.beginEdit(e);
+    app.handle(h, charEvent('a', Mods(ctrl: true)));
+    app.handle(h, charEvent('c', Mods(ctrl: true)));
+    assert(h.clipboardWrites == ["ab"]);
+    app.handle(h, charEvent('v', Mods(ctrl: true)));
+    assert(h.clipboardReads.length == 1);
+    pasteChunks("xy", (Event ev) { app.handle(h, ev); }, h.clipboardReads[0]);
+    assert(app.world.editText == "xy", "the answer replaces the selection");
+    pasteChunks("!", (Event ev) { app.handle(h, ev); });
+    assert(app.world.editText == "xy!", "a user's paste goes in too");
 }
