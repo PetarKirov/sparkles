@@ -19,7 +19,8 @@ without a driver; the canvas uploads what `takeDirty` reports.
 module sparkles.ui_vulkan.glyph_atlas;
 
 import sparkles.font : Colour, ColourGlyph, ColourRegion, ColourSource, ColourWorkspace, colourMeasure,
-    Face, FontErrorKind, FontLimit, Instance, OutlinePoint, OutlineSegment, Ppem, RasterRegion, RasterWorkspace, rasterizeColourGlyph, rasterizeGlyph, rasterMeasure, Tag;
+    Face, FlattenPolicy, FontErrorKind, FontLimit, Instance, LightHints, OutlinePoint, OutlineSegment,
+    OverlapMode, Ppem, RasterRegion, RasterWorkspace, rasterizeColourGlyph, rasterizeGlyph, rasterMeasure, Tag;
 
 /// What became of a glyph the atlas was asked for.
 enum AtlasOutcome : ubyte
@@ -59,6 +60,7 @@ struct GlyphKey
     ulong ppemNumerator, ppemDenominator; /// `Ppem` exactly (`FTM10`)
     uint glyph; ///
     bool colour; /// the colour form, or the outline
+    bool hinted; /// the outline light-hinted, or as designed
     uint foreground; /// for the colour form: the foreground as RGBA bytes
 }
 
@@ -98,12 +100,14 @@ struct GlyphAtlas
     /**
     Glyph `glyph` of `inst` at `ppem`, from the cache or rasterized now into
     a coverage page. `face` is the caller's serial for `inst`'s face: glyphs
-    of different faces never share entries.
+    of different faces never share entries. With `hints`, the outline is
+    light-hinted first, and cached apart from its unhinted self.
     */
-    AtlasOutcome get(in Instance inst, uint face, uint glyph, Ppem ppem, out AtlasGlyph g)
-        @safe
+    AtlasOutcome get(in Instance inst, uint face, uint glyph, Ppem ppem, out AtlasGlyph g,
+        const(LightHints)* hints = null) @safe
     {
-        const key = GlyphKey(face, ppem.numerator, ppem.denominator, glyph);
+        const key = GlyphKey(face: face, ppemNumerator: ppem.numerator, ppemDenominator: ppem.denominator,
+            glyph: glyph, hinted: hints !is null);
         if (auto e = key in entries_)
         {
             g = e.glyph;
@@ -111,7 +115,7 @@ struct GlyphAtlas
         }
         if (overflowed_)
             return AtlasOutcome.full;
-        auto measured = measure(inst, glyph, ppem);
+        auto measured = measure(inst, glyph, ppem, hints);
         if (measured.hasError)
             return remember(key, AtlasOutcome.refused, g);
         const m = measured.value;
@@ -127,7 +131,8 @@ struct GlyphAtlas
         auto region = RasterRegion(sheets_[0].pages[page][size_t(y) * pageSize + x .. $], pageSize,
             m.width, m.height);
         auto ws = storage_.workspace;
-        auto drawn = rasterizeGlyph(inst, glyph, ppem, region, ws);
+        auto drawn = rasterizeGlyph(inst, glyph, ppem, region, ws, FlattenPolicy.standard,
+            OverlapMode.perGlyphFlag, hints);
         if (drawn.hasError)
             return remember(key, AtlasOutcome.refused, g);
         sheets_[0].markDirty(page, x, y, m.width, m.height);
@@ -145,9 +150,10 @@ struct GlyphAtlas
     AtlasOutcome getColour(in Instance inst, uint face, uint glyph, Ppem ppem, Colour foreground,
         out AtlasGlyph g) @safe
     {
-        const key = GlyphKey(face, ppem.numerator, ppem.denominator, glyph, true,
-            (uint(foreground.red) << 24) | (uint(foreground.green) << 16)
-            | (uint(foreground.blue) << 8) | foreground.alpha);
+        const key = GlyphKey(face: face, ppemNumerator: ppem.numerator, ppemDenominator: ppem.denominator,
+            glyph: glyph, colour: true, foreground: !inst.face.has(Tag("COLR")) ? 0
+                : (uint(foreground.red) << 24) | (uint(foreground.green) << 16)
+                | (uint(foreground.blue) << 8) | foreground.alpha);
         if (auto e = key in entries_)
         {
             g = e.glyph;
@@ -221,12 +227,12 @@ struct GlyphAtlas
     }
 
     // The glyph's size, growing the workspace when the outline needs more.
-    auto measure(in Instance inst, uint glyph, Ppem ppem) @safe
+    auto measure(in Instance inst, uint glyph, Ppem ppem, const(LightHints)* hints) @safe
     {
         foreach (attempt; 0 .. 6)
         {
             auto ws = storage_.workspace;
-            auto r = rasterMeasure(inst, glyph, ppem, ws);
+            auto r = rasterMeasure(inst, glyph, ppem, ws, OverlapMode.perGlyphFlag, hints);
             if (r.hasError && r.error.kind == FontErrorKind.limitExceeded
                 && r.error.limit == FontLimit.callerStorage)
             {
@@ -238,7 +244,7 @@ struct GlyphAtlas
             return r;
         }
         auto ws = storage_.workspace;
-        return rasterMeasure(inst, glyph, ppem, ws);
+        return rasterMeasure(inst, glyph, ppem, ws, OverlapMode.perGlyphFlag, hints);
     }
 
     // The colour form's size, the storage drawing it needs made ready.

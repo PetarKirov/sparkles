@@ -1022,9 +1022,16 @@ private ubyte[] twoColourImage()
     auto ends = new ushort[1024];
     auto ws = RasterWorkspace(segments, points, onCurve, ends, new float[1 << 16],
         new ubyte[1 << 16]);
-    const m = rasterMeasure(inst, gid, size, ws).value;
+    // Light-hinted, as the canvas draws by default.
+    import sparkles.font : FlattenPolicy, lightHints, OutlineWorkspace, OverlapMode;
+
+    const hints = lightHints(inst, charMap(face).value, size, new OutlineSegment[4096],
+        OutlineWorkspace(new OutlinePoint[4096], new bool[4096], new ushort[1024], new uint[4096],
+            new int[4096], new int[4096], new int[2][4096]));
+    const m = rasterMeasure(inst, gid, size, ws, OverlapMode.perGlyphFlag, &hints).value;
     auto coverage = new ubyte[m.width * m.height];
-    cast(void) rasterizeGlyph(inst, gid, size, RasterRegion(coverage, m.width, m.width, m.height), ws);
+    cast(void) rasterizeGlyph(inst, gid, size, RasterRegion(coverage, m.width, m.width, m.height), ws,
+        FlattenPolicy.standard, OverlapMode.perGlyphFlag, &hints);
 
     const metrics = FrameMetrics(cellW: 14, cellH: 28);
     const frame = rig.draw((ref Canvas c) {
