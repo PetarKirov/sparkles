@@ -82,17 +82,16 @@ uint view(ref Builder b, in GalleryState s)
 {
     const w = s.contentWidth;
     const data = sampleTree();
-    const d = s.treeDemo;
 
     // The view flattens fresh (it is pure over the state); the cursor's row
     // index maps to a node through these same rows.
-    auto rows = flatten(data, (uint n) => d.open.isOpen(n));
-    const selected = d.sel >= 0 && d.sel < cast(long) rows.length
-        ? rows[cast(size_t) d.sel].node : uint.max;
+    auto rows = flatten(data, (uint n) => s.treeDemo.open.isOpen(n));
+    const selected = s.treeDemo.sel >= 0 && s.treeDemo.sel < cast(long) rows.length
+        ? rows[cast(size_t) s.treeDemo.sel].node : uint.max;
 
     // The second view is the same data under a different opened set — the
     // property the data/interaction split exists to provide.
-    auto everything = typeof(d.open).allOpen;
+    auto everything = typeof(s.treeDemo.open).allOpen;
     auto allRows = flatten(data, (uint n) => everything.isOpen(n));
 
     uint[] body_;
@@ -106,7 +105,7 @@ uint view(ref Builder b, in GalleryState s)
     body_ ~= spacer(b);
 
     body_ ~= section(b, "your view", [
-        treeView(b, data, rows, (uint n) => d.open.isOpen(n), selected,
+        treeView(b, data, rows, (uint n) => s.treeDemo.open.isOpen(n), selected,
             TreeGlyphs(guides: s.theme.glyphs.guides)),
     ]);
     body_ ~= spacer(b);
