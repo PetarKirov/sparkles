@@ -22,8 +22,24 @@ import std.sumtype : SumType;
 
 import sparkles.base.buffer : InlineBuffer;
 import sparkles.base.meta : isVersion;
+import sparkles.base.pool.handle : Handle;
 import sparkles.math : ScreenPosition, ScreenSize;
 public import sparkles.metadata : Aliases, AnyFormat, Label, WireName, WireNameAttr;
+
+/// Tags ids into the host's input text pool.
+struct InputTextTag
+{
+}
+
+/**
+Names text in the host's input text pool (`INP24`, `INP25`): a pasted
+answer to a clipboard read, an editor command's text, and later an input
+method's preedit. An id keeps `Event` and the editor's command pointer-free
+and 64 bytes, as `PasteEvent` does with its inline chunk. It resolves until
+the host's next poll; a consumer that keeps the text copies it.
+`TextId.init` names no text.
+*/
+alias TextId = Handle!InputTextTag;
 
 /// Re-exported so consumers dispatch with `event.match!(…)` without importing
 /// `std.sumtype` themselves.
