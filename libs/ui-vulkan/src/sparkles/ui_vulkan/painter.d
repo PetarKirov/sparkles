@@ -27,7 +27,9 @@ import std.traits : EnumMembers;
 import sparkles.base.buffer : UniqueBuffer;
 import sparkles.base.term_color : RgbColor;
 import sparkles.base.term_style : TextAttr, UnderlineStyle;
-import sparkles.base.text.grapheme : byGraphemeCluster, visibleWidth;
+import sparkles.base.text.grapheme : byGraphemeCluster, ClusterMeasure, emojiPresentation, visibleWidth;
+import sparkles.base.text.utf : convertPrefix, UtfMode;
+import sparkles.base.text.width : codepointWidth;
 import sparkles.shaders : v4, vec4;
 import sparkles.ui.canvas : isCanvas, LineStyle, RuleEdge, Scrollbar;
 import sparkles.ui.effect : EffectId;
@@ -47,7 +49,7 @@ enum Degradation : ubyte
     missingFace,     /// a text run's font role had no face (`UVK17`)
     glyphMiss,       /// a glyph was not available in time (`UVK22`)
     unshapedCluster, /// a cluster needing shaping drew its first codepoint (`UVK19`)
-    noGlyph,         /// the cell font has no glyph for a codepoint; fallback faces wait (`UVX12`)
+    noGlyph,         /// neither the cell font nor a fallback face has a glyph for a codepoint (`UVX12`)
     imageDeferred,   /// an image waited for a later frame's upload budget (`UVK25`)
     imageTooLarge,   /// an image exceeded the device's largest image (`UVK25`)
     srgbBlending,    /// the target is sRGB: partial coverage blends in linear light (`UVK7`)
@@ -137,7 +139,7 @@ enum GlyphOutcome : ubyte
 {
     drawn,   /// in an atlas page: draw it from the `GlyphQuad`
     blank,   /// no ink (a space): nothing to draw, nothing to count
-    noGlyph, /// the cell font has no glyph for the codepoint (`noGlyph`)
+    noGlyph, /// no face has a glyph for the codepoint (`noGlyph`)
     refused, /// the rasterizer refused it (`glyphMiss`)
     full,    /// the atlas is full this frame; it starts over (`glyphMiss`, another frame)
 }
@@ -146,7 +148,8 @@ enum GlyphOutcome : ubyte
 /// sits from the pen and the baseline.
 struct GlyphQuad
 {
-    uint page;             /// the coverage page, numbered from 1 as draw runs bind it
+    uint page;             /// the page, numbered from 1 as draw runs bind it
+    bool colour;           /// a colour page's premultiplied RGBA, drawn in its own colours
     vec4 texRect;          /// its texels' (u0, v0, u1, v1) in the page
     int width, height;     /// its box, in pixels
     int bearingX;          /// pixels from the pen to the box's left edge
@@ -181,14 +184,29 @@ FaceStyle faceStyle(bool bold, bool italic) @safe pure nothrow @nogc
     => bold ? (italic ? FaceStyle.boldItalic : FaceStyle.bold)
         : italic ? FaceStyle.italic : FaceStyle.regular;
 
+/// A glyph a painter asks for: a cluster's first codepoint, the face style its
+/// run asks for, whether the cluster presents as an emoji, and the text's colour
+/// (straight RGBA), which colour layers drawn in the foreground take.
+struct GlyphRequest
+{
+    dchar cp;           ///
+    FaceStyle style;    ///
+    bool emoji;         /// the cluster presents as an emoji: an emoji face first
+    vec4 colour = v4(1, 1, 1, 1); ///
+    /// The cells the cluster takes, in pixels: a colour glyph larger than them
+    /// is drawn smaller to fit, as the raylib arm fits it. 0 fits nothing.
+    int fitWidth, fitHeight;
+}
+
 /**
-Whether `S` supplies glyphs too: `resolveGlyph(cp, style, quad)` for a
-codepoint in the cell font's face of that style, and `textMetrics` for where it sits in a cell. A source
-without them draws no text (every run counts `glyphMiss`).
+Whether `S` supplies glyphs too: `resolveGlyph(request, quad)` for a
+codepoint in the cell font's face of that style or a fallback face, and
+`textMetrics` for where it sits in a cell. A source without them draws no
+text (every run counts `glyphMiss`).
 */
 enum bool isGlyphSource(S) = is(typeof((ref S s) {
     GlyphQuad q;
-    GlyphOutcome o = s.resolveGlyph(dchar('a'), FaceStyle.regular, q);
+    GlyphOutcome o = s.resolveGlyph(GlyphRequest(dchar('a')), q);
     TextMetrics m = s.textMetrics;
 }));
 
@@ -361,7 +379,9 @@ if (isImageSource!Images)
         {
             if (!textReady)
                 return report.count(Degradation.glyphMiss);
-            glyphAt(px(at.x), py(at.y), g, faceStyleOf(v), rgba(v.fg, v.fgAlpha));
+            uint[1] cps = [g];
+            clusterAt(px(at.x), py(at.y), cps[], faceStyleOf(v), rgba(v.fg, v.fgAlpha),
+                (codepointWidth(g) > 1 ? 2 : 1) * m_.cellW, m_.cellH);
         }
         else if (g != ' ')
             report.count(Degradation.glyphMiss);
@@ -381,10 +401,8 @@ if (isImageSource!Images)
         {
             if (!textReady)
                 return report.count(Degradation.glyphMiss);
-            if (cps.length > 1)
-                report.count(Degradation.unshapedCluster);
-            glyphAt(m_.originX + shiftX_ + x, m_.originY + shiftY_ + y, cast(dchar) cps[0],
-                faceStyle(bold, italic), colour);
+            clusterAt(m_.originX + shiftX_ + x, m_.originY + shiftY_ + y, cps, faceStyle(bold, italic),
+                colour, w, h);
         }
         else
             report.count(Degradation.glyphMiss);
@@ -402,9 +420,7 @@ if (isImageSource!Images)
             {
                 if (c.isEscape)
                     continue;
-                if (c.codepoints > 1)
-                    report.count(Degradation.unshapedCluster);
-                glyphAt(pen, m_.originY + shiftY_ + y, c.first, FaceStyle.regular, colour);
+                textCluster(pen, m_.originY + shiftY_ + y, c, FaceStyle.regular, colour);
                 pen += (c.width > 0 ? c.width : 1) * m_.cellW;
             }
         }
@@ -438,9 +454,7 @@ if (isImageSource!Images)
             {
                 if (c.isEscape)
                     continue;
-                if (c.codepoints > 1)
-                    report.count(Degradation.unshapedCluster);
-                glyphAt(x + cells * m_.cellW, y, c.first, style, colour);
+                textCluster(x + cells * m_.cellW, y, c, style, colour);
                 cells += c.width > 0 ? c.width : 0;
             }
             const metrics = images.textMetrics;
@@ -466,18 +480,57 @@ if (isImageSource!Images)
             return images.textMetrics.present;
         }
 
-        // One codepoint's glyph with its pen at `penX` in a cell whose top is
-        // `top`, its bitmap's origin on whole pixels (`UVK21`).
-        private void glyphAt(int penX, int top, dchar cp, FaceStyle style, vec4 colour)
+        // A cluster of text at its cell's top-left.
+        private void textCluster(int penX, int top, in ClusterMeasure c, FaceStyle style, vec4 colour)
+        {
+            dchar[16] cps; // a longer cluster draws its first glyph all the same
+            const decoded = convertPrefix(c.slice, cps[], UtfMode.replacement);
+            clusterAt(penX, top, cast(const(uint)[]) cps[0 .. decoded.written], style, colour,
+                (c.width > 0 ? c.width : 1) * m_.cellW, m_.cellH);
+        }
+
+        /*
+        A cluster's glyph: its first codepoint's, from an emoji face first when
+        the cluster presents as an emoji. A cluster that needs shaping — a
+        combining mark, a joiner sequence, a flag — draws that first glyph and
+        counts as `unshapedCluster` (`UVK19`); a variation selector needs no
+        shaping, only the face it picks.
+        */
+        private void clusterAt(int penX, int top, scope const(uint)[] cps, FaceStyle style, vec4 colour,
+            int boxW, int boxH)
+        {
+            if (!cps.length)
+                return;
+            foreach (cp; cps[1 .. $])
+                if (cp != 0xFE0E && cp != 0xFE0F)
+                {
+                    report.count(Degradation.unshapedCluster);
+                    break;
+                }
+            glyphAt(penX, top, boxH, GlyphRequest(cast(dchar) cps[0], style, emojiPresentation(cps), colour,
+                boxW, boxH));
+        }
+
+        // One glyph with its pen at `penX` in cells whose top is `top` and
+        // height `boxH`, its bitmap's origin on whole pixels (`UVK21`): a
+        // coverage glyph tinted with the text's colour on the baseline, or a
+        // colour glyph in its own colours, centred in the cells' height as the
+        // raylib arm centres it.
+        private void glyphAt(int penX, int top, int boxH, in GlyphRequest request)
         {
             GlyphQuad q;
-            final switch (images.resolveGlyph(cp, style, q))
+            final switch (images.resolveGlyph(request, q))
             {
                 case GlyphOutcome.drawn:
-                    const baseline = top + images.textMetrics.ascent;
-                    emit(record(v4(penX + q.bearingX, baseline - q.bearingY, q.width, q.height),
-                        colour, v4(0), v4(QuadKind.coverageGlyph, 0, 0, 0), q.texRect),
-                        BoundImages(coveragePage: q.page));
+                    const y = q.colour ? top + (boxH - q.height) / 2
+                        : top + images.textMetrics.ascent - q.bearingY;
+                    const box = v4(penX + q.bearingX, y, q.width, q.height);
+                    if (q.colour)
+                        emit(record(box, request.colour, v4(0), v4(QuadKind.colourGlyph, 0, 0, 0), q.texRect),
+                            BoundImages(colourPage: q.page));
+                    else
+                        emit(record(box, request.colour, v4(0), v4(QuadKind.coverageGlyph, 0, 0, 0),
+                            q.texRect), BoundImages(coveragePage: q.page));
                     break;
                 case GlyphOutcome.blank:
                     break;
@@ -1096,14 +1149,18 @@ version (unittest)
         ImageOutcome resolve(ImageHandle, out uint, out Size) const @safe pure nothrow @nogc
             => ImageOutcome.missing;
 
-        GlyphOutcome resolveGlyph(dchar cp, FaceStyle style, out GlyphQuad q) @safe pure nothrow @nogc
+        bool lastEmoji;
+
+        GlyphOutcome resolveGlyph(in GlyphRequest r, out GlyphQuad q) @safe pure nothrow @nogc
         {
-            lastStyle = style;
-            if (cp == 'x')
+            lastStyle = r.style;
+            lastEmoji = r.emoji;
+            if (r.cp == 'x')
                 return GlyphOutcome.noGlyph;
-            if (cp == ' ')
+            if (r.cp == ' ')
                 return GlyphOutcome.blank;
-            q = GlyphQuad(2, v4(0, 0, 0.25f, 0.25f), 4, 6, 1, 5);
+            q = r.emoji ? GlyphQuad(3, true, v4(0, 0, 0.5f, 0.5f), 16, 16, 0, 14)
+                : GlyphQuad(2, false, v4(0, 0, 0.25f, 0.25f), 4, 6, 1, 5);
             return GlyphOutcome.drawn;
         }
 
@@ -1141,6 +1198,25 @@ unittest
     assert(p.images.lastStyle == FaceStyle.bold, "the run's attributes pick the face");
     const underline = p.instances[$ - 1];
     assert(boxIs(underline, 5, 3 + 17, 20, 1), "the underline spans the run's cells");
+}
+
+@("ui_vulkan.painter.anEmojiClusterDrawsInColour")
+@safe pure nothrow @nogc
+unittest
+{
+    Painter!FakeGlyphs p;
+    p.begin(Size(200, 100), metrics10x20);
+    const v = Visual(fg: RgbColor(255, 255, 255), fgAlpha: 255);
+    p.textRun(Point(0, 0), "\u2764\uFE0F", v); // a heart asked for as an emoji
+    assert(p.images.lastEmoji, "VS16 asks for the emoji face");
+    assert(p.report[Degradation.unshapedCluster] == 0, "a variation selector needs no shaping");
+    assert(p.instances.length == 1 && p.instances[0].shape.array[0] == QuadKind.colourGlyph);
+    assert(p.runs[$ - 1].images.colourPage == 3 && p.runs[$ - 1].images.coveragePage == 0);
+    p.textRun(Point(0, 0), "\u2764", v);
+    assert(!p.images.lastEmoji, "the bare heart is text");
+    p.textRun(Point(0, 0), "\U0001F469\u200D\U0001F4BB", v);
+    assert(p.images.lastEmoji && p.report[Degradation.unshapedCluster] == 1,
+        "a joiner sequence draws its first emoji and counts as unshaped");
 }
 
 @("ui_vulkan.painter.textWithoutAGlyphSourceCountsAMiss")
