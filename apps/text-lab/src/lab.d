@@ -15,9 +15,7 @@ import std.format : format;
 
 import sparkles.base.term_color : RgbColor;
 import sparkles.base.term_style : TextAttr, UnderlineStyle;
-import sparkles.base.text.grapheme : visibleWidth;
 import sparkles.input : Event, isEndOfInput, KeyEvent, match, PointerAction, PointerEvent;
-import sparkles.ui.canvas : DrawOp, fillRectOp, textRunOp;
 import sparkles.ui.geometry : Point, Rect, Size;
 import sparkles.ui.style : Slot, Visual;
 import sparkles.ui.widget : Builder, Widget, WidgetKind, WidgetTree;
@@ -30,7 +28,7 @@ immutable string[2][] specimen = [
     ["Digits", "0123456789  +-*/=<>  ()[]{}  @#$%^&  ~`_\\"],
     ["Code", "-> => != === <= >= :: |> <| /* */ // www 0x1F"],
     ["Accents", "café naïve façade Ångström Øresund ŁÓDŹ ẞ"],
-    ["Scripts", "Ωμέγα αβγδ  Привет мир  שלום  مرحبا"],
+    ["Scripts", "Ωμέγα αβγδ  Привет мир  Tiếng Việt  Ğğ İı Şş"],
     ["Combining", "é ä ñ ô ç  Z̵̀a͓ḻg͔o"],
     ["CJK", "漢字 かな カナ 한국어 中文字体"],
     ["Emoji", "😀 😎 ❤️ ❤ ✨ 👍 👍🏽 🎉 🚀"],
@@ -53,6 +51,17 @@ struct Lab
     /// The header, as widgets; the panels are painted in `paint`.
     WidgetTree view(H)(ref H h)
     {
+        // `--shot`: a few frames for the atlas and the window to settle, then
+        // the capture, then out.
+        if (shotPath.length)
+        {
+            static if (__traits(hasMember, H, "screenshot"))
+                if (--framesToShot == 0)
+                    h.screenshot(shotPath);
+            if (framesToShot < -2)
+                h.quit();
+            h.requestFrame();
+        }
         auto b = Builder();
         auto status = b.add(Widget(kind: WidgetKind.text, text: statusLine(h), slot: Slot.code));
         auto keys = b.add(Widget(kind: WidgetKind.text, slot: Slot.muted,
@@ -91,28 +100,20 @@ struct Lab
         panel(h, Rect(0, 3 + half, size.width, size.height - 3 - half), RgbColor(0xfa, 0xfa, 0xf7),
             RgbColor(0x1f, 0x23, 0x28), RgbColor(0xc0, 0x1c, 0x28), RgbColor(0x1a, 0x7f, 0x37),
             RgbColor(0x09, 0x69, 0xda));
-        if (shotPath.length)
-        {
-            static if (__traits(hasMember, H, "screenshot"))
-                if (--framesToShot == 0)
-                    h.screenshot(shotPath);
-            if (framesToShot < -2)
-                h.quit();
-            h.requestFrame();
-        }
     }
 
     private void panel(H)(ref H h, in Rect r, RgbColor bg, RgbColor fg, RgbColor red, RgbColor green,
         RgbColor blue)
     {
-        h.ops() ~= fillRectOp(r, Slot.inherit, Visual(bg: bg, hasBg: true));
+        auto canvas = h.canvas;
+        canvas.fillRect(r, Visual(bg: bg, hasBg: true));
         Visual ink(RgbColor c, ushort style = 0, UnderlineStyle underline = UnderlineStyle.none)
             => Visual(fg: c, bg: bg, hasBg: true, styleBits: style, underline: underline);
         int y = r.y + 1;
         void line(int x, string text, in Visual v)
         {
             if (y < r.y + r.height)
-                h.ops() ~= textRunOp(Rect(x, y, cast(int) visibleWidth(text), 1), text, Slot.inherit, v);
+                canvas.textRun(Point(x, y), text, v);
         }
         const label = ink(RgbColor(cast(ubyte)((fg.r + bg.r) / 2), cast(ubyte)((fg.g + bg.g) / 2),
             cast(ubyte)((fg.b + bg.b) / 2)));

@@ -36,6 +36,13 @@ int main(string[] args)
         else
             gui.tupleof[i] = parsed.value.tupleof[i];
     }}
+    // A specimen wants more lines than the shared default size leaves room for.
+    import sparkles.ui_app.gui_options : defaultFontSizePoints, defaultWindowRows;
+
+    if (gui.fontSize == defaultFontSizePoints)
+        gui.fontSize = 12;
+    if (gui.windowHeight == defaultWindowRows)
+        gui.windowHeight = 40;
     RunConfig cfg = {
         title: "text lab",
         gui: gui,
