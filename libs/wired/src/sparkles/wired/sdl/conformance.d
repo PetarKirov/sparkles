@@ -50,6 +50,13 @@ private auto normalizedScalar(scope const ref SdlScalar value)
 @("sdl.conformance.recipeLinkedSymbols")
 @system unittest
 {
+    version (Windows)
+    {
+        import sparkles.test_runner.skip : skipTest;
+
+        skipTest("the probe reads its binary's symbols with POSIX `nm`");
+    }
+
     import std.algorithm.searching : canFind;
     import std.file : write;
     import std.path : buildNormalizedPath, buildPath, dirName;
@@ -295,6 +302,13 @@ comparison allow DUB one ulp where Phobos's parse is inexact. */
 @("sdl.conformance.pinnedDub")
 @system unittest
 {
+    version (Windows)
+    {
+        import sparkles.test_runner.skip : skipTest;
+
+        skipTest("the pinned DUB checkout comes from the Nix dev shell, which the native Windows leg lacks");
+    }
+
     import std.base64 : Base64;
     import std.file : exists, write;
     import std.json : JSONValue, parseJSON;
