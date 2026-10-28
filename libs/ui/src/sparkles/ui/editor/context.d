@@ -62,6 +62,9 @@ struct LogicalContext
     /// The host answers clipboard reads (`INP25`); absent, paste is a
     /// `noop(capabilityAbsent)` the field reports (`EDI5`).
     bool clipboardRead;
+    /// The host writes the clipboard; absent, copy and cut are a
+    /// `noop(capabilityAbsent)` and cut deletes nothing (`EDI5`).
+    bool clipboardWrite;
 
 @safe pure nothrow @nogc:
 
