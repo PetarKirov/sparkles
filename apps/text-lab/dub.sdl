@@ -24,6 +24,14 @@ configuration "application" {
     subConfiguration "sparkles:ui-app" "gui-vulkan"
 }
 
+configuration "unittest" {
+    targetType "library"
+    excludedSourceFiles "src/app.d"
+    dependency "sparkles:test-runner" path="../.."
+    subConfiguration "sparkles:ui-app" "gui-vulkan"
+    dflags "-checkaction=context" "-allinst"
+}
+
 // BEGIN managed build types — apps/ci/tools/standardize-build-settings.d
 dflags "--linker=lld" platform="linux-ldc"
 dflags "-L-fuse-ld=lld" platform="linux-dmd"
