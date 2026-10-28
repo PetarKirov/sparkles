@@ -27,7 +27,7 @@ import sparkles.ui.arena : GcArena;
 import sparkles.ui.canvas : DrawOp, RecordingCanvas;
 import sparkles.ui.geometry : Size;
 import sparkles.ui_app.backend : Backend;
-import sparkles.ui_app.host : FrameOpsOf, HostState, isHost, modsOf,
+import sparkles.ui_app.host : FrameOpsOf, HostState, canReadClipboard, isHost, modsOf,
     recordedOpCapacity, RunConfig, withRealSize;
 
 /// One recorded frame: what the application drew, and whether it drew at all.
@@ -87,6 +87,9 @@ struct RecordingHost
     string[] titles;
     /// ditto
     string[] outOfBand;
+    /// Clipboard reads requested (`INP25`), in order; a test answers one by
+    /// feeding `PasteEvent`s carrying its number.
+    uint[] clipboardReads;
     /// Whether the application asked for fullscreen at any point.
     bool fullscreenToggled;
 
@@ -98,6 +101,7 @@ struct RecordingHost
 
     void pointerShape(PointerShape s) pure nothrow { shapes ~= s; }
     void clipboard(scope const(char)[] text) pure nothrow { clipboardWrites ~= text.idup; }
+    void readClipboard(uint request) pure nothrow { clipboardReads ~= request; }
     void title(scope const(char)[] t) pure nothrow { titles ~= t.idup; }
     void writeOutOfBand(scope const(char)[] seq) pure nothrow { outOfBand ~= seq.idup; }
 
@@ -177,6 +181,7 @@ struct RecordingHost
 
 static assert(isHost!RecordingHost, "the recorder must satisfy the same"
     ~ " contract as a live host — that is the whole point of it");
+static assert(canReadClipboard!RecordingHost);
 
 
 /**
@@ -386,6 +391,7 @@ unittest
         (ref RecordingHost h) { h.pointerShape(PointerShape.pointer); },
         (ref RecordingHost h, in Event e) {
             h.clipboard("copied");
+            h.readClipboard(4);
             h.title("new title");
             h.writeOutOfBand("\x1b]52;c;…\x07");
             h.toggleFullscreen();
@@ -394,6 +400,7 @@ unittest
 
     assert(rec.shapes == [PointerShape.pointer, PointerShape.pointer]);
     assert(rec.clipboardWrites == ["copied"]);
+    assert(rec.clipboardReads == [4]);
     assert(rec.titles == ["new title"]);
     assert(rec.outOfBand.length == 1);
     assert(rec.fullscreenToggled);

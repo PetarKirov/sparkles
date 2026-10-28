@@ -933,13 +933,16 @@ struct PasteEvent
 {
     InlineBuffer!(char, pasteChunkBytes) text; /// this chunk's bytes
     bool last; /// the paste ends with this chunk
+    /// The clipboard read this paste answers (`INP25`), or 0 for a paste the
+    /// user made. An empty answer is one empty `last` chunk.
+    uint request;
 }
 
 /**
 `text` as a paste: $(LREF PasteEvent) chunks to `sink`, split between code
 points, the final one `last` — one empty chunk for an empty paste.
 */
-void pasteChunks(Sink)(scope const(char)[] text, scope Sink sink)
+void pasteChunks(Sink)(scope const(char)[] text, scope Sink sink, uint request = 0)
 {
     import std.range.primitives : put;
     import sparkles.base.text.utf : decodeToken, UtfMode;
@@ -960,6 +963,7 @@ void pasteChunks(Sink)(scope const(char)[] text, scope Sink sink)
         const piece = text[at .. end];
         cast(void) chunk.text.tryWrite((ref s) { put(s, piece); });
         chunk.last = end == text.length;
+        chunk.request = request;
         sink(Event(chunk));
         at = end;
     }
@@ -1330,4 +1334,26 @@ unittest
     assert(a == b);
     Event c = a;
     assert(c == a);
+}
+
+/// INP25: every chunk of a clipboard answer carries its request; a user's
+/// paste carries none, and an empty answer is one empty last chunk.
+@("input.events.pasteAnswersCarryTheirRequest")
+@safe pure nothrow
+unittest
+{
+    PasteEvent[] chunks;
+    char[100] long_ = 'x';
+    pasteChunks(long_[], (Event e) { e.match!((PasteEvent p) { chunks ~= p; }, (_) {}); }, 7);
+    assert(chunks.length == 3);
+    foreach (c; chunks)
+        assert(c.request == 7);
+    assert(chunks[$ - 1].last);
+    chunks = null;
+    pasteChunks("", (Event e) { e.match!((PasteEvent p) { chunks ~= p; }, (_) {}); }, 8);
+    assert(chunks.length == 1 && chunks[0].last && chunks[0].request == 8
+        && chunks[0].text[].length == 0);
+    chunks = null;
+    pasteChunks("typed", (Event e) { e.match!((PasteEvent p) { chunks ~= p; }, (_) {}); });
+    assert(chunks[0].request == 0);
 }

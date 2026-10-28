@@ -446,6 +446,14 @@ enum bool canSpawnDaemon(H) = __traits(compiles, (ref H h) {
 enum bool canWake(H) = __traits(compiles, (ref H h) { h.wake(); });
 
 /**
+The clipboard read errand (`INP25`, `HST8`), capability-by-presence: a host
+that can read the system clipboard takes `readClipboard(request)` and
+answers at its next poll with `PasteEvent`s carrying `request`. Presence is
+compile-time; `InputCapabilities.clipboardRead` says whether this run can.
+*/
+enum bool canReadClipboard(H) = __traits(compiles, (ref H h) { h.readClipboard(1u); });
+
+/**
 The default draw phase: nothing.
 
 The loop's third callback (`HST13`) — the post-display-list slot inside the
