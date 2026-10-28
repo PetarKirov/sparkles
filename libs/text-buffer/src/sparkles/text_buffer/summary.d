@@ -37,15 +37,16 @@ struct TextSummary
             rhs.lineFeeds ? rhs.lastLineBytes : lastLineBytes + rhs.bytes);
 }
 
-/// One decoded token: a scalar, or U+FFFD for a malformed maximal subpart.
-package struct Token
+/// One decoded token: a scalar, or U+FFFD for a malformed maximal subpart,
+/// and its length in bytes.
+struct Token
 {
     dchar scalar;
     size_t length;
 }
 
 /// Decode the token at the start of `bytes`, which must not be empty.
-package Token tokenAt(scope const(char)[] bytes) @safe pure nothrow @nogc
+Token tokenAt(scope const(char)[] bytes) @safe pure nothrow @nogc
 in (bytes.length, "no token in an empty slice")
 {
     if (bytes[0] < 0x80)
@@ -56,7 +57,7 @@ in (bytes.length, "no token in an empty slice")
 }
 
 /// UTF-16 code units of a token's scalar.
-package size_t utf16Units(dchar scalar) @safe pure nothrow @nogc => scalar >= 0x10000 ? 2 : 1;
+size_t utf16Units(dchar scalar) @safe pure nothrow @nogc => scalar >= 0x10000 ? 2 : 1;
 
 /// The measures of `bytes`, which must start at a token boundary.
 TextSummary measure(scope const(char)[] bytes) @safe pure nothrow @nogc
