@@ -1171,3 +1171,33 @@ private ubyte[] twoColourImage()
     assert(report[Degradation.unshapedCluster] == 1, "e + combining acute, unshaped");
     assert(accentInk(shaped) > accentInk(unshaped) + 255 * 3, format("the accent adds ink only shaped: %s unshaped, %s shaped", accentInk(unshaped), accentInk(shaped)));
 }
+
+@("ui_vulkan.canvas.aLoupeRedrawsItsSourceAsBlocks")
+@system unittest
+{
+    // `UVK38`: a loupe redraws a region of the frame `scale` times larger,
+    // after everything else, each pixel a block of its exact colour; its
+    // source is left as drawn.
+    if (!readbackEnabled)
+        return skipTest(readbackSkipReason);
+    import sparkles.ui_vulkan.text_rendering : Loupe;
+
+    auto rig = new Rig;
+    rig.open("ui-vulkan-loupe", 48, 48);
+    scope (success)
+        rig.close();
+    rig.canvas.loupe(Loupe(shown: true, sourceX: 4, sourceY: 4, sourceWidth: 4, sourceHeight: 4,
+        x: 20, y: 20, scale: 3));
+    const frame = rig.draw((ref Canvas c) {
+        c.fillRect(Rect(1, 1, 1, 1), filled(RgbColor(255, 0, 0)));
+    }, FrameMetrics(cellW: 4, cellH: 4), black);
+    foreach (y; 0 .. 48)
+        foreach (x; 0 .. 48)
+        {
+            const inCell = x >= 4 && x < 8 && y >= 4 && y < 8;
+            const inLoupe = x >= 20 && x < 32 && y >= 20 && y < 32;
+            const want = inCell || inLoupe ? 255 : 0;
+            assert(pixel(frame, 48, x, y)[0] == want, format("(%s, %s) is %s, wanted %s", x, y,
+                pixel(frame, 48, x, y)[0], want));
+        }
+}

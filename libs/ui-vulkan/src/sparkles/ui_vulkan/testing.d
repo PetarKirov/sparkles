@@ -112,7 +112,8 @@ struct Rig
         extent = VkExtent2D(width, height);
         assert(!GpuImage.create(target, *dev, memory, format, extent,
             VkImageUsageFlagBits.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
-            | VkImageUsageFlagBits.VK_IMAGE_USAGE_TRANSFER_SRC_BIT).hasError);
+            | VkImageUsageFlagBits.VK_IMAGE_USAGE_TRANSFER_SRC_BIT
+            | VkImageUsageFlagBits.VK_IMAGE_USAGE_TRANSFER_DST_BIT).hasError);
         assert(!GpuBuffer.create(readback, *dev, memory, width * height * 4,
             VkBufferUsageFlagBits.VK_BUFFER_USAGE_TRANSFER_DST_BIT,
             VkMemoryPropertyFlagBits.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
@@ -139,7 +140,8 @@ struct Rig
 
         canvas.beginFrame(CanvasTarget(image: target.handle, view: target.view, format: format,
             extent: extent, usage: VkImageUsageFlagBits.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
-                | VkImageUsageFlagBits.VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                | VkImageUsageFlagBits.VK_IMAGE_USAGE_TRANSFER_SRC_BIT
+                | VkImageUsageFlagBits.VK_IMAGE_USAGE_TRANSFER_DST_BIT,
             finalLayout: VkImageLayout.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL), cmd, slot, metrics,
             ground);
         paint(canvas);
