@@ -567,6 +567,10 @@ alias VulkanDeviceMemory = DeviceMemory!DeviceMemoryBackend;
 
 // ── the block bitmap ──────────────────────────────────────────────────────────
 
+// `n` rounded up to a multiple of `alignment`, a power of two.
+private ulong roundUpTo(ulong n, ulong alignment) @safe pure nothrow @nogc
+    => (n + alignment - 1) & ~(alignment - 1);
+
 private ulong* newBitmap(uint blocks) @trusted pure nothrow @nogc
 {
     const words = (blocks + 63) / 64;
@@ -661,13 +665,22 @@ if (isMemoryBackend!B)
     /**
     `slots` ranges of `rangeSize` bytes each, in host-visible memory
     preferring `preferred`. `memory` must outlive the arena and not move.
+
+    A caller that binds buffers over the ranges passes what such a buffer
+    needs (`VkMemoryRequirements`): `typeBits`, the memory types it can live
+    in, and `alignment`, to which every range's offset and size is rounded —
+    no driver promises a buffer fits memory chosen without asking it.
     */
     static VkExpected!() create(out FrameArena arena, ref DeviceMemory!B memory,
-        uint slots, ulong rangeSize, VkMemoryPropertyFlags preferred = 0)
+        uint slots, ulong rangeSize, VkMemoryPropertyFlags preferred = 0,
+        uint typeBits = uint.max, ulong alignment = 1)
+    in (alignment > 0 && (alignment & (alignment - 1)) == 0, "alignment is a power of two")
     {
         arena.memory_ = (() @trusted => &memory)();
-        arena.rangeSize_ = rangeSize;
-        arena.request_.size = rangeSize;
+        arena.rangeSize_ = roundUpTo(rangeSize, alignment);
+        arena.request_.size = arena.rangeSize_;
+        arena.request_.alignment = alignment;
+        arena.request_.typeBits = typeBits;
         arena.request_.required = hostVisible;
         arena.request_.preferred = preferred;
         arena.request_.tiling = Tiling.linear;
@@ -713,7 +726,7 @@ if (isMemoryBackend!B)
         }
         // An extra range of its own (`VKM10`).
         auto request = request_;
-        request.size = size > rangeSize_ ? size : rangeSize_;
+        request.size = roundUpTo(size > rangeSize_ ? size : rangeSize_, request_.alignment);
         auto extra = memory_.allocate(request);
         if (extra.hasError)
             return err!DeviceRegion(extra.error);
@@ -1051,6 +1064,27 @@ version (unittest)
     auto y = cached.allocate(0, 10).value;
     assert(x.typeIndex == 2 && (y.offset - x.offset) % mem.backend.atom == 0);
     cached.destroy();
+    arena.destroy();
+}
+
+@("vulkan.memory.frameArenaRangesFitTheBuffersBoundOverThem")
+@system unittest
+{
+    // A buffer over a range may need memory types, an alignment and a
+    // rounded size of its own (Adreno's do): the arena allocates every range,
+    // first and extra, to them.
+    auto mem = DeviceMemory!FakeDevice(FakeDevice.make());
+    FrameArena!FakeDevice arena;
+    assert(!FrameArena!FakeDevice.create(arena, mem, 1, 5000, typeBits: 1u << 2,
+        alignment: 4 * KiB).hasError);
+    const first = arena.rangeRegion(0, 0);
+    assert(first.typeIndex == 2, "only the type the buffer allows");
+    assert(first.size == 8 * KiB && first.offset % (4 * KiB) == 0);
+    uint range;
+    cast(void) arena.allocate(0, 9000, 16, range).value;
+    const extra = arena.rangeRegion(0, range);
+    assert(range != 0 && extra.typeIndex == 2);
+    assert(extra.size == 12 * KiB && extra.offset % (4 * KiB) == 0, "an extra range is rounded too");
     arena.destroy();
 }
 
