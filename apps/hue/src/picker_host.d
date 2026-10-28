@@ -555,7 +555,7 @@ struct PickerHost
             request();
             return PickerAction.consumed;
         case Command.pickerErase:
-            if (state.prompt.erase())
+            if (state.prompt.key(k).changed)
                 request();
             return PickerAction.consumed;
         case Command.pickerUp:
@@ -599,14 +599,13 @@ struct PickerHost
             previewEvent = Event(k);
             return PickerAction.preview;
         }
+        // A printable refocuses the prompt (the list never swallows a query
+        // edit); in the input pane the prompt's editor takes every key the
+        // picker does not bind — words, kills, yanks, motion.
         if (k.key == Key.char_ && !k.mods.ctrl && !k.mods.alt && k.ch >= 0x20)
-        {
-            // A printable refocuses the prompt (the list never swallows a
-            // query edit) and types.
             focus = ScopeFocus!Scope_(Scope_.pickerInput);
-            if (state.prompt.type(k.ch))
-                request();
-        }
+        if (focus.isFocused(Scope_.pickerInput) && state.prompt.key(k).changed)
+            request();
         return PickerAction.consumed;
     }
 
