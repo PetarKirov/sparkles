@@ -45,6 +45,7 @@ $(UL
     $(LI `sparkles.font.png` — the PNG decoder of bitmap strikes.)
     $(LI `sparkles.font.coverage` — Coverage tables: binary-search lookup and covered-glyph iteration.)
     $(LI `sparkles.font.gdef` — the `GDEF` header and the item variation store `MATH` and `GPOS` resolve against.)
+    $(LI `sparkles.font.platform_fonts` — `listPlatformFonts`: the font files, or directories, the platform lists.)
     $(LI `sparkles.font.corrections` — the correction registry: `Correction`, `CorrectionPolicy`, and what each entry follows and changes.)
     $(LI `sparkles.font.errors` — `FontError`, `FontResult` and `Tag`.)
 )
@@ -71,6 +72,7 @@ public import sparkles.font.math_table;
 public import sparkles.font.metrics;
 public import sparkles.font.names;
 public import sparkles.font.outlines;
+public import sparkles.font.platform_fonts;
 public import sparkles.font.png;
 public import sparkles.font.raster;
 public import sparkles.font.tables;
