@@ -20,7 +20,7 @@ the detailed descriptions and the module map live there.
 | `terminal`, `terminal-benchmark`                                                       | raylib terminal emulator on libghostty-vt; its render-CPU benchmark                          |
 | `ui-gallery`, `diagram`                                                                | `sparkles:ui-app` apps: the toolkit catalog; a camera-driven diagram board                   |
 | `nix-eval`, `twoslash-extract`                                                         | `sparkles:nix` demo; batch D twoslash extractor                                              |
-| `base`                                                                                 | `Buffer`, `@nogc` text, lifetime, logging, `term_caps`, `hw_caps`                            |
+| `base`, `text-buffer`                                                                  | `Buffer`, `@nogc` text, lifetime, logging, caps; persistent editable text and undo           |
 | `core-cli`                                                                             | argument parsing, help, prompts, process utilities                                           |
 | `ui`, `ui-app`, `ui-tui`, `ui-raylib`, `ui-sdl3`, `ui-vulkan`, `input`, `tui`          | the one UI stack: toolkit, host, backends, input vocabulary, cell grid                       |
 | `syntax`, `tree-sitter`, `source-view`, `doc-view`, `diff`, `dsv`                      | highlighting, markdown model, code/markdown views, the document viewer, diff and DSV engines |

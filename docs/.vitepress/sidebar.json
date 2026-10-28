@@ -704,6 +704,43 @@
         ]
       },
       {
+        "text": "text-buffer",
+        "link": "/libs/text-buffer/",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Tutorial",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Edit and undo",
+                "link": "/libs/text-buffer/tutorial/getting-started"
+              }
+            ]
+          },
+          {
+            "text": "Reference",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "API",
+                "link": "/libs/text-buffer/reference/api"
+              }
+            ]
+          },
+          {
+            "text": "Explanation",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "The tree and its costs",
+                "link": "/libs/text-buffer/explanation/design"
+              }
+            ]
+          }
+        ]
+      },
+      {
         "text": "shaders",
         "link": "/libs/shaders/"
       },
