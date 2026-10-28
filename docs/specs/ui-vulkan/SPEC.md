@@ -344,3 +344,24 @@ replaces the current pixel clip and is not moved by a later offset; offsets
 nest and move what is drawn after them. An image quad's texture coordinates
 are that source rectangle within the image. Text is not part of this
 requirement.
+
+**UVK36: Text compositing.** A coverage glyph over a background the painter
+knows — a cell run's, a terminal cell's — **must** be composited as the text
+rendering's `Compositing` says: `gamma` blends coverage as encoded;
+`linear` blends in linear light and leaves exactly that result over the
+background; `linearCorrected`, the default, raises the coverage's contrast
+by the settings' `contrast` and then blends in linear light at the
+coverage that gives the luminance encoded blending gives. Over an unknown
+background every mode **must** blend as `gamma`.
+
+**UVK37: Hinting.** With the text rendering's `Hinting.light`, the
+default, outline glyphs **must** be drawn from `sparkles:font`'s light
+hinting (font `FTR9`) of each face at its size, and cached apart from
+their unhinted forms. Changing the mode **must** take effect from the next
+frame.
+
+**UVK38: Settings and the loupe.** The canvas **must** take the text
+rendering — compositing, contrast, hinting, shaping — at any time, effective
+from the next frame, and a loupe: a region of the target redrawn larger
+after the frame by nearest filtering, so each pixel is a block of its exact
+composited colour, on a target that allows transfers both ways.
