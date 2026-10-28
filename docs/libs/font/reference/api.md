@@ -581,6 +581,15 @@ shaper allocates its callback state, workspace included, once, in a `Unique`.
 | `measureJustificationCandidate(shaper, request, mode, …)`         | the exact re-shaped candidate for `featureSettings`; `unsupportedCapability` for the insertion modes font never performs and for `JSTF` maximum lookups                                        |
 | `checkEngineProfile(manifest, version, unicode)`                  | the FTS8 check itself, for any engine version and base release                                                                                                                                 |
 
+`sparkles.font.cluster_shaping` shapes one grapheme cluster behind a narrow
+interface: `openClusterShaper(&inst)` (null when the engine cannot shape),
+`shapeCluster(shaper, text, ppemNumerator, ppemDenominator, glyphs)` writing
+glyph ids with their advance and offsets in pixels, and
+`closeClusterShaper(shaper)`. The module imports the engine only inside its
+function bodies, so a renderer naming these functions does not analyse the
+engine's modules in its own build — which, beside ImportC modules, tripped
+the frontend into naming a `ModuleInfo` those never have.
+
 `pinnedEngine` is the FTS8 manifest: HarfBuzz 14.6.0, its source revision,
 and the Unicode release of its internal tables (18.0.0, base's). Advances
 and offsets are multiples of 1/1,024 font unit; `ShapeInfo.measured(value)`
