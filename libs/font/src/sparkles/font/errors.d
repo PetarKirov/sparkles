@@ -9,6 +9,7 @@ module sparkles.font.errors;
 import expected : Expected, err, ok;
 
 import sparkles.base.text.errors : NoGcHook;
+import sparkles.font.corrections : Correction;
 
 @safe pure nothrow @nogc:
 
@@ -121,6 +122,8 @@ struct FontError
     FontLimit limit;
     /// For `callerStorage`, the array length the operation needs; otherwise 0.
     ulong needed;
+    /// The registry entry that produced this outcome, such as a `GDEF` read as absent (FTD45).
+    Correction correction;
 
     /// The exceeded limit's value, or 0.
     ulong limitValue() const => fontLimitValue[limit];

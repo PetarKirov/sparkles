@@ -32,6 +32,7 @@ never a wrapped size.
 */
 module sparkles.font.raster;
 
+import sparkles.font.corrections : Correction;
 import sparkles.font.errors : callerStorageError, FontError, FontErrorKind, FontResult,
     fontErr, fontOk, Tag;
 import sparkles.font.face : Face, OutlineFormat;
@@ -135,6 +136,18 @@ private double pixelScale(in Instance inst, Ppem ppem)
     => toPixels(DesignValue.fromUnits(1, inst.unitsPerEm), ppem);
 
 /**
+FTD12's refusal (FTD45): a face only its hinting bytecode draws correctly,
+which this rasterizer does not interpret, is `unsupportedCapability` naming
+the correction, rather than its unhinted outlines.
+*/
+private FontError bytecodeRefusal()
+{
+    auto e = FontError(FontErrorKind.unsupportedCapability);
+    e.correction = Correction.requiresBytecode;
+    return e;
+}
+
+/**
 The size, bearings and workspace needs of glyph `gid` at `ppem`
 (FTR1), without drawing. The region is anchored on whole pixels: its
 left edge is the floor of the outline's leftmost control point and its
@@ -150,6 +163,8 @@ FontResult!RasterGlyph rasterMeasure(in Instance inst, uint gid, Ppem ppem,
 {
     if (!ppem.valid)
         return fontErr!RasterGlyph(FontError(FontErrorKind.badValue));
+    if (inst.face.requiresBytecode)
+        return fontErr!RasterGlyph(bytecodeRefusal());
     auto outlineWs = ws.outline;
     const result = glyphOutline(inst, gid, ws.segments, outlineWs);
     if (result.hasError)
@@ -447,6 +462,8 @@ FontResult!RasterGlyph rasterizeGlyph(in Instance inst, uint gid, Ppem ppem,
 {
     if (!ppem.valid)
         return fontErr!RasterGlyph(FontError(FontErrorKind.badValue));
+    if (inst.face.requiresBytecode)
+        return fontErr!RasterGlyph(bytecodeRefusal());
     auto outlineWs = ws.outline;
     const drawn = glyphOutline(inst, gid, ws.segments, outlineWs);
     if (drawn.hasError)

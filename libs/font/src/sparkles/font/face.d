@@ -9,6 +9,7 @@ use (FTA1); `-preview=dip1000` checks that in `@safe` code.
 module sparkles.font.face;
 
 import sparkles.font.bytes : be16, be32, fits, slice;
+import sparkles.font.corrections : Correction, CorrectionPolicy, Corrections, recognizeCorrections;
 import sparkles.font.errors : bufferError, FontError, FontErrorKind, FontLimit, FontResult,
     fontErr, fontOk, limitError, Tag, tableError;
 
@@ -105,6 +106,7 @@ struct Face
     private OutlineFormat outlines_;
     private ushort unitsPerEm_;
     private ushort numGlyphs_;
+    private Corrections corrections_;
 
     /// The whole buffer the face was opened from.
     const(ubyte)[] bytes() const return scope => data_;
@@ -122,6 +124,10 @@ struct Face
     ushort tableCount() const scope => numTables_;
     /// Whether the directory is sorted by tag, so lookups binary-search.
     bool sortedDirectory() const scope => sorted_;
+    /// The registry entries the face triggers; empty when opened with corrections off (FTD44).
+    Corrections corrections() const scope => corrections_;
+    /// Whether the face requires hinting bytecode to draw (FTD12).
+    bool requiresBytecode() const scope => corrections_.has(Correction.requiresBytecode);
 
     /// Record `i` of the directory, `i < tableCount`.
     DirectoryRecord record(size_t i) const scope
@@ -270,8 +276,9 @@ struct Collection
     /// The number of faces.
     uint count() const scope => count_;
 
-    /// Face `i`, as `openFace(bytes, i)`.
-    FontResult!Face face(uint i) const return scope => openFace(data_, i);
+    /// Face `i`, as `openFace(bytes, i, policy)`.
+    FontResult!Face face(uint i, CorrectionPolicy policy = CorrectionPolicy.off) const return scope
+        => openFace(data_, i, policy);
 }
 
 /// Opens the file as a collection; a single font has one face (FTP2).
@@ -324,9 +331,13 @@ private FontResult!uint collectionHeader(scope const(ubyte)[] bytes)
 /**
 Opens face `index` of `bytes` (FTP18): detects the container, selects the
 face, reads the directory, then checks `head`, `maxp` and the `cmap` header.
-Costs O(r) for `r` directory records; never allocates (FTP20).
+Under `CorrectionPolicy.apply` it then recognizes the registry entries the
+face triggers (FTD44); under `off` the face reports every value as stored.
+Costs O(r) for `r` directory records, plus the recognition costs of
+`sparkles.font.corrections`; never allocates (FTP20).
 */
-FontResult!Face openFace(return scope const(ubyte)[] bytes, uint index = 0)
+FontResult!Face openFace(return scope const(ubyte)[] bytes, uint index = 0,
+    CorrectionPolicy policy = CorrectionPolicy.off)
 {
     const sig = signature(bytes);
     if (sig.hasError)
@@ -418,5 +429,7 @@ FontResult!Face openFace(return scope const(ubyte)[] bytes, uint index = 0)
     if (!fits(cmap.value.length, 4, 8UL * records))
         return fontErr!Face(tableError(FontErrorKind.truncated, Tag("cmap"), cmapStart, 4));
 
+    if (policy == CorrectionPolicy.apply)
+        face.corrections_ = recognizeCorrections(face);
     return fontOk(face);
 }
