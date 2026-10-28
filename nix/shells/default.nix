@@ -159,6 +159,12 @@
       # `shader-compile` looks for, and one that cannot shadow the shell's own
       # `ldc2`. Wherever dlang.nix defines it (Linux, macOS).
       ++ lib.optional (config.packages ? ldc2-vulkan) config.packages.ldc2-vulkan
+      # `fc-list`, the oracle the font platform listing (FTD18) is compared
+      # with, from the same fontconfig the test loads ($SPARKLES_FONTCONFIG_LIB);
+      # without it the comparison skips.
+      ++ lib.optional (pkgs.stdenv.hostPlatform.isLinux || pkgs.stdenv.hostPlatform.isFreeBSD) (
+        lib.getBin pkgs.fontconfig
+      )
       ++ [
         # wasm-ld, for the test runner's `--wasm` mode: nixpkgs' LDC is
         # built without -link-internally, so the wasm32 link needs an
@@ -426,6 +432,13 @@
         export SPARKLES_FONTS_PATH=${config.packages.sparkles-fonts}/fonts
         # Test-only faces (variable CFF2) the bundle does not ship.
         export SPARKLES_FONT_TEST_CORPUS=${config.packages.sparkles-font-test-corpus}
+        ${lib.optionalString (pkgs.stdenv.hostPlatform.isLinux || pkgs.stdenv.hostPlatform.isFreeBSD) ''
+          # fontconfig, which the platform listing (FTD18) loads at run time
+          # rather than links (FTA7). A Nix store has no global library path,
+          # so a bare dlopen("libfontconfig.so.1") from a test binary fails;
+          # the listing test passes this path instead, and skips when unset.
+          export SPARKLES_FONTCONFIG_LIB=${lib.getLib pkgs.fontconfig}/lib/libfontconfig.so.1
+        ''}
         # The UCD release HarfBuzz's USE table was generated from (14.6.0 reads
         # DerivedCoreProperties-17.0.0): the FTS8 manifest check compares its
         # Default_Ignorable_Code_Point set with base's 18.0.0.
