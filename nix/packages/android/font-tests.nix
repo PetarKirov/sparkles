@@ -22,10 +22,15 @@ in
           "libs/font/src"
           "libs/font/test"
         ];
-        srcDirs = [ "libs/image/src" ];
+        # The catalog's tests read real files through the VFS's blocking backend.
+        srcDirs = [
+          "libs/image/src"
+          "libs/event-horizon-sys/src"
+        ];
         versions = [
           "Have_expected"
           "Have_sparkles_base"
+          "Have_sparkles_event_horizon_sys"
           "Have_sparkles_image"
         ];
         dubDeps = [
@@ -50,10 +55,14 @@ in
           "libs/font/test"
           "libs/font/test-engine"
         ];
-        srcDirs = [ "libs/image/src" ];
+        srcDirs = [
+          "libs/image/src"
+          "libs/event-horizon-sys/src"
+        ];
         versions = [
           "Have_expected"
           "Have_sparkles_base"
+          "Have_sparkles_event_horizon_sys"
           "Have_sparkles_image"
           "SparklesFontEngine"
         ];

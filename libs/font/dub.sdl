@@ -23,6 +23,8 @@ configuration "library" {
 configuration "unittest" {
     dependency "sparkles:test-runner" path="../.."
     dependency "sparkles:base" path="../.."
+    // The catalog's tests over real files use the VFS's blocking backend.
+    dependency "sparkles:event-horizon-sys" path="../.."
 
     // The fixture builder exists only for tests.
     sourcePaths "src" "test"
@@ -44,6 +46,7 @@ configuration "engine" {
 configuration "engine-unittest" {
     dependency "sparkles:test-runner" path="../.."
     dependency "sparkles:base" path="../.."
+    dependency "sparkles:event-horizon-sys" path="../.."
     sourcePaths "src" "src-engine" "test" "test-engine"
     importPaths "src" "src-engine" "test" "test-engine"
     libs "harfbuzz"
