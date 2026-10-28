@@ -589,6 +589,12 @@ version (OSX) void probeVideoToolbox(ref Report r)
         r.notes ~= "VTIsHardwareDecodeSupported missing";
         return;
     }
+    // VP9 and AV1 are "supplemental" decoders on Apple silicon: a process
+    // must register them before VideoToolbox will report or use them. The
+    // registration is per process and changes nothing on the system.
+    alias Register = extern (C) void function(uint) nothrow @nogc;
+    auto register = cast(Register) dlsym(vt, "VTRegisterSupplementalVideoDecoderIfAvailable");
+
     static immutable string[2][] codecs = [
         ["avc1", "video/avc"], ["hvc1", "video/hevc"], ["av01", "video/av01"],
         ["vp09", "video/x-vnd.on2.vp9"], ["apcn", "video/prores-422"],
@@ -597,6 +603,8 @@ version (OSX) void probeVideoToolbox(ref Report r)
     foreach (c; codecs)
     {
         const fourcc = (uint(c[0][0]) << 24) | (uint(c[0][1]) << 16) | (uint(c[0][2]) << 8) | c[0][3];
+        if (register !is null)
+            register(fourcc);
         r.media.codecs ~= MediaCodec(
             name: c[0],
             mime: c[1],
@@ -1249,9 +1257,10 @@ void probeAndroid(ref Report r, string serial)
     if (!r.cpu.model.length)
         r.cpu.model = r.android.soc;
 
-    // App processes are confined by seccomp; the shell reports kernel support only.
+    // Whether an app may call `io_uring_setup` depends on its own SELinux and
+    // seccomp context, which the adb shell does not share.
     r.io = IoReport(backend: "io_uring",
-        status: "not probed over adb; Android's app seccomp policy blocks io_uring_setup");
+        status: "not probed over adb; needs a run in the app's own context");
 
     probeAndroidVulkan(r, sh("cmd gpu vkjson"));
     probeAndroidCodecs(r, &sh);
