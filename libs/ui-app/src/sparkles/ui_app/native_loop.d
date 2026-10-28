@@ -825,7 +825,16 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
             lc.requested(host.frameRequested);
             if (host.frameSkipped)
                 continue;
+            // Acquire and present may read the shared display themselves —
+            // Mesa's Wayland present round-trips for a compositor's colour
+            // management, and its acquire waits for buffer releases — and a
+            // read the window system holds prepared would block them forever.
+            static if (__traits(hasMember, Wsi, "beginNativeIo"))
+                const borrowed = !wsi.beginNativeIo().hasError;
             auto outcome = drawFrame!draw(*gpu, host, session, request.ground);
+            static if (__traits(hasMember, Wsi, "beginNativeIo"))
+                if (borrowed)
+                    cast(void) wsi.endNativeIo();
             if (presented + 1 == loseDeviceAt)
             {
                 loseDeviceAt = 0;
