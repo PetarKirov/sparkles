@@ -25,15 +25,8 @@ enum Compositing : ubyte
     linearCorrected,
 }
 
-/// How a glyph's outline meets the pixel grid.
-enum Hinting : ubyte
-{
-    /// The outline as designed, rasterized where it falls.
-    none,
-    /// Vertical-only grid fitting: the baseline, x-height, cap height and
-    /// horizontal stems on whole pixels; advances and shapes untouched.
-    light,
-}
+/// How a glyph's outline meets the pixel grid: `sparkles:font`'s own choice.
+public import sparkles.font.hinting : Hinting;
 
 /// The settings, together.
 struct TextRendering

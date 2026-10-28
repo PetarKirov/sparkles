@@ -37,7 +37,7 @@ import sparkles.ui_vulkan.painter;
 import sparkles.ui_vulkan.pipelines;
 import sparkles.ui_vulkan.resources : GpuImage;
 import sparkles.ui_vulkan.shading : Binding, CanvasView, Instance, srgbToLinear;
-import sparkles.ui_vulkan.text_rendering : Loupe, TextRendering;
+import sparkles.ui_vulkan.text_rendering : Hinting, Loupe, TextRendering;
 import sparkles.ui_vulkan.upload : transition, Uploads;
 import sparkles.font : Colour, Ppem;
 import sparkles.vulkan;
@@ -559,7 +559,8 @@ struct VulkanCanvas(B)
                 }
             }
             if (outcome == AtlasOutcome.noColour)
-                outcome = atlas_.get(face.inst, face.serial, gid, face.ppem, g);
+                outcome = atlas_.get(face.inst, face.serial, gid, face.ppem, g,
+                    textRendering_.hinting == Hinting.light ? &face.hints : null);
             final switch (outcome)
             {
                 case AtlasOutcome.placed:
@@ -1177,7 +1178,7 @@ static foreach (method; ["textRunIn", "rule", "scrollbar", "image", "pushClip", 
 // its character map, and the instance at the cell size.
 private struct CellFace
 {
-    import sparkles.font : CharMap, Face, Instance, Ppem;
+    import sparkles.font : CharMap, Face, Instance, LightHints, Ppem;
 
     const(ubyte)[] bytes;
     Face face;
@@ -1186,6 +1187,7 @@ private struct CellFace
     Ppem ppem;
     uint serial; // the atlas's key for this face
     bool colour; // it has colour forms (`COLR`, `CBDT`, `sbix`): asked for them first
+    LightHints hints; // its light-hinting metrics at `ppem`
 
     // `bytes` at `ppem`, or `CellFace.init` when they hold no usable face.
     static CellFace open(const(ubyte)[] bytes, Ppem size) @system
@@ -1203,7 +1205,13 @@ private struct CellFace
         auto inst = instance(face.value, InstanceSize.pixels(size), null);
         if (inst.hasError)
             return CellFace.init;
-        return CellFace(bytes, face.value, map.value, inst.value, size, 0, hasColourGlyphs(face.value));
+        import sparkles.font : lightHints, OutlinePoint, OutlineSegment, OutlineWorkspace;
+
+        auto segments = new OutlineSegment[4096];
+        auto ws = OutlineWorkspace(new OutlinePoint[4096], new bool[4096], new ushort[1024], new uint[4096],
+            new int[4096], new int[4096], new int[2][4096]);
+        const hints = lightHints(inst.value, map.value, size, segments, ws);
+        return CellFace(bytes, face.value, map.value, inst.value, size, 0, hasColourGlyphs(face.value), hints);
     }
 }
 
