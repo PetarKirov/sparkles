@@ -986,7 +986,7 @@ struct ExplorerTui
             case Command.viewScrollLeft: case Command.viewScrollRight:
             case Command.viewScrollHome: case Command.viewScrollEnd:
             case Command.diffStage: case Command.diffUnstage:
-            case Command.diffDiscard:
+            case Command.diffDiscard: case Command.diffEdit: case Command.diffSave:
                 break;
 
             // The picker's modal surface answers these; its scopes are
