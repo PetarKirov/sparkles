@@ -338,6 +338,25 @@ struct Window
             SetClipboardText(text.toTempStringz!1024.ptr);
     }
 
+    /// The system clipboard's text, copied, or empty when it holds none
+    /// (`INP25`).
+    string clipboardText() @trusted
+    {
+        version (Android)
+        {
+            import sparkles.android.clipboard : getClipboardText;
+
+            return getClipboardText().idup;
+        }
+        else
+        {
+            import core.stdc.string : strlen;
+
+            const(char)* clip = GetClipboardText();
+            return clip is null ? null : clip[0 .. strlen(clip)].idup;
+        }
+    }
+
     /**
     Requests that the surface be written to `path`.
 

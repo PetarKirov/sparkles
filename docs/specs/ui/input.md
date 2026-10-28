@@ -167,9 +167,9 @@ Proposed. Required by the [application host](../ui-app/index.md) and by migratin
 
 ## Clipboard reads (`INP25`)
 
-| ID    | Requirement                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Status      | Evidence                                                       |
-| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------- | -------------------------------------------------------------- |
-| INP25 | Reading the system clipboard must be a **request answered by an event**, never a blocking call inside a step: the application asks the host ([`HST8`](../ui-app/feature-requirements.md)), and the host delivers the text as a run of `PasteEvent` chunks marked as the answer to that request, carrying the request's number so a late answer can be recognised, or an empty answer when the clipboard holds no text. A target declares whether it can read the clipboard (`InputCapabilities.clipboardRead`); a terminal declares it absent, because its own paste key arrives as a bracketed paste. | not started | proposed host clipboard read; the [editor](./editor.md) `EDY5` |
+| ID    | Requirement                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Status | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| INP25 | Reading the system clipboard must be a **request answered by an event**, never a blocking call inside a step: the application asks the host ([`HST8`](../ui-app/feature-requirements.md)), and the host delivers the text as a run of `PasteEvent` chunks marked as the answer to that request, carrying the request's number so a late answer can be recognised, or an empty answer when the clipboard holds no text. A target declares whether it can read the clipboard (`InputCapabilities.clipboardRead`); a terminal declares it absent, because its own paste key arrives as a bracketed paste. | full   | `PasteEvent.request`, `pasteChunks`, `InputCapabilities.clipboardRead`; `canReadClipboard`, `GuiHost.readClipboard` (raylib), `RecordingHost.readClipboard`; tests `input.events.pasteAnswersCarryTheirRequest`, `ui_app.record.platformCallsAreCaptured`, the [editor](./editor.md)'s `editor.clipboard.requestAndAnswer`. The native window host declares the capability absent until it streams the clipboard offer. |
 
 ## Hit testing (`INP10`)
 
@@ -221,13 +221,13 @@ order, or equivalently a culled top-down frame-tree descent. The rules:
 
 ## Module coverage
 
-| Source file                                         | Requirements                   |
-| --------------------------------------------------- | ------------------------------ |
-| `libs/input/src/sparkles/input/`                    | `INP1`–`INP6`, `INP11`–`INP23` |
-| `libs/tui/src/sparkles/tui/input.d`                 | `INP7`                         |
-| `libs/ui-raylib/src/`                               | `INP8`, `INP9`                 |
-| `libs/ui/src/sparkles/ui/state.d`                   | `INP10` (the consumer)         |
-| `libs/input/src/sparkles/input/frame.d` _(planned)_ | `INP17`                        |
+| Source file                                         | Requirements                            |
+| --------------------------------------------------- | --------------------------------------- |
+| `libs/input/src/sparkles/input/`                    | `INP1`–`INP6`, `INP11`–`INP23`, `INP25` |
+| `libs/tui/src/sparkles/tui/input.d`                 | `INP7`                                  |
+| `libs/ui-raylib/src/`                               | `INP8`, `INP9`                          |
+| `libs/ui/src/sparkles/ui/state.d`                   | `INP10` (the consumer)                  |
+| `libs/input/src/sparkles/input/frame.d` _(planned)_ | `INP17`                                 |
 
 ## Relationship to existing specs
 
