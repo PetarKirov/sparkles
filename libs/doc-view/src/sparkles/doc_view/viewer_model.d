@@ -52,6 +52,7 @@ import sparkles.ui.style : defaultTwoslashPalette, FontRole, Palette,
 import sparkles.ui.widget : Builder, TextSpan, WidgetKind, WidgetTree;
 
 import sparkles.doc_view.ansi_model : anchorAnsiLines, AnsiLine, Attr;
+import sparkles.doc_view.conflict_view : ConflictSession, Pick, viewConflict;
 import sparkles.doc_view.diff_comments : LocalComment;
 import sparkles.doc_view.diff_edit : DiffEdit, writeFileAtomically;
 import sparkles.doc_view.diff_session : DiffSession;
@@ -641,6 +642,7 @@ struct ViewerModel
         // `DST5`: an edit belongs to the document it was opened on.
         diffEditOpen = diffEditing = diffEditSaved = false;
         diffRowCursor = size_t.max;
+        conflictOpen = false;
         composing = false;
         diffEmphasis = diffEmphasis_;
         coverage = coverage_;
@@ -1134,6 +1136,21 @@ struct ViewerModel
         // The outgoing tree dies here: from this point on `tree` aliases
         // storage the builder is about to overwrite.
         arena_.reset();
+        if (conflictOpen)
+        {
+            // `CFV2`: the conflicted file as its plain text and its aligned
+            // conflicts, or the file in the editor while it is edited.
+            foldable = null;
+            tree = viewConflict(conflict, widthCols, conflictHint);
+            tree.nodes[tree.root].scrollsX = true;
+            frames = layoutDoc(tree, Constraints(maxW: widthCols));
+            ops = displayListOf(tree, frames);
+            derive(withTargets: false);
+            cells = keyedRects(tree, frames);
+            fences.length = 0;
+            cellList.length = 0;
+            return;
+        }
         if (showPreview && diff.files.length)
         {
             // A diff document (`DVL1`/`DVL4`): the unified diff widget view;
@@ -3013,6 +3030,95 @@ struct ViewerModel
         }
     }
 
+    // ── `CFV2`–`CFV4`: the conflict view ────────────────────────────────
+
+    /// The conflicted file being resolved, while `conflictOpen`.
+    ConflictSession conflict;
+    /// ditto
+    bool conflictOpen;
+    /// The conflict view's keys, said under its header; the host knows them.
+    string conflictHint;
+
+    /**
+    Opens the conflict view on this document's text (`CFV1`): `null`, or why
+    not, when it holds no conflict markers.
+    */
+    string conflictStart(EditorTarget target = EditorTarget.terminal)
+    {
+        import sparkles.diff.conflict : ConflictError, parseConflicts;
+
+        const parsed = parseConflicts(source);
+        if (parsed.error != ConflictError.none)
+            return "the conflict markers here are unterminated";
+        if (parsed.conflicts == 0)
+            return "no conflict markers here";
+        conflict = ConflictSession.open(docPath.length ? docPath : title, source.idup, target);
+        conflictOpen = true;
+        rebuild();
+        return null;
+    }
+
+    /// `CFV3`: the next or previous conflict.
+    bool conflictMove(int delta)
+    {
+        if (!conflictOpen || !conflict.move(delta))
+            return false;
+        rebuild();
+        return true;
+    }
+
+    /// `CFV4`: resolves the conflict in view.
+    bool conflictPick(Pick p)
+    {
+        if (!conflictOpen || !conflict.pick(p))
+            return false;
+        rebuild();
+        return true;
+    }
+
+    /// `CFV4`: takes back the last pick or edit.
+    bool conflictUndo()
+    {
+        if (!conflictOpen || !conflict.undo())
+            return false;
+        rebuild();
+        return true;
+    }
+
+    /// `EDU3`: edits the file freely, the markers read-only.
+    void conflictEdit()
+    {
+        if (!conflictOpen)
+            return;
+        conflict.edit();
+        rebuild();
+    }
+
+    /// One key while the conflict's editor has the keyboard.
+    bool conflictKey(in KeyEvent k)
+    {
+        if (!conflictOpen || !conflict.editing)
+            return false;
+        const r = conflict.key(k);
+        rebuild();
+        return r.handled;
+    }
+
+    /// Writes the resolved file; why not, or `null`.
+    string conflictSave()
+    {
+        if (!conflictOpen)
+            return "no conflict view is open";
+        return conflict.save((string path, string text) => writeFileAtomically(path, text));
+    }
+
+    /// Leaves the conflict view.
+    void conflictClose()
+    {
+        conflictOpen = false;
+        rebuild();
+    }
+
     /// Scrolls just enough to keep the row keyed `key` in view.
     private void keepKeyInView(size_t key)
     {
@@ -4644,4 +4750,33 @@ unittest
     const row = dd.rows[first + 1];
     assert(c.oldSide == (row.kind == RowKind.removed));
     assert(relocate(c, c.oldSide ? before : after) == (c.oldSide ? row.oldLine : row.newLine));
+}
+
+@("viewer_model.conflict.opensOnMarkersAndResolves")
+@system unittest
+{
+    import std.file : readText, remove, tempDir, write;
+    import std.path : buildPath;
+
+    // `CFV1`–`CFV4` through the model: a document with markers opens the
+    // conflict view; picks resolve it; a save writes it once none remain.
+    const path = buildPath(tempDir, "vm-conflict.txt");
+    enum text = "a\n<<<<<<< ours\nb\n=======\nc\n>>>>>>> theirs\n";
+    write(path, text);
+    scope (exit)
+        remove(path);
+    ViewerModel vm;
+    vm.themes = [builtinDark];
+    vm.names = ["dark"];
+    vm.widthCols = 100;
+    vm.applyTheme(0);
+    vm.setDocument("x", "", "plain\n", null, PreviewModel.init, TwoslashReturn.init, "text");
+    assert(vm.conflictStart() == "no conflict markers here");
+    vm.setDocument("vm-conflict.txt", "", text, null, PreviewModel.init, TwoslashReturn.init,
+        "text");
+    vm.docPath = path;
+    assert(vm.conflictStart() is null && vm.conflictOpen && vm.conflict.remaining == 1);
+    assert(vm.conflictSave() == "1 conflict remains");
+    assert(vm.conflictPick(Pick.theirs) && vm.conflict.remaining == 0);
+    assert(vm.conflictSave() is null && readText(path) == "a\nc\n");
 }
