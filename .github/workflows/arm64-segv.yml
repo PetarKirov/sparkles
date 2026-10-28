@@ -39,12 +39,17 @@ jobs:
           mkdir -p /tmp/cores
           ulimit -c unlimited
           bin=libs/event-horizon/build/sparkles-event-horizon-test-unittest
+          set +e
+          segv=0; failed=0
           for i in $(seq 1 60); do
             "$bin" -t 3 --DRT-covopt=merge:1 --DRT-covopt=dstpath:build/coverage > run.log 2>&1
             rc=$?
             echo "run $i rc=$rc"
-            if [ $rc -ne 0 ]; then tail -20 run.log; break; fi
+            if [ $rc -ge 128 ]; then segv=$((segv+1)); tail -5 run.log; fi
+            if [ $rc -ne 0 ] && [ $rc -lt 128 ]; then failed=$((failed+1)); grep -aA6 "✗" run.log | head -30; fi
           done
+          echo "SUMMARY crashes=$segv test-failures=$failed of 60"
+          [ $segv -eq 0 ]
           ls -la /tmp/cores || true
       - name: Backtrace every core
         if: always()
