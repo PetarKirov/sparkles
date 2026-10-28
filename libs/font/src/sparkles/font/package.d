@@ -47,6 +47,9 @@ $(UL
     $(LI `sparkles.font.coverage` — Coverage tables: binary-search lookup and covered-glyph iteration.)
     $(LI `sparkles.font.gdef` — the `GDEF` header and the item variation store `MATH` and `GPOS` resolve against.)
     $(LI `sparkles.font.platform_fonts` — `listPlatformFonts`: the font files, or directories, the platform lists.)
+    $(LI `sparkles.font.face_record` — face records: `FaceRecord`, `RecordPools`, `describeFace` (FTD19).)
+    $(LI `sparkles.font.catalog` — `buildCatalog` over a capability VFS: sources, the `Catalog`, its family index and build report.)
+    $(LI `sparkles.font.catalog_cache` — the on-disk catalog's format (FTD23).)
     $(LI `sparkles.font.corrections` — the correction registry: `Correction`, `CorrectionPolicy`, and what each entry follows and changes.)
     $(LI `sparkles.font.errors` — `FontError`, `FontResult` and `Tag`.)
 )
@@ -56,6 +59,8 @@ module sparkles.font;
 public import sparkles.font.baseline;
 public import sparkles.font.bitmap;
 public import sparkles.font.box_face;
+public import sparkles.font.catalog;
+public import sparkles.font.catalog_cache;
 public import sparkles.font.cmap;
 public import sparkles.font.carets;
 public import sparkles.font.colour;
@@ -65,6 +70,7 @@ public import sparkles.font.corrections;
 public import sparkles.font.coverage;
 public import sparkles.font.errors;
 public import sparkles.font.face;
+public import sparkles.font.face_record;
 public import sparkles.font.gdef;
 public import sparkles.font.glyph_names;
 public import sparkles.font.instance;
