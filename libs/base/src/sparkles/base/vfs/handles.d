@@ -19,7 +19,7 @@ import core.lifetime : move;
 import std.traits : isInstanceOf;
 
 import sparkles.base.io.errors : ErrorKind, IoError, IoErrorStage, IoResult, OpKind, ioErr, ioOk;
-import sparkles.base.vfs.concept : hasWholePathResolver, isVfs, mountCheckOf, openDirAtFor,
+import sparkles.base.vfs.concept : hasMap, hasWholePathResolver, isVfs, mountCheckOf, openDirAtFor,
     openRootDirFor, resolverWithdrawn;
 import sparkles.base.vfs.names : checkLinkTarget, checkName, lexicalError;
 import sparkles.base.vfs.remove : removeTreeAt;
@@ -560,6 +560,20 @@ if (isVfs!V)
                 IoErrorStage.completion, "empty handle");
         return vfs.read(handle, buffer);
     }
+
+    /**
+    Maps the file's contents read-only (VFO11), where the backend offers
+    mapping. The mapping outlives this `File`; destroying it unmaps.
+    */
+    static if (hasMap!V)
+        IoResult!(V.Mapping) map()() scope
+        {
+            static assert(hasRights(R, Rights.read), "map needs a file opened for reading");
+            if (!open)
+                return ioErr!(V.Mapping)(ErrorKind.other, OpKind.none, 9,
+                    IoErrorStage.completion, "empty handle");
+            return vfs.map(handle);
+        }
 
     /// Writes `bytes`; returns the number written.
     IoResult!size_t write()(scope const(ubyte)[] bytes) scope

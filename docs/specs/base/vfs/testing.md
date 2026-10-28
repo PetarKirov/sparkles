@@ -242,6 +242,7 @@ that observation is made.
 | [`VFO8`](./SPEC.md#vfo8-rename-stays-in-one-root)          | two roots over one directory; a rename between them fails and neither tree changes                                                                                   | 4       |
 | [`VFO9`](./SPEC.md#vfo9-atomic-write)                      | R9; a reader loop concurrent with 1000 writes never sees a mixed or empty file on the Linux and Windows legs; the replacement has the requested sharing              | 2, 6    |
 | [`VFO10`](./SPEC.md#vfo10-symbolic-link-targets)           | rows 25 and 26, with the operation counter unchanged after row 25                                                                                                    | 1       |
+| [`VFO11`](./SPEC.md#vfo11-mapping)                         | a mapped file's bytes equal its `read`, survive closing the `File`, and an empty file maps empty; `map` does not compile on a write-only `File`                      | 4, 5    |
 
 ### Paths and resolution policy (`VFP`)
 
@@ -296,6 +297,7 @@ that observation is made.
 | [`VFB4`](./backends.md#vfb4-the-blocking-backend)             | oracles 1, 3, 4 and 6 on `BlockingVfs`                                                                                  | 1, 3, 4, 6       |
 | [`VFB5`](./backends.md#vfb5-the-asynchronous-backend)         | oracle 4 on each leg; a live environment on the select and IOCP backends contains `fs`                                  | 4, 6             |
 | [`VFB6`](./backends.md#vfb6-the-blocking-package-has-no-loop) | `dub describe :event-horizon-sys` lists only `sparkles:base`, `expected`, `sparkles:reflection` and `sparkles:metadata` | repository audit |
+| [`VFB7`](./backends.md#vfb7-mapping)                          | `hasMap` holds for `BlockingVfs` and `MemVfs`; a mapping of a 1 MiB file on every native leg equals its `read`          | 4, 6             |
 
 ### Native backends (`VFN`)
 
@@ -325,6 +327,7 @@ that observation is made.
 | [`VFM3`](./backends.md#vfm3-interleaving-hook)   | each oracle 2 scenario fires the hook at a chosen call index and asserts the outcome                  | 2          |
 | [`VFM4`](./backends.md#vfm4-arena)               | an arena sized for N nodes accepts N and refuses the next; no GC allocation is recorded               | allocation |
 | [`VFM5`](./backends.md#vfm5-sharing-is-recorded) | oracle 4 compares the recorded sharing with the native result                                         | 4          |
+| [`VFM6`](./backends.md#vfm6-mapping)             | a write after `map` leaves the mapped bytes unchanged; the arena's use does not grow                  | unit       |
 
 ## Worked traces
 

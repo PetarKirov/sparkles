@@ -47,6 +47,8 @@ struct RingVfs
     alias Handle = BlockingVfs.Handle;
     /// ditto
     alias Listing = BlockingVfs.Listing;
+    /// ditto
+    alias Mapping = BlockingVfs.Mapping;
 
     /// The capability row's name for this member.
     enum capName = "fs";
@@ -215,6 +217,9 @@ struct RingVfs
     void closeListing(scope ref Listing listing) @nogc => inner.closeListing(listing);
     /// See `BlockingVfs.read`.
     IoResult!size_t read(Handle h, scope ubyte[] data) => offload(() => inner.read(h, data));
+    /// See `BlockingVfs.map`; called inline, as a mapping has no ring
+    /// operation and `mmap` does not wait on the file's contents.
+    IoResult!Mapping map(Handle h) => inner.map(h);
     /// See `BlockingVfs.write`.
     IoResult!size_t write(Handle h, scope const(ubyte)[] data)
         => offload(() => inner.write(h, data));

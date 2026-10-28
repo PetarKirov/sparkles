@@ -80,6 +80,19 @@ _Rationale:_ Test fixtures in every package's test build depend on the
 blocking backend, and must not pull the loop's platform arms into each of them
 ([DV1](./decisions.md#dv1-the-vocabulary-lives-in-base-syscalls-live-in-event-horizon)).
 
+<a id="vfb7-mapping"></a>
+**VFB7: Mapping.** A backend **may** offer mapping: a `Mapping` type and
+`map(handle)` returning `IoResult!Mapping`, whose `bytes` and destructor
+[`VFO11`](./SPEC.md#vfo11-mapping) describes; `hasMap!V` is true exactly then.
+`BlockingVfs` **must** offer it: on POSIX by `fstat` and `mmap` with
+`PROT_READ` and `MAP_PRIVATE`, unmapped with `munmap`; on Windows by
+`CreateFileMappingW` with `PAGE_READONLY` and `MapViewOfFile` with
+`FILE_MAP_READ` over the file's handle, unmapped with `UnmapViewOfFile`. A
+file larger than the address space fails with `other` and the context
+`"file too large to map"`. `RingVfs` offers it by calling `BlockingVfs`
+inline, as a mapping has no ring operation and does not wait on the file's
+contents.
+
 ## 2. Native results
 
 A native backend classifies every failure once, where the system call
@@ -287,3 +300,9 @@ and the context `"arena exhausted"`, and leaves the tree unchanged.
 was created with ([`VFO5`](./SPEC.md#vfo5-sharing-of-created-entries)) and
 report it through its test inspection interface. Under `version (Posix)` its
 `Stat` reports the mode bits that sharing implies, with no umask applied.
+
+<a id="vfm6-mapping"></a>
+**VFM6: Mapping.** `MemVfs` **must** offer mapping
+([`VFB7`](#vfb7-mapping)) by copying the file's contents into storage the
+`Mapping` owns, from the process heap and not its arena, so a later write to
+the file leaves the mapping unchanged, and it counts the call as a read.

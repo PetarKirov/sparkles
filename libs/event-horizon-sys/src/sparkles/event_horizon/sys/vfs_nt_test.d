@@ -424,3 +424,26 @@ bool enablePrivilege(string name, bool enable) @trusted
         ~ (backup ? "enabled" : "disabled") ~ ", restore " ~ (restore ? "enabled" : "disabled") ~ ")");
     assert(listing.error.kind == ErrorKind.permission);
 }
+
+@("vfs.blocking.VFB7.mapping")
+@system unittest
+{
+    static assert(hasMap!BlockingVfs);
+    auto dir = scratchDir("map");
+    scope (exit)
+        rmdirRecurse(dir);
+    auto big = new ubyte[1 << 20];
+    foreach (i, ref b; big)
+        b = cast(ubyte)(i * 7 + i / 4096);
+    write(buildPath(dir, "big"), big);
+    write(buildPath(dir, "empty"), "");
+    auto v = new BlockingVfs;
+    auto root = openRoot!(Rights.readOnly)(v, dir, ambientAuthority());
+    auto file = root.value.openFile!(OpenMode.read)("big");
+    auto mapped = file.value.map();
+    assert(!mapped.hasError);
+    file.value.close();
+    assert(mapped.value.bytes == big, "the mapping equals the file, and outlives its handle");
+    auto empty = root.value.openFile!(OpenMode.read)("empty");
+    assert(empty.value.map().value.bytes.length == 0);
+}
