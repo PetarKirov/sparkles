@@ -87,6 +87,16 @@ struct InputCapabilities
     /// can insert it verbatim instead of interpreting a newline as submit.
     bool pasteEvents = true;
 
+    /**
+    The application can read the system clipboard by asking the host
+    (`INP25`), which answers with `PasteEvent`s carrying the request.
+
+    $(B Defaults to `false`): an undeclared target cannot be asked. A
+    terminal never declares it — its own paste key arrives as a bracketed
+    paste instead.
+    */
+    bool clipboardRead = false;
+
     // The module-level block above does not reach inside an aggregate.
 @safe pure nothrow @nogc:
 
