@@ -850,7 +850,7 @@ private void deliverInput(alias handle, Wsi)(ref NativeHost host, ref WsiInput i
 // level the batch left (`HST17`).
 private void flushInput(alias handle)(ref NativeHost host, ref WsiInput input, ref bool dirty)
 {
-    input.flush((Event x) {
+    input.endDrain((Event x) {
         handle(host, withRealSize(x, host.size));
         dirty = true;
     });
@@ -1183,7 +1183,13 @@ private void writeCapture(ref Gpu gpu, ref GpuBuffer buffer, string path) @syste
     static struct Texts
     {
         string[] texts;
-        void withText(Fn)(TextId id, scope Fn fn) => fn(texts[id.index], false);
+        auto withText(Fn)(TextId id, scope Fn fn)
+        {
+            import sparkles.wsi.types : wsiOk;
+
+            fn(texts[id.index], false);
+            return wsiOk();
+        }
     }
     auto texts = Texts(["a", "\x03"]);
 
