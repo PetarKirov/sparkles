@@ -2343,6 +2343,21 @@ struct WaylandWsi
             xkb_keysym_to_utf32(keysyms[0]));
     }
 
+    /// Queues the text evdev `key` types under the current modifiers and
+    /// layout. A key an input method consumes never reaches `wl_keyboard`,
+    /// so every key seen here is one nothing else typed.
+    private void emitTypedText(WindowId id, uint key) nothrow @nogc
+    {
+        if (xkbState_ is null)
+            return;
+        char[64] utf8 = void;
+        const n = xkb_state_key_get_utf8(xkbState_, key + 8, utf8.ptr, utf8.length);
+        if (n <= 0 || n >= utf8.length)
+            return;
+        if (const text = xkbTypedText(utf8[0 .. n]))
+            emitText(id, text, (TextId committed, size_t kept) => TextCommittedEvent(committed));
+    }
+
     private extern (C) static void onKeyboardEnter(void* data,
         wl_keyboard*, uint serial, wl_surface* surface, wl_array*) nothrow @nogc
     {
@@ -2385,6 +2400,7 @@ struct WaylandWsi
         owner.emit(owner.idAt(index), event);
         if (state != 0)
         {
+            owner.emitTypedText(owner.idAt(index), key);
             // Wayland never repeats on the wire (wl_keyboard.key is one
             // press); the client synthesizes repeats for the most recently
             // pressed repeating key, per the compositor's repeat_info.
@@ -2497,6 +2513,7 @@ struct WaylandWsi
         event.action = KeyAction.repeat;
         event.modifiers = keyboardMods_;
         emit(idAt(index), event);
+        emitTypedText(idAt(index), repeatKey_);
         repeatFirstFire_ = false;
         armRepeatOp();
     }

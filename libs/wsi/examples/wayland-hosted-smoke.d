@@ -115,6 +115,7 @@ private struct WaylandHooks
     enum uint chordKeyCode = 30; // evdev KEY_A
     // Layout-derived unshifted spelling the chorded key must carry.
     enum dchar chordKeyCharacter = 'a';
+    enum string chordTypedText = "A";
     enum bool expectFocusEvent = true;
     enum bool resizeExact = false;
     enum bool expectPointerMotion = true;

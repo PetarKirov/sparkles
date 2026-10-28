@@ -36,7 +36,10 @@ $(LIST
         modifier state (Wine `SendMessage`), and `chordDeadline` extends the
         wait where injection is external to the process. An
         `enum dchar chordKeyCharacter` additionally requires the chorded key
-        to carry that layout-derived unshifted `LogicalKey` character.
+        to carry that layout-derived unshifted `LogicalKey` character. An
+        `enum string chordTypedText` requires the chord to type that text, a
+        `TextCommittedEvent` (shift+a types `"A"`): a key no input method
+        consumed types what the layout gives it, on every platform.
     * `void holdKey()` / `void releaseHold()` plus `enum uint holdKeyCode`
         — press a repeating key and hold it. The property requires a
         `KeyAction.repeat` for that physical key between its press and its
@@ -137,6 +140,7 @@ private struct Observed
     bool chordedPress;
     bool chordedPressAnyMods;
     bool chordReleased;
+    bool chordTyped;
     bool heldPress;
     bool heldRepeat;
     bool heldRelease;
@@ -385,6 +389,9 @@ ConformanceOutcome checkWsiConformance(Backend, Hooks)(ref Backend wsi,
             driveUntil(() => seen.shiftLeftPress && seen.chordedPress
                 && seen.chordReleased,
                 "the injected key chord never arrived", chordLimit);
+            static if (is(typeof(Hooks.chordTypedText)))
+                driveUntil(() => seen.chordTyped,
+                    "the chord never typed its text", chordLimit);
             static if (is(typeof(Hooks.expectFocusEvent))
                 && Hooks.expectFocusEvent)
                 assert(seen.focusGained, "keyboard focus was never reported");
@@ -869,6 +876,10 @@ private void observeCommit(Backend, Hooks)(ref Backend wsi, ref Hooks hooks,
     static if (is(typeof(Hooks.imeCommittedText)))
         assert(!wsi.withText(event.text, (scope const(char)[] text) {
             seen.imeCommitted |= text == Hooks.imeCommittedText;
+        }).hasError, "committed text is readable during its drain");
+    static if (is(typeof(Hooks.chordTypedText)))
+        assert(!wsi.withText(event.text, (scope const(char)[] text) {
+            seen.chordTyped |= text == Hooks.chordTypedText;
         }).hasError, "committed text is readable during its drain");
 }
 

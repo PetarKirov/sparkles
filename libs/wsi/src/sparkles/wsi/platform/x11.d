@@ -1171,6 +1171,18 @@ struct X11Wsi
             : KeyAction.release;
         keyboard.modifiers = x11Mods(event.state);
         emit(idAt(index), keyboard);
+        // The key reached here unconsumed (no input method, or the method
+        // bounced it back): it types what xkb says, under the state
+        // `logicalForKey` just applied from the event's own modifiers.
+        if (pressed && xkbState_ !is null)
+        {
+            char[64] utf8 = void;
+            const n = xkb_state_key_get_utf8(xkbState_, keycode, utf8.ptr, utf8.length);
+            if (n > 0 && n < utf8.length)
+                if (const text = xkbTypedText(utf8[0 .. n]))
+                    emitText(idAt(index), text,
+                        (TextId committed, size_t kept) => TextCommittedEvent(committed));
+        }
     }
 
     private void handleNative(const xcb_generic_event_t* generic)
