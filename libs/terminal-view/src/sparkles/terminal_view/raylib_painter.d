@@ -9,8 +9,8 @@ module sparkles.terminal_view.raylib_painter;
 
 import raylib : BeginScissorMode, Color, DrawRectangleLines, DrawTextEx, DrawTexturePro,
     EndScissorMode, Image, ImageFormat, LoadImageFromMemory, LoadTextureFromImage,
-    MeasureTextEx, PixelFormat, Rectangle, SetTextureFilter, Texture2D, TextureFilter,
-    UnloadImage, UnloadTexture, UpdateTextureRec, Vector2;
+    MeasureTextEx, PixelFormat, Rectangle, SetTextureFilter, SetTextureWrap, Texture2D, TextureFilter,
+    TextureWrap, UnloadImage, UnloadTexture, UpdateTextureRec, Vector2;
 import raylib.rlgl : rlDrawRenderBatchActive, rlPopMatrix, rlPushMatrix, rlTranslatef;
 
 import sparkles.base.text.cstring : toTempStringz;
@@ -117,6 +117,9 @@ struct RaylibTextures
         if (texture.id == 0)
             return TextureId.init;
         SetTextureFilter(texture, TextureFilter.TEXTURE_FILTER_BILINEAR);
+        // Clamped, as the Vulkan canvas samples images: OpenGL's default
+        // wrap repeats, which blended each edge with the opposite one.
+        SetTextureWrap(texture, TextureWrap.TEXTURE_WRAP_CLAMP);
         return TextureId(texture.id, image.width, image.height, image.layout);
     }
 
