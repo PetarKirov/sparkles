@@ -66,7 +66,7 @@ int main(string[] args) => runCli!MediaHwProbe(args);
 struct MediaHwProbe
 {
     @(Option(`o|out`, description: "Write the JSON report to this file instead of stdout"))
-    string out_;
+    string report;
 
     @(Option(`adb`, description: "Probe the Android device with this adb serial instead of the host"))
     string adb;
@@ -94,7 +94,7 @@ struct MediaHwProbe
         else
             probeHost(report);
 
-        auto file = out_.length ? File(out_, "w") : stdout;
+        auto file = this.report.length ? File(this.report, "w") : stdout;
         auto w = file.lockingTextWriter;
         enum opts = JsonWriteOptions(pretty: true);
         const wrote = writeJSON!opts(report, w);
