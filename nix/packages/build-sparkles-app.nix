@@ -77,8 +77,16 @@
           else
             grow (seen ++ [ name ]) (rest ++ refsOf (readManifest "libs/${name}"));
 
+      # A library's source directories: `src`, and the `src-engine` an optional
+      # configuration compiles (`sparkles:font`'s HarfBuzz engine, which
+      # `sparkles:ui-vulkan` selects) where the library has one.
+      libSrcDirs =
+        n:
+        [ "libs/${n}/src" ]
+        ++ lib.optional (builtins.pathExists (root + "/libs/${n}/src-engine")) "libs/${n}/src-engine";
+
       sparklesSrcClosure =
-        appDir: [ "${appDir}/src" ] ++ map (n: "libs/${n}/src") (grow [ ] (refsOf (readManifest appDir)));
+        appDir: [ "${appDir}/src" ] ++ lib.concatMap libSrcDirs (grow [ ] (refsOf (readManifest appDir)));
 
       # What an application build links. The fileset walk follows every
       # configuration above `unittest`, so it still carries `ui-app`'s `tui`
@@ -538,7 +546,7 @@
       #   * `manifestFileset` → the dub manifests every build needs present.
       legacyPackages.sparklesSources = {
         srcClosure = sparklesSrcClosure;
-        libsClosure = names: map (n: "libs/${n}/src") (grow [ ] names);
+        libsClosure = names: lib.concatMap libSrcDirs (grow [ ] names);
         componentNames = shippedComponentNames;
         refsIn = refsOf;
         inherit sourceFor manifestFileset;
