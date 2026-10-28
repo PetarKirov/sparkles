@@ -52,6 +52,8 @@ import workspace_host : WorkspaceHost;
 struct DroidTerminal
 {
     WorkspaceHost host;
+    /// A paste's chunks so far, while a modal surface takes it.
+    private char[] surfacePaste;
     ScreenOracle oracle;
     /// Notifications, the system scheme, the autofill spike (`droid_platform`).
     DroidPlatform platform;
@@ -299,6 +301,18 @@ struct DroidTerminal
             (in WheelEvent w) { onWheel(h, w); },
             (in GestureEvent g) { onGesture(h, g); },
             (in PasteEvent p) {
+                // A modal surface with a field takes the whole paste, once its
+                // last chunk is in (`EDI4`); nothing under it reaches a pane.
+                if (host.surfaces.modal)
+                {
+                    surfacePaste ~= p.text[];
+                    if (p.last)
+                    {
+                        cast(void) host.surfaces.paste(surfacePaste);
+                        surfacePaste = null;
+                    }
+                    return;
+                }
                 if (auto tv = host.focusedView())
                     tv.onPaste(p);
             },

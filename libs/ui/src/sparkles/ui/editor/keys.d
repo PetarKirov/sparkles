@@ -153,6 +153,12 @@ bool editorCommand(Pool)(in KeyEvent key, EditorTarget target, ref Pool pool,
 }
 
 
+/// The table for a window on the platform this binary runs on.
+version (OSX)
+    enum EditorTarget windowTarget = EditorTarget.macWindow;
+else
+    enum EditorTarget windowTarget = EditorTarget.window;
+
 /// Whether `target`'s default table binds `key` (`EDK5`): a host that hands
 /// chords back to the application asks this first.
 bool editorBinds(in KeyEvent key, EditorTarget target) @safe pure nothrow

@@ -88,6 +88,17 @@ interface Surface
 }
 
 /**
+A surface with a text field takes pastes (`EDI4`): the whole paste at once,
+assembled from its chunks by the host. Optional: a surface that is not one
+leaves the paste to the focused pane.
+*/
+interface Pasteable
+{
+    /// `text` pasted while the surface is on top; true when used.
+    bool paste(scope const(char)[] text) @system;
+}
+
+/**
 A surface about something other than the cursor line — a link, a selection —
 says where it is, in pixels; an anchored card goes above or below that
 instead (`TCF10`). Optional: a surface that is not one anchors at the cursor.
@@ -276,6 +287,20 @@ struct Surfaces
         if (!stack.length)
             return false;
         const used = stack[$ - 1].key(k);
+        changed |= used;
+        return used;
+    }
+
+    /// A paste while a surface is modal: to the top surface when it takes
+    /// pastes (`Pasteable`); true when used.
+    bool paste(scope const(char)[] text) @system
+    {
+        if (!stack.length)
+            return false;
+        auto target = cast(Pasteable) stack[$ - 1];
+        if (target is null)
+            return false;
+        const used = target.paste(text);
         changed |= used;
         return used;
     }
