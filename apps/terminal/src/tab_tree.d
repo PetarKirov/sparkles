@@ -35,8 +35,9 @@ import sparkles.ui.geometry : SizeSpec;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 
 import chrome : band, uiLabel;
-import page_kit : fitCells, ScrollBody, scrollViewport, searchRow, settleViewport;
-import surfaces : Placement, Scrollable, Surface, SurfaceContext;
+import page_kit : fitCells, QueryField, ScrollBody, scrollViewport, searchRow, settleViewport;
+import sparkles.ui.editor.keys : editorBinds, windowTarget;
+import surfaces : Pasteable, Placement, Scrollable, Surface, SurfaceContext;
 
 /// One pane, as the tree shows it.
 struct TreePane
@@ -87,12 +88,13 @@ private ulong tabKey(in TreeTab tab, size_t index) @safe pure nothrow @nogc
     => (tab.panes.length ? 1UL << 32 : 2UL << 32) | (tab.panes.length ? tab.panes[0].id : index);
 
 /// The tree of tabs and panes.
-final class TabTree : Surface, Scrollable
+final class TabTree : Surface, Scrollable, Pasteable
 {
     private TreeTab[] delegate() snapshot;
     private void delegate(size_t tab, PaneId pane) pick;
     private void delegate() newTab;
-    private char[] query;
+    private QueryField queryField; // the search, typed straight in (`EDU4`)
+    private string query() const @safe pure nothrow @nogc => queryField.text;
     private TreeData!TabNode data;
     private TreeViewState!ulong tv;
     private ScrollBody body;
@@ -336,9 +338,6 @@ final class TabTree : Surface, Scrollable
 
     bool key(in KeyEvent k) @system
     {
-        import sparkles.base.text.utf : encodeScalar, UtfStatus;
-        import page_kit : queryPrefixWithoutLastGrapheme;
-
         // A desktop key arrives twice, pressed and released; the release
         // is the press's, and moving on it too stepped two rows a press.
         if (k.action == KeyAction.release)
@@ -358,42 +357,55 @@ final class TabTree : Surface, Scrollable
                 break;
             case Key.left:
                 if (!query.length)
+                {
                     collapseOrUp(tv, data, (uint n) => data.nodes[n].value.key);
-                break;
+                    break;
+                }
+                goto default; // with a query, the arrows move its caret
             case Key.right:
                 const n = tv.selectedNode;
-                if (n != uint.max && data.nodes[n].value.expandable && !query.length)
+                if (!query.length)
                 {
-                    if (!tv.open.isOpen(data.nodes[n].value.key))
-                        tv.open = tv.open.opened(data.nodes[n].value.key);
-                    else if (tv.sel + 1 < cast(long) tv.rows.length)
-                        tv.moveSel(1); // already open: into its first pane
+                    if (n != uint.max && data.nodes[n].value.expandable)
+                    {
+                        if (!tv.open.isOpen(data.nodes[n].value.key))
+                            tv.open = tv.open.opened(data.nodes[n].value.key);
+                        else if (tv.sel + 1 < cast(long) tv.rows.length)
+                            tv.moveSel(1); // already open: into its first pane
+                    }
+                    break;
                 }
-                break;
-            case Key.backspace:
-                if (query.length)
-                {
-                    query.length = queryPrefixWithoutLastGrapheme(query);
-                    bestMatch = true;
-                }
-                break;
-            case Key.char_:
-                if (k.ch < 0x20 || k.mods.ctrl || k.mods.alt)
+                goto default;
+            default:
+                // The query's editor; Enter and Escape are the overlay's.
+                if (k.key == Key.enter || k.key == Key.escape)
                     return false;
-                char[4] buf;
-                const encoded = encodeScalar(k.ch, buf[]);
-                if (encoded.status != UtfStatus.ok)
+                if ((k.mods.ctrl || k.mods.alt || k.mods.super_)
+                    && !editorBinds(k, windowTarget))
                     return false;
-                query ~= buf[0 .. encoded.written];
+                const r = queryField.key(k);
+                if (!r.handled)
+                    return false;
                 // The rows still hold the old results: the next rebuild
                 // selects the new best match.
-                bestMatch = true;
+                if (r.changed)
+                    bestMatch = true;
                 break;
-            default:
-                return false;
         }
         keepSelection();
         reveal = true;
+        return true;
+    }
+
+    /// A paste into the search (`EDI4`).
+    bool paste(scope const(char)[] text) @system
+    {
+        if (queryField.paste(text).changed)
+        {
+            bestMatch = true;
+            keepSelection();
+            reveal = true;
+        }
         return true;
     }
 

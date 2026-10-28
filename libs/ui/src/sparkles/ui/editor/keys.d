@@ -10,7 +10,7 @@ Specification: `docs/specs/ui/editor.md` §4.
 */
 module sparkles.ui.editor.keys;
 
-import sparkles.input.events : Key, KeyAction, KeyEvent, ShiftReq, TextId, chord;
+import sparkles.input.events : Key, KeyAction, KeyEvent, Mods, ShiftReq, TextId, chord;
 import sparkles.ui.editor.command : Boundary, EditCommand, EditKind;
 import sparkles.ui.keymap : Binding, bind, commandFor;
 
@@ -152,6 +152,28 @@ bool editorCommand(Pool)(in KeyEvent key, EditorTarget target, ref Pool pool,
     return true;
 }
 
+
+/// The table for a window on the platform this binary runs on.
+version (OSX)
+    enum EditorTarget windowTarget = EditorTarget.macWindow;
+else
+    enum EditorTarget windowTarget = EditorTarget.window;
+
+/// The modifier of `windowTarget`'s clipboard, undo and select-all chords:
+/// Command on macOS, Ctrl elsewhere.
+version (OSX)
+    enum Mods windowCommandMods = Mods(super_: true);
+else
+    enum Mods windowCommandMods = Mods(ctrl: true);
+
+///
+@("ui.editor.keys.windowCommandModsCopiesInTheWindowTable")
+@safe pure nothrow
+unittest
+{
+    assert(actionOf(windowTarget, KeyEvent(Key.char_, 'c', windowCommandMods)) == EditorAction.copy);
+    assert(actionOf(windowTarget, KeyEvent(Key.char_, 'v', windowCommandMods)) == EditorAction.paste);
+}
 
 /// Whether `target`'s default table binds `key` (`EDK5`): a host that hands
 /// chords back to the application asks this first.
@@ -314,7 +336,6 @@ static immutable EditorBinding[] windowTable = build(EditorTarget.window);
 
 version (unittest)
 {
-    import sparkles.input.events : Mods;
     import sparkles.ui.editor.testing : TestPool;
 
     EditorAction actionOf(EditorTarget target, KeyEvent key) @safe pure nothrow
