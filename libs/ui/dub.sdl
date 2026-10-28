@@ -20,6 +20,9 @@ importPaths "src" "../test-runner/src" "../math/src"
 // sparkles:ui, never the reverse.
 dependency "sparkles:base" path="../.."
 dependency "sparkles:input" path="../.."
+// The editor model (`sparkles.ui.editor`) keeps its text, change sets and
+// undo history in the persistent text buffer.
+dependency "sparkles:text-buffer" path="../.."
 // The single-source effect transforms (`effect_shaders.d`) are written
 // against the shader vocabulary, and run on the CPU through it.
 dependency "sparkles:shaders" path="../.."

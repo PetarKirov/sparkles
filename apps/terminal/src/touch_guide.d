@@ -23,9 +23,10 @@ import sparkles.ui.style : Slot;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 
 import chrome : band, label, row, uiLabel;
-import page_kit : ScrollBody, searchRow;
+import page_kit : PageClipboard, QueryField, ScrollBody, searchRow;
+import sparkles.ui.editor.keys : editorBinds, windowTarget;
 import keymap : Binding, Chord, KeyCommand, TermCommand, TermContext;
-import surfaces : Placement, Scrollable, Surface, SurfaceContext;
+import surfaces : Pasteable, Placement, Scrollable, Surface, SurfaceContext;
 
 /// Hit ids.
 private enum size_t crumbHit = 0x6C00_0000, rowHit = 0x6C10_0000, recentHit = 0x6C20_0000,
@@ -36,13 +37,17 @@ private enum size_t crumbHit = 0x6C00_0000, rowHit = 0x6C10_0000, recentHit = 0x
 private KeyCommand[] recent;
 
 /// The touch key guide.
-final class TouchGuide : Surface, Scrollable
+final class TouchGuide : Surface, Scrollable, Pasteable
 {
     private immutable(Binding)[] table;
     private TermContext ctx;
     private Chord[] path; // the levels entered, the leader first
     private void delegate(KeyCommand) run;
-    private char[] query;
+    private QueryField queryField; // the search, typed straight in (`EDU4`)
+
+    /// Copy and paste for the search (`EDY5`).
+    void clipboard(PageClipboard c) @safe pure nothrow => queryField.clipboard(c);
+    private string query() const @safe pure nothrow @nogc => queryField.text;
     private Binding[] shown; // the rows built, for the hits
     private KeyCommand[] found; // the search results
     private ScrollBody list; // the list's scroll and bar
@@ -209,16 +214,14 @@ final class TouchGuide : Surface, Scrollable
 
     bool key(in KeyEvent k) @system
     {
-        import sparkles.base.text.utf : encodeScalar, UtfStatus;
         import sparkles.input.events : KeyAction;
-        import page_kit : queryPrefixWithoutLastGrapheme;
 
         // A desktop key arrives pressed and released: acting on the release
         // too climbed two levels an Escape and erased two letters a Backspace.
         if (k.action == KeyAction.release)
             return k.key == Key.escape || k.key == Key.back || k.key == Key.backspace
                 || k.key == Key.char_;
-        if (k.mods.ctrl || k.mods.alt || k.mods.super_)
+        if ((k.mods.ctrl || k.mods.alt || k.mods.super_) && !editorBinds(k, windowTarget))
             return false;
         switch (k.key)
         {
@@ -227,7 +230,7 @@ final class TouchGuide : Surface, Scrollable
                 // One level up; at the root the overlay rows close the guide.
                 if (query.length)
                 {
-                    query.length = 0;
+                    queryField.clear();
                     return true;
                 }
                 if (path.length > 1)
@@ -236,22 +239,19 @@ final class TouchGuide : Surface, Scrollable
                     return true;
                 }
                 return false;
-            case Key.backspace:
-                if (query.length)
-                    query.length = queryPrefixWithoutLastGrapheme(query);
-                return true;
-            case Key.char_:
-                if (k.ch < 0x20)
-                    return false;
-                char[4] buf;
-                const encoded = encodeScalar(k.ch, buf[]);
-                if (encoded.status != UtfStatus.ok)
-                    return false;
-                query ~= buf[0 .. encoded.written];
-                return true;
+            case Key.enter:
+                return false; // the overlay's: it confirms the row
             default:
-                return false;
+                // The query's editor: typing, Backspace, words and kills.
+                return queryField.key(k).handled;
         }
+    }
+
+    /// A paste into the search (`EDI4`).
+    bool paste(scope const(char)[] text) @system
+    {
+        cast(void) queryField.paste(text);
+        return true;
     }
 
     /// The path, as the user would type it: `␣ p v`.

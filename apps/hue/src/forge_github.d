@@ -17,6 +17,7 @@ import expected : err;
 
 import forge : Comment, CommentThread, ForgeError, ForgeErrorKind,
     ForgeFileRef, ForgeResult, HttpRequest, HttpResponse, isForge, PrFile, PrRef,
+    ReviewDraft, SubmittedReview,
     PullRequest, RepoId, ThreadSide, Transport;
 
 import sparkles.wired.policy : CaseStyle, WireCase, WireInvalid,
@@ -94,6 +95,41 @@ struct GitHubForge
         if (res.hasError)
             return err!(CommentThread[])(res.error);
         return decodeThreads(res.value);
+    }
+
+    /**
+    `DCM6`: submits `draft` as one review on `pr`, through REST's
+    `POST /pulls/{n}/reviews`, which takes every inline comment in the one
+    request: the forge keeps all of them or none. Comments only, never an
+    approval or a request for changes; a token is required.
+    */
+    ForgeResult!SubmittedReview submitReview(in PrRef pr, in ReviewDraft draft,
+        scope Transport http) @system
+    {
+        import sparkles.wired.json : fromJSON, toJSON;
+        import std.conv : text;
+
+        if (token.length == 0)
+            return err!SubmittedReview(ForgeError(ForgeErrorKind.noAuth,
+                "submitting a review needs a token"));
+        RestReview wire;
+        wire.commit_id = draft.commitSha;
+        wire.body_ = draft.body_;
+        wire.event = "COMMENT";
+        foreach (ref c; draft.comments)
+            wire.comments ~= RestReviewComment(c.path, c.line,
+                c.side == ThreadSide.oldSide ? "LEFT" : "RIGHT", c.body_);
+        auto json = (() @trusted => toJSON(wire))();
+        if (json.hasError)
+            return err!SubmittedReview(ForgeError(ForgeErrorKind.malformed,
+                "the review does not encode as JSON"));
+        const url = text(apiBase, "/repos/", pr.repo.owner, "/", pr.repo.name,
+            "/pulls/", pr.number, "/reviews");
+        auto res = post(url, json.value[].idup, http);
+        if (res.hasError)
+            return err!SubmittedReview(res.error);
+        auto made = (() @trusted => fromJSON!RestReviewMade(res.value))();
+        return ForgeResult!SubmittedReview(SubmittedReview(made.hasValue ? made.value.html_url : null));
     }
 
     /// The GraphQL endpoint beside `apiBase`. On github.com the REST root is
@@ -774,4 +810,56 @@ private ForgeResult!T parse(T)(scope const(char)[] json) @safe
     auto resAuth = auth.fetchFile(fileRef, mockTransport);
     assert(!resAuth.hasError);
     assert(fetchedUrl == "https://api.github.com/repos/owner/repo/contents/src/app.d?ref=main");
+}
+
+// `DCM6`: the REST review submission's wire shape.
+private struct RestReviewComment
+{
+    string path;
+    uint line;
+    string side;
+    @WireName("body") string body_;
+}
+
+private struct RestReview
+{
+    string commit_id;
+    @WireName("body") string body_;
+    string event;
+    RestReviewComment[] comments;
+}
+
+private struct RestReviewMade
+{
+    @WireOptional() string html_url;
+}
+
+@("forge_github.submitReview.postsOneReviewWithEveryComment")
+@system unittest
+{
+    import forge : ReviewComment, ReviewDraft;
+    import std.algorithm.searching : canFind;
+
+    // `DCM6`: one request carries the whole batch, against the head commit.
+    HttpRequest[] sent;
+    Transport http = (in HttpRequest req) {
+        sent ~= HttpRequest(req.url, req.headers.dup, req.body_.idup);
+        return ForgeResult!HttpResponse(HttpResponse(200,
+            `{"html_url":"https://github.com/o/r/pull/7#pullrequestreview-1"}`));
+    };
+    auto forge = GitHubForge(token: "t");
+    const draft = ReviewDraft("abc123", "", [
+        ReviewComment("f.d", 3, ThreadSide.newSide, "why?"),
+        ReviewComment("g.d", 9, ThreadSide.oldSide, "```suggestion\nx\n```"),
+    ]);
+    auto made = forge.submitReview(PrRef(RepoId("github.com", "o", "r"), 7), draft, http);
+    assert(made.hasValue && made.value.url.canFind("pullrequestreview"));
+    assert(sent.length == 1 && sent[0].url == "https://api.github.com/repos/o/r/pulls/7/reviews");
+    assert(sent[0].body_.canFind(`"commit_id":"abc123"`) && sent[0].body_.canFind(`"event":"COMMENT"`));
+    assert(sent[0].body_.canFind(`"side":"RIGHT"`) && sent[0].body_.canFind(`"side":"LEFT"`));
+    assert(sent[0].body_.canFind(`"body":"why?"`));
+
+    auto anonymous = GitHubForge();
+    assert(anonymous.submitReview(PrRef(RepoId("github.com", "o", "r"), 7), draft, http).hasError,
+        "never submits without a token");
 }

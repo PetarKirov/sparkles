@@ -31,7 +31,7 @@ import core.time : Duration, MonoTime, msecs, seconds;
 import sparkles.base.term_color : RgbColor;
 import sparkles.base.term_control : PointerShape;
 import sparkles.event_horizon : DefaultLoop, LoopConfig;
-import sparkles.input : Event, InputCapabilities, mousePointer;
+import sparkles.input : Event, InputCapabilities, InputTextPool, mousePointer;
 import sparkles.ui.canvas : DrawOp;
 import sparkles.ui.effect : EffectRegistry;
 import sparkles.ui.geometry : Size;
@@ -205,6 +205,11 @@ struct NativeHost
     mixin HostState;
 
     private NativeSession* session_;
+    private WsiInput* input_;
+
+    /// Where a `CompositionEvent`'s preedit resolves (`INP24`), until the next
+    /// drain: the window-system adapter's pool.
+    ref InputTextPool inputTexts() return @safe => input_.texts;
 
     /// A desktop window is a mouse target (`TGT5`).
     InputCapabilities capabilities = mousePointer;
@@ -635,6 +640,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
     host.session_ = &session;
     host.capabilities.keyRelease = cfg.keyRelease;
     WsiInput input;
+    host.input_ = &input;
     input.capabilities = host.capabilities;
     input.fractionalScroll = cfg.fractionalScroll;
     input.scale = metrics.scale.value;
@@ -850,7 +856,7 @@ private void deliverInput(alias handle, Wsi)(ref NativeHost host, ref WsiInput i
 // level the batch left (`HST17`).
 private void flushInput(alias handle)(ref NativeHost host, ref WsiInput input, ref bool dirty)
 {
-    input.flush((Event x) {
+    input.endDrain((Event x) {
         handle(host, withRealSize(x, host.size));
         dirty = true;
     });
@@ -891,6 +897,7 @@ void replayNative(alias present, alias handle, Texts)(ref NativeSession session,
     host.session_ = &session;
     host.capabilities.keyRelease = cfg.keyRelease;
     WsiInput input;
+    host.input_ = &input;
     input.capabilities = host.capabilities;
     input.fractionalScroll = cfg.fractionalScroll;
     input.scale = session.scale;
@@ -1183,7 +1190,13 @@ private void writeCapture(ref Gpu gpu, ref GpuBuffer buffer, string path) @syste
     static struct Texts
     {
         string[] texts;
-        void withText(Fn)(TextId id, scope Fn fn) => fn(texts[id.index], false);
+        auto withText(Fn)(TextId id, scope Fn fn)
+        {
+            import sparkles.wsi.types : wsiOk;
+
+            fn(texts[id.index], false);
+            return wsiOk();
+        }
     }
     auto texts = Texts(["a", "\x03"]);
 

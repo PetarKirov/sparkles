@@ -22,7 +22,7 @@ import sparkles.doc_view.table_select : serializeTable, TableCopyFormat, TableRe
 import sparkles.doc_view.scroll_latch : LatchTarget, ScrollLatch;
 import sparkles.doc_view.dsv_view : DsvCopy, serializeGridCopy;
 import core.time : Duration, msecs;
-import input_line : InputState, Mode;
+import input_line : InputState, LineStep, Mode;
 import keymap : Binding, bindingsAt, Command, InputMode, KeyContext;
 import lantern : defaultDelay, LanternState, ltnStep = step, ltnTick = tick,
     untilShown, LtnStepKind = StepKind;
@@ -30,8 +30,19 @@ import sparkles.ui.components.lantern_view : BoxLayout, LabelArena,
     LanternStyle, Placement,
     viewLantern;
 import sparkles.doc_view.document : DiffEmphasis, DiffSides;
-import staging : StageAction;
+import forge : ReviewDraft;
+import review_store : applySuggestionAtCursor, persistFolds, postComment, refreshLocalThreads,
+    resolveCommentAtCursor, ReviewSession,
+    toggleViewedAtCursor;
+import sparkles.doc_view.conflict_view : Pick;
+import staging : StageAction, stageResolvedFile;
+import sparkles.ui.editor.keys : EditorTarget;
 import sparkles.base.text.writers : writeInteger;
+
+/// The conflict view's keys in the terminal (`CFV3`, `CFV4`), said under its
+/// header.
+enum string conflictKeysHint =
+    "} { move · o t b B take · u undo · E edit · Alt-S save · space stage · Esc leave";
 
 import sparkles.syntax : ColorDepth, HighlightEvent, LabelSet, ResolvedTheme,
     RgbColor, toRgb;
@@ -46,7 +57,7 @@ import sparkles.twoslash.signature_layout : ExpandedRegions;
 
 import sparkles.base.term_style : TextAttr, UnderlineStyle;
 import sparkles.input : EndOfInput, Event, isEndOfInput, Key, KeyEvent,
-    match, PointerAction, PointerButton, PointerEvent, ResizeEvent, WheelEvent;
+    match, PasteEvent, PointerAction, PointerButton, PointerEvent, ResizeEvent, WheelEvent;
 import sparkles.ui.canvas : DrawOp;
 import sparkles.ui.components.chrome : headerBar;
 import sparkles.ui.display_list : buildDisplayList;
@@ -354,13 +365,13 @@ struct PreviewTui
     private enum size_t tableHBarHitBase = ViewerModel.tableHBarHitBase;
     private enum size_t tableVBarHitBase = ViewerModel.tableVBarHitBase;
 
-    private const(char)[] query() const return @safe pure nothrow @nogc => inp.query[];
+    private const(char)[] query() const return @safe pure nothrow @nogc => inp.query;
 
     /// What the line-input bar currently holds — the query as the shared
     /// matcher will see it. Public so a parity test can assert that both
     /// hosts reach `findMatches` with the same bytes, not merely the same
     /// function.
-    const(char)[] inputQuery() const return @safe pure nothrow @nogc => inp.query[];
+    const(char)[] inputQuery() const return @safe pure nothrow @nogc => inp.query;
     private bool searching() const @safe pure nothrow @nogc => inp.mode == Mode.search;
     /// The filter prompt (`DSF1`) — the search prompt's twin, same bar.
     private bool filtering() const @safe pure nothrow @nogc => inp.mode == Mode.dsvFilter;
@@ -676,8 +687,7 @@ struct PreviewTui
         tableFmt = TableCopyFormat.tsv;
         hoverSel = -1;
         sel = Selection!long.cleared;
-        inp.mode = Mode.normal;
-        inp.query.clear();
+        inp.close();
         vm.inlineFoldMarker = true;
         vm.widthCols = width < 9 ? 8 : width - 1;
         vm.viewRows = bodyRows();
@@ -1092,8 +1102,8 @@ struct PreviewTui
         // preview's formatter · width · error chip (`FMV7`), then the hints.
         const fchip = formatPreviewChip(vm);
         const line = b.add(Widget(kind: WidgetKind.text,
-            text: filtering ? text("⌕ ", query, "▏")
-                : searching ? text("/", query, "▏")
+            text: filtering ? text("⌕ ", inp.shown)
+                : searching ? text("/", inp.shown)
                 : notice.length ? notice
                 : fchip.length ? fchip
                 : "scroll ↑↓ · ←→ theme · Tab raw/preview · / search · za fold · drag+y copy · q quit",
@@ -1293,6 +1303,7 @@ struct PreviewTui
         {
             // A diff has no CST fold ranges; its fold unit is the file.
             vm.diffToggleFile();
+            notice = persistFolds(vm, review);
             clampTop();
             return;
         }
@@ -1308,7 +1319,10 @@ struct PreviewTui
     private void setAllFolds(bool folded) @system
     {
         if (diffNav())
+        {
             vm.diffSetAllFiles(folded);
+            notice = persistFolds(vm, review);
+        }
         else
             vm.setAllFolds(folded);
         clampTop();
@@ -1410,6 +1424,33 @@ struct PreviewTui
             onStaged(); // the diff changed underneath us
     }
 
+
+    // ── `DCM1`/`DCM2`/`DCM5`: local review comments ──────────────────────
+
+    /// The review state of the repository this diff is in; `null` when it
+    /// is in none, and comments are then kept for this run only.
+    ReviewSession review;
+    /// `DCM6`: a submission waits for its confirming key.
+    private bool submitArmed;
+    /// `CFV4`: the resolved file was saved, so staging it means something.
+    private bool conflictSaved;
+
+    /// A paste's chunks so far, for the diff editor (`EDI4`).
+    private char[] editPaste;
+
+    /**
+    `DST5`: once an edit that was saved closes, the diff on screen is stale,
+    as after a stage, so the host produces it again.
+    */
+    private void reloadAfterEdit() @system
+    {
+        if (vm.diffEditOpen || !vm.diffEditSaved)
+            return;
+        vm.diffEditSaved = false;
+        if (onStaged !is null)
+            onStaged();
+    }
+
     /// `DVG2`: expand or re-fold the one unchanged region in view.
     void toggleDiffGap() @system
     {
@@ -1471,6 +1512,37 @@ struct PreviewTui
             return handleSearch(e);
         if (filtering)
             return handleFilterPrompt(e);
+        // `DST5`/`DCM2`: while the file's editor or the comment composer has
+        // the keyboard it sees keys and pastes first; what it declines (a
+        // save, a post) goes on to the table.
+        if (vm.diffEditing || vm.composing || vm.conflictOpen && vm.conflict.editing)
+        {
+            bool taken;
+            e.match!(
+                (in KeyEvent k) {
+                    taken = vm.conflictOpen && vm.conflict.editing ? vm.conflictKey(k)
+                        : vm.composing ? vm.commentKey(k) : vm.diffEditKey(k);
+                },
+                (in PasteEvent p) {
+                    editPaste ~= p.text[];
+                    if (p.last)
+                    {
+                        if (vm.composing)
+                            cast(void) vm.commentPaste(editPaste, p.request);
+                        else
+                            cast(void) vm.diffEditPaste(editPaste, p.request);
+                        editPaste = null;
+                    }
+                    taken = true;
+                },
+                (in _) {},
+            );
+            if (taken)
+            {
+                reloadAfterEdit();
+                return true;
+            }
+        }
         return e.match!(
             (in PointerEvent p) => handlePointer(p),
             (in WheelEvent w) => handleWheel(w),
@@ -1514,8 +1586,33 @@ struct PreviewTui
                 return true;
             }
         }
+        // `DCM6`: an armed submission, answered like a discard. Sending a
+        // review is outward-facing and cannot be taken back, so it takes a
+        // second, deliberate key.
+        if (submitArmed)
+        {
+            const confirmed = e.key == Key.char_ && e.ch == 'y';
+            submitArmed = false;
+            notice = null;
+            if (confirmed)
+            {
+                import forge_client : submitPullRequestReview;
+
+                notice = review.submit((string target, in ReviewDraft draft)
+                    => submitPullRequestReview(target, draft));
+                refreshLocalThreads(vm, review);
+                return true;
+            }
+        }
         // A notice answers the previous keystroke, not this one.
         notice = null;
+
+        // `CFV3`: Escape leaves the conflict view before it means anything else.
+        if (vm.conflictOpen && e.key == Key.escape)
+        {
+            vm.conflictClose();
+            return true;
+        }
 
         // Escape closes an open popup before it means anything else; the
         // guide only sees it when there is nothing to close.
@@ -1647,13 +1744,11 @@ struct PreviewTui
             // Opening the bar starts from nothing — query AND matches, so a
             // fresh `/` never shows the previous search's tint (`FND5`).
             case Command.startSearch:
-                inp.mode = Mode.search;
-                inp.query.clear();
+                inp.open(Mode.search);
                 vm.clearSearch();
                 break;
             case Command.dsvFilter:
-                inp.mode = Mode.dsvFilter;
-                inp.query.clear();
+                inp.open(Mode.dsvFilter);
                 break;
             case Command.dsvReset:
                 if (onDsvReset !is null)
@@ -1707,6 +1802,101 @@ struct PreviewTui
             case Command.diffStage:   applyStaging(StageAction.stage); break;
             case Command.diffUnstage: applyStaging(StageAction.unstage); break;
             case Command.diffDiscard: applyStaging(StageAction.discard); break;
+            case Command.diffEdit:
+                if (diffNav())
+                    notice = vm.diffEditStart(EditorTarget.terminal);
+                break;
+            case Command.diffRowDown:
+                if (diffNav())
+                    cast(void) vm.diffMoveRow(1);
+                break;
+            case Command.diffRowUp:
+                if (diffNav())
+                    cast(void) vm.diffMoveRow(-1);
+                break;
+            case Command.diffComment:
+                if (diffNav())
+                {
+                    notice = vm.commentStart(EditorTarget.terminal);
+                    vm.composerHint = "Alt-S posts · Esc drops it";
+                    vm.rebuild();
+                }
+                break;
+            case Command.diffSuggest:
+                if (diffNav())
+                {
+                    notice = vm.commentStart(EditorTarget.terminal, suggest: true);
+                    vm.composerHint = "edit the line · Alt-S posts the suggestion · Esc drops it";
+                    vm.rebuild();
+                }
+                break;
+            case Command.diffApplySuggestion:
+                if (diffNav())
+                {
+                    string said;
+                    const applied = applySuggestionAtCursor(vm, review, said);
+                    notice = said;
+                    if (applied && onStaged !is null)
+                        onStaged(); // the working tree changed under the diff
+                }
+                break;
+            case Command.conflictResolve:
+                notice = vm.conflictStart(EditorTarget.terminal);
+                vm.conflictHint = conflictKeysHint;
+                vm.rebuild();
+                break;
+            case Command.conflictNext:  cast(void) vm.conflictMove(1); break;
+            case Command.conflictPrev:  cast(void) vm.conflictMove(-1); break;
+            case Command.conflictOurs:  cast(void) vm.conflictPick(Pick.ours); break;
+            case Command.conflictTheirs: cast(void) vm.conflictPick(Pick.theirs); break;
+            case Command.conflictBoth:  cast(void) vm.conflictPick(Pick.both); break;
+            case Command.conflictBothReversed: cast(void) vm.conflictPick(Pick.bothReversed); break;
+            case Command.conflictUndo:
+                if (!vm.conflictUndo())
+                    notice = "nothing to undo";
+                break;
+            case Command.conflictEdit:  vm.conflictEdit(); break;
+            case Command.conflictSave:
+                notice = vm.conflictSave();
+                conflictSaved = notice is null;
+                if (conflictSaved)
+                    notice = "saved " ~ vm.conflict.path;
+                break;
+            case Command.conflictStage:
+                notice = stageResolvedFile(vm.conflict.path, conflictSaved, repoRoot);
+                break;
+            case Command.diffSubmitReview:
+                if (review is null || review.target.length == 0)
+                    notice = "only a forge's pull request takes a review";
+                else if (review.drafts == 0)
+                    notice = "no drafts to submit";
+                else
+                {
+                    import std.conv : text;
+
+                    submitArmed = true;
+                    notice = text("submit ", review.drafts, " draft comments to ",
+                        review.target, "? press y to send");
+                }
+                break;
+            case Command.diffResolve:
+                if (diffNav())
+                    notice = resolveCommentAtCursor(vm, review);
+                break;
+            case Command.diffMarkViewed:
+                if (diffNav())
+                    notice = toggleViewedAtCursor(vm, review);
+                break;
+            case Command.diffSave:
+                if (vm.composing)
+                    notice = postComment(vm, review);
+                else if (!vm.diffEditOpen)
+                    notice = "nothing is being edited";
+                else if (const failure = vm.diffEditSave())
+                    notice = failure;
+                else
+                    notice = "saved " ~ vm.diffEdit.newPath;
+                break;
 
             // The picker's modal surface answers these; its scopes are
             // unreachable while a pane dispatches.
@@ -1787,7 +1977,8 @@ struct PreviewTui
             // materialising a match list, so a live query IS the
             // condition `n`/`N` are gated on.
             hasMatches: inp.query.length > 0,
-            hasDiffSession: vm.showPreview && !vm.diffSession.empty,
+            hasDiffSession: vm.showPreview && !vm.diffSession.empty && !vm.conflictOpen,
+            conflictOpen: vm.conflictOpen,
             showPreview: vm.showPreview,
             formatPreviewActive: formatPreviewActive(vm),
             hasDsvGrid: vm.showPreview && dsvCopy.info.present,
@@ -2026,13 +2217,16 @@ struct PreviewTui
         return false;
     }
 
-    // Key handling while typing a search query (`/…`): printable keys extend it,
-    // backspace trims, Enter commits, Esc cancels; the view live-jumps to the
-    // first match as the query changes.
+    // Key handling while typing a search query (`/…`): the bar's editor takes
+    // the keys and pastes, Enter commits, Esc cancels; the view live-jumps to
+    // the first match as the query changes.
     private bool handleSearch(in Event ev) @system
     {
-        return ev.match!((in KeyEvent e) {
-            searchKey(e);
+        return ev.match!((in PasteEvent p) {
+            searchStep(inp.paste(p.text[]));
+            return true;
+        }, (in KeyEvent e) {
+            searchStep(inp.key(e));
             return true;
         }, (in EndOfInput _) => false, _ => true);
     }
@@ -2041,64 +2235,53 @@ struct PreviewTui
     /// workspace hook (`DSF5` errors surface as a notice there), Esc cancels.
     private bool handleFilterPrompt(in Event ev) @system
     {
-        return ev.match!((in KeyEvent e) {
-            switch (e.key)
+        void step(LineStep s)
+        {
+            if (s == LineStep.submitted)
             {
-                case Key.char_:
-                    cast(void) inp.typeChar(e.ch);
-                    break;
-                case Key.backspace:
-                    cast(void) inp.backspace();
-                    break;
-                case Key.enter:
-                    inp.mode = Mode.normal;
-                    if (onDsvFilterApply !is null)
-                        onDsvFilterApply(query.idup);
-                    inp.query.clear();
-                    break;
-                case Key.escape:
-                    inp.mode = Mode.normal;
-                    inp.query.clear();
-                    break;
-                default: break;
+                const q = query.idup;
+                inp.close();
+                if (onDsvFilterApply !is null)
+                    onDsvFilterApply(q);
             }
+            else if (s == LineStep.cancelled)
+                inp.close();
+        }
+
+        return ev.match!((in PasteEvent p) {
+            step(inp.paste(p.text[]));
+            return true;
+        }, (in KeyEvent e) {
+            step(inp.key(e));
             return true;
         }, (in EndOfInput _) => false, _ => true);
     }
 
-    private void searchKey(in KeyEvent e) @system
+    private void searchKey(in KeyEvent e) @system => searchStep(inp.key(e));
+
+    private void searchStep(LineStep s) @system
     {
-        switch (e.key)
+        final switch (s)
         {
-            case Key.char_:
-                // `typeChar` decides what a keystroke is worth (printable
-                // ASCII, capped) — the same gate the window applies, so both
-                // reach the matcher with the same query.
-                if (!inp.typeChar(e.ch))
-                    break;
+            case LineStep.none:
+            case LineStep.handled:
+                break;
+            case LineStep.edited:
                 vm.search(query); // the one matcher (`UIA13`)
                 jumpMatch(top, true);
                 break;
-            case Key.backspace:
-                if (!inp.backspace())
-                    break;
-                vm.search(query);
-                jumpMatch(top, true);
-                break;
-            case Key.enter:
-                inp.mode = Mode.normal;
+            case LineStep.submitted:
+                inp.mode = Mode.normal; // the query and its matches stay
                 jumpMatch(top + 1, true); // move off the current match
                 break;
-            case Key.escape:
-                inp.mode = Mode.normal;
-                inp.query.clear();
+            case LineStep.cancelled:
+                inp.close();
                 // Cancelling drops the matches, not just the query (`FND5`).
                 // Clearing `qlen` alone left `vm.matches` populated, so `n`
                 // kept cycling a search the reviewer had already abandoned —
                 // and the count in the status bar outlived its query.
                 vm.clearSearch();
                 break;
-            default: break;
         }
     }
 }
@@ -2433,14 +2616,14 @@ unittest
     // Search runs the SHARED matcher and jumps to a match's row (shrink the
     // viewport so the document overflows and the jump sticks). `vm.search` is
     // the step that used to be a private per-row scan in this module.
-    foreach (char c; "y = 2")
-        cast(void) t.inp.typeChar(c);
+    t.inp.open(Mode.search);
+    cast(void) t.inp.type("y = 2");
     t.height = 5;
     t.vm.search(t.query);
     t.jumpMatch(0, true);
     assert(t.top > 0, "search did not jump to the fence's second line");
     t.top = 0;
-    t.inp.query.clear();
+    t.inp.close();
     t.height = 12;
 
     // A click on the top-border copy cutout (` ⧉ ` before the corner)
@@ -3168,4 +3351,230 @@ unittest
         g.resize(30, 6);
         t.paint(g); // out-of-bounds here before the fix
     }
+}
+
+@("tui.diff.editTheWorktreeSideAndSave")
+@system
+unittest
+{
+    import sparkles.diff : diffText;
+    import sparkles.doc_view.diff_session : buildDiffSession;
+    import sparkles.input.events : Mods;
+    import sparkles.syntax : HighlightEvent, LabelSet;
+    import std.file : readText, remove, tempDir, write;
+    import std.path : buildPath;
+
+    // `DST5`: `Shift-E` opens the worktree side in the editor, keys edit it,
+    // `Alt-S` saves it, and Escape closes the clean edit and reloads.
+    enum before = "a\nb\nc\n", after = "a\nB\nc\n";
+    const path = buildPath(tempDir, "tui-dst5.txt");
+    write(path, after);
+    scope (exit)
+        remove(path);
+    static immutable(Theme)[1] themes = [builtinDark];
+    static immutable string[1] names = ["dark"];
+    auto dd = diffText(before, after, "tui-dst5.txt", "tui-dst5.txt");
+    auto session = buildDiffSession(dd);
+    session.editable = true;
+    session.editRoot = tempDir;
+
+    PreviewTui t;
+    t.labels = LabelSet.standard();
+    t.names = names[];
+    t.themes = themes[];
+    t.resize(60, 20);
+    t.setDocument("diff", "", [HighlightEvent.sourceSpan(0, 0)], PreviewModel.init,
+        startPreview: true, TwoslashReturn.init, "diff", dd,
+        [DiffSides("", before, after)], session);
+    t.relayout();
+    bool reloaded;
+    t.onStaged = () { reloaded = true; };
+
+    assert(t.handle(Event(KeyEvent(Key.char_, 'E', Mods(shift: true)))));
+    assert(t.vm.diffEditing, t.notice);
+    t.handle(Event(KeyEvent(Key.end)));
+    t.handle(Event(KeyEvent(Key.char_, '!')));
+    assert(t.vm.diffEdit.text == "a\nB!\nc\n");
+    const ks = KeyEvent(Key.char_, 's', Mods(alt: true));
+    t.handle(Event(ks));
+    assert(readText(path) == "a\nB!\nc\n", t.notice);
+    assert(!reloaded, "the edit is still open");
+    t.handle(Event(KeyEvent(Key.escape)));
+    assert(!t.vm.diffEditing && reloaded, "closing a saved edit reloads the diff");
+}
+
+@("tui.diff.commentsPersistInTheReviewRef")
+@system
+unittest
+{
+    import review_store : readReview, ReviewData;
+    import sparkles.build_primitives.testing : gitAvailable, TmpGitRepo;
+    import sparkles.diff : diffText;
+    import sparkles.doc_view.diff_session : buildDiffSession;
+    import sparkles.input.events : Mods;
+    import sparkles.syntax : HighlightEvent, LabelSet;
+    import sparkles.syntax.md.model : MdDoc;
+    import sparkles.test_runner.skip : skipTest;
+
+    // `DCM1`/`DCM2`/`DCM5`: `a` opens a comment on the cursor's row, `Alt-S`
+    // posts it to `refs/hue/data`, `d` resolves it and `m` marks the file
+    // viewed, each saved as it happens.
+    if (!gitAvailable)
+        return skipTest("git is not installed");
+    auto repo = TmpGitRepo.create();
+    auto review = new ReviewSession;
+    review.root = repo.dir;
+    review.author = "me";
+    review.parse = (string md) => MdDoc.init;
+
+    enum before = "a\nb\nc\n", after = "a\nB\nc\n";
+    static immutable(Theme)[1] themes = [builtinDark];
+    static immutable string[1] names = ["dark"];
+    auto dd = diffText(before, after, "f.txt", "f.txt");
+    PreviewTui t;
+    t.labels = LabelSet.standard();
+    t.names = names[];
+    t.themes = themes[];
+    t.resize(60, 20);
+    t.setDocument("diff", "", [HighlightEvent.sourceSpan(0, 0)], PreviewModel.init,
+        startPreview: true, TwoslashReturn.init, "diff", dd,
+        [DiffSides("", before, after)], buildDiffSession(dd));
+    t.relayout();
+    t.review = review;
+
+    t.handle(Event(KeyEvent(Key.char_, 'a')));
+    assert(t.vm.composing, t.notice);
+    foreach (ch; "why?")
+        t.handle(Event(KeyEvent(Key.char_, ch)));
+    t.handle(Event(KeyEvent(Key.char_, 's', Mods(alt: true))));
+    assert(!t.vm.composing, t.notice);
+    ReviewData stored;
+    assert(readReview(repo.dir, stored) is null);
+    assert(stored.comments.length == 1 && stored.comments[0].body_ == "why?");
+    size_t local;
+    foreach (ref th; t.vm.diffSession.threads)
+        local += th.localId.length != 0;
+    assert(local == 1, "the comment hangs in the diff");
+
+    t.handle(Event(KeyEvent(Key.char_, 'd')));
+    assert(readReview(repo.dir, stored) is null && stored.comments[0].resolved, t.notice);
+    t.handle(Event(KeyEvent(Key.char_, 'm')));
+    assert(t.vm.diffSession.entries[0].viewed);
+    assert(readReview(repo.dir, stored) is null && stored.viewed.length == 1);
+}
+
+@("tui.diff.suggestionAppliesToTheWorktree")
+@system
+unittest
+{
+    import sparkles.build_primitives.testing : gitAvailable, TmpGitRepo;
+    import sparkles.diff : diffText;
+    import sparkles.doc_view.diff_session : buildDiffSession;
+    import sparkles.input.events : Mods;
+    import sparkles.syntax : HighlightEvent, LabelSet;
+    import sparkles.syntax.md.model : MdDoc;
+    import sparkles.test_runner.skip : skipTest;
+    import std.file : readText;
+    import std.path : buildPath;
+
+    // `DCM3`/`DCM4`: `Shift-A` edits the cursor's line as a suggestion,
+    // `Alt-S` posts it, and `Alt-A` applies it to the working tree.
+    if (!gitAvailable)
+        return skipTest("git is not installed");
+    enum before = "a\nb\nc\n", after = "a\nB\nc\n";
+    auto repo = TmpGitRepo.create();
+    repo.writeFile("f.txt", before);
+    repo.commitAll();
+    repo.writeFile("f.txt", after);
+    auto review = new ReviewSession;
+    review.root = repo.dir;
+    review.author = "me";
+    review.parse = (string md) => MdDoc.init;
+
+    static immutable(Theme)[1] themes = [builtinDark];
+    static immutable string[1] names = ["dark"];
+    auto dd = diffText(before, after, "f.txt", "f.txt");
+    auto session = buildDiffSession(dd);
+    session.editable = true;
+    session.editRoot = repo.dir;
+    PreviewTui t;
+    t.labels = LabelSet.standard();
+    t.names = names[];
+    t.themes = themes[];
+    t.resize(60, 20);
+    t.setDocument("diff", "", [HighlightEvent.sourceSpan(0, 0)], PreviewModel.init,
+        startPreview: true, TwoslashReturn.init, "diff", dd,
+        [DiffSides("", before, after)], session);
+    t.relayout();
+    t.review = review;
+    bool reloaded;
+    t.onStaged = () { reloaded = true; };
+
+    // The cursor starts on the hunk's first change, the removed `b`; the
+    // suggestion goes on the line that replaced it.
+    t.handle(Event(KeyEvent(Key.char_, 'J', Mods(shift: true))));
+    t.handle(Event(KeyEvent(Key.char_, 'A', Mods(shift: true))));
+    assert(t.vm.composing && t.vm.composer.text == "B", t.notice);
+    t.handle(Event(KeyEvent(Key.char_, '!')));
+    t.handle(Event(KeyEvent(Key.char_, 's', Mods(alt: true))));
+    assert(review.data.comments.length == 1 && review.data.comments[0].suggestion.text == "B!",
+        t.notice);
+    bool drawn;
+    foreach (ref th; t.vm.diffSession.threads)
+        drawn = drawn || th.hasSuggestion && th.suggestedFrom == "B" && th.suggestedTo == "B!";
+    assert(drawn, "the thread carries its mini-diff");
+
+    t.handle(Event(KeyEvent(Key.char_, 'a', Mods(alt: true))));
+    assert(readText(buildPath(repo.dir, "f.txt")) == "a\nB!\nc\n", t.notice);
+    assert(reloaded, "the diff is produced again");
+}
+
+@("tui.conflict.pickUndoSaveStage")
+@system
+unittest
+{
+    import sparkles.build_primitives.testing : gitAvailable, TmpGitRepo;
+    import sparkles.input.events : Mods;
+    import sparkles.syntax : HighlightEvent, LabelSet;
+    import sparkles.test_runner.skip : skipTest;
+    import std.file : readText;
+    import std.path : buildPath;
+
+    // `CFV3`/`CFV4` in the terminal: `}` moves, `t`/`b` take sides, `u`
+    // undoes, `Alt-S` saves once none remain, space stages, Esc leaves.
+    if (!gitAvailable)
+        return skipTest("git is not installed");
+    enum text = "<<<<<<< ours\na\n=======\nA\n>>>>>>> theirs\nmid\n"
+        ~ "<<<<<<< ours\nb\n=======\nB\n>>>>>>> theirs\n";
+    auto repo = TmpGitRepo.create();
+    const path = repo.writeFile("f.txt", text);
+
+    static immutable(Theme)[1] themes = [builtinDark];
+    static immutable string[1] names = ["dark"];
+    PreviewTui t;
+    t.labels = LabelSet.standard();
+    t.names = names[];
+    t.themes = themes[];
+    t.resize(100, 30);
+    t.repoRoot = repo.dir;
+    t.setDocument("f.txt", text, [HighlightEvent.sourceSpan(0, text.length)],
+        PreviewModel.init, startPreview: false);
+    t.vm.docPath = path;
+    t.relayout();
+    assert(t.vm.conflictStart() is null && t.vm.conflict.remaining == 2);
+
+    t.handle(Event(KeyEvent(Key.char_, 't')));
+    assert(t.vm.conflict.remaining == 1);
+    t.handle(Event(KeyEvent(Key.char_, 'u')));
+    assert(t.vm.conflict.remaining == 2, "undone");
+    t.handle(Event(KeyEvent(Key.char_, 't')));
+    t.handle(Event(KeyEvent(Key.char_, 's', Mods(alt: true))));
+    assert(t.notice == "1 conflict remains");
+    t.handle(Event(KeyEvent(Key.char_, 'b')));
+    t.handle(Event(KeyEvent(Key.char_, 's', Mods(alt: true))));
+    assert(readText(path) == "A\nmid\nb\nB\n", t.notice);
+    t.handle(Event(KeyEvent(Key.char_, ' ')));
+    assert(t.notice == "staged " ~ path, t.notice);
+    t.handle(Event(KeyEvent(Key.escape)));
+    assert(!t.vm.conflictOpen);
 }

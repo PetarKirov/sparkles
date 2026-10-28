@@ -43,6 +43,8 @@ struct SessionEntry
     uint removed; /// removed rows
     /// `DVG3`: the file's hunks are hidden (the header still renders).
     bool collapsed;
+    /// `DCM5`: the reviewer marked this file viewed at the content shown.
+    bool viewed;
     /// `DVS5`: why this file could not be shown — rendered in-band under the
     /// header, leaving the rest of the session intact. Empty when fine.
     string error;
@@ -108,6 +110,13 @@ struct AnchoredThread
     /// The code it was written against has changed since.
     bool outdated;
     ThreadComment[] comments;
+    /// `DCM1`: the local comment this thread shows, or empty for a forge's.
+    string localId;
+    /// `DCM3`: the lines a suggestion replaces, and what it proposes; drawn
+    /// as a mini-diff under the comment.
+    bool hasSuggestion;
+    /// ditto
+    string suggestedFrom, suggestedTo;
 }
 
 struct DiffSession
@@ -124,6 +133,14 @@ struct DiffSession
     /// `DPR3`/`DCM2`: every conversation on this session, any file. The view
     /// selects each file's own by path.
     AnchoredThread[] threads;
+    /// `DST5`: each file's new side is a file on disk, under this directory
+    /// when it is relative, so it can be edited in place and saved: the
+    /// working tree of a `git diff` against the index or a revision, or the
+    /// second file of a two-file diff. False when the new side is a revision,
+    /// the index or a forge's copy, which are read-only.
+    bool editable;
+    /// ditto
+    string editRoot;
 
 @safe pure nothrow @nogc:
 

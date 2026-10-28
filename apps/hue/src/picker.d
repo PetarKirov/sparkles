@@ -16,68 +16,71 @@ import sparkles.fuzzy : CandidateId, CandidateSnapshot, CandidateView,
     MatchConfig, MatcherWorkspace, QueryParseOptions, QueryStorage,
     RankedResult, Scoring, SearchAccumulator, SearchCursor, SearchLimits,
     SearchStop, fuzzyErr, fuzzyOk, parseQuery, searchChunk;
+import sparkles.input.events : KeyEvent;
 import sparkles.ui.components.scroll_view : ScrollView;
+import sparkles.ui.editor.field : EditorField, FieldResult, FieldSetup, serveClipboard;
 
-/// Fixed UTF-8 prompt editor; accepted keystrokes never allocate.
+/**
+The picker's prompt: the toolkit's editor (`EDU4`) in single-line mode,
+capped at `Capacity` bytes, with a fixed copy of its text so the search
+path reads the query without allocating (`PIK6`).
+*/
 struct PickerPrompt(size_t Capacity = 256)
 if (Capacity > 0)
 {
-    private char[Capacity] bytes = void;
+    /// The editor; refreshes `text` through `sync` after every edit.
+    EditorField field;
+    /// The prompt's key table and clipboard, applied each time it starts.
+    FieldSetup setup;
+    private char[Capacity] mirror = void;
     private size_t length_;
     bool active;
 
     const(char)[] text() const return scope @trusted pure nothrow @nogc
-        => bytes[0 .. length_];
+        => mirror[0 .. length_];
     size_t length() const @safe pure nothrow @nogc => length_;
 
     void start() @safe pure nothrow @nogc
     {
+        field = setup.singleLine();
+        field.state.options.maxLength = Capacity;
         length_ = 0;
         active = true;
     }
 
-    bool type(dchar value) @safe pure nothrow @nogc
-    {
-        import sparkles.base.text.utf : encodeScalar;
+    /// One key for the prompt's editor; `handled` is `false` for a key it
+    /// declines, `changed` when the query changed.
+    FieldResult key(in KeyEvent event) @safe pure nothrow
+        => synced(field.key(event));
 
-        if (value < 0x20 || value == 0x7F)
-            return false;
-        char[4] encoded = void;
-        const count = encodeScalar(value, encoded[]).written;
-        if (count == 0 || count > Capacity - length_)
-            return false;
-        foreach (i; 0 .. count)
-            bytes[length_++] = encoded[i];
-        return true;
-    }
+    /// Text typed or pasted at once; `true` when the query changed.
+    bool insert(scope const(char)[] text, bool paste = false) @safe pure nothrow
+        => synced(field.insert(text, paste)).changed;
 
-    bool erase() @safe pure nothrow @nogc
-    {
-        if (length_ == 0)
-            return false;
-        import sparkles.base.text.utf : decodeToken, UtfMode, UtfStatus;
-
-        // type() is the sole writer: this buffer always contains valid scalars.
-        size_t at, last;
-        while (at < length_)
-        {
-            last = at;
-            const decoded = decodeToken(bytes[at .. length_], UtfMode.strict, true, at);
-            assert(decoded.result.status == UtfStatus.ok);
-            at += decoded.result.consumed;
-        }
-        length_ = last;
-        return true;
-    }
+    /// Do the clipboard work the prompt asked for (`EDY5`); `true` when a
+    /// paste changed the query.
+    bool serve(Clipboard)(in Clipboard clipboard)
+        => synced(serveClipboard(field, clipboard)).changed;
 
     void accept() @safe pure nothrow @nogc
     {
         active = false;
     }
+
     void cancel() @safe pure nothrow @nogc
     {
-        length_ = 0;
+        start();
         active = false;
+    }
+
+    private FieldResult synced(FieldResult result) @safe pure nothrow @nogc
+    {
+        if (result.changed)
+        {
+            length_ = field.state.text.length;
+            field.state.text.copyTo(0, length_, mirror[0 .. length_]);
+        }
+        return result;
     }
 }
 
@@ -687,14 +690,16 @@ private void completeGeneration(Caps, size_t ResultCapacity)(void* raw,
 
 
 @("picker.state.fixedPromptSelectionAndDebug")
-@safe pure nothrow @nogc
+@safe pure nothrow
 unittest
 {
+    import sparkles.input.events : Key;
+
     PickerState!4 state;
     state.open();
-    assert(state.prompt.type('a') && state.prompt.type('é'));
+    assert(state.prompt.insert("a") && state.prompt.insert("é"));
     assert(state.prompt.text == "aé");
-    assert(state.prompt.erase() && state.prompt.text == "a");
+    assert(state.prompt.key(KeyEvent(Key.backspace)).changed && state.prompt.text == "a");
     RankedResult[2] rows;
     rows[0].id.low = 1;
     rows[0].score.total = 10;
@@ -708,19 +713,21 @@ unittest
         && state.debugScore.result.score.total == 9);
 }
 
-@("picker.prompt.scalarEraseAndAtomicCapacity")
-@safe pure nothrow @nogc unittest
+@("picker.prompt.editsAndCaps")
+@safe pure nothrow unittest
 {
+    import sparkles.input.events : Key, Mods;
+
     PickerPrompt!8 prompt;
     prompt.start();
-    assert(prompt.type('e') && prompt.type('\u0301') && prompt.type('😀'));
-    assert(prompt.text == "e\u0301😀");
-    assert(!prompt.type('é') && prompt.text == "e\u0301😀");
-    assert(prompt.erase() && prompt.text == "e\u0301");
-    assert(prompt.erase() && prompt.text == "e");
-    assert(!prompt.type(cast(dchar) 0xD800) && prompt.text == "e");
-    assert(prompt.erase() && prompt.text == "");
-    assert(!prompt.erase());
+    assert(prompt.insert("é") && prompt.insert("😀"));
+    assert(prompt.text == "é😀");
+    assert(!prompt.insert("é") && prompt.text == "é😀", "past the cap: refused whole");
+    assert(prompt.key(KeyEvent(Key.backspace)).changed && prompt.text == "é");
+    assert(prompt.key(KeyEvent(Key.backspace)).changed && prompt.text == "", "a cluster at once");
+    assert(prompt.insert("ab cd"));
+    assert(prompt.key(KeyEvent(Key.char_, 'w', Mods(ctrl: true))).changed && prompt.text == "ab ");
+    assert(!prompt.key(KeyEvent(Key.down)).handled, "the list takes vertical keys");
 }
 
 @("picker.scheduler.syncFallbackAndStaleRejection")

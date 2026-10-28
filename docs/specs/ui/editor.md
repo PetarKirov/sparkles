@@ -222,7 +222,7 @@ range deletes the range.
 **EDC3: Word motion and deletion.** `moveWord(±1)` **must** skip every
 segment that is not of kind `word`, then one `word` segment
 ([`TXT-SEG9`](../base/text/SPEC.md#43-boundaries-from-an-arbitrary-position)),
-as Readline's `forward-word` does: from the start of `foo.bar` it stops
+as Readline's `forward-word` does: from the start of `foo/bar` it stops
 after `foo`, then after `bar`. `killWord(±1)` **must** kill the same span. `killBlankWord(-1)` **must**
 kill back over trailing whitespace and then one blank-delimited run.
 
@@ -288,7 +288,10 @@ default table **must** bind: `Ctrl-A`/`Ctrl-E` line start/end,
 start/end, `Ctrl-W` kill blank-delimited word back, `Alt-B`/`Alt-F` word
 back/forward, `Alt-Backspace`/`Alt-D` kill word back/forward, `Ctrl-H`
 delete back, `Ctrl-Y` yank and `Alt-Y` yank-pop
-([`KBD5`](../design-system/keyboard.md)).
+([`KBD5`](../design-system/keyboard.md)). One exception follows the
+platform: in a window on Linux or Windows, `Ctrl-A` selects all, as every
+other text field there does, and line start is `Home` (EDK3, ED-D2). In a
+terminal, `Ctrl-D` deletes forward, as Readline's `delete-char` does.
 
 **EDK2: The common keys.** Arrows, `Home`/`End`, `PageUp`/`PageDown`,
 `Backspace`/`Delete`, `Enter` and `Tab` **must** keep their conventional
@@ -301,14 +304,15 @@ range, else cancel the field.
 
 | Command              | macOS                   | Linux and Windows, windowed | Terminal                     |
 | -------------------- | ----------------------- | --------------------------- | ---------------------------- |
-| select all           | `Cmd-A`                 | `Ctrl-Shift-A`              | `Ctrl-Shift-A` where encoded |
+| select all           | `Cmd-A`                 | `Ctrl-A`                    | `Ctrl-Shift-A` where encoded |
 | copy / cut / paste   | `Cmd-C`/`Cmd-X`/`Cmd-V` | `Ctrl-C`/`Ctrl-X`/`Ctrl-V`  | the terminal's own paste     |
 | undo / redo          | `Cmd-Z`/`Cmd-Shift-Z`   | `Ctrl-Z`/`Ctrl-Shift-Z`     | `Ctrl-_` / `Alt-_`           |
 | word motion          | `Opt-Left`/`Opt-Right`  | `Ctrl-Left`/`Ctrl-Right`    | both                         |
 | line start / end     | `Cmd-Left`/`Cmd-Right`  | `Home`/`End`                | `Home`/`End`                 |
 | kill word back       | `Opt-Backspace`         | `Ctrl-Backspace`            | `Alt-Backspace`              |
-| add next occurrence  | `Cmd-D`                 | `Ctrl-D`                    | `Ctrl-D`                     |
-| cursor above / below | `Opt-Cmd-Up`/`Down`     | `Ctrl-Alt-Up`/`Down`        | `Ctrl-Alt-Up`/`Down`         |
+| delete forward       | `Delete`                | `Delete`                    | `Delete`, `Ctrl-D`           |
+| add next occurrence  | `Cmd-D`                 | `Ctrl-D`                    | unbound; rebind (`KEY12`)    |
+| cursor above / below | `Opt-Cmd-Up`/`Down`     | `Alt-Shift-Up`/`Down`       | `Alt-Shift-Up`/`Down`        |
 | split into lines     | `Shift-Opt-I`           | `Shift-Alt-I`               | `Shift-Alt-I`                |
 | add / remove cursor  | `Opt-click`             | `Alt-click`                 | `Alt-click`                  |
 | column select        | `Opt-drag`              | `Alt-drag`                  | `Alt-drag`                   |
@@ -501,12 +505,19 @@ whitespace
 but moves over alphanumeric words with `Alt-B`/`Alt-F`. The editor keeps
 both (EDC3), defined once in base (`TXT-SEG9`): as in a shell, `Ctrl-W`
 removes a whole path back to the previous space, while `Alt-Backspace`
-removes one component.
+removes one component. Words are UAX #29's, not Readline's runs of
+alphanumerics, so `foo.bar` and `e.g.` are one word each: `.` between
+letters is MidNumLet and joins them.
 
-**ED-D2: Readline keys plus a platform layer.** `Ctrl-A` means line start
-everywhere, as it does in macOS text fields; native platform chords are
-bound beside it (EDK3). The alternative, platform-native keys in windows
-and Readline only in terminals, would give one application two editors.
+**ED-D2: Readline keys plus a platform layer.** The Readline keys are bound
+on every target, and native platform chords beside them (EDK3), so one
+application has one editor wherever it runs. Where the two collide, the
+platform wins in a window and Readline in a terminal: `Ctrl-A` selects all
+in a window on Linux or Windows and moves to line start in a terminal and
+on macOS, whose text fields already treat it as line start; `Ctrl-D` adds
+the next occurrence in a window and deletes forward in a terminal. The
+owner chose this split ([EDQ2, EDQ3](#resolved-questions)): a window user
+expects the platform's select-all, and a shell user expects Readline.
 
 **ED-D3: Several cursors from the start.** The selection is a set of ranges
 with a primary one, as in CodeMirror, Helix, Kakoune and Zed, and every
@@ -527,38 +538,50 @@ holds counted pointers ([text-buffer TXD-2](../text-buffer/decisions.md#txd-2)).
 ([text-buffer TXD-3](../text-buffer/decisions.md#txd-3)); `earlier`/`later`
 reach abandoned branches.
 
-### Open questions
+### Resolved questions
 
 - **EDQ1 — terminal undo and redo keys.** `Ctrl-Z` is reserved in a
-  terminal; Readline's undo is `Ctrl-_`, and it has no redo. `Alt-_` for
-  redo is a proposal. Owner decision before E1.
-- **EDQ2 — `Ctrl-D`.** Readline binds it to delete-forward (and end of
-  input on an empty line); EDK3 binds it to add-next-occurrence, following
-  VS Code. Owner decision before E1.
-- **EDQ3 — desktop conflicts.** GNOME binds `Ctrl-Alt-Up`/`Down` to
-  workspace switching, and `Ctrl-Shift-A` is uncommon for select-all.
-  Owner decision before E1.
+  terminal and Readline has no redo. Decided: `Ctrl-_` undoes, as in
+  Readline, and `Alt-_` redoes.
+- **EDQ2 — `Ctrl-D`.** Readline deletes forward with it; VS Code adds the
+  next occurrence. Decided: delete forward in a terminal, add the next
+  occurrence in a window (`Cmd-D` on macOS). Add-next-occurrence is unbound
+  in a terminal and reachable by rebinding.
+- **EDQ3 — desktop conflicts.** GNOME takes `Ctrl-Alt-Up`/`Down` for
+  workspace switching. Decided: adding a cursor above or below is
+  `Alt-Shift-Up`/`Down` off macOS, and `Ctrl-A` selects all in a window on
+  Linux and Windows (ED-D2).
 
 ## Requirements and evidence
 
-| ID         | Requirement              | Status      | Traces to                                |
-| ---------- | ------------------------ | ----------- | ---------------------------------------- |
-| EDT1       | the state is a value     | not started | proposed `EditorState`                   |
-| EDT2       | one step                 | not started | proposed `step`                          |
-| EDT3       | grapheme boundaries      | not started | proposed `step`                          |
-| EDT4       | normalized selection set | not started | proposed `SelectionSet`                  |
-| EDT5       | every range, one change  | not started | proposed `step`                          |
-| EDT6       | coalescing               | not started | proposed `step`                          |
-| EDT7       | visual lines are a query | not started | proposed `EditContext`                   |
-| EDT8       | single-line mode         | not started | proposed `EditorOptions`                 |
-| EDT9       | effects                  | not started | proposed `EditEffect`                    |
-| EDT10      | read-only spans          | not started | proposed `EditorState`                   |
-| EDC1–EDC11 | command vocabulary       | not started | proposed `EditCommand`                   |
-| EDK1–EDK5  | default keys             | not started | proposed editor key table                |
-| EDY1–EDY5  | kill ring and clipboard  | not started | proposed `KillRing`                      |
-| EDI1–EDI9  | input and composition    | not started | proposed input routing; `INP24`          |
-| EDR1–EDR5  | the view                 | not started | proposed `sparkles.ui.components.editor` |
-| EDU1–EDU4  | consumers and migration  | not started | the fields listed in EDU4                |
+| ID                     | Requirement                                            | Status  | Traces to                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ---------------------- | ------------------------------------------------------ | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| EDT1                   | the state is a value                                   | full    | `EditorState`; tests `editor.oracle.invariants`, `editor.history.coalescingAndBranches`                                                                                                                                                                                                                                                                                                                                 |
+| EDT2                   | one step                                               | full    | `step`, `stepInPlace`, `isTextSource`, `isEditContext`; test `editor.oracle.referenceEditor`                                                                                                                                                                                                                                                                                                                            |
+| EDT3                   | grapheme boundaries                                    | full    | `step`; tests `editor.oracle.invariants`, `editor.grapheme.wholeClusters`                                                                                                                                                                                                                                                                                                                                               |
+| EDT4                   | normalized selection set                               | full    | `SelectionSet`; tests `editor.selection.normalize`, `editor.normalize.afterEdit`, `editor.oracle.invariants`                                                                                                                                                                                                                                                                                                            |
+| EDT5                   | every range, one change                                | full    | `step`; tests `editor.insert.everyRange`, `editor.oracle.multiCursorMatchesOneAtATime`                                                                                                                                                                                                                                                                                                                                  |
+| EDT6                   | coalescing                                             | full    | `step`; test `editor.history.coalescingAndBranches`                                                                                                                                                                                                                                                                                                                                                                     |
+| EDT7                   | visual lines are a query                               | full    | `isEditContext`, `LogicalContext`; tests `editor.context.logicalLines`, `editor.vertical.goalColumn`                                                                                                                                                                                                                                                                                                                    |
+| EDT8                   | single-line mode                                       | full    | `EditorOptions`; test `editor.singleLine`                                                                                                                                                                                                                                                                                                                                                                               |
+| EDT9                   | effects                                                | full    | `EditEffect`, `EditEffects`, `EffectKind.imeArea`; tests `editor.composition.imeAreaFollowsTheCaret`, `editor.clipboard.requestAndAnswer`                                                                                                                                                                                                                                                                               |
+| EDT10                  | read-only spans                                        | full    | `ReadOnlySpan`; test `editor.readOnly.spans`                                                                                                                                                                                                                                                                                                                                                                            |
+| EDC1–EDC9              | commands                                               | full    | `EditCommand`, `EditKind`; tests `editor.word.motionAndKill`, `editor.killBlankWord.wholePath`, `editor.lineBoundary.toggleAndKillBreak`, `editor.selection.commands`, `editor.multi.addNextOccurrence`, `editor.multi.verticalSplitAndColumns`, `editor.history.coalescingAndBranches`                                                                                                                                 |
+| EDC10                  | composition                                            | full    | `EditCommand.compose`, `EditCommand.commitComposition`, `Composition`; tests `editor.composition.shownThenCommitted`, `editor.composition.emptyUpdateEnds`, `editor.composition.otherCommandsCommitFirst`, `editor.composition.motionWithinPreedit`, `editor.composition.escapeCancels`                                                                                                                                 |
+| EDC11                  | field control                                          | full    | `EditKind.escape`; test `editor.fieldControl`                                                                                                                                                                                                                                                                                                                                                                           |
+| EDK1–EDK5              | default keys                                           | full    | `editorBindings`, `editorCommand`, `editorBinds`, `windowTarget`; tests `editor.keys.readlineEverywhere`, `editor.keys.platformLayer`, `editor.keys.reservedInTerminals`, `editor.keys.typedTextAndDecline`                                                                                                                                                                                                             |
+| EDY1–EDY4              | kill ring                                              | full    | `KillRing`, `KillEntry`; tests `editor.killRing.boundedAndCycling`, `editor.killRing.joinYankAndPop`, `editor.paste.distribution`                                                                                                                                                                                                                                                                                       |
+| EDY5                   | the system clipboard                                   | full    | `EditKind.paste`, `LogicalContext.clipboardRead`, `LogicalContext.clipboardWrite`, `serveClipboard`, `forwardClipboard`, `FieldSetup`; tests `editor.clipboard.requestAndAnswer`, `editor.clipboard.absentIsExplicit`, `editor.clipboard.cutWithoutWriterKeepsText`, `editor.field.serveClipboard`, `editor.field.forwardClipboard`. Hosts: hue's window, the terminal app's pages and viewer, the diagram, the gallery |
+| EDI1, EDI2             | typed text, focus routing                              | full    | `editorCommand`; the migrated fields' hosts route a focused field's keys first                                                                                                                                                                                                                                                                                                                                          |
+| EDI4                   | pasted text                                            | full    | `EditorField.insert`; `TreeViewState.filterPaste`, `InputState.paste`, `QueryField.paste`, `Pasteable`                                                                                                                                                                                                                                                                                                                  |
+| EDI5                   | degradation is explicit                                | full    | `NoopReason.capabilityAbsent`; test `editor.clipboard.absentIsExplicit`                                                                                                                                                                                                                                                                                                                                                 |
+| EDI3, EDI6, EDI7       | composition, the input-method area, the wsi conversion | full    | `Composition`, `EditorField.compose`, `withPreedit`, `caretArea`, `inputComposition`, `WsiInput.texts`; tests `editor.field.compose`, `editor.composition.imeAreaFollowsTheCaret`, `ui_app.wsi_input.compositionFromEachBackend`, `ui_app.wsi_input.waylandRecordingMatchesItsMapping`, `ui_gallery.gallery.propertyFilterShowsComposition`, `diagram.app.labelDraftShowsComposition`                                   |
+| EDI8                   | SDL composition                                        | partial | `Sdl3Events` translates `SDL_EVENT_TEXT_EDITING` (`texts`), `Window.textInput`, `Window.textInputArea`; test `ui_sdl3.events.textEditingIsAComposition`. No SDL host yet ties text input to editor focus or forwards `imeArea`                                                                                                                                                                                          |
+| EDI9                   | Android soft keyboard                                  | full    | `SoftKeyboard`, `KeyboardAsk`, `TextInputSurface`, `DocViewPane.editing`; test `editor.softKeyboard.followsFocusEdges`. Verified on the API 35 emulator: hue's search bar and the terminal app's logs-page search raise the keyboard, take its text, and put it away on leaving the field; hue lays out above the keyboard's inset                                                                                      |
+| EDR1, EDR2, EDR4, EDR5 | the view                                               | full    | `editorView`, `editorLineSpans`, `scrollToPrimary`, `EffectKind.changed`; tests `editor.view.spans`, `editor.view.readOnlyDistinct`, `editor.view.sourceRanges`, `editor.view.scrollToPrimary`, `editor.view.composition`                                                                                                                                                                                               |
+| EDR3                   | highlighting off the key path                          | full    | `DiffEdit.styled`, `DiffEdit.tick`: the edited diff draws plain while typing and re-highlights once the edit settles (`DiffEdit.settle`); test `diff_edit.DiffEdit.rediffsAsItIsEdited`                                                                                                                                                                                                                                 |
+| EDU1–EDU3              | write-wave consumers                                   | full    | `DiffEdit` (`DST5`), the comment composer and suggestion editor (`DCM2`, `DCM3`), `ConflictSession` with read-only markers (`CFV4`); tests `tui.diff.editTheWorktreeSideAndSave`, `tui.diff.suggestionAppliesToTheWorktree`, `conflict_view.ConflictSession.handEditsKeepTheMarkers`                                                                                                                                    |
+| EDU4                   | every existing field migrates                          | full    | `EditorField`; `TreeViewState.filterKey`, `InputState.key`, `PickerPrompt.key`, `SettingsPane.handlePaste`, `QueryField`, `editKey`; the line-edit state it replaced is removed                                                                                                                                                                                                                                         |
 
 ### Oracles
 
@@ -582,13 +605,13 @@ pattern of `libs/diff/src/sparkles/diff/myers.d`.
 
 ## Milestones
 
-| Milestone | Scope                                                                                                                      | Status      | Requirements                                                                                                                             |
-| --------- | -------------------------------------------------------------------------------------------------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| E0        | Base steppers and the text buffer                                                                                          | delivered   | [`TXT-SEG7`–`9`](../base/text/PLAN.md), [TB0–TB3](../text-buffer/PLAN.md)                                                                |
-| E1        | The model, commands, kill ring, clipboard read, default keys, the view on every backend, and every existing field migrated | not started | EDT1–EDT10, EDC1–EDC11, EDK1–EDK5, EDY1–EDY5, EDI1, EDI2, EDI4, EDI5, EDR1, EDR2, EDR4, EDR5, EDU4, `INP25`, a target-aware `KBD3` check |
-| E2        | Composition, the SDL3 IME, the wsi conversion, input-method placement                                                      | not started | EDI3, EDI6, EDI7, EDI8, `INP24`, composition in EDR1                                                                                     |
-| E3        | Write-wave consumers                                                                                                       | not started | EDU1–EDU3, EDR3                                                                                                                          |
-| E4        | Android soft keyboard                                                                                                      | not started | EDI9                                                                                                                                     |
+| Milestone | Scope                                                                                                                      | Status    | Requirements                                                                                                                             |
+| --------- | -------------------------------------------------------------------------------------------------------------------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| E0        | Base steppers and the text buffer                                                                                          | delivered | [`TXT-SEG7`–`9`](../base/text/PLAN.md), [TB0–TB3](../text-buffer/PLAN.md)                                                                |
+| E1        | The model, commands, kill ring, clipboard read, default keys, the view on every backend, and every existing field migrated | partial   | EDT1–EDT10, EDC1–EDC11, EDK1–EDK5, EDY1–EDY5, EDI1, EDI2, EDI4, EDI5, EDR1, EDR2, EDR4, EDR5, EDU4, `INP25`, a target-aware `KBD3` check |
+| E2        | Composition, the SDL3 IME, the wsi conversion, input-method placement                                                      | partial   | EDI3, EDI6, EDI7, EDI8, `INP24`, composition in EDR1                                                                                     |
+| E3        | Write-wave consumers                                                                                                       | delivered | EDU1–EDU3, EDR3                                                                                                                          |
+| E4        | Android soft keyboard                                                                                                      | delivered | EDI9                                                                                                                                     |
 
 E0 to E2 are delivered as one stack of pull requests after this
 specification is accepted. Live composition on native wsi windows arrives

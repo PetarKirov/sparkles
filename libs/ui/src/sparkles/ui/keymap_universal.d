@@ -150,10 +150,21 @@ static immutable Chord[] reservedChords = [
     Chord(key: Key.char_, ch: '\\', ctrl: true),
 ];
 
-/// The first row of `table` whose path uses a reserved chord at any depth —
-/// the index, or `size_t.max` (`KBD3`).
-size_t firstReserved(B)(scope const(B)[] table)
+/// Where a table's keys are read. `KBD3` reserves keys in a terminal only: a
+/// window has no interrupt or flow control to protect, and its platform
+/// binds `Ctrl-C`/`Ctrl-Z` to copy and undo.
+enum KeyTarget : ubyte
 {
+    terminal,
+    window,
+}
+
+/// The first row of `table` whose path uses a reserved chord at any depth —
+/// the index, or `size_t.max` (`KBD3`). Nothing is reserved in a window.
+size_t firstReserved(B)(scope const(B)[] table, KeyTarget target = KeyTarget.terminal)
+{
+    if (target == KeyTarget.window)
+        return size_t.max;
     foreach (i, ref b; table)
         foreach (d; 0 .. b.depth)
             foreach (ref r; reservedChords)

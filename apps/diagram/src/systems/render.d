@@ -184,8 +184,9 @@ private void renderBoard(ref const World w, ref const Camera cam, in Rect board,
             textAt(ops, Point(r.x, r.y), lab, Slot.code, codeVis, r.width);
         if (editing && r.height >= 1)
         {
-            // Caret after the draft (clamped inside the box), by cell width.
-            int cx = r.x + cast(int) visibleWidth(lab);
+            // The caret where the draft's editor has it (clamped inside the
+            // box), by cell width.
+            int cx = r.x + cast(int) visibleWidth(lab[0 .. w.editCaret]);
             if (cx >= r.right)
                 cx = r.right - 1;
             if (cx < r.x)

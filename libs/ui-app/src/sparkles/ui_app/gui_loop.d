@@ -29,12 +29,13 @@ import core.time : msecs;
 
 import sparkles.base.term_control : PointerShape;
 import sparkles.base.buffer : SharedBuffer;
-import sparkles.input : Event, InputCapabilities, Mods, mousePointer, touchPointer;
+import sparkles.input : Event, InputCapabilities, Mods, mousePointer, pasteChunks,
+    touchPointer;
 import sparkles.ui.canvas : DrawOp;
 import sparkles.ui.geometry : Size;
 import sparkles.ui_app.backend : Backend;
 import sparkles.ui_app.gui_setup : GuiRequest, GuiSession, openGuiSession;
-import sparkles.ui_app.host : FrameOps, HostState, isHost, noDraw, noSetup,
+import sparkles.ui_app.host : FrameOps, HostState, canReadClipboard, isHost, noDraw, noSetup,
     noShutdown, PointerUnit, RunConfig, withRealSize;
 import sparkles.base.term_color : RgbColor;
 import raylib : GetTime;
@@ -121,6 +122,22 @@ struct GuiHost
     void screenshot(in char[] path) @safe => session.window.screenshot(path);
 
     void clipboard(in char[] text) @safe => session.window.clipboard(text);
+
+    /**
+    Reads the system clipboard for request `request` (`INP25`). The answer
+    arrives after the next poll as `PasteEvent`s carrying `request`, so the
+    read never blocks a step and a late answer is recognisable.
+    */
+    void readClipboard(uint request) @safe
+    {
+        pendingClipboard = session.window.clipboardText();
+        pendingRequest = request;
+    }
+
+    /// The clipboard answer waiting for the next poll, and its request.
+    private string pendingClipboard;
+    /// ditto
+    private uint pendingRequest;
 
     void title(in char[] t) @safe => session.window.title(t);
 
@@ -216,6 +233,7 @@ struct GuiHost
 }
 
 static assert(isHost!GuiHost);
+static assert(canReadClipboard!GuiHost);
 
 /**
 Runs `present`/`handle` in a window until the application quits or the platform
@@ -252,6 +270,7 @@ bool runGui(alias present, alias handle, alias draw = noDraw,
     // The terminal-grade keyboard, where the application asked for it: the
     // capability declaration IS the switch — RaylibEvents reads it back.
     host.capabilities.keyRelease = cfg.keyRelease;
+    host.capabilities.clipboardRead = true; // `readClipboard` answers at the next poll
 
     // Uploaded textures are GL objects: free them here, while the context is
     // still up. A destructor would run at an unspecified point relative to
@@ -301,6 +320,19 @@ bool runGui(alias present, alias handle, alias draw = noDraw,
         // `HST17`: the live level, not the last event's — read after the
         // drain, so a frame sees the modifiers it was actually held under.
         host.noteModifiers(events.modifiers);
+        // `INP25`: a clipboard read asked for during the last frame is
+        // answered now, after this frame's input, as a tagged paste.
+        if (host.pendingRequest)
+        {
+            const request = host.pendingRequest;
+            const text = host.pendingClipboard;
+            host.pendingRequest = 0;
+            host.pendingClipboard = null;
+            Event[] answer;
+            pasteChunks(text, (Event e) @safe { answer ~= e; }, request);
+            foreach (e; answer)
+                handle(host, e);
+        }
 
         if (host.quitRequested)
             return;

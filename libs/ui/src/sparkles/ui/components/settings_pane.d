@@ -57,9 +57,11 @@ import sparkles.input.events : Event, Key, KeyEvent, Point, PointerEvent,
     WheelEvent;
 import std.sumtype : match;
 
+import sparkles.ui.components.editor : EditorViewOptions, editorLineSpans;
+import sparkles.ui.editor.field : EditorField, FieldSetup;
 import sparkles.ui.components.property_view : propertyView, propertyViewSlots,
     PropertyViewOptions;
-import sparkles.ui.components.tree_view : treeActivate = activate,
+import sparkles.ui.components.tree_view : filterServe, treeActivate = activate,
     treeCollapseOrUp = collapseOrUp, TreeStep, TreeViewState;
 import sparkles.ui.geometry : Constraints, Insets, Rect, SizeSpec;
 import sparkles.ui.keymap : Binding, bind, chord, Chord, commandFor,
@@ -365,7 +367,12 @@ struct SettingsPane(T, alias resolveKey = defaultSettingsCommand)
     // The string-leaf line editor (owns the keys while open).
     bool textEditing;            ///
     string textPath;             ///
-    string textBuf;              ///
+    /// The string leaf's editor (`EDU4`), while `textEditing`.
+    EditorField textField;
+    private FieldSetup textSetup;
+
+    /// The text being edited.
+    string textBuf() const => textField.text;
 
     string status;               /// footer line: saves, refusals, apply notes
 
@@ -926,11 +933,14 @@ struct SettingsPane(T, alias resolveKey = defaultSettingsCommand)
         if (!readValueAt(*subject, path, cur))
             return consumed();
         textPath = path;
-        textBuf = cur.s.idup;
+        textField = textSetup.singleLine(cur.s);
         textEditing = true;
         return consumed();
     }
 
+    /// The editor takes every key the pane's text scope does not bind
+    /// (Enter accepts, Escape cancels): Backspace, words, kills, yanks,
+    /// motion. The pane is modal, so a key the editor declines is swallowed.
     private SettingsResult handleTextKey(in KeyEvent k)
     {
         switch (resolveKey(k, true))
@@ -939,41 +949,51 @@ struct SettingsPane(T, alias resolveKey = defaultSettingsCommand)
             {
                 textEditing = false;
                 const a = editProperty(*subject,
-                    Edit(textPath, EditValue.ofText(textBuf),
+                    Edit(textPath, EditValue.ofText(textField.text),
                         EditPhase.commit), edits, tree.policy);
                 return a.ok ? committed(textPath) : consumedRefresh();
             }
             case SettingsCommand.textCancel:
                 textEditing = false;
                 return consumed();
-            case SettingsCommand.textBackspace:
-                if (textBuf.length)
-                {
-                    import sparkles.base.text.utf : decodeToken, UtfMode, UtfStatus;
-
-                    // This scalar editor's buffer is valid UTF-8, not a grapheme editor.
-                    size_t at, cut;
-                    while (at < textBuf.length)
-                    {
-                        cut = at;
-                        const decoded = decodeToken(textBuf[at .. $], UtfMode.strict, true, at);
-                        assert(decoded.result.status == UtfStatus.ok);
-                        at += decoded.result.consumed;
-                    }
-                    textBuf = textBuf[0 .. cut];
-                }
-                return consumed();
             default:
-                if (k.key == Key.char_ && k.ch >= ' ')
-                {
-                    import sparkles.base.text.utf : encodeScalar;
-
-                    char[4] encoded;
-                    const result = encodeScalar(k.ch, encoded[]);
-                    textBuf ~= encoded[0 .. result.written];
-                }
+                cast(void) textField.key(k);
                 return consumed();
         }
+    }
+
+    /// The key table and clipboard of the pane's fields, the string editor
+    /// and the filter (`EDK1`, `EDY5`).
+    void fieldSetup(FieldSetup setup) @safe pure nothrow @nogc
+    {
+        textSetup = setup;
+        tv.filterSetup = setup;
+    }
+
+    /// Do the clipboard work the open editor or the filter asked for
+    /// (`EDY5`): a copy, and a paste answered with `clipboard`'s text.
+    SettingsResult serveClipboard(Clipboard)(in Clipboard clipboard)
+    {
+        import sparkles.ui.editor.field : serveField = serveClipboard;
+
+        if (textEditing)
+            cast(void) serveField(textField, clipboard);
+        else if (tv.searching && tv.filterServe(clipboard) == TreeStep.rebuild)
+            return consumedRefresh();
+        return consumed();
+    }
+
+    /// Text pasted into the pane: the open editor's, else the filter's.
+    SettingsResult handlePaste(scope const(char)[] text)
+    {
+        if (textEditing)
+        {
+            cast(void) textField.insert(text, true);
+            return consumed();
+        }
+        if (tv.searching && tv.filterPaste(text) == TreeStep.rebuild)
+            return consumedRefresh();
+        return consumed();
     }
 
     // ── the save ────────────────────────────────────────────────────────────
@@ -1065,14 +1085,16 @@ struct SettingsPane(T, alias resolveKey = defaultSettingsCommand)
             key: settingsTreeKey, width: SizeSpec.grow(),
             height: SizeSpec.grow()));
 
-        // The line editor, while open.
+        // The line editor, while open: the caret where the editor has it.
         if (textEditing)
+        {
+            EditorViewOptions fieldView;
+            fieldView.textSlot = Slot.code;
             body_ ~= b.add(Widget(kind: WidgetKind.rich, spans: [
                 TextSpan(text: textPath, slot: Slot.chromeAccent),
                 TextSpan(text: ": ", slot: Slot.muted),
-                TextSpan(text: textBuf.idup, slot: Slot.code),
-                TextSpan(text: "▏", slot: Slot.caret),
-            ], width: SizeSpec.grow()));
+            ] ~ editorLineSpans(textField.state, 0, fieldView), width: SizeSpec.grow()));
+        }
 
         // The footer: history depth, shadow warning, status.
         {
@@ -1383,9 +1405,11 @@ version (UiSettingsFixtures)
     cast(void) p.handleKey(kch('😀'));
     cast(void) p.handleKey(kch('\u0301'));
     cast(void) p.handleKey(knk(Key.backspace));
-    assert(p.textBuf == "start-us😀", "backspace is scalar, not grapheme deletion");
-    cast(void) p.handleKey(knk(Key.backspace));
-    assert(p.textBuf == "start-us");
+    assert(p.textBuf == "start-us", "backspace deletes the whole cluster, accent and all");
+    cast(void) p.handleKey(kch('w', Mods(ctrl: true)));
+    assert(p.textBuf == "", "Ctrl-W kills the whole value back to the blank");
+    cast(void) p.handleKey(kch('y', Mods(ctrl: true)));
+    assert(p.textBuf == "start-us", "and Ctrl-Y yanks it back");
     cast(void) p.handleKey(knk(Key.enter));
     assert(!p.textEditing && cfg.name == "start-us" && p.fileDraft.name == "start-us");
 

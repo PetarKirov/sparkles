@@ -25,5 +25,5 @@ unittest
 {
     enum table = collectSchema!Event();
     assert(table.paths.length >= 40);
-    assert(table.categories.length == 10); // one per `Event` variant, `ColorSchemeEvent` included
+    assert(table.categories.length == 11); // one per `Event` variant, `CompositionEvent` included
 }

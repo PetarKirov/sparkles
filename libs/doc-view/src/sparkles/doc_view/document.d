@@ -85,6 +85,14 @@ struct Document
     /// re-running it after a `DST2` apply narrows to the same files. Widening
     /// the view as a side effect of staging would be its own small betrayal.
     string[] diffPaths;
+    /// `kind == diff`: how to produce this document again (`DST2`, `DST5`).
+    DiffSource diffSource;
+    /// `kind == diff`: the forge review this diff is (`"github.com/o/r#7"`) and
+    /// the head commit it shows, so comments drafted on it can be submitted
+    /// there (`DCM6`); empty for a local diff.
+    string reviewTarget;
+    /// ditto
+    string reviewHead;
     /// `kind == dsv`: the original bytes (`source` holds the adapter's
     /// decoded buffer — see `dsv_view`; the raw-fidelity copy contract
     /// `DSC2`–`DSC5` is post-CHK and reads these).
@@ -168,6 +176,29 @@ struct DiffEmphasis
     }
 }
 
+
+/**
+How a diff document was produced, so a host can produce it again after the
+working tree changed under it: a stage (`DST2`), a save (`DST5`). A patch
+read from a pipe or fetched from a forge has no source to re-run.
+*/
+struct DiffSource
+{
+    enum Kind : ubyte
+    {
+        none,
+        /// `git diff [--staged] [revspec] [-- paths]`.
+        git,
+        /// Two files on disk.
+        pair,
+    }
+
+    Kind kind;
+    string revspec;
+    bool staged;
+    string[] paths;
+    string oldPath, newPath;
+}
 /// The per-side full texts of a diff document (`DVM5` syntax composition):
 /// the renderers re-highlight each side with `lang` and layer the diff tints
 /// on top. Empty when the sides are unavailable (a patch without readable
@@ -759,7 +790,23 @@ struct DocumentPipeline
         // into. `--staged` is already there; a revision range has no index at
         // all, and a reviewer must not be shown keys that cannot work.
         doc.diffSession.stageable = revspec.length == 0 && !staged;
+        // `DST5`: a worktree new side can be edited and saved in place; its
+        // paths are relative to the repository's top level.
+        {
+            string oldSpec, newSpec;
+            gitDiffSideSpecs(revspec, staged, oldSpec, newSpec);
+            if (newSpec is null)
+            {
+                const top = runGit(["rev-parse", "--show-toplevel"]);
+                if (top.status == 0)
+                {
+                    doc.diffSession.editable = true;
+                    doc.diffSession.editRoot = top.output.strip;
+                }
+            }
+        }
         doc.diffPaths = paths.dup;
+        doc.diffSource = DiffSource(DiffSource.Kind.git, revspec, staged, paths.dup);
         doc.events = highlight(doc.lang, doc.source, quietFallback: true);
         return doc;
     }
@@ -1140,11 +1187,28 @@ struct DocumentPipeline
         };
         classifyStructural(doc);
         attachSession(doc);
+        doc.diffSession.editable = true; // `DST5`: the second file is on disk
+        doc.diffSource = DiffSource(DiffSource.Kind.pair, oldPath: oldPath, newPath: newPath);
         SharedBuffer!char patchBuf;
         emitPatch(doc.diffDoc, patchBuf);
         doc.source = patchBuf[].idup;
         doc.events = highlight(doc.lang, doc.source, quietFallback: true);
         return doc;
+    }
+
+    /// Produces a diff document again from its source (`DST2`, `DST5`):
+    /// `Document.init` when it has none.
+    Document reloadDiff(in DiffSource source)
+    {
+        final switch (source.kind)
+        {
+            case DiffSource.Kind.none:
+                return Document.init;
+            case DiffSource.Kind.git:
+                return loadGitDiff(source.revspec, source.staged, source.paths.dup);
+            case DiffSource.Kind.pair:
+                return loadDiffPair(source.oldPath, source.newPath);
+        }
     }
 
     /**

@@ -26,6 +26,9 @@ import sparkles.input.events : Key, KeyEvent, WheelEvent;
 import sparkles.syntax : GrammarRegistry, LabelSet, TsConfigCache;
 import sparkles.ui.canvas : DrawOp, fillRectOp, popClipOp, pushClipOp,
     RuleEdge, Scrollbar;
+import sparkles.ui.components.editor : EditorViewOptions, editorLineSpans;
+import sparkles.ui.editor.field : EditorField, FieldClipboard, serveClipboard, useClipboard;
+import sparkles.ui.editor.keys : windowTarget;
 import sparkles.ui.geometry : Rect;
 import sparkles.ui.style : ColorScheme, schemeForBackground, Slot, Visual;
 import sparkles.ui.theme : Theme;
@@ -130,7 +133,17 @@ struct DocViewPane
     private SysTime mtime;
     private MonoTime lastPoll;
     private bool searching;
-    private char[] query;
+
+    /// The search line has the keyboard (`EDI9`).
+    bool editing() const @safe pure nothrow @nogc => searching;
+
+    /// The search line's editor (`EDU4`), and its text as of the last edit.
+    private EditorField queryField;
+    /// Where the search line copies to and pastes from (`EDY5`); unset, it
+    /// offers neither.
+    FieldClipboard!(void delegate(scope const(char)[]) @system, const(char)[] delegate() @system) clipboard;
+    /// ditto
+    private string query;
     private dchar pending; // `g` or `z`, awaiting its second key
     private int laidCols = -1;
     private int docRows = 1;
@@ -541,6 +554,8 @@ struct DocViewPane
                 return PaneKey.handled;
             case '/':
                 searching = true;
+                queryField = EditorField.singleLine("", windowTarget);
+                useClipboard(queryField, clipboard);
                 query = null;
                 vm.clearSearch();
                 return PaneKey.handled;
@@ -623,34 +638,26 @@ struct DocViewPane
 
     private PaneKey searchKey(in KeyEvent k) @system
     {
-        switch (k.key)
+        // The search line is an editor field (`EDU4`): it takes the keys,
+        // Enter keeps the matches, Esc clears them. A chord the editor
+        // declines is still the search line's while it is open.
+        const r = serveClipboard(queryField, queryField.key(k), clipboard);
+        if (r.cancelled)
         {
-            case Key.escape:
-                searching = false;
-                query = null;
-                vm.clearSearch();
-                return PaneKey.handled;
-            case Key.enter:
-                searching = false;
-                return PaneKey.handled;
-            case Key.backspace:
-                if (query.length)
-                {
-                    import sparkles.base.text.tokens : byUtfToken;
-                    import sparkles.base.text.utf : UtfMode;
-
-                    size_t last;
-                    foreach (token; byUtfToken(query, UtfMode.opaque))
-                        last = token.start;
-                    query = query[0 .. last];
-                }
-                break;
-            default:
-                if (k.text.length && !k.mods.ctrl && !k.mods.alt)
-                    query ~= k.text;
-                else
-                    return PaneKey.handled;
+            searching = false;
+            queryField = EditorField.init;
+            query = null;
+            vm.clearSearch();
+            return PaneKey.handled;
         }
+        if (r.submitted)
+        {
+            searching = false;
+            return PaneKey.handled;
+        }
+        if (!r.changed)
+            return PaneKey.handled;
+        query = queryField.text;
         vm.search(query);
         if (vm.matches.length)
         {
@@ -891,8 +898,13 @@ struct DocViewPane
         }
 
         if (searching)
-            textLine(c, rows - 1, cols, "/" ~ cast(string) query.idup,
-                mix(vm.pageBg, vm.pageFg, 0.12));
+        {
+            // The query with the caret where its editor has it (`EDR1`).
+            string shown = "/";
+            foreach (span; editorLineSpans(queryField.state, 0, EditorViewOptions.init))
+                shown ~= span.text;
+            textLine(c, rows - 1, cols, shown, mix(vm.pageBg, vm.pageFg, 0.12));
+        }
     }
 
     private void textLine(ref RaylibCanvas c, int row, int cols, string text, RgbColor bg) @system

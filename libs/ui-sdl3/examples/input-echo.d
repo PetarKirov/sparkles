@@ -147,7 +147,16 @@ struct InputEcho
             // left after it — SDL_EVENT_QUIT has no toolkit spelling.
             events.poll((Event e) {
                 if (!hasFilter || evalDql!EventSchema(engine, filter, e))
+                {
                     writeln(describe(e));
+                    // A preedit is named by id, readable until the next poll.
+                    const shown = e; // matching a const event stays `@safe`
+                    shown.match!((in CompositionEvent c) {
+                        if (!c.ends)
+                            events.texts.withText(c.preedit,
+                                (scope const(char)[] s) { writeln("       preedit ", s.idup); });
+                    }, (in _) {});
+                }
                 quit |= isEscape(e);
             }, cell, cell);
 
@@ -185,6 +194,8 @@ string describe(in Event e) @safe
         (FocusEvent f) => format("focus  %s", f.focused ? "gained" : "lost"),
         (PasteEvent p) => format("paste  %(%s%)%s", [p.text[]], p.last ? " (last)" : ""),
         (ColorSchemeEvent c) => format("scheme %s", c.dark ? "dark" : "light"),
+        (CompositionEvent c) => c.ends ? "compose (end)"
+            : format("compose cursor=%d runs=%(%s %)", c.cursor, c.runs[0 .. c.runCount]),
         (ResizeEvent r) => "resize (re-query the window)",
         // Not produced by this backend yet: `GestureEvent` needs the touch arm
         // (`SDL_EVENT_FINGER_*` fed to `sparkles:input`'s recogniser), and

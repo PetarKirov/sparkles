@@ -18,7 +18,8 @@ import expected : err;
 
 import forge : CommentThread, discoverToken, ForgeError, ForgeErrorKind,
     ForgeFileRef, ForgeResult, hasCapability, HttpRequest, HttpResponse,
-    parseForgeFileUrl, parsePrTarget, PrRef, PullRequest, repoFromRemote, RepoId;
+    parseForgeFileUrl, parsePrTarget, PrRef, PullRequest, repoFromRemote, RepoId,
+    ReviewDraft, SubmittedReview;
 import forge_github : GitHubForge;
 
 version (HueCurl)
@@ -262,4 +263,44 @@ ForgeResult!string fetchUrl(string url) @system
         auto res = fetchHttp(HttpRequest("https://example.invalid/", null));
         assert(res.hasError && res.error.kind == ForgeErrorKind.unsupported);
     }
+}
+
+/**
+`DCM6`: submits `draft` as one review on the pull request `pr` names
+(`"github.com/owner/name#7"`), through the adapter for its host and that
+adapter's `submitReview` capability. A forge without the capability says
+so instead of failing somewhere else.
+*/
+ForgeResult!SubmittedReview submitPullRequestReview(string target, in ReviewDraft draft) @system
+{
+
+    import std.conv : to;
+    import std.string : indexOf, lastIndexOf;
+
+    // `host/owner/name#number`, as the session recorded it.
+    const hash = target.lastIndexOf('#');
+    const firstSlash = target.indexOf('/');
+    const secondSlash = firstSlash < 0 ? -1 : target[firstSlash + 1 .. $].indexOf('/');
+    if (hash < 0 || firstSlash < 0 || secondSlash < 0)
+        return err!SubmittedReview(ForgeError(ForgeErrorKind.malformed,
+            "not a pull request: " ~ target));
+    PrRef pr;
+    pr.repo = RepoId(target[0 .. firstSlash],
+        target[firstSlash + 1 .. firstSlash + 1 + secondSlash],
+        target[firstSlash + 2 + secondSlash .. hash]);
+    try
+        pr.number = target[hash + 1 .. $].to!uint;
+    catch (Exception)
+        return err!SubmittedReview(ForgeError(ForgeErrorKind.malformed,
+            "not a pull request number: " ~ target));
+
+    if (!GitHubForge.handles(pr.repo.host))
+        return err!SubmittedReview(ForgeError(ForgeErrorKind.unknownRemote,
+            pr.repo.host ~ " is not a supported forge"));
+    auto forge = GitHubForge(token: tokenFor(pr.repo.host));
+    static if (hasCapability!(GitHubForge, "submitReview"))
+        return forge.submitReview(pr, draft, (in HttpRequest req) => fetchHttp(req));
+    else
+        return err!SubmittedReview(ForgeError(ForgeErrorKind.unsupported,
+            "this forge does not take reviews from hue"));
 }

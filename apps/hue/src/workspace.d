@@ -44,6 +44,8 @@ import sparkles.ui.geometry : Point, Rect, Size;
 import sparkles.ui.style : Slot;
 
 import sparkles.doc_view.ansi_model : BackgroundMode;
+import review_store : ReviewSession;
+import sparkles.doc_view.diff_edit : DiffEdit;
 import sparkles.doc_view.diff_view : DiffLayout;
 import sparkles.doc_view.document : Document;
 import dsv_browser : DsvBrowser, PaletteRow, paletteRows, rowMaskFor;
@@ -68,7 +70,7 @@ import settings_store : ConfigStore, SettingsPane;
 import sparkles.doc_view.preview_model : PreviewModel;
 import live_types : applyTip, LiveTypesSession;
 import sparkles.twoslash.protocol : TwoslashReturn;
-import tui : PreviewTui;
+import tui : conflictKeysHint, PreviewTui;
 import sparkles.doc_view.viewer_model : ScrollAnchorMode;
 
 version (linux)
@@ -892,6 +894,18 @@ struct WorkspaceTui
             doc.coverage, doc.hasCoverage);
         viewer.docNote = doc.dsvNote;
         viewer.vm.docPath = path; // .editorconfig discovery (format preview)
+        // `CFV1`: a file git calls conflicted opens in the conflict view.
+        {
+            import git_status : GitStatus;
+            import sparkles.ui.editor.keys : EditorTarget;
+
+            if (tree.git.map.statusOf(path, false) == GitStatus.conflict
+                && viewer.vm.conflictStart(EditorTarget.terminal) is null)
+            {
+                viewer.vm.conflictHint = conflictKeysHint;
+                viewer.vm.rebuild();
+            }
+        }
         // `DSN7`: the pipeline already parsed this document; adopt its model
         // rather than resolving a throwaway one over the same bytes. This is
         // the per-open path, so the duplicate parse was paid on EVERY open.
@@ -2155,6 +2169,7 @@ WorkspaceExit runWorkspace(string target, bool isDir, WorkspaceDoc initial,
     OverflowPolicy tableOverflow = OverflowPolicy.init,
     int tableMaxLines = -1,
     WorkspaceDoc delegate() @system reloadDiff = null,
+    ReviewSession review = null,
     bool formatPreview = false, int formatWidth = 0,
     string formatterName = null,
     string tableCopyFlag = "auto",
@@ -2201,6 +2216,7 @@ WorkspaceExit runWorkspace(string target, bool isDir, WorkspaceDoc initial,
             w.dsvPalOpen = false;
             w.wireDsvHooks();
         };
+    w.viewer.review = review; // `DCM5`
     w.liveTypes = liveTypes;
     // `DVL3`: the layout the reviewer asked for on the command line; `s`
     // toggles it, and a narrow pane degrades it at render time.
@@ -2502,6 +2518,11 @@ private Duration waitDeadline(ref WorkspaceTui w, bool eventDriven = false)
         if (untilPreview < deadline)
             deadline = untilPreview;
     }
+    // `DST5`: an edit catches its diff and highlighting up once typing
+    // pauses (`EDR3`), which needs a wake with no key.
+    if (w.viewer.vm.diffEditOpen && !w.viewer.vm.diffEdit.styled
+        && deadline > DiffEdit.settle)
+        deadline = DiffEdit.settle;
     if (w.viewer.toastVisible && deadline > 50.msecs)
         deadline = 50.msecs;
     return deadline;
@@ -2526,6 +2547,8 @@ private bool onWaitExpired(ref WorkspaceTui w, Duration waited) @system
     // clock so the panel opens on time — and the settings pane's scrollbar
     // easing with it (the same cadence, the same look as every tree view).
     w.tickLantern(waited);
+    if (w.viewer.vm.diffEditTick())
+        repainted = true;
     if (w.settings.active)
         w.settings.tickAnims(waited);
     return w.tickDock(waited) || repainted;
@@ -4114,15 +4137,15 @@ unittest
     // it with the SAME query. The terminal used to append `cast(char) e.ch`,
     // so a non-ASCII keystroke truncated a code point into a stray byte —
     // `é` (U+00E9) became the lone byte 0xE9, which is not valid UTF-8 and
-    // which the window's `typeChar` gate would never have admitted. Both now
-    // run the same gate, so the terminal cannot build a query the window
-    // could not.
+    // which the window's ASCII gate then refused instead. Both now drive the
+    // same editor field (`input_line`), which keeps every code point whole,
+    // so the terminal builds exactly the query the window does.
     assert(w.handle(Event(KeyEvent(key: Key.char_, ch: '/'))));
     foreach (dchar c; "féo")
         w.handle(Event(KeyEvent(key: Key.char_, ch: c)));
     const typed = w.viewer.inputQuery.idup;
-    assert(typed == "fo",
-        "the terminal admitted a non-ASCII keystroke into the query: " ~ typed);
+    assert(typed == "féo",
+        "the terminal did not keep a non-ASCII keystroke whole: " ~ typed);
     w.handle(Event(KeyEvent(key: Key.escape)));
 }
 

@@ -254,16 +254,26 @@ if (slots > 0 && bytes > 0 && bytes < uint.max && maxText > 0
 Copies the text `id` names in `src` into `dst` and returns the new id
 (`POOL18`). The copy keeps the truncation flag, and is truncated (and flagged)
 again if `dst`'s per-text bound is smaller.
+
+`src` is another pool, or any store that lends its texts the same way: a
+`withText(id, fn(text, truncated))` whose result reports `hasError`, such as
+a window system's event queue. An error of the source's own kind means its
+text is gone, and is reported as `PoolError.stale`.
 */
 PoolResult!(Dst.Id) retain(Src, Id, Dst)(ref Src src, Id id, ref Dst dst)
-if (is(immutable Id == immutable Src.Id))
+if (is(typeof(src.withText(id, (scope const(char)[] text, bool truncated) {}).hasError)))
 {
     auto copied = poolErr!(Dst.Id)(PoolError.stale);
     auto read = src.withText(id, (scope const(char)[] text, bool truncated) {
         copied = dst.store(text, truncated);
     });
     if (read.hasError)
-        return poolErr!(Dst.Id)(read.error);
+    {
+        static if (is(typeof(read.error) : PoolError))
+            return poolErr!(Dst.Id)(read.error);
+        else
+            return poolErr!(Dst.Id)(PoolError.stale);
+    }
     return copied;
 }
 

@@ -29,10 +29,10 @@ import sparkles.syntax : LabelSet, ResolvedTheme, resolveTheme, RgbColor,
 import sparkles.ui.theme : Theme;
 import sparkles.ui.themes : builtinDark;
 import sparkles.input : EndOfInput, Event, isEndOfInput, Key, KeyEvent,
-    match, Point, PointerAction, PointerButton, PointerEvent, ResizeEvent,
+    match, PasteEvent, Point, PointerAction, PointerButton, PointerEvent, ResizeEvent,
     WheelEvent;
 import sparkles.ui.components.chrome : headerBar;
-import sparkles.ui.components.tree_view : jumpMatching, measureContent,
+import sparkles.ui.components.tree_view : filterServe, jumpMatching, measureContent,
     treeActivate = activate, treeCollapseOrUp = collapseOrUp, TreeStep,
     TreeViewState, viewSlice;
 import sparkles.ui.components.tree_widget : FlatTreeRow, flatten, TreeData,
@@ -40,7 +40,7 @@ import sparkles.ui.components.tree_widget : FlatTreeRow, flatten, TreeData,
 import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.geometry : Rect, SizeSpec;
 import sparkles.ui.layout : layout;
-import sparkles.ui.state : CaptureState, DisclosureState, LineEditState;
+import sparkles.ui.state : CaptureState, DisclosureState;
 import sparkles.ui.style : GlyphSet, Palette, Slot, TextStyle;
 import sparkles.ui.widget : Builder, Widget, WidgetKind;
 import sparkles.ui_tui : CellStyle, Color, Grid, paintGrid;
@@ -291,7 +291,7 @@ struct ExplorerTui
     }
 
     private const(char)[] query() const @safe pure nothrow @nogc
-        => filter.text;
+        => tv.filterQuery;
 
     /// The pane is consuming typed text (the workspace must not steal keys).
     bool inputActive() const @safe pure nothrow @nogc => searching;
@@ -300,37 +300,36 @@ struct ExplorerTui
     /// `/`: enter filter mode (broot's tree-as-search-result — XPL/TRV5).
     void filterStart() @system
     {
-        filter = filter.started();
+        tv.filterStart();
         rebuild();
     }
 
-    /// ditto — a typed character narrows per keystroke.
-    void filterInput(dchar c) @system
+    /// One key for the filter's editor; Enter keeps the filtered tree, Esc
+    /// clears it.
+    void filterKey(in KeyEvent e) @system
     {
-        const next = filter.typed(c);
-        if (next == filter)
-            return;
-        filter = next;
-        rebuild();
+        if (tv.filterKey(e) == TreeStep.rebuild)
+            rebuild();
     }
 
-    /// ditto
-    void filterBackspace() @system
+    /// Do the clipboard work the filter asked for (`EDY5`).
+    void filterServe(Clipboard)(in Clipboard clipboard)
     {
-        filter = filter.erased();
-        rebuild();
+        if (tv.filterServe(clipboard) == TreeStep.rebuild)
+            rebuild();
     }
 
-    /// Enter keeps the filtered tree; Esc clears it.
-    void filterAccept() @safe pure nothrow
+    /// Text typed or pasted into the filter at once.
+    void filterText(scope const(char)[] text) @system
     {
-        filter = filter.accepted();
+        if (tv.filterPaste(text) == TreeStep.rebuild)
+            rebuild();
     }
 
-    /// ditto
+    /// Esc: clear the query and leave filter mode.
     void filterCancel() @system
     {
-        filter = filter.cancelled();
+        tv.filterCancel();
         rebuild();
     }
 
@@ -987,7 +986,15 @@ struct ExplorerTui
             case Command.viewScrollLeft: case Command.viewScrollRight:
             case Command.viewScrollHome: case Command.viewScrollEnd:
             case Command.diffStage: case Command.diffUnstage:
-            case Command.diffDiscard:
+            case Command.diffDiscard: case Command.diffEdit: case Command.diffSave:
+            case Command.diffRowDown: case Command.diffRowUp: case Command.diffComment:
+            case Command.diffResolve: case Command.diffMarkViewed:
+            case Command.diffSuggest: case Command.diffApplySuggestion:
+            case Command.diffSubmitReview:
+            case Command.conflictResolve: case Command.conflictNext: case Command.conflictPrev:
+            case Command.conflictOurs: case Command.conflictTheirs: case Command.conflictBoth:
+            case Command.conflictBothReversed: case Command.conflictUndo: case Command.conflictEdit:
+            case Command.conflictSave: case Command.conflictStage:
                 break;
 
             // The picker's modal surface answers these; its scopes are
@@ -1050,7 +1057,10 @@ struct ExplorerTui
 
     private bool handleSearch(in Event ev) @system
     {
-        return ev.match!((in KeyEvent e) {
+        return ev.match!((in PasteEvent p) {
+            filterText(p.text[]);
+            return true;
+        }, (in KeyEvent e) {
             if (tv.filterKey(e) == TreeStep.rebuild)
                 rebuild();
             return true;
@@ -1124,7 +1134,8 @@ unittest
     assert(row(7).canFind("filter"), row(7)); // the status bar hints
 
     // The live filter: "app" keeps the match and the dir on the way to it.
-    x.filter = LineEditState("app", true);
+    x.filterStart();
+    x.filterText("app");
     x.rebuild();
     assert(x.rows.length == 2);
     assert(x.data.nodes[x.rows[0].node].value.name == "src");

@@ -41,6 +41,12 @@ import keymap : Binding, bindingsAt, Chord, Command, commandFor, InputMode,
 import dub_config_picker : dubConfigurationPick;
 import picker_grep : PickerSource;
 import picker_host : OwnedPicker, PickerAction, PickerHost;
+import forge : ReviewDraft;
+import sparkles.doc_view.conflict_view : Pick;
+import staging : stageResolvedFile;
+import review_store : applySuggestionAtCursor, persistFolds, postComment, refreshLocalThreads,
+    resolveCommentAtCursor, ReviewSession,
+    toggleViewedAtCursor;
 import picker_sources : ChoiceFinder;
 import picker_preview : PickerDocPane;
 import picker_view : pickerGeometryFor, pickerOriginCol, pickerOriginRow,
@@ -125,6 +131,8 @@ import sparkles.ui.cmd_buffer : CmdBufferT;
 import sparkles.ui.arena : FrameArena;
 import sparkles.ui.layout : Frame, layout;
 import sparkles.ui.components.scroll_view : ScrollExtents, ScrollPointer;
+import sparkles.ui.editor.field : FieldClipboard, FieldSetup, serveClipboard;
+import sparkles.ui.editor.keys : windowTarget;
 import sparkles.ui.state : CaptureState, hoverTargets, HoverState, HoverTarget,
     keyAt, keyTargets, KeyTarget, PressState, ScrollAxis, ScrollbarState,
     selectionRects, sourceOffsetAt, wantedPointerShape,
@@ -252,6 +260,10 @@ struct GuiArgs
     int tableMaxLines = -1;              // --table-max-lines (TBL8; -1 = auto)
     SourceSet* set = null;               // the document set to navigate (GNV1)
     DocLoader loadDoc = null;            // loads a set entry (supplied by app.d)
+    /// `DST2`/`DST5`: produces the diff on screen again after a save.
+    Document delegate() @system reloadDiff = null;
+    /// `DCM5`: the review state of the diff's repository, or `null`.
+    ReviewSession review = null;
     TsConfigCache* tsCache = null;       // fence highlighting for the widget view
     TwoslashReturn twoslash = TwoslashReturn.init; // twoslash document payload
     string docPath = null;               // on-disk path (reveal in the tree)
@@ -296,6 +308,51 @@ struct GuiRunState
     HoverPopup pop;
     SelectionDrag drag;
     CopyModes cm;
+}
+
+/**
+The one clipboard seam. raylib's Android SetClipboardText is an
+unimplemented no-op (a TRACELOG warning — see rcore_android.c), so Android
+goes through the JNI ClipboardManager bridge instead. Writes take a slice:
+the Android side needs a length to transcode to UTF-16, and only the raylib
+path wants NUL termination.
+*/
+private struct ClipboardSeam
+{
+    Window** window; // set once the window opens
+
+    void write(scope const(char)[] text) @system
+    {
+        version (Android)
+        {
+            import android_glue : setClipboardText;
+            import sparkles.base.logger : warning;
+
+            if (!setClipboardText(text))
+                warning(i"copy: JNI clipboard bridge failed");
+        }
+        else
+            (**window).clipboard(text);
+    }
+
+    string read() @system => (**window).clipboardText();
+}
+
+/**
+The window's height above the soft keyboard while an editor has it up
+(`EDI9`). hue's window is full-screen, so the input method does not resize
+it; its inset says how much of the bottom it covers.
+*/
+version (Android)
+private int visibleHeight(int windowHeight, bool keyboardUp) @trusted nothrow
+{
+    import sparkles.android.window_metrics : windowInsets;
+
+    if (!keyboardUp)
+        return windowHeight;
+    const insets = windowInsets();
+    const covered = insets.known ? insets.keyboard[3] : 0;
+    return covered > 0 && covered < windowHeight ? windowHeight - covered : windowHeight;
 }
 
 /// The frame's geometry (`P2.B4` third slice): every per-frame value the view
@@ -383,7 +440,6 @@ struct FrameGeom
         int toolbarY;        // pixel Y of the bar's row
     }
 }
-
 
 /// ditto
 int runGui(GuiArgs guiArgs) @system
@@ -915,8 +971,7 @@ int runGui(GuiArgs guiArgs) @system
         dsvBrowser = DsvBrowser.init; // a new document starts unprojected (DSB2)
         dsvPalOpen = false;
         cm.tableFmt = resolveTableCopy(tableCopyFlag, doc.dsvInfo.present);
-        inp.query.clear();
-        inp.mode = Mode.normal;
+        inp.close();
         window.title(text(i"sparkles:hue — $(name)"));
         pn.tree.reveal(path); // the explorer follows the open document (XPL3/4)
         startLive(path, vm.tw.code.length != 0);
@@ -1043,6 +1098,14 @@ int runGui(GuiArgs guiArgs) @system
     // The modal settings pane (`SET*`) — the same component the workspace
     // mounts, over the same shared store.
     SettingsPane settingsPane;
+    bool submitArmed; // `DCM6`: a review submission waits for `y`
+    bool conflictSaved; // `CFV4`: the resolved file was saved
+    version (Android)
+    {
+        import sparkles.ui.editor.soft_keyboard : SoftKeyboard;
+
+        SoftKeyboard fieldKeyboard; // editor focus, for the soft keyboard's edges (`EDI9`)
+    }
 
     void openSettingsPane() @system
     {
@@ -1459,30 +1522,44 @@ int runGui(GuiArgs guiArgs) @system
     // The text-regime selection as a source range [drag.selMin, drag.selMax) — the union of
     // the anchor and head spans (a char point is a zero-width span).
 
-    // The one clipboard seam. raylib's Android SetClipboardText is an
-    // unimplemented no-op (a TRACELOG warning — see rcore_android.c), so
-    // Android goes through the JNI ClipboardManager bridge instead.
-    // Takes a slice: the Android side needs a length to transcode to UTF-16,
-    // and only the raylib path wants NUL termination.
-    void copyToClipboard(scope const(char)[] text)
-    {
-        version (Android)
-        {
-            import android_glue : setClipboardText;
-            import sparkles.base.logger : warning;
+    // The one clipboard seam (`ClipboardSeam`), on the heap so the fields'
+    // clipboard can hold its methods without closing over this frame.
+    auto clipSeam = new ClipboardSeam(&windowP);
+    void copyToClipboard(scope const(char)[] text) => clipSeam.write(text);
 
-            if (!setClipboardText(text))
-                warning(i"copy: JNI clipboard bridge failed");
-        }
-        else
-            window.clipboard(text);
-    }
+    // The fields' clipboard (`EDY5`): copies go through the seam; reads come
+    // from the window, except on Android, whose bridge only writes, so a
+    // field there offers no paste chord (`EDI5`). The fields take the window
+    // key table (`EDK1`).
+    FieldClipboard!(void delegate(scope const(char)[]) @system, string delegate() @system) fieldClip;
+    fieldClip.write = &clipSeam.write;
+    version (Android) {}
+    else
+        fieldClip.read = &clipSeam.read;
+    const fieldSetup = FieldSetup.of(windowTarget, fieldClip);
+    inp.setup = fieldSetup;
+    pn.tree.tv.filterSetup = fieldSetup;
 
     void showToast(string msg, bool success = false)
     {
         flash.copyModeMsg = msg;
         flash.toastSuccess = success;
         flash.toast = Timeline.triggered(toastCfg);
+    }
+
+    /// `DST5`: writes the edited file, saying how it went.
+    void saveDiffEdit() @system
+    {
+        const failure = vm.diffEditSave();
+        showToast(failure is null ? "saved " ~ vm.diffEdit.newPath : failure, failure is null);
+    }
+
+    /// `CFV4`: writes the resolved file, saying how it went.
+    void saveConflict() @system
+    {
+        const failure = vm.conflictSave();
+        conflictSaved = failure is null;
+        showToast(failure is null ? "saved " ~ vm.conflict.path : failure, failure is null);
     }
 
     // Where an accepted dub configuration is recorded; set while the choices
@@ -2220,10 +2297,10 @@ int runGui(GuiArgs guiArgs) @system
         {
             const barY = screenH - cellH;
             auto lineText = inp.mode == Mode.search
-                ? text("/", inp.query[], "   ", vm.matches.length, " matches")
+                ? text("/", inp.shown, "   ", vm.matches.length, " matches")
                 : inp.mode == Mode.dsvFilter
-                ? text("⌕ ", inp.query[], "▏")
-                : text(":", inp.query[]);
+                ? text("⌕ ", inp.shown)
+                : text(":", inp.shown);
             chromeOps.reset();
             chromeOps.fillRect(Rect(0, 0, (screenW + cellW - 1) / cellW, 1),
                 Slot.inherit, Visual(bg: vm.gutterFg, hasBg: true));
@@ -2516,6 +2593,43 @@ int runGui(GuiArgs guiArgs) @system
         foreach (e; evBuf)
             e.match!((in KeyEvent k) { keyBuf ~= k; }, (in _) {});
 
+        // `DST5`: an edit catches its diff and highlighting up once typing
+        // pauses (`EDR3`); once a saved edit closes, the session on screen is
+        // stale and is produced again from its source.
+        cast(void) vm.diffEditTick();
+        if (!vm.diffEditOpen && vm.diffEditSaved && reloadDiff !is null)
+        {
+            vm.diffEditSaved = false;
+            vm.setDocument(reloadDiff());
+        }
+
+        // The soft keyboard follows an editor's focus (`EDI9`): the search,
+        // goto and filter bar, the explorer's filter, the picker's prompt and
+        // the settings pane's fields. Only the edges act, so a keyboard the
+        // user put away stays away; its text arrives through the IME field
+        // the window installed, as key events like any other.
+        version (Android)
+        {
+            import sparkles.android.soft_input : hideSoftKeyboard, showSoftKeyboard;
+            import sparkles.ui.editor.soft_keyboard : KeyboardAsk;
+
+            const editing = inp.mode != Mode.normal || pn.tree.searching || vm.diffEditing
+                || vm.composing || vm.conflictOpen && vm.conflict.editing
+                || !filePicker.empty && filePicker.get.state.active
+                || settingsPane.active && (settingsPane.textEditing || settingsPane.tv.searching);
+            final switch (fieldKeyboard.update(editing))
+            {
+                case KeyboardAsk.none:
+                    break;
+                case KeyboardAsk.show:
+                    cast(void) showSoftKeyboard();
+                    break;
+                case KeyboardAsk.hide:
+                    hideSoftKeyboard();
+                    break;
+            }
+        }
+
         // `HUE_GUI_POINTER` parks the PHYSICAL pointer. It stands in for a
         // window-system event nobody sent, so it is SYNTHESIZED as one and put
         // through `admitEvent` like any other — routing included, not just the
@@ -2617,7 +2731,13 @@ int runGui(GuiArgs guiArgs) @system
         const cellW = fonts.cellW();
         const cellH = fonts.cellH();
         const screenW = window.width;
-        const screenH = window.height;
+        // On Android the soft keyboard covers the window's bottom; the layout
+        // ends above it, so the input bar stays in view
+        // (`EDI9`).
+        version (Android)
+            const screenH = visibleHeight(window.height, fieldKeyboard.editing);
+        else
+            const screenH = window.height;
         // The same surface in the toolkit's unit: chrome that names cells
         // and edges (UIA2) rather than pixels reads these.
         const screenCols = screenW / cellW;
@@ -2969,15 +3089,25 @@ int runGui(GuiArgs guiArgs) @system
                 routeSettingsOverlay(Event(hover));
             }
             settingsPane.tickAnims(dur!"msecs"(frameMs(window.frameSeconds)));
+            settingsPane.fieldSetup(fieldSetup);
             foreach (k; keyBuf)
+            {
                 applySettingsResult(settingsPane.handleKey(k));
+                applySettingsResult(settingsPane.serveClipboard(fieldClip));
+            }
         }
         else if (!filePicker.empty && filePicker.get.state.active)
         {
             // The fuzzy picker is a modal surface (`PIK1`): while it is
             // open it owns the whole keyboard.
+            filePicker.get.state.prompt.setup = fieldSetup;
+            fieldSetup.applyTo(filePicker.get.state.prompt.field);
             foreach (k; keyBuf)
+            {
                 applyPickerAction(filePicker.get.handleKey(k));
+                if (filePicker.get.state.active)
+                    filePicker.get.serveClipboard(fieldClip);
+            }
         }
         else if (pn.inspVisible && pn.inspFocused)
         {
@@ -2994,34 +3124,65 @@ int runGui(GuiArgs guiArgs) @system
         }
         else if (pn.treeFocused && pn.tree.searching)
         {
-            // The tree pane's live filter (broot mode): typed chars narrow
-            // per keystroke; Enter keeps the filtered tree, Esc clears it.
+            // The tree pane's live filter (broot mode) is an editor field:
+            // every key edits the query; Enter keeps the filtered tree, Esc
+            // clears it. The `/` that opened it is still in this frame's keys.
             foreach (k; keyBuf)
-                if (k.key == Key.char_ && k.ch != '/')
-                    pn.tree.filterInput(k.ch);
-            if (keyBuf.hasKey(Key.backspace))
-                pn.tree.filterBackspace();
-            if (keyBuf.hasKey(Key.enter))
-                pn.tree.filterAccept();
-            if (keyBuf.hasKey(Key.escape))
-                pn.tree.filterCancel();
+                if (!(k.key == Key.char_ && k.ch == '/'))
+                {
+                    pn.tree.filterKey(k);
+                    pn.tree.filterServe(fieldClip);
+                }
+        }
+        else if (vm.diffEditing || vm.composing || vm.conflictOpen && vm.conflict.editing)
+        {
+            // `DST5`/`DCM2`/`CFV4`: the diff's editor, the comment composer or
+            // the conflict's editor has the keyboard. Its clipboard is the
+            // window's; Ctrl-S (Cmd-S on macOS) or Alt-S saves the edit, posts
+            // the comment or saves the resolved file, and Escape gives the
+            // keyboard back.
+            const resolving = vm.conflictOpen && vm.conflict.editing;
+            if (resolving)
+                fieldSetup.applyTo(vm.conflict.result);
+            else if (vm.composing)
+                fieldSetup.applyTo(vm.composer);
+            else
+                fieldSetup.applyTo(vm.diffEdit.field);
+            foreach (k; keyBuf)
+            {
+                const taken = resolving ? vm.conflictKey(k)
+                    : vm.composing ? vm.commentKey(k) : vm.diffEditKey(k);
+                if (taken)
+                {
+                    if (resolving)
+                        cast(void) serveClipboard(vm.conflict.result, fieldClip);
+                    else if (vm.composing)
+                        cast(void) serveClipboard(vm.composer, fieldClip);
+                    else
+                        vm.diffEditServe(fieldClip);
+                    continue;
+                }
+                version (OSX)
+                    const saveChord = k.mods.super_ || k.mods.alt;
+                else
+                    const saveChord = k.mods.ctrl || k.mods.alt;
+                if (k.key == Key.char_ && k.ch == 's' && saveChord)
+                {
+                    if (resolving)
+                        saveConflict();
+                    else if (vm.composing)
+                        showToast(postComment(vm, review));
+                    else
+                        saveDiffEdit();
+                }
+            }
         }
         else if (inputMode)
         {
-            // Typing a search query or a goto-line number — the acceptance
-            // rules live on the state (`gui_state`, tested); what stays here
-            // is the live re-search, which is the view model's.
-            foreach (k; keyBuf)
-            {
-                if (k.key != Key.char_)
-                    continue;
-                if (inp.typeChar(k.ch) && inp.mode == Mode.search)
-                    vm.search(inp.query[]);
-            }
-            if (keyBuf.hasKey(Key.backspace) && inp.backspace()
-                && inp.mode == Mode.search)
-                vm.search(inp.query[]);
-            if (keyBuf.hasKey(Key.enter))
+            // Typing a search query or a goto-line number: the bar's editor
+            // takes the keys (`input_line`, tested); what stays here is the
+            // live re-search, which is the view model's, and each mode's Enter.
+            void submitPrompt()
             {
                 if (inp.mode == Mode.search)
                 {
@@ -3030,25 +3191,23 @@ int runGui(GuiArgs guiArgs) @system
                     jumpToMatch(firstMatchAtOrAfter!(
                         i => vm.visualOfMatch(vm.matches[i]))(
                         vm.matches.length, vm.top), visibleRows);
+                    inp.mode = Mode.normal; // the query and its matches stay
+                    return;
                 }
-                else if (inp.mode == Mode.dsvFilter)
+                if (inp.mode == Mode.dsvFilter)
                 {
                     // `DSF1`/`DSF5`: apply through the browser; a parse error
                     // keeps the previous filter and surfaces as a toast.
-                    if (dsvBrowser.setFilter(inp.query[].idup,
-                            dsvCopy.headerNames))
+                    if (dsvBrowser.setFilter(inp.query.idup, dsvCopy.headerNames))
                         applyDsvBrowser();
                     else
-                    {
                         showToast("filter: " ~ dsvBrowser.filterError);
-                    }
-                    inp.query.clear();
                 }
                 else if (inp.query.length) // gotoLine → the source line's visual row
                 {
                     // The parse half is the tested `parseGotoLine`; the jump
                     // half stays here with the view model.
-                    const parsed = parseGotoLine(inp.query[]);
+                    const parsed = parseGotoLine(inp.query);
                     try
                     {
                         if (parsed >= 0)
@@ -3058,16 +3217,38 @@ int runGui(GuiArgs guiArgs) @system
                     {
                     }
                 }
-                inp.mode = Mode.normal;
+                inp.close();
             }
-            if (keyBuf.hasKey(Key.escape))
+
+            foreach (k; keyBuf)
             {
-                inp.mode = Mode.normal;
-                inp.query.clear(); // cancelling clears the query (and search highlights)
-                // `clearSearch` drops the RECTS too. Nulling `matches` alone
-                // left `matchRects` populated, and the overlay below paints
-                // from the rects — so Esc cleared the count and kept the tint.
-                vm.clearSearch();
+                auto step = inp.key(k);
+                if (step == LineStep.handled && inp.serve(fieldClip) == LineStep.edited)
+                    step = LineStep.edited; // a paste the window answered
+                final switch (step)
+                {
+                    case LineStep.none:
+                    case LineStep.handled:
+                        break;
+                    case LineStep.edited:
+                        if (inp.mode == Mode.search)
+                            vm.search(inp.query);
+                        break;
+                    case LineStep.submitted:
+                        submitPrompt();
+                        break;
+                    case LineStep.cancelled:
+                        // Cancelling clears the query and the search
+                        // highlights: `clearSearch` drops the RECTS too.
+                        // Nulling `matches` alone left `matchRects` populated,
+                        // and the overlay paints from the rects — so Esc
+                        // cleared the count and kept the tint.
+                        inp.close();
+                        vm.clearSearch();
+                        break;
+                }
+                if (inp.mode == Mode.normal)
+                    break; // the rest of this frame's keys are not the bar's
             }
         }
         else
@@ -3091,7 +3272,8 @@ int runGui(GuiArgs guiArgs) @system
                 hasDocSet: set !is null && !set.empty && loadDoc !is null,
                 // Only while the diff view is actually showing: Tab drops to
                 // the raw patch text, where files are not a navigable unit.
-                hasDiffSession: vm.showPreview && !vm.diffSession.empty,
+                hasDiffSession: vm.showPreview && !vm.diffSession.empty && !vm.conflictOpen,
+                conflictOpen: vm.conflictOpen,
                 showPreview: vm.showPreview,
                 formatPreviewActive: formatPreviewActive(vm),
                 hasDsvGrid: vm.showPreview && dsvCopy.present,
@@ -3106,6 +3288,27 @@ int runGui(GuiArgs guiArgs) @system
 
             foreach (kev; keyBuf)
             {
+                // `CFV3`: Escape leaves the conflict view first.
+                if (vm.conflictOpen && kev.key == Key.escape)
+                {
+                    vm.conflictClose();
+                    continue;
+                }
+                // `DCM6`: an armed submission takes `y`; any other key
+                // disarms it, as a discard does in the terminal.
+                if (submitArmed)
+                {
+                    submitArmed = false;
+                    if (kev.key == Key.char_ && kev.ch == 'y')
+                    {
+                        import forge_client : submitPullRequestReview;
+
+                        showToast(review.submit((string target, in ReviewDraft draft)
+                            => submitPullRequestReview(target, draft)), true);
+                        refreshLocalThreads(vm, review);
+                        continue;
+                    }
+                }
                 // `lantern` owns the pending key path (`LTN2`): a prefix
                 // descends and nothing runs, a leaf resolves. Only `execute`
                 // reaches the dispatch below, so the arms are unchanged.
@@ -3288,9 +3491,18 @@ int runGui(GuiArgs guiArgs) @system
                 case Command.diffPrevFile:    vm.diffMoveFile(-1); break;
                 case Command.diffNextHunk:    vm.diffMoveHunk(1);  break;
                 case Command.diffPrevHunk:    vm.diffMoveHunk(-1); break;
-                case Command.diffToggleFile:  vm.diffToggleFile(); break;
-                case Command.diffCollapseAll: vm.diffSetAllFiles(true); break;
-                case Command.diffExpandAll:   vm.diffSetAllFiles(false); break;
+                case Command.diffToggleFile:
+                    vm.diffToggleFile();
+                    cast(void) persistFolds(vm, review);
+                    break;
+                case Command.diffCollapseAll:
+                    vm.diffSetAllFiles(true);
+                    cast(void) persistFolds(vm, review);
+                    break;
+                case Command.diffExpandAll:
+                    vm.diffSetAllFiles(false);
+                    cast(void) persistFolds(vm, review);
+                    break;
                 case Command.diffToggleStructural:
                     vm.diffToggleStructural();
                     break;
@@ -3321,6 +3533,85 @@ int runGui(GuiArgs guiArgs) @system
                 // `DST2`/`DST4`: the write surface is terminal-only for now —
                 // the GUI has no place to put a discard confirmation yet, and
                 // offering stage without it would be lopsided.
+                case Command.diffRowDown: cast(void) vm.diffMoveRow(1); break;
+                case Command.diffRowUp:   cast(void) vm.diffMoveRow(-1); break;
+                case Command.diffComment:
+                    if (const why = vm.commentStart(windowTarget))
+                        showToast(why);
+                    else
+                    {
+                        vm.composerHint = "Ctrl-S posts · Esc drops it";
+                        vm.rebuild();
+                    }
+                    break;
+                case Command.diffSuggest:
+                    if (const why = vm.commentStart(windowTarget, suggest: true))
+                        showToast(why);
+                    else
+                    {
+                        vm.composerHint = "edit the line · Ctrl-S posts the suggestion · Esc drops it";
+                        vm.rebuild();
+                    }
+                    break;
+                case Command.diffApplySuggestion:
+                {
+                    string said;
+                    const applied = applySuggestionAtCursor(vm, review, said);
+                    showToast(said, applied);
+                    if (applied && reloadDiff !is null)
+                        vm.setDocument(reloadDiff());
+                    break;
+                }
+                case Command.conflictResolve:
+                    if (const why = vm.conflictStart(windowTarget))
+                        showToast(why);
+                    else
+                    {
+                        vm.conflictHint = "} { move · o t b B take · u undo · E edit · Ctrl-S save · space stage · Esc leave";
+                        vm.rebuild();
+                    }
+                    break;
+                case Command.conflictNext:  cast(void) vm.conflictMove(1); break;
+                case Command.conflictPrev:  cast(void) vm.conflictMove(-1); break;
+                case Command.conflictOurs:  cast(void) vm.conflictPick(Pick.ours); break;
+                case Command.conflictTheirs: cast(void) vm.conflictPick(Pick.theirs); break;
+                case Command.conflictBoth:  cast(void) vm.conflictPick(Pick.both); break;
+                case Command.conflictBothReversed: cast(void) vm.conflictPick(Pick.bothReversed); break;
+                case Command.conflictUndo:  cast(void) vm.conflictUndo(); break;
+                case Command.conflictEdit:  vm.conflictEdit(); break;
+                case Command.conflictSave:  saveConflict(); break;
+                case Command.conflictStage:
+                    showToast(stageResolvedFile(vm.conflict.path, conflictSaved, null));
+                    break;
+                case Command.diffSubmitReview:
+                    if (review is null || review.target.length == 0)
+                        showToast("only a forge's pull request takes a review");
+                    else if (review.drafts == 0)
+                        showToast("no drafts to submit");
+                    else
+                    {
+                        import std.conv : text;
+
+                        submitArmed = true;
+                        showToast(text("submit ", review.drafts, " draft comments to ",
+                            review.target, "? press y to send"));
+                    }
+                    break;
+                case Command.diffResolve:
+                    if (const said = resolveCommentAtCursor(vm, review))
+                        showToast(said);
+                    break;
+                case Command.diffMarkViewed:
+                    if (const said = toggleViewedAtCursor(vm, review))
+                        showToast(said);
+                    break;
+                case Command.diffEdit:
+                    if (const why = vm.diffEditStart(windowTarget))
+                        showToast(why);
+                    break;
+                case Command.diffSave:
+                    saveDiffEdit();
+                    break;
                 case Command.diffStage:
                 case Command.diffUnstage:
                 case Command.diffDiscard:
@@ -3424,8 +3715,7 @@ int runGui(GuiArgs guiArgs) @system
                         ? "table-copy: markdown" : "table-copy: source");
                     break;
                 case Command.dsvFilter:
-                    inp.mode = Mode.dsvFilter;
-                    inp.query.clear();
+                    inp.open(Mode.dsvFilter);
                     break;
                 case Command.dsvReset:
                     dsvBrowser.reset();
@@ -3481,13 +3771,11 @@ int runGui(GuiArgs guiArgs) @system
                     dsvPalOpen = false;
                     break;
                 case Command.startSearch:
-                    inp.mode = Mode.search;
-                    inp.query.clear();
+                    inp.open(Mode.search);
                     vm.clearSearch();
                     break;
                 case Command.startGoto:
-                    inp.mode = Mode.gotoLine;
-                    inp.query.clear();
+                    inp.open(Mode.gotoLine);
                     break;
                 case Command.lanternAll:
                     // `lantern` shows the panel itself and never hands this
@@ -4347,11 +4635,16 @@ int runGui(GuiArgs guiArgs) @system
 
         // Debug/CI: a preselected search (highlights + jump to the first match)
         // so a golden capture exercises the match overlay.
-        foreach (ch; capture.search)
-            inp.query ~= ch;
+        if (capture.search.length)
+        {
+            // The query is set with the bar closed, as a golden expects.
+            inp.open(Mode.search);
+            cast(void) inp.type(capture.search);
+            inp.mode = Mode.normal;
+        }
         if (inp.query.length)
         {
-            vm.search(inp.query[]);
+            vm.search(inp.query);
             if (vm.matches.length)
                 vm.scrollTo(vm.visualOfMatch(vm.matches[0]));
         }
@@ -4393,15 +4686,7 @@ int runGui(GuiArgs guiArgs) @system
         {
             pn.treeFocused = true;
             pn.tree.filterStart();
-            import sparkles.base.text.utf : decodeToken, UtfMode;
-
-            for (size_t at; at < capture.treeFilter.length;)
-            {
-                const decoded = decodeToken(capture.treeFilter[at .. $],
-                    UtfMode.replacement, true, at);
-                pn.tree.filterInput(decoded.token.scalar);
-                at += decoded.result.consumed;
-            }
+            pn.tree.filterText(capture.treeFilter);
         }
 
         // Debug/CI: the prompts and notices that otherwise only exist

@@ -36,7 +36,7 @@ import camera : Camera, contentBounds, fitContent, scaleBase, minimapDivisor,
 import keymap : DiagramCommand, DiagramContext;
 import lantern : ltnStep = step, StepKind;
 
-import world : Capture, Entity, liveBounds, noEntity, Tool, World;
+import world : Capture, editKey, Entity, liveBounds, noEntity, Tool, World;
 
 /// Toolkit capture ids — one per $(LREF Capture) owner, non-zero (`STM11`).
 enum size_t capCreate = 1;
@@ -242,10 +242,11 @@ private bool onKey(ref World w, ref Camera cam, ref CaptureState cap,
     if (st.kind != StepKind.execute)
     {
         // `unbound` means "do whatever you would have done" — which, in a
-        // label edit, is to type the RAW character (`IXN5`), not the
-        // case-folded one the table matched against.
-        if (st.kind == StepKind.unbound && w.isEditing && k.key == Key.char_)
-            w.editType(k.ch);
+        // label edit, is to hand the RAW key (not the case-folded one the
+        // table matched against) to the draft's editor (`IXN5`): text,
+        // words, kills, yanks and motion.
+        if (st.kind == StepKind.unbound && w.isEditing)
+            cast(void) editKey(w, k);
         return false;
     }
     const c = st.cmd;
@@ -331,7 +332,7 @@ private bool onKey(ref World w, ref Camera cam, ref CaptureState cap,
             w.editCancel();
             return false; // cancel the edit, do not climb the rest of the chain
         case editErase:
-            w.editErase();
+            cast(void) editKey(w, k); // Backspace, to the draft's editor
             return false;
 
         // The settings pane (`SET1`, `SET2`). Opening it is the board's

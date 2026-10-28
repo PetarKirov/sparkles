@@ -44,7 +44,9 @@ import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.term_caps : isTerminal, StdStream;
 
 import sparkles.doc_view.ansi_model : BackgroundMode, backgroundOptions;
-import sparkles.doc_view.document : ContentKind, Document, DocumentPipeline, hueFenceRenderer;
+import review_store : ReviewSession;
+import sparkles.doc_view.document : ContentKind, DiffSource, Document, DocumentPipeline,
+    hueFenceRenderer;
 import sparkles.doc_view.viewer_model : GutterSelection;
 import sparkles.doc_view.diff_commutative : CommutativeKind;
 import sparkles.doc_view.diff_session : AnchoredThread, SessionHeader, ThreadComment;
@@ -415,6 +417,10 @@ int executePr(in HueCli root, in Pr pr)
             text(got.repo.owner, "/", got.repo.name, " #",
                 got.pr.number), got.patch);
         doc.diffSession.header = prHeader(registry, got.pr);
+        // `DCM6`: comments drafted here are this pull request's, submitted to it.
+        doc.reviewTarget = text(got.repo.host, "/", got.repo.owner, "/", got.repo.name,
+            "#", got.pr.number);
+        doc.reviewHead = got.pr.headSha;
         doc.diffSession.threads = prThreads(registry, got.threads);
         if (got.threadsNote.length)
             warning(i"review threads unavailable: $(got.threadsNote)");
@@ -1262,6 +1268,55 @@ ref const(LoadedConfig) loadedConfig() @safe nothrow @nogc => gConfig;
 /// ditto
 ref const(HueConfig) effectiveConfig() @safe nothrow @nogc => gConfig.effective;
 
+
+/**
+`DST2`/`DST5`: produces the diff on screen again once a stage or a save has
+changed the working tree under it, from the source it was produced from.
+`null` when it cannot be: a piped patch, a forge's, or no pipeline.
+*/
+private Document delegate() @system diffReloader(DocumentPipeline* pipeline,
+    in Document doc) @system
+{
+    if (pipeline is null || !(doc.diffSession.stageable || doc.diffSession.editable)
+        || doc.diffSource.kind == DiffSource.Kind.none)
+        return null;
+    auto pl = pipeline;
+    const source = doc.diffSource;
+    return delegate Document() @system => pl.reloadDiff(source);
+}
+
+/**
+`DCM5`: opens the review state of `doc`'s repository and applies it to
+`doc`: its comments, folds and viewed marks. `reload` is wrapped so every
+document it produces again gets them too. `null` when `doc` is no git diff.
+*/
+private ReviewSession openReview(ref Document doc, DocumentPipeline* pipeline,
+    ref Document delegate() @system reload) @system
+{
+    import sparkles.base.logger : warning;
+    import sparkles.syntax.md.model : extractMarkdown, MdDoc;
+
+    if (pipeline is null)
+        return null;
+    auto pl = pipeline;
+    auto review = ReviewSession.open(doc,
+        (string md) => md.length ? extractMarkdown(*pl.registry, md) : MdDoc.init);
+    if (review is null)
+        return null;
+    if (review.error.length)
+        warning(i"review state: $(review.error)");
+    review.apply(doc);
+    if (reload !is null)
+    {
+        auto inner = reload;
+        reload = delegate Document() @system {
+            auto fresh = inner();
+            review.apply(fresh);
+            return fresh;
+        };
+    }
+    return review;
+}
 int main(string[] args)
 {
     version (Android)
@@ -1716,14 +1771,8 @@ private int runTuiSink(in ViewRenderOptions opt, ref Document doc, in LabelSet l
             loader = delegate WorkspaceDoc(string path) @system
                 => pl.load(path);
         }
-        WorkspaceDoc delegate() @system reloadDiff;
-        if (pipeline !is null && doc.diffSession.stageable)
-        {
-            auto pl = pipeline;
-            auto paths = doc.diffPaths.dup;
-            reloadDiff = delegate WorkspaceDoc() @system
-                => pl.loadGitDiff(null, false, paths.dup);
-        }
+        auto reloadDiff = diffReloader(pipeline, doc);
+        auto review = openReview(doc, pipeline, reloadDiff);
         const exit = runWorkspace(doc.path, isDir: false, doc,
             loader, themeSet.names, themeSet.themes, themeSet.idx, labels,
             &cache, opt.include.dup, opt.exclude.dup, opt.treeWidth,
@@ -1734,6 +1783,7 @@ private int runTuiSink(in ViewRenderOptions opt, ref Document doc, in LabelSet l
             tableOverflow: parseOverflow(opt.tableOverflow, "--table-overflow"),
             tableMaxLines: opt.tableMaxLines,
             reloadDiff: reloadDiff,
+            review: review,
             formatPreview: opt.formatPreview,
             formatWidth: opt.formatWidth,
             formatterName: opt.formatter,
@@ -1816,6 +1866,8 @@ private int runGuiSink(in ViewRenderOptions opt, ref Document doc, in LabelSet l
                 capture.screenshotPath = androidDataDir() ~ "/" ~ capture.screenshotPath;
         }
 
+        auto guiReload = diffReloader(pipeline, doc);
+        auto guiReview = openReview(doc, pipeline, guiReload);
         return runGui(GuiArgs(
             title: doc.title,
             source: doc.source,
@@ -1842,6 +1894,8 @@ private int runGuiSink(in ViewRenderOptions opt, ref Document doc, in LabelSet l
             tableMaxLines: opt.tableMaxLines,
             set: docSet,
             loadDoc: &loadDoc,
+            reloadDiff: guiReload,
+            review: guiReview,
             tsCache: &cache,
             twoslash: doc.twoslash,
             docPath: doc.path,

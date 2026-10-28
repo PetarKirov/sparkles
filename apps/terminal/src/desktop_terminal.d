@@ -65,6 +65,8 @@ struct DesktopTerminal
 
     private int defaultFontPx;
     private bool guideWasShown;
+    /// A paste's chunks so far, while a modal surface takes it.
+    private char[] surfacePaste;
     private TerminalSettingsStore* settings; // the open page's
     private int startFontPt; // the font size the window opened at
     private bool fontPending; // the page changed the font size
@@ -145,6 +147,18 @@ struct DesktopTerminal
         e.match!(
             (in KeyEvent k) { onKey(h, k); },
             (in PasteEvent p) {
+                // A modal surface with a field takes the whole paste, once its
+                // last chunk is in (`EDI4`); nothing under it reaches a pane.
+                if (host.surfaces.modal)
+                {
+                    surfacePaste ~= p.text[];
+                    if (p.last)
+                    {
+                        cast(void) host.surfaces.paste(surfacePaste);
+                        surfacePaste = null;
+                    }
+                    return;
+                }
                 if (auto tv = host.focusedView())
                     tv.onPaste(p);
             },

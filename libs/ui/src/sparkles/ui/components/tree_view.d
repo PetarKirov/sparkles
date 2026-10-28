@@ -30,7 +30,7 @@ $(LIST
     * A press on a scrollbar is a grab, never a row click, and the grab owns
         the pointer until release wherever the drag strays (STM9's inverse
         mapping, same as the viewer's).
-    * The live filter is the one line-edit machine (STM13); every edit asks
+    * The live filter is an editor field (`EditorField`, editor `EDU4`); every edit asks
         the adapter to rebuild, because in broot's tree-as-search-result mode
         the tree $(I is) a function of the query.
 )
@@ -45,7 +45,7 @@ rebuilding, the state only reports that it is needed.
 module sparkles.ui.components.tree_view;
 
 import sparkles.base.term_color : RgbColor;
-import sparkles.input : InputCapabilities, InputKey = Key, KeyEvent,
+import sparkles.input : CompositionEvent, InputCapabilities, InputKey = Key, KeyEvent,
     PointerAction, PointerButton, PointerEvent;
 import sparkles.ui.components.scroll_view : scrollLayout, ScrollArea,
     ScrollAreaAxis, ScrollLayout, ScrollView;
@@ -53,9 +53,24 @@ import sparkles.ui.components.tree_widget : FlatTreeRow, nodeExpandable, treeWid
     TreeData, TreeGlyphs, treeView;
 import sparkles.ui.geometry : Rect;
 import sparkles.ui.style : Slot;
-import sparkles.ui.state : CaptureState, DisclosureState, LineEditState,
+import sparkles.ui.editor.field : EditorField, FieldSetup, serveClipboard;
+import sparkles.ui.state : CaptureState, DisclosureState,
     ScrollbarState;
 import sparkles.ui.widget : Builder;
+
+/**
+Do the clipboard work `state`'s filter asked for (`EDY5`): a copy, and a
+paste answered with `clipboard`'s text. Declared above the module's `@safe:`
+so its safety follows the clipboard's.
+*/
+TreeStep filterServe(Key, Clipboard)(ref TreeViewState!Key state, in Clipboard clipboard)
+{
+    if (!state.filtering)
+        return TreeStep.none;
+    const result = serveClipboard(state.filter, clipboard);
+    return state.filterResult(result.handled, result.changed, result.submitted,
+        result.cancelled);
+}
 
 @safe:
 
@@ -91,8 +106,15 @@ struct TreeViewState(Key)
     ScrollView scroll;
     /// Widest visible row in cells — the horizontal bar's content extent.
     int contentCols;
-    /// The live filter's editor (STM13); `filter.active` IS filter mode.
-    LineEditState filter;
+    /// The live filter's editor (`EDU4`): a single-line field, so the query
+    /// edits like every other field — graphemes, words, kills and yanks.
+    EditorField filter;
+    /// The filter's key table and clipboard, applied each time it starts.
+    FieldSetup filterSetup;
+    /// Filter mode: the field owns the keyboard.
+    bool filtering;
+    /// The query as of the last edit, kept so readers borrow it for free.
+    private string query_;
     /**
     The per-query transient fold overlay (`PRT29`): while a query is live,
     folding commands act here — visibility only, never on `open`, so
@@ -170,11 +192,11 @@ struct TreeViewState(Key)
         => scrollFrame().hLive;
 
     /// The pane is consuming typed text (a host must not steal keys).
-    bool searching() const pure nothrow @nogc => filter.active;
+    bool searching() const pure nothrow @nogc => filtering;
 
     /// The live-filter query (for a host that paints its own input line).
     const(char)[] filterQuery() const return scope pure nothrow @nogc
-        => filter.text;
+        => query_;
 
     /// Moves the cursor by `dy` visible rows (`±1` step, `±bodyRows` page),
     /// keeping it in view.
@@ -309,37 +331,70 @@ struct TreeViewState(Key)
     /// the tree is a function of the query.
     TreeStep filterStart() pure nothrow
     {
-        filter = filter.started();
+        filter = filterSetup.singleLine();
+        filtering = true;
+        query_ = null;
         searchFold = DisclosureState!Key(true, null);
         return TreeStep.rebuild;
     }
 
-    /// One key while the filter owns the keyboard: characters narrow, Enter
-    /// keeps the filtered tree, Esc clears it. `none` for keys that are not
-    /// the editor's (a host may route them elsewhere or drop them).
+    /// One key while the filter owns the keyboard: it edits the query, Enter
+    /// keeps the filtered tree, Esc clears it. `none` for keys the editor
+    /// declines (a host may route them elsewhere or drop them).
     TreeStep filterKey(in KeyEvent e) pure nothrow
     {
-        switch (e.key)
+        if (!filtering)
+            return TreeStep.none;
+        const result = filter.key(e);
+        return filterResult(result.handled, result.changed, result.submitted, result.cancelled);
+    }
+
+    /// Text pasted while the filter owns the keyboard (`EDI4`), or the answer
+    /// to its clipboard read when `request` is not 0 (`EDY5`).
+    TreeStep filterPaste(scope const(char)[] text, uint request = 0) pure nothrow
+    {
+        if (!filtering)
+            return TreeStep.none;
+        const result = filter.paste(text, request);
+        return filterResult(result.handled, result.changed, result.submitted, result.cancelled);
+    }
+
+    /// An input method's composition while the filter owns the keyboard
+    /// (`EDI3`), its preedit read from the host's pool.
+    TreeStep filterCompose(in CompositionEvent update, scope const(char)[] preedit) pure nothrow
+    {
+        if (!filtering)
+            return TreeStep.none;
+        const result = filter.compose(update, preedit);
+        return result.handled ? TreeStep.handled : TreeStep.none;
+    }
+
+    /// Leave filter mode and clear the query.
+    TreeStep filterCancel() pure nothrow
+    {
+        filter = filterSetup.singleLine();
+        filtering = false;
+        query_ = null;
+        searchFold = DisclosureState!Key(true, null);
+        return TreeStep.rebuild;
+    }
+
+    private TreeStep filterResult(bool handled, bool changed, bool submitted, bool cancelled)
+        pure nothrow
+    {
+        if (!handled)
+            return TreeStep.none;
+        if (cancelled)
+            return filterCancel();
+        if (submitted)
         {
-            case InputKey.char_:
-                const next = filter.typed(e.ch);
-                if (next == filter)
-                    return TreeStep.handled;
-                filter = next;
-                return TreeStep.rebuild;
-            case InputKey.backspace:
-                filter = filter.erased();
-                return TreeStep.rebuild;
-            case InputKey.enter:
-                filter = filter.accepted();
-                return TreeStep.handled;
-            case InputKey.escape:
-                filter = filter.cancelled();
-                searchFold = DisclosureState!Key(true, null);
-                return TreeStep.rebuild;
-            default:
-                return TreeStep.none;
+            filtering = false;
+            return TreeStep.handled;
         }
+        if (!changed)
+            return TreeStep.handled;
+        query_ = filter.text;
+        return TreeStep.rebuild;
     }
 
     /**
@@ -853,14 +908,16 @@ version (unittest)
 }
 
 @("tree_view.resize.aTallerPaneRevealsMoreBelow")
-@safe pure nothrow @nogc
+@safe pure nothrow
 unittest
 {
     // hue issue #299 for a row-list pane: growing it must only change how
     // many rows follow the first visible one.
-    FlatTreeRow[12] pool;
+    // Heap rows: the state's field editor gives it a destructor, so a local
+    // state cannot hold a borrow of a local array.
+    auto pool = new FlatTreeRow[12];
     TreeViewState!size_t s;
-    s.rows = pool[];
+    s.rows = pool;
     s.chromeRows = 0;
     s.height = 4;
     s.scrollBy(100);
@@ -930,4 +987,25 @@ unittest
     s.searchFold = s.searchFold.closed(3);
     s.filterStart();
     assert(s.searchFold.isOpen(3), "a new query starts with a fresh overlay");
+}
+
+@("ui.tree_view.filterServesItsClipboard")
+@safe unittest
+{
+    import sparkles.input.events : Key, KeyEvent, Mods;
+    import sparkles.ui.editor.field : fieldClipboard, FieldSetup;
+    import sparkles.ui.editor.keys : EditorTarget;
+
+    string board = "needle";
+    auto clipboard = fieldClipboard((scope const(char)[] t) { board = t.idup; }, () => board);
+    TreeViewState!uint s;
+    s.filterSetup = FieldSetup.of(EditorTarget.window, clipboard);
+    s.filterStart();
+    assert(s.filterKey(KeyEvent(Key.char_, 'v', Mods(ctrl: true))) == TreeStep.handled,
+        "the paste waits for the host");
+    assert(s.filterServe(clipboard) == TreeStep.rebuild && s.filterQuery == "needle");
+    s.filterCancel();
+    s.filterStart();
+    s.filterKey(KeyEvent(Key.char_, 'v', Mods(ctrl: true)));
+    assert(s.filterServe(clipboard) == TreeStep.rebuild, "a restarted filter keeps its setup");
 }

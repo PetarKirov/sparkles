@@ -30,6 +30,8 @@ import sparkles.twoslash.render_widgets : decorateCodeRow;
 import sparkles.ui.geometry : SizeSpec;
 import sparkles.ui.components.gutter : blankCell, cellOf, GutterCell,
     GutterChannel, withGutterCells;
+import sparkles.ui.components.editor : EditorViewOptions, editorLineSpans;
+import sparkles.ui.editor.state : EditorState;
 import sparkles.ui.style : Slot;
 import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind, WidgetTree;
 
@@ -99,6 +101,21 @@ struct DiffViewOptions
     /// whose spans don't cover its text) falls back to plain rows.
     TextSpan[][] oldStyled;
     TextSpan[][] newStyled;
+    /// `DST5`: the new side being edited. Its rows that hold a caret, a
+    /// selection or a preedit draw through the editor's view, and the primary
+    /// caret's row is keyed $(LREF diffCaretKey). `null` when the new side is
+    /// read-only, which is every side but a worktree file's.
+    const(EditorState)* editing;
+    /// `DCM1`: the document-global index of the row a comment would anchor
+    /// to, marked in its gutter; `size_t.max` marks none.
+    size_t cursorRow = size_t.max;
+    /// `DCM2`: a comment being written under row `composerRow` (global), or
+    /// `null`.
+    const(EditorState)* composer;
+    /// ditto
+    size_t composerRow = size_t.max;
+    /// ditto: the composer's keys, said under it.
+    string composerHint;
 }
 
 /**
@@ -300,6 +317,19 @@ uint viewDiffInto(ref Builder b, const ref DiffDoc doc, in FileEntry file,
     if (opt.entry.error.length)
         rows ~= noticeRow(b, opt.entry.error);
 
+    // `DCM6`: a conversation the forge could not place on a line still
+    // shows, under the file's header, rather than vanishing (the diffy
+    // finding).
+    {
+        const(GutterChannel)[] none;
+        foreach (ref t; opt.threads)
+            if (t.line == 0)
+            {
+                rows ~= noticeRow(b, "(a comment not placed on a line)");
+                rows ~= threadBlock(b, t, none, opt);
+            }
+    }
+
     if (file.degraded == Degradation.fileTooLarge)
         rows ~= noticeRow(b, "(file too large — diff not computed)");
     else if (file.degraded == Degradation.editDistanceCapped)
@@ -409,6 +439,51 @@ size_t diffGapKey(size_t gapIndex) @safe pure nothrow @nogc
 /// `true` for a key produced by $(LREF diffGapKey).
 bool isDiffGapKey(size_t key) @safe pure nothrow @nogc => key >= diffGapKeyBase;
 
+/// `DST5`: the key of the row holding the edited side's primary caret, so the
+/// host keeps it in view. Between the file keys and the hunk keys.
+enum size_t diffCaretKey = size_t.max / 4;
+
+/// `DCM1`: the key of the row the comment cursor is on, so the host keeps it
+/// in view. Beside $(LREF diffCaretKey).
+enum size_t diffRowCursorKey = diffCaretKey + 1;
+
+/// `DST5`: line `line` (0-based) of the edited text has a caret, a selection
+/// or a preedit on it, so its row draws through the editor.
+private bool editorOnLine(in EditorState state, size_t line) @safe pure nothrow @nogc
+{
+    const text = state.text;
+    if (line >= text.lineCount)
+        return false;
+    const start = text.lineStart(line);
+    const end = text.lineEnd(line);
+    foreach (r; state.selection.ranges)
+        if (r.head >= start && r.head <= end || r.start < end && r.end > start)
+            return true;
+    return false;
+}
+
+/// ditto: the primary caret is on it.
+private bool primaryOnLine(in EditorState state, size_t line) @safe pure nothrow @nogc
+    => line < state.text.lineCount
+        && state.text.lineOf(state.selection.primary.head) == line;
+
+/**
+`DST5`: the spans of an edited new-side row, through the editor's view, or
+`null` when the row has no caret, selection or preedit on it.
+*/
+private TextSpan[] editedSpans(in DiffViewOptions opt, in Row row) @safe
+{
+    if (opt.editing is null || row.kind == RowKind.removed || row.newLine == 0
+        || !editorOnLine(*opt.editing, row.newLine - 1))
+        return null;
+    return editorLineSpans(*opt.editing, row.newLine - 1, EditorViewOptions.init);
+}
+
+/// The key an edited row carries: $(LREF diffCaretKey) on the primary caret's.
+private size_t editedKey(in DiffViewOptions opt, in Row row) @safe pure nothrow @nogc
+    => opt.editing !is null && row.kind != RowKind.removed && row.newLine != 0
+        && primaryOnLine(*opt.editing, row.newLine - 1) ? diffCaretKey : 0;
+
 /// Marks a node as filling its parent's remaining width.
 private uint grown(ref Builder b, uint node) @safe
 {
@@ -464,6 +539,9 @@ private uint fileHeader(ref Builder b, const ref DiffDoc doc, in FileEntry file,
         spans ~= TextSpan(" ");
         spans ~= TextSpan(text("−", opt.entry.removed), slot: Slot.diffRemoved);
     }
+    // `DCM5`: the reviewer has seen this file as it is now.
+    if (opt.entry.viewed)
+        spans ~= TextSpan("  ✓ viewed", slot: Slot.muted);
     return b.add(Widget(kind: WidgetKind.rich, spans: spans));
 }
 
@@ -513,6 +591,51 @@ private bool anchoredHere(in AnchoredThread t, in Row row) @safe pure nothrow @n
     return t.oldSide ? row.oldLine == t.line : row.newLine == t.line;
 }
 
+
+
+/// `DCM3`: a suggestion's mini-diff, the lines it replaces over what it
+/// proposes, tinted like the diff's own rows.
+private uint suggestionBlock(ref Builder b, in AnchoredThread t) @safe
+{
+    import sparkles.doc_view.diff_comments : linesOf;
+    import sparkles.ui.geometry : Insets;
+
+    auto rows = [b.add(Widget(kind: WidgetKind.rich,
+        spans: [TextSpan("suggested change", slot: Slot.muted)]))];
+    foreach (line; linesOf(t.suggestedFrom ~ "\n"))
+        rows ~= tinted(b, b.add(Widget(kind: WidgetKind.rich,
+            spans: [TextSpan("- " ~ line, slot: Slot.diffRemoved)])), RowKind.removed);
+    foreach (line; linesOf(t.suggestedTo ~ "\n"))
+        rows ~= tinted(b, b.add(Widget(kind: WidgetKind.rich,
+            spans: [TextSpan("+ " ~ line, slot: Slot.diffAdded)])), RowKind.added);
+    return b.add(Widget(kind: WidgetKind.column, children: rows, padding: Insets(0, 0, 0, 2)));
+}
+/**
+`DCM2`: the comment being written, under its row: the editor drawn like a
+thread's body, with a line saying how to post it or leave.
+*/
+private uint composerBlock(ref Builder b, const(GutterChannel)[] chans, in DiffViewOptions opt)
+    @safe
+{
+    import sparkles.ui.components.editor : editorView;
+    import sparkles.ui.geometry : Insets;
+    import sparkles.ui.style : TextStyle;
+
+    EditorViewOptions eopt;
+    eopt.placeholder = "Write a comment (markdown)";
+    auto rows = [
+        b.add(Widget(kind: WidgetKind.rich, spans: [
+            TextSpan("▌ ", slot: Slot.chromeAccent),
+            TextSpan("new comment", slot: Slot.chromeAccent, textStyle: TextStyle(bold: true)),
+        ])),
+        b.add(Widget(kind: WidgetKind.column, children: [editorView(b, *opt.composer, eopt)],
+            padding: Insets(0, 0, 0, 2))),
+    ];
+    if (opt.composerHint.length)
+        rows ~= b.add(Widget(kind: WidgetKind.rich,
+            spans: [TextSpan("  " ~ opt.composerHint, slot: Slot.muted)]));
+    return withGutterCells(b, chans, null, b.container(WidgetKind.column, rows), 0);
+}
 /**
 `DPR3`/`DCM2`: one review conversation, rendered under its anchor line.
 
@@ -568,6 +691,10 @@ private uint threadBlock(ref Builder b, in AnchoredThread t,
                 children: [viewMarkdownInto(b, c.body_, mopt)],
                 padding: Insets(0, 0, 0, 2)));
         }
+        // `DCM3`: a suggestion is its own mini-diff, the anchored lines
+        // against what it proposes.
+        if (i == 0 && t.hasSuggestion)
+            rows ~= suggestionBlock(b, t);
     }
     return withGutterCells(b, chans, null,
         b.container(WidgetKind.column, rows), 0);
@@ -603,8 +730,17 @@ private GutterChannel[] diffChannels(int digits, bool split) @safe
 }
 
 /// The marker cell for `kind`: the `+`/`-`/context band that runs into the code.
-private GutterCell markerCell(RowKind kind) @safe
+private GutterCell markerCell(RowKind kind, bool cursor = false) @safe
 {
+    // `DCM1`: the row a comment would anchor to keeps its sign and gains a
+    // pointer, in the accent, so the tier still reads.
+    if (cursor)
+        final switch (kind) with (RowKind)
+        {
+            case context: return cellOf("▶ ", 2, Slot.chromeAccent, alignEnd: false);
+            case removed: return cellOf("▶-", 2, Slot.chromeAccent, alignEnd: false);
+            case added:   return cellOf("▶+", 2, Slot.chromeAccent, alignEnd: false);
+        }
     final switch (kind) with (RowKind)
     {
         case context:
@@ -621,7 +757,7 @@ private GutterCell markerCell(RowKind kind) @safe
 }
 
 /// A row's cells for the unified channels: both line numbers, then the marker.
-private GutterCell[] unifiedCells(in Row row, int digits) @safe
+private GutterCell[] unifiedCells(in Row row, int digits, bool cursor = false) @safe
 {
     GutterCell[] cells;
     if (digits > 0)
@@ -629,7 +765,7 @@ private GutterCell[] unifiedCells(in Row row, int digits) @safe
         cells ~= numberCell(row.oldLine, digits);
         cells ~= numberCell(row.newLine, digits);
     }
-    return cells ~ markerCell(row.kind);
+    return cells ~ markerCell(row.kind, cursor);
 }
 
 /// A line number, or a blank strip when the side has none.
@@ -840,16 +976,32 @@ private uint viewHunkSplit(ref Builder b, const ref DiffDoc doc, in Hunk hunk,
         rows ~= hunkHeader(b, hunk);
 
     const hunkRows = doc.hunkRows(hunk);
+    const base = hunk.rowsStart;
     foreach (pair; alignSplitRows(hunkRows))
     {
         const left = splitHalf(b, doc, hunkRows, pair.old_, true,
-            chans, digits, opt);
+            chans, digits, opt, base);
         const right = splitHalf(b, doc, hunkRows, pair.new_, false,
-            chans, digits, opt);
+            chans, digits, opt, base);
         // The row itself must fill the pane, or its two `grow` halves have no
         // remaining space to divide and both shrink-wrap their text.
         // The row fills the pane; its two halves each take exactly 50% of it.
         rows ~= grown(b, b.container(WidgetKind.row, [left, right]));
+
+        // `DPR3`/`DCM2`: the conversations on either half, across the pane
+        // under the pair, and a comment being written on one of them. A
+        // context row is both halves; it is visited once.
+        foreach (idx; [pair.old_, pair.new_ == pair.old_ ? -1 : pair.new_])
+        {
+            if (idx < 0)
+                continue;
+            const row = hunkRows[cast(size_t) idx];
+            foreach (ref t; opt.threads)
+                if (anchoredHere(t, row))
+                    rows ~= threadBlock(b, t, chans, opt);
+            if (opt.composer !is null && base + idx == opt.composerRow)
+                rows ~= composerBlock(b, chans, opt);
+        }
     }
     // Every container between the panes and the viewport must fill the width,
     // or `percent(50)` resolves against a shrink-wrapped ancestor and the
@@ -867,7 +1019,7 @@ as "unchanged and short".
 */
 private uint splitHalf(ref Builder b, const ref DiffDoc doc,
     const(Row)[] hunkRows, int idx, bool oldSide,
-    const(GutterChannel)[] chans, int digits, DiffViewOptions opt) @safe
+    const(GutterChannel)[] chans, int digits, DiffViewOptions opt, size_t base = 0) @safe
 {
     if (idx < 0)
     {
@@ -880,7 +1032,7 @@ private uint splitHalf(ref Builder b, const ref DiffDoc doc,
     GutterCell[] cells;
     if (digits > 0)
         cells ~= numberCell(oldSide ? row.oldLine : row.newLine, digits);
-    cells ~= markerCell(row.kind);
+    cells ~= markerCell(row.kind, base + idx == opt.cursorRow);
     TextSpan[] spans;
 
     const rowText = doc.rowText(row);
@@ -889,23 +1041,29 @@ private uint splitHalf(ref Builder b, const ref DiffDoc doc,
         ? styledLine(opt.newStyled, row.newLine)
         : styledLine(opt.oldStyled, row.oldLine);
 
-    final switch (row.kind) with (RowKind)
-    {
-        case context:
-            spans ~= composedSpans(styled, rowText, emph, Slot.inherit,
-                Slot.inherit, false);
-            break;
-        case removed:
-            spans ~= composedSpans(styled, rowText, emph, Slot.diffRemoved,
-                Slot.diffEmphRemoved, true);
-            break;
-        case added:
-            spans ~= composedSpans(styled, rowText, emph, Slot.diffAdded,
-                Slot.diffEmphAdded, true);
-            break;
-    }
+    // `DST5`: on the new side, a row the editor is on draws through it.
+    auto edited = oldSide ? null : editedSpans(opt, row);
+    if (edited !is null)
+        spans = edited;
+    else
+        final switch (row.kind) with (RowKind)
+        {
+            case context:
+                spans ~= composedSpans(styled, rowText, emph, Slot.inherit,
+                    Slot.inherit, false);
+                break;
+            case removed:
+                spans ~= composedSpans(styled, rowText, emph, Slot.diffRemoved,
+                    Slot.diffEmphRemoved, true);
+                break;
+            case added:
+                spans ~= composedSpans(styled, rowText, emph, Slot.diffAdded,
+                    Slot.diffEmphAdded, true);
+                break;
+        }
     const text = withGutterCells(b, chans, cells,
-        b.add(Widget(kind: WidgetKind.rich, spans: spans)), 0);
+        keyed(b, b.add(Widget(kind: WidgetKind.rich, spans: spans)),
+            oldSide ? 0 : editedKey(opt, row)), 0);
     // `DVL9`: the half already spans its pane, so it is the container that
     // carries the row tint — same rule as the unified row.
     return halfWidth(b, b.container(WidgetKind.column, [text],
@@ -921,22 +1079,26 @@ private uint viewHunk(ref Builder b, const ref DiffDoc doc, in Hunk hunk,
     if (opt.chrome)
         rows ~= hunkHeader(b, hunk);
 
-    foreach (ref row; doc.hunkRows(hunk))
+    foreach (i, ref row; doc.hunkRows(hunk))
     {
-        rows ~= viewRow(b, doc, row, chans, digits, opt);
+        const global = hunk.rowsStart + i;
+        rows ~= viewRow(b, doc, row, chans, digits, opt, global == opt.cursorRow);
         // `DPR3`: the conversation goes UNDER the line it is about, the way
         // a reviewer reads it — not in a margin, and not in a separate pane
         // where the code it refers to is no longer on screen.
         foreach (ref t; opt.threads)
             if (anchoredHere(t, row))
                 rows ~= threadBlock(b, t, chans, opt);
+        // `DCM2`: a comment being written goes where it will hang.
+        if (opt.composer !is null && global == opt.composerRow)
+            rows ~= composerBlock(b, chans, opt);
     }
 
     return grown(b, b.container(WidgetKind.column, rows));
 }
 
 private uint viewRow(ref Builder b, const ref DiffDoc doc, in Row row,
-    const(GutterChannel)[] chans, int digits, DiffViewOptions opt) @safe
+    const(GutterChannel)[] chans, int digits, DiffViewOptions opt, bool cursor = false) @safe
 {
     TextSpan[] spans;
     const rowText = doc.rowText(row);
@@ -945,28 +1107,34 @@ private uint viewRow(ref Builder b, const ref DiffDoc doc, in Row row,
     const styled = row.kind == RowKind.added
         ? styledLine(opt.newStyled, row.newLine)
         : styledLine(opt.oldStyled, row.oldLine);
-    final switch (row.kind)
-    {
-    case RowKind.context:
-        spans ~= composedSpans(styled, rowText, emph, Slot.inherit,
-            Slot.inherit, false);
-        break;
-    case RowKind.removed:
-        spans ~= composedSpans(styled, rowText, emph, Slot.diffRemoved,
-            Slot.diffEmphRemoved, true);
-        break;
-    case RowKind.added:
-        spans ~= composedSpans(styled, rowText, emph, Slot.diffAdded,
-            Slot.diffEmphAdded, true);
-        break;
-    }
-    const code = b.add(Widget(kind: WidgetKind.rich, spans: spans));
+    // `DST5`: a row the editor's caret or selection is on draws through it.
+    if (auto edited = editedSpans(opt, row))
+        spans = edited;
+    else
+        final switch (row.kind)
+        {
+        case RowKind.context:
+            spans ~= composedSpans(styled, rowText, emph, Slot.inherit,
+                Slot.inherit, false);
+            break;
+        case RowKind.removed:
+            spans ~= composedSpans(styled, rowText, emph, Slot.diffRemoved,
+                Slot.diffEmphRemoved, true);
+            break;
+        case RowKind.added:
+            spans ~= composedSpans(styled, rowText, emph, Slot.diffAdded,
+                Slot.diffEmphAdded, true);
+            break;
+        }
+    const rowKey = editedKey(opt, row);
+    const code = keyed(b, b.add(Widget(kind: WidgetKind.rich, spans: spans)),
+        rowKey != 0 ? rowKey : cursor ? diffRowCursorKey : 0);
 
     // `DVT1`: the side's type overlay decorates this row. The decorations are
     // `stack` children of the code and the chrome is its sibling, so the
     // layout places both — nothing here has to know how wide the gutter is,
     // which is what an underline two cells off its token used to cost.
-    const cells = unifiedCells(row, digits);
+    const cells = unifiedCells(row, digits, cursor);
     const side = row.kind == RowKind.added ? opt.newTypes : opt.oldTypes;
     const line = row.kind == RowKind.added ? row.newLine : row.oldLine;
     const composed = !side.live || line == 0
@@ -1464,6 +1632,8 @@ version (unittest)
 {
     import sparkles.twoslash.protocol : Node, NodeType;
     import sparkles.ui.geometry : SizeSpec;
+import sparkles.ui.components.editor : EditorViewOptions, editorLineSpans;
+import sparkles.ui.editor.state : EditorState;
 import sparkles.ui.style : Slot;
 
     // One changed line: the old side gets a hover span, the new side none.
@@ -1771,6 +1941,7 @@ import sparkles.ui.style : Slot;
 @safe unittest
 {
     import sparkles.doc_view.diff_session : AnchoredThread, buildDiffSession, ThreadComment;
+    import sparkles.syntax.md.model : MdDoc;
     import sparkles.syntax.md.model : MdBlock, MdBlockKind, MdDoc, MdInline,
         MdInlineKind, Span;
 
@@ -1839,26 +2010,34 @@ import sparkles.ui.style : Slot;
     assert(!other.canFind("this needs a why"));
 }
 
-@("diff_view.threads.anOutdatedThreadHasNoLineToHangOn")
+
+@("diff_view.threads.unplacedOnesShowUnderTheHeader")
 @safe unittest
 {
     import sparkles.doc_view.diff_session : AnchoredThread, buildDiffSession, ThreadComment;
+    import std.algorithm.searching : canFind, countUntil;
 
     // GitHub reports an outdated thread with a null line, which decodes to
-    // zero. Zero must not match row 0 of anything — it means "nowhere".
+    // zero. Zero must not match row 0 of anything, and the thread must not
+    // vanish either (`DCM6`, the diffy finding): it shows under the file's
+    // header, said to be on no line.
     auto doc = diffText("a\n", "b\n", "f.d", "f.d");
     auto session = buildDiffSession(doc);
     session.threads = [AnchoredThread(path: "f.d", line: 0, outdated: true,
         comments: [ThreadComment("reviewer", "2026-08-01")])];
 
     auto tree = viewDiffDoc(doc, DiffViewOptions.init, null, null, session);
-    const(char)[] all;
+    string[] texts;
     foreach (ref n; tree.nodes)
+    {
+        if (n.text.length)
+            texts ~= n.text.idup;
         foreach (sp; n.spans)
-            all ~= sp.text;
-
-    import std.algorithm.searching : canFind;
-
-    assert(!all.canFind("reviewer"),
-        "a thread with no line anchors nowhere rather than at the top");
+            texts ~= sp.text.idup;
+    }
+    const notice = texts.countUntil("(a comment not placed on a line)");
+    const author = texts.countUntil("reviewer");
+    assert(notice >= 0 && author > notice, "surfaced, under its notice");
+    assert(texts.countUntil("- ") < 0 || texts.countUntil("- ") > author,
+        "before the rows, not hung on the first one");
 }

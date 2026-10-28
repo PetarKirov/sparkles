@@ -80,19 +80,21 @@ StageResult applyPatch(string patch, StageAction action, string workDir = null)
             break;
     }
 
-    const checked = run(base ~ "--check", patch, workDir);
+    const checked = runWithInput(base ~ "--check", patch, workDir);
     if (checked.status != 0)
         return err!bool(StageError("the selection does not apply: "
             ~ checked.output.strip));
 
-    const applied = run(base, patch, workDir);
+    const applied = runWithInput(base, patch, workDir);
     if (applied.status != 0)
         return err!bool(StageError("git apply failed: "
             ~ applied.output.strip));
     return StageResult(true);
 }
 
-private auto run(string[] argv, string input, string workDir) @safe
+/// Runs `argv` in `workDir` with `input` on its standard input, through the
+/// environment every repository-naming git call uses; its status and output.
+auto runWithInput(string[] argv, string input, string workDir) @safe
 {
     import sparkles.build_primitives.git_env : gitChildEnvironment;
     import std.process : Config, pipeProcess, Redirect, wait;
@@ -297,4 +299,20 @@ version (unittest)
 
     const r = runGit(["show", ":f.txt"], dir);
     assert(r.output == after);
+}
+
+/**
+`CFV4`, optional staging: marks a resolved conflict file resolved in the
+index with `git add`, once it has been saved. Returns what to tell the
+user.
+*/
+string stageResolvedFile(string path, bool saved, string workDir) @safe
+{
+    import sparkles.build_primitives.git_env : runGit;
+    import std.string : strip;
+
+    if (!saved)
+        return "save the resolved file first";
+    const added = runGit(["add", "--", path], workDir);
+    return added.status == 0 ? "staged " ~ path : "git add failed: " ~ added.output.strip;
 }

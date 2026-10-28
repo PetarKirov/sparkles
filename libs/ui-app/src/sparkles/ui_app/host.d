@@ -35,7 +35,7 @@ import core.time : Duration;
 import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.term_color : RgbColor;
 import sparkles.base.term_control : PointerShape;
-import sparkles.input : Event, InputCapabilities, Mods;
+import sparkles.input : CompositionEvent, Event, InputCapabilities, Mods, TextId;
 import sparkles.ui.arena : FrameArena;
 import sparkles.ui.canvas : DrawOp, fillRectOp;
 import sparkles.ui.cmd_buffer : CmdBufferT;
@@ -444,6 +444,37 @@ enum bool canSpawnDaemon(H) = __traits(compiles, (ref H h) {
 
 /// ditto
 enum bool canWake(H) = __traits(compiles, (ref H h) { h.wake(); });
+
+/**
+The clipboard read errand (`INP25`, `HST8`), capability-by-presence: a host
+that can read the system clipboard takes `readClipboard(request)` and
+answers at its next poll with `PasteEvent`s carrying `request`. Presence is
+compile-time; `InputCapabilities.clipboardRead` says whether this run can.
+*/
+enum bool canReadClipboard(H) = __traits(compiles, (ref H h) { h.readClipboard(1u); });
+
+/**
+The host's input text pool (`INP24`): `h.inputTexts` resolves the `TextId` a
+`CompositionEvent` names, until the host's next poll. Presence is
+compile-time; `InputCapabilities.composition` says whether this run delivers
+composition at all.
+*/
+enum bool hasInputTexts(H) = __traits(compiles, (ref H h) {
+    h.inputTexts.withText(TextId.init, (scope const(char)[] s) {});
+});
+
+/**
+Calls `fn(preedit)` with the preedit `update` names, borrowed from `h`'s
+pool for the call: empty when the update ends the composition, when `h`
+keeps no pool, or when the text is gone.
+*/
+void withPreedit(H, Fn)(ref H h, in CompositionEvent update, scope Fn fn)
+{
+    static if (hasInputTexts!H)
+        if (!update.ends && !h.inputTexts.withText(update.preedit, fn).hasError)
+            return;
+    fn("");
+}
 
 /**
 The default draw phase: nothing.

@@ -22,12 +22,13 @@ import sparkles.base.term_color : RgbColor;
 import sparkles.ui.effect : EffectRegistry;
 import sparkles.ui.image : ImageRegistry;
 import sparkles.base.term_control : PointerShape;
-import sparkles.input : Event, InputCapabilities, cellPointer, match, ResizeEvent;
+import sparkles.input : Event, InputCapabilities, InputTextPool, cellPointer, match, ResizeEvent,
+    TextId;
 import sparkles.ui.arena : GcArena;
 import sparkles.ui.canvas : DrawOp, RecordingCanvas;
 import sparkles.ui.geometry : Size;
 import sparkles.ui_app.backend : Backend;
-import sparkles.ui_app.host : FrameOpsOf, HostState, isHost, modsOf,
+import sparkles.ui_app.host : FrameOpsOf, HostState, canReadClipboard, isHost, modsOf,
     recordedOpCapacity, RunConfig, withRealSize;
 
 /// One recorded frame: what the application drew, and whether it drew at all.
@@ -87,6 +88,9 @@ struct RecordingHost
     string[] titles;
     /// ditto
     string[] outOfBand;
+    /// Clipboard reads requested (`INP25`), in order; a test answers one by
+    /// feeding `PasteEvent`s carrying its number.
+    uint[] clipboardReads;
     /// Whether the application asked for fullscreen at any point.
     bool fullscreenToggled;
 
@@ -98,8 +102,33 @@ struct RecordingHost
 
     void pointerShape(PointerShape s) pure nothrow { shapes ~= s; }
     void clipboard(scope const(char)[] text) pure nothrow { clipboardWrites ~= text.idup; }
+    void readClipboard(uint request) pure nothrow { clipboardReads ~= request; }
     void title(scope const(char)[] t) pure nothrow { titles ~= t.idup; }
     void writeOutOfBand(scope const(char)[] seq) pure nothrow { outOfBand ~= seq.idup; }
+
+    /// The texts a recorded `CompositionEvent` names (`INP24`): a recording
+    /// carries them beside its events, and `holdTexts` puts them here.
+    ref InputTextPool inputTexts() return @safe pure nothrow
+    {
+        if (inputTexts_ is null)
+            inputTexts_ = new InputTextPool;
+        return *inputTexts_;
+    }
+
+    /**
+    Interns a recording's texts in order, so the `n`th is named by
+    $(LREF recordedText)`(n)`: what a scripted `CompositionEvent` names.
+    */
+    void holdTexts(in string[] texts) @safe pure nothrow
+    {
+        foreach (i, text; texts)
+        {
+            const id = inputTexts.intern(text);
+            assert(id.hasValue && id.value == recordedText(i), "a recording's texts are interned first");
+        }
+    }
+
+    private InputTextPool* inputTexts_;
 
     /// Kept, as the terminal arm keeps it: a recording host paints nothing,
     /// but whoever paints its op stream afterwards (a `--render`) resolves the
@@ -177,6 +206,7 @@ struct RecordingHost
 
 static assert(isHost!RecordingHost, "the recorder must satisfy the same"
     ~ " contract as a live host — that is the whole point of it");
+static assert(canReadClipboard!RecordingHost);
 
 
 /**
@@ -386,6 +416,7 @@ unittest
         (ref RecordingHost h) { h.pointerShape(PointerShape.pointer); },
         (ref RecordingHost h, in Event e) {
             h.clipboard("copied");
+            h.readClipboard(4);
             h.title("new title");
             h.writeOutOfBand("\x1b]52;c;…\x07");
             h.toggleFullscreen();
@@ -394,6 +425,7 @@ unittest
 
     assert(rec.shapes == [PointerShape.pointer, PointerShape.pointer]);
     assert(rec.clipboardWrites == ["copied"]);
+    assert(rec.clipboardReads == [4]);
     assert(rec.titles == ["new title"]);
     assert(rec.outOfBand.length == 1);
     assert(rec.fullscreenToggled);
@@ -533,4 +565,27 @@ unittest
     assert(!h.target.unicode && h.declaredTarget == declared);
     h.widenTarget();
     assert(h.target == declared);
+}
+
+/// The id a recording's `n`th text has once `RecordingHost.holdTexts` interns it.
+TextId recordedText(size_t n) @safe pure nothrow @nogc => TextId(cast(uint) n, 1);
+
+@("ui_app.record.recordingCarriesItsTexts")
+@safe pure nothrow
+unittest
+{
+    import sparkles.input : CompositionEvent;
+    import sparkles.ui_app.host : hasInputTexts, withPreedit;
+
+    // `INP24`: a recording names its preedits by id and carries the texts.
+    static assert(hasInputTexts!RecordingHost);
+    RecordingHost h;
+    h.holdTexts(["にほ", "ん"]);
+    CompositionEvent update;
+    update.preedit = recordedText(1);
+    string seen;
+    withPreedit(h, update, (scope const(char)[] s) { seen = s.idup; });
+    assert(seen == "ん");
+    withPreedit(h, CompositionEvent.init, (scope const(char)[] s) { seen = s.idup; });
+    assert(seen == "", "an ending update has no preedit");
 }

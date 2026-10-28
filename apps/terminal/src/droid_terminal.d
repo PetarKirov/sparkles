@@ -30,6 +30,7 @@ import sparkles.input : Event, GestureEvent, Gesture, Key, KeyAction, KeyEvent,
 import sparkles.raylib_text.font_set : FontSet;
 import sparkles.terminal_view.component : ColorOverrides, TerminalView, TerminalViewOptions;
 import sparkles.ui.components.dock : PaneId;
+import sparkles.ui.editor.soft_keyboard : SoftKeyboard;
 import sparkles.ui.geometry : Rect;
 import sparkles.ui.layout : Frame;
 import sparkles.ui.widget : WidgetTree;
@@ -38,6 +39,7 @@ import autofill_chip : AutofillChip;
 import chrome : ChromeTheme;
 import droid_platform : DroidPlatform;
 import key_router : KeyRouter, paintGuide, Route;
+import page_kit : pageClipboard;
 import touch_guide : TouchGuide;
 import keymap : KeyCommand, TermCommand, TermContext;
 import screen_oracle : ScreenOracle;
@@ -52,6 +54,8 @@ import workspace_host : WorkspaceHost;
 struct DroidTerminal
 {
     WorkspaceHost host;
+    /// A paste's chunks so far, while a modal surface takes it.
+    private char[] surfacePaste;
     ScreenOracle oracle;
     /// Notifications, the system scheme, the autofill spike (`droid_platform`).
     DroidPlatform platform;
@@ -107,6 +111,8 @@ struct DroidTerminal
     private bool rowContact;             // the raw contact was down last frame
     private int rowLastX, rowLastY;      // where it last was
     private bool keyboardShown;
+    /// Editor focus, for the soft keyboard's edges (`EDI9`).
+    private SoftKeyboard fieldKeyboard;
     private PaneId keyboardFocus; // the pane focused when the keyboard was last decided
     private float pinchBase = 0; // the font size a pinch started from
     private Geometry lastGeometry;
@@ -231,6 +237,29 @@ struct DroidTerminal
                 keyboardShown = false;
             }
         }
+        // The soft keyboard follows an editor's focus (`EDI9`): a page's
+        // search field, the viewer's search line. Only the edges act, so a
+        // keyboard the user put away stays away.
+        {
+            import sparkles.android.soft_input : hideSoftKeyboard, showSoftKeyboard;
+            import sparkles.ui.editor.soft_keyboard : KeyboardAsk;
+
+            auto viewer = host.viewer(host.ws.focused);
+            const editing = host.surfaces.editing
+                || !host.surfaces.modal && viewer !is null && viewer.editing;
+            final switch (fieldKeyboard.update(editing))
+            {
+                case KeyboardAsk.none:
+                    break;
+                case KeyboardAsk.show:
+                    keyboardShown = showSoftKeyboard();
+                    break;
+                case KeyboardAsk.hide:
+                    hideSoftKeyboard();
+                    keyboardShown = false;
+                    break;
+            }
+        }
         // A finger on a divider resizes the split (`TSS10`); that contact,
         // its fling included, is then the divider's, not the panes'.
         {
@@ -299,6 +328,18 @@ struct DroidTerminal
             (in WheelEvent w) { onWheel(h, w); },
             (in GestureEvent g) { onGesture(h, g); },
             (in PasteEvent p) {
+                // A modal surface with a field takes the whole paste, once its
+                // last chunk is in (`EDI4`); nothing under it reaches a pane.
+                if (host.surfaces.modal)
+                {
+                    surfacePaste ~= p.text[];
+                    if (p.last)
+                    {
+                        cast(void) host.surfaces.paste(surfacePaste);
+                        surfacePaste = null;
+                    }
+                    return;
+                }
                 if (auto tv = host.focusedView())
                     tv.onPaste(p);
             },
@@ -764,6 +805,7 @@ struct DroidTerminal
         auto self = &this;
         auto guide = new TouchGuide(router.table, context, router.leader,
             (KeyCommand c) { self.pendingCommand = c; self.hasPending = true; });
+        guide.clipboard(pageClipboard((string text) { self.host.setClipboard(text); }));
         guide.onSearch = () {
             import sparkles.android.soft_input : showSoftKeyboard;
 
