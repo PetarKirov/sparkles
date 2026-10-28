@@ -62,8 +62,8 @@ Drawing rasterized pixels on a screen belongs to the consumer: a GPU backend
 uploads them, a terminal backend sends them as an image.
 HarfBuzz parses the same hostile bytes when it shapes; its robustness is
 HarfBuzz's own, and this
-library's trust guarantees cover only its own reads. Font hinting, LCD subpixel
-rendering, web-font containers (WOFF and WOFF2), writing or subsetting font
+library's trust guarantees cover only its own reads. Hinting beyond light
+vertical grid fitting (`FTR9`), LCD subpixel rendering, web-font containers (WOFF and WOFF2), writing or subsetting font
 files, and installing fonts system-wide are out of scope. `COLR` version 1
 and `SVG ` colour glyphs are reported but not rendered. [`decisions.md`](./decisions.md)
 records why each of these was excluded and what would bring it back.
@@ -518,6 +518,22 @@ indexed: 3,908 at 8 bits and 76 at 4 bits, beside one RGBA.
 glyph of the test corpus at 12, 16, 24 and 48 pixels per em **must** be within
 the tolerance recorded in [`testing.md`](./testing.md#raster-oracle) of the
 same glyph rendered by the same rasterizer with curves flattened to 0.001 px.
+
+**FTR9: Light hinting.** On request, an outline glyph **must** be fitted to
+the pixel grid vertically before it is rasterized: its horizontal edges in
+the face's blue zones (baseline, x-height, cap height, ascender, descender)
+on the zones' pixel rows, with the x-height's overshoot on a whole pixel;
+its horizontal stems on the grid at their designed widths, at least a pixel;
+every other point interpolated between them. Horizontal coordinates, side
+bearings and advances **must not** change. Against FreeType's auto-hinter in
+its light mode, hinted coverage **must** be at least twice as close as
+unhinted, and the x-height and baseline rows **must** match in nineteen of
+twenty lowercase letters ([`testing.md`](./testing.md#raster-oracle)).
+
+_Rationale:_ At terminal sizes an unhinted baseline or crossbar between two
+pixel rows draws as two grey rows; vertical-only fitting is what FreeType's
+light mode, most Linux desktops and browsers draw with, and it never
+distorts a glyph's width ([`FTX17`](./decisions.md#ftx17-light-hinting-vertical-only-in-d)).
 
 ## 12. Shaping
 

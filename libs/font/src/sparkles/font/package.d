@@ -76,6 +76,7 @@ public import sparkles.font.face_record;
 public import sparkles.font.fallback;
 public import sparkles.font.gdef;
 public import sparkles.font.glyph_names;
+public import sparkles.font.hinting;
 public import sparkles.font.instance;
 public import sparkles.font.jstf;
 public import sparkles.font.layout;
