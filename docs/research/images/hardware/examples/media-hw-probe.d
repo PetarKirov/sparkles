@@ -399,7 +399,7 @@ string run(string[] cmd) nothrow
 immutable string[] x86SimdFlags = [
     "sse2", "ssse3", "sse4_1", "sse4_2", "avx", "avx2", "fma", "f16c", "bmi2",
     "avx512f", "avx512dq", "avx512cd", "avx512bw", "avx512vl", "avx512ifma",
-    "avx512vbmi", "avx512vbmi2", "avx512_vnni", "avx512_bitalg",
+    "avx512vbmi", "avx512_vbmi2", "avx512_vnni", "avx512_bitalg",
     "avx512_vpopcntdq", "avx512_bf16", "avx512_fp16", "avx_vnni", "avx_vnni_int8",
     "avx_ifma", "avx10", "gfni", "vaes", "vpclmulqdq", "sha_ni", "amx_tile",
     "amx_int8", "amx_bf16", "amx_fp16",
