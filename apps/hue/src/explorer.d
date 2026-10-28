@@ -990,6 +990,7 @@ struct ExplorerTui
             case Command.diffRowDown: case Command.diffRowUp: case Command.diffComment:
             case Command.diffResolve: case Command.diffMarkViewed:
             case Command.diffSuggest: case Command.diffApplySuggestion:
+            case Command.diffSubmitReview:
                 break;
 
             // The picker's modal surface answers these; its scopes are

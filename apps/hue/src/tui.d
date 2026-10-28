@@ -30,7 +30,8 @@ import sparkles.ui.components.lantern_view : BoxLayout, LabelArena,
     LanternStyle, Placement,
     viewLantern;
 import sparkles.doc_view.document : DiffEmphasis, DiffSides;
-import review_store : applySuggestionAtCursor, persistFolds, postComment,
+import forge : ReviewDraft;
+import review_store : applySuggestionAtCursor, persistFolds, postComment, refreshLocalThreads,
     resolveCommentAtCursor, ReviewSession,
     toggleViewedAtCursor;
 import staging : StageAction;
@@ -1423,6 +1424,8 @@ struct PreviewTui
     /// The review state of the repository this diff is in; `null` when it
     /// is in none, and comments are then kept for this run only.
     ReviewSession review;
+    /// `DCM6`: a submission waits for its confirming key.
+    private bool submitArmed;
 
     /// A paste's chunks so far, for the diff editor (`EDI4`).
     private char[] editPaste;
@@ -1571,6 +1574,24 @@ struct PreviewTui
             {
                 discardArmed = true; // the second pass performs it
                 applyStaging(StageAction.discard);
+                return true;
+            }
+        }
+        // `DCM6`: an armed submission, answered like a discard. Sending a
+        // review is outward-facing and cannot be taken back, so it takes a
+        // second, deliberate key.
+        if (submitArmed)
+        {
+            const confirmed = e.key == Key.char_ && e.ch == 'y';
+            submitArmed = false;
+            notice = null;
+            if (confirmed)
+            {
+                import forge_client : submitPullRequestReview;
+
+                notice = review.submit((string target, in ReviewDraft draft)
+                    => submitPullRequestReview(target, draft));
+                refreshLocalThreads(vm, review);
                 return true;
             }
         }
@@ -1801,6 +1822,20 @@ struct PreviewTui
                     notice = said;
                     if (applied && onStaged !is null)
                         onStaged(); // the working tree changed under the diff
+                }
+                break;
+            case Command.diffSubmitReview:
+                if (review is null || review.target.length == 0)
+                    notice = "only a forge's pull request takes a review";
+                else if (review.drafts == 0)
+                    notice = "no drafts to submit";
+                else
+                {
+                    import std.conv : text;
+
+                    submitArmed = true;
+                    notice = text("submit ", review.drafts, " draft comments to ",
+                        review.target, "? press y to send");
                 }
                 break;
             case Command.diffResolve:

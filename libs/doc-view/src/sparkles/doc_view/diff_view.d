@@ -317,6 +317,19 @@ uint viewDiffInto(ref Builder b, const ref DiffDoc doc, in FileEntry file,
     if (opt.entry.error.length)
         rows ~= noticeRow(b, opt.entry.error);
 
+    // `DCM6`: a conversation the forge could not place on a line still
+    // shows, under the file's header, rather than vanishing (the diffy
+    // finding).
+    {
+        const(GutterChannel)[] none;
+        foreach (ref t; opt.threads)
+            if (t.line == 0)
+            {
+                rows ~= noticeRow(b, "(a comment not placed on a line)");
+                rows ~= threadBlock(b, t, none, opt);
+            }
+    }
+
     if (file.degraded == Degradation.fileTooLarge)
         rows ~= noticeRow(b, "(file too large — diff not computed)");
     else if (file.degraded == Degradation.editDistanceCapped)
@@ -1928,6 +1941,7 @@ import sparkles.ui.style : Slot;
 @safe unittest
 {
     import sparkles.doc_view.diff_session : AnchoredThread, buildDiffSession, ThreadComment;
+    import sparkles.syntax.md.model : MdDoc;
     import sparkles.syntax.md.model : MdBlock, MdBlockKind, MdDoc, MdInline,
         MdInlineKind, Span;
 
@@ -1996,26 +2010,34 @@ import sparkles.ui.style : Slot;
     assert(!other.canFind("this needs a why"));
 }
 
-@("diff_view.threads.anOutdatedThreadHasNoLineToHangOn")
+
+@("diff_view.threads.unplacedOnesShowUnderTheHeader")
 @safe unittest
 {
     import sparkles.doc_view.diff_session : AnchoredThread, buildDiffSession, ThreadComment;
+    import std.algorithm.searching : canFind, countUntil;
 
     // GitHub reports an outdated thread with a null line, which decodes to
-    // zero. Zero must not match row 0 of anything — it means "nowhere".
+    // zero. Zero must not match row 0 of anything, and the thread must not
+    // vanish either (`DCM6`, the diffy finding): it shows under the file's
+    // header, said to be on no line.
     auto doc = diffText("a\n", "b\n", "f.d", "f.d");
     auto session = buildDiffSession(doc);
     session.threads = [AnchoredThread(path: "f.d", line: 0, outdated: true,
         comments: [ThreadComment("reviewer", "2026-08-01")])];
 
     auto tree = viewDiffDoc(doc, DiffViewOptions.init, null, null, session);
-    const(char)[] all;
+    string[] texts;
     foreach (ref n; tree.nodes)
+    {
+        if (n.text.length)
+            texts ~= n.text.idup;
         foreach (sp; n.spans)
-            all ~= sp.text;
-
-    import std.algorithm.searching : canFind;
-
-    assert(!all.canFind("reviewer"),
-        "a thread with no line anchors nowhere rather than at the top");
+            texts ~= sp.text.idup;
+    }
+    const notice = texts.countUntil("(a comment not placed on a line)");
+    const author = texts.countUntil("reviewer");
+    assert(notice >= 0 && author > notice, "surfaced, under its notice");
+    assert(texts.countUntil("- ") < 0 || texts.countUntil("- ") > author,
+        "before the rows, not hung on the first one");
 }

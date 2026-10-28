@@ -87,6 +87,12 @@ struct Document
     string[] diffPaths;
     /// `kind == diff`: how to produce this document again (`DST2`, `DST5`).
     DiffSource diffSource;
+    /// `kind == diff`: the forge review this diff is (`"github.com/o/r#7"`) and
+    /// the head commit it shows, so comments drafted on it can be submitted
+    /// there (`DCM6`); empty for a local diff.
+    string reviewTarget;
+    /// ditto
+    string reviewHead;
     /// `kind == dsv`: the original bytes (`source` holds the adapter's
     /// decoded buffer — see `dsv_view`; the raw-fidelity copy contract
     /// `DSC2`–`DSC5` is post-CHK and reads these).

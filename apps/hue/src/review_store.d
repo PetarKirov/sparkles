@@ -16,6 +16,7 @@ module review_store;
 
 import sparkles.doc_view.diff_comments : LocalComment;
 import sparkles.doc_view.diff_session : AnchoredThread;
+import forge : ForgeResult, ReviewComment, ReviewDraft, SubmittedReview, ThreadSide;
 
 /// The ref the review state lives on.
 enum string reviewRef = "refs/hue/data";
@@ -237,11 +238,17 @@ final class ReviewSession
     string error;
     /// Parses a comment body for its thread block.
     MdDoc delegate(string markdown) @system parse;
+    /// `DCM6`: the forge review this session drafts for, and the head commit
+    /// it shows; empty for a local diff, whose comments stay local.
+    string target;
+    /// ditto
+    string head;
 
     /**
-    The state of the repository `doc` was produced in, for a diff git
-    produced; `null` for any other document, which has no repository to
-    keep it in.
+    The state of the repository `doc` was produced in: for a diff git
+    produced, or a forge review fetched into this checkout (`DCM6`), whose
+    comments are kept apart as drafts for it. `null` for any other
+    document, which has no repository to keep it in.
     */
     static ReviewSession open(in Document doc, MdDoc delegate(string) @system parse) @system
     {
@@ -249,7 +256,8 @@ final class ReviewSession
         import sparkles.doc_view.document : ContentKind, DiffSource;
         import std.string : strip;
 
-        if (doc.kind != ContentKind.diff || doc.diffSource.kind != DiffSource.Kind.git)
+        if (doc.kind != ContentKind.diff
+            || doc.diffSource.kind != DiffSource.Kind.git && doc.reviewTarget.length == 0)
             return null;
         const top = runGit(["rev-parse", "--show-toplevel"]);
         if (top.status != 0)
@@ -259,6 +267,8 @@ final class ReviewSession
         const name = runGit(["config", "user.name"], s.root);
         s.author = name.status == 0 && name.output.strip.length ? name.output.strip : "me";
         s.parse = parse;
+        s.target = doc.reviewTarget;
+        s.head = doc.reviewHead;
         s.error = readReview(s.root, s.data);
         return s;
     }
@@ -286,7 +296,17 @@ final class ReviewSession
     {
         import sparkles.doc_view.diff_comments : threadsOf;
 
-        return threadsOf(data.comments, path, oldText, newText, parse);
+        return threadsOf(ours(), path, oldText, newText, parse);
+    }
+
+    /// The comments this session shows: its review's, or the local ones.
+    LocalComment[] ours() @safe pure nothrow
+    {
+        LocalComment[] mine;
+        foreach (c; data.comments)
+            if (c.review == target)
+                mine ~= c;
+        return mine;
     }
 
     /// Saves comment `c`, giving it its id. Returns why it could not be
@@ -296,8 +316,63 @@ final class ReviewSession
         import std.format : format;
 
         c.id = format!"%d-%d"(c.created, data.comments.length);
+        c.review = target;
         data.comments ~= c;
         return writeReview(root, data, "hue: comment on " ~ c.path);
+    }
+
+    /// `DCM6`: the comments drafted for this session's review and not yet
+    /// submitted.
+    size_t drafts() const @safe pure nothrow @nogc
+    {
+        size_t n;
+        foreach (ref c; data.comments)
+            n += target.length && c.review == target && !c.submitted;
+        return n;
+    }
+
+    /**
+    `DCM6`: submits every draft as one review through `send`, which takes
+    the draft to the forge, and marks them submitted. Returns what to tell
+    the user. A draft whose anchor the session could not place stays a
+    draft and is named, never dropped.
+    */
+    string submit(scope ForgeResult!SubmittedReview delegate(string target, in ReviewDraft draft)
+        @system send) @system
+    {
+        import sparkles.doc_view.diff_comments : bodyWithSuggestion;
+        import std.conv : text;
+
+        if (target.length == 0)
+            return "only a forge's pull request takes a review";
+        ReviewDraft draft = { commitSha: head };
+        size_t[] sent;
+        size_t unplaced;
+        foreach (i, ref c; data.comments)
+        {
+            if (c.review != target || c.submitted)
+                continue;
+            if (c.line == 0)
+            {
+                ++unplaced;
+                continue;
+            }
+            draft.comments ~= ReviewComment(c.path, c.line,
+                c.oldSide ? ThreadSide.oldSide : ThreadSide.newSide, bodyWithSuggestion(c));
+            sent ~= i;
+        }
+        if (draft.comments.length == 0)
+            return unplaced ? text(unplaced, " drafts are on no line and were kept")
+                : "no drafts to submit";
+        auto made = send(target, draft);
+        if (made.hasError)
+            return "the review was not submitted: " ~ made.error.toString();
+        foreach (i; sent)
+            data.comments[i].submitted = true;
+        error = writeReview(root, data, "hue: submit review to " ~ target);
+        return text("submitted ", sent.length, sent.length == 1 ? " comment" : " comments",
+            unplaced ? text(" (", unplaced, " on no line kept)") : "",
+            made.value.url.length ? ": " ~ made.value.url : "");
     }
 
     /// Marks comment `id` resolved, or open again. `false` when there is no
@@ -529,4 +604,45 @@ bool applySuggestionAtCursor(ref ViewerModel vm, ReviewSession review, out strin
     }
     said = "no suggestion on this row";
     return false;
+}
+
+@("review_store.ReviewSession.submitsDraftsAsOneReviewAndKeepsUnplacedOnes")
+@system unittest
+{
+    import sparkles.build_primitives.testing : gitAvailable, TmpGitRepo;
+    import sparkles.test_runner.skip : skipTest;
+    import std.algorithm.searching : canFind;
+
+    // `DCM6`: the drafts for this pull request go in one request against
+    // its head; a local comment is not a draft, and one on no line stays.
+    if (!gitAvailable)
+        return skipTest("git is not installed");
+    auto repo = TmpGitRepo.create();
+    auto s = new ReviewSession;
+    s.root = repo.dir;
+    s.target = "github.com/o/r#7";
+    s.head = "abc123";
+
+    LocalComment placed, unplaced, local;
+    placed.path = unplaced.path = local.path = "f.d";
+    placed.line = 3;
+    placed.body_ = "why?";
+    unplaced.body_ = "where?";
+    assert(s.post(placed) is null && s.post(unplaced) is null);
+    s.data.comments ~= local; // drafted on a local diff: not this review's
+    assert(s.drafts == 2);
+
+    ReviewDraft got;
+    const said = s.submit((string target, in ReviewDraft d) {
+        assert(target == "github.com/o/r#7");
+        got = ReviewDraft(d.commitSha, d.body_, d.comments.dup);
+        return ForgeResult!SubmittedReview(SubmittedReview("https://example/review"));
+    });
+    assert(got.commitSha == "abc123" && got.comments.length == 1 && got.comments[0].line == 3);
+    assert(said.canFind("submitted 1 comment") && said.canFind("1 on no line kept"), said);
+    assert(s.drafts == 1, "the unplaced one is still a draft");
+
+    ReviewData stored;
+    assert(readReview(repo.dir, stored) is null);
+    assert(stored.comments[0].submitted && !stored.comments[1].submitted);
 }
