@@ -1,0 +1,24 @@
+key	title	authors	year	doi-or-arxiv	local-pdf-path	quote-verified
+keys1981	Cubic convolution interpolation for digital image processing	Robert G. Keys	1981	10.1109/TASSP.1981.1163711	no open PDF	yes
+mitchell1988	Reconstruction filters in computer graphics	Don P. Mitchell; Arun N. Netravali	1988	10.1145/54852.378514	~/code/repos/papers/image-video/resampling-colour/mitchell1988-reconstruction-filters.pdf	yes
+turkowski1990	Filters for common resampling tasks	Ken Turkowski	1990	10.1016/B978-0-08-050753-8.50042-5	~/code/repos/papers/image-video/resampling-colour/turkowski1990-filters-for-common-resampling-tasks.pdf	yes
+heckbert1989	Fundamentals of texture mapping and image warping	Paul S. Heckbert	1989	UCB/CSD 89/516 (no DOI)	~/code/repos/papers/image-video/resampling-colour/heckbert1989-fundamentals-texture-mapping.pdf	yes
+smith1995pixel	A pixel is not a little square (Technical Memo 6)	Alvy Ray Smith	1995	none	~/code/repos/papers/image-video/resampling-colour/smith1995-pixel-is-not-a-little-square.pdf	yes
+nehab2014	A fresh look at generalized sampling	Diego Nehab; Hugues Hoppe	2014	10.1561/0600000053	~/code/repos/papers/image-video/resampling-colour/nehab2014-fresh-look-generalized-sampling.pdf	yes
+porter1984	Compositing digital images	Thomas Porter; Tom Duff	1984	10.1145/800031.808606	~/code/repos/papers/image-video/resampling-colour/porter1984-compositing-digital-images.pdf	yes
+smith1995comp	Image compositing fundamentals (Technical Memo 4)	Alvy Ray Smith	1995	none	~/code/repos/papers/image-video/resampling-colour/smith1995-image-compositing-fundamentals.pdf	yes
+poynton1997	Frequently asked questions about color	Charles Poynton	1997	none	~/code/repos/papers/image-video/resampling-colour/poynton1997-color-faq.pdf	yes
+sharma2005	The CIEDE2000 color-difference formula: implementation notes, supplementary test data, and mathematical observations	Gaurav Sharma; Wencheng Wu; Edul N. Dalal	2005	10.1002/col.20070	~/code/repos/papers/image-video/resampling-colour/sharma2005-ciede2000-implementation-notes.pdf	yes
+li2017	Comprehensive color solutions: CAM16, CAT16, and CAM16-UCS	Changjun Li; Zhiqiang Li; Zhifeng Wang; Yang Xu; Ming Ronnier Luo; Guihua Cui; Manuel Melgosa; Michael H. Brill; Michael Pointer	2017	10.1002/col.22131	no open PDF	yes
+schlomer2018	Algorithmic improvements for the CIECAM02 and CAM16 color appearance models	Nico Schlömer	2018	arXiv:1802.06067	~/code/repos/papers/image-video/resampling-colour/schlomer2018-ciecam02-cam16-improvements.pdf	yes
+safdar2017	Perceptually uniform color space for image signals including high dynamic range and wide gamut	Muhammad Safdar; Guihua Cui; Youn Jin Kim; Ming Ronnier Luo	2017	10.1364/OE.25.015131	no open PDF	yes
+ottosson2020	A perceptual color space for image processing (Oklab)	Björn Ottosson	2020	none (https://bottosson.github.io/posts/oklab/)	web source	yes
+miller2013	Perceptual signal coding for more efficient usage of bit codes	Scott Miller; Mahdi Nezamabadi; Scott Daly	2013	10.5594/J18290; 10.5594/M001446	no open PDF	no
+borer2015	A "display independent" high dynamic range television system	Tim Borer; Andrew Cotton	2015	10.1049/ibc.2015.0005	~/code/repos/papers/image-video/resampling-colour/borer2015-display-independent-hdr-tv.pdf	yes
+itu2025bt2100	Rec. ITU-R BT.2100-3: Image parameter values for high dynamic range television	ITU-R SG6	2025	none	~/code/repos/papers/image-video/resampling-colour/itu2025-bt2100-hdr-tv.pdf	yes
+itu2025bt2390	Report ITU-R BT.2390-12: High dynamic range television for production and international programme exchange	ITU-R SG6	2025	none	~/code/repos/papers/image-video/resampling-colour/itu2025-bt2390-hdr-report.pdf	yes
+itu2017bt2407	Report ITU-R BT.2407-0: Colour gamut conversion from BT.2020 to BT.709	ITU-R SG6	2017	none	~/code/repos/papers/image-video/resampling-colour/itu2017-bt2407-gamut-conversion.pdf	yes
+icc2022	ICC.1:2022 Image technology colour management - Architecture, profile format, and data structure	International Color Consortium	2022	none	~/code/repos/papers/image-video/resampling-colour/icc2022-icc1-profile-specification.pdf	yes
+icc2023	ICC.2:2023 (iccMAX) Extensions to architecture, profile format, and data structure	International Color Consortium	2023	none	~/code/repos/papers/image-video/resampling-colour/icc2023-icc2-iccmax-specification.pdf	yes
+itu2024h273	Rec. ITU-T H.273 (V4): Coding-independent code points for video signal type identification	ITU-T SG16	2024	none	~/code/repos/papers/image-video/resampling-colour/itu2024-coding-independent-code-points.pdf	yes
+google2024ultrahdr	Ultra HDR Image Format v1.1 (with ISO 21496-1:2025 gain-map metadata)	Google Android; ISO/TC 42	2024	none (https://developer.android.com/media/platform/hdr-image-format)	web source	yes
