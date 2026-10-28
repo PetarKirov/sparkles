@@ -8084,6 +8084,40 @@
                 "link": "/research/images/baseline/existing-code"
               }
             ]
+          },
+          {
+            "text": "Papers",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "DSLs and scheduling",
+                "link": "/research/images/papers/dsl-scheduling"
+              },
+              {
+                "text": "Generic image programming",
+                "link": "/research/images/papers/generic-image-programming"
+              },
+              {
+                "text": "Resampling and colour",
+                "link": "/research/images/papers/resampling-colour"
+              },
+              {
+                "text": "Entropy coding and codecs",
+                "link": "/research/images/papers/entropy-codecs"
+              },
+              {
+                "text": "GPU texture compression",
+                "link": "/research/images/papers/gpu-texture-compression"
+              },
+              {
+                "text": "Hostile input and safety",
+                "link": "/research/images/papers/hostile-input-safety"
+              },
+              {
+                "text": "Storage-to-GPU and GPU decode",
+                "link": "/research/images/papers/gpu-decode-streaming"
+              }
+            ]
           }
         ]
       }
