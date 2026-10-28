@@ -155,6 +155,9 @@ struct GlyphQuad
     int width, height;     /// its box, in pixels
     int bearingX;          /// pixels from the pen to the box's left edge
     int bearingY;          /// pixels from the baseline up to the box's top edge
+    /// For one glyph of a shaped cluster: pixels from the cluster's pen to
+    /// this glyph's, and up from the baseline (its shaped offset).
+    int dx, dy;
 }
 
 /// The cell font's vertical metrics, in pixels from a cell's top.
@@ -202,6 +205,26 @@ struct GlyphRequest
     int fitWidth, fitHeight;
 }
 
+/// A cluster a painter asks a glyph source to shape (T3): its codepoints and
+/// what a `GlyphRequest` carries for its first.
+struct ClusterRequest
+{
+    const(uint)[] cps;  ///
+    GlyphRequest first; /// style, presentation, colours and cells, as for one glyph
+}
+
+/**
+Whether `S` shapes clusters: `resolveCluster(request, quads, count)` writes
+the cluster's glyphs, each placed from the cluster's pen, into `quads`.
+`drawn` with none written is a cluster with no ink; any other outcome leaves
+the painter to draw the first codepoint, unshaped.
+*/
+enum bool shapesClusters(S) = is(typeof((ref S s) {
+    GlyphQuad[4] q;
+    size_t n;
+    GlyphOutcome o = s.resolveCluster(ClusterRequest.init, q[], n);
+}));
+
 /**
 Whether `S` supplies glyphs too: `resolveGlyph(request, quad)` for a
 codepoint in the cell font's face of that style or a fallback face, and
@@ -243,11 +266,13 @@ if (isImageSource!Images)
     /// How coverage glyphs composite (`Compositing`), and their contrast.
     TextRendering textRendering;
 
-    // Whether the source supplies glyphs too (`isGlyphSource`).
+    // The source behind `images`, and whether it supplies glyphs too
+    // (`isGlyphSource`).
     static if (is(Images == U*, U))
-        private enum bool drawsText = isGlyphSource!U;
+        private alias GlyphSource = U;
     else
-        private enum bool drawsText = isGlyphSource!Images;
+        private alias GlyphSource = Images;
+    private enum bool drawsText = isGlyphSource!GlyphSource;
 
     /// The shortest a scrollbar's thumb is drawn, in device pixels (`SCV13`).
     int minThumbPx = scrollbarMinExtentPx;
@@ -499,25 +524,31 @@ if (isImageSource!Images)
         }
 
         /*
-        A cluster's glyph: its first codepoint's, from an emoji face first when
-        the cluster presents as an emoji. A cluster that needs shaping — a
-        combining mark, a joiner sequence, a flag — draws that first glyph and
-        counts as `unshapedCluster` (`UVK19`); a variation selector needs no
-        shaping, only the face it picks.
+        A cluster's glyphs. A single codepoint, or one with only variation
+        selectors (which pick a face, not glyphs), draws its glyph, from an
+        emoji face first when the cluster presents as one. A cluster that
+        needs shaping — a combining mark, a joiner sequence, a flag, a keycap —
+        is shaped by a source that shapes, when the text rendering asks for
+        it; otherwise it draws its first codepoint's glyph and counts as
+        `unshapedCluster` (`UVK19`).
         */
         private void clusterAt(int penX, int top, scope const(uint)[] cps, FaceStyle style, vec4 colour,
             vec4 background, int boxW, int boxH)
         {
             if (!cps.length)
                 return;
+            const request = GlyphRequest(cast(dchar) cps[0], style, emojiPresentation(cps), colour,
+                background, boxW, boxH);
+            bool needsShaping;
             foreach (cp; cps[1 .. $])
-                if (cp != 0xFE0E && cp != 0xFE0F)
-                {
-                    report.count(Degradation.unshapedCluster);
-                    break;
-                }
-            glyphAt(penX, top, boxH, GlyphRequest(cast(dchar) cps[0], style, emojiPresentation(cps), colour,
-                background, boxW, boxH));
+                needsShaping |= cp != 0xFE0E && cp != 0xFE0F;
+            if (!needsShaping)
+                return glyphAt(penX, top, boxH, request);
+            static if (shapesClusters!GlyphSource)
+                if (textRendering.shaping && shapedAt(penX, top, boxH, ClusterRequest(cps, request)))
+                    return;
+            report.count(Degradation.unshapedCluster);
+            glyphAt(penX, top, boxH, request);
         }
 
         // One glyph with its pen at `penX` in cells whose top is `top` and
@@ -525,22 +556,49 @@ if (isImageSource!Images)
         // coverage glyph tinted with the text's colour on the baseline, or a
         // colour glyph in its own colours, centred in the cells' height as the
         // raylib arm centres it.
+        // One drawn glyph: a coverage glyph on the baseline, tinted with the
+        // text's colour and composited against its background, or a colour
+        // glyph in its own colours centred in the cells' height; a shaped
+        // glyph moved by its offsets.
+        private void emitQuad(int penX, int top, int boxH, in GlyphQuad q, in GlyphRequest request)
+        {
+            const y = q.colour ? top + (boxH - q.height) / 2 - q.dy
+                : top + images.textMetrics.ascent - q.bearingY - q.dy;
+            const box = v4(penX + q.dx + q.bearingX, y, q.width, q.height);
+            if (q.colour)
+                emit(record(box, request.colour, v4(0), v4(QuadKind.colourGlyph, 0, 0, 0), q.texRect),
+                    BoundImages(colourPage: q.page));
+            else
+                emit(record(box, request.colour, request.background, v4(QuadKind.coverageGlyph,
+                    textRendering.compositing, textRendering.contrast, 0), q.texRect),
+                    BoundImages(coveragePage: q.page));
+        }
+
+        // A cluster shaped by the source: true when it drew (or had no ink),
+        // false to draw it unshaped.
+        private bool shapedAt(int penX, int top, int boxH, in ClusterRequest r)
+        {
+            static if (shapesClusters!GlyphSource)
+            {
+                GlyphQuad[16] quads;
+                size_t n;
+                if (images.resolveCluster(r, quads[], n) != GlyphOutcome.drawn)
+                    return false;
+                foreach (ref q; quads[0 .. n])
+                    emitQuad(penX, top, boxH, q, r.first);
+                return true;
+            }
+            else
+                return false;
+        }
+
         private void glyphAt(int penX, int top, int boxH, in GlyphRequest request)
         {
             GlyphQuad q;
             final switch (images.resolveGlyph(request, q))
             {
                 case GlyphOutcome.drawn:
-                    const y = q.colour ? top + (boxH - q.height) / 2
-                        : top + images.textMetrics.ascent - q.bearingY;
-                    const box = v4(penX + q.bearingX, y, q.width, q.height);
-                    if (q.colour)
-                        emit(record(box, request.colour, v4(0), v4(QuadKind.colourGlyph, 0, 0, 0), q.texRect),
-                            BoundImages(colourPage: q.page));
-                    else
-                        emit(record(box, request.colour, request.background, v4(QuadKind.coverageGlyph,
-                            textRendering.compositing, textRendering.contrast, 0), q.texRect),
-                            BoundImages(coveragePage: q.page));
+                    emitQuad(penX, top, boxH, q, request);
                     break;
                 case GlyphOutcome.blank:
                     break;

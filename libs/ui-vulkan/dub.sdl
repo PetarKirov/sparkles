@@ -15,8 +15,10 @@ libs "vulkan"
 
 dependency "expected" version="~>0.4.1"
 dependency "sparkles:base" path="../.."
-// The interim glyph atlas rasterizes with it (`UVX12`).
+// The interim glyph atlas rasterizes with it (`UVX12`), and its HarfBuzz
+// engine shapes clusters (T3): the `engine` configuration links HarfBuzz.
 dependency "sparkles:font" path="../.."
+subConfiguration "sparkles:font" "engine"
 dependency "sparkles:shaders" path="../.."
 dependency "sparkles:ui" path="../.."
 dependency "sparkles:vulkan" path="../.."

@@ -244,10 +244,12 @@ interim atlas holds them, rasterized by `sparkles:font` (decision [`UVX12`](./de
 **UVK19: Clusters.** In a cell text run, each grapheme cluster **must**
 occupy the cells its display width gives. A cluster that one glyph of the
 font's character map represents **must** draw that glyph. A cluster that
-needs shaping — a multi-codepoint emoji sequence, or a combining mark the
-face has no precomposed glyph for — **must** draw the glyph of its first
-codepoint and count as `unshapedCluster`, until the font library offers
-shaping; a variation selector needs none, and only picks the face. A cluster
+needs shaping — a multi-codepoint emoji sequence, a flag, a keycap, or a
+combining mark — **must** be shaped by the font library's engine, in the
+first face that maps all of its visible codepoints, where the engine is
+linked and the text rendering asks for it; otherwise it **must** draw the
+glyph of its first codepoint and count as `unshapedCluster`. A variation
+selector needs no shaping, and only picks the face. A cluster
 that presents as an emoji **must** be drawn from a colour emoji face first. A
 codepoint neither the cell font's faces nor its fallback faces map **must**
 draw nothing and count as `noGlyph`.
