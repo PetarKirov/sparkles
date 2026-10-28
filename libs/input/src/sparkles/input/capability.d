@@ -97,6 +97,15 @@ struct InputCapabilities
     */
     bool clipboardRead = false;
 
+    /**
+    The target delivers input-method composition as `CompositionEvent`s
+    (`INP24`), so an editor can show a preedit in place.
+
+    $(B Defaults to `false`): a terminal composes in its own window and sends
+    only the committed text, as typed keys.
+    */
+    bool composition = false;
+
     // The module-level block above does not reach inside an aggregate.
 @safe pure nothrow @nogc:
 
