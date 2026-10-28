@@ -37,6 +37,7 @@ private struct X11Hooks
     enum bool expectPointerMotion = true;
     // Layout-derived unshifted spelling the chorded key must carry.
     enum dchar chordKeyCharacter = 'a';
+    enum string chordTypedText = "A";
     enum bool expectFocusEvent = true;
 
     void step(Duration timeout)

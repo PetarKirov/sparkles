@@ -607,6 +607,28 @@ unittest
     assert(logicalFromKeysym(0, 0).kind == LogicalKeyKind.unknown);
 }
 
+/**
+The text an xkb key press types, from what `xkb_state_key_get_utf8` wrote:
+none for a control character (Return, Tab, Backspace, Escape, a Ctrl
+chord's C0 code), which the key's named identity already carries. A key no
+input method consumed types this text, as `WM_CHAR` and `insertText:` do on
+the other platforms.
+*/
+package const(char)[] xkbTypedText(return scope const(char)[] utf8)
+    @safe pure nothrow @nogc
+    => utf8.length == 0 || (utf8.length == 1 && (utf8[0] < 0x20 || utf8[0] == 0x7F))
+        ? null : utf8;
+
+@("wsi.events.xkbTypedTextDropsControlCharacters")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(xkbTypedText("a") == "a");
+    assert(xkbTypedText("é") == "é");
+    assert(xkbTypedText("\r") is null && xkbTypedText("\x03") is null);
+    assert(xkbTypedText("\x7F") is null && xkbTypedText("") is null);
+}
+
 /// Chord modifiers only: Lock (caps) and Mod2 (num lock) are latched states.
 package Mods xkbRealMods(uint mask) @safe pure nothrow @nogc
     => Mods(
