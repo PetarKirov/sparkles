@@ -37,6 +37,7 @@ import sparkles.ui_vulkan.painter;
 import sparkles.ui_vulkan.pipelines;
 import sparkles.ui_vulkan.resources : GpuImage;
 import sparkles.ui_vulkan.shading : Binding, CanvasView, Instance, srgbToLinear;
+import sparkles.ui_vulkan.text_rendering : Loupe, TextRendering;
 import sparkles.ui_vulkan.upload : transition, Uploads;
 import sparkles.font : Colour, Ppem;
 import sparkles.vulkan;
@@ -175,6 +176,10 @@ struct VulkanCanvas(B)
     private UniqueBuffer!ulong inFlight_; // per slot: the serial in flight there, or 0
     private ulong serial_ = 1;
     private Painter!CanvasImages painter_;
+
+    // How text is rendered, and the loupe drawn over the frame.
+    private TextRendering textRendering_;
+    private Loupe loupe_;
 
     // The cell font text draws in, and its glyphs (`UVK18`; interim, `UVX12`).
     private GlyphAtlas atlas_;
@@ -393,15 +398,17 @@ struct VulkanCanvas(B)
         }
         endPass();
 
-        if (target_.finalLayout != VkImageLayout.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
+        auto layout = VkImageLayout.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        VkPipelineStageFlags written = VkPipelineStageFlagBits.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        VkAccessFlags writes = VkAccessFlagBits.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        recordLoupe(layout, written, writes);
+        if (target_.finalLayout != layout)
         {
             VkPipelineStageFlags stage;
             VkAccessFlags access;
             readersOf(target_.finalLayout, stage, access);
-            transition(*device_, commands_, target_.image,
-                VkImageLayout.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, target_.finalLayout,
-                VkPipelineStageFlagBits.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                VkAccessFlagBits.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, stage, access);
+            transition(*device_, commands_, target_.image, layout, target_.finalLayout, written, writes,
+                stage, access);
         }
 
         if (placeholderStaged_)
@@ -617,6 +624,71 @@ struct VulkanCanvas(B)
                 result = staged.error;
         });
         return result;
+    }
+
+    /// How text is rendered from the next frame on. A change that alters
+    /// glyph pixels (hinting) starts the glyph atlas over.
+    void textRendering(in TextRendering settings) @system
+    {
+        if (settings.hinting != textRendering_.hinting)
+            atlas_.reset();
+        textRendering_ = settings;
+    }
+
+    /// ditto
+    TextRendering textRendering() const @safe pure nothrow @nogc => textRendering_;
+
+    /// The loupe drawn over every frame from the next on, or none. It needs a
+    /// target that allows transfers both ways; on another it is not drawn.
+    void loupe(in Loupe l) @safe pure nothrow @nogc
+    {
+        loupe_ = l;
+    }
+
+    // The loupe, after the pass: the target to the general layout, its
+    // `source` blitted `scale` times larger with nearest filtering — each
+    // pixel a block, exactly as composited — unless the two overlap.
+    private void recordLoupe(ref VkImageLayout layout, ref VkPipelineStageFlags stage,
+        ref VkAccessFlags access) @system
+    {
+        with (VkImageUsageFlagBits)
+            if (!loupe_.shown || loupe_.scale < 1
+                || !(target_.usage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT)
+                || !(target_.usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT))
+                return;
+        const w = int(target_.extent.width), h = int(target_.extent.height);
+        static int clampTo(int v, int hi) => v < 0 ? 0 : v > hi ? hi : v;
+        const sx0 = clampTo(loupe_.sourceX, w), sy0 = clampTo(loupe_.sourceY, h);
+        const sx1 = clampTo(loupe_.sourceX + loupe_.sourceWidth, w);
+        const sy1 = clampTo(loupe_.sourceY + loupe_.sourceHeight, h);
+        const dx0 = clampTo(loupe_.x, w), dy0 = clampTo(loupe_.y, h);
+        // Whole source pixels only, so every block is `scale` square.
+        const cols = (clampTo(loupe_.x + (sx1 - sx0) * loupe_.scale, w) - dx0) / loupe_.scale;
+        const rows = (clampTo(loupe_.y + (sy1 - sy0) * loupe_.scale, h) - dy0) / loupe_.scale;
+        const dx1 = dx0 + cols * loupe_.scale, dy1 = dy0 + rows * loupe_.scale;
+        const overlaps = sx0 < dx1 && dx0 < sx0 + cols && sy0 < dy1 && dy0 < sy0 + rows;
+        if (cols <= 0 || rows <= 0 || overlaps)
+            return;
+        with (VkPipelineStageFlagBits) with (VkAccessFlagBits)
+        {
+            transition(*device_, commands_, target_.image, layout, VkImageLayout.VK_IMAGE_LAYOUT_GENERAL,
+                stage, access, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+            const colour = VkImageSubresourceLayers(
+                aspectMask: VkImageAspectFlagBits.VK_IMAGE_ASPECT_COLOR_BIT, layerCount: 1);
+            VkImageBlit region = {
+                srcSubresource: colour,
+                srcOffsets: [VkOffset3D(sx0, sy0, 0), VkOffset3D(sx0 + cols, sy0 + rows, 1)],
+                dstSubresource: colour,
+                dstOffsets: [VkOffset3D(dx0, dy0, 0), VkOffset3D(dx1, dy1, 1)],
+            };
+            device_.cmdBlitImage(commands_, target_.image, VkImageLayout.VK_IMAGE_LAYOUT_GENERAL,
+                target_.image, VkImageLayout.VK_IMAGE_LAYOUT_GENERAL, 1, &region,
+                VkFilter.VK_FILTER_NEAREST);
+            layout = VkImageLayout.VK_IMAGE_LAYOUT_GENERAL;
+            stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+            access = VK_ACCESS_TRANSFER_WRITE_BIT;
+        }
     }
 
     /// A label's size in device pixels, as `labelPx` lays it out in the
