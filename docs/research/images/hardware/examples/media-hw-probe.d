@@ -45,7 +45,7 @@ import std.range.primitives : put;
 import std.regex : ctRegex, matchAll, matchFirst;
 import std.stdio : File, stdout;
 import std.string : fromStringz, indexOf, lineSplitter, strip;
-import std.traits : EnumMembers, FieldNameTuple;
+import std.traits : EnumMembers, FieldNameTuple, Unqual;
 
 import expected : Expected, err, ok;
 
@@ -855,7 +855,7 @@ string[] trueBools(T)(in T s)
 {
     string[] r;
     static foreach (name; FieldNameTuple!T)
-        static if (name != "sType" && is(typeof(__traits(getMember, s, name)) == VkBool32))
+        static if (name != "sType" && is(Unqual!(typeof(__traits(getMember, s, name))) == VkBool32))
             if (__traits(getMember, s, name))
                 r ~= name;
     return r;
@@ -1360,6 +1360,9 @@ double num(in JSONValue v)
         case JSONType.integer: return v.integer;
         case JSONType.uinteger: return v.uinteger;
         case JSONType.true_: return 1;
+        // 64-bit values (heap sizes, alignments) are written as hex strings.
+        case JSONType.string:
+            return v.str.startsWith("0x") ? v.str[2 .. $].to!ulong(16) : v.str.to!double;
         default: return 0;
     }
 }
