@@ -37,5 +37,6 @@ win32-ldc2 -preview=in -preview=dip1000 -g -i \
   -of=echowin.exe
 
 echo ">> running under Wine ..."
-WINEDEBUG=-all timeout 60 wine echowin.exe
+WINEDEBUG=-all timeout 60 wine echowin.exe | tee echo.log
+grep -q '^ok:' echo.log
 echo ">> EventLoop!IocpBackend fiber echo verified under Wine."

@@ -17,9 +17,14 @@ and the scheduler-integrated `BlockingPool`. Cancellation uses `CancelIoEx`;
 the target's storage remains live until its terminal completion, and
 `cancelAndWait` consumes both the target and the cancellation acknowledgment.
 Port waits drain batches with `GetQueuedCompletionStatusEx`. An operation on
-a socket that another completion port owns fails with `EINVAL`, and Win32
-and NTSTATUS failures map to the C runtime's `errno` values. File-handle I/O
-and Windows process supervision remain incomplete; see M19 in the delivery
+a handle that another completion port owns fails with `EINVAL`, and Win32
+and NTSTATUS failures map to the C runtime's `errno` values. Overlapped native
+pipe reads/writes are supported, including cancellation and EOF. Synchronous
+file/pipe handles are rejected with `EINVAL` before issuing I/O. Regular-file
+operations require explicit offsets: `ulong.max` (current position) is accepted
+only for pipes, not regular-file current-position or append operations.
+The asynchronous VFS open path, file
+flush and Windows process supervision remain incomplete; see M19 in the delivery
 plan below. Wine probes are smoke evidence, not native Windows certification.
 
 `OwnedFd` and `BorrowedFd` carry `NativeHandle`: an `int` on POSIX and a

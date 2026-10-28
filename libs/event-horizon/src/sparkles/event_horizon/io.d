@@ -378,16 +378,12 @@ unittest
     Sched s;
     schedOrSkip(s);
 
-    int[2] fds;
-    if ((() @trusted {
-        import core.sys.posix.unistd : pipe;
+    import sparkles.event_horizon.sys.pipe : NativePipe;
 
-        return pipe(fds);
-    })() != 0)
-        return;
-
-    auto rd = OwnedFd(fds[0]);
-    auto wr = OwnedFd(fds[1]);
+    NativePipe pipe;
+    assert(!NativePipe.create(pipe).hasError);
+    auto rd = move(pipe.reader);
+    auto wr = move(pipe.writer);
     scope (exit)
     {
         rd.close();
@@ -607,6 +603,14 @@ unittest
 @safe
 unittest
 {
+    static if (canSubmitOp!(DefaultBackend, OpPollAdd))
+        readinessProbe();
+    else
+        skipTest("the backend does not lower readiness operations");
+}
+
+private void readinessProbe()()
+{
     import core.time : msecs;
 
     Sched s;
@@ -618,7 +622,7 @@ unittest
 
         return pipe(fds);
     })() != 0)
-        return;
+        skipTest("pipe creation failed (descriptor limit)");
     auto rd = OwnedFd(fds[0]);
     auto wr = OwnedFd(fds[1]);
     scope (exit)
@@ -665,11 +669,18 @@ unittest
     int listenFd;
     SockAddr addr;
     if (!(() @trusted {
-        import core.sys.posix.arpa.inet : htonl;
-        import core.sys.posix.netinet.in_ : INADDR_LOOPBACK, sockaddr_in;
-        import core.sys.posix.sys.socket;
+        version (Windows)
+            import core.sys.windows.winsock2 : AF_INET, SOCK_STREAM, INADDR_LOOPBACK,
+                sockaddr_in, sockaddr, socklen_t, socket, bind, listen, getsockname, htonl;
+        else
+        {
+            import core.sys.posix.arpa.inet : htonl;
+            import core.sys.posix.netinet.in_ : INADDR_LOOPBACK, sockaddr_in;
+            import core.sys.posix.sys.socket : AF_INET, SOCK_STREAM, sockaddr,
+                socklen_t, socket, bind, listen, getsockname;
+        }
 
-        listenFd = socket(AF_INET, SOCK_STREAM, 0);
+        listenFd = cast(int) socket(AF_INET, SOCK_STREAM, 0);
         if (listenFd < 0)
             return false;
         sockaddr_in a;
@@ -679,12 +690,13 @@ unittest
             || listen(listenFd, 1) != 0)
             return false;
         socklen_t len = a.sizeof;
-        getsockname(listenFd, cast(sockaddr*) &a, &len);
+        if (getsockname(listenFd, cast(sockaddr*) &a, &len) != 0)
+            return false;
         addr.storage[0 .. a.sizeof] = (cast(ubyte*) &a)[0 .. a.sizeof];
         addr.len = a.sizeof;
         return true;
     })())
-        return;
+        skipTest("loopback listener setup failed");
 
     auto listener = Listener(listenFd);
     scope (exit) listener.close();
@@ -713,9 +725,12 @@ unittest
         // Client fiber (the root): connect, send, verify the echo.
         Stream client;
         (() @trusted {
-            import core.sys.posix.sys.socket : AF_INET, SOCK_STREAM, socket;
+            version (Windows)
+                import core.sys.windows.winsock2 : AF_INET, SOCK_STREAM, socket;
+            else
+                import core.sys.posix.sys.socket : AF_INET, SOCK_STREAM, socket;
 
-            client.fd = socket(AF_INET, SOCK_STREAM, 0);
+            client.fd = cast(int) socket(AF_INET, SOCK_STREAM, 0);
         })();
         assert(client.fd >= 0);
         scope (exit) client.close();
@@ -773,15 +788,12 @@ unittest
     Sched s;
     schedOrSkip(s);
 
-    int[2] fds;
-    if ((() @trusted {
-        import core.sys.posix.unistd : socketpair_ = pipe;
+    import sparkles.event_horizon.sys.pipe : NativePipe;
 
-        return socketpair_(fds);
-    })() != 0)
-        return;
-    auto rd = OwnedFd(fds[0]);
-    auto wr = OwnedFd(fds[1]);
+    NativePipe pipe;
+    assert(!NativePipe.create(pipe).hasError);
+    auto rd = move(pipe.reader);
+    auto wr = move(pipe.writer);
     scope (exit)
     {
         rd.close();
@@ -816,15 +828,18 @@ unittest
         auto warm = read(rd, move(buf));
         buf = move(warm.buf);
         assert(!warm.res.hasError);
+        uint received = warm.res.value;
 
         gcBefore = GC.allocatedInCurrentThread();
         const poolBefore = pool.alloc.numAllocate;
-        foreach (_; 1 .. rounds)
+        while (received < rounds * 32)
         {
             auto got = read(rd, move(buf));
             buf = move(got.buf);
             assert(!got.res.hasError && got.res.value > 0);
+            received += got.res.value;
         }
+        assert(received == rounds * 32, "a byte pipe may coalesce writes");
         gcAfter = GC.allocatedInCurrentThread();
         assert(pool.alloc.numAllocate == poolBefore,
             "the pool allocator must be untouched at steady state");
@@ -864,7 +879,7 @@ unittest
 
         return socketpair(AF_UNIX, SOCK_STREAM, 0, sv);
     })() != 0)
-        return;
+        skipTest("socketpair failed (descriptor limit)");
     scope (exit) () @trusted {
         import core.sys.posix.unistd : close;
 
