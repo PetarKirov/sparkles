@@ -28,4 +28,5 @@ public import sparkles.ui_vulkan.painter;
 public import sparkles.ui_vulkan.pipelines;
 public import sparkles.ui_vulkan.resources;
 public import sparkles.ui_vulkan.shading;
+public import sparkles.ui_vulkan.text_rendering;
 public import sparkles.ui_vulkan.upload;

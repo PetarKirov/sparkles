@@ -282,6 +282,9 @@ private enum CommandSet[] deviceSets = [
         // through.
         "CmdCopyBufferToImage",
         "CmdClearColorImage",
+        // A region of an image scaled onto another, or onto itself: the
+        // canvas's loupe.
+        "CmdBlitImage",
         "CreateSampler",
         "DestroySampler",
     ]),

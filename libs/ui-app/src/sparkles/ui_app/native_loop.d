@@ -277,6 +277,17 @@ struct NativeHost
     /// The window system offers no retitling yet; accepted and dropped.
     void title(in char[]) @safe pure nothrow @nogc {}
 
+    /// How the canvas renders text (`UVX12`): compositing, hinting, shaping.
+    /// An application offering these as settings probes for the errand.
+    void textRendering(in TextRendering settings) @system => session_.canvas.textRendering(settings);
+
+    /// ditto
+    TextRendering textRendering() const @system => session_.canvas.textRendering;
+
+    /// A loupe over the frame: a region of the window's pixels drawn
+    /// magnified, exactly as composited.
+    void loupe(in Loupe l) @system => session_.canvas.loupe(l);
+
     /// Binds the image registry the canvas draws images from (`IMG3`).
     void images(const(ImageRegistry)* registry) @system => session_.canvas.images(registry);
 
