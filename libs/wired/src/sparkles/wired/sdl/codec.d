@@ -56,7 +56,7 @@ import std.typecons : Nullable, Ternary;
 import optional : Optional, some;
 
 import sparkles.base.text.errors : valueOf;
-import sparkles.base.buffer : SharedBuffer;
+import sparkles.base.buffer : SharedBuffer, UniqueBuffer;
 import std.experimental.allocator.mallocator : Mallocator;
 import sparkles.base.text.case_style : CaseStyle;
 import sparkles.wired.policy : ConvertedWire, Repr, WireInvalid, WireTarget, convertOf,
@@ -75,8 +75,8 @@ import sparkles.wired.sdl.document : OwnedSdlExtras, SdlDocument,
     SdlOwnedExtraNode, poolName, poolScalar;
 import sparkles.wired.policy : MatchStrategy, WireSkip;
 import sparkles.wired.sdl.document : SdlAttributeView, SdlSpan;
-import sparkles.wired.sdl.error : SdlError, SdlErrorCode, SdlErrorStage,
-    SdlExpected, sdlErr, sdlOk;
+import sparkles.wired.sdl.error : resolvePositions, SdlError, SdlErrorCode,
+    SdlErrorStage, SdlExpected, sdlErr, sdlOk;
 import sparkles.wired.sdl.schema_annotations : SdlFieldRole,
     hasBorrowedSdlExtras;
 import sparkles.wired.sdl.reader : parseSdlDocument;
@@ -136,8 +136,8 @@ private DRes!T dFail(T)(ref SdlError failure, SdlError e)
 /// The SDL role path and the D value path shared across one walk (SPEC §7).
 private struct WalkPath
 {
-    SharedBuffer!(char, 96) text;
-    SharedBuffer!(char, 96) value;
+    UniqueBuffer!(char, 96) text;
+    UniqueBuffer!(char, 96) value;
 }
 
 private void popSegment(ref WalkPath p, size_t mark) @safe pure
@@ -190,8 +190,8 @@ private SdlError typedError(T)(SdlErrorCode code, SdlSpan span,
 /// Zero-width span at a tag's terminator — the SPEC §6 missing-member site.
 private SdlSpan endSpan(scope const ref SdlNode node) @safe pure
 {
-    const end = node.span.end;
-    return SdlSpan(end, end);
+    const span = node.span;
+    return span.isValid ? SdlSpan.at(span.endOffset) : SdlSpan.init;
 }
 
 private string roleSegment(scope const SdlFieldRole role) @safe pure
@@ -778,24 +778,10 @@ private bool decodeSingular(alias Parent, size_t i, V, alias Conv = void)(
 
 // ── Channel collection ───────────────────────────────────────────────────────
 
-/// Matching direct children in source order, by full qualified identity.
-private size_t collectChildren(scope const ref SdlNode node,
-    scope const SdlFieldRole role,
-    ref SharedBuffer!(SdlNode, 4) matches) @safe pure
-{
-    matches.clear();
-    foreach (child; node.byChild)
-    {
-        const name = child.qualifiedName;
-        if (roleMatches(role, name))
-            () @trusted { matches ~= child; }();
-    }
-    return matches.length;
-}
-
 private bool roleMatches(scope const SdlFieldRole role,
     scope const SdlQualifiedName name) @safe pure nothrow @nogc
 {
+    debug sdlNameComparisons++;
     if (name.namespace_ == role.namespace_ && name.localName == role.localName)
         return true;
     foreach (alias_; role.aliases)
@@ -847,34 +833,14 @@ private void assignField(T)(ref T slot, T value)
 
 // ── Aggregate walk ───────────────────────────────────────────────────────────
 
-private size_t collectAttributes(scope const ref SdlNode node,
-    scope const SdlFieldRole role,
-    ref SharedBuffer!(SdlAttributeView, 4) matches) @safe pure
-{
-    matches.clear();
-    foreach (attribute; node.byAttribute)
-    {
-        const name = attribute.qualifiedName;
-        if (roleMatches(role, name))
-            () @trusted { matches ~= attribute; }();
-    }
-    return matches.length;
-}
-
 private SdlScalar valueAt(scope const ref SdlNode node, size_t index,
     ref bool found) @safe pure
 {
-    size_t seen;
-    found = false;
-    foreach (value; node.byValue)
-    {
-        if (seen++ == index)
-        {
-            found = true;
-            return copyBorrowedScalar(value);
-        }
-    }
-    return SdlScalar.init;
+    found = index < node.valueCount;
+    if (!found)
+        return SdlScalar.init;
+    const value = node.valueAt(index);
+    return copyBorrowedScalar(value);
 }
 
 /// Collection-element decode: converters/enums/unions without the singular
@@ -913,124 +879,208 @@ private bool slotConsumesValue(scope const SdlFieldRole r, size_t pos)
         && pos < r.positionalIndex + (r.staticCount ? r.staticCount : 1);
 }
 
-/** Runtime matching tables for one aggregate's unknown occurrences.
+// ── Linear channel dispatch (SDP5) ───────────────────────────────────────────
 
-Built once per aggregate walk: which attribute/child identities are declared,
-which namespaces a map-shaped child field consumes, which singular children
-own their names outright, and the positional-slot facts (kept as a slice of
-the aggregate's projected roles). The same tables drive both the strict
-first-error scan and the preserve capture, guaranteeing the two policies agree
-on what "unmatched" means.
-*/
-private struct UnknownMatcher
-{
-    const(SdlFieldRole)[] roles;
-    string[] attrNamespaces;
-    string[] attrLocals;
-    string[] childNamespaces;
-    string[] childLocals;
-    string[] mapNamespaces;
-    string[] claimedLocals;
-    SdlQualifiedName[] childSingles;
+/// Name comparisons `roleMatches` made, counted in debug builds: the SDP5
+/// oracle that typed decode visits each child and attribute a bounded number
+/// of times.
+debug package size_t sdlNameComparisons;
 
-    /// Whether positional occurrence `pos` is consumed by a declared slot.
-    bool valueConsumed(size_t pos) const scope @safe pure nothrow @nogc
+/// The local names, aliases included, that `U`'s non-map `kind` fields claim.
+private enum string[] claimLocals(U, SdlRoleKind kind) = () {
+    alias roles = sdlAggregateRoles!(U).sdlFieldRoles;
+    string[] locals;
+    void add(string local)
     {
-        foreach (r; roles)
-            if (slotConsumesValue(r, pos))
-                return true;
-        return false;
+        foreach (existing; locals)
+            if (existing == local)
+                return;
+        locals ~= local;
     }
-
-    /// Whether an attribute matches any declared attribute field.
-    bool attributeKnown(scope const SdlQualifiedName name) const scope
-        @safe pure nothrow @nogc
-    {
-        foreach (i; 0 .. attrLocals.length)
-            if (name.namespace_ == attrNamespaces[i]
-                && name.localName == attrLocals[i])
-                return true;
-        return false;
-    }
-
-    /// Whether a child tag is consumed by a named field or a same-namespace
-    /// map field (which claims every unclaimed sibling, mirroring decode).
-    bool childKnown(scope const SdlQualifiedName name) const scope
-        @safe pure nothrow @nogc
-    {
-        foreach (i; 0 .. childLocals.length)
-            if (name.namespace_ == childNamespaces[i]
-                && name.localName == childLocals[i])
-                return true;
-        foreach (ns; mapNamespaces)
-            if (name.namespace_ == ns && !contains(claimedLocals,
-                    name.localName))
-                return true;
-        return false;
-    }
-
-    private static bool contains(scope const(string)[] haystack,
-        scope const(char)[] needle) @safe pure nothrow @nogc
-    {
-        foreach (s; haystack)
-            if (s == needle)
-                return true;
-        return false;
-    }
-}
-
-private UnknownMatcher unknownMatcher(T)()
-    @safe pure nothrow
-if (is(T == struct))
-{
-    import std.traits : isDynamicArray;
-
-    alias projected = sdlAggregateRoles!(Unqual!T).sdlFieldRoles;
-    UnknownMatcher m;
-    m.roles = projected.roles;
-    static foreach (j; 0 .. T.tupleof.length)
-    {{
-        enum RJ = projected.roles[j];
-        static if (RJ.role == SdlRoleKind.attribute)
+    foreach (role; roles.roles)
+        if (role.role == kind && role.childShape != SdlChildShape.map)
         {
-            m.attrNamespaces ~= RJ.namespace_;
-            m.attrLocals ~= RJ.localName;
-            foreach (name; RJ.aliases)
-            {
-                m.attrNamespaces ~= name.namespace_.idup;
-                m.attrLocals ~= name.localName.idup;
-            }
+            add(role.localName);
+            foreach (alias_; role.aliases)
+                add(alias_.localName.idup);
         }
-        else static if (RJ.role == SdlRoleKind.child)
-        {{
-            static foreach (k; 0 .. T.tupleof.length)
-                static if (k != j && projected.roles[k].role
-                    == SdlRoleKind.child)
-                    m.claimedLocals ~= projected.roles[k].localName;
-            static if (RJ.childShape == SdlChildShape.map)
-                m.mapNamespaces ~= RJ.namespace_;
-            else
-            {
-                m.childNamespaces ~= RJ.namespace_;
-                m.childLocals ~= RJ.localName;
-                foreach (name; RJ.aliases)
-                {
-                    m.childNamespaces ~= name.namespace_.idup;
-                    m.childLocals ~= name.localName.idup;
-                }
-                static if (RJ.childShape == SdlChildShape.scalarSingle
-                    || RJ.childShape == SdlChildShape.aggregateSingle)
-                    m.childSingles ~= SdlQualifiedName(RJ.namespace_,
-                        RJ.localName);
-            }
-        }}
-    }}
-    return m;
+    return locals;
+}();
+
+/// Whether `role` claims local name `local` (its own or an alias's).
+private bool claimsLocal(in SdlFieldRole role, string local) @safe pure nothrow
+{
+    if (role.localName == local)
+        return true;
+    foreach (alias_; role.aliases)
+        if (alias_.localName == local)
+            return true;
+    return false;
 }
+
+/** The field of `U` whose `kind` channel claims `name`, or `size_t.max`.
+
+Dispatch is a compile-time `switch` over the claimed local names, then a full
+comparison against only the fields that claim that local name, so the cost
+does not grow with the number of fields. */
+package size_t claimantOf(U, SdlRoleKind kind)(scope const SdlQualifiedName name)
+    @safe pure nothrow @nogc
+{
+    alias roles = sdlAggregateRoles!(U).sdlFieldRoles;
+    switch (name.localName)
+    {
+        static foreach (local; claimLocals!(U, kind))
+        {
+        case local:
+            static foreach (j; 0 .. roles.roles.length)
+                static if (roles.roles[j].role == kind
+                    && roles.roles[j].childShape != SdlChildShape.map
+                    && claimsLocal(roles.roles[j], local))
+                    if (roleMatches(roles.roles[j], name))
+                        return j;
+            return size_t.max;
+        }
+        default:
+            return size_t.max;
+    }
+}
+
+/// Whether `local` is the local name of a child field of `U` other than
+/// field `field` — the names a map field leaves to them.
+package bool isOtherChildLocal(U, size_t field)(scope const(char)[] local)
+    @safe pure nothrow @nogc
+{
+    alias roles = sdlAggregateRoles!(U).sdlFieldRoles;
+    enum string[] others = () {
+        string[] r;
+        foreach (j, role; roles.roles)
+            if (role.role == SdlRoleKind.child && j != field)
+                r ~= role.localName;
+        return r;
+    }();
+    switch (local)
+    {
+        static foreach (name; others)
+        {
+        case name:
+            return true;
+        }
+        default:
+            return false;
+    }
+}
+
+/// Whether a map-shaped child field of `U` takes an unclaimed child `name`:
+/// its namespace, and a local name no other child field holds.
+private bool mapClaims(U)(scope const SdlQualifiedName name) @safe pure nothrow @nogc
+{
+    alias roles = sdlAggregateRoles!(U).sdlFieldRoles;
+    static foreach (j; 0 .. roles.roles.length)
+        static if (roles.roles[j].role == SdlRoleKind.child
+            && roles.roles[j].childShape == SdlChildShape.map)
+            if (name.namespace_ == roles.roles[j].namespace_
+                && !isOtherChildLocal!(U, j)(name.localName))
+                return true;
+    return false;
+}
+
+/// Whether positional occurrence `pos` is consumed by a declared slot of `U`.
+private bool valueConsumed(U)(size_t pos) @safe pure nothrow @nogc
+{
+    alias roles = sdlAggregateRoles!(U).sdlFieldRoles;
+    static foreach (j; 0 .. roles.roles.length)
+        static if (roles.roles[j].role == SdlRoleKind.tagValue)
+            if (slotConsumesValue(roles.roles[j], pos))
+                return true;
+    return false;
+}
+
+/** One node's children and attributes, grouped by the field of `U` that
+claims each, in source order — built in one pass over each channel (SDP5).
+
+`childOwner` and `attributeOwner` give each occurrence's claimant, or
+`size_t.max`; field `f`'s claims are `children[childStart[f] ..
+childStart[f + 1]]` (cell indexes), and likewise for attributes. */
+private struct ClaimIndex(U)
+{
+    enum fieldCount = sdlAggregateRoles!(U).sdlFieldRoles.roles.length;
+    UniqueBuffer!(size_t, 16) childOwner, attributeOwner;
+    UniqueBuffer!(size_t, 16) children, attributes;
+    size_t[fieldCount + 1] childStart, attributeStart;
+
+    /// Field `f`'s claimed children, as views, into `matches`.
+    size_t childrenOf(size_t f, scope const ref SdlNode node,
+        ref UniqueBuffer!(SdlNode, 4) matches) const @safe pure
+    {
+        matches.clear();
+        foreach (cell; children[childStart[f] .. childStart[f + 1]])
+            () @trusted { matches ~= SdlNode(node.core, cell); }();
+        return matches.length;
+    }
+
+    /// Field `f`'s claimed attributes, as views, into `matches`.
+    size_t attributesOf(size_t f, scope const ref SdlNode node,
+        ref UniqueBuffer!(SdlAttributeView, 4) matches) const @safe pure
+    {
+        matches.clear();
+        foreach (cell; attributes[attributeStart[f] .. attributeStart[f + 1]])
+            () @trusted { matches ~= SdlAttributeView(node.core, cell); }();
+        return matches.length;
+    }
+}
+
+private void buildClaims(U)(scope const ref SdlNode node, ref ClaimIndex!U claims)
+    @safe pure
+{
+    enum none = size_t.max;
+    size_t[ClaimIndex!U.fieldCount] childCounts, attributeCounts;
+    foreach (child; node.byChild)
+    {
+        const f = claimantOf!(U, SdlRoleKind.child)(child.qualifiedName);
+        claims.childOwner ~= f;
+        if (f != none)
+            childCounts[f]++;
+    }
+    foreach (attribute; node.byAttribute)
+    {
+        const f = claimantOf!(U, SdlRoleKind.attribute)(attribute.qualifiedName);
+        claims.attributeOwner ~= f;
+        if (f != none)
+            attributeCounts[f]++;
+    }
+    foreach (f; 0 .. ClaimIndex!U.fieldCount)
+    {
+        claims.childStart[f + 1] = claims.childStart[f] + childCounts[f];
+        claims.attributeStart[f + 1] = claims.attributeStart[f] + attributeCounts[f];
+    }
+    claims.children.length = claims.childStart[$ - 1];
+    claims.attributes.length = claims.attributeStart[$ - 1];
+    size_t[ClaimIndex!U.fieldCount] childNext, attributeNext;
+    size_t position;
+    foreach (child; node.byChild)
+    {
+        const f = claims.childOwner[position++];
+        if (f != none)
+            claims.children[claims.childStart[f] + childNext[f]++] = child.cellIndex;
+    }
+    position = 0;
+    foreach (attribute; node.byAttribute)
+    {
+        const f = claims.attributeOwner[position++];
+        if (f != none)
+            claims.attributes[claims.attributeStart[f] + attributeNext[f]++] = attribute.cellIndex;
+    }
+}
+
+/// Whether the child at channel position `position` is claimed: by a named
+/// field, or by a map field that takes the unclaimed remainder.
+private bool childKnown(U)(scope const ref ClaimIndex!U claims, size_t position,
+    scope const SdlQualifiedName name) @safe pure nothrow @nogc
+    => claims.childOwner[position] != size_t.max || mapClaims!U(name);
 
 /** Reports unmatched occurrences in value/attribute/child channel order.
 The fail-fast specialization stops at the first; an accumulating walk records all. */
-private bool reportFirstUnknown(Sink)(scope const ref UnknownMatcher m,
+private bool reportFirstUnknown(U, Sink)(scope const ref ClaimIndex!U claims,
     scope const ref SdlNode node, ref WalkPath path,
     ref SdlError failure, ref WireErrors!(Sink, SdlError) errors)
 {
@@ -1038,7 +1088,7 @@ private bool reportFirstUnknown(Sink)(scope const ref UnknownMatcher m,
     size_t index;
     foreach (v; node.byValue)
     {
-        if (!m.valueConsumed(index))
+        if (!valueConsumed!U(index))
         {
             const mark = path.text.length;
             path.text ~= "<value[" ~ index.to!string ~ "]>";
@@ -1061,7 +1111,7 @@ private bool reportFirstUnknown(Sink)(scope const ref UnknownMatcher m,
     foreach (a; node.byAttribute)
     {
         const name = a.qualifiedName;
-        if (!m.attributeKnown(name))
+        if (claims.attributeOwner[index] == size_t.max)
         {
             const mark = path.text.length;
             path.text ~= "@" ~ qualifiedKey(name.namespace_, name.localName);
@@ -1084,7 +1134,7 @@ private bool reportFirstUnknown(Sink)(scope const ref UnknownMatcher m,
     foreach (c; node.byChild)
     {
         const name = c.qualifiedName;
-        if (!m.childKnown(name))
+        if (!childKnown(claims, index, name))
         {
             const mark = path.text.length;
             path.text ~= "." ~ qualifiedKey(name.namespace_, name.localName)
@@ -1138,13 +1188,13 @@ in (position < node.childCount)
 /** Captures every unmatched occurrence of the containing tag into `captured`,
 in canonical grammar order: values by position, then attributes, then children
 in occurrence order. */
-private void captureUnknowns(scope const ref UnknownMatcher m,
+private void captureUnknowns(U)(scope const ref ClaimIndex!U claims,
     scope const ref SdlNode node, ref SdlExtraMember[] captured) @safe pure
 {
     size_t index;
     foreach (v; node.byValue)
     {
-        if (!m.valueConsumed(index))
+        if (!valueConsumed!U(index))
             captured ~= SdlExtraMember(SdlExtraChannel.value, index,
                 SdlQualifiedName(null, null), copyBorrowedScalar(v),
                 SdlNode.init, v.span());
@@ -1154,7 +1204,7 @@ private void captureUnknowns(scope const ref UnknownMatcher m,
     index = 0;
     foreach (a; node.byAttribute)
     {
-        if (!m.attributeKnown(copyQualifiedName(a)))
+        if (claims.attributeOwner[index] == size_t.max)
         {
             const attrScalar = a.value;
             captured ~= SdlExtraMember(SdlExtraChannel.attribute, index,
@@ -1167,7 +1217,7 @@ private void captureUnknowns(scope const ref UnknownMatcher m,
     index = 0;
     foreach (c; node.byChild)
     {
-        if (!m.childKnown(copyQualifiedName(c)))
+        if (!childKnown(claims, index, copyQualifiedName(c)))
             captured ~= SdlExtraMember(SdlExtraChannel.child, index,
                 copyQualifiedName(c), SdlScalar.invalidScalar(),
                 copyBorrowedNode(c), c.span());
@@ -1248,6 +1298,9 @@ if (is(T == struct))
     alias policies = WireWalk!(Sdl, U).childPolicies!0;
     U result;
     const initialErrors = errors.count;
+    // Each child and attribute is dispatched to its field once (SDP5).
+    ClaimIndex!U claims;
+    buildClaims(node, claims);
 
     // SPEC §8 forbid policy: the first unmatched occurrence — scanned values
     // by position, then attributes, then children — fails the walk before any
@@ -1256,8 +1309,7 @@ if (is(T == struct))
     // exclusive at compile time.
     static if (roles.strictUnknown)
     {
-        auto strictMatcher = unknownMatcher!(U);
-        if (reportFirstUnknown(strictMatcher, node, path, failure, errors))
+        if (reportFirstUnknown(claims, node, path, failure, errors))
         {
             static if (is(Sink == FailFast))
                 return DRes!(U)(true);
@@ -1282,9 +1334,8 @@ if (is(T == struct))
 
         static if (R.role == SdlRoleKind.child)
         {
-            SharedBuffer!(SdlNode, 4) matches;
-            const count = collectChildren(node, R,
-                matches);
+            UniqueBuffer!(SdlNode, 4) matches;
+            const count = claims.childrenOf(i, node, matches);
 
             static if (R.childShape == SdlChildShape.scalarSingle
                 || R.childShape == SdlChildShape.aggregateSingle)
@@ -1460,33 +1511,14 @@ if (is(T == struct))
                 static if (!(is(K == string) || is(K == enum)))
                     static assert(false, "wired.sdl: unreachable AA key kind");
 
-                // Compile-time set of local names claimed by *other* child
-                // fields; the AA consumes every remaining same-namespace
-                // sibling so its tags may be arbitrarily named.
-                static immutable string[] claimedNames = () {
-                    string[] r;
-                    static foreach (j; 0 .. roles.roles.length)
-                        static if (roles.roles[j].role == SdlRoleKind.child
-                            && j != i)
-                            r ~= roles.roles[j].localName;
-                    return r;
-                }();
-
-                SharedBuffer!(SdlNode, 4) aaMatches;
+                // The AA consumes every same-namespace sibling whose local name
+                // no other child field holds, so its tags may be arbitrarily
+                // named; the local-name test is a compile-time switch.
+                UniqueBuffer!(SdlNode, 4) aaMatches;
                 foreach (child; node.byChild)
-                {
-                    if (child.qualifiedName.namespace_ != R.namespace_)
-                        continue;
-                    bool taken;
-                    foreach (cn; claimedNames)
-                        if (cn == child.qualifiedName.localName)
-                        {
-                            taken = true;
-                            break;
-                        }
-                    if (!taken)
+                    if (child.qualifiedName.namespace_ == R.namespace_
+                        && !isOtherChildLocal!(U, i)(child.qualifiedName.localName))
                         () @trusted { aaMatches ~= child; }();
-                }
 
                 K[] seenKeys;
                 M[string] table;
@@ -1548,9 +1580,8 @@ if (is(T == struct))
         }
         else static if (R.role == SdlRoleKind.attribute)
         {
-            SharedBuffer!(SdlAttributeView, 4) attrs;
-            const acount = collectAttributes(node, R,
-                attrs);
+            UniqueBuffer!(SdlAttributeView, 4) attrs;
+            const acount = claims.attributesOf(i, node, attrs);
 
             // NOTE: string is a dynamic array in D but a *scalar* channel
             // value; only genuine array types mean "repeated attribute".
@@ -1709,9 +1740,8 @@ if (is(T == struct))
             // SPEC §8 preserve: capture every unmatched occurrence in
             // canonical grammar order (values by position, then attributes,
             // then children).
-            auto preserveMatcher = unknownMatcher!(U);
             SdlExtraMember[] captured;
-            captureUnknowns(preserveMatcher, node, captured);
+            captureUnknowns(claims, node, captured);
             static if (is(V == OwnedSdlExtras))
                 assignField(result.tupleof[i], ownCaptures(captured));
             else static if (is(V == SdlExtras))
@@ -1944,22 +1974,25 @@ private WireFieldSet!T suppliedSdlFields(T)(scope SdlNode node) @safe
 {
     WireFieldSet!T supplied;
     alias roles = sdlAggregateRoles!T.sdlFieldRoles;
+    ClaimIndex!T claims;
+    buildClaims(node, claims);
     static foreach (i; 0 .. roles.roles.length)
     {{
         enum role = roles.roles[i];
         bool found;
         static if (role.role == SdlRoleKind.child)
         {
-            foreach (child; node.byChild)
-                if (roleMatches(role, child.qualifiedName))
-                    found = true;
+            static if (role.childShape == SdlChildShape.map)
+            {
+                foreach (child; node.byChild)
+                    found |= child.qualifiedName.namespace_ == role.namespace_
+                        && !isOtherChildLocal!(T, i)(child.qualifiedName.localName);
+            }
+            else
+                found = claims.childStart[i + 1] > claims.childStart[i];
         }
         else static if (role.role == SdlRoleKind.attribute)
-        {
-            foreach (attribute; node.byAttribute)
-                if (roleMatches(role, attribute.qualifiedName))
-                    found = true;
-        }
+            found = claims.attributeStart[i + 1] > claims.attributeStart[i];
         else static if (role.role == SdlRoleKind.tagValue)
             found = node.valueCount > role.positionalIndex;
         else static if (role.role == SdlRoleKind.tagName)
@@ -1968,14 +2001,13 @@ private WireFieldSet!T suppliedSdlFields(T)(scope SdlNode node) @safe
             found = node.qualifiedName.namespace_.length != 0;
         else static if (role.role == SdlRoleKind.extra)
         {
-            auto matcher = unknownMatcher!T();
-            size_t index;
-            foreach (_; node.byValue)
-                found |= !matcher.valueConsumed(index++);
-            foreach (attribute; node.byAttribute)
-                found |= !matcher.attributeKnown(attribute.qualifiedName);
+            foreach (index; 0 .. node.valueCount)
+                found |= !valueConsumed!T(index);
+            foreach (owner; claims.attributeOwner[])
+                found |= owner == size_t.max;
+            size_t position;
             foreach (child; node.byChild)
-                found |= !matcher.childKnown(child.qualifiedName);
+                found |= !childKnown(claims, position++, child.qualifiedName);
         }
         if (found)
             supplied.include(i);
@@ -1997,6 +2029,24 @@ private struct SdlSourceSink(Sink)
     }
 }
 
+/// Resolves each error's positions against the decoded document's core
+/// before handing it to the caller's sink.
+private struct SdlLocatingSink(Sink)
+{
+    import sparkles.wired.sdl.document : SdlCore;
+
+    Sink* target;
+    const(SdlCore)* core;
+
+    void put(SdlError error)
+    {
+        import std.range.primitives : put;
+
+        resolvePositions(error, core);
+        put(*target, error);
+    }
+}
+
 // One root decode, fail-fast or accumulating. The result borrows from `node`
 // exactly as far as `T` does; the public overloads below decide that.
 private SdlExpected!T decodeRootNode(T, Sink)(return scope SdlNode node,
@@ -2008,7 +2058,10 @@ private SdlExpected!T decodeRootNode(T, Sink)(return scope SdlNode node,
         SdlError failure;
         auto r = decodeAggregate!(Value, Sink)(node, path, failure, errors);
         if (r.failed)
+        {
+            resolvePositions(failure, node.core);
             return sdlErr!T(failure);
+        }
         return sdlOk(T(r.value, suppliedSdlFields!Value(node)));
     }
     else
@@ -2017,7 +2070,10 @@ private SdlExpected!T decodeRootNode(T, Sink)(return scope SdlNode node,
         SdlError failure;
         auto r = decodeAggregate!(T, Sink)(node, path, failure, errors);
         if (r.failed)
+        {
+            resolvePositions(failure, node.core);
             return sdlErr!T(failure);
+        }
         return sdlOk(r.value);
     }
 }
@@ -2060,22 +2116,26 @@ the first. */
 SdlExpected!T fromSDL(T, Sink)(return scope SdlNode node, ref Sink sink)
 if (is(T == struct) && hasBorrowedSdlExtras!(Unqual!T))
 {
-    WireErrors!(Sink, SdlError) errors;
-    // Narrow trust: `errors` is local to this call, so the pointer to the
-    // caller's sink cannot outlive it.
-    errors.sink = (() @trusted => &sink)();
-    return decodeRootNode!(T, Sink)(node, errors);
+    SdlLocatingSink!Sink locating;
+    WireErrors!(SdlLocatingSink!Sink, SdlError) errors;
+    // Narrow trust: `errors` and `locating` are local to this call, so the
+    // pointers to the caller's sink and to `locating` cannot outlive it.
+    locating = SdlLocatingSink!Sink((() @trusted => &sink)(), node.core);
+    errors.sink = (() @trusted => &locating)();
+    return decodeRootNode!(T, SdlLocatingSink!Sink)(node, errors);
 }
 
 /// ditto
 SdlExpected!T fromSDL(T, Sink)(scope SdlNode node, ref Sink sink)
 if (is(T == struct) && !hasBorrowedSdlExtras!(Unqual!T))
 {
-    WireErrors!(Sink, SdlError) errors;
-    // Narrow trust: `errors` is local to this call, so the pointer to the
-    // caller's sink cannot outlive it.
-    errors.sink = (() @trusted => &sink)();
-    auto result = decodeRootNode!(T, Sink)(node, errors);
+    SdlLocatingSink!Sink locating;
+    WireErrors!(SdlLocatingSink!Sink, SdlError) errors;
+    // Narrow trust: `errors` and `locating` are local to this call, so the
+    // pointers to the caller's sink and to `locating` cannot outlive it.
+    locating = SdlLocatingSink!Sink((() @trusted => &sink)(), node.core);
+    errors.sink = (() @trusted => &locating)();
+    auto result = decodeRootNode!(T, SdlLocatingSink!Sink)(node, errors);
     // Narrow trust: as for the fail-fast owned overload.
     return (() @trusted => result)();
 }
@@ -2289,7 +2349,7 @@ if (is(T == struct))
     assert(bad.hasError && bad.error.code == SdlErrorCode.checkFailed);
     assert(bad.error.rolePath[] == ".settings[0]@low");
     assert(bad.error.sourceName[] == "check.sdl");
-    assert(bad.error.span.start.byteOffset == 13);
+    assert(bad.error.span.startOffset == 13);
     Doc invalid = good.value;
     invalid.settings.high = 1;
     const encoded = toSDL(invalid);
@@ -2618,7 +2678,7 @@ private enum fullSource =
     assert(dup.hasError, "expected duplicate");
     assert(dup.error.code == SdlErrorCode.duplicateRole);
     assert(dup.error.rolePath[] == ".dep[1]");
-    assert(dup.error.span.start.byteOffset > 0);
+    assert(dup.error.span.startOffset > 0);
 
     static struct AADoc
     {
@@ -2630,14 +2690,14 @@ private enum fullSource =
     assert(dupKey.hasError);
     assert(dupKey.error.code == SdlErrorCode.duplicateRole);
     assert(dupKey.error.rolePath[] == ".k[k]");
-    assert(dupKey.error.span.start.byteOffset > 0);
+    assert(dupKey.error.span.startOffset > 0);
 
     // Missing required singular child reports at the root terminator.
     auto missingChild = fromSDL!(DupChildDoc, sdlFull)("");
     assert(missingChild.hasError
         && missingChild.error.code == SdlErrorCode.missingRole);
     assert(missingChild.error.rolePath[] == ".dep[0]");
-    assert(missingChild.error.span.start.byteOffset == 0);
+    assert(missingChild.error.span.startOffset == 0);
 
     static struct AttrReq
     {
@@ -2653,7 +2713,7 @@ private enum fullSource =
     assert(missingAttr.hasError
         && missingAttr.error.code == SdlErrorCode.missingRole);
     assert(missingAttr.error.rolePath[] == ".a[0]@verbose");
-    assert(missingAttr.error.span.start.byteOffset == 2);
+    assert(missingAttr.error.span.startOffset == 2);
 
     static struct SlotsDoc
     {
@@ -3050,7 +3110,7 @@ private enum fullSource =
     assert(halted.hasError);
     assert(halted.error.stage == SdlErrorStage.decode);
     assert(halted.error.code == SdlErrorCode.unknownMember);
-    assert(halted.error.span.start.byteOffset == 0);
+    assert(halted.error.span.startOffset == 0);
 }
 
 @("wired.sdl.codec.namespacedChildrenAndTextPropagation")
@@ -3095,12 +3155,26 @@ private enum fullSource =
 /** Builds a temporary ordered arena from a D value, mirroring the decode
 walk field-for-field so `writeSDL` can reuse $(LREF writeSdlDocument)'s
 canonical-form kernels verbatim. */
+private struct EncDocument
+{
+    import sparkles.wired.sdl.document : SdlCore;
+
+    SdlCore core; /// GC-owned cells; no source, so every span is invalid.
+
+    bool valid() const scope @safe pure nothrow @nogc => core.nodes.length != 0;
+
+    // Narrow trust: the root refers to `core`, which lives in the builder
+    // for the whole synchronous build-and-write.
+    SdlNode root() const return scope @safe pure nothrow @nogc
+        => (() @trusted => SdlNode(&core, 0))();
+}
+
 private struct EncBuilder
 {
-    import sparkles.wired.sdl.document : SdlAttributeCell, SdlDocument,
-        SdlNodeCell, SdlValueCell;
+    import sparkles.wired.sdl.document : SdlAttributeCell, SdlNodeCell,
+        SdlValueCell;
 
-    SdlDocument!(Mallocator) doc;
+    EncDocument doc;
     size_t[][] kids;            // child arena indices per node, in order
     SdlValueCell[][] vals;      // positional values per node
     SdlAttributeCell[][] attrs; // attributes per node
@@ -3119,11 +3193,11 @@ private size_t encAppendNode(ref EncBuilder b, scope const(char)[] ns,
     cell.depth = depth;
     // Narrow trust: the cell aliases caller-owned name bytes that stay alive
     // for the whole synchronous build-and-write.
-    () @trusted { b.doc.nodes ~= cell; }();
-    b.kids.length = b.doc.nodes.length;
-    b.vals.length = b.doc.nodes.length;
-    b.attrs.length = b.doc.nodes.length;
-    return b.doc.nodes.length - 1;
+    () @trusted { b.doc.core.nodes ~= cell; }();
+    b.kids.length = b.doc.core.nodes.length;
+    b.vals.length = b.doc.core.nodes.length;
+    b.attrs.length = b.doc.core.nodes.length;
+    return b.doc.core.nodes.length - 1;
 }
 
 private void encAddValue(ref EncBuilder b, size_t node, scope SdlScalar s) @safe pure
@@ -3167,25 +3241,25 @@ private string encOwn(ref EncBuilder b, scope const(char)[] s) @safe pure
 private void encFinish(ref EncBuilder b) @safe pure
 {
     size_t valueCursor;
-    foreach (i, ref node; b.doc.nodes)
+    foreach (i, ref node; b.doc.core.nodes)
     {
         node.valueStart = valueCursor;
         node.valueCount = b.vals[i].length;
         foreach (cell; b.vals[i])
-            b.doc.values ~= cell;
+            b.doc.core.values ~= cell;
         valueCursor += b.vals[i].length;
     }
     size_t attrCursor;
-    foreach (i, ref node; b.doc.nodes)
+    foreach (i, ref node; b.doc.core.nodes)
     {
         node.attributeStart = attrCursor;
         node.attributeCount = b.attrs[i].length;
         foreach (cell; b.attrs[i])
-            b.doc.attributes ~= cell;
+            b.doc.core.attributes ~= cell;
         attrCursor += b.attrs[i].length;
     }
     size_t childCursor;
-    foreach (i, ref node; b.doc.nodes)
+    foreach (i, ref node; b.doc.core.nodes)
     {
         node.childStart = childCursor;
         node.childCount = b.kids[i].length;
@@ -3194,16 +3268,16 @@ private void encFinish(ref EncBuilder b) @safe pure
         node.hasBlock = b.kids[i].length != 0 || node.hasBlock;
         childCursor += b.kids[i].length;
     }
-    b.doc.childIndexes.length = childCursor;
+    b.doc.core.childIndexes.length = childCursor;
     foreach (i, kids; b.kids)
         foreach (pos, child; kids)
-            b.doc.childIndexes[b.doc.nodes[i].childStart + pos] = child;
+            b.doc.core.childIndexes[b.doc.core.nodes[i].childStart + pos] = child;
 
     // The arena is exactly the nodes' extents: every cell belongs to one node
     // and every node's window lands inside it.
-    assert(b.doc.values.length == valueCursor);
-    assert(b.doc.attributes.length == attrCursor);
-    assert(b.doc.childIndexes.length == childCursor);
+    assert(b.doc.core.values.length == valueCursor);
+    assert(b.doc.core.attributes.length == attrCursor);
+    assert(b.doc.core.childIndexes.length == childCursor);
 }
 
 /// Builds the canonical $(LREF SdlScalar) payload for one wire value.
@@ -3451,9 +3525,9 @@ private size_t copyExtraSubtree(ref EncBuilder b, return scope const SdlNode n,
     const name = n.qualifiedName;
     const idx = encAppendNode(b, name.namespace_, name.localName, depth);
     {
-        auto cell = b.doc.nodes[idx];
+        auto cell = b.doc.core.nodes[idx];
         cell.hasBlock = n.hasBlock();
-        b.doc.nodes[idx] = cell;
+        b.doc.core.nodes[idx] = cell;
     }
     foreach (v; n.byValue)
         encAddValue(b, idx, copyBorrowedScalar(v));
@@ -3479,9 +3553,9 @@ private size_t appendOwnedSubtree(ref EncBuilder b,
     const idx = encAppendNode(b, tree.name.namespace_, tree.name.localName,
         depth);
     {
-        auto cell = b.doc.nodes[idx];
+        auto cell = b.doc.core.nodes[idx];
         cell.hasBlock = tree.hasBlock;
-        b.doc.nodes[idx] = cell;
+        b.doc.core.nodes[idx] = cell;
     }
     foreach (v; tree.values)
         encAddValue(b, idx, v);
@@ -3711,7 +3785,9 @@ if (is(T == struct))
         foreach (slot; 0 .. maxFixed + 1)
             if ((slot in slotScalars) is null)
                 gap = true;
-    if (gap || haveSuffix && suffixStart != maxFixed + 1)
+    // With no fixed slot the suffix starts at 0.
+    const fixedCount = slotScalars.length ? maxFixed + 1 : 0;
+    if (gap || haveSuffix && suffixStart != fixedCount)
     {
         b.failure = attachPath(b.path, encBaseError(
             SdlErrorCode.valueOutOfRange,
@@ -3948,7 +4024,7 @@ if (is(T == struct))
         static if (R.role == SdlRoleKind.child)
         {
             const childDepth = nodeIdx == 0 ? 0u
-                : cast(uint) (b.doc.nodes[nodeIdx].depth + 1);
+                : cast(uint) (b.doc.core.nodes[nodeIdx].depth + 1);
 
             static if (isNullAwareType!(V))
             {
@@ -3995,41 +4071,50 @@ if (is(T == struct))
             static if ((!isDynamicArray!(Unqual!V) || is(V == string))
                 && !isAssociativeArray!(Unqual!V))
             {
-                // Scalar or aggregate single child.
-                static if (__traits(hasMember, typeof(value.tupleof[i]),
-                        "init") && HasIdentity!(typeof(value.tupleof[i])))
-                    const name = encChildName(value.tupleof[i], R.namespace_, R.localName);
+                // An optional field at its declared default is omitted when
+                // its policy says so, as for attributes.
+                static if (policies[i].optional && policies[i].skip == WireSkip.whenDefault)
+                    const emitChild = !(value.tupleof[i] == declaredDefault!(T, i));
                 else
-                    const name = EncName(R.namespace_, R.localName);
-
-                const mark = b.path.text.length;
-                b.path.text ~= "." ~ qualifiedKey(name.namespace_, name.localName) ~ "[0]";
-                const cIdx = encAppendNode(b, name.namespace_, name.localName, childDepth);
-                scope (exit) popSegment(b.path, mark);
-
-                static if (is(Unqual!(EncPayload!V) == struct)
-                    && !is(EncPayload!V == bool) && !isSomeChar!(EncPayload!V)
-                    && !is(EncPayload!V == string))
+                    enum emitChild = true;
+                if (emitChild)
                 {
-                    alias P = EncPayload!(V);
-                    const P payload = encPayload(value.tupleof[i]);
-                    encodeAggregate!(P)(b, payload, cIdx);
+                    // Scalar or aggregate single child.
+                    static if (__traits(hasMember, typeof(value.tupleof[i]),
+                            "init") && HasIdentity!(typeof(value.tupleof[i])))
+                        const name = encChildName(value.tupleof[i], R.namespace_, R.localName);
+                    else
+                        const name = EncName(R.namespace_, R.localName);
+
+                    const mark = b.path.text.length;
+                    b.path.text ~= "." ~ qualifiedKey(name.namespace_, name.localName) ~ "[0]";
+                    const cIdx = encAppendNode(b, name.namespace_, name.localName, childDepth);
+                    scope (exit) popSegment(b.path, mark);
+
+                    static if (is(Unqual!(EncPayload!V) == struct)
+                        && !is(EncPayload!V == bool) && !isSomeChar!(EncPayload!V)
+                        && !is(EncPayload!V == string))
+                    {
+                        alias P = EncPayload!(V);
+                        const P payload = encPayload(value.tupleof[i]);
+                        encodeAggregate!(P)(b, payload, cIdx);
+                    }
+                    else
+                    {
+                        // An lvalue: `encConverted` borrows the payload by `ref`,
+                        // and a plain scalar's payload is the scalar itself.
+                        auto payload = encPayload(value.tupleof[i]);
+                        auto wire = encConverted!(FC3, EncPayload!(V))(payload, b,
+                            "." ~ qualifiedKey(name.namespace_, name.localName) ~ "[0]");
+                        if (wire.failed)
+                            return;
+                        auto singleScalar = encScalar(wire.value, b);
+                        encAddValue(b, cIdx, singleScalar);
+                        if (b.failure.reason.length)
+                            return;
+                    }
+                    kidOrder ~= cIdx;
                 }
-                else
-                {
-                    // An lvalue: `encConverted` borrows the payload by `ref`,
-                    // and a plain scalar's payload is the scalar itself.
-                    auto payload = encPayload(value.tupleof[i]);
-                    auto wire = encConverted!(FC3, EncPayload!(V))(payload, b,
-                        "." ~ qualifiedKey(name.namespace_, name.localName) ~ "[0]");
-                    if (wire.failed)
-                        return;
-                    auto singleScalar = encScalar(wire.value, b);
-                    encAddValue(b, cIdx, singleScalar);
-                    if (b.failure.reason.length)
-                        return;
-                }
-                kidOrder ~= cIdx;
             }
             else static if (isDynamicArray!(Unqual!V) && !is(V == string)
                 && !isAssociativeArray!(Unqual!V))
@@ -4156,7 +4241,7 @@ if (is(T == struct))
         alias Extras = typeof(T.tupleof[sdlExtrasIndex!T]);
         const extras = value.tupleof[sdlExtrasIndex!T];
         const extraDepth = nodeIdx == 0 ? 0u
-            : cast(uint) (b.doc.nodes[nodeIdx].depth + 1);
+            : cast(uint) (b.doc.core.nodes[nodeIdx].depth + 1);
 
         static immutable string[] singularChildNames = () {
             string[] names;
@@ -4273,6 +4358,34 @@ if (is(T == struct))
     encFinish(b);
     return writeSdlDocument(b.doc, writer);
     }
+}
+
+/** Package seam: `value`'s canonical tree, built as `writeSDL` builds it,
+for the lossless typed write-back (`sparkles.wired.sdl.typed_edit`) to walk
+beside the parsed document. The tree refers to storage inside `tree`, so the
+caller holds it in place while it uses `root`. */
+package struct SdlEncodedTree
+{
+    private EncBuilder builder;
+
+    @disable this(this);
+
+    /// The encode failure, when `failed`.
+    SdlError failure() const @safe pure nothrow @nogc => builder.failure;
+    /// Whether encoding failed.
+    bool failed() const @safe pure nothrow @nogc => builder.failure.reason.length != 0;
+    /// The encoded root, valid while `this` stays where it is.
+    SdlNode root() const return scope @safe pure nothrow @nogc => builder.doc.root;
+}
+
+/// ditto
+package void encodeSdlTree(T)(scope const ref T value, ref SdlEncodedTree tree)
+if (is(T == struct))
+{
+    const root = encAppendNode(tree.builder, null, null, uint.max);
+    encodeAggregate!(T)(tree.builder, value, root);
+    if (!tree.failed)
+        encFinish(tree.builder);
 }
 
 /// ditto — renders into an owned $(LREF SdlString). A non-empty document
@@ -4868,7 +4981,7 @@ version (unittest)
     assert(forbidden.error.code == SdlErrorCode.unknownMember);
     // The value channel is scanned first even though attributes appear later.
     assert(forbidden.error.rolePath[] == ".config[0]<value[1]>");
-    assert(forbidden.error.span.start.byteOffset == matrixSource.indexOf("99"));
+    assert(forbidden.error.span.startOffset == matrixSource.indexOf("99"));
 
     // Attributes only: the first unknown attribute is reported.
     @WireStrict!Sdl
@@ -4885,7 +4998,7 @@ version (unittest)
     assert(attrCase.hasError && attrCase.error.code
         == SdlErrorCode.unknownMember);
     assert(attrCase.error.rolePath[] == ".t[0]@ghost");
-    assert(attrCase.error.span.start.byteOffset
+    assert(attrCase.error.span.startOffset
         == `t known=true ghost=1 {`.indexOf("ghost"));
 
     // Children only: the first unknown child is reported with its same-name
@@ -4904,7 +5017,7 @@ version (unittest)
     assert(childCase.hasError && childCase.error.code
         == SdlErrorCode.unknownMember);
     assert(childCase.error.rolePath[] == ".p[0].stray[0]");
-    assert(childCase.error.span.start.byteOffset
+    assert(childCase.error.span.startOffset
         == childSource.indexOf("stray"));
 }
 
@@ -4927,7 +5040,7 @@ version (unittest)
     assert(v.name().namespace_.length == 0 && v.name().localName.length == 0);
     assert(v.scalar().kind == SdlScalarKind.integer && v.scalar().integer
         == 99);
-    assert(v.span().start.byteOffset == matrixSource.indexOf("99"));
+    assert(v.span().startOffset == matrixSource.indexOf("99"));
 
     // Attributes in occurrence order with full ordinals among ALL attributes.
     const a1 = extras.at(1);
@@ -4939,7 +5052,7 @@ version (unittest)
     assert(a2.name().namespace_ == "x" && a2.name().localName == "opt");
     assert(a2.scalar().kind == SdlScalarKind.string_
         && a2.scalar().stringValue == "y");
-    assert(a2.span().start.byteOffset == matrixSource.indexOf("x:opt"));
+    assert(a2.span().startOffset == matrixSource.indexOf("x:opt"));
 
     // Child capture carries the whole borrowed subtree view.
     const c = extras.at(3);
@@ -4997,7 +5110,7 @@ version (unittest)
     assert(forbidden.hasError && forbidden.error.code
         == SdlErrorCode.unknownMember);
     assert(forbidden.error.rolePath[] == ".m[0]@x:a");
-    assert(forbidden.error.span.start.byteOffset == src.indexOf("x:a"));
+    assert(forbidden.error.span.startOffset == src.indexOf("x:a"));
 
     auto parsed = parseSdlDocument!sdlFull(src, "dup.sdl");
     assert(parsed.hasValue);
@@ -5033,7 +5146,7 @@ version (unittest)
     assert(forbidden.hasError && forbidden.error.code
         == SdlErrorCode.unknownMember);
     assert(forbidden.error.rolePath[] == ".p[0].zz[0]");
-    assert(forbidden.error.span.start.byteOffset == src.indexOf("zz"));
+    assert(forbidden.error.span.startOffset == src.indexOf("zz"));
 
     auto parsed = parseSdlDocument!sdlFull(src, "kids.sdl");
     assert(parsed.hasValue);
@@ -5345,4 +5458,77 @@ version (unittest)
     assert(back.hasValue, back.error.toString);
     assert(!back.value.maybe.isNull && back.value.maybe.get == 7
         && back.value.label == some("hi"));
+}
+
+@("wired.sdl.codec.linearDecode.nameComparisons")
+@safe unittest
+{
+    // SDP5: decoding visits each child and attribute a bounded number of
+    // times, whatever the number of fields. Thirty-two fields, 256 children
+    // and 64 attributes, half of them unknown: a fields × children walk
+    // makes over 10,000 name comparisons; a linear one about one per
+    // occurrence.
+    static string fields()
+    {
+        import std.conv : to;
+
+        string text;
+        foreach (i; 0 .. 32)
+            text ~= "@SdlChild() int[] c" ~ i.to!string ~ "; @SdlAttribute() @WireOptional() int a"
+                ~ i.to!string ~ ";\n";
+        return text;
+    }
+
+    static struct Wide
+    {
+        import sparkles.wired : WireOptional;
+
+        mixin(fields());
+    }
+
+    import std.conv : to;
+
+    string source = "w";
+    foreach (i; 0 .. 64)
+        source ~= " " ~ (i % 2 ? "a" ~ (i / 2 % 32).to!string : "z" ~ i.to!string) ~ "=1";
+    source ~= " {\n";
+    foreach (i; 0 .. 256)
+        source ~= (i % 2 ? "c" ~ (i % 32).to!string : "u" ~ i.to!string) ~ " 1\n";
+    source ~= "}\n";
+    auto parsed = parseSdlDocument!sdlFull(source);
+    assert(parsed.hasValue);
+
+    debug
+    {
+        const before = sdlNameComparisons;
+        const decoded = fromSDL!Wide(parsed.document.root.byChild.front);
+        assert(decoded.hasValue, decoded.error.toString);
+        const comparisons = sdlNameComparisons - before;
+        assert(comparisons >= 128 && comparisons <= 2 * (256 + 64), comparisons.to!string);
+        assert(decoded.value.c1.length == 8 && decoded.value.a1 == 1);
+    }
+}
+
+@("wired.sdl.codec.writeSDL.suffixOnlyAndSkippedChildren")
+@safe unittest
+{
+    import sparkles.wired : WireName, WireOptional, WireSkip;
+
+    // A child whose only positional field is a dynamic suffix at 0, and an
+    // optional scalar child at its default, which `whenDefault` omits.
+    static struct Values
+    {
+        @SdlTagValue(0) string[] values;
+    }
+
+    static struct Holder
+    {
+        @WireName!Sdl("flags") Values[] flags;
+        @WireOptional(WireSkip.whenDefault) string note;
+    }
+
+    const encoded = toSDL(Holder([Values(["-a", "-b"])]));
+    assert(encoded.hasValue, encoded.error.toString);
+    assert(encoded.value[] == "flags \"-a\" \"-b\"\n", encoded.value[]);
+    assert(fromSDL!Holder(encoded.value[]).value == Holder([Values(["-a", "-b"])]));
 }

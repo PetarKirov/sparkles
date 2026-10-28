@@ -1,4 +1,4 @@
-# `runtime-bench` — runtime JSON benchmark for `sparkles:wired`
+# `runtime-bench` — runtime JSON and SDL benchmark for `sparkles:wired`
 
 Step 1 of replacing `std.json` inside `sparkles:wired` with a
 state-of-the-art JSON parser: measure the field. The benchmark is a set of
@@ -11,6 +11,8 @@ engines × datasets × ops, one row per case.
 | D (SUT)   | `wired`                                                | in-tree          |
 | C/C++     | yyjson, simdjson, rapidjson                            | nix-built shims  |
 | Rust      | serde_json, simd-json, sonic-rs                        | nix-built shims  |
+
+The same harness carries the SDL backend's rows (see [SDL rows](#sdl-rows)).
 
 The default unittest configuration builds the D field. Use
 `-c unittest-foreign` inside the devshell for the full competitive matrix.
@@ -274,6 +276,90 @@ once outside timing. The reference pass collects in bounded batches and returns
 unused GC pages before measurement, so it does not leave a dump-sized reference
 tree behind. Malformed normalization or a parser that silently skips data fails
 the row instead of producing a throughput number.
+
+## SDL rows
+
+The SDL backend's benchmark ([performance SDP1](../../../../docs/specs/wired/sdl/performance.md#1-measurement))
+lives in `src/sparkles/wired_bench/sdl.d`: four `@benchmark` tests,
+`sdl.parse`, `sdl.decode`, `sdl.encode` and `sdl.edit`, written against the public
+`sparkles.wired.sdl` API only, so they compile unchanged across changes to
+the backend's internal representation.
+
+| Op       | Row          | Contract                                                                                                                                   |
+| -------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `parse`  | `wired`      | bytes → `SdlDocument` (`parseSdlDocument`); recipes under `sdlDubRecipe`, `deep_wide` under `sdlFull`. Documents are released untimed.     |
+| `parse`  | `dub-sdlang` | the same bytes through DUB's own pinned SDLang parser (`parseSource`): an external reference point, not a target. `unittest-foreign` only. |
+| `decode` | `wired`      | bytes → the `dub.sdl` schema (`parseDubManifest` from `sparkles:build-primitives`), parse included. Recipe datasets only.                  |
+| `encode` | `wired`      | a parsed document (untimed `setup`) → canonical SDL text (`writeSdlDocument`), into one retained buffer per document.                      |
+| `edit`   | `wired`      | a parsed document (untimed `setup`) → one lossless change through `SdlEditor` (a `probe` attribute on the first tag), re-parse included.   |
+
+Throughput is normalized over the dataset's input bytes for every row.
+
+### SDL datasets
+
+All three come from `$WIRED_BENCH_DATA/sdl/`, built by
+`nix/packages/wired-bench-data.nix`:
+
+| selector             | path                         | shape                                                                                   |
+| -------------------- | ---------------------------- | --------------------------------------------------------------------------------------- |
+| `dub_recipes`        | `sdl/dub-recipes/`           | the repository's 151 `dub.sdl` files at `020926d5c`, 535 KB, one document each          |
+| `dub_recipes_concat` | `sdl/dub-recipes-concat.sdl` | the same recipes, copied unread into inline `subPackage { … }` blocks of one recipe     |
+| `deep_wide`          | `sdl/deep-wide.sdl`          | 1.47 MB generated: four 200-level chains, 64 tags × (64 values, 256 attributes), a tree |
+
+The snapshot is a fixed-output fetch of
+`github:PetarKirov/sparkles/020926d5c76a43b786f3b81658338a3b224393c6` that
+keeps only the `dub.sdl` files (`sdlRecipes` in
+`nix/packages/wired-bench-datasets.nix`), so the corpus stays fixed while the
+working tree's recipes change, and a pure flake build reproduces it.
+`tools/gen-sdl-datasets.d` (Phobos only, run by the data package with
+`ldc2 -run`) derives the other two from it deterministically.
+
+### SDL verification
+
+Each row checks its first iteration, untimed, against the fingerprint
+committed beside its dataset in `sdl.d`:
+
+- `parse` and `encode` — the SHA-256 of the canonical writer's output for
+  every document (each preceded by its file name), plus the tag, value and
+  attribute counts;
+- `decode` — a SHA-256 over the decoded values themselves, field by field.
+  `writeSDL` cannot write the `dub.sdl` schema back today (it rejects
+  `DubBuildType`), so the typed round trip cannot be hashed;
+- `edit` — the SHA-256 of every edited document, each preceded by its file
+  name;
+- `dub-sdlang` — the tag, value and attribute counts, which DUB's tree
+  reproduces independently. It skips `deep_wide`: DUB's pull parser runs on
+  a fiber with the default 16 KiB stack and overflows beyond about ten
+  nested blocks.
+
+Moving the snapshot pin, or changing the generator, changes the
+fingerprints: a mismatch row prints the actual values to commit.
+
+### Running the SDL rows
+
+```sh
+cd libs/wired/bench/runtime
+
+# Recorded protocol (SDP2: `bench`, assertions live), DUB reference included:
+dub test -b bench -c unittest-foreign -- --bench --perf \
+    -i 'sdl\.(parse|decode|encode)' --group-by=dataset,operation \
+    --bench-min-time=2000 \
+    --bench-json=results/$(date -I)-<host>-$WIRED_BENCH_ISA-sdl-<tag>.json
+
+# Without the nix-only foreign field (no `dub-sdlang` row):
+dub test -b bench -- --bench -i 'sdl\.' --datasets=dub_recipes
+```
+
+The first baseline,
+[`results/2026-10-27-ryzen9-7940hx-x86-64-v4-sdl-baseline.json`](results/2026-10-27-ryzen9-7940hx-x86-64-v4-sdl-baseline.json),
+was recorded with the first command above at `439f6997e` (Ryzen 9 7940HX,
+LDC 1.42.0, `-b bench`), medians per iteration over the whole dataset:
+
+| dataset              | `parse` wired | `parse` dub-sdlang | `decode` | `encode` |
+| -------------------- | ------------: | -----------------: | -------: | -------: |
+| `dub_recipes`        |       10.7 ms |            24.4 ms |  40.6 ms |  1.28 ms |
+| `dub_recipes_concat` |       10.9 ms |            21.2 ms |  41.2 ms |  1.36 ms |
+| `deep_wide`          |       25.5 ms |                  — |        — |  8.79 ms |
 
 ## Conformance corpora
 

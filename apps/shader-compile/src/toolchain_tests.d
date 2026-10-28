@@ -27,7 +27,12 @@ import std.process : Config, environment, execute, Pid, spawnProcess, thisProces
 import std.stdio : File;
 import std.string : indexOf, lineSplitter, strip;
 
+import std.experimental.allocator.mallocator : Mallocator;
+
+import sparkles.base.buffer : UniqueBuffer;
 import sparkles.test_runner.skip : skipTest;
+import sparkles.wired.sdl : parseSdlDocument, sdlDubRecipe, SdlEditor, sdlEditor, SdlNode,
+    SdlQualifiedName, SdlScalar;
 
 import app : isFresh, parseDescribe, stampName, unitOf, withoutHostFlags;
 
@@ -113,7 +118,8 @@ private struct Fixture
     void configuration(string name, string body)
     {
         const recipe = pkg.buildPath("dub.sdl");
-        recipe.write(recipe.readText ~ format("configuration \"%s\" {\n%s\n}\n", name, body));
+        recipe.write(editRecipe(recipe.readText, (ref editor, root) =>
+            editor.append(root, format("configuration \"%s\" {\n%s\n}\n", name, body))));
     }
 
     /// Runs the tool with `args` after `--package`/`--out`.
@@ -145,15 +151,41 @@ private void copyFixture(string dest)
         e.name.copy(to);
     }
     // The fixture's dependency, relative to where it is checked in, points
-    // at the checkout instead.
-    foreach (file; ["dub.sdl", "dub.selections.json"])
-    {
-        const path = dest.buildPath(file);
-        const before = path.readText;
-        const after = before.replace(`"../../../..`, `"` ~ repoRoot);
-        assert(after != before, file ~ " no longer names the checkout as ../../../..");
-        path.write(after);
-    }
+    // at the checkout instead: in the recipe its `path` attribute, in the
+    // selections (JSON) the same spelling.
+    const recipe = dest.buildPath("dub.sdl");
+    recipe.write(editRecipe(recipe.readText, (ref editor, root) {
+        bool found;
+        foreach (dependency; root.byChild(SdlQualifiedName(null, "dependency")))
+            foreach (path; dependency.byAttribute(SdlQualifiedName(null, "path")))
+                if (path.value.stringValue == "../../../..")
+                {
+                    editor.replaceAttribute(path, SdlQualifiedName(null, "path"),
+                        SdlScalar(repoRoot));
+                    found = true;
+                }
+        assert(found, "dub.sdl no longer names the checkout as ../../../..");
+    }));
+    const selections = dest.buildPath("dub.selections.json");
+    const before = selections.readText;
+    const after = before.replace(`"../../../..`, `"` ~ repoRoot);
+    assert(after != before, "dub.selections.json no longer names the checkout as ../../../..");
+    selections.write(after);
+}
+
+/// `text` (a `dub.sdl`) after `edit` states its changes to the lossless editor.
+private string editRecipe(scope const(char)[] text,
+    scope void delegate(ref SdlEditor!sdlDubRecipe editor, SdlNode root) edit)
+{
+    auto parsed = parseSdlDocument!sdlDubRecipe(text);
+    assert(parsed.hasValue, parsed.error.toString);
+    auto editor = sdlEditor!sdlDubRecipe(parsed.document, text);
+    edit(editor, parsed.document.root);
+    UniqueBuffer!char output;
+    Mallocator allocator;
+    const written = editor.write(output, allocator);
+    assert(!written.hasError, written.error.toString);
+    return output[].idup;
 }
 
 private struct Outcome

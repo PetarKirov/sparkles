@@ -1,0 +1,341 @@
+{
+  "columns": [
+    {
+      "class": "diagnostic",
+      "format": "count",
+      "header": "instr/iter",
+      "name": "instr",
+      "source": "perf"
+    },
+    {
+      "class": "quantitative",
+      "format": "count",
+      "header": "B/s",
+      "name": "B/s",
+      "source": "client"
+    },
+    {
+      "class": "diagnostic",
+      "format": "ratio",
+      "header": "IPC",
+      "name": "ipc",
+      "source": "perf"
+    },
+    {
+      "class": "diagnostic",
+      "format": "percent",
+      "header": "br-miss",
+      "name": "br-miss",
+      "source": "perf"
+    },
+    {
+      "class": "diagnostic",
+      "format": "percent",
+      "header": "cache-miss",
+      "name": "cache-miss",
+      "source": "perf"
+    },
+    {
+      "class": "diagnostic",
+      "format": "count",
+      "header": "cycles/iter",
+      "name": "cycles",
+      "source": "perf"
+    },
+    {
+      "class": "diagnostic",
+      "format": "count",
+      "header": "branch/iter",
+      "name": "branches",
+      "source": "perf"
+    },
+    {
+      "class": "diagnostic",
+      "format": "count",
+      "header": "pgflt/iter",
+      "name": "page-faults",
+      "source": "perf"
+    }
+  ],
+  "meta": {
+    "arch": "x86_64",
+    "buildType": "bench",
+    "command": "dub test -b bench -c unittest-foreign -- --bench --perf -i 'sdl\\.(parse|decode|encode)' --group-by=dataset,operation --bench-min-time=2000 --bench-json=results/2026-10-27-ryzen9-7940hx-x86-64-v4-sdl-baseline.json",
+    "compiler": "LDC (front-end 2.112)",
+    "configuration": "unittest-foreign",
+    "cpu": "AMD Ryzen 9 7940HX with Radeon Graphics",
+    "date": "2026-10-27",
+    "hostname": "petar-kirov-minisforum-bd790i0-se-002",
+    "isa": "x86-64-v4 (-mcpu=native)",
+    "minSampleTimeMs": 2000,
+    "note": "host load average about 5 (other builds running) during the run",
+    "os": "linux",
+    "sampleCount": 32,
+    "sdlRecipesCommit": "020926d5c76a43b786f3b81658338a3b224393c6",
+    "sourceCommit": "439f6997e (feat/wired-sdl-lossless-edit) + S11 harness",
+    "toolchain": "LDC 1.42.0 (DMD v2.112.1, LLVM 18.1.8), dub, nix devshell"
+  },
+  "rows": [
+    {
+      "countIterations": 228,
+      "deviationNs": 52667.5,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "deep_wide",
+        "operation": "encode",
+        "tier": "light"
+      },
+      "maxNs": 10224374,
+      "medianNs": 8789000,
+      "metrics": {
+        "B/s": 166280000,
+        "br-miss": 0.521996,
+        "branches": 27001600,
+        "cache-miss": null,
+        "cycles": 43178900,
+        "instr": 118273000,
+        "ipc": 2.73913,
+        "page-faults": 0
+      },
+      "minNs": 8590314,
+      "name": "wired",
+      "samples": 228
+    },
+    {
+      "countIterations": 79,
+      "deviationNs": 62362,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "deep_wide",
+        "operation": "parse",
+        "tier": "light"
+      },
+      "maxNs": 28525112,
+      "medianNs": 25522299,
+      "metrics": {
+        "B/s": 57261000,
+        "br-miss": 0.158807,
+        "branches": 111894000,
+        "cache-miss": null,
+        "cycles": 121857000,
+        "instr": 435775000,
+        "ipc": 3.57613,
+        "page-faults": 0
+      },
+      "minNs": 24950537,
+      "name": "wired",
+      "samples": 79
+    },
+    {
+      "countIterations": 49,
+      "deviationNs": 279474,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "dub_recipes",
+        "operation": "decode",
+        "tier": "light"
+      },
+      "maxNs": 42824545,
+      "medianNs": 40561381,
+      "metrics": {
+        "B/s": 13240500,
+        "br-miss": 0.232845,
+        "branches": 73481600,
+        "cache-miss": null,
+        "cycles": 199798000,
+        "instr": 292384000,
+        "ipc": 1.4634,
+        "page-faults": 0.285714
+      },
+      "minNs": 40110243,
+      "name": "wired",
+      "samples": 49
+    },
+    {
+      "countIterations": 1553,
+      "deviationNs": 7845,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "dub_recipes",
+        "operation": "encode",
+        "tier": "light"
+      },
+      "maxNs": 2090918,
+      "medianNs": 1281042,
+      "metrics": {
+        "B/s": 419230000,
+        "br-miss": 0.119871,
+        "branches": 4544710,
+        "cache-miss": null,
+        "cycles": 6204130,
+        "instr": 20448000,
+        "ipc": 3.29587,
+        "page-faults": 0
+      },
+      "minNs": 1246646,
+      "name": "wired",
+      "samples": 1553
+    },
+    {
+      "countIterations": 187,
+      "deviationNs": 34757,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "dub_recipes",
+        "operation": "parse",
+        "tier": "light"
+      },
+      "maxNs": 11264618,
+      "medianNs": 10740578,
+      "metrics": {
+        "B/s": 50002100,
+        "br-miss": 0.0915982,
+        "branches": 48406600,
+        "cache-miss": null,
+        "cycles": 52265500,
+        "instr": 183487000,
+        "ipc": 3.51067,
+        "page-faults": 0
+      },
+      "minNs": 10651324,
+      "name": "wired",
+      "samples": 187
+    },
+    {
+      "countIterations": 82,
+      "deviationNs": 456594,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "dub_recipes",
+        "operation": "parse",
+        "tier": "light"
+      },
+      "maxNs": 26309711,
+      "medianNs": 24386960,
+      "metrics": {
+        "B/s": 22022100,
+        "br-miss": 1.04435,
+        "branches": 58170700,
+        "cache-miss": null,
+        "cycles": 119752000,
+        "instr": 242056000,
+        "ipc": 2.02131,
+        "page-faults": 302
+      },
+      "minNs": 23287691,
+      "name": "dub-sdlang",
+      "samples": 82
+    },
+    {
+      "countIterations": 49,
+      "deviationNs": 368427,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "dub_recipes_concat",
+        "operation": "decode",
+        "tier": "light"
+      },
+      "maxNs": 45336151,
+      "medianNs": 41166108,
+      "metrics": {
+        "B/s": 13230000,
+        "br-miss": 0.19107,
+        "branches": 74024000,
+        "cache-miss": null,
+        "cycles": 198504000,
+        "instr": 294325000,
+        "ipc": 1.48271,
+        "page-faults": 5.04082
+      },
+      "minNs": 40515382,
+      "name": "wired",
+      "samples": 49
+    },
+    {
+      "countIterations": 1472,
+      "deviationNs": 10896,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "dub_recipes_concat",
+        "operation": "encode",
+        "tier": "light"
+      },
+      "maxNs": 1618960,
+      "medianNs": 1361434,
+      "metrics": {
+        "B/s": 400038000,
+        "br-miss": 0.0955353,
+        "branches": 4932190,
+        "cache-miss": null,
+        "cycles": 6373370,
+        "instr": 22135900,
+        "ipc": 3.47319,
+        "page-faults": 0
+      },
+      "minNs": 1309888,
+      "name": "wired",
+      "samples": 1472
+    },
+    {
+      "countIterations": 184,
+      "deviationNs": 24006.5,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "dub_recipes_concat",
+        "operation": "parse",
+        "tier": "light"
+      },
+      "maxNs": 12714239,
+      "medianNs": 10865600,
+      "metrics": {
+        "B/s": 50123800,
+        "br-miss": 0.0814935,
+        "branches": 49138000,
+        "cache-miss": null,
+        "cycles": 52166200,
+        "instr": 186147000,
+        "ipc": 3.56834,
+        "page-faults": 0
+      },
+      "minNs": 10677465,
+      "name": "wired",
+      "samples": 184
+    },
+    {
+      "countIterations": 90,
+      "deviationNs": 262882,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "dub_recipes_concat",
+        "operation": "parse",
+        "tier": "light"
+      },
+      "maxNs": 27780432,
+      "medianNs": 21153924,
+      "metrics": {
+        "B/s": 25745900,
+        "br-miss": 0.791015,
+        "branches": 56190000,
+        "cache-miss": null,
+        "cycles": 106730000,
+        "instr": 233310000,
+        "ipc": 2.18599,
+        "page-faults": 2
+      },
+      "minNs": 20406385,
+      "name": "dub-sdlang",
+      "samples": 90
+    }
+  ],
+  "schema": 2
+}

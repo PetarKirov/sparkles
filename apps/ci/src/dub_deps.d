@@ -13,10 +13,12 @@ import std.array : array;
 import std.path : buildPath, relativePath;
 import std.range.primitives : put;
 
+import std.experimental.allocator.mallocator : Mallocator;
+
 import sparkles.base.buffer : UniqueBuffer;
-import sparkles.build_primitives.dub_manifest : embeddedDubRecipe, readDubManifest;
-import sparkles.wired.sdl : parseSdlDocument, sdlDubRecipe, SdlNode, SdlQualifiedName,
-    SdlScalarKind;
+import sparkles.build_primitives.dub_manifest : readDubManifest;
+import sparkles.wired.sdl : parseEmbeddedSdlDocument, sdlDubRecipe, sdlEditor, SdlNode,
+    SdlQualifiedName, SdlScalar, SdlScalarKind;
 
 /// Parses sub-package paths from the root `dub.sdl`.
 @safe
@@ -71,20 +73,14 @@ private string readPackageName(string dubSdlPath)
 void writeInTreeDeps(Writer)(ref Writer writer, string code, string repoRoot, string fromDir)
 {
     auto names = repoRoot.inTreePackageNames;
-    const embedded = embeddedDubRecipe(code);
-    if (names.length == 0 || !embedded.found || embedded.isJson)
+    if (names.length == 0)
         return put(writer, code);
-    // Rendered at its source position, so spans are offsets into `code`.
-    UniqueBuffer!char positioned;
-    embedded.toString(positioned);
-    auto parsed = parseSdlDocument!sdlDubRecipe(positioned[]);
-    if (parsed.hasError)
+    auto embedded = parseEmbeddedSdlDocument!sdlDubRecipe(code);
+    if (!embedded.recipe.found || embedded.recipe.isJson || embedded.parsed.hasError)
         return put(writer, code);
 
     const rel = repoRoot.relativePath(fromDir);
-    // The walk is preorder and attributes never nest, so replaced spans
-    // arrive in source order and `code` streams through once.
-    size_t at;
+    auto editor = sdlEditor!sdlDubRecipe(embedded.parsed.document, code);
     void rewrite(scope const SdlNode node)
     {
         foreach (child; node.byChild)
@@ -98,19 +94,18 @@ void writeInTreeDeps(Writer)(ref Writer writer, string code, string repoRoot, st
                     && attribute.qualifiedName == SdlQualifiedName(null, "version")
                     && attribute.value.kind == SdlScalarKind.string_
                     && attribute.value.stringValue == "*")
-                {
-                    put(writer, code[at .. attribute.span.start.byteOffset]);
-                    put(writer, `path="`);
-                    put(writer, rel);
-                    put(writer, `"`);
-                    at = attribute.span.end.byteOffset;
-                }
+                    editor.replaceAttribute(attribute, SdlQualifiedName(null, "path"),
+                        SdlScalar(rel));
             }
             rewrite(child);
         }
     }
-    rewrite(parsed.document.root);
-    put(writer, code[at .. $]);
+    rewrite(embedded.parsed.document.root);
+    UniqueBuffer!char output;
+    Mallocator allocator;
+    if (editor.write(output, allocator).hasError)
+        return put(writer, code);
+    put(writer, output[]);
 }
 
 version (unittest)

@@ -179,6 +179,152 @@ The SDL backend is complete only after S10. Performance optimization follows as
 separate measured work and may not weaken source spans, ordering, scalar-kind
 fidelity, error structure, or any round-trip law.
 
+## After S10: editing, migration, and performance
+
+These milestones deliver [lossless editing](./editing.md) and the
+[performance architecture](./performance.md). Measurement comes first so every
+later change has a baseline, and the shared primitives land in
+`sparkles:base` before the SDL code that uses them.
+
+Stage 0 review, 2026-10-24/25: three rounds by one independent reviewer
+over the three drafts. Round 1 found 2 blockers and 10 majors, round 2
+(on the repairs) 2 blockers and 7 majors, round 3 (bounded to round 2's
+findings) 4 majors; every finding was fixed. The round-3 repairs — the SDE4
+separator rule, views referring to the document's core, the SDE9
+allowlist, the block-less append point, whitespace before a removed
+continuation, and the constructor's host check — have not been reviewed.
+The usual second, fresh reviewer did not run.
+
+Accepted by the owner, 2026-10-27: span-patch editing rather than a
+concrete syntax tree; the `SdlSpan` break, with the document owning its
+source, views referring to its core, and the SPEC amended; and no
+persistent node handles in the first slice. S11–S18 are delivered as one
+pull request, one or more commits per milestone.
+
+### S11 — Benchmark baseline
+
+SDL `parse`, `decode` and `encode` rows in the `wired_bench` runtime
+harness; pinned datasets in its Nix data package (a recipe snapshot at a
+named commit, a concatenated large recipe, a generated deep/wide document)
+with committed canonical-output fingerprints; the pinned DUB parser as a
+reference row.
+
+Gate: the three rows run under `-b bench` and verify against their
+fingerprints; the first results file is committed with machine and
+toolchain. No SDL source changes. (The `edit` row joins in S14.)
+
+### S12 — Shared primitives in `sparkles:base`
+
+[Text edits](../../base/text/edits.md) (TXE1–TXE5) with dmd-fmt migrated
+onto them; the line index's newline policy, column unit, construction from
+known line starts, and `@nogc` storage ([performance §4](./performance.md)).
+
+Gate: the TXE oracles; dmd-fmt's tests unchanged, `mapCursor`'s included;
+the line index's existing tests unchanged, plus every SDL newline form and
+invalid-UTF-8 columns.
+
+### S13 — Owned source, byte spans, and layout
+
+The document owns its source; spans become byte ranges with positions on
+demand and eager positions in errors, and node views become a document
+core reference and a cell index so typed decode reaches the line table (SDP3),
+with the SPEC amendment of
+[performance §3](./performance.md#3-amendment-to-the-accepted-spec) and its
+consumers migrated in the same commit. The parser records extents, block
+delimiters and comment spans ([editing §2](./editing.md#2-layout-the-parser-records), SDE6).
+
+Gate: every position, error and conformance golden equal on all CI
+platforms (SDP7); extents and comment spans checked against hand-annotated
+recipes (CRLF, no final newline, tabs, `;`-separated nodes, one-line
+blocks such as `a {; b 1; }`, comments in every position, embedded
+recipes); S11 rows before and after (SDP2).
+
+### S14 — The editor
+
+The operations of [editing §3](./editing.md#3-operations) resolving to base
+text edits, with SDE1–SDE5, SDE7, SDE8 and SDE10, and the
+`EmbeddedDubRecipe` rendering keeping every logical newline sequence.
+
+Gate: the SDE1 annotated-range fixtures and byte-comparison property test,
+and the SDE2 reference-model test, over every tracked recipe and embedded
+recipe; conflict, ambiguity, fragment, newline, indentation and
+embedded-delimiter cases; the SDE10 growth-and-move test; a `@safe pure
+nothrow @nogc` editing test; the S11 `edit` row; `readDubManifest`
+errors in hosts whose prefix holds a lone CR or U+2028 now report the
+host's line, pinned by a test.
+
+### S15 — Migration
+
+Every site in [editing §7](./editing.md#7-migration-coverage) moves to the
+editor, the document API or the schema; the SDE9 audit lands in `apps/ci`
+with its allowlist.
+
+Gate: `standardize-build-settings --check` and the checked-build-type tool
+report no change on the current tree; on fixture recipes with comments,
+CRLF and unusual layout, each tool's diff is exactly the intended lines.
+Where the old tools were right, their output is the oracle; where they were
+wrong — a commented `buildType "checked"`, a `}` not in column zero, a whole
+file stripped — the fixture pins the fix. `ci --test` is green.
+
+### S16 — One-pass reader
+
+SDP4: the pool sized once from the source, the cell arrays growing,
+behind the same public API.
+
+Gate: SDP7 everywhere; the allocation-failure rollback test still covers
+every block; S11 `parse` improves and no other row regresses (SDP2).
+
+### S17 — Linear typed decode
+
+SDP5, with compile-time name dispatch modeled on the JSON codec.
+
+Gate: SDP7; the name-comparison counting test; S11 `decode` improves.
+
+### S18 — Shared scratch
+
+SDP6 for scratch, keeping the allocator parameter.
+
+Gate: SDP7; S11 rows; the recorded fixed-width scratch decisions re-measured.
+
+## S11–S18 closure: 2026-10-27
+
+Every gate from S11 to S18 holds on this branch, delivered as one pull request.
+
+| Milestone | Gate                                                                                           | Evidence                                                                                                                                                                                                                                                           |
+| --------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| S11       | three rows under `-b bench`, verified against committed fingerprints; first results committed  | `sdl.parse`, `sdl.decode`, `sdl.encode` in `libs/wired/bench/runtime/src/sparkles/wired_bench/sdl.d`; datasets pinned in `nix/packages/wired-bench-datasets.nix`; `results/2026-10-27-ryzen9-7940hx-x86-64-v4-sdl-baseline.json`                                   |
+| S12       | TXE oracles; dmd-fmt tests unchanged; line-index tests unchanged plus SDL newlines and columns | `sparkles.base.text.edits` (concatenation reference, pairwise validity, monotonic mapping, `@nogc`); dmd-fmt's `mapCursor` tests; `sparkles.base.text.lineindex`                                                                                                   |
+| S13       | positions, errors and conformance unchanged; extents and comments against annotated fixtures   | `sdl.reader.layout.positionsMatchTheScan`, `.extentFixtures`, `.commentsInSourceOrder`; `sdl.conformance.pinnedDub`; SPEC §4.1, §4.2 and §7 amended                                                                                                                |
+| S14       | SDE1–SDE5, SDE7, SDE8, SDE10; `edit` row; host lines past a lone CR or U+2028                  | `sdl.editor.*`, including `properties.repositoryRecipes` (SDE1 and SDE2 over every recipe, mutation-checked), `nogc`, `replacementsSurviveGrowthAndMoves`, `embeddedRecipe`; `sdl.edit`; `readDubManifest.hostLinesPastLoneCrAndU2028`                             |
+| S15       | tools report no change on the tree; old-tool defects pinned; SDE9 audit and re-inventory       | `standardize-build-settings --check`: 0 of 152; `add-checked-buildtype`: 0 of 119; `buildSettings.normalize.lossless`, `addChecked.withChecked`; `ci --check-adhoc-sdl` with six reviewed exceptions; [editing §7](./editing.md#7-migration-coverage) re-inventory |
+| S16–S18   | each optimization's before and after on every row; no regression                               | the table below; SDP7 suites green throughout                                                                                                                                                                                                                      |
+
+Retired instructions per input byte (`--perf`, `-b bench`, Ryzen 9 7940HX,
+LDC 1.42), the SDP2 metric. The S11 column precedes S13; S13 changed no row.
+
+| Dataset       | Row    |   S11 | pre-S16 |   S16 |   S17 |   S18 |
+| ------------- | ------ | ----: | ------: | ----: | ----: | ----: |
+| `dub_recipes` | parse  | 341.4 |   341.4 | 184.6 | 184.6 | 184.6 |
+| `dub_recipes` | decode | 546.5 |   547.1 | 390.4 | 373.0 | 366.7 |
+| `dub_recipes` | encode |  37.8 |    37.8 |  37.8 |  37.8 |  37.8 |
+| `dub_recipes` | edit   |     — |   344.4 | 186.4 | 186.4 | 186.4 |
+| `deep_wide`   | parse  | 291.7 |   291.9 | 148.2 | 148.2 | 146.5 |
+| `deep_wide`   | encode |  80.9 |    80.9 |  80.9 |  80.9 |  80.9 |
+| `deep_wide`   | edit   |     — |   291.7 | 148.5 | 148.4 | 146.8 |
+
+S16's single pass removed the counting lex (parse −46%, decode −29%); S17's
+dispatch shows −4.5% on decode here because recipe aggregates are narrow —
+`wired.sdl.codec.linearDecode.nameComparisons` pins the complexity bound on
+a wide one; S18 is within a percent. Wall-time medians, recorded in the
+results file, moved by the host's load more than these effects during the
+measurement, which is why the gate reads instructions.
+
+Beyond the plan, the work also fixed a lexer disagreement with DUB (a date
+followed by a duration lexed as one token; now in the pinned DUB fixtures),
+two encode bugs that kept `toSDL` from writing the `dub.sdl` schema, and
+added the lossless typed write-back (`updateSDL`, [editing §3.1](./editing.md#3-1-typed-write-back))
+with the format and lossless round-trip suites of SPEC §10 over every recipe.
+
 ## S10 closure: 2026-10-23
 
 Every S10 gate holds on this branch, so the SDL backend is complete in the

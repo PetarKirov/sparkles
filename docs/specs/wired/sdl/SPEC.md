@@ -84,15 +84,17 @@ needs one import.
 
 The modules also export these names, each specified where it is used:
 
-| Names                                                                                                          | Section |
-| -------------------------------------------------------------------------------------------------------------- | ------- |
-| `SdlTokenKind`, `SdlToken`, `SdlLexer`, `lexSDL`, `SdlScalarStorage`, `decodeSdlScalar`                        | §11     |
-| `SdlNameQuery`, `SdlNamespaceMatch`, `SdlFilteredAttributeRange`, `SdlFilteredChildRange`                      | §4      |
-| `SdlValueRange`, `SdlAttributeRange`, `SdlChildRange`, `SdlAttributeView`, `SdlPosition`                       | §4      |
-| `SdlTagValueAttr`, `SdlAttributeAttr`, `SdlChildAttr`, `SdlTagNameAttr`, `SdlTagNamespaceAttr`, `SdlExtraAttr` | §5      |
-| `SdlExpected`, `sdlOk`, `sdlErr`                                                                               | §7      |
-| `OwnedSdlExtras`, `SdlOwnedExtraMember`, `SdlOwnedExtraNode`, `SdlOwnedExtraAttribute`, `SdlExtraChannel`      | §8      |
-| `writeSdlScalar`, `sdlParserConfigFor`                                                                         | §11     |
+| Names                                                                                                                                                                       | Section |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `SdlTokenKind`, `SdlToken`, `SdlLexer`, `lexSDL`, `SdlScalarStorage`, `decodeSdlScalar`                                                                                     | §11     |
+| `SdlNameQuery`, `SdlNamespaceMatch`, `SdlFilteredAttributeRange`, `SdlFilteredChildRange`                                                                                   | §4      |
+| `SdlValueRange`, `SdlAttributeRange`, `SdlChildRange`, `SdlAttributeView`, `SdlPosition`, `SdlComment`, `SdlCommentKind`                                                    | §4      |
+| `SdlTagValueAttr`, `SdlAttributeAttr`, `SdlChildAttr`, `SdlTagNameAttr`, `SdlTagNamespaceAttr`, `SdlExtraAttr`                                                              | §5      |
+| `SdlExpected`, `sdlOk`, `sdlErr`                                                                                                                                            | §7      |
+| `OwnedSdlExtras`, `SdlOwnedExtraMember`, `SdlOwnedExtraNode`, `SdlOwnedExtraAttribute`, `SdlExtraChannel`                                                                   | §8      |
+| `writeSdlScalar`, `sdlParserConfigFor`                                                                                                                                      | §11     |
+| `SdlEditor`, `sdlEditor`, `SdlAttachedComments`, `updateSDL`                                                                                                                | §11     |
+| `SdlEmbeddedRecipe`, `locateEmbeddedRecipe`, `hasEmbeddedRecipeHeader`, `embeddedRecipeHeaderEnd`, `writeEmbeddedRendering`, `SdlEmbeddedParse`, `parseEmbeddedSdlDocument` | §11     |
 
 No public declaration names a DUB type. The per-aggregate role projection that
 the codec reads (`sdlAggregateRoles` and its role records) is package-internal;
@@ -329,9 +331,12 @@ field's type (`numberOutOfRange`).
 ## 4. Ordered arena document
 
 `parseSdlDocument` returns an owning, movable, non-copyable `SdlDocument` backed
-by contiguous arenas. `SdlNode`, `SdlAttributeView`, and `SdlScalar` are small,
-copyable borrowed views whose lifetime cannot exceed the document under
-`-preview=dip1000`. `root()` is `scope return`: its view is bound to the
+by contiguous arenas. The document owns a copy of the text it parsed, and its
+cells, that copy, its line table and its layout live in one heap block, the
+document's **core**, which does not move when the document does. `SdlNode` and
+`SdlAttributeView` are a core reference and a cell index; they, `SdlScalar` and
+the ranges are small, copyable borrowed views whose lifetime cannot exceed the
+document under `-preview=dip1000`. `root()` is `scope return`: its view is bound to the
 document object itself, so a consumer must keep the document alive, and in
 scope, for as long as any view taken from it.
 
@@ -341,12 +346,17 @@ struct SdlDocument(Allocator = Mallocator)
     bool valid() const;
     SdlNode root() scope return const;
     const(char)[] sourceName() return scope const;
+    const(char)[] source() return scope const;      // the owned copy spans index
+    SdlPosition position(size_t offset) const;      // §4.1
+    const(SdlComment)[] comments() return scope const; // §4.2
 }
 
 struct SdlNode
 {
     SdlQualifiedName qualifiedName() const;
     SdlSpan span() const;
+    SdlSpan extent() const;                         // §4.2
+    bool aloneOnLines() const;
     size_t valueCount() const;
     size_t attributeCount() const;
     size_t childCount() const;
@@ -379,16 +389,40 @@ source order.
 ### 4.1 Spans
 
 ```d
+struct SdlSpan
+{
+    TextSpan bytes;              // sparkles.base.text.span
+    uint startOffset() const;
+    uint endOffset() const;      // exclusive
+    bool isValid() const;
+    const(char)[] sliceOf(const(char)[] source) const;
+}
 struct SdlPosition { size_t byteOffset; uint line; uint column; }
-struct SdlSpan { SdlPosition start; SdlPosition end; }
 ```
 
-Offsets are zero-based UTF-8 byte offsets; lines and columns are one-based for
-display. `end` is exclusive. Every tag, qualified name, scalar, and attribute
+A span is a half-open range of zero-based UTF-8 byte offsets into the
+document's source; `SdlSpan.init` is invalid, the span of a value with no
+source. A position is computed on demand: `SdlDocument.position` and
+`SdlLexer.position` turn an offset into a one-based line and column, and an
+`SdlError` carries the positions of its span (§7). Line 1 starts after any
+byte-order mark, each logical newline (`\n`, `\r`, `\r\n`, U+2028, U+2029)
+starts a line, and a column counts one per UTF-8 sequence and one per invalid
+byte from the line's start. A source of `uint.max` bytes or more fails with
+`allocationFailed`. Every tag, qualified name, scalar, and attribute
 has a span. A tag span covers its complete semantic declaration, including its
 child block when present. Synthetic root and EOF spans are zero-width. Parsed
 strings point at decoded storage, while their span still points at the original
 literal.
+
+### 4.2 Layout
+
+For lossless editing ([editing §2](./editing.md#2-layout-the-parser-records))
+the document also records, as spans: each node's **extent** — the bytes that
+belong to it and to nothing else, whole lines when it is `aloneOnLines`, else
+the inline range — clipped to the content after any byte-order mark; the `{`
+and `}` of each child block; and every comment the lexer consumed, with its
+kind (`SdlCommentKind.line` or `.block`), in source order. Recording layout
+changes no parse result, error, position, or round-trip law.
 
 ## 5. Typed SDL roles
 
@@ -507,7 +541,10 @@ may. `SdlError` is a plain value with:
 
 - `SdlErrorStage` (`lex`, `parse`, `decode`, `encode`, `fileRead`, `fileWrite`);
 - a stable `SdlErrorCode` suitable for tests and callers;
-- source name and `SdlSpan` when input caused the failure;
+- source name and `SdlSpan` when input caused the failure, with the
+  `SdlPosition`s of its start and end (`startPosition`, `endPosition`),
+  filled when the error leaves the library, so rendering one needs no
+  document;
 - the D value path and SDL role path;
 - source/target type and expected/actual kind where applicable;
 - a bounded human-readable reason.
@@ -643,10 +680,28 @@ the canonical writer targets (§9):
    `fromSDL!T(toSDL(value)) == value`, modulo the asymmetries already declared
    by the shared schema contract.
 
-Textual identity with the input is not promised. The writer may turn `on` into
-`true`, a raw string into a quoted string, comments into nothing, and semicolons
-into newlines. Unknown ignored input cannot satisfy a typed text round-trip;
-`@SdlExtra` is required when preservation is part of the type's law.
+These are the **format** round trip: the canonical writer is a formatter whose
+output parses to the same tree. Textual identity with the input is not
+promised by it. The writer may turn `on` into `true`, a raw string into a
+quoted string, comments into nothing, and semicolons into newlines. Unknown
+ignored input cannot satisfy a typed text round-trip; `@SdlExtra` is required
+when preservation is part of the type's law.
+
+The **lossless** round trip goes through the lossless editor
+([editing](./editing.md)) and keeps the text:
+
+4. **Lossless document law:** for every accepted document `s` and its host
+   `h`, an `SdlEditor` with no operation writes `h` byte for byte.
+5. **Lossless typed law:** for every `T` the document decodes as,
+   `updateSDL(editor, root, fromSDL!T(root))` makes no edit, so the editor
+   writes `h` byte for byte; for any other value `v`, the output decodes as
+   `v`, and bytes outside the values, attributes and children whose meaning
+   changed — comments, layout, spellings of equal scalars, members the schema
+   does not claim — are kept.
+
+`build_primitives.dub_manifest.roundTrip.format` and `.lossless` check laws 1–5
+over every recipe in the repository, embedded recipes included, under the
+`dub.sdl` schema.
 
 ## 11. Reader, writer, and file APIs
 
@@ -657,6 +712,9 @@ struct SdlWriteOptions
     bool newlineForEmptyDocument = false;
 }
 ```
+
+Lossless editing — `SdlEditor`, and the embedded-recipe locator that it and
+every recipe reader share — is specified in [editing](./editing.md#5-interface).
 
 `SdlParserConfig` is the compile-time value from §3.1. Disabling its
 `validateUtf8` skips a separate validation pass but does not permit

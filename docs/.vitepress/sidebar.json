@@ -1070,6 +1070,10 @@
               {
                 "text": "float_conv spec",
                 "link": "/specs/base/text/float-conv"
+              },
+              {
+                "text": "Text edits spec",
+                "link": "/specs/base/text/edits"
               }
             ]
           },
@@ -2208,6 +2212,14 @@
               {
                 "text": "Delivery Plan",
                 "link": "/specs/wired/sdl/PLAN"
+              },
+              {
+                "text": "Lossless Editing",
+                "link": "/specs/wired/sdl/editing"
+              },
+              {
+                "text": "Performance Architecture",
+                "link": "/specs/wired/sdl/performance"
               },
               {
                 "text": "Provenance Manifest",

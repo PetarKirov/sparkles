@@ -6,6 +6,9 @@ import std.datetime.date : Date;
 import std.experimental.allocator.common : stateSize;
 import std.experimental.allocator.mallocator : Mallocator;
 
+import sparkles.base.text.lineindex : LineIndex;
+import sparkles.base.text.span : TextSpan;
+
 /// Exact semantic kind retained for every SDL scalar.
 enum SdlScalarKind : ubyte
 {
@@ -77,7 +80,12 @@ struct SdlNameQuery
                 || candidate.namespace_ == name.namespace_);
 }
 
-/// One source position: zero-based byte offset and one-based display position.
+/** One source position: zero-based byte offset and one-based display position.
+
+A position is computed from a byte offset on demand (`SdlDocument.position`,
+`SdlLexer.position`); an `SdlError` carries its own. Columns count one per
+UTF-8 sequence and one per invalid byte from the start of the line.
+*/
 struct SdlPosition
 {
     size_t byteOffset; /// Zero-based offset into the original source bytes.
@@ -85,11 +93,53 @@ struct SdlPosition
     uint column = 1; /// One-based column in Unicode scalars.
 }
 
-/// Half-open source range.
+/** Half-open byte range of a document's source.
+
+`SdlSpan.init` is invalid: the span of a value that came from no source, such
+as a standalone scalar or an encoded document. Offsets fit in a `uint`; the
+parser rejects longer sources with `allocationFailed`.
+*/
 struct SdlSpan
 {
-    SdlPosition start; /// First position inside the range.
-    SdlPosition end; /// First position after the range.
+    TextSpan bytes; /// The byte range; invalid when the value has no source.
+
+    /// Constructs `[start, end)`; `start <= end < uint.max`.
+    this(size_t start, size_t end) @safe pure nothrow @nogc
+    in (start <= end && end < uint.max, "SDL span offsets out of range")
+    {
+        bytes = TextSpan(cast(uint) start, cast(uint) end);
+    }
+
+    /// Zero-width span at `offset`.
+    static SdlSpan at(size_t offset) @safe pure nothrow @nogc
+        => SdlSpan(offset, offset);
+
+    /// First byte offset inside the range.
+    uint startOffset() const scope @safe pure nothrow @nogc => bytes.startOffset;
+    /// First byte offset after the range.
+    uint endOffset() const scope @safe pure nothrow @nogc => bytes.endOffset;
+    /// Whether the span names source bytes at all.
+    bool isValid() const scope @safe pure nothrow @nogc => bytes.isValid;
+    /// Number of bytes covered; `0` for an invalid span.
+    size_t length() const scope @safe pure nothrow @nogc => bytes.length;
+    /// The covered bytes of `text`, the source the span was made from.
+    const(char)[] sliceOf(return scope const(char)[] text) const @safe pure nothrow @nogc
+    in (isValid && endOffset <= text.length, "span outside the text")
+        => text[startOffset .. endOffset];
+}
+
+/// Comment syntax family, as SDE6 reports it.
+enum SdlCommentKind : ubyte
+{
+    line, /// `#`, `//` or `--`, through the end of its line.
+    block, /// `/* … */`, possibly spanning lines.
+}
+
+/// One comment the lexer consumed, in source order (editing SDE6).
+struct SdlComment
+{
+    SdlSpan span; /// The comment's bytes, delimiters included, newline excluded.
+    SdlCommentKind kind; /// Line or block.
 }
 
 /** A local civil date-time with exact hectonanosecond fractional precision.
@@ -373,6 +423,15 @@ package struct SdlNodeCell
     /// Source had an explicit child block (canonical writer emits braces
     /// even when the block was empty).
     bool hasBlock;
+    /// The node's bytes and nothing else's (editing §2), clipped to content.
+    SdlSpan extent;
+    /// The `{` and `}` tokens of the child block; invalid without one.
+    SdlSpan openBrace, closeBrace;
+    /// The `;`, newline or zero-width end that ends the declaration (for a
+    /// node with a block, the one after its `}`).
+    SdlSpan terminator;
+    /// No other node's tokens and no enclosing brace share its lines.
+    bool aloneOnLines;
 }
 
 package struct SdlValueCell
@@ -388,9 +447,44 @@ package struct SdlAttributeCell
     SdlScalar value;
 }
 
+/** A document's immovable core: its cells, owned source, line table and
+layout (performance SDP3).
+
+It lives in one heap block the document points at, so moving a document never
+invalidates a view, and its type does not depend on the allocator, so a view
+can reach the source and line table without being a template.
+*/
+package struct SdlCore
+{
+    SdlNodeCell[] nodes;
+    SdlValueCell[] values;
+    SdlAttributeCell[] attributes;
+    size_t[] childIndexes;
+    SdlComment[] comments;
+    /// The owned copy of the parsed text; `null` for an encoded document.
+    const(char)[] source;
+    /// The bytes nodes may occupy: the source after any byte-order mark,
+    /// or an embedded recipe's text.
+    SdlSpan content;
+    /// Logical line starts; line 0 starts after any byte-order mark.
+    LineIndex lines;
+
+    /// The position of byte `offset` (at most the source length).
+    SdlPosition position(size_t offset) const scope @safe pure nothrow @nogc
+    {
+        if (source.length == 0 || offset <= lines.lineStart(0))
+            return SdlPosition(offset, 1, 1);
+        const at = offset > source.length ? source.length : offset;
+        const lc = lines.lineColAt(at, source);
+        return SdlPosition(offset, cast(uint)(lc.line + 1), cast(uint)(lc.column + 1));
+    }
+}
+
 /** Owning, movable, non-copyable parsed SDL document.
 
-The synthetic root always has the empty/default qualified name and a
+The document owns a copy of the text it was parsed from (`source`), and every
+span is a byte range into that copy; `position` turns an offset into a line and
+column. The synthetic root always has the empty/default qualified name and a
 zero-width span at the source start after UTF-8 BOM handling.
 */
 struct SdlDocument(Allocator = Mallocator)
@@ -400,15 +494,14 @@ struct SdlDocument(Allocator = Mallocator)
     else
         package alias alloc = Allocator.instance;
 
-    package SdlNodeCell[] nodes;
-    package SdlValueCell[] values;
-    package SdlAttributeCell[] attributes;
-    package size_t[] childIndexes;
+    package SdlCore* core;
     package ubyte[] pool;
+    private void[] coreBlock;
     private void[] nodeBlock;
     private void[] valueBlock;
     private void[] attributeBlock;
     private void[] childBlock;
+    private void[] commentBlock;
     private void[] poolBlock;
     package const(char)[] ownedSourceName;
 
@@ -421,54 +514,120 @@ struct SdlDocument(Allocator = Mallocator)
 
         static if (stateSize!Allocator)
             swap(alloc, rhs.alloc);
-        swap(nodes, rhs.nodes);
-        swap(values, rhs.values);
-        swap(attributes, rhs.attributes);
-        swap(childIndexes, rhs.childIndexes);
+        swap(core, rhs.core);
         swap(pool, rhs.pool);
+        swap(coreBlock, rhs.coreBlock);
         swap(nodeBlock, rhs.nodeBlock);
         swap(valueBlock, rhs.valueBlock);
         swap(attributeBlock, rhs.attributeBlock);
         swap(childBlock, rhs.childBlock);
+        swap(commentBlock, rhs.commentBlock);
         swap(poolBlock, rhs.poolBlock);
         swap(ownedSourceName, rhs.ownedSourceName);
     }
 
     /// Whether this document contains its synthetic root.
-    bool valid() const @safe pure nothrow @nogc => nodes.length != 0;
+    bool valid() const scope @safe pure nothrow @nogc
+        => core !is null && core.nodes.length != 0;
 
     /** Borrowed synthetic root view, valid only while this document is.
 
     `scope return` binds the view to the document object rather than to its
-    arenas, so no view outlives the owner that frees them. Narrow trust: the
-    arena slices are fields of a `scope` `this`, which dip1000 would only
-    let escape under `return scope`, the weaker arena-lifetime binding. */
+    core, so no view outlives the owner that frees it. Narrow trust: the core
+    pointer is a field of a `scope` `this`, which dip1000 would only let
+    escape under `return scope`, the weaker arena-lifetime binding. */
     SdlNode root() scope return const @safe pure nothrow @nogc
     in (valid, "empty document has no root")
-        => (() @trusted => SdlNode(nodes[], values[], attributes[],
-            childIndexes[], 0))();
+        => (() @trusted => SdlNode(core, 0))();
 
     /// Owned source label supplied to the parser.
     const(char)[] sourceName() const return scope @safe pure nothrow @nogc
         => ownedSourceName;
+
+    /// The owned copy of the parsed text, which every span indexes.
+    const(char)[] source() const return scope @safe pure nothrow @nogc
+        => core is null ? null : (() @trusted => core.source)();
+
+    /** The line and column of byte `offset` of `source`.
+
+    Line 1 starts after any byte-order mark; each logical newline (`\n`, `\r`,
+    `\r\n`, U+2028, U+2029) starts a line; columns count one per UTF-8 sequence
+    and one per invalid byte. */
+    SdlPosition position(size_t offset) const scope @safe pure nothrow @nogc
+        => core is null ? SdlPosition(offset) : core.position(offset);
+
+    /// Every comment in the source, in source order (editing SDE6).
+    const(SdlComment)[] comments() const return scope @safe pure nothrow @nogc
+        => core is null ? null : (() @trusted => core.comments)();
 
     ~this()
     {
         release();
     }
 
-    package bool acquire(size_t nodeCount, size_t valueCount,
-        size_t attributeCount, size_t childCount, size_t poolBytes)
+    /** Allocates the core, the pool, and first capacities for the node,
+    value and attribute arrays; the parser grows those (`grow`) and trims
+    them (`finish`). */
+    package bool acquire(size_t nodeCapacity, size_t valueCapacity,
+        size_t attributeCapacity, size_t poolBytes)
     {
-        if (!acquireBlock(nodes, nodeBlock, nodeCount)
-            || !acquireBlock(values, valueBlock, valueCount)
-            || !acquireBlock(attributes, attributeBlock, attributeCount)
-            || !acquireBlock(childIndexes, childBlock, childCount)
-            || !acquireBlock(pool, poolBlock, poolBytes))
+        SdlCore[] coreSlot;
+        if (!acquireBlock(coreSlot, coreBlock, 1))
+            return false;
+        () @trusted {
+            import core.lifetime : emplace;
+
+            emplace(&coreSlot[0]);
+            core = &coreSlot[0];
+        }();
+        if (!acquireBlock(pool, poolBlock, poolBytes)
+            || !acquireBlock(core.nodes, nodeBlock, nodeCapacity)
+            || !acquireBlock(core.values, valueBlock, valueCapacity)
+            || !acquireBlock(core.attributes, attributeBlock, attributeCapacity))
         {
             release();
             return false;
         }
+        return true;
+    }
+
+    /// Doubles `field`'s array, keeping its first `used` cells.
+    package bool grow(string field)(size_t used)
+    {
+        static if (field == "nodes")
+            alias block = nodeBlock;
+        else static if (field == "values")
+            alias block = valueBlock;
+        else
+            alias block = attributeBlock;
+        alias T = typeof(__traits(getMember, *core, field)[0]);
+
+        const capacity = __traits(getMember, *core, field).length;
+        const wanted = capacity < 8 ? 16 : capacity * 2;
+        T[] grown;
+        void[] grownBlock;
+        if (wanted <= capacity || !acquireBlock(grown, grownBlock, wanted))
+            return false;
+        grown[0 .. used] = __traits(getMember, *core, field)[0 .. used];
+        releaseBlock(block);
+        block = grownBlock;
+        __traits(getMember, *core, field) = grown;
+        return true;
+    }
+
+    /** Trims the grown arrays to the cells the parser filled, and allocates
+    the child-index arena (one entry per node below the root) and the exact
+    comment array. */
+    package bool finish(size_t nodeCount, size_t valueCount, size_t attributeCount,
+        scope const(SdlComment)[] comments)
+    {
+        core.nodes = core.nodes[0 .. nodeCount];
+        core.values = core.values[0 .. valueCount];
+        core.attributes = core.attributes[0 .. attributeCount];
+        if (!acquireBlock(core.childIndexes, childBlock, nodeCount - 1)
+            || !acquireBlock(core.comments, commentBlock, comments.length))
+            return false;
+        core.comments[] = comments[];
         return true;
     }
 
@@ -495,23 +654,26 @@ struct SdlDocument(Allocator = Mallocator)
 
     private void release()
     {
+        if (core !is null)
+            () @trusted { destroy(core.lines); }();
         static if (__traits(hasMember, Allocator, "deallocate"))
         {
+            releaseBlock(coreBlock);
             releaseBlock(nodeBlock);
             releaseBlock(valueBlock);
             releaseBlock(attributeBlock);
             releaseBlock(childBlock);
+            releaseBlock(commentBlock);
             releaseBlock(poolBlock);
         }
-        nodes = null;
-        values = null;
-        attributes = null;
-        childIndexes = null;
+        core = null;
         pool = null;
+        coreBlock = null;
         nodeBlock = null;
         valueBlock = null;
         attributeBlock = null;
         childBlock = null;
+        commentBlock = null;
         poolBlock = null;
         ownedSourceName = null;
     }
@@ -524,46 +686,50 @@ struct SdlDocument(Allocator = Mallocator)
     }
 }
 
-/** Copyable borrowed view of one SDL node.
+/** Copyable borrowed view of one SDL node: its document's core and a cell
+index, 16 bytes.
 
-Views store slices of the document's arenas, so `dip1000` tracks every view,
-range, and payload slice back to the owning document: a view cannot outlive
-the `SdlDocument` it was reached through.
+`dip1000` tracks every view, range, and payload slice back to the owning
+document: a view cannot outlive the `SdlDocument` it was reached through.
 */
 struct SdlNode
 {
-    private const(SdlNodeCell)[] _nodes;
-    private const(SdlValueCell)[] _values;
-    private const(SdlAttributeCell)[] _attributes;
-    private const(size_t)[] _childIndexes;
+    private const(SdlCore)* _core;
     private size_t _cell;
 
-    private this(return scope const(SdlNodeCell)[] nodes,
-        return scope const(SdlValueCell)[] values,
-        return scope const(SdlAttributeCell)[] attributes,
-        return scope const(size_t)[] childIndexes, size_t cell)
+    package this(return scope const(SdlCore)* core, size_t cell)
         @safe pure nothrow @nogc
     {
-        _nodes = nodes;
-        _values = values;
-        _attributes = attributes;
-        _childIndexes = childIndexes;
+        _core = core;
         _cell = cell;
     }
 
     // Narrow trust: the cell copy outlives `scope this` only as a value.
     private SdlNodeCell cell() const scope @safe pure nothrow @nogc
-        => (() @trusted => _nodes[_cell])();
+        => (() @trusted => _core.nodes[_cell])();
+
+    package const(SdlCore)* core() const return scope @safe pure nothrow @nogc
+        => _core;
+    package size_t cellIndex() const scope @safe pure nothrow @nogc => _cell;
 
     /// Full stored name. The synthetic root returns the empty/default name.
     SdlQualifiedName qualifiedName() const return scope @safe pure nothrow @nogc
-        => (() @trusted => _nodes[_cell].qualifiedName)();
+        => (() @trusted => _core.nodes[_cell].qualifiedName)();
 
     /// Exact qualified-name span, or the root's zero-width source-start span.
     SdlSpan nameSpan() const scope @safe pure nothrow @nogc => this.cell.nameSpan;
 
-    /// Complete declaration span.
+    /// Complete declaration span, from the name through the terminator.
     SdlSpan span() const scope @safe pure nothrow @nogc => this.cell.span;
+
+    /** The bytes that belong to this node and to nothing else (editing §2):
+    whole lines when it is alone on them, else the inline range; removing it
+    leaves its neighbours intact. Invalid for an encoded document. */
+    SdlSpan extent() const scope @safe pure nothrow @nogc => this.cell.extent;
+
+    /// Whether no other node's tokens and no enclosing brace share its lines.
+    bool aloneOnLines() const scope @safe pure nothrow @nogc
+        => this.cell.aloneOnLines;
 
     /// Number of positional scalar values.
     size_t valueCount() const scope @safe pure nothrow @nogc => this.cell.valueCount;
@@ -575,13 +741,18 @@ struct SdlNode
         => this.cell.childCount;
     /// Whether the source declaration carried a `{ }` block.
     bool hasBlock() const scope @safe pure nothrow @nogc
-        => (() @trusted => _nodes[_cell].hasBlock)();
+        => this.cell.hasBlock;
+
+    /// Positional value `index`, by index rather than by walking the range.
+    package SdlScalar valueAt(size_t index) const return scope @safe pure nothrow @nogc
+    in (index < valueCount, "no such value")
+        => (() @trusted => _core.values[_core.nodes[_cell].valueStart + index].value)();
 
     /// Forward range over positional values in source order.
     SdlValueRange byValue() const return scope @safe pure nothrow @nogc
     {
         const owned = this.cell;
-        return (() @trusted => SdlValueRange(_values[owned.valueStart
+        return (() @trusted => SdlValueRange(_core.values[owned.valueStart
             .. owned.valueStart + owned.valueCount]))();
     }
 
@@ -589,9 +760,8 @@ struct SdlNode
     SdlAttributeRange byAttribute() const return scope @safe pure nothrow @nogc
     {
         const owned = this.cell;
-        return (() @trusted => SdlAttributeRange(
-            _attributes[owned.attributeStart
-                .. owned.attributeStart + owned.attributeCount]))();
+        return (() @trusted => SdlAttributeRange(_core, owned.attributeStart,
+            owned.attributeStart + owned.attributeCount))();
     }
 
     /// Every attribute matching an exact full qualified name.
@@ -608,9 +778,8 @@ struct SdlNode
     SdlChildRange byChild() const return scope @safe pure nothrow @nogc
     {
         const owned = this.cell;
-        return (() @trusted => SdlChildRange(_nodes, _values, _attributes,
-            _childIndexes, _childIndexes[owned.childStart
-                .. owned.childStart + owned.childCount]))();
+        return (() @trusted => SdlChildRange(_core, _core.childIndexes[owned.childStart
+            .. owned.childStart + owned.childCount]))();
     }
 
     /// Every direct child matching an exact full qualified name.
@@ -624,32 +793,37 @@ struct SdlNode
         => SdlFilteredChildRange(byChild, query);
 }
 
-/// Borrowed attribute occurrence.
+/// Borrowed attribute occurrence: its document's core and a cell index.
 struct SdlAttributeView
 {
-    private const(SdlAttributeCell)[] _cells;
+    private const(SdlCore)* _core;
     private size_t _cell;
 
-    private this(return scope const(SdlAttributeCell)[] cells, size_t cell)
+    package this(return scope const(SdlCore)* core, size_t cell)
         @safe pure nothrow @nogc
     {
-        _cells = cells;
+        _core = core;
         _cell = cell;
     }
 
     // Narrow trust: as for `SdlNode.cell`.
     private SdlAttributeCell cell() const scope @safe pure nothrow @nogc
-        => (() @trusted => _cells[_cell])();
+        => (() @trusted => _core.attributes[_cell])();
+
+    package const(SdlCore)* core() const return scope @safe pure nothrow @nogc
+        => _core;
+    package size_t cellIndex() const scope @safe pure nothrow @nogc => _cell;
 
     /// Full stored attribute name.
     SdlQualifiedName qualifiedName() const return scope @safe pure nothrow @nogc
-        => (() @trusted => _cells[_cell].qualifiedName)();
+        => (() @trusted => _core.attributes[_cell].qualifiedName)();
     /// Exact qualified-name source span.
     SdlSpan nameSpan() const scope @safe pure nothrow @nogc => this.cell.nameSpan;
     /// Span from name start through scalar end.
     SdlSpan span() const scope @safe pure nothrow @nogc => this.cell.span;
     /// Borrowed scalar value and its exact token span.
-    SdlScalar value() const return scope @safe pure nothrow @nogc => this.cell.value;
+    SdlScalar value() const return scope @safe pure nothrow @nogc
+        => (() @trusted => _core.attributes[_cell].value)();
 }
 
 /// Forward range over scalar values.
@@ -677,18 +851,21 @@ struct SdlValueRange
 /// Forward range over attributes.
 struct SdlAttributeRange
 {
-    private const(SdlAttributeCell)[] _cells;
+    private const(SdlCore)* _core;
     private size_t _index;
-    private this(return scope const(SdlAttributeCell)[] cells)
+    private size_t _end;
+    private this(return scope const(SdlCore)* core, size_t start, size_t end)
         @safe pure nothrow @nogc
     {
-        _cells = cells;
+        _core = core;
+        _index = start;
+        _end = end;
     }
     /// Forward-range primitives.
-    bool empty() const scope @safe pure nothrow @nogc => _index >= _cells.length;
+    bool empty() const scope @safe pure nothrow @nogc => _index >= _end;
     /// ditto
     SdlAttributeView front() const return scope @safe pure nothrow @nogc
-    in (!empty) => SdlAttributeView(_cells, _index);
+    in (!empty) => SdlAttributeView(_core, _index);
     /// ditto
     void popFront() scope @safe pure nothrow @nogc
     in (!empty) { _index++; }
@@ -699,34 +876,23 @@ struct SdlAttributeRange
 /// Forward range over direct child nodes.
 ///
 /// Iteration walks the parent's contiguous index window; every yielded
-/// view carries the full arena slices so deeper descendants keep whole-
-/// document addressing.
+/// view refers to the whole document's core.
 struct SdlChildRange
 {
-    private const(SdlNodeCell)[] _nodes;
-    private const(SdlValueCell)[] _values;
-    private const(SdlAttributeCell)[] _attributes;
-    private const(size_t)[] _allIndexes;
+    private const(SdlCore)* _core;
     private const(size_t)[] _window;
     private size_t _index;
-    private this(return scope const(SdlNodeCell)[] nodes,
-        return scope const(SdlValueCell)[] values,
-        return scope const(SdlAttributeCell)[] attributes,
-        return scope const(size_t)[] allIndexes,
+    private this(return scope const(SdlCore)* core,
         return scope const(size_t)[] window) @safe pure nothrow @nogc
     {
-        _nodes = nodes;
-        _values = values;
-        _attributes = attributes;
-        _allIndexes = allIndexes;
+        _core = core;
         _window = window;
     }
     /// Forward-range primitives.
     bool empty() const scope @safe pure nothrow @nogc => _index >= _window.length;
     /// ditto
     SdlNode front() const return scope @safe pure nothrow @nogc
-    in (!empty) => (() @trusted => SdlNode(_nodes, _values, _attributes,
-        _allIndexes, _window[_index]))();
+    in (!empty) => (() @trusted => SdlNode(_core, _window[_index]))();
     /// ditto
     void popFront() scope @safe pure nothrow @nogc
     in (!empty) { _index++; }
@@ -1049,8 +1215,10 @@ unittest
     auto name = SdlQualifiedName("x", "platform");
     assert(name.namespace_ == "x" && name.localName == "platform");
 
-    auto span = SdlSpan(SdlPosition(3, 2, 4), SdlPosition(7, 2, 8));
-    assert(span.start.byteOffset == 3 && span.end.column == 8);
+    auto span = SdlSpan(3, 7);
+    assert(span.startOffset == 3 && span.endOffset == 7 && span.length == 4);
+    assert(span.sliceOf("abcdefgh") == "defg");
+    assert(!SdlSpan.init.isValid && SdlSpan.at(2).length == 0);
 }
 
 @("sdl.document.textPayloadsAreConstBorrowed")
@@ -1077,13 +1245,13 @@ unittest
 {
     SdlExtraMember member = SdlExtraMember(SdlExtraChannel.attribute, 3,
         SdlQualifiedName("x", "platform"), SdlScalar(7),
-        SdlNode.init, SdlSpan(SdlPosition(1, 1, 2), SdlPosition(9, 1, 10)));
+        SdlNode.init, SdlSpan(1, 9));
 
     assert(member.channel == SdlExtraChannel.attribute);
     assert(member.ordinal == 3);
     assert(member.name.namespace_ == "x" && member.name.localName == "platform");
     assert(member.scalar.kind == SdlScalarKind.integer);
-    assert(member.span.start.byteOffset == 1);
+    assert(member.span.startOffset == 1);
 
     SdlExtraMember[1] storage = [member];
     auto extras = SdlExtras(storage[]);

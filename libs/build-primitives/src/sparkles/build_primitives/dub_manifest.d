@@ -20,20 +20,18 @@ The schema describes what a recipe $(I states). What a build resolves from it
 module sparkles.build_primitives.dub_manifest;
 
 import std.conv : text;
-import std.range.primitives : put;
 
-import sparkles.base.buffer : UniqueBuffer;
-import sparkles.base.text.readers : skipWhile, tryConsume;
-import sparkles.wired : WireName, WireOptional;
+import sparkles.wired : WireName, WireOptional, WireSkip;
 import sparkles.wired.sdl : Sdl, SdlAttribute, SdlError, SdlErrorCode, SdlErrorStage,
-    SdlExpected, SdlTagValue, fromSDL, readSDLFile, sdlDubRecipe, sdlErr;
+    SdlExpected, SdlTagValue, fromSDL, parseEmbeddedSdlDocument, readSDLFile, sdlDubRecipe,
+    sdlErr;
 
 /// One occurrence of a list-valued setting: its values and, when the
 /// occurrence is platform-qualified, the platform (`platform="linux-ldc"`).
 struct DubPlatformValues
 {
     @SdlTagValue(0) string[] values; ///
-    @WireOptional() @SdlAttribute() string platform; ///
+    @WireOptional(WireSkip.whenDefault) @SdlAttribute() string platform; ///
 }
 
 /// A `dependency` declaration.
@@ -41,7 +39,7 @@ struct DubDependency
 {
     /// The package name, `root` or `root:sub`.
     @SdlTagValue(0) string name;
-    @WireOptional():
+    @WireOptional(WireSkip.whenDefault):
     @WireName!Sdl("version") @SdlAttribute() string version_; /// version specification
     @SdlAttribute() string path;       /// a path dependency's directory, as written
     @SdlAttribute() string repository; /// a repository dependency's URL
@@ -102,11 +100,11 @@ mixin template DubBuildSettingFields()
     DubPlatformValues[] buildRequirements;    ///
     DubPlatformValues[] buildOptions;         ///
 
-    @WireOptional() string targetType;       ///
-    @WireOptional() string targetName;       ///
-    @WireOptional() string targetPath;       ///
-    @WireOptional() string workingDirectory; ///
-    @WireOptional() string mainSourceFile;   ///
+    @WireOptional(WireSkip.whenDefault) string targetType;       ///
+    @WireOptional(WireSkip.whenDefault) string targetName;       ///
+    @WireOptional(WireSkip.whenDefault) string targetPath;       ///
+    @WireOptional(WireSkip.whenDefault) string workingDirectory; ///
+    @WireOptional(WireSkip.whenDefault) string mainSourceFile;   ///
 
     /// These settings alone, without the declaration that holds them.
     const(DubBuildSettings) buildSettings() const return scope @safe pure nothrow @nogc
@@ -150,7 +148,7 @@ struct DubBuildType
 /// (`subPackage { name "x" … }`).
 struct DubSubPackage
 {
-    @WireOptional():
+    @WireOptional(WireSkip.whenDefault):
     /// The referenced directory, as written; empty for an inline block.
     @SdlTagValue(0) string path;
     /// The inline block's `name`; empty for a path reference, whose name is
@@ -161,7 +159,7 @@ struct DubSubPackage
 /// A `dub.sdl` recipe.
 struct DubManifest
 {
-    @WireOptional():
+    @WireOptional(WireSkip.whenDefault):
     string name;        ///
     string description; ///
     string homepage;    ///
@@ -202,8 +200,8 @@ SdlExpected!DubManifest parseDubManifest(scope const(char)[] text, scope const(c
 
 /**
 Reads a recipe: a `dub.sdl`, or a `.d` single-file package whose leading
-`/+ dub.sdl: … +/` comment holds one ($(LREF embeddedDubRecipe)). Positions in
-an error are the file's own either way.
+`/+ dub.sdl: … +/` comment holds one. Positions in an error are the file's own
+either way.
 */
 SdlExpected!DubManifest readDubManifest(string path) @safe
 {
@@ -217,20 +215,30 @@ SdlExpected!DubManifest readDubManifest(string path) @safe
         source = readText(path);
     catch (Exception)
         return sdlErr!DubManifest(fileFailure(path, "cannot read the file"));
-    const embedded = embeddedDubRecipe(source);
-    if (!embedded.found || embedded.isJson)
-        return sdlErr!DubManifest(fileFailure(path, "no embedded dub.sdl recipe"));
-    return parseEmbeddedDubManifest(embedded, path);
+    return parseEmbeddedDubManifest(source, path);
 }
 
-/// Parses the recipe a single-file package embeds, reporting the source
-/// file's own positions.
-SdlExpected!DubManifest parseEmbeddedDubManifest(scope const ref EmbeddedDubRecipe embedded,
+/**
+Parses the recipe a single-file package `host` embeds
+($(REF parseEmbeddedSdlDocument, sparkles,wired,sdl,embedded)), reporting the
+host's own positions; a host without an SDL recipe is a `fileReadFailed` error.
+*/
+SdlExpected!DubManifest parseEmbeddedDubManifest(scope const(char)[] host,
     scope const(char)[] sourceName = null) @safe pure
 {
-    UniqueBuffer!char text;
-    embedded.toString(text);
-    return parseDubManifest(text[], sourceName);
+    auto embedded = parseEmbeddedSdlDocument!sdlDubRecipe(host, sourceName);
+    if (!embedded.recipe.found || embedded.recipe.isJson)
+        return sdlErr!DubManifest(fileFailure(sourceName, "no embedded dub.sdl recipe"));
+    if (embedded.parsed.hasError)
+        return sdlErr!DubManifest(embedded.parsed.error);
+    auto decoded = fromSDL!DubManifest(embedded.parsed.document.root);
+    if (decoded.hasError)
+    {
+        auto failure = decoded.error;
+        failure.sourceName ~= sourceName;
+        return sdlErr!DubManifest(failure);
+    }
+    return decoded;
 }
 
 private SdlError fileFailure(scope const(char)[] path, string reason) @safe pure nothrow
@@ -242,63 +250,6 @@ private SdlError fileFailure(scope const(char)[] path, string reason) @safe pure
     error.filePath ~= path;
     error.reason ~= reason;
     return error;
-}
-
-/// The recipe a single-file package embeds, from $(LREF embeddedDubRecipe):
-/// slices of the source, which it borrows.
-struct EmbeddedDubRecipe
-{
-    const(char)[] prefix; /// the source before the recipe text
-    const(char)[] recipe; /// the recipe text, up to its closing `+/`
-    bool isJson; /// the comment is `/+ dub.json: … +/`
-    bool found;  /// the source opens with a recipe comment at all
-
-    /**
-    Writes the recipe where it stands in the source: every byte of `prefix`
-    blanked to a space (newlines kept), then `recipe`. A parse of the output
-    reports the source file's own byte offsets, lines, and columns.
-    */
-    void toString(Writer)(ref Writer writer) const
-    {
-        foreach (c; prefix)
-        {
-            const char[1] blank = c == '\n' ? '\n' : ' ';
-            put(writer, blank[]);
-        }
-        put(writer, recipe);
-    }
-}
-
-/// The recipe inside a single-file package's leading `/+ dub.sdl: … +/` (or
-/// `dub.json`) comment, which DUB requires before any code, after an optional
-/// shebang line.
-EmbeddedDubRecipe embeddedDubRecipe(return scope const(char)[] source) @safe pure nothrow @nogc
-{
-    static bool isSpace(char c) => c == ' ' || c == '\t' || c == '\n' || c == '\r';
-
-    const(char)[] rest = source;
-    if (tryConsume(rest, "#!"))
-    {
-        skipWhile!(c => c != '\n')(rest);
-        tryConsume(rest, '\n');
-    }
-    skipWhile!isSpace(rest);
-    if (!tryConsume(rest, "/+"))
-        return EmbeddedDubRecipe.init;
-    skipWhile!isSpace(rest);
-
-    bool isJson;
-    if (tryConsume(rest, "dub.json:"))
-        isJson = true;
-    else if (!tryConsume(rest, "dub.sdl:"))
-        return EmbeddedDubRecipe.init;
-
-    const start = source.length - rest.length;
-    foreach (i; 0 .. rest.length ? rest.length - 1 : 0)
-        if (rest[i] == '+' && rest[i + 1] == '/')
-            return EmbeddedDubRecipe(prefix: source[0 .. start], recipe: rest[0 .. i],
-                isJson: isJson, found: true);
-    return EmbeddedDubRecipe.init;
 }
 
 @("build_primitives.dub_manifest.parseDubManifest.everyChannel")
@@ -366,34 +317,36 @@ buildType "checked" {
     assert(parseDubManifest("targetType \"library\"\ntargetType \"executable\"\n").hasError);
 }
 
-@("build_primitives.dub_manifest.embeddedDubRecipe.keepsSourcePositions")
+@("build_primitives.dub_manifest.parseEmbeddedDubManifest.hostPositions")
 @safe pure unittest
 {
-    import sparkles.base.buffer : checkWriter;
-
     const source = "#!/usr/bin/env dub\n/+ dub.sdl:\n    name \"s\"\n    bad =\n+/\nvoid main() {}\n";
-    const embedded = embeddedDubRecipe(source);
-    assert(embedded.found && !embedded.isJson);
-    assert(embedded.recipe == "\n    name \"s\"\n    bad =\n");
-    checkWriter!((ref w) => embedded.toString(w))(
-        "                  \n           \n    name \"s\"\n    bad =\n");
-    const parsed = parseEmbeddedDubManifest(embedded, "x.d");
+    const parsed = parseEmbeddedDubManifest(source, "x.d");
     assert(parsed.hasError);
-    assert(parsed.error.span.start.line == 4, parsed.error.text);
-
-    assert(embeddedDubRecipe("/+dub.json: {} +/").isJson);
-    assert(!embeddedDubRecipe("module m;\n/+ dub.sdl: +/").found);
-    assert(!embeddedDubRecipe("/+ dub.sdl: name \"x\"").found);
+    assert(parsed.error.startPosition.line == 4, parsed.error.text);
+    assert(parseEmbeddedDubManifest("/+dub.sdl: name \"n\" +/").value.name == "n");
+    assert(parseEmbeddedDubManifest("/+dub.json: {} +/").hasError);
+    assert(parseEmbeddedDubManifest("module m;\n/+ dub.sdl: +/").hasError);
 }
 
-@("build_primitives.dub_manifest.embeddedDubRecipe.nogc")
+@("build_primitives.dub_manifest.readDubManifest.hostLinesPastLoneCrAndU2028")
+@system unittest
+{
+    import std.path : buildPath;
+    import sparkles.test_utils.tmpfs : TmpFS;
+
+    // A lone CR and U+2028 before the recipe each end a line of the host;
+    // the error reports the host's line, not one counted from `\n` alone.
+    auto tmp = TmpFS.create("sparkles-build-primitives-lines");
+    tmp.writeFileAt("cr.d", "#!/usr/bin/env dub\n\r/+ dub.sdl:\n    bad =\n+/\n");
+    tmp.writeFileAt("ls.d", "#!/usr/bin/env dub\n/+ dub.sdl:\u2028    bad =\n+/\n");
+    assert(readDubManifest(tmp.dir.buildPath("cr.d")).error.startPosition.line == 4);
+    assert(readDubManifest(tmp.dir.buildPath("ls.d")).error.startPosition.line == 3);
+}
+
+@("build_primitives.dub_manifest.DubDependency.names")
 @safe pure nothrow @nogc unittest
 {
-    import sparkles.base.buffer : checkWriter;
-
-    const embedded = embeddedDubRecipe("/+dub.sdl: name \"n\" +/");
-    assert(embedded.found && embedded.recipe == " name \"n\" ");
-    checkWriter!((ref w) => embedded.toString(w))("          " ~ " name \"n\" ");
     const dependency = DubDependency("sparkles:base");
     assert(dependency.rootName == "sparkles" && dependency.subPackageName == "base");
     assert(DubDependency("silly").subPackageName is null);
@@ -443,7 +396,9 @@ buildType "checked" {
             continue;
         if (path.endsWith(".d"))
         {
-            const embedded = embeddedDubRecipe(path.readText);
+            import sparkles.wired.sdl : locateEmbeddedRecipe;
+
+            const embedded = locateEmbeddedRecipe(path.readText);
             if (!embedded.found || embedded.isJson)
                 continue;
         }
@@ -452,4 +407,156 @@ buildType "checked" {
         ++recipes;
     }
     assert(recipes > 100);
+}
+
+version (unittest)
+{
+    /// Every recipe in this repository — `dub.sdl` files and the recipes
+    /// single-file packages embed — with its path and text.
+    private string[2][] repositoryRecipes()
+    {
+        import std.algorithm.searching : endsWith;
+        import std.file : exists, readText;
+        import std.path : buildNormalizedPath, dirName;
+        import std.string : lineSplitter;
+        import sparkles.build_primitives.git_env : runGit;
+        import sparkles.wired.sdl : locateEmbeddedRecipe;
+
+        const root = __FILE_FULL_PATH__.dirName.buildNormalizedPath("..", "..", "..", "..", "..");
+        const listed = runGit(["ls-files", "*dub.sdl", "*.d"], root);
+        string[2][] recipes;
+        if (listed.status != 0)
+            return recipes;
+        foreach (file; listed.output.lineSplitter)
+        {
+            const path = root.buildNormalizedPath(file);
+            if (!path.exists)
+                continue;
+            const text = path.readText;
+            if (path.endsWith(".d"))
+            {
+                const embedded = locateEmbeddedRecipe(text);
+                if (!embedded.found || embedded.isJson)
+                    continue;
+            }
+            recipes ~= [path, text];
+        }
+        return recipes;
+    }
+
+    /// The recipe's document: its own, or the one a `.d` host embeds.
+    private auto parseRecipe(string path, string text)
+    {
+        import core.lifetime : move;
+        import std.algorithm.searching : endsWith;
+        import sparkles.wired.sdl : parseEmbeddedSdlDocument, parseSdlDocument, sdlDubRecipe;
+
+        if (!path.endsWith(".d"))
+            return parseSdlDocument!sdlDubRecipe(text, path);
+        auto embedded = parseEmbeddedSdlDocument!sdlDubRecipe(text, path);
+        return move(embedded.parsed);
+    }
+}
+
+@("build_primitives.dub_manifest.roundTrip.format")
+@system unittest
+{
+    import sparkles.test_runner.skip : skipTest;
+    import sparkles.wired.sdl : fromSDL, parseSdlDocument, SdlString, toSDL, writeSdlDocument;
+
+    // The canonical writer is a formatter: what it writes parses to the same
+    // tree, and writing that again changes nothing. Typed, `toSDL` of a
+    // decoded recipe decodes to the same value, and is stable.
+    const recipes = repositoryRecipes();
+    if (recipes.length == 0)
+        return skipTest("not a git checkout");
+    foreach (recipe; recipes)
+    {
+        auto parsed = parseRecipe(recipe[0], recipe[1]);
+        assert(parsed.hasValue, parsed.error.text);
+
+        SdlString once, twice;
+        assert(!writeSdlDocument(parsed.document, once).hasError, recipe[0]);
+        auto formatted = parseSdlDocument!sdlDubRecipe(once[]);
+        assert(formatted.hasValue, recipe[0] ~ ": " ~ formatted.error.text);
+        assert(!writeSdlDocument(formatted.document, twice).hasError);
+        assert(once[] == twice[], recipe[0] ~ ": the formatter is not idempotent");
+
+        const value = fromSDL!DubManifest(parsed.document.root);
+        assert(value.hasValue, value.error.text);
+        const encoded = toSDL(value.value);
+        assert(encoded.hasValue, recipe[0] ~ ": " ~ encoded.error.text);
+        const decoded = parseDubManifest(encoded.value[]);
+        assert(decoded.hasValue, recipe[0] ~ ": " ~ decoded.error.text);
+        assert(decoded.value == value.value, recipe[0] ~ ": toSDL does not round-trip");
+        assert(toSDL(decoded.value).value[] == encoded.value[], recipe[0]);
+    }
+}
+
+@("build_primitives.dub_manifest.roundTrip.lossless")
+@system unittest
+{
+    import std.algorithm.searching : canFind;
+    import std.experimental.allocator.mallocator : Mallocator;
+    import sparkles.base.buffer : UniqueBuffer;
+    import sparkles.test_runner.skip : skipTest;
+    import sparkles.wired.sdl : fromSDL, sdlDubRecipe, sdlEditor, updateSDL;
+
+    // The lossless editor writes back exactly the bytes it read: with no
+    // edit, and with the unchanged decoded value. A changed value decodes as
+    // the change, and keeps every comment outside what it removed.
+    const recipes = repositoryRecipes();
+    if (recipes.length == 0)
+        return skipTest("not a git checkout");
+    size_t changed;
+    foreach (recipe; recipes)
+    {
+        const host = recipe[1];
+        auto parsed = parseRecipe(recipe[0], host);
+        assert(parsed.hasValue, parsed.error.text);
+        const decoded = fromSDL!DubManifest(parsed.document.root);
+        assert(decoded.hasValue, decoded.error.text);
+
+        string writeBack(scope void delegate(ref typeof(sdlEditor!sdlDubRecipe(parsed.document, host)))
+            edit)
+        {
+            auto editor = sdlEditor!sdlDubRecipe(parsed.document, host);
+            edit(editor);
+            UniqueBuffer!char output;
+            Mallocator allocator;
+            const written = editor.write(output, allocator);
+            assert(!written.hasError, recipe[0] ~ ": " ~ written.error.text);
+            return output[].idup;
+        }
+
+        assert(writeBack((ref editor) {}) == host, recipe[0]);
+        DubManifest same = cast() decoded.value;
+        assert(writeBack((ref editor) => updateSDL(editor, parsed.document.root, same)) == host,
+            recipe[0] ~ ": writing back the unchanged value edited it");
+
+        DubManifest other = cast() decoded.value;
+        other.description = "changed by the round-trip test";
+        other.dependencies ~= DubDependency("sparkles:probe", version_: "*");
+        size_t removedStart = size_t.max, removedEnd;
+        if (other.configurations.length)
+        {
+            other.configurations = other.configurations[0 .. $ - 1];
+            foreach (node; parsed.document.root.byChild)
+                if (node.qualifiedName.localName == "configuration")
+                {
+                    removedStart = node.extent.startOffset;
+                    removedEnd = node.extent.endOffset;
+                }
+        }
+        const output = writeBack((ref editor) => updateSDL(editor, parsed.document.root, other));
+        auto reparsed = parseRecipe(recipe[0], output);
+        assert(reparsed.hasValue, recipe[0] ~ ": " ~ reparsed.error.text);
+        const back = fromSDL!DubManifest(reparsed.document.root);
+        assert(back.hasValue && back.value == other, recipe[0] ~ ": the change did not round-trip");
+        foreach (comment; parsed.document.comments)
+            if (comment.span.startOffset < removedStart || comment.span.startOffset >= removedEnd)
+                assert(output.canFind(comment.span.sliceOf(host)), recipe[0] ~ ": lost a comment");
+        changed++;
+    }
+    assert(changed > 100);
 }

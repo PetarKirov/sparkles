@@ -541,7 +541,26 @@ SdlExpected!void writeSdlDocument(Document, Writer)(
         return sdlErr!void(encodeError(SdlErrorCode.checkFailed, "indent",
             "indent must be a non-empty string"));
 
-    SharedBuffer!(char, 96) rolePath;
+    // Narrow trust: the root view borrows `document`, which the caller keeps
+    // alive past this call; dip1000 reads binding it to a local as taking the
+    // address of a `scope` parameter.
+    const root = (() @trusted => document.root)();
+    return writeSdlChildren(root, writer, options);
+}
+
+/** Package seam: writes the children of `parent` canonically, as
+`writeSdlDocument` writes the root's — or only the child at position `only`,
+which renders one node's subtree (the lossless editor's typed write-back
+inserts it). Child depths start at `depth`. */
+package SdlExpected!void writeSdlChildren(Writer)(SdlNode parent, ref Writer writer,
+    SdlWriteOptions options = SdlWriteOptions.init, size_t only = size_t.max,
+    size_t depth = 0)
+{
+    if (options.indent.length == 0)
+        return sdlErr!void(encodeError(SdlErrorCode.checkFailed, "indent",
+            "indent must be a non-empty string"));
+
+    UniqueBuffer!(char, 96) rolePath;
 
     /// Stamps the role path composed during the unwind onto the failure.
     SdlExpected!void attach(SdlError error)
@@ -612,7 +631,7 @@ SdlExpected!void writeSdlDocument(Document, Writer)(
     {
         import sparkles.base.text.writers : writeInteger;
 
-        SharedBuffer!(char, 96) composed;
+        UniqueBuffer!(char, 96) composed;
         composed ~= ".";
         putName(composed, childNameAt(node, position));
         composed ~= "[";
@@ -689,21 +708,19 @@ SdlExpected!void writeSdlDocument(Document, Writer)(
         return sdlOk();
     }
 
-    // Narrow trust: the root view borrows `document`, which the caller keeps
-    // alive past this call; dip1000 reads binding it to a local as taking the
-    // address of a `scope` parameter.
-    const root = (() @trusted => document.root)();
-    auto topLevel = root.byChild;
+    auto topLevel = parent.byChild;
     for (size_t position = 0; !topLevel.empty;
         topLevel.popFront(), position++)
     {
+        if (only != size_t.max && position != only)
+            continue;
         const child = topLevel.front;
-        const written = writeNode(writer, child, 0,
+        const written = writeNode(writer, child, depth,
             child.qualifiedName.localName.length != 0
                 || child.qualifiedName.namespace_.length != 0);
         if (written.hasError)
         {
-            prependChildSegment(root, position);
+            prependChildSegment(parent, position);
             return attach(written.error);
         }
     }
@@ -719,16 +736,16 @@ while preserving every ordered channel, scalar kind, and payload byte.
 package bool sdlDocumentsSemanticallyEqual(A, B)(
     return scope const ref A left, return scope const ref B right)
 {
-    import sparkles.base.buffer : SharedBuffer, checkWriter;
+    import sparkles.base.buffer : UniqueBuffer;
 
     static bool canonical(D)(scope const ref D document,
-        ref SharedBuffer!(char, 512) bytes)
+        ref UniqueBuffer!(char, 512) bytes)
     {
         return !writeSdlDocument(document, bytes).hasError;
     }
 
-    SharedBuffer!(char, 512) leftBytes;
-    SharedBuffer!(char, 512) rightBytes;
+    UniqueBuffer!(char, 512) leftBytes;
+    UniqueBuffer!(char, 512) rightBytes;
     if (!canonical(left, leftBytes) || !canonical(right, rightBytes))
         return false;
     return leftBytes[] == rightBytes[];
@@ -1481,9 +1498,9 @@ version (unittest)
         if (!parsed.hasValue)
             throw new AssertError(parsed.error.toString);
         if (valueIndex != size_t.max)
-            parsed.document.values[valueIndex].value = replacement;
+            parsed.document.core.values[valueIndex].value = replacement;
         else
-            parsed.document.attributes[attributeIndex].value = replacement;
+            parsed.document.core.attributes[attributeIndex].value = replacement;
 
         SharedBuffer!(char, 128) sink;
         const failure = writeSdlDocument(parsed.document, sink);
@@ -1561,7 +1578,7 @@ version (unittest)
     auto parsed = parseSdlDocument!sdlFull(source, "partial.sdl");
     assert(parsed.hasValue, parsed.error.toString);
 
-    parsed.document.values[1].value = SdlScalar("invalid\xFF");
+    parsed.document.core.values[1].value = SdlScalar("invalid\xFF");
 
     SharedBuffer!(char, 128) sink;
     sink ~= "PRE|";

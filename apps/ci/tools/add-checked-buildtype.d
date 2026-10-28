@@ -2,6 +2,7 @@
 /+ dub.sdl:
     name "add_checked_buildtype"
     dependency "sparkles:build-primitives" path="../../.."
+    dependency "sparkles:wired" path="../../.."
     targetPath "build"
 +/
 /**
@@ -22,16 +23,16 @@
  */
 module add_checked_buildtype;
 
-import std.algorithm : canFind, endsWith, sort;
-import std.array : array, replace;
+import std.algorithm : any, endsWith, sort;
+import std.experimental.allocator.mallocator : Mallocator;
 import std.file : dirEntries, exists, isDir, readText, write, SpanMode;
 import std.path : buildPath;
-import std.stdio : writefln, writeln;
-import std.string : indexOf, lastIndexOf, lineSplitter;
+import std.stdio : writefln;
 
-/// The declaration inserted into every recipe, and the marker that makes the
-/// insertion idempotent.
-enum marker = `buildType "checked"`;
+import sparkles.base.buffer : UniqueBuffer;
+import sparkles.build_primitives.dub_manifest : DubManifest;
+import sparkles.wired.sdl : fromSDL, parseEmbeddedSdlDocument, parseSdlDocument, sdlDubRecipe,
+    sdlEditor;
 
 // A delimited string: the SDL comment quotes `debug` in backticks, so a
 // backtick-delimited literal would terminate early.
@@ -44,41 +45,57 @@ buildType "checked" {
 }
 SDL";
 
-/// Insert the block into a single-file example's inline recipe, immediately
-/// before its closing `+/`. Returns the new text, or null when the file
-/// already declares `checked` or carries no inline recipe.
-string withCheckedInSingleFile(string text)
+/**
+Appends the block to a recipe — a `dub.sdl` (`embedded` false) or the recipe a
+single-file example embeds — through the lossless SDL editor, indented like
+the recipe's other top-level settings. Returns the new text, or null when the
+recipe already declares `checked` (read through the `dub.sdl` schema, so a
+commented-out declaration does not count), carries no SDL recipe, or does not
+parse.
+*/
+string withChecked(string text, bool embedded) @safe
 {
-    if (text.canFind(marker))
+    import core.lifetime : move;
+
+    auto parsed = embedded
+        ? move(parseEmbeddedSdlDocument!sdlDubRecipe(text).parsed)
+        : parseSdlDocument!sdlDubRecipe(text);
+    if (parsed.hasError)
+        return null;
+    const manifest = fromSDL!DubManifest(parsed.document.root);
+    if (manifest.hasError || manifest.value.buildTypes.any!(b => b.name == "checked"))
         return null;
 
-    const start = text.indexOf("/+ dub.sdl:");
-    if (start < 0)
+    auto editor = sdlEditor!sdlDubRecipe(parsed.document, text);
+    editor.append(parsed.document.root, blockSdl);
+    UniqueBuffer!char output;
+    Mallocator allocator;
+    if (editor.write(output, allocator).hasError)
         return null;
-
-    const close = text.indexOf("+/", start);
-    if (close < 0)
-        return null;
-
-    // The inline block is indented by four spaces throughout; match it so the
-    // inserted lines do not stand out (and so editorconfig stays happy). Each
-    // line is indented individually rather than by replacing every newline —
-    // the latter also indents the closing `+/` that follows the insertion.
-    string indented;
-    foreach (line; blockSdl.lineSplitter)
-        indented ~= line.length ? "    " ~ line ~ "\n" : "\n";
-
-    return text[0 .. close] ~ indented ~ text[close .. $];
+    return output[].idup;
 }
 
-/// Append the block to a normal `dub.sdl`, which needs no re-indentation.
-string withCheckedInManifest(string text)
+@("addChecked.withChecked")
+@safe unittest
 {
-    if (text.canFind(marker))
-        return null;
-    return text ~ blockSdl;
+    enum single = "#!/usr/bin/env dub\n/+ dub.sdl:\n    name \"x\"\n+/\nvoid main() {}\n";
+    const updated = withChecked(single, true);
+    assert(updated == "#!/usr/bin/env dub\n/+ dub.sdl:\n    name \"x\"\n"
+        ~ "    // Optimised, assertions live, `debug {}` blocks out — the build every nix\n"
+        ~ "    // artifact uses. Neither `debug` (which compiles those blocks in) nor\n"
+        ~ "    // `release` (which deletes assert *expressions*, side effects included).\n"
+        ~ "    buildType \"checked\" {\n        buildOptions \"optimize\" \"inline\" \"debugInfo\"\n    }\n"
+        ~ "+/\nvoid main() {}\n", updated);
+    assert(withChecked(updated, true) is null);
+
+    // A manifest without a final newline gains the block on lines of its own.
+    assert(withChecked("name \"m\"", false) == "name \"m\"\n" ~ blockSdl[0 .. $ - 1]);
+    // A commented-out declaration is no declaration.
+    assert(withChecked("name \"m\"\n// buildType \"checked\" {\n", false) !is null);
+    assert(withChecked("module m;\n", true) is null);
 }
 
+version (unittest) {} else
 int main(string[] args)
 {
     const root = args.length > 1 ? args[1] : ".";
@@ -119,9 +136,7 @@ int main(string[] args)
     foreach (path; targets)
     {
         const text = path.readText;
-        const updated = path.endsWith("dub.sdl")
-            ? withCheckedInManifest(text)
-            : withCheckedInSingleFile(text);
+        const updated = withChecked(text, !path.endsWith("dub.sdl"));
 
         if (updated is null)
             continue;

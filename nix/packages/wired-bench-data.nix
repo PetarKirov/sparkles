@@ -38,10 +38,57 @@ in
           path = resolvePath d;
         }) list;
 
-      lightList = mapList datasets.light;
+      # SDL datasets (see `sdlRecipes` in wired-bench-datasets.nix): the
+      # recipe snapshot, and the concatenated and deep/wide documents the
+      # committed generator derives from it.
+      sdlRecipes = pkgs.fetchFromGitHub (
+        datasets.sdlRecipes
+        // {
+          name = "sparkles-dub-recipes-${builtins.substring 0 9 datasets.sdlRecipes.rev}";
+          postFetch = ''
+            find "$out" ! -type d ! -name dub.sdl -delete
+            find "$out" -depth -type d -empty -delete
+          '';
+        }
+      );
+      sdlGenerated =
+        pkgs.runCommandCC "wired-bench-sdl-generated"
+          {
+            nativeBuildInputs = [
+              pkgs.ldc
+              (import ../wrapped-lld.nix { inherit pkgs; })
+            ];
+          }
+          ''
+            mkdir -p "$out"
+            gen=${../../libs/wired/bench/runtime/tools/gen-sdl-datasets.d}
+            ldc2 -run "$gen" concat ${sdlRecipes} "$out/dub-recipes-concat.sdl"
+            ldc2 -run "$gen" deep-wide "$out/deep-wide.sdl"
+          '';
+      sdlList = [
+        {
+          name = "sdl/dub-recipes";
+          path = sdlRecipes;
+        }
+        {
+          name = "sdl/dub-recipes-concat.sdl";
+          path = "${sdlGenerated}/dub-recipes-concat.sdl";
+        }
+        {
+          name = "sdl/deep-wide.sdl";
+          path = "${sdlGenerated}/deep-wide.sdl";
+        }
+      ];
+
+      lightList = mapList datasets.light ++ sdlList;
       mediumList = mapList datasets.medium;
 
-      lightSelectors = map (d: d.selector) datasets.light;
+      # The SDL rows (`sdl.*`) read the same selector list.
+      lightSelectors = map (d: d.selector) datasets.light ++ [
+        "dub_recipes"
+        "dub_recipes_concat"
+        "deep_wide"
+      ];
       mediumSelectors = map (d: d.selector) datasets.medium;
       hugeSelectors = map (d: d.selector) datasets.huge;
       mediumPlusLightSelectors = lightSelectors ++ mediumSelectors;

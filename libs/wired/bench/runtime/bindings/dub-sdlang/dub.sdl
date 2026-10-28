@@ -1,0 +1,86 @@
+name "dub-sdlang"
+description "DUB's bundled SDLang parser, built from the pinned DUB input — the wired runtime bench's SDL reference row"
+authors "Petar Kirov"
+license "BSL-1.0"
+
+targetPath "build"
+
+// The unmodified modules of the DUB checkout pinned as the flake input
+// `dub-sdl-src` (the same one `sparkles.wired.sdl.conformance` uses as its
+// oracle), reached through the dev shell's `$SPARKLES_FLAKE_INPUT_DUB_SDL_SRC`;
+// see the `wired-runtime-bench` recipe's `unittest-foreign` configuration.
+// A static library rather than a source library, so DUB's own `unittest`
+// blocks are not compiled into, and run by, the benchmark.
+importPaths "$SPARKLES_FLAKE_INPUT_DUB_SDL_SRC/source"
+sourceFiles \
+    "$SPARKLES_FLAKE_INPUT_DUB_SDL_SRC/source/dub/internal/sdlang/ast.d" \
+    "$SPARKLES_FLAKE_INPUT_DUB_SDL_SRC/source/dub/internal/sdlang/exception.d" \
+    "$SPARKLES_FLAKE_INPUT_DUB_SDL_SRC/source/dub/internal/sdlang/lexer.d" \
+    "$SPARKLES_FLAKE_INPUT_DUB_SDL_SRC/source/dub/internal/sdlang/package.d" \
+    "$SPARKLES_FLAKE_INPUT_DUB_SDL_SRC/source/dub/internal/sdlang/parser.d" \
+    "$SPARKLES_FLAKE_INPUT_DUB_SDL_SRC/source/dub/internal/sdlang/symbol.d" \
+    "$SPARKLES_FLAKE_INPUT_DUB_SDL_SRC/source/dub/internal/sdlang/token.d" \
+    "$SPARKLES_FLAKE_INPUT_DUB_SDL_SRC/source/dub/internal/sdlang/util.d" \
+    "$SPARKLES_FLAKE_INPUT_DUB_SDL_SRC/source/dub/internal/libInputVisitor.d" \
+    "$SPARKLES_FLAKE_INPUT_DUB_SDL_SRC/source/dub/internal/dyaml/stdsumtype.d"
+
+configuration "library" {
+    targetType "staticLibrary"
+}
+
+// BEGIN managed build types — apps/ci/tools/standardize-build-settings.d
+dflags "--linker=lld" platform="linux-ldc"
+dflags "-L-fuse-ld=lld" platform="linux-dmd"
+
+buildType "unittest" {
+    buildOptions "unittests" "debugMode" "debugInfo"
+    dflags "--gline-tables-only" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "unittest-debug" {
+    buildOptions "unittests" "debugMode" "debugInfo"
+    dflags "-defaultlib=libphobos2.so" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "unittest-cov" {
+    buildOptions "unittests" "coverage" "debugMode" "debugInfo"
+    dflags "--gline-tables-only" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "unittest-cov-ctfe" {
+    buildOptions "unittests" "coverageCTFE" "debugMode" "debugInfo"
+    dflags "--gline-tables-only" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "checked" {
+    buildOptions "optimize" "inline" "debugInfo"
+}
+buildType "bench" {
+    buildOptions "unittests" "optimize" "inline"
+    dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "bench-unchecked" {
+    buildOptions "unittests" "releaseMode" "optimize" "inline"
+    dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "bench-static" {
+    buildOptions "unittests" "releaseMode" "optimize" "inline"
+    dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
+    dflags "--link-defaultlib-shared=false" platform="linux-ldc"
+    dflags "-defaultlib=libphobos2.a" platform="linux-dmd"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+// END managed build types

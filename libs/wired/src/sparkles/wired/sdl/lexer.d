@@ -4,7 +4,7 @@ module sparkles.wired.sdl.lexer;
 import core.time : Duration, hnsecs, hours, minutes;
 import std.datetime.date : Date;
 
-import sparkles.base.buffer : SharedBuffer, Storage;
+import sparkles.base.buffer : HeapBuffer, SharedBuffer, Storage, UniqueBuffer;
 import sparkles.base.text.errors : valueOf;
 import sparkles.base.text.unicode_tables : generalCategory, GeneralCategory,
     unicodeProperty, UnicodeProperty;
@@ -108,12 +108,15 @@ package enum bool sdlScalarKernelAvailable(SdlParserConfig config, SdlTokenKind 
     featureFor(config, kind);
 
 private SdlError lexicalError(SdlErrorCode code, SdlSpan span,
+    SdlPosition start, SdlPosition end,
     scope const(char)[] sourceName, string reason) @safe pure nothrow @nogc
 {
     SdlError result;
     result.stage = SdlErrorStage.lex;
     result.code = code;
     result.span = span;
+    result.startPosition = start;
+    result.endPosition = end;
     result.sourceName ~= sourceName;
     result.reason ~= reason;
     return result;
@@ -165,6 +168,65 @@ private bool isLogicalNewline(scope const(char)[] source, size_t at,
         return true;
     }
     return false;
+}
+
+private bool hasUtf8Bom(scope const(char)[] source) @safe pure nothrow @nogc
+    => source.length >= 3 && cast(ubyte) source[0] == 0xEF
+        && cast(ubyte) source[1] == 0xBB && cast(ubyte) source[2] == 0xBF;
+
+/// One-based column of `offset` on the line starting at `lineStart`: one per
+/// UTF-8 sequence, one per invalid byte, as the lexer advances.
+package uint sdlColumn(scope const(char)[] source, size_t lineStart, size_t offset)
+    @safe pure nothrow @nogc
+{
+    uint column = 1;
+    for (size_t at = lineStart; at < offset; column++)
+    {
+        const width = utf8Length(source, at);
+        at += width ? width : 1;
+    }
+    return column;
+}
+
+/** The position of byte `offset` of `source`, found by scanning from its
+start: line 1 starts after a UTF-8 byte-order mark, and each logical newline
+starts a line. Linear, so callers with a line table use that instead. */
+package SdlPosition sdlScanPosition(scope const(char)[] source, size_t offset)
+    @safe pure nothrow @nogc
+{
+    size_t at = hasUtf8Bom(source) ? 3 : 0;
+    if (offset <= at)
+        return SdlPosition(offset, 1, 1);
+    uint line = 1;
+    size_t lineStart = at;
+    while (at < offset)
+    {
+        size_t width;
+        if (isLogicalNewline(source, at, width) && at + width <= offset)
+        {
+            at += width;
+            line++;
+            lineStart = at;
+            continue;
+        }
+        const step = utf8Length(source, at);
+        at += step ? step : 1;
+    }
+    return SdlPosition(offset, line, sdlColumn(source, lineStart, offset));
+}
+
+/** Where the lexer reports layout while it lexes (editing §2, SDP3): every
+logical line start after the first, and every comment, in source order. */
+package struct SdlLexerLayout
+{
+    HeapBuffer!size_t lineStarts;
+    bool recordLines; /// Whether to collect `lineStarts`.
+    HeapBuffer!SdlComment comments;
+
+    void comment(SdlSpan span, SdlCommentKind kind) @safe pure nothrow @nogc
+    {
+        comments ~= SdlComment(span, kind);
+    }
 }
 
 private bool isDelimiter(scope const(char)[] source, size_t at)
@@ -367,7 +429,9 @@ struct SdlLexer(SdlParserConfig config = sdlFull)
     private const(char)[] _source;
     private const(char)[] _sourceName;
     private size_t _at;
-    private SdlPosition _position;
+    private uint _line = 1;
+    private size_t _lineStart;
+    package SdlLexerLayout* _layout;
     private SdlToken _token;
     private SdlError _error;
     private bool _ready;
@@ -380,7 +444,6 @@ struct SdlLexer(SdlParserConfig config = sdlFull)
     {
         _source = source;
         _sourceName = sourceName;
-        _position = SdlPosition(0, 1, 1);
     }
 
     /// Whether EOF or a yielded error has been consumed.
@@ -423,19 +486,28 @@ struct SdlLexer(SdlParserConfig config = sdlFull)
                 && _at + newlineWidth <= end)
             {
                 _at += newlineWidth;
-                _position.byteOffset = _at;
-                _position.line++;
-                _position.column = 1;
+                _line++;
+                _lineStart = _at;
+                if (_layout !is null && _layout.recordLines)
+                    _layout.lineStarts ~= _at;
                 continue;
             }
             const width = utf8Length(_source, _at);
             _at += width ? width : 1;
-            _position.byteOffset = _at;
-            _position.column++;
         }
     }
 
-    private SdlSpan spanFrom(SdlPosition start) scope => SdlSpan(start, _position);
+    /** The line and column of byte `offset` of the lexed source: exact for any
+    offset, and cheap on the current line. Positions follow the document's
+    rules ($(LREF sparkles.wired.sdl.document.SdlPosition)). */
+    SdlPosition position(size_t offset) const scope @safe pure nothrow @nogc
+    {
+        if (offset >= _lineStart && offset <= _at)
+            return SdlPosition(offset, _line, sdlColumn(_source, _lineStart, offset));
+        return sdlScanPosition(_source, offset);
+    }
+
+    private SdlSpan spanFrom(size_t start) scope => SdlSpan(start, _at);
 
     private SdlError errorCopy() scope
     {
@@ -444,20 +516,23 @@ struct SdlLexer(SdlParserConfig config = sdlFull)
         result.code = _error.code;
         result.sourceName ~= _error.sourceName[];
         result.span = _error.span;
+        result.startPosition = _error.startPosition;
+        result.endPosition = _error.endPosition;
         result.relatedSpan = _error.relatedSpan;
         result.hasRelatedSpan = _error.hasRelatedSpan;
         result.reason ~= _error.reason[];
         return result;
     }
 
-    private void fail(SdlErrorCode code, SdlPosition start, string reason) scope
+    private void fail(SdlErrorCode code, size_t start, string reason) scope
     {
-        _error = lexicalError(code, spanFrom(start), _sourceName, reason);
+        _error = lexicalError(code, spanFrom(start), position(start), position(_at),
+            _sourceName, reason);
         _failed = true;
         _ready = true;
     }
 
-    private bool consumeUtf8(SdlPosition constructStart, string reason) scope
+    private bool consumeUtf8(size_t constructStart, string reason) scope
     {
         const width = utf8Length(_source, _at);
         if (width)
@@ -465,13 +540,13 @@ struct SdlLexer(SdlParserConfig config = sdlFull)
             advance(width);
             return true;
         }
-        const invalidStart = _position;
+        const invalidStart = _at;
         advance(1);
         fail(SdlErrorCode.invalidUtf8, invalidStart, reason);
         return false;
     }
 
-    private bool consumeUtf8Until(size_t end, SdlPosition constructStart,
+    private bool consumeUtf8Until(size_t end, size_t constructStart,
         string reason) scope
     {
         while (_at < end)
@@ -480,7 +555,7 @@ struct SdlLexer(SdlParserConfig config = sdlFull)
         return true;
     }
 
-    private void emit(SdlTokenKind kind, size_t startAt, SdlPosition start) scope
+    private void emit(SdlTokenKind kind, size_t startAt, size_t start) scope
     {
         _token = SdlToken(kind, _source[startAt .. _at], spanFrom(start));
         _ready = true;
@@ -489,7 +564,7 @@ struct SdlLexer(SdlParserConfig config = sdlFull)
     private bool skipComment() scope
     {
         const startAt = _at;
-        const start = _position;
+        const start = _at;
         bool line;
         bool enabled;
         if (_source[_at] == '#')
@@ -538,6 +613,9 @@ struct SdlLexer(SdlParserConfig config = sdlFull)
         if (!enabled)
             fail(SdlErrorCode.unsupportedFeature, start,
                 "comment syntax is disabled by this SDL profile");
+        else if (_layout !is null)
+            _layout.comment(SdlSpan(startAt, _at),
+                line ? SdlCommentKind.line : SdlCommentKind.block);
         return true;
     }
 
@@ -545,7 +623,7 @@ struct SdlLexer(SdlParserConfig config = sdlFull)
     {
         if (_source[_at] != '\\')
             return false;
-        const start = _position;
+        const start = _at;
         advance(1);
         while (_at < _source.length)
         {
@@ -612,7 +690,7 @@ struct SdlLexer(SdlParserConfig config = sdlFull)
     private void scanQuoted(char quote, SdlTokenKind kind) scope
     {
         const startAt = _at;
-        const start = _position;
+        const start = _at;
         advance(1);
         size_t scalarCount;
         while (_at < _source.length)
@@ -695,7 +773,7 @@ struct SdlLexer(SdlParserConfig config = sdlFull)
     private void scanRawString() scope
     {
         const startAt = _at;
-        const start = _position;
+        const start = _at;
         advance(1);
         while (_at < _source.length && _source[_at] != '`')
         {
@@ -724,7 +802,7 @@ struct SdlLexer(SdlParserConfig config = sdlFull)
     private void scanBinary() scope
     {
         const startAt = _at;
-        const start = _position;
+        const start = _at;
         advance(1);
         while (_at < _source.length && _source[_at] != ']')
         {
@@ -820,8 +898,11 @@ struct SdlLexer(SdlParserConfig config = sdlFull)
     private void scanNumber() scope
     {
         const startAt = _at;
-        const start = _position;
+        const start = _at;
         bool sawSlash;
+        // A date joins at most one clock, across trivia: once a `:` is in the
+        // token, trivia ends it, and what follows is a value of its own.
+        bool sawColon;
         while (_at < _source.length)
         {
             size_t newlineWidth;
@@ -834,7 +915,7 @@ struct SdlLexer(SdlParserConfig config = sdlFull)
                 break;
             if (isAsciiSpace(_source[_at]))
             {
-                if (!sawSlash)
+                if (!sawSlash || sawColon)
                     break;
                 const clockAt = dateTimeClockAt!config(_source, _at);
                 if (clockAt == size_t.max)
@@ -844,7 +925,7 @@ struct SdlLexer(SdlParserConfig config = sdlFull)
                     return;
                 continue;
             }
-            if (sawSlash && (_source[_at] == '\\' || (_at + 1 < _source.length
+            if (sawSlash && !sawColon && (_source[_at] == '\\' || (_at + 1 < _source.length
                 && _source[_at .. _at + 2] == "/*")))
             {
                 const clockAt = dateTimeClockAt!config(_source, _at);
@@ -857,6 +938,8 @@ struct SdlLexer(SdlParserConfig config = sdlFull)
             }
             if (_source[_at] == '/')
                 sawSlash = true;
+            else if (_source[_at] == ':')
+                sawColon = true;
             if (_source[_at] == ';' || _source[_at] == '{' || _source[_at] == '}'
                 || _source[_at] == '=' || _source[_at] == ',')
             {
@@ -915,7 +998,7 @@ struct SdlLexer(SdlParserConfig config = sdlFull)
     private void scanIdentifier() scope
     {
         const startAt = _at;
-        const start = _position;
+        const start = _at;
         while (_at < _source.length)
         {
             const width = utf8Length(_source, _at);
@@ -945,7 +1028,7 @@ struct SdlLexer(SdlParserConfig config = sdlFull)
                 && cast(ubyte) _source[1] == 0xBB && cast(ubyte) _source[2] == 0xBF)
             {
                 _at = 3;
-                _position.byteOffset = 3;
+                _lineStart = 3;
             }
             else if ((_source.length >= 2
                     && ((cast(ubyte) _source[0] == 0xFF && cast(ubyte) _source[1] == 0xFE)
@@ -956,7 +1039,7 @@ struct SdlLexer(SdlParserConfig config = sdlFull)
                     || (cast(ubyte) _source[0] == 0xFF && cast(ubyte) _source[1] == 0xFE
                         && cast(ubyte) _source[2] == 0 && cast(ubyte) _source[3] == 0))))
             {
-                const start = _position;
+                const start = _at;
                 const isUtf32 = _source.length >= 4
                     && ((cast(ubyte) _source[0] == 0 && cast(ubyte) _source[1] == 0
                             && cast(ubyte) _source[2] == 0xFE
@@ -977,11 +1060,7 @@ struct SdlLexer(SdlParserConfig config = sdlFull)
                 if (invalid != _source.length - _at)
                 {
                     advance(invalid + 1);
-                    const end = _position;
-                    SdlPosition start = end;
-                    start.byteOffset--;
-                    if (start.column > 1) start.column--;
-                    fail(SdlErrorCode.invalidUtf8, start, "source is not well-formed UTF-8");
+                    fail(SdlErrorCode.invalidUtf8, _at - 1, "source is not well-formed UTF-8");
                     return;
                 }
             }
@@ -999,7 +1078,7 @@ struct SdlLexer(SdlParserConfig config = sdlFull)
                 const width = utf8Length(_source, _at);
                 if (width == 0)
                 {
-                    const invalidStart = _position;
+                    const invalidStart = _at;
                     advance(1);
                     fail(SdlErrorCode.invalidUtf8, invalidStart,
                         "invalid UTF-8 in SDL source");
@@ -1011,7 +1090,7 @@ struct SdlLexer(SdlParserConfig config = sdlFull)
                 {
                     if (!config.syntax.unicodeNewlines)
                     {
-                        const start = _position;
+                        const start = _at;
                         advance(newlineWidth);
                         fail(SdlErrorCode.unsupportedFeature, start,
                             "Unicode newlines are disabled by this SDL profile");
@@ -1019,7 +1098,7 @@ struct SdlLexer(SdlParserConfig config = sdlFull)
                     else
                     {
                         const startAt = _at;
-                        const start = _position;
+                        const start = _at;
                         advance(newlineWidth);
                         emit(SdlTokenKind.newline, startAt, start);
                     }
@@ -1027,7 +1106,7 @@ struct SdlLexer(SdlParserConfig config = sdlFull)
                 }
                 if (unicodeProperty(cp, UnicodeProperty.WSpace))
                 {
-                    const start = _position;
+                    const start = _at;
                     advance(width);
                     if (!config.syntax.unicodeWhitespace)
                     {
@@ -1059,13 +1138,13 @@ struct SdlLexer(SdlParserConfig config = sdlFull)
         if (_at == _source.length)
         {
             _token = SdlToken(SdlTokenKind.eof, _source[_at .. _at],
-                SdlSpan(_position, _position));
+                SdlSpan.at(_at));
             _ready = true;
             return;
         }
 
         const startAt = _at;
-        const start = _position;
+        const start = _at;
         size_t newlineWidth;
         if (isLogicalNewline(_source, _at, newlineWidth))
         {
@@ -1198,6 +1277,29 @@ private uint monthDays(SdlParserConfig config)(long year, ulong month)
     return month == 2 && leapYear!config(year) ? 29 : days[month - 1];
 }
 
+/** The `Date` of a validated proleptic Gregorian civil date, without the
+throwing field constructor: Hinnant's days-from-civil, shifted to `Date`'s
+day 1 (January 1 of year 1). */
+private Date civilDate(long year, ulong month, ulong day) @safe pure nothrow @nogc
+{
+    const y = month <= 2 ? year - 1 : year;
+    const era = (y >= 0 ? y : y - 399) / 400;
+    const yearOfEra = y - era * 400;
+    const dayOfYear = (153 * (month > 2 ? month - 3 : month + 9) + 2) / 5 + day - 1;
+    const dayOfEra = yearOfEra * 365 + yearOfEra / 4 - yearOfEra / 100 + dayOfYear;
+    const daysFrom1970 = era * 146_097 + dayOfEra - 719_468;
+    return Date(cast(int)(daysFrom1970 + 719_163));
+}
+
+@("sdl.lexer.civilDate.matchesPhobos")
+@safe pure unittest
+{
+    static immutable int[3][8] dates = [[2024, 2, 29], [1970, 1, 1], [1, 1, 1], [0, 3, 1],
+        [-1, 12, 31], [-400, 2, 29], [32_767, 12, 31], [-32_768, 1, 1]];
+    foreach (d; dates)
+        assert(civilDate(d[0], d[1], d[2]) == Date(d[0], d[1], d[2]));
+}
+
 private SdlExpected!Date decodeDatePart(SdlParserConfig config)(
     scope const(char)[] raw,
     in SdlToken token) @safe pure nothrow
@@ -1214,18 +1316,17 @@ private SdlExpected!Date decodeDatePart(SdlParserConfig config)(
             negativeYear ? -cast(long) year : cast(long) year, month))
         return sdlErr!Date(decodeError(SdlErrorCode.invalidDate, token,
             "date fields are invalid"));
-    try
-        return sdlOk(Date(negativeYear ? -cast(int) year : cast(int) year,
-            cast(int) month, cast(int) day));
-    catch (Exception)
+    const signedYear = negativeYear ? -cast(long) year : cast(long) year;
+    if (signedYear < short.min || signedYear > short.max)
         return sdlErr!Date(decodeError(SdlErrorCode.invalidDate, token,
             "date is outside the representable Date range"));
+    return sdlOk(civilDate(signedYear, month, day));
 }
 
 private SdlExpected!SdlDateTime decodeDateTimePart(SdlParserConfig config)(
     scope const(char)[] raw, in SdlToken token) @safe pure nothrow
 {
-    SharedBuffer!(char, 128) normalized;
+    UniqueBuffer!(char, 128) normalized;
     const firstSlash = indexOf(raw, '/');
     if (firstSlash == raw.length)
         return sdlErr!SdlDateTime(decodeError(SdlErrorCode.invalidDateTime,
@@ -1973,7 +2074,7 @@ version (unittest)
         const token = oneToken!sdlFull(test.source);
         assert(token.kind == test.kind);
         assert(token.raw == test.source);
-        assert(token.span.start.byteOffset == 0 && token.span.end.byteOffset == test.source.length);
+        assert(token.span.startOffset == 0 && token.span.endOffset == test.source.length);
     }
 }
 
@@ -2003,7 +2104,7 @@ version (unittest)
         assert(item.value.kind == expected[index]);
         index++;
         if (item.value.kind == SdlTokenKind.identifier && item.value.raw == "α")
-            assert(item.value.span.start.byteOffset == 20);
+            assert(item.value.span.startOffset == 20);
         lexer.popFront();
     }
     assert(index == expected.length);
@@ -2020,16 +2121,17 @@ version (unittest)
         assert(item.hasValue);
         if (item.value.kind == SdlTokenKind.identifier)
         {
-            assert(item.value.span.start.line == expectedLine++);
-            assert(item.value.span.start.column == 1);
+            const at = lexer.position(item.value.span.startOffset);
+            assert(at.line == expectedLine++ && at.column == 1);
+            assert(at == sdlScanPosition(lexer._source, at.byteOffset));
         }
         lexer.popFront();
     }
     assert(expectedLine == 7);
 
     const bomToken = oneToken!sdlDubCompat("\xEF\xBB\xBFname");
-    assert(bomToken.span.start.byteOffset == 3);
-    assert(bomToken.span.start.line == 1 && bomToken.span.start.column == 1);
+    assert(bomToken.span.startOffset == 3);
+    assert(sdlScanPosition("\xEF\xBB\xBFname", 3) == SdlPosition(3, 1, 1));
 }
 
 @("sdl.lexer.exactPositionAndBomPins")
@@ -2048,19 +2150,19 @@ version (unittest)
         const token = item.value;
         if (token.kind == SdlTokenKind.identifier)
         {
-            assert(token.span.start.byteOffset == identifierOffsets[identifierIndex]);
-            assert(token.span.start.line == identifierIndex + 1);
-            assert(token.span.start.column == 1);
+            assert(token.span.startOffset == identifierOffsets[identifierIndex]);
+            assert(lexer.position(token.span.startOffset)
+                == SdlPosition(token.span.startOffset, cast(uint) identifierIndex + 1, 1));
             identifierIndex++;
         }
         else if (token.kind == SdlTokenKind.newline)
         {
-            assert(token.span.start.byteOffset == newlineStarts[newlineIndex]);
-            assert(token.span.end.byteOffset == newlineEnds[newlineIndex]);
-            assert(token.span.start.line == newlineIndex + 1);
-            assert(token.span.start.column == 2);
-            assert(token.span.end.line == newlineIndex + 2);
-            assert(token.span.end.column == 1);
+            assert(token.span.startOffset == newlineStarts[newlineIndex]);
+            assert(token.span.endOffset == newlineEnds[newlineIndex]);
+            assert(lexer.position(token.span.startOffset)
+                == SdlPosition(token.span.startOffset, cast(uint) newlineIndex + 1, 2));
+            assert(lexer.position(token.span.endOffset)
+                == SdlPosition(token.span.endOffset, cast(uint) newlineIndex + 2, 1));
             newlineIndex++;
         }
         lexer.popFront();
@@ -2078,12 +2180,12 @@ version (unittest)
     {
         const failure = oneError!sdlFull(test.source);
         assert(failure.code == SdlErrorCode.unsupportedBom);
-        assert(failure.span.start.byteOffset == 0);
-        assert(failure.span.end.byteOffset == test.width);
+        assert(failure.span.startOffset == 0);
+        assert(failure.span.endOffset == test.width);
     }
     const utf8 = oneToken!sdlFull("\xEF\xBB\xBFname");
-    assert(utf8.raw == "name" && utf8.span.start.byteOffset == 3);
-    assert(utf8.span.start.line == 1 && utf8.span.start.column == 1);
+    assert(utf8.raw == "name" && utf8.span.startOffset == 3);
+    assert(sdlScanPosition("\xEF\xBB\xBFname", utf8.span.startOffset) == SdlPosition(3, 1, 1));
 
     const unicodeNumeric = oneToken!sdlFull("α١");
     assert(unicodeNumeric.kind == SdlTokenKind.identifier
@@ -2109,8 +2211,8 @@ version (unittest)
     {
         const failure = oneError!sdlFull(test.source);
         assert(failure.code == test.code);
-        assert(failure.span.start.byteOffset <= failure.span.end.byteOffset);
-        assert(failure.span.end.byteOffset <= test.source.length);
+        assert(failure.span.startOffset <= failure.span.endOffset);
+        assert(failure.span.endOffset <= test.source.length);
     }
 }
 
@@ -2131,8 +2233,8 @@ version (unittest)
     {
         const failure = oneError!sdlFull(source);
         assert(failure.code == SdlErrorCode.invalidBase64);
-        assert(failure.span.start.byteOffset == 0
-            && failure.span.end.byteOffset == source.length);
+        assert(failure.span.startOffset == 0
+            && failure.span.endOffset == source.length);
     }
     assert(oneError!sdlDubRecipe("[TQ==]").code
         == SdlErrorCode.unsupportedFeature);
@@ -2384,8 +2486,8 @@ version (unittest)
     {
         const failure = oneError!sdlDubRecipe(source);
         assert(failure.code == SdlErrorCode.unsupportedFeature);
-        assert(failure.span.start.byteOffset == 0);
-        assert(failure.span.end.byteOffset == source.length);
+        assert(failure.span.startOffset == 0);
+        assert(failure.span.endOffset == source.length);
     }
     assert(oneToken!sdlDubRecipe(`"value"`).kind == SdlTokenKind.string_);
     assert(oneToken!sdlDubRecipe("false").kind == SdlTokenKind.boolean);

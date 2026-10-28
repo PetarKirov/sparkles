@@ -1,5 +1,5 @@
 name "wired-runtime-bench"
-description "Runtime JSON benchmark: std.json baseline vs D engines, on sparkles:test-runner"
+description "Runtime JSON and SDL benchmark: std.json baseline vs D engines, on sparkles:test-runner"
 authors "Petar Kirov"
 copyright "Copyright © 2026, Petar Kirov"
 license "BSL-1.0"
@@ -28,6 +28,10 @@ dependency "sparkles:test-runner" path="../../../.."
 // single-object configuration avoids duplicate nested reporting symbols
 // emitted by LDC into separate objects under those flags.
 subConfiguration "sparkles:test-runner" "benchmark"
+
+// The SDL rows' `decode` reads the repository's own `dub.sdl` schema
+// (`sparkles.build_primitives.dub_manifest`), which depends only on wired.
+dependency "sparkles:build-primitives" path="../../../.."
 
 // D engines (pure-D dub packages; pinned in dub.selections.json). Each adapter
 // sits behind its `versions` gate so a frontend incompatibility is one line
@@ -67,6 +71,11 @@ configuration "unittest-foreign" {
     // serde_json + simd-json + sonic-rs via the Rust staticlib.
     dependency "wired-bench-shim" path="bindings/shim"
     versions "BenchCpp" "BenchRust"
+
+    // The SDL `parse` reference row: DUB's own SDLang parser, built from the
+    // pinned `$SPARKLES_FLAKE_INPUT_DUB_SDL_SRC` checkout.
+    dependency "dub-sdlang" path="bindings/dub-sdlang"
+    versions "BenchDubSdlang"
 
     dflags "-checkaction=context" "-allinst"
 }

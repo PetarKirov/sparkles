@@ -31,6 +31,7 @@ nix run .#ci -- [--dedup-reference-links|--fix-reference-links] [--include-files
 nix run .#ci -- --check-vcs-urls [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]
 nix run .#ci -- --check-docs-sidebar
 nix run .#ci -- --check-glossary
+nix run .#ci -- --check-adhoc-sdl
 nix run .#ci -- --check-credits
 nix run .#ci -- --check-blob-paths [--clone-root DIR] [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]
 nix run .#ci -- [--log-level trace|info|warning|error]
@@ -60,6 +61,7 @@ $(LIST
     $(ITEM `--check-vcs-urls` — check tracked markdown files for github.com/raw.githubusercontent.com URLs, ensuring they reference a specific commit SHA)
     $(ITEM `--check-docs-sidebar` — verify the VitePress sidebar in `docs/.vitepress/sidebar.json` is consistent with published `docs/**/*.md` pages: every page is linked, and every sidebar link resolves to a page (respects `srcExclude`; home page is implicit))
     $(ITEM `--check-glossary` — verify `docs/.vitepress/glossary.json` (ids, owners, plain-text summaries, cross-references) and that every docs link into the glossary names an existing entry; entries no page links to are reported, not failed)
+    $(ITEM `--check-adhoc-sdl` — verify no D source reads, edits or detects SDL by matching text: a text-matching call whose arguments hold an SDL marker fails unless `apps/ci/sdl-audit-allowlist.txt` lists it with a reason (lossless editing SDE9; see the `sdl_audit` module))
     $(ITEM `--check-credits` — verify the credits document (`docs/credits/`) against the build inputs: every dub package, native library, static archive, bundled font and grammar bundle the applications link or ship has a part, every part names something shipped, and each application page includes exactly its own parts (see the `credits` module))
     $(ITEM `--check-blob-paths` — verify every SHA-pinned GitHub blob citation names a path that exists at that commit, using local clones under `--clone-root` (default `$REPOS`). Complements `--check-vcs-urls`, which only checks the ref; a wrong path is a 404 no ref check can see. $(B Local only) — a citation whose repository is not cloned is reported as unchecked, never failed, so this is not wired into CI or a pre-commit hook)
 )
@@ -344,6 +346,12 @@ struct CliParams
         ~ "plain-text summaries, portable links, cross-references — and that every docs link "
         ~ "into the glossary names an existing entry. Unused entries are reported, not failed."))
     bool checkGlossary;
+    @(Option(`check-adhoc-sdl`,
+        description: "Verify no D source matches SDL text by hand (lossless editing SDE9): "
+        ~ "a canFind/indexOf/regex/… call whose arguments hold an SDL marker fails unless "
+        ~ "apps/ci/sdl-audit-allowlist.txt lists it with a reason; so does a stale entry."))
+    bool checkAdHocSdl;
+
     @(Option(`check-credits`,
         description: "Verify the credits document (docs/credits/) against the build inputs: "
         ~ "every component an application links or ships has a part, every part names "
@@ -496,6 +504,7 @@ enum ProgramMode
     checkDocsSidebar,
     checkSpecEvidence,
     checkGlossary,
+    checkAdHocSdl,
     checkCredits,
     checkBlobPaths,
     ciStats,
@@ -650,6 +659,8 @@ int ciMain(string[] args)
 
     if (mode == ProgramMode.checkGlossary)
         return runCheckGlossary();
+    if (mode == ProgramMode.checkAdHocSdl)
+        return runCheckAdHocSdl();
     if (mode == ProgramMode.checkCredits)
         return runCheckCredits();
 
@@ -756,7 +767,7 @@ private string validateCliMode(
             || cli.testExtracted || cli.testSanitize || cli.buildEachCommit || cli.auditFences
             || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkCommitScope
             || cli.checkVcsUrls || cli.checkDocsSidebar || cli.checkSpecEvidence || cli.checkGlossary
-            || cli.checkBlobPaths || cli.ciStats || cli.mirrorChecks || cli.reportLinkRot || cli.linuxHostProbe
+            || cli.checkAdHocSdl || cli.checkBlobPaths || cli.ciStats || cli.mirrorChecks || cli.reportLinkRot || cli.linuxHostProbe
             || cli.hostSystem.length || cli.files.length || cli.exclude.length))
         return "--seed-dub-cache cannot be combined with other modes or file selection";
 
@@ -970,6 +981,8 @@ private ProgramMode resolveProgramMode(in CliParams cli)
 
     if (cli.checkGlossary)
         return ProgramMode.checkGlossary;
+    if (cli.checkAdHocSdl)
+        return ProgramMode.checkAdHocSdl;
     if (cli.checkCredits)
         return ProgramMode.checkCredits;
 
@@ -1002,6 +1015,7 @@ private string programModeName(ProgramMode mode) @safe pure nothrow @nogc
         case ProgramMode.checkDocsSidebar:   return "--check-docs-sidebar";
         case ProgramMode.checkSpecEvidence:  return "--check-spec-evidence";
         case ProgramMode.checkGlossary:      return "--check-glossary";
+        case ProgramMode.checkAdHocSdl:      return "--check-adhoc-sdl";
         case ProgramMode.checkCredits:       return "--check-credits";
         case ProgramMode.checkBlobPaths:     return "--check-blob-paths";
         case ProgramMode.ciStats:            return "--ci-stats";
@@ -1585,6 +1599,7 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
             case ProgramMode.checkDocsSidebar:
             case ProgramMode.checkSpecEvidence:
             case ProgramMode.checkGlossary:
+            case ProgramMode.checkAdHocSdl:
             case ProgramMode.checkCredits:
             case ProgramMode.checkBlobPaths:
                 rc = 1;
@@ -2200,6 +2215,72 @@ private int runCheckBlobPaths(string[] files, string cloneRoot)
 /// (pages → sidebar and sidebar → pages). Invoked by the pre-commit
 /// `check-docs-sidebar` hook. Returns 0 when both directions are clean, 1
 /// when pages are missing from the sidebar or sidebar links are dangling.
+
+/++
+`--check-adhoc-sdl`: no D source matches SDL text by hand (`sdl_audit`).
+
+Whole-tree, like `--check-spec-evidence`: every tracked D source is read. A hit
+the allowlist does not name fails, and so does an allowlist entry that names
+no hit any more, so the list only shrinks.
++/
+private int runCheckAdHocSdl()
+{
+    import std.file : exists, readText;
+    import std.path : buildPath, extension;
+    import std.string : splitLines;
+    import sdl_audit : AdHocSdlHit, auditSource, parseAllowlist;
+
+    const repoRoot = detectRepoRoot();
+    const listed = execute(["git", "-C", repoRoot, "ls-files", "--", "*.d"]);
+    if (listed.status != 0)
+    {
+        error(i"Failed to enumerate D sources with git ls-files");
+        return 1;
+    }
+
+    const allowlistPath = buildPath(repoRoot, "apps", "ci", "sdl-audit-allowlist.txt");
+    size_t badLine;
+    const allowed = allowlistPath.exists ? parseAllowlist(allowlistPath.readText, badLine) : null;
+    if (badLine)
+    {
+        error(i"$(allowlistPath):$(badLine): expected `path | literal | reason`");
+        return 1;
+    }
+    auto used = new bool[allowed.length];
+
+    AdHocSdlHit[] unlisted;
+    size_t files;
+    foreach (rel; splitLines(listed.output))
+    {
+        const path = rel.strip;
+        if (path.extension != ".d" || !buildPath(repoRoot, path).exists)
+            continue;
+        files++;
+        foreach (hit; auditSource(path, readText(buildPath(repoRoot, path))))
+        {
+            bool found;
+            foreach (i, entry; allowed)
+                if (entry.path == hit.path && entry.literal == hit.literal)
+                    found = used[i] = true;
+            if (!found)
+                unlisted ~= hit;
+        }
+    }
+
+    foreach (hit; unlisted)
+        error(i"$(hit.path):$(hit.line): `$(hit.call)` matches SDL text `$(hit.literal)`; use sparkles.wired.sdl or the dub.sdl schema, or allowlist it with a reason");
+    size_t stale;
+    foreach (i, entry; allowed)
+        if (!used[i])
+        {
+            error(i"$(allowlistPath): `$(entry.path) | $(entry.literal)` matches nothing; delete it");
+            stale++;
+        }
+    if (unlisted.length || stale)
+        return 1;
+    info(i"✓ No ad-hoc SDL: $(files) D sources checked, $(allowed.length) allowlisted matches reviewed.");
+    return 0;
+}
 
 /++
 `--check-spec-evidence`: every symbol a spec's evidence column cites must exist.
@@ -3748,21 +3829,42 @@ unittest
 /// ignores the flag, runs the ordinary unittests and exits 0 — a green that
 /// means nothing. Better to leave such a package out than to report success
 /// for a mode that never ran.
-bool integratesTestRunner(scope const(char)[] dubConfig) @safe pure nothrow
+///
+/// The recipe is read through the `dub.sdl` schema, in every scope that can
+/// declare either: the top level, each configuration and each build type. A
+/// comment that mentions the runner does not count.
+bool integratesTestRunner(scope const(char)[] dubConfig) @safe pure
 {
-    import std.algorithm.searching : canFind;
+    import std.algorithm.searching : any, canFind, endsWith;
+    import sparkles.build_primitives.dub_manifest : DubBuildSettings, parseDubManifest,
+        valuesOf;
 
-    return dubConfig.canFind("test-runner");
+    static bool wires(scope const DubBuildSettings settings)
+        => settings.dependencies.any!(d => d.name == "sparkles:test-runner")
+            || settings.sourcePaths.valuesOf.any!(p => p.endsWith("test-runner/src"));
+
+    const parsed = parseDubManifest(dubConfig);
+    if (parsed.hasError)
+        return false;
+    const manifest = parsed.value;
+    return wires(manifest.buildSettings)
+        || manifest.configurations.any!(c => wires(c.buildSettings))
+        || manifest.buildTypes.any!(b => wires(b.buildSettings));
 }
 
 @("ci.integratesTestRunner")
-@safe pure nothrow
+@safe pure
 unittest
 {
     assert(integratesTestRunner(`    dependency "sparkles:test-runner" path="../.."`));
-    assert(integratesTestRunner(`    sourcePaths "../test-runner/src" "../test-runner-impl/src"`));
+    assert(integratesTestRunner(`configuration "unittest" {
+    sourcePaths "../test-runner/src" "../test-runner-impl/src"
+}`));
     assert(!integratesTestRunner(`dependency "sparkles:base" path="../.."`));
     assert(!integratesTestRunner(""));
+    // A comment, or a package merely named like it, is not the runner.
+    assert(!integratesTestRunner("// test-runner comes later\nname \"x\"\n"));
+    assert(!integratesTestRunner(`dependency "test-runner-extras" version="*"`));
 }
 
 /// The modes any `.d` file under `packagePath` opts into — empty for a
@@ -4801,15 +4903,18 @@ private bool precededBySkipDirective(const(char[])[] lines, size_t codeStart)
     return s.startsWith(openTag) && s.endsWith(closeTag);
 }
 
-/// Checks if code lines represent a dub single-file program.
-@safe pure nothrow @nogc
+/// Checks if code lines represent a dub single-file program: a `dub`
+/// shebang, an embedded SDL recipe (the shared locator), and a `main`.
+@safe pure
 private bool isDubSingleFileBlock(const(char[])[] codeLines)
 {
-    if (codeLines.length < 4)
+    import std.array : join;
+    import sparkles.wired.sdl : locateEmbeddedRecipe;
+
+    if (codeLines.length < 2 || !codeLines[0].strip.startsWith("#!/usr/bin/env dub"))
         return false;
-    if (!codeLines[0].strip.startsWith("#!/usr/bin/env dub"))
-        return false;
-    if (!codeLines[1].strip.startsWith("/+ dub.sdl:"))
+    const recipe = locateEmbeddedRecipe(codeLines.join('\n'));
+    if (!recipe.found || recipe.isJson)
         return false;
 
     bool hasMain = false;
@@ -4829,12 +4934,9 @@ private bool isDubSingleFileBlock(const(char[])[] codeLines)
 private string extractExampleName(const(char[])[] codeLines)
 {
     import std.array : join;
-    import sparkles.build_primitives.dub_manifest : embeddedDubRecipe, parseEmbeddedDubManifest;
+    import sparkles.build_primitives.dub_manifest : parseEmbeddedDubManifest;
 
-    const embedded = embeddedDubRecipe(codeLines.join('\n'));
-    if (!embedded.found || embedded.isJson)
-        return "unnamed";
-    const manifest = parseEmbeddedDubManifest(embedded);
+    const manifest = parseEmbeddedDubManifest(codeLines.join('\n'));
     return manifest.hasValue && manifest.value.name.length ? manifest.value.name : "unnamed";
 }
 
@@ -5378,11 +5480,18 @@ private StandaloneExampleSpec detectStandaloneExampleSpec(string filePath)
 @safe pure
 private StandaloneExampleSpec parseStandaloneExampleSpec(const(char[])[] lines)
 {
+    import std.array : join;
+    import sparkles.wired.sdl : locateEmbeddedRecipe;
+
     enum metadataPrefixes = ["// ci:", "// run_md_examples:"];
 
-    bool insideDubSdl = false;
+    // The directives follow the embedded recipe, which the shared locator
+    // finds and ends at its first `+/`, as DUB does.
+    const text = lines.join('\n');
+    const recipe = locateEmbeddedRecipe(text);
+    const rest = recipe.found ? text[recipe.close.endOffset .. $] : text;
 
-    foreach (line; lines)
+    foreach (line; rest.lineSplitter)
     {
         const stripped = line.strip;
 
@@ -5391,19 +5500,6 @@ private StandaloneExampleSpec parseStandaloneExampleSpec(const(char[])[] lines)
 
         if (stripped.startsWith("#!"))
             continue;
-
-        if (insideDubSdl)
-        {
-            if (stripped.startsWith("+/"))
-                insideDubSdl = false;
-            continue;
-        }
-
-        if (stripped.startsWith("/+ dub.sdl:"))
-        {
-            insideDubSdl = true;
-            continue;
-        }
 
         // A `module …;` declaration may sit between the recipe and the
         // directive. It is not a comment, so without this the scan would stop

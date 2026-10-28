@@ -137,7 +137,10 @@ private string[] oracleKind(SdlTokenKind kind) @safe pure nothrow
         SdlChildAttr, SdlTagNameAttr, SdlTagNamespaceAttr, SdlExtraAttr,
         SdlExpected, sdlOk, sdlErr, OwnedSdlExtras, SdlOwnedExtraMember,
         SdlOwnedExtraNode, SdlOwnedExtraAttribute, SdlExtraChannel,
-        writeSdlScalar, sdlParserConfigFor;
+        writeSdlScalar, sdlParserConfigFor, SdlComment, SdlCommentKind,
+        SdlEditor, sdlEditor, SdlAttachedComments, SdlEmbeddedRecipe, locateEmbeddedRecipe,
+        hasEmbeddedRecipeHeader, embeddedRecipeHeaderEnd, writeEmbeddedRendering,
+        SdlEmbeddedParse, parseEmbeddedSdlDocument, updateSDL;
 
     static struct Doc { @SdlAttribute() int port; }
     static struct Sink
@@ -153,7 +156,22 @@ private string[] oracleKind(SdlTokenKind kind) @safe pure nothrow
         auto parsed = parseSdlDocument!sdlDubCompat(text, name);
         SdlExpected!void valid = validateSDL!sdlDubRecipe(text, name);
         valid = writeSdlDocument(parsed.document, buffer, SdlWriteOptions.init);
-        auto token = lexSDL!sdlFull(text, name).front;
+        auto lexer = lexSDL!sdlFull(text, name);
+        auto token = lexer.front;
+        SdlPosition at = lexer.position(token.value.span.startOffset);
+        at = parsed.document.position(parsed.document.root.span.startOffset);
+        const(char)[] source = parsed.document.source;
+        const(SdlComment)[] comments = parsed.document.comments;
+        SdlSpan extent = parsed.document.root.extent;
+        auto editor = sdlEditor!sdlDubCompat(parsed.document, text);
+        editor.setAttribute(parsed.document.root.byChild.front, SdlQualifiedName(null, "x"),
+            SdlScalar(true));
+        import std.experimental.allocator.mallocator : Mallocator;
+        Mallocator allocator;
+        const port = Doc(1);
+        updateSDL(editor, parsed.document.root, port);
+        valid = editor.write(buffer, allocator);
+        auto embedded = parseEmbeddedSdlDocument!sdlDubRecipe(text, name);
         SdlScalarStorage storage;
         SdlExpected!SdlScalar scalar = decodeSdlScalar!sdlFull(token.value, storage);
         valid = writeSdlScalar(scalar.value, buffer);
@@ -324,7 +342,9 @@ comparison allow DUB one ulp where Phobos's parse is inexact. */
         "tag 2026/10/22 01:02:03-GMT+02:00\n", "tag \"unterminated",
         "tag [!bad]\n", "tag {", "tag =\n", "tag 1 2\n",
         "tag \"a b\"\n", "tag `a b c`\n", "tag \"a\x01b\"\n",
-        "x:a 1 y:b=2 c=3 {\n  y:d\n  e\n  x:f\n}\n", "\"anonymous\" k=1\n"];
+        "x:a 1 y:b=2 c=3 {\n  y:d\n  e\n  x:f\n}\n", "\"anonymous\" k=1\n",
+        // A date takes one clock; a value after it is a value of its own.
+        "tag 2018/10/22 20:17:10-GMT+02:00 14:51:24\n", "tag 2018/10/22 20:17 1:02:03\n"];
     const inputs = buildPath(tmp.dir(), "inputs.json");
     write(inputs, JSONValue(fixtures).toString);
     const run = execute([oracle, inputs]);

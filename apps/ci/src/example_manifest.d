@@ -15,7 +15,7 @@ module example_manifest;
 import std.string : indexOf;
 import std.algorithm : canFind;
 
-import sparkles.build_primitives.dub_manifest : embeddedDubRecipe, parseEmbeddedDubManifest;
+import sparkles.build_primitives.dub_manifest : parseEmbeddedDubManifest;
 
 /**
  * Platform specifiers declared by an example's embedded `/+ dub.sdl: … +/`
@@ -25,10 +25,7 @@ import sparkles.build_primitives.dub_manifest : embeddedDubRecipe, parseEmbedded
  */
 string[] exampleDeclaredPlatforms(scope const(char)[] source) @safe pure
 {
-    const embedded = embeddedDubRecipe(source);
-    if (!embedded.found || embedded.isJson)
-        return null;
-    auto manifest = parseEmbeddedDubManifest(embedded);
+    auto manifest = parseEmbeddedDubManifest(source);
     return manifest.hasValue ? manifest.value.platforms : null;
 }
 
