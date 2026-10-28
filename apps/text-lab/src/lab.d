@@ -233,7 +233,10 @@ struct Lab
             default:
                 return;
         }
-        sentSettings = false;
+        // Before the frame that shows them: `paint` runs after the header
+        // has drawn, which would leave it in the old settings.
+        static if (offersSettings!H)
+            h.textRendering(settings);
         h.requestFrame();
     }
 }
