@@ -26,7 +26,7 @@ import lantern : LanternState;
 import sparkles.base.unique : makeUnique, Unique;
 import settings : DiagramSettings;
 import sparkles.ui.components.grid_backdrop : GridConfig;
-import sparkles.input.events : KeyEvent;
+import sparkles.input.events : CompositionEvent, KeyEvent;
 import sparkles.ui.editor.field : EditorField, FieldResult;
 import sparkles.ui.editor.keys : windowTarget;
 import sparkles.text_buffer.text : Text;
@@ -344,12 +344,35 @@ struct World
     }
 
     /// Copy the draft's text and caret into the fixed slot the frame reads.
+    /// While an input method composes, the slot shows its preedit in place of
+    /// the selection, the caret at the preedit's cursor (`EDI3`); whatever
+    /// passes the slot's `labelCap` bytes is not shown.
     package void editMirror()
     {
-        const text = editField.state.text;
-        editLen = cast(ubyte) text.length;
-        text.copyTo(0, editLen, editBuf[0 .. editLen]);
-        editCaret = cast(ubyte) editField.state.selection.primary.head;
+        const state = &editField.state;
+        const text = state.text;
+        if (!state.composition.active)
+        {
+            editLen = cast(ubyte) text.length;
+            text.copyTo(0, editLen, editBuf[0 .. editLen]);
+            editCaret = cast(ubyte) state.selection.primary.head;
+            return;
+        }
+        const r = state.selection.primary;
+        const preedit = state.composition.preedit;
+        size_t at;
+        void put(in Text source, size_t from, size_t to)
+        {
+            const n = to - from < labelCap - at ? to - from : labelCap - at;
+            source.copyTo(from, from + n, editBuf[at .. at + n]);
+            at += n;
+        }
+        put(text, 0, r.start);
+        const caret = at + state.composition.cursor;
+        put(preedit, 0, preedit.length);
+        put(text, r.end, text.length);
+        editLen = cast(ubyte) at;
+        editCaret = cast(ubyte)(caret < at ? caret : at);
     }
 
     // ── groups (`WLD2`) ─────────────────────────────────────────────────────
@@ -625,6 +648,17 @@ void editPaste(ref World w, scope const(char)[] text, uint request) @safe pure n
         cast(void) w.editField.pasteAnswer(request, text);
     else
         cast(void) w.editField.insert(text, true);
+    w.editMirror();
+}
+
+/// An input method's composition in the label draft (`EDI3`), its preedit
+/// read from the host's pool; the committed text follows as typed text.
+void editCompose(ref World w, in CompositionEvent update, scope const(char)[] preedit)
+    @safe pure nothrow @nogc
+{
+    if (!w.isEditing)
+        return;
+    cast(void) w.editField.compose(update, preedit);
     w.editMirror();
 }
 
