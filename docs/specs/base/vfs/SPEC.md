@@ -361,7 +361,8 @@ optional argument of [`VFO5`](#vfo5-sharing-of-created-entries); passing
 | `writeFileAtomic(name, bytes, sharing)` | `create`, `write`, `rename`                         | nothing; readers see the old or the new content, never a mix |
 
 A `File` **must** provide `read(buffer)`, `write(bytes)`, `stat(mask)`,
-`sync()` and `close()`, gated by the rights it was opened with.
+`sync()` and `close()`, gated by the rights it was opened with, and `map()`
+where the backend offers it ([`VFO11`](#vfo11-mapping)).
 
 <a id="vfo4-open-modes"></a>
 **VFO4: Open modes.** `openFile` **must** take its mode as a template
@@ -446,6 +447,24 @@ _Rationale:_ No walk through this interface can follow an absolute target
 cap-std also judges. A relative target's escape depends on where the link
 ends up, which renames can change, so it is not checked
 ([DV23](./decisions.md#dv23-symbolic-link-targets)).
+
+<a id="vfo11-mapping"></a>
+**VFO11: Mapping.** On a backend that offers mapping
+([`VFB7`](./backends.md#vfb7-mapping)), a `File` opened with the `read`
+right **must** provide `map()`, which returns a move-only `Mapping` whose
+`bytes` are the file's contents, read-only, as long as the file had when
+mapped. The bytes stay valid until the `Mapping` is destroyed, which unmaps
+them; closing the `File` does not. An empty file maps to an empty slice with
+no system call. On a backend without mapping, `map` **must not** compile, so a
+caller chooses between `map` and `read` by introspection.
+
+_Rationale:_ A reader of large, mostly unread files, such as a font catalog
+reading a face's names and character map from a 20 MB collection, touches
+only the pages it reads. A mapping reflects the file, not a copy: pages not
+yet read show a later in-place write, and another process that truncates a
+mapped file makes later reads of the lost pages fault. Mapping suits files
+that are replaced, not rewritten in place, as installed fonts are; a caller
+that cannot rule out truncation reads instead.
 
 ## 7. Paths and resolution policy (`VFP`)
 

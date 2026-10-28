@@ -16,6 +16,8 @@ backend's own root and check nothing.
 */
 module sparkles.base.vfs.mem;
 
+import core.lifetime : move;
+
 import sparkles.base.io.errors : ErrorKind, IoError, IoErrorStage, IoResult, OpKind, ioErr, ioOk;
 import sparkles.base.vfs.names : pathComponents;
 import sparkles.base.vfs.types : Access, Disposition, EntryKind, OpenMode, Sharing, Stat,
@@ -386,6 +388,59 @@ struct MemVfs
     {
         release(listing.dir);
         listing = Listing.init;
+    }
+
+    /**
+    A file's contents, copied out of the arena into the process heap (VFM6),
+    so a later write to the file leaves them unchanged. Move-only; freed
+    when destroyed.
+    */
+    struct Mapping
+    {
+        private ubyte[] data;
+
+        @disable this(this);
+
+        ~this() @trusted nothrow @nogc
+        {
+            import core.memory : pureFree;
+
+            pureFree(data.ptr);
+            data = null;
+        }
+
+        /// The mapped bytes, valid while this mapping lives.
+        const(ubyte)[] bytes() const return scope @safe pure nothrow @nogc => data;
+    }
+
+    /// Maps an open file (VFO11) by copying its contents; counted as a read.
+    IoResult!Mapping map(Handle h) @safe nothrow @nogc
+    {
+        enter(OpKind.read);
+        auto s = slotOf(h, OpKind.read);
+        if (s.hasError)
+            return ioErr!Mapping(s);
+        const slot = &slots[s.value];
+        if (slot.directory)
+            return ioErr!Mapping(ErrorKind.isADirectory, OpKind.read);
+        if (slot.access == Access.write || slot.access == Access.append)
+            return ioErr!Mapping(ErrorKind.permission, OpKind.read, 9); // EBADF
+        const n = &nodes[slot.node];
+        Mapping m;
+        if (n.dataLength == 0)
+            return ioOk(move(m));
+        const length = cast(size_t) n.dataLength;
+        m.data = () @trusted {
+            import core.memory : pureMalloc;
+
+            auto p = cast(ubyte*) pureMalloc(length);
+            return p is null ? null : p[0 .. length];
+        }();
+        if (m.data is null)
+            return ioErr!Mapping(ErrorKind.other, OpKind.read, 12, // ENOMEM
+                IoErrorStage.completion, "out of memory");
+        m.data[] = bytes[n.dataOffset .. n.dataOffset + length];
+        return ioOk(move(m));
     }
 
     /// Reads from an open file at its offset.

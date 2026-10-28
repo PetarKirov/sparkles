@@ -113,6 +113,30 @@ auto rootOf(Rights R = Rights.all)(MemVfs* v, string path = "r",
     assert(!rw.hasError && d.statAt("x").value.executable);
 }
 
+@("vfs.check.VFO11.VFM6.mapping")
+@safe unittest
+{
+    static assert(hasMap!MemVfs);
+    auto v = testVfs();
+    auto root = rootOf(v);
+    ref d = root.value;
+    d.openFile!(OpenMode.createNew)("f").value.write(cast(const(ubyte)[]) "font bytes");
+    d.openFile!(OpenMode.createNew)("empty");
+
+    auto file = d.openFile!(OpenMode.read)("f");
+    auto mapped = file.value.map();
+    assert(mapped.value.bytes == cast(const(ubyte)[]) "font bytes");
+    // The mapping outlives its file, and a later write leaves it unchanged (VFM6).
+    file.value.close();
+    d.openFile!(OpenMode.createOrTruncate)("f").value.write(cast(const(ubyte)[]) "other");
+    assert(mapped.value.bytes == cast(const(ubyte)[]) "font bytes");
+    assert(d.openFile!(OpenMode.read)("empty").value.map().value.bytes.length == 0);
+
+    // A file opened only for writing has no `map`.
+    auto w = d.openFile!(OpenMode.append)("f");
+    static assert(!__traits(compiles, w.value.map()));
+}
+
 @("vfs.check.VFO5.sharing")
 @safe unittest
 {

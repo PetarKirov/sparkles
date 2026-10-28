@@ -409,6 +409,62 @@ struct BlockingVfs
         l.raw = 0;
     }
 
+    /// A read-only view of a file (VFB7), unmapped when destroyed.
+    struct Mapping
+    {
+        private const(ubyte)[] data;
+
+        @disable this(this);
+
+        ~this() @trusted nothrow @nogc
+        {
+            import core.sys.windows.winbase : UnmapViewOfFile;
+
+            if (data.length)
+                UnmapViewOfFile(cast(void*) data.ptr);
+            data = null;
+        }
+
+        /// The mapped bytes, valid while this mapping lives.
+        const(ubyte)[] bytes() const return scope @safe pure nothrow @nogc => data;
+    }
+
+    /**
+    Maps an open file read-only (VFO11): `CreateFileMappingW` with
+    `PAGE_READONLY`, then `MapViewOfFile` with `FILE_MAP_READ`; the section
+    handle is closed at once, as the view keeps the section alive. An empty
+    file maps empty.
+    */
+    IoResult!Mapping map(Handle h) @safe nothrow @nogc
+    {
+        import core.lifetime : move;
+        import core.sys.windows.winbase : CloseHandle, CreateFileMappingW, FILE_MAP_READ,
+            GetFileSizeEx, MapViewOfFile;
+        import core.sys.windows.winnt : LARGE_INTEGER, PAGE_READONLY;
+
+        LARGE_INTEGER size;
+        if (!(() @trusted => GetFileSizeEx(cast(HANDLE) h.raw, &size))())
+            return ioErr!Mapping(win32Error(OpKind.read));
+        Mapping m;
+        if (size.QuadPart <= 0)
+            return ioOk(move(m));
+        if (cast(ulong) size.QuadPart > size_t.max)
+            return ioErr!Mapping(ErrorKind.other, OpKind.read, 0,
+                IoErrorStage.completion, "file too large to map");
+        const length = cast(size_t) size.QuadPart;
+        auto section = (() @trusted => CreateFileMappingW(cast(HANDLE) h.raw, null, PAGE_READONLY,
+            0, 0, null))();
+        if (section is null)
+            return ioErr!Mapping(win32Error(OpKind.read));
+        auto p = (() @trusted => MapViewOfFile(section, FILE_MAP_READ, 0, 0, length))();
+        const failed = p is null ? win32Error(OpKind.read) : IoError.init;
+        (() @trusted => CloseHandle(section))();
+        if (p is null)
+            return ioErr!Mapping(failed);
+        m.data = (() @trusted => (cast(const(ubyte)*) p)[0 .. length])();
+        return ioOk(move(m));
+    }
+
     /// Reads from an open file.
     IoResult!size_t read(Handle h, scope ubyte[] buffer) @safe nothrow @nogc
     {

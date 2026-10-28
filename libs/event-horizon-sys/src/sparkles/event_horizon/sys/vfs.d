@@ -337,6 +337,49 @@ public:
         listing.dir = null;
     }
 
+    /// A read-only private mapping of a file (VFB7), unmapped when destroyed.
+    struct Mapping
+    {
+        private const(ubyte)[] data;
+
+        @disable this(this);
+
+        ~this() @trusted nothrow @nogc
+        {
+            import core.sys.posix.sys.mman : munmap;
+
+            if (data.length)
+                munmap(cast(void*) data.ptr, data.length);
+            data = null;
+        }
+
+        /// The mapped bytes, valid while this mapping lives.
+        const(ubyte)[] bytes() const return scope @safe pure nothrow @nogc => data;
+    }
+
+    /// Maps an open file read-only with `mmap` (VFO11); an empty file maps empty.
+    IoResult!Mapping map(Handle h) @safe nothrow @nogc
+    {
+        import core.lifetime : move;
+        import core.sys.posix.sys.mman : MAP_FAILED, MAP_PRIVATE, mmap, PROT_READ;
+
+        stat_t st;
+        if ((() @trusted => .fstat(h.fd, &st))() < 0)
+            return ioErr!Mapping(failure(OpKind.read));
+        Mapping m;
+        if (st.st_size <= 0)
+            return ioOk(move(m));
+        if (cast(ulong) st.st_size > size_t.max)
+            return ioErr!Mapping(ErrorKind.other, OpKind.read, 27, // EFBIG
+                IoErrorStage.completion, "file too large to map");
+        const length = cast(size_t) st.st_size;
+        auto p = (() @trusted => mmap(null, length, PROT_READ, MAP_PRIVATE, h.fd, 0))();
+        if (p == MAP_FAILED)
+            return ioErr!Mapping(failure(OpKind.read));
+        m.data = (() @trusted => (cast(const(ubyte)*) p)[0 .. length])();
+        return ioOk(move(m));
+    }
+
     /// Reads from an open file.
     IoResult!size_t read(Handle h, scope ubyte[] buffer) @safe nothrow @nogc
     {

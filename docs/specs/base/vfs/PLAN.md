@@ -210,3 +210,4 @@ finds no normative text duplicating this one.
 | M3        | delivered                                                | #629         |
 | M4        | delivered                                                | #628         |
 | M5        | delivered                                                | #628         |
+| Mapping   | `VFO11`, `VFB7`, `VFM6`, delivered with font M7          | —            |

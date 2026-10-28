@@ -69,6 +69,15 @@ enum isVfs(V) = is(V.Handle) && is(V.Listing) && __traits(compiles, (
     IoResult!void cl = v.close(h);
 });
 
+/**
+Whether `V` offers mapping (VFB7): a move-only `V.Mapping`, from
+`map(handle)`, whose `bytes` are the file's contents until it is destroyed.
+*/
+enum hasMap(V) = is(V.Mapping) && __traits(compiles, (ref V v, V.Handle h) {
+    IoResult!(V.Mapping) m = v.map(h);
+    const(ubyte)[] b = m.value.bytes;
+});
+
 /// Whether `V` offers a whole-path resolver (VFB3).
 enum hasWholePathResolver(V) = __traits(compiles, (ref V v, V.Handle h,
         scope const(char)[] path, ResolvePolicy p) {
