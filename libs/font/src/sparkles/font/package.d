@@ -43,6 +43,7 @@ $(UL
     $(LI `sparkles.font.colr` — `COLR` version 0 layers, `CPAL` palettes, and layered rendering.)
     $(LI `sparkles.font.bitmap` — `CBDT`/`CBLC` and `sbix` strikes: strike choice, lookup and scaled rendering.)
     $(LI `sparkles.font.png` — the PNG decoder of bitmap strikes.)
+    $(LI `sparkles.font.box_face` — the generated box-drawing face of a cell: a TrueType font for U+2500–U+259F.)
     $(LI `sparkles.font.coverage` — Coverage tables: binary-search lookup and covered-glyph iteration.)
     $(LI `sparkles.font.gdef` — the `GDEF` header and the item variation store `MATH` and `GPOS` resolve against.)
     $(LI `sparkles.font.platform_fonts` — `listPlatformFonts`: the font files, or directories, the platform lists.)
@@ -54,6 +55,7 @@ module sparkles.font;
 
 public import sparkles.font.baseline;
 public import sparkles.font.bitmap;
+public import sparkles.font.box_face;
 public import sparkles.font.cmap;
 public import sparkles.font.carets;
 public import sparkles.font.colour;
