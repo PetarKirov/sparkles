@@ -552,7 +552,7 @@ struct KqueueBackend
     }
 
     /// Non-blocking drain: the synthesized completions plus the readiness ones.
-    uint reap(Sink)(scope Sink sink) @trusted
+    uint reap(Sink)(scope Sink sink)
     {
         uint n;
         foreach (i; 0 .. _synthCount)

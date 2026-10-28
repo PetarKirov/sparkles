@@ -63,13 +63,30 @@ struct WSABUF
 
 alias ULONG = uint;
 
+// Calls that take only handles and integers touch no D memory: `@trusted`.
+extern (Windows) @trusted nothrow @nogc
+{
+    uint GetLastError();
+    uint GetFileType(scope HANDLE handle);
+    int WSACleanup();
+    int WSAGetLastError();
+    int closesocket(SOCKET s);
+    int SetEvent(scope HANDLE event);
+    int ResetEvent(scope HANDLE event);
+    DWORD WaitForSingleObject(scope HANDLE handle, DWORD milliseconds);
+    int CloseHandle(scope HANDLE h); // @nogc-declared here (winbase's isn't marked)
+    SOCKET socket(int af, int type, int protocol);
+    int listen(SOCKET s, int backlog);
+    ushort htons(ushort hostshort);
+    uint htonl(uint hostlong);
+    ushort ntohs(ushort netshort);
+}
+
 extern (Windows) nothrow @nogc
 {
     int GetQueuedCompletionStatusEx(HANDLE port, OverlappedEntry* entries,
         uint count, uint* removed, uint timeout, int alertable);
     int CancelIoEx(HANDLE handle, OVERLAPPED* ov);
-    uint GetLastError();
-    uint GetFileType(HANDLE handle);
     int ReadFile(HANDLE, void*, uint, uint*, OVERLAPPED*);
     int WriteFile(HANDLE, const(void)*, uint, uint*, OVERLAPPED*);
     struct WSADATA
@@ -81,9 +98,6 @@ extern (Windows) nothrow @nogc
     }
 
     int WSAStartup(ushort wVersionRequested, WSADATA* lpWSAData);
-    int WSACleanup();
-    int WSAGetLastError();
-    int closesocket(SOCKET s);
 
     int WSARecv(SOCKET s, WSABUF* lpBuffers, DWORD dwBufferCount,
         DWORD* lpNumberOfBytesRecvd, DWORD* lpFlags, OVERLAPPED* lpOverlapped,
@@ -95,26 +109,17 @@ extern (Windows) nothrow @nogc
         OVERLAPPED* ov);
     HANDLE CreateEventW(void* attributes, int manualReset, int initialState,
         const(wchar)* name);
-    int SetEvent(HANDLE event);
-    int ResetEvent(HANDLE event);
-    DWORD WaitForSingleObject(HANDLE handle, DWORD milliseconds);
-    int CloseHandle(HANDLE h); // @nogc-declared here (winbase's isn't marked)
 
     // Socket setup + the async accept/connect machinery.
-    SOCKET socket(int af, int type, int protocol);
     SOCKET WSASocketW(int af, int type, int protocol, void* protocolInfo,
         uint group, DWORD dwFlags);
     int bind(SOCKET s, const void* addr, int namelen);
-    int listen(SOCKET s, int backlog);
     SOCKET accept(SOCKET s, void* addr, int* addrlen);
     int connect(SOCKET s, const void* addr, int namelen);
     int getsockname(SOCKET s, void* addr, int* namelen);
     int setsockopt(SOCKET s, int level, int optname, const void* optval, int optlen);
     int WSAIoctl(SOCKET s, DWORD code, void* inBuf, DWORD inLen, void* outBuf,
         DWORD outLen, DWORD* bytesReturned, OVERLAPPED* ov, void* completion);
-    ushort htons(ushort hostshort);
-    uint htonl(uint hostlong);
-    ushort ntohs(ushort netshort);
 
     // The AcceptEx/ConnectEx extension functions, resolved at runtime.
     alias LPFN_ACCEPTEX = int function(SOCKET listenSock, SOCKET acceptSock,
@@ -172,7 +177,7 @@ enum int WSA_IO_PENDING = 997;
 enum int SOCKET_ERROR = -1;
 enum uint ERROR_INVALID_PARAMETER = 87;
 
-extern (Windows) uint RtlNtStatusToDosError(uint status) nothrow @nogc;
+extern (Windows) uint RtlNtStatusToDosError(uint status) @trusted nothrow @nogc;
 
 /**
 The C runtime's `errno` for a Win32 or Winsock error code, as `RawCompletion`
@@ -214,7 +219,7 @@ int winErrno(uint code) @safe pure nothrow @nogc
 }
 
 /// The `errno` for a completion packet's NTSTATUS.
-int ntErrno(uint status) @trusted nothrow @nogc
+int ntErrno(uint status) @safe nothrow @nogc
     => winErrno(RtlNtStatusToDosError(status));
 
 /**
@@ -227,8 +232,6 @@ handle associates afresh, which resets its entry.
 */
 struct Associations
 {
-    import core.memory : pureFree, pureMalloc;
-
     /// Facts a file operation reads once per associated handle.
     enum ubyte known = 1, synchronous = 2, pipe = 4;
 
@@ -238,88 +241,107 @@ struct Associations
         ubyte facts;
     }
 
-    private Entry* _slots;
-    private size_t _cap;
+    private Entry[] _slots; // pureMalloc'd; the length is a power of two
     private size_t _count;
 
-    bool contains(HANDLE h) const @trusted nothrow @nogc => find(h) !is null;
+    bool contains(HANDLE h) const @safe nothrow @nogc => find(h) != none;
 
     /// The facts recorded for `h`; 0 when there are none.
-    ubyte facts(HANDLE h) const @trusted nothrow @nogc
+    ubyte facts(HANDLE h) const @safe nothrow @nogc
     {
-        auto e = find(h);
-        return e is null ? 0 : e.facts;
+        const i = find(h);
+        return i == none ? 0 : _slots[i].facts;
     }
 
-    void setFacts(HANDLE h, ubyte facts) @trusted nothrow @nogc
+    void setFacts(HANDLE h, ubyte facts) @safe nothrow @nogc
     {
-        if (auto e = cast(Entry*) find(h))
-            e.facts = facts;
+        const i = find(h);
+        if (i != none)
+            _slots[i].facts = facts;
     }
 
     /// Records a fresh association of `h`, forgetting any earlier facts;
     /// `false` when the table could not grow.
-    bool add(HANDLE h) @trusted nothrow @nogc
+    bool add(HANDLE h) @safe nothrow @nogc
     {
-        if (auto e = cast(Entry*) find(h))
+        const i = find(h);
+        if (i != none)
         {
-            e.facts = 0;
+            _slots[i].facts = 0;
             return true;
         }
-        if ((_count + 1) * 4 >= _cap * 3 && !grow())
+        if ((_count + 1) * 4 >= _slots.length * 3 && !grow())
             return false;
         insert(Entry(h, 0));
         return true;
     }
 
-    void clear() @trusted nothrow @nogc
+    void clear() @safe nothrow @nogc
     {
-        pureFree(_slots);
+        freeSlots(_slots);
         _slots = null;
-        _cap = _count = 0;
+        _count = 0;
     }
 
-    private const(Entry)* find(HANDLE h) const @trusted nothrow @nogc
+    private enum size_t none = size_t.max;
+
+    private size_t find(HANDLE h) const @safe nothrow @nogc
     {
-        if (_slots is null)
-            return null;
-        for (auto i = slotOf(h);; i = (i + 1) & (_cap - 1))
+        if (_slots.length == 0)
+            return none;
+        for (auto i = slotOf(h);; i = (i + 1) & (_slots.length - 1))
         {
             if (_slots[i].handle is null)
-                return null;
+                return none;
             if (_slots[i].handle is h)
-                return &_slots[i];
+                return i;
         }
     }
 
-    private void insert(Entry entry) @trusted nothrow @nogc
+    private void insert(Entry entry) @safe nothrow @nogc
     {
         auto i = slotOf(entry.handle);
         while (_slots[i].handle !is null)
-            i = (i + 1) & (_cap - 1);
+            i = (i + 1) & (_slots.length - 1);
         _slots[i] = entry;
         ++_count;
     }
 
-    private size_t slotOf(HANDLE h) const @trusted pure nothrow @nogc
-        => (cast(size_t) h >> 2) & (_cap - 1); // handle values are multiples of 4
+    private size_t slotOf(HANDLE h) const @safe pure nothrow @nogc
+        => (cast(size_t) h >> 2) & (_slots.length - 1); // handles are multiples of 4
 
-    private bool grow() @trusted nothrow @nogc
+    private bool grow() @safe nothrow @nogc
     {
-        const cap = _cap == 0 ? 64 : _cap * 2;
-        auto slots = cast(Entry*) pureMalloc(cap * Entry.sizeof);
+        auto slots = allocSlots(_slots.length == 0 ? 64 : _slots.length * 2);
         if (slots is null)
             return false;
-        slots[0 .. cap] = Entry.init;
-        auto old = _slots[0 .. _cap];
+        auto old = _slots;
         _slots = slots;
-        _cap = cap;
         _count = 0;
         foreach (entry; old)
             if (entry.handle !is null)
                 insert(entry);
-        pureFree(old.ptr);
+        freeSlots(old);
         return true;
+    }
+
+    private static Entry[] allocSlots(size_t length) @trusted nothrow @nogc
+    {
+        import core.memory : pureMalloc;
+
+        auto p = cast(Entry*) pureMalloc(length * Entry.sizeof);
+        if (p is null)
+            return null;
+        auto slots = p[0 .. length];
+        slots[] = Entry.init;
+        return slots;
+    }
+
+    private static void freeSlots(Entry[] slots) @trusted nothrow @nogc
+    {
+        import core.memory : pureFree;
+
+        pureFree(slots.ptr);
     }
 }
 
@@ -356,14 +378,14 @@ struct IocpBackend
     enum terminalCancelCompletions = true;
 
     /// Creates the completion port and starts winsock.
-    IoResult!void open(in BackendConfig cfg) @trusted nothrow
+    IoResult!void open(in BackendConfig cfg) @safe nothrow
     {
         WSADATA wsa;
-        if (WSAStartup(0x0202, &wsa) != 0) // request Winsock 2.2
+        if ((() @trusted => WSAStartup(0x0202, &wsa))() != 0) // request Winsock 2.2
             return ioErr!void(WSAGetLastError(), OpKind.none, IoErrorStage.setup,
                 "WSAStartup failed");
         _winsockStarted = true;
-        _port = CreateIoCompletionPort(INVALID_HANDLE_VALUE, null, 0, 0);
+        _port = (() @trusted => CreateIoCompletionPort(INVALID_HANDLE_VALUE, null, 0, 0))();
         if (_port is null)
         {
             close();
@@ -373,7 +395,7 @@ struct IocpBackend
         // Manual-reset: one signal represents any number of queued IOCP
         // completions. This is the handle a native Win32 message host folds
         // into MsgWaitForMultipleObjectsEx.
-        _hostEvent = CreateEventW(null, TRUE, FALSE, null);
+        _hostEvent = (() @trusted => CreateEventW(null, TRUE, FALSE, null))();
         if (_hostEvent is null)
         {
             close();
@@ -384,8 +406,11 @@ struct IocpBackend
         // A backend-owned op-context slab, freelist-linked.
         const cap = cfg.cqEntries != 0 ? cfg.cqEntries : 2 * cfg.sqEntries;
         _cap = cap != 0 ? cap : 256;
-        _ops = (cast(IocpOp*) pureMalloc(_cap * IocpOp.sizeof))[0 .. _cap];
-        if (_ops.ptr is null)
+        _ops = (() @trusted {
+            auto p = cast(IocpOp*) pureMalloc(_cap * IocpOp.sizeof);
+            return p is null ? null : p[0 .. _cap];
+        })();
+        if (_ops is null)
         {
             close();
             return ioErr!void(12, OpKind.none, IoErrorStage.setup,
@@ -403,8 +428,7 @@ struct IocpBackend
         const boot = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         if (boot != INVALID_SOCKET)
         {
-            loadExt(boot, WSAID_ACCEPTEX, cast(void**) &_acceptEx);
-            loadExt(boot, WSAID_CONNECTEX, cast(void**) &_connectEx);
+            loadExtensions(boot);
             closesocket(boot);
         }
 
@@ -420,20 +444,24 @@ struct IocpBackend
         return ioOk();
     }
 
-    private void loadExt(SOCKET s, GUID guid, void** target) @trusted nothrow @nogc
+    /// Each query writes exactly one function pointer into its own field.
+    private void loadExtensions(SOCKET s) @trusted nothrow @nogc
     {
         DWORD bytes;
-        cast(void) WSAIoctl(s, SIO_GET_EXTENSION_FUNCTION_POINTER,
-            &guid, GUID.sizeof, target, (void*).sizeof, &bytes, null, null);
+        GUID acceptEx = WSAID_ACCEPTEX, connectEx = WSAID_CONNECTEX;
+        cast(void) WSAIoctl(s, SIO_GET_EXTENSION_FUNCTION_POINTER, &acceptEx,
+            GUID.sizeof, &_acceptEx, (void*).sizeof, &bytes, null, null);
+        cast(void) WSAIoctl(s, SIO_GET_EXTENSION_FUNCTION_POINTER, &connectEx,
+            GUID.sizeof, &_connectEx, (void*).sizeof, &bytes, null, null);
     }
 
     /// Closes the port and winsock and forgets all runtime state, so the
     /// backend can open again. A second call does nothing.
-    void close() @trusted nothrow @nogc
+    void close() @safe nothrow @nogc
     {
-        if (_ops.ptr !is null)
+        if (_ops !is null)
         {
-            pureFree(_ops.ptr);
+            (() @trusted => pureFree(_ops.ptr))();
             _ops = null;
         }
         if (_port !is null)
@@ -476,9 +504,9 @@ struct IocpBackend
     static ushort selectedBufferId(uint) @safe pure nothrow @nogc => 0;
 
     /// Associates a socket with the completion port (call once per socket).
-    IoResult!void register(SOCKET s) @trusted nothrow
+    IoResult!void register(SOCKET s) @safe nothrow
     {
-        if (const failed = ensureAssociated(cast(HANDLE) s))
+        if (const failed = ensureAssociated(asHandle(s)))
             return ioErr!void(-failed, OpKind.none, IoErrorStage.registration,
                 "CreateIoCompletionPort(assoc) failed");
         return ioOk();
@@ -503,9 +531,9 @@ struct IocpBackend
 
     /// As `ensureAssociated`; `fresh` says whether this call made the
     /// association, so facts recorded for the value belong to another handle.
-    private int associate(HANDLE handle, out bool fresh) @trusted nothrow @nogc
+    private int associate(HANDLE handle, out bool fresh) @safe nothrow @nogc
     {
-        if (CreateIoCompletionPort(handle, _port, 0, 0) !is null)
+        if ((() @trusted => CreateIoCompletionPort(handle, _port, 0, 0))() !is null)
         {
             fresh = true;
             return _associated.add(handle) ? 0 : -ENOMEM;
@@ -524,7 +552,7 @@ struct IocpBackend
         => length > int.max ? int.max : cast(uint) length;
 
     /// A NOP: post a synthetic completion to the port.
-    bool trySubmit(in OpNop, OpToken token, ref OpSlot) @trusted nothrow @nogc
+    bool trySubmit(in OpNop, OpToken token, ref OpSlot) @safe nothrow @nogc
     {
         if (_readyCount == _ready.length)
             return false;
@@ -532,7 +560,7 @@ struct IocpBackend
         if (op is null)
             return false;
         op.token = token.raw;
-        if (!PostQueuedCompletionStatus(_port, 0, 0, &op.ov))
+        if (!(() @trusted => PostQueuedCompletionStatus(_port, 0, 0, &op.ov))())
             return reject(op, -winErrno(GetLastError()));
         SetEvent(_hostEvent);
         return true;
@@ -545,20 +573,20 @@ struct IocpBackend
     by contract. The context lives until `close()` frees the slab, which
     the loop does only after retiring every `Waker` copy.
     */
-    WakeTarget nativeWaker(OpToken token) @trusted nothrow @nogc
+    WakeTarget nativeWaker(OpToken token) @safe nothrow @nogc
     {
         auto op = acquire();
         if (op is null)
             return WakeTarget.init;
         op.token = token.raw;
         op.kind = IoKind.wake;
-        WakeTarget w = {port: cast(void*) _port, ov: cast(void*) &op.ov,
-            event: cast(void*) _hostEvent};
+        WakeTarget w = {port: _port, ov: (() @trusted => cast(void*) &op.ov)(),
+            event: _hostEvent};
         return w;
     }
 
     /// A socket receive into the pinned buffer's capacity (`WSARecv`).
-    bool trySubmit(in OpRecv o, OpToken token, ref OpSlot slot) @trusted nothrow @nogc
+    bool trySubmit(in OpRecv o, OpToken token, ref OpSlot slot) @safe nothrow @nogc
     {
         if (_readyCount == _ready.length)
             return false;
@@ -567,12 +595,16 @@ struct IocpBackend
             return false;
         op.token = token.raw;
         auto space = slot.pinned.space();
-        op.handle = cast(HANDLE) cast(SOCKET) o.fd;
+        op.handle = asHandle(cast(SOCKET) o.fd);
         if (const failed = ensureAssociated(op.handle))
             return reject(op, failed);
-        op.buf = WSABUF(transferLength(space.length), cast(char*) space.ptr);
         DWORD flags, recvd;
-        const rc = WSARecv(cast(SOCKET) o.fd, &op.buf, 1, &recvd, &flags, &op.ov, null);
+        // The pinned buffer and the OVERLAPPED stay live until the terminal
+        // packet, even after CancelIoEx.
+        const rc = (() @trusted {
+            op.buf = WSABUF(transferLength(space.length), cast(char*) space.ptr);
+            return WSARecv(cast(SOCKET) o.fd, &op.buf, 1, &recvd, &flags, &op.ov, null);
+        })();
         if (rc == SOCKET_ERROR && WSAGetLastError() != WSA_IO_PENDING)
             return reject(op, -winErrno(WSAGetLastError()));
         repairHostSignalAfterIssue();
@@ -580,7 +612,7 @@ struct IocpBackend
     }
 
     /// A socket send of the pinned buffer's valid bytes (`WSASend`).
-    bool trySubmit(in OpSend o, OpToken token, ref OpSlot slot) @trusted nothrow @nogc
+    bool trySubmit(in OpSend o, OpToken token, ref OpSlot slot) @safe nothrow @nogc
     {
         if (_readyCount == _ready.length)
             return false;
@@ -589,12 +621,14 @@ struct IocpBackend
             return false;
         op.token = token.raw;
         auto bytes = slot.pinned[];
-        op.handle = cast(HANDLE) cast(SOCKET) o.fd;
+        op.handle = asHandle(cast(SOCKET) o.fd);
         if (const failed = ensureAssociated(op.handle))
             return reject(op, failed);
-        op.buf = WSABUF(transferLength(bytes.length), cast(char*) bytes.ptr);
         DWORD sent;
-        const rc = WSASend(cast(SOCKET) o.fd, &op.buf, 1, &sent, 0, &op.ov, null);
+        const rc = (() @trusted {
+            op.buf = WSABUF(transferLength(bytes.length), cast(char*) bytes.ptr);
+            return WSASend(cast(SOCKET) o.fd, &op.buf, 1, &sent, 0, &op.ov, null);
+        })();
         if (rc == SOCKET_ERROR && WSAGetLastError() != WSA_IO_PENDING)
             return reject(op, -winErrno(WSAGetLastError()));
         repairHostSignalAfterIssue();
@@ -625,7 +659,7 @@ struct IocpBackend
         int facts = Associations.known;
         if (mode & synchronousModes)
             facts |= Associations.synchronous;
-        if ((() @trusted => GetFileType(handle))() == 3) // FILE_TYPE_PIPE
+        if (GetFileType(handle) == 3) // FILE_TYPE_PIPE
             facts |= Associations.pipe;
         return facts;
     }
@@ -688,7 +722,7 @@ struct IocpBackend
         }
         if (!issued)
         {
-            const code = (() @trusted => GetLastError())();
+            const code = GetLastError();
             if (code != 997) // ERROR_IO_PENDING: the port owns completion
             {
                 static if (reading)
@@ -704,7 +738,7 @@ struct IocpBackend
     /// A relative timer, driven off the completion-port wait timeout (no
     /// threadpool): the deadline is tracked and its completion synthesized
     /// when it expires. `res` is 0 on expiry.
-    bool trySubmit(in OpTimeout o, OpToken token, ref OpSlot) @trusted nothrow @nogc
+    bool trySubmit(in OpTimeout o, OpToken token, ref OpSlot) @safe nothrow @nogc
     {
         if (_timerCount >= _timers.length)
             return false;
@@ -724,7 +758,7 @@ struct IocpBackend
 
     /// Async accept via `AcceptEx`: pre-create the accept socket, associate it
     /// with the port, and issue AcceptEx. On completion `res` is the new fd.
-    bool trySubmit(in OpAccept o, OpToken token, ref OpSlot) @trusted nothrow @nogc
+    bool trySubmit(in OpAccept o, OpToken token, ref OpSlot) @safe nothrow @nogc
     {
         if (_readyCount == _ready.length)
             return false;
@@ -735,13 +769,13 @@ struct IocpBackend
         if (_acceptEx is null)
             return reject(op, -EOPNOTSUPP);
         const listenSock = cast(SOCKET) o.listenFd;
-        if (const failed = ensureAssociated(cast(HANDLE) listenSock))
+        if (const failed = ensureAssociated(asHandle(listenSock)))
             return reject(op, failed);
-        const acceptSock = WSASocketW(AF_INET, SOCK_STREAM, IPPROTO_TCP, null, 0,
-            WSA_FLAG_OVERLAPPED);
+        const acceptSock = (() @trusted => WSASocketW(AF_INET, SOCK_STREAM,
+            IPPROTO_TCP, null, 0, WSA_FLAG_OVERLAPPED))();
         if (acceptSock == INVALID_SOCKET)
             return reject(op, -winErrno(WSAGetLastError()));
-        if (const failed = ensureAssociated(cast(HANDLE) acceptSock))
+        if (const failed = ensureAssociated(asHandle(acceptSock)))
         {
             closesocket(acceptSock);
             return reject(op, failed);
@@ -749,11 +783,11 @@ struct IocpBackend
         op.kind = IoKind.accept;
         op.sock = acceptSock;
         op.listenSock = listenSock;
-        op.handle = cast(HANDLE) listenSock;
+        op.handle = asHandle(listenSock);
         DWORD received;
         // localAddrLength/remoteAddrLength = sizeof(sockaddr_in)+16 = 32.
-        const rc = _acceptEx(listenSock, acceptSock, op.addrBuf.ptr, 0, 32, 32,
-            &received, &op.ov);
+        const rc = (() @trusted => _acceptEx(listenSock, acceptSock,
+            op.addrBuf.ptr, 0, 32, 32, &received, &op.ov))();
         if (rc == 0 && WSAGetLastError() != WSA_IO_PENDING)
         {
             const error = WSAGetLastError();
@@ -766,7 +800,7 @@ struct IocpBackend
 
     /// Async connect via `ConnectEx`: the socket must be bound first. On
     /// completion `res` is 0 / -errno.
-    bool trySubmit(in OpConnect o, OpToken token, ref OpSlot) @trusted nothrow @nogc
+    bool trySubmit(in OpConnect o, OpToken token, ref OpSlot) @safe nothrow @nogc
     {
         if (_readyCount == _ready.length)
             return false;
@@ -781,14 +815,15 @@ struct IocpBackend
         sockaddr_in local;
         local.sin_family = AF_INET;
         local.sin_addr = htonl(INADDR_ANY);
-        cast(void) bind(s, &local, sockaddr_in.sizeof);
-        if (const failed = ensureAssociated(cast(HANDLE) s))
+        cast(void) (() @trusted => bind(s, &local, sockaddr_in.sizeof))();
+        if (const failed = ensureAssociated(asHandle(s)))
             return reject(op, failed);
         op.kind = IoKind.connect;
         op.sock = s;
-        op.handle = cast(HANDLE) s;
+        op.handle = asHandle(s);
         DWORD sent;
-        const rc = _connectEx(s, o.addr.storage.ptr, o.addr.len, null, 0, &sent, &op.ov);
+        const rc = (() @trusted => _connectEx(s, o.addr.storage.ptr, o.addr.len,
+            null, 0, &sent, &op.ov))();
         if (rc == 0 && WSAGetLastError() != WSA_IO_PENDING)
             return reject(op, -winErrno(WSAGetLastError()));
         repairHostSignalAfterIssue();
@@ -802,7 +837,7 @@ struct IocpBackend
                 "GetQueuedCompletionStatusEx failed");
 
     /** Event that mirrors IOCP completions for a foreign native host wait. */
-    void* nativeHostWaitHandle() @trusted pure nothrow @nogc
+    void* nativeHostWaitHandle() @safe pure nothrow @nogc
         => cast(void*) _hostEvent;
 
     /**
@@ -810,7 +845,7 @@ struct IocpBackend
 
     `uint.max` means infinite, matching the Win32 wait APIs.
     */
-    uint nativeHostWaitTimeout(uint requestedMs) @trusted nothrow @nogc
+    uint nativeHostWaitTimeout(uint requestedMs) @safe nothrow @nogc
     {
         if (_readyCount != 0)
             return 0; // queued completions are already due
@@ -830,7 +865,7 @@ struct IocpBackend
     drain. A completion racing after the reset sets it again; one queued
     before the reset is found by that drain. This is the lost-wake repair.
     */
-    void prepareNativeHostDrain() @trusted nothrow @nogc
+    void prepareNativeHostDrain() @safe nothrow @nogc
     {
         ResetEvent(_hostEvent);
     }
@@ -840,7 +875,7 @@ struct IocpBackend
     for `reap`. Already-stashed results are never overwritten by a wait.
     */
     IoResult!uint submitAndWait(uint want, scope const KernelTimespec* deadline)
-        @trusted nothrow
+        @safe nothrow
     {
         if (want == 0)
             return ioOk(0u);
@@ -881,7 +916,7 @@ struct IocpBackend
 
     /// Non-blocking drain: the stashed completion, expired timers, plus any
     /// others already queued on the port.
-    uint reap(Sink)(scope Sink sink) @trusted
+    uint reap(Sink)(scope Sink sink)
     {
         uint n;
         expireTimers();
@@ -906,7 +941,7 @@ struct IocpBackend
 
     /// Acknowledges cancellation separately from the target's terminal packet.
     /// Neither its OVERLAPPED nor its pinned storage is released by CancelIoEx.
-    bool trySubmitCancel(OpToken cancelSlot, OpToken target) @trusted nothrow @nogc
+    bool trySubmitCancel(OpToken cancelSlot, OpToken target) @safe nothrow @nogc
     {
         if (_readyCount + 2 > _ready.length)
             return false;
@@ -927,7 +962,7 @@ struct IocpBackend
                 continue;
             if (op.handle !is null)
             {
-                if (CancelIoEx(op.handle, &op.ov))
+                if ((() @trusted => CancelIoEx(op.handle, &op.ov))())
                     res = 0;
                 else
                     res = GetLastError() == 1168 ? -ENOENT : -winErrno(GetLastError());
@@ -949,7 +984,7 @@ private:
     restoring the level signal. A completion racing after this zero-time
     probe signals the event itself.
     */
-    void repairHostSignalAfterIssue() @trusted nothrow @nogc
+    void repairHostSignalAfterIssue() @safe nothrow @nogc
     {
         if (_readyCount != 0)
         {
@@ -962,7 +997,7 @@ private:
     }
 
     /// A bounded ring also used for software timers and cancel acknowledgments.
-    private void enqueue(RawCompletion completion) @trusted nothrow @nogc
+    private void enqueue(RawCompletion completion) @safe nothrow @nogc
     {
         assert(_readyCount < _ready.length);
         _ready[(_readyHead + _readyCount) % _ready.length] = completion;
@@ -970,7 +1005,7 @@ private:
     }
 
     /// Kernel rejection is a terminal result, never submission backpressure.
-    private bool reject(IocpOp* op, int res) @trusted nothrow @nogc
+    private bool reject(IocpOp* op, int res) @safe nothrow @nogc
     {
         enqueue(RawCompletion(op.token, res, 0));
         release(op);
@@ -978,14 +1013,15 @@ private:
         return true;
     }
 
-    private uint dequeue(DWORD timeout) @trusted nothrow @nogc
+    private uint dequeue(DWORD timeout) @safe nothrow @nogc
     {
         OverlappedEntry[64] entries;
         const room = cast(uint)(_ready.length - _readyCount);
         if (room == 0)
             return 0;
         uint removed;
-        if (!GetQueuedCompletionStatusEx(_port, entries.ptr, room, &removed, timeout, FALSE))
+        if (!(() @trusted => GetQueuedCompletionStatusEx(_port, entries.ptr, room,
+                &removed, timeout, FALSE))())
         {
             const error = GetLastError();
             if (error != 258) // WAIT_TIMEOUT is an ordinary empty dequeue
@@ -998,7 +1034,7 @@ private:
     }
 
     /// Moves any now-due timers into the synthesized-completion buffer.
-    void expireTimers() @trusted nothrow @nogc
+    void expireTimers() @safe nothrow @nogc
     {
         const now = MonoTime.currTime;
         uint w;
@@ -1013,9 +1049,9 @@ private:
     }
 
     RawCompletion ovToCompletion(OVERLAPPED* ov, DWORD bytes, uint status)
-        @trusted nothrow @nogc
+        @safe nothrow @nogc
     {
-        auto op = cast(IocpOp*) ov; // ov is the first field of IocpOp
+        auto op = opOf(ov);
         const token = op.token;
         const ok = cast(int) status >= 0;
         const failure = ok ? 0 : -ntErrno(status);
@@ -1030,8 +1066,8 @@ private:
                 if (ok && op.sock <= int.max)
                 {
                     // Inherit the listener's properties; res is the new fd.
-                    setsockopt(op.sock, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT,
-                        &op.listenSock, SOCKET.sizeof);
+                    (() @trusted => setsockopt(op.sock, SOL_SOCKET,
+                        SO_UPDATE_ACCEPT_CONTEXT, &op.listenSock, SOCKET.sizeof))();
                     res = cast(int) op.sock;
                 }
                 else
@@ -1045,7 +1081,8 @@ private:
             case IoKind.connect:
                 if (ok)
                 {
-                    setsockopt(op.sock, SOL_SOCKET, SO_UPDATE_CONNECT_CONTEXT, null, 0);
+                    (() @trusted => setsockopt(op.sock, SOL_SOCKET,
+                        SO_UPDATE_CONNECT_CONTEXT, null, 0))();
                     res = 0;
                 }
                 else
@@ -1063,11 +1100,13 @@ private:
         return RawCompletion(token, res, 0);
     }
 
-    IocpOp* acquire() @trusted nothrow @nogc
+    IocpOp* acquire() @safe nothrow @nogc
     {
         if (_freeHead == uint.max)
             return null;
-        auto op = &_ops[_freeHead];
+        // The slab outlives every op: `close` frees it only after the loop
+        // has drained.
+        auto op = (() @trusted => &_ops[_freeHead])();
         _freeHead = op.nextFree;
         *op = IocpOp.init;
         op.ov.hEvent = _hostEvent;
@@ -1075,13 +1114,22 @@ private:
         return op;
     }
 
-    void release(IocpOp* op) @trusted nothrow @nogc
+    void release(IocpOp* op) @safe nothrow @nogc
     {
-        const idx = cast(uint)(op - _ops.ptr);
+        const idx = (() @trusted => cast(uint)(op - _ops.ptr))();
         op.inUse = false;
         op.nextFree = _freeHead;
         _freeHead = idx;
     }
+
+    /// A socket's value as the opaque `HANDLE` the port APIs take.
+    private static HANDLE asHandle(SOCKET s) @trusted pure nothrow @nogc
+        => cast(HANDLE) s;
+
+    /// The op a dequeued OVERLAPPED belongs to: the port returns only the
+    /// OVERLAPPEDs this backend issued, each the first field of its op.
+    private static IocpOp* opOf(OVERLAPPED* ov) @trusted pure nothrow @nogc
+        => cast(IocpOp*) ov;
 
     import core.memory : pureFree, pureMalloc;
 
