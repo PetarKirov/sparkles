@@ -29,6 +29,7 @@ import sparkles.ui.components.grid_backdrop : GridConfig;
 import sparkles.input.events : KeyEvent;
 import sparkles.ui.editor.field : EditorField, FieldResult;
 import sparkles.ui.editor.keys : windowTarget;
+import sparkles.text_buffer.text : Text;
 import sparkles.ui.geometry : Point, Rect;
 
 /// The board's caps. A few thousand nodes is past what a diagram stays
@@ -153,6 +154,18 @@ struct World
     ubyte editLen;
     /// The draft's caret, as a byte offset into `editBuf`.
     ubyte editCaret;
+    /**
+    The clipboard work the draft's editor asked for (`EDY5`), until the app
+    hands it to its host: text to copy, and a read's request the host
+    answers with a paste.
+    */
+    Text editCopy;
+    /// ditto
+    uint editRead;
+    /// What the host can do with the clipboard, declared to each draft.
+    bool clipboardWrite;
+    /// ditto
+    bool clipboardRead;
     /**
     Everything the settings pane edits (`SET4`): the backdrop configuration
     (`GRD7`) and the board preferences that are also runtime toggles.
@@ -583,16 +596,36 @@ struct World
 
 /**
 One key for the label draft's editor (`IXN5`, `EDU4`): Backspace, words,
-kills, yanks and motion. Input, not the frame, so it may allocate; the
-draft the frame draws is mirrored into `World.editBuf`.
+kills, yanks, motion, copy and paste. Input, not the frame, so it may
+allocate; the draft the frame draws is mirrored into `World.editBuf`, and
+clipboard work waits in `editCopy` and `editRead` for the app.
 */
 FieldResult editKey(ref World w, in KeyEvent k) @safe pure nothrow @nogc
 {
     if (!w.isEditing)
         return FieldResult.init;
+    w.editField.context.clipboardWrite = w.clipboardWrite;
+    w.editField.context.clipboardRead = w.clipboardRead;
     auto result = w.editField.key(k);
+    if (result.clipboardWrite.length)
+        w.editCopy = result.clipboardWrite;
+    if (result.clipboardRequest)
+        w.editRead = result.clipboardRequest;
     w.editMirror();
     return result;
+}
+
+/// A whole paste into the label draft (`EDI4`), or the answer to the draft's
+/// clipboard read when `request` is not 0 (`EDY5`).
+void editPaste(ref World w, scope const(char)[] text, uint request) @safe pure nothrow @nogc
+{
+    if (!w.isEditing)
+        return;
+    if (request)
+        cast(void) w.editField.pasteAnswer(request, text);
+    else
+        cast(void) w.editField.insert(text, true);
+    w.editMirror();
 }
 
 /// Every live entity's rectangle, into `sink` — what `contentBounds` and the
