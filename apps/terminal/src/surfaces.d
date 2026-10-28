@@ -99,6 +99,17 @@ interface Pasteable
 }
 
 /**
+A surface whose text field can have the keyboard: a touch host shows the
+soft keyboard while `editing` is true of the top surface and hides it when
+it turns false (`EDI9`).
+*/
+interface TextInputSurface
+{
+    /// A field on this surface has the keyboard.
+    bool editing() const @safe pure nothrow @nogc;
+}
+
+/**
 A surface about something other than the cursor line — a link, a selection —
 says where it is, in pixels; an anchored card goes above or below that
 instead (`TCF10`). Optional: a surface that is not one anchors at the cursor.
@@ -303,6 +314,15 @@ struct Surfaces
         const used = target.paste(text);
         changed |= used;
         return used;
+    }
+
+    /// Whether the top surface has a field with the keyboard (`EDI9`).
+    bool editing() const @system
+    {
+        if (stack.length == 0)
+            return false;
+        auto top = cast(const TextInputSurface) stack[$ - 1];
+        return top !is null && top.editing;
     }
 
     /**

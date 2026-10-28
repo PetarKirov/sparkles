@@ -33,7 +33,7 @@ import sparkles.ui.wrap : TextWrap;
 
 import chrome : button, cachedChromeLayout, chromeLayout, squareCols;
 import settings : ButtonLabels;
-import surfaces : Pasteable, Placement, Scrollable, Surface, SurfaceContext;
+import surfaces : Pasteable, Placement, Scrollable, Surface, SurfaceContext, TextInputSurface;
 
 /// What a page may ask of the application. Every member may be null: the
 /// page then leaves the action out.
@@ -160,7 +160,7 @@ The base of every page: header, scrolling, search editing. A page builds its
 body in `buildPage`, answers its own hits in `onHit` and its own keys in
 `onKey`.
 */
-abstract class Page : Surface, Scrollable, Pasteable
+abstract class Page : Surface, Scrollable, Pasteable, TextInputSurface
 {
     protected PageServices services;
     /// The body's scroll: its position, motion and bar ($(LREF finishPage)).
@@ -314,6 +314,9 @@ abstract class Page : Surface, Scrollable, Pasteable
         }
         return r.handled;
     }
+
+    /// The search field has the keyboard (`EDI9`).
+    final bool editing() const @safe pure nothrow @nogc => searching;
 
     /// A paste while the field has the keyboard (`EDI4`); true when used.
     final bool paste(scope const(char)[] text) @safe

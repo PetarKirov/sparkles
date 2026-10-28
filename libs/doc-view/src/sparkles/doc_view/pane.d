@@ -133,6 +133,10 @@ struct DocViewPane
     private SysTime mtime;
     private MonoTime lastPoll;
     private bool searching;
+
+    /// The search line has the keyboard (`EDI9`).
+    bool editing() const @safe pure nothrow @nogc => searching;
+
     /// The search line's editor (`EDU4`), and its text as of the last edit.
     private EditorField queryField;
     /// Where the search line copies to and pastes from (`EDY5`); unset, it
