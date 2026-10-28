@@ -23,6 +23,7 @@ import std.sumtype : SumType;
 import sparkles.base.buffer : InlineBuffer;
 import sparkles.base.meta : isVersion;
 import sparkles.base.pool.handle : Handle;
+import sparkles.base.pool.text_pool : TextPool;
 import sparkles.math : ScreenPosition, ScreenSize;
 public import sparkles.metadata : Aliases, AnyFormat, Label, WireName, WireNameAttr;
 
@@ -33,8 +34,8 @@ struct InputTextTag
 
 /**
 Names text in the host's input text pool (`INP24`, `INP25`): a pasted
-answer to a clipboard read, an editor command's text, and later an input
-method's preedit. An id keeps `Event` and the editor's command pointer-free
+answer to a clipboard read, an editor command's text, and an input
+method's preedit (`CompositionEvent`). An id keeps `Event` and the editor's command pointer-free
 and 64 bytes, as `PasteEvent` does with its inline chunk. It resolves until
 the host's next poll; a consumer that keeps the text copies it.
 `TextId.init` names no text.
@@ -970,6 +971,56 @@ void pasteChunks(Sink)(scope const(char)[] text, scope Sink sink, uint request =
     while (at < text.length);
 }
 
+/// How an input method marks a run of its preedit (`INP24`), as
+/// `sparkles:wsi` names the styles.
+enum CompositionStyle : ubyte
+{
+    none,
+    underline,
+    selected,
+    converted,
+}
+
+/// One styled run of a preedit, in UTF-8 bytes from the preedit's start.
+struct CompositionRun
+{
+    ushort start;
+    ushort length;
+    CompositionStyle style;
+}
+
+/// The styled runs one $(LREF CompositionEvent) carries at most.
+enum size_t maxCompositionRuns = 4;
+
+/**
+An input method's composition changed (`INP24`): the preedit, its cursor, and
+up to $(LREF maxCompositionRuns) styled runs, offsets in UTF-8 bytes into the
+preedit.
+
+The preedit is named by a `TextId` into the host's $(LREF InputTextPool), so
+the event stays pointer-free and within 64 bytes, a Regular value like every
+other (`INP4`). The id resolves until the host's next poll; a consumer that
+keeps the text copies it. A preedit of `TextId.init` ends the composition.
+The committed text arrives afterwards as typed text.
+*/
+struct CompositionEvent
+{
+    TextId preedit;
+    ushort cursor;
+    CompositionRun[maxCompositionRuns] runs;
+    ubyte runCount;
+
+    /// This event ends the composition.
+    bool ends() const @safe pure nothrow @nogc => !preedit.valid;
+}
+
+/**
+The pool a host keeps input text in for the events it delivers (`INP24`):
+up to 16 texts and 16 KiB between two polls, which a host clears as it
+starts the next.
+*/
+alias InputTextPool = TextPool!(InputTextTag, 16, 16 * 1024);
+
 /**
 The surface's colour scheme changed (`INP22`): the terminal — or the OS
 behind a window — switched between light and dark, and an application that
@@ -1038,7 +1089,7 @@ struct EndOfInput
 /// `event.match!((in KeyEvent k) => …, …)`. `Event.init` is `NoEvent`.
 alias Event = SumType!(
     NoEvent, KeyEvent, PointerEvent, WheelEvent, FocusEvent, ResizeEvent,
-    GestureEvent, EndOfInput, PasteEvent, ColorSchemeEvent);
+    GestureEvent, EndOfInput, PasteEvent, ColorSchemeEvent, CompositionEvent);
 
 /// A named-key event.
 Event keyEvent(Key k, Mods m = Mods(), KeyAction a = KeyAction.press) pure nothrow @nogc
@@ -1356,4 +1407,25 @@ unittest
     chunks = null;
     pasteChunks("typed", (Event e) { e.match!((PasteEvent p) { chunks ~= p; }, (_) {}); });
     assert(chunks[0].request == 0);
+}
+
+@("input.events.compositionIsRegular")
+@safe pure nothrow
+unittest
+{
+    // `INP24`: a preedit is an id into the host's pool; the event stays a
+    // pointer-free value in one cache line.
+    static assert(Event.sizeof <= 64);
+    auto pool = new InputTextPool;
+    CompositionEvent update;
+    update.preedit = pool.intern("にほん").value;
+    update.cursor = 9;
+    update.runs[0] = CompositionRun(0, 9, CompositionStyle.underline);
+    update.runCount = 1;
+    const a = Event(update), b = Event(update);
+    assert(a == b && !update.ends);
+    assert(CompositionEvent.init.ends, "an empty preedit ends the composition");
+    bool seen;
+    pool.withText(update.preedit, (scope const(char)[] s) { seen = s == "にほん"; });
+    assert(seen);
 }
