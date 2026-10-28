@@ -29,9 +29,11 @@ configuration "unittest" {
     libs "freetype2"
     dependency "sparkles:base" path="../.."
 
-    // The differential suite exists only for tests.
+    // The differential suite exists only for tests. It reuses sparkles:font's
+    // fixture byte builder: that module alone, none of font's tests.
     sourcePaths "src" "test"
-    importPaths "src" "test"
+    importPaths "src" "test" "../font/test"
+    sourceFiles "../font/test/sparkles/font/fixtures.d"
 
     dflags "-checkaction=context" "-allinst"
 }

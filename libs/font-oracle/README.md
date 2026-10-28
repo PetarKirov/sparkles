@@ -9,6 +9,19 @@ HarfBuzz is declared by ImportC (`src/sparkles/font_oracle/harfbuzz_c.c`), set
 up as the [ImportC guideline](../../docs/guidelines/importc-c-libraries.md)
 describes.
 
+The correction registry
+([`testing.md` § Compatibility quirks](../../docs/specs/font/testing.md#compatibility-quirks-ftd8-ftd12))
+is checked on fixtures rebuilt from the registry's own lists, which
+`test/sparkles/font/oracle_registry.d` forwards out of their `package` module,
+by `sparkles:font`'s fixture builder (`libs/font/test/sparkles/font/fixtures.d`,
+compiled in alone): Cambria Math's minimum heights against
+`hb_ot_math_get_constant`, on HarfBuzz's `MathTestFontPretendToBeCambria.ttf`
+(a pinned corpus face, so its absence fails) and on near misses; every `GDEF`
+blocklist triple and three near misses each against
+`hb_ot_layout_get_glyph_class` and `hb_ot_layout_get_ligature_carets`; the
+legacy Arabic pages against `hb_font_get_nominal_glyph`; and the tricky faces,
+by name and by `cvt `/`fpgm`/`prep`, against FreeType 2.14.3's `FT_IS_TRICKY`.
+
 Other inputs, all exported by the dev shell:
 
 - `$SPARKLES_FONT_TEST_CORPUS`: faces tested against but not shipped
@@ -35,7 +48,9 @@ One input is opt-in: `$SPARKLES_FONT_UNFREE_CORPUS`, Microsoft's core Arial
 and Times New Roman, which hold `JSTF` tables too. Their licence forbids
 redistributing them, so neither the dev shell nor CI's cache builds them
 (`nix/packages/font-unfree-corpus.nix`), and
-`oracle.jstf.unfreeAgreesWithFontTools` skips without them:
+`oracle.jstf.unfreeAgreesWithFontTools` and
+`oracle.corrections.gdefBlocklistUnfree` (their glyph classes against
+HarfBuzz's) skip without them:
 
 ```bash
 SPARKLES_FONT_UNFREE_CORPUS=$(nix build --no-link --print-out-paths \
