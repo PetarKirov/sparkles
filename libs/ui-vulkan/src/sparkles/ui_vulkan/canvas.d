@@ -206,6 +206,9 @@ struct VulkanCanvas(B)
     // A hinting change asked for mid-frame: the atlas starts over at the
     // next frame, not under the quads this one already recorded.
     private bool atlasStale_;
+    // The frame's origin in the target: where pixel coordinates, the
+    // loupe's among them, start.
+    private int originX_, originY_;
     private CanvasTarget target_;
     private VkCommandBuffer commands_;
     private uint slot_;
@@ -250,12 +253,28 @@ struct VulkanCanvas(B)
             facts_.spirv16 ? vertex13 : vertex11, facts_.spirv16 ? fragment13 : fragment11);
         if (made.hasError)
             return made;
-        made = FrameArena!B.create(arena_, *memory_, config_.frameSlots, config_.frameArenaBytes);
+        enum usage = VkBufferUsageFlagBits.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT
+            | VkBufferUsageFlagBits.VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+        // What a buffer over the arena's ranges needs of their memory — the
+        // types it can live in, its alignment, its rounded size — asked of
+        // one such buffer before any memory is chosen: Adreno's refuse the
+        // host-visible memory a desktop driver accepts (`UVK28`).
+        VkMemoryRequirements needs;
+        {
+            auto info = vkInfo(VkBufferCreateInfo(size: config_.frameArenaBytes, usage: usage,
+                sharingMode: VkSharingMode.VK_SHARING_MODE_EXCLUSIVE));
+            VkBuffer probe;
+            auto r = device_.createBuffer(device_.device, &info, null, &probe);
+            if (r < 0)
+                return err!void(r);
+            device_.getBufferMemoryRequirements(device_.device, probe, &needs);
+            device_.destroyBuffer(device_.device, probe, null);
+        }
+        made = FrameArena!B.create(arena_, *memory_, config_.frameSlots, needs.size,
+            typeBits: needs.memoryTypeBits, alignment: needs.alignment);
         if (made.hasError)
             return made;
-        made = FrameBuffers!B.create(buffers_, *device_, arena_, config_.frameSlots,
-            VkBufferUsageFlagBits.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT
-            | VkBufferUsageFlagBits.VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+        made = FrameBuffers!B.create(buffers_, *device_, arena_, config_.frameSlots, usage);
         if (made.hasError)
             return made;
         uploads_ = Uploads!B(buffers_, *memory_);
@@ -282,6 +301,8 @@ struct VulkanCanvas(B)
         commands_ = commands;
         slot_ = slot;
         ground_ = ground;
+        originX_ = metrics.originX;
+        originY_ = metrics.originY;
 
         // The host reuses a slot only after its fence has signalled.
         inFlight_[][slot] = 0;
@@ -794,13 +815,16 @@ struct VulkanCanvas(B)
                 return;
         const w = int(target_.extent.width), h = int(target_.extent.height);
         static int clampTo(int v, int hi) => v < 0 ? 0 : v > hi ? hi : v;
-        const sx0 = clampTo(loupe_.sourceX, w), sy0 = clampTo(loupe_.sourceY, h);
-        const sx1 = clampTo(loupe_.sourceX + loupe_.sourceWidth, w);
-        const sy1 = clampTo(loupe_.sourceY + loupe_.sourceHeight, h);
-        const dx0 = clampTo(loupe_.x, w), dy0 = clampTo(loupe_.y, h);
+        // From the frame's origin, as every pixel coordinate is.
+        const sx = loupe_.sourceX + originX_, sy = loupe_.sourceY + originY_;
+        const lx = loupe_.x + originX_, ly = loupe_.y + originY_;
+        const sx0 = clampTo(sx, w), sy0 = clampTo(sy, h);
+        const sx1 = clampTo(sx + loupe_.sourceWidth, w);
+        const sy1 = clampTo(sy + loupe_.sourceHeight, h);
+        const dx0 = clampTo(lx, w), dy0 = clampTo(ly, h);
         // Whole source pixels only, so every block is `scale` square.
-        const cols = (clampTo(loupe_.x + (sx1 - sx0) * loupe_.scale, w) - dx0) / loupe_.scale;
-        const rows = (clampTo(loupe_.y + (sy1 - sy0) * loupe_.scale, h) - dy0) / loupe_.scale;
+        const cols = (clampTo(lx + (sx1 - sx0) * loupe_.scale, w) - dx0) / loupe_.scale;
+        const rows = (clampTo(ly + (sy1 - sy0) * loupe_.scale, h) - dy0) / loupe_.scale;
         const dx1 = dx0 + cols * loupe_.scale, dy1 = dy0 + rows * loupe_.scale;
         const overlaps = sx0 < dx1 && dx0 < sx0 + cols && sy0 < dy1 && dy0 < sy0 + rows;
         if (cols <= 0 || rows <= 0 || overlaps)

@@ -41,7 +41,8 @@ struct TextRendering
 /**
 A loupe: the target's pixels in `source` drawn `scale` times larger with
 their top-left at (`x`, `y`), after everything else — each pixel a
-`scale` × `scale` block, exactly as it was composited.
+`scale` × `scale` block, exactly as it was composited. Both are in pixels
+from the frame's origin, as a pixel fill's are.
 */
 struct Loupe
 {
