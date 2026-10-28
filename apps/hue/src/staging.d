@@ -300,3 +300,19 @@ version (unittest)
     const r = runGit(["show", ":f.txt"], dir);
     assert(r.output == after);
 }
+
+/**
+`CFV4`, optional staging: marks a resolved conflict file resolved in the
+index with `git add`, once it has been saved. Returns what to tell the
+user.
+*/
+string stageResolvedFile(string path, bool saved, string workDir) @safe
+{
+    import sparkles.build_primitives.git_env : runGit;
+    import std.string : strip;
+
+    if (!saved)
+        return "save the resolved file first";
+    const added = runGit(["add", "--", path], workDir);
+    return added.status == 0 ? "staged " ~ path : "git add failed: " ~ added.output.strip;
+}

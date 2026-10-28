@@ -34,9 +34,15 @@ import forge : ReviewDraft;
 import review_store : applySuggestionAtCursor, persistFolds, postComment, refreshLocalThreads,
     resolveCommentAtCursor, ReviewSession,
     toggleViewedAtCursor;
-import staging : StageAction;
+import sparkles.doc_view.conflict_view : Pick;
+import staging : StageAction, stageResolvedFile;
 import sparkles.ui.editor.keys : EditorTarget;
 import sparkles.base.text.writers : writeInteger;
+
+/// The conflict view's keys in the terminal (`CFV3`, `CFV4`), said under its
+/// header.
+enum string conflictKeysHint =
+    "} { move · o t b B take · u undo · E edit · Alt-S save · space stage · Esc leave";
 
 import sparkles.syntax : ColorDepth, HighlightEvent, LabelSet, ResolvedTheme,
     RgbColor, toRgb;
@@ -1426,6 +1432,8 @@ struct PreviewTui
     ReviewSession review;
     /// `DCM6`: a submission waits for its confirming key.
     private bool submitArmed;
+    /// `CFV4`: the resolved file was saved, so staging it means something.
+    private bool conflictSaved;
 
     /// A paste's chunks so far, for the diff editor (`EDI4`).
     private char[] editPaste;
@@ -1507,12 +1515,13 @@ struct PreviewTui
         // `DST5`/`DCM2`: while the file's editor or the comment composer has
         // the keyboard it sees keys and pastes first; what it declines (a
         // save, a post) goes on to the table.
-        if (vm.diffEditing || vm.composing)
+        if (vm.diffEditing || vm.composing || vm.conflictOpen && vm.conflict.editing)
         {
             bool taken;
             e.match!(
                 (in KeyEvent k) {
-                    taken = vm.composing ? vm.commentKey(k) : vm.diffEditKey(k);
+                    taken = vm.conflictOpen && vm.conflict.editing ? vm.conflictKey(k)
+                        : vm.composing ? vm.commentKey(k) : vm.diffEditKey(k);
                 },
                 (in PasteEvent p) {
                     editPaste ~= p.text[];
@@ -1597,6 +1606,13 @@ struct PreviewTui
         }
         // A notice answers the previous keystroke, not this one.
         notice = null;
+
+        // `CFV3`: Escape leaves the conflict view before it means anything else.
+        if (vm.conflictOpen && e.key == Key.escape)
+        {
+            vm.conflictClose();
+            return true;
+        }
 
         // Escape closes an open popup before it means anything else; the
         // guide only sees it when there is nothing to close.
@@ -1824,6 +1840,31 @@ struct PreviewTui
                         onStaged(); // the working tree changed under the diff
                 }
                 break;
+            case Command.conflictResolve:
+                notice = vm.conflictStart(EditorTarget.terminal);
+                vm.conflictHint = conflictKeysHint;
+                vm.rebuild();
+                break;
+            case Command.conflictNext:  cast(void) vm.conflictMove(1); break;
+            case Command.conflictPrev:  cast(void) vm.conflictMove(-1); break;
+            case Command.conflictOurs:  cast(void) vm.conflictPick(Pick.ours); break;
+            case Command.conflictTheirs: cast(void) vm.conflictPick(Pick.theirs); break;
+            case Command.conflictBoth:  cast(void) vm.conflictPick(Pick.both); break;
+            case Command.conflictBothReversed: cast(void) vm.conflictPick(Pick.bothReversed); break;
+            case Command.conflictUndo:
+                if (!vm.conflictUndo())
+                    notice = "nothing to undo";
+                break;
+            case Command.conflictEdit:  vm.conflictEdit(); break;
+            case Command.conflictSave:
+                notice = vm.conflictSave();
+                conflictSaved = notice is null;
+                if (conflictSaved)
+                    notice = "saved " ~ vm.conflict.path;
+                break;
+            case Command.conflictStage:
+                notice = stageResolvedFile(vm.conflict.path, conflictSaved, repoRoot);
+                break;
             case Command.diffSubmitReview:
                 if (review is null || review.target.length == 0)
                     notice = "only a forge's pull request takes a review";
@@ -1936,7 +1977,8 @@ struct PreviewTui
             // materialising a match list, so a live query IS the
             // condition `n`/`N` are gated on.
             hasMatches: inp.query.length > 0,
-            hasDiffSession: vm.showPreview && !vm.diffSession.empty,
+            hasDiffSession: vm.showPreview && !vm.diffSession.empty && !vm.conflictOpen,
+            conflictOpen: vm.conflictOpen,
             showPreview: vm.showPreview,
             formatPreviewActive: formatPreviewActive(vm),
             hasDsvGrid: vm.showPreview && dsvCopy.info.present,
@@ -3485,4 +3527,54 @@ unittest
     t.handle(Event(KeyEvent(Key.char_, 'a', Mods(alt: true))));
     assert(readText(buildPath(repo.dir, "f.txt")) == "a\nB!\nc\n", t.notice);
     assert(reloaded, "the diff is produced again");
+}
+
+@("tui.conflict.pickUndoSaveStage")
+@system
+unittest
+{
+    import sparkles.build_primitives.testing : gitAvailable, TmpGitRepo;
+    import sparkles.input.events : Mods;
+    import sparkles.syntax : HighlightEvent, LabelSet;
+    import sparkles.test_runner.skip : skipTest;
+    import std.file : readText;
+    import std.path : buildPath;
+
+    // `CFV3`/`CFV4` in the terminal: `}` moves, `t`/`b` take sides, `u`
+    // undoes, `Alt-S` saves once none remain, space stages, Esc leaves.
+    if (!gitAvailable)
+        return skipTest("git is not installed");
+    enum text = "<<<<<<< ours\na\n=======\nA\n>>>>>>> theirs\nmid\n"
+        ~ "<<<<<<< ours\nb\n=======\nB\n>>>>>>> theirs\n";
+    auto repo = TmpGitRepo.create();
+    const path = repo.writeFile("f.txt", text);
+
+    static immutable(Theme)[1] themes = [builtinDark];
+    static immutable string[1] names = ["dark"];
+    PreviewTui t;
+    t.labels = LabelSet.standard();
+    t.names = names[];
+    t.themes = themes[];
+    t.resize(100, 30);
+    t.repoRoot = repo.dir;
+    t.setDocument("f.txt", text, [HighlightEvent.sourceSpan(0, text.length)],
+        PreviewModel.init, startPreview: false);
+    t.vm.docPath = path;
+    t.relayout();
+    assert(t.vm.conflictStart() is null && t.vm.conflict.remaining == 2);
+
+    t.handle(Event(KeyEvent(Key.char_, 't')));
+    assert(t.vm.conflict.remaining == 1);
+    t.handle(Event(KeyEvent(Key.char_, 'u')));
+    assert(t.vm.conflict.remaining == 2, "undone");
+    t.handle(Event(KeyEvent(Key.char_, 't')));
+    t.handle(Event(KeyEvent(Key.char_, 's', Mods(alt: true))));
+    assert(t.notice == "1 conflict remains");
+    t.handle(Event(KeyEvent(Key.char_, 'b')));
+    t.handle(Event(KeyEvent(Key.char_, 's', Mods(alt: true))));
+    assert(readText(path) == "A\nmid\nb\nB\n", t.notice);
+    t.handle(Event(KeyEvent(Key.char_, ' ')));
+    assert(t.notice == "staged " ~ path, t.notice);
+    t.handle(Event(KeyEvent(Key.escape)));
+    assert(!t.vm.conflictOpen);
 }

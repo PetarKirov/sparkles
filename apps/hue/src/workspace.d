@@ -70,7 +70,7 @@ import settings_store : ConfigStore, SettingsPane;
 import sparkles.doc_view.preview_model : PreviewModel;
 import live_types : applyTip, LiveTypesSession;
 import sparkles.twoslash.protocol : TwoslashReturn;
-import tui : PreviewTui;
+import tui : conflictKeysHint, PreviewTui;
 import sparkles.doc_view.viewer_model : ScrollAnchorMode;
 
 version (linux)
@@ -894,6 +894,18 @@ struct WorkspaceTui
             doc.coverage, doc.hasCoverage);
         viewer.docNote = doc.dsvNote;
         viewer.vm.docPath = path; // .editorconfig discovery (format preview)
+        // `CFV1`: a file git calls conflicted opens in the conflict view.
+        {
+            import git_status : GitStatus;
+            import sparkles.ui.editor.keys : EditorTarget;
+
+            if (tree.git.map.statusOf(path, false) == GitStatus.conflict
+                && viewer.vm.conflictStart(EditorTarget.terminal) is null)
+            {
+                viewer.vm.conflictHint = conflictKeysHint;
+                viewer.vm.rebuild();
+            }
+        }
         // `DSN7`: the pipeline already parsed this document; adopt its model
         // rather than resolving a throwaway one over the same bytes. This is
         // the per-open path, so the duplicate parse was paid on EVERY open.
