@@ -2994,17 +2994,12 @@ int runGui(GuiArgs guiArgs) @system
         }
         else if (pn.treeFocused && pn.tree.searching)
         {
-            // The tree pane's live filter (broot mode): typed chars narrow
-            // per keystroke; Enter keeps the filtered tree, Esc clears it.
+            // The tree pane's live filter (broot mode) is an editor field:
+            // every key edits the query; Enter keeps the filtered tree, Esc
+            // clears it. The `/` that opened it is still in this frame's keys.
             foreach (k; keyBuf)
-                if (k.key == Key.char_ && k.ch != '/')
-                    pn.tree.filterInput(k.ch);
-            if (keyBuf.hasKey(Key.backspace))
-                pn.tree.filterBackspace();
-            if (keyBuf.hasKey(Key.enter))
-                pn.tree.filterAccept();
-            if (keyBuf.hasKey(Key.escape))
-                pn.tree.filterCancel();
+                if (!(k.key == Key.char_ && k.ch == '/'))
+                    pn.tree.filterKey(k);
         }
         else if (inputMode)
         {
@@ -4393,15 +4388,7 @@ int runGui(GuiArgs guiArgs) @system
         {
             pn.treeFocused = true;
             pn.tree.filterStart();
-            import sparkles.base.text.utf : decodeToken, UtfMode;
-
-            for (size_t at; at < capture.treeFilter.length;)
-            {
-                const decoded = decodeToken(capture.treeFilter[at .. $],
-                    UtfMode.replacement, true, at);
-                pn.tree.filterInput(decoded.token.scalar);
-                at += decoded.result.consumed;
-            }
+            pn.tree.filterText(capture.treeFilter);
         }
 
         // Debug/CI: the prompts and notices that otherwise only exist

@@ -678,7 +678,7 @@ struct PropertyTree(T)
             || data.nodes[node].value.role != SearchRole.direct)
             if (_bestMatchPath.length)
                 target = _bestMatchPath;
-        tv.filter = tv.filter.cancelled();
+        tv.filterCancel();
         tv.searchFold = typeof(tv.searchFold)(true, null);
         _hasAnchor = false;
         auto p = parentPath(target);
@@ -3007,7 +3007,7 @@ version (UiPropertyFixtures)
     assert(rowByPath(pt, "handle") is null, "no 'v' anywhere in that record");
 
     // Zero matches are explicit, never empty (PRT33).
-    tv.filter = tv.filter.cancelled();
+    tv.filterCancel();
     typeQuery(tv, "qqzz");
     pt.rebuild(l, tv);
     assert(pt.matchCount == 0);
@@ -3040,7 +3040,7 @@ version (UiPropertyFixtures)
     // A label match outranks path-only matches (PRT30 tie order). Park the
     // selection on a row the next query will NOT match, so the best-match
     // rule (not selection preservation) is what the assert exercises.
-    tv.filter = tv.filter.cancelled();
+    tv.filterCancel();
     pt.rebuild(l, tv);
     foreach (i, ref const r; tv.rows)
         if (pt.data.nodes[r.node].value.path == "visible")
@@ -3052,7 +3052,7 @@ version (UiPropertyFixtures)
         "the highest-ranked direct match is selected (PRT32)");
 
     // Erased values are searchable through propText/@names (PRT30 corpus).
-    tv.filter = tv.filter.cancelled();
+    tv.filterCancel();
     typeQuery(tv, "retries");
     pt.rebuild(l, tv);
     assert(rowByPath(pt, "extra.retries") !is null);
@@ -3125,7 +3125,7 @@ version (UiPropertyFixtures)
 
     // Nine parts exceed fuzzy's part capacity: an explicit error, and the
     // last complete result is kept (PRT33).
-    tv.filter = tv.filter.cancelled();
+    tv.filterCancel();
     typeQuery(tv, "a b c d e f g h i");
     pt.rebuild(l, tv);
     assert(pt.filterError.length);
