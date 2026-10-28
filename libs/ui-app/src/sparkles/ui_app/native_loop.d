@@ -84,6 +84,17 @@ struct CellFont
     int underlineY;    /// ditto
     int underlineHeight = 1; /// ditto
     int strikeY;       /// ditto
+    /// The faces text falls back to where the cell font has no glyph, in
+    /// order (`systemFallbackFacePaths`), each at its own exact em.
+    FallbackFont[] fallbacks;
+}
+
+/// A fallback face's bytes and the em its glyphs draw at: the cell's line
+/// height over the face's own `hhea` span, as the raylib arm sizes every face.
+struct FallbackFont
+{
+    const(ubyte)[] bytes; ///
+    ulong emNumerator, emDenominator = 1; ///
 }
 
 /**
@@ -164,6 +175,25 @@ bool measureCellFont(in FontRequest request, in string[] extraSources, int px,
         span > 0 ? ulong(px) * upem : cast(ulong)(em < 1 ? 1 : em), span > 0 ? cast(ulong) span : 1,
         ascent, underlineY, thickness,
         ascent - (em * 28 + 50) / 100); // about half the x-height
+    // Icons, text the face lacks, and emoji, from the faces the raylib arm
+    // falls back to.
+    import sparkles.raylib_text.font_set : systemFallbackFacePaths;
+
+    string nerdPath, regularPath, emojiPath;
+    systemFallbackFacePaths(path, sources, nerdPath, regularPath, emojiPath);
+    foreach (p; [regularPath, nerdPath, emojiPath])
+    {
+        if (!p.length)
+            continue;
+        const fb = load(p);
+        auto fbFace = openFace(fb);
+        if (fbFace.hasError)
+            continue;
+        const fbHh = hhea(fbFace.value);
+        const fbSpan = fbHh.hasValue ? long(fbHh.value.ascender) - fbHh.value.descender : 0;
+        if (fbSpan > 0)
+            cell.fallbacks ~= FallbackFont(fb, ulong(px) * fbFace.value.unitsPerEm, cast(ulong) fbSpan);
+    }
     return true;
 }
 
@@ -499,12 +529,20 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         import sparkles.base.text.layout_units : I128, Rational, U128;
         import sparkles.font : Ppem;
 
-        auto em = Ppem.fromRational(Rational(I128(U128(f.emNumerator, 0)),
-            U128(f.emDenominator ? f.emDenominator : 1, 0)));
+        static auto exactly(ulong num, ulong den)
+            => Ppem.fromRational(Rational(I128(U128(num, 0)), U128(den ? den : 1, 0)));
+        auto em = exactly(f.emNumerator, f.emDenominator);
         if (em.hasError)
             em = Ppem.fromInteger(f.ppem ? f.ppem : 1);
+        FallbackFace[] fallbacks;
+        foreach (fb; f.fallbacks)
+        {
+            const fbEm = exactly(fb.emNumerator, fb.emDenominator);
+            if (fbEm.hasValue)
+                fallbacks ~= FallbackFace(fb.bytes, fbEm.value);
+        }
         cast(void) gpu.canvas.cellFont(faces, em.value, TextMetrics(ascent: f.ascent,
-            underlineY: f.underlineY, underlineHeight: f.underlineHeight, strikeY: f.strikeY));
+            underlineY: f.underlineY, underlineHeight: f.underlineHeight, strikeY: f.strikeY), fallbacks);
     }
 
     bool nativeIo(bool delegate() @system work)
