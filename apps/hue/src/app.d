@@ -417,6 +417,10 @@ int executePr(in HueCli root, in Pr pr)
             text(got.repo.owner, "/", got.repo.name, " #",
                 got.pr.number), got.patch);
         doc.diffSession.header = prHeader(registry, got.pr);
+        // `DCM6`: comments drafted here are this pull request's, submitted to it.
+        doc.reviewTarget = text(got.repo.host, "/", got.repo.owner, "/", got.repo.name,
+            "#", got.pr.number);
+        doc.reviewHead = got.pr.headSha;
         doc.diffSession.threads = prThreads(registry, got.threads);
         if (got.threadsNote.length)
             warning(i"review threads unavailable: $(got.threadsNote)");

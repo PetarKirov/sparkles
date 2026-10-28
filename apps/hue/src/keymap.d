@@ -313,6 +313,7 @@ enum Command : ubyte
     diffApplySuggestion,               /// `Alt-A` — apply the suggestion on it (`DCM4`)
     diffResolve,                       /// `d` — resolve or reopen the comment on it
     diffMarkViewed,                    /// `m` — mark the file viewed (`DCM5`)
+    diffSubmitReview,                  /// `<leader>ds` — submit the drafts to the forge (`DCM6`)
 
     // The fuzzy picker's modal surface (`PKL7`): its keys are table rows so
     // the guide can list them (`PKL3`), gated on `pickerActive` + pane focus.
@@ -804,6 +805,8 @@ immutable Binding[] hueBindings = [
         Command.diffPrevFile, "prev file", require: CtxFlag.hasDiffSession),
     bind(Scope_.shared_, chord(leader), chord('d'), chord('f'),
         Command.diffToggleFile, "toggle file", require: CtxFlag.hasDiffSession),
+    bind(Scope_.shared_, chord(leader), chord('d'), chord('s'),
+        Command.diffSubmitReview, "submit the review", require: CtxFlag.hasDiffSession),
 
     // ── the fuzzy picker's modal surface (`PKL7`) ────────────────────────
     // Reachable only while the picker is open; the `picker` scope covers

@@ -2883,7 +2883,7 @@ struct ViewerModel
         if (diffEditOpen)
             return "save or close the edit first";
         const row = diffCursorRow();
-        if (row >= diff.rows.length || fileOfRow(row) >= diffSides.length)
+        if (row >= diff.rows.length || fileOfRow(row) >= diff.files.length)
             return "no line to comment on here";
         string prefill;
         if (suggest)
@@ -2964,12 +2964,53 @@ struct ViewerModel
         }
         taken.author = author;
         taken.created = created;
-        const sideText = taken.oldSide ? diffSides[fi].oldText : diffSides[fi].newText;
-        if (!captureAnchor(taken, sideText, taken.oldSide ? row.oldLine : row.newLine))
-            return false;
+        const sideText = fi >= diffSides.length ? null
+            : taken.oldSide ? diffSides[fi].oldText : diffSides[fi].newText;
+        const line = taken.oldSide ? row.oldLine : row.newLine;
+        if (sideText.length)
+        {
+            if (!captureAnchor(taken, sideText, line))
+                return false;
+        }
+        else
+            captureFromRows(taken, composerRow, line);
         composing = false;
         rebuild();
         return true;
+    }
+
+    /**
+    `DCM1` without side text, as for a forge's patch: the anchor's content
+    from the hunk's own rows on the comment's side, the lines around it as
+    far as the hunk shows them.
+    */
+    private void captureFromRows(ref LocalComment c, size_t at, uint line)
+    {
+        import sparkles.doc_view.diff_comments : anchorRadius;
+
+        c.line = line;
+        c.context = null;
+        foreach (ref h; diff.hunks[])
+        {
+            if (at < h.rowsStart || at >= h.rowsStart + h.rowsCount)
+                continue;
+            string[] side;
+            size_t anchor;
+            foreach (i, ref r; diff.hunkRows(h))
+            {
+                const ours = c.oldSide ? r.kind != RowKind.added : r.kind != RowKind.removed;
+                if (!ours)
+                    continue;
+                if (h.rowsStart + i == at)
+                    anchor = side.length;
+                side ~= diff.rowText(r).idup;
+            }
+            const from = anchor >= anchorRadius ? anchor - anchorRadius : 0;
+            const to = anchor + anchorRadius + 1 < side.length ? anchor + anchorRadius + 1 : side.length;
+            c.context = side[from .. to];
+            c.anchorAt = cast(uint)(anchor - from);
+            return;
+        }
     }
 
     /// Scrolls just enough to keep the row keyed `key` in view.

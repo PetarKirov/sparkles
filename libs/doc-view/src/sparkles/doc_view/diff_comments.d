@@ -49,6 +49,11 @@ struct LocalComment
     /// When it was written, in seconds since the Unix epoch.
     long created;
     bool resolved;
+    /// `DCM6`: the forge review this comment drafts for (`"github.com/o/r#7"`),
+    /// or empty for a local one; and whether it has been submitted there.
+    string review;
+    /// ditto
+    bool submitted;
     /// A proposed change to the anchored lines (`DCM3`).
     bool hasSuggestion;
     /// ditto
@@ -145,7 +150,9 @@ AnchoredThread[] threadsOf(Parse)(in LocalComment[] comments, string path, strin
         if (c.path != path)
             continue;
         const text = c.oldSide ? oldText : newText;
-        const found = relocate(c, text);
+        // No side text (a forge's patch carries only hunks): the line written
+        // on is all there is to go by.
+        const found = text.length ? relocate(c, text) : c.line;
         const lineCount = linesOf(text).length;
         AnchoredThread t;
         t.path = c.path;
