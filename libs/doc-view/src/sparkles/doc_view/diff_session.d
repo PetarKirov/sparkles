@@ -43,6 +43,8 @@ struct SessionEntry
     uint removed; /// removed rows
     /// `DVG3`: the file's hunks are hidden (the header still renders).
     bool collapsed;
+    /// `DCM5`: the reviewer marked this file viewed at the content shown.
+    bool viewed;
     /// `DVS5`: why this file could not be shown — rendered in-band under the
     /// header, leaving the rest of the session intact. Empty when fine.
     string error;
@@ -108,6 +110,8 @@ struct AnchoredThread
     /// The code it was written against has changed since.
     bool outdated;
     ThreadComment[] comments;
+    /// `DCM1`: the local comment this thread shows, or empty for a forge's.
+    string localId;
 }
 
 struct DiffSession

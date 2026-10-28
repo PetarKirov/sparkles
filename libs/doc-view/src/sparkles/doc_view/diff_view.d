@@ -526,6 +526,9 @@ private uint fileHeader(ref Builder b, const ref DiffDoc doc, in FileEntry file,
         spans ~= TextSpan(" ");
         spans ~= TextSpan(text("−", opt.entry.removed), slot: Slot.diffRemoved);
     }
+    // `DCM5`: the reviewer has seen this file as it is now.
+    if (opt.entry.viewed)
+        spans ~= TextSpan("  ✓ viewed", slot: Slot.muted);
     return b.add(Widget(kind: WidgetKind.rich, spans: spans));
 }
 

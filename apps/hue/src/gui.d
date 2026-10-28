@@ -41,6 +41,8 @@ import keymap : Binding, bindingsAt, Chord, Command, commandFor, InputMode,
 import dub_config_picker : dubConfigurationPick;
 import picker_grep : PickerSource;
 import picker_host : OwnedPicker, PickerAction, PickerHost;
+import review_store : persistFolds, postComment, resolveCommentAtCursor, ReviewSession,
+    toggleViewedAtCursor;
 import picker_sources : ChoiceFinder;
 import picker_preview : PickerDocPane;
 import picker_view : pickerGeometryFor, pickerOriginCol, pickerOriginRow,
@@ -125,7 +127,7 @@ import sparkles.ui.cmd_buffer : CmdBufferT;
 import sparkles.ui.arena : FrameArena;
 import sparkles.ui.layout : Frame, layout;
 import sparkles.ui.components.scroll_view : ScrollExtents, ScrollPointer;
-import sparkles.ui.editor.field : FieldClipboard, FieldSetup;
+import sparkles.ui.editor.field : FieldClipboard, FieldSetup, serveClipboard;
 import sparkles.ui.editor.keys : windowTarget;
 import sparkles.ui.state : CaptureState, hoverTargets, HoverState, HoverTarget,
     keyAt, keyTargets, KeyTarget, PressState, ScrollAxis, ScrollbarState,
@@ -256,6 +258,8 @@ struct GuiArgs
     DocLoader loadDoc = null;            // loads a set entry (supplied by app.d)
     /// `DST2`/`DST5`: produces the diff on screen again after a save.
     Document delegate() @system reloadDiff = null;
+    /// `DCM5`: the review state of the diff's repository, or `null`.
+    ReviewSession review = null;
     TsConfigCache* tsCache = null;       // fence highlighting for the widget view
     TwoslashReturn twoslash = TwoslashReturn.init; // twoslash document payload
     string docPath = null;               // on-disk path (reveal in the tree)
@@ -3115,25 +3119,37 @@ int runGui(GuiArgs guiArgs) @system
                     pn.tree.filterServe(fieldClip);
                 }
         }
-        else if (vm.diffEditing)
+        else if (vm.diffEditing || vm.composing)
         {
-            // `DST5`: the diff's editor has the keyboard. Its clipboard is the
-            // window's; Ctrl-S (Cmd-S on macOS) saves, and Escape gives the
-            // keyboard back.
-            fieldSetup.applyTo(vm.diffEdit.field);
+            // `DST5`/`DCM2`: the diff's editor or the comment composer has the
+            // keyboard. Its clipboard is the window's; Ctrl-S (Cmd-S on
+            // macOS) or Alt-S saves the edit or posts the comment, and Escape
+            // gives the keyboard back.
+            if (vm.composing)
+                fieldSetup.applyTo(vm.composer);
+            else
+                fieldSetup.applyTo(vm.diffEdit.field);
             foreach (k; keyBuf)
             {
-                if (vm.diffEditKey(k))
+                if (vm.composing ? vm.commentKey(k) : vm.diffEditKey(k))
                 {
-                    vm.diffEditServe(fieldClip);
+                    if (vm.composing)
+                        cast(void) serveClipboard(vm.composer, fieldClip);
+                    else
+                        vm.diffEditServe(fieldClip);
                     continue;
                 }
                 version (OSX)
-                    const saveChord = k.mods.super_;
+                    const saveChord = k.mods.super_ || k.mods.alt;
                 else
-                    const saveChord = k.mods.ctrl;
+                    const saveChord = k.mods.ctrl || k.mods.alt;
                 if (k.key == Key.char_ && k.ch == 's' && saveChord)
-                    saveDiffEdit();
+                {
+                    if (vm.composing)
+                        showToast(postComment(vm, review));
+                    else
+                        saveDiffEdit();
+                }
             }
         }
         else if (inputMode)
@@ -3428,9 +3444,18 @@ int runGui(GuiArgs guiArgs) @system
                 case Command.diffPrevFile:    vm.diffMoveFile(-1); break;
                 case Command.diffNextHunk:    vm.diffMoveHunk(1);  break;
                 case Command.diffPrevHunk:    vm.diffMoveHunk(-1); break;
-                case Command.diffToggleFile:  vm.diffToggleFile(); break;
-                case Command.diffCollapseAll: vm.diffSetAllFiles(true); break;
-                case Command.diffExpandAll:   vm.diffSetAllFiles(false); break;
+                case Command.diffToggleFile:
+                    vm.diffToggleFile();
+                    cast(void) persistFolds(vm, review);
+                    break;
+                case Command.diffCollapseAll:
+                    vm.diffSetAllFiles(true);
+                    cast(void) persistFolds(vm, review);
+                    break;
+                case Command.diffExpandAll:
+                    vm.diffSetAllFiles(false);
+                    cast(void) persistFolds(vm, review);
+                    break;
                 case Command.diffToggleStructural:
                     vm.diffToggleStructural();
                     break;
@@ -3461,6 +3486,25 @@ int runGui(GuiArgs guiArgs) @system
                 // `DST2`/`DST4`: the write surface is terminal-only for now —
                 // the GUI has no place to put a discard confirmation yet, and
                 // offering stage without it would be lopsided.
+                case Command.diffRowDown: cast(void) vm.diffMoveRow(1); break;
+                case Command.diffRowUp:   cast(void) vm.diffMoveRow(-1); break;
+                case Command.diffComment:
+                    if (const why = vm.commentStart(windowTarget))
+                        showToast(why);
+                    else
+                    {
+                        vm.composerHint = "Ctrl-S posts · Esc drops it";
+                        vm.rebuild();
+                    }
+                    break;
+                case Command.diffResolve:
+                    if (const said = resolveCommentAtCursor(vm, review))
+                        showToast(said);
+                    break;
+                case Command.diffMarkViewed:
+                    if (const said = toggleViewedAtCursor(vm, review))
+                        showToast(said);
+                    break;
                 case Command.diffEdit:
                     if (const why = vm.diffEditStart(windowTarget))
                         showToast(why);

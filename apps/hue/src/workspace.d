@@ -44,6 +44,7 @@ import sparkles.ui.geometry : Point, Rect, Size;
 import sparkles.ui.style : Slot;
 
 import sparkles.doc_view.ansi_model : BackgroundMode;
+import review_store : ReviewSession;
 import sparkles.doc_view.diff_edit : DiffEdit;
 import sparkles.doc_view.diff_view : DiffLayout;
 import sparkles.doc_view.document : Document;
@@ -2156,6 +2157,7 @@ WorkspaceExit runWorkspace(string target, bool isDir, WorkspaceDoc initial,
     OverflowPolicy tableOverflow = OverflowPolicy.init,
     int tableMaxLines = -1,
     WorkspaceDoc delegate() @system reloadDiff = null,
+    ReviewSession review = null,
     bool formatPreview = false, int formatWidth = 0,
     string formatterName = null,
     string tableCopyFlag = "auto",
@@ -2202,6 +2204,7 @@ WorkspaceExit runWorkspace(string target, bool isDir, WorkspaceDoc initial,
             w.dsvPalOpen = false;
             w.wireDsvHooks();
         };
+    w.viewer.review = review; // `DCM5`
     w.liveTypes = liveTypes;
     // `DVL3`: the layout the reviewer asked for on the command line; `s`
     // toggles it, and a narrow pane degrades it at render time.
