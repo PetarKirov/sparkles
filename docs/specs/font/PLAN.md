@@ -22,7 +22,7 @@ the gate each milestone must pass, and progress. Scenarios and oracles live in
 | [M4 Shaping](#m4-shaping)                                                 | done        |
 | [M5 Grayscale raster](#m5-grayscale-raster)                               | done        |
 | [M6 Colour glyphs](#m6-colour-glyphs)                                     | done        |
-| [M7 Discovery and fallback](#m7-discovery-and-fallback)                   | not started |
+| [M7 Discovery and fallback](#m7-discovery-and-fallback)                   | done        |
 | [M8 Consumer migration](#m8-consumer-migration)                           | not started |
 
 The font explorer's own plan interleaves with this one: its `inspect`
@@ -281,7 +281,12 @@ signature value away.
 **Prerequisites.** M1–M7. [`FTX7`](decisions.md#ftx7-ligatures-keep-one-glyph-per-cell-their-ink-crosses-cells)
 permits only an audited terminal fast path; general cluster placement is required.
 
-**Deliverable.** `sparkles:raylib-text` rebuilt over `sparkles:font`; the
+**Deliverable.** The GUI stack opens faces and builds catalogs with
+corrections applied (`CorrectionPolicy.apply`,
+[`FTX15`](decisions.md#ftx15-compatibility-quirks-the-engines-apply-applied-visibly)),
+and its layout splits spans at codepoint routes
+([`FTX16`](decisions.md#ftx16-codepoint-routes-override-the-primary)).
+`sparkles:raylib-text` rebuilt over `sparkles:font`; the
 spike's `shaping_c.c`, `shaping_api.h` and `shaping.d` and the discovery modules
 deleted; `hue`, `terminal`, `terminal-view`, `ui-raylib` and `ui-app` updated.
 
@@ -365,4 +370,18 @@ M6 (colour glyphs) followed on 2026-10-27: `COLR` version 0 layers and
 and `sbix` strikes decoded in D and scaled to the requested size, with every
 glyph of the bundled Noto Color Emoji decoding at three sizes and HarfBuzz
 agreeing on layers, palettes and the strike each PNG comes from.
-The ledger lists each gap. Next action: the MS startup slice or M7.
+M7 (discovery and fallback) followed on 2026-10-28, its operation contracts
+([`discovery.md`](./discovery.md)) reviewed adversarially twice and
+implemented in the same change: a catalog of face records built over base's
+capability VFS, which gained memory-mapped reads, from explicit files,
+directories, the bundle, memory buffers and the platform's own list
+(fontconfig and Core Text loaded at run time), cached on disk in a small
+versioned format; CSS Fonts Level 4 matching; fallback chains with routes
+that override the primary (`FTX16`) and a box-drawing face generated as a
+real TrueType font; whole-span trials through HarfBuzz that skip a face only
+where a proven rule says HarfBuzz would draw `.notdef`; and the registry of
+the engines' font corrections, opt-in at this level (`FTX15`). HarfBuzz,
+FreeType and fontconfig agree with it on every checked value; one
+disagreement the oracle found, the U+F000 duplication under an `OS/2` code
+page, was fixed in `FTP25`. The ledger lists each gap. Next action: the MS
+startup slice, whose catalog part M7 delivers, or M8.

@@ -501,10 +501,14 @@ should a caller see that it did?
   change what layout, the explorer and fallback see, and in each case the
   shaper already applies the same correction, so leaving it out makes this
   library disagree with the text it shapes.
-- A correction is applied by default and reported where it applies: every
-  result it changes says so, and a face record lists the corrections its
-  face triggers. A caller can open a face with corrections off and read the
-  stored values.
+- A correction is reported where it applies: every result it changes says
+  so, and a face record lists the corrections its face triggers. A caller can
+  open a face with corrections off and read the stored values.
+- Amended 2026-10-28 (owner): corrections are opt-in in this library, so
+  `openFace` and `buildCatalog` default to the stored values, and the
+  Sparkles GUI stack turns them on by default when it adopts the library
+  (M8). A library that reads fonts reports what they hold unless asked;
+  the stack that draws text beside the shaper asks.
 - The registry is part of M7, because the face record carries it, and two of
   its entries decide fallback: legacy Arabic code pages change a face's
   character coverage, and a tricky face cannot be drawn by this library's
@@ -515,6 +519,55 @@ can go stale when the font is fixed; the signature, not the family name,
 keeps a fixed version from triggering it, and the engine revision recorded
 with each entry says which list to compare against when the pin moves. A
 reader who wants the bytes as stored must ask for them.
+
+---
+
+## FTX16: Codepoint routes override the primary
+
+**State:** accepted 2026-10-28 (owner) · **Affects:** `FTD5`, `FTD6`, [`discovery.md`](./discovery.md) `FTD31`, `FTD33`
+
+**Question.** A user routes a range of codepoints to a font, such as Nerd
+Font symbols, a preferred CJK face or colour emoji. Does the route win over
+a primary font that covers those codepoints, or does it only fill what the
+primary lacks? And where does it sit in the chain?
+
+**Evidence.** A survey on 2026-10-28 of the systems that have such routes and
+of the general text stacks, from their sources at pinned commits:
+
+| System                                                                                           | Route mechanism                          | Overrides a covering primary?                                                  |
+| ------------------------------------------------------------------------------------------------ | ---------------------------------------- | ------------------------------------------------------------------------------ |
+| kitty                                                                                            | `symbol_map`                             | yes, checked before the main font, without a coverage check                    |
+| Ghostty                                                                                          | `font-codepoint-map`                     | yes, checked first; a routed font lacking the glyph falls through to the chain |
+| iTerm2                                                                                           | special exceptions of the non-ASCII font | yes, checked first                                                             |
+| DirectWrite                                                                                      | `IDWriteFontFallbackBuilder::AddMapping` | no: the base family first, mappings fill what it lacks                         |
+| CSS Fonts 4                                                                                      | `unicode-range`                          | only within one family, composing it                                           |
+| WezTerm, Alacritty, foot, Windows Terminal, Core Text, Android, Pango, Skia, parley, cosmic-text | none; ordered fallback lists             | no routes; fill only                                                           |
+
+Every system with explicit codepoint routes treats them as overrides, which
+is what their users mean: a main font's own Powerline, CJK or emoji glyphs
+are what they route away from. Fill-only ranges are a fallback family
+restricted to a range. The survey also found that a route kept only as a
+chain entry is defeated by whole-span trials: a mixed span such as a prompt
+with one Powerline glyph cannot be shaped by the route, so the primary shapes
+it whole, routed glyph included. kitty and Ghostty choose a font per cell
+before building runs.
+
+**Choice.**
+
+- A route overrides the primary for the scalars its ranges hold and its face
+  covers; a route whose face lacks a scalar lets it fall through to the
+  chain, as Ghostty does, rather than drawing `.notdef`, as kitty does.
+- `routeEntry(cp)` answers which route claims a scalar. Layout, which owns
+  span boundaries (`FTD7`), splits spans so that the clusters a route claims
+  by their base scalar are tried apart from the rest; the chain keeps routes
+  first for those spans.
+- The match stays the source of cell metrics. A fill-only range, if needed,
+  is a fallback family restricted to the range, not a second kind of route.
+
+**Trade-off.** Ligatures and shaping context do not cross a route boundary.
+Icon, Powerline and emoji ranges are not ligature components, so the common
+routes lose nothing; a user who routes a script loses cross-boundary
+shaping inside it, which is what routing that script asks for.
 
 ---
 

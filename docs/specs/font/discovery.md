@@ -341,8 +341,10 @@ contributes nothing, recorded; without a
 primary match, `boxDrawing` contributes nothing either. The default list is:
 the routes the caller gives, `primary`, `boxDrawing`, the caller's fallback
 families, `everything`. Routes come first because a user who routes a range
-means it to win over the primary; `SPEC.md`'s `FTD5` is amended to say a chain
-begins with its routes and then the match. An entry **must** appear once per
+means it to win over the primary, as kitty, Ghostty and iTerm2 route
+([`FTX16`](./decisions.md#ftx16-codepoint-routes-override-the-primary));
+`SPEC.md`'s `FTD5` is amended to say a chain begins with its routes and then
+the match, which remains the source of cell metrics. An entry **must** appear once per
 (record, coordinates, synthesis), at its first position, except that a route
 entry may repeat one found elsewhere, because its scalars differ. Faces with
 coverage identical to an earlier entry's, or a subset of it, stay (`FTD5`).
@@ -370,6 +372,14 @@ counts as colour for every scalar, even where only some glyphs are coloured.
 No entry holding `cp` is `noEntry`. A character cache, a separate value,
 memoizes answers under the key (chain identity, `cp`, presentation). Cost:
 O(E log k) uncached.
+
+`routeEntry(cp)` **must** return the first route whose ranges hold `cp` and
+whose face covers it, or `noEntry`: a route overrides the primary for its
+scalars, and one whose face lacks a scalar lets it fall through to the rest of
+the chain. Because a trial shapes a span whole with one face (`FTD41`), a
+route inside a mixed span would never be chosen; layout, which owns span
+boundaries (`FTD7`), **must** split spans so that the clusters a route claims
+by their base scalar are tried apart from the rest. Cost: O(routes · log k).
 
 **FTD34: Chain identity.** A chain **must** have a 128-bit identity: the
 BLAKE3 hash, truncated, of the catalog's correction policy and every record
@@ -526,7 +536,7 @@ answers only for unmoved runs.
 ## 8. The correction registry
 
 **FTD44: Opening with corrections.** `openFace` **must** take a correction
-policy, `apply` by default. Under `apply` the face records the registry
+policy, `off` by default ([`FTX15`](./decisions.md#ftx15-compatibility-quirks-the-engines-apply-applied-visibly)); the GUI stack asks for `apply`. Under `apply` the face records the registry
 entries its signature matches at open; under `off` it records none and every
 result is the stored value. A face's `corrections` lists them; each entry's
 identifier, engine, engine revision, signature and effect are readable from
@@ -578,14 +588,14 @@ rasterizer, `unsupportedCapability`.
 
 ## 9. Oracles
 
-| Operations      | Oracle                                                                                                                                             | Known divergence, and the substitute oracle                                                                                                                                                               |
-| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `FTD16`–`FTD21` | `fc-scan` over the bundle for family, style, weight, width and coverage; the records of hand-built fixtures                                        | fontconfig maps weights onto its own scale and reads a width from the style name when `usWidthClass` is absent; this page reads `OS/2` and the axes only. Substitute: fixtures and the raw `OS/2` values. |
-| `FTD18`         | `fc-list` on Linux; on macOS and Windows the CI runners' listing                                                                                   | —                                                                                                                                                                                                         |
-| `FTD22`–`FTD24` | scenarios over `MemVfs`, whose modification times are set exactly                                                                                  | —                                                                                                                                                                                                         |
-| `FTD25`–`FTD30` | hand-derived traces of CSS Fonts Level 4 §5.2 over a synthetic family of nine weights, two widths and four styles, and a variable family           | CSS leaves the synthesis threshold to the browser; this page follows Blink's 600.                                                                                                                         |
-| `FTD31`–`FTD34` | fixtures with known coverage                                                                                                                       | —                                                                                                                                                                                                         |
-| `FTD35`–`FTD38` | HarfBuzz and FreeType over the generated face: every glyph opens, shapes and rasterizes; hand-computed pixel coverage of lines, blocks and shades  | —                                                                                                                                                                                                         |
-| `FTD40`         | a property over the bundle's faces: for each face and each scalar the rule prunes it for, alone and in sampled sequences, `hb_shape` gives glyph 0 | —                                                                                                                                                                                                         |
-| `FTD39`–`FTD43` | real faces with inspected coverage: a mark sequence, an RGI ZWJ sequence and an Arabic word, each with a failing primary                           | —                                                                                                                                                                                                         |
-| `FTD44`–`FTD46` | HarfBuzz 14.6.0 (`hb_ot_math_get_constant`, `hb_ot_layout_get_glyph_class`, `hb_font_get_nominal_glyph`); FreeType's `FT_IS_TRICKY`                | The signatures' fonts may not be redistributed; fixtures rebuild them byte for byte, as `testing.md` describes.                                                                                           |
+| Operations      | Oracle                                                                                                                                             | Known divergence, and the substitute oracle                                                                                                                                                                                                                                                                                                                     |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `FTD16`–`FTD21` | `fc-scan` over the bundle for family, style, weight, width and coverage; the records of hand-built fixtures                                        | fontconfig maps weights onto its own scale, reads a width from the style name when `usWidthClass` is absent, reads an oblique slant from a style name such as "Oblique" (DejaVu Sans Mono Oblique), and leaves C0 controls mapped to empty glyphs out of the charset; this page reads `OS/2` and the axes only. Substitute: fixtures and the raw `OS/2` values. |
+| `FTD18`         | `fc-list` on Linux; on macOS and Windows the CI runners' listing                                                                                   | —                                                                                                                                                                                                                                                                                                                                                               |
+| `FTD22`–`FTD24` | scenarios over `MemVfs`, whose modification times are set exactly                                                                                  | —                                                                                                                                                                                                                                                                                                                                                               |
+| `FTD25`–`FTD30` | hand-derived traces of CSS Fonts Level 4 §5.2 over a synthetic family of nine weights, two widths and four styles, and a variable family           | CSS leaves the synthesis threshold to the browser; this page follows Blink's 600.                                                                                                                                                                                                                                                                               |
+| `FTD31`–`FTD34` | fixtures with known coverage                                                                                                                       | —                                                                                                                                                                                                                                                                                                                                                               |
+| `FTD35`–`FTD38` | HarfBuzz and FreeType over the generated face: every glyph opens, shapes and rasterizes; hand-computed pixel coverage of lines, blocks and shades  | —                                                                                                                                                                                                                                                                                                                                                               |
+| `FTD40`         | a property over the bundle's faces: for each face and each scalar the rule prunes it for, alone and in sampled sequences, `hb_shape` gives glyph 0 | —                                                                                                                                                                                                                                                                                                                                                               |
+| `FTD39`–`FTD43` | real faces with inspected coverage: a mark sequence, an RGI ZWJ sequence and an Arabic word, each with a failing primary                           | —                                                                                                                                                                                                                                                                                                                                                               |
+| `FTD44`–`FTD46` | HarfBuzz 14.6.0 (`hb_ot_math_get_constant`, `hb_ot_layout_get_glyph_class`, `hb_font_get_nominal_glyph`); FreeType's `FT_IS_TRICKY`                | The signatures' fonts may not be redistributed; fixtures rebuild them byte for byte, as `testing.md` describes.                                                                                                                                                                                                                                                 |
