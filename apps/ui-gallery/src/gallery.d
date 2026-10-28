@@ -17,7 +17,7 @@ import core.time : Duration, msecs;
 import std.conv : text;
 
 import sparkles.base.term_control : PointerShape;
-import sparkles.input : ColorSchemeEvent, Event, isDismiss, Key, KeyAction, KeyEvent, match,
+import sparkles.input : ColorSchemeEvent, CompositionEvent, Event, isDismiss, Key, KeyAction, KeyEvent, match,
     PasteEvent,
     PointerAction, PointerButton, PointerEvent, ResizeEvent, WheelEvent;
 import sparkles.terminal_view.cell_paint : paintCells;
@@ -504,6 +504,7 @@ struct Gallery
             (in ResizeEvent r) { s.surface = r.size; },
             (in PasteEvent p) { onPaste(p); },
             (in ColorSchemeEvent c) { onColorScheme(c); },
+            (in CompositionEvent c) { onComposition(h, c); },
             (in _) {},
         );
     }
@@ -532,6 +533,19 @@ struct Gallery
         if (s.prop.tv.filterPaste(pasteBuf, p.request) == TreeStep.rebuild)
             s.prop.refresh();
         pasteBuf = null;
+    }
+
+    /// An input method's composition goes where typed text goes (`EDI2`):
+    /// the Property page's filter while it is typed into, else nowhere.
+    private void onComposition(H)(ref H h, in CompositionEvent update)
+    {
+        import sparkles.ui_app.host : withPreedit;
+
+        if (s.page != propertyPageIndex || !s.prop.built || !s.prop.tv.searching)
+            return;
+        withPreedit(h, update, (scope const(char)[] preedit) {
+            cast(void) s.prop.tv.filterCompose(update, preedit);
+        });
     }
 
     /// A paste's chunks so far, for the Property page's filter.
@@ -3050,4 +3064,27 @@ version (unittest)
     assert(h.clipboardReads.length == 1);
     pasteChunks("theme", (Event ev) { g.handle(h, ev); }, h.clipboardReads[0]);
     assert(g.s.prop.tv.filterQuery == "theme");
+}
+
+@("ui_gallery.gallery.propertyFilterShowsComposition")
+@safe unittest
+{
+    import sparkles.ui_app.record : recordedText;
+
+    // `EDI2`, `EDI3`: a composition reaches the typed-into filter; the commit
+    // arrives as typed text and becomes the query.
+    Gallery g;
+    RecordingHost h;
+    h.holdTexts(["て"]);
+    g.s.page = propertyPageIndex;
+    g.s.prop.ensure();
+    g.s.prop.tv.filterStart();
+    CompositionEvent update;
+    update.preedit = recordedText(0);
+    update.cursor = 3;
+    g.handle(h, Event(update));
+    assert(g.s.prop.tv.filter.state.composition.active);
+    assert(g.s.prop.tv.filterQuery == "", "a preedit is not the query");
+    g.handle(h, charEvent('テ'));
+    assert(g.s.prop.tv.filterQuery == "テ" && !g.s.prop.tv.filter.state.composition.active);
 }

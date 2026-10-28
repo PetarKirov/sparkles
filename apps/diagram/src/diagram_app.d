@@ -20,7 +20,7 @@ module diagram_app;
 import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.unique : makeUnique, Unique;
 import sparkles.input : EndOfInput, Event, isEndOfInput, KeyAction, KeyEvent,
-    match, PasteEvent, Point, PointerAction, PointerEvent, WheelEvent;
+    match, CompositionEvent, PasteEvent, Point, PointerAction, PointerEvent, WheelEvent;
 import sparkles.text_buffer.text : Text;
 import sparkles.ui.components.lantern_view : BoxLayout, LabelArena, LanternStyle,
     Placement, viewLantern;
@@ -31,7 +31,7 @@ import sparkles.ui.layout : Frame, layout;
 import sparkles.ui.state : CaptureState;
 import sparkles.ui.widget : Builder, WidgetTree;
 import sparkles.ui_app.backend : Backend;
-import sparkles.ui_app.host : canReadClipboard;
+import sparkles.ui_app.host : canReadClipboard, withPreedit;
 import sparkles.ui_app.run_app : AppTheme;
 
 import camera : Camera;
@@ -40,7 +40,7 @@ import keymap : Binding, bindingsAt, DiagramContext;
 import settings_pane : PaneGeometry, paneGeometryFor, PaneOutcome, SettingsPane;
 import systems.input : InputView, surfaceCell, systemInput;
 import systems.render : FrameOps, systemRender;
-import world : editPaste, World;
+import world : editCompose, editPaste, World;
 
 /// How many rows the key guide may list at once (`LTN`). The board's whole
 /// table is smaller than this, so the panel never scrolls today.
@@ -181,6 +181,12 @@ struct DiagramApp
                     editPaste(world, pasteBuf, p.request);
                     pasteBuf = null;
                 }
+                return true;
+            }, (in CompositionEvent c) {
+                // An input method composes into the draft (`EDI3`).
+                withPreedit(h, c, (scope const(char)[] preedit) {
+                    editCompose(world, c, preedit);
+                });
                 return true;
             }, _ => false))
             return;
@@ -762,4 +768,29 @@ unittest
     assert(app.world.editText == "xy", "the answer replaces the selection");
     pasteChunks("!", (Event ev) { app.handle(h, ev); });
     assert(app.world.editText == "xy!", "a user's paste goes in too");
+}
+
+@("diagram.app.labelDraftShowsComposition")
+@safe
+unittest
+{
+    import sparkles.ui_app.record : recordedText;
+
+    // `EDI3`: the preedit shows in the draft's slot without entering the
+    // label; the typed commit replaces it.
+    auto appOwner = themedApp();
+    ref DiagramApp app() => appOwner.get();
+    RecordingHost h;
+    h.holdTexts(["に"]);
+    const e = app.world.spawn(Rect(0, 0, 8, 2));
+    app.world.setLabel(e, "ab");
+    app.world.beginEdit(e);
+    CompositionEvent update;
+    update.preedit = recordedText(0);
+    update.cursor = 3;
+    app.handle(h, Event(update));
+    assert(app.world.editText == "abに" && app.world.editCaret == 5);
+    assert(app.world.editField.text == "ab", "the preedit is not in the draft");
+    app.handle(h, charEvent('日'));
+    assert(app.world.editText == "ab日" && app.world.editField.text == "ab日");
 }
