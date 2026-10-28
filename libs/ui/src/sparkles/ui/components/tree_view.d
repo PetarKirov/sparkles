@@ -53,10 +53,24 @@ import sparkles.ui.components.tree_widget : FlatTreeRow, nodeExpandable, treeWid
     TreeData, TreeGlyphs, treeView;
 import sparkles.ui.geometry : Rect;
 import sparkles.ui.style : Slot;
-import sparkles.ui.editor.field : EditorField;
+import sparkles.ui.editor.field : EditorField, FieldSetup, serveClipboard;
 import sparkles.ui.state : CaptureState, DisclosureState,
     ScrollbarState;
 import sparkles.ui.widget : Builder;
+
+/**
+Do the clipboard work `state`'s filter asked for (`EDY5`): a copy, and a
+paste answered with `clipboard`'s text. Declared above the module's `@safe:`
+so its safety follows the clipboard's.
+*/
+TreeStep filterServe(Key, Clipboard)(ref TreeViewState!Key state, in Clipboard clipboard)
+{
+    if (!state.filtering)
+        return TreeStep.none;
+    const result = serveClipboard(state.filter, clipboard);
+    return state.filterResult(result.handled, result.changed, result.submitted,
+        result.cancelled);
+}
 
 @safe:
 
@@ -95,6 +109,8 @@ struct TreeViewState(Key)
     /// The live filter's editor (`EDU4`): a single-line field, so the query
     /// edits like every other field — graphemes, words, kills and yanks.
     EditorField filter;
+    /// The filter's key table and clipboard, applied each time it starts.
+    FieldSetup filterSetup;
     /// Filter mode: the field owns the keyboard.
     bool filtering;
     /// The query as of the last edit, kept so readers borrow it for free.
@@ -315,7 +331,7 @@ struct TreeViewState(Key)
     /// the tree is a function of the query.
     TreeStep filterStart() pure nothrow
     {
-        filter = EditorField.singleLine();
+        filter = filterSetup.singleLine();
         filtering = true;
         query_ = null;
         searchFold = DisclosureState!Key(true, null);
@@ -333,19 +349,20 @@ struct TreeViewState(Key)
         return filterResult(result.handled, result.changed, result.submitted, result.cancelled);
     }
 
-    /// Text pasted while the filter owns the keyboard (`EDI4`).
-    TreeStep filterPaste(scope const(char)[] text) pure nothrow
+    /// Text pasted while the filter owns the keyboard (`EDI4`), or the answer
+    /// to its clipboard read when `request` is not 0 (`EDY5`).
+    TreeStep filterPaste(scope const(char)[] text, uint request = 0) pure nothrow
     {
         if (!filtering)
             return TreeStep.none;
-        const result = filter.insert(text, true);
+        const result = filter.paste(text, request);
         return filterResult(result.handled, result.changed, result.submitted, result.cancelled);
     }
 
     /// Leave filter mode and clear the query.
     TreeStep filterCancel() pure nothrow
     {
-        filter = EditorField.singleLine();
+        filter = filterSetup.singleLine();
         filtering = false;
         query_ = null;
         searchFold = DisclosureState!Key(true, null);
@@ -960,4 +977,25 @@ unittest
     s.searchFold = s.searchFold.closed(3);
     s.filterStart();
     assert(s.searchFold.isOpen(3), "a new query starts with a fresh overlay");
+}
+
+@("ui.tree_view.filterServesItsClipboard")
+@safe unittest
+{
+    import sparkles.input.events : Key, KeyEvent, Mods;
+    import sparkles.ui.editor.field : fieldClipboard, FieldSetup;
+    import sparkles.ui.editor.keys : EditorTarget;
+
+    string board = "needle";
+    auto clipboard = fieldClipboard((scope const(char)[] t) { board = t.idup; }, () => board);
+    TreeViewState!uint s;
+    s.filterSetup = FieldSetup.of(EditorTarget.window, clipboard);
+    s.filterStart();
+    assert(s.filterKey(KeyEvent(Key.char_, 'v', Mods(ctrl: true))) == TreeStep.handled,
+        "the paste waits for the host");
+    assert(s.filterServe(clipboard) == TreeStep.rebuild && s.filterQuery == "needle");
+    s.filterCancel();
+    s.filterStart();
+    s.filterKey(KeyEvent(Key.char_, 'v', Mods(ctrl: true)));
+    assert(s.filterServe(clipboard) == TreeStep.rebuild, "a restarted filter keeps its setup");
 }

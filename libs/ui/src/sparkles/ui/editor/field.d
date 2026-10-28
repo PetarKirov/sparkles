@@ -60,6 +60,14 @@ struct EditorField
     /// `context.clipboardRead` when the host answers the field's clipboard
     /// requests (`EDY5`).
     LogicalContext context;
+    /**
+    The clipboard work the field's inputs asked for and its host has not yet
+    served (`EDY5`): text to copy, and a read's request. A host that sees
+    only a wrapper's answer serves it from here with `serveClipboard`.
+    */
+    Text pendingCopy;
+    /// ditto
+    uint pendingRead;
 
     private KillRing ownRing;
     private SharedPool pool;
@@ -118,6 +126,12 @@ struct EditorField
         return runWith(EditCommand.insert(TextId.init, paste), source, now);
     }
 
+    /// A paste (`EDI4`), or, when `request` is not 0, the answer to the
+    /// field's clipboard read (`EDY5`): what a host's paste event carries.
+    FieldResult paste(scope const(char)[] text, uint request = 0, MonoTime now = MonoTime.init)
+        @safe pure nothrow @nogc
+        => request ? pasteAnswer(request, text, now) : insert(text, true, now);
+
     /// Answer clipboard request `request` with `text` (`EDY5`).
     FieldResult pasteAnswer(uint request, scope const(char)[] text, MonoTime now = MonoTime.init)
         @safe pure nothrow @nogc
@@ -153,9 +167,9 @@ struct EditorField
         result.submitted = result.effects.has(EffectKind.submit);
         result.cancelled = result.effects.has(EffectKind.cancel);
         if (result.effects.has(EffectKind.readClipboard))
-            result.clipboardRequest = result.effects.first(EffectKind.readClipboard).request;
+            pendingRead = result.clipboardRequest = result.effects.first(EffectKind.readClipboard).request;
         if (result.effects.has(EffectKind.writeClipboard))
-            result.clipboardWrite = Text(result.effects.first(EffectKind.writeClipboard).text);
+            pendingCopy = result.clipboardWrite = Text(result.effects.first(EffectKind.writeClipboard).text);
         return result;
     }
 
@@ -278,6 +292,38 @@ unittest
 }
 
 /**
+How a host sets up the fields it creates: the key table (`EDK1`) and what
+its clipboard can do (`EDY5`). A component that creates fields on its own,
+such as a filter that starts afresh, keeps one and creates them with it.
+*/
+struct FieldSetup
+{
+    EditorTarget target = EditorTarget.terminal;
+    bool clipboardWrite;
+    bool clipboardRead;
+
+    /// The setup of a host with `clipboard` (see `FieldClipboard`).
+    static FieldSetup of(Clipboard)(EditorTarget target, in Clipboard clipboard)
+        => FieldSetup(target, clipboard.write !is null, clipboard.read !is null);
+
+    /// A single-line field set up this way.
+    EditorField singleLine(scope const(char)[] text = "") const @safe pure nothrow @nogc
+    {
+        auto field = EditorField.singleLine(text);
+        applyTo(field);
+        return field;
+    }
+
+    /// Set up an existing `field` this way; its text and history stay.
+    void applyTo(ref EditorField field) const @safe pure nothrow @nogc
+    {
+        field.target = target;
+        field.context.clipboardWrite = clipboardWrite;
+        field.context.clipboardRead = clipboardRead;
+    }
+}
+
+/**
 What a host's clipboard can do, for a host that reads it at once (`EDY5`).
 Either member may be null; the field then reports that capability absent
 (`EDI5`). `useClipboard` declares it to a field and `serveClipboard` does a
@@ -311,19 +357,32 @@ answer's change folded in.
 FieldResult serveClipboard(Clipboard)(ref EditorField field, FieldResult result,
     in Clipboard clipboard)
 {
-    if (result.clipboardWrite.length && clipboard.write !is null)
+    const answer = serveClipboard(field, clipboard);
+    result.changed = result.changed || answer.changed;
+    if (answer.handled)
+        result.clipboardRequest = 0;
+    return result;
+}
+
+/**
+Do the clipboard work `field` has pending: write the text it copied and
+answer its read with the clipboard's text. Returns the answer's result;
+not `handled` when nothing was read.
+*/
+FieldResult serveClipboard(Clipboard)(ref EditorField field, in Clipboard clipboard)
+{
+    if (field.pendingCopy.length && clipboard.write !is null)
     {
-        auto bytes = new char[result.clipboardWrite.length];
-        result.clipboardWrite.copyTo(0, bytes.length, bytes);
+        auto bytes = new char[field.pendingCopy.length];
+        field.pendingCopy.copyTo(0, bytes.length, bytes);
         clipboard.write(bytes);
     }
-    if (result.clipboardRequest && clipboard.read !is null)
-    {
-        const answer = field.pasteAnswer(result.clipboardRequest, clipboard.read());
-        result.changed = result.changed || answer.changed;
-        result.clipboardRequest = 0;
-    }
-    return result;
+    field.pendingCopy = Text.init;
+    const request = field.pendingRead;
+    field.pendingRead = 0;
+    if (request && clipboard.read !is null)
+        return field.pasteAnswer(request, clipboard.read());
+    return FieldResult.init;
 }
 
 /// A host serving a field's clipboard.
@@ -347,4 +406,54 @@ unittest
     assert(board == "abc" && field.empty, "cut puts the text on the board");
     const r = serveClipboard(field, field.key(KeyEvent(Key.char_, 'v', Mods(ctrl: true))), clipboard);
     assert(r.changed && field.text == "abc", "paste reads it back");
+}
+
+/**
+Hand `field`'s pending clipboard work to `host`, a host that reads the
+clipboard by request (`INP25`): copied text to `host.clipboard(text)`, and
+a read to `host.readClipboard(request)`, whose answer arrives later as a
+paste carrying the request, for `EditorField.paste`. Work the host has no
+member for is dropped; declare only what it can do (`FieldSetup`).
+*/
+void forwardClipboard(Host)(ref EditorField field, ref Host host)
+{
+    if (field.pendingCopy.length)
+    {
+        auto bytes = new char[field.pendingCopy.length];
+        field.pendingCopy.copyTo(0, bytes.length, bytes);
+        static if (__traits(compiles, host.clipboard(bytes)))
+            host.clipboard(bytes);
+    }
+    field.pendingCopy = Text.init;
+    if (field.pendingRead)
+        static if (__traits(compiles, host.readClipboard(1u)))
+            host.readClipboard(field.pendingRead);
+    field.pendingRead = 0;
+}
+
+/// A host that answers reads later: the request goes out, the paste comes back.
+@("editor.field.forwardClipboard")
+@safe pure nothrow
+unittest
+{
+    import sparkles.input.events : Key, Mods;
+    import sparkles.ui.editor.keys : EditorTarget;
+
+    static struct Host
+    {
+        string written;
+        uint asked;
+        void clipboard(scope const(char)[] text) { written = text.idup; }
+        void readClipboard(uint request) { asked = request; }
+    }
+
+    Host host;
+    auto field = FieldSetup(EditorTarget.window, true, true).singleLine("abc");
+    field.key(KeyEvent(Key.char_, 'a', Mods(ctrl: true)));
+    field.key(KeyEvent(Key.char_, 'c', Mods(ctrl: true)));
+    field.key(KeyEvent(Key.char_, 'v', Mods(ctrl: true)));
+    forwardClipboard(field, host);
+    assert(host.written == "abc" && host.asked != 0);
+    assert(field.paste("xyz", host.asked).changed && field.text == "xyz");
+    assert(!field.paste("late", host.asked).changed, "an answer counts once");
 }
