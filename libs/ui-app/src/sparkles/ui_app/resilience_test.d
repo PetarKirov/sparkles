@@ -514,7 +514,9 @@ private struct Rig
     r.start();
     r.settle();
     r.lc.input();
-    assert(!r.step().draw, "waits for a frame opportunity (`RES32`)");
+    const waiting = r.step();
+    assert(!waiting.draw, "waits for a frame opportunity (`RES32`)");
+    assert(waiting.askFrame, "and asks for one");
     r.lc.frameReady();
     r.lc.frameReady();
     r.lc.frameReady();
@@ -522,6 +524,9 @@ private struct Rig
     assert(r.step().draw);
     r.lc.input();
     assert(!r.step().draw, "the extra opportunities were not queued");
+    r.lc.frameReady();
+    assert(r.step().draw);
+    assert(!r.step().askFrame, "nothing wanted, nothing asked");
 }
 
 @("resilience.RSC29.model.frameSecondsIsTheIntervalClamped")

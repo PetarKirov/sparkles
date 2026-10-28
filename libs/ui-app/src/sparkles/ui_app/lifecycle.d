@@ -85,6 +85,10 @@ struct Plan
     bool rebuildTargets;    /// a swapchain for the current surface
     bool draw;              /// build a frame and draw it
     bool mustDraw;          /// the frame may not be skipped (`HST6`)
+    /// A frame is wanted on a paced window and waits for its opportunity:
+    /// ask the window system for one, where it gives them only on request
+    /// (Android's `AChoreographer`; Wayland's come unasked).
+    bool askFrame;
     Duration park = Duration.max; /// how long to wait for events first
 
     /// Whether the plan changes nothing and draws nothing.
@@ -321,6 +325,7 @@ struct Lifecycle
             dirty_ = false;
             return p;
         }
+        p.askFrame = dirty_ || requested_ || mustDraw_;
         p.park = wakeAsk;
         return p;
     }
