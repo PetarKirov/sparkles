@@ -147,7 +147,16 @@ struct InputEcho
             // left after it — SDL_EVENT_QUIT has no toolkit spelling.
             events.poll((Event e) {
                 if (!hasFilter || evalDql!EventSchema(engine, filter, e))
+                {
                     writeln(describe(e));
+                    // A preedit is named by id, readable until the next poll.
+                    const shown = e; // matching a const event stays `@safe`
+                    shown.match!((in CompositionEvent c) {
+                        if (!c.ends)
+                            events.texts.withText(c.preedit,
+                                (scope const(char)[] s) { writeln("       preedit ", s.idup); });
+                    }, (in _) {});
+                }
                 quit |= isEscape(e);
             }, cell, cell);
 

@@ -59,8 +59,16 @@ struct Sdl3Events
     different keyboard events depending on which backend it was built with,
     which is the one thing the shared vocabulary exists to prevent. A host that
     wants the full grade asks for it, on either backend.
+
+    Composition is declared (`INP24`): SDL delivers the input method's
+    preedit as `SDL_EVENT_TEXT_EDITING`, which this translates. It only adds
+    events, and only while an input method composes.
     */
-    InputCapabilities capabilities = mousePointer;
+    InputCapabilities capabilities = () {
+        InputCapabilities c = mousePointer;
+        c.composition = true;
+        return c;
+    }();
 
     private
     {
@@ -72,6 +80,10 @@ struct Sdl3Events
         // can ride on it — see `translate`.
         KeyEvent _pending;
         bool _hasPending;
+
+        // The preedits this poll's composition events name (`INP24`).
+        InputTextPool* _texts;
+        TextId[] _issued;
     }
 
     /**
@@ -93,6 +105,11 @@ struct Sdl3Events
     void poll(Sink)(scope Sink sink, int cellW, int cellH,
         int originX = 0, int originY = 0) @system
     {
+        // The previous poll's preedits stop resolving here (`INP24`).
+        foreach (id; _issued)
+            cast(void) texts.release(id);
+        _issued.length = 0;
+
         const m = CellMetrics(cellW, cellH, originX, originY);
         _mods = toMods(cast(ushort) SDL_GetModState());
 
@@ -122,6 +139,10 @@ struct Sdl3Events
             case SDL_EventType.SDL_EVENT_KEY_UP:
                 _mods = toMods(ev.key.mod);
                 onKey(ev.key, sink);
+                return;
+
+            case SDL_EventType.SDL_EVENT_TEXT_EDITING:
+                onEditing(ev.edit, sink);
                 return;
 
             case SDL_EventType.SDL_EVENT_TEXT_INPUT:
@@ -243,6 +264,68 @@ struct Sdl3Events
             _pending = e;
             _hasPending = true;
         }
+    }
+
+    /**
+    The pool this window's composition events name their preedits in
+    (`INP24`): read a `CompositionEvent.preedit` here, before the next `poll`.
+    */
+    ref InputTextPool texts() return @safe
+    {
+        if (_texts is null)
+            _texts = new InputTextPool;
+        return *_texts;
+    }
+
+    /**
+    An input method's preedit (`EDI8`), interned into $(LREF texts). SDL
+    counts `start` and `length` in code points, as its IME backends report
+    them; they become byte offsets. The whole preedit is underlined, SDL's
+    selected span highlighted, and the cursor is the span's start, or the
+    preedit's end when SDL sets none. An empty preedit ends the composition.
+    */
+    private void onEditing(Sink)(in SDL_TextEditingEvent e, scope Sink sink) @system
+    {
+        import core.stdc.string : strlen;
+
+        flush(sink);
+        const whole = e.text is null ? null : e.text[0 .. strlen(e.text)];
+        CompositionEvent update;
+        if (whole.length)
+        {
+            auto id = texts.intern(whole);
+            if (!id.hasValue)
+                return; // the pool is full this poll: the next update replaces it
+            _issued ~= id.value;
+            const text = whole.length <= ushort.max ? whole : whole[0 .. ushort.max];
+            update.preedit = id.value;
+            update.cursor = cast(ushort)(e.start < 0 ? text.length : byteOffset(text, e.start));
+            update.runs[update.runCount++] = CompositionRun(0, cast(ushort) text.length,
+                CompositionStyle.underline);
+            if (e.start >= 0 && e.length > 0)
+            {
+                const end = byteOffset(text, e.start + e.length);
+                update.runs[update.runCount++] = CompositionRun(update.cursor,
+                    cast(ushort)(end - update.cursor), CompositionStyle.selected);
+            }
+        }
+        sink(Event(update));
+    }
+
+    /// The byte offset of code point `points` in `text`, clamped to its end.
+    private static auto byteOffset(scope const(char)[] text, long points) @safe pure nothrow @nogc
+    {
+        import sparkles.base.text.tokens : byUtfToken;
+        import sparkles.base.text.utf : UtfMode;
+
+        auto at = text.length - text.length; // `size_t` is ambiguous here on macOS
+        foreach (token; byUtfToken(text, UtfMode.replacement))
+        {
+            if (points-- <= 0)
+                break;
+            at = token.end;
+        }
+        return at;
     }
 
     private void onText(Sink)(in SDL_TextInputEvent t, scope Sink sink) @system
@@ -485,6 +568,17 @@ version (unittest)
         ev.key.down = down;
         ev.key.repeat = repeat;
         ev.key.mod = mod;
+        return ev;
+    }
+
+    private SDL_Event editingEventOf(const(char)* text, int start, int length)
+        @system pure nothrow @nogc
+    {
+        SDL_Event ev;
+        ev.type = SDL_EventType.SDL_EVENT_TEXT_EDITING;
+        ev.edit.text = text;
+        ev.edit.start = start;
+        ev.edit.length = length;
         return ev;
     }
 
@@ -866,4 +960,28 @@ version (unittest)
     const p = rec.only.match!((PointerEvent e) => e, _ => PointerEvent.init);
     assert(p.action == PointerAction.leave);
     assert(p.pos == Point(3, 4));
+}
+
+@("ui_sdl3.events.textEditingIsAComposition")
+@system unittest
+{
+    // `EDI8`: SDL's editing text becomes a `CompositionEvent` whose preedit
+    // resolves in this window's pool until the next poll; SDL's code-point
+    // span becomes byte offsets, highlighted on the underlined preedit.
+    Sdl3Events ev;
+    Recorder rec;
+    ev.translate(editingEventOf("にほんご", 1, 2), rec.sink, CellMetrics.init);
+    const update = rec.only.match!((CompositionEvent c) => c, _ => CompositionEvent.init);
+    assert(!update.ends && update.cursor == 3);
+    assert(update.runCount == 2);
+    assert(update.runs[0] == CompositionRun(0, 12, CompositionStyle.underline));
+    assert(update.runs[1] == CompositionRun(3, 6, CompositionStyle.selected));
+    string preedit;
+    ev.texts.withText(update.preedit, (scope const(char)[] s) { preedit = s.idup; });
+    assert(preedit == "にほんご");
+
+    rec.events = null;
+    ev.translate(editingEventOf("", -1, -1), rec.sink, CellMetrics.init);
+    assert(rec.only.match!((CompositionEvent c) => c.ends, _ => false),
+        "an empty preedit ends the composition");
 }
