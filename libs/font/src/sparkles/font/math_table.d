@@ -23,6 +23,7 @@ instance whose coordinates are all zero no item variation store is read
 module sparkles.font.math_table;
 
 import sparkles.font.bytes : be16, bes16, fits;
+import sparkles.font.corrections : Correction;
 import sparkles.font.coverage : Coverage;
 import sparkles.font.errors : callerStorageError, FontError, FontErrorKind, FontResult, fontErr, fontOk, Tag,
     tableError;
@@ -164,6 +165,8 @@ struct MathValue
     bool hasDevice;
     /// That table's adjustment; `device.variation` is already in `value`.
     DeviceDelta device;
+    /// The registry entry that changed the value, as FTD9's swap does (FTD45).
+    Correction correction;
 
     /**
     The value in fractional pixels at a pixel-sized instance, plus the
@@ -335,6 +338,9 @@ struct MathConstants
     instance at an integer ppem inside the table's range. Another delta
     format is `unsupportedVersion`, a device offset outside the table
     `badOffset`, and a constant past the end of a short table `truncated`.
+    Under FTD9's correction, `delimitedSubFormulaMinHeight` and
+    `displayOperatorMinHeight` each report the other's stored value, as
+    `hb_ot_math_get_constant` does, with the correction named.
     Costs O(1) plus the constant's variation delta.
     */
     FontResult!MathValue opIndex(MathConstant c) const scope
@@ -342,7 +348,13 @@ struct MathConstants
         if (!present_)
             return fontOk(MathValue.init);
         const kind = kindOf(c);
-        const fieldAt = at_ + constantOffset(c);
+        auto stored = c;
+        const swapped = inst_.face.corrections.has(Correction.cambriaMathMinHeights)
+            && (c == MathConstant.delimitedSubFormulaMinHeight || c == MathConstant.displayOperatorMinHeight);
+        if (swapped)
+            stored = c == MathConstant.delimitedSubFormulaMinHeight ? MathConstant.displayOperatorMinHeight
+                : MathConstant.delimitedSubFormulaMinHeight;
+        const fieldAt = at_ + constantOffset(stored);
         const d = table_.data_;
         if (!fits(d.length, fieldAt, kind == MathValueKind.record ? 4 : 2))
             return fontErr!MathValue(table_.error(FontErrorKind.truncated, fieldAt));
@@ -357,6 +369,8 @@ struct MathConstants
                 return fontOk(v);
             case MathValueKind.length:
                 v.value = measured(inst_, DesignValue.fromUnits(be16(d, p), inst_.unitsPerEm));
+                if (swapped)
+                    v.correction = Correction.cambriaMathMinHeights;
                 return fontOk(v);
             case MathValueKind.record:
                 const store = mathStore(inst_);

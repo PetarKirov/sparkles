@@ -12,6 +12,7 @@ format-4 glyph-array target outside `cmap` reads as unmapped.
 module sparkles.font.cmap;
 
 import sparkles.font.bytes : be16, be24, be32, bes16, fits;
+import sparkles.font.corrections : arabicPuaCode, Correction;
 import sparkles.font.errors : FontError, FontErrorKind, FontResult, fontErr, fontOk, Tag, tableError;
 import sparkles.font.face : Face;
 import sparkles.font.mac_roman : macRomanByUnicode, unicodeToMacRoman;
@@ -29,6 +30,19 @@ enum CmapLookup : ubyte
     macRoman,
     /// Codepoints up to U+007F only.
     ascii,
+    /**
+    Directly, then through a legacy Arabic code page in place of `symbol`'s
+    U+F000 duplication (FTD11): the face's `arabicSimplifiedPage` or
+    `arabicTraditionalPage` correction.
+    */
+    arabicPage,
+}
+
+/// A glyph with the registry entry that produced it, if any (FTD45).
+struct MappedGlyph
+{
+    uint glyph;
+    Correction correction;
 }
 
 /// A format-14 answer (FTP27).
@@ -68,6 +82,7 @@ struct CharMap
     private uint count_; // segments (4), groups (12, 13) or entries (6)
     private uint firstCode_; // format 6
     private uint rejected_;
+    private Correction page_; // the Arabic page, for CmapLookup.arabicPage
     private FontError firstRejection_;
     private uint outOfRange_, unmappedByTarget_;
     private bool hasVariants_;
@@ -112,7 +127,27 @@ struct CharMap
             }
             case CmapLookup.ascii:
                 return cp <= 0x7F ? direct(cp) : 0;
+            case CmapLookup.arabicPage:
+                return lookup(cp).glyph;
         }
+    }
+
+    /**
+    The glyph for `cp` with the correction that mapped it (FTD45): under a
+    legacy Arabic page, a scalar the subtable lacks is tried at the code the
+    page gives it, as `get_glyph_from_symbol` does, and a glyph found there
+    names the page. Otherwise as `glyph`, with no correction.
+    */
+    MappedGlyph lookup(dchar cp) const scope
+    {
+        if (lookup_ != CmapLookup.arabicPage)
+            return MappedGlyph(glyph(cp));
+        const g = direct(cp);
+        if (g)
+            return MappedGlyph(g);
+        const code = arabicPuaCode(page_, cp);
+        const viaPage = code ? direct(code) : 0;
+        return viaPage ? MappedGlyph(viaPage, page_) : MappedGlyph(0);
     }
 
     /// The mapped codepoints as sorted, merged, disjoint ranges (FTP27).
@@ -428,6 +463,14 @@ private FontResult!CharMap build(scope const Face face, return scope const(ubyte
     m.platform_ = be16(cmap, 4 + 8 * i);
     m.encoding_ = be16(cmap, 6 + 8 * i);
     m.lookup_ = lookupFor(m.platform_, m.encoding_);
+    static immutable Correction[2] pages = [Correction.arabicSimplifiedPage, Correction.arabicTraditionalPage];
+    if (m.lookup_ == CmapLookup.symbol)
+        foreach (page; pages)
+            if (face.corrections.has(page))
+            {
+                m.lookup_ = CmapLookup.arabicPage;
+                m.page_ = page;
+            }
     const checked = checkSubtable(m, cmap, start, be32(cmap, 8 + 8 * i));
     if (checked.hasError)
         return fontErr!CharMap(checked.error);

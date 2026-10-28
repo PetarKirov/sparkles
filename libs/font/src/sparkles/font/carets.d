@@ -12,11 +12,12 @@ malformed data as its table error; nothing is synthesized.
 module sparkles.font.carets;
 
 import sparkles.font.bytes : be16, bes16, fits;
+import sparkles.font.corrections : Correction;
 import sparkles.font.coverage : Coverage;
 import sparkles.font.errors : callerStorageError, FontError, FontErrorKind, FontResult,
     fontErr, fontOk, Tag, tableError;
 import sparkles.font.face : Face;
-import sparkles.font.gdef : gdefVariationStore;
+import sparkles.font.gdef : gdefTable, gdefVariationStore;
 import sparkles.font.instance : Instance, InstanceSize;
 import sparkles.font.outlines : glyphPoint, PointWorkspace;
 import sparkles.font.tables : locate;
@@ -65,6 +66,8 @@ struct LigatureCarets
 
     bool present;
     size_t count;
+    /// The registry entry that hid the carets, when FTD10's applies (FTD45).
+    Correction correction;
 }
 
 /**
@@ -81,11 +84,15 @@ FontResult!LigatureCarets ligatureCarets(in Instance inst, uint gid, uint cluste
     bool horizontal, scope LigatureCaret[] out_, scope ref PointWorkspace ws)
 {
     const face = inst.face;
-    auto at = locate(face, gdefTag);
+    auto at = gdefTable(face);
     if (at.hasError)
     {
         if (at.error.kind == FontErrorKind.missingTable)
-            return fontOk(LigatureCarets.init);
+        {
+            LigatureCarets none;
+            none.correction = at.error.correction;
+            return fontOk(none);
+        }
         return fontErr!LigatureCarets(at.error);
     }
     const d = at.value.data;
