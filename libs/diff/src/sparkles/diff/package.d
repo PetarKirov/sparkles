@@ -12,8 +12,11 @@
 /// `package.d` unittests); this module only re-exports the public surface.
 module sparkles.diff;
 
+public import sparkles.diff.alignment : AlignedRow, alignSides, maxAlignSides;
 public import sparkles.diff.classify : classifyHunks, formattingOnlyCount,
     isFormattingOnly;
+public import sparkles.diff.conflict : ConflictDoc, ConflictError, ConflictRegion, ConflictSide,
+    parseConflicts, RegionKind, writeSide;
 public import sparkles.diff.engine : diffText;
 public import sparkles.diff.identity : rowId, stampIds;
 public import sparkles.diff.model : Degradation, DiffDoc, DiffOptions, FileEntry,
