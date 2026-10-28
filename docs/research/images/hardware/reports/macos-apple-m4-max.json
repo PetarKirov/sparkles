@@ -1,0 +1,1450 @@
+{
+  "android": {
+    "board": "",
+    "mediaCodecVariant": "",
+    "sdk": "",
+    "soc": "",
+    "vulkanHardware": ""
+  },
+  "cpu": {
+    "coreTypes": [
+      "Performance x10",
+      "Efficiency x4"
+    ],
+    "logicalCpus": 14,
+    "model": "Apple M4 Max",
+    "simd": [
+      "FEAT_CRC32",
+      "FEAT_FlagM",
+      "FEAT_FlagM2",
+      "FEAT_FHM",
+      "FEAT_DotProd",
+      "FEAT_SHA3",
+      "FEAT_RDM",
+      "FEAT_LSE",
+      "FEAT_SHA256",
+      "FEAT_SHA512",
+      "FEAT_SHA1",
+      "FEAT_AES",
+      "FEAT_PMULL",
+      "FEAT_SB",
+      "FEAT_FRINTTS",
+      "FEAT_PACIMP",
+      "FEAT_LRCPC",
+      "FEAT_LRCPC2",
+      "FEAT_FCMA",
+      "FEAT_JSCVT",
+      "FEAT_PAuth",
+      "FEAT_PAuth2",
+      "FEAT_FPAC",
+      "FEAT_FPACCOMBINE",
+      "FEAT_DPB",
+      "FEAT_DPB2",
+      "FEAT_BF16",
+      "FEAT_I8MM",
+      "FEAT_WFxT",
+      "FEAT_RPRES",
+      "FEAT_ECV",
+      "FEAT_AFP",
+      "FEAT_LSE2",
+      "FEAT_CSV2",
+      "FEAT_CSV3",
+      "FEAT_DIT",
+      "AdvSIMD",
+      "AdvSIMD_HPFPCvt",
+      "FEAT_FP16",
+      "FEAT_BTI",
+      "FEAT_SME",
+      "FEAT_SME2",
+      "SME_F32F32",
+      "SME_BI32I32",
+      "SME_B16F32",
+      "SME_F16F32",
+      "SME_I8I32",
+      "SME_I16I32",
+      "FEAT_SME_F64F64",
+      "FEAT_SME_I16I64",
+      "FP_SyncExceptions",
+      "floatingpoint",
+      "neon",
+      "neon_hpfp",
+      "neon_fp16",
+      "armv8_crc32",
+      "armv8_gpi",
+      "armv8_1_atomics",
+      "armv8_2_fhm",
+      "armv8_2_sha512",
+      "armv8_2_sha3",
+      "armv8_3_compnum",
+      "ucnormal_mem",
+      "arm64"
+    ]
+  },
+  "host": {
+    "arch": "aarch64",
+    "collectedVia": "native",
+    "kernel": "27.0.0",
+    "memoryBytes": 38654705664,
+    "model": "Mac16,5",
+    "os": "macos",
+    "osVersion": "27.0.1"
+  },
+  "io": {
+    "backend": "none",
+    "status": "macOS has no io_uring; kqueue only",
+    "uringFeatures": [],
+    "uringOpcodes": []
+  },
+  "media": {
+    "api": "VideoToolbox",
+    "codecs": [
+      {
+        "direction": "decode",
+        "features": [],
+        "kind": "hardware",
+        "maxSize": "",
+        "mime": "video/avc",
+        "name": "avc1",
+        "source": "VTIsHardwareDecodeSupported"
+      },
+      {
+        "direction": "decode",
+        "features": [],
+        "kind": "hardware",
+        "maxSize": "",
+        "mime": "video/hevc",
+        "name": "hvc1",
+        "source": "VTIsHardwareDecodeSupported"
+      },
+      {
+        "direction": "decode",
+        "features": [],
+        "kind": "hardware",
+        "maxSize": "",
+        "mime": "video/av01",
+        "name": "av01",
+        "source": "VTIsHardwareDecodeSupported"
+      },
+      {
+        "direction": "decode",
+        "features": [],
+        "kind": "hardware",
+        "maxSize": "",
+        "mime": "video/x-vnd.on2.vp9",
+        "name": "vp09",
+        "source": "VTIsHardwareDecodeSupported"
+      },
+      {
+        "direction": "decode",
+        "features": [],
+        "kind": "hardware",
+        "maxSize": "",
+        "mime": "video/prores-422",
+        "name": "apcn",
+        "source": "VTIsHardwareDecodeSupported"
+      },
+      {
+        "direction": "decode",
+        "features": [],
+        "kind": "hardware",
+        "maxSize": "",
+        "mime": "video/prores-4444",
+        "name": "ap4h",
+        "source": "VTIsHardwareDecodeSupported"
+      },
+      {
+        "direction": "decode",
+        "features": [],
+        "kind": "hardware",
+        "maxSize": "",
+        "mime": "image/jpeg",
+        "name": "jpeg",
+        "source": "VTIsHardwareDecodeSupported"
+      },
+      {
+        "direction": "decode",
+        "features": [],
+        "kind": "software",
+        "maxSize": "",
+        "mime": "video/mp4v-es",
+        "name": "mp4v",
+        "source": "VTIsHardwareDecodeSupported"
+      }
+    ],
+    "devices": [],
+    "nvidia": ""
+  },
+  "notes": [],
+  "probe": {
+    "commit": "0ef4564",
+    "schema": "sparkles.media-hw-probe/1",
+    "version_": "1"
+  },
+  "vulkan": {
+    "devices": [
+      {
+        "apiVersion": "1.4.357",
+        "conformanceVersion": "1.4.4.0",
+        "cooperativeMatrix": [],
+        "deviceId": "0x1B000209",
+        "driverId": "moltenvk",
+        "driverInfo": "1.4.2",
+        "driverName": "MoltenVK",
+        "extensions": [
+          "VK_AMD_gpu_shader_half_float",
+          "VK_AMD_negative_viewport_height",
+          "VK_AMD_shader_image_load_store_lod",
+          "VK_AMD_shader_trinary_minmax",
+          "VK_EXT_4444_formats",
+          "VK_EXT_buffer_device_address",
+          "VK_EXT_calibrated_timestamps",
+          "VK_EXT_debug_marker",
+          "VK_EXT_depth_clip_control",
+          "VK_EXT_descriptor_indexing",
+          "VK_EXT_extended_dynamic_state",
+          "VK_EXT_extended_dynamic_state2",
+          "VK_EXT_extended_dynamic_state3",
+          "VK_EXT_external_memory_host",
+          "VK_EXT_external_memory_metal",
+          "VK_EXT_fragment_shader_interlock",
+          "VK_EXT_global_priority",
+          "VK_EXT_global_priority_query",
+          "VK_EXT_hdr_metadata",
+          "VK_EXT_host_image_copy",
+          "VK_EXT_host_query_reset",
+          "VK_EXT_image_2d_view_of_3d",
+          "VK_EXT_image_robustness",
+          "VK_EXT_index_type_uint8",
+          "VK_EXT_inline_uniform_block",
+          "VK_EXT_legacy_dithering",
+          "VK_EXT_line_rasterization",
+          "VK_EXT_load_store_op_none",
+          "VK_EXT_memory_budget",
+          "VK_EXT_metal_objects",
+          "VK_EXT_non_seamless_cube_map",
+          "VK_EXT_pipeline_creation_cache_control",
+          "VK_EXT_pipeline_creation_feedback",
+          "VK_EXT_pipeline_robustness",
+          "VK_EXT_post_depth_coverage",
+          "VK_EXT_primitive_topology_list_restart",
+          "VK_EXT_private_data",
+          "VK_EXT_provoking_vertex",
+          "VK_EXT_robustness2",
+          "VK_EXT_sample_locations",
+          "VK_EXT_scalar_block_layout",
+          "VK_EXT_separate_stencil_usage",
+          "VK_EXT_shader_atomic_float",
+          "VK_EXT_shader_demote_to_helper_invocation",
+          "VK_EXT_shader_stencil_export",
+          "VK_EXT_shader_subgroup_ballot",
+          "VK_EXT_shader_subgroup_vote",
+          "VK_EXT_shader_viewport_index_layer",
+          "VK_EXT_subgroup_size_control",
+          "VK_EXT_swapchain_maintenance1",
+          "VK_EXT_texel_buffer_alignment",
+          "VK_EXT_texture_compression_astc_hdr",
+          "VK_EXT_tooling_info",
+          "VK_EXT_vertex_attribute_divisor",
+          "VK_GOOGLE_display_timing",
+          "VK_IMG_format_pvrtc",
+          "VK_INTEL_shader_integer_functions2",
+          "VK_KHR_16bit_storage",
+          "VK_KHR_8bit_storage",
+          "VK_KHR_bind_memory2",
+          "VK_KHR_buffer_device_address",
+          "VK_KHR_calibrated_timestamps",
+          "VK_KHR_copy_commands2",
+          "VK_KHR_create_renderpass2",
+          "VK_KHR_dedicated_allocation",
+          "VK_KHR_deferred_host_operations",
+          "VK_KHR_depth_stencil_resolve",
+          "VK_KHR_descriptor_update_template",
+          "VK_KHR_device_group",
+          "VK_KHR_driver_properties",
+          "VK_KHR_dynamic_rendering",
+          "VK_KHR_dynamic_rendering_local_read",
+          "VK_KHR_external_fence",
+          "VK_KHR_external_memory",
+          "VK_KHR_external_semaphore",
+          "VK_KHR_format_feature_flags2",
+          "VK_KHR_fragment_shader_barycentric",
+          "VK_KHR_get_memory_requirements2",
+          "VK_KHR_global_priority",
+          "VK_KHR_image_format_list",
+          "VK_KHR_imageless_framebuffer",
+          "VK_KHR_incremental_present",
+          "VK_KHR_index_type_uint8",
+          "VK_KHR_line_rasterization",
+          "VK_KHR_load_store_op_none",
+          "VK_KHR_maintenance1",
+          "VK_KHR_maintenance2",
+          "VK_KHR_maintenance3",
+          "VK_KHR_maintenance4",
+          "VK_KHR_maintenance5",
+          "VK_KHR_maintenance6",
+          "VK_KHR_maintenance7",
+          "VK_KHR_maintenance8",
+          "VK_KHR_maintenance9",
+          "VK_KHR_map_memory2",
+          "VK_KHR_multiview",
+          "VK_KHR_portability_subset",
+          "VK_KHR_present_id",
+          "VK_KHR_present_id2",
+          "VK_KHR_present_wait",
+          "VK_KHR_present_wait2",
+          "VK_KHR_push_descriptor",
+          "VK_KHR_relaxed_block_layout",
+          "VK_KHR_robustness2",
+          "VK_KHR_sampler_mirror_clamp_to_edge",
+          "VK_KHR_sampler_ycbcr_conversion",
+          "VK_KHR_separate_depth_stencil_layouts",
+          "VK_KHR_shader_draw_parameters",
+          "VK_KHR_shader_expect_assume",
+          "VK_KHR_shader_float16_int8",
+          "VK_KHR_shader_float_controls",
+          "VK_KHR_shader_float_controls2",
+          "VK_KHR_shader_fma",
+          "VK_KHR_shader_integer_dot_product",
+          "VK_KHR_shader_maximal_reconvergence",
+          "VK_KHR_shader_non_semantic_info",
+          "VK_KHR_shader_relaxed_extended_instruction",
+          "VK_KHR_shader_subgroup_extended_types",
+          "VK_KHR_shader_subgroup_rotate",
+          "VK_KHR_shader_subgroup_uniform_control_flow",
+          "VK_KHR_shader_terminate_invocation",
+          "VK_KHR_spirv_1_4",
+          "VK_KHR_storage_buffer_storage_class",
+          "VK_KHR_swapchain",
+          "VK_KHR_swapchain_maintenance1",
+          "VK_KHR_swapchain_mutable_format",
+          "VK_KHR_synchronization2",
+          "VK_KHR_timeline_semaphore",
+          "VK_KHR_uniform_buffer_standard_layout",
+          "VK_KHR_variable_pointers",
+          "VK_KHR_vertex_attribute_divisor",
+          "VK_KHR_vulkan_memory_model",
+          "VK_KHR_zero_initialize_workgroup_memory",
+          "VK_NV_fragment_shader_barycentric"
+        ],
+        "features": [
+          {
+            "enabled": [
+              "robustBufferAccess",
+              "fullDrawIndexUint32",
+              "imageCubeArray",
+              "independentBlend",
+              "tessellationShader",
+              "sampleRateShading",
+              "dualSrcBlend",
+              "logicOp",
+              "multiDrawIndirect",
+              "drawIndirectFirstInstance",
+              "depthClamp",
+              "depthBiasClamp",
+              "fillModeNonSolid",
+              "wideLines",
+              "largePoints",
+              "alphaToOne",
+              "multiViewport",
+              "samplerAnisotropy",
+              "textureCompressionETC2",
+              "textureCompressionASTC_LDR",
+              "textureCompressionBC",
+              "occlusionQueryPrecise",
+              "vertexPipelineStoresAndAtomics",
+              "fragmentStoresAndAtomics",
+              "shaderTessellationAndGeometryPointSize",
+              "shaderImageGatherExtended",
+              "shaderStorageImageExtendedFormats",
+              "shaderStorageImageReadWithoutFormat",
+              "shaderStorageImageWriteWithoutFormat",
+              "shaderUniformBufferArrayDynamicIndexing",
+              "shaderSampledImageArrayDynamicIndexing",
+              "shaderStorageBufferArrayDynamicIndexing",
+              "shaderStorageImageArrayDynamicIndexing",
+              "shaderClipDistance",
+              "shaderInt64",
+              "shaderInt16",
+              "shaderResourceMinLod",
+              "inheritedQueries"
+            ],
+            "struct_": "VkPhysicalDeviceFeatures"
+          },
+          {
+            "enabled": [
+              "storageBuffer16BitAccess",
+              "uniformAndStorageBuffer16BitAccess",
+              "storagePushConstant16",
+              "storageInputOutput16",
+              "multiview",
+              "variablePointersStorageBuffer",
+              "variablePointers",
+              "samplerYcbcrConversion",
+              "shaderDrawParameters"
+            ],
+            "struct_": "VkPhysicalDeviceVulkan11Features"
+          },
+          {
+            "enabled": [
+              "samplerMirrorClampToEdge",
+              "storageBuffer8BitAccess",
+              "uniformAndStorageBuffer8BitAccess",
+              "storagePushConstant8",
+              "shaderFloat16",
+              "shaderInt8",
+              "descriptorIndexing",
+              "shaderInputAttachmentArrayDynamicIndexing",
+              "shaderUniformTexelBufferArrayDynamicIndexing",
+              "shaderStorageTexelBufferArrayDynamicIndexing",
+              "shaderUniformBufferArrayNonUniformIndexing",
+              "shaderSampledImageArrayNonUniformIndexing",
+              "shaderStorageBufferArrayNonUniformIndexing",
+              "shaderStorageImageArrayNonUniformIndexing",
+              "shaderInputAttachmentArrayNonUniformIndexing",
+              "shaderUniformTexelBufferArrayNonUniformIndexing",
+              "shaderStorageTexelBufferArrayNonUniformIndexing",
+              "descriptorBindingUniformBufferUpdateAfterBind",
+              "descriptorBindingSampledImageUpdateAfterBind",
+              "descriptorBindingStorageImageUpdateAfterBind",
+              "descriptorBindingStorageBufferUpdateAfterBind",
+              "descriptorBindingUniformTexelBufferUpdateAfterBind",
+              "descriptorBindingStorageTexelBufferUpdateAfterBind",
+              "descriptorBindingUpdateUnusedWhilePending",
+              "descriptorBindingPartiallyBound",
+              "descriptorBindingVariableDescriptorCount",
+              "runtimeDescriptorArray",
+              "scalarBlockLayout",
+              "imagelessFramebuffer",
+              "uniformBufferStandardLayout",
+              "shaderSubgroupExtendedTypes",
+              "separateDepthStencilLayouts",
+              "hostQueryReset",
+              "timelineSemaphore",
+              "bufferDeviceAddress",
+              "vulkanMemoryModel",
+              "vulkanMemoryModelDeviceScope",
+              "shaderOutputViewportIndex",
+              "shaderOutputLayer",
+              "subgroupBroadcastDynamicId"
+            ],
+            "struct_": "VkPhysicalDeviceVulkan12Features"
+          },
+          {
+            "enabled": [
+              "robustImageAccess",
+              "inlineUniformBlock",
+              "descriptorBindingInlineUniformBlockUpdateAfterBind",
+              "pipelineCreationCacheControl",
+              "privateData",
+              "shaderDemoteToHelperInvocation",
+              "shaderTerminateInvocation",
+              "subgroupSizeControl",
+              "computeFullSubgroups",
+              "synchronization2",
+              "textureCompressionASTC_HDR",
+              "shaderZeroInitializeWorkgroupMemory",
+              "dynamicRendering",
+              "shaderIntegerDotProduct",
+              "maintenance4"
+            ],
+            "struct_": "VkPhysicalDeviceVulkan13Features"
+          },
+          {
+            "enabled": [
+              "globalPriorityQuery",
+              "shaderSubgroupRotate",
+              "shaderSubgroupRotateClustered",
+              "shaderFloatControls2",
+              "shaderExpectAssume",
+              "bresenhamLines",
+              "vertexAttributeInstanceRateDivisor",
+              "vertexAttributeInstanceRateZeroDivisor",
+              "indexTypeUint8",
+              "dynamicRenderingLocalRead",
+              "maintenance5",
+              "maintenance6",
+              "pipelineRobustness",
+              "hostImageCopy",
+              "pushDescriptor"
+            ],
+            "struct_": "VkPhysicalDeviceVulkan14Features"
+          },
+          {
+            "enabled": [
+              "textureCompressionASTC_HDR"
+            ],
+            "struct_": "VkPhysicalDeviceTextureCompressionASTCHDRFeatures"
+          }
+        ],
+        "formats": [
+          {
+            "buffer": [
+              "UNIFORM_TEXEL_BUFFER",
+              "STORAGE_TEXEL_BUFFER",
+              "VERTEX_BUFFER"
+            ],
+            "format": "R8_UNORM",
+            "linear": [
+              "SAMPLED_IMAGE",
+              "STORAGE_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST"
+            ],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "STORAGE_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST"
+            ]
+          },
+          {
+            "buffer": [
+              "UNIFORM_TEXEL_BUFFER",
+              "STORAGE_TEXEL_BUFFER",
+              "VERTEX_BUFFER"
+            ],
+            "format": "R8G8_UNORM",
+            "linear": [
+              "SAMPLED_IMAGE",
+              "STORAGE_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST"
+            ],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "STORAGE_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST"
+            ]
+          },
+          {
+            "buffer": [
+              "UNIFORM_TEXEL_BUFFER",
+              "STORAGE_TEXEL_BUFFER",
+              "VERTEX_BUFFER"
+            ],
+            "format": "R8G8B8A8_UNORM",
+            "linear": [
+              "SAMPLED_IMAGE",
+              "STORAGE_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST"
+            ],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "STORAGE_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST"
+            ]
+          },
+          {
+            "buffer": [
+              "UNIFORM_TEXEL_BUFFER",
+              "STORAGE_TEXEL_BUFFER",
+              "VERTEX_BUFFER"
+            ],
+            "format": "R8G8B8A8_SRGB",
+            "linear": [
+              "SAMPLED_IMAGE",
+              "STORAGE_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST"
+            ],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "STORAGE_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST"
+            ]
+          },
+          {
+            "buffer": [
+              "UNIFORM_TEXEL_BUFFER",
+              "STORAGE_TEXEL_BUFFER",
+              "VERTEX_BUFFER"
+            ],
+            "format": "B8G8R8A8_UNORM",
+            "linear": [
+              "SAMPLED_IMAGE",
+              "STORAGE_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST"
+            ],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "STORAGE_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST"
+            ]
+          },
+          {
+            "buffer": [
+              "UNIFORM_TEXEL_BUFFER",
+              "STORAGE_TEXEL_BUFFER"
+            ],
+            "format": "B8G8R8A8_SRGB",
+            "linear": [
+              "SAMPLED_IMAGE",
+              "STORAGE_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST"
+            ],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "STORAGE_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST"
+            ]
+          },
+          {
+            "buffer": [
+              "UNIFORM_TEXEL_BUFFER",
+              "STORAGE_TEXEL_BUFFER",
+              "VERTEX_BUFFER"
+            ],
+            "format": "R16_UNORM",
+            "linear": [
+              "SAMPLED_IMAGE",
+              "STORAGE_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST"
+            ],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "STORAGE_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST"
+            ]
+          },
+          {
+            "buffer": [
+              "UNIFORM_TEXEL_BUFFER",
+              "STORAGE_TEXEL_BUFFER",
+              "VERTEX_BUFFER"
+            ],
+            "format": "R16G16_UNORM",
+            "linear": [
+              "SAMPLED_IMAGE",
+              "STORAGE_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST"
+            ],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "STORAGE_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST"
+            ]
+          },
+          {
+            "buffer": [
+              "UNIFORM_TEXEL_BUFFER",
+              "STORAGE_TEXEL_BUFFER",
+              "VERTEX_BUFFER"
+            ],
+            "format": "R16G16B16A16_UNORM",
+            "linear": [
+              "SAMPLED_IMAGE",
+              "STORAGE_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST"
+            ],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "STORAGE_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST"
+            ]
+          },
+          {
+            "buffer": [
+              "UNIFORM_TEXEL_BUFFER",
+              "STORAGE_TEXEL_BUFFER",
+              "VERTEX_BUFFER"
+            ],
+            "format": "R16G16B16A16_SFLOAT",
+            "linear": [
+              "SAMPLED_IMAGE",
+              "STORAGE_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST"
+            ],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "STORAGE_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST"
+            ]
+          },
+          {
+            "buffer": [
+              "UNIFORM_TEXEL_BUFFER",
+              "STORAGE_TEXEL_BUFFER",
+              "VERTEX_BUFFER"
+            ],
+            "format": "R32G32B32A32_SFLOAT",
+            "linear": [
+              "SAMPLED_IMAGE",
+              "STORAGE_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST"
+            ],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "STORAGE_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST"
+            ]
+          },
+          {
+            "buffer": [
+              "UNIFORM_TEXEL_BUFFER",
+              "STORAGE_TEXEL_BUFFER",
+              "VERTEX_BUFFER"
+            ],
+            "format": "A2B10G10R10_UNORM_PACK32",
+            "linear": [
+              "SAMPLED_IMAGE",
+              "STORAGE_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST"
+            ],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "STORAGE_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST"
+            ]
+          },
+          {
+            "buffer": [
+              "UNIFORM_TEXEL_BUFFER",
+              "STORAGE_TEXEL_BUFFER",
+              "VERTEX_BUFFER"
+            ],
+            "format": "B10G11R11_UFLOAT_PACK32",
+            "linear": [
+              "SAMPLED_IMAGE",
+              "STORAGE_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST"
+            ],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "STORAGE_IMAGE",
+              "COLOR_ATTACHMENT",
+              "COLOR_ATTACHMENT_BLEND",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST"
+            ]
+          },
+          {
+            "buffer": [
+              "UNIFORM_TEXEL_BUFFER",
+              "STORAGE_TEXEL_BUFFER",
+              "VERTEX_BUFFER"
+            ],
+            "format": "E5B9G9R9_UFLOAT_PACK32",
+            "linear": [
+              "SAMPLED_IMAGE",
+              "STORAGE_IMAGE",
+              "COLOR_ATTACHMENT",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST"
+            ],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "STORAGE_IMAGE",
+              "COLOR_ATTACHMENT",
+              "BLIT_SRC",
+              "BLIT_DST",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST"
+            ]
+          },
+          {
+            "buffer": [],
+            "format": "BC1_RGBA_UNORM_BLOCK",
+            "linear": [],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "BLIT_SRC",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST"
+            ]
+          },
+          {
+            "buffer": [],
+            "format": "BC3_UNORM_BLOCK",
+            "linear": [],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "BLIT_SRC",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST"
+            ]
+          },
+          {
+            "buffer": [],
+            "format": "BC4_UNORM_BLOCK",
+            "linear": [],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "BLIT_SRC",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST"
+            ]
+          },
+          {
+            "buffer": [],
+            "format": "BC5_UNORM_BLOCK",
+            "linear": [],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "BLIT_SRC",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST"
+            ]
+          },
+          {
+            "buffer": [],
+            "format": "BC6H_UFLOAT_BLOCK",
+            "linear": [],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "BLIT_SRC",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST"
+            ]
+          },
+          {
+            "buffer": [],
+            "format": "BC7_UNORM_BLOCK",
+            "linear": [],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "BLIT_SRC",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST"
+            ]
+          },
+          {
+            "buffer": [],
+            "format": "BC7_SRGB_BLOCK",
+            "linear": [],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "BLIT_SRC",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST"
+            ]
+          },
+          {
+            "buffer": [],
+            "format": "ETC2_R8G8B8A8_UNORM_BLOCK",
+            "linear": [],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "BLIT_SRC",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST"
+            ]
+          },
+          {
+            "buffer": [],
+            "format": "EAC_R11G11_UNORM_BLOCK",
+            "linear": [],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "BLIT_SRC",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST"
+            ]
+          },
+          {
+            "buffer": [],
+            "format": "ASTC_4x4_UNORM_BLOCK",
+            "linear": [],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "BLIT_SRC",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST"
+            ]
+          },
+          {
+            "buffer": [],
+            "format": "ASTC_4x4_SRGB_BLOCK",
+            "linear": [],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "BLIT_SRC",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST"
+            ]
+          },
+          {
+            "buffer": [],
+            "format": "ASTC_4x4_SFLOAT_BLOCK",
+            "linear": [],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "BLIT_SRC",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST"
+            ]
+          },
+          {
+            "buffer": [],
+            "format": "ASTC_8x8_UNORM_BLOCK",
+            "linear": [],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "BLIT_SRC",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST"
+            ]
+          },
+          {
+            "buffer": [],
+            "format": "ASTC_12x12_UNORM_BLOCK",
+            "linear": [],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "BLIT_SRC",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST"
+            ]
+          },
+          {
+            "buffer": [],
+            "format": "G8B8G8R8_422_UNORM",
+            "linear": [],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "MIDPOINT_CHROMA_SAMPLES",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_LINEAR_FILTER"
+            ]
+          },
+          {
+            "buffer": [],
+            "format": "G8_B8R8_2PLANE_420_UNORM",
+            "linear": [
+              "SAMPLED_IMAGE",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "MIDPOINT_CHROMA_SAMPLES",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_LINEAR_FILTER",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_SEPARATE_RECONSTRUCTION_FILTER",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_CHROMA_RECONSTRUCTION_EXPLICIT",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_CHROMA_RECONSTRUCTION_EXPLICIT_FORCEABLE",
+              "DISJOINT",
+              "COSITED_CHROMA_SAMPLES"
+            ],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "MIDPOINT_CHROMA_SAMPLES",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_LINEAR_FILTER",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_SEPARATE_RECONSTRUCTION_FILTER",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_CHROMA_RECONSTRUCTION_EXPLICIT",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_CHROMA_RECONSTRUCTION_EXPLICIT_FORCEABLE",
+              "DISJOINT",
+              "COSITED_CHROMA_SAMPLES"
+            ]
+          },
+          {
+            "buffer": [],
+            "format": "G8_B8_R8_3PLANE_420_UNORM",
+            "linear": [
+              "SAMPLED_IMAGE",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "MIDPOINT_CHROMA_SAMPLES",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_LINEAR_FILTER",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_SEPARATE_RECONSTRUCTION_FILTER",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_CHROMA_RECONSTRUCTION_EXPLICIT",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_CHROMA_RECONSTRUCTION_EXPLICIT_FORCEABLE",
+              "DISJOINT",
+              "COSITED_CHROMA_SAMPLES"
+            ],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "MIDPOINT_CHROMA_SAMPLES",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_LINEAR_FILTER",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_SEPARATE_RECONSTRUCTION_FILTER",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_CHROMA_RECONSTRUCTION_EXPLICIT",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_CHROMA_RECONSTRUCTION_EXPLICIT_FORCEABLE",
+              "DISJOINT",
+              "COSITED_CHROMA_SAMPLES"
+            ]
+          },
+          {
+            "buffer": [],
+            "format": "G8_B8R8_2PLANE_422_UNORM",
+            "linear": [
+              "SAMPLED_IMAGE",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "MIDPOINT_CHROMA_SAMPLES",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_LINEAR_FILTER",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_SEPARATE_RECONSTRUCTION_FILTER",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_CHROMA_RECONSTRUCTION_EXPLICIT",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_CHROMA_RECONSTRUCTION_EXPLICIT_FORCEABLE",
+              "DISJOINT",
+              "COSITED_CHROMA_SAMPLES"
+            ],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "MIDPOINT_CHROMA_SAMPLES",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_LINEAR_FILTER",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_SEPARATE_RECONSTRUCTION_FILTER",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_CHROMA_RECONSTRUCTION_EXPLICIT",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_CHROMA_RECONSTRUCTION_EXPLICIT_FORCEABLE",
+              "DISJOINT",
+              "COSITED_CHROMA_SAMPLES"
+            ]
+          },
+          {
+            "buffer": [],
+            "format": "G8_B8R8_2PLANE_444_UNORM",
+            "linear": [],
+            "optimal": []
+          },
+          {
+            "buffer": [],
+            "format": "G8_B8_R8_3PLANE_444_UNORM",
+            "linear": [
+              "SAMPLED_IMAGE",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "MIDPOINT_CHROMA_SAMPLES",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_LINEAR_FILTER",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_SEPARATE_RECONSTRUCTION_FILTER",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_CHROMA_RECONSTRUCTION_EXPLICIT",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_CHROMA_RECONSTRUCTION_EXPLICIT_FORCEABLE",
+              "DISJOINT",
+              "COSITED_CHROMA_SAMPLES"
+            ],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "MIDPOINT_CHROMA_SAMPLES",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_LINEAR_FILTER",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_SEPARATE_RECONSTRUCTION_FILTER",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_CHROMA_RECONSTRUCTION_EXPLICIT",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_CHROMA_RECONSTRUCTION_EXPLICIT_FORCEABLE",
+              "DISJOINT",
+              "COSITED_CHROMA_SAMPLES"
+            ]
+          },
+          {
+            "buffer": [],
+            "format": "G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16",
+            "linear": [
+              "SAMPLED_IMAGE",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "MIDPOINT_CHROMA_SAMPLES",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_LINEAR_FILTER",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_SEPARATE_RECONSTRUCTION_FILTER",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_CHROMA_RECONSTRUCTION_EXPLICIT",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_CHROMA_RECONSTRUCTION_EXPLICIT_FORCEABLE",
+              "DISJOINT",
+              "COSITED_CHROMA_SAMPLES"
+            ],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "MIDPOINT_CHROMA_SAMPLES",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_LINEAR_FILTER",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_SEPARATE_RECONSTRUCTION_FILTER",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_CHROMA_RECONSTRUCTION_EXPLICIT",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_CHROMA_RECONSTRUCTION_EXPLICIT_FORCEABLE",
+              "DISJOINT",
+              "COSITED_CHROMA_SAMPLES"
+            ]
+          },
+          {
+            "buffer": [],
+            "format": "G10X6_B10X6R10X6_2PLANE_444_UNORM_3PACK16",
+            "linear": [],
+            "optimal": []
+          },
+          {
+            "buffer": [],
+            "format": "G12X4_B12X4R12X4_2PLANE_420_UNORM_3PACK16",
+            "linear": [
+              "SAMPLED_IMAGE",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "MIDPOINT_CHROMA_SAMPLES",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_LINEAR_FILTER",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_SEPARATE_RECONSTRUCTION_FILTER",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_CHROMA_RECONSTRUCTION_EXPLICIT",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_CHROMA_RECONSTRUCTION_EXPLICIT_FORCEABLE",
+              "DISJOINT",
+              "COSITED_CHROMA_SAMPLES"
+            ],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "MIDPOINT_CHROMA_SAMPLES",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_LINEAR_FILTER",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_SEPARATE_RECONSTRUCTION_FILTER",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_CHROMA_RECONSTRUCTION_EXPLICIT",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_CHROMA_RECONSTRUCTION_EXPLICIT_FORCEABLE",
+              "DISJOINT",
+              "COSITED_CHROMA_SAMPLES"
+            ]
+          },
+          {
+            "buffer": [],
+            "format": "G16_B16R16_2PLANE_420_UNORM",
+            "linear": [
+              "SAMPLED_IMAGE",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "MIDPOINT_CHROMA_SAMPLES",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_LINEAR_FILTER",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_SEPARATE_RECONSTRUCTION_FILTER",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_CHROMA_RECONSTRUCTION_EXPLICIT",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_CHROMA_RECONSTRUCTION_EXPLICIT_FORCEABLE",
+              "DISJOINT",
+              "COSITED_CHROMA_SAMPLES"
+            ],
+            "optimal": [
+              "SAMPLED_IMAGE",
+              "SAMPLED_IMAGE_FILTER_LINEAR",
+              "TRANSFER_SRC",
+              "TRANSFER_DST",
+              "MIDPOINT_CHROMA_SAMPLES",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_LINEAR_FILTER",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_SEPARATE_RECONSTRUCTION_FILTER",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_CHROMA_RECONSTRUCTION_EXPLICIT",
+              "SAMPLED_IMAGE_YCBCR_CONVERSION_CHROMA_RECONSTRUCTION_EXPLICIT_FORCEABLE",
+              "DISJOINT",
+              "COSITED_CHROMA_SAMPLES"
+            ]
+          }
+        ],
+        "limits": {
+          "maxComputeSharedMemorySize": 32768,
+          "maxComputeWorkGroupCount": [
+            1073741824,
+            1073741824,
+            1073741824
+          ],
+          "maxComputeWorkGroupInvocations": 1024,
+          "maxComputeWorkGroupSize": [
+            1024,
+            1024,
+            1024
+          ],
+          "maxImageArrayLayers": 2048,
+          "maxImageDimension2D": 16384,
+          "maxImageDimension3D": 2048,
+          "maxPushConstantsSize": 4096,
+          "maxSamplerAnisotropy": 16,
+          "maxStorageBufferRange": 4294967295,
+          "minMemoryMapAlignment": 64,
+          "minStorageBufferOffsetAlignment": 16,
+          "nonCoherentAtomSize": 16,
+          "optimalBufferCopyOffsetAlignment": 16,
+          "optimalBufferCopyRowPitchAlignment": 1,
+          "timestampPeriod": 1.0
+        },
+        "memoryDecompression": {
+          "extension": "",
+          "maxIndirectCount": 0,
+          "methods": []
+        },
+        "memoryHeaps": [
+          {
+            "flags": [
+              "DEVICE_LOCAL"
+            ],
+            "size": 38654705664,
+            "typeFlags": [
+              [
+                "DEVICE_LOCAL"
+              ],
+              [
+                "DEVICE_LOCAL",
+                "HOST_VISIBLE",
+                "HOST_COHERENT",
+                "HOST_CACHED"
+              ],
+              [
+                "DEVICE_LOCAL",
+                "LAZILY_ALLOCATED"
+              ]
+            ]
+          }
+        ],
+        "minImportedHostPointerAlignment": 16384,
+        "name": "Apple M4 Max",
+        "queueFamilies": [
+          {
+            "count": 1,
+            "flags": [
+              "GRAPHICS",
+              "COMPUTE",
+              "TRANSFER"
+            ],
+            "index": 0,
+            "videoCodecs": []
+          },
+          {
+            "count": 1,
+            "flags": [
+              "GRAPHICS",
+              "COMPUTE",
+              "TRANSFER"
+            ],
+            "index": 1,
+            "videoCodecs": []
+          },
+          {
+            "count": 1,
+            "flags": [
+              "GRAPHICS",
+              "COMPUTE",
+              "TRANSFER"
+            ],
+            "index": 2,
+            "videoCodecs": []
+          },
+          {
+            "count": 1,
+            "flags": [
+              "GRAPHICS",
+              "COMPUTE",
+              "TRANSFER"
+            ],
+            "index": 3,
+            "videoCodecs": []
+          }
+        ],
+        "subgroup": {
+          "maxSize": 32,
+          "minSize": 4,
+          "operations": [
+            "BASIC",
+            "VOTE",
+            "ARITHMETIC",
+            "BALLOT",
+            "SHUFFLE",
+            "SHUFFLE_RELATIVE",
+            "CLUSTERED",
+            "QUAD",
+            "ROTATE",
+            "ROTATE_CLUSTERED"
+          ],
+          "size": 32,
+          "stages": [
+            "TESSELLATION_CONTROL",
+            "FRAGMENT",
+            "COMPUTE"
+          ]
+        },
+        "type": "integrated-gpu",
+        "vendor": "Apple",
+        "video": []
+      }
+    ],
+    "instanceExtensions": [
+      "VK_EXT_debug_report",
+      "VK_EXT_debug_utils",
+      "VK_EXT_headless_surface",
+      "VK_EXT_layer_settings",
+      "VK_EXT_metal_surface",
+      "VK_EXT_surface_maintenance1",
+      "VK_EXT_swapchain_colorspace",
+      "VK_KHR_device_group_creation",
+      "VK_KHR_external_fence_capabilities",
+      "VK_KHR_external_memory_capabilities",
+      "VK_KHR_external_semaphore_capabilities",
+      "VK_KHR_get_physical_device_properties2",
+      "VK_KHR_get_surface_capabilities2",
+      "VK_KHR_portability_enumeration",
+      "VK_KHR_surface",
+      "VK_KHR_surface_maintenance1",
+      "VK_KHR_surface_protected_capabilities",
+      "VK_LUNARG_direct_driver_loading",
+      "VK_MVK_macos_surface"
+    ],
+    "loaderVersion": "1.4.357",
+    "status": "available"
+  }
+}
