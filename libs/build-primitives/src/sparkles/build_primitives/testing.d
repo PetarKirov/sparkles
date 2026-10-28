@@ -122,6 +122,29 @@ struct TmpGitRepo
         ]);
         enforce(committed.status == 0, "git commit failed: " ~ committed.output);
     }
+
+    /**
+    Writes the identity `commitAll` passes, and disabled signing, into this
+    repository's own config — for code under test that commits by itself
+    (`commit-tree`, `commit`) and cannot be handed `-c`. A machine with no
+    global identity, a CI runner, then commits the same as a developer's.
+
+    Throws: `Exception` when `git config` fails.
+    */
+    void useTestIdentity() @safe
+    {
+        import std.exception : enforce;
+
+        foreach (setting; [
+            ["user.name", "sparkles-test"],
+            ["user.email", "sparkles-test@invalid"],
+            ["commit.gpgsign", "false"],
+        ])
+        {
+            const set = git(["config", setting[0], setting[1]]);
+            enforce(set.status == 0, "git config failed: " ~ set.output);
+        }
+    }
 }
 
 /// A fixture is a real repository: git answers about it, and the tree is gone
@@ -157,4 +180,25 @@ struct TmpGitRepo
     }
 
     assert(!root.exists, "the scratch repository outlived its fixture");
+}
+
+/// Code that commits without `-c` finds the identity in the fixture's config,
+/// whatever the machine's global one.
+@("buildPrimitives.testing.tmpGitRepo.useTestIdentityLetsPlainCommitsWork")
+@system unittest
+{
+    import sparkles.test_runner.skip : skipTest;
+    import std.string : strip;
+
+    if (!gitAvailable)
+        return skipTest("git is not on PATH");
+
+    auto repo = TmpGitRepo.create();
+    repo.useTestIdentity();
+    const tree = repo.git(["write-tree"]); // the empty index: the empty tree
+    assert(tree.status == 0);
+    const commit = repo.git(["commit-tree", tree.output.strip, "-m", "plain"]);
+    assert(commit.status == 0, commit.output);
+    assert(repo.git(["log", "-1", "--format=%an", commit.output.strip]).output.strip
+        == "sparkles-test");
 }

@@ -306,7 +306,11 @@ enum Command : ubyte
     diffUnstage,                       /// `u` — take it back out of the index
     diffDiscard,                       /// `Shift-X` — throw the change away
     diffEdit,                          /// `Shift-E` — edit the file in place (`DST5`)
-    diffSave,                          /// `Alt-S` — write the edited file
+    diffSave,                          /// `Alt-S` — write the edited file, or post the comment
+    diffRowDown, diffRowUp,            /// `Shift-J` / `Shift-K` — the comment cursor (`DCM1`)
+    diffComment,                       /// `a` — comment on the cursor's row (`DCM2`)
+    diffResolve,                       /// `d` — resolve or reopen the comment on it
+    diffMarkViewed,                    /// `m` — mark the file viewed (`DCM5`)
 
     // The fuzzy picker's modal surface (`PKL7`): its keys are table rows so
     // the guide can list them (`PKL3`), gated on `pickerActive` + pane focus.
@@ -518,6 +522,12 @@ immutable Binding[] hueBindings = [
     bind(Scope_.viewer, chord(Key.up), Command.viewUp, "up"),
     bind(Scope_.viewer, chord(Key.home, ShiftReq.no), Command.viewHome, "top"),
     bind(Scope_.viewer, chord(Key.end, ShiftReq.no), Command.viewEnd, "bottom"),
+    // `DCM1`: the comment cursor walks rows; above `j`/`k`, which ignore
+    // Shift and would take these too.
+    bind(Scope_.viewer, chord('j', ShiftReq.yes), Command.diffRowDown,
+        "comment cursor down", require: CtxFlag.hasDiffSession),
+    bind(Scope_.viewer, chord('k', ShiftReq.yes), Command.diffRowUp,
+        "comment cursor up", require: CtxFlag.hasDiffSession),
     bind(Scope_.viewer, chord('j'), Command.viewDown, "down"),
     bind(Scope_.viewer, chord('k'), Command.viewUp, "up"),
     bind(Scope_.viewer, chord('l'), Command.toggleLineNumbers, "line numbers"),
@@ -632,7 +642,14 @@ immutable Binding[] hueBindings = [
     bind(Scope_.viewer, chord('e', ShiftReq.yes), Command.diffEdit,
         "edit this file", require: CtxFlag.hasDiffSession),
     bind(Scope_.viewer, Chord(key: Key.char_, ch: 's', alt: true), Command.diffSave,
-        "save the edited file", require: CtxFlag.hasDiffSession),
+        "save the edit or post the comment", require: CtxFlag.hasDiffSession),
+    // `DCM2`/`DCM5`: local review comments and viewed marks.
+    bind(Scope_.viewer, chord('a'), Command.diffComment,
+        "comment on this row", require: CtxFlag.hasDiffSession),
+    bind(Scope_.viewer, chord('d'), Command.diffResolve,
+        "resolve the comment here", require: CtxFlag.hasDiffSession),
+    bind(Scope_.viewer, chord('m'), Command.diffMarkViewed,
+        "mark the file viewed", require: CtxFlag.hasDiffSession),
     bind(Scope_.viewer, chord('s', ShiftReq.no), Command.diffToggleLayout,
         "unified / split", require: CtxFlag.hasDiffSession),
     // `DVN3`'s view is NOT part of the `z` family: `z` means "things this
