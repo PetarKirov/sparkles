@@ -314,6 +314,66 @@ version (RaylibTextTests)
 }
 
 /**
+The fallback faces a cell font is backed by, found in plain directories as
+`FontSet` finds them without fontconfig: the best-ranked Nerd Font file (an
+explicit Regular, else an undecorated face, else any) for icons, the first
+common monospace face for text the primary lacks, and a colour emoji face.
+`primaryPath` is never its own fallback. Out-params are `""` where the
+directories hold none.
+*/
+void fallbackFacePaths(string primaryPath, const(string)[] dirs, out string nerd,
+    out string regular, out string emoji) @safe
+{
+    import std.path : baseName;
+
+    int bestNerdRank = int.max;
+    foreach (path; fontFilesInDirs(dirs))
+    {
+        if (path == primaryPath)
+            continue;
+        const name = path.baseName;
+        if (!emoji.length && (name.canFind("ColorEmoji") || name.canFind("Color Emoji")))
+            emoji = path;
+        if (!path.canFind("NerdFont") && !path.canFind("Nerd Font"))
+            continue;
+        // A fallback supplies glyphs the primary lacks, so it wants the
+        // plainest face available. Ranked, not first-hit: with both
+        // `FiraCodeNerdFontMono-{Bold,Regular}.ttf` shipped, the first file
+        // sorted was the bold one.
+        const rank = isRegularFace(path) ? 0 : (isUndecoratedFace(path) ? 1 : 2);
+        if (rank < bestNerdRank)
+        {
+            nerd = path;
+            bestNerdRank = rank;
+        }
+    }
+    const found = resolveFontInDirs("DejaVu Sans Mono,Roboto Mono,Droid Sans Mono,Liberation Mono,Cousine",
+        dirs);
+    if (found != primaryPath)
+        regular = found;
+}
+
+version (RaylibTextTests)
+@("font_discovery.fallbackFacePaths.ranksAndFindsEmoji")
+@system unittest
+{
+    import std.path : buildPath;
+
+    auto tmp = uniqueTestDir("sparkles-font-fallback-test");
+    const dir = tmp.dir;
+    foreach (f; ["FiraCodeNerdFontMono-Bold.ttf", "FiraCodeNerdFontMono-Regular.ttf",
+            "DejaVuSansMono.ttf", "NotoColorEmoji.ttf", "MapleMono-Regular.ttf"])
+        tmp.writeFileAt(f, "x");
+    string nerd, regular, emoji;
+    fallbackFacePaths(buildPath(dir, "MapleMono-Regular.ttf"), [dir], nerd, regular, emoji);
+    assert(nerd == buildPath(dir, "FiraCodeNerdFontMono-Regular.ttf"), "the Regular, not the first sorted");
+    assert(regular == buildPath(dir, "DejaVuSansMono.ttf"));
+    assert(emoji == buildPath(dir, "NotoColorEmoji.ttf"));
+    fallbackFacePaths(buildPath(dir, "DejaVuSansMono.ttf"), [dir], nerd, regular, emoji);
+    assert(regular == "", "the primary is never its own fallback");
+}
+
+/**
 The sibling-file naming convention that stands in for fc-scan: given the
 primary face's path, the styled variants are `<Base>-Bold`, `-Italic` (or
 `-Oblique`), and `-BoldItalic` (or `-BoldOblique`) next to it, where `<Base>`
