@@ -58,10 +58,10 @@ import sparkles.input.events : Event, Key, KeyEvent, Point, PointerEvent,
 import std.sumtype : match;
 
 import sparkles.ui.components.editor : EditorViewOptions, editorLineSpans;
-import sparkles.ui.editor.field : EditorField;
+import sparkles.ui.editor.field : EditorField, FieldSetup;
 import sparkles.ui.components.property_view : propertyView, propertyViewSlots,
     PropertyViewOptions;
-import sparkles.ui.components.tree_view : treeActivate = activate,
+import sparkles.ui.components.tree_view : filterServe, treeActivate = activate,
     treeCollapseOrUp = collapseOrUp, TreeStep, TreeViewState;
 import sparkles.ui.geometry : Constraints, Insets, Rect, SizeSpec;
 import sparkles.ui.keymap : Binding, bind, chord, Chord, commandFor,
@@ -369,6 +369,7 @@ struct SettingsPane(T, alias resolveKey = defaultSettingsCommand)
     string textPath;             ///
     /// The string leaf's editor (`EDU4`), while `textEditing`.
     EditorField textField;
+    private FieldSetup textSetup;
 
     /// The text being edited.
     string textBuf() const => textField.text;
@@ -932,7 +933,7 @@ struct SettingsPane(T, alias resolveKey = defaultSettingsCommand)
         if (!readValueAt(*subject, path, cur))
             return consumed();
         textPath = path;
-        textField = EditorField.singleLine(cur.s);
+        textField = textSetup.singleLine(cur.s);
         textEditing = true;
         return consumed();
     }
@@ -959,6 +960,27 @@ struct SettingsPane(T, alias resolveKey = defaultSettingsCommand)
                 cast(void) textField.key(k);
                 return consumed();
         }
+    }
+
+    /// The key table and clipboard of the pane's fields, the string editor
+    /// and the filter (`EDK1`, `EDY5`).
+    void fieldSetup(FieldSetup setup) @safe pure nothrow @nogc
+    {
+        textSetup = setup;
+        tv.filterSetup = setup;
+    }
+
+    /// Do the clipboard work the open editor or the filter asked for
+    /// (`EDY5`): a copy, and a paste answered with `clipboard`'s text.
+    SettingsResult serveClipboard(Clipboard)(in Clipboard clipboard)
+    {
+        import sparkles.ui.editor.field : serveField = serveClipboard;
+
+        if (textEditing)
+            cast(void) serveField(textField, clipboard);
+        else if (tv.searching && tv.filterServe(clipboard) == TreeStep.rebuild)
+            return consumedRefresh();
+        return consumed();
     }
 
     /// Text pasted into the pane: the open editor's, else the filter's.
