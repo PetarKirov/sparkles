@@ -495,6 +495,14 @@ struct PickerHost
         => KeyContext(pickerActive: true, pickerFocus: focus.focused,
             grepActive: source == PickerSource.grep);
 
+    /// Do the clipboard work the prompt asked for (`EDY5`), searching again
+    /// when a paste changed the query.
+    void serveClipboard(Clipboard)(in Clipboard clipboard)
+    {
+        if (state.prompt.serve(clipboard))
+            request();
+    }
+
     /**
     The modal key policy, identical in both hosts — and, since `PKL7`, table
     rows rather than a hand-written waterfall: the `picker*` scopes of
@@ -1420,4 +1428,30 @@ unittest
     cast(void) host.handleOverlay(Event(PointerEvent(pos: Point(bar.x, bar.y),
         action: PointerAction.release, button: PointerButton.left)), geometry);
     assert(!host.state.scroll.v.dragging, "the grab ended");
+}
+
+@("picker_host.PickerHost.servesThePromptClipboard")
+@system unittest
+{
+    import sparkles.input.events : Mods;
+    import sparkles.ui.editor.field : FieldClipboard, FieldSetup;
+    import sparkles.ui.editor.keys : EditorTarget;
+
+    // `EDY5`: Ctrl-V in the prompt asks for the clipboard; the host's answer
+    // becomes the query and searches again.
+    auto fixture = pickerFixture("hue-picker-clipboard");
+    string board = "lib";
+    FieldClipboard!(void delegate(scope const(char)[]) @system, string delegate() @system) clipboard;
+    clipboard.write = (scope const(char)[] t) { board = t.idup; };
+    clipboard.read = () => board;
+    auto owner = makeUnique!PickerHost();
+    auto host = &owner.get();
+    scope (exit) host.shutdown();
+    host.state.prompt.setup = FieldSetup.of(EditorTarget.window, clipboard);
+    host.open(fixture.dir);
+    drain(*host);
+    assert(host.handleKey(KeyEvent(Key.char_, 'v', Mods(ctrl: true))) == PickerAction.consumed);
+    host.serveClipboard(clipboard);
+    drain(*host);
+    assert(host.state.prompt.text == "lib" && host.state.rowCount == 1);
 }

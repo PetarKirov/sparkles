@@ -125,6 +125,8 @@ import sparkles.ui.cmd_buffer : CmdBufferT;
 import sparkles.ui.arena : FrameArena;
 import sparkles.ui.layout : Frame, layout;
 import sparkles.ui.components.scroll_view : ScrollExtents, ScrollPointer;
+import sparkles.ui.editor.field : FieldClipboard, FieldSetup;
+import sparkles.ui.editor.keys : windowTarget;
 import sparkles.ui.state : CaptureState, hoverTargets, HoverState, HoverTarget,
     keyAt, keyTargets, KeyTarget, PressState, ScrollAxis, ScrollbarState,
     selectionRects, sourceOffsetAt, wantedPointerShape,
@@ -298,6 +300,34 @@ struct GuiRunState
     CopyModes cm;
 }
 
+/**
+The one clipboard seam. raylib's Android SetClipboardText is an
+unimplemented no-op (a TRACELOG warning — see rcore_android.c), so Android
+goes through the JNI ClipboardManager bridge instead. Writes take a slice:
+the Android side needs a length to transcode to UTF-16, and only the raylib
+path wants NUL termination.
+*/
+private struct ClipboardSeam
+{
+    Window** window; // set once the window opens
+
+    void write(scope const(char)[] text) @system
+    {
+        version (Android)
+        {
+            import android_glue : setClipboardText;
+            import sparkles.base.logger : warning;
+
+            if (!setClipboardText(text))
+                warning(i"copy: JNI clipboard bridge failed");
+        }
+        else
+            (**window).clipboard(text);
+    }
+
+    string read() @system => (**window).clipboardText();
+}
+
 /// The frame's geometry (`P2.B4` third slice): every per-frame value the view
 /// half computes and the paint half reads. The list is not an estimate — hoisting
 /// `paintWindowFrame` out of the loop turned each captured local into an
@@ -383,7 +413,6 @@ struct FrameGeom
         int toolbarY;        // pixel Y of the bar's row
     }
 }
-
 
 /// ditto
 int runGui(GuiArgs guiArgs) @system
@@ -1458,24 +1487,23 @@ int runGui(GuiArgs guiArgs) @system
     // The text-regime selection as a source range [drag.selMin, drag.selMax) — the union of
     // the anchor and head spans (a char point is a zero-width span).
 
-    // The one clipboard seam. raylib's Android SetClipboardText is an
-    // unimplemented no-op (a TRACELOG warning — see rcore_android.c), so
-    // Android goes through the JNI ClipboardManager bridge instead.
-    // Takes a slice: the Android side needs a length to transcode to UTF-16,
-    // and only the raylib path wants NUL termination.
-    void copyToClipboard(scope const(char)[] text)
-    {
-        version (Android)
-        {
-            import android_glue : setClipboardText;
-            import sparkles.base.logger : warning;
+    // The one clipboard seam (`ClipboardSeam`), on the heap so the fields'
+    // clipboard can hold its methods without closing over this frame.
+    auto clipSeam = new ClipboardSeam(&windowP);
+    void copyToClipboard(scope const(char)[] text) => clipSeam.write(text);
 
-            if (!setClipboardText(text))
-                warning(i"copy: JNI clipboard bridge failed");
-        }
-        else
-            window.clipboard(text);
-    }
+    // The fields' clipboard (`EDY5`): copies go through the seam; reads come
+    // from the window, except on Android, whose bridge only writes, so a
+    // field there offers no paste chord (`EDI5`). The fields take the window
+    // key table (`EDK1`).
+    FieldClipboard!(void delegate(scope const(char)[]) @system, string delegate() @system) fieldClip;
+    fieldClip.write = &clipSeam.write;
+    version (Android) {}
+    else
+        fieldClip.read = &clipSeam.read;
+    const fieldSetup = FieldSetup.of(windowTarget, fieldClip);
+    inp.setup = fieldSetup;
+    pn.tree.tv.filterSetup = fieldSetup;
 
     void showToast(string msg, bool success = false)
     {
@@ -2968,15 +2996,25 @@ int runGui(GuiArgs guiArgs) @system
                 routeSettingsOverlay(Event(hover));
             }
             settingsPane.tickAnims(dur!"msecs"(frameMs(window.frameSeconds)));
+            settingsPane.fieldSetup(fieldSetup);
             foreach (k; keyBuf)
+            {
                 applySettingsResult(settingsPane.handleKey(k));
+                applySettingsResult(settingsPane.serveClipboard(fieldClip));
+            }
         }
         else if (!filePicker.empty && filePicker.get.state.active)
         {
             // The fuzzy picker is a modal surface (`PIK1`): while it is
             // open it owns the whole keyboard.
+            filePicker.get.state.prompt.setup = fieldSetup;
+            fieldSetup.applyTo(filePicker.get.state.prompt.field);
             foreach (k; keyBuf)
+            {
                 applyPickerAction(filePicker.get.handleKey(k));
+                if (filePicker.get.state.active)
+                    filePicker.get.serveClipboard(fieldClip);
+            }
         }
         else if (pn.inspVisible && pn.inspFocused)
         {
@@ -2998,7 +3036,10 @@ int runGui(GuiArgs guiArgs) @system
             // clears it. The `/` that opened it is still in this frame's keys.
             foreach (k; keyBuf)
                 if (!(k.key == Key.char_ && k.ch == '/'))
+                {
                     pn.tree.filterKey(k);
+                    pn.tree.filterServe(fieldClip);
+                }
         }
         else if (inputMode)
         {
@@ -3045,7 +3086,10 @@ int runGui(GuiArgs guiArgs) @system
 
             foreach (k; keyBuf)
             {
-                final switch (inp.key(k))
+                auto step = inp.key(k);
+                if (step == LineStep.handled && inp.serve(fieldClip) == LineStep.edited)
+                    step = LineStep.edited; // a paste the window answered
+                final switch (step)
                 {
                     case LineStep.none:
                     case LineStep.handled:

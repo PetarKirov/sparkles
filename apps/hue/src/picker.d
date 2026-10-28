@@ -18,7 +18,7 @@ import sparkles.fuzzy : CandidateId, CandidateSnapshot, CandidateView,
     SearchStop, fuzzyErr, fuzzyOk, parseQuery, searchChunk;
 import sparkles.input.events : KeyEvent;
 import sparkles.ui.components.scroll_view : ScrollView;
-import sparkles.ui.editor.field : EditorField, FieldResult;
+import sparkles.ui.editor.field : EditorField, FieldResult, FieldSetup, serveClipboard;
 
 /**
 The picker's prompt: the toolkit's editor (`EDU4`) in single-line mode,
@@ -30,6 +30,8 @@ if (Capacity > 0)
 {
     /// The editor; refreshes `text` through `sync` after every edit.
     EditorField field;
+    /// The prompt's key table and clipboard, applied each time it starts.
+    FieldSetup setup;
     private char[Capacity] mirror = void;
     private size_t length_;
     bool active;
@@ -40,7 +42,7 @@ if (Capacity > 0)
 
     void start() @safe pure nothrow @nogc
     {
-        field = EditorField.singleLine();
+        field = setup.singleLine();
         field.state.options.maxLength = Capacity;
         length_ = 0;
         active = true;
@@ -54,6 +56,11 @@ if (Capacity > 0)
     /// Text typed or pasted at once; `true` when the query changed.
     bool insert(scope const(char)[] text, bool paste = false) @safe pure nothrow
         => synced(field.insert(text, paste)).changed;
+
+    /// Do the clipboard work the prompt asked for (`EDY5`); `true` when a
+    /// paste changed the query.
+    bool serve(Clipboard)(in Clipboard clipboard)
+        => synced(serveClipboard(field, clipboard)).changed;
 
     void accept() @safe pure nothrow @nogc
     {
