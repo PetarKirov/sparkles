@@ -20,14 +20,23 @@ ergonomic win ErupteD had over both C and raw ImportC, at zero runtime cost
 */
 module sparkles.vulkan.structure_type;
 
+import std.traits : EnumMembers;
+
 import sparkles.vulkan.vulkan_c;
 import sparkles.vulkan.platform;
 
 /**
 The `VK_STRUCTURE_TYPE_*` enumerator belonging to `T`.
 
-Compile error if `T` is not a `Vk`-prefixed struct, or if the derived
-enumerator does not exist.
+$(LREF upperSnake) derives it for the regular names. Vulkan does not split
+every digit or acronym the same way — `VkVideoDecodeH264ProfileInfoKHR` is
+`..._H264_PROFILE_INFO_KHR`, `VkPhysicalDeviceTextureCompressionASTCHDRFeatures`
+is `..._ASTC_HDR_FEATURES`, `VkWin32SurfaceCreateInfoKHR` is `..._WIN32_...` —
+so when the derived name is absent, the enumerator is the one member whose
+spelling without underscores is the type's name in upper case. Two such members
+are a compile error, never a guess.
+
+Compile error if `T` is not a `Vk`-prefixed struct, or if no enumerator matches.
 */
 template structureTypeOf(T)
 {
@@ -35,18 +44,55 @@ template structureTypeOf(T)
     static assert(T.stringof.length > 2 && T.stringof[0 .. 2] == "Vk",
         T.stringof ~ " is not a Vk* type");
 
-    // Vulkan treats the platform name `Win32` as one token, unlike API
-    // version suffixes (`Vulkan11` -> `VULKAN_1_1`). It is the sole struct
-    // naming exception among the surface create infos.
-    private enum name = T.stringof == "VkWin32SurfaceCreateInfoKHR"
-        ? "VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR"
-        : "VK_STRUCTURE_TYPE_" ~ upperSnake(T.stringof[2 .. $]);
+    private enum derived = "VK_STRUCTURE_TYPE_" ~ upperSnake(T.stringof[2 .. $]);
+    static if (__traits(hasMember, VkStructureType, derived))
+        private enum name = derived;
+    else
+        private enum name = matchingStructureType(T.stringof[2 .. $]);
 
-    static assert(__traits(hasMember, VkStructureType, name),
-        "no `" ~ name ~ "` in VkStructureType (derived from " ~ T.stringof
-            ~ "); the naming convention does not hold for this type");
+    static assert(name.length && name[0] != '!',
+        "no unique `VK_STRUCTURE_TYPE_*` for " ~ T.stringof ~ " (tried `" ~ derived
+            ~ "` and an underscore-insensitive match)" ~ (name.length ? ": " ~ name[1 .. $] : ""));
 
     enum VkStructureType structureTypeOf = __traits(getMember, VkStructureType, name);
+}
+
+private immutable string[] structureTypeNames = [__traits(allMembers, VkStructureType)];
+private immutable VkStructureType[] structureTypeValues = [EnumMembers!VkStructureType];
+
+/**
+The `VkStructureType` member spelled `VK_STRUCTURE_TYPE_` plus `name` in upper
+case once underscores are ignored; empty when none is, and `!` followed by the
+candidates when several are and their values differ. Legacy aliases share a
+value with the member they alias (`SURFACE_CAPABILITIES2_EXT` and
+`SURFACE_CAPABILITIES_2_EXT`), so they are not a conflict.
+*/
+private string matchingStructureType(string name) @safe pure nothrow
+{
+    static string squash(string s) @safe pure nothrow
+    {
+        string r;
+        foreach (char c; s)
+            if (c != '_')
+                r ~= isLower(c) ? cast(char)(c - 'a' + 'A') : c;
+        return r;
+    }
+
+    const want = "VKSTRUCTURETYPE" ~ squash(name);
+    string found;
+    size_t foundAt;
+    foreach (i, m; structureTypeNames)
+        if (squash(m) == want)
+        {
+            if (!found.length)
+            {
+                found = m;
+                foundAt = i;
+            }
+            else if (structureTypeValues[i] != structureTypeValues[foundAt])
+                return "!" ~ found ~ ", " ~ m;
+        }
+    return found;
 }
 
 /**
@@ -147,6 +193,31 @@ T vkInfo(T)(T value = T.init) @safe pure nothrow @nogc
         == VkStructureType.VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO);
     static assert(structureTypeOf!VkImageMemoryBarrier
         == VkStructureType.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER);
+}
+
+@("vulkan.structure_type.irregularSpellings")
+@safe pure nothrow @nogc unittest
+{
+    // Codec names, acronym pairs and digit-letter tokens that the digit-by-digit
+    // transform splits where Vulkan does not.
+    static assert(structureTypeOf!VkVideoDecodeH264ProfileInfoKHR
+        == VkStructureType.VK_STRUCTURE_TYPE_VIDEO_DECODE_H264_PROFILE_INFO_KHR);
+    static assert(structureTypeOf!VkVideoDecodeAV1CapabilitiesKHR
+        == VkStructureType.VK_STRUCTURE_TYPE_VIDEO_DECODE_AV1_CAPABILITIES_KHR);
+    static assert(structureTypeOf!VkPhysicalDeviceTextureCompressionASTCHDRFeatures
+        == VkStructureType.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TEXTURE_COMPRESSION_ASTC_HDR_FEATURES);
+    static assert(structureTypeOf!VkPhysicalDeviceYcbcr2Plane444FormatsFeaturesEXT
+        == VkStructureType.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_YCBCR_2_PLANE_444_FORMATS_FEATURES_EXT);
+    static assert(structureTypeOf!VkPhysicalDeviceShaderFloat16Int8Features
+        == VkStructureType.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES);
+}
+
+@("vulkan.structure_type.matchingStructureType")
+@safe pure nothrow unittest
+{
+    assert(matchingStructureType("VideoDecodeVP9ProfileInfoKHR")
+        == "VK_STRUCTURE_TYPE_VIDEO_DECODE_VP9_PROFILE_INFO_KHR");
+    assert(matchingStructureType("NoSuchStruct") == "");
 }
 
 @("vulkan.structure_type.vkInfoTagsTheStruct")
