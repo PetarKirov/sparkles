@@ -318,9 +318,10 @@ private __gshared Mutex gSharedGuard;
 private __gshared BlockingPool* gShared;
 
 /**
-The process-wide pool supervision uses (daemon workers; never shut down —
-the holder is intentionally leaked, and a `__gshared` reference keeps it
-rooted). Creation failure is returned to the caller and $(B not) memoized:
+The process-wide pool supervision uses. Its workers are daemon threads, so
+the runtime does not wait for them before module destruction, and the module
+destructor below shuts the pool down. A `__gshared` reference keeps the holder
+rooted. Creation failure is returned to the caller and $(B not) memoized:
 the next caller retries under the same guard, and only a completed holder
 is ever published.
 */
@@ -335,6 +336,27 @@ package IoResult!(BlockingPool*) sharedBlockingPool() @trusted
         return ioErr!(BlockingPool*)(created.error);
     gShared = holder;
     return ioOk(holder);
+}
+
+/**
+Shuts the shared pool down before the runtime tears the GC down.
+
+Module destructors run before `gc_term`, whose last collection suspends
+every live thread and resumes them without waiting before it unmaps the GC
+heap. A daemon worker that has not yet left the suspend handler then reads
+its `Thread` from unmapped memory, as soon as the main thread blocks at
+exit. That crashed event-horizon's test binary on aarch64 and `capture`'s
+examples on x86_64 (`examples/exit-after-capture.d` forces the schedule).
+The workers are idle by then, so the join is immediate; a job still running
+delays exit until it
+returns, as `shutdown` documents. A later `sharedBlockingPool` caller gets
+the closed pool, whose `run` reports `EPIPE`.
+*/
+shared static ~this() @trusted
+{
+    auto guard = gSharedGuard.guard();
+    if (gShared !is null)
+        cast(void) gShared.shutdown();
 }
 
 // ── tests ───────────────────────────────────────────────────────────────────
