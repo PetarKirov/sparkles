@@ -21,25 +21,31 @@ kqueue backend; sockets are lazily associated with the port on first use.
 `OpTimeout` is driven off the completion-port wait timeout (no threadpool), so
 `sleep`, deadlines, `timeout`, and schedules work on Windows too — the peer
 backend is at full parity with io_uring for the socket + timer surface.
+
+Native file/pipe reads and writes require overlapped handles; synchronous
+handles are rejected with `-EINVAL` before I/O is issued. Regular files also
+require explicit offsets: the POSIX current-position sentinel (`ulong.max`)
+is supported only for pipes, not a shared file position or append-to-EOF.
 */
 module sparkles.event_horizon.backend.iocp;
 
 version (Windows)  :  // IOCP is Windows-only.
 
-pragma(lib, "ntdll"); // RtlNtStatusToDosError
+pragma(lib, "ntdll"); // NtQueryInformationFile, RtlNtStatusToDosError
 
 import core.sys.windows.winbase : CreateIoCompletionPort,
     INFINITE, OVERLAPPED;
 import core.sys.windows.windef : DWORD, FALSE, TRUE;
 import core.sys.windows.winnt : HANDLE;
 import core.sys.windows.basetsd : ULONG_PTR;
-import core.stdc.errno : ECANCELED, EIO, ENOENT, ENOMEM, EOPNOTSUPP, EOVERFLOW;
+import core.stdc.errno : ECANCELED, EINVAL, EIO, ENOENT, ENOMEM, EOPNOTSUPP, EOVERFLOW;
+import core.time : MonoTime, Duration, msecs, nsecs, seconds;
 
 import sparkles.event_horizon.backend.concept : BackendConfig, RawCompletion, Waker;
 import sparkles.event_horizon.backend.probe : BackendCaps, BackendId, LoopMode;
 import sparkles.event_horizon.errors;
 import sparkles.event_horizon.op : KernelTimespec, OpAccept, OpConnect, OpNop,
-    OpRecv, OpSend, OpSlot, OpTimeout, OpToken;
+    OpRead, OpRecv, OpSend, OpSlot, OpTimeout, OpToken, OpWrite, NativeHandle;
 
 // ── minimal winsock2 / IOCP bindings (only what the data path needs) ────────
 
@@ -63,6 +69,9 @@ extern (Windows) nothrow @nogc
         uint count, uint* removed, uint timeout, int alertable);
     int CancelIoEx(HANDLE handle, OVERLAPPED* ov);
     uint GetLastError();
+    uint GetFileType(HANDLE handle);
+    int ReadFile(HANDLE, void*, uint, uint*, OVERLAPPED*);
+    int WriteFile(HANDLE, const(void)*, uint, uint*, OVERLAPPED*);
     struct WSADATA
     {
         ushort wVersion;
@@ -90,7 +99,6 @@ extern (Windows) nothrow @nogc
     int ResetEvent(HANDLE event);
     DWORD WaitForSingleObject(HANDLE handle, DWORD milliseconds);
     int CloseHandle(HANDLE h); // @nogc-declared here (winbase's isn't marked)
-    ulong GetTickCount64(); // monotonic milliseconds since boot
 
     // Socket setup + the async accept/connect machinery.
     SOCKET socket(int af, int type, int protocol);
@@ -210,50 +218,58 @@ int ntErrno(uint status) @trusted nothrow @nogc
     => winErrno(RtlNtStatusToDosError(status));
 
 /**
-The handles this backend has associated with its port. Windows reports the
-same error for a handle already associated with this port as for one
-associated with another, so the set is what tells them apart. Entries are
-never removed, because the backend does not see a handle close. A closed
-handle's value that comes back as a new handle associates afresh, which
-replaces its entry.
+The handles this backend has associated with its port, and what a file
+operation learned about each. Windows reports the same error for a handle
+already associated with this port as for one associated with another, so the
+set is what tells them apart. Entries are never removed, because the backend
+does not see a handle close. A closed handle's value that comes back as a new
+handle associates afresh, which resets its entry.
 */
 struct Associations
 {
     import core.memory : pureFree, pureMalloc;
 
-    private HANDLE* _slots; // null is the empty sentinel, never a real handle
+    /// Facts a file operation reads once per associated handle.
+    enum ubyte known = 1, synchronous = 2, pipe = 4;
+
+    private static struct Entry
+    {
+        HANDLE handle; // null is the empty sentinel, never a real handle
+        ubyte facts;
+    }
+
+    private Entry* _slots;
     private size_t _cap;
     private size_t _count;
 
-    bool contains(HANDLE h) const @trusted nothrow @nogc
+    bool contains(HANDLE h) const @trusted nothrow @nogc => find(h) !is null;
+
+    /// The facts recorded for `h`; 0 when there are none.
+    ubyte facts(HANDLE h) const @trusted nothrow @nogc
     {
-        if (_slots is null)
-            return false;
-        for (auto i = slotOf(h);; i = (i + 1) & (_cap - 1))
-        {
-            if (_slots[i] is null)
-                return false;
-            if (_slots[i] is h)
-                return true;
-        }
+        auto e = find(h);
+        return e is null ? 0 : e.facts;
     }
 
-    /// Records `h`; `false` when the table could not grow.
+    void setFacts(HANDLE h, ubyte facts) @trusted nothrow @nogc
+    {
+        if (auto e = cast(Entry*) find(h))
+            e.facts = facts;
+    }
+
+    /// Records a fresh association of `h`, forgetting any earlier facts;
+    /// `false` when the table could not grow.
     bool add(HANDLE h) @trusted nothrow @nogc
     {
+        if (auto e = cast(Entry*) find(h))
+        {
+            e.facts = 0;
+            return true;
+        }
         if ((_count + 1) * 4 >= _cap * 3 && !grow())
             return false;
-        for (auto i = slotOf(h);; i = (i + 1) & (_cap - 1))
-        {
-            if (_slots[i] is h)
-                return true;
-            if (_slots[i] is null)
-            {
-                _slots[i] = h;
-                ++_count;
-                return true;
-            }
-        }
+        insert(Entry(h, 0));
+        return true;
     }
 
     void clear() @trusted nothrow @nogc
@@ -263,23 +279,45 @@ struct Associations
         _cap = _count = 0;
     }
 
+    private const(Entry)* find(HANDLE h) const @trusted nothrow @nogc
+    {
+        if (_slots is null)
+            return null;
+        for (auto i = slotOf(h);; i = (i + 1) & (_cap - 1))
+        {
+            if (_slots[i].handle is null)
+                return null;
+            if (_slots[i].handle is h)
+                return &_slots[i];
+        }
+    }
+
+    private void insert(Entry entry) @trusted nothrow @nogc
+    {
+        auto i = slotOf(entry.handle);
+        while (_slots[i].handle !is null)
+            i = (i + 1) & (_cap - 1);
+        _slots[i] = entry;
+        ++_count;
+    }
+
     private size_t slotOf(HANDLE h) const @trusted pure nothrow @nogc
         => (cast(size_t) h >> 2) & (_cap - 1); // handle values are multiples of 4
 
     private bool grow() @trusted nothrow @nogc
     {
         const cap = _cap == 0 ? 64 : _cap * 2;
-        auto slots = cast(HANDLE*) pureMalloc(cap * HANDLE.sizeof);
+        auto slots = cast(Entry*) pureMalloc(cap * Entry.sizeof);
         if (slots is null)
             return false;
-        slots[0 .. cap] = null;
+        slots[0 .. cap] = Entry.init;
         auto old = _slots[0 .. _cap];
         _slots = slots;
         _cap = cap;
         _count = 0;
-        foreach (h; old)
-            if (h !is null)
-                add(h);
+        foreach (entry; old)
+            if (entry.handle !is null)
+                insert(entry);
         pureFree(old.ptr);
         return true;
     }
@@ -288,6 +326,7 @@ struct Associations
 enum IoKind : ubyte
 {
     data,     // recv/send: res is the byte count
+    read,     // ReadFile: a broken pipe / end-of-file status is EOF
     accept,   // AcceptEx: res is the new socket fd
     connect,  // ConnectEx: res is 0 / -errno
     wake,     // external waker post (SPEC §5.6): persistent, res is 0
@@ -371,7 +410,8 @@ struct IocpBackend
 
         _caps.backend = BackendId.iocp;
         _caps.mode = LoopMode.cooperative;
-        foreach (kind; [OpKind.nop, OpKind.recv, OpKind.send, OpKind.timeout])
+        foreach (kind; [OpKind.nop, OpKind.recv, OpKind.send, OpKind.timeout,
+            OpKind.read, OpKind.write])
             _caps.opBits |= 1UL << kind;
         if (_acceptEx !is null)
             _caps.opBits |= 1UL << OpKind.accept;
@@ -455,10 +495,21 @@ struct IocpBackend
     and any other is rejected with `EINVAL` rather than left to complete on
     a port that will never deliver it here.
     */
-    private int ensureAssociated(HANDLE handle) @trusted nothrow @nogc
+    private int ensureAssociated(HANDLE handle) @safe nothrow @nogc
+    {
+        bool fresh;
+        return associate(handle, fresh);
+    }
+
+    /// As `ensureAssociated`; `fresh` says whether this call made the
+    /// association, so facts recorded for the value belong to another handle.
+    private int associate(HANDLE handle, out bool fresh) @trusted nothrow @nogc
     {
         if (CreateIoCompletionPort(handle, _port, 0, 0) !is null)
+        {
+            fresh = true;
             return _associated.add(handle) ? 0 : -ENOMEM;
+        }
         const error = GetLastError();
         if (error == ERROR_INVALID_PARAMETER && _associated.contains(handle))
             return 0;
@@ -549,6 +600,106 @@ struct IocpBackend
         return true;
     }
 
+    /// Reads an overlapped native pipe or a file at an explicit offset.
+    bool trySubmit(in OpRead o, OpToken token, ref OpSlot slot) @safe nothrow @nogc
+        => fileIo!true((() @trusted => cast(NativeHandle) o.fd)(), o.offset, token, slot);
+
+    /// Writes an overlapped native pipe or a file at an explicit offset.
+    bool trySubmit(in OpWrite o, OpToken token, ref OpSlot slot) @safe nothrow @nogc
+        => fileIo!false((() @trusted => cast(NativeHandle) o.fd)(), o.offset, token, slot);
+
+    /// The `Associations` facts for a file or pipe handle, or `-errno`.
+    /// Asked once per association: a handle's mode and type never change.
+    private static int fileFacts(scope NativeHandle handle) @safe nothrow @nogc
+    {
+        import sparkles.event_horizon.sys.nt : IO_STATUS_BLOCK, NtQueryInformationFile;
+
+        IO_STATUS_BLOCK io;
+        uint mode;
+        const status = (() @trusted => NtQueryInformationFile(handle, &io,
+            &mode, mode.sizeof, 16 /* FileModeInformation */))();
+        if (status != 0)
+            return -ntErrno(status);
+        enum synchronousModes = 0x10 | 0x20; // ALERT / NONALERT
+        int facts = Associations.known;
+        if (mode & synchronousModes)
+            facts |= Associations.synchronous;
+        if ((() @trusted => GetFileType(handle))() == 3) // FILE_TYPE_PIPE
+            facts |= Associations.pipe;
+        return facts;
+    }
+
+    private bool fileIo(bool reading)(scope NativeHandle handle, ulong offset,
+        OpToken token, ref OpSlot slot) @safe nothrow @nogc
+    {
+        if (_readyCount == _ready.length)
+            return false;
+        auto op = acquire();
+        if (op is null)
+            return false;
+        op.token = token.raw;
+        // HANDLE is an opaque integer token in pointer-shaped ABI storage;
+        // retaining that token does not retain a pointer into the descriptor.
+        op.handle = (() @trusted => cast(HANDLE) cast(size_t) handle)();
+        // A handle another port owns is rejected here, before any I/O.
+        bool fresh;
+        if (const failed = associate(op.handle, fresh))
+            return reject(op, failed);
+        auto facts = _associated.facts(op.handle);
+        if (fresh || !(facts & Associations.known))
+        {
+            const probed = fileFacts(handle);
+            if (probed < 0)
+                return reject(op, probed);
+            facts = cast(ubyte) probed;
+            _associated.setFacts(op.handle, facts);
+        }
+        // A synchronous handle can return success without ever posting a
+        // terminal packet (or block this worker).
+        if (facts & Associations.synchronous)
+            return reject(op, -EINVAL);
+        static if (reading)
+            op.kind = IoKind.read;
+        // Async regular files have no implicit shared file position. Never
+        // reinterpret ulong.max as WriteFile's append-to-EOF sentinel.
+        if (offset == ulong.max && !(facts & Associations.pipe))
+            return reject(op, -EINVAL);
+        if (offset != ulong.max)
+            (() @trusted {
+                op.ov.Offset = cast(uint) offset;
+                op.ov.OffsetHigh = cast(uint)(offset >> 32);
+            })();
+        uint transferred;
+        int issued;
+        static if (reading)
+        {
+            auto space = slot.pinned.space();
+            // The loop's pinned buffer and this backend's OVERLAPPED remain
+            // live through the terminal packet, even after CancelIoEx.
+            issued = (() @trusted => ReadFile(handle, space.ptr,
+                transferLength(space.length), &transferred, &op.ov))();
+        }
+        else
+        {
+            auto bytes = slot.pinned[];
+            issued = (() @trusted => WriteFile(handle, bytes.ptr,
+                transferLength(bytes.length), &transferred, &op.ov))();
+        }
+        if (!issued)
+        {
+            const code = (() @trusted => GetLastError())();
+            if (code != 997) // ERROR_IO_PENDING: the port owns completion
+            {
+                static if (reading)
+                    if (code == 109 || code == 38) // BROKEN_PIPE / HANDLE_EOF
+                        return reject(op, 0);
+                return reject(op, -winErrno(code));
+            }
+        }
+        repairHostSignalAfterIssue();
+        return true;
+    }
+
     /// A relative timer, driven off the completion-port wait timeout (no
     /// threadpool): the deadline is tracked and its completion synthesized
     /// when it expires. `res` is 0 on expiry.
@@ -556,8 +707,17 @@ struct IocpBackend
     {
         if (_timerCount >= _timers.length)
             return false;
-        const ms = o.rel.tv_sec * 1000 + o.rel.tv_nsec / 1_000_000;
-        _timers[_timerCount++] = Timer(token.raw, GetTickCount64() + (ms < 0 ? 0 : ms));
+        const now = MonoTime.currTime;
+        const room = MonoTime.max - now;
+        // Compare before converting seconds to clock ticks, so huge finite
+        // deadlines saturate rather than wrapping into an immediate timeout.
+        Duration rel = o.rel.tv_sec >= room.total!"seconds" ? room
+            : o.rel.tv_sec.seconds + o.rel.tv_nsec.nsecs;
+        if (rel < Duration.zero)
+            rel = Duration.zero;
+        if (rel > room)
+            rel = room;
+        _timers[_timerCount++] = Timer(token.raw, now + rel);
         return true;
     }
 
@@ -654,11 +814,10 @@ struct IocpBackend
         if (_readyCount != 0)
             return 0; // queued completions are already due
         ulong waitMs = requestedMs;
-        const now = GetTickCount64();
+        const now = MonoTime.currTime;
         foreach (i; 0 .. _timerCount)
         {
-            const rem = _timers[i].deadlineMs > now
-                ? _timers[i].deadlineMs - now : 0;
+            const rem = waitMilliseconds(_timers[i].deadline - now);
             if (rem < waitMs)
                 waitMs = rem;
         }
@@ -698,13 +857,13 @@ struct IocpBackend
 
         // The wait timeout is the min of the caller's deadline and the
         // earliest pending timer, so the port wakes when a timer is due.
-        ulong waitMs = deadline is null
-            ? ulong.max
-            : cast(ulong)(deadline.tv_sec * 1000 + deadline.tv_nsec / 1_000_000);
-        const now = GetTickCount64();
+        ulong waitMs = deadline is null ? ulong.max
+            : deadline.tv_sec >= uint.max / 1000 ? uint.max - 1
+            : waitMilliseconds(deadline.tv_sec.seconds + deadline.tv_nsec.nsecs);
+        const now = MonoTime.currTime;
         foreach (i; 0 .. _timerCount)
         {
-            const rem = _timers[i].deadlineMs > now ? _timers[i].deadlineMs - now : 0;
+            const rem = waitMilliseconds(_timers[i].deadline - now);
             if (rem < waitMs)
                 waitMs = rem;
         }
@@ -840,11 +999,11 @@ private:
     /// Moves any now-due timers into the synthesized-completion buffer.
     void expireTimers() @trusted nothrow @nogc
     {
-        const now = GetTickCount64();
+        const now = MonoTime.currTime;
         uint w;
         foreach (i; 0 .. _timerCount)
         {
-            if (_timers[i].deadlineMs <= now && _readyCount < _ready.length)
+            if (_timers[i].deadline <= now && _readyCount < _ready.length)
                 enqueue(RawCompletion(_timers[i].token, 0, 0));
             else
                 _timers[w++] = _timers[i]; // keep the still-pending ones
@@ -863,6 +1022,7 @@ private:
         final switch (op.kind)
         {
             case IoKind.data:
+            case IoKind.read:
                 res = ok ? cast(int) bytes : failure;
                 break;
             case IoKind.accept:
@@ -895,6 +1055,9 @@ private:
                 // target for every future wake — never released here.
                 return RawCompletion(token, 0, 0);
         }
+        if (op.kind == IoKind.read
+            && (status == 0xc000_014b || status == 0xc000_0011)) // PIPE_BROKEN / END_OF_FILE
+            res = 0;
         release(op);
         return RawCompletion(token, res, 0);
     }
@@ -924,7 +1087,19 @@ private:
     static struct Timer
     {
         ulong token;
-        ulong deadlineMs; // absolute GetTickCount64
+        MonoTime deadline;
+    }
+
+    // Round up, never down: sub-millisecond truncation fires timers early
+    // against the scheduler's monotonic clock and can cause zero-time spins.
+    private static uint waitMilliseconds(Duration duration) @safe pure nothrow @nogc
+    {
+        if (duration <= Duration.zero)
+            return 0;
+        const ms = duration.total!"msecs";
+        if (ms >= uint.max - 1)
+            return uint.max - 1; // uint.max means infinite, not a finite wait
+        return cast(uint) ms + (duration > ms.msecs ? 1 : 0);
     }
 
     HANDLE _port;
@@ -956,8 +1131,9 @@ private:
         assert(b.caps.supports(kind));
     assert(b.caps.supports(OpKind.accept) == (b._acceptEx !is null));
     assert(b.caps.supports(OpKind.connect) == (b._connectEx !is null));
-    assert(!b.caps.supports(OpKind.read));
-    assert(!b.caps.supports(OpKind.write));
+    assert(b.caps.supports(OpKind.read));
+    assert(b.caps.supports(OpKind.write));
+    assert(!b.caps.supports(OpKind.fsync));
 }
 
 /// A full dequeue batch, an overflow batch, and callback-side submission all
@@ -1291,6 +1467,146 @@ version (unittest)
     import sparkles.event_horizon.buffer : Buf;
     import sparkles.event_horizon.op : OpSlot;
     import sparkles.test_runner.skip : skipTest;
+}
+
+/// Synchronous pipe handles must be rejected before issuing I/O: even an
+/// inline-successful operation does not supply the terminal IOCP packet.
+@("iocp.fileIo.rejectsSynchronousHandles")
+@system unittest
+{
+    import core.sys.windows.winbase : CreatePipe;
+    import sparkles.event_horizon.op : OpClass;
+
+    IocpBackend b;
+    assert(!b.open(BackendConfig()).hasError);
+    scope (exit) b.close();
+    HANDLE reader, writer;
+    assert(CreatePipe(&reader, &writer, null, 0));
+    scope (exit) CloseHandle(reader);
+    scope (exit) CloseHandle(writer);
+    ubyte[1] payload = [42];
+    uint written;
+    assert(WriteFile(writer, payload.ptr, 1, &written, null) && written == 1);
+    OpSlot slot;
+    slot.pinned = Buf.fromForeign(payload[], null);
+    const token = OpToken.pack(1, 1, OpClass.user);
+    assert(b.trySubmit(OpRead(reader, Buf.init, ulong.max), token, slot));
+    assert(b.reap((ref const RawCompletion c) {
+        assert(c.userData == token.raw && c.res == -EINVAL);
+    }) == 1, "synchronous read must reject immediately, not wait for a packet");
+    slot.pinned.length = 1;
+    assert(b.trySubmit(OpWrite(writer, Buf.init, ulong.max), token, slot));
+    assert(b.reap((ref const RawCompletion c) {
+        assert(c.userData == token.raw && c.res == -EINVAL);
+    }) == 1, "synchronous write must reject immediately, not wait for a packet");
+    uint got;
+    assert(ReadFile(reader, payload.ptr, 1, &got, null) && got == 1 && payload[0] == 42);
+}
+
+/// Native pipe reads/writes use OVERLAPPED handles, cancellation waits for the
+/// target packet, and the writer's close becomes a successful zero-byte EOF.
+@("iocp.pipe.readWriteCancelAndEof")
+@system unittest
+{
+    import sparkles.event_horizon.op : OpClass;
+    import sparkles.event_horizon.sys.pipe : NativePipe;
+
+    IocpBackend b;
+    assert(!b.open(BackendConfig()).hasError);
+    scope (exit) b.close();
+    NativePipe pipe;
+    assert(!NativePipe.create(pipe).hasError);
+    ubyte[16] rx;
+    ubyte[5] tx = cast(ubyte[5]) "hello";
+    OpSlot readSlot, writeSlot;
+    readSlot.pinned = Buf.fromForeign(rx[], null);
+    writeSlot.pinned = Buf.fromForeign(tx[], null);
+    writeSlot.pinned.length = tx.length;
+    const readToken = OpToken.pack(1, 1, OpClass.user);
+    const writeToken = OpToken.pack(2, 1, OpClass.user);
+    assert(b.trySubmit(OpRead(pipe.reader.borrowFd.fd, Buf.init, ulong.max), readToken, readSlot));
+    assert(b.trySubmit(OpWrite(pipe.writer.borrowFd.fd, Buf.init, ulong.max), writeToken, writeSlot));
+    uint reads, writes;
+    while (reads + writes < 2)
+    {
+        KernelTimespec deadline = KernelTimespec(2, 0);
+        assert(b.submitAndWait(1, &deadline).value != 0);
+        b.reap((ref const RawCompletion c) {
+            assert(c.res == 5);
+            if (c.userData == readToken.raw)
+                assert(++reads == 1);
+            else
+                assert(c.userData == writeToken.raw && ++writes == 1);
+        });
+    }
+    assert(rx[0 .. 5] == tx[]);
+
+    const cancelToken = OpToken.pack(3, 1, OpClass.internal);
+    assert(b.trySubmit(OpRead(pipe.reader.borrowFd.fd, Buf.init, ulong.max), readToken, readSlot));
+    assert(b.trySubmitCancel(cancelToken, readToken));
+    uint cancelled, acknowledged;
+    while (cancelled + acknowledged < 2)
+    {
+        KernelTimespec deadline = KernelTimespec(2, 0);
+        assert(b.submitAndWait(1, &deadline).value != 0);
+        b.reap((ref const RawCompletion c) {
+            if (c.userData == readToken.raw)
+                assert(c.res == -ECANCELED && ++cancelled == 1);
+            else
+                assert(c.userData == cancelToken.raw && c.res == 0 && ++acknowledged == 1);
+        });
+    }
+    pipe.writer.close();
+    assert(b.trySubmit(OpRead(pipe.reader.borrowFd.fd, Buf.init, ulong.max), readToken, readSlot));
+    KernelTimespec deadline = KernelTimespec(2, 0);
+    assert(b.submitAndWait(1, &deadline).value != 0);
+    assert(b.reap((ref const RawCompletion c) {
+        assert(c.userData == readToken.raw && c.res == 0);
+    }) == 1);
+}
+
+/// A write to a pipe whose reader is gone fails with `EPIPE`, as on POSIX,
+/// and the handle's facts are read once: a second write is rejected the
+/// same way without asking again.
+@("iocp.pipe.brokenPipeWriteIsEpipe")
+@system unittest
+{
+    import core.stdc.errno : EPIPE;
+    import sparkles.event_horizon.op : OpClass;
+    import sparkles.event_horizon.sys.pipe : NativePipe;
+
+    IocpBackend b;
+    assert(!b.open(BackendConfig()).hasError);
+    scope (exit) b.close();
+    NativePipe pipe;
+    assert(!NativePipe.create(pipe).hasError);
+    pipe.reader.close();
+    ubyte[1] tx = [1];
+    OpSlot slot;
+    slot.pinned = Buf.fromForeign(tx[], null);
+    slot.pinned.length = 1;
+    const token = OpToken.pack(1, 1, OpClass.user);
+    foreach (round; 0 .. 2)
+    {
+        assert(b.trySubmit(OpWrite(pipe.writer.borrowFd.fd, Buf.init, ulong.max), token, slot));
+        KernelTimespec deadline = KernelTimespec(2, 0);
+        assert(b.submitAndWait(1, &deadline).value != 0);
+        assert(b.reap((ref const RawCompletion c) {
+            assert(c.userData == token.raw && c.res == -EPIPE);
+        }) == 1);
+    }
+    auto handle = cast(HANDLE) pipe.writer.borrowFd.fd;
+    assert(b._associated.facts(handle) & Associations.pipe);
+}
+
+/// One operation never asks for more than `int.max` bytes, so a completed
+/// count cannot read as `-errno`.
+@("iocp.transferLength.capsAtIntMax")
+@safe pure nothrow @nogc unittest
+{
+    assert(IocpBackend.transferLength(5) == 5);
+    assert(IocpBackend.transferLength(int.max) == int.max);
+    assert(IocpBackend.transferLength(size_t(uint.max) + 7) == int.max);
 }
 
 /// The M11 data-path gate (runs under Wine): drive a real WSASend through the

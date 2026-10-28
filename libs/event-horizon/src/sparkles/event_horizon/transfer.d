@@ -74,7 +74,7 @@ if (isFileLike!H && isOwnedIoBuf!B)
     return result.res;
 }
 
-private TransferResult!B complete(Op, B)(int fd, B buf, ulong offset = ulong.max)
+private TransferResult!B complete(Op, B)(typeof(Op.init.fd) fd, B buf, ulong offset = ulong.max)
 {
     auto bytes = buf[];
     size_t total;
@@ -188,11 +188,11 @@ version (Posix)
 @("transfer.emptyAndOverflowDoNotSubmit") @system unittest
 {
     UniqueBuffer!(ubyte, 8) bytes;
-    auto empty = writeAll(BorrowedFd(-1), move(bytes));
+    auto empty = writeAll(BorrowedFd.init, move(bytes));
     assert(!empty.res.hasError && empty.transferred == 0);
     bytes = move(empty.buf);
     bytes.length = 8;
-    auto overflow = writeAll(BorrowedFd(-1), move(bytes), ulong.max - 4);
+    auto overflow = writeAll(BorrowedFd.init, move(bytes), ulong.max - 4);
     assert(overflow.res.error.code == EOVERFLOW);
     assert(overflow.transferred == 0 && overflow.buf.length == 8);
 }

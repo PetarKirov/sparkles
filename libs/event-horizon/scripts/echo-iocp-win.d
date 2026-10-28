@@ -3,7 +3,7 @@
  * accept (AcceptEx) and connect (ConnectEx) go through the loop too, so the
  * whole echo — accept, connect, recv, send — is driven by the fibers + IOCP.
  */
-module echo_iocp_async;
+module sparkles.event_horizon.tests.echo_iocp_async;
 
 import core.lifetime : move;
 import std.stdio : writefln, writeln;
@@ -50,9 +50,36 @@ int main()
     if (Sched.create(sched).hasError)
     {
         writeln("SKIP: IOCP unavailable");
-        return 0;
+        return 1;
     }
     scope (exit) sched.destroy();
+
+    // The same direct-style pipe verbs used by process supervision, with
+    // native HANDLE ownership rather than truncated Winsock-style integers.
+    {
+        import sparkles.event_horizon.io : read, write;
+        import sparkles.event_horizon.sys.pipe : NativePipe;
+
+        NativePipe pipe;
+        assert(!NativePipe.create(pipe).hasError);
+        auto piped = sched.run(() {
+            assert(!sched.spawn(() {
+                SharedBuffer!(ubyte, 64) bytes;
+                bytes ~= payload[];
+                auto result = write(pipe.writer, move(bytes));
+                assert(!result.res.hasError && result.res.value == payload.length);
+                pipe.writer.close();
+            }).hasError);
+            SharedBuffer!(ubyte, 64) bytes;
+            bytes.length = 64;
+            auto got = read(pipe.reader, move(bytes));
+            assert(!got.res.hasError && got.res.value == payload.length);
+            assert(got.buf[][0 .. got.res.value] == payload[]);
+            auto eof = read(pipe.reader, move(got.buf));
+            assert(!eof.res.hasError && eof.res.value == 0);
+        });
+        assert(!piped.hasError);
+    }
 
     const listenFd = socket(AF_INET, SOCK_STREAM, 0);
     assert(listenFd != INVALID_SOCKET);
@@ -155,7 +182,7 @@ int main()
     }
 
     if (verified && wokeEarly)
-        writefln("ok: %d-byte payload echoed — accept+connect+recv+send all through the IOCP loop; cancel barriers and cross-thread waker verified",
+        writefln("ok: %d-byte payload echoed — native pipe I/O and accept+connect+recv+send through IOCP; cancel barriers and cross-thread waker verified",
             payload.length);
     else
         writeln("FAILED");
