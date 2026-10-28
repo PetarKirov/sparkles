@@ -277,6 +277,7 @@
         ./nix/packages/shader-compile.nix
         ./nix/packages/test-runner.nix
         ./nix/packages/android-dev-env-probe.nix
+        ./nix/packages/media-hw-probe.nix
         ./nix/packages/ui-shaders.nix
         ./nix/packages/skia.nix
         ./nix/packages/wasm-modules.nix
