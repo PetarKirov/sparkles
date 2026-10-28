@@ -8049,6 +8049,43 @@
             "link": "/research/autological-artifacts/measurement"
           }
         ]
+      },
+      {
+        "text": "Images & Video",
+        "link": "/research/images/",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Overview",
+            "link": "/research/images/"
+          },
+          {
+            "text": "Sparkles baseline",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "wired and Flat",
+                "link": "/research/images/baseline/wired"
+              },
+              {
+                "text": "event-horizon and storage I/O",
+                "link": "/research/images/baseline/event-horizon"
+              },
+              {
+                "text": "Vulkan and the GPU upload path",
+                "link": "/research/images/baseline/vulkan"
+              },
+              {
+                "text": "Shaders, math and host SIMD",
+                "link": "/research/images/baseline/shaders-simd"
+              },
+              {
+                "text": "Existing image code and consumers",
+                "link": "/research/images/baseline/existing-code"
+              }
+            ]
+          }
+        ]
       }
     ]
   }
