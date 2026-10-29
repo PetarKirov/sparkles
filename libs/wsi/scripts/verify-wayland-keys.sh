@@ -80,8 +80,11 @@ WSI_POINTER_GO="\$rt/pointer-go" WSI_HOLD_GO="\$rt/hold-go" \\
   >"$work/smoke.log" 2>&1 &
 smoke_pid=\$!
 
-# Re-inject until the smoke observes a full chord; duplicates are ignored.
-for _ in \$(seq 1 60); do
+# Re-inject for as long as the smoke runs: it needs a full chord first, and
+# later a fresh key serial before it replaces its clipboard offer (Weston
+# refuses a selection set again under the last one's serial). Duplicates
+# are ignored; the bound only stops a smoke that hangs.
+for _ in \$(seq 1 600); do
   if ! kill -0 "\$smoke_pid" 2>/dev/null; then
     break
   fi

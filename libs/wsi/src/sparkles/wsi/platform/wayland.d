@@ -15,6 +15,7 @@ module sparkles.wsi.platform.wayland;
 
 version (linux):
 
+import core.atomic : atomicOp;
 import core.stdc.errno : EAGAIN, EINTR, EPIPE, errno;
 import core.sys.linux.unistd : pipe2;
 import core.sys.posix.fcntl : F_GETFL, F_SETFL, O_CLOEXEC, O_NONBLOCK, fcntl;
@@ -22,7 +23,7 @@ import core.stdc.string : strcmp, strlen;
 import core.sys.posix.pthread : pthread_equal, pthread_self, pthread_t;
 import core.sys.posix.sys.mman : MAP_FAILED, MAP_PRIVATE, PROT_READ, mmap,
     munmap;
-import core.sys.posix.unistd : posixClose = close, read, write;
+import core.sys.posix.unistd : getpid, posixClose = close, read, write;
 import core.time : Duration, MonoTime, msecs;
 import std.traits : Parameters;
 
@@ -710,6 +711,11 @@ struct WaylandWsi
             wl_callback_destroy(bootstrapSync_);
             bootstrapSync_ = null;
         }
+        if (selectionSync_ !is null)
+        {
+            wl_callback_destroy(selectionSync_);
+            selectionSync_ = null;
+        }
         releasePointer();
         if (textInput_ !is null)
         {
@@ -1065,6 +1071,22 @@ struct WaylandWsi
     private ubyte selectionTypeCount_;
     private OfferId cancelledOffer_;
     private bool selectionIsOwn_; // the compositor returned the own source
+    // Every own source offers a marker type of its own, never shown to the
+    // application (`ownMarker`): the selection is this application's current
+    // source only when it carries the current marker. A compositor hands
+    // back other selections while a source is held — another client's, or
+    // its own copy of an earlier one (Weston's clipboard).
+    private uint instance_;           // this connection's number in the process, from 1
+    private uint sourceNumber_;       // the current own source's marker number
+    private bool pendingOwn_;         // the introduced offer carries the current marker
+    private bool pendingStale_;       // ... an earlier own source's marker
+    private bool selectionOwn_;       // the selection carries the current marker
+    private bool selectionStale_;     // ... an earlier own source's marker
+    // A round trip after each `set_selection`: a compositor that does not
+    // take the selection says nothing (Weston, for a serial no newer than
+    // the selection's), so its end is when to conclude it did not.
+    private wl_callback* selectionSync_;
+    private bool selectionSettled_;
     private Pipe[8] readers_;
     private Pipe[4] writers_;
 
@@ -1104,6 +1126,13 @@ struct WaylandWsi
             mime[0 .. t.length] = t[];
             wl_data_source_offer(source, mime.ptr);
         }
+        // This source's marker, after the application's types.
+        if (instance_ == 0)
+            instance_ = atomicOp!"+="(nextInstance, 1);
+        ++sourceNumber_;
+        char[64] marker;
+        cast(void) ownMarker(marker, instance_, sourceNumber_);
+        wl_data_source_offer(source, marker.ptr);
         // The previous own source is replaced: the compositor cancels it, and
         // `publish` withdraws its offer now.
         releaseSource();
@@ -1111,9 +1140,85 @@ struct WaylandWsi
         sourceOffer_ = offer;
         selectionIsOwn_ = false;
         wl_data_device_set_selection(dataDevice_, source, inputSerial_);
+        armSelectionSync();
         flushRequests();
         publish(offer);
         return wsiOk(offer);
+    }
+
+    // What begins every own source's marker type, before
+    // `<pid>.<instance>-<number>`: unique to a connection, as two can share a
+    // process (the clipboard lane's second client does).
+    private enum markerStem = "application/x-sparkles-wsi-own-";
+
+    // The marker type of connection `instance`'s own source `number`, in `buf`
+    // with a NUL after it; the slice leaves the NUL out.
+    private static const(char)[] ownMarker(return ref char[64] buf, uint instance, uint number)
+        nothrow @nogc
+    {
+        size_t n;
+        void decimal(ulong v)
+        {
+            char[20] digits;
+            size_t k;
+            do
+            {
+                digits[k++] = cast(char)('0' + v % 10);
+                v /= 10;
+            }
+            while (v);
+            while (k)
+                buf[n++] = digits[--k];
+        }
+
+        buf[0 .. markerStem.length] = markerStem;
+        n = markerStem.length;
+        decimal(getpid());
+        buf[n++] = '.';
+        decimal(instance);
+        buf[n++] = '-';
+        decimal(number);
+        buf[n] = 0;
+        return buf[0 .. n];
+    }
+
+    private void armSelectionSync() nothrow @nogc
+    {
+        if (display_ is null)
+            return;
+        if (selectionSync_ !is null)
+            wl_callback_destroy(selectionSync_);
+        selectionSync_ = wl_display_sync(display_);
+        if (selectionSync_ !is null && wl_callback_add_listener(selectionSync_,
+                listenerPtr(selectionSyncListener), &this) != 0)
+        {
+            wl_callback_destroy(selectionSync_);
+            selectionSync_ = null;
+        }
+    }
+
+    private extern (C) static void onSelectionSync(void* data, wl_callback* callback, uint)
+        nothrow @nogc
+    {
+        auto owner = cast(WaylandWsi*) data;
+        wl_callback_destroy(callback);
+        owner.selectionSync_ = null;
+        owner.selectionSettled_ = true;
+    }
+
+    // This application's offer is not the selection: it ends (`DT1`), its
+    // readers failing, and its source with it.
+    private void withdrawOwnOffer()
+    {
+        const offer = sourceOffer_;
+        if (clipboard_.offers.isLive(offer))
+        {
+            announce(offer, DataOfferAction.withdrawn);
+            dropOffer(offer);
+        }
+        else
+            releaseSource();
+        selectionIsOwn_ = false;
     }
 
     private void releaseSource() nothrow @nogc
@@ -1198,12 +1303,33 @@ struct WaylandWsi
         {
             selectionChanged_ = false;
             work = true;
-            selectionIsOwn_ = source_ !is null && selectionOffer_ !is null;
-            noticeSelection();
-            if (selectionIsOwn_)
-                foreach (ref pipe; readers_)
-                    if (pipe.waiting)
-                        startRead(pipe);
+            // An earlier own source's selection, overtaken by a later
+            // `set_selection` whose own report follows: nothing to act on.
+            if (!selectionStale_)
+            {
+                selectionIsOwn_ = source_ !is null && selectionOwn_;
+                // Another client's selection, or the compositor's copy of an
+                // earlier one, while a source is held: this application's
+                // offer is not the selection.
+                if (source_ !is null && !selectionOwn_ && selectionOffer_ !is null)
+                    withdrawOwnOffer();
+                noticeSelection();
+                if (selectionIsOwn_)
+                    foreach (ref pipe; readers_)
+                        if (pipe.waiting)
+                            startRead(pipe);
+            }
+        }
+        if (selectionSettled_)
+        {
+            selectionSettled_ = false;
+            work = true;
+            // The round trip after `set_selection` ended with no report of
+            // this source as the selection. With keyboard focus — the client
+            // a compositor reports selections to — it did not take it, and
+            // the offer ends rather than leaving its readers waiting.
+            if (source_ !is null && !selectionIsOwn_ && keyboardFocus_ !is null)
+                withdrawOwnOffer();
         }
         foreach (ref pipe; writers_)
             if (pipe.fresh)
@@ -1371,6 +1497,7 @@ struct WaylandWsi
             wl_data_offer_destroy(owner.pendingOffer_);
         owner.pendingOffer_ = offer;
         owner.pendingTypeCount_ = 0;
+        owner.pendingOwn_ = owner.pendingStale_ = false;
         wl_data_offer_add_listener(offer, listenerPtr(dataOfferListener), owner);
     }
 
@@ -1381,6 +1508,25 @@ struct WaylandWsi
         if (offer !is owner.pendingOffer_ || owner.pendingTypeCount_ == maxOfferTypes)
             return;
         const spelled = type[0 .. strlen(type)];
+        // A source marker is never an application's type: it says whose the
+        // offer is.
+        if (spelled.length > markerStem.length && spelled[0 .. markerStem.length] == markerStem)
+        {
+            char[64] current;
+            const mine = ownMarker(current, owner.instance_, owner.sourceNumber_);
+            if (spelled == mine)
+                owner.pendingOwn_ = true;
+            else
+            {
+                // This connection's stem (`…-<pid>.<instance>-`): an earlier
+                // source of its own, not another connection's in the process.
+                size_t stem = mine.length;
+                while (stem > 0 && mine[stem - 1] != '-')
+                    --stem;
+                owner.pendingStale_ = spelled.length > stem && spelled[0 .. stem] == mine[0 .. stem];
+            }
+            return;
+        }
         // Text under its X names (Xwayland, older toolkits) is the one MIME
         // type; anything else that is not a MIME type is skipped.
         const mime = spelled == "UTF8_STRING" ? textMime : spelled;
@@ -1402,7 +1548,10 @@ struct WaylandWsi
             wl_data_offer_destroy(owner.selectionOffer_);
         owner.selectionOffer_ = offer;
         owner.selectionTypeCount_ = 0;
-        if (offer !is null && offer is owner.pendingOffer_)
+        const introduced = offer !is null && offer is owner.pendingOffer_;
+        owner.selectionOwn_ = introduced && owner.pendingOwn_;
+        owner.selectionStale_ = introduced && owner.pendingStale_;
+        if (introduced)
         {
             owner.selectionTypes_ = owner.pendingTypes_;
             owner.selectionTypeCount_ = owner.pendingTypeCount_;
@@ -2750,6 +2899,12 @@ private immutable xdg_toplevel_listener toplevelListener = {
 private immutable wl_callback_listener frameListener = {
     &WaylandWsi.onFrameDone
 };
+private immutable wl_callback_listener selectionSyncListener = {
+    &WaylandWsi.onSelectionSync
+};
+
+// The last connection number given out in this process (`WaylandWsi.instance_`).
+private shared uint nextInstance;
 private immutable wl_seat_listener seatListener = {
     &WaylandWsi.onSeatCapabilities, &WaylandWsi.onSeatName
 };
