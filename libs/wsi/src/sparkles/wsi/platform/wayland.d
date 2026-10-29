@@ -1059,8 +1059,7 @@ struct WaylandWsi
     private wl_data_source* source_;        // the own offer's, while it is the selection
     private OfferId sourceOffer_;
     private wl_data_offer* pendingOffer_;   // introduced, not yet the selection
-    private InlineBuffer!(char, maxMimeType)[maxOfferTypes] pendingTypes_;
-    private ubyte pendingTypeCount_;
+    private PendingOffer pending_;
     private wl_data_offer* selectionOffer_; // the selection's, own or foreign
     private uint inputSerial_;              // the latest keyboard or button serial
     // What listeners saw, for `serviceClipboard` to act on from dispatch:
@@ -1078,8 +1077,6 @@ struct WaylandWsi
     // its own copy of an earlier one (Weston's clipboard).
     private uint instance_;           // this connection's number in the process, from 1
     private uint sourceNumber_;       // the current own source's marker number
-    private bool pendingOwn_;         // the introduced offer carries the current marker
-    private bool pendingStale_;       // ... an earlier own source's marker
     private bool selectionOwn_;       // the selection carries the current marker
     private bool selectionStale_;     // ... an earlier own source's marker
     // A round trip after each `set_selection`: a compositor that does not
@@ -1089,6 +1086,67 @@ struct WaylandWsi
     private bool selectionSettled_;
     private Pipe[8] readers_;
     private Pipe[4] writers_;
+
+    // What an introduced offer has said so far: its application types (at
+    // most `maxOfferTypes`) and which marker, if any, it carried. A marker
+    // is judged before the type cap and never counts toward it: an own
+    // offer carries its marker after the application's types, so a full
+    // offer's marker arrives when the cap is already reached — and it is
+    // the marker that says the offer is this application's own.
+    private struct PendingOffer
+    {
+        InlineBuffer!(char, maxMimeType)[maxOfferTypes] types;
+        ubyte count;
+        bool own;   // carries the current source's marker
+        bool stale; // carries an earlier own source's marker
+
+        void reset() nothrow @nogc
+        {
+            count = 0;
+            own = stale = false;
+        }
+
+        // One `wl_data_offer.offer` type, against the current own source
+        // (`instance`, `number`).
+        void noteType(scope const(char)[] spelled, uint instance, uint number)
+            nothrow @nogc
+        {
+            // A source marker is never an application's type: it says
+            // whose the offer is.
+            if (spelled.length > markerStem.length
+                && spelled[0 .. markerStem.length] == markerStem)
+            {
+                char[64] current;
+                const mine = ownMarker(current, instance, number);
+                if (spelled == mine)
+                    own = true;
+                else
+                {
+                    // This connection's stem (`…-<pid>.<instance>-`): an
+                    // earlier source of its own, not another connection's
+                    // in the process.
+                    size_t stem = mine.length;
+                    while (stem > 0 && mine[stem - 1] != '-')
+                        --stem;
+                    stale = spelled.length > stem && spelled[0 .. stem] == mine[0 .. stem];
+                }
+                return;
+            }
+            if (count == maxOfferTypes)
+                return;
+            // Text under its X names (Xwayland, older toolkits) is the one
+            // MIME type; anything else that is not a MIME type is skipped.
+            const mime = spelled == "UTF8_STRING" ? textMime : spelled;
+            if (mime.length == 0 || mime.length > maxMimeType || !isMimeType(mime))
+                return;
+            foreach (ref t; types[0 .. count])
+                if (t[] == mime)
+                    return;
+            const assigned = types[count].assign(mime);
+            assert(assigned, "the length was checked");
+            ++count;
+        }
+    }
 
     private void ensureDataDevice() nothrow @nogc
     {
@@ -1496,8 +1554,7 @@ struct WaylandWsi
         if (owner.pendingOffer_ !is null && owner.pendingOffer_ !is owner.selectionOffer_)
             wl_data_offer_destroy(owner.pendingOffer_);
         owner.pendingOffer_ = offer;
-        owner.pendingTypeCount_ = 0;
-        owner.pendingOwn_ = owner.pendingStale_ = false;
+        owner.pending_.reset();
         wl_data_offer_add_listener(offer, listenerPtr(dataOfferListener), owner);
     }
 
@@ -1505,39 +1562,10 @@ struct WaylandWsi
         const(char)* type) nothrow @nogc
     {
         auto owner = cast(WaylandWsi*) data;
-        if (offer !is owner.pendingOffer_ || owner.pendingTypeCount_ == maxOfferTypes)
+        if (offer !is owner.pendingOffer_)
             return;
-        const spelled = type[0 .. strlen(type)];
-        // A source marker is never an application's type: it says whose the
-        // offer is.
-        if (spelled.length > markerStem.length && spelled[0 .. markerStem.length] == markerStem)
-        {
-            char[64] current;
-            const mine = ownMarker(current, owner.instance_, owner.sourceNumber_);
-            if (spelled == mine)
-                owner.pendingOwn_ = true;
-            else
-            {
-                // This connection's stem (`…-<pid>.<instance>-`): an earlier
-                // source of its own, not another connection's in the process.
-                size_t stem = mine.length;
-                while (stem > 0 && mine[stem - 1] != '-')
-                    --stem;
-                owner.pendingStale_ = spelled.length > stem && spelled[0 .. stem] == mine[0 .. stem];
-            }
-            return;
-        }
-        // Text under its X names (Xwayland, older toolkits) is the one MIME
-        // type; anything else that is not a MIME type is skipped.
-        const mime = spelled == "UTF8_STRING" ? textMime : spelled;
-        if (mime.length == 0 || mime.length > maxMimeType || !isMimeType(mime))
-            return;
-        foreach (ref t; owner.pendingTypes_[0 .. owner.pendingTypeCount_])
-            if (t[] == mime)
-                return;
-        const assigned = owner.pendingTypes_[owner.pendingTypeCount_].assign(mime);
-        assert(assigned, "the length was checked");
-        ++owner.pendingTypeCount_;
+        owner.pending_.noteType(type[0 .. strlen(type)], owner.instance_,
+            owner.sourceNumber_);
     }
 
     private extern (C) static void onSelection(void* data, wl_data_device*,
@@ -1549,12 +1577,12 @@ struct WaylandWsi
         owner.selectionOffer_ = offer;
         owner.selectionTypeCount_ = 0;
         const introduced = offer !is null && offer is owner.pendingOffer_;
-        owner.selectionOwn_ = introduced && owner.pendingOwn_;
-        owner.selectionStale_ = introduced && owner.pendingStale_;
+        owner.selectionOwn_ = introduced && owner.pending_.own;
+        owner.selectionStale_ = introduced && owner.pending_.stale;
         if (introduced)
         {
-            owner.selectionTypes_ = owner.pendingTypes_;
-            owner.selectionTypeCount_ = owner.pendingTypeCount_;
+            owner.selectionTypes_ = owner.pending_.types;
+            owner.selectionTypeCount_ = owner.pending_.count;
             owner.pendingOffer_ = null;
         }
         owner.selectionChanged_ = true;
@@ -3132,6 +3160,56 @@ unittest
     // An immediate-delay schedule is legal, and a >1000/s rate still ticks.
     assert(repeatsEnabled(40, 0));
     assert(repeatInterval(2000) == msecs(1));
+}
+
+@("wsi.wayland.pendingOffer.markerJudgedBeforeTheTypeCap")
+@system unittest
+{
+    alias PendingOffer = WaylandWsi.PendingOffer;
+    enum mimes = [
+        "text/plain", "text/html", "image/png", "image/jpeg",
+        "application/json", "text/csv", "application/pdf", "audio/wav",
+    ];
+    static assert(mimes.length == maxOfferTypes);
+    static const(char)[] markerOf(ref char[64] buf, uint instance, uint number)
+        => WaylandWsi.ownMarker(buf, instance, number);
+
+    // A full own offer: eight application types, the marker last (as
+    // `setSelection` offers it). The marker still owns the offer.
+    PendingOffer p;
+    foreach (m; mimes)
+        p.noteType(m, 1, 2);
+    assert(p.count == maxOfferTypes && !p.own);
+    char[64] buf;
+    p.noteType(markerOf(buf, 1, 2), 1, 2);
+    assert(p.own && !p.stale, "the marker after the cap still classifies");
+    assert(p.count == maxOfferTypes, "and never counted toward it");
+    p.noteType("video/mp4", 1, 2);
+    assert(p.count == maxOfferTypes, "a ninth type is dropped");
+
+    // The marker first does not spend a type slot either.
+    p.reset();
+    p.noteType(markerOf(buf, 1, 2), 1, 2);
+    foreach (m; mimes)
+        p.noteType(m, 1, 2);
+    assert(p.own && p.count == maxOfferTypes);
+
+    // An earlier source of this connection is stale; another connection's
+    // marker in the same process is neither own nor stale.
+    p.reset();
+    p.noteType(markerOf(buf, 1, 1), 1, 2);
+    assert(!p.own && p.stale);
+    p.reset();
+    p.noteType(markerOf(buf, 2, 2), 1, 2);
+    assert(!p.own && !p.stale);
+
+    // Normalization and dedup ride along: the X name is the one MIME type,
+    // a repeat and a non-MIME name take no slot.
+    p.reset();
+    p.noteType("UTF8_STRING", 1, 2);
+    p.noteType("text/plain;charset=utf-8", 1, 2);
+    p.noteType("STRING", 1, 2);
+    assert(p.count == 1 && p.types[0][] == "text/plain;charset=utf-8");
 }
 
 private WsiResult!T waylandFailure(T)(WsiOperation operation,
