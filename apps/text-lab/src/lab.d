@@ -57,6 +57,10 @@ enum int headerRows = 3;
 enum int sideSheetMinWidth = 90;
 /// The side sheet's width in cells (360 dp).
 enum int sideSheetWidth = 45;
+/// The specimen's label column, in cells.
+enum int labelWidth = 10;
+/// The smallest pixel size the font steps down to so the panels fit.
+enum int minFitPx = 8;
 
 /// The lab's state.
 struct Lab
@@ -75,6 +79,7 @@ struct Lab
     private Point pointer = Point(-1, -1);
     private bool pointing; // a mouse hovers, or a finger is down
     private bool sentSettings;
+    private bool userSized; // `+` or `-` was pressed: the size is theirs
     // What the last frame laid out, for a tap or click: the Settings
     // button, the sheet, and the sheet's buttons.
     private Rect settingsButton_;
@@ -119,6 +124,14 @@ struct Lab
         else
             auto canvas = &h.canvas;
         const size = h.size;
+        // Until the user picks a size, the font steps down a pixel a frame
+        // until both panels hold the whole specimen: a phone's 12 pt is a
+        // row short.
+        if (!userSized && h.fontSizePx > minFitPx && !fits(size))
+        {
+            h.fontSize(h.fontSizePx - 1);
+            h.requestFrame();
+        }
         header(h, canvas, size.width);
         const half = (size.height - headerRows) / 2;
         panel(canvas, Rect(0, headerRows, size.width, half), dark);
@@ -160,12 +173,26 @@ struct Lab
             button(canvas, settingsButton_, "≡ Settings", sheetOpen);
     }
 
+    // Whether both panels hold the whole specimen at `size`.
+    private static bool fits(in Size size)
+    {
+        const half = (size.height - headerRows) / 2;
+        int rows;
+        foreach (line; lines)
+        {
+            int r = 1;
+            foreach (p; wrap(line.runs, size.width - labelWidth - 2))
+                r = p.row + 1 > r ? p.row + 1 : r;
+            rows += r;
+        }
+        return rows <= half;
+    }
+
     // A panel: each specimen line's label in a narrow column, its text wrapped
     // beside it.
     private void panel(C)(C canvas, in Rect r, in Theme t)
     {
         canvas.fillRect(r, Visual(bg: t.bg, hasBg: true));
-        enum labelWidth = 10;
         const textX = r.x + 1 + labelWidth, textWidth = r.width - labelWidth - 2;
         const label = Visual(fg: t.label, bg: t.bg, hasBg: true);
         int y = r.y;
@@ -505,9 +532,11 @@ struct Lab
                 loupe.shown = true;
                 break;
             case '+', '=':
+                userSized = true;
                 h.fontSize(h.fontSizePx + 1);
                 break;
             case '-':
+                userSized = true;
                 h.fontSize(h.fontSizePx > 6 ? h.fontSizePx - 1 : 6);
                 break;
             case 'p':
@@ -867,4 +896,26 @@ version (unittest) private struct SettingsHost
     frame();
     l = h.shownLoupe;
     assert(l.x == 58 && l.x + l.sourceWidth * l.scale <= 100 - 8, "the right half");
+}
+
+@("text_lab.theFontStepsDownUntilThePanelsHoldTheSpecimen")
+@system unittest
+{
+    // A phone's 49×51 cells hold one row fewer than the wrapped specimen
+    // needs: the font steps down a pixel; a tablet's 100×78 needs none; and
+    // once the user picks a size, it is theirs.
+    assert(!Lab.fits(Size(49, 51)) && Lab.fits(Size(49, 53)) && Lab.fits(Size(100, 78)));
+    Lab lab;
+    SettingsHost h;
+    h.rec.size = Size(49, 51);
+    auto tree = lab.view(h);
+    lab.paint(h, tree, null);
+    assert(h.rec.fontSizeRequests == [17]);
+    h.rec.size = Size(100, 78);
+    lab.paint(h, tree, null);
+    assert(h.rec.fontSizeRequests == [17], "it fits: nothing more");
+    lab.handle(h, Event(KeyEvent(ch: '+')));
+    h.rec.size = Size(49, 51);
+    lab.paint(h, tree, null);
+    assert(h.rec.fontSizeRequests == [17, 18], "after `+`, the size is the user's");
 }
