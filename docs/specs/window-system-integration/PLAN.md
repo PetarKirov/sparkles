@@ -460,7 +460,8 @@ Gate for slice 4's Vulkan half: after the smoke, the lane runs
 pattern through `VK_KHR_android_surface` with a pre-rotated swapchain and checks
 a screen capture in portrait, turned to landscape and back: corners, safe-area
 border, inset hatch, and an unstretched layout. The same script passes on a
-phone without root. The terminal half waits for M7.
+phone without root. The terminal half is `sparkles:ui-vulkan`'s slice V7: the
+terminal runs on the backend on a phone and on the emulator.
 
 Gate for slice 5: the test pattern logs each launch's timing (instance, device,
 pipelines, swapchain, first present); a relaunch in a running process and a
