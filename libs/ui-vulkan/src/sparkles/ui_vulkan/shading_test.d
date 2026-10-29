@@ -200,6 +200,39 @@ unittest
     assert(t.vTexCoord.array == [0.75f, 1]);
 }
 
+@("ui_vulkan.shading.aTurnedTargetKeepsTheDisplaysLayout")
+@safe pure nothrow @nogc
+unittest
+{
+    // `UVK39`: on a target the presentation engine turns, each corner lands
+    // where the turn brings it back to its display pixel, and a fragment's
+    // display pixel is found again from its target pixel.
+    import sparkles.ui_vulkan.shading : displayToTarget, targetExtent, targetToDisplay;
+
+    const display = v2(800, 600);
+    const box = v4(13, 7, 120, 31);
+    // The box's top-left corner on the target, for each turn: a quarter turn
+    // clockwise brings target (600 - 7, 13) to display (13, 7).
+    const float[2][4] topLeft = [[13, 7], [593, 13], [787, 593], [7, 787]];
+    foreach (turn; 0 .. 4)
+    {
+        const view = PushConstants!CanvasView(CanvasView(extent: display, turn: turn));
+        const target = targetExtent(display, turn);
+        assert(target.x == (turn % 2 ? 600 : 800) && target.y == (turn % 2 ? 800 : 600));
+        const v = canvasVertex(0, box, v4(0), v4(0), v4(0), v4(0, 0, 1, 1), view);
+        const x = (v.position.array[0] + 1) / 2 * target.array[0];
+        const y = (v.position.array[1] + 1) / 2 * target.array[1];
+        assert(fabs(x - topLeft[turn][0]) < 1e-3 && fabs(y - topLeft[turn][1]) < 1e-3);
+        static immutable float[2][3] points = [[0.5f, 0.5f], [13.5f, 200.5f], [799.5f, 599.5f]];
+        foreach (pt; points)
+        {
+            const p = v2(pt[0], pt[1]);
+            const back = targetToDisplay(displayToTarget(p, display, turn), display, turn);
+            assert(fabs(back.x - p.x) < 1e-4 && fabs(back.y - p.y) < 1e-4);
+        }
+    }
+}
+
 @("ui_vulkan.shading.anInstanceIsFiveVectors")
 @safe pure nothrow @nogc
 unittest

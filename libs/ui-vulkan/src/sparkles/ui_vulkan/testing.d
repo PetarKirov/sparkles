@@ -56,6 +56,8 @@ struct Rig
     ImageRegistry images;
     DeviceCommands spied;
     DeviceFacts facts;
+    /// Quarter turns the target is drawn pre-rotated by (`CanvasTarget.turn`).
+    uint turn;
 
     @disable this(this);
 
@@ -142,7 +144,8 @@ struct Rig
             extent: extent, usage: VkImageUsageFlagBits.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
                 | VkImageUsageFlagBits.VK_IMAGE_USAGE_TRANSFER_SRC_BIT
                 | VkImageUsageFlagBits.VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-            finalLayout: VkImageLayout.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL), cmd, slot, metrics,
+            finalLayout: VkImageLayout.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, turn: turn), cmd, slot,
+            metrics,
             ground);
         paint(canvas);
         auto ended = canvas.endFrame();
