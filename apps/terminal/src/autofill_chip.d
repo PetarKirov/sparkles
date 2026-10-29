@@ -98,13 +98,13 @@ struct AutofillChip
     Probes `tv`'s pty — only while the keyboard shows — and decides whether
     the chip shows; true when that changed (the panes resize).
     */
-    bool frame(TerminalView* tv) @system
+    bool frame(H)(ref H h, TerminalView* tv) @system
     {
         import sparkles.android.autofill : autofillAvailable, autofillPending,
             cancelPasswordAutofill;
         import sparkles.terminal_view.process_info : ptyReading;
 
-        const keyboard = softKeyboardShown();
+        const keyboard = softKeyboardShown(h);
         const reading = tv !is null && keyboard ? ptyReading(tv.s.pty_fd) : PtyReading.unknown;
         // The program stopped reading a password (or went away) with a request
         // still open: it is cancelled, and nothing is sent (`TSE8`).
@@ -159,13 +159,23 @@ struct AutofillChip
 }
 
 /// Whether the soft keyboard is up: the content rect shrank by more than a
-/// system bar (native code is not told).
-bool softKeyboardShown() @system nothrow @nogc
+/// system bar (native code is not told) — on the native window, its bottom
+/// inset, which covers the keyboard too.
+bool softKeyboardShown(H)(ref H h) @system
 {
-    import raylib : GetScreenHeight;
-    import sparkles.android.activity : contentRect;
+    static if (__traits(hasMember, H, "insets"))
+    {
+        const i = h.insets;
+        const screen = h.pixels.height + i.top + i.bottom;
+        return i.bottom > screen / 6;
+    }
+    else
+    {
+        import raylib : GetScreenHeight;
+        import sparkles.android.activity : contentRect;
 
-    const r = contentRect();
-    const screen = GetScreenHeight();
-    return r.bottom > r.top && screen - r.bottom > screen / 6;
+        const r = contentRect();
+        const screen = GetScreenHeight();
+        return r.bottom > r.top && screen - r.bottom > screen / 6;
+    }
 }

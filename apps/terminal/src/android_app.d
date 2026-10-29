@@ -157,23 +157,28 @@ int androidMain()
     {
         import am_server : setOpenInApp;
         import settings : OpenTarget;
-        import sparkles.doc_view.pane : DocViewEnv;
-        import sparkles.syntax : GrammarRegistry;
         import workspace_host : placementFor;
 
         const target = app.config.effective.open.target;
         setOpenInApp(target != OpenTarget.external);
         app.host.openPlacement = placementFor(target);
         app.host.setViewerColors(app.chromeFg, app.chromeBg);
-        const grammars = buildPath(paths.files, "grammars");
         app.host.creditsPath = "asset:credits/terminal.md";
-        app.host.makeDocEnv = () {
-            auto env = DocViewEnv.create(GrammarRegistry.fromSonames(grammars),
-                (string p) => readViewerFile(p));
-            // The credits' includes stay inside the bundled document (`VIW7`).
-            env.pipeline.includeRoot = "asset:credits";
-            return env;
-        };
+        // The viewer pane paints with raylib: the native arm has none yet.
+        version (Have_sparkles_ui_raylib)
+        {
+            import sparkles.doc_view.pane : DocViewEnv;
+            import sparkles.syntax : GrammarRegistry;
+
+            const grammars = buildPath(paths.files, "grammars");
+            app.host.makeDocEnv = () {
+                auto env = DocViewEnv.create(GrammarRegistry.fromSonames(grammars),
+                    (string p) => readViewerFile(p));
+                // The credits' includes stay inside the bundled document (`VIW7`).
+                env.pipeline.includeRoot = "asset:credits";
+                return env;
+            };
+        }
     }
 
     // The last session's tabs and splits (`TSS14`) — not while installing,
