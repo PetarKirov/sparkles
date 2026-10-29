@@ -310,6 +310,36 @@ private void observeClipboard(ref ProtocolInbox inbox, scope const(char)[] paylo
     assert(inbox.opens.length == maxPendingOpens && inbox.droppedOpens == 3);
 }
 
+@("protocols.observeOsc.openRequestSplitAndAborted")
+@system nothrow @nogc unittest
+{
+    import sparkles.terminal_view.osc_query : oscScanByte;
+
+    ProtocolInbox inbox;
+    OscScanner sc;
+    void feed(scope const(char)[] bytes)
+    {
+        foreach (b; bytes)
+            if (oscScanByte(sc, b))
+                observeOsc(inbox, sc, -1);
+    }
+
+    // A 5379 split across pty chunks still assembles (the scanner's state
+    // outlives a chunk); "README.md" base64, cut inside the payload.
+    feed("\x1b]5379;open;UkVB");
+    feed("RE1FLm1k");
+    assert(inbox.opens.length == 0);
+    feed("\x1b\\");
+    assert(inbox.opens.length == 1
+        && inbox.opens[0].text[0 .. inbox.opens[0].length] == "README.md");
+
+    // Aborted by a fresh escape, it opens nothing; the sequence after it does.
+    feed("\x1b]5379;open;UkVB\x1b]2;interrupting title\x07");
+    feed("\x1b]5379;open;UkVBRE1FLm1k\x07");
+    assert(inbox.opens.length == 2
+        && inbox.opens[1].text[0 .. inbox.opens[1].length] == "README.md");
+}
+
 @("protocols.observeOsc.boundsHostileVolume")
 @system nothrow @nogc unittest
 {

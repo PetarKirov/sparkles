@@ -66,7 +66,12 @@ ViewKind viewKindOf(string path) @system
     if (path.endsWith(".md") || path.endsWith(".markdown"))
         return ViewKind.markdown;
     try
+    {
+        import std.file : isFile;
+        if (!path.isFile)
+            return ViewKind.unsupported; // never open a FIFO or device to sniff it
         return looksLikeText(headOf(path)) ? ViewKind.code : ViewKind.unsupported;
+    }
     catch (Exception)
         return ViewKind.unsupported;
 }
@@ -105,6 +110,16 @@ private ubyte[] headOf(string path) @system
     assert(viewKindOfName("fix.patch") == ViewKind.diff);
     assert(viewKindOfName("notes.txt") == ViewKind.text);
     assert(viewKindOfName("photo.heic") == ViewKind.unsupported);
+}
+
+@("kind.viewKindOf.nonRegularIsUnsupported")
+@system unittest
+{
+    // Sniffing must never open a non-regular file: opening a FIFO with no
+    // writer blocks, and a device's bytes are not a document. `/dev/null`
+    // stands in for the class: a character device with an unknown name.
+    version (Posix)
+        assert(viewKindOf("/dev/null") == ViewKind.unsupported);
 }
 
 @("kind.looksLikeText.sniff")
