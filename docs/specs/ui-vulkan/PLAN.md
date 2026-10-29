@@ -15,16 +15,16 @@ Requirement identifiers refer to [SPEC.md](./SPEC.md) (`UVK`) and
 
 ## Progress
 
-| Slice                                                             | State       |
-| ----------------------------------------------------------------- | ----------- |
-| [V0 Specification](#v0-specification)                             | done        |
-| [V1 Device memory and resources](#v1-device-memory-and-resources) | done        |
-| [V2 The canvas](#v2-the-canvas)                                   | done        |
-| [V3 Glyphs](#v3-glyphs)                                           | done        |
-| [V4 The native host](#v4-the-native-host)                         | done        |
-| [V5 The terminal's seams](#v5-the-terminal-s-seams)               | done        |
-| [V6 The terminal on Vulkan](#v6-the-terminal-on-vulkan)           | done        |
-| [V7 The phone terminal](#v7-the-phone-terminal)                   | not started |
+| Slice                                                             | State |
+| ----------------------------------------------------------------- | ----- |
+| [V0 Specification](#v0-specification)                             | done  |
+| [V1 Device memory and resources](#v1-device-memory-and-resources) | done  |
+| [V2 The canvas](#v2-the-canvas)                                   | done  |
+| [V3 Glyphs](#v3-glyphs)                                           | done  |
+| [V4 The native host](#v4-the-native-host)                         | done  |
+| [V5 The terminal's seams](#v5-the-terminal-s-seams)               | done  |
+| [V6 The terminal on Vulkan](#v6-the-terminal-on-vulkan)           | done  |
+| [V7 The phone terminal](#v7-the-phone-terminal)                   | done  |
 
 ## Dependencies
 
@@ -257,3 +257,38 @@ window-system plan's MA slice 4.
 
 **Gate.** The emulator and phone lanes run the terminal; first-frame time is
 recorded against the raylib APK.
+
+**Outcome.** `apps/terminal`'s `android` configuration is the
+terminal on `sparkles:wsi`'s Android backend and this canvas, with no raylib
+(`packages.terminal-vulkan-apk`, under its own application id beside the
+raylib APK). What the phone took from raylib comes from the native host:
+touch resolved by the shared gesture recogniser and the fingers' raw
+contacts (`touches`) for the key row, the dividers and the selection
+handles; the soft keyboard as the host's text input; the content rect as
+its pixels inside the safe insets. The canvas draws into a pre-rotated
+swapchain turned (`UVK39`), centres a faceless run in the rows of a touch
+target (`UVK17`) and fills the handles' discs (`UVK35`). Two loop defects
+the phone exposed are fixed: a timed wake restarted by every idle wake (the
+keyboard's inset poll held a pane's output back until the next touch), and
+a surface lost before the device came up (an activity started behind the
+keyguard) ending the application.
+
+On a Xiaomi 2107113SG (Adreno 660, Android 14) the terminal types from the
+soft keyboard, the key row and the history, scrolls by a drag, selects by a
+long-press, follows the keyboard and both orientations, and keeps its
+sessions across leaving and returning. Its first frame is 276–329 ms after
+the system starts the activity (median 304 ms over seven cold starts; 541
+ms on the first after installing), against 448–609 ms (median 467 ms over
+eight) for the raylib APK built from the same tree. On a 25091RP04G
+tablet (Android 16) started behind its keyguard it waited for a surface,
+drawing its first frame when the tablet was unlocked; there it types,
+scrolls, keeps the rail in portrait and turns both ways, its first frame
+193–228 ms after the activity starts (median 200 ms over six).
+
+On the emulator (API 36, SwiftShader) it types, scrolls and turns to
+landscape and back, its first frame 271–306 ms after the activity starts
+(median 294 ms over five cold starts) against 460–480 ms (median 468 ms
+over five) for the raylib APK. The gate is met on both lanes. Gaps beside the gate:
+no document viewer (the pane paints with raylib), chrome text in the cell
+font rather than the interface face, no pinch tried by hand (`adb` injects
+one finger), and screenshots read back in the panel's orientation.
