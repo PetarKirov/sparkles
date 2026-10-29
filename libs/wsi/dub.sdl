@@ -9,11 +9,7 @@ targetType "library"
 
 dflags "-preview=in" "-preview=dip1000"
 libs "imm32" platform="windows"
-libs "wayland-client" "xcb" "xcb-xkb" "xcb-xtest" "xcb-xinput" "xcb-xfixes" "xcb-imdkit" "xkbcommon" "xkbcommon-x11" platform="linux"
 lflags "-framework" "AppKit" "-framework" "CoreFoundation" "-framework" "UniformTypeIdentifiers" platform="osx"
-
-sourceFiles "src/xcb_native.c" platform="linux"
-sourceFiles "src/wayland_native.c" platform="linux"
 
 // `sparkles:math` is source-imported for the same reason as input: its
 // unittest configuration depends on the repository runner and a normal dub
@@ -29,11 +25,26 @@ dependency "sparkles:event-horizon" path="../.."
 // so on a desktop host this dependency compiles to nothing.
 dependency "sparkles:android" path="../.."
 
+// Android is `linux` to dub as to D, and has neither X11 nor Wayland: its
+// configuration, first so dub picks it there and only there, leaves their
+// backends, C glue and libraries out. The desktop configurations carry them.
+configuration "android" {
+    platforms "android"
+    targetType "library"
+    excludedSourceFiles "src/sparkles/wsi/platform/x11.d" "src/sparkles/wsi/platform/wayland.d" "src/*.c"
+}
+
 configuration "library" {
     targetType "library"
+    libs "wayland-client" "xcb" "xcb-xkb" "xcb-xtest" "xcb-xinput" "xcb-xfixes" "xcb-imdkit" "xkbcommon" "xkbcommon-x11" platform="linux"
+    sourceFiles "src/xcb_native.c" platform="linux"
+    sourceFiles "src/wayland_native.c" platform="linux"
 }
 
 configuration "unittest" {
+    libs "wayland-client" "xcb" "xcb-xkb" "xcb-xtest" "xcb-xinput" "xcb-xfixes" "xcb-imdkit" "xkbcommon" "xkbcommon-x11" platform="linux"
+    sourceFiles "src/xcb_native.c" platform="linux"
+    sourceFiles "src/wayland_native.c" platform="linux"
     dependency "sparkles:test-runner" path="../.."
 
     dflags "-checkaction=context" "-allinst"
