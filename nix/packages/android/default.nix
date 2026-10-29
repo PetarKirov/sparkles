@@ -93,6 +93,8 @@ in
         # The terminal's plain-shell APK; the nix-on-droid variant is the same
         # closure with a different session.conf, built in that flake.
         terminal-apk = config.packages.terminal-apk;
+        # The same terminal on the native arm (sparkles:wsi, Vulkan).
+        terminal-vulkan-apk = config.packages.terminal-vulkan-apk;
       };
 
       # The names this module owns, so nix/packages/all.nix can subtract them
@@ -125,11 +127,13 @@ in
         "libhue-android"
         "libkqueue-android"
         "libterminal-android"
+        "libterminal-vulkan-android"
         "libtext-lab-android"
         "libtext-lab-android-raw"
         "raylib-android"
         "terminal-apk"
         "terminal-icon"
+        "terminal-vulkan-apk"
         "text-lab-apk"
         "text-lab-apk-debug"
         "text-lab-assets"

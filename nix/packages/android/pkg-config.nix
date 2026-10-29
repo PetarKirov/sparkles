@@ -1,6 +1,7 @@
 # `packages.android-pkg-config`: a pkg-config directory per ABI
 # (`<abi>/`) describing the Android builds of the C libraries the sparkles
-# packages name with `libs` — FreeType, HarfBuzz, raylib, libkqueue — so a
+# packages name with `libs` — FreeType, HarfBuzz, raylib, libkqueue,
+# libghostty-vt and tree-sitter — so a
 # dub cross build (`dub build --arch=aarch64-linux-android`) resolves them
 # exactly as a desktop build resolves the host's: dub asks pkg-config, which
 # hands ImportC the headers and the linker the static archives. Point
@@ -25,6 +26,8 @@ in
       hb = config.packages.harfbuzz-android;
       raylib = config.packages.raylib-android;
       kqueue = config.packages.libkqueue-android;
+      ghostty = config.packages.libghostty-vt-android;
+      treeSitter = config.packages.tree-sitter-android;
 
       pcFiles =
         abi:
@@ -72,6 +75,18 @@ in
             name = "kqueue";
             inherit (kqueue) version;
             libs = "${kqueue}/lib/${abi}/libkqueue.a";
+          }}
+          ${pc {
+            name = "ghostty-vt";
+            inherit ((builtins.parseDrvName ghostty.name)) version;
+            cflags = "-I${ghostty}/include";
+            libs = "${ghostty}/lib/${abi}/libghostty-vt.a";
+          }}
+          ${pc {
+            name = "tree-sitter";
+            inherit (treeSitter) version;
+            cflags = "-I${treeSitter}/include";
+            libs = "${treeSitter}/lib/${abi}/libtree-sitter.a";
           }}
         '';
     in

@@ -4,6 +4,12 @@
 #   legacyPackages.mkTerminalApk   the APK, parameterized by app id, label,
 #                                  icon and session (the D5 data-driven APK)
 #   packages.terminal-apk          the plain terminal: /system/bin/sh
+#   packages.libterminal-vulkan-android
+#                                  apps/terminal's `android` dub configuration:
+#                                  the native arm (`sparkles:wsi`, Vulkan), no
+#                                  raylib
+#   packages.terminal-vulkan-apk   the plain terminal on it, beside the raylib
+#                                  one under its own app id
 #
 # The nix-on-droid app is a `mkTerminalApk` call in the nix-on-droid flake,
 # with its own app id, label, icon and bootstrap URL — nothing in sparkles
@@ -122,6 +128,23 @@ in
         check = config.legacyPackages.checkTerminalBuildInfo;
       };
 
+      # The native arm (ui-vulkan PLAN, V7): dub builds the `android`
+      # configuration — the activity sparkles:wsi's, the drawing Vulkan's.
+      libterminalVulkan = config.legacyPackages.buildSparklesAndroidLib {
+        pname = "libterminal-vulkan-android";
+        appDir = "apps/terminal";
+        libName = "terminal";
+        inherit ((androidHost system)) ldcAndroid;
+        emptyBuildInfo = true;
+      };
+      libterminalVulkanStamped = config.legacyPackages.stampAndroidLib {
+        unstamped = libterminalVulkan;
+        libName = "terminal";
+        app = "terminal";
+        links = config.legacyPackages.terminalLinks;
+        check = config.legacyPackages.checkTerminalBuildInfo;
+      };
+
       # Nerd-icon coverage and a classic fallback; Maple Mono NF CN (hue's
       # face) is left out — its CJK glyphs are most of the bundle's 61 MB.
       bundledFonts = [
@@ -224,6 +247,7 @@ in
     in
     lib.optionalAttrs (androidHost system).supported {
       packages.libterminal-android = libterminal;
+      packages.libterminal-vulkan-android = libterminalVulkan;
 
       /**
         The terminal APK. Every argument but `session` is packaging; `session`
@@ -261,9 +285,13 @@ in
           # 28 keeps app-data files executable (NOD3); a higher value is for
           # measuring the target-SDK exec restriction (android-dev-env E1).
           targetSdk ? 28,
+          # "raylib", or "vulkan": the native arm (`sparkles:wsi` owns the
+          # activity, `sparkles:ui-vulkan` draws).
+          renderer ? "raylib",
         }:
         let
-          baseLibs = apkLibs libterminalStamped;
+          vulkan = renderer == "vulkan";
+          baseLibs = apkLibs (if vulkan then libterminalVulkanStamped else libterminalStamped);
           validExtras = lib.all (
             abi:
             builtins.hasAttr abi baseLibs
@@ -274,6 +302,14 @@ in
           ) (builtins.attrNames extraNativeLibs);
           manifest = pkgs.replaceVars ../../../apps/terminal/android/AndroidManifest.xml {
             inherit label;
+            # The activity's entry: raylib's glue behind sparkles:android's
+            # main-thread wiring, or sparkles:wsi's own.
+            funcName = if vulkan then "sparkles_wsi_onCreate" else "sparkles_onCreate";
+            feature =
+              if vulkan then
+                ''<uses-feature android:name="android.hardware.vulkan.version" android:version="0x400003" android:required="true" />''
+              else
+                ''<uses-feature android:glEsVersion="0x00020000" android:required="true" />'';
           };
           icon = config.legacyPackages.mkAndroidIcon {
             name = "${pname}-icon";
@@ -325,7 +361,8 @@ in
           (old: {
             nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.unzip ];
             passthru = (old.passthru or { }) // {
-              buildInfo = libterminalStamped.passthru.buildInfo;
+              buildInfo = (if vulkan then libterminalVulkanStamped else libterminalStamped).passthru.buildInfo;
+              applicationId = appId;
             };
             # NOD1: the app ships no code for the VM — not by review, by
             # construction. A dependency that smuggled in a classes.dex (or a
@@ -339,5 +376,11 @@ in
           });
 
       packages.terminal-apk = config.legacyPackages.mkTerminalApk { };
+      packages.terminal-vulkan-apk = config.legacyPackages.mkTerminalApk {
+        renderer = "vulkan";
+        appId = "dev.petar_kirov.sparkles.terminal.vulkan";
+        label = "terminal (Vulkan)";
+        pname = "terminal-vulkan";
+      };
     };
 }
