@@ -862,6 +862,11 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
     }
 
     bool ok = true;
+    // The last frame pass, drawn or not: the application's timed wake
+    // (`HST16`) counts from here, not from each park, which a window system
+    // waking the loop with nothing to deliver (Android's inset poll while the
+    // keyboard is up) would otherwise restart forever.
+    MonoTime lastPass = MonoTime.currTime;
     for (;;)
     {
         if (host.quitRequested)
@@ -916,6 +921,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         if (plan.draw)
         {
             const started = MonoTime.currTime;
+            lastPass = started;
             buildFrame!present(host, plan.mustDraw);
             lc.requested(host.frameRequested);
             if (host.frameSkipped)
@@ -975,6 +981,13 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         // Park until the window system has something, or the application's
         // next deadline.
         Duration timeout = plan.park < 1.seconds ? plan.park : 1.seconds;
+        if (host.wakeAsk != Duration.max)
+        {
+            const since = MonoTime.currTime - lastPass;
+            const left = host.wakeAsk > since ? host.wakeAsk - since : Duration.zero;
+            if (left < timeout)
+                timeout = left;
+        }
         // A gesture in flight is ticked at the display's rate until it rests.
         if (input.gesturing && timeout > gestureTick)
             timeout = gestureTick;
@@ -987,9 +1000,12 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         // A wake with nothing to draw is still a frame pass for an
         // application that asked to be woken (`HST16`), or for an idle
         // timeout.
-        if ((host.wakeAsk != Duration.max && MonoTime.currTime - parkedAt >= host.wakeAsk)
+        if ((host.wakeAsk != Duration.max && MonoTime.currTime - lastPass >= host.wakeAsk)
             || (cfg.idleTimeoutMs >= 0 && MonoTime.currTime - parkedAt >= cfg.idleTimeoutMs.msecs))
+        {
             lc.input();
+            lastPass = MonoTime.currTime;
+        }
     }
     return ok;
 }
@@ -1132,7 +1148,8 @@ private FrameOutcome drawFrame(alias draw)(ref Gpu gpu, ref NativeHost host,
     VkImage image = gpu.swapchain.images[index];
     gpu.canvas.beginFrame(CanvasTarget(image: image, view: gpu.views.views[index],
         format: gpu.swapchain.format, extent: gpu.swapchain.extent, usage: gpu.swapchain.usage,
-        finalLayout: VkImageLayout.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR), cmd, gpu.sync.frame,
+        finalLayout: VkImageLayout.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+        turn: quarterTurns(gpu.swapchain.transform)), cmd, gpu.sync.frame,
         FrameMetrics(cellW: session.font.cellW, cellH: session.font.cellH,
             originX: session.insets.left, originY: session.insets.top,
             density: cast(float) session.scale), ground);
@@ -1174,6 +1191,19 @@ private FrameOutcome drawFrame(alias draw)(ref Gpu gpu, ref NativeHost host,
     if (Swapchain.needsRecreation(presented.value) || decision.recreate)
         return FrameOutcome.rebuild;
     return outcome;
+}
+
+// The quarter turns a pre-rotated swapchain's images take on their way to the
+// display (Android with the panel turned): the canvas draws into them turned.
+private uint quarterTurns(VkSurfaceTransformFlagBitsKHR transform) @safe pure nothrow @nogc
+{
+    with (VkSurfaceTransformFlagBitsKHR) switch (transform)
+    {
+        case VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR: return 1;
+        case VK_SURFACE_TRANSFORM_ROTATE_180_BIT_KHR: return 2;
+        case VK_SURFACE_TRANSFORM_ROTATE_270_BIT_KHR: return 3;
+        default: return 0;
+    }
 }
 
 // The acquired image cleared to `ground` and made presentable, for a frame
