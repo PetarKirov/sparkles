@@ -80,7 +80,11 @@ the viewer shows into an open request on its terminal (`TDV15`), and **must**
 run the next opener of its name on `PATH` for anything else: flags, several
 targets, a URL, a directory, a kind the viewer does not show, no controlling
 terminal, or no `SPARKLES_TERMINAL_OPEN`. Android's plain shell gets the
-opener as a script under `sparkles-open`, `xdg-open` and `termux-open`.
+opener as a script under `sparkles-open`, `xdg-open` and `termux-open`,
+installed only while interception is on; the plain shell has no next
+opener, so the script refuses what it would have handed on — and a
+non-regular file — where it runs, with a message and status 1 (`TDV3`),
+and leaves the content kind to the host (`TDV1`).
 `open.intercept = false` or `open.target = external` turns this off. On
 Android, nix-on-droid's `termux-open` and `am start -a VIEW` go to the `am`
 server ([NOD13](./android.md#requirements)), which queues them the same way.

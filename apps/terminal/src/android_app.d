@@ -160,8 +160,10 @@ int androidMain()
         import workspace_host : placementFor;
 
         const target = app.config.effective.open.target;
-        setOpenInApp(target != OpenTarget.external);
-        app.host.openInApp = target != OpenTarget.external;
+        const inApp = app.config.effective.open.intercept
+            && target != OpenTarget.external;
+        setOpenInApp(inApp);
+        app.host.openInApp = inApp;
         app.host.openPlacement = placementFor(target);
         app.host.setViewerColors(app.chromeFg, app.chromeBg);
         app.host.creditsPath = "asset:credits/terminal.md";
@@ -298,10 +300,12 @@ private TerminalViewOptions sessionOptions(const SessionPaths paths, bool bootst
 
     import sparkles.terminal_view.input : ExitBehavior;
 
+    import am_server : opensInApp;
+
     string[] parentEnv;
     foreach (key, value; environment.toAA)
         parentEnv ~= key ~ "=" ~ value;
-    const env = sessionEnvironment(parentEnv, paths, bootstrapped);
+    const env = sessionEnvironment(parentEnv, paths, bootstrapped, opensInApp());
     try
         mkdirRecurse(bootstrapped ? paths.tmp : paths.files ~ "/tmp");
     catch (Exception) {}
@@ -327,17 +331,32 @@ private TerminalViewOptions sessionOptions(const SessionPaths paths, bool bootst
 
 /// Write the plain shell's own commands (`shellTools`) into
 /// `SessionPaths.shellBin`, executable; a tool already up to date is left
-/// alone. A failure costs the command, never the session.
+/// alone. The openers are installed only while open requests are the
+/// app's (`TDV4`) — and removed when they stop being, so a stale script
+/// from an earlier launch cannot keep intercepting. A failure costs the
+/// command, never the session.
 private void installShellTools(const SessionPaths paths)
 {
     import std.conv : octal;
-    import std.file : exists, mkdirRecurse, readText, setAttributes, write;
+    import std.file : exists, mkdirRecurse, readText, remove, setAttributes, write;
     import std.path : buildPath;
+    import am_server : opensInApp;
     import sparkles.base.logger : warning;
 
     foreach (tool; shellTools)
     {
         const path = buildPath(paths.shellBin, tool.name);
+        if (tool.script == openerScript && !opensInApp())
+        {
+            try
+            {
+                if (path.exists)
+                    remove(path);
+            }
+            catch (Exception e)
+                warning(i"terminal: cannot remove $(path): $(e.msg)");
+            continue;
+        }
         try
         {
             mkdirRecurse(paths.shellBin);
