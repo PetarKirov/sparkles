@@ -105,6 +105,25 @@ corpus, say.
   `@slow:` label or block: `ci` finds slow tests by reading the source, and
   fails a job whose test binary lists slow tests the source scan did not.
 
+## `@serial` / `@serial(threadAffinity: ThreadAffinity.mainThread)`
+
+The test must not run beside other tests: it uses process-wide state, say.
+Whatever `-t` asks for, the default mode runs every other test first, on the
+workers, then the `@serial` ones, one at a time.
+
+- `threadAffinity` (a `ThreadAffinity`) says which thread runs them:
+  - `none` (the default, and a bare `@serial`): any thread; the runner uses
+    one worker for all of them.
+  - `mainThread`: the runner's main thread, after the `none` ones. For a
+    library confined to the thread that initialized it: `sparkles:nix`'s
+    tests use it, because the Nix evaluator registers only the thread that
+    called `initNix` with its garbage collector, and evaluating on another
+    thread crashes.
+- The main thread runs its tests under the same stack budget as a worker (a
+  384 KiB watermark), so a test that passes there also fits a worker.
+- `--list` shows `@serial` or `@serial(mainThread)`; it combines with every
+  other attribute.
+
 ## Combining
 
 Attributes compose freely — e.g. `@betterC @wasm` opts one test into both

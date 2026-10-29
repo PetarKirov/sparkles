@@ -9,7 +9,7 @@ module sparkles.test_runner.model;
 
 import core.time : Duration;
 
-import sparkles.test_runner.attributes : CacheRegime;
+import sparkles.test_runner.attributes : CacheRegime, ThreadAffinity;
 
 /// Source location of a `unittest` block, from `__traits(getLocation)`.
 /// The file path is as the compiler saw it (usually relative to the package
@@ -33,6 +33,13 @@ struct TestTraits
     /// The test is `@slow`: `--skip-slow` leaves it out, `--only-slow` keeps
     /// only such tests.
     bool isSlow;
+
+    /// The test is `@serial`: it runs alone, after the parallel tests, on
+    /// the thread `serialAffinity` asks for.
+    bool isSerial;
+
+    /// Where a `@serial` test runs (see `serial.threadAffinity`).
+    ThreadAffinity serialAffinity;
 
     /// The test asserts it needs nothing linked from its own module, so the
     /// extracted `--better-c` / `--wasm` program leaves that module out
