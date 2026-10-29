@@ -77,6 +77,12 @@ configuration "vulkan" {
     subConfiguration "sparkles:ui-app" "gui-vulkan"
     subConfiguration "sparkles:terminal-view" "vulkan"
     dependency "sparkles:ui-vulkan" path="../.."
+    // Still raylib for one thing: the selection handles a phone shows
+    // (selection_menu.d `paint`), drawn with raylib calls until they move onto
+    // the canvas (ui-vulkan PLAN, V7). Declared here now that the native arm
+    // takes only `sparkles:raylib-text`'s raylib-free half.
+    dependency "raylib-d" version="~>6.2.0"
+    libs "raylib"
     versions "TerminalVulkan"
 }
 

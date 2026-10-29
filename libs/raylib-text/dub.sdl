@@ -7,29 +7,46 @@ license "BSL-1.0"
 targetPath "build"
 
 importPaths "src"
-sourceFiles "src/sparkles/raylib_text/shaping_c.c"
 
 dflags "-preview=in" "-preview=dip1000"
-
-// raylib comes in two halves: the D bindings via dub, and the native library via
-// the linker. raylib-d's `library` config does NOT declare `libs "raylib"`, so
-// this package owns it; both propagate transitively to consuming executables
-// (each still needs the native raylib present at link/run time).
-dependency "raylib-d" version="~>6.2.0"
-// Cluster shaping and rasterization are native dependencies. Nix supplies
-// their development headers to ImportC and their libraries to the linker.
-libs "raylib" "freetype2" "harfbuzz"
 
 // UniqueBuffer backs the per-face sorted glyph maps and the
 // on-demand request set — the same @nogc buffers apps/terminal uses.
 dependency "sparkles:base" path="../.."
 
+// raylib comes in two halves: the D bindings via dub, and the native library via
+// the linker. raylib-d's `library` config does NOT declare `libs "raylib"`, so
+// this package owns it; both propagate transitively to consuming executables
+// (each still needs the native raylib present at link/run time). Cluster
+// shaping and rasterization are native dependencies too: Nix supplies their
+// development headers to ImportC and their libraries to the linker.
 configuration "library" {
     // ImportC needs pkg-config's include flags in the consuming executable.
     targetType "sourceLibrary"
+    sourceFiles "src/sparkles/raylib_text/shaping_c.c"
+    dependency "raylib-d" version="~>6.2.0"
+    libs "raylib" "freetype2" "harfbuzz"
+}
+
+// The raylib-free half alone: font files found (by name, in directories, from
+// fontconfig or Core Text) and point sizes resolved for a display — what an arm
+// that draws with another renderer (`sparkles:ui-app`'s `gui-vulkan`) needs, with
+// no raylib, FreeType or HarfBuzz compiled or linked. An interim home until the
+// font library's catalog takes these over.
+configuration "discovery" {
+    targetType "sourceLibrary"
+    excludedSourceFiles "src/sparkles/raylib_text/atlas.d" "src/sparkles/raylib_text/box.d" \
+        "src/sparkles/raylib_text/draw.d" "src/sparkles/raylib_text/font.d" \
+        "src/sparkles/raylib_text/font_set.d" "src/sparkles/raylib_text/metrics.d" \
+        "src/sparkles/raylib_text/package.d" "src/sparkles/raylib_text/shaping.d" \
+        "src/sparkles/raylib_text/style.d" "src/sparkles/raylib_text/ui_font.d" \
+        "src/sparkles/raylib_text/shaping_c.c"
 }
 
 configuration "unittest" {
+    sourceFiles "src/sparkles/raylib_text/shaping_c.c"
+    dependency "raylib-d" version="~>6.2.0"
+    libs "raylib" "freetype2" "harfbuzz"
     versions "RaylibTextTests"
     // Only raylib-FREE code carries unittests — the GL-backed FontSet/drawText
     // are validated by the apps' screenshot goldens — so `dub test :raylib-text`

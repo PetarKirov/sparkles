@@ -48,8 +48,9 @@ configuration "gui" {
 
 // The native arm (`INT4`): `sparkles:wsi` windows drawn by `sparkles:ui-vulkan`,
 // with no raylib on the drawing path. The cell font's file comes from
-// `sparkles:raylib-text`'s resolver for now — an interim source the font
-// library's catalog replaces — and is measured by `sparkles:font`.
+// `sparkles:raylib-text`'s resolver for now (its raylib-free `discovery` half)
+// — an interim source the font library's catalog replaces — and is measured by
+// `sparkles:font`.
 configuration "gui-vulkan" {
     targetType "sourceLibrary"
     dependency "sparkles:ui-vulkan" path="../.."
@@ -57,6 +58,7 @@ configuration "gui-vulkan" {
     dependency "sparkles:wsi" path="../.."
     dependency "sparkles:font" path="../.."
     dependency "sparkles:raylib-text" path="../.."
+    subConfiguration "sparkles:raylib-text" "discovery"
     versions "UiAppGuiVulkan"
 }
 
@@ -78,6 +80,7 @@ configuration "full-vulkan" {
     dependency "sparkles:wsi" path="../.."
     dependency "sparkles:font" path="../.."
     dependency "sparkles:raylib-text" path="../.."
+    subConfiguration "sparkles:raylib-text" "discovery"
     versions "UiAppTui" "UiAppGuiVulkan"
 }
 
