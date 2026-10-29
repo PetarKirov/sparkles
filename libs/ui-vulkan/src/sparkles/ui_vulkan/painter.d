@@ -744,6 +744,15 @@ if (isImageSource!Images)
         solid(Rect(m_.originX + shiftX_ + x, m_.originY + shiftY_ + y, w, h), colour);
     }
 
+    /// A rounded rectangle in device pixels, filled; `radius` pixels at each
+    /// corner, half the shorter side making a circle or a pill.
+    void roundedPx(int x, int y, int w, int h, float radius, vec4 colour)
+    {
+        if (colour.array[3] > 0)
+            rounded(Rect(m_.originX + shiftX_ + x, m_.originY + shiftY_ + y, w, h), radius,
+                colour, v4(0), 0);
+    }
+
     /// The rectangle's one-pixel border, inside the box, corners drawn once.
     void outlinePx(int x, int y, int w, int h, vec4 colour)
     {

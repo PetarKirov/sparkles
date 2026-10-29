@@ -337,7 +337,8 @@ and the next frame starts from the released state.
 ## 8. Pixel space
 
 **UVK35: Pixel operations.** Beside the cell operations, the canvas **must**
-draw a solid rectangle, a one-pixel outline, a clip, an offset, and an image
+draw a solid rectangle, a one-pixel outline, a filled rounded rectangle
+(a disc when its radius is half its side), a clip, an offset, and an image
 quad from a source sub-rectangle, all in device pixels and through the same
 instance batcher. A pixel coordinate is not scaled by the cell size. A clip
 replaces the current pixel clip and is not moved by a later offset; offsets
