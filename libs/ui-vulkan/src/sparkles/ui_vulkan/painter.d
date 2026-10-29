@@ -395,13 +395,16 @@ if (isImageSource!Images)
     }
 
     /// ditto — an interface run has no face of its own here, so it also
-    /// counts as `missingFace` and falls back to the cell font (`UVK17`).
+    /// counts as `missingFace` and falls back to the cell font (`UVK17`),
+    /// centred in the rows it was given, as an interface face is: a touch
+    /// target's label sits in the middle of its several rows.
     void textRunIn(in Rect r, scope const(char)[] text, in Visual v)
     {
         if (text.length && (v.fontRole == FontRole.ui || v.fontRole == FontRole.uiMono
                 || v.fontRole == FontRole.docs))
             report.count(Degradation.missingFace);
-        textRun(r.origin, text, v);
+        const dy = r.height > 1 ? (r.height - 1) * m_.cellH / 2 : 0;
+        cellText(px(r.x), py(r.y) + dy, text, v);
     }
 
     /// One glyph at cell `at`, in the cell font.
@@ -1275,6 +1278,26 @@ unittest
     assert(p.images.lastStyle == FaceStyle.bold, "the run's attributes pick the face");
     const underline = p.instances[$ - 1];
     assert(boxIs(underline, 5, 3 + 17, 20, 1), "the underline spans the run's cells");
+}
+
+@("ui_vulkan.painter.anInterfaceRunSitsInTheMiddleOfItsRows")
+@safe pure nothrow @nogc
+unittest
+{
+    // `UVK17`: a run in a rect several rows tall (a touch target's label)
+    // draws in the cell font, centred in those rows, as an interface face is.
+    Painter!FakeGlyphs p;
+    p.begin(Size(200, 100), metrics10x20); // origin (5, 3), 10 × 20 cells
+    const v = Visual(fg: RgbColor(255, 255, 255), fgAlpha: 255, fontRole: FontRole.ui);
+    p.textRunIn(Rect(1, 0, 4, 1), "a", v);
+    assert(boxIs(p.instances[$ - 1], 5 + 10 + 1, 3 + 15 - 5, 4, 6), "one row: as a run");
+    p.textRunIn(Rect(1, 1, 4, 3), "a", v);
+    assert(boxIs(p.instances[$ - 1], 5 + 10 + 1, 3 + 20 + 20 + 15 - 5, 4, 6),
+        "three rows: in the middle one");
+    p.textRunIn(Rect(1, 1, 4, 2), "a", v);
+    assert(boxIs(p.instances[$ - 1], 5 + 10 + 1, 3 + 20 + 10 + 15 - 5, 4, 6),
+        "two rows: half a row down");
+    assert(p.report[Degradation.missingFace] == 3);
 }
 
 @("ui_vulkan.painter.anEmojiClusterDrawsInColour")
