@@ -50,7 +50,8 @@ import core.stdc.config : c_long;
 import core.time : Duration, MonoTime, msecs, nsecs, seconds;
 import std.math : lround;
 
-import sparkles.android.activity : ANativeActivity, nativeActivity;
+import sparkles.android.activity : ANativeActivity, nativeActivity, noteActivityResumed,
+    refreshConfiguration;
 import sparkles.android.clipboard : ClipDescription, ClipText, closeClipText,
     describePrimaryClip, openPrimaryClipText, readClipText, setPrimaryClipTyped;
 import sparkles.android.ime : installImeField, pollImeField, showImeKeyboard;
@@ -1581,10 +1582,12 @@ struct AndroidWsi
                     emit(live, FocusChangedEvent(false));
                 break;
             case NoteKind.resumed:
+                noteActivityResumed(true);
                 if (live.valid)
                     emit(live, OccludedEvent(false));
                 break;
             case NoteKind.paused:
+                noteActivityResumed(false);
                 if (live.valid)
                     emit(live, OccludedEvent(true));
                 break;
@@ -1596,6 +1599,7 @@ struct AndroidWsi
             case NoteKind.activityStarted:
                 activity_ = cast(void*) nativeActivity();
                 activityLive_ = true;
+                refreshConfiguration();
                 if (textInput_)
                 {
                     installImeField();
@@ -1611,6 +1615,8 @@ struct AndroidWsi
                         MonoTime.zero + note.frameNanos.nsecs);
                 break;
             case NoteKind.contentRect, NoteKind.configuration:
+                if (note.kind == NoteKind.configuration)
+                    refreshConfiguration();
                 // Insets or the density may have changed; the surface's
                 // pixels did not.
                 refreshMetrics();

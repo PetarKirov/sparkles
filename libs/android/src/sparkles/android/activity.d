@@ -10,9 +10,13 @@ Two hosts own the activity. Under raylib, its `native_app_glue` does, and
 `GetAndroidApp()` (defined by raylib's `rcore_android.c`, valid from
 `android_main` on) exposes the glue's state. Without raylib, the
 `sparkles:wsi` Android backend does. That symbol is therefore declared weak:
-an app without the glue still loads, the glue's readers below answer their
-"not known" values, and the activity itself comes from
-$(LREF setNativeActivity), which every entry point calls first.
+an app without the glue still loads, and the activity itself comes from
+$(LREF setNativeActivity), which every entry point calls first. The
+configuration's readers (density, keyboard, screen width) and
+$(LREF activityResumed) then answer from what that host records
+($(LREF refreshConfiguration), $(LREF noteActivityResumed)); the window's
+readers ($(LREF hasNativeWindow), $(LREF contentRect)) answer their "not
+known" values, the host reporting the window itself.
 */
 module sparkles.android.activity;
 
@@ -68,6 +72,50 @@ pragma(LDC_extern_weak) extern (C) AndroidApp* GetAndroidApp() @nogc nothrow;
 /// The glue's state, or `null` in an app without raylib's glue.
 AndroidApp* glueApp() @trusted nothrow @nogc
     => &GetAndroidApp is null ? null : GetAndroidApp();
+
+private extern (C) void* AConfiguration_new() @nogc nothrow;
+private extern (C) void AConfiguration_delete(void* config) @nogc nothrow;
+private extern (C) void AConfiguration_fromAssetManager(void* config, void* assets) @nogc nothrow;
+
+// Without the glue: the configuration read from the activity's assets, and
+// the lifecycle step, both kept by the host that owns the activity.
+private __gshared void* ownConfig;
+private __gshared bool ownResumed;
+
+/**
+Rereads the configuration an app without raylib's glue answers from — the
+density, the keyboard, the screen's smallest width. The host that owns the
+activity (`sparkles:wsi`'s Android backend) calls it when an activity starts
+and whenever the configuration changes, on the thread that reads it.
+*/
+void refreshConfiguration() @trusted nothrow @nogc
+{
+    auto activity = nativeActivity();
+    if (activity is null || activity.assetManager is null)
+        return;
+    if (ownConfig is null)
+        ownConfig = AConfiguration_new();
+    if (ownConfig !is null)
+        AConfiguration_fromAssetManager(ownConfig, activity.assetManager);
+}
+
+/// Records whether the activity is resumed, for an app without the glue
+/// ($(LREF activityResumed)); its host calls it on each `onResume`/`onPause`.
+void noteActivityResumed(bool resumed) @trusted nothrow @nogc
+{
+    ownResumed = resumed;
+}
+
+// The configuration in effect: the glue's, else the one kept here.
+private const(void)* configuration() @trusted nothrow @nogc
+{
+    auto app = glueApp();
+    if (app !is null)
+        return app.config;
+    if (ownConfig is null)
+        refreshConfiguration();
+    return ownConfig;
+}
 
 private __gshared ANativeActivity* recordedActivity;
 
@@ -165,8 +213,7 @@ plugged in or a cover being folded back without polling anything else.
 */
 bool hardwareKeyboardAttached() @trusted nothrow @nogc
 {
-    auto app = glueApp();
-    const config = app is null ? null : app.config;
+    const config = configuration();
     return config !is null
         && AConfiguration_getKeyboard(config) == ACONFIGURATION_KEYBOARD_QWERTY
         && AConfiguration_getKeysHidden(config) == ACONFIGURATION_KEYSHIDDEN_NO;
@@ -183,7 +230,7 @@ yet paused. The glue records each lifecycle step (`START`, `RESUME`, `PAUSE`,
 transition into the foreground on the frame after it happened.
 */
 bool activityResumed() @trusted nothrow @nogc
-    => glueApp() !is null && glueApp().activityState == appCmdResume;
+    => glueApp() !is null ? glueApp().activityState == appCmdResume : ownResumed;
 
 private extern (C) int AConfiguration_getDensity(const(void)* config) @nogc nothrow;
 
@@ -191,8 +238,7 @@ private extern (C) int AConfiguration_getDensity(const(void)* config) @nogc noth
 /// the configuration does not say.
 int densityDpi() @trusted nothrow @nogc
 {
-    auto app = glueApp();
-    const config = app is null ? null : app.config;
+    const config = configuration();
     const d = config !is null ? AConfiguration_getDensity(config) : 0;
     return d > 0 && d < 0xFFFE ? d : 160;
 }
@@ -231,7 +277,6 @@ say. Follows the configuration, so a foldable opening flips it.
 */
 bool largeScreen() @trusted nothrow @nogc
 {
-    auto app = glueApp();
-    const config = app is null ? null : app.config;
+    const config = configuration();
     return config !is null && AConfiguration_getSmallestScreenWidthDp(config) >= 600;
 }
