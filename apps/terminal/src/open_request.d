@@ -89,13 +89,17 @@ string localPathOf(string target, string cwd) @safe
 /// Whether the viewer takes `path`, by what is on disk.
 OpenCheck checkOpen(string path) @system
 {
-    import std.file : exists, isDir;
+    import std.file : exists, isDir, isFile;
     import std.stdio : File;
 
     if (!path.length || !path.exists)
         return OpenCheck(OpenVerdict.refuse, path ~ ": no such file");
     if (path.isDir)
         return OpenCheck(OpenVerdict.decline);
+    // Refuse before probing: opening a FIFO with no writer (or a device
+    // with odd semantics) blocks, and this runs on the frame (TDV15).
+    if (!path.isFile)
+        return OpenCheck(OpenVerdict.refuse, path ~ ": not a regular file");
     try
         File(path, "rb").close();
     catch (Exception)
@@ -554,6 +558,24 @@ private string realPathOf(string p) @system
     assert(checkOpen(md).verdict == OpenVerdict.open);
     assert(checkOpen(bin).verdict == OpenVerdict.decline, "binary: the desktop's handler");
     assert(checkOpen(tempDir).verdict == OpenVerdict.decline, "a directory is not ours");
+    version (Posix)
+    {
+        // A non-regular file is refused before any open: probing one with
+        // `File(path, "rb")` blocks on a FIFO with no writer. `/dev/null`
+        // is the character device that stands in for the class.
+        const dev = checkOpen("/dev/null");
+        assert(dev.verdict == OpenVerdict.refuse && dev.message.length,
+            "a device is not a regular file");
+        import core.sys.posix.sys.stat : mkfifo;
+        import std.string : toStringz;
+
+        const fifo = buildPath(tempDir, "open-request-fifo.md");
+        assert(mkfifo(fifo.toStringz, 0x180) == 0); // 0600
+        scope (exit)
+            remove(fifo);
+        assert(checkOpen(fifo).verdict == OpenVerdict.refuse,
+            "a FIFO is refused without opening it");
+    }
     const gone = checkOpen(buildPath(tempDir, "open-request-missing.md"));
     assert(gone.verdict == OpenVerdict.refuse && gone.message.length);
 }

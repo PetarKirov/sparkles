@@ -481,7 +481,7 @@ bool namesAnotherHost(scope const(char)[] raw, scope const(char)[] localHost)
 
 ///
 @("osc_scan.namesAnotherHost")
-pure nothrow @nogc unittest
+@safe pure nothrow @nogc unittest
 {
     assert(namesAnotherHost("file://build-box/home/u", "laptop"));
     assert(!namesAnotherHost("file://laptop/home/u", "laptop"));
@@ -525,7 +525,7 @@ size_t parseOpenRequest(scope const(char)[] payload, ref char[maxOpenTargetBytes
 
 ///
 @("osc_scan.parseOpenRequest")
-pure nothrow @nogc unittest
+@safe pure nothrow @nogc unittest
 {
     char[maxOpenTargetBytes] t;
     // `printf %s /tmp/a b.md | base64`
@@ -538,6 +538,15 @@ pure nothrow @nogc unittest
     assert(parseOpenRequest("5380;open;UkVBRE1FLm1k", t) == 0, "another OSC");
     // `printf 'a\nb' | base64`: a newline is no path character here.
     assert(parseOpenRequest("5379;open;YQpi", t) == 0);
+    // `printf '\xff\xfe' | base64`: ill-formed UTF-8 is no path either.
+    assert(parseOpenRequest("5379;open;//4=", t) == 0, "ill-formed UTF-8");
+    // A decoded target past `maxOpenTargetBytes` is refused, not truncated:
+    // the base64 of 'a' repeated is "YWFh" repeated.
+    char[4112] big;
+    big[0 .. 10] = "5379;open;";
+    foreach (i; 10 .. big.length)
+        big[i] = "YWFh"[(i - 10) % 4];
+    assert(parseOpenRequest(big[], t) == 0, "past maxOpenTargetBytes");
 }
 
 /**
