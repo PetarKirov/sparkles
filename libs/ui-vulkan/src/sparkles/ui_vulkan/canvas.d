@@ -792,7 +792,7 @@ struct VulkanCanvas(B)
         ubyte[] rows;
         atlas_.takeDirty((in DirtyRegion d) {
             if (result < 0)
-                return;
+                return false;
             const texel = d.colour ? 4 : 1;
             const pixels = atlas_.page(d.page, d.colour);
             const(ubyte)[] data = pixels;
@@ -813,6 +813,7 @@ struct VulkanCanvas(B)
                 data, texel, VkOffset2D(d.x, d.y), VkExtent2D(d.width, d.height));
             if (staged.hasError)
                 result = staged.error;
+            return !staged.hasError;
         });
         return result;
     }
@@ -1331,6 +1332,9 @@ struct VulkanCanvas(B)
     {
         uploads_.discard();
         placeholderStaged_ = false;
+        // The discarding above may drop atlas uploads `stageAtlas` staged
+        // this frame; the atlas must not keep believing they landed.
+        atlas_.markUnstaged();
         if (r == VkResult.VK_ERROR_DEVICE_LOST)
             lost_ = true;
         else if (r == VkResult.VK_ERROR_OUT_OF_DEVICE_MEMORY
