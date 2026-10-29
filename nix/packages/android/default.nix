@@ -28,6 +28,7 @@ in
     ./libghostty-vt.nix
     ./libkqueue.nix
     ./ndk.nix
+    ./pkg-config.nix
     ./raylib.nix
     ./sdk.nix
     ./shaping.nix
@@ -106,6 +107,7 @@ in
       # contain it either.
       legacyPackages.androidPackageNames = [
         "all-android"
+        "android-pkg-config"
         "base-android-tests"
         "font-android-tests"
         "font-engine-android-tests"
@@ -124,6 +126,7 @@ in
         "libkqueue-android"
         "libterminal-android"
         "libtext-lab-android"
+        "libtext-lab-android-raw"
         "raylib-android"
         "terminal-apk"
         "terminal-icon"
