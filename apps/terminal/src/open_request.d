@@ -1,17 +1,22 @@
 /**
-Open requests (`TDV1`–`TDV4`): a program in a pane asks for a local file to
-be opened, and the terminal opens it in a viewer pane beside that pane.
+Open requests (`TDV1`–`TDV4`, `TDV15`): a program in a pane asks for a local
+file to be opened, and the terminal opens it in a viewer pane beside that
+pane.
 
-The requests arrive on a server thread — the desktop's `xdg-open` shim over
-the per-app socket ($(LREF startOpenServer)), Android's `termux-open` / `am
-start -a VIEW` through the `am` server — and reach the frame through a small
-queue: the server decides what it can alone (the file is missing, unreadable,
-or not a kind the viewer shows), queues the rest, and answers the requesting
-command once the frame has opened the pane (`TDV3`). The pane that asked is
-found from the socket peer's process: its ancestry leads to one pane's child
-($(LREF paneOfProcess)).
+Most arrive in-band: the shims — this executable run as `xdg-open`, as `open`
+on macOS, or as `sparkles-open`; a shell script on Android — decide what they
+can where the file is (missing, unreadable, or not a kind the viewer shows)
+and write the rest to their terminal as OSC 5379 ($(LREF openShim)). The pane
+whose output carries it is the pane that asked, so nothing maps a process to
+a pane; `sparkles:terminal-view` reads the sequence and the workspace opens
+the file.
 
-The decision half is pure and host-tested; the sockets are Posix.
+Android's `termux-open` / `am start -a VIEW`, which nix-on-droid's tools send
+to the `am` server, still arrive on a server thread: they reach the frame
+through a small queue, and the pane is found from the socket peer's process,
+whose ancestry leads to one pane's child ($(LREF paneOfProcess)).
+
+The decisions are host-tested.
 */
 module open_request;
 
@@ -249,7 +254,8 @@ string cwdOf(int pid) @system
         return null;
 }
 
-/// The process at the other end of a connected Unix socket, or 0.
+/// The process at the other end of a connected Unix socket, or 0 (the `am`
+/// server's peer on Android).
 int peerProcess(int fd) @system nothrow @nogc
 {
     version (linux)
@@ -269,31 +275,136 @@ int peerProcess(int fd) @system nothrow @nogc
             return 0;
         return c.pid;
     }
-    else version (OSX)
-    {
-        import core.sys.posix.sys.socket : getsockopt, socklen_t;
-
-        enum SOL_LOCAL = 0, LOCAL_PEERPID = 2; // <sys/un.h>
-        int pid;
-        socklen_t len = pid.sizeof;
-        if (getsockopt(fd, SOL_LOCAL, LOCAL_PEERPID, &pid, &len) != 0)
-            return 0;
-        return pid;
-    }
     else
         return 0;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// The desktop's socket and its `xdg-open` (`TDV4`).
+// The desktop's shims and the in-band request (`TDV4`, `TDV15`).
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// The reply's statuses, in the `am` reply's framing (`amReply`).
-enum ShimStatus : int
+/// The names the shim answers to on this platform, besides `sparkles-open`:
+/// the opener programs call here.
+version (OSX)
+    immutable string[] shimNames = ["open", "sparkles-open"];
+else
+    immutable string[] shimNames = ["xdg-open", "sparkles-open"];
+
+/// Whether `argv0` names the shim: this executable, run as an opener.
+bool isShimName(string argv0) @safe pure
 {
-    opened = 0,
-    refused = 1,
-    declined = 2, /// the shim hands the file to the next `xdg-open`
+    import std.algorithm.searching : canFind;
+    import std.path : baseName;
+
+    return shimNames.canFind(argv0.baseName);
+}
+
+/// The environment variable each pane gets while open requests are the
+/// app's (`TDV4`): a shim run elsewhere — another terminal, a cron job — hands
+/// everything to the platform's opener and writes nothing.
+enum string openEnvVar = "SPARKLES_TERMINAL_OPEN";
+
+/**
+The open request for `path` as a program writes it to its terminal
+(`TDV15`): `ESC ] 5379 ; open ; <base64 of the path> ST`.
+*/
+string openRequestSequence(string path) @safe pure
+{
+    import std.base64 : Base64;
+
+    return "\x1b]5379;open;" ~ Base64.encode(cast(const(ubyte)[]) path) ~ "\x1b\\";
+}
+
+///
+@("open_request.openRequestSequence")
+@safe pure unittest
+{
+    assert(openRequestSequence("/tmp/a b.md") == "\x1b]5379;open;L3RtcC9hIGIubWQ=\x1b\\");
+}
+
+/// What the shim does with one invocation.
+enum ShimAction : ubyte
+{
+    platform, /// run the platform's opener: not one local file, or not ours
+    refuse,   /// a missing or unreadable file: a message, status 1 (`TDV3`)
+    request,  /// write the open request to the terminal, status 0
+}
+
+/// A decision and what it needs: the absolute path to request, or the message.
+struct ShimDecision
+{
+    ShimAction action;
+    string path;    /// `request`: the file, absolute
+    string message; /// `refuse`: why
+}
+
+/**
+Decides one shim invocation `args` (its own name first), run from `cwd`, with
+open requests the app's (`enabled`): exactly one local file the viewer shows
+is a request; a missing or unreadable one is refused here, where it can be
+seen; anything else — flags, several files, a URL, a directory, a kind the
+viewer does not show, or no app to ask — is the platform's.
+*/
+ShimDecision decideShim(string[] args, string cwd, bool enabled) @system
+{
+    if (!enabled || args.length != 2 || (args[1].length && args[1][0] == '-'))
+        return ShimDecision(ShimAction.platform);
+    const path = localPathOf(args[1], cwd);
+    if (path is null)
+        return ShimDecision(ShimAction.platform);
+    const check = checkOpen(path);
+    final switch (check.verdict)
+    {
+        case OpenVerdict.open:
+            return ShimDecision(ShimAction.request, path);
+        case OpenVerdict.refuse:
+            return ShimDecision(ShimAction.refuse, null, check.message);
+        case OpenVerdict.decline:
+            return ShimDecision(ShimAction.platform);
+    }
+}
+
+/**
+The opener as the shim (this executable, run as `xdg-open`, `open` on macOS,
+or `sparkles-open`; `TDV4`): a local file the viewer shows becomes an open
+request written to the controlling terminal (`TDV15`), which the pane that
+owns it reads; everything else goes to the next opener of the same name on
+`PATH` (`sparkles-open` has none, and says so).
+*/
+int openShim(string[] args) @system
+{
+    import core.sys.posix.fcntl : O_NOCTTY, O_WRONLY, open;
+    import core.sys.posix.unistd : close, write;
+    import std.file : getcwd;
+    import std.path : baseName;
+    import std.process : environment;
+    import std.stdio : stderr;
+
+    const name = args.length ? args[0].baseName : "sparkles-open";
+    const d = decideShim(args, getcwd(), environment.get(openEnvVar, "") == "1");
+    final switch (d.action)
+    {
+        case ShimAction.platform:
+            return execNext(args);
+        case ShimAction.refuse:
+            stderr.writeln(name, ": ", d.message);
+            return 1;
+        case ShimAction.request:
+            const tty = open("/dev/tty", O_WRONLY | O_NOCTTY);
+            if (tty < 0)
+                return execNext(args); // no terminal of ours to ask
+            scope (exit) close(tty);
+            const seq = openRequestSequence(d.path);
+            size_t done;
+            while (done < seq.length)
+            {
+                const n = write(tty, seq.ptr + done, seq.length - done);
+                if (n <= 0)
+                    return execNext(args);
+                done += n;
+            }
+            return 0;
+    }
 }
 
 /// The per-app directory: `$XDG_RUNTIME_DIR/sparkles-terminal-<pid>`, else
@@ -310,11 +421,11 @@ string openDir() @safe
 }
 
 /**
-Makes this process's sessions answer `xdg-open` (`TDV4`): a `bin/xdg-open`
-link to this executable in the per-app directory, the directory first on the
-`PATH` every pane inherits, and `SPARKLES_TERMINAL_SOCKET` naming the socket
-$(LREF startOpenServer) listens on. Returns the directory (remove it at exit),
-or null after a warning when it could not be made.
+Makes this process's sessions' open requests the app's (`TDV4`): links to
+this executable under the shim's names (`shimNames`) in the per-app
+directory, the directory first on the `PATH` every pane inherits, and
+`SPARKLES_TERMINAL_OPEN=1`. Returns the directory (remove it at exit), or
+null after a warning when it could not be made.
 */
 string installOpenShim() @system
 {
@@ -329,16 +440,17 @@ string installOpenShim() @system
     try
     {
         mkdirRecurse(bin);
-        symlink(thisExePath, buildPath(bin, "xdg-open"));
+        foreach (name; shimNames)
+            symlink(thisExePath, buildPath(bin, name));
     }
     catch (Exception e)
     {
-        warning(i"open: cannot install the xdg-open shim: $(e.msg)");
+        warning(i"open: cannot install the open shims: $(e.msg)");
         return null;
     }
     const path = environment.get("PATH", "");
     environment["PATH"] = path.length ? bin ~ ":" ~ path : bin;
-    environment["SPARKLES_TERMINAL_SOCKET"] = buildPath(dir, "open.sock");
+    environment[openEnvVar] = "1";
     return dir;
 }
 
@@ -355,239 +467,41 @@ void removeOpenDir(string dir) @system nothrow
     }
 }
 
-/**
-Listens on `path` for the shim's requests on a thread of its own; false
-(after a warning) when it cannot.
-*/
-bool startOpenServer(string path) @system
-{
-    import core.thread : Thread;
-
-    const fd = listenUnix(path);
-    if (fd < 0)
-        return false;
-    auto t = new Thread({ serveShim(fd); });
-    t.isDaemon = true;
-    t.start();
-    return true;
-}
-
-/// A listening Unix socket at `path`, or -1 after a warning.
-int listenUnix(string path) @system
-{
-    import core.sys.posix.sys.socket : AF_UNIX, bind, listen, sockaddr, socket, SOCK_STREAM;
-    import core.sys.posix.sys.un : sockaddr_un;
-    import core.sys.posix.unistd : close, unlink;
-    import std.string : toStringz;
-
-    import sparkles.base.logger : warning;
-
-    unlink(path.toStringz);
-    const fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (fd < 0)
-        return -1;
-    sockaddr_un addr;
-    addr.sun_family = AF_UNIX;
-    if (path.length >= addr.sun_path.length)
-    {
-        warning(i"open: socket path too long: $(path)");
-        close(fd);
-        return -1;
-    }
-    addr.sun_path[0 .. path.length] = cast(byte[]) path;
-    if (bind(fd, cast(sockaddr*) &addr, addr.sizeof) != 0 || listen(fd, 8) != 0)
-    {
-        warning(i"open: cannot listen on $(path)");
-        close(fd);
-        return -1;
-    }
-    return fd;
-}
-
-private void serveShim(int listener) @system
-{
-    import core.sys.posix.sys.socket : accept;
-    import core.sys.posix.unistd : close;
-
-    import sparkles.base.logger : warning;
-
-    for (;;)
-    {
-        const conn = accept(listener, null, null);
-        if (conn < 0)
-            continue;
-        scope (exit) close(conn);
-        try
-            answerShim(conn);
-        catch (Exception e)
-            warning(i"open: request failed: $(e.msg)");
-    }
-}
-
-private void answerShim(int conn) @system
-{
-    import am_command : amReply;
-
-    // One path, NUL-terminated, already absolute.
-    auto request = receiveAll(conn);
-    if (request.length && request[$ - 1] == '\0')
-        request = request[0 .. $ - 1];
-    const path = localPathOf(cast(string) request.idup, null);
-    if (path is null)
-        return sendAll(conn, amReply(ShimStatus.declined, "", ""));
-    const check = checkOpen(path);
-    final switch (check.verdict)
-    {
-        case OpenVerdict.refuse:
-            return sendAll(conn, amReply(ShimStatus.refused, "", "xdg-open: " ~ check.message ~ "\n"));
-        case OpenVerdict.decline:
-            return sendAll(conn, amReply(ShimStatus.declined, "", ""));
-        case OpenVerdict.open:
-            string msg;
-            const ok = awaitOpen(enqueueOpen(path, peerProcess(conn)), msg);
-            return sendAll(conn, ok ? amReply(ShimStatus.opened, "", "")
-                : amReply(ShimStatus.refused, "", "xdg-open: " ~ msg ~ "\n"));
-    }
-}
-
-/// Reads until the peer shuts its side down (64 KiB at most).
-char[] receiveAll(int conn) @system
-{
-    import core.sys.posix.sys.socket : recv;
-
-    char[] request;
-    char[4096] buf = void;
-    for (;;)
-    {
-        const n = recv(conn, buf.ptr, buf.length, 0);
-        if (n <= 0)
-            break;
-        request ~= buf[0 .. n];
-        if (request.length > 64 * 1024)
-            break;
-    }
-    return request;
-}
-
-/// Writes all of `msg`.
-void sendAll(int conn, scope const(char)[] msg) @system
-{
-    import core.sys.posix.sys.socket : send;
-
-    size_t sent;
-    while (sent < msg.length)
-    {
-        const n = send(conn, msg.ptr + sent, msg.length - sent, 0);
-        if (n <= 0)
-            return;
-        sent += n;
-    }
-}
-
-/**
-`xdg-open` as the shim (this executable, run by that name): a local file goes
-to the terminal over `SPARKLES_TERMINAL_SOCKET`; anything it declines — and
-anything when no terminal answers — goes to the next `xdg-open` on `PATH`.
-*/
-int xdgOpenShim(string[] args) @system
-{
-    import core.sys.posix.sys.socket : AF_UNIX, connect, shutdown, SHUT_WR, sockaddr,
-        socket, SOCK_STREAM;
-    import core.sys.posix.sys.un : sockaddr_un;
-    import core.sys.posix.unistd : close;
-    import std.file : getcwd;
-    import std.process : environment;
-    import std.stdio : stderr;
-
-    if (args.length != 2)
-        return execNext(args);
-    const sock = environment.get("SPARKLES_TERMINAL_SOCKET", "");
-    const path = localPathOf(args[1], getcwd());
-    if (!sock.length || path is null)
-        return execNext(args);
-
-    const fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (fd < 0)
-        return execNext(args);
-    sockaddr_un addr;
-    addr.sun_family = AF_UNIX;
-    if (sock.length >= addr.sun_path.length)
-        return execNext(args);
-    addr.sun_path[0 .. sock.length] = cast(byte[]) sock;
-    if (connect(fd, cast(sockaddr*) &addr, addr.sizeof) != 0)
-    {
-        close(fd);
-        return execNext(args);
-    }
-    sendAll(fd, path ~ "\0");
-    shutdown(fd, SHUT_WR);
-    const reply = receiveAll(fd);
-    close(fd);
-
-    int code;
-    string out_, err;
-    if (!parseReply(reply, code, out_, err) || code == ShimStatus.declined)
-        return execNext(args);
-    if (err.length)
-        stderr.write(err);
-    return code;
-}
-
-/// Splits `<code>\0<stdout>\0<stderr>\0`.
-bool parseReply(scope const(char)[] reply, out int code, out string out_, out string err) @safe
-{
-    import std.conv : to;
-    import std.string : indexOf;
-
-    const a = reply.indexOf('\0');
-    if (a <= 0)
-        return false;
-    const b = reply[a + 1 .. $].indexOf('\0');
-    if (b < 0)
-        return false;
-    const c = reply[a + 1 + b + 1 .. $].indexOf('\0');
-    if (c < 0)
-        return false;
-    try
-        code = reply[0 .. a].to!int;
-    catch (Exception)
-        return false;
-    out_ = reply[a + 1 .. a + 1 + b].idup;
-    err = reply[a + 1 + b + 1 .. a + 1 + b + 1 + c].idup;
-    return true;
-}
-
-// Runs the first `xdg-open` on PATH that is not this executable.
+// Runs the first opener of this name on PATH that is not this executable.
 private int execNext(string[] args) @system
 {
     import core.sys.posix.unistd : execv;
     import std.algorithm.iteration : splitter;
     import std.file : exists, isFile, thisExePath;
-    import std.path : buildPath;
+    import std.path : baseName, buildPath;
     import std.process : environment;
     import std.stdio : stderr;
     import std.string : toStringz;
 
+    const name = args.length ? args[0].baseName : "sparkles-open";
     const self = realPathOf(thisExePath);
-    foreach (dir; environment.get("PATH", "").splitter(':'))
-    {
-        if (!dir.length)
-            continue;
-        const candidate = buildPath(dir, "xdg-open");
-        bool usable;
-        try
-            usable = candidate.exists && candidate.isFile && realPathOf(candidate) != self;
-        catch (Exception)
-            usable = false;
-        if (!usable)
-            continue;
-        const(char)*[] argv = [candidate.toStringz];
-        foreach (a; args[1 .. $])
-            argv ~= a.toStringz;
-        argv ~= null;
-        execv(argv[0], argv.ptr);
-    }
-    stderr.writeln("xdg-open: no other xdg-open on PATH");
+    if (name != "sparkles-open")
+        foreach (dir; environment.get("PATH", "").splitter(':'))
+        {
+            if (!dir.length)
+                continue;
+            const candidate = buildPath(dir, name);
+            bool usable;
+            try
+                usable = candidate.exists && candidate.isFile && realPathOf(candidate) != self;
+            catch (Exception)
+                usable = false;
+            if (!usable)
+                continue;
+            const(char)*[] argv = [candidate.toStringz];
+            foreach (a; args[1 .. $])
+                argv ~= a.toStringz;
+            argv ~= null;
+            execv(argv[0], argv.ptr);
+        }
+    stderr.writeln(name, name == "sparkles-open"
+        ? ": opens one local file in the sparkles terminal that runs it"
+        : ": no other " ~ name ~ " on PATH");
     return 3;
 }
 
@@ -671,12 +585,39 @@ private string realPathOf(string p) @system
     assert(paneOfProcess(getpid(), (int p) => 0UL) == 0);
 }
 
-@("open_request.parseReply.amFraming")
-@safe unittest
+@("open_request.decideShim.oneLocalFileTheViewerShows")
+@system unittest
 {
-    int code;
-    string o, e;
-    assert(parseReply("1\0\0no such file\n\0", code, o, e) && code == 1 && e == "no such file\n");
-    assert(parseReply("0\0\0\0", code, o, e) && code == 0 && !e.length);
-    assert(!parseReply("garbage", code, o, e));
+    import std.file : remove, tempDir, write;
+    import std.path : buildPath;
+
+    const md = buildPath(tempDir, "open-request-shim.md");
+    write(md, "# hi\n");
+    scope (exit) remove(md);
+    const cwd = tempDir;
+    with (ShimAction)
+    {
+        assert(decideShim(["xdg-open", md], cwd, true) == ShimDecision(request, md));
+        assert(decideShim(["open", "open-request-shim.md"], cwd, true).path == md,
+            "a relative path, against the shim's directory");
+        assert(decideShim(["xdg-open", md], cwd, false).action == platform,
+            "outside one of the app's panes, the platform's");
+        assert(decideShim(["open", "-a", "Preview", md], cwd, true).action == platform);
+        assert(decideShim(["open", "-R", md], cwd, true).action == platform, "a flag");
+        assert(decideShim(["xdg-open", "https://nixos.org"], cwd, true).action == platform);
+        assert(decideShim(["xdg-open", tempDir], cwd, true).action == platform, "a directory");
+        const gone = decideShim(["xdg-open", "no-such-open-request.md"], cwd, true);
+        assert(gone.action == refuse && gone.message.length, "refused where it can be seen");
+    }
+}
+
+@("open_request.isShimName")
+@safe pure unittest
+{
+    assert(isShimName("/run/user/1000/sparkles-terminal-7/bin/sparkles-open"));
+    version (OSX)
+        assert(isShimName("open") && !isShimName("xdg-open"));
+    else
+        assert(isShimName("xdg-open") && !isShimName("open"));
+    assert(!isShimName("sparkles_terminal"));
 }
