@@ -24,6 +24,7 @@ module lab;
 import std.format : format;
 
 import sparkles.base.term_color : RgbColor;
+import sparkles.base.term_control : PointerShape;
 import sparkles.base.term_style : TextAttr, UnderlineStyle;
 import sparkles.base.text.grapheme : fitCells, visibleWidth;
 import sparkles.input : Event, isEndOfInput, Key, KeyEvent, match, PointerAction, PointerEvent;
@@ -80,6 +81,7 @@ struct Lab
     private bool pointing; // a mouse hovers, or a finger is down
     private bool sentSettings;
     private bool userSized; // `+` or `-` was pressed: the size is theirs
+    private PointerShape shape_ = PointerShape.default_;
     // What the last frame laid out, for a tap or click: the Settings
     // button, the sheet, and the sheet's buttons.
     private Rect settingsButton_;
@@ -429,6 +431,14 @@ struct Lab
             },
             (in PointerEvent p) {
                 const cell = cellOf(h, p.pos);
+                // A hand over what a click does something to, the arrow elsewhere
+                // (a mouse or stylus pointer; on Android 7+ too).
+                const shape = overButton(cell) ? PointerShape.pointer : PointerShape.default_;
+                if (shape != shape_)
+                {
+                    shape_ = shape;
+                    h.pointerShape(shape);
+                }
                 if (p.action == PointerAction.press)
                 {
                     if (settingsButton_.contains(cell))
@@ -460,6 +470,18 @@ struct Lab
             },
             (in _) {},
         );
+    }
+
+    // Whether `cell` is on a control: Settings, or a button of the open sheet.
+    private bool overButton(Point cell) const
+    {
+        if (settingsButton_.contains(cell))
+            return true;
+        if (sheetOpen)
+            foreach (b; buttons_)
+                if (b.rect.contains(cell))
+                    return true;
+        return false;
     }
 
     private void toggleSheet(H)(ref H h)
@@ -918,4 +940,21 @@ version (unittest) private struct SettingsHost
     h.rec.size = Size(49, 51);
     lab.paint(h, tree, null);
     assert(h.rec.fontSizeRequests == [17, 18], "after `+`, the size is the user's");
+}
+
+@("text_lab.aHandOverControls")
+@system unittest
+{
+    // A pointer over Settings shows a hand, and the arrow again off it — the
+    // shape asked for once per change.
+    Lab lab;
+    SettingsHost h;
+    h.rec.size = Size(49, 51);
+    auto tree = lab.view(h);
+    lab.paint(h, tree, null);
+    const s = lab.settingsButton_;
+    lab.handle(h, Event(PointerEvent(action: PointerAction.move, pos: Point(s.x + 1, 1))));
+    lab.handle(h, Event(PointerEvent(action: PointerAction.move, pos: Point(s.x + 2, 1))));
+    lab.handle(h, Event(PointerEvent(action: PointerAction.move, pos: Point(5, 20))));
+    assert(h.rec.shapes == [PointerShape.pointer, PointerShape.default_]);
 }
