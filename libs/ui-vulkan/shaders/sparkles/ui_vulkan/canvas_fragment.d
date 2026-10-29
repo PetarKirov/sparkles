@@ -12,7 +12,7 @@ through the nearest-filtering sampler and images through the linear one
 module sparkles.ui_vulkan.canvas_fragment;
 
 import sparkles.shaders;
-import sparkles.ui_vulkan.shading : Binding, canvasVertex, CanvasView, shade;
+import sparkles.ui_vulkan.shading : Binding, canvasVertex, CanvasView, shade, targetToDisplay;
 
 /// The premultiplied colour the record leaves at this fragment.
 @fragment vec4 canvasFragment(@builtin(Builtin.fragCoord) vec4 position,
@@ -25,8 +25,10 @@ import sparkles.ui_vulkan.shading : Binding, canvasVertex, CanvasView, shade;
     const coverageTexel = coveragePage.sample(nearestSampler, vTexCoord);
     const colourTexel = colourPage.sample(nearestSampler, vTexCoord);
     const imageTexel = boundImage.sample(linearSampler, vTexCoord);
-    return shade(v2(position.x, position.y), vBox, vFill, vEdge, vShape, coverageTexel,
-        colourTexel, imageTexel, canvasView.srgb);
+    // Shaded where the fragment shows: the records are in display pixels.
+    const at = targetToDisplay(v2(position.x, position.y), canvasView.extent, canvasView.turn);
+    return shade(at, vBox, vFill, vEdge, vShape, coverageTexel, colourTexel, imageTexel,
+        canvasView.srgb);
 }
 
 static assert(stagesLink!(canvasVertex, canvasFragment));

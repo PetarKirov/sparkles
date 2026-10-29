@@ -62,8 +62,50 @@ enum Binding : int
 /// The push-constant block both stages read.
 struct CanvasView
 {
-    vec2 extent;      /// the target's size, in pixels
+    /// The display's size, in pixels: what records are placed in. The
+    /// target's, unless it is turned.
+    vec2 extent;
     float srgb = 0;   /// 1 on an sRGB target (`UVK7`), else 0
+    /// Quarter turns clockwise the presentation engine gives the target on
+    /// its way to the display (`UVK39`): a pre-rotated swapchain on a turned
+    /// Android panel. 0–3; the records stay in display pixels.
+    float turn = 0;
+}
+
+/**
+Display pixel `p` in a target the presentation engine turns `turn` quarter
+turns clockwise onto a display of `display` pixels (`UVK39`).
+*/
+vec2 displayToTarget(vec2 p, vec2 display, float turn)
+{
+    if (turn > 2.5f)
+        return v2(p.y, display.x - p.x);
+    if (turn > 1.5f)
+        return v2(display.x - p.x, display.y - p.y);
+    if (turn > 0.5f)
+        return v2(display.y - p.y, p.x);
+    return p;
+}
+
+/// ditto, the other way: where target pixel `q` shows on the display.
+vec2 targetToDisplay(vec2 q, vec2 display, float turn)
+{
+    if (turn > 2.5f)
+        return v2(display.x - q.y, q.x);
+    if (turn > 1.5f)
+        return v2(display.x - q.x, display.y - q.y);
+    if (turn > 0.5f)
+        return v2(q.y, display.y - q.x);
+    return q;
+}
+
+/// The target's size for a display of `display` pixels turned `turn`
+/// quarter turns: a quarter or three-quarter turn swaps the sides.
+vec2 targetExtent(vec2 display, float turn)
+{
+    if ((turn > 0.5f && turn < 1.5f) || turn > 2.5f)
+        return v2(display.y, display.x);
+    return display;
 }
 
 /**
@@ -95,7 +137,8 @@ struct CanvasVaryings
 
 /**
 Corner `index` (0–3, a triangle strip) of the quad record's box grown by its
-outset, in clip space for a target of `canvasView.extent` pixels.
+outset, in clip space for a display of `canvasView.extent` pixels, on a
+target turned `canvasView.turn` quarter turns from it.
 */
 @vertex CanvasVaryings canvasVertex(@builtin(Builtin.vertexIndex) int index,
     @input vec4 quadBox, @input vec4 quadFill, @input vec4 quadEdge, @input vec4 quadShape,
@@ -106,9 +149,10 @@ outset, in clip space for a target of `canvasView.extent` pixels.
     const outset = quadShape.w;
     const px = quadBox.x - outset + cx * (quadBox.z + 2.0f * outset);
     const py = quadBox.y - outset + cy * (quadBox.w + 2.0f * outset);
+    const q = displayToTarget(v2(px, py), canvasView.extent, canvasView.turn);
+    const target = targetExtent(canvasView.extent, canvasView.turn);
     CanvasVaryings v;
-    v.position = v4(px / canvasView.extent.x * 2.0f - 1.0f, py / canvasView.extent.y * 2.0f - 1.0f,
-        0.0f, 1.0f);
+    v.position = v4(q.x / target.x * 2.0f - 1.0f, q.y / target.y * 2.0f - 1.0f, 0.0f, 1.0f);
     v.vBox = quadBox;
     v.vFill = quadFill;
     v.vEdge = quadEdge;

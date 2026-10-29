@@ -160,6 +160,56 @@ package immutable FrameMetrics[4] metricsUnderTest = [
     }
 }
 
+@("ui_vulkan.canvas.aTurnedTargetIsDrawnPreRotated")
+@system unittest
+{
+    // `UVK39`: an 80×40 display on a 40×80 target the presentation engine
+    // turns a quarter turn clockwise. A fill lands, clipped, where that turn
+    // brings it back to its display pixels, and a disc is shaded where it
+    // shows: display (x, y) is target (40 - 1 - y, x).
+    import sparkles.ui_vulkan.painter : rgba;
+    import sparkles.ui_vulkan.shading_test : inRoundedBox;
+
+    if (!readbackEnabled)
+        return skipTest(readbackSkipReason);
+    auto rig = new Rig;
+    rig.open("ui-vulkan-turned", 40, 80);
+    scope (success)
+        rig.close();
+    rig.turn = 1;
+
+    const colour = RgbColor(200, 100, 50);
+    const m = FrameMetrics(cellW: 10, cellH: 20);
+    const frame = rig.draw((ref Canvas c) {
+        c.clipPx(0, 0, 12, 40);
+        c.fillPx(10, 20, 4, 3, rgba(colour, 255)); // display x 10–11 survive the clip
+        c.unclipPx();
+    }, m, black);
+    foreach (v; 0 .. 80)
+        foreach (u; 0 .. 40)
+        {
+            const got = pixel(frame, 40, u, v);
+            // The display pixel this target pixel shows.
+            const x = v, y = 40 - 1 - u;
+            const inside = x >= 10 && x < 12 && y >= 20 && y < 23;
+            assert(inside ? got[0] == colour.r && got[1] == colour.g && got[2] == colour.b
+                : got[0 .. 3] == [0, 0, 0], format("target (%s, %s), display (%s, %s): %s",
+                    u, v, x, y, got));
+        }
+
+    const disc = rig.draw((ref Canvas c) {
+        c.roundedPx(50, 8, 20, 20, 10, rgba(white, 255));
+    }, m, black);
+    // Back to display order, then against the disc's coverage there.
+    auto upright = new ubyte[80 * 40 * 4];
+    foreach (y; 0 .. 40)
+        foreach (x; 0 .. 80)
+            upright[(y * 80 + x) * 4 .. (y * 80 + x) * 4 + 4] = pixel(disc, 40, 40 - 1 - y, x);
+    const e = coverageErrors(upright, 80, 40, (px, py) => inRoundedBox(px, py, 50, 8, 20, 20, 10));
+    assert(e[0] <= 16.0 / 255 && e[1] <= 2.0 / 255,
+        format("worst %.1f/255, mean %.2f/255", e[0] * 255, e[1] * 255));
+}
+
 // ── helpers for the scenarios ──
 
 private enum RgbColor white = RgbColor(255, 255, 255);

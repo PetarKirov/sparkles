@@ -368,3 +368,10 @@ rendering — compositing, contrast, hinting, shaping — at any time, effective
 from the next frame, and a loupe: a region of the target redrawn larger
 after the frame by nearest filtering, so each pixel is a block of its exact
 composited colour, on a target that allows transfers both ways.
+
+**UVK39: A turned target.** A target the presentation engine turns by a
+quarter, half or three-quarter turn on its way to the display (a swapchain
+created with that `preTransform`, as on a turned Android panel) **must** be
+drawn into pre-rotated: every operation is placed, clipped and shaded in
+display pixels and shows on the display where it would on an unturned
+target of the display's size. The loupe's rectangles are display pixels too.
