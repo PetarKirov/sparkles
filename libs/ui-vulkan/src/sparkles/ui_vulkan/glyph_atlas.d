@@ -121,6 +121,8 @@ struct GlyphAtlas
         const m = measured.value;
         if (m.empty || m.width <= 0 || m.height <= 0)
             return remember(key, AtlasOutcome.blank, g);
+        if (!fitsPage(m.width, m.height))
+            return remember(key, AtlasOutcome.refused, g);
         uint page;
         int x, y;
         if (!sheets_[0].place(m.width, m.height, page, x, y))
@@ -169,6 +171,8 @@ struct GlyphAtlas
             return remember(key, AtlasOutcome.noColour, g);
         if (m.empty)
             return remember(key, AtlasOutcome.blank, g);
+        if (!fitsPage(m.width, m.height))
+            return remember(key, AtlasOutcome.refused, g);
         uint page;
         int x, y;
         if (!sheets_[1].place(m.width, m.height, page, x, y))
@@ -203,12 +207,27 @@ struct GlyphAtlas
         overflowed_ = false;
     }
 
-    /// Hands each page region written since the last call to `upload`,
-    /// once, and forgets it.
-    void takeDirty(scope void delegate(in DirtyRegion) @system upload) @system
+    /**
+    Hands each page region written since the last call to `upload`, and
+    forgets a region only when `upload` took it (returned `true`): a
+    staging failure leaves the region dirty for the next frame instead of
+    marking texels uploaded that never reached the device.
+    */
+    void takeDirty(scope bool delegate(in DirtyRegion) @system upload) @system
     {
         foreach (ref s; sheets_)
             s.takeDirty(upload);
+    }
+
+    /**
+    Says no page is on the device after all — a frame whose staged uploads
+    were discarded — so every page uploads whole again. Texels and cache
+    entries stand; only the upload bookkeeping starts over.
+    */
+    void markUnstaged() @safe pure nothrow
+    {
+        foreach (ref s; sheets_)
+            s.markUnstaged();
     }
 
     private:
@@ -225,6 +244,10 @@ struct GlyphAtlas
         entries_[key] = Entry(outcome);
         return outcome;
     }
+
+    // Whether a glyph of this size could ever sit in a page, however empty.
+    static bool fitsPage(int w, int h) @safe pure nothrow @nogc
+        => w + padding <= pageSize && h + padding <= pageSize;
 
     // The glyph's size, growing the workspace when the outline needs more.
     auto measure(in Instance inst, uint glyph, Ppem ppem, const(LightHints)* hints) @safe
@@ -352,7 +375,7 @@ private struct Sheet
         }
     }
 
-    void takeDirty(scope void delegate(in DirtyRegion) @system upload) @system
+    void takeDirty(scope bool delegate(in DirtyRegion) @system upload) @system
     {
         enum size = GlyphAtlas.pageSize;
         foreach (i, ref d; dirty)
@@ -361,9 +384,20 @@ private struct Sheet
                 continue;
             if (!uploaded[i])
                 d = DirtyRegion(colour, cast(uint) i, true, 0, 0, size, size);
-            upload(d);
+            if (!upload(d))
+                continue; // not taken: still dirty, still not uploaded
             uploaded[i] = true;
             d = DirtyRegion(colour, cast(uint) i, false, 0, 0, 0, 0);
+        }
+    }
+
+    void markUnstaged() @safe pure nothrow
+    {
+        enum size = GlyphAtlas.pageSize;
+        foreach (i, ref d; dirty)
+        {
+            uploaded[i] = false;
+            d = DirtyRegion(colour, cast(uint) i, true, 0, 0, size, size);
         }
     }
 }
@@ -523,17 +557,59 @@ version (unittest)
     AtlasGlyph a, b;
     cast(void) atlas.get(f.inst, 1, f.glyph('a'), f.ppem, a);
     DirtyRegion[] taken;
-    atlas.takeDirty((in DirtyRegion d) { taken ~= d; });
+    atlas.takeDirty((in DirtyRegion d) { taken ~= d; return true; });
     assert(taken.length == 1 && taken[0].whole, "a page's first upload is the whole page");
     taken = null;
-    atlas.takeDirty((in DirtyRegion d) { taken ~= d; });
+    atlas.takeDirty((in DirtyRegion d) { taken ~= d; return true; });
     assert(taken.length == 0, "and nothing more until something is written");
     cast(void) atlas.get(f.inst, 1, f.glyph('b'), f.ppem, b);
-    atlas.takeDirty((in DirtyRegion d) { taken ~= d; });
+    atlas.takeDirty((in DirtyRegion d) { taken ~= d; return true; });
     assert(taken.length == 1 && !taken[0].whole);
     assert(taken[0].x <= b.x && taken[0].y <= b.y
         && taken[0].x + taken[0].width >= b.x + b.width
         && taken[0].y + taken[0].height >= b.y + b.height, "the patch covers the new glyph");
+}
+
+@("ui_vulkan.glyph_atlas.anUploadNotTakenStaysDirty")
+@system unittest
+{
+    auto f = Fixture.at(18);
+    GlyphAtlas atlas;
+    AtlasGlyph a, b;
+    cast(void) atlas.get(f.inst, 1, f.glyph('a'), f.ppem, a);
+    DirtyRegion[] taken;
+    atlas.takeDirty((in DirtyRegion d) { taken ~= d; return false; });
+    assert(taken.length == 1, "the region was offered");
+    taken = null;
+    atlas.takeDirty((in DirtyRegion d) { taken ~= d; return true; });
+    assert(taken.length == 1 && taken[0].whole,
+        "not taken, it is offered again — still as a first, whole upload");
+    taken = null;
+    cast(void) atlas.get(f.inst, 1, f.glyph('b'), f.ppem, b);
+    atlas.takeDirty((in DirtyRegion d) { taken ~= d; return false; });
+    taken = null;
+    atlas.takeDirty((in DirtyRegion d) { taken ~= d; return true; });
+    assert(taken.length == 1 && !taken[0].whole
+        && taken[0].x <= b.x && taken[0].y <= b.y,
+        "a refused patch stays a patch, covering the same glyph");
+}
+
+@("ui_vulkan.glyph_atlas.markUnstagedUploadsWholePagesAgain")
+@system unittest
+{
+    auto f = Fixture.at(18);
+    GlyphAtlas atlas;
+    AtlasGlyph a, again;
+    cast(void) atlas.get(f.inst, 1, f.glyph('a'), f.ppem, a);
+    DirtyRegion[] taken;
+    atlas.takeDirty((in DirtyRegion d) { taken ~= d; return true; });
+    assert(taken.length == 1);
+    atlas.markUnstaged();
+    taken = null;
+    atlas.takeDirty((in DirtyRegion d) { taken ~= d; return true; });
+    assert(taken.length == 1 && taken[0].whole, "the page uploads whole again");
+    assert(atlas.get(f.inst, 1, f.glyph('a'), f.ppem, again) == AtlasOutcome.placed
+        && again == a && atlas.length == 1, "but its glyphs are still cached");
 }
 
 @("ui_vulkan.glyph_atlas.aFullAtlasSaysSoAndStartsOver")
@@ -550,6 +626,24 @@ version (unittest)
     atlas.reset();
     assert(!atlas.overflowed && atlas.length == 0);
     assert(atlas.get(f.inst, 1, f.glyph('Z'), f.ppem, g) == AtlasOutcome.placed);
+}
+
+@("ui_vulkan.glyph_atlas.aGlyphLargerThanAPageIsRefusedNotFull")
+@system unittest
+{
+    // At this size a capital is wider than a whole page: it can never be
+    // placed, however empty the atlas is. That is a per-glyph refusal,
+    // not a full atlas — `full` would reset every frame and retry it.
+    auto huge = Fixture.at(1800);
+    GlyphAtlas atlas;
+    AtlasGlyph g;
+    assert(atlas.get(huge.inst, 1, huge.glyph('A'), huge.ppem, g) == AtlasOutcome.refused);
+    assert(!atlas.overflowed, "one oversized glyph does not fill the atlas");
+    assert(atlas.get(huge.inst, 1, huge.glyph('A'), huge.ppem, g) == AtlasOutcome.refused,
+        "and the refusal is remembered, not re-measured every frame");
+    auto small = Fixture.at(18);
+    assert(atlas.get(small.inst, 2, small.glyph('A'), small.ppem, g) == AtlasOutcome.placed,
+        "ordinary glyphs still place after it");
 }
 
 @("ui_vulkan.glyph_atlas.anEmojiIsPlacedInColour")
@@ -577,7 +671,7 @@ version (unittest)
     assert(atlas.getColour(f.inst, 1, f.glyph('\U0001F600'), f.ppem, white, again) == AtlasOutcome.placed
         && again == g && atlas.length == 1, "cached");
     DirtyRegion[] taken;
-    atlas.takeDirty((in DirtyRegion d) { taken ~= d; });
+    atlas.takeDirty((in DirtyRegion d) { taken ~= d; return true; });
     assert(taken.length == 1 && taken[0].colour && taken[0].whole);
 }
 
