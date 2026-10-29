@@ -2,7 +2,8 @@
 The document viewer as an embeddable GPU pane (`UIA14`, terminal `TDV5`–
 `TDV8`): one file — source, markdown, DSV, a diff, or an image — loaded,
 kept current, driven by keys and the wheel, and painted into any pixel rect
-of a `sparkles:ui-raylib` window.
+of a window: a `sparkles:ui-raylib` one, or any canvas that draws in device
+pixels ($(LREF isPixelCanvas), `sparkles:ui-vulkan`'s).
 
 The pane is a component the way a terminal pane is: the embedder owns where
 it sits, the focus and the closing; the pane owns the document, its scroll,
@@ -11,11 +12,10 @@ reuses everything hue's window paints from — the $(LREF ViewerModel), its
 display list and $(REF emitVisibleOps, sparkles,doc_view,view_ops) — so a
 file looks the same in hue and in an embedding application.
 
-Compiled where the consumer links `sparkles:ui-raylib`.
+The raylib half (its canvas, its textures) compiles where the consumer links
+`sparkles:ui-raylib`; the pixel-canvas half everywhere.
 */
 module sparkles.doc_view.pane;
-
-version (Have_sparkles_ui_raylib):
 
 import core.time : MonoTime, msecs;
 import std.datetime.systime : SysTime;
@@ -24,14 +24,17 @@ import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.term_color : Color, mix, RgbColor;
 import sparkles.input.events : Key, KeyEvent, WheelEvent;
 import sparkles.syntax : GrammarRegistry, LabelSet, TsConfigCache;
-import sparkles.ui.canvas : DrawOp, fillRectOp, popClipOp, pushClipOp,
+import sparkles.ui.canvas : DrawOp, fillRectOp, isCanvas, popClipOp, pushClipOp,
     RuleEdge, Scrollbar;
 import sparkles.ui.geometry : Rect;
 import sparkles.ui.style : ColorScheme, schemeForBackground, Slot, Visual;
 import sparkles.ui.theme : Theme;
 import sparkles.ui.themes : builtinDark, builtinLight;
-import sparkles.ui_raylib : RaylibCanvas;
-import sparkles.ui_raylib.raylib_canvas : GuiMeasure;
+version (Have_sparkles_ui_raylib)
+{
+    import sparkles.ui_raylib : RaylibCanvas;
+    import sparkles.ui_raylib.raylib_canvas : GuiMeasure;
+}
 
 import sparkles.doc_view.document : DocumentPipeline;
 import sparkles.doc_view.kind : ViewKind, viewKindOf;
@@ -104,9 +107,12 @@ struct DocViewPane
 {
     /// The document's model (null-document while `error` is set).
     ViewerModel vm;
-    // The host's measurer the model lays out with, once a GUI host paints it.
-    private GuiMeasure guiMeasure;
-    private bool measured;
+    version (Have_sparkles_ui_raylib)
+    {
+        // The host's measurer the model lays out with, once a GUI host paints it.
+        private GuiMeasure guiMeasure;
+        private bool measured;
+    }
     /// The path the pane shows (restore re-opens it, `TDV5`).
     string path;
     /// The file name, for the pane's title.
@@ -139,7 +145,10 @@ struct DocViewPane
     private bool loadPending;
     private int pendingPaints;
     private SharedBuffer!(char, 4096) buf;
-    private ImageTexture image;
+    version (Have_sparkles_ui_raylib)
+        private ImageTexture image;
+    // An image file on a pixel canvas: decoded once, in the pane's registry.
+    private PaneImage picture;
 
     @disable this(this);
 
@@ -260,7 +269,7 @@ struct DocViewPane
             deleted = false;
             if (kind == ViewKind.image)
             {
-                image.release();
+                release();
                 mtime = m;
                 dirty = true;
                 return true;
@@ -311,7 +320,9 @@ struct DocViewPane
     /// Frees the GPU texture of an image pane. Call while the window lives.
     void release() @system
     {
-        image.release();
+        version (Have_sparkles_ui_raylib)
+            image.release();
+        picture.release();
     }
 
     // ── input (`TDV6`) ──────────────────────────────────────────────────
@@ -689,24 +700,16 @@ struct DocViewPane
     canvas of the host's (its fonts, effect backend and images). `focused`
     lights the header.
     */
+    version (Have_sparkles_ui_raylib)
     void paint(ref RaylibCanvas host, int px, int py, int pw, int ph, bool focused,
         in Rect barBand = Rect.init) @system
     {
-        import sparkles.ui.components.chrome : headerBar;
-        import sparkles.ui.display_list : buildDisplayList;
-        import sparkles.ui.geometry : SizeSpec;
-        import sparkles.ui.interp.immediate : paint;
-        import sparkles.ui.layout : layout;
-        import sparkles.ui.style : TextStyle;
-        import sparkles.ui.widget : Builder, Widget, WidgetKind;
-
         if (pw <= 0 || ph <= 0)
             return;
         dirty = false;
         if (!loadedForPaint())
             return;
         const cw = host.cellW > 0 ? host.cellW : 1, ch = host.cellH > 0 ? host.cellH : 1;
-        const cols = pw / cw, rows = ph / ch;
         auto c = RaylibCanvas(host.fonts, &buf, cw, ch, px, py);
         c.fx = host.fx;
         c.images = host.images;
@@ -730,7 +733,44 @@ struct DocViewPane
             measured = true;
             vm.rebuild();
         }
-        c.fillPixels(px, py, pw, ph, vm.pageBg);
+        paintOn(c, px, py, pw, ph, cw, ch, focused, barBand);
+    }
+
+    /**
+    ditto, through a canvas that draws in device pixels (`sparkles:ui-vulkan`'s
+    `VulkanCanvas`): its cells are `cw` × `ch` pixels, and the pane is drawn
+    under a pixel offset to (`px`, `py`), so the toolkit's cell operations land
+    in the pane. An image file is a PNG decoded into the pane's own registry.
+    */
+    void paint(C)(C* canvas, int cw, int ch, int px, int py, int pw, int ph, bool focused,
+        in Rect barBand = Rect.init) @system
+    if (isPixelCanvas!C)
+    {
+        if (canvas is null || pw <= 0 || ph <= 0)
+            return;
+        dirty = false;
+        if (!loadedForPaint())
+            return;
+        canvas.pushOffsetPx(px, py);
+        scope (exit) canvas.popOffsetPx();
+        paintOn(*canvas, px, py, pw, ph, cw > 0 ? cw : 1, ch > 0 ? ch : 1, focused, barBand);
+    }
+
+    // The pane on canvas `c`, whose cell (0, 0) is the pane's top-left
+    // pixel (`px`, `py`): what both arms share.
+    private void paintOn(C)(ref C c, int px, int py, int pw, int ph, int cw, int ch,
+        bool focused, in Rect barBand) @system
+    {
+        import sparkles.ui.components.chrome : headerBar;
+        import sparkles.ui.display_list : buildDisplayList;
+        import sparkles.ui.geometry : SizeSpec;
+        import sparkles.ui.interp.immediate : paint;
+        import sparkles.ui.layout : layout;
+        import sparkles.ui.style : TextStyle;
+        import sparkles.ui.widget : Builder, Widget, WidgetKind;
+
+        const cols = pw / cw, rows = ph / ch;
+        fillPane(c, px, py, 0, 0, pw, ph, vm.pageBg);
         if (cols < 4 || rows < 2)
             return;
 
@@ -778,7 +818,7 @@ struct DocViewPane
         }
         if (kind == ViewKind.image)
         {
-            image.draw(path, px, py + y0 * ch, pw, ph - y0 * ch);
+            drawImage(c, px, py, 0, y0 * ch, pw, ph - y0 * ch, y0, cols);
             return;
         }
 
@@ -883,7 +923,7 @@ struct DocViewPane
             if (overlay)
             {
                 c.popClip(); // the band is outside the pane
-                cast(void) c.scrollbarPx(barBand_, sb);
+                overlayBar(c, px, py, barBand_, sb, cw);
                 c.pushClip(Rect(0, 0, cols, rows));
             }
             else
@@ -895,7 +935,72 @@ struct DocViewPane
                 mix(vm.pageBg, vm.pageFg, 0.12));
     }
 
-    private void textLine(ref RaylibCanvas c, int row, int cols, string text, RgbColor bg) @system
+    // A solid rectangle at pane pixel (`x`, `y`): raylib's canvas places it
+    // in window pixels, a pixel canvas under the pane's offset.
+    private static void fillPane(C)(ref C c, int px, int py, int x, int y, int w, int h,
+        RgbColor colour) @system
+    {
+        static if (isPixelCanvas!C)
+            c.fillPx(x, y, w, h, rgbaOf(colour));
+        else
+            c.fillPixels(px + x, py + y, w, h, colour);
+    }
+
+    // The overlay bar in `windowBand`, window pixels outside the document's
+    // columns (`SCV13`): its rail and thumb, as the shared geometry places them.
+    private static void overlayBar(C)(ref C c, int px, int py, in Rect windowBand,
+        in Scrollbar op, int cw) @system
+    {
+        static if (isPixelCanvas!C)
+        {
+            const band = Rect(windowBand.x - px, windowBand.y - py, windowBand.width,
+                windowBand.height);
+            import sparkles.ui.pixel_geometry : railExpandedPx, railIdlePx,
+                scrollbarMinExtentPx, scrollbarRailPx;
+
+            const idle = railIdlePx(cw);
+            const thickness = idle + (railExpandedPx(cw) - idle) * op.expandPercent / 100;
+            if (op.fadePercent == 0)
+                return;
+            const r = scrollbarRailPx(band, op.edge, op.content, op.viewport, op.offset,
+                op.offsetFrac, thickness, scrollbarMinExtentPx);
+            if (!r.live)
+                return;
+            if (op.trackLit)
+                c.fillPx(r.track.x, r.track.y, r.track.width, r.track.height,
+                    rgbaOf(op.trackColor, cast(ubyte)(op.trackAlpha * op.fadePercent / 100)));
+            c.fillPx(r.thumb.x, r.thumb.y, r.thumb.width, r.thumb.height,
+                rgbaOf(op.fg, cast(ubyte)(op.fgAlpha * op.fadePercent / 100)));
+        }
+        else
+            cast(void) c.scrollbarPx(windowBand, op);
+    }
+
+    // An image file in the box at pane pixel (`x`, `y`), `w` × `h`: scaled to
+    // fit, centred, never enlarged past 1:1.
+    private void drawImage(C)(ref C c, int px, int py, int x, int y, int w, int h, int row,
+        int cols) @system
+    {
+        static if (isPixelCanvas!C)
+        {
+            if (!picture.load(path))
+            {
+                textLine(c, row, cols, picture.error, vm.pageBg);
+                return;
+            }
+            int dw, dh;
+            fitWithin(picture.width, picture.height, w, h, dw, dh);
+            const found = c.boundImages;
+            c.images(&picture.registry);
+            scope (exit) c.images(found);
+            c.imageSourcePx(picture.handle, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh, 0, 0,
+                picture.width, picture.height);
+        }
+        else
+            image.draw(path, px + x, py + y, w, h);
+    }
+
+    private void textLine(C)(ref C c, int row, int cols, string text, RgbColor bg) @system
     {
         import sparkles.ui.canvas : textRunOp;
         import sparkles.ui.interp.immediate : paint;
@@ -939,6 +1044,7 @@ struct DocViewPane
 
 // A decoded image file as a texture, loaded on first paint (the GL context is
 // the paint's) and scaled to fit, centred, never enlarged past 1:1.
+version (Have_sparkles_ui_raylib)
 private struct ImageTexture
 {
     import raylib : Texture2D;
@@ -980,6 +1086,116 @@ private struct ImageTexture
         if (loaded)
             UnloadTexture(tex);
         loaded = failed = false;
+    }
+}
+
+/**
+Whether `C` draws in device pixels the way the pane needs to embed in a
+window: a toolkit canvas with pixel fills, a pixel offset that moves its
+cell operations, and images from a registry it binds (`sparkles:ui-vulkan`'s
+`VulkanCanvas`).
+*/
+enum bool isPixelCanvas(C) = isCanvas!C && __traits(compiles, (ref C c) {
+    import sparkles.shaders : v4;
+    import sparkles.ui.image : ImageHandle, ImageRegistry;
+
+    c.fillPx(0, 0, 1, 1, v4(0, 0, 0, 0));
+    c.pushOffsetPx(0, 0);
+    c.popOffsetPx();
+    const(ImageRegistry)* r = c.boundImages;
+    c.images(r);
+    c.imageSourcePx(ImageHandle.init, 0, 0, 1, 1, 0, 0, 1, 1);
+});
+
+private auto rgbaOf(RgbColor c, ubyte alpha = 255) @safe pure nothrow @nogc
+{
+    import sparkles.shaders : v4;
+
+    return v4(c.r / 255.0f, c.g / 255.0f, c.b / 255.0f, alpha / 255.0f);
+}
+
+// The size an image of `iw` × `ih` takes in a `w` × `h` box: scaled to fit,
+// never enlarged past 1:1.
+private void fitWithin(int iw, int ih, int w, int h, out int dw, out int dh)
+    @safe pure nothrow @nogc
+{
+    if (iw <= 0 || ih <= 0 || w <= 0 || h <= 0)
+        return;
+    double s = cast(double) w / iw;
+    if (cast(double) h / ih < s)
+        s = cast(double) h / ih;
+    if (s > 1)
+        s = 1;
+    dw = cast(int)(iw * s);
+    dh = cast(int)(ih * s);
+}
+
+@("pane.fitWithin.scalesDownNeverUp")
+@safe pure nothrow @nogc unittest
+{
+    int w, h;
+    fitWithin(400, 200, 100, 100, w, h);
+    assert(w == 100 && h == 50);
+    fitWithin(40, 20, 100, 100, w, h);
+    assert(w == 40 && h == 20, "never enlarged");
+    fitWithin(100, 400, 100, 100, w, h);
+    assert(w == 25 && h == 100);
+}
+
+// An image file decoded for a pixel canvas: a PNG (`sparkles:image`), held in
+// a registry of the pane's own that it binds while it draws, so the
+// embedder's images stay its own (`UVX11`).
+private struct PaneImage
+{
+    import sparkles.ui.image : ImageHandle, ImageRegistry;
+
+    ImageRegistry registry;
+    ImageHandle handle;
+    int width, height;
+    string error;
+    private bool tried;
+
+    @disable this(this);
+
+    // Decodes `path` once; false (with `error`) when it is not a PNG this
+    // canvas can draw.
+    bool load(string path) @system
+    {
+        import std.file : read;
+        import sparkles.image.png : decodePngAlloc;
+        import sparkles.ui.geometry : Size;
+
+        if (tried)
+            return error.length == 0;
+        tried = true;
+        const(ubyte)[] bytes;
+        try
+            bytes = cast(const(ubyte)[]) read(path);
+        catch (Exception e)
+        {
+            error = e.msg;
+            return false;
+        }
+        auto png = decodePngAlloc(bytes);
+        if (png.hasError)
+        {
+            error = "only PNG images draw here";
+            return false;
+        }
+        width = cast(int) png.value.width;
+        height = cast(int) png.value.height;
+        handle = registry.register(png.value.rgba, Size(width, height));
+        return true;
+    }
+
+    // Forgets the image: a changed file decodes again on the next paint.
+    void release() @safe nothrow
+    {
+        if (handle.valid)
+            registry.remove(handle);
+        handle = handle.init;
+        error = null;
+        tried = false;
     }
 }
 
@@ -1183,4 +1399,118 @@ version (unittest)
     assert(pane.loadedForPaint() && pane.vm.source.length > 0, "the second reads the document");
     assert(pane.vm.widthCols < 0, "unlaid out, so its first build is the screen's");
     assert(pane.loadedForPaint());
+}
+
+version (unittest)
+{
+    // A pixel canvas that records: the toolkit's operations, and the pixel
+    // calls the pane makes around them.
+    private struct PixelRecorder
+    {
+        import sparkles.shaders : vec4;
+        import sparkles.ui.canvas : RecordingCanvas;
+        import sparkles.ui.image : ImageHandle, ImageRegistry;
+
+        RecordingCanvas rec;
+        alias rec this;
+        string[] calls;
+        const(ImageRegistry)* bound;
+        ImageHandle drawn;
+        int[4] drawnBox;
+
+        void fillPx(int x, int y, int w, int h, vec4) @safe
+        {
+            import std.conv : text;
+
+            calls ~= text("fill ", x, " ", y, " ", w, " ", h);
+        }
+
+        void pushOffsetPx(int dx, int dy) @safe
+        {
+            import std.conv : text;
+
+            calls ~= text("offset ", dx, " ", dy);
+        }
+
+        void popOffsetPx() @safe { calls ~= "unoffset"; }
+
+        const(ImageRegistry)* boundImages() const @safe pure nothrow @nogc => bound;
+
+        void images(const(ImageRegistry)* r) @safe pure nothrow @nogc { bound = r; }
+
+        void imageSourcePx(ImageHandle h, int x, int y, int w, int ht, int, int, int, int) @safe
+        {
+            drawn = h;
+            drawnBox = [x, y, w, ht];
+            calls ~= bound is null ? "image, none bound" : "image";
+        }
+    }
+
+    static assert(isPixelCanvas!PixelRecorder);
+}
+
+@("pane.paint.aPixelCanvasDrawsThePaneUnderItsOffset")
+@system unittest
+{
+    import std.algorithm.searching : canFind;
+    import std.file : remove;
+    import std.sumtype : match;
+    import sparkles.ui.canvas : TextRun;
+
+    auto env = DocViewEnv.create(GrammarRegistry.fromEnvironment());
+    const p = fixture("pixels.md", "# Title\n\nHello pixel world\n");
+    scope (exit) remove(p);
+    auto pane = new DocViewPane;
+    assert(pane.open(env, p, chromeTheme(RgbColor(200, 200, 200), RgbColor(20, 20, 20))));
+    PixelRecorder c;
+    pane.paint(&c, 10, 20, 100, 50, 400, 300, focused: true);
+    assert(c.calls[0] == "offset 100 50" && c.calls[$ - 1] == "unoffset",
+        "everything the pane draws is under its offset");
+    assert(c.calls[1] == "fill 0 0 400 300", "its background fills its box, from its corner");
+    string[] runs;
+    foreach (ref op; c.ops)
+        op.payload.match!((in TextRun t) { runs ~= t.text.idup; }, (in _) {});
+    assert(runs.canFind("Title") && runs.canFind("Hello") && runs.canFind("world"),
+        "the document's text reaches the canvas");
+    assert(pane.docRows == 300 / 20 - 1, "the rows under the header");
+}
+
+@("pane.paint.aPngFileDrawsFromThePanesOwnRegistry")
+@system unittest
+{
+    import std.file : remove, write;
+    import sparkles.image.png : encodePng;
+    import sparkles.ui.image : ImageRegistry;
+
+    auto env = DocViewEnv.create(GrammarRegistry.fromEnvironment());
+    const p = fixture("picture.png", "");
+    write(p, encodePng(new ubyte[400 * 100 * 4], 400, 100));
+    scope (exit) remove(p);
+    auto pane = new DocViewPane;
+    assert(pane.open(env, p, chromeTheme(RgbColor(200, 200, 200), RgbColor(20, 20, 20))));
+    ImageRegistry embedders;
+    PixelRecorder c;
+    c.bound = &embedders;
+    pane.paint(&c, 10, 20, 0, 0, 200, 220, focused: false);
+    assert(c.drawn.valid && c.calls.canFindImage, "the image, from a registry bound for it");
+    assert(c.bound is &embedders, "the embedder's registry is put back");
+    // Under the header row: 200 px wide, so half its size, centred.
+    assert(c.drawnBox == [0, 20 + (200 - 50) / 2, 200, 50]);
+
+    const q = fixture("notpng.png", "not a png");
+    scope (exit) remove(q);
+    auto bad = new DocViewPane;
+    assert(bad.open(env, q, chromeTheme(RgbColor(200, 200, 200), RgbColor(20, 20, 20))));
+    PixelRecorder d;
+    bad.paint(&d, 10, 20, 0, 0, 200, 220, focused: false);
+    assert(!d.drawn.valid && bad.picture.error.length, "a located message instead");
+}
+
+version (unittest)
+    private bool canFindImage(string[] calls) @safe pure nothrow
+{
+    foreach (c; calls)
+        if (c == "image")
+            return true;
+    return false;
 }

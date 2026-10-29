@@ -21,6 +21,8 @@ dependency "sparkles:code-instrumentation" path="../.."
 dependency "sparkles:build-primitives" path="../.."
 dependency "sparkles:input" path="../.."
 dependency "sparkles:ui" path="../.."
+// An image file on a pixel canvas: a PNG decoded in D.
+dependency "sparkles:image" path="../.."
 
 // Two halves, gated on what the consumer links rather than on a
 // configuration of this package (`Have_<package>` versions):
@@ -29,8 +31,9 @@ dependency "sparkles:ui" path="../.."
 //     needs only the packages above and builds everywhere hue's `no-gui`
 //     configuration does;
 //   * `ansi_decode` (an off-screen libghostty-vt) compiles where the consumer
-//     depends on `sparkles:ghostty`, and the pane (`sparkles.doc_view.pane`)
-//     where it depends on `sparkles:ui-raylib`.
+//     depends on `sparkles:ghostty`, and the pane's raylib half
+//     (`sparkles.doc_view.pane`) where it depends on `sparkles:ui-raylib`;
+//     its pixel-canvas half builds everywhere.
 //
 // sourceLibrary because sparkles:syntax is one (ImportC types in its
 // signatures) — see docs/guidelines/importc-c-libraries.md.
