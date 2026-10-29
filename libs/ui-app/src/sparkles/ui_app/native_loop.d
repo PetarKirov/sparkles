@@ -31,7 +31,7 @@ import core.time : Duration, MonoTime, msecs, seconds;
 import sparkles.base.term_color : RgbColor;
 import sparkles.base.term_control : PointerShape;
 import sparkles.event_horizon : DefaultLoop, LoopConfig;
-import sparkles.input : Event, InputCapabilities, mousePointer;
+import sparkles.input : Event, InputCapabilities, mousePointer, touchPointer;
 import sparkles.ui.canvas : DrawOp;
 import sparkles.ui.effect : EffectRegistry;
 import sparkles.ui.geometry : Size;
@@ -41,7 +41,7 @@ import sparkles.ui_app.gui_options : FontRequest, WindowCells;
 import sparkles.ui_app.host : HostState, isHost, noDraw, noSetup, noShutdown, PointerUnit,
     RunConfig, withRealSize;
 import sparkles.ui_app.lifecycle : Failure, FrameResult, Lifecycle, Rebuild, Surface;
-import sparkles.ui_app.wsi_input : WsiInput;
+import sparkles.ui_app.wsi_input : TouchContacts, WsiInput;
 import sparkles.ui_vulkan;
 import sparkles.vulkan;
 import sparkles.vulkan_wsi;
@@ -241,6 +241,9 @@ struct NativeSession
     void delegate(PointerShape) @system setCursor;           ///
     void delegate(scope const(char)[]) @system setClipboard; ///
     void delegate(int px) @system setFontSize;               ///
+    void delegate(bool on) @system setTextInput;             ///
+    /// The fingers down, as the last drain left them.
+    TouchContacts touches;
 }
 
 /// The host an application sees in a native window.
@@ -277,6 +280,19 @@ struct NativeHost
         with (session_.insets)
             return Size(inside(session_.pixelW, left, right), inside(session_.pixelH, top, bottom));
     }
+
+    /// The edges system bars, cutouts or the soft keyboard cover, in device
+    /// pixels: outside `pixels`, which starts inside them.
+    PhysicalInsets insets() const @safe pure nothrow @nogc => session_.insets;
+
+    /// The fingers on a touch surface, positions in device pixels from the
+    /// cells' origin: what a press drawn while the finger is still down
+    /// reads, the gestures arriving as events.
+    TouchContacts touches() const @safe pure nothrow @nogc => session_.touches;
+
+    /// Asks for text input — on a phone, the soft keyboard — or puts it away.
+    /// A hardware keyboard types either way.
+    void textInput(bool on) @system => session_.setTextInput(on);
 
     /// One cell, in device pixels. A terminal pane opens with these
     /// (`openPixels`) and needs `PointerUnit.pixels` so pointer events
@@ -729,9 +745,17 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
     // ── the host ──
     NativeHost host;
     host.session_ = &session;
+    // A touch surface where the platform is one and the application asked
+    // for gestures (`RunConfig.touchGestures`).
+    bool touch;
+    version (Android)
+        touch = cfg.touchGestures;
+    if (touch)
+        host.capabilities = touchPointer;
     host.capabilities.keyRelease = cfg.keyRelease;
     WsiInput input;
     input.capabilities = host.capabilities;
+    input.touchGestures = touch;
     input.fractionalScroll = cfg.fractionalScroll;
     input.scale = metrics.scale.value;
     input.originX = metrics.safeInsets.left;
@@ -747,6 +771,10 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
     session.setFontSize = (int px) {
         measure(lc.fontSize(px));
         bindFont();
+    };
+    session.setTextInput = (bool on) {
+        static if (__traits(hasMember, Wsi, "setTextInput"))
+            cast(void) wsi.setTextInput(window, on);
     };
 
     scope (exit)
@@ -816,8 +844,18 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                 (in MemoryPressureEvent m) { lc.memoryPressure(m.critical); input_ = false; },
                 (in _) {});
             if (input_)
+            {
+                configureGestures(input, session.font);
                 deliverInput!handle(host, input, wsi, e, unitW(), unitH(), delivered);
+            }
         });
+        // Time resolves gestures too: a long-press, a fling's tail.
+        if (input.gesturing)
+            input.tickGestures(MonoTime.currTime, unitW(), unitH(), (Event x) {
+                handle(host, withRealSize(x, host.size));
+                delivered = true;
+            });
+        session.touches = input.contacts;
         flushInput!handle(host, input, delivered);
         if (delivered)
             lc.input();
@@ -937,6 +975,9 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         // Park until the window system has something, or the application's
         // next deadline.
         Duration timeout = plan.park < 1.seconds ? plan.park : 1.seconds;
+        // A gesture in flight is ticked at the display's rate until it rests.
+        if (input.gesturing && timeout > gestureTick)
+            timeout = gestureTick;
         if (cfg.idleTimeoutMs >= 0 && cfg.idleTimeoutMs.msecs < timeout)
             timeout = cfg.idleTimeoutMs.msecs;
         const parkedAt = MonoTime.currTime;
@@ -951,6 +992,20 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
             lc.input();
     }
     return ok;
+}
+
+// How often a gesture in flight is ticked while nothing else arrives.
+private enum gestureTick = 16.msecs;
+
+// The recogniser's thresholds are physical, so they follow the cell: a
+// pinch or a font-size change moves it, as on the raylib arm.
+private void configureGestures(ref WsiInput input, in CellFont font) @safe pure nothrow @nogc
+{
+    const slop = font.cellH / 2.0f;
+    input.gestures.cfg.slopPx = slop > 8 ? slop : 8;
+    input.gestures.cfg.cellH = font.cellH;
+    input.gestures.cfg.cellW = font.cellW;
+    input.gestures.cfg.fractional = input.fractionalScroll;
 }
 
 // The loop's halves an application sees — input in, a frame's operations
@@ -1007,6 +1062,8 @@ void replayNative(alias present, alias handle, Texts)(ref NativeSession session,
         session.setClipboard = (scope const(char)[]) {};
     if (session.setFontSize is null)
         session.setFontSize = (int) {};
+    if (session.setTextInput is null)
+        session.setTextInput = (bool) {};
 
     NativeHost host;
     host.session_ = &session;
@@ -1208,6 +1265,8 @@ private void writeCapture(ref Gpu gpu, ref GpuBuffer buffer, string path) @syste
         h.clipboard("copied");
         h.screenshot("frame.png");
         h.fontSize(h.fontSizePx + 2);
+        h.textInput(true);
+        const contacts = h.touches.count + h.insets.bottom;
         auto c = h.canvas;
     }
 }

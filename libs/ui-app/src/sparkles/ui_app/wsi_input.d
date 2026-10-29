@@ -26,6 +26,11 @@ $(UL
     repeat and release with its unshifted code point, and pairs the text a
     keystroke typed onto it — the WSI delivers that text as the next event —
     so a pty encoder knows which stroke produced it (`INP15`).)
+    $(LI $(B Touch) is the first finger as the left button, or, with
+    `touchGestures`, what the shared gesture recogniser resolves — taps,
+    drags as wheel steps, long-presses and pinches — as the raylib arm's
+    touch surface delivers them. Every finger is tracked either way
+    (`contacts`).)
     $(LI $(B Window state): a ready or resized surface is a `ResizeEvent` with
     a zero size, which the host fills in; focus is a `FocusEvent`.)
 )
@@ -41,6 +46,7 @@ import core.time : MonoTime, msecs;
 
 import sparkles.base.text.utf : decodeToken, UtfMode;
 import sparkles.input;
+import sparkles.input.gesture : GestureRecognizer;
 import sparkles.wsi.events : CloseRequestedEvent, FocusChangedEvent, KeyboardEvent,
     LogicalKeyKind, PointerPhase, ReadyEvent, ScrollEvent, ScrollUnit,
     SurfaceMetricsChangedEvent, TextCommittedEvent, TextId, TouchEvent, TouchPhase, WindowEvent;
@@ -50,6 +56,22 @@ import sparkles.wsi.types : PointerId;
 /// A pause longer than this between two scroll events starts a new gesture
 /// (`WheelEvent.begins`).
 enum scrollGesturePause = 300.msecs;
+
+/**
+The fingers on a touch surface, as the platform last reported them: what an
+application that draws a press while a finger is still down (a key row, a
+handle being dragged) reads between gestures.
+*/
+struct TouchContacts
+{
+    ubyte count;   /// fingers down now
+    Point[2] at;   /// the first two, in device pixels from the cells' origin
+    /// Contacts begun so far: a change since the last read is a new touch,
+    /// even one that began and ended between two reads.
+    uint began;
+    Point beganAt; /// where the latest first finger came down
+    Point lastAt;  /// where the first finger last was, down or lifted
+}
 
 /**
 The adapter's state across events: the buttons held, the scroll remainder,
@@ -73,6 +95,28 @@ struct WsiInput
     /// canvas draws from here.
     int originX, originY;
 
+    /**
+    Touch resolves through the gesture recogniser (`RunConfig.touchGestures`):
+    a tap is a press and a release, a drag wheel steps, a long-press and a
+    pinch gestures, each at the point the gesture began — never the first
+    finger as a mouse. The host keeps calling $(LREF tickGestures) while
+    $(LREF gesturing).
+    */
+    bool touchGestures;
+
+    /// ditto; its thresholds are the host's to set, in device pixels.
+    GestureRecognizer gestures;
+
+    private enum maxContacts = 10;
+    private PointerId[maxContacts] contactIds_;
+    private Point[maxContacts] contactAt_;
+    private TouchContacts contacts_;
+    private MonoTime gestureClock_;
+
+    version (unittest) package static void gestureClockForTest(ref WsiInput i, MonoTime at)
+    {
+        i.gestureClock_ = at;
+    }
     private Mods mods_;
     private bool[PointerButton.max + 1] held_;
     private float scrollX_ = 0, scrollY_ = 0;
@@ -85,6 +129,31 @@ struct WsiInput
 
     /// The modifiers the last event reported held (`HST17`).
     Mods modifiers() const @safe pure nothrow @nogc => mods_;
+
+    /// The fingers down, as the last touch event left them.
+    TouchContacts contacts() const @safe pure nothrow @nogc => contacts_;
+
+    /// Whether time alone can still resolve a gesture: a finger is down or a
+    /// fling coasts.
+    bool gesturing() const @safe pure nothrow @nogc => touchGestures && gestures.active;
+
+    /**
+    Advances the recogniser to `now` and delivers what it resolves, at the
+    point the gesture began, in cells of `cellW`×`cellH` pixels.
+    */
+    void tickGestures(Sink)(MonoTime now, int cellW, int cellH, scope Sink sink)
+    {
+        if (!touchGestures)
+            return;
+        const dtMs = gestureClock_ == MonoTime.init ? 0
+            : cast(float)(now - gestureClock_).total!"usecs" / 1000;
+        gestureClock_ = now;
+        gestures.tick(dtMs);
+        const anchor = gestures.anchor;
+        const at = cellAt(cast(int) anchor.x, cast(int) anchor.y, cellW, cellH);
+        for (auto e = gestures.next(); !isNoEvent(e); e = gestures.next())
+            sink(atAnchor(e, at, mods_));
+    }
 
     /**
     Delivers to `sink` the input events `event` translates to, positions in
@@ -148,13 +217,18 @@ struct WsiInput
         return event.payload.match!((in TextCommittedEvent _) => true, (in _) => false);
     }
 
-    // The first finger down is the left button: it presses, drags while it
-    // moves, and releases when it lifts or the system cancels it, so an
-    // application written for a mouse works by touch. Other fingers are not
-    // a pointer.
+    // Every finger is tracked (`contacts`). Without the recogniser the first
+    // finger down is the left button: it presses, drags while it moves, and
+    // releases when it lifts or the system cancels it, so an application
+    // written for a mouse works by touch; other fingers are not a pointer.
     private void touch(Sink)(in TouchEvent t, int cellW, int cellH, scope Sink sink)
     {
-        const pos = cellAt(t.physicalPosition.x - originX, t.physicalPosition.y - originY, cellW, cellH);
+        const px = Point(cast(int) t.physicalPosition.x - originX,
+            cast(int) t.physicalPosition.y - originY);
+        noteContact(t.contact, t.phase, px);
+        if (touchGestures)
+            return recognise(t.phase, cellW, cellH, sink);
+        const pos = cellAt(px.x, px.y, cellW, cellH);
         final switch (t.phase)
         {
             case TouchPhase.began:
@@ -180,6 +254,96 @@ struct WsiInput
                     pos: pos, mods: mods_)));
         }
     }
+
+    private void noteContact(PointerId id, TouchPhase phase, Point at)
+    {
+        size_t i;
+        while (i < contacts_.count && contactIds_[i] != id)
+            ++i;
+        final switch (phase)
+        {
+            case TouchPhase.began:
+                if (i == contacts_.count && contacts_.count < maxContacts)
+                {
+                    contactIds_[i] = id;
+                    ++contacts_.count;
+                    if (i == 0)
+                    {
+                        ++contacts_.began;
+                        contacts_.beganAt = at;
+                    }
+                }
+                break;
+            case TouchPhase.moved:
+                break;
+            case TouchPhase.ended:
+            case TouchPhase.cancelled:
+                if (i < contacts_.count)
+                {
+                    if (i == 0)
+                        contacts_.lastAt = at;
+                    foreach (j; i + 1 .. contacts_.count)
+                    {
+                        contactIds_[j - 1] = contactIds_[j];
+                        contactAt_[j - 1] = contactAt_[j];
+                    }
+                    --contacts_.count;
+                }
+                i = maxContacts; // gone
+                break;
+        }
+        if (i < contacts_.count)
+        {
+            contactAt_[i] = at;
+            if (i == 0)
+                contacts_.lastAt = at;
+        }
+        contacts_.at[0] = contacts_.count > 0 ? contactAt_[0] : Point.init;
+        contacts_.at[1] = contacts_.count > 1 ? contactAt_[1] : Point.init;
+    }
+
+    // One sample to the recogniser — the contacts as they are now, as a
+    // frame-polling host reports them — and what it resolves at once. Ticked
+    // per sample, so a burst of samples cannot overflow its queue.
+    private void recognise(Sink)(TouchPhase phase, int cellW, int cellH, scope Sink sink)
+    {
+        import sparkles.input.gesture : PointF;
+
+        static PointF f(Point p) => PointF(p.x, p.y);
+        // A recogniser at rest has nothing timed: the gap since its last tick
+        // must not count as a finger held (a long-press on every touch).
+        if (!gestures.active)
+            gestureClock_ = MonoTime.currTime;
+        const n = contacts_.count;
+        if (n >= 2)
+            gestures.setContacts(n > ubyte.max ? ubyte.max : cast(ubyte) n, f(contacts_.at[0]),
+                f(contacts_.at[1]));
+        else if (n == 1)
+        {
+            gestures.setContacts(1, f(contacts_.at[0]), PointF());
+            gestures.pointer(0, true, f(contacts_.at[0]));
+        }
+        else
+        {
+            // The system took the touch: nothing it began resolves.
+            if (phase == TouchPhase.cancelled)
+                gestures.cancel();
+            gestures.setContacts(0, PointF(), PointF());
+            gestures.pointer(0, false, f(contacts_.lastAt));
+        }
+        tickGestures(MonoTime.currTime, cellW, cellH, sink);
+    }
+
+    private static Event atAnchor(Event e, Point at, Mods m) @safe pure nothrow @nogc
+        => e.match!(
+            (PointerEvent p) => Event(PointerEvent(action: p.action, button: p.button, pos: at,
+                mods: m)),
+            (WheelEvent w) => Event(WheelEvent(dx: w.dx, dy: w.dy, pos: at, mods: m,
+                precise: w.precise, fdx: w.fdx, fdy: w.fdy, begins: w.begins)),
+            (GestureEvent g) => Event(GestureEvent(gesture: g.gesture, pos: at, scale: g.scale,
+                mods: m)),
+            (ref other) => Event(other),
+        );
 
     private void pointer(Sink)(in sparkles.wsi.events.PointerEvent p, int cellW, int cellH,
         scope Sink sink)
@@ -560,6 +724,84 @@ version (unittest)
         Event(PointerEvent(action: PointerAction.drag, button: PointerButton.left, pos: Point(3, 3))),
         Event(PointerEvent(action: PointerAction.release, button: PointerButton.left, pos: Point(3, 3))),
     ]);
+}
+
+@("ui_app.wsi_input.contactsFollowEveryFinger")
+@system unittest
+{
+    static WindowEvent touch(TouchPhase phase, uint contact, int x, int y)
+    {
+        TouchEvent t;
+        t.contact = PointerId(contact);
+        t.phase = phase;
+        t.physicalPosition = PhysicalPosition(x, y);
+        return ev(t);
+    }
+
+    WsiInput input;
+    input.originX = 5;
+    FakeTexts wsi;
+    cast(void) translated(input, wsi, [touch(TouchPhase.began, 1, 25, 45),
+        touch(TouchPhase.began, 2, 5, 5)]);
+    auto c = input.contacts;
+    assert(c.count == 2 && c.at == [Point(20, 45), Point(0, 5)] && c.began == 1,
+        "two fingers, from the origin; one touch begun");
+    cast(void) translated(input, wsi, [touch(TouchPhase.ended, 1, 35, 45)]);
+    c = input.contacts;
+    assert(c.count == 1 && c.at[0] == Point(0, 5) && c.lastAt == Point(30, 45),
+        "the other finger is the first now; the first lifted there");
+    cast(void) translated(input, wsi, [touch(TouchPhase.cancelled, 2, 15, 5),
+        touch(TouchPhase.began, 3, 105, 5), touch(TouchPhase.ended, 3, 105, 5)]);
+    c = input.contacts;
+    assert(c.count == 0 && c.began == 2 && c.beganAt == Point(100, 5) && c.lastAt == Point(100, 5),
+        "a touch that began and ended between two reads still counts");
+}
+
+@("ui_app.wsi_input.touchGesturesResolveAtTheirAnchor")
+@system unittest
+{
+    import core.time : msecs, seconds;
+
+    static WindowEvent touch(TouchPhase phase, uint contact, int x, int y)
+    {
+        TouchEvent t;
+        t.contact = PointerId(contact);
+        t.phase = phase;
+        t.physicalPosition = PhysicalPosition(x, y);
+        return ev(t);
+    }
+
+    WsiInput input;
+    input.touchGestures = true;
+    input.gestures.cfg.cellH = 20;
+    FakeTexts wsi;
+    // A tap: a press and a release where it began, and no mouse drag.
+    assert(translated(input, wsi, [touch(TouchPhase.began, 1, 25, 45),
+        touch(TouchPhase.moved, 1, 27, 46), touch(TouchPhase.ended, 1, 27, 46)]) == [
+        Event(PointerEvent(action: PointerAction.press, button: PointerButton.left, pos: Point(2, 2))),
+        Event(PointerEvent(action: PointerAction.release, button: PointerButton.left, pos: Point(2, 2))),
+    ]);
+    // A drag up: wheel steps towards the end, each where the drag began.
+    const drag = translated(input, wsi, [touch(TouchPhase.began, 1, 25, 245),
+        touch(TouchPhase.moved, 1, 25, 200), touch(TouchPhase.moved, 1, 25, 150)]);
+    assert(drag.length > 0);
+    foreach (e; drag)
+        assert(e.match!((in WheelEvent w) => w.dy > 0 && w.pos == Point(2, 12), (in _) => false));
+    cast(void) translated(input, wsi, [touch(TouchPhase.cancelled, 1, 25, 150)]);
+    // A touch long after the last one: the idle gap is no hold.
+    WsiInput.gestureClockForTest(input, MonoTime.currTime - 5.seconds);
+    const late = translated(input, wsi, [touch(TouchPhase.began, 1, 25, 45),
+        touch(TouchPhase.ended, 1, 25, 45)]);
+    assert(late.length == 2 && late[0].match!((in PointerEvent p) => p.action == PointerAction.press,
+        (in _) => false), "a tap, not a long-press");
+    // Held still: a long-press once the time has passed, and nothing before.
+    assert(translated(input, wsi, [touch(TouchPhase.began, 1, 65, 45)]).length == 0);
+    assert(input.gesturing, "a finger down needs time to resolve");
+    Event[] held;
+    input.tickGestures(MonoTime.currTime + 600.msecs, 10, 20, (Event e) { held ~= e; });
+    assert(held == [Event(GestureEvent(Gesture.longPress, Point(6, 2)))]);
+    cast(void) translated(input, wsi, [touch(TouchPhase.ended, 1, 65, 45)]);
+    assert(!input.gesturing, "a lifted long-press leaves nothing to resolve");
 }
 
 @("ui_app.wsi_input.pixelsWithAOneByOneCell")
