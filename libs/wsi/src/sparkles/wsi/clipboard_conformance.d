@@ -16,6 +16,11 @@ $(LIST
     * `enum size_t maxChunkBytes` — the largest chunk a sink may receive
         (`DT4`); 1 MiB when absent.
     * `enum transferDeadline` — how long one transfer may take in total.
+    * `void beforeReplace()` — return once the window has a fresh input
+        serial (a key or button since the last offer): a compositor may
+        refuse a selection set again under the serial that set the last one
+        (Weston does), and the replacement property then sees its offer
+        withdrawn instead.
 )
 */
 module sparkles.wsi.clipboard_conformance;
@@ -262,6 +267,8 @@ ConformanceOutcome checkClipboardConformance(Backend, Hooks)(ref Backend wsi,
     // reported `withdrawn` and can no longer be read.
     {
         static immutable ubyte[5] hello = cast(immutable(ubyte)[5]) "hello";
+        static if (is(typeof(hooks.beforeReplace())))
+            hooks.beforeReplace();
         auto replaced = wsi.offerClipboard(window, textType, hello[]);
         assert(!replaced.hasError, "the whole-value offer failed");
         waitFor(() => sawOffer(offer, DataOfferAction.withdrawn),

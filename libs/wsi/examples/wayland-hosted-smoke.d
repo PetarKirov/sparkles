@@ -27,6 +27,7 @@ import core.sys.posix.stdlib : mkstemp;
 import core.sys.posix.unistd : ftruncate, posixClose = close, unlink;
 
 import sparkles.event_horizon.loop : DefaultLoop, LoopConfig, RunStatus;
+import sparkles.input.events : KeyAction;
 import sparkles.wsi;
 import wayland_native;
 
@@ -388,6 +389,24 @@ int main()
                 // serviced by its own step.
                 if (other.bootstrapComplete)
                     assert(!other.runIntegratedOnce(*loop, Duration.zero).hasError);
+            }
+
+            // Weston refuses a selection set again under the serial of the
+            // last: wait for the injector's next key press, a fresh serial.
+            void beforeReplace()
+            {
+                const deadline = MonoTime.currTime + 20.seconds;
+                bool pressed;
+                while (!pressed)
+                {
+                    assert(MonoTime.currTime < deadline, "no key arrived to replace the offer under");
+                    step(100.msecs);
+                    assert(!wsi.drain((WindowEvent e) @safe {
+                        e.payload.match!(
+                            (in KeyboardEvent k) { pressed |= k.action == KeyAction.press; },
+                            (_) {});
+                    }).hasError);
+                }
             }
         }
         auto clipHooks = ClipboardHooks(&wsi, &other, &loop);
