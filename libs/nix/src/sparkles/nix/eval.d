@@ -11,6 +11,7 @@ import std.string : toStringz, fromStringz;
 import std.typecons : RefCounted, RefCountedAutoInitialize, Nullable, nullable, Tuple;
 
 import nc = sparkles.nix.c;
+import sparkles.test_runner.attributes : serial, ThreadAffinity;
 import sparkles.nix.error;
 import sparkles.nix.strings;
 import sparkles.nix.value;
@@ -604,7 +605,7 @@ struct EvalState
 }
 
 @("nix.eval.scalars")
-@system
+@serial(threadAffinity: ThreadAffinity.mainThread) @system
 unittest
 {
     auto store = Store.open("dummy://");
@@ -636,7 +637,7 @@ unittest
 }
 
 @("nix.eval.list")
-@system
+@serial(threadAffinity: ThreadAffinity.mainThread) @system
 unittest
 {
     auto store = Store.open("dummy://");
@@ -654,7 +655,7 @@ unittest
 }
 
 @("nix.eval.attrs")
-@system
+@serial(threadAffinity: ThreadAffinity.mainThread) @system
 unittest
 {
     auto store = Store.open("dummy://");
@@ -675,7 +676,7 @@ unittest
 }
 
 @("nix.eval.construct.roundTrip")
-@system
+@serial(threadAffinity: ThreadAffinity.mainThread) @system
 unittest
 {
     auto store = Store.open("dummy://");
@@ -692,7 +693,7 @@ unittest
 }
 
 @("nix.eval.lookupPath")
-@system
+@serial(threadAffinity: ThreadAffinity.mainThread) @system
 unittest
 {
     auto store = Store.open("dummy://");

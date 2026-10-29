@@ -10,6 +10,7 @@
 /// See $(LINK2 ../../../../docs/specs/nix/SPEC.md, SPEC §9).
 module sparkles.nix.value;
 
+import sparkles.test_runner.attributes : serial, ThreadAffinity;
 import sparkles.nix.c;
 
 /// Clean D mirror of the C `ValueType` enum (the `NIX_TYPE_*` constants). The
@@ -116,7 +117,7 @@ struct Value
 }
 
 @("nix.value.internalPointer")
-@system
+@serial(threadAffinity: ThreadAffinity.mainThread) @system
 unittest
 {
     import sparkles.nix.store : Store;

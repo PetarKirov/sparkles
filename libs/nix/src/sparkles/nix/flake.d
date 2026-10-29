@@ -13,6 +13,7 @@ import std.string : toStringz;
 import std.typecons : RefCounted, RefCountedAutoInitialize, Tuple, tuple;
 
 import nc = sparkles.nix.c;
+import sparkles.test_runner.attributes : serial, ThreadAffinity;
 import sparkles.nix.error;
 import sparkles.nix.strings;
 import sparkles.nix.value : Value;
@@ -219,7 +220,7 @@ struct LockedFlake
 }
 
 @("nix.flake.parseAndBuild")
-@system
+@serial(threadAffinity: ThreadAffinity.mainThread) @system
 unittest
 {
     import sparkles.nix.store : Store;
