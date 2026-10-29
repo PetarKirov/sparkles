@@ -347,10 +347,19 @@ void fallbackFacePaths(string primaryPath, const(string)[] dirs, out string nerd
             bestNerdRank = rank;
         }
     }
-    const found = resolveFontInDirs("DejaVu Sans Mono,Roboto Mono,Droid Sans Mono,Liberation Mono,Cousine",
-        dirs);
-    if (found != primaryPath)
-        regular = found;
+    // The first of the common faces that is not the primary: with the
+    // primary DejaVu Sans Mono itself, stopping at its match left no text
+    // fallback at all, and every letter it lacks (Vietnamese ế) drew nothing.
+    foreach (family; ["DejaVu Sans Mono", "Noto Sans Mono", "Roboto Mono", "Droid Sans Mono",
+            "Liberation Mono", "Cousine"])
+    {
+        const found = resolveFontInDirs(family, dirs);
+        if (found.length && found != primaryPath)
+        {
+            regular = found;
+            break;
+        }
+    }
 }
 
 version (RaylibTextTests)
@@ -371,6 +380,11 @@ version (RaylibTextTests)
     assert(emoji == buildPath(dir, "NotoColorEmoji.ttf"));
     fallbackFacePaths(buildPath(dir, "DejaVuSansMono.ttf"), [dir], nerd, regular, emoji);
     assert(regular == "", "the primary is never its own fallback");
+    // With another common face beside it, that one backs the primary: a
+    // primary first in the preference list does not end the search.
+    tmp.writeFileAt("NotoSansMono.ttf", "x");
+    fallbackFacePaths(buildPath(dir, "DejaVuSansMono.ttf"), [dir], nerd, regular, emoji);
+    assert(regular == buildPath(dir, "NotoSansMono.ttf"), regular);
 }
 
 /**
