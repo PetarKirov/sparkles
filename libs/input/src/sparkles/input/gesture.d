@@ -118,6 +118,12 @@ struct GestureRecognizer
     /// hover or press affordances for its duration.
     bool dragging() const => dragging_;
 
+    /// `true` while time alone can still resolve something — a contact is
+    /// down (a long-press), a fling tail runs, or an event waits to be
+    /// drained: a host that parks between inputs keeps calling $(LREF tick)
+    /// until it is `false`.
+    bool active() const => wasDown_ || pinching_ || velocity_ != 0 || queued_ > 0;
+
     /**
     Abandon the in-flight gesture without resolving it: the spelling for
     "something else took the pointer".
@@ -738,4 +744,34 @@ unittest
     }
     assert(d.scrollRows == atPress, "the fling outlived the press");
     assert(coasting != 0, "the fixture never actually coasted");
+}
+
+@("input.gesture.activeUntilTimeHasNothingLeft")
+@safe pure nothrow @nogc
+unittest
+{
+    GestureRecognizer g;
+    g.cfg.cellH = 10;
+    Drain d;
+    assert(!g.active, "nothing touched");
+    g.pointer(0, true, PointF(10, 400));
+    assert(g.active, "a held finger may still become a long-press");
+    foreach (i; 0 .. 4)
+    {
+        g.pointer(0, true, PointF(10, 400 - 30 * (i + 1)));
+        g.tick(16);
+    }
+    g.pointer(0, false, PointF(10, 280));
+    g.tick(16);
+    d.run(g);
+    assert(g.active, "the fling coasts after the finger lifts");
+    foreach (_; 0 .. 400)
+        g.tick(16);
+    d.run(g);
+    assert(!g.active, "the fling stopped and everything was drained");
+    g.pointer(0, true, PointF(10, 10));
+    g.pointer(0, false, PointF(10, 10));
+    assert(g.active, "a tap waits to be drained");
+    d.run(g);
+    assert(!g.active);
 }
