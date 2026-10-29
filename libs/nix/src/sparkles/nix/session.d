@@ -9,6 +9,7 @@ module sparkles.nix.session;
 
 import std.typecons : Nullable;
 
+import sparkles.test_runner.attributes : serial, ThreadAffinity;
 import sparkles.nix.error;
 import sparkles.nix.value : Value, ValueType;
 import sparkles.nix.store : Store, StorePath;
@@ -68,7 +69,7 @@ struct NixSession
 }
 
 @("nix.session.evalAndExtract")
-@system
+@serial(threadAffinity: ThreadAffinity.mainThread) @system
 unittest
 {
     auto opened = NixSession.open();

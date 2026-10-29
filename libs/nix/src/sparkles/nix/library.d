@@ -15,6 +15,7 @@ module sparkles.nix.library;
 
 import std.string : toStringz;
 
+import sparkles.test_runner.attributes : serial, ThreadAffinity;
 import sparkles.base.sync.mutex : Mutex;
 import sparkles.nix.c;
 import sparkles.nix.error;
@@ -90,7 +91,7 @@ NixResult!string getSetting(in char[] key) @trusted
 }
 
 @("nix.library.nixVersion.nonEmpty")
-@system
+@serial(threadAffinity: ThreadAffinity.mainThread) @system
 unittest
 {
     const v = nixVersion();
@@ -98,7 +99,7 @@ unittest
 }
 
 @("nix.library.initNix.idempotent")
-@system
+@serial(threadAffinity: ThreadAffinity.mainThread) @system
 unittest
 {
     // Idempotent: the second call returns the cached result.
@@ -109,7 +110,7 @@ unittest
 }
 
 @("nix.library.setting.roundTrip")
-@system
+@serial(threadAffinity: ThreadAffinity.mainThread) @system
 unittest
 {
     auto init = initNix();

@@ -10,6 +10,7 @@ module sparkles.nix.store;
 import std.string : toStringz;
 import std.typecons : RefCounted, RefCountedAutoInitialize;
 
+import sparkles.test_runner.attributes : serial, ThreadAffinity;
 import sparkles.nix.c;
 import sparkles.nix.c : CStore = Store, CStorePath = StorePath;
 import sparkles.nix.error;
@@ -161,7 +162,7 @@ struct StorePath
 }
 
 @("nix.store.open.dummy")
-@system
+@serial(threadAffinity: ThreadAffinity.mainThread) @system
 unittest
 {
     auto opened = Store.open("dummy://");
