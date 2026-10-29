@@ -412,7 +412,7 @@ struct OpenConfig
     @Description("Where a file opened from a pane appears: tab, splitRight, splitDown or external.")
     OpenTarget target = OpenTarget.tab;
 
-    @Description("Answer xdg-open in the terminal's sessions (desktop).")
+    @Description("Answer the openers in the terminal's sessions: xdg-open, open on macOS, sparkles-open.")
     bool intercept = true;
 }
 
