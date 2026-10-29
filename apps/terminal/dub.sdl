@@ -26,6 +26,22 @@ dependency "sparkles:wired" path="../.."
 // The document viewer (`TDV`): files programs ask to open become panes.
 dependency "sparkles:doc-view" path="../.."
 
+// On Android, the terminal on the native arm is the shared library a
+// NativeActivity loads, its entry `AndroidWsiMain`'s (src/android_entry.d —
+// dub leaves a library's app.d out); listed first so dub picks it there. No
+// raylib: the window, its input and its frames are `sparkles:wsi`'s, the
+// drawing `sparkles:ui-vulkan`'s.
+configuration "android" {
+    platforms "android"
+    targetType "dynamicLibrary"
+    targetName "terminal"
+    subConfiguration "sparkles:ui-app" "gui-vulkan"
+    subConfiguration "sparkles:terminal-view" "vulkan"
+    subConfiguration "sparkles:raylib-text" "discovery"
+    dependency "sparkles:ui-vulkan" path="../.."
+    versions "TerminalVulkan"
+}
+
 configuration "application" {
     targetType "executable"
     dependency "raylib-d" version="~>6.2.0"

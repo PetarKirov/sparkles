@@ -25,12 +25,11 @@ import core.time : Duration, msecs;
 
 import extra_keys : ExtraKey, ExtraKeyKind, Latch;
 import sparkles.base.term_color : RgbColor;
-import sparkles.input : Event, GestureEvent, Gesture, Key, KeyAction, KeyEvent,
+import sparkles.input : Event, FocusEvent, GestureEvent, Gesture, Key, KeyAction, KeyEvent,
     match, PasteEvent, PointerAction, PointerEvent, WheelEvent;
-import sparkles.raylib_text.font_set : FontSet;
 import sparkles.terminal_view.component : ColorOverrides, TerminalView, TerminalViewOptions;
 import sparkles.ui.components.dock : PaneId;
-import sparkles.ui.geometry : Rect;
+import sparkles.ui.geometry : Point, Rect;
 import sparkles.ui.layout : Frame;
 import sparkles.ui.widget : WidgetTree;
 
@@ -107,18 +106,19 @@ struct DroidTerminal
     private bool rowContact;             // the raw contact was down last frame
     private int rowLastX, rowLastY;      // where it last was
     private bool keyboardShown;
+    private bool keyboardAsked; // a change `keyboard` asked for, applied in `view`
     private PaneId keyboardFocus; // the pane focused when the keyboard was last decided
     private float pinchBase = 0; // the font size a pinch started from
     private Geometry lastGeometry;
-    private FontSet* fonts; // the host's, for the key row's labels
     private int cellW = 1, cellH = 1;
+    private uint contactsSeen; // the host's count of touches begun, last frame
     private KeyCommand pendingCommand; // picked in the touch guide
     private bool hasPending;
     private SettingsPage settingsPage; // the open page, for the keyboard
     private int startFontPt; // the configured size the window opened at
     private bool fontPending; // the page changed the font size
 
-    private bool windowFocused = true; // last frame's, for the save on leaving
+    private bool firstPaintLogged; // the launch's first frame, timed once
     private bool dividerGesture; // this contact began on a divider (`TSS10`)
     private bool dividerGestureHeld; // a finger was down last frame
     private bool barGesture; // this contact grabbed an overlay bar (`SCV13`)
@@ -142,10 +142,8 @@ struct DroidTerminal
         if (takeReloadRequest())
             loadSettings();
 
-        auto c = h.canvas;
-        fonts = c.fonts;
-        cellW = fonts.cellW() > 0 ? fonts.cellW() : 1;
-        cellH = fonts.cellH() > 0 ? fonts.cellH() : 1;
+        cellW = cellWidthOf(h);
+        cellH = cellHeightOf(h);
         {
             import sparkles.android.activity : dpToPx;
 
@@ -161,14 +159,19 @@ struct DroidTerminal
         }
         if (defaultFontPx == 0) // the first frame
         {
-            import sparkles.android.activity : showStatusBar;
-
             defaultFontPx = h.fontSizePx;
             // raylib opens the window fullscreen; the status bar gives the
             // system's own overlays (HyperOS's multitasking handle) a band of
-            // their own, as Termux has (D48).
-            showStatusBar();
+            // their own, as Termux has (D48). The native window is edge to
+            // edge with its bars shown, the panes inside their insets.
+            static if (!isNative!H)
+            {
+                import sparkles.android.activity : showStatusBar;
+
+                showStatusBar();
+            }
         }
+        applyKeyboard(h);
 
         // The installer's pty ended: the login takes the pane over in place
         // (`TSS4`) — the installer's output stays above a separator.
@@ -197,7 +200,7 @@ struct DroidTerminal
                 h.wakeIn(wait);
         noteGuide();
 
-        if (chip.frame(host.focusedView()))
+        if (chip.frame(h, host.focusedView()))
             host.invalidate();
         const g = geometry(h);
         chip.place(host.labels, host.theme.targetRows,
@@ -210,12 +213,12 @@ struct DroidTerminal
             host.invalidate();
         }
         {
-            import raylib : GetScreenHeight, GetScreenWidth;
-
+            import chrome : windowPixels;
             import sparkles.android.activity : largeScreen;
 
             // A tablet keeps the rail in portrait too (`TCF14`, D47).
-            host.phonePortrait = GetScreenHeight() > GetScreenWidth() && !largeScreen();
+            const screen = windowPixels(h);
+            host.phonePortrait = screen.height > screen.width && !largeScreen();
         }
         selection.reducedMotion = platform.reducedMotion; // `ACC5`, `TSE3`
         // Focus reaching a document viewer — a tab, the tree, a pane closed
@@ -224,34 +227,29 @@ struct DroidTerminal
         {
             keyboardFocus = host.ws.focused;
             if (viewerFocused && !host.surfaces.modal)
-            {
-                import sparkles.android.soft_input : hideSoftKeyboard;
-
-                hideSoftKeyboard();
-                keyboardShown = false;
-            }
+                keyboard(false);
         }
         // A finger on a divider resizes the split (`TSS10`); that contact,
         // its fling included, is then the divider's, not the panes'.
+        const touch = contactOf(h, contactsSeen);
         {
-            import raylib : GetTouchPointCount, GetTouchPosition;
             import sparkles.android.activity : dpToPx;
 
-            const n = GetTouchPointCount();
-            const p = n > 0 ? GetTouchPosition(0) : typeof(GetTouchPosition(0)).init;
-            pollKeyRow(h, g, n > 0, cast(int) p.x, cast(int) p.y);
+            const n = touch.count;
+            const p = touch.at;
+            pollKeyRow(h, g, touch);
             // A page's or the guide's overlay bar, grabbed (`SCV13`): the
             // contact is the bar's until it lifts.
             // Its fling tail too: the gesture stays the bar's until the next
             // contact begins.
-            if (host.touchBar(cast(int) p.x, cast(int) p.y, n == 1, dpToPx(44)))
+            if (host.touchBar(p.x, p.y, n == 1, dpToPx(44)))
                 barGesture = true;
             else if (n > 0 && !barGestureHeld)
                 barGesture = false;
             barGestureHeld = n > 0;
             if (barGesture)
                 dividerGesture = false;
-            else if (host.touchDivider(cast(int) p.x, cast(int) p.y, n == 1, dpToPx(16)))
+            else if (host.touchDivider(p.x, p.y, n == 1, dpToPx(16)))
                 dividerGesture = true;
             else if (n > 0 && !host.draggingDivider && !dividerGestureHeld)
                 dividerGesture = false; // a new contact elsewhere
@@ -260,7 +258,7 @@ struct DroidTerminal
         if (dividerGesture)
             selection.frame(h, host);
         else
-            selection.pollTouch(h, host);
+            selection.pollTouch(h, host, touch.count, touch.at);
         host.frame(h, paneArea(g));
         settingsFrame(h);
         if (auto tv = host.focusedView())
@@ -273,17 +271,6 @@ struct DroidTerminal
             }
         if (host.takeDirty())
             save();
-        // Leaving the foreground saves too (`TSS14`): a phone may kill the app
-        // there without a shutdown, and the directories the shells moved to
-        // (`refreshCwds`) mark nothing dirty.
-        {
-            import raylib : IsWindowFocused;
-
-            const focusedNow = IsWindowFocused();
-            if (windowFocused && !focusedNow)
-                save();
-            windowFocused = focusedNow;
-        }
         if (auto tv = host.focusedView())
             oracle.frame(*tv, keyLabels());
         return WidgetTree.init;
@@ -301,6 +288,13 @@ struct DroidTerminal
             (in PasteEvent p) {
                 if (auto tv = host.focusedView())
                     tv.onPaste(p);
+            },
+            // Leaving the foreground saves (`TSS14`): a phone may kill the app
+            // there without a shutdown, and the directories the shells moved
+            // to (`refreshCwds`) mark nothing dirty.
+            (in FocusEvent f) {
+                if (!f.focused)
+                    save();
             },
             (in _) {},
         );
@@ -326,12 +320,26 @@ struct DroidTerminal
         // The handles and the chip mark the panes; a page or a menu covers
         // them (`TSE3`, `TSE10`).
         host.paint(h, paneArea(g), divider, accent, withSurfaces: false);
-        selection.paint(accent);
+        selection.paint(h, accent);
         chip.paint(h, host.theme);
         host.paintSurfaces(h);
         paintGuide(h, router, context, g.paneCols, g.paneRows, 0, g.top, chromeFg, chromeBg,
             g.width, g.paneHeight);
         paintKeys(h, g);
+        // The launch's cost, comparable across the arms: logcat's timestamp of
+        // this line against the system's START of the activity. Not against
+        // the process's own start: Android forks app processes ahead of use.
+        if (!firstPaintLogged)
+        {
+            import sparkles.base.logger : info;
+
+            firstPaintLogged = true;
+            version (TerminalVulkan)
+                enum arm = "Vulkan";
+            else
+                enum arm = "raylib";
+            info(i"terminal: first frame ($(arm))");
+        }
     }
 
     /**
@@ -549,15 +557,12 @@ struct DroidTerminal
     /// font size it changed.
     private void settingsFrame(H)(ref H h)
     {
-        import sparkles.android.soft_input : showSoftKeyboard;
-
         if (settingsPage !is null)
         {
             if (settingsPage.wantsKeyboard)
             {
                 settingsPage.wantsKeyboard = false;
-                showSoftKeyboard();
-                keyboardShown = true;
+                keyboard(true);
             }
             if (settingsPage.closed)
                 settingsPage = null;
@@ -626,13 +631,42 @@ struct DroidTerminal
 
     private void toggleKeyboard()
     {
-        import sparkles.android.soft_input : hideSoftKeyboard, showSoftKeyboard;
+        keyboard(!keyboardShown);
+    }
 
-        if (keyboardShown)
-            hideSoftKeyboard();
+    /**
+    Asks for the soft keyboard or puts it away. The native window's text
+    input is a host errand, made on the next frame (`applyKeyboard`); raylib's
+    is asked at once.
+    */
+    private void keyboard(bool show)
+    {
+        keyboardShown = show;
+        version (TerminalVulkan)
+        {
+            keyboardAsked = true;
+            host.invalidate();
+        }
         else
-            showSoftKeyboard();
-        keyboardShown = !keyboardShown;
+        {
+            import sparkles.android.soft_input : hideSoftKeyboard, showSoftKeyboard;
+
+            if (show)
+                cast(void) showSoftKeyboard();
+            else
+                hideSoftKeyboard();
+        }
+    }
+
+    // The keyboard `keyboard` asked for, through the host that has it.
+    private void applyKeyboard(H)(ref H h)
+    {
+        static if (__traits(compiles, h.textInput(true)))
+            if (keyboardAsked)
+            {
+                keyboardAsked = false;
+                h.textInput(keyboardShown);
+            }
     }
 
     /// The row (mockups E, K3): the chrome's band with a rule along its top;
@@ -640,7 +674,7 @@ struct DroidTerminal
     /// labels centred in the cell font at the label step (`uiMono`).
     private void paintKeys(H)(ref H h, in Geometry g)
     {
-        import raylib : Color, DrawRectangle;
+        import chrome : fillPixels;
         import sparkles.ui.geometry : Rect;
         import sparkles.base.text.grapheme : visibleWidth;
         import sparkles.ui.style : FontRole, resolveSlot, Slot, TypeStep, Visual;
@@ -648,13 +682,12 @@ struct DroidTerminal
         if (keys.length == 0 || g.keysHeight == 0)
             return;
         const t = host.theme;
-        static Color rgb(RgbColor c) => Color(c.r, c.g, c.b, 255);
         RgbColor fill(Slot s) { const v = resolveSlot(t.palette, s, t.fg, t.bg); return v.hasBg ? v.bg : t.bg; }
         const band = fill(Slot.surfaceSunken), pressed = fill(Slot.surfaceRaised), on = fill(Slot.controlOn);
         const onText = resolveSlot(t.palette, Slot.controlOn, t.fg, t.bg).fg;
         const rule = resolveSlot(t.palette, Slot.border, t.fg, t.bg).fg;
-        DrawRectangle(0, g.keysTop, g.width, g.keysHeight, rgb(band));
-        DrawRectangle(0, g.keysTop, g.width, host.ruleWidth, rgb(rule));
+        fillPixels(h, 0, g.keysTop, g.width, g.keysHeight, band);
+        fillPixels(h, 0, g.keysTop, g.width, host.ruleWidth, rule);
         auto c = h.canvas;
         foreach (r, row; keys)
         {
@@ -669,24 +702,40 @@ struct DroidTerminal
                 const down = r == pressedRow && i == pressedCol;
                 const inset = host.ruleWidth * 3;
                 if (lit || down)
-                    DrawRectangle(x0 + inset, y + inset, x1 - x0 - 2 * inset,
-                        g.keyHeight - 2 * inset, rgb(lit ? on : pressed));
-                // The label centred in the key, whole cells laid over it.
-                const cols = (x1 - x0) / cellW, rows = g.keyHeight / cellH;
-                c.originX = x0 + ((x1 - x0) - cols * cellW) / 2;
-                c.originY = y + (g.keyHeight - rows * cellH) / 2;
-                Visual v;
-                v.fg = lit ? onText : t.fg;
-                v.fontRole = FontRole.uiMono;
-                // A lone symbol (an arrow, ☰) reads at the title size; a name or a
-                // character at the label size.
-                v.typeStep = visibleWidth(key.label) == 1 && key.label[0] >= 0x80
-                    ? TypeStep.title : TypeStep.label;
-                v.textAlign = 1;
-                c.textRunIn(Rect(0, 0, cols > 0 ? cols : 1, rows > 0 ? rows : 1), key.label, v);
+                    fillPixels(h, x0 + inset, y + inset, x1 - x0 - 2 * inset,
+                        g.keyHeight - 2 * inset, lit ? on : pressed);
+                static if (isNative!H)
+                {
+                    // The label centred in the key, in the cell font,
+                    // composited over the key it sits on.
+                    import sparkles.shaders : v4;
+
+                    static auto rgba(RgbColor k) => v4(k.r / 255.0f, k.g / 255.0f, k.b / 255.0f, 1);
+                    const size = c.labelSizePx(key.label);
+                    c.labelPx(key.label, x0 + ((x1 - x0) - size[0]) / 2,
+                        y + (g.keyHeight - size[1]) / 2, rgba(lit ? onText : t.fg),
+                        rgba(lit ? on : down ? pressed : band));
+                }
+                else
+                {
+                    // The label centred in the key, whole cells laid over it.
+                    const cols = (x1 - x0) / cellW, rows = g.keyHeight / cellH;
+                    c.originX = x0 + ((x1 - x0) - cols * cellW) / 2;
+                    c.originY = y + (g.keyHeight - rows * cellH) / 2;
+                    Visual v;
+                    v.fg = lit ? onText : t.fg;
+                    v.fontRole = FontRole.uiMono;
+                    // A lone symbol (an arrow, ☰) reads at the title size; a name or a
+                    // character at the label size.
+                    v.typeStep = visibleWidth(key.label) == 1 && key.label[0] >= 0x80
+                        ? TypeStep.title : TypeStep.label;
+                    v.textAlign = 1;
+                    c.textRunIn(Rect(0, 0, cols > 0 ? cols : 1, rows > 0 ? rows : 1), key.label, v);
+                }
             }
         }
-        c.originX = c.originY = 0;
+        static if (!isNative!H)
+            c.originX = c.originY = 0;
     }
 
     /**
@@ -695,14 +744,17 @@ struct DroidTerminal
     and a modifier must engage on the way down so that holding CTRL while
     typing on the keyboard sends Ctrl+c. Down on a key: drawn pressed, a
     modifier engaged. Up: a modifier released, any other key fired when the
-    finger lifts over it; a finger that slid off it fires nothing.
+    finger lifts over it; a finger that slid off it fires nothing. A touch
+    that began and ended between two frames (an arm that draws only on
+    change) is both, at once.
     */
-    private void pollKeyRow(H)(ref H h, in Geometry g, bool down, int x, int y)
+    private void pollKeyRow(H)(ref H h, in Geometry g, in Contact c)
     {
+        const down = c.count > 0;
         size_t r, i;
-        if (down && !rowContact)
+        if (c.began || (down && !rowContact))
         {
-            if (keyAt(g, x, y, r, i))
+            if (keyAt(g, c.beganAt.x, c.beganAt.y, r, i))
             {
                 pressedRow = r;
                 pressedCol = i;
@@ -710,8 +762,20 @@ struct DroidTerminal
                     latch.press(keys[r][i].key);
                 host.invalidate();
             }
+            rowLastX = c.beganAt.x;
+            rowLastY = c.beganAt.y;
         }
-        else if (!down && rowContact && pressedRow >= 0)
+        if (down)
+        {
+            rowLastX = c.at.x;
+            rowLastY = c.at.y;
+        }
+        else if (c.liftedAt != Point.init || c.began)
+        {
+            rowLastX = c.liftedAt.x;
+            rowLastY = c.liftedAt.y;
+        }
+        if (!down && (rowContact || c.began) && pressedRow >= 0)
         {
             const pr = cast(size_t) pressedRow, pc = cast(size_t) pressedCol;
             pressedRow = pressedCol = -1;
@@ -726,11 +790,6 @@ struct DroidTerminal
             }
         }
         rowContact = down;
-        if (down)
-        {
-            rowLastX = x;
-            rowLastY = y;
-        }
     }
 
     /// The row key at pixel (`x`, `y`): its row and column; false off the row.
@@ -755,28 +814,20 @@ struct DroidTerminal
     /// the host is at hand.
     private void openTouchGuide()
     {
-        import sparkles.android.soft_input : hideSoftKeyboard;
-
         // The guide is navigation first: the soft keyboard goes, or a phone
         // in landscape leaves it two rows (`TPG19`). Its search field brings
         // the keyboard back.
-        hideSoftKeyboard();
+        keyboard(false);
         auto self = &this;
         auto guide = new TouchGuide(router.table, context, router.leader,
             (KeyCommand c) { self.pendingCommand = c; self.hasPending = true; });
-        guide.onSearch = () {
-            import sparkles.android.soft_input : showSoftKeyboard;
-
-            cast(void) showSoftKeyboard();
-        };
+        guide.onSearch = () { self.keyboard(true); };
         host.surfaces.push(guide);
         host.invalidate();
     }
 
     private void onPointer(H)(ref H h, in PointerEvent p)
     {
-        import sparkles.android.soft_input : showSoftKeyboard;
-
         if (p.action == PointerAction.press)
         {
             pinchBase = 0; // a new contact re-bases the next pinch
@@ -820,16 +871,7 @@ struct DroidTerminal
         // (`TSS11`) and asks for the keyboard — a terminal's. A document
         // viewer is read with the finger: its tap puts the keyboard away.
         cast(void) host.tapPane(p.pos.x, p.pos.y);
-        if (viewerFocused)
-        {
-            import sparkles.android.soft_input : hideSoftKeyboard;
-
-            hideSoftKeyboard();
-            keyboardShown = false;
-            return;
-        }
-        showSoftKeyboard();
-        keyboardShown = true;
+        keyboard(!viewerFocused);
     }
 
     /// Whether the focused pane is a document viewer: no keyboard, no
@@ -976,22 +1018,33 @@ struct DroidTerminal
 
     private Geometry geometry(H)(ref H h)
     {
-        import raylib : GetScreenHeight, GetScreenWidth;
-        import sparkles.android.activity : contentRect, hardwareKeyboardAttached;
+        import autofill_chip : softKeyboardShown;
+        import sparkles.android.activity : hardwareKeyboardAttached;
 
         import extra_keys : extraKeysShown;
 
         Geometry g;
-        const r = contentRect();
-        const valid = r.bottom > r.top && r.right > r.left;
-        g.top = valid ? r.top : 0;
-        g.width = valid ? r.right - r.left : GetScreenWidth();
-        const bottom = valid ? r.bottom : GetScreenHeight();
+        int bottom;
+        static if (isNative!H)
+        {
+            // The host's pixels are the content rect already: the window
+            // inside its bars and the soft keyboard, its origin their corner.
+            g.top = 0;
+            g.width = h.pixels.width;
+            bottom = h.pixels.height;
+        }
+        else
+        {
+            import raylib : GetScreenHeight, GetScreenWidth;
+            import sparkles.android.activity : contentRect;
 
-        // The soft keyboard is not reported to native code; the content rect
-        // shrinking by more than a system bar is it.
-        const screenHeight = GetScreenHeight();
-        const softKeyboard = valid && screenHeight - r.bottom > screenHeight / 6;
+            const r = contentRect();
+            const valid = r.bottom > r.top && r.right > r.left;
+            g.top = valid ? r.top : 0;
+            g.width = valid ? r.right - r.left : GetScreenWidth();
+            bottom = valid ? r.bottom : GetScreenHeight();
+        }
+        const softKeyboard = softKeyboardShown(h);
         // A full-screen page hides the row unless the keyboard is up to type
         // into it (D49).
         // Nor does a document viewer, which takes no keys (`TDV14`) — unless
@@ -1023,4 +1076,73 @@ struct DroidTerminal
         g.keysTop = bottom - g.keysHeight;
         return g;
     }
+}
+
+/// Whether `H` is the native host: a window drawn in device pixels whose
+/// size, touches and text input come from the host rather than raylib.
+private enum bool isNative(H) = __traits(hasMember, H, "touches");
+
+/// The cell, in pixels, on either arm.
+private int cellWidthOf(H)(ref H h)
+{
+    static if (isNative!H)
+        return h.cellWidth > 0 ? h.cellWidth : 1;
+    else
+    {
+        auto c = h.canvas;
+        return c.fonts.cellW() > 0 ? c.fonts.cellW() : 1;
+    }
+}
+
+/// ditto
+private int cellHeightOf(H)(ref H h)
+{
+    static if (isNative!H)
+        return h.cellHeight > 0 ? h.cellHeight : 1;
+    else
+    {
+        auto c = h.canvas;
+        return c.fonts.cellH() > 0 ? c.fonts.cellH() : 1;
+    }
+}
+
+/// The raw contact a frame reads: the fingers down, the first one's
+/// position, and a touch begun since the last read (`seen`, updated).
+private struct Contact
+{
+    int count;     /// fingers down
+    Point at;      /// the first one, in pixels
+    bool began;    /// a touch began since the last frame, perhaps already ended
+    Point beganAt; /// where it began
+    Point liftedAt; /// where the first finger lifted; zero where not known
+}
+
+private Contact contactOf(H)(ref H h, ref uint seen)
+{
+    Contact c;
+    static if (isNative!H)
+    {
+        const t = h.touches;
+        c.count = t.count;
+        c.at = t.at[0];
+        c.began = t.began != seen;
+        seen = t.began;
+        c.beganAt = c.began ? t.beganAt : c.at;
+        c.liftedAt = t.count == 0 ? t.lastAt : Point.init;
+    }
+    else
+    {
+        import raylib : GetTouchPointCount, GetTouchPosition;
+
+        // A frame loop polls every contact while it lasts: none begins and
+        // ends unseen.
+        c.count = GetTouchPointCount();
+        if (c.count > 0)
+        {
+            const p = GetTouchPosition(0);
+            c.at = Point(cast(int) p.x, cast(int) p.y);
+        }
+        c.beganAt = c.at;
+    }
+    return c;
 }

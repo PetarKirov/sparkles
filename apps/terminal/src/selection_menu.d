@@ -1439,16 +1439,15 @@ struct SelectionUi
 
         /// The phone's per-frame half, before the workspace's frame: the
         /// raw contact (handle drags, the row's swipe) and `frame`.
-        void pollTouch(H)(ref H h, ref WorkspaceHost ws) @system
+        /// `contacts` fingers are down, the first at pixel `at`.
+        void pollTouch(H)(ref H h, ref WorkspaceHost ws, int contacts, Point at) @system
         {
-            import raylib : GetTouchPointCount, GetTouchPosition;
-
             frame(h, ws);
-            const n = GetTouchPointCount();
-            const p = n > 0 ? GetTouchPosition(0) : typeof(GetTouchPosition(0)).init;
-            const cw = h.canvas.fonts.cellW(), ch = h.canvas.fonts.cellH();
-            contact(n == 1, Point(cast(int) p.x, cast(int) p.y), h.frameSeconds,
-                cw > 0 ? cw : 1, ch > 0 ? ch : 1);
+            static if (__traits(compiles, { int w = h.cellWidth; }))
+                const cw = h.cellWidth, ch = h.cellHeight;
+            else
+                const cw = h.canvas.fonts.cellW(), ch = h.canvas.fonts.cellH();
+            contact(contacts == 1, at, h.frameSeconds, cw > 0 ? cw : 1, ch > 0 ? ch : 1);
             if (dragging || down && onMenu)
                 ws.invalidate();
         }
@@ -1546,25 +1545,34 @@ struct SelectionUi
         menu.geo = g;
     }
 
-    /// Paints the handles (a phone), in `accent`.
-    void paint(RgbColor accent) @system
+    /// Paints the handles (a phone), in `accent`, on whichever canvas `h`
+    /// draws with.
+    void paint(H)(ref H h, RgbColor accent) @system
     {
-        import raylib : Color, DrawCircle, DrawRectangle;
+        import chrome : fillPixels;
+        import sparkles.shaders : v4;
 
         auto tv = view();
         if (!platform.touch || tv is null || !tv.hasSelection)
             return;
-        const c = Color(accent.r, accent.g, accent.b, 255);
         foreach (i, ref hd; handles)
         {
             if (!hd.shown)
                 continue;
             const r = hd.drawing.width / 2;
             const cx = hd.drawing.x + r, cy = hd.drawing.y + r;
-            DrawCircle(cx, cy, r, c);
+            static if (__traits(compiles, h.canvas.roundedPx(0, 0, 0, 0, 0.0f, v4(0, 0, 0, 0))))
+                h.canvas.roundedPx(cx - r, cy - r, 2 * r, 2 * r, r,
+                    v4(accent.r / 255.0f, accent.g / 255.0f, accent.b / 255.0f, 1));
+            else
+            {
+                import raylib : Color, DrawCircle;
+
+                DrawCircle(cx, cy, r, Color(accent.r, accent.g, accent.b, 255));
+            }
             // The square corner that points at the text: top-right for the
             // start's droplet, top-left for the end's (S2).
-            DrawRectangle(i == 0 ? cx : hd.drawing.x, hd.drawing.y, r, r, c);
+            fillPixels(h, i == 0 ? cx : hd.drawing.x, hd.drawing.y, r, r, accent);
         }
     }
 }
