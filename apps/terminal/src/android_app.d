@@ -161,6 +161,7 @@ int androidMain()
 
         const target = app.config.effective.open.target;
         setOpenInApp(target != OpenTarget.external);
+        app.host.openInApp = target != OpenTarget.external;
         app.host.openPlacement = placementFor(target);
         app.host.setViewerColors(app.chromeFg, app.chromeBg);
         app.host.creditsPath = "asset:credits/terminal.md";

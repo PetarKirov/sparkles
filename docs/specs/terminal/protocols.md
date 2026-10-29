@@ -74,6 +74,7 @@ is extended only if a payload cannot be obtained otherwise
 | Mode 2031, `CSI ? 996 n`    | Contour's colour-palette update notifications, as Ghostty and kitty implement them                                       |
 | Kitty keyboard protocol     | kitty's keyboard protocol                                                                                                |
 | Bracketed paste (2004)      | XTerm Control Sequences                                                                                                  |
+| OSC 5379                    | this project's open request ([`TDV15`](./viewer.md)): no other terminal assigns the number                               |
 
 [Testing](./testing.md#protocol-authorities-pinned) pins the edition of each.
 `OSC 9;<n>;…` with a numeric first field is ConEmu's family (progress, sleep

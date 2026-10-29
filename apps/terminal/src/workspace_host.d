@@ -210,6 +210,9 @@ struct WorkspaceHost
     DocViewEnv* delegate() @system makeDocEnv;
     /// Where an opened file appears (`open.target`, `TDV2`).
     Placement openPlacement = Placement.tab;
+    /// Whether open requests from a pane's program are the app's (`TDV4`,
+    /// `TDV15`): off with `open.intercept = false` or `open.target = external`.
+    bool openInApp = true;
     /// The credits document the `showCredits` command opens (`TPG15`):
     /// beside the executable on the desktop, `asset:credits/terminal.md` on
     /// Android; empty when the build bundles none.
@@ -391,6 +394,11 @@ struct WorkspaceHost
                 self.surfaces.push(new ClipboardRead(tv, self.programName(id),
                     self.paneWhere(id)));
         };
+        // OSC 5379, what the openers on the pane's PATH write (`TDV15`).
+        o.hooks.openRequest = (scope const(char)[] target, scope const(char)[] cwd) {
+            trace(i"pane $(id): open request for $(target)");
+            self.openRequested(id, target.idup, cwd.idup);
+        };
         o.hooks.clipboardWrite = (scope const(char)[] text) {
             trace(i"pane $(id): OSC 52 clipboard write, $(text.length) bytes");
             self.pendingClipboard = text.idup;
@@ -476,6 +484,42 @@ struct WorkspaceHost
         }
         repaint = true;
         return create(id);
+    }
+
+    /**
+    An open request from pane `from`'s program (`TDV15`): `target` resolved
+    against `cwd` — the pane's directory as OSC 7 reported it — or else the
+    directory the pane last had; a local file the viewer shows opens beside
+    that pane (`TDV2`), anything else says why in a toast.
+    */
+    void openRequested(PaneId from, string target, string cwd) @system
+    {
+        version (Posix)
+        {
+            import std.path : baseName;
+            import open_request : checkOpen, localPathOf, OpenVerdict;
+
+            if (!openInApp)
+                return surfaces.toast("Not opened: files open outside the app (open.target)");
+            const spec = ws.spec(from);
+            const path = localPathOf(target, cwd.length ? cwd : spec !is null ? spec.cwd : null);
+            if (path is null)
+                return surfaces.toast("Not opened: " ~ target ~ " is not a local file");
+            const check = checkOpen(path);
+            final switch (check.verdict)
+            {
+                case OpenVerdict.open:
+                    if (!openDocument(path, from))
+                        surfaces.toast("Not opened: " ~ notice);
+                    break;
+                case OpenVerdict.refuse:
+                    surfaces.toast("Not opened: " ~ check.message);
+                    break;
+                case OpenVerdict.decline:
+                    surfaces.toast("Not opened: the viewer does not show " ~ path.baseName);
+                    break;
+            }
+        }
     }
 
     /// The viewer pane `id`, or null when it is a terminal pane.

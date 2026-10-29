@@ -313,7 +313,29 @@ immutable ShellTool[] shellTools = [
         "#!/system/bin/sh\n"
         ~ "# Written by the terminal app: Android's clear keeps the scrollback.\n"
         ~ "printf '\\033[H\\033[2J\\033[3J'\n"),
+    ShellTool("sparkles-open", openerScript),
+    ShellTool("xdg-open", openerScript),
+    ShellTool("termux-open", openerScript),
 ];
+
+/**
+The plain shell's opener (`TDV4`, `TDV15`), under the names programs call:
+one local file, made absolute and checked where it is, becomes an open
+request on the terminal (`ESC ] 5379 ; open ; <base64> ST`); a missing one is
+refused with status 1 (`TDV3`). Everything else says what the command takes:
+Android has no other opener a plain shell could hand it to.
+*/
+enum string openerScript = "#!/system/bin/sh\n"
+    ~ "# Written by the terminal app: one local file opens in its viewer.\n"
+    ~ "if [ $# -ne 1 ] || [ \"${1#-}\" != \"$1\" ]; then\n"
+    ~ "  echo \"${0##*/}: opens one local file in the terminal's viewer\" >&2; exit 2\n"
+    ~ "fi\n"
+    ~ "t=$1\n"
+    ~ "case $t in *://* | /*) ;; *) t=$PWD/$t ;; esac\n"
+    ~ "case $t in *://*) ;; *)\n"
+    ~ "  [ -r \"$t\" ] || { echo \"${0##*/}: $t: no such file\" >&2; exit 1; } ;;\n"
+    ~ "esac\n"
+    ~ "printf '\\033]5379;open;%s\\033\\\\' \"$(printf %s \"$t\" | base64 | tr -d '\\n')\" > /dev/tty\n";
 
 ///
 @("session.shellTools")
@@ -323,6 +345,38 @@ immutable ShellTool[] shellTools = [
 
     assert(shellTools[0].name == "clear");
     assert(shellTools[0].script.canFind(`\033[3J`), "clear erases the scrollback too");
+}
+
+/// The plain shell's opener writes what the desktop's shim writes (`TDV15`).
+@("session.openerScript.writesTheOpenRequest")
+@system unittest
+{
+    import std.file : exists, mkdirRecurse, remove, rmdirRecurse, tempDir, write;
+    import std.path : buildPath;
+    import std.algorithm.searching : canFind;
+    import std.array : replace;
+    import std.conv : text;
+    import std.process : execute, thisProcessID;
+    import open_request : openRequestSequence;
+
+    import sparkles.test_runner.skip : skipTest;
+
+    // `/system/bin/sh` is Android's; any POSIX sh runs the script, its output
+    // sent to stdout in place of the terminal.
+    if (!exists("/bin/sh"))
+        return skipTest("no /bin/sh");
+    const dir = buildPath(tempDir, text("opener-", thisProcessID));
+    mkdirRecurse(dir);
+    scope (exit) rmdirRecurse(dir);
+    const script = buildPath(dir, "xdg-open");
+    write(script, openerScript.replace(" > /dev/tty", ""));
+    write(buildPath(dir, "a b.md"), "# hi\n");
+    auto r = execute(["/bin/sh", "-c", "cd '" ~ dir ~ "' && sh ./xdg-open 'a b.md'"]);
+    assert(r.status == 0 && r.output == openRequestSequence(buildPath(dir, "a b.md")), r.output);
+    r = execute(["/bin/sh", "-c", "cd '" ~ dir ~ "' && sh ./xdg-open missing.md"]);
+    assert(r.status == 1 && r.output.canFind("no such file"));
+    r = execute(["/bin/sh", "-c", "cd '" ~ dir ~ "' && sh ./xdg-open -a b"]);
+    assert(r.status == 2);
 }
 
 /// The bootstrap zip's name for the running ABI (`NOD5`) — nix-on-droid's

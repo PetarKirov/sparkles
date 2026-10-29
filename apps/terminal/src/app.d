@@ -35,16 +35,13 @@ int main(string[] args)
     }
     else
     {
-        // Run as `xdg-open` (the shim on every session's PATH, `TDV4`): hand the
-        // file to the terminal that owns the session, or to the next xdg-open.
-        import std.path : baseName;
+        // Run as the opener (`xdg-open`, `open` on macOS, `sparkles-open`: the
+        // shims on every session's PATH, `TDV4`): ask the pane's terminal to
+        // open the file (`TDV15`), or hand it to the next opener.
+        import open_request : isShimName, openShim;
 
-        if (args.length && args[0].baseName == "xdg-open")
-        {
-            import open_request : xdgOpenShim;
-
-            return xdgOpenShim(args);
-        }
+        if (args.length && isShimName(args[0]))
+            return openShim(args);
         return runCli!TerminalCli(args, (ref CommandNode!TerminalCli node) => prepareDesktop(node));
     }
 }
@@ -158,10 +155,10 @@ int launchDesktop(ref CommandNode!TerminalCli node)
     app.config = lc;
     app.followColors();
 
-    // Files opened from a pane open in the app (`TDV1`–`TDV4`): the sessions
-    // find this terminal's `xdg-open` first on their PATH, which forwards
-    // over the per-app socket. The viewer wears the chrome's colours (`TDV7`).
-    import open_request : installOpenShim, removeOpenDir, startOpenServer;
+    // Files opened from a pane open in the app (`TDV1`–`TDV4`, `TDV15`): the
+    // sessions find this terminal's openers first on their PATH, which ask
+    // the pane's terminal in-band. The viewer wears the chrome's colours (`TDV7`).
+    import open_request : installOpenShim, removeOpenDir;
     import settings : OpenTarget;
     import workspace_host : placementFor;
 
@@ -169,12 +166,10 @@ int launchDesktop(ref CommandNode!TerminalCli node)
     app.host.creditsPath = bundledCredits();
     app.host.setViewerColors(app.chromeFg, app.chromeBg);
     string openDir;
-    if (lc.effective.open.intercept && lc.effective.open.target != OpenTarget.external)
-    {
+    app.host.openInApp = lc.effective.open.intercept
+        && lc.effective.open.target != OpenTarget.external;
+    if (app.host.openInApp)
         openDir = installOpenShim();
-        if (openDir.length && !startOpenServer(buildPath(openDir, "open.sock")))
-            lc.warnings ~= "open: files opened from a pane go to the desktop's handler";
-    }
     scope (exit)
         if (openDir.length)
             removeOpenDir(openDir);
