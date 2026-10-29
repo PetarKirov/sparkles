@@ -84,9 +84,8 @@ configuration "unittest-vulkan" {
     dflags "-checkaction=context" "-allinst"
 }
 
-// The desktop terminal on the native arm. Text is blank until the font
-// atlas (plan slice V3). No document viewer: that pane paints with raylib.
-// Raylib stays on `application` and `unittest`, which Android's version list
+// The desktop terminal on the native arm: the panes, the chrome and the
+// document viewer drawn by the Vulkan canvas. Raylib stays on `application` and `unittest`, which Android's version list
 // still names `Have_raylib_d`.
 configuration "vulkan" {
     targetType "executable"

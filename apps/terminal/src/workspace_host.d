@@ -436,36 +436,27 @@ struct WorkspaceHost
     // makes the pane — restore shows where the file went, as a located error.
     private bool createViewer(PaneId id, string path) @system
     {
-        version (Have_sparkles_ui_raylib)
+        if (docEnv is null)
         {
-            if (docEnv is null)
-            {
-                import sparkles.syntax : GrammarRegistry;
+            import sparkles.syntax : GrammarRegistry;
 
-                docEnv = makeDocEnv !is null ? makeDocEnv()
-                    : DocViewEnv.create(GrammarRegistry.fromEnvironment());
-            }
-            auto p = new DocViewPane;
-            // Set before `open`, which builds the first view: no line numbers by
-            // default (`TDV13`). The prose stays in the cell font, beside the
-            // tables and code blocks that need it, until the design system sets
-            // the viewer's proportional type (`TDV13`).
-            p.vm.lineNumbers = viewerLineNumbers;
-            p.vm.codeLineNumbers = viewerCodeLineNumbers;
-            // Read on the pane's second paint: never before the window's first
-            // frame, and a hidden tab's document only once its tab is shown.
-            p.deferLoad = true;
-            cast(void) p.open(docEnv, path, chromeTheme(viewerFg, viewerBg));
-            viewers[id] = p;
-            dirty = true;
-            return true;
+            docEnv = makeDocEnv !is null ? makeDocEnv()
+                : DocViewEnv.create(GrammarRegistry.fromEnvironment());
         }
-        else
-        {
-            notice = "no document viewer on this arm";
-            ws.close(id);
-            return false;
-        }
+        auto p = new DocViewPane;
+        // Set before `open`, which builds the first view: no line numbers by
+        // default (`TDV13`). The prose stays in the cell font, beside the
+        // tables and code blocks that need it, until the design system sets
+        // the viewer's proportional type (`TDV13`).
+        p.vm.lineNumbers = viewerLineNumbers;
+        p.vm.codeLineNumbers = viewerCodeLineNumbers;
+        // Read on the pane's second paint: never before the window's first
+        // frame, and a hidden tab's document only once its tab is shown.
+        p.deferLoad = true;
+        cast(void) p.open(docEnv, path, chromeTheme(viewerFg, viewerBg));
+        viewers[id] = p;
+        dirty = true;
+        return true;
     }
 
     /**
@@ -1634,10 +1625,16 @@ struct WorkspaceHost
                 v.touch = touch;
                 v.wide = touch && wideBars;
                 const right = b.content.x + b.content.width;
-                v.paint(canvas, b.content.x, b.content.y, b.content.width, b.content.height,
-                    focused: b.focused,
-                    barBand: Rect(right, b.content.y, b.outer.x + b.outer.width - right,
-                        b.content.height));
+                const band = Rect(right, b.content.y, b.outer.x + b.outer.width - right,
+                    b.content.height);
+                // The native canvas draws in device pixels at the cells the
+                // panes are laid out in; raylib's knows its own.
+                static if (is(typeof(canvas) == P*, P))
+                    v.paint(canvas, cellW, cellH, b.content.x, b.content.y, b.content.width,
+                        b.content.height, focused: b.focused, barBand: band);
+                else
+                    v.paint(canvas, b.content.x, b.content.y, b.content.width,
+                        b.content.height, focused: b.focused, barBand: band);
             }
         // A rule on each boundary, `ruleWidth` thick either way.
         foreach (i, ref d; dividerRects)
