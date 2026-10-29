@@ -26,6 +26,7 @@ import sparkles.terminal_view.component : ColorOverrides, TerminalView, Terminal
 import sparkles.terminal_view.input : ExitBehavior;
 import sparkles.terminal_view.notification_log : NotificationLog, NotificationRoute, NotifyWhen;
 import sparkles.terminal_view.osc_scan : Notification, NotificationProtocol;
+import sparkles.terminal_view.protocols : maxPendingOpens;
 import sparkles.terminal_view.protocols : ClipboardReadAnswer, ClipboardReadPolicy,
     ColorScheme, PasteConfirm, PasteConfirmRequest;
 
@@ -303,6 +304,58 @@ private KeyEvent key(Key k, Mods m = Mods(), dchar unshifted = 0, string text = 
     p.program("\x1b]7;file:///\x07");
     p.deliver();
     assert(p.tv.cwd == "/");
+}
+
+// ── TDV15: open requests ──
+
+@("protocol_oracle.TDV15.openRequestsReachTheHookWithTheDirectory")
+@system unittest
+{
+    import core.sys.posix.unistd : gethostname;
+    import std.base64 : Base64;
+    import std.string : fromStringz;
+
+    static struct Got { string target, cwd; }
+    Got[] got;
+    TerminalViewOptions o;
+    o.hooks.openRequest = (scope const(char)[] t, scope const(char)[] cwd) {
+        got ~= Got(t.idup, cwd.idup);
+    };
+    auto p = RecordingPty.open(o);
+    scope (exit) p.close();
+    string request(string target, string end = "\x1b\\")
+        => "\x1b]5379;open;" ~ Base64.encode(cast(const(ubyte)[]) target).idup ~ end;
+
+    // What the shims print: `ESC ] 5379 ; open ; <base64 path> ST`.
+    p.program("\x1b]7;file:///tmp\x07" ~ request("/tmp/a b.md") ~ request("README.md", "\x07"));
+    p.deliver();
+    assert(got == [Got("/tmp/a b.md", "/tmp"), Got("README.md", "/tmp")]);
+
+    // Another verb, and a target with a control in it, are no requests.
+    got = null;
+    p.program("\x1b]5379;edit;UkVBRE1FLm1k\x07" ~ request("a\nb"));
+    p.deliver();
+    assert(got.length == 0);
+
+    // A flood from one chunk opens a few, not hundreds.
+    string flood;
+    foreach (_; 0 .. 50)
+        flood ~= request("/tmp/x.md");
+    p.program(flood);
+    p.deliver();
+    assert(got.length == maxPendingOpens);
+
+    // Once OSC 7 says the shell is on another host, nothing opens.
+    got = null;
+    char[256] hostBuf = 0;
+    gethostname(hostBuf.ptr, hostBuf.length - 1);
+    p.program("\x1b]7;file://not-" ~ fromStringz(hostBuf.ptr).idup ~ "/home/u\x07");
+    p.program(request("/etc/hosts"));
+    p.deliver();
+    assert(got.length == 0, "a path from a program on another host is not this machine's");
+    p.program("\x1b]7;file:///tmp\x07" ~ request("/etc/hosts"));
+    p.deliver();
+    assert(got == [Got("/etc/hosts", "/tmp")], "back on this host, it opens again");
 }
 
 // ── TPR8, TPR9, TPG9: notifications ──
