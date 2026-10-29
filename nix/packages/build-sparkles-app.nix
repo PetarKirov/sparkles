@@ -859,6 +859,9 @@
           dubConfig ? "android",
           dubBuildType ? "checked",
           version ? "0.1.0",
+          # Reserve the empty `.build_info` section `stampAndroidLib` patches
+          # (`TPG2`), as the raw cross build's option of the same name does.
+          emptyBuildInfo ? false,
           description ? "${appDir} as an Android shared library, per ABI, built by dub",
         }:
         let
@@ -894,6 +897,10 @@
                 dub build --skip-registry=all --compiler=ldc2 --arch=${t.triple} \
                   --config=${dubConfig} --build=${dubBuildType}
               install -Dm644 build/lib${libName}.so "$NIX_BUILD_TOP/android-libs/${t.abi}/lib${libName}.so"
+              ${lib.optionalString emptyBuildInfo ''
+                llvm-objcopy --add-section .build_info=${config.legacyPackages.emptyBuildInfoJson} \
+                  "$NIX_BUILD_TOP/android-libs/${t.abi}/lib${libName}.so"
+              ''}
             '') (lib.attrValues ndk.targets)}
             runHook postBuild
           '';
