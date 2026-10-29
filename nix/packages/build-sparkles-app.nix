@@ -838,5 +838,76 @@
           step1 = unstampedSparklesApp callerArgs;
         in
         if step1.passthru.stampBuildInfo then stampSparklesApp step1 else step1;
+
+      # `legacyPackages.buildSparklesAndroidLib`: an app's `android` dub
+      # configuration, built by dub for every ABI the NDK targets — the shared
+      # library a NativeActivity loads, `lib/<abi>/lib<libName>.so`. dub cross
+      # compiles (`--arch=<triple>`; the Android LDC's ldc2.conf sections give
+      # each target its runtime and NDK driver), so the versions, configurations
+      # and paths are the recipes' own, never a list kept here; pkg-config
+      # (`android-pkg-config`, one directory per ABI) resolves the C libraries
+      # the recipes name, and SPARKLES_ANDROID_MIN_SDK the API level
+      # `sparkles:android` links for. Only evaluated where Android builds.
+      legacyPackages.buildSparklesAndroidLib =
+        {
+          pname,
+          appDir,
+          # The `.so` stem: `lib<libName>.so`, the configuration's `targetName`
+          # and what the manifest's `android.app.lib_name` names.
+          libName,
+          ldcAndroid,
+          dubConfig ? "android",
+          dubBuildType ? "checked",
+          version ? "0.1.0",
+          description ? "${appDir} as an Android shared library, per ABI, built by dub",
+        }:
+        let
+          ndk = config.legacyPackages.androidNdk;
+          # The JNI shim sits outside every source path (libs/android/dub.sdl).
+          srcDirs = sparklesSrcClosure appDir ++ [ "libs/android/c" ];
+          src = sourceFor (srcDirs ++ uiShaderDirs srcDirs);
+          pkgConfig = config.packages.android-pkg-config;
+        in
+        pkgs.buildDubPackage {
+          inherit pname version src;
+          sourceRoot = "${src.name}/${appDir}";
+          dubLock = fromRoot "nix/dub-lock.json";
+          compiler = ldcAndroid;
+          # lld links the host tools a pre-generate step builds (`shader-compile`,
+          # which checks the prebuilt shaders' stamp), as for any app.
+          nativeBuildInputs = [
+            pkgs.pkg-config-unwrapped
+            pkgs.llvmPackages.llvm
+            (import ../wrapped-lld.nix { inherit pkgs; })
+          ];
+          preBuild = ''
+            chmod -R u+w "$NIX_BUILD_TOP"
+          ''
+          + lib.optionalString (needsUiVulkanShaders srcDirs) (
+            placeUiVulkanShaders "$NIX_BUILD_TOP/${src.name}"
+          );
+          buildPhase = ''
+            runHook preBuild
+            ${lib.concatMapStrings (t: ''
+              PKG_CONFIG_LIBDIR=${pkgConfig}/${t.abi} PKG_CONFIG_PATH= \
+              SPARKLES_ANDROID_MIN_SDK=${ndk.minSdk} \
+                dub build --skip-registry=all --compiler=ldc2 --arch=${t.triple} \
+                  --config=${dubConfig} --build=${dubBuildType}
+              install -Dm644 build/lib${libName}.so "$NIX_BUILD_TOP/android-libs/${t.abi}/lib${libName}.so"
+            '') (lib.attrValues ndk.targets)}
+            runHook postBuild
+          '';
+          installPhase = ''
+            runHook preInstall
+            mkdir -p $out/lib
+            cp -r "$NIX_BUILD_TOP/android-libs/." $out/lib/
+            runHook postInstall
+          '';
+          # Unstripped for ndk-stack, as the raw cross build leaves it; the APK
+          # carries the bytes, not the store paths assert messages name.
+          dontStrip = true;
+          disallowedReferences = [ ];
+          meta.description = description;
+        };
     };
 }
