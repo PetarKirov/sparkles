@@ -20,6 +20,8 @@ application.
 
 <!-- @include: ./parts/libkqueue.md -->
 
+<!-- @include: ./parts/android-system-libraries.md -->
+
 <!-- @include: ./parts/tree-sitter.md -->
 
 <!-- @include: ./parts/tree-sitter-grammars.md -->

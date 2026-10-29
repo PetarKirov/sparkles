@@ -15,6 +15,15 @@ dependency "sparkles:event-horizon-sys" path="../.."
 dependency "expected" version="~>0.4.1"
 dependency "during" version="~>0.5.0" platform="linux"
 
+// Android: the kqueue backend is the only one there (backend/concept.d), over
+// libkqueue built for Android (`android-pkg-config` resolves `kqueue`). First,
+// so dub picks it there and only there.
+configuration "android" {
+    platforms "android"
+    targetType "library"
+    libs "kqueue"
+}
+
 configuration "library" {
     targetType "library"
 }

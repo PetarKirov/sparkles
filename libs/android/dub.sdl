@@ -6,6 +6,17 @@ license "BSL-1.0"
 targetPath "build"
 
 dflags "-preview=in" "-preview=dip1000"
+// ImportC against the NDK headers: they use `__int128` when the compiler
+// says it has one, which ImportC cannot parse. Every Android build depends on
+// this source library, so its consumers' C imports all see this.
+dflags "-P-U__SIZEOF_INT128__" platform="android"
+// Link and preprocess for the APK's minimum API level, from the environment
+// (Nix sets SPARKLES_ANDROID_MIN_SDK from nix/packages/android/ndk.nix): the
+// default driver targets API 21, which has no libvulkan. Every shared library
+// is aligned to 16 KiB pages, and links the system libraries this package
+// calls (logcat, the activity and asset manager).
+dflags "-Xcc=--target=$ARCH-linux-android$SPARKLES_ANDROID_MIN_SDK" "-Xcc=-Wl,-z,max-page-size=16384" platform="android"
+libs "log" "android" platform="android"
 
 dependency "sparkles:base" path="../.."
 
@@ -13,10 +24,15 @@ dependency "sparkles:base" path="../.."
 // package is its pure helpers (bundle.d) and a set of empty modules — which is
 // what lets any library depend on it unconditionally. The ImportC shim for
 // <jni.h> lives in c/, outside every source path: dub compiles any .c file it
-// finds in one, and a desktop host has no NDK header. The nix cross build
-// passes it to ldc2 by path (nix/packages/android/build-d-android-lib.nix).
+// finds in one, and a desktop host has no NDK header. An Android build names it
+// (`dub build --arch=aarch64-linux-android`); the raw ldc2 cross build passes
+// it by path (nix/packages/android/build-d-android-lib.nix).
 configuration "library" {
     targetType "sourceLibrary"
+    sourceFiles "c/jni_c.c" platform="android"
+    // Found by import, too: a package compiled apart from this one (an app
+    // over sparkles:wsi) still imports `jni_c` through it.
+    importPaths "src" "c" platform="android"
 }
 
 configuration "unittest" {

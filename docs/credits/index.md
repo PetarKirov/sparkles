@@ -31,6 +31,8 @@ names something nothing ships.
 
 <!-- @include: ./parts/libkqueue.md -->
 
+<!-- @include: ./parts/android-system-libraries.md -->
+
 <!-- @include: ./parts/vulkan-loader.md -->
 
 <!-- @include: ./parts/wayland.md -->

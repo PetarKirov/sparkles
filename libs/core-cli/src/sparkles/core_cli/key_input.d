@@ -114,7 +114,15 @@ unittest
 // POSIX: termios raw mode + blocking read + poll-based Esc disambiguation
 // ---------------------------------------------------------------------------
 
-version (Posix)
+// Android: an application has no terminal (and Bionic's termios calls are
+// header inlines druntime does not declare); a key session ends at once,
+// as it does on a desktop with no tty.
+version (Android)
+{
+    private KeySession beginRawKeySession() @trusted nothrow
+        => KeySession(() => Key.cancel, () {});
+}
+else version (Posix)
 {
     private enum escTimeoutMs = 35;
 
