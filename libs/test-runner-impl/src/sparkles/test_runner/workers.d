@@ -20,16 +20,18 @@ import sparkles.test_runner.stack_budget : prepareCurrentThreadForStackBudget,
 Starts workers that call `onResult` once per test.
 
 `onResult` must be thread-safe and must outlive $(LREF joinTestWorkers).
-When `nThreads <= 1` the calling thread runs every test (still under the
-stack-budget watermark) and this returns an empty list. When `nThreads > 1`
-exactly that many 512 KiB workers run the suite and the caller does not
-participate — join them with $(LREF joinTestWorkers). Each body is still
-subject to the 384 KiB stack watermark.
+When `nThreads <= 1` and `onCaller` is set, the calling thread runs every
+test (still under the stack-budget watermark) and this returns an empty
+list. Otherwise `max(nThreads, 1)` 512 KiB workers run the suite and the
+caller does not participate — join them with $(LREF joinTestWorkers). Each
+body is still subject to the 384 KiB stack watermark.
 */
 Thread[] startTestWorkers(Test[] tests, size_t nThreads,
-    void delegate(TestResult) onResult)
+    void delegate(TestResult) onResult, bool onCaller = true)
 {
-    if (tests.length == 0 || nThreads <= 1)
+    if (nThreads < 1)
+        nThreads = 1;
+    if (tests.length == 0 || (nThreads == 1 && onCaller))
     {
         if (tests.length)
         {
@@ -105,4 +107,21 @@ unittest
             ++seen;
     });
     assert(seen == 8);
+}
+
+@("workers.startTestWorkers.oneWorkerOffCaller")
+@system
+unittest
+{
+    static __gshared Thread ranOn;
+    static void record() { ranOn = Thread.getThis(); }
+    Test[] tests = [Test(fullName: "w.t", name: "t", ptr: &record)];
+
+    // One worker, off the caller: what a plain `@serial` phase uses.
+    joinTestWorkers(startTestWorkers(tests, 1, (TestResult) {}, onCaller: false));
+    assert(ranOn !is null && ranOn !is Thread.getThis());
+
+    // One worker on the caller: the `mainThread` phase.
+    joinTestWorkers(startTestWorkers(tests, 1, (TestResult) {}));
+    assert(ranOn is Thread.getThis());
 }

@@ -663,6 +663,7 @@ private UnitTestResult runCtfeTraceMode(Test[] tests, in RunnerOptions options, 
 private UnitTestResult listTests(Test[] tests, bool colored)
 {
     import std.stdio : stdout;
+    import sparkles.test_runner.attributes : ThreadAffinity;
     import sparkles.test_runner.reporting : render;
 
     auto writer = stdout.lockingTextWriter;
@@ -682,10 +683,63 @@ private UnitTestResult listTests(Test[] tests, bool colored)
             markers ~= " @wasm";
         if (test.traits.isSlow)
             markers ~= " @slow";
+        if (test.traits.isSerial)
+            markers ~= test.traits.serialAffinity == ThreadAffinity.mainThread
+                ? " @serial(mainThread)" : " @serial";
         writer.put(render(colored,
             i" {dim $(moduleName)} $(test.name){cyan $(markers)}\n"));
     }
     return UnitTestResult(0, 0, false, false);
+}
+
+/// One run phase of the default mode: tests and the workers that run them.
+private struct TestPhase
+{
+    Test[] tests;
+    size_t threads;
+    /// A single worker runs on the calling thread (see `startTestWorkers`).
+    bool onCaller = true;
+}
+
+/// The default mode's phases: every test but the `@serial` ones on `threads`
+/// workers; then the `@serial` ones of any thread, one at a time on one
+/// worker; then the `mainThread` ones, one at a time on the calling thread.
+private TestPhase[3] testPhases(Test[] runnable, size_t threads) @safe pure
+{
+    import std.algorithm.iteration : filter;
+    import std.array : array;
+    import sparkles.test_runner.attributes : ThreadAffinity;
+
+    return [
+        TestPhase(runnable.filter!(t => !t.traits.isSerial).array, threads),
+        TestPhase(runnable.filter!(t => t.traits.isSerial
+            && t.traits.serialAffinity == ThreadAffinity.none).array, 1, onCaller: false),
+        TestPhase(runnable.filter!(t => t.traits.isSerial
+            && t.traits.serialAffinity == ThreadAffinity.mainThread).array, 1),
+    ];
+}
+
+@("runner.testPhases.serialRunLast")
+@safe pure
+unittest
+{
+    import sparkles.test_runner.attributes : ThreadAffinity;
+
+    Test parallel, anyThread, mainThread;
+    parallel.name = "parallel";
+    anyThread.name = "anyThread";
+    anyThread.traits.isSerial = true;
+    mainThread.name = "mainThread";
+    mainThread.traits.isSerial = true;
+    mainThread.traits.serialAffinity = ThreadAffinity.mainThread;
+
+    const phases = testPhases([mainThread, parallel, anyThread], 4);
+    assert(phases[0].threads == 4 && phases[0].tests.length == 1);
+    assert(phases[0].tests[0].name == "parallel");
+    assert(phases[1].threads == 1 && !phases[1].onCaller);
+    assert(phases[1].tests.length == 1 && phases[1].tests[0].name == "anyThread");
+    assert(phases[2].threads == 1 && phases[2].onCaller);
+    assert(phases[2].tests.length == 1 && phases[2].tests[0].name == "mainThread");
 }
 
 /// The default mode: evaluate the selected `@ctfe` tests through the probe
@@ -725,42 +779,47 @@ private UnitTestResult runDefaultMode(Test[] tests, in RunnerOptions options, bo
     shared size_t passed, failed, skipped;
     const threads = options.threads ? options.threads : hwParallelism();
 
-    bool ranLive = false;
-    static if (hasLiveRegion)
+    foreach (phase; testPhases(runnable, threads))
     {
-        // The same animate-or-not policy as the bench spinner (tty and no
-        // color opt-outs), asked about stdout — the line redraws beneath the
-        // streamed result lines there.
-        if (progressEnabled(options.noColors, stderrStream: false))
+        if (!phase.tests.length)
+            continue;
+        bool ranLive = false;
+        static if (hasLiveRegion)
         {
-            runParallelLive(runnable, options, colored, width, threads,
-                passed, failed, skipped, failures);
-            ranLive = true;
-        }
-    }
-    if (!ranLive)
-    {
-        import sparkles.base.sync.mutex : Mutex;
-
-        Mutex mutex;
-        auto workers = startTestWorkers(runnable, threads, (result) {
-            auto output = formatResultLine(result, colored, options.verbose, width) ~ "\n";
-            foreach (thrown; result.thrown)
-                output ~= formatThrown(thrown, colored, options.verbose);
-            stdout.lockingTextWriter.put(output);
-            stdout.flush();
-
-            if (result.skipped)
-                atomicOp!"+="(skipped, size_t(1));
-            else
-                atomicOp!"+="(result.succeeded ? passed : failed, size_t(1));
-            if (!result.succeeded && !result.skipped)
+            // The same animate-or-not policy as the bench spinner (tty and no
+            // color opt-outs), asked about stdout — the line redraws beneath the
+            // streamed result lines there.
+            if (progressEnabled(options.noColors, stderrStream: false))
             {
-                auto held = mutex.guard();
-                failures ~= result;
+                runParallelLive(phase.tests, options, colored, width, phase.threads,
+                    passed, failed, skipped, failures, phase.onCaller);
+                ranLive = true;
             }
-        });
-        joinTestWorkers(workers);
+        }
+        if (!ranLive)
+        {
+            import sparkles.base.sync.mutex : Mutex;
+
+            Mutex mutex;
+            auto workers = startTestWorkers(phase.tests, phase.threads, (result) {
+                auto output = formatResultLine(result, colored, options.verbose, width) ~ "\n";
+                foreach (thrown; result.thrown)
+                    output ~= formatThrown(thrown, colored, options.verbose);
+                stdout.lockingTextWriter.put(output);
+                stdout.flush();
+
+                if (result.skipped)
+                    atomicOp!"+="(skipped, size_t(1));
+                else
+                    atomicOp!"+="(result.succeeded ? passed : failed, size_t(1));
+                if (!result.succeeded && !result.skipped)
+                {
+                    auto held = mutex.guard();
+                    failures ~= result;
+                }
+            }, phase.onCaller);
+            joinTestWorkers(workers);
+        }
     }
 
     totals.passed = passed;
@@ -1512,7 +1571,7 @@ static if (hasLiveRegion)
 private void runParallelLive(
     Test[] runnable, in RunnerOptions options, bool colored, uint width,
     size_t threads, ref shared size_t passed, ref shared size_t failed,
-    ref shared size_t skipped, ref TestResult[] failures)
+    ref shared size_t skipped, ref TestResult[] failures, bool onCaller = true)
 {
     import core.atomic : atomicLoad, atomicOp;
     import core.thread : Thread;
@@ -1545,7 +1604,7 @@ private void runParallelLive(
             else
                 atomicOp!"+="(result.succeeded ? passed : failed, size_t(1));
             atomicOp!"+="(completed, size_t(1)); // after the queue append (see drain)
-        });
+        }, onCaller);
     scope (exit)
         joinTestWorkers(workers);
 

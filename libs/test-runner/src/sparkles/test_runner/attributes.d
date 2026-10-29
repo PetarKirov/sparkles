@@ -139,6 +139,30 @@ struct slow
 {
 }
 
+/// Which thread a $(LREF serial) test runs on.
+///
+/// `none` is first so `.init` (and a bare `@serial`) means "any thread".
+enum ThreadAffinity
+{
+    /// Any thread: the test only needs to run alone. The runner uses one
+    /// worker for all such tests.
+    none,
+    /// The runner's main thread, for a library confined to the thread that
+    /// initialized it (the Nix evaluator registers only that thread with its
+    /// garbage collector).
+    mainThread,
+}
+
+/// Marks a test that must not run beside other tests, such as one that uses
+/// process-wide state. Whatever `-t` asks for, `@serial` tests run one at a
+/// time after every other test has finished, still within the worker stack
+/// budget; `@serial(threadAffinity: ThreadAffinity.mainThread)` also pins them
+/// to the main thread.
+struct serial
+{
+    ThreadAffinity threadAffinity;
+}
+
 @("attributes.selfContained.wasm")
 @wasm(selfContained: true) @betterC(selfContained: true) @safe pure nothrow @nogc
 unittest

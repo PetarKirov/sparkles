@@ -176,7 +176,11 @@ lists every flag, [docs](../libs/test-runner/index.md)). Beyond `-i`/`-e`/`-v`/
 `sparkles.test_runner.attributes` — `@ctfe`, `@betterC` (`--better-c`), `@wasm`
 (`--wasm`), `@benchmark`/`@workload` (`--bench`), `@slow` (`--skip-slow`/
 `--only-slow`). Mark a test that takes minutes `@slow`, with a `@("name")`:
-`ci --test` skips it and CI runs it as a job of its own. Import the attributes
+`ci --test` skips it and CI runs it as a job of its own. Mark a test that must
+run alone `@serial` (process-wide state): it runs after the parallel tests,
+whatever `-t` says; `@serial(threadAffinity: ThreadAffinity.mainThread)` also
+pins it to the main thread (a thread-confined library, such as Nix's
+evaluator). Import the attributes
 **unconditionally**, never under `version (unittest)`
 ([reference](../libs/test-runner/reference/attributes.md)). `@ctfe` tests are
 evaluated by a separate `-o- -unittest` probe after filtering, so a failing one

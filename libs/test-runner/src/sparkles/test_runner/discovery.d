@@ -12,7 +12,7 @@ import std.meta : Alias, AliasSeq, staticMap;
 import std.traits : fullyQualifiedName, getUDAs, hasUDA;
 
 import sparkles.test_runner.attributes : benchmark, betterC, CacheRegime, ctfe,
-    slow, wasm, workload;
+    serial, slow, ThreadAffinity, wasm, workload;
 import sparkles.test_runner.model : Test, TestLocation, TestTraits;
 
 /// The module containing `m`: `m` itself when it is a module, or its parent
@@ -66,6 +66,14 @@ TestTraits testTraits(alias test)()
     traits.isCtfe = hasUDA!(test, ctfe);
     traits.isWasm = hasUDA!(test, wasm);
     traits.isSlow = hasUDA!(test, slow);
+    static if (hasUDA!(test, serial))
+    {
+        traits.isSerial = true;
+        alias suda = Alias!(getUDAs!(test, serial)[0]);
+        // `@serial` attaches the type; `@serial(...)` attaches a value.
+        static if (!is(suda))
+            traits.serialAffinity = suda.threadAffinity;
+    }
     static if (hasUDA!(test, betterC) || hasUDA!(test, wasm))
     {
         traits.functionAttributes = functionAttributesOf!test;
@@ -201,6 +209,8 @@ version (unittest)
     @workload(reps: 0) private void workloadZeroFixture() {}
     @workload(reps: 2, regime: CacheRegime.cold) private void workloadColdFixture() {}
     @slow private void slowFixture() {}
+    @serial private void serialFixture() {}
+    @serial(threadAffinity: ThreadAffinity.mainThread) private void mainThreadFixture() {}
     @benchmark @workload private void benchmarkWorkloadClashFixture() {}
 }
 
@@ -218,6 +228,16 @@ unittest
     enum slowTraits = testTraits!slowFixture();
     static assert(slowTraits.isSlow);
     static assert(!slowTraits.isBenchmark && !slowTraits.isWorkload);
+    static assert(!slowTraits.isSerial);
+
+    // So is `@serial`: it only moves the test into the serial phase.
+    enum serialTraits = testTraits!serialFixture();
+    static assert(serialTraits.isSerial);
+    static assert(serialTraits.serialAffinity == ThreadAffinity.none);
+    static assert(!serialTraits.isSlow && !serialTraits.isBenchmark);
+    enum mainTraits = testTraits!mainThreadFixture();
+    static assert(mainTraits.isSerial);
+    static assert(mainTraits.serialAffinity == ThreadAffinity.mainThread);
 
     enum bare = testTraits!workloadBareFixture();
     static assert(bare.isWorkload);
