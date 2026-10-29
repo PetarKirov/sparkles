@@ -7,7 +7,6 @@ license "BSL-1.0"
 targetType "executable"
 targetName "text-lab"
 targetPath "build"
-mainSourceFile "src/app.d"
 
 dflags "-preview=in" "-preview=dip1000"
 
@@ -18,9 +17,20 @@ dependency "sparkles:ui" path="../.."
 dependency "sparkles:ui-app" path="../.."
 dependency "sparkles:ui-vulkan" path="../.."
 
+// On Android the lab is the shared library a NativeActivity loads, its entry
+// `AndroidWsiMain`'s (src/app.d — no `mainSourceFile` here, which dub would
+// leave out of a library); listed first so dub picks it there.
+configuration "android" {
+    platforms "android"
+    targetType "dynamicLibrary"
+    targetName "textlab"
+    subConfiguration "sparkles:ui-app" "gui-vulkan"
+}
+
 // The native arm only: the settings it shows are the Vulkan canvas's.
 configuration "application" {
     targetType "executable"
+    mainSourceFile "src/app.d"
     subConfiguration "sparkles:ui-app" "gui-vulkan"
 }
 

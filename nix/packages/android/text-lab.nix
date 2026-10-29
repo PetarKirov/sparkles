@@ -38,10 +38,20 @@ in
       );
       javaName = lib.replaceStrings [ "-" ] [ "_" ];
 
-      library = config.legacyPackages.buildDAndroidLib {
+      # dub builds the lab for Android from its recipes (`android` configuration).
+      library = config.legacyPackages.buildSparklesAndroidLib {
         pname = "libtext-lab-android";
+        appDir = "apps/text-lab";
         libName = "textlab";
-        mainFile = "apps/text-lab/src/app.d";
+        inherit ((androidHost system)) ldcAndroid;
+      };
+
+      # The same library by the raw ldc2 cross build (`ldc2 -i` from the entry
+      # module, versions listed): kept beside the dub build to compare the two.
+      rawLibrary = config.legacyPackages.buildDAndroidLib {
+        pname = "libtext-lab-android-raw";
+        libName = "textlab";
+        mainFile = "apps/text-lab/src/android_entry.d";
         srcDirs = srcDirs ++ [ "libs/android/c" ];
         versions = [
           # The `application` configuration's choices: the native arm, and
@@ -154,6 +164,7 @@ in
     lib.optionalAttrs (androidHost system).supported {
       packages = {
         libtext-lab-android = library;
+        libtext-lab-android-raw = rawLibrary;
         text-lab-assets = assets;
         text-lab-apk = apk false;
         text-lab-apk-debug = apk true;
