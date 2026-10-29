@@ -132,6 +132,34 @@ package immutable FrameMetrics[4] metricsUnderTest = [
         }
 }
 
+@("ui_vulkan.canvas.aPixelCircleIsARoundedBox")
+@system unittest
+{
+    // `UVK35`: a rounded pixel box whose radius is half its side is a disc,
+    // within the rounded boxes' tolerance, wherever the cells are.
+    import sparkles.ui_vulkan.painter : rgba;
+    import sparkles.ui_vulkan.shading_test : inRoundedBox;
+
+    if (!readbackEnabled)
+        return skipTest(readbackSkipReason);
+    auto rig = new Rig;
+    rig.open("ui-vulkan-pixel-circle", 80, 40);
+    scope (success)
+        rig.close();
+
+    foreach (m; metricsUnderTest[0 .. 2])
+    {
+        const frame = rig.draw((ref Canvas c) {
+            c.roundedPx(10, 6, 20, 20, 10, rgba(white, 255));
+        }, m, black);
+        const double bx = m.originX + 10, by = m.originY + 6;
+        const e = coverageErrors(frame, 80, 40,
+            (px, py) => inRoundedBox(px, py, bx, by, 20, 20, 10));
+        assert(e[0] <= 16.0 / 255 && e[1] <= 2.0 / 255,
+            format("worst %.1f/255, mean %.2f/255", e[0] * 255, e[1] * 255));
+    }
+}
+
 // ── helpers for the scenarios ──
 
 private enum RgbColor white = RgbColor(255, 255, 255);
