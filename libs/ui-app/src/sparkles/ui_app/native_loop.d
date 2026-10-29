@@ -734,10 +734,36 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         return true;
     }
 
-    if (!bringUp())
+    // A window can lose its surface before the device comes up — an Android
+    // activity started behind the keyguard is given one and has it taken
+    // away at once — and then waits for the next one rather than failing.
+    while (!bringUp())
     {
-        whyNot(i"the native arm could not bring up Vulkan on the window");
-        return false;
+        if (!wsi.nativeHandles(window).hasError)
+        {
+            whyNot(i"the native arm could not bring up Vulkan on the window");
+            return false;
+        }
+        bool closing;
+        do
+        {
+            if (wsi.runIntegratedOnce(loop, 1.seconds).hasError)
+                return false;
+            cast(void) wsi.drain((WindowEvent e) {
+                if (e.window != window)
+                    return;
+                e.payload.match!(
+                    (in SurfaceMetricsChangedEvent m) { metrics = m.metrics; },
+                    (in CloseRequestedEvent _) { closing = true; },
+                    (in _) {});
+            });
+            if (closing)
+                return true;
+        }
+        while (wsi.nativeHandles(window).hasError);
+        takeMetrics();
+        if (const px = lc.metrics(surfaceOf(metrics)))
+            measure(px);
     }
     lc.started(surfaceOf(metrics));
     trace(i"native arm: $(gpu.vk.deviceName) $(gpu.swapchain.extent.width)x$(gpu.swapchain.extent.height), cells $(session.font.cellW)x$(session.font.cellH)");
