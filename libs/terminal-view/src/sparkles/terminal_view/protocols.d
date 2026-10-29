@@ -28,11 +28,28 @@ enum size_t maxPendingNotifications = 32;
 /// a file full of them that a program prints opens a few panes, not hundreds.
 enum size_t maxPendingOpens = 4;
 
-/// One open request's target, as `parseOpenRequest` decoded it.
+/// One open request's target, as `parseOpenRequest` decoded it, with the
+/// directory report in effect when it was captured.
 struct OpenTarget
 {
     char[maxOpenTargetBytes] text = 0;
     size_t length;
+    /// The raw OSC 7 value (unvalidated) in effect at capture (`TDV15`):
+    /// delivery judges the request against it, not against the last report
+    /// of the delivery window.
+    char[4096] pwd = 0;
+    size_t pwdLength;    ///
+    bool pwdTooLong;     /// the report did not fit and is ignored, not truncated
+    ulong pwdGeneration; /// which report `pwd` is; 0 before any OSC 7
+}
+
+/// The directory report in effect at a capture, as the feed hands it to
+/// `observeOsc` (`TDV15`).
+struct PwdSnapshot
+{
+    const(char)[] raw; ///
+    bool tooLong;      ///
+    ulong generation;  ///
 }
 
 /// When a paste without bracketed-paste mode asks first (`paste.confirm`, `TPR19`).
@@ -167,7 +184,8 @@ notification query on `ptyFd`. Titles (OSC 0/2) and working directories
 (OSC 7) arrive through the engine's own effects instead.
 */
 @system nothrow @nogc
-void observeOsc(ref ProtocolInbox inbox, ref const OscScanner sc, int ptyFd)
+void observeOsc(ref ProtocolInbox inbox, ref const OscScanner sc, int ptyFd,
+    PwdSnapshot pwd = PwdSnapshot.init)
 {
     const payload = sc.payload[];
     const command = oscCommand(payload);
@@ -211,6 +229,10 @@ void observeOsc(ref ProtocolInbox inbox, ref const OscScanner sc, int ptyFd)
             t.length = parseOpenRequest(payload, t.text);
             if (t.length == 0)
                 break;
+            t.pwdLength = pwd.raw.length <= t.pwd.length ? pwd.raw.length : t.pwd.length;
+            t.pwd[0 .. t.pwdLength] = pwd.raw[0 .. t.pwdLength];
+            t.pwdTooLong = pwd.tooLong || pwd.raw.length > t.pwd.length;
+            t.pwdGeneration = pwd.generation;
             if (inbox.opens.length < maxPendingOpens)
                 inbox.opens ~= t;
             else
@@ -321,7 +343,7 @@ private void observeClipboard(ref ProtocolInbox inbox, scope const(char)[] paylo
     {
         foreach (b; bytes)
             if (oscScanByte(sc, b))
-                observeOsc(inbox, sc, -1);
+                observeOsc(inbox, sc, -1, PwdSnapshot("file:///tmp", false, 7));
     }
 
     // A 5379 split across pty chunks still assembles (the scanner's state
@@ -332,6 +354,9 @@ private void observeClipboard(ref ProtocolInbox inbox, scope const(char)[] paylo
     feed("\x1b\\");
     assert(inbox.opens.length == 1
         && inbox.opens[0].text[0 .. inbox.opens[0].length] == "README.md");
+    // The capture carries the directory report in effect when it arrived.
+    assert(inbox.opens[0].pwd[0 .. inbox.opens[0].pwdLength] == "file:///tmp"
+        && inbox.opens[0].pwdGeneration == 7 && !inbox.opens[0].pwdTooLong);
 
     // Aborted by a fresh escape, it opens nothing; the sequence after it does.
     feed("\x1b]5379;open;UkVB\x1b]2;interrupting title\x07");

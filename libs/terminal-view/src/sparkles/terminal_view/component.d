@@ -473,6 +473,9 @@ struct TerminalView
     // The last OSC 7 named another host: the program now runs there (`ssh`),
     // and a path it names is not this machine's (`TDV15`).
     private bool cwdForeign;
+    // The OSC 7 report generation `cwdBuf`/`cwdForeign` were judged from,
+    // so a queued open request can be replayed against its own report.
+    private ulong cwdGeneration;
     // A user rename pins the label against OSC 0/2 until cleared (`TPR3`).
     private char[maxTitleBytes + 1] renamedBuf = 0;
     private size_t renamedLen;
@@ -2084,6 +2087,21 @@ struct TerminalView
                 hooks.iconChanged(iconBuf[0 .. iconLen]);
         }
 
+        // Open requests replay from the directory state at the last
+        // delivery, judged report by report (`TDV15`); save it before this
+        // delivery's own report replaces it.
+        char[4096] windowCwd = 0;
+        size_t windowCwdLen;
+        bool windowForeign;
+        ulong windowGeneration;
+        if (inbox.opens.length)
+        {
+            windowCwd = cwdBuf;
+            windowCwdLen = cwdLen;
+            windowForeign = cwdForeign;
+            windowGeneration = cwdGeneration;
+        }
+
         if (s.effects_ctx.pwdDirty)
         {
             s.effects_ctx.pwdDirty = false;
@@ -2091,14 +2109,38 @@ struct TerminalView
                 hooks.cwdChanged(cwd);
         }
 
-        // OSC 5379 (`TDV15`): ignored from a program on another host.
+        // OSC 5379 (`TDV15`): each request judged with the directory report
+        // in effect when it was captured, and ignored from another host.
         if (inbox.opens.length)
         {
             foreach (ref t; inbox.opens[])
-                if (cwdForeign)
+            {
+                if (t.pwdGeneration != windowGeneration)
+                {
+                    char[4096] path = 0;
+                    size_t n;
+                    bool foreign;
+                    final switch (judgeWorkingDirectory(t.pwd[0 .. t.pwdLength],
+                        t.pwdTooLong, path, n, foreign))
+                    {
+                        case PwdJudgement.accepted:
+                            windowCwd = path;
+                            windowCwdLen = n;
+                            windowForeign = false;
+                            break;
+                        case PwdJudgement.rejected:
+                            windowForeign = foreign;
+                            break;
+                        case PwdJudgement.tooLong:
+                            break;
+                    }
+                    windowGeneration = t.pwdGeneration;
+                }
+                if (windowForeign)
                     warning(i"terminal: an open request from a program on another host was ignored");
                 else if (hooks.openRequest !is null)
-                    hooks.openRequest(t.text[0 .. t.length], cwd);
+                    hooks.openRequest(t.text[0 .. t.length], windowCwd[0 .. windowCwdLen]);
+            }
             inbox.opens.clear(releaseStorage: false);
         }
         if (inbox.droppedOpens)
@@ -2227,16 +2269,27 @@ struct TerminalView
             opts.hooks.notify(n, route);
     }
 
-    // OSC 7 (`TPR4`): a `file:` URI on this host, or a bare absolute path,
-    // naming a directory that exists. Anything else leaves `cwd` as it was.
-    private bool acceptWorkingDirectory() @system nothrow @nogc
+    private enum PwdJudgement : ubyte
+    {
+        accepted, /// `path`/`pathLen` hold an existing local directory
+        rejected, /// not accepted; `foreign` says whether it named another host
+        tooLong,  /// the report did not fit: no judgement, state stands
+    }
+
+    // Judges one raw OSC 7 value (`TPR4`): a `file:` URI on this host, or a
+    // bare absolute path, naming a directory that exists.
+    private PwdJudgement judgeWorkingDirectory(scope const(char)[] raw, bool tooLong,
+        ref char[4096] path, out size_t pathLen, out bool foreign)
+        @system nothrow @nogc
     {
         import core.sys.posix.sys.stat : S_ISDIR, stat, stat_t;
         import core.sys.posix.unistd : gethostname;
         import sparkles.terminal_view.osc_scan : namesAnotherHost, parseWorkingDirectory;
 
-        if (s.effects_ctx.pwdTooLong)
-            return false;
+        pathLen = 0;
+        foreign = false;
+        if (tooLong)
+            return PwdJudgement.tooLong;
         char[256] host = 0;
         if (gethostname(host.ptr, host.length - 1) != 0)
             host[0] = 0;
@@ -2244,22 +2297,44 @@ struct TerminalView
         while (hostLen < host.length && host[hostLen])
             ++hostLen;
 
-        char[4096] path = 0;
-        const raw = s.effects_ctx.pwdBuf[0 .. s.effects_ctx.pwdLen];
         const n = parseWorkingDirectory(raw, host[0 .. hostLen], path[0 .. $ - 1]);
         if (n == 0)
         {
-            cwdForeign = namesAnotherHost(raw, host[0 .. hostLen]);
-            return false;
+            foreign = namesAnotherHost(raw, host[0 .. hostLen]);
+            return PwdJudgement.rejected;
         }
-        cwdForeign = false;
+        path[n] = 0;
         stat_t st;
         if (stat(path.ptr, &st) != 0 || !S_ISDIR(st.st_mode))
-            return false;
-        cwdBuf[0 .. n] = path[0 .. n];
-        cwdBuf[n] = 0;
-        cwdLen = n;
-        return true;
+            return PwdJudgement.rejected;
+        pathLen = n;
+        return PwdJudgement.accepted;
+    }
+
+    // OSC 7 (`TPR4`): anything not accepted leaves `cwd` as it was.
+    private bool acceptWorkingDirectory() @system nothrow @nogc
+    {
+        char[4096] path = 0;
+        size_t n;
+        bool foreign;
+        const raw = s.effects_ctx.pwdBuf[0 .. s.effects_ctx.pwdLen];
+        final switch (judgeWorkingDirectory(raw, s.effects_ctx.pwdTooLong, path, n, foreign))
+        {
+            case PwdJudgement.accepted:
+                cwdForeign = false;
+                cwdBuf[0 .. n] = path[0 .. n];
+                cwdBuf[n] = 0;
+                cwdLen = n;
+                cwdGeneration = s.effects_ctx.pwdGeneration;
+                return true;
+            case PwdJudgement.rejected:
+                cwdForeign = foreign;
+                cwdGeneration = s.effects_ctx.pwdGeneration;
+                return false;
+            case PwdJudgement.tooLong:
+                cwdGeneration = s.effects_ctx.pwdGeneration;
+                return false;
+        }
     }
 
     /**

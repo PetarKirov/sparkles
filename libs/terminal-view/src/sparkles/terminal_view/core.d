@@ -48,6 +48,9 @@ struct EffectsContext
     size_t pwdLen;
     bool pwdDirty;
     bool pwdTooLong;
+    // Bumped on every OSC 7 report, so an open request can name the
+    // directory report in effect when it was captured (`TDV15`).
+    ulong pwdGeneration;
 
     // The light/dark scheme `CSI ? 996 n` reports (`TPR14`): the embedder's
     // when it set one, else the default background's lightness.
@@ -153,6 +156,7 @@ void effect_pwd_changed(GhosttyTerminal terminal, void* userdata)
     if (ctx.pwdLen)
         ctx.pwdBuf[0 .. ctx.pwdLen] = (cast(const(char)*) pwd.ptr)[0 .. ctx.pwdLen];
     ctx.pwdDirty = true;
+    ++ctx.pwdGeneration;
 }
 
 // color_scheme: answers `CSI ? 996 n` (`TPR14`) from the scheme the embedder
@@ -658,9 +662,14 @@ void feedPtyChunk(ref CoreState s, scope const(char)[] chunk)
             }
             if (oscBoundary)
             {
-                import sparkles.terminal_view.protocols : observeOsc;
+                import sparkles.terminal_view.protocols : PwdSnapshot, observeOsc;
 
-                observeOsc(s.protocol, s.oscScan, s.pty_fd);
+                // The vt write above already applied any OSC 7 preceding
+                // this sequence, so the effects context names the directory
+                // in effect at this capture (`TDV15`).
+                observeOsc(s.protocol, s.oscScan, s.pty_fd,
+                    PwdSnapshot(s.effects_ctx.pwdBuf[0 .. s.effects_ctx.pwdLen],
+                        s.effects_ctx.pwdTooLong, s.effects_ctx.pwdGeneration));
             }
         }
     }
