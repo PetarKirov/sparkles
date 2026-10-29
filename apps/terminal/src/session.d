@@ -189,7 +189,7 @@ prefix's `bin` alone. Entries keep the parent's order, the session's
 follow; the result is `KEY=VALUE` strings.
 */
 string[] sessionEnvironment(scope const string[] parent, const SessionPaths p,
-    bool prefixed) @safe pure
+    bool prefixed, bool openInApp = true) @safe pure
 {
     import std.algorithm.searching : canFind, startsWith;
     import std.string : indexOf;
@@ -208,6 +208,11 @@ string[] sessionEnvironment(scope const string[] parent, const SessionPaths p,
     ];
     if (p.nativeLibraryDir.length)
         own ~= "SPARKLES_NATIVE_LIBRARY_DIR=" ~ p.nativeLibraryDir;
+    // The plain shell's opener is live only while open requests are the
+    // app's (`TDV4`); the prefix has no shim (its `termux-open` is the
+    // `am` server's, which decides for itself).
+    if (!prefixed && openInApp)
+        own ~= "SPARKLES_TERMINAL_OPEN=1";
     if (prefixed)
     {
         own ~= "PREFIX=" ~ p.prefix;
@@ -220,7 +225,10 @@ string[] sessionEnvironment(scope const string[] parent, const SessionPaths p,
         own ~= "NIX_ON_DROID_AM_SOCKET=" ~ p.amSocket;
     }
 
-    static immutable dropped = ["LD_LIBRARY_PATH", "LD_PRELOAD", "SPARKLES_NATIVE_LIBRARY_DIR"];
+    static immutable dropped = [
+        "LD_LIBRARY_PATH", "LD_PRELOAD", "SPARKLES_NATIVE_LIBRARY_DIR",
+        "SPARKLES_TERMINAL_OPEN",
+    ];
     string[] result;
     foreach (entry; parent)
     {
@@ -270,6 +278,10 @@ string[] sessionEnvironment(scope const string[] parent, const SessionPaths p,
         "the app's own commands first (shellTools)");
     assert(shell.canFind("TMPDIR=/data/org.example/files/tmp"));
     assert(!shell.canFind!(e => e.length >= 7 && e[0 .. 7] == "PREFIX="));
+    assert(shell.canFind("SPARKLES_TERMINAL_OPEN=1"), "the plain shell's opener is live (`TDV4`)");
+    assert(!boot.canFind("SPARKLES_TERMINAL_OPEN=1"), "the prefix has no opener shim");
+    const off = sessionEnvironment(parent, p, false, false);
+    assert(!off.canFind("SPARKLES_TERMINAL_OPEN=1"), "off with `open.intercept = false`");
 }
 
 /// The host's actual APK path replaces stale inherited paths in both modes.
@@ -322,18 +334,46 @@ immutable ShellTool[] shellTools = [
 The plain shell's opener (`TDV4`, `TDV15`), under the names programs call:
 one local file, made absolute and checked where it is, becomes an open
 request on the terminal (`ESC ] 5379 ; open ; <base64> ST`); a missing one is
-refused with status 1 (`TDV3`). Everything else says what the command takes:
-Android has no other opener a plain shell could hand it to.
+refused with status 1 (`TDV3`). The plain shell has no next opener to hand
+the rest to, so what the desktop's shim passes on — a URL, another host's
+`file:` path, a directory, a non-regular file, no `SPARKLES_TERMINAL_OPEN` —
+the script refuses where it runs, with a message and status 1. The content
+kind stays the host's to decline (`TDV1`): a shell script cannot sniff it.
 */
 enum string openerScript = "#!/system/bin/sh\n"
     ~ "# Written by the terminal app: one local file opens in its viewer.\n"
+    ~ "name=${0##*/}\n"
+    ~ "if [ \"${SPARKLES_TERMINAL_OPEN:-}\" != \"1\" ]; then\n"
+    ~ "  echo \"$name: open requests are off in this terminal\" >&2; exit 1\n"
+    ~ "fi\n"
     ~ "if [ $# -ne 1 ] || [ \"${1#-}\" != \"$1\" ]; then\n"
-    ~ "  echo \"${0##*/}: opens one local file in the terminal's viewer\" >&2; exit 2\n"
+    ~ "  echo \"$name: opens one local file in the terminal's viewer\" >&2; exit 2\n"
     ~ "fi\n"
     ~ "t=$1\n"
-    ~ "case $t in *://* | /*) ;; *) t=$PWD/$t ;; esac\n"
-    ~ "case $t in *://*) ;; *)\n"
-    ~ "  [ -r \"$t\" ] || { echo \"${0##*/}: $t: no such file\" >&2; exit 1; } ;;\n"
+    ~ "case $t in\n"
+    ~ "  file://localhost/*) p=${t#file://localhost} ;;\n"
+    ~ "  file:///*) p=${t#file://} ;;\n"
+    ~ "  /*) p=$t ;;\n"
+    ~ "  *)\n"
+    ~ "    h=${t%%/*}\n"
+    ~ "    case $h in\n"
+    ~ "      *:*) echo \"$name: $t: not a local file\" >&2; exit 1 ;;\n"
+    ~ "      *) p=$PWD/$t ;;\n"
+    ~ "    esac ;;\n"
+    ~ "esac\n"
+    ~ "if [ -d \"$p\" ]; then\n"
+    ~ "  echo \"$name: $t: a directory\" >&2; exit 1\n"
+    ~ "elif [ ! -f \"$p\" ]; then\n"
+    ~ "  if [ -e \"$p\" ]; then\n"
+    ~ "    echo \"$name: $t: not a regular file\" >&2\n"
+    ~ "  else\n"
+    ~ "    echo \"$name: $t: no such file\" >&2\n"
+    ~ "  fi\n"
+    ~ "  exit 1\n"
+    ~ "elif [ ! -r \"$p\" ]; then\n"
+    ~ "  echo \"$name: $t: not readable\" >&2; exit 1\n"
+    ~ "fi\n"
+    ~ "case $t in file://*) ;; *) t=$p ;;\n"
     ~ "esac\n"
     ~ "printf '\\033]5379;open;%s\\033\\\\' \"$(printf %s \"$t\" | base64 | tr -d '\\n')\" > /dev/tty\n";
 
@@ -371,12 +411,31 @@ enum string openerScript = "#!/system/bin/sh\n"
     const script = buildPath(dir, "xdg-open");
     write(script, openerScript.replace(" > /dev/tty", ""));
     write(buildPath(dir, "a b.md"), "# hi\n");
-    auto r = execute(["/bin/sh", "-c", "cd '" ~ dir ~ "' && sh ./xdg-open 'a b.md'"]);
+    string[string] on = ["SPARKLES_TERMINAL_OPEN": "1"];
+    auto run(string args, string[string] env = on) =>
+        execute(["/bin/sh", "-c", "cd '" ~ dir ~ "' && sh ./xdg-open " ~ args], env);
+    auto r = run("'a b.md'");
     assert(r.status == 0 && r.output == openRequestSequence(buildPath(dir, "a b.md")), r.output);
-    r = execute(["/bin/sh", "-c", "cd '" ~ dir ~ "' && sh ./xdg-open missing.md"]);
+    r = run("missing.md");
     assert(r.status == 1 && r.output.canFind("no such file"));
-    r = execute(["/bin/sh", "-c", "cd '" ~ dir ~ "' && sh ./xdg-open -a b"]);
+    r = run("-a b");
     assert(r.status == 2);
+    // What the desktop's shim hands to the next opener, the plain shell
+    // refuses where it runs (`TDV3`, `TDV4`): no request is written.
+    r = run("'a b.md'", ["SPARKLES_TERMINAL_OPEN": "0"]);
+    assert(r.status == 1 && !r.output.canFind("5379"), "off without the env (`TDV4`)");
+    r = run("https://example.org/a.md");
+    assert(r.status == 1 && !r.output.canFind("5379"), "a URL is not a local file");
+    r = run("file://otherhost/tmp/a.md");
+    assert(r.status == 1 && !r.output.canFind("5379"), "another host's path is not local");
+    r = run(".");
+    assert(r.status == 1 && !r.output.canFind("5379"), "a directory is refused");
+    r = execute(["/bin/sh", "-c", "cd '" ~ dir ~ "' && mkfifo fifo.md && sh ./xdg-open fifo.md"], on);
+    assert(r.status == 1 && !r.output.canFind("5379"), "a FIFO is not a regular file");
+    r = run("'file://localhost" ~ buildPath(dir, "a b.md") ~ "'");
+    assert(r.status == 0
+        && r.output == openRequestSequence("file://localhost" ~ buildPath(dir, "a b.md")),
+        "a local file: URI is passed on for the host to decode");
 }
 
 /// The bootstrap zip's name for the running ABI (`NOD5`) — nix-on-droid's

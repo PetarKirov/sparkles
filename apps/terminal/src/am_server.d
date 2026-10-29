@@ -26,7 +26,7 @@ private shared bool reloadRequested;
 bool takeReloadRequest() @trusted nothrow @nogc => atomicExchange(&reloadRequested, false);
 
 /// Whether `termux-open` of a file the viewer shows opens it in the app
-/// (`open.target` other than `external`, `TDV1`).
+/// (`open.intercept` on and `open.target` other than `external`, `TDV1`).
 private shared bool openInApp = true;
 
 /// ditto
@@ -34,6 +34,9 @@ void setOpenInApp(bool yes) @trusted nothrow @nogc
 {
     atomicStore(openInApp, yes);
 }
+
+/// ditto
+bool opensInApp() @trusted nothrow @nogc => atomicLoad(openInApp);
 
 /**
 Start the server on a thread of its own, listening on `path`
