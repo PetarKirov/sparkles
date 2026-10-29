@@ -205,6 +205,11 @@ struct GlyphRequest
     int fitWidth, fitHeight;
 }
 
+/// The most glyphs one cluster is drawn as: the font seam's cap
+/// (`sparkles.font.cluster_shaping.maxClusterGlyphs`), which the canvas
+/// asserts against where both are visible.
+enum size_t maxClusterQuads = 64;
+
 /// A cluster a painter asks a glyph source to shape (T3): its codepoints and
 /// what a `GlyphRequest` carries for its first.
 struct ClusterRequest
@@ -583,7 +588,7 @@ if (isImageSource!Images)
         {
             static if (shapesClusters!GlyphSource)
             {
-                GlyphQuad[16] quads;
+                GlyphQuad[maxClusterQuads] quads;
                 size_t n;
                 if (images.resolveCluster(r, quads[], n) != GlyphOutcome.drawn)
                     return false;

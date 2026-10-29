@@ -542,9 +542,13 @@ struct VulkanCanvas(B)
     {
         textMetrics_ = TextMetrics.init;
         // A face's glyphs keep their atlas entries across a size change;
-        // other bytes are another face.
-        uint serialOf(const(ubyte)[] bytes, in CellFace was)
-            => bytes.ptr is was.bytes.ptr && bytes.length == was.bytes.length ? was.serial : ++faceSerial_;
+        // other bytes are another face. Identity is the bytes' content,
+        // not their address: the caller's bytes may die at the next call
+        // and a different face be allocated where they lay, which a
+        // pointer would call the same face.
+        uint serialOf(in CellFace face, in CellFace was)
+            => face.contentHash == was.contentHash && face.bytes.length == was.bytes.length
+                ? was.serial : ++faceSerial_;
         CellFace[] opened;
         foreach (fb; fallbacks)
         {
@@ -553,9 +557,9 @@ struct VulkanCanvas(B)
                 continue;
             CellFace was;
             foreach (ref old; fallbacks_)
-                if (old.bytes.ptr is fb.bytes.ptr)
+                if (old.contentHash == face.contentHash && old.bytes.length == fb.bytes.length)
                     was = old;
-            face.serial = serialOf(fb.bytes, was);
+            face.serial = serialOf(face, was);
             opened ~= face;
         }
         fallbacks_ = opened;
@@ -567,7 +571,7 @@ struct VulkanCanvas(B)
                 faces_[] = CellFace.init;
                 return false;
             }
-            bound.serial = serialOf(bytes, faces_[style]);
+            bound.serial = serialOf(bound, faces_[style]);
             faces_[style] = bound;
         }
         textMetrics_ = metrics;
@@ -689,7 +693,10 @@ struct VulkanCanvas(B)
         else
         {
             import sparkles.base.text.utf : convertPrefix, UtfMode;
-            import sparkles.font.cluster_shaping : ClusterGlyph, shapeCluster;
+            import sparkles.font.cluster_shaping : ClusterGlyph, maxClusterGlyphs, shapeCluster;
+
+            static assert(maxClusterGlyphs == maxClusterQuads,
+                "the painter's quads and the font seam's glyphs are one cap");
 
             if (!textMetrics_.present || !textRendering_.shaping || !r.cps.length)
                 return GlyphOutcome.noGlyph;
@@ -717,7 +724,7 @@ struct VulkanCanvas(B)
             char[128] text;
             const encoded = convertPrefix(cast(const(dchar)[]) r.cps, text[], UtfMode.replacement);
             const source = text[0 .. encoded.written];
-            ClusterGlyph[16] glyphs;
+            ClusterGlyph[maxClusterGlyphs] glyphs;
             const shaped = shapeCluster(shaper, source, face.ppem.numerator, face.ppem.denominator, glyphs[]);
             if (shaped == 0)
                 return GlyphOutcome.noGlyph;
@@ -1399,6 +1406,7 @@ private struct CellFace
     uint serial; // the atlas's key for this face
     bool colour; // it has colour forms (`COLR`, `CBDT`, `sbix`): asked for them first
     LightHints hints; // its light-hinting metrics at `ppem`
+    ulong contentHash; // of `bytes`, taken while they are known to live
 
     // `bytes` at `ppem`, or `CellFace.init` when they hold no usable face.
     static CellFace open(const(ubyte)[] bytes, Ppem size) @system
@@ -1422,7 +1430,10 @@ private struct CellFace
         auto ws = OutlineWorkspace(new OutlinePoint[4096], new bool[4096], new ushort[1024], new uint[4096],
             new int[4096], new int[4096], new int[2][4096]);
         const hints = lightHints(inst.value, map.value, size, segments, ws);
-        return CellFace(bytes, face.value, map.value, inst.value, size, 0, hasColourGlyphs(face.value), hints);
+        auto opened = CellFace(bytes, face.value, map.value, inst.value, size, 0,
+            hasColourGlyphs(face.value), hints);
+        opened.contentHash = contentHashOf(bytes);
+        return opened;
     }
 }
 
@@ -1432,6 +1443,28 @@ private Colour foregroundOf(vec4 c) @safe pure nothrow @nogc
 {
     static ubyte b(float x) => cast(ubyte)(x <= 0 ? 0 : x >= 1 ? 255 : x * 255 + 0.5f);
     return Colour(b(c.x), b(c.y), b(c.z), b(c.w));
+}
+
+// A face's identity by content (FNV-1a): two binds of the same bytes keep
+// one atlas serial, and different bytes at a recycled address do not.
+private ulong contentHashOf(scope const(ubyte)[] bytes) @safe pure nothrow @nogc
+{
+    ulong h = 0xcbf2_9ce4_8422_2325;
+    foreach (b; bytes)
+    {
+        h ^= b;
+        h *= 0x0000_0100_0000_01b3;
+    }
+    return h;
+}
+
+@("ui_vulkan.canvas.contentHashOfDistinguishesBytes")
+@safe pure nothrow @nogc unittest
+{
+    assert(contentHashOf(cast(const(ubyte)[]) "face") == contentHashOf(cast(const(ubyte)[]) "face"));
+    assert(contentHashOf(cast(const(ubyte)[]) "face") != contentHashOf(cast(const(ubyte)[]) "facc"));
+    assert(contentHashOf(cast(const(ubyte)[]) "face") != contentHashOf(cast(const(ubyte)[]) "faces"));
+    assert(contentHashOf(null) != 0, "the empty face is nobody's hash by accident");
 }
 
 // `ppem` scaled by `a / b`, exactly.
