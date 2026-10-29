@@ -11,6 +11,10 @@ modules needs that: analysing the engine there made the frontend list a
 */
 module sparkles.font.cluster_shaping;
 
+/// The most glyphs one call shapes a cluster to: `shapeCluster` writes at
+/// most this many, and a cluster needing more is refused whole.
+enum size_t maxClusterGlyphs = 64;
+
 /// A shaper of one face, made by `openClusterShaper`.
 struct ClusterShaper;
 
@@ -28,22 +32,26 @@ A shaper for `instance` (a `sparkles.font.Instance`, which must outlive
 it), or null when the engine cannot shape — not linked, an incompatible
 HarfBuzz, or no memory.
 */
-ClusterShaper* openClusterShaper(const(void)* instance) @trusted nothrow @nogc
+ClusterShaper* openClusterShaper(const(void)* instance) @system nothrow @nogc
 {
     import core.lifetime : emplace;
-    import core.stdc.stdlib : free, malloc;
+    import core.stdc.stdlib : malloc;
     import sparkles.font.errors : FontError;
     import sparkles.font.instance : Instance;
     import sparkles.font.shaping : Shaper;
 
-    auto memory = malloc(Shaper.sizeof);
+    if (instance is null)
+        return null;
+    auto memory = () @trusted { return malloc(Shaper.sizeof); }();
     if (memory is null)
         return null;
-    auto shaper = emplace(cast(Shaper*) memory, *cast(const(Instance)*) instance);
+    // The one place the type-erased instance is taken on trust.
+    auto shaper = () @trusted {
+        return emplace(cast(Shaper*) memory, *cast(const(Instance)*) instance);
+    }();
     if (shaper.status != FontError.init)
     {
-        shaper.__xdtor();
-        free(memory);
+        closeClusterShaper(cast(ClusterShaper*) memory);
         return null;
     }
     return cast(ClusterShaper*) memory;
@@ -55,7 +63,7 @@ ppemDenominator` pixels per em into `glyphs`: how many it wrote, or 0 when
 shaping failed or `glyphs` is too short.
 */
 size_t shapeCluster(ClusterShaper* shaper, scope const(char)[] text, ulong ppemNumerator,
-    ulong ppemDenominator, scope ClusterGlyph[] glyphs) @trusted nothrow @nogc
+    ulong ppemDenominator, scope ClusterGlyph[] glyphs) @system nothrow @nogc
 {
     import sparkles.base.text.layout_units : I128, Rational, U128;
     import sparkles.font.shaping : SegmentProperties, ShapedGlyph, ShapeRequest, Shaper, SourceSpan;
@@ -66,8 +74,8 @@ size_t shapeCluster(ClusterShaper* shaper, scope const(char)[] text, ulong ppemN
     const ppem = Ppem.fromRational(Rational(I128(U128(ppemNumerator, 0)), U128(ppemDenominator, 0)));
     if (ppem.hasError)
         return 0;
-    ShapedGlyph[64] shaped;
-    SourceSpan[64] spans;
+    ShapedGlyph[maxClusterGlyphs] shaped;
+    SourceSpan[maxClusterGlyphs] spans;
     if (glyphs.length > shaped.length)
         glyphs = glyphs[0 .. shaped.length];
     const result = (cast(Shaper*) shaper).shape(ShapeRequest(text, 0, text.length, SegmentProperties.init,
@@ -81,13 +89,15 @@ size_t shapeCluster(ClusterShaper* shaper, scope const(char)[] text, ulong ppemN
 }
 
 /// Destroys a shaper `openClusterShaper` made; null is ignored.
-void closeClusterShaper(ClusterShaper* shaper) @trusted nothrow @nogc
+void closeClusterShaper(ClusterShaper* shaper) @system nothrow @nogc
 {
     import core.stdc.stdlib : free;
     import sparkles.font.shaping : Shaper;
 
     if (shaper is null)
         return;
-    (cast(Shaper*) shaper).__xdtor();
-    free(shaper);
+    () @trusted {
+        (cast(Shaper*) shaper).__xdtor();
+        free(shaper);
+    }();
 }
