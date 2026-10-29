@@ -345,10 +345,29 @@ private KeyEvent key(Key k, Mods m = Mods(), dchar unshifted = 0, string text = 
     p.deliver();
     assert(got.length == maxPendingOpens);
 
-    // Once OSC 7 says the shell is on another host, nothing opens.
+    // Each request is judged with the directory in effect when it was
+    // captured, not the delivery's last one: two requests bracketing a
+    // directory change in ONE chunk resolve against their own.
+    got = null;
+    p.program("\x1b]7;file:///tmp\x07" ~ request("a.md")
+        ~ "\x1b]7;file:///\x07" ~ request("b.md"));
+    p.deliver();
+    assert(got == [Got("a.md", "/tmp"), Got("b.md", "/")],
+        "a request resolves against the directory at its capture");
+
+    // And a foreign report between two requests in one chunk suppresses
+    // only the one captured while foreign.
     got = null;
     char[256] hostBuf = 0;
     gethostname(hostBuf.ptr, hostBuf.length - 1);
+    p.program("\x1b]7;file://not-" ~ fromStringz(hostBuf.ptr).idup ~ "/home/u\x07"
+        ~ request("/etc/hosts") ~ "\x1b]7;file:///tmp\x07" ~ request("/etc/hosts"));
+    p.deliver();
+    assert(got == [Got("/etc/hosts", "/tmp")],
+        "only the request captured while on another host is ignored");
+
+    // Once OSC 7 says the shell is on another host, nothing opens.
+    got = null;
     p.program("\x1b]7;file://not-" ~ fromStringz(hostBuf.ptr).idup ~ "/home/u\x07");
     p.program(request("/etc/hosts"));
     p.deliver();
