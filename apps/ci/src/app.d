@@ -3452,6 +3452,11 @@ private int runBuildEachCommitMode(string base, string[] requested, bool failFas
     const total = commits.length * pkgs.length;
     walk: foreach (cIdx, commit; commits)
     {
+        // What the last commit's builds left untracked goes first: a file dub
+        // writes for a package (its `dub.selections.json`) that a later
+        // commit tracks otherwise stops the checkout. Ignored build output
+        // stays, so each build is still incremental.
+        runGit(["-C", wt, "clean", "-fdq"]);
         const co = runGit(["-C", wt, "checkout", "--quiet", "--detach", commit.sha]);
         if (co.status != 0)
         {
@@ -3464,6 +3469,13 @@ private int runBuildEachCommitMode(string base, string[] requested, bool failFas
             const progress = i"[$(cIdx * pkgs.length + pi + 1)/$(total)]".text;
             const header = styledText(i"{dim $(progress)} {yellow $(commit.sha)} {cyan $(pkgName)} {dim › $(commit.subject)}");
 
+            // A package a later commit adds is not here yet: nothing to build.
+            if (!buildPath(wt, pkg, "dub.sdl").exists && !buildPath(wt, pkg, "dub.json").exists)
+            {
+                writeln(styledText(i"{dim $(progress) $(commit.sha) $(pkgName): not in this commit}"));
+                ++processed;
+                continue;
+            }
             mkdirRecurse(buildPath(wt, pkg, "build"));
             auto lines = executeMonitoredLines(
                 dubBuildCommand(wt, pkg, pkgName), 250.msecs, &onSample,
