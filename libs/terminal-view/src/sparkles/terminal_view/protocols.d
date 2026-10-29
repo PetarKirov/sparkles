@@ -24,6 +24,17 @@ import sparkles.terminal_view.osc_scan;
 /// Notifications held between two deliveries; more are counted and dropped.
 enum size_t maxPendingNotifications = 32;
 
+/// Open requests held between two deliveries (`TDV15`); more are dropped, so
+/// a file full of them that a program prints opens a few panes, not hundreds.
+enum size_t maxPendingOpens = 4;
+
+/// One open request's target, as `parseOpenRequest` decoded it.
+struct OpenTarget
+{
+    char[maxOpenTargetBytes] text = 0;
+    size_t length;
+}
+
 /// When a paste without bracketed-paste mode asks first (`paste.confirm`, `TPR19`).
 enum PasteConfirm : ubyte
 {
@@ -116,6 +127,10 @@ struct TerminalViewHooks
     /// The label of the tab holding this pane, for the notification log
     /// (`TPG9`). Unset, the pane's title.
     const(char)[] delegate() tabTitle;
+    /// OSC 5379 (terminal `TDV15`): a program asked to open `target` — a
+    /// path, absolute or relative to `cwd`, the pane's directory as OSC 7
+    /// last reported it (empty when none), or a `file:` URI. Unset, ignored.
+    void delegate(scope const(char)[] target, scope const(char)[] cwd) openRequest;
 }
 
 /**
@@ -140,6 +155,9 @@ struct ProtocolInbox
     size_t readSelectorsLen;
     bool clipboardRead;
     bool readEndedWithBel;
+
+    HeapBuffer!OpenTarget opens;
+    size_t droppedOpens;
 }
 
 /**
@@ -187,6 +205,16 @@ void observeOsc(ref ProtocolInbox inbox, ref const OscScanner sc, int ptyFd)
             break;
         case 52:
             observeClipboard(inbox, payload, sc.endedWithBel);
+            break;
+        case openRequestOsc:
+            OpenTarget t;
+            t.length = parseOpenRequest(payload, t.text);
+            if (t.length == 0)
+                break;
+            if (inbox.opens.length < maxPendingOpens)
+                inbox.opens ~= t;
+            else
+                ++inbox.droppedOpens;
             break;
         default:
             break;
@@ -273,6 +301,13 @@ private void observeClipboard(ref ProtocolInbox inbox, scope const(char)[] paylo
     feed("\x1b]52;c;?\x1b\\");
     assert(inbox.clipboardRead && !inbox.readEndedWithBel);
     assert(inbox.readSelectors[0 .. inbox.readSelectorsLen] == "c");
+
+    // An open request (`TDV15`), then more than a delivery holds.
+    feed("\x1b]5379;open;UkVBRE1FLm1k\x1b\\");
+    assert(inbox.opens.length == 1 && inbox.opens[0].text[0 .. inbox.opens[0].length] == "README.md");
+    foreach (_; 0 .. maxPendingOpens + 2)
+        feed("\x1b]5379;open;UkVBRE1FLm1k\x07");
+    assert(inbox.opens.length == maxPendingOpens && inbox.droppedOpens == 3);
 }
 
 @("protocols.observeOsc.boundsHostileVolume")

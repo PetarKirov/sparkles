@@ -60,7 +60,8 @@ import sparkles.terminal_view.png_decoder : installPngDecoder;
 import sparkles.terminal_view.pointer : PaneGeometry, pointerEvent, pointerFrame, PointerTrack,
     wheelEvent;
 import sparkles.terminal_view.protocols : ClipboardReadAnswer, ClipboardReadPolicy,
-    ColorScheme, PasteConfirm, PasteConfirmRequest, ProtocolPolicy, TerminalViewHooks;
+    ColorScheme, maxPendingOpens, PasteConfirm, PasteConfirmRequest, ProtocolPolicy,
+    TerminalViewHooks;
 import sparkles.terminal_view.selection : bounds, findBackward, FindResult, Granularity, moveEnd,
     selectAllModel = selectAll, selectAtModel = selectAt, SelectionBounds, SelectionEnd,
     selectionEmptied, selectionHyperlinksModel = selectionHyperlinks, selectionLive,
@@ -469,6 +470,9 @@ struct TerminalView
     // The validated OSC 7 directory, NUL-terminated.
     private char[4096] cwdBuf = 0;
     private size_t cwdLen;
+    // The last OSC 7 named another host: the program now runs there (`ssh`),
+    // and a path it names is not this machine's (`TDV15`).
+    private bool cwdForeign;
     // A user rename pins the label against OSC 0/2 until cleared (`TPR3`).
     private char[maxTitleBytes + 1] renamedBuf = 0;
     private size_t renamedLen;
@@ -2087,6 +2091,22 @@ struct TerminalView
                 hooks.cwdChanged(cwd);
         }
 
+        // OSC 5379 (`TDV15`): ignored from a program on another host.
+        if (inbox.opens.length)
+        {
+            foreach (ref t; inbox.opens[])
+                if (cwdForeign)
+                    warning(i"terminal: an open request from a program on another host was ignored");
+                else if (hooks.openRequest !is null)
+                    hooks.openRequest(t.text[0 .. t.length], cwd);
+            inbox.opens.clear(releaseStorage: false);
+        }
+        if (inbox.droppedOpens)
+        {
+            warning(i"terminal: $(inbox.droppedOpens) open requests dropped (more than $(maxPendingOpens) in one frame)");
+            inbox.droppedOpens = 0;
+        }
+
         if (inbox.notifications.length)
         {
             foreach (ref n; inbox.notifications[])
@@ -2213,7 +2233,7 @@ struct TerminalView
     {
         import core.sys.posix.sys.stat : S_ISDIR, stat, stat_t;
         import core.sys.posix.unistd : gethostname;
-        import sparkles.terminal_view.osc_scan : parseWorkingDirectory;
+        import sparkles.terminal_view.osc_scan : namesAnotherHost, parseWorkingDirectory;
 
         if (s.effects_ctx.pwdTooLong)
             return false;
@@ -2225,10 +2245,14 @@ struct TerminalView
             ++hostLen;
 
         char[4096] path = 0;
-        const n = parseWorkingDirectory(s.effects_ctx.pwdBuf[0 .. s.effects_ctx.pwdLen],
-            host[0 .. hostLen], path[0 .. $ - 1]);
+        const raw = s.effects_ctx.pwdBuf[0 .. s.effects_ctx.pwdLen];
+        const n = parseWorkingDirectory(raw, host[0 .. hostLen], path[0 .. $ - 1]);
         if (n == 0)
+        {
+            cwdForeign = namesAnotherHost(raw, host[0 .. hostLen]);
             return false;
+        }
+        cwdForeign = false;
         stat_t st;
         if (stat(path.ptr, &st) != 0 || !S_ISDIR(st.st_mode))
             return false;

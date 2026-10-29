@@ -1,7 +1,8 @@
 /**
 The OSC payloads the VT engine leaves to its host (`TPR2`, `TPR4`, `TPR8`,
-`TPR20`, `TPR21`): titles and icon strings, OSC 7 working directories,
-OSC 9 / 777 / 99 notifications and OSC 52 clipboard operations.
+`TPR20`, `TPR21`, terminal `TDV15`): titles and icon strings, OSC 7 working
+directories, OSC 9 / 777 / 99 notifications, OSC 52 clipboard operations and
+the open requests of OSC 5379.
 
 libghostty-vt recognizes these sequences but exposes only the title as data
 ([protocols](../../../../../docs/specs/terminal/protocols.md)), so the host
@@ -34,6 +35,8 @@ enum size_t maxNotifyBodyBytes = 1024;
 enum size_t maxClipboardBytes = 1024 * 1024;
 /// The kitty notification identifier we keep (`[a-zA-Z0-9_\-+.]`).
 enum size_t maxNotifyIdBytes = 64;
+/// The target an open request names (terminal `TDV15`), decoded.
+enum size_t maxOpenTargetBytes = 2048;
 
 // ── sanitizing ──────────────────────────────────────────────────────────────
 
@@ -454,6 +457,87 @@ pure nothrow @nogc unittest
     assert(decodeBase64Lenient("a$==", b) == -1);
     ubyte[2] small;
     assert(decodeBase64Lenient("aGVsbG8=", small) == -1);
+}
+
+/**
+Whether OSC 7's raw value names a host other than `localHost` — a `file:`
+URI whose authority is neither empty, `localhost`, nor this host: the program
+reporting it runs elsewhere (`ssh`), so a path it names is not this
+machine's (terminal `TDV15`).
+*/
+bool namesAnotherHost(scope const(char)[] raw, scope const(char)[] localHost)
+    pure nothrow @nogc
+{
+    enum scheme = "file://";
+    if (raw.length < scheme.length || raw[0 .. scheme.length] != scheme)
+        return false;
+    const rest = raw[scheme.length .. $];
+    size_t end;
+    while (end < rest.length && rest[end] != '/')
+        ++end;
+    const host = rest[0 .. end];
+    return host.length && host != "localhost" && host != localHost;
+}
+
+///
+@("osc_scan.namesAnotherHost")
+pure nothrow @nogc unittest
+{
+    assert(namesAnotherHost("file://build-box/home/u", "laptop"));
+    assert(!namesAnotherHost("file://laptop/home/u", "laptop"));
+    assert(!namesAnotherHost("file:///home/u", "laptop"));
+    assert(!namesAnotherHost("file://localhost/home/u", "laptop"));
+    assert(!namesAnotherHost("/home/u", "laptop"), "a bare path is local");
+}
+
+// ── OSC 5379: open requests ─────────────────────────────────────────────────
+
+/// The OSC number of an open request (terminal `TDV15`): one no other
+/// terminal or multiplexer uses.
+enum int openRequestOsc = 5379;
+
+/**
+The target of an open request (`TDV15`), `5379;open;<base64>` — a path,
+absolute or relative to the pane's directory, or a `file:` URI — decoded into
+`dst`; 0 when the payload is not one: another verb, invalid base64, a target
+past `maxOpenTargetBytes`, or one holding a control character or ill-formed
+UTF-8. Whether the target exists, and what opens it, is the host's to decide.
+*/
+size_t parseOpenRequest(scope const(char)[] payload, ref char[maxOpenTargetBytes] dst)
+    pure nothrow @nogc
+{
+    if (oscCommand(payload) != openRequestOsc)
+        return 0;
+    const args = oscArgs(payload);
+    enum verb = "open;";
+    if (args.length <= verb.length || args[0 .. verb.length] != verb)
+        return 0;
+    ubyte[maxOpenTargetBytes] raw;
+    const n = decodeBase64Lenient(args[verb.length .. $], raw[]);
+    if (n <= 0)
+        return 0;
+    const text = cast(const(char)[]) raw[0 .. n];
+    size_t len;
+    if (!appendSanitized(text, dst[], len) || len != text.length)
+        return 0; // a control character or ill-formed text: not a path we take
+    return len;
+}
+
+///
+@("osc_scan.parseOpenRequest")
+pure nothrow @nogc unittest
+{
+    char[maxOpenTargetBytes] t;
+    // `printf %s /tmp/a b.md | base64`
+    assert(parseOpenRequest("5379;open;L3RtcC9hIGIubWQ=", t) == 11 && t[0 .. 11] == "/tmp/a b.md");
+    // Unpadded, as a stream encoder may leave it; a relative path.
+    assert(parseOpenRequest("5379;open;UkVBRE1FLm1k", t) == 9 && t[0 .. 9] == "README.md");
+    assert(parseOpenRequest("5379;edit;UkVBRE1FLm1k", t) == 0, "only `open`");
+    assert(parseOpenRequest("5379;open;", t) == 0, "an empty target");
+    assert(parseOpenRequest("5379;open;$$$$", t) == 0, "not base64");
+    assert(parseOpenRequest("5380;open;UkVBRE1FLm1k", t) == 0, "another OSC");
+    // `printf 'a\nb' | base64`: a newline is no path character here.
+    assert(parseOpenRequest("5379;open;YQpi", t) == 0);
 }
 
 /**
