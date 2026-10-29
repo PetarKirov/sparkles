@@ -38,10 +38,12 @@
     {
       packages = lib.optionalAttrs available {
         # A symlink, not a wrapper script: LDC finds its `ldc2.conf` (and so
-        # the dcompute druntime) from its resolved executable path.
+        # the dcompute druntime) from its resolved executable path. The
+        # compiler without the wrapper that defaults `CC`: shaders are only
+        # compiled (`-c`), never linked, so the closure carries no C compiler.
         ldc2-vulkan = pkgs.runCommand "ldc2-vulkan" { meta.mainProgram = "ldc2-vulkan"; } ''
           mkdir -p $out/bin
-          ln -s ${lib.getExe' inputs'.dlang-nix.packages.ldc-vulkan "ldc2"} $out/bin/ldc2-vulkan
+          ln -s ${lib.getExe' inputs'.dlang-nix.packages.ldc-vulkan.unwrapped "ldc2"} $out/bin/ldc2-vulkan
         '';
 
         shader-compile = config.legacyPackages.buildSparklesApp (finalAttrs: {
