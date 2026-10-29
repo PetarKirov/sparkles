@@ -288,7 +288,8 @@ scrolls, keeps the rail in portrait and turns both ways, its first frame
 On the emulator (API 36, SwiftShader) it types, scrolls and turns to
 landscape and back, its first frame 271–306 ms after the activity starts
 (median 294 ms over five cold starts) against 460–480 ms (median 468 ms
-over five) for the raylib APK. The gate is met on both lanes. Gaps beside the gate:
-no document viewer (the pane paints with raylib), chrome text in the cell
+over five) for the raylib APK. The gate is met on both lanes. The document viewer
+paints on this canvas too (the credits, a markdown preview with its tables
+and code blocks, scroll on a phone). Gaps beside the gate: chrome text in the cell
 font rather than the interface face, no pinch tried by hand (`adb` injects
 one finger), and screenshots read back in the panel's orientation.

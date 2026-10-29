@@ -38,12 +38,12 @@ clamping or skipping ranges. See the coverage library's
 
 ## Embedding
 
-| Module     | What it holds                                                                                                 |
-| ---------- | ------------------------------------------------------------------------------------------------------------- |
-| `include`  | `expandIncludes`, VitePress `@include` resolution, confined and total (`VIW5`, `VIW7`)                        |
-| `kind`     | `ViewKind`, `viewKindOf`: what the viewer can show of a file, decided before opening it (terminal `TDV1`)     |
-| `view_ops` | `emitVisibleOps`, the document's paint loop shared by hue's window and the pane                               |
-| `pane`     | `DocViewEnv`, `DocViewPane`, `PaneKey`, `chromeTheme`; compiled where the consumer links `sparkles:ui-raylib` |
+| Module     | What it holds                                                                                                                                                                      |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `include`  | `expandIncludes`, VitePress `@include` resolution, confined and total (`VIW5`, `VIW7`)                                                                                             |
+| `kind`     | `ViewKind`, `viewKindOf`: what the viewer can show of a file, decided before opening it (terminal `TDV1`)                                                                          |
+| `view_ops` | `emitVisibleOps`, the document's paint loop shared by hue's window and the pane                                                                                                    |
+| `pane`     | `DocViewEnv`, `DocViewPane`, `PaneKey`, `chromeTheme`, `isPixelCanvas`; painted through raylib's canvas where the consumer links `sparkles:ui-raylib`, or through any pixel canvas |
 
 ## The pane's keys
 
