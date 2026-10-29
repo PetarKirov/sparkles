@@ -233,7 +233,9 @@ asks for another frame to complete what it skipped.
 ## 4. Text
 
 **UVK17: Faces.** A text operation whose font role has no face **must** draw
-in the cell font and count as `missingFace`, as the reference canvas does.
+in the cell font and count as `missingFace`, as the reference canvas does. A
+run given a rectangle several rows tall **must** sit in the middle of those
+rows, as a run in an interface face does.
 
 **UVK18: Glyph source.** Glyph pixels **must** come from `sparkles:font`'s
 glyph cache: coverage glyphs as single-channel atlas pages, colour glyphs as
