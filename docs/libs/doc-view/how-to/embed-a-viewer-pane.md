@@ -6,12 +6,14 @@ its scroll, its view toggles, folding and search, and paints only inside the
 rect you give it. This is how `sparkles:terminal` mounts it
 (`apps/terminal/src/workspace_host.d`).
 
-## 1. Depend on the library and on the GPU backend
+## 1. Depend on the library, and on raylib if it draws there
 
 ```sdl
 dependency "sparkles:doc-view" path="../.."
-// The pane compiles where the consumer names ui-raylib itself
-// (`Have_sparkles_ui_raylib`), not merely through sparkles:ui-app.
+// Only for raylib's canvas: its half of the pane compiles where the consumer
+// names ui-raylib itself (`Have_sparkles_ui_raylib`), not merely through
+// sparkles:ui-app. A canvas that draws in device pixels (sparkles:ui-vulkan's)
+// needs nothing more.
 dependency "sparkles:ui-raylib" path="../.."
 ```
 
@@ -61,9 +63,14 @@ pane.scrollBy(rows);
 // Paint at window pixels, through your host's canvas.
 auto c = h.canvas;
 pane.paint(c, x, y, width, height, focused: true);
+// On the native arm the canvas is a pointer to one that draws in device
+// pixels (`isPixelCanvas`); give it the cell, in pixels, it lays cells out in.
+pane.paint(h.canvas, h.cellWidth, h.cellHeight, x, y, width, height, focused: true);
 ```
 
-Call `pane.release()` before the window closes: an image pane holds a texture.
+Call `pane.release()` before the window closes: an image pane holds a texture,
+or, on a pixel canvas, its decoded pixels. There an image file draws only if it
+is a PNG; any other shows a located message.
 
 ## What decides whether a file opens
 
