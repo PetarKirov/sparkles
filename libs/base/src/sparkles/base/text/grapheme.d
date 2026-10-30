@@ -9,6 +9,7 @@ module sparkles.base.text.grapheme;
 
 
 import sparkles.base.text.ansi : escapeLength;
+import sparkles.test_runner.attributes : wasm;
 import sparkles.base.text.width : ClusterWidthState;
 import sparkles.base.text.utf8 : decodeValidated;
 import sparkles.base.text.utf : UtfMode, UtfStatus, UtfResult, UtfToken,
@@ -743,7 +744,7 @@ unittest
     assert(wide.bytes == 3 && wide.cells == 1 && !wide.complete);
 }
 
-@("grapheme.visibleWidth.plainAndStyled")
+@("grapheme.visibleWidth.plainAndStyled") @wasm
 unittest
 {
     assert(visibleWidth("hello") == 5);
@@ -752,7 +753,7 @@ unittest
     assert(visibleWidth("\x1b]8;;http://x\x07Click\x1b]8;;\x07") == 5); // OSC 8
 }
 
-@("grapheme.visibleWidth.unicode")
+@("grapheme.visibleWidth.unicode") @wasm
 unittest
 {
     assert(visibleWidth("\u4E16\u754C") == 4);   // CJK 'shijie' = 2 wide cells x2
@@ -762,7 +763,7 @@ unittest
     assert(visibleWidth("\u0915\u093e") == 1);       // \u0915 + \u093e : base + Mc = one cell
 }
 
-@("grapheme.byGraphemeCluster.slicesAndKinds")
+@("grapheme.byGraphemeCluster.slicesAndKinds") @wasm
 unittest
 {
     auto r = "a\x1b[31m\u4E16".byGraphemeCluster;
@@ -775,7 +776,7 @@ unittest
     assert(r.empty);
 }
 
-@("grapheme.byGraphemeCluster.unclustered")
+@("grapheme.byGraphemeCluster.unclustered") @wasm
 unittest
 {
     // A ZWJ family is one cluster of 2 cells, and 6 where the terminal lays

@@ -9,6 +9,9 @@ targetPath "build"
 dependency "sparkles:base" path="../../.."
 dependency "sparkles:ui" path="../../.."
 
+// The marker attributes (`@wasm`) resolve against the runner shim.
+importPaths "src" "../../test-runner/src"
+
 dflags "-preview=in" "-preview=dip1000"
 
 // The module: `dub build :table-wasm --arch=wasm32-unknown-wasip1`. A reactor
