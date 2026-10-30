@@ -102,9 +102,19 @@ private double meanDifference(in Bitmap a, in Bitmap b)
         return skipTest("SPARKLES_FONTS_PATH is unset");
     import std.stdio : stderr;
 
+    // Each face at each size has a ceiling of its own, a level above what
+    // it measured on 2026-10-30, so a regression in one cannot hide behind
+    // the others in the totals. At 11 px light hinting does not yet beat
+    // unhinted outlines (DejaVu 8.8 against 9.3, Fira Code 12.4 against
+    // 11.1): a ratchet, not a claim that 11 px is right.
+    static immutable faces = ["DejaVuSansMono.ttf", "FiraCodeNerdFontMono-Regular.ttf"];
+    static immutable double[6][2] ceilings = [
+        [10.0, 7.5, 7.5, 7.0, 7.0, 7.0], // DejaVu Sans Mono, 11–16 px
+        [13.5, 7.0, 7.5, 7.0, 7.5, 8.0], // Fira Code, 11–16 px
+    ];
     double hintedTotal = 0, unhintedTotal = 0;
     size_t glyphs, edgesHinted, edgesUnhinted, letters;
-    foreach (name; ["DejaVuSansMono.ttf", "FiraCodeNerdFontMono-Regular.ttf"])
+    foreach (fi, name; faces)
     {
         string path;
         foreach (p; corpus)
@@ -186,6 +196,8 @@ private double meanDifference(in Bitmap a, in Bitmap b)
             }
             stderr.writefln("hinting %s @%dpx: mean |diff| hinted %.1f, unhinted %.1f", name, px,
                 hintedSum / n, unhintedSum / n);
+            assert(hintedSum / n <= ceilings[fi][px - 11], "hinted " ~ name ~ " drifted from "
+                ~ "FreeType's past its ceiling at one size");
             hintedTotal += hintedSum;
             unhintedTotal += unhintedSum;
             glyphs += n;
