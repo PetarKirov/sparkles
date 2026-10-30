@@ -836,13 +836,13 @@
     "wired-bench-external-elasticsearch": {
       "flake": false,
       "locked": {
-        "narHash": "sha256-63anghZTCNAyDFKIlpX1NbsEWH8p7Sys9KstAZTPevU=",
+        "narHash": "sha256-NcRhKJ3CTtHTa06tordxHQzuSYb3I/H3IbUfQL4Ogp0=",
         "type": "file",
-        "url": "https://raw.githubusercontent.com/simdjson/simdjson-data/master/jsonexamples/amazon_cellphones.ndjson"
+        "url": "https://raw.githubusercontent.com/elastic/elasticsearch/6d42e197b82aa1c98a1796d547e373f7029ee27a/docs/src/test/resources/accounts.json"
       },
       "original": {
         "type": "file",
-        "url": "https://raw.githubusercontent.com/simdjson/simdjson-data/master/jsonexamples/amazon_cellphones.ndjson"
+        "url": "https://raw.githubusercontent.com/elastic/elasticsearch/6d42e197b82aa1c98a1796d547e373f7029ee27a/docs/src/test/resources/accounts.json"
       }
     },
     "wired-bench-external-osm": {

@@ -210,9 +210,10 @@
       url = "https://raw.githubusercontent.com/simdjson/simdjson-data/master/jsonexamples/amazon_cellphones.ndjson";
       flake = false;
     };
+    # Elastic's getting-started Bulk API body: action and source lines.
     wired-bench-external-elasticsearch = {
       type = "file";
-      url = "https://raw.githubusercontent.com/simdjson/simdjson-data/master/jsonexamples/amazon_cellphones.ndjson";
+      url = "https://raw.githubusercontent.com/elastic/elasticsearch/6d42e197b82aa1c98a1796d547e373f7029ee27a/docs/src/test/resources/accounts.json";
       flake = false;
     };
   };
