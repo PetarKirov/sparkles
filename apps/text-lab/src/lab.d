@@ -93,11 +93,13 @@ struct Lab
     WidgetTree view(H)(ref H h)
     {
         // `--shot`: a few frames for the atlas and the window to settle, then
-        // the capture, then out.
+        // the capture, then out — on a host that cannot capture too, which
+        // otherwise asks for frames forever.
         if (shotPath.length)
         {
+            --framesToShot;
             static if (__traits(hasMember, H, "screenshot"))
-                if (--framesToShot == 0)
+                if (framesToShot == 0)
                     h.screenshot(shotPath);
             if (framesToShot < -2)
                 h.quit();
@@ -775,6 +777,18 @@ version (unittest)
     import sparkles.ui_app.host : RunConfig;
     import sparkles.ui_app.record : RecordingHost;
     import sparkles.ui_app.run_app : runAppRecorded;
+}
+
+@("text_lab.aShotEndsOnAHostThatCannotCapture")
+@system unittest
+{
+    // The recorder has no `screenshot`, like the terminal arm: the shot's
+    // countdown still runs out and the lab quits instead of asking for
+    // frames forever.
+    Lab lab;
+    lab.shotPath = "never-written.png";
+    const rec = runAppRecorded(lab, RunConfig.init, []);
+    assert(rec.quitRequested && rec.frames.length < 10);
 }
 
 @("text_lab.keysSwitchTheSettings")
