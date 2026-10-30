@@ -752,9 +752,12 @@
                     placeUiVulkanShaders "$NIX_BUILD_TOP/${finalAttrs.src.name}"
                   );
 
+                # dub names the binary after the package (`appDir`), the derivation
+                # after `pname`: they differ for a second configuration of an app
+                # (`terminal-vulkan`).
                 installPhase =
                   args.installPhase or ''
-                    install -Dm755 build/${finalAttrs.pname} $out/bin/${finalAttrs.pname}
+                    install -Dm755 build/${baseNameOf appDir} $out/bin/${finalAttrs.pname}
                   '';
 
                 disallowedReferences = disallowed;

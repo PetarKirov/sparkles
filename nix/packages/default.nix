@@ -135,19 +135,15 @@
       # `std.net.curl`, and tree-sitter, which `--audit-fences` links. Everything
       # else returns to the scrub set it was exempted from.
       #
-      # It builds `apps/ci` under its own name, so the three attributes
-      # `buildSparklesApp` derives from `pname` are supplied explicitly: the
-      # source closure, the unpacked directory to build in, and the binary dub
-      # emits (`build/ci`) versus the one installed (`bin/ci-minimal`).
+      # It builds `apps/ci` under its own name, so it names its `appDir`, from
+      # which `buildSparklesApp` derives the source closure, the unpacked
+      # directory to build in, and the binary dub emits (`build/ci`, installed
+      # as `bin/ci-minimal`).
       packages.ci-minimal = config.legacyPackages.buildSparklesApp (finalAttrs: {
         pname = "ci-minimal";
         version = "0.1.0";
 
-        sourceDirs = config.legacyPackages.sparklesSources.srcClosure "apps/ci";
-        sourceRoot = "${finalAttrs.src.name}/apps/ci";
-        installPhase = ''
-          install -Dm755 build/ci $out/bin/${finalAttrs.pname}
-        '';
+        appDir = "apps/ci";
 
         nativeBuildInputs = [ pkgs.pkg-config ];
 
@@ -343,10 +339,6 @@
           inputs'.ghostty.packages.libghostty-vt.dev
         ];
 
-        installPhase = ''
-          install -Dm755 build/ui-gallery $out/bin/${finalAttrs.pname}
-        '';
-
         meta = {
           description = "The sparkles:ui catalog on the native Vulkan arm";
           mainProgram = finalAttrs.pname;
@@ -361,10 +353,6 @@
 
         nativeBuildInputs = [ pkgs.pkg-config ];
         buildInputs = [ pkgs.raylib ];
-
-        installPhase = ''
-          install -Dm755 build/text-lab $out/bin/${finalAttrs.pname}
-        '';
 
         meta = {
           description = "The Vulkan canvas's text rendering, switched live and seen through a loupe";
@@ -385,10 +373,6 @@
           inputs'.ghostty.packages.libghostty-vt
           inputs'.ghostty.packages.libghostty-vt.dev
         ];
-
-        installPhase = ''
-          install -Dm755 build/terminal $out/bin/${finalAttrs.pname}
-        '';
 
         meta = {
           description = "The terminal on the native Vulkan arm (text waits on the font atlas)";
