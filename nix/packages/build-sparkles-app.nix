@@ -659,8 +659,8 @@
                 # The build compiler. `ldc.reproducible` maps its own store paths
                 # out of `__FILE__`, assertion messages and debug info
                 # (nix/d-toolchain.nix, toolchain spec TC15), so none reaches the
-                # program. A compiler without that map (`ci` builds with DMD on
-                # x86_64 Linux) leaves them, and they are removed after the build.
+                # program. A caller's compiler without that map leaves them, and
+                # they are removed after the build.
                 compiler = args.compiler or pkgs.ldc.reproducible;
                 # Every layer of it — the driver join, the compiler it joins
                 # over, and that one's own, inner package (whose `include/d`
