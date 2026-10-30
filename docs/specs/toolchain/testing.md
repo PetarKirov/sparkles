@@ -176,6 +176,23 @@ TC-M5, on x86_64-linux (LDC `b892093b`, LLVM `24d1ae35`, nixpkgs 3ec63636):
 | `spk-text.wasm`                          | 530 KB (file)  | —         | After `wasm-opt -Oz`; 488 KB before TC-M5. Not LTO-linked yet (TCM8)     |
 | `spk-table.wasm`                         | 1029 KB (file) | —         | After `wasm-opt -Oz`; 967 KB before TC-M5. Not LTO-linked yet (TCM8)     |
 
+The modules as dub packages (TCM1), each linked step of TCM8 on
+x86_64-linux (LDC `5d81911f`, LLVM `019489a2`, binaryen 133). A dub build
+compiles every library a module depends on whole, where the hand-written
+build compiled only the modules it imported, so the plain link is larger
+and link-time optimization recovers the table's (the text module, which uses
+little of its libraries, ends 18 KB above its plain link). Sizes are of the
+`.wasm` file, in bytes:
+
+| Step                                                                    | `spk-text.wasm` | `spk-table.wasm` |
+| ----------------------------------------------------------------------- | --------------- | ---------------- |
+| Linked, build type `checked` (with debug information)                   | 638 794         | 4 250 637        |
+| The same, debug information stripped                                    | 405 186         | 2 150 223        |
+| The same, `wasm-opt -Oz`                                                | 378 828         | 1 507 356        |
+| `-flto=full`, the LTO druntime and Phobos, `--gc-sections` (`wasm-lto`) | 484 476         | 1 159 323        |
+| The same, debug information stripped                                    | 421 146         | 1 034 582        |
+| The same, `wasm-opt -Oz`: the shipped module (`nix build .#…-wasm`)     | 396 781         | 947 932          |
+
 ## Fork review
 
 Forks as dlang.nix `e0684b2` builds them: LDC `sparkles/main` `0a4e8b9a9f` (tidied;
