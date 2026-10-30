@@ -10,6 +10,7 @@
       config,
       pkgs,
       inputs',
+      system,
       ...
     }:
     let
@@ -23,7 +24,7 @@
       # (via `--test-extracted --require-toolchain`) still needs LDC +
       # wasm-ld + a runtime, so those go on PATH even when DMD is the
       # default compiler.
-      ciCompiler = if pkgs.stdenv.hostPlatform.system == "x86_64-linux" then pkgs.dmd else pkgs.ldc;
+      ciCompiler = if system == "x86_64-linux" then pkgs.dmd else pkgs.ldc;
 
       # The LDC with the WASI runtimes: `--build` and `--build-each-commit`
       # compile the WebAssembly modules with it (`$SPARKLES_WASI_LDC`).
