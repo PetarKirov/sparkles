@@ -2128,6 +2128,12 @@ import core.thread : Thread;
 import sparkles.event_horizon.sched : SchedOptions, schedOrSkip;
 import sparkles.test_runner.skip : skipTest;
 
+// A test that bounds a run's wall-clock time is `@serial`: every supervised run
+// in the process shares one blocking pool of at most four workers (cgroup
+// create, kill and cleanup, probes, 500 ms evidence slices), so beside the
+// other parallel tests the bound measured their queue, not the supervisor.
+import sparkles.test_runner.attributes : serial;
+
 /// Event collector bound as a `ProcessEventSink`.
 private struct EventLog
 {
@@ -2225,6 +2231,7 @@ unittest
 }
 
 @("supervise.internalDefectRunsTheEmergencyPhaseAndReaps")
+@serial
 @safe
 unittest
 {
@@ -2258,6 +2265,7 @@ unittest
 }
 
 @("supervise.nullSinkNaturalExitIsPrompt")
+@serial
 @safe
 unittest
 {
@@ -2279,6 +2287,7 @@ unittest
 }
 
 @("supervise.callbacksStayOnSupervisorAndDefectsStillCleanUp")
+@serial
 @system
 unittest
 {
@@ -2536,6 +2545,7 @@ unittest
 }
 
 @("supervise.longLineIsLinear")
+@serial
 @safe
 unittest
 {
@@ -2686,6 +2696,7 @@ unittest
 }
 
 @("supervise.timeoutTermExitsTheChild")
+@serial
 @safe
 unittest
 {
@@ -2723,6 +2734,7 @@ unittest
 }
 
 @("supervise.graceExpiryEscalatesToKill")
+@serial
 @safe
 unittest
 {
@@ -2754,6 +2766,7 @@ unittest
 }
 
 @("supervise.exitedRootStillTerminatesGroupHoldingPipe")
+@serial
 @safe
 unittest
 {
@@ -2780,6 +2793,7 @@ unittest
 }
 
 @("supervise.exitedRootDescendantIgnoringTermGetsKilledAfterGrace")
+@serial
 @safe
 unittest
 {
@@ -2953,6 +2967,7 @@ unittest
 }
 
 @("supervise.externalCancellationStillEscalatesPastTerm")
+@serial
 @safe
 unittest
 {
@@ -2992,6 +3007,7 @@ unittest
 }
 
 @("supervise.fiberExhaustionKillsDrainsAndReaps")
+@serial
 @safe
 unittest
 {
@@ -3063,6 +3079,7 @@ unittest
 }
 
 @("supervise.callbackDefectWithSaturatedOutputStillCleansUp")
+@serial
 @safe
 unittest
 {
@@ -3091,6 +3108,7 @@ unittest
 }
 
 @("supervise.cancelAfterBothEofStillTerminatesRoot")
+@serial
 @safe
 unittest
 {
@@ -3150,6 +3168,7 @@ unittest
 }
 
 @("supervise.cooperativeTermSuppressesKillAndGraceDelay")
+@serial
 @safe
 unittest
 {
@@ -3298,6 +3317,7 @@ unittest
 }
 
 @("supervise.chattyDualStreamsCannotDeadlock")
+@serial
 @system unittest
 {
     import core.time : MonoTime, seconds;
@@ -3326,6 +3346,7 @@ unittest
 }
 
 @("supervise.samplesCumulativeAndCoalesced")
+@serial
 @safe
 unittest
 {
@@ -3338,10 +3359,10 @@ unittest
         EventLog log;
         SupervisedProcessConfig cfg;
         // Nominal cadence is 40 ticks over the one-second run; requiring
-        // three survives a sustained stall of the shared pool's public lane
-        // under the parallel suite without weakening the repeated-sampling
-        // property (missed instants coalesce by design, SPEC §13.8 — they
-        // do not queue).
+        // three survives a stall of the shared pool's public lane without
+        // weakening the repeated-sampling property (missed instants coalesce
+        // by design, SPEC §13.8 — they do not queue). `@serial`: beside the
+        // parallel suite the stall outlasted the whole run.
         cfg.sampleInterval = 25.msecs;
         cfg.process.stdinSpec = StdioSpec(StdioMode.nullDev);
         auto got = supervise(s, ["sleep", "1"], cfg, null, log.sink());
@@ -3507,6 +3528,7 @@ unittest
 }
 
 @("supervise.residual.boundedKillsAPipeClosingDaemonAtRootExit")
+@serial
 @safe
 unittest
 {
@@ -3533,6 +3555,7 @@ unittest
 }
 
 @("supervise.residual.boundedGivesAPipeHoldingDaemonTheOutputGrace")
+@serial
 @safe
 unittest
 {
@@ -3557,6 +3580,7 @@ unittest
 }
 
 @("supervise.residual.detachForcesEofAtTheDrainWindow")
+@serial
 @safe
 unittest
 {
@@ -3585,6 +3609,7 @@ unittest
 }
 
 @("supervise.residual.waitStaysUntilTheCgroupEmptiesOrIsRefused")
+@serial
 @safe
 unittest
 {
@@ -3711,6 +3736,7 @@ unittest
 }
 
 @("supervise.residual.requestedTerminationReplacesTheNaturalGrace")
+@serial
 @safe
 unittest
 {
@@ -3785,6 +3811,7 @@ unittest
 }
 
 @("supervise.residual.timeoutOverridesWait")
+@serial
 @safe
 unittest
 {
@@ -3816,6 +3843,7 @@ unittest
 }
 
 @("supervise.emergency.admissionFailureLeavesNoZombie")
+@serial
 @safe
 unittest
 {
@@ -3845,6 +3873,7 @@ unittest
 // ── implementation-review regressions ───────────────────────────────────────
 
 @("supervise.cancel.cgroupKillReachesASetsidDescendant")
+@serial
 @safe
 unittest
 {
@@ -3893,6 +3922,7 @@ unittest
 }
 
 @("supervise.wait.teardownBeforeEvidenceActivationJoins")
+@serial
 @safe
 unittest
 {
@@ -3923,6 +3953,7 @@ unittest
 }
 
 @("supervise.observer.failureIsProbedOnTheLaneBeforeSamplingAndReap")
+@serial
 @safe
 unittest
 {
@@ -3953,6 +3984,7 @@ unittest
 }
 
 @("supervise.cancel.fromTheFinalFragmentCallbackStillKillsTheCgroup")
+@serial
 @system
 unittest
 {
@@ -4114,6 +4146,7 @@ unittest
 }
 
 @("supervise.observer.failureWithNoReplacementFiberStillKillsAndReaps")
+@serial
 @safe
 unittest
 {
