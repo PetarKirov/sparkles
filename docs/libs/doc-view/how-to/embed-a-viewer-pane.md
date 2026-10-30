@@ -75,7 +75,8 @@ is a PNG; any other shows a located message.
 ## What decides whether a file opens
 
 `sparkles.doc_view.kind.viewKindOf(path)` answers before anything is loaded:
-images by extension (`png`, `gif`, `qoi`), the loader's own kinds (markdown,
+images by extension (`png`, `gif`, `qoi`; a pixel canvas draws only the
+first), the loader's own kinds (markdown,
 DSV, diffs, twoslash payloads), and any other file by its first bytes — valid
 UTF-8 without NUL opens as source, highlighted when a grammar knows the
 language; binary does not. The terminal hands a file it declines to the

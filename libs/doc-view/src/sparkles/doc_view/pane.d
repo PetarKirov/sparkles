@@ -1126,8 +1126,24 @@ private void fitWithin(int iw, int ih, int w, int h, out int dw, out int dh)
         s = cast(double) h / ih;
     if (s > 1)
         s = 1;
+    // At least a pixel each way: a 4000×1 rule scaled to a 100-pixel pane
+    // is still a line, not nothing.
     dw = cast(int)(iw * s);
     dh = cast(int)(ih * s);
+    if (dw < 1)
+        dw = 1;
+    if (dh < 1)
+        dh = 1;
+}
+
+@("pane.fitWithin.anExtremeAspectKeepsAPixel")
+@safe pure nothrow @nogc unittest
+{
+    int w, h;
+    fitWithin(4000, 1, 100, 100, w, h);
+    assert(w == 100 && h == 1);
+    fitWithin(1, 4000, 100, 100, w, h);
+    assert(w == 1 && h == 100);
 }
 
 @("pane.fitWithin.scalesDownNeverUp")
