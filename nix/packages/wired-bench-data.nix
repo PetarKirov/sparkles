@@ -90,6 +90,8 @@ in
         meta.description = "Run the wired JSON benchmarks over a dataset tier (light, medium or huge)";
         runtimeInputs = [
           pkgs.curl
+          # finds the repository root (the benchmark sources and data)
+          pkgs.git
           pkgs.gzip
           pkgs.zstd
           pkgs.dub
