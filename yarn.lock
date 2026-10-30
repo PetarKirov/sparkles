@@ -247,6 +247,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@bjorn3/browser_wasi_shim@npm:0.4.2":
+  version: 0.4.2
+  resolution: "@bjorn3/browser_wasi_shim@npm:0.4.2"
+  checksum: 10c0/eb9c961f0c9e6d7a28c01bdfb5aa8ff6a3b7e8ffef7f9d1970f24389b2f71edb7c2c7f50583ec95adf2b68decb681cc996410bc119f669538354878b02655a2f
+  languageName: node
+  linkType: hard
+
 "@braintree/sanitize-url@npm:^6.0.0":
   version: 6.0.4
   resolution: "@braintree/sanitize-url@npm:6.0.4"
@@ -3847,6 +3854,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "sparkles-docs@workspace:."
   dependencies:
+    "@bjorn3/browser_wasi_shim": "npm:0.4.2"
     dockview-vue: "npm:^7.0.2"
     markdown-it-mathjax3: "npm:^4.3.2"
     mermaid: "npm:^11.15.0"

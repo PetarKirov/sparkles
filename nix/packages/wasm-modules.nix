@@ -53,6 +53,21 @@
           };
         };
 
+      # The site's WASI loader (docs/.vitepress/theme/wasi.ts) imports this package;
+      # the agreement check gives node the version package.json pins.
+      browserWasiShim =
+        pkgs.runCommand "browser-wasi-shim-0.4.2"
+          {
+            src = pkgs.fetchurl {
+              url = "https://registry.npmjs.org/@bjorn3/browser_wasi_shim/-/browser_wasi_shim-0.4.2.tgz";
+              hash = "sha512-/iHkCVUG3VbcbmEHn5iIUpIrh7a7WPiwZ3sHy4HZKZzBdSadwdddYDZAII2zBvQYV0Lfi8naZngPCN7WPHI/hA==";
+            };
+          }
+          ''
+            mkdir $out
+            tar xzf $src -C $out --strip-components=1
+          '';
+
       buildWasmModule =
         {
           pname,
@@ -113,7 +128,8 @@
       '';
 
       # TCM9: each module, under node, agrees with the same functions run
-      # natively over a fixed corpus (apps/ci/src/wasm_modules_check.d).
+      # natively over a fixed corpus (apps/ci/src/wasm_modules_check.d), loaded
+      # through the site's own loader (TCM7).
       checks.wasm-modules =
         pkgs.runCommand "wasm-modules-agree"
           {
@@ -124,6 +140,8 @@
             ${lib.getExe config.packages.ci-minimal} --check-wasm-modules \
               --text-module ${config.packages.text-wasm}/spk-text.wasm \
               --table-module ${config.packages.table-wasm}/spk-table.wasm \
+              --wasi-loader ${../../docs/.vitepress/theme/wasi.ts} \
+              --wasi-shim ${browserWasiShim} \
               | tee "$out"
           '';
     };
