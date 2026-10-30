@@ -178,7 +178,7 @@ unconditionally (not under `version (unittest)`).
   separator) — violation is a registration-time error.
 - **`blackBox(x)`** — identity the optimizer cannot see through; route
   measured inputs and results through it.
-- **`@wasm`** _(target, [W1](./PLAN.md#w1--wasm-on-wasi))_ — the test also
+- **`@wasm`** ([W1](./PLAN.md#w1--wasm-on-wasi)) — the test also
   runs as WebAssembly under `--wasm`. It is compiled for
   `wasm32-unknown-wasip1` with the full druntime and Phobos of the
   [toolchain's WASI runtime](../toolchain/wasi.md), linked through that
@@ -188,6 +188,12 @@ unconditionally (not under `version (unittest)`).
   runtime is the separate `--wasm-bare` mode, which compiles with
   `-betterC`, links with the compiler's internal linker, and runs under a
   JavaScript host.
+- **`@serial`** / **`@serial(threadAffinity: ThreadAffinity.mainThread)`** —
+  the test must not run beside other tests (process-wide state). Whatever
+  `-t` asks for, serial tests run one at a time after every other test has
+  finished, on workers with the same stack budget; `mainThread` also pins
+  them to the runner's main thread, for a library confined to the thread
+  that initialized it.
 - **`skipTest(reason)`** (`sparkles.test_runner.skip`, `@safe pure nothrow
 @nogc`) — skip the enclosing test at runtime: a yellow `⊘` line plus an
   `N skipped` summary segment; never fails the run. Under `--bench` a
@@ -507,10 +513,9 @@ the contracts.
 - **Mode exclusivity** — `--bench`, `--ctfe-trace`, and
   `--better-c`/`--wasm` are mutually exclusive (hard error); `--better-c`
   with `--wasm` is one extraction family; `--list`/`--list-metrics` are
-  queries that win over any mode. _(Target, [W1](./PLAN.md#w1--wasm-on-wasi):)_
-  `--wasm-bare` joins the extraction family and is mutually exclusive with
+  queries that win over any mode. `--wasm-bare` joins the extraction family and is mutually exclusive with
   `--wasm`.
-- **Missing toolchain** _(target, [W1](./PLAN.md#w1--wasm-on-wasi))_ — when
+- **Missing toolchain** ([W1](./PLAN.md#w1--wasm-on-wasi)) — when
   `--wasm` lacks the WASI runtime or `wasmtime`, it skips with the missing
   piece named; under `--require-toolchain` the skip is a failure.
 - **Readable failures** — malformed options, unknown flags, and stray

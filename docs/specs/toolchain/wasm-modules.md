@@ -62,7 +62,9 @@ module's exported `memory`, and every integer is a 32-bit WebAssembly value.
 | `spk_table_render`  | `inPtr`, `inLen` (JSON table specification); `outPtr`, `outCap` | `n ≥ 0`: `n` bytes of UTF-8 rendering written at `outPtr`; `-1`: the rendering does not fit in `outCap`; `-(k + 1)`, `k ≥ 1`: the input is invalid and `k` bytes of a UTF-8 message are written at `outPtr`, truncated to `outCap` (table module) |
 
 Input ranges and output ranges **must** lie within `memory`; a module
-**must** treat overlapping input and output ranges as invalid input.
+**must** treat overlapping input and output ranges as invalid input. Invalid
+ranges make `spk_segment` and `spk_visible_width` return `-1`, and
+`spk_table_render` an error code with a message.
 
 **TCM6: Errors are values.** _(Owner: `sparkles:core-cli`.)_ For input that
 is not valid JSON, or JSON that is not a valid table specification,

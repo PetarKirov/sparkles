@@ -111,6 +111,15 @@ SPEC as new sections when they land.
 
 ## W1 — `@wasm` on WASI
 
+> **Shipped** (branch `feat/wasm-modules`): `driver.d`'s `runWasmTests`
+> (`wasm32-unknown-wasip1`, `$SPARKLES_WASI_LDC`, the packages' `-preview`
+> switches, `wasmtime`) and `runWasmBareTests`, `extract.d`'s
+> `generateWasiProgram`, the `--wasm-bare` option. The gate passes:
+> `ci --test-extracted` runs the `@wasm` tests of `sparkles:base`,
+> `sparkles:ui`, `sparkles:table-wasm` and the runner under `wasmtime`, and
+> `sparkles:table-wasm`'s throw and catch, read a table seeded by a module
+> constructor and allocate.
+
 Makes the `@wasm` bullet of [SPEC §3](./SPEC.md#_3-attribute-and-in-body-surface)
 true. `--wasm` compiles the extracted tests for `wasm32-unknown-wasip1` with
 the toolchain's WASI druntime and Phobos, links them through the runtime's WASI
