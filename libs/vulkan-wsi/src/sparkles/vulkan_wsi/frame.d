@@ -379,6 +379,24 @@ struct FrameSync
     }
 
     /**
+    Wait at most `timeoutNs` for every in-flight submit to finish: `true`
+    when they have, `false` when the time ran out first.
+
+    $(LREF waitAll) with a finite timeout cannot say which — `VK_TIMEOUT`
+    is a non-negative code, so it succeeds. A caller with a deadline of
+    its own (a surface the platform takes back) needs the difference.
+    */
+    VkExpected!bool finishedWithin(Context)(ref Context vk, ulong timeoutNs)
+        @system nothrow
+    {
+        if (_inFlight.length == 0)
+            return ok!VkResult(true);
+        const r = vk.device.waitForFences(vk.device.device, cast(uint) _inFlight.length,
+            _inFlight.ptr, VK_TRUE, timeoutNs);
+        return r == VkResult.VK_TIMEOUT ? ok!VkResult(false) : check(r, true);
+    }
+
+    /**
     Drop the association between images and fences.
 
     The images belong to a swapchain that is about to be retired. The fences
@@ -579,6 +597,42 @@ struct FrameSync
     FrameSync sync;
     const r = sync.waitAll(vk);
     assert(!r.hasError);
+}
+
+@("vulkan_wsi.frame.finishedWithinTellsATimeoutFromAFailure")
+@system nothrow unittest
+{
+    // A device whose fences answer whatever `answer` holds.
+    static struct Fake
+    {
+        static VkResult answer;
+        static ulong asked;
+        static struct Device
+        {
+            VkDevice device;
+            extern (System) static VkResult wait(VkDevice, uint, const(VkFence)*, VkBool32,
+                ulong timeout) nothrow @nogc
+            {
+                asked = timeout;
+                return answer;
+            }
+            auto waitForFences = &wait;
+        }
+        Device device;
+    }
+
+    Fake vk;
+    FrameSync sync;
+    assert(sync.finishedWithin(vk, 5).value, "nothing in flight has finished");
+    sync._inFlight = new VkFence[2];
+    Fake.answer = VkResult.VK_SUCCESS;
+    assert(sync.finishedWithin(vk, 7).value && Fake.asked == 7);
+    Fake.answer = VkResult.VK_TIMEOUT;
+    const late = sync.finishedWithin(vk, 7);
+    assert(!late.hasError && !late.value, "a timeout is no failure, and not finished");
+    Fake.answer = VkResult.VK_ERROR_DEVICE_LOST;
+    const lost = sync.finishedWithin(vk, 7);
+    assert(lost.hasError && lost.error == VkResult.VK_ERROR_DEVICE_LOST);
 }
 
 @("vulkan_wsi.frame.forgetImagesClearsGuardsAndKeepsTheSlots")
