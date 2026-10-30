@@ -53,6 +53,66 @@
                 done
               '';
 
+              # For Nix builds (`ldc.reproducible`): the same, plus a map from
+              # the compiler's store paths to `/ldc` in `__FILE__`, assertion
+              # messages and debug info (toolchain spec TC15). druntime's and
+              # Phobos' templates instantiate in the program and name their
+              # source files, which would otherwise keep the compiler in the
+              # program's closure. Development shells keep the real paths, where
+              # a debugger finds the sources.
+              reproducibleLdcConfig = prev.runCommand "ldc2.conf-reproducible" { } ''
+                mkdir $out
+                cp ${cleanLdcConfig}/* $out/
+                cat > $out/40-file-prefix-map.conf <<'EOF'
+                "default":
+                {
+                    switches ~= [
+                        ${
+                          lib.concatMapStringsSep ",\n" (p: ''"-ffile-prefix-map=${p}=/ldc"'') (
+                            lib.unique [
+                              "${rawLdc}"
+                              "${rawLdc.unwrapped or rawLdc}"
+                            ]
+                          )
+                        }
+                    ];
+                };
+                EOF
+              '';
+
+              # The project `ldc`: dlang.nix's with one of the configurations above.
+              wrapLdc =
+                conf:
+                prev.symlinkJoin {
+                  name = "ldc-${rawLdc.version}";
+                  paths = [ rawLdc ];
+                  nativeBuildInputs = [ prev.makeWrapper ];
+                  postBuild = ''
+                    for drv in ldc2 ldmd2; do
+                      wrapProgram "$out/bin/$drv" --add-flags "-conf=${conf}"
+                    done
+                  '';
+                  passthru =
+                    lib.optionalAttrs (rawLdc ? include) {
+                      inherit (rawLdc) include;
+                    }
+                    // {
+                      # The package this joins over. Consumers scrubbing compiler
+                      # paths out of a built binary need it: druntime bakes
+                      # `__FILE__` strings naming *this* store path into every
+                      # assert, and scrubbing the join is scrubbing the wrong one.
+                      unwrapped = rawLdc;
+                      # The C compiler `ldc2` links through (the macOS shell's `CC`).
+                      inherit (rawLdc) linkCc;
+                      # The same compiler for Nix builds, mapping its store paths.
+                      reproducible = wrapLdc reproducibleLdcConfig;
+                      mapsStorePaths = conf == reproducibleLdcConfig;
+                    };
+                  meta = rawLdc.meta // {
+                    mainProgram = "ldc2";
+                  };
+                };
+
             in
             {
               # dlang.nix defaults to `-link-defaultlib-shared` in its ldc2.conf,
@@ -64,32 +124,7 @@
               # `${ldc}/lib` (druntime/phobos) and may invoke `ldmd2` — so we
               # `symlinkJoin` the real package and only wrap the two drivers,
               # rather than substituting a bare `ldc2` shim.
-              ldc = prev.symlinkJoin {
-                name = "ldc-${rawLdc.version}";
-                paths = [ rawLdc ];
-                nativeBuildInputs = [ prev.makeWrapper ];
-                postBuild = ''
-                  for drv in ldc2 ldmd2; do
-                    wrapProgram "$out/bin/$drv" --add-flags "-conf=${cleanLdcConfig}"
-                  done
-                '';
-                passthru =
-                  lib.optionalAttrs (rawLdc ? include) {
-                    inherit (rawLdc) include;
-                  }
-                  // {
-                    # The package this joins over. Consumers scrubbing compiler
-                    # paths out of a built binary need it: druntime bakes
-                    # `__FILE__` strings naming *this* store path into every
-                    # assert, and scrubbing the join is scrubbing the wrong one.
-                    unwrapped = rawLdc;
-                    # The C compiler `ldc2` links through (the macOS shell's `CC`).
-                    inherit (rawLdc) linkCc;
-                  };
-                meta = rawLdc.meta // {
-                  mainProgram = "ldc2";
-                };
-              };
+              ldc = wrapLdc cleanLdcConfig;
 
               # Build `dtools` (rdmd, dustmite, …) against the *unwrapped* ldc.
               # Its check phase (`test_rdmd`) copies `ldmd2` into a temp dir and
