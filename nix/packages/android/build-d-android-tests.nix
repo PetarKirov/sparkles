@@ -104,7 +104,7 @@ in
                   -lib -of=dub-imports/${d.name}-${t.abi}.a \
                   $(find dub-imports/${d.name}/*/source -name '*.d')
               '') dubDeps}
-              ldc2 -mtriple=${t.triple} -gcc=${t.cc} -relocation-model=pic -O1 \
+              ldc2 -mtriple=${t.triple} -relocation-model=pic -O1 \
                 -preview=in -preview=dip1000 -unittest -checkaction=context -allinst \
                 ${toString (map (v: "-d-version=${v}") versions)} \
                 ${toString (map (dir: "-I=${dir}") importDirs)} \

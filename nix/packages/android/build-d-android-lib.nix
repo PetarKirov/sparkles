@@ -83,10 +83,7 @@ in
             '') dubDeps}
 
             ${lib.concatMapStrings (t: ''
-              # -gcc: link through the NDK clang at minSdk, not the API-21
-              # driver ldc2.conf names, so every libc symbol resolves against
-              # the stubs of the API level the APK actually declares.
-              ldc2 -mtriple=${t.triple} -gcc=${t.cc} -relocation-model=pic -O2 \
+              ldc2 -mtriple=${t.triple} -relocation-model=pic -O2 \
                 -preview=in -preview=dip1000 \
                 ${toString (map (v: "-d-version=${v}") versions)} \
                 ${toString (map (dir: "-J=${dir}") stringImportDirs)} \

@@ -79,8 +79,8 @@ in
 
           # This library is why the repo-wide floor cannot go below 23: bionic
           # hides sigwaitinfo before then (__INTRODUCED_IN) and libkqueue's
-          # monitor thread waits on it. ndk.minSdk is higher still (26, for the
-          # Skia/Graphite/Vulkan backend), so derive the platform from it
+          # monitor thread waits on it. ndk.minSdk is higher still (./min-sdk.nix
+          # lists what sets it), so derive the platform from it
           # rather than pinning a literal — a literal 23 here silently
           # reintroduces the skew that let the APK declare a floor it could not
           # actually run on.

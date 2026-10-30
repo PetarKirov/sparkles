@@ -220,8 +220,8 @@ in
             #   -0 arsc   MANDATORY. An app targeting API 30+ must ship an
             #             UNCOMPRESSED resources.arsc or Android 11+ refuses to
             #             install it. aapt2 only stores it by default when
-            #             minSdk >= 30, and ours is 26 — so without this the APK
-            #             builds, signs, verifies, and then cannot be installed.
+            #             minSdk >= 30, and ours is lower (./min-sdk.nix) — so the APK
+            #             would build, sign, verify, and then not install.
             #   --no-crunch
             #             skips aapt2's PNG re-encode. The rasters come from
             #             resvg already at their final size, so this only
