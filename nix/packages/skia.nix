@@ -123,12 +123,6 @@
         # silently disables it, and `ContextFactory::MakeVulkan` through the
         # visibility bug patched above — and each failed silently, surfacing
         # only as a link error in a consumer much later.
-        # Every capability above is a claim about the dynamic symbol table, so
-        # assert it there. Each has already been observed missing once —
-        # Graphite because the flag was off, SVG because `is_component_build`
-        # silently disables it, `ContextFactory::MakeVulkan` through the
-        # visibility default — and each failed silently, surfacing only as a
-        # link error in a consumer much later.
         postInstall = (old.postInstall or "") + ''
           syms="$NIX_BUILD_TOP/skia-dynsyms.txt"
           ${pkgs.buildPackages.binutils}/bin/nm -D --defined-only \
