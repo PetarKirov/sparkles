@@ -25,6 +25,7 @@ import core.sys.windows.imm : ATTR_CONVERTED, ATTR_FIXEDCONVERTED,
 
 import sparkles.base.buffer : HeapBuffer, Storage, UniqueBuffer;
 import sparkles.base.pool.pool : Pool, PoolError;
+import sparkles.base.text.cstring : hasInteriorNul;
 import sparkles.base.text.utf16 : utf16ToUtf8, utf8ToUtf16, utf8ToUtf16z;
 import sparkles.base.text.utf : decodeToken, encodeScalar, UtfMode, UtfStatus, scalarUnits;
 import sparkles.base.text.source_map : SourceByteOffset, Utf16Offset,
@@ -123,8 +124,13 @@ struct Win32Wsi
     private WsiError stickyError_;
 
     /** Opens the User32 adapter on the calling (UI) thread. */
-    static WsiResult!void open(out Win32Wsi wsi)
+    static WsiResult!void open(out Win32Wsi wsi, in WsiConfig config = WsiConfig.init)
     {
+        // The identity is checked here as on every backend; the
+        // AppUserModelID it names is not set yet (`F13`).
+        if (auto fault = config.app.fault)
+            return win32Failure!void(WsiOperation.open, 0, fault,
+                WsiErrorKind.invalidArgument);
         wsi.instance_ = GetModuleHandleW(null);
         if (wsi.instance_ is null)
             return win32Failure!void(WsiOperation.open, GetLastError(),
@@ -256,6 +262,23 @@ struct Win32Wsi
         if (config.visible)
             UpdateWindow(hwnd);
         return wsiOk(id);
+    }
+
+    /// Retitles the window (`F13`).
+    WsiResult!void setTitle(WindowId id, in char[] title)
+    {
+        auto checked = checkedSlot(id, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!void(checked.error);
+        wchar[WindowConfig.init.title.inlineCapacity + 1] wide;
+        if (hasInteriorNul(title) || utf8ToUtf16z(title, wide[]).hasError)
+            return win32Failure!void(WsiOperation.command, 0,
+                "a window title is NUL-free UTF-8 within the title's capacity",
+                WsiErrorKind.invalidArgument);
+        if (!SetWindowTextW(windows_.at(checked.value).hwnd, wide.ptr))
+            return win32Failure!void(WsiOperation.command, GetLastError(),
+                "SetWindowTextW failed");
+        return wsiOk();
     }
 
     WsiResult!void destroyWindow(WindowId id)
@@ -1578,6 +1601,8 @@ struct Win32Wsi
             case PointerShape.nsResize: return IDC_SIZENS;
             case PointerShape.grab: return IDC_SIZEALL; // nearest stock
             case PointerShape.grabbing: return IDC_SIZEALL; // nearest stock
+            case PointerShape.nwseResize: return IDC_SIZENWSE;
+            case PointerShape.neswResize: return IDC_SIZENESW;
         }
     }
 

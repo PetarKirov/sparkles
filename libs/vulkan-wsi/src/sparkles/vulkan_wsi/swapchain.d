@@ -230,11 +230,32 @@ struct Swapchain
     VkImage[] images;
 
     /**
-    Previous handles retired by $(LREF recreate). A present may still be
-    scanning their images, so they cannot be destroyed until the queue is
-    idle — see $(LREF reap).
+    The owner's count of what it has presented, which a handle retired by
+    $(LREF recreate) is stamped with, so $(LREF reapThrough) can destroy each
+    once enough has been presented after it, however many rebuilds follow.
+    */
+    ulong epoch;
+
+    /**
+    Whether the images' alpha is to reach the compositor, for a window that
+    is transparent where it draws nothing — a client-drawn frame's shadow
+    and rounded corners. Read by $(LREF create) and by each $(LREF recreate);
+    what the surface allowed is $(LREF compositeAlpha).
+    */
+    bool wantsAlpha;
+
+    /// How the presentation engine composites the images' alpha, as
+    /// $(LREF chooseCompositeAlpha) chose it.
+    VkCompositeAlphaFlagBitsKHR compositeAlpha =
+        VkCompositeAlphaFlagBitsKHR.VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+
+    /**
+    Previous handles retired by $(LREF recreate), and the `epoch` each was
+    retired at. A present may still be scanning their images, so they
+    cannot be destroyed until the queue is done with them — see $(LREF reap).
     */
     private VkSwapchainKHR[] _retired;
+    private ulong[] _retiredAt; // ditto
 
     @disable this(this);
 
@@ -287,6 +308,7 @@ struct Swapchain
         sc.usage = VkImageUsageFlagBits.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
             | VkImageUsageFlagBits.VK_IMAGE_USAGE_TRANSFER_DST_BIT
             | (caps.supportedUsageFlags & VkImageUsageFlagBits.VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
+        sc.compositeAlpha = chooseCompositeAlpha(caps.supportedCompositeAlpha, sc.wantsAlpha);
 
         // A zero-area swapchain is invalid. It happens while a window is
         // minimised, and the caller's answer is to stop drawing, not to fail.
@@ -303,7 +325,7 @@ struct Swapchain
             imageUsage: sc.usage,
             imageSharingMode: VkSharingMode.VK_SHARING_MODE_EXCLUSIVE,
             preTransform: caps.currentTransform,
-            compositeAlpha: VkCompositeAlphaFlagBitsKHR.VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+            compositeAlpha: sc.compositeAlpha,
             presentMode: sc.presentMode,
             clipped: VK_TRUE,
             oldSwapchain: previous,
@@ -418,6 +440,9 @@ struct Swapchain
             return ok!string(action);
 
         auto previous = sc.handle;
+        // Chosen again: a window that comes to want alpha (a client frame
+        // after fullscreen) gains it at its next rebuild.
+        sc.compositeAlpha = chooseCompositeAlpha(caps.supportedCompositeAlpha, sc.wantsAlpha);
         auto info = vkInfo(VkSwapchainCreateInfoKHR(
             surface: vk.surface,
             minImageCount: chooseImageCount(caps),
@@ -425,11 +450,12 @@ struct Swapchain
             imageColorSpace: sc.colorSpace,
             imageExtent: extent,
             imageArrayLayers: 1,
-            imageUsage: VkImageUsageFlagBits.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
-                | VkImageUsageFlagBits.VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+            // The usage `create` chose and `usage` reports: a reader of the
+            // images (the canvas's loupe) copies from them by it.
+            imageUsage: sc.usage,
             imageSharingMode: VkSharingMode.VK_SHARING_MODE_EXCLUSIVE,
             preTransform: caps.currentTransform,
-            compositeAlpha: VkCompositeAlphaFlagBitsKHR.VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+            compositeAlpha: sc.compositeAlpha,
             presentMode: sc.presentMode,
             clipped: VK_TRUE,
             oldSwapchain: previous,
@@ -443,6 +469,7 @@ struct Swapchain
         // and on failure the spec still retires oldSwapchain. Destroying it
         // here would race any present still scanning its images.
         sc._retired ~= previous;
+        sc._retiredAt ~= sc.epoch;
         sc.handle = null;
         sc.images = null;
 
@@ -488,6 +515,21 @@ struct Swapchain
             n++;
         }
         _retired = n >= _retired.length ? null : _retired[n .. $];
+        _retiredAt = n >= _retiredAt.length ? null : _retiredAt[n .. $];
+    }
+
+    /**
+    Destroy the swapchains retired at `epoch` or before — the oldest first,
+    as they were retired — and keep the rest. The caller picks an `epoch`
+    the queue is done with; the contract is $(LREF reap)'s.
+    */
+    void reapThrough(Context)(ref Context vk, ulong epoch) @system nothrow
+    {
+        uint n;
+        while (n < _retiredAt.length && _retiredAt[n] <= epoch)
+            n++;
+        if (n)
+            reap(vk, n);
     }
 
     /**
@@ -521,6 +563,27 @@ struct Swapchain
         ));
 
         return checked(vk.device.queuePresentKHR(vk.queue, &info));
+    }
+
+    /**
+    How a swapchain's alpha is composited, from what the surface `supported`:
+    premultiplied where `wantsAlpha` and the surface allows it — the canvas
+    draws premultiplied colour — else opaque, else whatever the surface
+    offers (an Android surface may offer only `INHERIT`).
+    */
+    static VkCompositeAlphaFlagBitsKHR chooseCompositeAlpha(VkCompositeAlphaFlagsKHR supported,
+        bool wantsAlpha) @safe pure nothrow @nogc
+    {
+        with (VkCompositeAlphaFlagBitsKHR)
+        {
+            if (wantsAlpha && (supported & VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR))
+                return VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR;
+            foreach (bit; [VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR, VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR,
+                    VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR, VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR])
+                if (supported & bit)
+                    return bit;
+            return VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+        }
     }
 
     /// `true` when a result from $(D acquire) or $(D present) means "rebuild me".
@@ -717,4 +780,167 @@ struct Swapchain
     assert(sc.hasRetired);
     sc._retired = null;
     assert(!sc.hasRetired);
+}
+
+version (unittest)
+{
+    // A device that only counts the swapchains destroyed on it.
+    private struct CountingDevice
+    {
+        VkDevice device = cast(VkDevice) cast(void*) 1;
+        extern (C) void function(VkDevice, VkSwapchainKHR, const(VkAllocationCallbacks)*) nothrow
+            destroySwapchainKHR = &countDestroyedSwapchain;
+    }
+
+    private struct CountingVk
+    {
+        CountingDevice device;
+    }
+
+    private __gshared size_t destroyedSwapchains;
+
+    private extern (C) void countDestroyedSwapchain(VkDevice, VkSwapchainKHR h, const(VkAllocationCallbacks)*)
+        nothrow
+    {
+        if (h !is null)
+            ++destroyedSwapchains;
+    }
+}
+
+@("vulkan_wsi.swapchain.reapThroughTakesOnlyWhatIsOldEnough")
+@system nothrow unittest
+{
+    // Three rebuilds in three frames: each retiree goes once its own epoch
+    // is old enough, whatever followed it — a resize that rebuilds every
+    // frame does not keep every swapchain alive until it stops.
+    Swapchain sc;
+    CountingVk vk;
+    destroyedSwapchains = 0;
+    foreach (epoch; [10UL, 11, 12])
+    {
+        sc._retired ~= cast(VkSwapchainKHR) cast(void*) epoch;
+        sc._retiredAt ~= epoch;
+    }
+    sc.reapThrough(vk, 9);
+    assert(destroyedSwapchains == 0 && sc._retired.length == 3);
+    sc.reapThrough(vk, 11);
+    assert(destroyedSwapchains == 2 && sc._retired.length == 1 && sc._retiredAt == [12]);
+    sc.reapThrough(vk, 100);
+    assert(destroyedSwapchains == 3 && !sc.hasRetired && sc._retiredAt.length == 0);
+}
+
+version (unittest)
+{
+    // A context that answers what `recreate` asks, and keeps the create info
+    // it was given.
+    private __gshared VkSwapchainCreateInfoKHR lastCreate;
+
+    private struct RecreateInstance
+    {
+        extern (C) VkResult function(VkPhysicalDevice, VkSurfaceKHR, VkSurfaceCapabilitiesKHR*)
+            nothrow getPhysicalDeviceSurfaceCapabilitiesKHR = &fakeCaps;
+        // What only `create` asks, which `recreate` reaches for a first build.
+        extern (C) VkResult function(VkPhysicalDevice, VkSurfaceKHR, uint*, VkSurfaceFormatKHR*)
+            nothrow getPhysicalDeviceSurfaceFormatsKHR;
+        extern (C) VkResult function(VkPhysicalDevice, VkSurfaceKHR, uint*, VkPresentModeKHR*)
+            nothrow getPhysicalDeviceSurfacePresentModesKHR;
+    }
+
+    private struct RecreateDevice
+    {
+        VkDevice device = cast(VkDevice) cast(void*) 1;
+        extern (C) VkResult function(VkDevice, const(VkSwapchainCreateInfoKHR)*,
+            const(VkAllocationCallbacks)*, VkSwapchainKHR*) nothrow createSwapchainKHR = &fakeCreate;
+        extern (C) VkResult function(VkDevice, VkSwapchainKHR, uint*, VkImage*) nothrow
+            getSwapchainImagesKHR = &fakeImages;
+        extern (C) void function(VkDevice, VkSwapchainKHR, const(VkAllocationCallbacks)*) nothrow
+            destroySwapchainKHR;
+    }
+
+    private struct RecreateVk
+    {
+        RecreateInstance instance;
+        RecreateDevice device;
+        VkPhysicalDevice physicalDevice;
+        VkSurfaceKHR surface;
+    }
+
+    private extern (C) VkResult fakeCaps(VkPhysicalDevice, VkSurfaceKHR,
+        VkSurfaceCapabilitiesKHR* caps) nothrow
+    {
+        *caps = VkSurfaceCapabilitiesKHR.init;
+        caps.minImageCount = 2;
+        caps.maxImageCount = 4;
+        caps.currentExtent = VkExtent2D(640, 480);
+        caps.minImageExtent = VkExtent2D(1, 1);
+        caps.maxImageExtent = VkExtent2D(4096, 4096);
+        caps.currentTransform = VkSurfaceTransformFlagBitsKHR.VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+        caps.supportedCompositeAlpha = VkCompositeAlphaFlagBitsKHR.VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR
+            | VkCompositeAlphaFlagBitsKHR.VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR;
+        return VkResult.VK_SUCCESS;
+    }
+
+    private extern (C) VkResult fakeCreate(VkDevice, const(VkSwapchainCreateInfoKHR)* info,
+        const(VkAllocationCallbacks)*, VkSwapchainKHR* made) nothrow
+    {
+        lastCreate = cast() *info;
+        *made = cast(VkSwapchainKHR) cast(void*) 0x2;
+        return VkResult.VK_SUCCESS;
+    }
+
+    private extern (C) VkResult fakeImages(VkDevice, VkSwapchainKHR, uint* count, VkImage* images)
+        nothrow
+    {
+        if (images !is null)
+            foreach (i; 0 .. *count)
+                images[i] = cast(VkImage) cast(void*)(0x10 + i);
+        else
+            *count = 2;
+        return VkResult.VK_SUCCESS;
+    }
+}
+
+@("vulkan_wsi.swapchain.recreateKeepsTheImagesUsage")
+@system nothrow unittest
+{
+    // A swapchain created for transfers out (the canvas's loupe reads its
+    // images) keeps that usage through a recreate; built with the default
+    // usage, a blit from it is `VUID-vkCmdBlitImage-srcImage-00219`.
+    import sparkles.wsi : PixelSize = PhysicalSize;
+
+    Swapchain sc;
+    RecreateVk vk;
+    sc.handle = cast(VkSwapchainKHR) cast(void*) 0x1;
+    sc.extent = VkExtent2D(320, 240);
+    sc.format = VkFormat.VK_FORMAT_B8G8R8A8_SRGB;
+    sc.usage = VkImageUsageFlagBits.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
+        | VkImageUsageFlagBits.VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    sc.wantsAlpha = true; // and it had none: an opaque swapchain coming to want alpha
+    const r = Swapchain.recreate(sc, vk, PixelSize(640, 480), true);
+    assert(!r.hasError && r.value == SwapchainResize.rebuilt);
+    assert(lastCreate.imageUsage == sc.usage && lastCreate.oldSwapchain is cast(VkSwapchainKHR) cast(void*) 0x1);
+    assert(lastCreate.compositeAlpha == VkCompositeAlphaFlagBitsKHR.VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR
+        && sc.compositeAlpha == lastCreate.compositeAlpha, "it gains alpha at the rebuild");
+    sc.wantsAlpha = false;
+    assert(!Swapchain.recreate(sc, vk, PixelSize(640, 480), true).hasError);
+    assert(lastCreate.compositeAlpha == VkCompositeAlphaFlagBitsKHR.VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+        "and gives it up again");
+    assert(sc.extent == VkExtent2D(640, 480) && sc.images.length == 2 && sc.hasRetired);
+}
+
+@("vulkan_wsi.swapchain.chooseCompositeAlpha")
+@safe pure nothrow @nogc unittest
+{
+    with (VkCompositeAlphaFlagBitsKHR)
+    {
+        const desktop = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR | VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR;
+        assert(Swapchain.chooseCompositeAlpha(desktop, true) == VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR);
+        assert(Swapchain.chooseCompositeAlpha(desktop, false) == VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR);
+        // A surface without premultiplied alpha is opaque, asked or not.
+        assert(Swapchain.chooseCompositeAlpha(VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR, true)
+            == VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR);
+        // One that offers only `INHERIT` gets it, not a mode it lacks.
+        assert(Swapchain.chooseCompositeAlpha(VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR, false)
+            == VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR);
+    }
 }

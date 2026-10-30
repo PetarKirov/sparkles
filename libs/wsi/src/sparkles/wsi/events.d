@@ -43,6 +43,9 @@ optional, since the process may be killed next.
 */
 struct MemoryPressureEvent { bool critical; }
 struct FocusChangedEvent { bool focused; }
+/// The window manager's view of the frame changed (`F13`, `F14`): before
+/// $(B ReadyEvent), then on every change, applied with the configure it came in.
+struct WindowStateChangedEvent { WindowState state; }
 struct SurfaceMetricsChangedEvent { SurfaceMetrics metrics; }
 struct MovedEvent { PhysicalPosition position; }
 
@@ -365,7 +368,7 @@ alias WindowEventPayload = SumType!(NoWindowEvent, ReadyEvent, ExposedEvent,
     KeyboardEvent, TextCommittedEvent, CompositionEvent, PointerEvent,
     RelativePointerEvent, ScrollEvent, TouchEvent, OutputEvent, DataOfferEvent,
     PopupConfiguredEvent, PopupDismissedEvent, CursorChangedEvent,
-    EventsDroppedEvent, MemoryPressureEvent);
+    EventsDroppedEvent, MemoryPressureEvent, WindowStateChangedEvent);
 
 /**
 Sequence-stamped event. Sequence zero is reserved for uninitialized data.

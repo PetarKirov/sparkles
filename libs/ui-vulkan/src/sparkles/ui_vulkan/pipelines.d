@@ -319,13 +319,15 @@ struct Pipelines
         auto multisample = vkInfo(VkPipelineMultisampleStateCreateInfo(
             rasterizationSamples: VkSampleCountFlagBits.VK_SAMPLE_COUNT_1_BIT,
         ));
-        // Premultiplied source over destination (`UVK6`).
+        // Premultiplied source over destination (`UVK6`), the source weighed
+        // by the blend constants the draw sets: ones paint, zeros erase
+        // (`UVK41`).
         auto blendAttachment = VkPipelineColorBlendAttachmentState(
             blendEnable: VK_TRUE,
-            srcColorBlendFactor: VkBlendFactor.VK_BLEND_FACTOR_ONE,
+            srcColorBlendFactor: VkBlendFactor.VK_BLEND_FACTOR_CONSTANT_COLOR,
             dstColorBlendFactor: VkBlendFactor.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
             colorBlendOp: VkBlendOp.VK_BLEND_OP_ADD,
-            srcAlphaBlendFactor: VkBlendFactor.VK_BLEND_FACTOR_ONE,
+            srcAlphaBlendFactor: VkBlendFactor.VK_BLEND_FACTOR_CONSTANT_ALPHA,
             dstAlphaBlendFactor: VkBlendFactor.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
             alphaBlendOp: VkBlendOp.VK_BLEND_OP_ADD,
             colorWriteMask: VkColorComponentFlagBits.VK_COLOR_COMPONENT_R_BIT
@@ -335,8 +337,8 @@ struct Pipelines
         );
         auto blend = vkInfo(VkPipelineColorBlendStateCreateInfo(attachmentCount: 1,
             pAttachments: &blendAttachment));
-        VkDynamicState[2] dynamicStates = [VkDynamicState.VK_DYNAMIC_STATE_VIEWPORT,
-            VkDynamicState.VK_DYNAMIC_STATE_SCISSOR];
+        VkDynamicState[3] dynamicStates = [VkDynamicState.VK_DYNAMIC_STATE_VIEWPORT,
+            VkDynamicState.VK_DYNAMIC_STATE_SCISSOR, VkDynamicState.VK_DYNAMIC_STATE_BLEND_CONSTANTS];
         auto dynamic = vkInfo(VkPipelineDynamicStateCreateInfo(
             dynamicStateCount: dynamicStates.length, pDynamicStates: dynamicStates.ptr));
         auto colourFormat = format;

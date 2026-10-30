@@ -33,7 +33,7 @@ if grep -q '^SKIP: no macOS WindowServer' "$work/output.log"; then
   echo ">> AppKit smoke skipped: no WindowServer."
   exit 0
 fi
-grep -q '^ok: AppKit WSI conformance (18 checked, 3 skipped)' "$work/output.log"
+grep -q '^ok: AppKit WSI conformance (18 checked, 4 skipped)' "$work/output.log"
 grep -q '^ok: AppKit marked-text round trip' "$work/output.log"
 grep -q '^ok: AppKit clipboard conformance (4 checked, 32 MiB' "$work/output.log"
 grep -q "^ok: AppKit reads another writer's pasteboard" "$work/output.log"

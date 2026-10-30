@@ -32,6 +32,7 @@ module sparkles.ui_app.host;
 import core.stdc.stdarg : va_list;
 import core.time : Duration;
 
+import sparkles.base.app_identity : AppIdentity;
 import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.term_color : RgbColor;
 import sparkles.base.term_control : PointerShape;
@@ -40,6 +41,7 @@ import sparkles.ui.arena : FrameArena;
 import sparkles.ui.canvas : DrawOp, fillRectOp;
 import sparkles.ui.cmd_buffer : CmdBufferT;
 import sparkles.ui.geometry : Size;
+import sparkles.ui.style : Palette;
 import sparkles.ui_app.backend : Backend;
 import sparkles.ui_app.gui_options : GuiOptions;
 
@@ -91,7 +93,21 @@ nothing arrived.
 */
 struct RunConfig
 {
-    string title = "app";       /// window title, where there is one
+    /**
+    Who the application is (`AppIdentity`): the desktop's and the driver's
+    name for it, and the title of a window that gives none.
+    */
+    AppIdentity app;
+    string title;               /// window title, where there is one; empty: the app's name
+    /**
+    The colours of a window frame the host draws itself (`F13` — GNOME leaves
+    the frame to the application): the `chrome` slot's background for the bar
+    and its foreground for the title, the icons and the buttons' tint. Without
+    one the frame takes Adwaita's header bar colours, light or dark as the
+    launch background is.
+    */
+    Palette framePalette;
+    bool hasFramePalette;       /// ditto
     GuiOptions gui;             /// the window/font/theme settings (`CLI`)
     Backend backend;            /// `Backend.init` (gui) unless overridden; see `run`
     bool autoBackend = true;    /// ignore `backend` and pick one
@@ -230,6 +246,24 @@ import the spelling of a member it never names — with a `static import` of
 this module travelling alongside, since qualification on its own has not
 reached an unimported module since DIP22.
 */
+/// The title a run's window opens with: its own, else the application's name,
+/// else `app`.
+const(char)[] windowTitle(return ref const RunConfig cfg) @safe pure nothrow @nogc
+    => cfg.title.length ? cfg.title : cfg.app.name.length ? cfg.app.name[] : "app";
+
+///
+@("ui_app.host.windowTitle.titleThenNameThenApp")
+@safe pure nothrow @nogc
+unittest
+{
+    RunConfig cfg;
+    assert(cfg.windowTitle == "app");
+    assert(cfg.app.name.assign("Text Lab"));
+    assert(cfg.windowTitle == "Text Lab");
+    cfg.title = "notes.md — Text Lab";
+    assert(cfg.windowTitle == "notes.md — Text Lab");
+}
+
 mixin template HostState(size_t opCapacity = frameOpCapacity,
     Arena = FrameArena!())
 {

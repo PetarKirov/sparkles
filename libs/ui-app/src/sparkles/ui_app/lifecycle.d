@@ -83,6 +83,10 @@ struct Plan
     bool createDevice;      /// a device, its canvas, a surface and its targets
     bool createSurface;     /// a surface from the window's current handles
     bool rebuildTargets;    /// a swapchain for the current surface
+    /// The swapchain was reported out of date or suboptimal: replace it even
+    /// at the size it has (`RES21`). A suboptimal one at an unchanged size is
+    /// the compositor asking for other buffers — a format it can scan out.
+    bool replaceTargets;
     bool draw;              /// build a frame and draw it
     bool mustDraw;          /// the frame may not be skipped (`HST6`)
     /// A frame is wanted on a paced window and waits for its opportunity:
@@ -105,6 +109,11 @@ struct Lifecycle
 {
     /// Rebuilds that may fail in a row before the host gives up (`RES27`).
     enum maxRecoveries = 3;
+    /// Frames that may find their swapchain stale in a row, each after a
+    /// rebuild that succeeded, before the targets count as failed: a
+    /// replacement that comes out stale again is escalated like one that
+    /// could not be built, and never retried forever (`RES27`).
+    enum maxStale = 8;
     /// Device losses tolerated within `lossWindow`; one more stops (`RES27`).
     enum maxLosses = 3;
     /// ditto
@@ -144,6 +153,7 @@ struct Lifecycle
         bool mustDraw_ = true;
         bool closing_;
         bool needTargets_;
+        bool staleTargets_; // reported by the presentation engine
         bool needSurface_;
         bool needDevice_;
         bool deviceUp_;
@@ -154,6 +164,7 @@ struct Lifecycle
         double userBase_ = 0; // the user's chosen size, in `base`'s unit (`RES55`)
         int measuredPx_;
         int recoveries_;
+        int staleRun_; // stale frames since the last presented one
         Failure failure_;
         Duration[maxLosses + 1] losses_;
         uint lossCount_;
@@ -206,6 +217,14 @@ struct Lifecycle
         scale_ = s.scale;
         measuredPx_ = pxFor(scale_);
         return measuredPx_;
+    }
+
+    /// The targets must be built again for an unchanged surface: a
+    /// swapchain kept larger through a resize goes back to the window's size.
+    void retarget()
+    {
+        if (deviceUp_ && !needSurface_)
+            needTargets_ = dirty_ = true;
     }
 
     /// A frame opportunity (`FrameReadyEvent`).
@@ -309,9 +328,11 @@ struct Lifecycle
         if (needTargets_)
         {
             p.rebuildTargets = true;
+            p.replaceTargets = staleTargets_;
             needTargets_ = false;
             dirty_ = true;
         }
+        staleTargets_ = false; // a new surface or device rebuilds them anyway
         if (state_ == HostPhase.recovering)
             state_ = HostPhase.visible;
 
@@ -348,13 +369,21 @@ struct Lifecycle
                 // `requested_` is the ask made while building this frame: it
                 // stands for the next one (`HST9`).
                 frameReady_ = mustDraw_ = false;
-                recoveries_ = 0;
+                recoveries_ = staleRun_ = 0;
                 break;
             case FrameResult.again:
                 dirty_ = true;
                 break;
             case FrameResult.outOfDate:
-                needTargets_ = dirty_ = true;
+                needTargets_ = staleTargets_ = dirty_ = true;
+                if (++staleRun_ > maxStale)
+                {
+                    // Escalated as far as the run already has: targets to a
+                    // new surface, then a surface to a new device.
+                    staleRun_ = 0;
+                    needTargets_ = staleTargets_ = false;
+                    rebuildFailed(recoveries_ == 0 ? Rebuild.targets : Rebuild.surface);
+                }
                 break;
             case FrameResult.surfaceLost:
                 // The surface scope ends; a new surface comes from the

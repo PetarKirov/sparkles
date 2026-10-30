@@ -14,8 +14,9 @@ import sparkles.ui_app.host : PointerUnit, RunConfig;
 import sparkles.ui_app.run : RunOutcome;
 import sparkles.ui_app.run_app : runApp;
 import sparkles.ui_vulkan.text_rendering : Compositing, Hinting;
+import sparkles.base.term_color : RgbColor;
 
-import lab : Lab;
+import lab : framePalette, Lab;
 
 /// The shared window/font/theme options, and the lab's own.
 struct LabOptions
@@ -66,11 +67,18 @@ int run(string[] args)
     if (!gui.noGui && !gui.tui)
         gui.gui = true;
     RunConfig cfg = {
-        title: "text lab",
         gui: gui,
+        framePalette: framePalette,
+        hasFramePalette: true,
+        launchBackground: RgbColor(0x11, 0x11, 0x1b),
+        hasLaunchBackground: true,
         motion: true, // the loupe follows the pointer
         pointerUnit: PointerUnit.pixels,
     };
+    // The desktop's and the driver's name for the lab; its APK is the same
+    // package (`nix/packages/android/text-lab.nix`).
+    cast(void) cfg.app.id.assign("dev.petar_kirov.sparkles.text_lab");
+    cast(void) cfg.app.name.assign("Sparkles Text Lab");
     version (Android)
     {
         import sparkles.android.activity : internalDataPath;

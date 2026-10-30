@@ -121,6 +121,9 @@ struct ConformanceOutcome
 {
     uint checked;
     uint skipped;
+    /// The frame the backend reported (`F13`), if it reported one.
+    bool stateReported;
+    WindowState state; /// ditto
 }
 
 /// Everything the shared drain observes about the window under test.
@@ -157,6 +160,9 @@ private struct Observed
     bool relativeMotion;
     bool motionInside;
     bool motionOutside;
+    bool stateReported;
+    bool stateBeforeReady;
+    WindowState state;
 }
 
 /**
@@ -189,6 +195,12 @@ ConformanceOutcome checkWsiConformance(Backend, Hooks)(ref Backend wsi,
                 (in SurfaceMetricsChangedEvent value) {
                     seen.metricsChanged = true;
                     seen.lastMetrics = value.metrics;
+                },
+                (in WindowStateChangedEvent value) {
+                    if (!seen.stateReported)
+                        seen.stateBeforeReady = !seen.ready;
+                    seen.stateReported = true;
+                    seen.state = value.state;
                 },
                 (in ExposedEvent _) { seen.exposed = true; },
                 (in FrameReadyEvent _) { seen.frameReady = true; },
@@ -258,6 +270,52 @@ ConformanceOutcome checkWsiConformance(Backend, Hooks)(ref Backend wsi,
         && seen.readyMetrics.physicalSize.height > 0,
         "ready physical size is empty");
     ++outcome.checked;
+
+    // Property: a backend that reports the frame (`F13`) reports it before
+    // ready, so an application insetting its content for a title bar lays
+    // out once, against the metrics that follow.
+    if (seen.stateReported)
+    {
+        assert(seen.stateBeforeReady, "the window state arrived after ReadyEvent");
+        outcome.stateReported = true;
+        outcome.state = seen.state;
+        ++outcome.checked;
+    }
+    else
+        ++outcome.skipped;
+
+    // Property: a client frame's extents (`F13`) grow the surface by the
+    // margin on every side, reported as one metrics change with the margin,
+    // and taking them back returns the surface to the window's size.
+    static if (is(typeof(wsi.setFrameExtents(id, FrameExtents.init))))
+    {
+        if (seen.stateReported && seen.state.decorations == DecorationMode.client
+            && !seen.state.has(ToplevelState.maximized)
+            && !seen.state.has(ToplevelState.fullscreen))
+        {
+            const window = seen.lastMetrics.logicalSize;
+            const scale = seen.lastMetrics.scale.value;
+            assert(!wsi.setFrameExtents(id, FrameExtents(margin: 20, resize: 12, radius: 15))
+                .hasError, "setFrameExtents failed");
+            driveUntil(() => seen.lastMetrics.frameMargin.left > 0,
+                "frame extents did not change the metrics");
+            assert(seen.lastMetrics.logicalSize
+                == LogicalSize(window.width + 40, window.height + 40),
+                "the surface is not the window and its margin");
+            assert(seen.lastMetrics.frameMargin.top == cast(uint)(20 * scale)
+                && seen.lastMetrics.frameMargin.right == seen.lastMetrics.frameMargin.top,
+                "the margin is not reported on every side");
+            assert(!wsi.setFrameExtents(id, FrameExtents.init).hasError);
+            driveUntil(() => seen.lastMetrics.frameMargin.left == 0,
+                "taking the extents back did not change the metrics");
+            assert(seen.lastMetrics.logicalSize == window);
+            assert(wsi.setFrameExtents(id, FrameExtents(margin: 4, resize: 12)).hasError,
+                "a resize border wider than its margin is refused");
+            ++outcome.checked;
+        }
+        else
+            ++outcome.skipped;
+    }
 
     static if (is(typeof(hooks.onWindowReady(id, SurfaceMetrics.init))))
         hooks.onWindowReady(id, seen.readyMetrics);
@@ -914,5 +972,5 @@ unittest
     auto hooks = RecordingHooks(&wsi);
     const outcome = checkWsiConformance(wsi, loop, hooks,
         "sparkles:wsi recording conformance");
-    assert(outcome.checked == 6 && outcome.skipped == 15);
+    assert(outcome.checked == 6 && outcome.skipped == 16);
 }

@@ -407,6 +407,28 @@ state supersedes earlier state (title, cursor, redraw), and ordered where every 
 matters (capture, clipboard offers, popup grabs). A command that cannot be represented
 on the active backend returns `unsupported`; it never silently succeeds.
 
+The application has one identity per process, `WsiConfig.app` (`AppIdentity`): a
+reverse-DNS `id`, a display `name` and a version. Every backend checks it at `open`.
+It is Wayland's `app_id` and X11's `WM_CLASS` (what a desktop matches against an
+installed `.desktop` file for the dock's name and icon), the graphics driver's
+application name and version, and the title of a window that gives none. On Android
+the installed package is authoritative. `setTitle` retitles a window on every backend
+(Android has no window title and accepts it).
+
+The frame is reported, not assumed. A backend whose window manager may leave the frame
+to the client reports a `WindowState` — who draws the frame (`DecorationMode`), the
+toplevel's states (maximized, fullscreen, activated, tiled edges, suspended) and the
+controls the window manager offers — in a `windowStateChanged` event **before**
+`ready`, then whenever a configure changes it. A backend that never reports one draws
+its own frames. For a `client` frame the application paints the title bar and borders
+and drives the window from them: `startInteractiveMove`, `startInteractiveResize`,
+`setMaximized`, `setMinimized` and `showWindowMenu`, each answering the pointer press
+the compositor validates. A client frame may draw outside its window: given
+`FrameExtents` (in `WindowConfig` or by `setFrameExtents`), a backend whose window lives
+in a larger surface grows the surface by the margin on every side while the frame is the
+client's and the window is neither maximized nor fullscreen, and reports the margin with
+the metrics (`SurfaceMetrics.frameMargin`); the sizes stay the surface's.
+
 Close is vetoable. A native close request produces `closeRequested`; only an explicit
 accept or a configured default destroys the window. Destruction produces exactly one
 `destroyed` event after the native handle is no longer usable.
@@ -573,8 +595,16 @@ Vulkan ICD—must additionally hold the backend's owner-thread native-I/O borrow
 - Ack every `xdg_surface.configure` before returning from its listener; state and
   physical-size decisions may be deferred, acknowledgement may not.
 - First commit follows the no-buffer/initial-configure handshake.
-- Use `xdg-decoration` for SSD when present; otherwise expose own-drawn CSD regions. No
-  libdecor dependency.
+- Request server decorations through `xdg-decoration` when present, before the first
+  commit; the decoration's configure decides `DecorationMode`. Without the manager
+  (GNOME) or on `DecorationPreference.client` the frame is the client's. No libdecor
+  dependency: the application's own canvas paints the frame (`WSI-O4`, decided).
+- Bind `xdg_wm_base` up to v6, so a configure carries tiled edges and suspension and
+  `wm_capabilities` names the controls a client frame may show.
+- A client frame's extents set the window geometry to the window inside its margin, the
+  input region to the window and its outer resize border (a press on the shadow beyond
+  goes through), and the opaque region to the window less its rounded corners; the
+  configure sizes the window, not the surface.
 - Bind fractional scale with viewporter, presentation time, relative pointer/pointer
   constraints, text-input-v3, data-device, primary selection when present, and
   xdg-output/standard output state as capabilities rather than hard requirements.
@@ -590,6 +620,9 @@ Vulkan ICD—must additionally hold the backend's owner-thread native-I/O borrow
   authoritative per-surface fractional scale.
 - Popups are override-redirect windows with an active pointer/keyboard grab and
   explicit dismissal.
+- Write the title as `_NET_WM_NAME` (`UTF8_STRING`), and as ICCCM `WM_NAME` only while
+  it is ASCII (`STRING` is Latin-1); `WM_CLASS` carries the application id as both
+  instance and class.
 
 ### 9.3 Win32
 

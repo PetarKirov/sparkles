@@ -869,8 +869,13 @@ struct AndroidWsi
     with `unavailable` when no activity was recorded: the process was not
     started through $(LREF AndroidWsiMain).
     */
-    static WsiResult!void open(out AndroidWsi wsi)
+    static WsiResult!void open(out AndroidWsi wsi, in WsiConfig config = WsiConfig.init)
     {
+        // The installed package is the identity here; a malformed id is
+        // still refused, as on every backend.
+        if (auto fault = config.app.fault)
+            return androidFailure!void(WsiOperation.open, fault,
+                WsiErrorKind.invalidArgument);
         auto activity = nativeActivity();
         if (activity is null)
             return androidFailure!void(WsiOperation.open,
@@ -973,6 +978,14 @@ struct AndroidWsi
     `createWindow` names the window again. $(LREF finishActivity) ends the
     activity itself.
     */
+    /// Accepted and shown nowhere (`F13`): an Android window has no title;
+    /// the launcher shows the package's label.
+    WsiResult!void setTitle(WindowId id, in char[] title)
+    {
+        auto checked = checkedSlot(id, WsiOperation.command);
+        return checked.hasError ? wsiErr!void(checked.error) : wsiOk();
+    }
+
     WsiResult!void destroyWindow(WindowId id)
     {
         auto checked = checkedSlot(id, WsiOperation.close);
@@ -1027,6 +1040,8 @@ struct AndroidWsi
             case PointerShape.nsResize: type = PointerIconType.verticalDoubleArrow; break;
             case PointerShape.grab: type = PointerIconType.grab; break;
             case PointerShape.grabbing: type = PointerIconType.grabbing; break;
+            case PointerShape.nwseResize: type = PointerIconType.topLeftDiagonalDoubleArrow; break;
+            case PointerShape.neswResize: type = PointerIconType.topRightDiagonalDoubleArrow; break;
         }
         if (!setPointerIcon(type))
             return androidFailure!void(WsiOperation.command,

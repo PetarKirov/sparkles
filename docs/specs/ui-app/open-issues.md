@@ -184,3 +184,66 @@ everywhere, or "handle by value, recorder is the exception") and the live arms,
 the recorder, and `paint`'s parameter match that rule with no `auto ref` needed
 only as a compatibility shim — or when (2) is chosen and the DDoc on `paint` /
 `HST3` records the exception as intentional.
+
+## UIAPP-O7 — The client frame's icons follow the desktop's icon theme {#uiapp-o7}
+
+**Status:** open (scouted). **Requirements:** [`F13`](../window-system-integration/feature-requirements.md),
+[`RES45`](./resilience.md).
+
+The client frame (`ClientFrame`) draws its minimize, maximize, restore and close
+icons itself, from fills measured on one desktop. That desktop's icon theme was
+**Yaru**, not GNOME's default **Adwaita**, and the two differ:
+
+| Icon                      | Adwaita 49                                               | Yaru                                                                                                 |
+| ------------------------- | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| strokes                   | 2 units on the 16-unit grid                              | 1 unit                                                                                               |
+| `window-restore-symbolic` | one 6 × 6 square, centred (looks like maximize, smaller) | a 6 × 6 square at (4, 6) and, at `opacity=".5"`, the top and right edges of one 2 units up and right |
+
+The built-in icons follow Yaru today: the 1-unit stroke ("GTK 4.20 draws these
+icons' strokes a pixel wide") was measured beside a GTK header bar under Yaru, and
+restore copies Yaru's two windows. On a stock GNOME desktop both are wrong. A GTK
+header bar is right on both because it does not draw the icons: it names them.
+
+**What GTK does.** `GtkWindowControls` asks the icon theme for
+`window-minimize-symbolic`, `window-maximize-symbolic` or `window-restore-symbolic`
+(by the window's maximized state) and `window-close-symbolic`
+(`gtk/gtkwindowcontrols.c`, GTK 4.20). The theme is the `gtk-icon-theme-name`
+setting, which on GNOME is `org.gnome.desktop.interface icon-theme`. A symbolic
+SVG is recoloured as it loads: every `rect`, `circle` and `path` fills with the
+foreground, `.warning`/`.error`/`.success` with the state colours, and opacity is
+kept (`make_stylesheet`, `gtk/gdktextureutils.c`). GTK 4.20 parses simple symbolic
+SVGs into paths itself (`gsk_render_node_new_from_bytes_symbolic`) and falls back
+to librsvg.
+
+**What following the theme needs:**
+
+1. **The setting, live.** `org.freedesktop.portal.Settings.ReadOne("org.gnome.desktop.interface",
+"icon-theme")`, and the `SettingChanged` signal for changes. This is the same
+   D-Bus client the colour scheme, accent and contrast need (`RES45`); without a
+   portal the theme is `Adwaita`.
+2. **The lookup** of the [Icon Theme Specification](https://specifications.freedesktop.org/icon-theme-spec/latest/):
+   - search `$XDG_DATA_HOME/icons`, `~/.icons` and each `$XDG_DATA_DIRS/*/icons`
+     (Yaru was found through `~/.nix-profile/share/icons` on `XDG_DATA_DIRS`);
+   - parse `index.theme`: `Inherits` (Yaru inherits `Humanity`, `hicolor`) and
+     each directory's `Size`, `Scale`, `Type` (`Fixed`, `Scalable`, `Threshold`),
+     `MinSize`/`MaxSize` and `Threshold`;
+   - pick the closest match for 16 px at the window's scale, walking `Inherits`
+     and then `hicolor`. Yaru keeps these icons in `scalable/ui`.
+3. **Rendering a symbolic SVG.** The repository has no SVG rasteriser
+   (`sparkles:image` reads PNG). The icons are a few filled paths (`M`, `m`, `h`,
+   `v`, `z`, sometimes curves), a `transform` and an `opacity`. A D reader for
+   that subset, whose coverage the canvas fills, mirrors GTK's own fast path;
+   librsvg over ImportC would bring Rust and cairo. An icon outside the subset
+   falls back to the built-in drawing.
+4. **Recolouring** as GTK does: fills to the frame's foreground, opacity kept.
+5. **The pixel grid.** The SVG drawn at 16 px per CSS pixel and the window's
+   scale, its centre on the disc's (`ui_app.client_frame.everyIconIsCentredOnItsDisc`).
+6. **A change while running** re-reads the theme and redraws the frame, as
+   equivalent to a cold start as `RES45` asks.
+
+Until then the built-in icons should match the default theme, Adwaita: 2-unit
+strokes and its single-square restore.
+
+Close this entry when the frame draws the desktop's theme icons, with the
+built-in drawing as the fallback, and a test renders `window-restore-symbolic`
+from Adwaita and from Yaru.

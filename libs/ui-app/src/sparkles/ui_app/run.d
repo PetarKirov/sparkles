@@ -15,7 +15,7 @@ module sparkles.ui_app.run;
 
 import sparkles.ui_app.backend : Backend, BackendPolicy, isInteractive,
     pickBackend, platformForcedBackend;
-import sparkles.ui_app.host : noDraw, noSetup, noShutdown, RunConfig;
+import sparkles.ui_app.host : noDraw, noSetup, noShutdown, RunConfig, windowTitle;
 
 /// Why a run did not happen. `ok` is the only value that means a loop ran.
 enum RunOutcome : ubyte
@@ -154,7 +154,10 @@ RunOutcome run(alias present, alias handle, alias draw = noDraw,
                 import sparkles.ui_app.gui_options : fontRequestOf, windowCellsOf;
 
                 NativeRequest req;
-                req.title = cfg.title;
+                req.title = cfg.windowTitle.idup;
+                req.app = cfg.app;
+                req.framePalette = cfg.framePalette;
+                req.hasFramePalette = cfg.hasFramePalette;
                 req.font = fontRequestOf(cfg.gui);
                 req.cells = windowCellsOf(cfg.gui);
                 req.fontSizePoints = cfg.gui.fontSize;
@@ -172,7 +175,7 @@ RunOutcome run(alias present, alias handle, alias draw = noDraw,
                 import sparkles.ui_app.gui_options : fontRequestOf, windowCellsOf;
 
                 GuiRequest req;
-                req.title = cfg.title;
+                req.title = cfg.windowTitle.idup;
                 req.font = fontRequestOf(cfg.gui);
                 req.cells = windowCellsOf(cfg.gui);
                 req.fontSizePoints = cfg.gui.fontSize;

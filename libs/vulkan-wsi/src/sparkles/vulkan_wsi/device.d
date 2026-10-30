@@ -36,6 +36,9 @@ import sparkles.wsi : AndroidDisplayHandle, AppKitDisplayHandle, BackendKind,
 struct ContextRequest
 {
     string applicationName = "sparkles";
+    /// The application's version (`makeApiVersion(0, major, minor, patch)`),
+    /// from its `AppIdentity`.
+    uint applicationVersion = makeApiVersion(0, 0, 1, 0);
     uint apiVersion = apiVersion11;
     bool validation;
     /// A messenger made as soon as the instance exists, so it hears the
@@ -207,27 +210,50 @@ struct VulkanDevice
     */
     VulkanWsiResult!void savePipelineCache(string path) @trusted nothrow
     {
-        import std.file : rename, write;
+        import std.conv : to;
+        import std.file : remove, rename, write;
+        import std.process : thisProcessID;
 
         if (pipelineCache is null || path.length == 0)
             return vulkanWsiOk();
+        // `VK_INCOMPLETE` means the cache grew between the two calls: asked
+        // again, never written in part.
+        ubyte[] bytes;
         size_t size;
-        auto result = device.getPipelineCacheData(device.device, pipelineCache, &size, null);
-        if (result < 0 || size == 0)
-            return vulkanWsiOk();
-        auto bytes = new ubyte[size];
-        result = device.getPipelineCacheData(device.device, pipelineCache, &size, bytes.ptr);
-        if (result < 0)
+        VkResult result;
+        foreach (attempt; 0 .. 4)
+        {
+            result = device.getPipelineCacheData(device.device, pipelineCache, &size, null);
+            if (result != VkResult.VK_SUCCESS || size == 0)
+                return vulkanWsiOk();
+            bytes = new ubyte[size];
+            result = device.getPipelineCacheData(device.device, pipelineCache, &size, bytes.ptr);
+            if (result != VkResult.VK_INCOMPLETE)
+                break;
+        }
+        if (result != VkResult.VK_SUCCESS)
             return fail(VulkanWsiErrorKind.vulkanFailure, VulkanWsiOperation.createDevice,
                 result, "vkGetPipelineCacheData failed");
+        // A temporary file of this process's own: two instances saving at
+        // once must not write into one another's.
+        string temporary;
         try
         {
-            write(path ~ ".tmp", bytes[0 .. size]);
-            rename(path ~ ".tmp", path);
+            temporary = path ~ ".tmp." ~ thisProcessID.to!string;
+            write(temporary, bytes[0 .. size]);
+            rename(temporary, path);
         }
         catch (Exception)
+        {
+            try
+                if (temporary.length)
+                    remove(temporary);
+            catch (Exception)
+            {
+            }
             return fail(VulkanWsiErrorKind.vulkanFailure, VulkanWsiOperation.createDevice,
                 VkResult.VK_SUCCESS, "the pipeline cache could not be written");
+        }
         return vulkanWsiOk();
     }
 
@@ -500,7 +526,7 @@ private:
 
         auto appInfo = vkInfo(VkApplicationInfo(
             pApplicationName: appName.ptr,
-            applicationVersion: makeApiVersion(0, 0, 1, 0),
+            applicationVersion: request.applicationVersion,
             pEngineName: "sparkles",
             engineVersion: makeApiVersion(0, 0, 1, 0),
             apiVersion: request.apiVersion,
