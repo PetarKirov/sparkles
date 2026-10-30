@@ -27,10 +27,16 @@ struct TermSize
     ushort height; /// rows
 }
 
+// A terminal's size comes from `ioctl(TIOCGWINSZ)` and its changes from
+// SIGWINCH on POSIX systems with terminals; WASI is POSIX-like but has
+// neither, and `terminalSize` reports the size unknown there.
+version (WASI) {} else version (Posix)
+    version = PosixTerminal;
+
 // The SIGWINCH resize-notification machinery is POSIX-only; `terminalSize`
 // below is cross-platform. Guarding the POSIX import keeps the module
 // compilable on Windows (where the runner's size query still works).
-version (Posix)
+version (PosixTerminal)
 {
     // TODO: upstream
     version (linux)  enum SIGWINCH = 28;
@@ -86,7 +92,7 @@ version (Posix)
 /// terminal while stdout is a file, so the line's budget is stderr's width.
 TermSize terminalSize(StdStream stream = StdStream.stdout) @safe nothrow @nogc
 {
-    version (Posix)
+    version (PosixTerminal)
     {
         import core.sys.posix.sys.ioctl : ioctl, winsize, TIOCGWINSZ;
         import core.sys.posix.unistd : STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO;
