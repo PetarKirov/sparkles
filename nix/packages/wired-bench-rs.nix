@@ -9,7 +9,6 @@
     { pkgs, ... }:
     let
       fs = lib.fileset;
-      presets = import ./wired-bench-isa-presets.nix pkgs;
 
       crate = ../../libs/wired/bench/runtime/shims/rust;
       src = fs.toSource {
@@ -53,11 +52,6 @@
         };
     in
     {
-      packages = lib.listToAttrs (
-        map (p: {
-          name = "wired-bench-rs-${p.attr}";
-          value = mkShim p;
-        }) presets
-      );
+      packages = import ./wired-bench-for-each-preset.nix pkgs "wired-bench-rs" mkShim;
     };
 }
