@@ -25,8 +25,6 @@
       ...
     }:
     let
-      # Gate the attrs, not the module (see ./shader-compile.nix).
-      available = inputs'.dlang-nix.packages ? ldc-vulkan;
       inherit (config.legacyPackages.sparklesSources) libsClosure;
 
       # The output of `shader-compile` for the package `libs/<lib>`, whose
@@ -79,7 +77,7 @@
         });
     in
     {
-      packages = lib.optionalAttrs available {
+      packages = {
         ui-shaders = prebuiltShaders {
           pname = "ui-shaders";
           lib' = "ui";

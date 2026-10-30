@@ -30,13 +30,8 @@
       pkgs,
       ...
     }:
-    let
-      # Gate the attrs, not the module: a module whose *shape* depends on an
-      # input's package set is infinite recursion in flake-parts.
-      available = inputs'.dlang-nix.packages ? ldc-vulkan;
-    in
     {
-      packages = lib.optionalAttrs available {
+      packages = {
         # A symlink, not a wrapper script: LDC finds its `ldc2.conf` (and so
         # the dcompute druntime) from its resolved executable path. The
         # compiler without the wrapper that defaults `CC`: shaders are only
@@ -74,7 +69,7 @@
         });
       };
 
-      apps = lib.optionalAttrs available {
+      apps = {
         shader-compile = {
           type = "app";
           program = lib.getExe config.packages.shader-compile;

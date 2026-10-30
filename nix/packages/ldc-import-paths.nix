@@ -17,12 +17,10 @@
   perSystem =
     { inputs', pkgs, ... }:
     let
-      # Gate the attrs, not the module (see shader-compile.nix).
-      available = inputs'.dlang-nix.packages ? ldc-vulkan;
       ldcSrc = inputs'.dlang-nix.packages.ldc-vulkan.src;
     in
     {
-      packages = lib.optionalAttrs available {
+      packages = {
         ldc-import-paths = pkgs.linkFarm "sparkles-ldc-import-paths" [
           {
             name = "druntime";

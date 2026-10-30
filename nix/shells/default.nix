@@ -157,8 +157,8 @@
       ]
       # The dcompute-enabled LDC itself, as `ldc2-vulkan` — the name
       # `shader-compile` looks for, and one that cannot shadow the shell's own
-      # `ldc2`. Wherever dlang.nix defines it (Linux, macOS).
-      ++ lib.optional (config.packages ? ldc2-vulkan) config.packages.ldc2-vulkan
+      # `ldc2`.
+      ++ [ config.packages.ldc2-vulkan ]
       # `fc-list`, the oracle the font platform listing (FTD18) is compared
       # with, from the same fontconfig the test loads ($SPARKLES_FONTCONFIG_LIB);
       # without it the comparison skips.
@@ -448,12 +448,9 @@
         # sparkles:dmd-lsp semantic analysis (BLD3). Tests skip when unset.
         export SPARKLES_DMD_IMPORT_PATH=${config.packages.dmd-import-paths}/druntime:${config.packages.dmd-import-paths}/phobos
 
-        ${lib.optionalString (config.packages ? ldc-import-paths) ''
-          # The dcompute LDC's druntime/phobos sources, for sparkles:dmd-lsp's
-          # LDC profiles — shader (device) code imports `ldc.dcompute` (TGT3).
-          # Where dlang.nix defines `ldc-vulkan`; tests skip when unset.
-          export SPARKLES_LDC_IMPORT_PATH=${config.packages.ldc-import-paths}/druntime:${config.packages.ldc-import-paths}/phobos
-        ''}
+        # The dcompute LDC's druntime/phobos sources, for sparkles:dmd-lsp's
+        # LDC profiles — shader (device) code imports `ldc.dcompute` (TGT3).
+        export SPARKLES_LDC_IMPORT_PATH=${config.packages.ldc-import-paths}/druntime:${config.packages.ldc-import-paths}/phobos
 
         ${lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
           # libdw/libelf (elfutils), libpfm, libkqueue — for `dub run --single`

@@ -61,10 +61,8 @@
       });
 
       importPaths = "${config.packages.dmd-import-paths}/druntime:${config.packages.dmd-import-paths}/phobos";
-      # The device side of a `@compute` module (TGT3), where `ldc-vulkan` exists.
-      ldcImportPaths =
-        lib.optionalString (config.packages ? ldc-import-paths)
-          "--set-default SPARKLES_LDC_IMPORT_PATH ${config.packages.ldc-import-paths}/druntime:${config.packages.ldc-import-paths}/phobos";
+      # The device side of a `@compute` module (TGT3).
+      ldcImportPaths = "--set-default SPARKLES_LDC_IMPORT_PATH ${config.packages.ldc-import-paths}/druntime:${config.packages.ldc-import-paths}/phobos";
 
       wrap =
         { name, tools }:
