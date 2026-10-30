@@ -250,6 +250,7 @@
         ./nix/packages/freebsd-vm.nix
         ./nix/packages/hue.nix
         ./nix/packages/libghostty-vt.nix
+        ./nix/packages/terminal-static.nix
         ./nix/packages/shader-compile.nix
         ./nix/packages/android-dev-env-probe.nix
         ./nix/packages/ui-shaders.nix

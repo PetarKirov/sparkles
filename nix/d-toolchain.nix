@@ -52,8 +52,15 @@
                   done
                 '';
 
+              # A compiler package and every one it joins over (`unwrapped`), down to
+              # the one whose `include/d` holds druntime's and Phobos' sources:
+              # `ldc-vulkan` joins over one, the all-LLVM runtime profile's over two.
+              layersOf = p: [ p ] ++ lib.optionals (p ? unwrapped) (layersOf p.unwrapped);
+
               # The project's wrapping of a dlang.nix LDC: its drivers read one of the
-              # configurations below. `pkgs.ldc` wraps `rawLdc`.
+              # configurations below. `pkgs.ldc` wraps `rawLdc`; on Linux,
+              # `pkgs.ldc-llvm-runtimes` wraps dlang.nix's all-LLVM runtime profile
+              # (toolchain spec TC18), which nix/packages/terminal-static.nix builds with.
               ldcFrom =
                 rawLdc:
                 let
@@ -84,10 +91,7 @@
                     {
                         switches ~= [
                             ${lib.concatMapStringsSep ",\n" (p: ''"-ffile-prefix-map=${p}=/ldc"'') (
-                              lib.unique [
-                                "${rawLdc}"
-                                "${rawLdc.unwrapped or rawLdc}"
-                              ]
+                              map toString (layersOf rawLdc)
                             )}
                         ];
                     };
@@ -227,6 +231,12 @@
                       "dev"
                     ];
                   });
+            }
+            // lib.optionalAttrs prev.stdenv.hostPlatform.isLinux {
+              # The all-LLVM runtime profile's LDC (TC18): its programs link
+              # compiler-rt, libunwind and libc++ statically in place of the
+              # GCC runtime, and druntime and Phobos statically always.
+              ldc-llvm-runtimes = ldcFrom inputs'.dlang-nix.packages.ldc-vulkan-llvm-runtimes;
             }
             // lib.optionalAttrs isDarwin {
               # The fork's glfw 3.5.1 bump buys Darwin nothing, yet makes

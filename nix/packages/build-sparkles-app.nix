@@ -662,16 +662,11 @@
                 # program. A caller's compiler without that map leaves them, and
                 # they are removed after the build.
                 compiler = args.compiler or pkgs.ldc.reproducible;
-                # Every layer of it — the driver join, the compiler it joins
-                # over, and that one's own, inner package (whose `include/d`
-                # druntime's and Phobos' sources are read from) — asserted absent.
-                compilerPaths = [
-                  compiler
-                ]
-                ++ lib.optionals (compiler ? include) [ compiler.include ]
-                ++ lib.optionals (compiler ? unwrapped) (
-                  [ compiler.unwrapped ] ++ lib.optional (compiler.unwrapped ? unwrapped) compiler.unwrapped.unwrapped
-                );
+                # Every layer of it — the driver join and each compiler it joins
+                # over, down to the inner package whose `include/d` druntime's and
+                # Phobos' sources are read from — asserted absent.
+                layersOf = p: [ p ] ++ lib.optionals (p ? unwrapped) (layersOf p.unwrapped);
+                compilerPaths = layersOf compiler ++ lib.optionals (compiler ? include) [ compiler.include ];
                 # Phobos' service paths, the nixpkgs-patched `libcurl.so.4` dlopen
                 # path and the tzdata directory: compiled into Phobos itself, and
                 # never reached by a static program that loads neither, so they are
