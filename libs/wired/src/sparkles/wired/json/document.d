@@ -96,7 +96,7 @@ package struct JsonCell
     /// The pool bytes of a string/rawNumber cell.
     const(char)[] text() const @trusted pure nothrow @nogc
     in (kind == JsonKind.string_ || kind == JsonKind.rawNumber)
-        => (cast(immutable(char)*) bits)[0 .. size];
+        => (cast(immutable(char)*) cast(size_t) bits)[0 .. cast(size_t) size];
 }
 
 static assert(JsonCell.sizeof == 16);
@@ -194,7 +194,7 @@ struct JsonDocument(Allocator = Mallocator)
 }
 
 /**
-A borrowed, copyable, 8-byte view of one value in a document
+A borrowed, copyable, pointer-sized view of one value in a document
 (SPEC §11.2). Copying a view is free; the document must outlive every
 view (`dip1000`-enforced from `root()` onward). Accessors carry
 `in`-contracts on the dynamic kind; iteration is forward-only through
@@ -205,7 +205,7 @@ struct JsonValue
 {
     private const(JsonCell)* cell;
 
-    static assert(JsonValue.sizeof == 8);
+    static assert(JsonValue.sizeof == (void*).sizeof);
 
     /// The dynamic type (`JsonKind.none` for a default view).
     JsonKind kind() const scope @safe pure nothrow @nogc
@@ -384,7 +384,7 @@ version (unittest)
 unittest
 {
     static assert(JsonCell.sizeof == 16);
-    static assert(JsonValue.sizeof == 8);
+    static assert(JsonValue.sizeof == (void*).sizeof);
 
     auto cell = JsonCell(JsonKind.string_, 5);
     assert(cell.kind == JsonKind.string_);
