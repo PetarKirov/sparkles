@@ -292,14 +292,6 @@
         # Maps its own store paths out of the examples (nix/d-toolchain.nix).
         compiler = pkgs.ldc.reproducible;
 
-        # `checked` — the repo-wide artifact build (see the note on
-        # `buildSparklesApp`). Assertions live, which is the whole point of
-        # running the examples in CI: under `-release` an example that asserts
-        # its own result and exits 0 has verified nothing, and one that
-        # performs I/O inside an assert doesn't even do the I/O — which is how
-        # `fiber-echo` came to hang for 13 minutes on a 20-minute-capped job.
-        dubBuildType = "checked";
-
         # Examples that depend on sparkles:syntax (or other ImportC bindings)
         # need pkg-config + the C library so dub#3085 can feed -P-I...
         # to ImportC for headers like <tree_sitter/api.h>.

@@ -44,7 +44,6 @@
         shader-compile = config.legacyPackages.buildSparklesApp (finalAttrs: {
           pname = "shader-compile";
           version = "0.1.0";
-          dubBuildType = "checked";
 
           postFixup = ''
             wrapProgram $out/bin/${finalAttrs.pname} \
