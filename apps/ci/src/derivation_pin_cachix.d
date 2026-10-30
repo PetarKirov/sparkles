@@ -1,19 +1,118 @@
 /**
-The Cachix side of a pin run: which of the cache's pins fall outside the set
-(TC24).
+The Cachix side of a pin run: which pin-set outputs the cache serves
+(`--check`, TC23's gate) and which of its pins fall outside the set (TC24).
 
 Each operation takes its HTTP verb as a template argument, so tests script
-the responses; `liveGet` and `liveDelete` are the `std.net.curl`
+the responses; `liveHead`, `liveGet` and `liveDelete` are the `std.net.curl`
 implementations. The auth token travels in a request header, never on a
 command line.
 */
 module derivation_pin_cachix;
 
+import std.algorithm.iteration : filter, map;
+import std.array : array;
 import std.format : format;
 
 import expected : Expected, err, ok;
 
-import derivation_pin_set : Target, parsePinList, pinUrl, pinsUrl, stalePins;
+import derivation_pin_set : Target, narinfoUrl, parsePinList, pinUrl, pinsUrl, stalePins;
+
+/// Whether the cache serves one output.
+enum Presence : ubyte
+{
+    cached,
+    missing,
+    unknown, /// The question got no answer: a network error or an unexpected status.
+}
+
+/// One output's narinfo query.
+struct CachedCheck
+{
+    Target target;
+    Presence presence;
+    string detail; /// The narinfo URL, or why the query has no answer.
+}
+
+/**
+Query `<cacheUri>/<hash>.narinfo` for every target's out path. `head` takes a
+URL and returns its HTTP status: 200 is cached, 404 is missing, anything else
+(and a transport error) is unknown.
+*/
+CachedCheck[] checkCached(alias head)(Target[] targets, string cacheUri)
+{
+    CachedCheck check(Target target)
+    {
+        const url = narinfoUrl(cacheUri, target.outPath);
+        if (url.hasError)
+            return CachedCheck(target, Presence.unknown, url.error);
+        const status = head(url.value);
+        if (status.hasError)
+            return CachedCheck(target, Presence.unknown, status.error);
+        if (status.value == 200)
+            return CachedCheck(target, Presence.cached, url.value);
+        if (status.value == 404)
+            return CachedCheck(target, Presence.missing, url.value);
+        return CachedCheck(target, Presence.unknown, format("HTTP %d from %s", status.value, url.value));
+    }
+
+    return targets.map!check.array;
+}
+
+/// True when every output is cached: the gate passes.
+bool allCached(in CachedCheck[] checks) @safe pure nothrow @nogc
+{
+    foreach (check; checks)
+        if (check.presence != Presence.cached)
+            return false;
+    return true;
+}
+
+/// One line per output that is not cached, for the failure report.
+string[] uncachedLines(in CachedCheck[] checks) @safe pure
+{
+    return checks
+        .filter!(check => check.presence != Presence.cached)
+        .map!(check => format("%-8s %s  %s  (%s)",
+            check.presence == Presence.missing ? "missing" : "unknown",
+            check.target.pinName, check.target.outPath, check.detail))
+        .array;
+}
+
+@("pinCachix.checkCached.statusClasses")
+@safe
+unittest
+{
+    enum uri = "https://sparkles.cachix.org";
+    auto targets = [
+        Target("toolchain-dmd", "x86_64-linux", "/nix/store/45iz365bm9kwm02x4ll7njn7vfqphq8h-dmd"),
+        Target("harfbuzz", "aarch64-linux", "/nix/store/ydgp3y3s65fgbv1gg5r6f3biay85sh5m-harfbuzz"),
+        Target("skia-sparkles", "aarch64-darwin", "/nix/store/p0q348b2znkvndgmf15dhg11li4kilik-skia"),
+        Target("maple-mono", "x86_64-linux", "not-a-store-path"),
+    ];
+    string[] asked;
+    Expected!(ushort, string) head(string url)
+    {
+        asked ~= url;
+        if (url == uri ~ "/45iz365bm9kwm02x4ll7njn7vfqphq8h.narinfo")
+            return ok(cast(ushort) 200);
+        if (url == uri ~ "/ydgp3y3s65fgbv1gg5r6f3biay85sh5m.narinfo")
+            return ok(cast(ushort) 404);
+        return err!ushort("connection reset");
+    }
+
+    const checks = checkCached!head(targets, uri);
+    assert(asked.length == 3, "an unparsable path asks nothing");
+    assert(checks[0].presence == Presence.cached);
+    assert(checks[1].presence == Presence.missing);
+    assert(checks[2].presence == Presence.unknown && checks[2].detail == "connection reset");
+    assert(checks[3].presence == Presence.unknown);
+    assert(!allCached(checks));
+    assert(allCached(checks[0 .. 1]));
+    const lines = uncachedLines(checks);
+    assert(lines.length == 3);
+    assert(lines[0] == "missing  harfbuzz-aarch64-linux  /nix/store/ydgp3y3s65fgbv1gg5r6f3biay85sh5m-harfbuzz"
+        ~ "  (https://sparkles.cachix.org/ydgp3y3s65fgbv1gg5r6f3biay85sh5m.narinfo)");
+}
 
 /// What pruning found, and what it did with it.
 struct PruneReport
@@ -91,6 +190,23 @@ unittest
     deletes = null;
     const unreadable = prunePins!(get, del)("other", set, "synthetic-token", false);
     assert(unreadable.hasError && deletes.length == 0, "no list, no deletion");
+}
+
+/// HTTP status of a HEAD request to `url`.
+Expected!(ushort, string) liveHead(string url) @system
+{
+    import std.net.curl : HTTP;
+
+    try
+    {
+        auto http = HTTP(url);
+        http.method = HTTP.Method.head;
+        http.addRequestHeader("User-Agent", "sparkles-toolchain-pin");
+        http.perform();
+        return ok(http.statusLine.code);
+    }
+    catch (Exception e)
+        return err!ushort(e.msg);
 }
 
 /// Body of a GET request to `url`; a non-2xx status is an error.
