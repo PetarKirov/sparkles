@@ -28,7 +28,9 @@ enum ViewKind : ubyte
     image,       /// a raster image
 }
 
-/// The image extensions the GPU pane decodes (raylib's default formats).
+/// The image extensions a pane opens as images: the raylib arm decodes all
+/// three (raylib's default formats); a pixel canvas decodes PNG and shows a
+/// located message for the others.
 immutable string[] imageExtensions = ["png", "gif", "qoi"];
 
 /// The kind `path` would open as by its name alone; `unsupported` means
