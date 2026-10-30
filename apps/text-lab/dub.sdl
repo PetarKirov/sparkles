@@ -18,8 +18,8 @@ dependency "sparkles:ui-app" path="../.."
 dependency "sparkles:ui-vulkan" path="../.."
 
 // On Android the lab is the shared library a NativeActivity loads, its entry
-// `AndroidWsiMain`'s (src/app.d — no `mainSourceFile` here, which dub would
-// leave out of a library); listed first so dub picks it there.
+// `AndroidWsiMain`'s in src/android_entry.d (not app.d, which dub leaves out
+// of a library as a program's main); listed first so dub picks it there.
 configuration "android" {
     platforms "android"
     targetType "dynamicLibrary"
