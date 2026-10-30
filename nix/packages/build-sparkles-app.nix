@@ -649,8 +649,8 @@
                       pkgs.libxcb
                       pkgs.libxcb.dev
                       pkgs.xcb-imdkit
-                      pkgs.xorg.xcbutil
-                      pkgs.xorg.xcbutil.dev
+                      pkgs.libxcb-util
+                      pkgs.libxcb-util.dev
                     ];
                 vulkanInputs = lib.optionals (builtins.elem "libs/vulkan/src" srcDirs) [
                   pkgs.vulkan-loader

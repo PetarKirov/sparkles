@@ -78,6 +78,7 @@
         shader-compile = {
           type = "app";
           program = lib.getExe config.packages.shader-compile;
+          meta.description = config.packages.shader-compile.meta.description;
         };
       };
     };

@@ -419,11 +419,13 @@
       apps.ci = {
         type = "app";
         program = lib.getExe config.packages.ci;
+        meta.description = config.packages.ci.meta.description;
       };
 
       apps.ci-minimal = {
         type = "app";
         program = lib.getExe config.packages.ci-minimal;
+        meta.description = config.packages.ci-minimal.meta.description;
       };
 
       packages.release = config.legacyPackages.buildSparklesApp (finalAttrs: {
@@ -493,30 +495,36 @@
       apps.release = {
         type = "app";
         program = lib.getExe config.packages.release;
+        meta.description = config.packages.release.meta.description;
       };
       # `nix run .#release-full` — the publishing configuration.
       apps.release-full = {
         type = "app";
         program = lib.getExe config.packages.release-full;
+        meta.description = config.packages.release-full.meta.description;
       };
       apps.terminal = {
         type = "app";
         program = lib.getExe config.packages.terminal;
+        meta.description = config.packages.terminal.meta.description;
       };
 
       apps.terminal-benchmark = {
         type = "app";
         program = lib.getExe config.packages.terminal-benchmark;
+        meta.description = config.packages.terminal-benchmark.meta.description;
       };
 
       apps.ui-gallery = {
         type = "app";
         program = lib.getExe config.packages.ui-gallery;
+        meta.description = config.packages.ui-gallery.meta.description;
       };
 
       apps.text-lab = {
         type = "app";
         program = lib.getExe config.packages.text-lab;
+        meta.description = config.packages.text-lab.meta.description;
       };
     };
 }

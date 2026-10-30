@@ -87,6 +87,7 @@ in
 
       packages.run-wired-bench = pkgs.writeShellApplication {
         name = "run-wired-bench";
+        meta.description = "Run the wired JSON benchmarks over a dataset tier (light, medium or huge)";
         runtimeInputs = [
           pkgs.curl
           pkgs.gzip
@@ -145,10 +146,12 @@ in
       apps.run-wired-bench = {
         type = "app";
         program = lib.getExe config.packages.run-wired-bench;
+        meta.description = config.packages.run-wired-bench.meta.description;
       };
       apps.wired-bench = {
         type = "app";
         program = lib.getExe config.packages.run-wired-bench;
+        meta.description = config.packages.run-wired-bench.meta.description;
       };
     };
 }
