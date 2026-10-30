@@ -8,6 +8,7 @@
       ...
     }:
     let
+      inherit (config.legacyPackages) nativeLibs;
       inherit (pkgs) lib;
       inherit (config.legacyPackages) d-toolchain;
 
@@ -213,21 +214,12 @@
 
         # `libs "raylib"` in libs/raylib-text and apps/terminal.
         pkgs.raylib
-        # raylib-text's ImportC shaping bridge and native runtime.
-        pkgs.freetype
-        pkgs.freetype.dev
-        # The HarfBuzz sparkles:font pins (FTS8), not nixpkgs' (nix/packages/harfbuzz.nix).
-        config.packages.harfbuzz
-        config.packages.harfbuzz.dev
-
-        # `libs "vulkan"` in libs/vulkan. The `.dev` output carries
-        # `vulkan.pc`, whose `includedir` points at vulkan-headers — so one
-        # pkg-config entry supplies both the ImportC include path and the link
-        # flags. The headers alone would not be discoverable: vulkan-headers
-        # ships no `.pc` of its own.
-        pkgs.vulkan-loader
-        pkgs.vulkan-loader.dev
-
+      ]
+      # raylib-text's shaping libraries and the Vulkan loader
+      # (nix/packages/native-libs.nix).
+      ++ nativeLibs.shaping
+      ++ nativeLibs.vulkan
+      ++ [
         # `libs "sdl3"` in libs/ui-sdl3: the window, the input source, and the
         # Vulkan surface. `.dev` carries `sdl3.pc`; `.lib` is what the built
         # binary loads at runtime.

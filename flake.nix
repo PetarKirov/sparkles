@@ -249,6 +249,7 @@
         ./nix/packages/harfbuzz.nix
         ./nix/packages/freebsd-vm.nix
         ./nix/packages/hue.nix
+        ./nix/packages/native-libs.nix
         ./nix/packages/libghostty-vt.nix
         ./nix/packages/static-apps.nix
         ./nix/packages/shader-compile.nix
