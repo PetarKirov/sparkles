@@ -11,7 +11,7 @@
   };
 
   inputs = {
-    nixpkgs.url = "github:PetarKirov/nixpkgs?ref=glfw3-3.5.1-nixos-unstable";
+    nixpkgs.url = "github:PetarKirov/nixpkgs?ref=glfw3-3.5.1-nixos-unstable-2026-10-27";
     flake-parts.url = "github:hercules-ci/flake-parts";
 
     git-hooks-nix = {
@@ -78,7 +78,7 @@
     # instead, so raylib's GLFW (and every other consumer's) stays the one
     # cache.nixos.org already built. Keep it at the fork's merge base.
     nixpkgs-upstream-glfw = {
-      url = "github:NixOS/nixpkgs/3ec636362e1816bc2f0888fa0fa2c69f1bc9e504";
+      url = "github:NixOS/nixpkgs/31ecbaca1bdefa45dffc409f0250bd8039ea0010";
       flake = false;
     };
     tree-sitter-d-src = {

@@ -18,11 +18,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1793354063,
-        "narHash": "sha256-hWvi6SlvY0qmQMjk2PRnKpnWJ5LC6FlrAUTTf1yPWGc=",
+        "lastModified": 1793472790,
+        "narHash": "sha256-XeuDkbXfeTlY7YvTKgSb3xh1h1BYEEPBPspYZ3g9Zes=",
         "owner": "PetarKirov",
         "repo": "dlang.nix",
-        "rev": "857a8a98775fc4d915330810a1b791e84f76bb40",
+        "rev": "0993e9d8e0acae194fa0336f6ba9a6b90fd8aa46",
         "type": "github"
       },
       "original": {
@@ -317,11 +317,11 @@
     "ldc-sparkles": {
       "flake": false,
       "locked": {
-        "lastModified": 1793255816,
-        "narHash": "sha256-A3cX6MawUXrlYoYm5cJWkwjNxn5YdQgVN5LSY1mirqQ=",
+        "lastModified": 1793472710,
+        "narHash": "sha256-FSWW0TIUmtZe/iZIJ/vcLtdLBOcUQ9Zkk5vB60W2cjQ=",
         "ref": "sparkles/main",
-        "rev": "89c1a7f6c9bb0f035c22aae21db4596a0971ae21",
-        "revCount": 49371,
+        "rev": "5d81911f60c38c90487afd21fc3f3b04da7222bc",
+        "revCount": 49390,
         "submodules": true,
         "type": "git",
         "url": "https://github.com/PetarKirov/ldc"
@@ -353,10 +353,10 @@
     "llvm-sparkles": {
       "flake": false,
       "locked": {
-        "lastModified": 1792878720,
-        "narHash": "sha256-9OY8KW5hNDttk2J8V43xzV3pLlyfRPJQWkf6HvsjgE4=",
+        "lastModified": 1793436318,
+        "narHash": "sha256-VKJA+re49aiAa6osyXYJdu4l2RJ6hwoNNo0CwEOT+zg=",
         "ref": "sparkles/main",
-        "rev": "24d1ae35e055e8a32192fc07da66885d0e2c5576",
+        "rev": "019489a268bec85a95a7298283476cfdbf0c04fc",
         "shallow": true,
         "type": "git",
         "url": "https://github.com/PetarKirov/llvm-project"
@@ -528,32 +528,32 @@
     "nixpkgs-upstream-glfw": {
       "flake": false,
       "locked": {
-        "lastModified": 1792773339,
-        "narHash": "sha256-rZLrzrC6i+jnTAlvPZHogKDulY7WWDEv9hJeHieO7Zw=",
+        "lastModified": 1793110635,
+        "narHash": "sha256-dhoW6VgFWlaodSY5jrBn+CF2FLmaUvDVgM7+C7T2+NM=",
         "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "3ec636362e1816bc2f0888fa0fa2c69f1bc9e504",
+        "rev": "31ecbaca1bdefa45dffc409f0250bd8039ea0010",
         "type": "github"
       },
       "original": {
         "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "3ec636362e1816bc2f0888fa0fa2c69f1bc9e504",
+        "rev": "31ecbaca1bdefa45dffc409f0250bd8039ea0010",
         "type": "github"
       }
     },
     "nixpkgs_2": {
       "locked": {
-        "lastModified": 1793057227,
-        "narHash": "sha256-G1cCIWSWbCnQi1aIdI/tHtyI3Jd+1Z4x57sJ9754jco=",
+        "lastModified": 1793363981,
+        "narHash": "sha256-Ru8rtvBrBwagkQR7+V290MdNwBlxHtlY0qgqdxDfUHw=",
         "owner": "PetarKirov",
         "repo": "nixpkgs",
-        "rev": "60c0882dd14bc083ea721a42b8c31bfaa91b8bcf",
+        "rev": "b32e1eb268f8a32ec738297d6a0cc0374c184fa8",
         "type": "github"
       },
       "original": {
         "owner": "PetarKirov",
-        "ref": "glfw3-3.5.1-nixos-unstable",
+        "ref": "glfw3-3.5.1-nixos-unstable-2026-10-27",
         "repo": "nixpkgs",
         "type": "github"
       }
