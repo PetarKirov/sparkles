@@ -93,8 +93,8 @@ struct ToolchainPin
     @(Option("token", description: "Cachix auth token (default: from $CACHIX_AUTH_TOKEN)."))
     string token;
 
-    @(Option("revisions", description: "Revisions to keep per pin (default: from $CI_PIN_REVISIONS or 3)."))
-    int revisions = 3;
+    @(Option("revisions", description: "Revisions to keep per pin (default: from $CI_PIN_REVISIONS or 1)."))
+    int revisions = 1;
 
     @(Argument("names", description: "Select only these pin-set entries, by name (toolchain-dmd).", optional: true))
     string[] names;
@@ -254,7 +254,7 @@ unittest
  * `--cache` wins over `$CACHIX_CACHE`, which wins over `sparkles`. Dry-run is
  * on when the flag is set, when `$CI_DRY_RUN` is `1`, or when no auth token
  * is available. The last case sets `announcedDryRun`. `--revisions` left at
- * its default of 3 takes `$CI_PIN_REVISIONS` when that is a positive integer.
+ * its default of 1 takes `$CI_PIN_REVISIONS` when that is a positive integer.
  * `jobs` is at least 1.
  */
 Expected!(RunPlan, string) resolveRun(
@@ -279,7 +279,7 @@ Expected!(RunPlan, string) resolveRun(
     RunPlan plan(int revisions) => RunPlan(cache, dryRun, announced, revisions, jobs, token);
     if (cli.revisions < 1)
         return err!(RunPlan)("--revisions must be a positive integer.");
-    if (cli.revisions != 3 || envRevisions.length == 0)
+    if (cli.revisions != 1 || envRevisions.length == 0)
         return ok(plan(cli.revisions));
 
     import std.conv : ConvException, to;
@@ -305,7 +305,7 @@ unittest
     assert(dry.value.dryRun);
     assert(!dry.value.announcedDryRun);
     assert(dry.value.cache == "sparkles");
-    assert(dry.value.revisions == 3);
+    assert(dry.value.revisions == 1);
     assert(dry.value.jobs == 4);
 
     const forced = resolveRun(
