@@ -21,15 +21,27 @@
 { lib, ... }:
 {
   perSystem =
-    { config, pkgs, ... }:
+    {
+      config,
+      inputs',
+      pkgs,
+      ...
+    }:
     let
       inherit (config.legacyPackages) d-toolchain;
 
       # Only needed to answer `dub describe`'s compiler probe. Prefer DMD on
       # x86_64-linux (no LLVM backend — roughly half LDC's closure), matching
       # the `ci` package's reasoning; DMD only targets x86_64/i686-linux and
-      # x86_64-darwin, so keep LDC elsewhere.
-      dubCompiler = if pkgs.stdenv.hostPlatform.system == "x86_64-linux" then pkgs.dmd else pkgs.ldc;
+      # x86_64-darwin, so keep LDC elsewhere. That LDC is the compiler without
+      # the wrapper that defaults `CC`, as for shader-compile: the probe only
+      # compiles (`-c -o-`), and the link compiler (clang-sparkles, with GCC
+      # and compiler-rt) would add ~0.6 GiB to the closure.
+      dubCompiler =
+        if pkgs.stdenv.hostPlatform.system == "x86_64-linux" then
+          pkgs.dmd
+        else
+          inputs'.dlang-nix.packages.ldc-vulkan.unwrapped;
 
       unwrapped = config.legacyPackages.buildSparklesApp (finalAttrs: {
         pname = "twoslash-extract";
