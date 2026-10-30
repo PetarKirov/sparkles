@@ -58,6 +58,10 @@ struct Rig
     DeviceFacts facts;
     /// Quarter turns the target is drawn pre-rotated by (`CanvasTarget.turn`).
     uint turn;
+    /// The target is transparent (`CanvasTarget.transparent`).
+    bool transparent;
+    /// The part of the target drawn (`CanvasTarget.drawn`); empty for all.
+    VkExtent2D drawn;
 
     @disable this(this);
 
@@ -144,7 +148,7 @@ struct Rig
             extent: extent, usage: VkImageUsageFlagBits.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
                 | VkImageUsageFlagBits.VK_IMAGE_USAGE_TRANSFER_SRC_BIT
                 | VkImageUsageFlagBits.VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-            finalLayout: VkImageLayout.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, turn: turn), cmd, slot,
+            finalLayout: VkImageLayout.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, turn: turn, transparent: transparent, drawn: drawn), cmd, slot,
             metrics,
             ground);
         paint(canvas);

@@ -375,3 +375,45 @@ created with that `preTransform`, as on a turned Android panel) **must** be
 drawn into pre-rotated: every operation is placed, clipped and shaded in
 display pixels and shows on the display where it would on an unturned
 target of the display's size. The loupe's rectangles are display pixels too.
+
+**UVK40: A pixel box's drop shadow.** Beside `UVK12`'s shadow, which is the
+reference canvas's and has no blur, the canvas **must** draw the drop
+shadow of a rounded box in device pixels as CSS's `box-shadow` does: the box
+grown by a spread, moved by an offset, its corner radius grown by the spread,
+and blurred by a Gaussian whose standard deviation is half the blur radius,
+within the [tolerance](./testing.md#tolerances) of that convolution — and
+nothing under the box itself, which the shadow never darkens.
+
+_Rationale:_ A client-drawn window frame (`sparkles:ui-app`) casts the
+desktop's own shadow around the window, outside it; a shadow that darkened
+the window would show through every translucent pixel of its frame.
+
+**UVK41: Erasing outside a rounded box.** The canvas **must** erase, within a
+box's bounds, what lies outside the box's rounded corners: each pixel keeps
+`1 − α` of its colour and alpha, where α is the part of it outside the
+rounded box, within `UVK11`'s tolerance; nothing is added, no pixel outside
+the bounds changes, and operations after it paint as `UVK6` says.
+
+_Rationale:_ A window with rounded corners on a transparent surface must
+leave its corners empty after the application has drawn into them; painting
+cannot take colour away.
+
+**UVK42: A transparent target.** A target whose alpha reaches the
+compositor (a swapchain composited premultiplied) **must** start each frame
+transparent, every channel zero, instead of at the ground; what is drawn
+keeps its premultiplied alpha. The ground remains the background text is
+composited against (`UVK36`).
+
+_Rationale:_ A window that casts its own shadow and rounds its own corners
+draws into a surface larger than itself; what it leaves undrawn must show
+the desktop behind it.
+
+**UVK43: A drawn part.** A target that names a drawn extent **must** be
+drawn as a frame of that size at the image's top-left corner: the frame's
+display size, its viewport and its render area are the drawn part's, and
+nothing is drawn beyond it.
+
+_Rationale:_ A swapchain kept larger than the window through an
+interactive resize spares a new swapchain, and on Wayland a round trip to
+the compositor, per step; the compositor crops the image to the drawn
+part, so only that part may hold the frame.

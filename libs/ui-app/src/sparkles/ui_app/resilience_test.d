@@ -203,6 +203,22 @@ private struct Rig
     }
 }
 
+@("resilience.RSC4.model.theEndOfAResizeRebuildsTheTargetAtItsSize")
+@safe pure nothrow unittest
+{
+    // A swapchain kept larger through an interactive resize goes back to
+    // the window's size when it ends, though the surface did not change.
+    Rig r;
+    r.start(Surface(800, 600, 1));
+    r.settle();
+    const builds = r.targetBuilds, frames = r.drawn.length;
+    r.lc.retarget();
+    const p = r.step();
+    assert(p.rebuildTargets && !p.replaceTargets && p.draw);
+    assert(r.targetBuilds == builds + 1 && r.drawn.length == frames + 1);
+    assert(r.deviceCreates == 0 && r.surfaceCreates == 0);
+}
+
 @("resilience.RSC5.model.aFloodOfChangesIsOneRebuildAndOneFrame")
 @safe pure nothrow unittest
 {
@@ -392,6 +408,36 @@ private struct Rig
         }
         assert(!r.stopped, "a loss every ten seconds is recovered from indefinitely");
     }
+    {
+        // A swapchain that comes out stale after every replacement (a driver
+        // that keeps finding it suboptimal) is escalated like one that cannot
+        // be built — a new surface, a new device — and then stops the run
+        // with a cause, instead of being replaced forever.
+        Rig r;
+        r.start();
+        r.settle();
+        foreach (_; 0 .. 4 * (Lifecycle.maxStale + 1))
+            r.results ~= FrameResult.outOfDate;
+        r.lc.input();
+        foreach (_; 0 .. 8 * (Lifecycle.maxStale + 1))
+            if (!r.stopped)
+                r.step();
+        assert(r.surfaceCreates >= 1 && r.deviceCreates >= 1, "escalated through a surface and a device");
+        assert(r.stopped && r.failure == Failure.recoveryExhausted);
+    }
+    {
+        // Stale frames with presents between them are an ordinary resize
+        // storm, recovered from indefinitely.
+        Rig r;
+        r.start();
+        r.settle();
+        foreach (_; 0 .. 10 * Lifecycle.maxStale)
+            r.results ~= [FrameResult.outOfDate, FrameResult.outOfDate, FrameResult.presented];
+        r.lc.input();
+        foreach (_; 0 .. 40 * Lifecycle.maxStale)
+            r.step();
+        assert(!r.stopped && r.surfaceCreates == 0 && r.deviceCreates == 0);
+    }
 }
 
 @("resilience.RSC16.model.aLostSurfaceIsReplacedOrSuspends")
@@ -429,6 +475,13 @@ private struct Rig
     r.step();
     const p = r.step();
     assert(p.rebuildTargets && !p.createSurface && !p.createDevice && p.draw, "`RES21`");
+    assert(p.replaceTargets, "replaced even at the size it had: a suboptimal swapchain "
+        ~ "the size is unchanged for wants other buffers, and the next frame says so again");
+
+    // A resize rebuilds the targets for the new size, and only if it changed.
+    r.metrics(Surface(1024, 768, 1));
+    const resized = r.step();
+    assert(resized.rebuildTargets && !resized.replaceTargets);
 
     // A swapchain that cannot be built escalates to a new surface.
     r.results = [FrameResult.outOfDate];

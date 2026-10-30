@@ -64,7 +64,7 @@ EOF
 echo ">> running under Xvfb with the test XIM server ..."
 xvfb-run -a -s "-screen 0 1024x768x24" bash "$work/lane.sh" \
   | tee "$work/output.log"
-grep -q '^ok: X11 WSI conformance (19 checked, 2 skipped)' "$work/output.log"
+grep -q '^ok: X11 WSI conformance (19 checked, 3 skipped)' "$work/output.log"
 grep -q '^ok: X11 raw motion is one event per device motion' "$work/output.log"
 grep -q '^ok: X11 motion flood merged' "$work/output.log"
 grep -q '^ok: X11 queue overflow reported, not fatal' "$work/output.log"

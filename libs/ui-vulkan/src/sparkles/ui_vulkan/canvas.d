@@ -80,12 +80,33 @@ struct CanvasTarget
     display pixels; `extent` stays the image's.
     */
     uint turn;
+    /**
+    The image's alpha reaches the compositor (a swapchain composited
+    premultiplied): the frame starts transparent rather than at the ground,
+    and what is not drawn shows what lies behind the window (`UVK42`). The
+    ground is still the background text is composited against.
+    */
+    bool transparent;
+    /**
+    The part of the image the frame fills, from its top-left corner, in
+    image pixels; empty for all of it. An image larger than the window
+    (a swapchain kept through a resize, its rest cropped away by the
+    compositor) is drawn only where it shows (`UVK43`).
+    */
+    VkExtent2D drawn;
 }
 
-/// The display's size for `target`: its extent, sides swapped by a quarter
-/// or three-quarter turn (`UVK39`).
+/// The part of `target` a frame fills: `drawn`, or the whole image.
+VkExtent2D drawnExtent(in CanvasTarget target) @safe pure nothrow @nogc
+    => target.drawn.width && target.drawn.height ? target.drawn : target.extent;
+
+/// The display's size for `target`: its drawn extent, sides swapped by a
+/// quarter or three-quarter turn (`UVK39`).
 VkExtent2D displayExtent(in CanvasTarget target) @safe pure nothrow @nogc
-    => target.turn % 2 ? VkExtent2D(target.extent.height, target.extent.width) : target.extent;
+{
+    const e = drawnExtent(target);
+    return target.turn % 2 ? VkExtent2D(e.height, e.width) : e;
+}
 
 /// Display rectangle `r` on a target turned `turn` quarter turns from a
 /// display `w`×`h` pixels (`UVK39`).
@@ -450,8 +471,9 @@ struct VulkanCanvas(B)
         beginPass(format.value.renderPass, framebuffer);
         device_.cmdBindPipeline(commands_, VkPipelineBindPoint.VK_PIPELINE_BIND_POINT_GRAPHICS,
             format.value.pipeline);
-        auto viewport = VkViewport(x: 0, y: 0, width: target_.extent.width,
-            height: target_.extent.height, minDepth: 0, maxDepth: 1);
+        const drawn = drawnExtent(target_);
+        auto viewport = VkViewport(x: 0, y: 0, width: drawn.width, height: drawn.height,
+            minDepth: 0, maxDepth: 1);
         device_.cmdSetViewport(commands_, 0, 1, &viewport);
         ubyte[canvasViewBytes] push;
         const display = displayExtent(target_);
@@ -466,8 +488,18 @@ struct VulkanCanvas(B)
             auto offset = vertices.offset;
             device_.cmdBindVertexBuffers(commands_, 0, 1, &buffer, &offset);
         }
+        // The source is weighed by the blend constants: one paints, as
+        // premultiplied source over destination (`UVK6`); zero erases
+        // (`UVK41`). Set only where a run changes it.
+        bool erasing = true;
         foreach (i, ref run; painter_.runs)
         {
+            if (i == 0 || run.erase != erasing)
+            {
+                erasing = run.erase;
+                const float[4] weights = erasing ? [0.0f, 0, 0, 0] : [1.0f, 1, 1, 1];
+                device_.cmdSetBlendConstants(commands_, weights.ptr);
+            }
             const box = turnedBox(run.scissor, int(display.width), int(display.height), target_.turn);
             auto scissor = VkRect2D(VkOffset2D(box.x, box.y), VkExtent2D(box.w, box.h));
             device_.cmdSetScissor(commands_, 0, 1, &scissor);
@@ -541,6 +573,15 @@ struct VulkanCanvas(B)
         in FallbackFace[] fallbacks = null) @system
     {
         textMetrics_ = TextMetrics.init;
+        // The shapers borrow the bound faces' bytes, which the caller may let
+        // go after this call. They go now, while those bytes still live, and
+        // are made again from the bytes bound next: a face's identity, which
+        // its atlas entries keep, says nothing about which copy of it a
+        // shaper reads.
+        static if (canShape)
+            foreach (ref slot; shapers_)
+                if (slot.tried)
+                    slot.release();
         // A face's glyphs keep their atlas entries across a size change;
         // other bytes are another face. Identity is the bytes' content,
         // not their address: the caller's bytes may die at the next call
@@ -754,8 +795,8 @@ struct VulkanCanvas(B)
     static if (canShape)
     {
         // The shaper of `face`, made the first time a cluster needs it and
-        // kept for the canvas's life: it borrows the face's bytes, which
-        // outlive the canvas (`cellFont`).
+        // kept until the next `cellFont`, which drops it: it borrows the
+        // face's bytes, which live only until the caller binds others.
         private imported!"sparkles.font.cluster_shaping".ClusterShaper* shaperFor(CellFace* face) @system
         {
             foreach (ref slot; shapers_)
@@ -1008,7 +1049,8 @@ struct VulkanCanvas(B)
 
     static foreach (name; ["fillRect", "textRun", "textRunIn", "glyph", "line", "rule",
             "scrollbar", "image", "pushClip", "popClip", "pushShift", "popShift", "pushEffect",
-            "popEffect", "fillPx", "outlinePx", "roundedPx", "clipPx", "unclipPx", "pushOffsetPx",
+            "popEffect", "fillPx", "outlinePx", "roundedPx", "shadowPx", "eraseOutsidePx", "clipPx",
+            "unclipPx", "pushOffsetPx",
             "popOffsetPx", "imageQuadPx", "imageSourcePx", "clusterPx", "labelPx"])
         mixin("/// Through `Painter." ~ name ~ "`; only between `beginFrame` and `endFrame`.\n"
             ~ "void " ~ name ~ "(Args...)(auto ref Args args) @system\n"
@@ -1290,8 +1332,9 @@ struct VulkanCanvas(B)
         VkClearValue clear;
         const srgb = isSrgb(target_.format);
         float channel(ubyte c) => srgb ? srgbToLinear(c / 255.0f) : c / 255.0f;
-        clear.color.float32 = [channel(ground_.r), channel(ground_.g), channel(ground_.b), 1.0f];
-        const area = VkRect2D(VkOffset2D(0, 0), target_.extent);
+        clear.color.float32 = target_.transparent ? [0.0f, 0, 0, 0]
+            : [channel(ground_.r), channel(ground_.g), channel(ground_.b), 1.0f];
+        const area = VkRect2D(VkOffset2D(0, 0), drawnExtent(target_));
         if (pass is null)
         {
             auto colour = vkInfo(VkRenderingAttachmentInfo(

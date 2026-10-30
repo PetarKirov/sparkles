@@ -57,3 +57,25 @@ for proto in pointer-constraints relative-pointer; do
     sed -i -e 's/#include <stdlib.h>/#include <stddef.h>/' -e '${/^$/d;}' \
         "$repo/libs/wsi/src/wayland_${stem}_protocol.c"
 done
+
+# F13 on Wayland: xdg-decoration (unstable v1) asks the compositor to draw the
+# frame; one that declines — GNOME — leaves it to the client's own chrome.
+deco_xml="$(pkg-config --variable=pkgdatadir wayland-protocols)/unstable/xdg-decoration/xdg-decoration-unstable-v1.xml"
+
+wayland-scanner client-header "$deco_xml" \
+    "$repo/libs/wsi/src/wayland_xdg_decoration_client_protocol.h"
+wayland-scanner private-code "$deco_xml" \
+    "$repo/libs/wsi/src/wayland_xdg_decoration_protocol.c"
+sed -i -e 's/#include <stdlib.h>/#include <stddef.h>/' -e '${/^$/d;}' \
+    "$repo/libs/wsi/src/wayland_xdg_decoration_protocol.c"
+
+# A swapchain kept larger than the window through an interactive resize
+# shows only the window's part: viewporter (stable) crops the buffer.
+viewporter_xml="$(pkg-config --variable=pkgdatadir wayland-protocols)/stable/viewporter/viewporter.xml"
+
+wayland-scanner client-header "$viewporter_xml" \
+    "$repo/libs/wsi/src/wayland_viewporter_client_protocol.h"
+wayland-scanner private-code "$viewporter_xml" \
+    "$repo/libs/wsi/src/wayland_viewporter_protocol.c"
+sed -i -e 's/#include <stdlib.h>/#include <stddef.h>/' -e '${/^$/d;}' \
+    "$repo/libs/wsi/src/wayland_viewporter_protocol.c"

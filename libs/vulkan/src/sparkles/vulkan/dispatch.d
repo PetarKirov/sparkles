@@ -239,6 +239,12 @@ private enum CommandSet[] deviceSets = [
         "GetPipelineCacheData",
         "DestroyPipelineCache",
         "DestroyPipeline",
+        // Timestamps: how long the device spent on a frame, for a trace.
+        "CreateQueryPool",
+        "DestroyQueryPool",
+        "CmdResetQueryPool",
+        "CmdWriteTimestamp",
+        "GetQueryPoolResults",
         // Recording a draw. Viewport and scissor are set dynamically rather
         // than baked into the pipeline, so a resize rebuilds the swapchain
         // without rebuilding every pipeline built against it.
@@ -247,6 +253,7 @@ private enum CommandSet[] deviceSets = [
         "CmdBindPipeline",
         "CmdSetViewport",
         "CmdSetScissor",
+        "CmdSetBlendConstants",
         "CmdPushConstants",
         "CmdDraw",
         // An offscreen image and its readback: what a test renders into and

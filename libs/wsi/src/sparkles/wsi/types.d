@@ -13,6 +13,7 @@ import std.math : isFinite;
 import sparkles.base.buffer : InlineBuffer;
 import sparkles.base.pool.handle : Handle;
 import sparkles.base.text.cstring : hasInteriorNul;
+public import sparkles.base.app_identity : AppIdentity;
 import sparkles.base.text.utf8 : validateUtf8;
 import sparkles.math : ScreenPosition, ScreenSize;
 
@@ -62,6 +63,12 @@ struct SurfaceMetrics
     /// Zero on a platform that reports no covered edges, and on every
     /// desktop backend today.
     PhysicalInsets safeInsets;
+    /// The part of the surface outside the window, each side: transparent,
+    /// for a client-drawn frame's shadow and the resize border beyond the
+    /// window's edge (`F13`, $(LREF FrameExtents)). The sizes above are the
+    /// whole surface's; the window is the surface inside this margin. Zero
+    /// unless the application asked for extents and the frame is its own.
+    PhysicalInsets frameMargin;
 
     /// A zero pixel extent suspends presentation but is not a WSI error.
     bool suspended() const pure nothrow @nogc
@@ -158,6 +165,7 @@ struct WsiConfig
 {
     BackendPreference backend;
     ActivationPolicy activation;
+    AppIdentity app; /// who the application is (`F13`'s dock identity)
 }
 
 /**
@@ -230,6 +238,173 @@ enum DecorationPreference : ubyte
     none,
 }
 
+/**
+Who draws a window's frame — title bar, buttons, borders — as the window system
+decided it (`F13`). `server`: the window system does. `client`: it declined,
+as GNOME's compositor declines every request, and the application draws its own
+frame and drives the window from it (`startInteractiveMove`,
+`startInteractiveResize`, `setMaximized`, `setMinimized`, `showWindowMenu`).
+`none`: no frame at all — a fullscreen-only target, or `DecorationPreference.none`.
+*/
+enum DecorationMode : ubyte
+{
+    server,
+    client,
+    none,
+}
+
+/**
+What a client-drawn frame draws outside its window (`F13`), in logical units:
+a transparent margin on every side for its shadow, the part of it that still
+takes a press to resize the window, and the window's corner radius, outside
+which the window is not opaque. A backend that draws the window into a
+surface larger than the window — Wayland's window geometry — applies them
+while the frame is the client's, and reports the margin with the metrics.
+
+GNOME's are GTK's: a 20-pixel margin (Adwaita's shadow reaches 19), the
+outer 12 pixels of the window's edge resizing it, and 15-pixel corners.
+
+Setting them promises that the window is opaque inside its rounded corners:
+a backend tells the compositor so (Wayland's opaque region), which then
+draws nothing behind it.
+*/
+struct FrameExtents
+{
+    uint margin;  /// outside the window, each side; 0: none
+    uint resize;  /// how far outside the window a press resizes it, within `margin`
+    uint radius;  /// the window's corner radius
+
+@safe pure nothrow @nogc:
+
+    /// Why these extents cannot be applied, or `null`: a resize border
+    /// wider than its margin, or a margin or radius past 1024.
+    string fault() const
+        => resize > margin ? "a frame's resize border lies within its margin"
+            : margin > 1024 || radius > 1024 ? "a frame's margin and radius are at most 1024"
+            : null;
+
+    /**
+    The margin a window in `state` keeps: none unless the frame is the
+    client's, and none maximized or fullscreen, where the window fills its
+    output and casts no shadow. A tiled window keeps it, as GTK's does, so
+    the surface does not change size as the window tiles.
+    */
+    uint marginIn(in WindowState state) const
+        => state.decorations != DecorationMode.client
+            || state.has(ToplevelState.maximized) || state.has(ToplevelState.fullscreen)
+            ? 0 : margin;
+
+    /// How far beyond the window a press resizes it, in `state`: none where
+    /// an edge is held (`WindowState.edgesHeld`).
+    uint resizeIn(in WindowState state) const
+    {
+        const m = marginIn(state);
+        return state.edgesHeld ? 0 : resize < m ? resize : m;
+    }
+
+    /// The corner radius in `state`: square where an edge is held.
+    uint radiusIn(in WindowState state) const
+        => marginIn(state) == 0 || state.edgesHeld ? 0 : radius;
+}
+
+///
+@("wsi.types.frameExtents.followTheState")
+@safe pure nothrow @nogc
+unittest
+{
+    const gnome = FrameExtents(margin: 20, resize: 12, radius: 15);
+    WindowState s;
+    assert(gnome.marginIn(s) == 0, "the window system's own frame: no margin");
+    s.decorations = DecorationMode.client;
+    assert(gnome.marginIn(s) == 20 && gnome.resizeIn(s) == 12 && gnome.radiusIn(s) == 15);
+    s.flags = ToplevelState.tiledLeft;
+    assert(gnome.marginIn(s) == 20 && gnome.resizeIn(s) == 0 && gnome.radiusIn(s) == 0);
+    s.flags = ToplevelState.maximized;
+    assert(gnome.marginIn(s) == 0 && gnome.resizeIn(s) == 0 && gnome.radiusIn(s) == 0);
+    assert(FrameExtents(margin: 8, resize: 12).resizeIn(WindowState(DecorationMode.client)) == 8,
+        "the resize border lies within the margin");
+    // Extents that cannot be applied are refused where a window is made too.
+    assert(gnome.fault is null && FrameExtents(margin: 8, resize: 12).fault !is null);
+    WindowConfig config;
+    config.frameExtents = FrameExtents(margin: 4, resize: 12);
+    assert(config.fault !is null);
+}
+
+/// One state a window manager reports for a toplevel (`F14`), as a bit of
+/// $(LREF WindowState.flags).
+enum ToplevelState : ushort
+{
+    maximized = 1 << 0,
+    fullscreen = 1 << 1,
+    resizing = 1 << 2,   /// an interactive resize is in progress
+    activated = 1 << 3,  /// the window has the user's attention: draw it active
+    tiledLeft = 1 << 4,  /// an edge sits against another window or the screen
+    tiledRight = 1 << 5,
+    tiledTop = 1 << 6,
+    tiledBottom = 1 << 7,
+    suspended = 1 << 8,  /// not visible: skip frames, keep state
+}
+
+/// What the window manager offers for a toplevel, as a bit of
+/// $(LREF WindowState.capabilities): a frame shows only the controls it offers.
+enum WindowCapability : ubyte
+{
+    windowMenu = 1 << 0,
+    maximize = 1 << 1,
+    fullscreen = 1 << 2,
+    minimize = 1 << 3,
+    all = windowMenu | maximize | fullscreen | minimize,
+}
+
+/**
+A toplevel's frame as the window manager has configured it: who draws it, the
+states that change how it looks (maximized and tiled edges drop the resize
+borders and rounded corners; an inactive window dims), and the controls the
+window manager offers. A backend reports it once before $(B ReadyEvent) and
+again whenever it changes; one that never reports it draws its own frames.
+*/
+struct WindowState
+{
+    DecorationMode decorations;
+    ubyte capabilities = WindowCapability.all;
+    ushort flags;
+    /// The largest the window would usefully be, in logical units: the
+    /// output's work area, as the compositor bounds it
+    /// (`xdg_toplevel.configure_bounds`); zero where it says nothing. A
+    /// renderer keeping room through a resize can make it this size at once.
+    ushort boundsWidth, boundsHeight;
+
+@safe pure nothrow @nogc:
+
+    /// Whether `state` is set.
+    bool has(ToplevelState state) const => (flags & state) != 0;
+
+    /// Whether the window manager offers `capability`.
+    bool offers(WindowCapability capability) const => (capabilities & capability) != 0;
+
+    /// Whether any edge is held: a maximized, fullscreen or tiled window
+    /// cannot be resized from its borders.
+    bool edgesHeld() const
+        => (flags & (ToplevelState.maximized | ToplevelState.fullscreen
+            | ToplevelState.tiledLeft | ToplevelState.tiledRight
+            | ToplevelState.tiledTop | ToplevelState.tiledBottom)) != 0;
+}
+
+///
+@("wsi.types.windowState.flagsAndCapabilities")
+@safe pure nothrow @nogc
+unittest
+{
+    WindowState s;
+    assert(s.decorations == DecorationMode.server);
+    assert(s.offers(WindowCapability.minimize) && !s.has(ToplevelState.maximized));
+    assert(!s.edgesHeld);
+    s.flags = ToplevelState.tiledLeft | ToplevelState.activated;
+    assert(s.edgesHeld && s.has(ToplevelState.activated));
+    s.capabilities = WindowCapability.windowMenu;
+    assert(!s.offers(WindowCapability.maximize));
+}
+
 enum WindowStartupState : ubyte
 {
     normal,
@@ -246,6 +421,9 @@ struct WindowConfig
     bool resizable = true;
     bool transparent;
     DecorationPreference decorations;
+    /// What the frame draws outside the window when it is the client's
+    /// (`F13`); the default draws nothing outside it.
+    FrameExtents frameExtents;
     WindowStartupState state;
     WindowId parent;
 
@@ -280,6 +458,8 @@ struct WindowConfig
             return "window title is not valid UTF-8";
         if (hasInteriorNul(title[]))
             return "window title contains an embedded NUL";
+        if (const extents = frameExtents.fault)
+            return extents;
         return null;
     }
 }

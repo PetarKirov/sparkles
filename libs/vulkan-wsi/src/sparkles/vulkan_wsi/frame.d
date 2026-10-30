@@ -142,10 +142,16 @@ struct FrameSync
     private VkSemaphore[] _renderFinished;
 
     /**
-    `renderFinished` retired by a resize. A present may still be waiting on
-    them, so they cannot be destroyed (or reused) until the queue is idle.
+    `renderFinished` retired by a resize, and the `epoch` each was retired
+    at. A present may still be waiting on them, so they cannot be destroyed
+    (or reused) until the queue is done with them.
     */
     private VkSemaphore[] _retired;
+    private ulong[] _retiredAt; // ditto
+
+    /// The owner's count of what it has presented, which retired semaphores
+    /// are stamped with: see $(LREF reapThrough) and `Swapchain.epoch`.
+    ulong epoch;
 
     /**
     Which frame's fence, if any, is still guarding each image.
@@ -428,6 +434,8 @@ struct FrameSync
     in (imageCount > 0, "a swapchain always has at least one image")
     {
         _retired ~= _renderFinished;
+        foreach (_; _renderFinished)
+            _retiredAt ~= epoch;
         _renderFinished = new VkSemaphore[imageCount];
         _imageGuard = new VkFence[imageCount];
 
@@ -478,6 +486,20 @@ struct FrameSync
             n = limit < _retired.length ? limit : cast(uint) _retired.length;
 
         _retired = n >= _retired.length ? null : _retired[n .. $];
+        _retiredAt = n >= _retiredAt.length ? null : _retiredAt[n .. $];
+    }
+
+    /**
+    Destroy the semaphores retired at `epoch` or before, the oldest first,
+    and keep the rest; the contract is $(LREF reap)'s.
+    */
+    void reapThrough(Context)(ref Context vk, ulong epoch) @system nothrow
+    {
+        uint n;
+        while (n < _retiredAt.length && _retiredAt[n] <= epoch)
+            n++;
+        if (n)
+            reap(vk, n);
     }
 
     /**
@@ -518,6 +540,7 @@ struct FrameSync
         _imageAvailable = null;
         _renderFinished = null;
         _retired = null;
+        _retiredAt = null;
         _inFlight = null;
         _imageGuard = null;
         _frame = 0;
@@ -674,4 +697,49 @@ struct FrameSync
     sync.destroy(vk);
     assert(sync.framesInFlight == 0);
     assert(sync.imageCount == 0);
+}
+
+version (unittest)
+{
+    // A device that only counts the semaphores destroyed on it.
+    private struct CountingDevice
+    {
+        VkDevice device = cast(VkDevice) cast(void*) 1;
+        extern (C) void function(VkDevice, VkSemaphore, const(VkAllocationCallbacks)*) nothrow
+            destroySemaphore = &countDestroyedSemaphore;
+    }
+
+    private struct CountingVk
+    {
+        CountingDevice device;
+    }
+
+    private __gshared size_t destroyedSemaphores;
+
+    private extern (C) void countDestroyedSemaphore(VkDevice, VkSemaphore s, const(VkAllocationCallbacks)*)
+        nothrow
+    {
+        if (s !is null)
+            ++destroyedSemaphores;
+    }
+}
+
+@("vulkan_wsi.frame.reapThroughTakesOnlyWhatIsOldEnough")
+@system nothrow unittest
+{
+    // Two resizes' worth of semaphores, three then two, at epochs 4 and 5.
+    FrameSync sync;
+    CountingVk vk;
+    destroyedSemaphores = 0;
+    foreach (i, epoch; [4UL, 4, 4, 5, 5])
+    {
+        sync._retired ~= cast(VkSemaphore) cast(void*)(i + 1);
+        sync._retiredAt ~= epoch;
+    }
+    sync.reapThrough(vk, 4);
+    assert(destroyedSemaphores == 3 && sync._retired.length == 2 && sync._retiredAt == [5, 5]);
+    sync.reapThrough(vk, 4);
+    assert(destroyedSemaphores == 3);
+    sync.reapThrough(vk, 5);
+    assert(destroyedSemaphores == 5 && !sync.hasRetired);
 }

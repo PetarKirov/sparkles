@@ -28,7 +28,8 @@ import sparkles.event_horizon.loop : DefaultLoop, RunStatus;
 import sparkles.event_horizon.op : Completion, OpHandle, OpPollAdd, PollEvents;
 import sparkles.input.events : KeyAction, Mods, PointerButton;
 import sparkles.input.pointer : PointerShape;
-import sparkles.base.buffer : UniqueBuffer;
+import sparkles.base.buffer : InlineBuffer, UniqueBuffer;
+import sparkles.base.text.cstring : hasInteriorNul;
 import sparkles.wsi.clipboard;
 import sparkles.wsi.events;
 import sparkles.wsi.handles;
@@ -67,7 +68,13 @@ struct X11Wsi
         uint blackPixel;
         uint wmProtocols;
         uint wmDeleteWindow;
+        uint netWmName;  /// `_NET_WM_NAME`: the title as UTF-8
+        uint utf8String; /// `UTF8_STRING`
     }
+
+    /// `WsiConfig.app`'s id: every window's `WM_CLASS`, what a desktop
+    /// matches against a `.desktop` file's `StartupWMClass` or name.
+    private InlineBuffer!(char, 128) appId_;
 
     private xcb_connection_t* connection_;
     private Bootstrap bootstrap_;
@@ -102,8 +109,12 @@ struct X11Wsi
     private ubyte[256] rawDeviceKind_;
 
     /** Connects to the process' selected X display on the calling UI thread. */
-    static WsiResult!void open(out X11Wsi wsi)
+    static WsiResult!void open(out X11Wsi wsi, in WsiConfig config = WsiConfig.init)
     {
+        if (auto fault = config.app.fault)
+            return x11Failure!void(WsiOperation.open, 0, fault,
+                WsiErrorKind.invalidArgument);
+        cast(void) wsi.appId_.assign(config.app.idOrDefault);
         int screenIndex;
         auto connection = xcb_connect(null, &screenIndex);
         const connectError = connection is null
@@ -137,7 +148,9 @@ struct X11Wsi
             rootVisual: screens.data.root_visual,
             blackPixel: screens.data.black_pixel,
             wmProtocols: internAtom(connection, "WM_PROTOCOLS"),
-            wmDeleteWindow: internAtom(connection, "WM_DELETE_WINDOW"));
+            wmDeleteWindow: internAtom(connection, "WM_DELETE_WINDOW"),
+            netWmName: internAtom(connection, "_NET_WM_NAME"),
+            utf8String: internAtom(connection, "UTF8_STRING"));
         if (wsi.bootstrap_.fd < 0 || wsi.bootstrap_.wmProtocols == 0
             || wsi.bootstrap_.wmDeleteWindow == 0)
         {
@@ -295,9 +308,19 @@ struct X11Wsi
         xcb_change_property(connection_, XCB_PROP_MODE_REPLACE, window,
             bootstrap_.wmProtocols, XCB_ATOM_ATOM, 32, 1,
             &bootstrap_.wmDeleteWindow);
-        xcb_change_property(connection_, XCB_PROP_MODE_REPLACE, window,
-            XCB_ATOM_WM_NAME, XCB_ATOM_STRING, 8,
-            cast(uint) config.title.length, config.title[].ptr);
+        writeTitle(window, config.title[]);
+        // `WM_CLASS` is two NUL-terminated strings, instance then class; one
+        // id serves both, as the desktop entry matches either.
+        {
+            char[2 * 128 + 2] wmClass;
+            const n = appId_.length;
+            wmClass[0 .. n] = appId_[];
+            wmClass[n] = 0;
+            wmClass[n + 1 .. 2 * n + 1] = appId_[];
+            wmClass[2 * n + 1] = 0;
+            xcb_change_property(connection_, XCB_PROP_MODE_REPLACE, window,
+                XCB_ATOM_WM_CLASS, XCB_ATOM_STRING, 8, cast(uint)(2 * n + 2), wmClass.ptr);
+        }
         if (config.visible)
             xcb_map_window(connection_, window);
         const error = xcb_flush(connection_) > 0
@@ -326,6 +349,40 @@ struct X11Wsi
             return wsiErr!WindowId(stickyError_);
         }
         return wsiOk(id);
+    }
+
+    /// Retitles the window (`F13`).
+    WsiResult!void setTitle(WindowId id, in char[] title)
+    {
+        auto checked = checkedSlot(id, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!void(checked.error);
+        if (validateUtf8(title).hasError || hasInteriorNul(title))
+            return x11Failure!void(WsiOperation.command, 0,
+                "a window title is NUL-free UTF-8", WsiErrorKind.invalidArgument);
+        writeTitle(windows_.at(checked.value).window, title);
+        flushCommands();
+        return hasStickyError_ ? wsiErr!void(stickyError_) : wsiOk();
+    }
+
+    /*
+    The title both ways: `_NET_WM_NAME` as UTF-8, which every current window
+    manager reads, and ICCCM's `WM_NAME` for one that reads nothing else.
+    `WM_NAME`'s `STRING` is Latin-1, so it gets the title only while that is
+    ASCII; writing UTF-8 bytes there showed a non-ASCII title garbled.
+    */
+    private void writeTitle(uint window, in char[] title)
+    {
+        if (bootstrap_.netWmName != 0 && bootstrap_.utf8String != 0)
+            xcb_change_property(connection_, XCB_PROP_MODE_REPLACE, window,
+                bootstrap_.netWmName, bootstrap_.utf8String, 8,
+                cast(uint) title.length, title.ptr);
+        bool ascii = true;
+        foreach (c; title)
+            ascii &= c < 0x80;
+        xcb_change_property(connection_, XCB_PROP_MODE_REPLACE, window,
+            XCB_ATOM_WM_NAME, XCB_ATOM_STRING, 8,
+            ascii ? cast(uint) title.length : 0, title.ptr);
     }
 
     WsiResult!void destroyWindow(WindowId id)
@@ -706,6 +763,8 @@ struct X11Wsi
             case PointerShape.nsResize: return 116; // XC_sb_v_double_arrow
             case PointerShape.grab: return 52; // XC_fleur (nearest)
             case PointerShape.grabbing: return 52; // XC_fleur (nearest)
+            case PointerShape.nwseResize: return 134; // XC_top_left_corner
+            case PointerShape.neswResize: return 136; // XC_top_right_corner
         }
     }
 

@@ -20,6 +20,10 @@ $(UL
     edges stroked one pixel wide.)
     $(LI `coverageGlyph`, `colourGlyph`: a glyph from an atlas page.)
     $(LI `image`: a picture, filtered, times the foreground alpha (`UVK24`).)
+    $(LI `shadow`: a box's drop shadow — the box grown by a spread and
+    offset, blurred by a Gaussian — drawn only outside the box (`UVK40`).)
+    $(LI `outside`: the part of each pixel outside a rounded box, as alpha,
+    for erasing what lies beyond a window's rounded corners (`UVK41`).)
 )
 
 Everything is premultiplied gamma-space colour (`UVK6`): the result is
@@ -46,6 +50,8 @@ enum QuadKind : int
     coverageGlyph = 3, ///
     colourGlyph = 4,   ///
     image = 5,         ///
+    shadow = 6,        ///
+    outside = 7,       ///
 }
 
 /// The bindings of descriptor set 0, fixed (`SHR7`) so the host's layout
@@ -116,7 +122,9 @@ struct Instance
 {
     vec4 box;     /// x, y, width, height
     vec4 fill;    /// the fill: a box's background, a glyph's ink, an image's alpha in `w`
-    vec4 edge;    /// the stroke: a rounded box's border, the arrow's outline
+    /// the stroke: a rounded box's border, the arrow's outline; a shadow's
+    /// blur (the Gaussian's standard deviation), spread and offset
+    vec4 edge;
     /// `x` the `QuadKind`; `y` the corner radius; `z` the border's
     /// thickness; `w` how far the quad reaches past `box` on every side
     vec4 shape;
@@ -206,6 +214,59 @@ float roundedBoxCoverage(vec2 p, vec4 box, float r)
             sum += coverageOf(roundedBoxDistance(s, box, r) * subSamples);
         }
     return sum / (subSamples * subSamples);
+}
+
+/**
+The error function, to within 5·10⁻⁴ (Abramowitz and Stegun, 7.1.27): what a
+Gaussian blur of an edge leaves across it.
+*/
+float erf(float x)
+{
+    const s = x < 0.0f ? -1.0f : 1.0f;
+    const a = abs(x);
+    float t = 1.0f + (0.278393f + (0.230389f + 0.078108f * (a * a)) * a) * a;
+    t = t * t;
+    return s - s / (t * t);
+}
+
+/// How many rows across ±3σ $(LREF blurredBoxCoverage) integrates over.
+enum int shadowRows = 6;
+
+/**
+The rounded box `box` with corners of radius `r`, blurred by a Gaussian of
+standard deviation `sigma`, at the point `p`: the box's coverage convolved
+with the Gaussian. Exact across the box's straight edges in `x` (an `erf`
+of each row's span), and integrated over `shadowRows` rows in `y` (Evan
+Wallace's method), which is within the canvas's tolerance of the true
+convolution (`UVK40`). Below a quarter pixel of blur, the box's own
+coverage.
+*/
+float blurredBoxCoverage(vec2 p, vec4 box, float r, float sigma)
+{
+    if (sigma < 0.25f)
+        return roundedBoxCoverage(p, box, r);
+    const hw = box.z * 0.5f;
+    const hh = box.w * 0.5f;
+    const cx = p.x - (box.x + hw);
+    const cy = p.y - (box.y + hh);
+    const corner = min(r, min(hw, hh));
+    const reach = 3.0f * sigma;
+    const start = clamp(-reach, cy - hh, cy + hh);
+    const end = clamp(reach, cy - hh, cy + hh);
+    const pitch = (end - start) / shadowRows;
+    const k = 0.70710678f / sigma;
+    float sum = 0.0f;
+    foreach (i; 0 .. shadowRows)
+    {
+        // A row `y` from the point, at the row's height in the box: its
+        // span, narrowed at the corners, blurred across in `x`.
+        const y = start + (i + 0.5f) * pitch;
+        const inset = min(hh - corner - abs(cy - y), 0.0f);
+        const half = hw - corner + sqrt(max(0.0f, corner * corner - inset * inset));
+        const across = 0.5f * (erf((cx + half) * k) - erf((cx - half) * k));
+        sum += across * exp(-(y * y) / (2.0f * sigma * sigma)) * pitch;
+    }
+    return sum / (2.5066283f * sigma);
 }
 
 /// The signed distance from `p` to the arrow's triangle bounded by `box`:
@@ -374,5 +435,19 @@ vec4 shade(vec2 p, vec4 box, vec4 fill, vec4 edge, vec4 shape, vec4 coverageTexe
             : v4(0.0f);
         return premultiplied(straight, fill.w, srgb);
     }
-    return premultiplied(imageTexel, fill.w, srgb);
+    if (kind < 5.5f)
+        return premultiplied(imageTexel, fill.w, srgb);
+    if (kind < 6.5f)
+    {
+        // Under the box, nothing: a window's shadow does not darken it.
+        const hole = roundedBoxCoverage(p, box, shape.y);
+        if (hole >= 1.0f)
+            return v4(0.0f);
+        const spread = edge.y;
+        const thrown = v4(box.x - spread + edge.z, box.y - spread + edge.w,
+            box.z + 2.0f * spread, box.w + 2.0f * spread);
+        const r = shape.y > 0.0f ? max(shape.y + spread, 0.0f) : 0.0f;
+        return premultiplied(fill, blurredBoxCoverage(p, thrown, r, edge.x) * (1.0f - hole), srgb);
+    }
+    return premultiplied(fill, 1.0f - roundedBoxCoverage(p, box, shape.y), srgb);
 }

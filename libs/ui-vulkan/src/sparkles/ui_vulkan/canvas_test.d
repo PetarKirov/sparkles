@@ -160,6 +160,128 @@ package immutable FrameMetrics[4] metricsUnderTest = [
     }
 }
 
+@("ui_vulkan.canvas.anErasedCornerIsTransparent")
+@system unittest
+{
+    // `UVK41`: white over the whole target, then everything outside a
+    // rounded box erased within its bounds: the box's coverage is left, in
+    // colour and alpha alike, and the pixels outside its bounds are kept.
+    import sparkles.ui_vulkan.painter : rgba;
+    import sparkles.ui_vulkan.shading_test : inRoundedBox;
+
+    if (!readbackEnabled)
+        return skipTest(readbackSkipReason);
+    auto rig = new Rig;
+    rig.open("ui-vulkan-erase", 80, 40);
+    scope (success)
+        rig.close();
+
+    const frame = rig.draw((ref Canvas c) {
+        c.fillPx(0, 0, 80, 40, rgba(white, 255));
+        c.eraseOutsidePx(10, 5, 50, 30, 12);
+    }, FrameMetrics(cellW: 10, cellH: 20), black);
+    const e = coverageErrors(frame, 80, 40, (px, py)
+        => px < 10 || px >= 60 || py < 5 || py >= 35 || inRoundedBox(px, py, 10, 5, 50, 30, 12));
+    assert(e[0] <= 16.0 / 255 && e[1] <= 2.0 / 255,
+        format("worst %.1f/255, mean %.2f/255", e[0] * 255, e[1] * 255));
+    assert(pixel(frame, 80, 10, 5) == [0, 0, 0, 0], "the corner's tip is transparent");
+    assert(pixel(frame, 80, 30, 20) == [255, 255, 255, 255], "inside is kept");
+    // A paint after an erase paints again: the blend is set back.
+    const after = rig.draw((ref Canvas c) {
+        c.eraseOutsidePx(10, 5, 50, 30, 12);
+        c.fillPx(10, 5, 4, 4, rgba(white, 255));
+    }, FrameMetrics(cellW: 10, cellH: 20), black);
+    assert(pixel(after, 80, 10, 5)[0 .. 3] == [255, 255, 255]);
+}
+
+@("ui_vulkan.canvas.aShadowIsOnlyOutsideItsBox")
+@system unittest
+{
+    // `UVK40`: a black shadow on white — under the box nothing changes;
+    // beside it the white darkens, less with distance, as the host's
+    // shading has it.
+    import sparkles.shaders : v2, v4;
+    import sparkles.ui_vulkan.painter : rgba;
+    import sparkles.ui_vulkan.shading : QuadKind, shade;
+
+    if (!readbackEnabled)
+        return skipTest(readbackSkipReason);
+    auto rig = new Rig;
+    rig.open("ui-vulkan-shadow", 80, 60);
+    scope (success)
+        rig.close();
+
+    const frame = rig.draw((ref Canvas c) {
+        c.fillPx(0, 0, 80, 60, rgba(white, 255));
+        c.shadowPx(20, 15, 40, 30, 8, 10, 2, rgba(RgbColor(0, 0, 0), 128));
+    }, FrameMetrics(cellW: 10, cellH: 20), black);
+    foreach (y; 0 .. 60)
+        foreach (x; 0 .. 80)
+        {
+            const a = shade(v2(x + 0.5f, y + 0.5f), v4(20, 15, 40, 30), v4(0, 0, 0, 128 / 255.0f),
+                v4(5, 2, 0, 0), v4(QuadKind.shadow, 8, 0, 0), v4(0), v4(0), v4(0), 0).array[3];
+            const want = 255 * (1 - a);
+            const got = pixel(frame, 80, x, y)[0];
+            assert(fabs(got - want) <= 2, format("(%s, %s): %s, want %.1f", x, y, got, want));
+        }
+    assert(pixel(frame, 80, 40, 30)[0] == 255 && pixel(frame, 80, 40, 13)[0] < 230);
+}
+
+@("ui_vulkan.canvas.aTransparentTargetStartsEmpty")
+@system unittest
+{
+    // `UVK42`: a transparent target starts with nothing in it, whatever the
+    // ground, and keeps the alpha of what is drawn: a window's shadow and
+    // its rounded corners reach the compositor.
+    import sparkles.ui_vulkan.painter : rgba;
+
+    if (!readbackEnabled)
+        return skipTest(readbackSkipReason);
+    auto rig = new Rig;
+    rig.open("ui-vulkan-transparent", 40, 20);
+    scope (success)
+        rig.close();
+    rig.transparent = true;
+
+    const frame = rig.draw((ref Canvas c) {
+        c.fillPx(10, 5, 10, 5, rgba(white, 255));
+        c.fillPx(25, 5, 10, 5, rgba(RgbColor(0, 0, 0), 64));
+    }, FrameMetrics(cellW: 10, cellH: 20), RgbColor(200, 100, 50));
+    assert(pixel(frame, 40, 2, 2) == [0, 0, 0, 0], "nothing drawn: transparent");
+    assert(pixel(frame, 40, 12, 7) == [255, 255, 255, 255]);
+    assert(pixel(frame, 40, 27, 7)[3] == 64, "a translucent fill keeps its alpha");
+    rig.transparent = false;
+    const opaque = rig.draw((ref Canvas c) {}, FrameMetrics(cellW: 10, cellH: 20),
+        RgbColor(200, 100, 50));
+    assert(pixel(opaque, 40, 2, 2)[3] == 255, "an opaque target starts at the ground");
+}
+
+@("ui_vulkan.canvas.aFrameFillsOnlyItsDrawnPart")
+@system unittest
+{
+    // `UVK43`: a 40×20 image drawn as a 30×10 frame. The frame's edges are
+    // the drawn part's: a fill to the right edge stops at x = 30, and the
+    // pixels beyond it are left as the image held them.
+    import sparkles.ui_vulkan.painter : rgba;
+
+    if (!readbackEnabled)
+        return skipTest(readbackSkipReason);
+    auto rig = new Rig;
+    rig.open("ui-vulkan-drawn", 40, 20);
+    scope (success)
+        rig.close();
+    rig.transparent = true;
+    rig.drawn = VkExtent2D(30, 10);
+
+    const frame = rig.draw((ref Canvas c) {
+        c.fillPx(20, 0, 100, 100, rgba(white, 255));
+    }, FrameMetrics(cellW: 10, cellH: 20), RgbColor(200, 100, 50));
+    assert(pixel(frame, 40, 2, 2) == [0, 0, 0, 0], "drawn, nothing there: transparent");
+    assert(pixel(frame, 40, 29, 9) == [255, 255, 255, 255], "the drawn part's last pixel");
+    assert(pixel(frame, 40, 30, 5)[3] != 255, "not past its right edge");
+    assert(pixel(frame, 40, 25, 10)[3] != 255, "nor below it");
+}
+
 @("ui_vulkan.canvas.aTurnedTargetIsDrawnPreRotated")
 @system unittest
 {
@@ -1340,6 +1462,51 @@ private ubyte[] twoColourImage()
     }, FrameMetrics(cellW: 10, cellH: 20), black, report);
     assert(report[Degradation.unshapedCluster] == 1, "e + combining acute, unshaped");
     assert(accentInk(shaped) > accentInk(unshaped) + 255 * 3, format("the accent adds ink only shaped: %s unshaped, %s shaped", accentInk(unshaped), accentInk(shaped)));
+}
+
+@("ui_vulkan.canvas.aRebindDropsTheShapersOfTheBytesItReplaces")
+@system unittest
+{
+    // Rebinding the cell font with fresh bytes of the same face — what a
+    // size step does, reading the file again — keeps the face's identity
+    // (its atlas serial). The shaper made for it borrowed the old bytes;
+    // kept by that identity, it went on shaping from them after the caller
+    // let them go, and the text lab, stepping its font down as its window
+    // narrowed, crashed in HarfBuzz once the collector freed them. The old
+    // copy is scribbled over here instead of waiting for the collector.
+    if (!readbackEnabled)
+        return skipTest(readbackSkipReason);
+    import std.file : read;
+    import std.path : buildPath;
+    import std.process : environment;
+    import sparkles.ui_vulkan.painter : Degradation, TextMetrics;
+
+    const file = cast(const(ubyte)[]) read(
+        environment.get("SPARKLES_FONTS_PATH").buildPath("DejaVuSansMono.ttf"));
+    auto first = file.dup, second = file.dup;
+    const metrics = TextMetrics(ascent: 14, underlineY: 16, underlineHeight: 1, strikeY: 10);
+    auto rig = new Rig;
+    rig.open("ui-vulkan-rebind-shapers", 64, 32);
+    scope (success)
+        rig.close();
+
+    FrameReport report;
+    ubyte[] drawAccent()
+    {
+        return rig.draw((ref Canvas c) {
+            c.textRun(Point(0, 0), "ae\u0301", Visual(fg: white, fgAlpha: 255));
+        }, FrameMetrics(cellW: 10, cellH: 20), black, report).dup;
+    }
+
+    assert(rig.canvas.cellFont(first, 18, metrics));
+    const before = drawAccent();
+    assert(report[Degradation.unshapedCluster] == 0, "e + combining acute, shaped");
+
+    assert(rig.canvas.cellFont(second, 18, metrics));
+    first[] = 0; // the caller's old bytes, gone
+    const after = drawAccent();
+    assert(report[Degradation.unshapedCluster] == 0, "still shaped, from the bytes now bound");
+    assert(after == before, "the rebound face shapes the cluster as before");
 }
 
 @("ui_vulkan.canvas.aHintingChangeMidFrameKeepsWhatItDrew")

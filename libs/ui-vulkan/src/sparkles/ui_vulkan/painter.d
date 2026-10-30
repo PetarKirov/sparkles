@@ -105,13 +105,16 @@ struct BoundImages
 }
 
 /// Records drawn with one call: a range of the frame's instances under one
-/// scissor and one set of bound images.
+/// scissor, one set of bound images and one blend.
 struct DrawRun
 {
     uint first;          /// the first instance
     uint count;          /// how many
     ScissorBox scissor;  /// in target pixels
     BoundImages images;  ///
+    /// The records erase rather than paint: the destination is kept by
+    /// `1 − α` of each and nothing is added (`UVK41`).
+    bool erase;
 }
 
 /// What became of an image a painter asked for.
@@ -761,6 +764,39 @@ if (isImageSource!Images)
                 colour, v4(0), 0);
     }
 
+    /**
+    The drop shadow of the rounded box at (`x`, `y`), `w` × `h` device
+    pixels with corners of `radius`, as CSS's `box-shadow` draws one: the
+    box grown by `spread` and moved by (`dx`, `dy`), blurred by `blur` (the
+    CSS blur radius, twice the Gaussian's standard deviation), in `colour` —
+    and only outside the box, which it never darkens (`UVK40`).
+    */
+    void shadowPx(int x, int y, int w, int h, float radius, float blur, float spread,
+        vec4 colour, float dx = 0, float dy = 0)
+    {
+        if (colour.array[3] <= 0 || w <= 0 || h <= 0)
+            return;
+        const sigma = blur * 0.5f;
+        const ox = dx < 0 ? -dx : dx, oy = dy < 0 ? -dy : dy;
+        const reach = spread + 3.0f * sigma + (ox > oy ? ox : oy) + 1.0f;
+        emit(record(v4(m_.originX + shiftX_ + x, m_.originY + shiftY_ + y, w, h), colour,
+            v4(sigma, spread, dx, dy), v4(QuadKind.shadow, radius, 0, reach)));
+    }
+
+    /**
+    Erases what lies outside the rounded box at (`x`, `y`), `w` × `h` device
+    pixels with corners of `radius`, within the box's bounds: its corners'
+    outsides become transparent and the pixels the arcs cross keep only the
+    part inside (`UVK41`). Pixels outside the bounds are not touched.
+    */
+    void eraseOutsidePx(int x, int y, int w, int h, float radius)
+    {
+        if (w <= 0 || h <= 0 || radius <= 0)
+            return;
+        emit(record(v4(m_.originX + shiftX_ + x, m_.originY + shiftY_ + y, w, h), v4(0, 0, 0, 1),
+            v4(0), v4(QuadKind.outside, radius, 0, 0)), BoundImages.init, true);
+    }
+
     /// The rectangle's one-pixel border, inside the box, corners drawn once.
     void outlinePx(int x, int y, int w, int h, vec4 colour)
     {
@@ -945,14 +981,16 @@ if (isImageSource!Images)
         return i;
     }
 
-    // Appends `i`, starting a run where the scissor or the images change.
-    private void emit(in Instance i, BoundImages bound = BoundImages.init)
+    // Appends `i`, starting a run where the scissor, the images or the blend
+    // change.
+    private void emit(in Instance i, BoundImages bound = BoundImages.init, bool erase = false)
     {
         if (clipped_)
             return;
         auto all = runs_[];
-        if (!all.length || all[$ - 1].scissor != scissor_ || all[$ - 1].images != bound)
-            runs_.put(DrawRun(cast(uint) instances_.length, 0, scissor_, bound));
+        if (!all.length || all[$ - 1].scissor != scissor_ || all[$ - 1].images != bound
+            || all[$ - 1].erase != erase)
+            runs_.put(DrawRun(cast(uint) instances_.length, 0, scissor_, bound, erase));
         instances_.put(i);
         ++runs_[][$ - 1].count;
     }

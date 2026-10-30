@@ -68,6 +68,8 @@ enum PointerShape : string
     nsResize = "ns-resize", /// vertical resize (a horizontal divider)
     grab     = "grab",      /// an open hand (draggable content)
     grabbing = "grabbing",  /// a closed hand (a drag in progress)
+    nwseResize = "nwse-resize", /// diagonal resize: a top-left or bottom-right corner
+    neswResize = "nesw-resize", /// diagonal resize: a top-right or bottom-left corner
 }
 
 // Every writer below emits nothing for a zero argument: CSI treats a missing/0

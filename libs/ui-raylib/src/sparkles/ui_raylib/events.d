@@ -29,6 +29,8 @@ MouseCursor toRaylibCursor(PointerShape shape) @safe pure nothrow @nogc
         case nsResize: return MouseCursor.MOUSE_CURSOR_RESIZE_NS;
         case grab:     return MouseCursor.MOUSE_CURSOR_RESIZE_ALL;
         case grabbing: return MouseCursor.MOUSE_CURSOR_RESIZE_ALL;
+        case nwseResize: return MouseCursor.MOUSE_CURSOR_RESIZE_NWSE;
+        case neswResize: return MouseCursor.MOUSE_CURSOR_RESIZE_NESW;
     }
 }
 

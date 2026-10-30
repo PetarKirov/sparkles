@@ -21,7 +21,7 @@ import core.attribute : selector;
 
 import sparkles.base.buffer : InlineBuffer;
 import sparkles.base.pool.pool : Pool, PoolError;
-import sparkles.base.text.cstring : toTempStringz;
+import sparkles.base.text.cstring : hasInteriorNul, toTempStringz;
 import sparkles.base.text.utf8 : validateUtf8;
 import sparkles.base.text.utf : decodeToken, UtfMode, UtfStatus, scalarUnits;
 import sparkles.base.text.utf16 : measureConversion;
@@ -271,6 +271,7 @@ private extern class NSCursor : NSObject
     static NSCursor resizeUpDownCursor() @selector("resizeUpDownCursor");
     static NSCursor openHandCursor() @selector("openHandCursor");
     static NSCursor closedHandCursor() @selector("closedHandCursor");
+    static NSCursor crosshairCursor() @selector("crosshairCursor");
     static NSCursor currentCursor() @selector("currentCursor");
     static void hide() @selector("hide");
     static void unhide() @selector("unhide");
@@ -675,6 +676,9 @@ struct AppKitWsi
     static WsiResult!void open(out AppKitWsi wsi,
         in WsiConfig config = WsiConfig.init)
     {
+        if (auto fault = config.app.fault)
+            return appKitFailure!void(WsiOperation.open, 0, fault,
+                WsiErrorKind.invalidArgument);
         if (pthread_main_np() == 0)
             return appKitFailure!void(WsiOperation.open, 0,
                 "AppKit WSI must open on the process main thread",
@@ -818,6 +822,24 @@ struct AppKitWsi
         window.setAcceptsMouseMovedEvents(true);
         view.setNeedsDisplay(true);
         return wsiOk(id);
+    }
+
+    /// Retitles the window (`F13`).
+    WsiResult!void setTitle(WindowId id, in char[] title)
+    {
+        auto checked = checkedSlot(id, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!void(checked.error);
+        if (validateUtf8(title).hasError || hasInteriorNul(title))
+            return appKitFailure!void(WsiOperation.command, 0,
+                "a window title is NUL-free UTF-8", WsiErrorKind.invalidArgument);
+        auto nativeTitle = NSString.alloc().initWithUTF8String(title.toTempStringz.ptr);
+        if (nativeTitle is null)
+            return appKitFailure!void(WsiOperation.command, 0,
+                "NSString title conversion failed");
+        windows_.at(checked.value).window.setTitle(nativeTitle);
+        nativeTitle.release();
+        return wsiOk();
     }
 
     WsiResult!void destroyWindow(WindowId id)
@@ -1327,6 +1349,10 @@ struct AppKitWsi
                 return NSCursor.resizeUpDownCursor();
             case PointerShape.grab: return NSCursor.openHandCursor();
             case PointerShape.grabbing: return NSCursor.closedHandCursor();
+            // AppKit has no public diagonal resize cursor; the window's own
+            // frame draws the real one, so this is only ever a client's ask.
+            case PointerShape.nwseResize:
+            case PointerShape.neswResize: return NSCursor.crosshairCursor();
         }
     }
 

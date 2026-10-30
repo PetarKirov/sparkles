@@ -26,12 +26,13 @@ module sparkles.ui_app.native_loop;
 
 version (UiAppGuiVulkan):
 
-import core.time : Duration, MonoTime, msecs, seconds;
+import core.time : dur, Duration, MonoTime, msecs, seconds;
+import std.algorithm.comparison : max, min;
 
 import sparkles.base.term_color : RgbColor;
 import sparkles.base.term_control : PointerShape;
 import sparkles.event_horizon : DefaultLoop, LoopConfig;
-import sparkles.input : Event, InputCapabilities, InputTextPool, mousePointer, touchPointer;
+import sparkles.input : Event, InputCapabilities, InputTextPool, mousePointer, PointerButton, touchPointer;
 import sparkles.ui.canvas : DrawOp;
 import sparkles.ui.effect : EffectRegistry;
 import sparkles.ui.geometry : Size;
@@ -41,16 +42,38 @@ import sparkles.ui_app.gui_options : FontRequest, WindowCells;
 import sparkles.ui_app.host : HostState, isHost, noDraw, noSetup, noShutdown, PointerUnit,
     RunConfig, withRealSize;
 import sparkles.ui_app.lifecycle : Failure, FrameResult, Lifecycle, Rebuild, Surface;
+import sparkles.ui_app.frame_title : fitTitle, TitleFace, titleCssPx, TitleStrip;
+import sparkles.ui_app.client_frame : ClientFrame, crossCoverage, FrameAction, FrameColours,
+    FrameGeometry, FrameHit, FramePart, FrameShape;
 import sparkles.ui_app.wsi_input : TouchContacts, WsiInput;
+import sparkles.ui.style : Palette;
 import sparkles.ui_vulkan;
 import sparkles.vulkan;
 import sparkles.vulkan_wsi;
 import sparkles.wsi;
 
+/// The pointer shape over a resize border's edge or corner.
+PointerShape resizeCursor(ResizeEdge edge) @safe pure nothrow @nogc
+{
+    switch (edge)
+    {
+        case ResizeEdge.left, ResizeEdge.right: return PointerShape.ewResize;
+        case ResizeEdge.top, ResizeEdge.bottom: return PointerShape.nsResize;
+        case ResizeEdge.topLeft, ResizeEdge.bottomRight: return PointerShape.nwseResize;
+        case ResizeEdge.topRight, ResizeEdge.bottomLeft: return PointerShape.neswResize;
+        default: return PointerShape.default_;
+    }
+}
+
 /// What the native arm opens.
 struct NativeRequest
 {
     string title;             /// the window's title
+    AppIdentity app;          /// who the application is (`RunConfig.app`)
+    /// The palette a client-drawn frame is drawn in (`F13`): the
+    /// application's theme where it gives one, else one derived from `ground`.
+    Palette framePalette;
+    bool hasFramePalette;     /// ditto
     FontRequest font;         /// the cell font
     WindowCells cells;        /// the window's size, in cells
     int fontSizePoints = 18;  /// resolved against the window's scale
@@ -244,6 +267,23 @@ struct NativeSession
     void delegate(bool on) @system setTextInput;             ///
     /// The fingers down, as the last drain left them.
     TouchContacts touches;
+    /// The frame the host draws itself where the window system leaves it to
+    /// the client (`F13`), the title it shows and the palette it is drawn in.
+    ClientFrame frame;
+    char[] title;  /// ditto
+    Palette framePalette; /// ditto
+    /// The title's face, found the first time a frame is drawn, and the
+    /// title set in it.
+    TitleFace titleFace;
+    TitleStrip titleStrip; /// ditto
+    void delegate(in char[]) @system setTitle; ///
+    /// The transparent margin round the window, each side, in device pixels
+    /// (`SurfaceMetrics.frameMargin`): the frame's shadow and outer resize
+    /// border are drawn there, and the cells start inside it.
+    int margin;
+    /// The swapchain's alpha reaches the compositor: frames start
+    /// transparent, and the window's ground is filled before the content.
+    bool transparent;
 }
 
 /// The host an application sees in a native window.
@@ -315,8 +355,9 @@ struct NativeHost
     /// Offers `text` as the clipboard's (`HST8`).
     void clipboard(in char[] text) @system => session_.setClipboard(text);
 
-    /// The window system offers no retitling yet; accepted and dropped.
-    void title(in char[]) @safe pure nothrow @nogc {}
+    /// Retitles the window: the window system's title, and the bar's where
+    /// the host draws the frame.
+    void title(in char[] t) @system => session_.setTitle(t);
 
     /// How the canvas renders text (`UVX12`): compositing, hinting, shaping.
     /// An application offering these as settings probes for the errand.
@@ -379,12 +420,19 @@ bool runNative(alias present, alias handle, alias draw = noDraw, alias setup = n
         whyNot(i"the native arm could not open an event loop");
         return false;
     }
+    WsiConfig wsiConfig;
+    wsiConfig.app = request.app;
+    if (auto fault = request.app.fault)
+    {
+        whyNot(i"the application's identity is malformed: $(fault)");
+        return false;
+    }
     // Before `linux`, which Android also is: it has neither Wayland nor X11.
     // The window is the activity's, its frames paced by `AChoreographer`.
     version (Android)
     {
         AndroidWsi wsi;
-        if (AndroidWsi.open(wsi).hasError || wsi.attach(loop).hasError)
+        if (AndroidWsi.open(wsi, wsiConfig).hasError || wsi.attach(loop).hasError)
         {
             whyNot(i"the native arm has no activity: start the app through AndroidWsiMain");
             return false;
@@ -397,7 +445,7 @@ bool runNative(alias present, alias handle, alias draw = noDraw, alias setup = n
         if (getenv("WAYLAND_DISPLAY") !is null)
         {
             WaylandWsi wsi;
-            if (!WaylandWsi.open(wsi, loop).hasError)
+            if (!WaylandWsi.open(wsi, loop, wsiConfig).hasError)
             {
                 const deadline = MonoTime.currTime + 5.seconds;
                 while (!wsi.bootstrapComplete && MonoTime.currTime < deadline)
@@ -409,7 +457,7 @@ bool runNative(alias present, alias handle, alias draw = noDraw, alias setup = n
             }
         }
         X11Wsi wsi;
-        if (X11Wsi.open(wsi).hasError || wsi.attach(loop).hasError)
+        if (X11Wsi.open(wsi, wsiConfig).hasError || wsi.attach(loop).hasError)
         {
             whyNot(i"the native arm found no Wayland compositor or X server");
             return false;
@@ -465,6 +513,7 @@ private struct Gpu
     FrameSync sync;
     CommandPool commands;
     NativeCanvas canvas;
+    GpuTimer timer;
     bool up;
 
     @disable this(this);
@@ -475,6 +524,7 @@ private struct Gpu
             return;
         if (vk.device.device !is null)
             vk.device.deviceWaitIdle(vk.device.device);
+        timer.destroy(vk);
         canvas.destroy();
         commands.destroy(vk);
         sync.destroy(vk);
@@ -506,8 +556,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
     }
 
     WindowConfig config;
-    cast(void) config.title.assign(request.title.length > 255 ? request.title[0 .. 255]
-        : request.title);
+    cast(void) config.title.assign(fitTitle(request.title, 255));
     config.logicalSize = LogicalSize(request.cells.cols * session.font.cellW,
         request.cells.rows * session.font.cellH);
     auto created = wsi.createWindow(config);
@@ -530,6 +579,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
             if (e.window != window)
                 return;
             e.payload.match!(
+                (in WindowStateChangedEvent w) { session.frame.state = w.state; },
                 (in ReadyEvent r) { metrics = r.metrics; ready = true; },
                 (in SurfaceMetricsChangedEvent m) { metrics = m.metrics; },
                 (in _) {});
@@ -540,6 +590,10 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         whyNot(i"the native window was never configured");
         return false;
     }
+    // The title face is looked up while the cells are measured and the
+    // device is made, not in the first frame.
+    if (session.frame.active)
+        session.titleFace.prepare();
 
     // Every lifecycle decision is the machine's (`sparkles.ui_app.lifecycle`,
     // resilience §1); this loop executes its plans. Cell font sizes are in
@@ -560,18 +614,52 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         lc.baseOf = (int px, double scale) => pointsForPixels(px, scale);
     }
 
+    // The client frame's bar is an inset above the cells (`F13`): set again
+    // wherever the metrics, the cell height or the frame change, for the
+    // canvas's origin and the input's alike.
+    WsiInput* insetInput;
+    // The smallest window a framed one may be resized to, last asked for.
+    LogicalSize minimumAsked;
+    void inset()
+    {
+        // The cells start inside the margin, the safe area and the bar.
+        session.margin = metrics.frameMargin.left;
+        session.insets = metrics.safeInsets;
+        session.insets.left += metrics.frameMargin.left;
+        session.insets.right += metrics.frameMargin.right;
+        session.insets.bottom += metrics.frameMargin.bottom;
+        session.insets.top += metrics.frameMargin.top
+            + session.frame.barPx(cast(float) session.scale);
+        static if (__traits(hasMember, Wsi, "setMinimumSize"))
+        {
+            const scale = metrics.scale.value > 0 ? metrics.scale.value : 1;
+            const px = session.frame.minimumPx(session.font.cellH, cast(float) session.scale);
+            const minimum = LogicalSize(px.width / scale, px.height / scale);
+            if (minimum != minimumAsked)
+            {
+                minimumAsked = minimum;
+                cast(void) wsi.setMinimumSize(window, minimum);
+            }
+        }
+        if (insetInput !is null)
+        {
+            insetInput.originX = session.insets.left;
+            insetInput.originY = session.insets.top;
+        }
+    }
     void measure(int px)
     {
         CellFont font;
         if (measureCellFont(request.font, request.extraFontSources, px, font))
             session.font = font;
+        inset();
     }
     void takeMetrics()
     {
         session.scale = metrics.scale.value;
         session.pixelW = metrics.physicalSize.width;
         session.pixelH = metrics.physicalSize.height;
-        session.insets = metrics.safeInsets;
+        inset();
     }
     Surface surfaceOf(in SurfaceMetrics m)
         => Surface(m.physicalSize.width, m.physicalSize.height, m.scale.value);
@@ -579,10 +667,64 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
     if (const px = lc.metrics(surfaceOf(metrics)))
         measure(px);
 
+    // Teardown inside the window system's native-I/O borrow, as acquire and
+    // present are: Mesa's Wayland swapchain destruction round-trips the
+    // shared display, and with the window system's read prepared that
+    // round-trip waits forever. Every close hung there — the overview's
+    // close button, the shot's quit — with the window still on screen. The
+    // work runs whether or not the borrow is had: a device must not leak,
+    // and a borrow that cannot be had holds no read.
+    void underBorrow(scope void delegate() @system work)
+    {
+        static if (__traits(hasMember, Wsi, "beginNativeIo"))
+        {
+            const held = !wsi.beginNativeIo().hasError;
+            scope (exit)
+                if (held)
+                    cast(void) wsi.endNativeIo();
+        }
+        work();
+    }
+
     // ── the device ──
+    /*
+    Pipelines compile through a cache kept between runs, under the
+    application's cache directory: on a warm start the first frame does not
+    compile its pipelines again (18 ms of its recording on lavapipe). A
+    cache another driver or device wrote is ignored by the driver itself.
+    Saved after a device's first frame, which built its pipelines, and when
+    the window goes.
+    */
+    string pipelineCachePath;
+    {
+        import std.path : buildPath;
+        import sparkles.core_cli.common_dirs : cacheDir;
+
+        if (const dir = cacheDir())
+            pipelineCachePath = buildPath(dir, request.app.idOrDefault.idup,
+                "vulkan-pipelines.bin");
+    }
     auto gpu = new Gpu;
+    bool pipelinesSaved;
+    void savePipelines()
+    {
+        import std.file : mkdirRecurse;
+        import std.path : dirName;
+
+        if (!gpu.up || pipelineCachePath.length == 0)
+            return;
+        try
+            mkdirRecurse(pipelineCachePath.dirName);
+        catch (Exception)
+            return;
+        cast(void) gpu.vk.savePipelineCache(pipelineCachePath);
+        pipelinesSaved = true;
+    }
     scope (exit)
-        gpu.destroy();
+        underBorrow(() {
+            savePipelines();
+            gpu.destroy();
+        });
 
     // The cell font the canvas draws text with, at the size just measured
     // (`UVK18`).
@@ -648,10 +790,12 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         }
         gpu.canvas.releaseTargets();
         gpu.views.destroy(gpu.vk);
-        gpu.swapchain.destroy(gpu.vk);
-        if (gpu.vk.surface !is null)
-            gpu.vk.base.instance.destroySurfaceKHR(gpu.vk.base.instance.instance,
-                gpu.vk.surface, null);
+        underBorrow(() {
+            gpu.swapchain.destroy(gpu.vk);
+            if (gpu.vk.surface !is null)
+                gpu.vk.base.instance.destroySurfaceKHR(gpu.vk.base.instance.instance,
+                    gpu.vk.surface, null);
+        });
         gpu.vk.surface = null;
     }
 
@@ -683,25 +827,114 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         return ok;
     }
 
+    // Frames presented so far: the epoch what a rebuild retires is stamped
+    // with. Each frame waits for its slot's previous submit before reusing
+    // the slot, so once every slot has drawn again after a rebuild (and one
+    // frame more, for the presents that waited on the retired semaphores),
+    // the queue is done with what it retired. Each retiree is reaped by its
+    // own epoch: a resize that rebuilds every frame still reaps behind it.
+    ulong presents;
+
+    // The frame's extents (`F13`), asked for once the swapchain shows
+    // alpha: without it, the margin would show black, and the frame keeps
+    // to the window. Asked again only when the answer changes.
+    // The metrics they change follow in the event queue, and are taken
+    // before the next frame is drawn: drawn first, a frame of the old size
+    // would be committed with the new window geometry (`extentsPending`).
+    bool extentsAsked, extentsPending;
+    // What the traced frame spent (`SPARKLES_NATIVE_TRACE_FRAMES`).
+    FrameTiming timing;
+    void askFrameExtents()
+    {
+        static if (__traits(hasMember, Wsi, "setFrameExtents"))
+        {
+            const want = session.frame.active && session.transparent;
+            if (want == extentsAsked)
+                return;
+            extentsAsked = want;
+            extentsPending = !wsi.setFrameExtents(window,
+                want ? ClientFrame.extents : FrameExtents.init).hasError;
+        }
+    }
+
+    /*
+    Through an interactive resize the swapchain is kept while the window
+    fits it, and grown with room to spare when it does not: the compositor
+    crops each frame to the window (`setBufferCrop`). A new swapchain costs
+    Mesa's Wayland WSI a round trip to the compositor, which mutter, busy
+    resizing the window, answered in up to 110 ms; built for every step of a
+    drag, those stalls were the drag's stutter. The room goes when the
+    resize ends.
+    */
+    bool cropRefused;
+    bool resizing()
+    {
+        static if (__traits(hasMember, Wsi, "setBufferCrop"))
+            return !cropRefused && wsi.canCropBuffers
+                && session.frame.state.has(ToplevelState.resizing);
+        else
+            return false;
+    }
+
     bool rebuildSwapchain(bool force)
     {
+        const window = metrics.physicalSize;
+        const roomy = resizing();
+        if (roomy && !force && gpu.swapchain.handle !is null
+            && window.width <= gpu.swapchain.extent.width
+            && window.height <= gpu.swapchain.extent.height)
+            return true; // drawn into its corner, no rebuild
+        const room = roomy ? roomFor(window, session.frame.state, metrics.scale.value,
+            metrics.frameMargin) : PhysicalSize.init;
+        // Stamped now: a swapchain made since the last present (a new
+        // device's, a new surface's) has not been told the epoch yet.
+        gpu.swapchain.epoch = gpu.sync.epoch = presents;
+        // A frame of the client's casts its shadow and rounds its corners
+        // in a transparent margin, which the swapchain's alpha must reach.
+        gpu.swapchain.wantsAlpha = session.frame.active;
+        auto mark = MonoTime.currTime;
+        Duration lap()
+        {
+            const at = MonoTime.currTime, since = at - mark;
+            mark = at;
+            return since;
+        }
         if (gpu.sync.imageCount)
             cast(void) gpu.sync.waitAll(gpu.vk);
+        timing.settle += lap();
         gpu.canvas.releaseTargets();
+        timing.release += lap();
         bool ok;
         cast(void) nativeIo(() {
-            auto updated = Swapchain.recreate(gpu.swapchain, gpu.vk, metrics.physicalSize, force);
+            auto updated = Swapchain.recreate(gpu.swapchain, gpu.vk, window, force,
+                minAlloc: room, growOnly: roomy);
+            // The room is a guess the device may not afford (the whole
+            // output, on a large one): the window's own size is tried
+            // before the rebuild fails. The failed swapchain is gone
+            // either way, so this one is made afresh.
+            if (updated.hasError && room != PhysicalSize.init)
+                updated = Swapchain.recreate(gpu.swapchain, gpu.vk, window, true);
             ok = !updated.hasError;
             if (!ok)
                 whyNot(i"the native arm could not build a swapchain: $(updated.error)");
             return ok;
         });
+        timing.swapchain += lap();
         if (!ok)
             return false;
         gpu.views.create(gpu.vk, gpu.swapchain);
+        timing.views += lap();
+        // Premultiplied in the stored bytes only on a UNORM target: an sRGB
+        // one encodes the colour but not the alpha, so its translucent
+        // pixels would not be premultiplied as the compositor reads them.
+        session.transparent = gpu.swapchain.compositeAlpha
+            == VkCompositeAlphaFlagBitsKHR.VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR
+            && !isSrgb(gpu.swapchain.format);
+        askFrameExtents();
         const images = cast(uint) gpu.swapchain.images.length;
         const synced = gpu.sync.imageCount == 0 ? FrameSync.create(gpu.sync, gpu.vk, images)
             : gpu.sync.replaceImages(gpu.vk, images);
+        timing.sync += lap();
         if (synced.hasError)
             whyNot(i"the native arm could not synchronize its frames: $(synced.error)");
         return !synced.hasError;
@@ -720,7 +953,10 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         bool made;
         cast(void) nativeIo(() {
             auto context = VulkanContext.create(gpu.vk, handles.value, ContextRequest(
-                applicationName: request.title, apiVersion: apiVersion13,
+                applicationName: request.app.nameOrDefault.idup,
+                applicationVersion: makeApiVersion(0, request.app.version_[0],
+                    request.app.version_[1], request.app.version_[2]),
+                apiVersion: apiVersion13,
                 validation: getenv("SPARKLES_VULKAN_VALIDATION") !is null));
             made = !context.hasError;
             if (!made)
@@ -732,6 +968,8 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         gpu.memory = DeviceMemory!DeviceMemoryBackend(DeviceMemoryBackend(gpu.vk.instance,
             gpu.vk.physicalDevice, gpu.vk.device));
         gpu.up = true;
+        cast(void) gpu.vk.loadPipelineCache(pipelineCachePath);
+        pipelinesSaved = false;
         if (!rebuildSwapchain(true))
             return false;
         const pool = CommandPool.create(gpu.commands, gpu.vk, gpu.sync.framesInFlight);
@@ -761,7 +999,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
     {
         if (bringUpOnce())
             return true;
-        gpu.destroy();
+        underBorrow(() { gpu.destroy(); });
         return false;
     }
 
@@ -816,10 +1054,28 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
     input.touchGestures = touch;
     input.fractionalScroll = cfg.fractionalScroll;
     input.scale = metrics.scale.value;
-    input.originX = metrics.safeInsets.left;
-    input.originY = metrics.safeInsets.top;
+    insetInput = &input;
+    inset();
 
-    session.setCursor = (PointerShape s) { cast(void) wsi.setCursor(window, s); };
+    // The application's pointer shape, kept while the frame shows its own
+    // over a resize border, and shown again when the pointer leaves it.
+    PointerShape appCursor = PointerShape.default_;
+    bool frameCursor;
+    session.setCursor = (PointerShape s) {
+        appCursor = s;
+        if (!frameCursor)
+            cast(void) wsi.setCursor(window, s);
+    };
+    session.title = fitTitle(request.title, 255).dup;
+    // Without the application's colours the frame is Adwaita's own.
+    session.framePalette = request.hasFramePalette ? request.framePalette : Palette.init;
+    // Well-formed, so the window system takes it; a long one is the
+    // window system's to shorten, as the bar ellipsizes it.
+    session.setTitle = (in char[] t) {
+        session.title = fitTitle(t, maxTitleBytes).dup;
+        static if (__traits(hasMember, Wsi, "setTitle"))
+            cast(void) wsi.setTitle(window, session.title);
+    };
     session.setClipboard = (scope const(char)[] text) {
         cast(void) wsi.offerClipboard(window, "text/plain;charset=utf-8",
             cast(const(ubyte)[]) text);
@@ -843,13 +1099,15 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
     const unitH = () => cfg.pointerUnit == PointerUnit.pixels ? 1 : session.font.cellH;
 
     // `SPARKLES_NATIVE_TRACE_FRAMES`: a line on standard error per frame
-    // presented — its time and whether an event or the application asked
-    // for it — so a run can show an idle window drawing nothing.
+    // presented, and per frame the swapchain turned out stale for, so a run
+    // can show an idle window drawing nothing, or one rebuilding forever.
     import core.stdc.stdlib : getenv;
     const traceFrames = getenv("SPARKLES_NATIVE_TRACE_FRAMES") !is null;
     const opened = MonoTime.currTime;
     Duration now() => MonoTime.currTime - opened;
     uint presented;
+    // Since when the traced frame's size has waited.
+    MonoTime resizedAt;
     // `SPARKLES_NATIVE_LOSE_DEVICE_AT=<n>`: treat frame `n` as a lost
     // device, which no software driver produces on demand, so the rebuild
     // can be shown to redraw.
@@ -858,6 +1116,116 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
     uint loseDeviceAt;
     if (const at = getenv("SPARKLES_NATIVE_LOSE_DEVICE_AT"))
         loseDeviceAt = (() @trusted => at.fromStringz.to!uint)();
+
+    /*
+    The frame answers the pointer before the application (`F13`): a press on
+    the bar or a border goes to the window system as a move, a resize or a
+    button's action, and never reaches the cells. `true` when the frame took
+    the event. `frameDirty` says the bar's hover or pressed state changed,
+    taken or not, so the frame is drawn again.
+    */
+    bool frameDirty;
+    bool routeFrame(in sparkles.wsi.events.PointerEvent p)
+    {
+        if (!session.frame.active)
+            return false;
+        const geometry = FrameGeometry(surfaceW: session.pixelW, surfaceH: session.pixelH,
+            top: metrics.safeInsets.top + metrics.frameMargin.top, cellW: session.font.cellW,
+            cellH: session.font.cellH, density: cast(float) session.scale,
+            margin: metrics.frameMargin.left);
+        const hit = session.frame.hitTest(cast(int) p.physicalPosition.x,
+            cast(int) p.physicalPosition.y, geometry);
+        void cursorFor(in FrameHit h)
+        {
+            if (h.part == FramePart.resize)
+            {
+                frameCursor = true;
+                cast(void) wsi.setCursor(window, resizeCursor(h.edge));
+            }
+            else if (frameCursor)
+            {
+                frameCursor = false;
+                cast(void) wsi.setCursor(window, appCursor);
+            }
+        }
+        void act(FrameAction action)
+        {
+            final switch (action)
+            {
+                case FrameAction.none:
+                    break;
+                case FrameAction.move:
+                    static if (__traits(hasMember, Wsi, "startInteractiveMove"))
+                        cast(void) wsi.startInteractiveMove(window);
+                    break;
+                case FrameAction.resize:
+                    static if (__traits(hasMember, Wsi, "startInteractiveResize"))
+                        cast(void) wsi.startInteractiveResize(window, hit.edge);
+                    break;
+                case FrameAction.toggleMaximized:
+                    static if (__traits(hasMember, Wsi, "setMaximized"))
+                        cast(void) wsi.setMaximized(window,
+                            !session.frame.state.has(ToplevelState.maximized));
+                    break;
+                case FrameAction.minimize:
+                    static if (__traits(hasMember, Wsi, "setMinimized"))
+                        cast(void) wsi.setMinimized(window);
+                    break;
+                case FrameAction.close:
+                    lc.close();
+                    break;
+                case FrameAction.windowMenu:
+                    static if (__traits(hasMember, Wsi, "showWindowMenu"))
+                        cast(void) wsi.showWindowMenu(window, p.logicalPosition);
+                    break;
+            }
+        }
+        // A press the application took keeps its drag, over the frame or
+        // not, until its release.
+        alias Phase = ClientFrame.Phase;
+        const phase = p.phase == PointerPhase.pressed ? Phase.pressed
+            : p.phase == PointerPhase.released ? Phase.released : Phase.moved;
+        if (p.phase == PointerPhase.left)
+            session.frame.pointerLeft();
+        else if (session.frame.applicationOwns(phase, p.button, hit.part))
+            return false;
+        final switch (p.phase)
+        {
+            case PointerPhase.entered:
+            case PointerPhase.moved:
+                cursorFor(hit);
+                if (session.frame.holding)
+                {
+                    act(session.frame.motion(cast(int) p.physicalPosition.x,
+                        cast(int) p.physicalPosition.y, cast(float) session.scale));
+                    return true;
+                }
+                const was = session.frame.hover;
+                session.frame.hover = hit.part == FramePart.resize ? FramePart.content : hit.part;
+                frameDirty |= session.frame.hover != was;
+                return hit.part != FramePart.content;
+            case PointerPhase.left:
+                cursorFor(FrameHit(FramePart.content));
+                frameDirty |= session.frame.hover != FramePart.content;
+                session.frame.hover = FramePart.content;
+                return false;
+            case PointerPhase.pressed:
+                if (hit.part == FramePart.content)
+                    return false;
+                act(session.frame.press(hit, p.button == PointerButton.right, MonoTime.currTime,
+                    cast(int) p.physicalPosition.x, cast(int) p.physicalPosition.y));
+                frameDirty = true;
+                return true;
+            case PointerPhase.released:
+                if (session.frame.holding)
+                {
+                    act(session.frame.release(hit));
+                    frameDirty = true;
+                    return true;
+                }
+                return hit.part != FramePart.content;
+        }
+    }
 
     // One drain: everything the window system queued, translated and handed
     // to the application. Metrics apply at once, so the application's
@@ -881,11 +1249,12 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                 // nothing left to do.
                 if (m.suspended)
                     releaseSurface();
+                if (traceFrames && m.physicalSize != metrics.physicalSize
+                    && resizedAt == MonoTime.init)
+                    resizedAt = MonoTime.currTime;
                 metrics = m;
                 takeMetrics();
                 input.scale = m.scale.value;
-                input.originX = m.safeInsets.left;
-                input.originY = m.safeInsets.top;
                 if (const px = lc.metrics(surfaceOf(m)))
                     {
                     measure(px);
@@ -893,6 +1262,28 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                 }
             }
             e.payload.match!(
+                (in WindowStateChangedEvent w) {
+                    // A crop refused once is tried again with the next resize.
+                    if (w.state.has(ToplevelState.resizing)
+                        && !session.frame.state.has(ToplevelState.resizing))
+                        cropRefused = false;
+                    session.frame.state = w.state;
+                    // The resize's room goes with it.
+                    if (gpu.up && !resizing() && cornerOf(gpu.swapchain.extent,
+                        metrics.physicalSize.width, metrics.physicalSize.height,
+                        quarterTurns(gpu.swapchain.transform)).width)
+                        lc.retarget();
+                    askFrameExtents();
+                    inset();
+                    lc.exposed();
+                    input_ = false;
+                },
+                (in sparkles.wsi.events.PointerEvent p) {
+                    if (routeFrame(p))
+                        input_ = false;
+                    delivered |= !input_ || frameDirty;
+                    frameDirty = false;
+                },
                 (in ReadyEvent r) { onMetrics(r.metrics); },
                 (in SurfaceMetricsChangedEvent m) { onMetrics(m.metrics); },
                 (in FrameReadyEvent _) { lc.frameReady(); input_ = false; },
@@ -940,7 +1331,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
             break;
         }
         if (plan.releaseDevice)
-            gpu.destroy();
+            underBorrow(() { gpu.destroy(); });
         if (plan.releaseSurface)
             releaseSurface();
         if (plan.releaseCaches && gpu.up)
@@ -948,7 +1339,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         if (plan.createDevice)
         {
             trace(i"native arm: rebuilding the device");
-            gpu.destroy();
+            underBorrow(() { gpu.destroy(); });
             if (!bringUp())
             {
                 lc.rebuildFailed(Rebuild.device);
@@ -968,7 +1359,10 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         }
         if (plan.rebuildTargets && !plan.createDevice)
         {
-            if (!rebuildSwapchain(plan.createSurface))
+            const rebuildStarted = MonoTime.currTime;
+            scope (exit)
+                timing.rebuild += MonoTime.currTime - rebuildStarted;
+            if (!rebuildSwapchain(plan.createSurface || plan.replaceTargets))
             {
                 lc.rebuildFailed(Rebuild.targets);
                 continue;
@@ -978,9 +1372,16 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
 
         if (plan.draw)
         {
+            if (extentsPending)
+            {
+                extentsPending = false;
+                drainEvents();
+                continue;
+            }
             const started = MonoTime.currTime;
             lastPass = started;
             buildFrame!present(host, plan.mustDraw);
+            timing.build = MonoTime.currTime - started;
             lc.requested(host.frameRequested);
             if (host.frameSkipped)
                 continue;
@@ -996,15 +1397,52 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                 lc.frameDone(FrameResult.deviceLost, now());
                 continue;
             }
+            // A frame that does not present comes back at once, so the
+            // window system is read first without waiting: a swapchain that
+            // stays stale must not keep input and a close from arriving.
+            bool pollNow()
+            {
+                if (wsi.runIntegratedOnce(loop, Duration.zero).hasError)
+                    return false;
+                drainEvents();
+                return true;
+            }
             static if (__traits(hasMember, Wsi, "beginNativeIo"))
                 if (wsi.beginNativeIo().hasError)
                 {
                     lc.frameDone(FrameResult.again, now());
+                    if (!pollNow())
+                        break;
                     continue;
                 }
-            auto outcome = drawFrame!draw(*gpu, host, session, request.ground);
-            static if (__traits(hasMember, Wsi, "beginNativeIo"))
-                cast(void) wsi.endNativeIo();
+            FrameOutcome outcome;
+            {
+                // Ended however the frame ends, a throw included.
+                static if (__traits(hasMember, Wsi, "beginNativeIo"))
+                    scope (exit)
+                        cast(void) wsi.endNativeIo();
+                // A swapchain with room shows only the window's corner of it.
+                // Without the crop the whole image would show, its undrawn
+                // rest too: the frame is not presented, and the swapchain is
+                // built again at the window's size.
+                bool cropped = true;
+                static if (__traits(hasMember, Wsi, "setBufferCrop"))
+                {
+                    const corner = cornerOf(gpu.swapchain.extent, session.pixelW, session.pixelH,
+                        quarterTurns(gpu.swapchain.transform));
+                    if ((corner.width || wsi.canCropBuffers) && wsi.setBufferCrop(window,
+                        PhysicalSize(corner.width, corner.height)).hasError && corner.width)
+                    {
+                        cropRefused = true;
+                        cropped = false;
+                        lc.retarget();
+                    }
+                }
+                timing.traced = traceFrames;
+                outcome = cropped
+                    ? drawFrame!draw(*gpu, host, session, request.ground, timing)
+                    : FrameOutcome.again;
+            }
             if (presented + 1 == loseDeviceAt)
             {
                 loseDeviceAt = 0;
@@ -1015,13 +1453,28 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                 case FrameOutcome.presented:
                     lc.frameDone(FrameResult.presented, now());
                     ++presented;
+                    if (!pipelinesSaved)
+                        savePipelines();
                     if (traceFrames)
-                        whyNot(i"native frame $(presented) at $((started - opened).total!"msecs") ms");
-                    session.frameSeconds = lc.frameSeconds;
-                    if (gpu.sync.hasRetired || gpu.swapchain.hasRetired)
                     {
-                        gpu.sync.reap(gpu.vk, 8);
-                        gpu.swapchain.reap(gpu.vk, 1);
+                        const done = MonoTime.currTime;
+                        const resize = resizedAt == MonoTime.init ? Duration.zero
+                            : done - resizedAt;
+                        whyNot(i"native frame $(presented) at $((started - opened).total!"msecs") ms, $(session.pixelW)x$(session.pixelH) in $(gpu.swapchain.extent.width)x$(gpu.swapchain.extent.height): rebuild $(timing.rebuild.total!"usecs") us, build $(timing.build.total!"usecs"), wait $(timing.wait.total!"usecs"), acquire $(timing.acquire.total!"usecs"), record $(timing.record.total!"usecs"), present $(timing.present.total!"usecs"), gpu $(timing.gpu.total!"usecs") (frame -$(gpu.sync.framesInFlight)); resize shown after $(resize.total!"usecs") us; rebuild: settle $(timing.settle.total!"usecs"), release $(timing.release.total!"usecs"), swapchain $(timing.swapchain.total!"usecs"), views $(timing.views.total!"usecs"), sync $(timing.sync.total!"usecs")");
+                        resizedAt = MonoTime.init;
+                    }
+                    timing = FrameTiming.init;
+                    session.frameSeconds = lc.frameSeconds;
+                    // What a rebuild retired goes once nothing can still be
+                    // presenting it; destroyed at the next present, a quick
+                    // second rebuild's swapchain and semaphores were still in
+                    // use (`VUID-vkDestroySwapchainKHR-swapchain-01282`).
+                    gpu.swapchain.epoch = gpu.sync.epoch = ++presents;
+                    const settled = gpu.sync.framesInFlight + 1;
+                    if (presents > settled)
+                    {
+                        gpu.sync.reapThrough(gpu.vk, presents - settled);
+                        gpu.swapchain.reapThrough(gpu.vk, presents - settled);
                     }
                     break;
                 case FrameOutcome.again:
@@ -1029,6 +1482,8 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                     break;
                 case FrameOutcome.rebuild:
                     lc.frameDone(FrameResult.outOfDate, now());
+                    if (traceFrames)
+                        whyNot(i"native frame: the swapchain is stale at $((started - opened).total!"msecs") ms, $(session.pixelW)x$(session.pixelH): acquire $(timing.acquired), present $(timing.presented), rebuild $(timing.rebuild.total!"usecs") us");
                     break;
                 case FrameOutcome.deviceLost:
                     trace(i"native arm: the device was lost");
@@ -1038,6 +1493,8 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                     lc.frameDone(FrameResult.failed, now());
                     break;
             }
+            if (outcome != FrameOutcome.presented && !pollNow())
+                break;
             continue;
         }
 
@@ -1078,6 +1535,9 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
     }
     return ok;
 }
+
+// The longest title the window is given, in bytes.
+private enum size_t maxTitleBytes = 4096;
 
 // How often a gesture in flight is ticked while nothing else arrives.
 private enum gestureTick = 16.msecs;
@@ -1193,19 +1653,209 @@ private enum FrameOutcome
     failed,    ///
 }
 
+// The window's ground, inside the frame's margin, in device pixels from the
+// surface's corner.
+private void fillWindowGround(C)(ref C canvas, ref NativeSession session, RgbColor ground) @system
+{
+    const m = session.margin;
+    canvas.pushOffsetPx(-session.insets.left, -session.insets.top);
+    scope (exit)
+        canvas.popOffsetPx();
+    canvas.fillPx(m, m, session.pixelW - 2 * m, session.pixelH - 2 * m, rgba(ground, 255));
+}
+
+// The client frame in device pixels from the surface's corner: the canvas's
+// pixel calls start at the content's origin, which the bar moved down.
+private void drawClientFrame(C)(ref C canvas, ref NativeSession session, RgbColor ground) @system
+{
+    const density = cast(float) session.scale;
+    const geometry = FrameGeometry(surfaceW: session.pixelW, surfaceH: session.pixelH,
+        top: session.insets.top - session.frame.barPx(density), cellW: session.font.cellW,
+        cellH: session.font.cellH, density: density, margin: session.margin);
+    const colours = FrameColours.of(session.framePalette, ground);
+    FrameShape[ClientFrame.maxShapes] shapes;
+    const n = session.frame.build(shapes[], geometry, colours);
+    canvas.pushOffsetPx(-session.insets.left, -session.insets.top);
+    scope (exit)
+        canvas.popOffsetPx();
+    foreach (ref s; shapes[0 .. n])
+    {
+        final switch (s.kind)
+        {
+            case FrameShape.Kind.fill:
+                canvas.fillPx(s.x, s.y, s.w, s.h, rgba(s.colour, s.alpha));
+                break;
+            case FrameShape.Kind.disc:
+                canvas.roundedPx(s.x, s.y, s.w, s.h, s.w / 2.0f, rgba(s.colour, s.alpha));
+                break;
+            case FrameShape.Kind.shadow:
+                canvas.shadowPx(s.x, s.y, s.w, s.h, s.radius, s.blur, s.spread,
+                    rgba(s.colour, s.alpha));
+                break;
+            case FrameShape.Kind.erase:
+                canvas.eraseOutsidePx(s.x, s.y, s.w, s.h, s.radius);
+                break;
+            case FrameShape.Kind.cross:
+                foreach (y; 0 .. s.h)
+                    foreach (x; 0 .. s.w)
+                        if (const cover = crossCoverage(s.w, x, y))
+                            canvas.fillPx(s.x + x, s.y + y, 1, 1,
+                                rgba(s.colour, cast(ubyte)(cover * s.alpha / 255)));
+                break;
+        }
+    }
+    // The title in the desktop's title face at its fixed size, set again
+    // only when the text, the room or the density changes.
+    session.titleFace.load();
+    const ppem = cast(int)(titleCssPx * density + 0.5f);
+    if (session.titleFace.set(session.titleStrip, session.title,
+            session.frame.titleRoom(geometry), ppem) && session.titleStrip.width > 0)
+    {
+        const strip = &session.titleStrip;
+        const t = session.frame.titleAt(strip.width, strip.height, geometry, colours);
+        // A run of equal coverage is one fill: a stem is a few, not a
+        // pixel each.
+        foreach (y; 0 .. strip.height)
+        {
+            const row = strip.coverage[size_t(y) * strip.width .. size_t(y + 1) * strip.width];
+            for (int x = 0; x < strip.width;)
+            {
+                const cover = row[x];
+                int end = x + 1;
+                while (end < strip.width && row[end] == cover)
+                    ++end;
+                if (cover)
+                    canvas.fillPx(t.x + x, t.y + y, end - x, 1,
+                        rgba(t.colour, cast(ubyte)(cover * t.alpha / 255)));
+                x = end;
+            }
+        }
+    }
+}
+
+/*
+The device's time for each frame slot's commands, from a timestamp at their
+start and one at their end, for `SPARKLES_NATIVE_TRACE_FRAMES`. A slot's
+pair is read when the slot comes round again, its fence waited: the time is
+that of the frame drawn `framesInFlight` frames before. A queue whose
+timestamps carry no valid bits gets no timer.
+*/
+private struct GpuTimer
+{
+    VkQueryPool pool;
+    uint slots;
+    double nanosPerTick = 0;
+    ulong validMask; // the bits a timestamp counts in; it wraps at their width
+    bool[] written;
+
+    // Tried once per device: `slots` stays set where the queue has no
+    // timestamps and `pool` null.
+    void create(ref VulkanContext vk, uint slots) @system
+    {
+        this.slots = slots;
+        uint families;
+        vk.instance.getPhysicalDeviceQueueFamilyProperties(vk.physicalDevice, &families, null);
+        auto props = new VkQueueFamilyProperties[families];
+        vk.instance.getPhysicalDeviceQueueFamilyProperties(vk.physicalDevice, &families,
+            props.ptr);
+        if (vk.queueFamily >= families || props[vk.queueFamily].timestampValidBits == 0)
+            return;
+        auto info = vkInfo(VkQueryPoolCreateInfo(
+            queryType: VkQueryType.VK_QUERY_TYPE_TIMESTAMP, queryCount: 2 * slots));
+        if (vk.device.createQueryPool(vk.device.device, &info, null, &pool) != VkResult.VK_SUCCESS)
+        {
+            pool = null;
+            return;
+        }
+        nanosPerTick = vk.properties.limits.timestampPeriod;
+        const bits = props[vk.queueFamily].timestampValidBits;
+        validMask = bits >= 64 ? ulong.max : (1UL << bits) - 1;
+        written = new bool[slots];
+    }
+
+    void destroy(ref VulkanContext vk) @system
+    {
+        if (pool !is null && vk.device.device !is null)
+            vk.device.destroyQueryPool(vk.device.device, pool, null);
+        this = GpuTimer.init;
+    }
+
+    // What the slot's last frame took on the device; `Duration.zero` when
+    // it has none.
+    Duration read(ref VulkanContext vk, uint slot) @system
+    {
+        if (pool is null || slot >= slots || !written[slot])
+            return Duration.zero;
+        ulong[2] ticks;
+        const got = vk.device.getQueryPoolResults(vk.device.device, pool, 2 * slot, 2,
+            ticks.sizeof, ticks.ptr, ulong.sizeof, VkQueryResultFlagBits.VK_QUERY_RESULT_64_BIT);
+        if (got != VkResult.VK_SUCCESS)
+            return Duration.zero;
+        // Only the valid bits count, and a frame across the counter's wrap
+        // is measured modulo it.
+        const elapsed = ((ticks[1] & validMask) - (ticks[0] & validMask)) & validMask;
+        return dur!"nsecs"(cast(long)(elapsed * nanosPerTick));
+    }
+
+    void begin(ref VulkanContext vk, VkCommandBuffer cmd, uint slot) @system
+    {
+        if (pool is null || slot >= slots)
+            return;
+        vk.device.cmdResetQueryPool(cmd, pool, 2 * slot, 2);
+        vk.device.cmdWriteTimestamp(cmd,
+            VkPipelineStageFlagBits.VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, pool, 2 * slot);
+    }
+
+    void end(ref VulkanContext vk, VkCommandBuffer cmd, uint slot) @system
+    {
+        if (pool is null || slot >= slots)
+            return;
+        vk.device.cmdWriteTimestamp(cmd,
+            VkPipelineStageFlagBits.VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, pool, 2 * slot + 1);
+        written[slot] = true;
+    }
+}
+
+// Where a frame's time went, for `SPARKLES_NATIVE_TRACE_FRAMES`.
+private struct FrameTiming
+{
+    /// Time the device's work too (`GpuTimer`).
+    bool traced;
+    /// The device's time for the frame drawn `framesInFlight` before.
+    Duration gpu;
+    Duration rebuild, build, wait, acquire, record, present;
+    /// The rebuild's parts: the wait for frames in flight, the canvas's
+    /// targets released, the swapchain, its views, the frames' sync.
+    Duration settle, release, swapchain, views, sync;
+    VkResult acquired, presented; /// what each call said, for a stale frame
+}
+
 // Acquires an image, draws the host's operations and the draw phase into it,
 // and presents it.
 private FrameOutcome drawFrame(alias draw)(ref Gpu gpu, ref NativeHost host,
-    ref NativeSession session, RgbColor ground) @system
+    ref NativeSession session, RgbColor ground, ref FrameTiming timing) @system
 {
     import sparkles.ui.interp.immediate : paint;
 
     auto vk = &gpu.vk;
+    auto mark = MonoTime.currTime;
+    Duration lap()
+    {
+        const at = MonoTime.currTime, since = at - mark;
+        mark = at;
+        return since;
+    }
     if (gpu.sync.waitForFrame(*vk).hasError)
         return FrameOutcome.deviceLost;
+    timing.wait = lap();
+    if (timing.traced && gpu.timer.pool is null && gpu.timer.slots == 0)
+        gpu.timer.create(*vk, gpu.sync.framesInFlight);
+    timing.gpu = gpu.timer.read(*vk, gpu.sync.frame);
     uint index;
     const acquired = vk.device.acquireNextImageKHR(vk.device.device, gpu.swapchain.handle,
         ulong.max, gpu.sync.imageAvailable, null, &index);
+    timing.acquire = lap();
+    timing.acquired = acquired;
     const decision = decideAcquire(acquired);
     if (decision.failed)
         return acquired == VkResult.VK_ERROR_DEVICE_LOST ? FrameOutcome.deviceLost
@@ -1218,17 +1868,30 @@ private FrameOutcome drawFrame(alias draw)(ref Gpu gpu, ref NativeHost host,
     if (begun.hasError)
         return FrameOutcome.deviceLost;
     auto cmd = begun.value;
+    gpu.timer.begin(*vk, cmd, gpu.sync.frame);
 
     VkImage image = gpu.swapchain.images[index];
+    const corner = cornerOf(gpu.swapchain.extent, session.pixelW, session.pixelH,
+        quarterTurns(gpu.swapchain.transform));
     gpu.canvas.beginFrame(CanvasTarget(image: image, view: gpu.views.views[index],
         format: gpu.swapchain.format, extent: gpu.swapchain.extent, usage: gpu.swapchain.usage,
         finalLayout: VkImageLayout.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-        turn: quarterTurns(gpu.swapchain.transform)), cmd, gpu.sync.frame,
+        turn: quarterTurns(gpu.swapchain.transform), transparent: session.transparent,
+        drawn: corner), cmd,
+        gpu.sync.frame,
         FrameMetrics(cellW: session.font.cellW, cellH: session.font.cellH,
             originX: session.insets.left, originY: session.insets.top,
             density: cast(float) session.scale), ground);
+    // On a transparent surface the window's ground is laid first, inside
+    // the margin; the content draws over it, the frame's shadow beyond it.
+    if (session.transparent)
+        fillWindowGround(gpu.canvas, session, ground);
     paint(gpu.canvas, host.ops()[]);
     draw(host);
+    // The client frame last, over everything, in the bar's rows above the
+    // cells (`F13`).
+    if (session.frame.active)
+        drawClientFrame(gpu.canvas, session, ground);
     auto ended = gpu.canvas.endFrame();
     FrameOutcome outcome = FrameOutcome.presented;
     if (ended.hasError)
@@ -1237,25 +1900,30 @@ private FrameOutcome drawFrame(alias draw)(ref Gpu gpu, ref NativeHost host,
             return FrameOutcome.deviceLost;
         // Abandoned: the acquired image still has to be presented, so it
         // shows the ground, and the next frame draws again.
-        clearTo(gpu, cmd, image, ground);
+        clearTo(gpu, cmd, image, ground, session.transparent);
         outcome = FrameOutcome.again;
     }
     VkBuffer shot;
     GpuBuffer shotBuffer;
     if (session.shotPath.length && outcome == FrameOutcome.presented
         && (gpu.swapchain.usage & VkImageUsageFlagBits.VK_IMAGE_USAGE_TRANSFER_SRC_BIT))
-        recordCapture(gpu, cmd, image, shotBuffer);
+        recordCapture(gpu, cmd, image, corner.width ? corner : gpu.swapchain.extent, shotBuffer);
+    gpu.timer.end(*vk, cmd, gpu.sync.frame);
     if (gpu.commands.end(*vk, gpu.sync.frame).hasError)
         return FrameOutcome.deviceLost;
     const submitted = gpu.sync.submit(*vk, cmd, index);
     if (submitted.hasError)
         return submitted.error == VkResult.VK_ERROR_DEVICE_LOST ? FrameOutcome.deviceLost
             : FrameOutcome.failed;
+    timing.record = lap();
     const presented = gpu.swapchain.present(*vk, index, gpu.sync.renderFinished(index));
+    timing.present = lap();
+    timing.presented = presented.hasError ? presented.error : presented.value;
     gpu.sync.advance();
     if (shotBuffer.handle !is null)
     {
-        writeCapture(gpu, shotBuffer, session.shotPath);
+        writeCapture(gpu, shotBuffer, corner.width ? corner : gpu.swapchain.extent,
+            session.shotPath);
         session.shotPath = null;
     }
     if (presented.hasError)
@@ -1265,6 +1933,72 @@ private FrameOutcome drawFrame(alias draw)(ref Gpu gpu, ref NativeHost host,
     if (Swapchain.needsRecreation(presented.value) || decision.recreate)
         return FrameOutcome.rebuild;
     return outcome;
+}
+
+/*
+The swapchain a resize grows into once the window outgrows the last one: half
+as large again (at least 256 px more) on each side, and at least the output's
+work area as the compositor bounds the window, with the client frame's
+margin, so a drag within one output needs one swapchain, not one per step.
+Whole 64-pixel units.
+*/
+private PhysicalSize roomFor(PhysicalSize window, in WindowState state, double scale,
+    in PhysicalInsets margin) @safe pure nothrow @nogc
+{
+    static uint up(uint side) => (side + 63) & ~63u;
+    static uint grown(uint side) => up(side + max(side / 2, 256u));
+    if (!(scale > 0))
+        scale = 1;
+    uint bounded(uint bound, uint edges) => bound ? up(cast(uint)(bound * scale + 0.5) + edges) : 0;
+    return PhysicalSize(
+        max(grown(window.width), bounded(state.boundsWidth, margin.left + margin.right)),
+        max(grown(window.height), bounded(state.boundsHeight, margin.top + margin.bottom)));
+}
+
+@("ui_app.native_loop.roomForAResize")
+@safe pure nothrow @nogc unittest
+{
+    WindowState s;
+    assert(roomFor(PhysicalSize(740, 720), s, 1, PhysicalInsets.init) == PhysicalSize(1152, 1088),
+        "half again, in 64-pixel units");
+    assert(roomFor(PhysicalSize(100, 100), s, 1, PhysicalInsets.init) == PhysicalSize(384, 384),
+        "at least 256 more");
+    s.boundsWidth = 2560;
+    s.boundsHeight = 1371;
+    assert(roomFor(PhysicalSize(740, 720), s, 1, PhysicalInsets(20, 20, 20, 20))
+        == PhysicalSize(2624, 1472), "the work area and the margin");
+    assert(roomFor(PhysicalSize(740, 720), s, 2, PhysicalInsets.init) == PhysicalSize(5120, 2752),
+        "bounds are logical");
+    assert(roomFor(PhysicalSize(4000, 720), s, 1, PhysicalInsets.init).width == 6016,
+        "past the output: half again");
+}
+
+/*
+The window's corner of a swapchain image kept larger than the window through
+a resize, in image pixels: what a frame draws, the compositor shows and a
+screenshot keeps. Empty when the image is drawn and shown whole: the
+window's size, turned (Android, never kept larger), or smaller on either
+side (a driver's cap), where a crop past the buffer is a protocol error.
+*/
+private VkExtent2D cornerOf(VkExtent2D image, uint windowW, uint windowH, uint turns)
+    @safe pure nothrow @nogc
+{
+    if (turns % 4 || windowW == 0 || windowH == 0 || windowW > image.width
+        || windowH > image.height || (windowW == image.width && windowH == image.height))
+        return VkExtent2D.init;
+    return VkExtent2D(windowW, windowH);
+}
+
+@("ui_app.native_loop.cornerOfAKeptSwapchain")
+@safe pure nothrow @nogc unittest
+{
+    assert(cornerOf(VkExtent2D(1200, 900), 800, 600, 0) == VkExtent2D(800, 600));
+    assert(cornerOf(VkExtent2D(800, 600), 800, 600, 0) == VkExtent2D.init, "the window's size");
+    assert(cornerOf(VkExtent2D(40, 80), 80, 40, 1) == VkExtent2D.init, "turned: whole");
+    assert(cornerOf(VkExtent2D(1200, 900), 800, 600, 2) == VkExtent2D.init);
+    assert(cornerOf(VkExtent2D(8192, 900), 10_000, 600, 0) == VkExtent2D.init,
+        "a capped image is shown whole, never cropped past its edge");
+    assert(cornerOf(VkExtent2D(1200, 900), 0, 600, 0) == VkExtent2D.init);
 }
 
 // The quarter turns a pre-rotated swapchain's images take on their way to the
@@ -1282,7 +2016,8 @@ private uint quarterTurns(VkSurfaceTransformFlagBitsKHR transform) @safe pure no
 
 // The acquired image cleared to `ground` and made presentable, for a frame
 // the canvas abandoned.
-private void clearTo(ref Gpu gpu, VkCommandBuffer cmd, VkImage image, RgbColor ground) @system
+private void clearTo(ref Gpu gpu, VkCommandBuffer cmd, VkImage image, RgbColor ground,
+    bool transparent = false) @system
 {
     auto device = &gpu.vk.device;
     transition(*device, cmd, image, VkImageLayout.VK_IMAGE_LAYOUT_UNDEFINED,
@@ -1291,7 +2026,10 @@ private void clearTo(ref Gpu gpu, VkCommandBuffer cmd, VkImage image, RgbColor g
         VkPipelineStageFlagBits.VK_PIPELINE_STAGE_TRANSFER_BIT,
         VkAccessFlagBits.VK_ACCESS_TRANSFER_WRITE_BIT);
     VkClearColorValue colour;
-    colour.float32 = [ground.r / 255.0f, ground.g / 255.0f, ground.b / 255.0f, 1];
+    // A transparent surface shows nothing rather than a ground over its
+    // shadow's margin.
+    colour.float32 = transparent ? [0.0f, 0, 0, 0]
+        : [ground.r / 255.0f, ground.g / 255.0f, ground.b / 255.0f, 1];
     auto range = colourRange;
     device.cmdClearColorImage(cmd, image, VkImageLayout.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
         &colour, 1, &range);
@@ -1302,13 +2040,13 @@ private void clearTo(ref Gpu gpu, VkCommandBuffer cmd, VkImage image, RgbColor g
         VkPipelineStageFlagBits.VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0);
 }
 
-// Copies the presentable image into a host-visible buffer, after the frame
-// drew it and before it is presented.
-private void recordCapture(ref Gpu gpu, VkCommandBuffer cmd, VkImage image,
+// Copies the frame's `extent` of the presentable image, from its top-left
+// corner, into a host-visible buffer, after the frame drew it and before it
+// is presented.
+private void recordCapture(ref Gpu gpu, VkCommandBuffer cmd, VkImage image, VkExtent2D extent,
     out GpuBuffer buffer) @system
 {
     auto device = &gpu.vk.device;
-    const extent = gpu.swapchain.extent;
     if (GpuBuffer.create(buffer, *device, gpu.memory, ulong(extent.width) * extent.height * 4,
             VkBufferUsageFlagBits.VK_BUFFER_USAGE_TRANSFER_DST_BIT,
             VkMemoryPropertyFlagBits.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
@@ -1333,7 +2071,8 @@ private void recordCapture(ref Gpu gpu, VkCommandBuffer cmd, VkImage image,
 }
 
 // Waits for the captured frame and writes it as a PNG, in RGBA order.
-private void writeCapture(ref Gpu gpu, ref GpuBuffer buffer, string path) @system
+private void writeCapture(ref Gpu gpu, ref GpuBuffer buffer, VkExtent2D extent,
+    string path) @system
 {
     import std.file : write;
     import sparkles.image.png : encodePng;
@@ -1341,7 +2080,6 @@ private void writeCapture(ref Gpu gpu, ref GpuBuffer buffer, string path) @syste
     scope (exit)
         buffer.destroy(gpu.vk.device, gpu.memory);
     gpu.vk.device.queueWaitIdle(gpu.vk.queue);
-    const extent = gpu.swapchain.extent;
     auto pixels = buffer.region.host[0 .. size_t(extent.width) * extent.height * 4].dup;
     with (VkFormat) if (gpu.swapchain.format == VK_FORMAT_B8G8R8A8_UNORM
         || gpu.swapchain.format == VK_FORMAT_B8G8R8A8_SRGB)

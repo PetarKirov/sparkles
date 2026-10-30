@@ -297,3 +297,102 @@ private float[3] over(vec4 src, vec4 bg) @safe pure nothrow @nogc
         v4(0.5f, 0.5f, 0.5f, 1));
     assert(fabs(a[0] - 0.5f) < 1e-4f);
 }
+
+// The box's coverage convolved with a Gaussian of `sigma` at the pixel
+// centred at (px, py): a direct sum over a quarter-pixel grid to ±4σ, its
+// points between the box's whole-pixel edges, never on them.
+private double convolved(double px, double py, double x0, double y0, double w, double h,
+    double r, double sigma) @safe pure nothrow @nogc
+{
+    import std.math : exp, PI, sqrt;
+
+    enum pitch = 0.25;
+    const reach = 4 * sigma;
+    double sum = 0, weights = 0;
+    for (double dy = -reach + pitch / 2; dy <= reach; dy += pitch)
+        for (double dx = -reach + pitch / 2; dx <= reach; dx += pitch)
+        {
+            const g = exp(-(dx * dx + dy * dy) / (2 * sigma * sigma));
+            weights += g;
+            if (inRoundedBox(px + dx, py + dy, x0, y0, w, h, r))
+                sum += g;
+        }
+    return sum / weights;
+}
+
+@("ui_vulkan.shading.blurredBoxCoverage.matchesAConvolution")
+@safe pure nothrow @nogc unittest
+{
+    // A window-like box, blurred as Adwaita's two shadows blur: 14 and 5 CSS
+    // pixels of blur radius, σ 7 and 2.5; and a box smaller than its blur.
+    static immutable float[4][3] cases = [[20, 24, 90, 60], [20, 24, 90, 60], [40, 40, 12, 8]];
+    static immutable float[3] radii = [15, 15, 4];
+    static immutable float[3] sigmas = [7, 2.5f, 6];
+    foreach (c; 0 .. 3)
+    {
+        const b = cases[c];
+        double worst = 0;
+        for (int y = 0; y < 110; y += 3)
+            for (int x = 0; x < 130; x += 3)
+            {
+                const want = convolved(x + 0.5, y + 0.5, b[0], b[1], b[2], b[3], radii[c], sigmas[c]);
+                const got = blurredBoxCoverage(v2(x + 0.5f, y + 0.5f), v4(b[0], b[1], b[2], b[3]),
+                    radii[c], sigmas[c]);
+                const err = fabs(got - want);
+                if (err > worst)
+                    worst = err;
+            }
+        assert(worst <= 4.0 / 255, "within 4/255 of the convolution (`UVK40`)");
+    }
+    // No blur is the box itself.
+    assert(blurredBoxCoverage(v2(30.5f, 30.5f), v4(20, 24, 90, 60), 15, 0) == 1);
+    assert(blurredBoxCoverage(v2(10.5f, 10.5f), v4(20, 24, 90, 60), 15, 0) == 0);
+}
+
+@("ui_vulkan.shading.shadow.isOnlyOutsideTheBox")
+@safe pure nothrow @nogc unittest
+{
+    // Adwaita's window shadow: 14px of blur spread 5, black at 15 %.
+    const box = v4(40, 40, 120, 80);
+    const shape = v4(QuadKind.shadow, 15, 0, 40);
+    const edge = v4(7, 5, 0, 0);
+    float alpha(int x, int y)
+        => shade(v2(x + 0.5f, y + 0.5f), box, v4(0, 0, 0, 0.15f), edge, shape, v4(0), v4(0),
+            v4(0), 0).array[3];
+    // Under the box: nothing, so the window is not darkened.
+    assert(alpha(100, 80) == 0 && alpha(41, 60) == 0);
+    // Just outside an edge: most of the 15 %, fading with distance.
+    const near = alpha(100, 37), mid = alpha(100, 30), far = alpha(100, 10);
+    assert(near > 0.08f && near <= 0.15f && mid < near && far < mid && far < 0.01f);
+    // Beyond a rounded corner, inside the box's square: shadow, not window.
+    assert(alpha(41, 41) > 0.05f);
+    // An offset moves it: more below than above.
+    const dropped = v4(7, 5, 0, 6);
+    float alphaDropped(int x, int y)
+        => shade(v2(x + 0.5f, y + 0.5f), box, v4(0, 0, 0, 0.15f), dropped, shape, v4(0), v4(0),
+            v4(0), 0).array[3];
+    assert(alphaDropped(100, 124) > alphaDropped(100, 35));
+}
+
+@("ui_vulkan.shading.outside.coversWhatTheRoundedBoxDoesNot")
+@safe pure nothrow @nogc unittest
+{
+    const box = v4(10, 10, 60, 40);
+    const shape = v4(QuadKind.outside, 15, 0, 0);
+    // Exact against the oracle at every pixel of a corner: the box's
+    // coverage's complement.
+    foreach (y; 10 .. 26)
+        foreach (x; 10 .. 26)
+        {
+            const want = 1 - exactCoverage((double px, double py)
+                => inRoundedBox(px, py, 10, 10, 60, 40, 15), x, y);
+            const got = shade(v2(x + 0.5f, y + 0.5f), box, v4(0, 0, 0, 1), v4(0), shape, v4(0),
+                v4(0), v4(0), 0).array[3];
+            assert(fabs(got - want) <= 16.0 / 255, "within `UVK11`'s tolerance");
+        }
+    // Inside, nothing to erase; in the corner's tip, all of it.
+    assert(shade(v2(40.5f, 30.5f), box, v4(0, 0, 0, 1), v4(0), shape, v4(0), v4(0), v4(0), 0)
+        .array[3] == 0);
+    assert(shade(v2(10.5f, 10.5f), box, v4(0, 0, 0, 1), v4(0), shape, v4(0), v4(0), v4(0), 0)
+        .array[3] == 1);
+}

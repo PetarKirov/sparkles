@@ -29,6 +29,8 @@ enum PointerIconType : int
     verticalDoubleArrow = 1015,   /// `TYPE_VERTICAL_DOUBLE_ARROW`
     grab = 1020,                  /// `TYPE_GRAB`
     grabbing = 1021,              /// `TYPE_GRABBING`
+    topRightDiagonalDoubleArrow = 1016, /// `TYPE_TOP_RIGHT_DIAGONAL_DOUBLE_ARROW`
+    topLeftDiagonalDoubleArrow = 1017,  /// `TYPE_TOP_LEFT_DIAGONAL_DOUBLE_ARROW`
 }
 
 // The type the next main-thread job applies: the latest asked for, so a burst

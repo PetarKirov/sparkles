@@ -19,7 +19,7 @@ version (linux):
 import core.stdc.stdlib : getenv;
 import core.time : Duration, MonoTime, msecs, seconds;
 import std.conv : text;
-import std.stdio : writeln;
+import std.stdio : writefln, writeln;
 import std.sumtype : match;
 
 import core.stdc.string : strcmp;
@@ -282,6 +282,9 @@ int main()
         expectedScale: scaleText !is null ? atof(scaleText) : 0);
     const outcome = checkWsiConformance(wsi, loop, hooks,
         "sparkles:wsi Wayland conformance");
+    if (outcome.stateReported)
+        writefln("ok: frame reported before ready: %s decorations, states %#x, capabilities %#x",
+            outcome.state.decorations, outcome.state.flags, outcome.state.capabilities);
     writeln("ok: Wayland WSI conformance (", outcome.checked, " checked, ",
         outcome.skipped, " skipped)");
 

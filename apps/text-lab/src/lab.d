@@ -29,7 +29,7 @@ import sparkles.base.term_style : TextAttr, UnderlineStyle;
 import sparkles.base.text.grapheme : fitCells, visibleWidth;
 import sparkles.input : Event, isEndOfInput, Key, KeyEvent, match, PointerAction, PointerEvent;
 import sparkles.ui.geometry : Insets, Point, Rect, Size;
-import sparkles.ui.style : BorderStyle, BoxBorder, Visual;
+import sparkles.ui.style : BorderStyle, BoxBorder, Palette, Slot, Visual;
 import sparkles.ui.widget : Builder, WidgetKind, WidgetTree;
 import sparkles.ui_vulkan.painter : rgba;
 import sparkles.ui_vulkan.text_rendering : Compositing, Hinting, Loupe, TextRendering;
@@ -83,6 +83,7 @@ struct Lab
     private bool pointing; // a mouse hovers, or a finger is down
     private bool sentSettings;
     private bool userSized; // `+` or `-` was pressed: the size is theirs
+    private bool settled; // the panels held the specimen once: the size stays
     private PointerShape shape_ = PointerShape.default_;
     // What the last frame laid out, for a tap or click: the Settings
     // button, the sheet, and the sheet's buttons.
@@ -132,11 +133,18 @@ struct Lab
         const size = h.size;
         // Until the user picks a size, the font steps down a pixel a frame
         // until both panels hold the whole specimen: a phone's 12 pt is a
-        // row short.
-        if (!userSized && h.fontSizePx > minFitPx && !fits(size))
+        // row short. That is the opening size; once it fits, a window the
+        // user then drags smaller keeps its font, which would otherwise only
+        // ever shrink.
+        if (!userSized && !settled)
         {
-            h.fontSize(h.fontSizePx - 1);
-            h.requestFrame();
+            if (fits(size))
+                settled = true;
+            else if (h.fontSizePx > minFitPx)
+            {
+                h.fontSize(h.fontSizePx - 1);
+                h.requestFrame();
+            }
         }
         header(h, canvas, size.width);
         const half = (size.height - headerRows) / 2;
@@ -496,10 +504,19 @@ struct Lab
 
     // The cell under `at`: the pointer is in pixels where the host reports
     // cell sizes, in cells where it does not.
+    // The pixels right of the last whole column and below the last whole
+    // row belong to the last cell: the sheet reaches the window's edge, and
+    // the strip beside it is the sheet's, not the panels'.
     private static Point cellOf(H)(ref H h, Point at)
     {
+        import std.algorithm.comparison : max, min;
+
         static if (__traits(hasMember, H, "cellWidth"))
-            return Point(at.x / (h.cellWidth > 0 ? h.cellWidth : 1), at.y / (h.cellHeight > 0 ? h.cellHeight : 1));
+        {
+            const size = h.size;
+            return Point(min(at.x / max(h.cellWidth, 1), max(size.width - 1, 0)),
+                min(at.y / max(h.cellHeight, 1), max(size.height - 1, 0)));
+        }
         else
             return at;
     }
@@ -607,6 +624,17 @@ private enum RgbColor edge = RgbColor(0x58, 0x5b, 0x70);
 private enum RgbColor accent = RgbColor(0x89, 0xb4, 0xfa);
 private enum RgbColor ink = RgbColor(0xcd, 0xd6, 0xf4);
 private enum RgbColor muted = RgbColor(0x93, 0x99, 0xb2);
+
+/// The window frame's colours where the host draws it (GNOME): the header's.
+Palette framePalette() @safe pure nothrow @nogc
+{
+    import sparkles.base.term_color : Color;
+
+    Palette p;
+    p.bg[Slot.chrome] = Color.fromRgb(headerBg);
+    p.fg[Slot.chrome] = Color.fromRgb(ink);
+    return p;
+}
 
 /// A panel's colours.
 private struct Theme
@@ -961,8 +989,9 @@ version (unittest) private struct SettingsHost
 @system unittest
 {
     // A phone's 49×51 cells hold one row fewer than the wrapped specimen
-    // needs: the font steps down a pixel; a tablet's 100×78 needs none; and
-    // once the user picks a size, it is theirs.
+    // needs: the font steps down a pixel; a tablet's 100×78 needs none;
+    // once it fits, shrinking the window shrinks nothing; and once the user
+    // picks a size, it is theirs.
     assert(!Lab.fits(Size(49, 51)) && Lab.fits(Size(49, 53)) && Lab.fits(Size(100, 78)));
     Lab lab;
     SettingsHost h;
@@ -973,6 +1002,9 @@ version (unittest) private struct SettingsHost
     h.rec.size = Size(100, 78);
     lab.paint(h, tree, null);
     assert(h.rec.fontSizeRequests == [17], "it fits: nothing more");
+    h.rec.size = Size(30, 20);
+    lab.paint(h, tree, null);
+    assert(h.rec.fontSizeRequests == [17], "a window dragged smaller keeps its font");
     lab.handle(h, Event(KeyEvent(ch: '+')));
     h.rec.size = Size(49, 51);
     lab.paint(h, tree, null);
@@ -994,4 +1026,39 @@ version (unittest) private struct SettingsHost
     lab.handle(h, Event(PointerEvent(action: PointerAction.move, pos: Point(s.x + 2, 1))));
     lab.handle(h, Event(PointerEvent(action: PointerAction.move, pos: Point(5, 20))));
     assert(h.rec.shapes == [PointerShape.pointer, PointerShape.default_]);
+}
+
+@("text_lab.everySizeDraws")
+@system unittest
+{
+    // A window the user drags down to nothing — no columns, no rows, or one
+    // of each — is still drawn: GNOME leaves the frame to the client, and
+    // the title bar takes rows from the content first.
+    foreach (size; [Size(0, 0), Size(0, 40), Size(80, 0), Size(1, 1), Size(3, 2), Size(12, 1)])
+    {
+        Lab lab;
+        SettingsHost h;
+        h.rec.size = size;
+        auto tree = lab.view(h);
+        lab.paint(h, tree, null);
+        lab.loupe.shown = true;
+        lab.paint(h, tree, null);
+    }
+}
+
+@("text_lab.theStripPastTheLastCellIsTheLastCell")
+@safe pure nothrow @nogc unittest
+{
+    // A 747 px window of 11 px cells is 67 columns and 10 px more: those
+    // pixels are the last column's, so the open sheet beside them keeps
+    // the pointer from aiming the loupe there.
+    static struct Cells
+    {
+        Size size = Size(67, 30);
+        int cellWidth = 11, cellHeight = 20;
+    }
+    Cells h;
+    assert(Lab.cellOf(h, Point(740, 605)) == Point(66, 29));
+    assert(Lab.cellOf(h, Point(725, 580)) == Point(65, 29));
+    assert(Lab.cellOf(h, Point(0, 0)) == Point(0, 0));
 }

@@ -25,11 +25,13 @@ import core.sys.posix.sys.mman : MAP_FAILED, MAP_PRIVATE, PROT_READ, mmap,
     munmap;
 import core.sys.posix.unistd : getpid, posixClose = close, read, write;
 import core.time : Duration, MonoTime, msecs;
+import std.math : isFinite;
 import std.traits : Parameters;
 
 import sparkles.base.buffer : InlineBuffer, UniqueBuffer;
+import sparkles.base.text.utf8 : validateUtf8;
 import sparkles.base.pool.pool : Pool, PoolError;
-import sparkles.base.text.cstring : toTempStringz;
+import sparkles.base.text.cstring : hasInteriorNul, toTempStringz;
 import sparkles.input.events : KeyAction, Mods, PointerButton;
 import sparkles.input.pointer : PointerShape;
 import sparkles.event_horizon.errors : IoErrorStage, IoResult, OpKind,
@@ -79,6 +81,28 @@ struct WaylandWsi
         bool cursorVisible = true;
         zwp_confined_pointer_v1* confined;
         bool relative;
+        /// The server-side decoration request, when one was made (`F13`).
+        zxdg_toplevel_decoration_v1* decoration;
+        /// The frame as configured so far, and as last reported: a
+        /// configure sequence fills `pendingState`; `xdg_surface.configure`
+        /// applies it, reporting a change.
+        WindowState pendingState;
+        WindowState state;
+        bool stateReported;
+        /// `DecorationPreference.none`: a client-side frame is not drawn.
+        bool noFrame;
+        /// What a client frame draws outside the window (`F13`), and the
+        /// window's own size, which the surface exceeds by the margin.
+        FrameExtents extents;
+        LogicalSize windowSize;
+        /// Geometry and regions were set from extents, and are reset to the
+        /// protocol's defaults when the extents are taken back.
+        bool placed;
+        /// The crop of the buffers committed, and the viewport that makes it;
+        /// empty for none (`setBufferCrop`).
+        wp_viewport* viewport;
+        PhysicalSize crop;
+        int cropScale;
     }
 
     private wl_display* display_;
@@ -102,6 +126,10 @@ struct WaylandWsi
     private Output[8] outputs_;
     private wl_pointer* pointer_;
     private wp_cursor_shape_manager_v1* cursorShapeManager_;
+    private wp_viewporter* viewporter_;
+    private zxdg_decoration_manager_v1* decorationManager_;
+    /// `WsiConfig.app`'s id: every toplevel's `app_id`.
+    private InlineBuffer!(char, 128) appId_;
     private wp_cursor_shape_device_v1* cursorShapeDevice_;
     private uint pointerEnterSerial_;
     private uint pointerButtonSerial_;
@@ -157,8 +185,13 @@ struct WaylandWsi
     drive `runIntegratedOnce` until `bootstrapComplete` before creating a
     window. Event Horizon performs the first and every subsequent wait.
     */
-    static WsiResult!void open(out WaylandWsi wsi, ref DefaultLoop loop)
+    static WsiResult!void open(out WaylandWsi wsi, ref DefaultLoop loop,
+        in WsiConfig config = WsiConfig.init)
     {
+        if (auto fault = config.app.fault)
+            return waylandFailure!void(WsiOperation.open, 0, fault,
+                WsiErrorKind.invalidArgument);
+        cast(void) wsi.appId_.assign(config.app.idOrDefault);
         wsi.display_ = wl_display_connect(null);
         if (wsi.display_ is null)
             return waylandFailure!void(WsiOperation.open, errno,
@@ -222,8 +255,7 @@ struct WaylandWsi
             return waylandFailure!WindowId(WsiOperation.createWindow, 0,
                 fault, WsiErrorKind.invalidArgument);
         if (!config.visible || config.parent.valid || config.transparent
-            || config.state == WindowStartupState.minimized
-            || config.decorations == DecorationPreference.server)
+            || config.state == WindowStartupState.minimized)
             return waylandFailure!WindowId(WsiOperation.createWindow, 0,
                 "requested Wayland startup configuration is not implemented",
                 WsiErrorKind.unsupported);
@@ -245,6 +277,8 @@ struct WaylandWsi
         slot.owner = &this;
         slot.ready = false;
         slot.requestedSize = config.logicalSize;
+        slot.windowSize = config.logicalSize;
+        slot.extents = config.frameExtents;
         // Each step returns the moment it fails, so no later call runs against
         // a null object. They share one cleanup rather than each repeating
         // `destroyNative` and the re-arm: `destroyNative` frees exactly what
@@ -264,10 +298,12 @@ struct WaylandWsi
             slot.toplevel = xdg_surface_get_toplevel(slot.xdgSurface);
             if (slot.toplevel is null)
                 return false;
-            return xdg_surface_add_listener(slot.xdgSurface,
-                    listenerPtr(xdgSurfaceListener), &slot) == 0
-                && xdg_toplevel_add_listener(slot.toplevel,
-                    listenerPtr(toplevelListener), &slot) == 0;
+            if (xdg_surface_add_listener(slot.xdgSurface,
+                    listenerPtr(xdgSurfaceListener), &slot) != 0
+                || xdg_toplevel_add_listener(slot.toplevel,
+                    listenerPtr(toplevelListener), &slot) != 0)
+                return false;
+            return requestDecorations(slot, config.decorations);
         }
 
         if (!buildObjectTree())
@@ -288,7 +324,7 @@ struct WaylandWsi
         // past whatever `WindowConfig.title` happens to hold today.
         xdg_toplevel_set_title(slot.toplevel,
             config.title[].toTempStringz.ptr);
-        xdg_toplevel_set_app_id(slot.toplevel, "sparkles-wsi");
+        xdg_toplevel_set_app_id(slot.toplevel, appId_[].toTempStringz.ptr);
         if (!config.resizable)
         {
             const width = cast(int) config.logicalSize.width;
@@ -376,6 +412,113 @@ struct WaylandWsi
         else
             xdg_toplevel_unset_maximized(slot.toplevel);
         return prepareAndArm();
+    }
+
+    /// Retitles the window (`F13`): what the window list, the dock and a
+    /// server-drawn title bar show. A client-drawn bar reads its own copy.
+    WsiResult!void setTitle(WindowId id, in char[] title)
+    {
+        auto checked = checkedSlot(id, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!void(checked.error);
+        if (validateUtf8(title).hasError || hasInteriorNul(title))
+            return waylandFailure!void(WsiOperation.command, 0,
+                "a window title is NUL-free UTF-8", WsiErrorKind.invalidArgument);
+        auto paused = pausePoll();
+        if (paused.hasError)
+            return paused;
+        xdg_toplevel_set_title(windows_.at(checked.value).toplevel,
+            title.toTempStringz.ptr);
+        return prepareAndArm();
+    }
+
+    /**
+    The smallest size, in logical units, the user may resize the window to
+    (`F14`); a zero dimension lifts that bound. A client-drawn frame sets it
+    so the window cannot shrink past its own title bar. It applies with the
+    window's next commit.
+    */
+    WsiResult!void setMinimumSize(WindowId id, LogicalSize size)
+    {
+        auto checked = checkedSlot(id, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!void(checked.error);
+        if (!size.width.isFinite || !size.height.isFinite || size.width < 0 || size.height < 0
+            || size.width > int.max || size.height > int.max)
+            return waylandFailure!void(WsiOperation.command, 0,
+                "a minimum size is finite and not negative", WsiErrorKind.invalidArgument);
+        auto paused = pausePoll();
+        if (paused.hasError)
+            return paused;
+        xdg_toplevel_set_min_size(windows_.at(checked.value).toplevel,
+            cast(int) size.width, cast(int) size.height);
+        return prepareAndArm();
+    }
+
+    /// Asks the window manager to minimize the window (`F14`). It may
+    /// refuse; nothing reports whether it did.
+    WsiResult!void setMinimized(WindowId id)
+    {
+        auto checked = checkedSlot(id, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!void(checked.error);
+        auto paused = pausePoll();
+        if (paused.hasError)
+            return paused;
+        xdg_toplevel_set_minimized(windows_.at(checked.value).toplevel);
+        return prepareAndArm();
+    }
+
+    /**
+    Opens the window manager's own window menu at `at`, in logical units from
+    the window's top-left (`F13`): what a client-drawn title bar shows on a
+    secondary click. Like a move, it must answer a pointer press.
+    */
+    WsiResult!void showWindowMenu(WindowId id, LogicalPosition at)
+    {
+        auto checked = checkedSlot(id, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!void(checked.error);
+        if (seat_ is null || pointerButtonSerial_ == 0)
+            return waylandFailure!void(WsiOperation.command, 0,
+                "the window menu needs a recent pointer press",
+                WsiErrorKind.invalidArgument);
+        auto paused = pausePoll();
+        if (paused.hasError)
+            return paused;
+        xdg_toplevel_show_window_menu(windows_.at(checked.value).toplevel, seat_,
+            pointerButtonSerial_, cast(int) at.x, cast(int) at.y);
+        return prepareAndArm();
+    }
+
+    /*
+    The frame request (`F13`), made before the first commit as the protocol
+    requires, and told to the compositor whichever way it goes: one that
+    decorates unless asked otherwise must hear `client` (and `none`, which
+    the protocol spells as client-side) as well as `server`. Without the
+    decoration manager — GNOME has none — the frame is the client's; with
+    it, the decoration's configure answers, inside the configure sequence it
+    applies to.
+    */
+    private bool requestDecorations(ref Slot slot, DecorationPreference preference)
+    {
+        const drawsNone = preference == DecorationPreference.none;
+        slot.noFrame = drawsNone;
+        slot.pendingState.decorations = drawsNone ? DecorationMode.none : DecorationMode.client;
+        if (decorationManager_ is null)
+            return true;
+        slot.decoration = zxdg_decoration_manager_v1_get_toplevel_decoration(
+            decorationManager_, slot.toplevel);
+        if (slot.decoration is null
+            || zxdg_toplevel_decoration_v1_add_listener(slot.decoration,
+                listenerPtr(decorationListener), &slot) != 0)
+            return false;
+        const serverSide = preference == DecorationPreference.automatic
+            || preference == DecorationPreference.server;
+        zxdg_toplevel_decoration_v1_set_mode(slot.decoration, serverSide
+            ? ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE
+            : ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE);
+        return true;
     }
 
     WsiResult!void destroyWindow(WindowId id)
@@ -743,6 +886,16 @@ struct WaylandWsi
             wp_cursor_shape_manager_v1_destroy(cursorShapeManager_);
             cursorShapeManager_ = null;
         }
+        if (decorationManager_ !is null)
+        {
+            zxdg_decoration_manager_v1_destroy(decorationManager_);
+            decorationManager_ = null;
+        }
+        if (viewporter_ !is null)
+        {
+            wp_viewporter_destroy(viewporter_);
+            viewporter_ = null;
+        }
         if (keyboard_ !is null)
         {
             if (seatVersion_ >= WL_KEYBOARD_RELEASE_SINCE_VERSION)
@@ -809,6 +962,12 @@ struct WaylandWsi
             zwp_confined_pointer_v1_destroy(slot.confined);
         if (slot.frameCallback !is null)
             wl_callback_destroy(slot.frameCallback);
+        // Before its toplevel: a decoration outliving it is a protocol error.
+        if (slot.decoration !is null)
+            zxdg_toplevel_decoration_v1_destroy(slot.decoration);
+        // Before its surface, as every surface extension.
+        if (slot.viewport !is null)
+            wp_viewport_destroy(slot.viewport);
         if (slot.toplevel !is null)
             xdg_toplevel_destroy(slot.toplevel);
         if (slot.xdgSurface !is null)
@@ -1731,14 +1890,31 @@ struct WaylandWsi
         else if (strcmp(interfaceName, xdg_wm_base_interface.name) == 0
             && owner.wmBase_ is null)
         {
+            // v2 reports tiled edges, v5 the window manager's capabilities,
+            // v6 suspension; every listener handles all of v6's events.
+            const version_ = advertisedVersion < 6 ? advertisedVersion : 6;
             owner.wmBase_ = cast(xdg_wm_base*) wl_registry_bind(
-                registry, name, &xdg_wm_base_interface, 1);
+                registry, name, &xdg_wm_base_interface, version_);
             if (owner.wmBase_ !is null
                 && xdg_wm_base_add_listener(owner.wmBase_,
                     listenerPtr(wmBaseListener), owner) != 0)
                 owner.remember(wsiError(WsiErrorKind.nativeFailure,
                     WsiOperation.open, BackendKind.wayland, 0,
                     "failed to install xdg_wm_base listener"));
+        }
+        else if (strcmp(interfaceName,
+            zxdg_decoration_manager_v1_interface.name) == 0
+            && owner.decorationManager_ is null)
+        {
+            owner.decorationManager_ = cast(zxdg_decoration_manager_v1*)
+                wl_registry_bind(registry, name,
+                    &zxdg_decoration_manager_v1_interface, 1);
+        }
+        else if (strcmp(interfaceName, wp_viewporter_interface.name) == 0
+            && owner.viewporter_ is null)
+        {
+            owner.viewporter_ = cast(wp_viewporter*) wl_registry_bind(registry,
+                name, &wp_viewporter_interface, 1);
         }
         else if (strcmp(interfaceName,
             wp_cursor_shape_manager_v1_interface.name) == 0
@@ -1983,18 +2159,166 @@ struct WaylandWsi
         slot.scale = scale;
         if (slot.surface !is null)
             wl_surface_set_buffer_scale(slot.surface, scale);
-        const metrics = metricsFor(slot, slot.metrics.logicalSize);
+        const metrics = metricsFor(slot, slot.windowSize, slot.state);
         if (slot.ready && metrics != slot.metrics)
             emit(idAt(windowIndex), SurfaceMetricsChangedEvent(metrics));
         slot.metrics = metrics;
     }
 
-    private static SurfaceMetrics metricsFor(ref const Slot slot,
-        LogicalSize logical) nothrow @nogc
-        => SurfaceMetrics(logical,
+    /// The surface's metrics for a window of `window` logical units in
+    /// `state`: the surface is the window and the frame's margin round it.
+    private static SurfaceMetrics metricsFor(ref const Slot slot, LogicalSize window,
+        in WindowState state) nothrow @nogc
+    {
+        const m = slot.extents.marginIn(state);
+        const logical = LogicalSize(window.width + 2 * m, window.height + 2 * m);
+        auto metrics = SurfaceMetrics(logical,
             PhysicalSize(cast(int)(logical.width * slot.scale),
                 cast(int)(logical.height * slot.scale)),
             ScaleFactor(slot.scale));
+        const pm = m * slot.scale;
+        metrics.frameMargin = PhysicalInsets(pm, pm, pm, pm);
+        return metrics;
+    }
+
+    /*
+    The window inside its surface, as the compositor is to place and stack it
+    (`F13`): its geometry, the input region (the window and its outer resize
+    border; a press on the shadow beyond goes through) and the opaque region
+    (the window less its rounded corners). Double-buffered, so they apply
+    with the next buffer — the one at the size they were set for. A window
+    that asked for no extents keeps the protocol's defaults.
+    */
+    private void placeWindow(ref Slot slot, in WindowState state) nothrow @nogc
+    {
+        if (slot.xdgSurface is null || slot.surface is null)
+            return;
+        const w = cast(int) slot.windowSize.width, h = cast(int) slot.windowSize.height;
+        if (slot.extents == FrameExtents.init)
+        {
+            // Taken back: the whole surface is the window again, and takes
+            // input everywhere, as before any were set.
+            if (slot.placed && w > 0 && h > 0)
+            {
+                xdg_surface_set_window_geometry(slot.xdgSurface, 0, 0, w, h);
+                wl_surface_set_input_region(slot.surface, null);
+                wl_surface_set_opaque_region(slot.surface, null);
+            }
+            slot.placed = false;
+            return;
+        }
+        const m = cast(int) slot.extents.marginIn(state);
+        if (w <= 0 || h <= 0)
+            return;
+        slot.placed = true;
+        xdg_surface_set_window_geometry(slot.xdgSurface, m, m, w, h);
+        if (auto input = wl_compositor_create_region(compositor_))
+        {
+            const r = cast(int) slot.extents.resizeIn(state);
+            wl_region_add(input, m - r, m - r, w + 2 * r, h + 2 * r);
+            wl_surface_set_input_region(slot.surface, input);
+            wl_region_destroy(input);
+        }
+        if (auto opaque = wl_compositor_create_region(compositor_))
+        {
+            const r = cast(int) slot.extents.radiusIn(state);
+            if (2 * r < w && 2 * r < h)
+            {
+                wl_region_add(opaque, m, m + r, w, h - 2 * r);
+                if (r > 0)
+                    wl_region_add(opaque, m + r, m, w - 2 * r, h);
+            }
+            wl_surface_set_opaque_region(slot.surface, opaque);
+            wl_region_destroy(opaque);
+        }
+    }
+
+    /**
+    What a client-drawn frame draws outside the window from now on (`F13`):
+    the surface grows by the margin while the frame is the client's and the
+    window is not maximized or fullscreen, and the metrics that follow say
+    so. It applies with the window's next buffer.
+    */
+    WsiResult!void setFrameExtents(WindowId id, FrameExtents extents)
+    {
+        auto checked = checkedSlot(id, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!void(checked.error);
+        if (const fault = extents.fault)
+            return waylandFailure!void(WsiOperation.command, 0, fault,
+                WsiErrorKind.invalidArgument);
+        auto paused = pausePoll();
+        if (paused.hasError)
+            return paused;
+        const index = checked.value;
+        ref slot = windows_.at(index);
+        slot.extents = extents;
+        placeWindow(slot, slot.state);
+        const metrics = metricsFor(slot, slot.windowSize, slot.state);
+        if (slot.ready && metrics != slot.metrics)
+            emit(idAt(index), SurfaceMetricsChangedEvent(metrics));
+        slot.metrics = metrics;
+        return prepareAndArm();
+    }
+
+    /// Whether $(LREF setBufferCrop) can crop: the compositor has
+    /// `wp_viewporter`.
+    bool canCropBuffers() const @safe pure nothrow @nogc => viewporter_ !is null;
+
+    /**
+    Show only the top-left `shown` pixels of the buffers the window commits
+    from now on, at the window's size; an empty size shows whole buffers
+    again. A renderer that keeps a swapchain larger than the window through
+    an interactive resize spares a new swapchain per step, and Mesa's round
+    trip to the compositor with it. Applies with the next commit, as every
+    surface state; a compositor without `wp_viewporter` reports
+    `unsupported`, and buffers must then match the window.
+    */
+    WsiResult!void setBufferCrop(WindowId id, PhysicalSize shown)
+    {
+        auto checked = checkedSlot(id, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!void(checked.error);
+        ref slot = windows_.at(checked.value);
+        const scale = slot.scale > 0 ? slot.scale : 1;
+        const whole = shown.width == 0 || shown.height == 0;
+        // Whole buffers are what a surface without a viewport shows: asking
+        // for them costs nothing, viewporter or not.
+        if (whole && slot.viewport is null)
+            return wsiOk();
+        if (whole ? slot.crop == PhysicalSize.init
+            : shown == slot.crop && scale == slot.cropScale)
+            return wsiOk();
+        if (viewporter_ is null)
+            return waylandFailure!void(WsiOperation.command, 0,
+                "the compositor has no wp_viewporter", WsiErrorKind.unsupported);
+        if (shown.width % scale || shown.height % scale)
+            return waylandFailure!void(WsiOperation.command, 0,
+                "a crop must be whole surface units", WsiErrorKind.invalidArgument);
+        auto paused = pausePoll();
+        if (paused.hasError)
+            return paused;
+        if (slot.viewport is null)
+            slot.viewport = wp_viewporter_get_viewport(viewporter_, slot.surface);
+        if (slot.viewport is null)
+            return waylandFailure!void(WsiOperation.command, 0,
+                "wp_viewporter.get_viewport failed");
+        if (!whole)
+        {
+            const w = cast(int)(shown.width / scale), h = cast(int)(shown.height / scale);
+            // Surface-local units, after the buffer scale: whole ones.
+            wp_viewport_set_source(slot.viewport, 0, 0, w << 8, h << 8);
+            wp_viewport_set_destination(slot.viewport, w, h);
+        }
+        else
+        {
+            wp_viewport_set_source(slot.viewport, -256, -256, -256, -256);
+            wp_viewport_set_destination(slot.viewport, -1, -1);
+        }
+        slot.crop = whole ? PhysicalSize.init : shown;
+        slot.cropScale = scale;
+        return prepareAndArm();
+    }
 
     private extern (C) static void onSeatCapabilities(void* data,
         wl_seat* seat, uint capabilities) nothrow @nogc
@@ -2249,6 +2573,10 @@ struct WaylandWsi
                 return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_GRAB;
             case PointerShape.grabbing:
                 return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_GRABBING;
+            case PointerShape.nwseResize:
+                return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NWSE_RESIZE;
+            case PointerShape.neswResize:
+                return WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NESW_RESIZE;
         }
     }
 
@@ -2284,6 +2612,16 @@ struct WaylandWsi
     /// The seat exposes one pointer.
     private enum seatPointer = PointerId(0, 1);
 
+    /// A surface-local logical position in the buffer's pixels at its
+    /// integer `scale`: floored, so a grab's position left of the surface
+    /// stays left of it.
+    private static PhysicalPosition physicalAt(LogicalPosition p, int scale) @safe pure nothrow @nogc
+    {
+        import std.math : floor;
+
+        return PhysicalPosition(cast(int) floor(p.x * scale), cast(int) floor(p.y * scale));
+    }
+
     private void emitPointer(PointerPhase phase,
         PointerButton button = PointerButton.none) nothrow @nogc
     {
@@ -2295,8 +2633,7 @@ struct WaylandWsi
         event.phase = phase;
         event.button = button;
         event.logicalPosition = pointerPosition_;
-        event.physicalPosition = PhysicalPosition(
-            cast(int) pointerPosition_.x, cast(int) pointerPosition_.y);
+        event.physicalPosition = physicalAt(pointerPosition_, windows_.at(index).scale);
         event.modifiers = keyboardMods_;
         emit(idAt(index), event);
     }
@@ -2421,9 +2758,8 @@ struct WaylandWsi
         {
             ScrollEvent scroll;
             scroll.logicalPosition = owner.pointerPosition_;
-            scroll.physicalPosition = PhysicalPosition(
-                cast(int) owner.pointerPosition_.x,
-                cast(int) owner.pointerPosition_.y);
+            scroll.physicalPosition = physicalAt(owner.pointerPosition_,
+                owner.windows_.at(index).scale);
             scroll.dx = owner.pendingScrollDx_;
             scroll.dy = owner.pendingScrollDy_;
             scroll.discreteX = owner.pendingDiscreteX_;
@@ -2817,11 +3153,30 @@ struct WaylandWsi
         const height = slot.pendingHeight > 0
             ? cast(uint) slot.pendingHeight
             : cast(uint) slot.requestedSize.height;
-        const metrics = metricsFor(*slot, LogicalSize(width, height));
+        // A floating window's size is the one a configure that leaves the
+        // size to the client (0 × 0) keeps: Weston's at the end of a resize,
+        // which went back to the size the window opened at, and any
+        // compositor's on restoring a maximized window.
+        if (!slot.pendingState.edgesHeld)
+            slot.requestedSize = LogicalSize(width, height);
+        // The configure sizes the window; the surface is it and the margin
+        // the new state keeps.
+        slot.windowSize = LogicalSize(width, height);
+        owner.placeWindow(*slot, slot.pendingState);
+        const metrics = metricsFor(*slot, slot.windowSize, slot.pendingState);
         const index = owner.indexOfSlot(slot);
         if (index == size_t.max)
             return;
         const id = owner.idAt(index);
+
+        // The frame first: an application insetting its content for its own
+        // title bar lays out against the metrics that follow.
+        if (!slot.stateReported || slot.pendingState != slot.state)
+        {
+            slot.state = slot.pendingState;
+            slot.stateReported = true;
+            owner.emit(id, WindowStateChangedEvent(slot.state));
+        }
 
         if (!slot.ready)
         {
@@ -2846,11 +3201,23 @@ struct WaylandWsi
     }
 
     private extern (C) static void onToplevelConfigure(void* data,
-        xdg_toplevel*, int width, int height, wl_array*) nothrow @nogc
+        xdg_toplevel*, int width, int height, wl_array* states) nothrow @nogc
     {
         auto slot = cast(Slot*) data;
         slot.pendingWidth = width;
         slot.pendingHeight = height;
+        slot.pendingState.flags = toplevelFlags(arrayWords(states));
+    }
+
+    private extern (C) static void onDecorationConfigure(void* data,
+        zxdg_toplevel_decoration_v1*, uint mode) nothrow @nogc
+    {
+        auto slot = cast(Slot*) data;
+        // A window that draws no frame and is left one to draw draws none;
+        // one the compositor decorates anyway is decorated.
+        slot.pendingState.decorations =
+            mode == ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE ? DecorationMode.server
+                : slot.noFrame ? DecorationMode.none : DecorationMode.client;
     }
 
     private extern (C) static void onToplevelClose(void* data,
@@ -2863,14 +3230,20 @@ struct WaylandWsi
             owner.emit(owner.idAt(index), CloseRequestedEvent());
     }
 
-    private extern (C) static void onToplevelConfigureBounds(void*,
-        xdg_toplevel*, int, int) nothrow @nogc
+    private extern (C) static void onToplevelConfigureBounds(void* data,
+        xdg_toplevel*, int width, int height) nothrow @nogc
     {
+        auto slot = cast(Slot*) data;
+        static ushort side(int v) => cast(ushort)(v <= 0 ? 0 : v > ushort.max ? ushort.max : v);
+        slot.pendingState.boundsWidth = side(width);
+        slot.pendingState.boundsHeight = side(height);
     }
 
-    private extern (C) static void onToplevelWmCapabilities(void*,
-        xdg_toplevel*, wl_array*) nothrow @nogc
+    private extern (C) static void onToplevelWmCapabilities(void* data,
+        xdg_toplevel*, wl_array* capabilities) nothrow @nogc
     {
+        auto slot = cast(Slot*) data;
+        slot.pendingState.capabilities = windowCapabilities(arrayWords(capabilities));
     }
 
     private extern (C) static void onFrameDone(void* data,
@@ -2923,6 +3296,9 @@ private immutable xdg_toplevel_listener toplevelListener = {
     &WaylandWsi.onToplevelConfigure, &WaylandWsi.onToplevelClose,
     &WaylandWsi.onToplevelConfigureBounds,
     &WaylandWsi.onToplevelWmCapabilities
+};
+private immutable zxdg_toplevel_decoration_v1_listener decorationListener = {
+    &WaylandWsi.onDecorationConfigure
 };
 private immutable wl_callback_listener frameListener = {
     &WaylandWsi.onFrameDone
@@ -3292,6 +3668,42 @@ private wl_callback* wl_surface_frame()(wl_surface* self)
         WL_SURFACE_FRAME, &wl_callback_interface,
         wl_proxy_get_version(cast(wl_proxy*) self), 0, cast(void*) null);
 
+private wl_region* wl_compositor_create_region()(wl_compositor* self)
+    => cast(wl_region*) wl_proxy_marshal_flags(cast(wl_proxy*) self,
+        WL_COMPOSITOR_CREATE_REGION, &wl_region_interface,
+        wl_proxy_get_version(cast(wl_proxy*) self), 0, cast(void*) null);
+
+private void wl_region_add()(wl_region* self, int x, int y, int width, int height)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, WL_REGION_ADD, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), 0, x, y, width, height);
+}
+
+private void wl_region_destroy()(wl_region* self)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, WL_REGION_DESTROY, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), WL_MARSHAL_FLAG_DESTROY);
+}
+
+private void wl_surface_set_input_region()(wl_surface* self, wl_region* region)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, WL_SURFACE_SET_INPUT_REGION, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), 0, region);
+}
+
+private void wl_surface_set_opaque_region()(wl_surface* self, wl_region* region)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, WL_SURFACE_SET_OPAQUE_REGION, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), 0, region);
+}
+
+private void xdg_surface_set_window_geometry()(xdg_surface* self, int x, int y, int width,
+    int height)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, XDG_SURFACE_SET_WINDOW_GEOMETRY, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), 0, x, y, width, height);
+}
+
 private void wl_surface_set_buffer_scale()(wl_surface* self, int scale)
 {
     wl_proxy_marshal_flags(cast(wl_proxy*) self, WL_SURFACE_SET_BUFFER_SCALE, null,
@@ -3477,6 +3889,142 @@ private void xdg_toplevel_set_min_size()(xdg_toplevel* self, int width, int heig
 {
     wl_proxy_marshal_flags(cast(wl_proxy*) self, XDG_TOPLEVEL_SET_MIN_SIZE, null,
         wl_proxy_get_version(cast(wl_proxy*) self), 0, width, height);
+}
+
+private void xdg_toplevel_set_minimized()(xdg_toplevel* self)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, XDG_TOPLEVEL_SET_MINIMIZED, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), 0);
+}
+
+private void xdg_toplevel_show_window_menu()(xdg_toplevel* self, wl_seat* seat,
+    uint serial, int x, int y)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, XDG_TOPLEVEL_SHOW_WINDOW_MENU, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), 0, seat, serial, x, y);
+}
+
+private zxdg_toplevel_decoration_v1* zxdg_decoration_manager_v1_get_toplevel_decoration()(
+        zxdg_decoration_manager_v1* self, xdg_toplevel* toplevel)
+    => cast(zxdg_toplevel_decoration_v1*) wl_proxy_marshal_flags(cast(wl_proxy*) self,
+        ZXDG_DECORATION_MANAGER_V1_GET_TOPLEVEL_DECORATION,
+        &zxdg_toplevel_decoration_v1_interface,
+        wl_proxy_get_version(cast(wl_proxy*) self), 0, cast(void*) null, toplevel);
+
+private void wp_viewporter_destroy()(wp_viewporter* self)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, WP_VIEWPORTER_DESTROY, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), WL_MARSHAL_FLAG_DESTROY);
+}
+
+private wp_viewport* wp_viewporter_get_viewport()(wp_viewporter* self, wl_surface* surface)
+    => cast(wp_viewport*) wl_proxy_marshal_flags(cast(wl_proxy*) self,
+        WP_VIEWPORTER_GET_VIEWPORT, &wp_viewport_interface,
+        wl_proxy_get_version(cast(wl_proxy*) self), 0, cast(void*) null, surface);
+
+private void wp_viewport_destroy()(wp_viewport* self)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, WP_VIEWPORT_DESTROY, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), WL_MARSHAL_FLAG_DESTROY);
+}
+
+// `x`, `y`, `width` and `height` are `wl_fixed_t`: 24.8 fixed point.
+private void wp_viewport_set_source()(wp_viewport* self, int x, int y, int width, int height)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, WP_VIEWPORT_SET_SOURCE, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), 0, x, y, width, height);
+}
+
+private void wp_viewport_set_destination()(wp_viewport* self, int width, int height)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, WP_VIEWPORT_SET_DESTINATION, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), 0, width, height);
+}
+
+private void zxdg_decoration_manager_v1_destroy()(zxdg_decoration_manager_v1* self)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, ZXDG_DECORATION_MANAGER_V1_DESTROY, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), WL_MARSHAL_FLAG_DESTROY);
+}
+
+private int zxdg_toplevel_decoration_v1_add_listener()(zxdg_toplevel_decoration_v1* self,
+        const(zxdg_toplevel_decoration_v1_listener)* listener, void* data)
+    => wl_proxy_add_listener(cast(wl_proxy*) self, cast(ListenerImpl) listener, data);
+
+private void zxdg_toplevel_decoration_v1_set_mode()(zxdg_toplevel_decoration_v1* self,
+    uint mode)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, ZXDG_TOPLEVEL_DECORATION_V1_SET_MODE, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), 0, mode);
+}
+
+private void zxdg_toplevel_decoration_v1_destroy()(zxdg_toplevel_decoration_v1* self)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, ZXDG_TOPLEVEL_DECORATION_V1_DESTROY, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), WL_MARSHAL_FLAG_DESTROY);
+}
+
+/// A `wl_array` of protocol `uint`s as a slice, valid for the event.
+private const(uint)[] arrayWords(const(wl_array)* a) @trusted pure nothrow @nogc
+    => a is null || a.data is null ? null
+        : (cast(const(uint)*) a.data)[0 .. a.size / uint.sizeof];
+
+/// `xdg_toplevel.configure`'s states as $(LREF ToplevelState) bits; states
+/// a newer compositor adds are ignored.
+private ushort toplevelFlags(const(uint)[] states) @safe pure nothrow @nogc
+{
+    ushort flags;
+    foreach (st; states)
+        switch (st)
+        {
+            case XDG_TOPLEVEL_STATE_MAXIMIZED: flags |= ToplevelState.maximized; break;
+            case XDG_TOPLEVEL_STATE_FULLSCREEN: flags |= ToplevelState.fullscreen; break;
+            case XDG_TOPLEVEL_STATE_RESIZING: flags |= ToplevelState.resizing; break;
+            case XDG_TOPLEVEL_STATE_ACTIVATED: flags |= ToplevelState.activated; break;
+            case XDG_TOPLEVEL_STATE_TILED_LEFT: flags |= ToplevelState.tiledLeft; break;
+            case XDG_TOPLEVEL_STATE_TILED_RIGHT: flags |= ToplevelState.tiledRight; break;
+            case XDG_TOPLEVEL_STATE_TILED_TOP: flags |= ToplevelState.tiledTop; break;
+            case XDG_TOPLEVEL_STATE_TILED_BOTTOM: flags |= ToplevelState.tiledBottom; break;
+            case XDG_TOPLEVEL_STATE_SUSPENDED: flags |= ToplevelState.suspended; break;
+            default: break;
+        }
+    return flags;
+}
+
+@("wsi.wayland.toplevelFlags.knownStatesOnly")
+@safe pure nothrow @nogc
+unittest
+{
+    static immutable uint[] states = [XDG_TOPLEVEL_STATE_ACTIVATED,
+        XDG_TOPLEVEL_STATE_TILED_LEFT, 99];
+    assert(toplevelFlags(states) == (ToplevelState.activated | ToplevelState.tiledLeft));
+    assert(toplevelFlags(null) == 0);
+}
+
+/// `xdg_toplevel.wm_capabilities` as $(LREF WindowCapability) bits. An empty
+/// list is the protocol's "none offered", not "unknown".
+private ubyte windowCapabilities(const(uint)[] caps) @safe pure nothrow @nogc
+{
+    ubyte bits;
+    foreach (c; caps)
+        switch (c)
+        {
+            case XDG_TOPLEVEL_WM_CAPABILITIES_WINDOW_MENU: bits |= WindowCapability.windowMenu; break;
+            case XDG_TOPLEVEL_WM_CAPABILITIES_MAXIMIZE: bits |= WindowCapability.maximize; break;
+            case XDG_TOPLEVEL_WM_CAPABILITIES_FULLSCREEN: bits |= WindowCapability.fullscreen; break;
+            case XDG_TOPLEVEL_WM_CAPABILITIES_MINIMIZE: bits |= WindowCapability.minimize; break;
+            default: break;
+        }
+    return bits;
+}
+
+@("wsi.wayland.windowCapabilities.emptyMeansNone")
+@safe pure nothrow @nogc
+unittest
+{
+    static immutable uint[] caps = [XDG_TOPLEVEL_WM_CAPABILITIES_MINIMIZE];
+    assert(windowCapabilities(caps) == WindowCapability.minimize);
+    assert(windowCapabilities(null) == 0);
 }
 
 private wp_cursor_shape_device_v1* wp_cursor_shape_manager_v1_get_pointer()(wp_cursor_shape_manager_v1* self, wl_pointer* pointer)
@@ -3733,4 +4281,15 @@ private ptrdiff_t writeWithoutSigpipe(int fd, const(void)* bytes, size_t length)
     pthread_sigmask(SIG_SETMASK, &previous, null);
     errno = failure;
     return n;
+}
+
+@("wsi.wayland.pointerPositionsAreInBufferPixels")
+@safe pure nothrow @nogc unittest
+{
+    // At buffer scale 2 a pointer at logical (400.75, 10) is buffer pixel
+    // (801, 20): the frame's buttons and the cells are found in buffer
+    // pixels. Left of the surface, during a grab, it stays left.
+    assert(WaylandWsi.physicalAt(LogicalPosition(400.75, 10), 2) == PhysicalPosition(801, 20));
+    assert(WaylandWsi.physicalAt(LogicalPosition(400.75, 10), 1) == PhysicalPosition(400, 10));
+    assert(WaylandWsi.physicalAt(LogicalPosition(-0.5, 3), 1) == PhysicalPosition(-1, 3));
 }

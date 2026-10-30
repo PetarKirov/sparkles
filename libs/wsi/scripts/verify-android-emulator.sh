@@ -99,7 +99,7 @@ run() {
 }
 
 run "$smoke" "$smoke_package" 'ok: Android smoke complete'
-grep -q 'ok: Android WSI conformance (12 checked, 9 skipped)' "$log"
+grep -q 'ok: Android WSI conformance (12 checked, 10 skipped)' "$log"
 grep -q 'ok: Android touch drag with history' "$log"
 grep -q 'ok: Android scale and insets' "$log"
 grep -q 'ok: Android clipboard conformance (4 checked' "$log"
