@@ -21,6 +21,12 @@ configuration "wasm" {
         "--export=spk_table_render" platform="wasi"
 }
 
+// The exported functions as native D, for the agreement check that
+// compares the module with them (`ci --check-wasm-modules`, TCM9).
+configuration "library" {
+    targetType "library"
+}
+
 configuration "unittest" {
     dependency "sparkles:test-runner" path="../../.."
 
