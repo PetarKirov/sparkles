@@ -299,8 +299,8 @@
         # both over the backend's single XCB connection. Its .pc requires
         # xcb-util, so pkg-config needs that too.
         pkgs.xcb-imdkit
-        pkgs.xorg.xcbutil
-        pkgs.xorg.xcbutil.dev
+        pkgs.libxcb-util
+        pkgs.libxcb-util.dev
 
         # `dbus-daemon`, exec'd by apps/terminal's D-Bus tests (`dbus_conn`,
         # `desktop_bus`) as a private bus with a fake notification server
