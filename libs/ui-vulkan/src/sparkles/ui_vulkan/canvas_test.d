@@ -1127,6 +1127,98 @@ private ubyte[] twoColourImage()
         }
 }
 
+@("ui_vulkan.canvas.textOnAKnownBackgroundBlendsAsItsCompositingSays")
+@system unittest
+{
+    // `UVK36` through the device: a glyph over a background it paints is
+    // composited by its mode — the default, `linearCorrected`, and `gamma`
+    // — and reads back as the host's evaluation of the same `glyphColour`
+    // over that background, at the coverage `sparkles:font` rasterizes.
+    // The colours differ in luminance, so the modes disagree: each frame
+    // also fails the other mode's oracle.
+    if (!readbackEnabled)
+        return skipTest(readbackSkipReason);
+    import std.file : read;
+    import std.path : buildPath;
+    import std.process : environment;
+    import sparkles.font : charMap, FlattenPolicy, instance, InstanceSize, lightHints, openFace,
+        OutlinePoint, OutlineSegment, OutlineWorkspace, OverlapMode, Ppem, RasterRegion,
+        RasterWorkspace, rasterizeGlyph, rasterMeasure;
+    import sparkles.ui_vulkan.painter : rgba, TextMetrics;
+    import sparkles.shaders : vec4;
+    import sparkles.ui_vulkan.shading : glyphColour;
+    import sparkles.ui_vulkan.text_rendering : Compositing, TextRendering;
+
+    const dir = environment.get("SPARKLES_FONTS_PATH");
+    assert(dir !is null, "SPARKLES_FONTS_PATH is unset: run inside `nix develop`");
+    const bytes = cast(const(ubyte)[]) read(dir.buildPath("DejaVuSansMono.ttf"));
+
+    enum ppem = 24, ascent = 22;
+    auto rig = new Rig;
+    rig.open("ui-vulkan-composited-glyph", 80, 60);
+    scope (success)
+        rig.close();
+    assert(rig.canvas.cellFont(bytes, ppem, TextMetrics(ascent: ascent, underlineY: 24,
+        underlineHeight: 1, strikeY: 14)));
+
+    auto face = openFace(bytes).value;
+    const size = Ppem.fromInteger(ppem).value;
+    auto inst = instance(face, InstanceSize.pixels(size), null).value;
+    const gid = charMap(face).value.glyph('A');
+    auto ws = RasterWorkspace(new OutlineSegment[4096], new OutlinePoint[4096], new bool[4096],
+        new ushort[1024], new float[1 << 16], new ubyte[1 << 16]);
+    const hints = lightHints(inst, charMap(face).value, size, new OutlineSegment[4096],
+        OutlineWorkspace(new OutlinePoint[4096], new bool[4096], new ushort[1024], new uint[4096],
+            new int[4096], new int[4096], new int[2][4096]));
+    const m = rasterMeasure(inst, gid, size, ws, OverlapMode.perGlyphFlag, &hints).value;
+    auto coverage = new ubyte[m.width * m.height];
+    cast(void) rasterizeGlyph(inst, gid, size, RasterRegion(coverage, m.width, m.width, m.height), ws,
+        FlattenPolicy.standard, OverlapMode.perGlyphFlag, &hints);
+
+    const ink = RgbColor(235, 220, 190), paper = RgbColor(30, 50, 90);
+    const fill = rgba(ink, 255), under = rgba(paper, 255);
+    const metrics = FrameMetrics(cellW: 14, cellH: 28);
+    const left = metrics.cellW + m.bearingX, top = metrics.cellH + ascent - m.bearingY;
+    TextRendering settings;
+    assert(settings.compositing == Compositing.linearCorrected, "the default is the one tested first");
+
+    // What `mode` leaves at coverage `c`, as 8-bit channels.
+    static int[3] oracle(vec4 fill, vec4 under, ubyte c, float mode, float contrast)
+    {
+        const g = glyphColour(fill, under, c / 255.0f, mode, contrast, 0);
+        const keep = 1 - g.w;
+        return [cast(int) lround((g.x + under.x * keep) * 255),
+            cast(int) lround((g.y + under.y * keep) * 255),
+            cast(int) lround((g.z + under.z * keep) * 255)];
+    }
+
+    foreach (mode; [Compositing.linearCorrected, Compositing.gamma])
+    {
+        settings.compositing = mode;
+        rig.canvas.textRendering(settings);
+        const frame = rig.draw((ref Canvas c) {
+            c.glyph(Point(1, 1), 'A', Visual(fg: ink, fgAlpha: 255, bg: paper, hasBg: true));
+        }, metrics, paper);
+        const other = mode == Compositing.gamma ? Compositing.linearCorrected : Compositing.gamma;
+        size_t apart;
+        foreach (y; top .. top + m.height)
+            foreach (x; left .. left + m.width)
+            {
+                const c = coverage[(y - top) * m.width + (x - left)];
+                const want = oracle(fill, under, c, mode, settings.contrast);
+                const notWant = oracle(fill, under, c, other, settings.contrast);
+                const got = pixel(frame, 80, x, y);
+                foreach (k; 0 .. 3)
+                    assert(abs(got[k] - want[k]) <= 1, format("%s at (%s, %s) channel %s: %s, the host has %s",
+                        mode, x, y, k, got[k], want[k]));
+                if (abs(got[0] - notWant[0]) > 4)
+                    ++apart;
+            }
+        assert(apart > m.width * m.height / 10, format("%s: only %s pixels tell it from %s", mode,
+            apart, other));
+    }
+}
+
 @("ui_vulkan.canvas.anEmojiReadsBackInItsOwnColours")
 @system unittest
 {
