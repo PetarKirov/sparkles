@@ -20,8 +20,9 @@ $(OL
     $(LI An edge inside a blue zone snaps to the zone's pixel row: a flat
     one to the zone's reference, a round one to its overshoot.)
     $(LI A stem — a top edge over a bottom edge, close enough to be one
-    stroke — keeps a whole number of pixels of width, at least one, and
-    lands on the grid as a unit.)
+    stroke — keeps its designed width, widened to one pixel if thinner,
+    and moves as a unit: the edge already fitted, or else the lower one,
+    lands on a pixel row, and the other follows at that width.)
     $(LI Every other edge rounds to the nearest pixel row; positions stay
     in their original order.)
     $(LI Every point's y is mapped piecewise linearly between the fitted
@@ -349,7 +350,7 @@ private void fitEdges(scope Edge[] edges, in LightHints h)
             break;
         }
     // Stems: a bottom edge with the nearest top edge above it, close enough
-    // to be one stroke, keep a whole number of pixels between them.
+    // to be one stroke, keep their designed distance (at least a pixel).
     foreach (i, ref bottom; edges)
     {
         if (bottom.top)
