@@ -29,19 +29,20 @@
     systems.url = "github:nix-systems/triplet";
 
     dlang-nix = {
-      # feat/ldc-sparkles: `ldc-vulkan`, the project's one LDC — the
-      # PetarKirov/ldc `sparkles/main` fork (LDC master, dcompute's Vulkan
-      # target from ldc-developers/ldc#5132 and its shader stages) against
-      # LLVM main with llvm/llvm-project#216919 (`llvm-spirv-vulkan`, with
-      # clang and lld), plus a druntime/Phobos and a sysroot built from source
-      # for each production WASI preview (`wasm32-wasip1`, `wasm32-wasip2`), which
-      # `ldc-sparkles` adds. It is `pkgs.ldc` (nix/d-toolchain.nix), `ldc2-vulkan`
-      # (nix/packages/shader-compile.nix) and, as `ldc-sparkles`, the wasm
-      # modules' compiler.
-      # It extends feat/ldc-android-darwin: `ldc-android` (the aarch64 cross-
-      # compiler of `devShells.android`) on Linux and macOS hosts, and
-      # unstripped Android runtimes. Fold back once the upstream PRs and the
-      # fork's commits land.
+      # feat/ldc-sparkles: the project's one toolchain (toolchain spec TC1,
+      # TC2). `ldc-vulkan` is the PetarKirov/ldc `sparkles/main` fork (LDC
+      # master, dcompute's Vulkan target from ldc-developers/ldc#5132 and its
+      # shader stages), built against `llvm-spirv-vulkan`, the
+      # PetarKirov/llvm-project `sparkles/main` fork (LLVM main with
+      # llvm/llvm-project#216919), whose clang, lld and compiler-rt build and
+      # link everything else. `ldc-vulkan` is `pkgs.ldc` (nix/d-toolchain.nix)
+      # and `ldc2-vulkan` (nix/packages/shader-compile.nix). As `ldc-sparkles`
+      # it is the wasm modules' compiler, with a druntime/Phobos and a sysroot
+      # built from source for each production WASI preview (`wasm32-wasip1`,
+      # `wasm32-wasip2`); as `ldc-android`, the cross-compiler of the Android
+      # libraries (aarch64 and x86_64) on Linux and macOS hosts, with
+      # unstripped runtimes. Fold back once the upstream PRs and the forks'
+      # commits land.
       url = "github:PetarKirov/dlang.nix/feat/ldc-sparkles";
       inputs = {
         # One nixpkgs for the toolchain and everything it builds: one glibc

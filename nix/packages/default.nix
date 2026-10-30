@@ -113,13 +113,13 @@
       # The same `ci` binary with nothing on PATH — for the subcommands that
       # only talk to an HTTP API and never exec a compiler.
       #
-      # `packages.ci` is 2.4 GiB, and essentially none of it is linked: the
-      # wrapper above puts dmd (487 MiB), a second dmd (525), ldc-binary (543),
-      # lld (629), two llvm-libs (587 + 525), nodejs (253) and gcc+wrapper (645)
-      # on PATH so `--example-files` can compile markdown examples. That is
-      # right for the job that runs examples and wrong for one that files a
-      # check run: `main-checks.yml` sits on the merge path, so a two-gigabyte
-      # substitution there is paid on every merge to buy nothing.
+      # `packages.ci` is 1.4 GiB on x86_64-linux, and essentially none of it is
+      # linked: the wrapper above puts the LDC with its LLVM (1.0 GiB), DMD
+      # (529 MiB), lld (378 MiB, shared with the LDC's LLVM), nodejs (204 MiB)
+      # and git on PATH so `--example-files` can compile markdown examples.
+      # That is right for the job that runs examples and wrong for one that
+      # files a check run: `main-checks.yml` sits on the merge path, so a
+      # gigabyte-sized substitution there is paid on every merge to buy nothing.
       #
       # So: no `postFixup`, and `buildInputs` narrowed to the two genuine
       # runtime references — libcurl, whose absolute path Phobos bakes into

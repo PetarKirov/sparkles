@@ -240,7 +240,7 @@ workflow. Rehearse it with
 (`--ci-stats --merges` measures the split). Before touching the workflows:
 
 - **Jobs that only talk to an API use `.#ci-minimal`** — the same binary without
-  the compiler toolchain in its runtime closure (121 MiB vs 2.4 GiB).
+  the compiler toolchain in its runtime closure (83 MiB vs 1.4 GiB on x86_64-linux).
   `--test`, `--test-extracted`, `--test-slow`, and `--example-files` need `.#ci`.
 - **Every `ci.yml` job runs on every trigger; select work through the trigger
   list.** A called workflow sees the _caller's_ event (`push` on the rebuild
