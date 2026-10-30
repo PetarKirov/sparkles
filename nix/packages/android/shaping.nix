@@ -15,11 +15,16 @@ in
     let
       ndk = config.legacyPackages.androidNdk;
       targets = lib.attrValues ndk.targets;
+      # The NDK's (legacy) toolchain file caches empty flags before CMake reads
+      # `$CFLAGS`, then prepends its own to `CMAKE_C_FLAGS`; the prefix map
+      # goes there.
       cmakeFlags = t: ''
         -DCMAKE_TOOLCHAIN_FILE=${ndk.ndkRoot}/build/cmake/android.toolchain.cmake \
         -DANDROID_ABI=${t.abi} -DANDROID_PLATFORM=android-${ndk.minSdk} \
         -DCMAKE_BUILD_TYPE=Release -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
         -DBUILD_SHARED_LIBS=OFF \
+        "-DCMAKE_C_FLAGS=${ndk.cPrefixMapFlags}" \
+        "-DCMAKE_CXX_FLAGS=${ndk.cPrefixMapFlags}" \
       '';
 
       freetype = pkgs.stdenv.mkDerivation {
@@ -28,6 +33,7 @@ in
         nativeBuildInputs = [ pkgs.cmake ];
         dontUseCmakeConfigure = true;
         dontStrip = true;
+        disallowedReferences = ndk.toolchainPaths;
         postUnpack = ''
           mkdir zlib-source png-source
           tar -xf ${pkgs.zlib.src} -C zlib-source --strip-components=1
@@ -92,6 +98,7 @@ in
         nativeBuildInputs = [ pkgs.cmake ];
         dontUseCmakeConfigure = true;
         dontStrip = true;
+        disallowedReferences = ndk.toolchainPaths;
         buildPhase = ''
           runHook preBuild
           ${lib.concatMapStrings (t: ''

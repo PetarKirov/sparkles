@@ -34,6 +34,7 @@ in
 
         # Target code: the host's strip/ranlib must not touch it (ndk.nix).
         dontStrip = true;
+        disallowedReferences = ndk.toolchainPaths;
 
         # Two Android-isms:
         # - The NDK toolchain file sets CMAKE_SYSTEM_NAME=Android, which
@@ -91,7 +92,8 @@ in
               -DANDROID_PLATFORM=android-${ndk.minSdk} \
               -DCMAKE_BUILD_TYPE=Release \
               -DSTATIC_KQUEUE=ON \
-              -DENABLE_TESTING=OFF
+              -DENABLE_TESTING=OFF \
+              "-DCMAKE_C_FLAGS=${ndk.cPrefixMapFlags}"
             cmake --build build-${t.abi} -j$NIX_BUILD_CORES
           '') (lib.attrValues ndk.targets)}
 

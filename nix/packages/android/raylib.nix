@@ -82,6 +82,7 @@ in
 
           # Target code: the host's strip/ranlib must not touch it (ndk.nix).
           dontStrip = true;
+          disallowedReferences = ndk.toolchainPaths;
 
           buildPhase = ''
             runHook preBuild
@@ -92,10 +93,11 @@ in
                 ${t.cc} -c src/$unit.c -o out-${t.abi}/$unit.o \
                   -DPLATFORM_ANDROID -DGRAPHICS_API_OPENGL_ES2 \
                   -Isrc -I${ndk.nativeAppGlue} \
-                  -std=c99 -O2 -fPIC -ffunction-sections -fdata-sections
+                  -std=c99 -O2 -fPIC -ffunction-sections -fdata-sections \
+                  ${ndk.cPrefixMapFlags}
               done
               ${t.cc} -c ${ndk.nativeAppGlue}/android_native_app_glue.c \
-                -o out-${t.abi}/android_native_app_glue.o -O2 -fPIC
+                -o out-${t.abi}/android_native_app_glue.o -O2 -fPIC ${ndk.cPrefixMapFlags}
               ${ndk.ar} rcs out-${t.abi}/libraylib.a out-${t.abi}/*.o
             '') (lib.attrValues ndk.targets)}
 

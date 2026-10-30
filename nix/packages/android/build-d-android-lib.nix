@@ -84,6 +84,7 @@ in
 
             ${lib.concatMapStrings (t: ''
               ldc2 -mtriple=${t.triple} -relocation-model=pic -O2 -g \
+                ${ndk.dPrefixMapFlags} \
                 -preview=in -preview=dip1000 \
                 ${toString (map (v: "-d-version=${v}") versions)} \
                 ${toString (map (dir: "-J=${dir}") stringImportDirs)} \
@@ -124,6 +125,7 @@ in
           # Unstripped for ndk-stack; the APK carries the same bytes so a device
           # tombstone symbolizes against this output directly.
           dontStrip = true;
+          disallowedReferences = ndk.toolchainPaths;
 
           meta = {
             inherit description;

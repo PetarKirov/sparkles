@@ -101,10 +101,12 @@ in
               # unresolved, which a `.so` cannot be loaded with.
               ${lib.concatMapStrings (d: ''
                 ldc2 -mtriple=${t.triple} -relocation-model=pic -O1 -preview=in \
+                  ${ndk.dPrefixMapFlags} \
                   -lib -of=dub-imports/${d.name}-${t.abi}.a \
                   $(find dub-imports/${d.name}/*/source -name '*.d')
               '') dubDeps}
               ldc2 -mtriple=${t.triple} -relocation-model=pic -O1 \
+                ${ndk.dPrefixMapFlags} \
                 -preview=in -preview=dip1000 -unittest -checkaction=context -allinst \
                 ${toString (map (v: "-d-version=${v}") versions)} \
                 ${toString (map (dir: "-I=${dir}") importDirs)} \
@@ -118,7 +120,7 @@ in
                 -L-Wl,--warn-unresolved-symbols \
                 -of=${output t}
               ${lib.optionalString sharedLibrary ''
-                ${t.cc} -O2 -o ${exeName}-${t.abi} ${./dlopen-launcher.c} -ldl
+                ${t.cc} -O2 ${ndk.cPrefixMapFlags} -o ${exeName}-${t.abi} ${./dlopen-launcher.c} -ldl
               ''}
             '') (lib.attrValues ndk.targets)}
 
@@ -137,6 +139,7 @@ in
           '';
 
           dontStrip = true;
+          disallowedReferences = ndk.toolchainPaths;
 
           meta = {
             inherit description;
