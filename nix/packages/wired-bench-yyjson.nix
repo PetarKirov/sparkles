@@ -5,12 +5,11 @@
 # sub-package (libs/wired/bench/runtime/bindings/yyjson) resolves both its
 # `libs "yyjson"` link flags and its `#include <yyjson.h>` cflags through
 # pkg-config (dub #3085).
-{ inputs, lib, ... }:
+{ inputs, ... }:
 {
   perSystem =
     { pkgs, ... }:
     let
-      presets = import ./wired-bench-isa-presets.nix pkgs;
 
       version = "0.12.0";
       src = inputs.yyjson-src;
@@ -47,11 +46,6 @@
         };
     in
     {
-      packages = lib.listToAttrs (
-        map (p: {
-          name = "wired-bench-yyjson-${p.attr}";
-          value = mkYyjson p;
-        }) presets
-      );
+      packages = import ./wired-bench-for-each-preset.nix pkgs "wired-bench-yyjson" mkYyjson;
     };
 }
