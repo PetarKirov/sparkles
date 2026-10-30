@@ -1,19 +1,22 @@
 /**
- * Push and pin high-cost, low-churn derivations to Cachix across supported systems:
- *   - Compilers / toolchains: ldc-vulkan, ldc-android, ldc-wasm
- *   - Heavy desktop dependencies: skia, maple-mono, libghostty-vt, ts-grammars
- *   - Android native cross libraries: raylib, libghostty-vt, tree-sitter, etc.
+ * Push and pin Sparkles' pin set to Cachix (TC24).
  *
- * Target choice, installable strings, storage totals, and the summary table are
+ * The set is the flake output `legacyPackages.<system>.pinTargets`
+ * (`nix/pin-targets.nix`) for every system of `derivation_pin_set.pinSystems`;
+ * each entry is pinned as `<name>-<system>` from
+ * `.#legacyPackages.<system>.pinTargets.<name>`. The selectors filter it by
+ * name: `--toolchains` keeps the `toolchain-` prefix, `--android` the
+ * `-android` suffix, `--libs` the rest; positional names and `--system`
+ * narrow further.
+ *
+ * Target choice, storage totals and the summary table are
  * pure values. Nix and Cachix run as supervised children of bounded worker
  * fibers; one reporter fiber owns the live checklist. Scope exit joins all work.
  *
  * Usage:
- *   dub run --single ci/toolchain-pin.d -- [--dry-run|-n] [-j N] [--all]
- *   dub run --single ci/toolchain-pin.d -- [--dry-run|-n] [-j N] [--toolchains|-t]
- *   dub run --single ci/toolchain-pin.d -- [--dry-run|-n] [-j N] [--libs|-l]
- *   dub run --single ci/toolchain-pin.d -- [--dry-run|-n] [-j N] [--android|-a]
- *   dub run --single ci/toolchain-pin.d -- [--dry-run|-n] [-j N] <pin_name> <system> [attr]
+ *   dub run --single ci/toolchain-pin.d -- [--dry-run|-n] [-j N]
+ *   dub run --single ci/toolchain-pin.d -- [--dry-run|-n] [--toolchains|-t] [--libs|-l] [--android|-a]
+ *   dub run --single ci/toolchain-pin.d -- [--dry-run|-n] [--system <system>]... [<name>...]
  */
 module derivation_pin;
 
@@ -24,7 +27,7 @@ import core.lifetime : move;
 
 import std.algorithm.comparison : max, min;
 import std.algorithm.iteration : filter, joiner, map, sum;
-import std.algorithm.searching : all, any, startsWith;
+import std.algorithm.searching : all, any, maxElement, startsWith;
 import std.array : array;
 import std.format : format;
 import std.json : JSONType, JSONValue, parseJSON;
@@ -53,34 +56,36 @@ import sparkles.ui.components.tasklist : TaskReporter;
 import sparkles.ui.components.theme : makeTheme;
 
 import derivation_pin_process : Captured, SupervisedCommands;
+import derivation_pin_set : Category, Selection, Target,
+    expandPinSet, parsePinSet, pinSetEvalArgs, pinSystems, selectTargets;
 import derivation_pin_signals : ShutdownSignals;
 
 /**
-CLI arguments. `run` resolves the environment, drives every selected pin, and
-returns a message without an `Error:` prefix — `runCli` adds that prefix.
+CLI arguments. `run` resolves the environment, evaluates the pin set, and
+drives every selected pin. It returns a message without an `Error:` prefix — `runCli` adds that prefix.
 */
 @(Command("toolchain-pin",
-    shortDescription: "Push and pin heavy, low-churn derivations to Cachix across supported systems.",
+    shortDescription: "Push and pin Sparkles' pin set (nix/pin-targets.nix) to Cachix.",
 ))
 struct ToolchainPin
 {
-    @(Option("dry-run|n", description: "Evaluate store paths and display summary without pushing or pinning."))
+    @(Option("dry-run|n", description: "Evaluate store paths and display the summary without pushing or pinning."))
     bool dryRun;
 
     @(Option("jobs|j", description: "Number of concurrent workers for evaluation and cache queries (default: 4)."))
     int jobs = 4;
 
-    @(Option("all", description: "Pin all categories: toolchains, heavy libs, and Android cross libs (default)."))
-    bool all;
-
-    @(Option("toolchains|t", description: "Pin only D toolchains (ldc-vulkan, ldc-android, ldc-wasm, dmd, dub, dtools)."))
+    @(Option("toolchains|t", description: "Select the entries named toolchain-*."))
     bool toolchains;
 
-    @(Option("libs|l", description: "Pin only heavy desktop dependencies (skia, maple-mono, libghostty-vt, ts-grammars, nix-c-api, raylib, notcurses-core, tracy)."))
+    @(Option("libs|l", description: "Select the entries named neither toolchain-* nor *-android."))
     bool libs;
 
-    @(Option("android|a", description: "Pin only Android cross-compiled native libraries."))
+    @(Option("android|a", description: "Select the entries named *-android."))
     bool android;
+
+    @(Option("system", description: "Select only this system's entries (repeatable)."))
+    string[] systems;
 
     @(Option("cache", description: "Cachix cache name (default: from $CACHIX_CACHE or 'sparkles')."))
     string cache;
@@ -91,14 +96,21 @@ struct ToolchainPin
     @(Option("revisions", description: "Revisions to keep per pin (default: from $CI_PIN_REVISIONS or 3)."))
     int revisions = 3;
 
-    @(Argument("targets", description: "Custom pin: <pin_name> <system> [attr]", optional: true))
-    string[] targets;
+    @(Argument("names", description: "Select only these pin-set entries, by name (toolchain-dmd).", optional: true))
+    string[] names;
 
     /// Resolve, pin, and render. Parse and usage errors stay with `runCli`.
     Expected!(void, string) run() @system
     {
         import std.process : environment;
 
+        const selection = Selection(
+            categories: cast(ubyte) ((toolchains ? Category.toolchain : 0)
+                | (libs ? Category.library : 0)
+                | (android ? Category.android : 0)),
+            names: names,
+            systems: systems,
+        );
         return resolveRun(
             cli: this,
             envCache: environment.get("CACHIX_CACHE"),
@@ -106,29 +118,38 @@ struct ToolchainPin
             envDry: environment.get("CI_DRY_RUN", "0"),
             envRevisions: environment.get("CI_PIN_REVISIONS"),
         ).andThen!((RunPlan plan) {
-            if (plan.announcedDryRun)
-                stderr.writeln("NOTICE: CACHIX_AUTH_TOKEN is unset; running in dry-run summary mode.");
-            return chooseTargets(
-                toolchains: toolchains,
-                libs: libs,
-                android: android,
-                allCategories: all,
-                custom: targets,
-            ).andThen!((Target[] chosen) {
-                auto pinned = drive(chosen, plan, findRepoRoot());
-                renderSummary(pinned.reports, plan, pinned.interactive);
-                return announce(plan, pinned.reports);
-            });
+            const repoRoot = findRepoRoot();
+            return evaluatePinSet(repoRoot).andThen!((Target[] set) =>
+                selectTargets(set, selection).andThen!((Target[] chosen) {
+                    if (plan.announcedDryRun)
+                        stderr.writeln("NOTICE: CACHIX_AUTH_TOKEN is unset; running in dry-run summary mode.");
+                    auto pinned = drive(chosen, plan, repoRoot);
+                    renderSummary(pinned.reports, plan, pinned.interactive);
+                    return announce(plan, pinned.reports);
+                }));
         });
     }
 }
 
-/// A derivation to evaluate or build, then pin under `name` for `system`.
-struct Target
+/**
+ * The whole pin set, evaluated once per system in the repository at
+ * `repoRoot`. Any system that fails to evaluate fails the run.
+ */
+private Expected!(Target[], string) evaluatePinSet(string repoRoot) @safe
 {
-    string name;
-    string system;
-    string attr;
+    Target[][] perSystem;
+    foreach (system; pinSystems)
+    {
+        const evaluated = runCaptured(pinSetEvalArgs(system), workDir: repoRoot);
+        if (!evaluated.succeeded)
+            return err!(Target[])(format("evaluating pinTargets for %s failed: %s",
+                system, evaluated.stderr.strip));
+        auto parsed = parsePinSet(system, evaluated.stdout);
+        if (parsed.hasError)
+            return err!(Target[])(parsed.error);
+        perSystem ~= parsed.value;
+    }
+    return ok(expandPinSet(perSystem));
 }
 
 /// One store path and its nar size. A path with an unknown size contributes 0.
@@ -206,122 +227,6 @@ private enum remoteCaches = [
     "https://dlang-community.cachix.org",
 ];
 
-private struct PinSpec
-{
-    string name;
-    string attr;
-    string systems; /// Space-separated. Rows stay system-major, spec order within a system.
-}
-
-private bool hosts(string systems, string system) @safe pure nothrow =>
-    (" " ~ systems ~ " ").indexOf(" " ~ system ~ " ") >= 0;
-
-private Target[] expand(scope const(PinSpec)[] specs) @safe pure
-{
-    Target[] rows;
-    foreach (system; ["x86_64-linux", "aarch64-darwin", "aarch64-linux"])
-        foreach (spec; specs)
-            if (hosts(spec.systems, system))
-                rows ~= Target(spec.name, system, spec.attr);
-    return rows;
-}
-
-/**
- * Installable for a `legacyPackages.<system>.pinTargets` entry.
- *
- * `pinTargets` (`nix/shells/default.nix`) exposes the exact overlaid
- * derivations the shells and apps build, which `nixpkgs#…` would not.
- */
-private string pinTarget(string name) @safe pure nothrow =>
-    ".#legacyPackages.%s.pinTargets." ~ name;
-
-private immutable toolchainCatalog = expand([
-    PinSpec("toolchain-ldc-vulkan", "ldc-vulkan", "x86_64-linux aarch64-darwin aarch64-linux"),
-    PinSpec("toolchain-ldc-android", "ldc-android", "x86_64-linux aarch64-darwin"),
-    PinSpec("toolchain-ldc-wasm", "ldc-wasm", "x86_64-linux"),
-    PinSpec("toolchain-dmd", pinTarget("dmd"), "x86_64-linux"),
-    PinSpec("toolchain-dub", pinTarget("dub"), "x86_64-linux aarch64-darwin"),
-    PinSpec("toolchain-dtools", pinTarget("dtools"), "x86_64-linux"),
-]);
-
-private immutable heavyLibCatalog = expand([
-    PinSpec("skia-sparkles", ".#skia", "x86_64-linux aarch64-darwin aarch64-linux"),
-    PinSpec("maple-mono", ".#maple-mono", "x86_64-linux aarch64-darwin aarch64-linux"),
-    PinSpec("libghostty-vt", ".#libghostty-vt", "x86_64-linux aarch64-darwin aarch64-linux"),
-    PinSpec("ts-grammars", ".#ts-grammars", "x86_64-linux aarch64-darwin aarch64-linux"),
-    PinSpec("nix-c-api", pinTarget("nix-c-api"), "x86_64-linux aarch64-darwin"),
-    PinSpec("raylib", pinTarget("raylib"), "x86_64-linux"),
-    PinSpec("notcurses-core", pinTarget("notcurses-core"), "x86_64-linux aarch64-darwin"),
-    PinSpec("tracy", pinTarget("tracy"), "aarch64-darwin"),
-]);
-
-private immutable androidCatalog = expand([
-    PinSpec("raylib-android", ".#raylib-android", "x86_64-linux"),
-    PinSpec("libghostty-vt-android", ".#libghostty-vt-android", "x86_64-linux"),
-    PinSpec("tree-sitter-android", ".#tree-sitter-android", "x86_64-linux"),
-    PinSpec("ts-grammars-android", ".#ts-grammars-android", "x86_64-linux"),
-    PinSpec("freetype-android", ".#freetype-android", "x86_64-linux"),
-    PinSpec("harfbuzz-android", ".#harfbuzz-android", "x86_64-linux"),
-    PinSpec("libkqueue-android", ".#libkqueue-android", "x86_64-linux"),
-]);
-
-@("catalogs.predefined")
-@safe pure
-unittest
-{
-    assert(toolchainCatalog.length == 10);
-    assert(heavyLibCatalog.length == 18);
-    assert(androidCatalog.length == 7);
-    assert(toolchainCatalog[0] == Target("toolchain-ldc-vulkan", "x86_64-linux", "ldc-vulkan"));
-    assert(androidCatalog[$ - 1].name == "libkqueue-android");
-}
-
-/**
- * Flake installable for `attr` on `system`.
- *
- * A `%s` placeholder is the system. An attr that already resolves to a flake
- * output — `#packages.<system>.attr`, or a fully-qualified attribute path such
- * as `.#legacyPackages.<system>.pinTargets.<name>` that names its own system
- * — is returned unchanged. A flake fragment (`flake#attr` or `.#attr`) gains
- * `packages.<system>.`. A bare name is `dlang-nix#packages.<system>.<attr>`.
- */
-string resolveInstallable(string attr, string system) @safe pure
-{
-    if (attr.indexOf("%s") >= 0)
-        return format(attr, system);
-    // Already resolved: `#packages.<system>.attr`, or a fully-qualified path
-    // such as `.#legacyPackages.<system>.pinTargets.<name>` that names its
-    // own system.
-    if (attr.indexOf("packages.") >= 0 || attr.indexOf("Packages.") >= 0)
-        return attr;
-    const hash = attr.indexOf("#");
-    if (hash >= 0)
-        return attr[0 .. hash] ~ "#packages." ~ system ~ "." ~ attr[hash + 1 .. $];
-    if (attr.length > 0 && attr[0] == '.')
-        return ".#packages." ~ system ~ "." ~ attr[1 .. $];
-    return "dlang-nix#packages." ~ system ~ "." ~ attr;
-}
-
-@("resolveInstallable.forms")
-@safe pure
-unittest
-{
-    assert(resolveInstallable("ldc-vulkan", "x86_64-linux")
-            == "dlang-nix#packages.x86_64-linux.ldc-vulkan");
-    assert(resolveInstallable(".#skia", "aarch64-darwin")
-            == ".#packages.aarch64-darwin.skia");
-    assert(resolveInstallable("foo#bar", "aarch64-linux")
-            == "foo#packages.aarch64-linux.bar");
-    assert(resolveInstallable(".#packages.x86_64-linux.skia", "aarch64-linux")
-            == ".#packages.x86_64-linux.skia");
-    assert(resolveInstallable(".#%s.skia", "aarch64-linux") == ".#aarch64-linux.skia");
-    // A pin target already names its system and its flake; it is used as-is.
-    assert(resolveInstallable(".#legacyPackages.x86_64-linux.pinTargets.raylib", "x86_64-linux")
-            == ".#legacyPackages.x86_64-linux.pinTargets.raylib");
-    assert(resolveInstallable(pinTarget("dmd"), "x86_64-linux")
-            == ".#legacyPackages.x86_64-linux.pinTargets.dmd");
-}
-
 /// Last `/nix/store/…` line in `output`, or the stripped text when there is none.
 string extractStorePath(string output) @safe pure
 {
@@ -341,107 +246,6 @@ unittest
     assert(extractStorePath("warning: slow\n/nix/store/abc\n") == "/nix/store/abc");
     assert(extractStorePath("  /nix/store/a\n/nix/store/b\n") == "/nix/store/b");
     assert(extractStorePath("no path\n") == "no path");
-}
-
-/**
- * Attribute for a custom pin that omitted one.
- *
- * A leading `toolchain-` prefix is removed so `toolchain-ldc-wasm` selects
- * `ldc-wasm`. Any other name is its own attribute.
- */
-string defaultAttr(string name) @safe pure nothrow @nogc =>
-    name.startsWith("toolchain-") ? name["toolchain-".length .. $] : name;
-
-@("defaultAttr.prefix")
-@safe pure nothrow @nogc
-unittest
-{
-    assert(defaultAttr("toolchain-ldc-wasm") == "ldc-wasm");
-    assert(defaultAttr("skia-sparkles") == "skia-sparkles");
-    assert(defaultAttr("my-toolchain-foo") == "my-toolchain-foo");
-}
-
-/// Build the single custom target. Requires a name and a system.
-Target customTarget(string[] args) @safe pure
-in (args.length >= 2)
-{
-    const attr = args.length >= 3 ? args[2] : defaultAttr(args[0]);
-    return Target(name: args[0], system: args[1], attr: attr);
-}
-
-/**
- * Pins to run.
- *
- * Two or more positional arguments are one custom pin and ignore the category
- * flags. One positional argument is an error. Otherwise the selected catalogs
- * are concatenated; passing no category (and not refusing the default) selects
- * every catalog. `--all` selects every catalog once.
- */
-Expected!(Target[], string) chooseTargets(
-    bool toolchains,
-    bool libs,
-    bool android,
-    bool allCategories,
-    string[] custom,
-) @safe pure
-{
-    if (custom.length == 1)
-        return err!(Target[])("custom pin requires at least <pin_name> and <system> arguments.");
-    if (custom.length >= 2)
-    {
-        Target[] chosen;
-        chosen ~= customTarget(custom);
-        return ok(chosen);
-    }
-
-    const wantAll = allCategories || (!toolchains && !libs && !android);
-    Target[] targets;
-    if (wantAll || toolchains)
-        targets ~= toolchainCatalog;
-    if (wantAll || libs)
-        targets ~= heavyLibCatalog;
-    if (wantAll || android)
-        targets ~= androidCatalog;
-    return ok(targets);
-}
-
-@("chooseTargets.categoriesAndCustom")
-@safe
-unittest
-{
-    const tools = chooseTargets(
-        toolchains: true, libs: false, android: false, allCategories: false, custom: null);
-    assert(tools.hasValue);
-    assert(tools.value.length == toolchainCatalog.length);
-
-    const all = chooseTargets(
-        toolchains: false, libs: false, android: false, allCategories: false, custom: null);
-    assert(all.value.length
-            == toolchainCatalog.length + heavyLibCatalog.length + androidCatalog.length);
-    assert(all.value[0].name == "toolchain-ldc-vulkan");
-    assert(all.value[$ - 1].name == "libkqueue-android");
-
-    const flagged = chooseTargets(
-        toolchains: true, libs: false, android: false, allCategories: true, custom: null);
-    assert(flagged.value.length == all.value.length);
-
-    const custom = chooseTargets(
-        toolchains: true, libs: true, android: true, allCategories: true,
-        custom: ["skia-sparkles", "x86_64-linux", ".#skia"]);
-    assert(custom.value == [Target(name: "skia-sparkles", system: "x86_64-linux", attr: ".#skia")]);
-
-    const implied = chooseTargets(
-        toolchains: false, libs: false, android: false, allCategories: false,
-        custom: ["toolchain-ldc-wasm", "aarch64-linux"]);
-    assert(implied.value == [
-        Target(name: "toolchain-ldc-wasm", system: "aarch64-linux", attr: "ldc-wasm"),
-    ]);
-
-    const missing = chooseTargets(
-        toolchains: false, libs: false, android: false, allCategories: false, custom: ["only-name"]);
-    assert(missing.hasError);
-    assert(missing.error == "custom pin requires at least <pin_name> and <system> arguments.");
-    assert(!missing.error.startsWith("Error:"), "runCli supplies the Error: prefix");
 }
 
 /**
@@ -1419,13 +1223,13 @@ private PinRun drive(Target[] targets, RunPlan plan, string repoRoot) @system
 
     JobRequest[] requests;
     requests.reserve(targets.length);
+    const nameWidth = targets.length ? targets.map!(target => target.name.length).maxElement : 0;
     foreach (i, target; targets)
     {
-        const installable = resolveInstallable(target.attr, target.system);
-        const label = format("%-23s  %-15s", target.name, target.system);
+        const label = format("%-*s  %-15s", nameWidth, target.name, target.system);
         const id = tasks.add(label);
         assert(id == i);
-        requests ~= JobRequest(i, target.name, target.system, installable);
+        requests ~= JobRequest(i, target.name, target.system, target.installable);
     }
 
     auto batch = new PinBatch(requests);
@@ -1605,9 +1409,10 @@ private Expected!(void, string) announce(RunPlan plan, JobReport[] reports) @sys
     else
     {
         writefln(
-            "Successfully pushed and pinned all selected derivations to %s (keeping %d revisions each).",
+            "Successfully pushed and pinned all selected derivations to %s (keeping %d revision%s each).",
             plan.cache,
             plan.revisions,
+            plan.revisions == 1 ? "" : "s",
         );
     }
     return ok();

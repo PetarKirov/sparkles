@@ -8,7 +8,8 @@
     dependency "expected" version="~>0.4.1"
     targetPath "build"
     dflags "-preview=in" "-preview=dip1000"
-    dflags "-i=derivation_pin" "-i=derivation_pin_process" "-i=derivation_pin_signals"
+    dflags "-i=derivation_pin" "-i=derivation_pin_process"
+    dflags "-i=derivation_pin_set" "-i=derivation_pin_signals"
     dflags "-I$PACKAGE_DIR/../apps/ci/src"
 
     buildType "checked" {
