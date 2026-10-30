@@ -73,8 +73,9 @@ docs/.vitepress/cache/
 **/.yarn/unplugged/
 **/.yarn/build-state.yml
 
-# drawTable playground wasm: reproducible build artifact (nix build .#table-wasm),
-# rebuilt by docs:dev / docs:build via docs/scripts/build-wasm.sh
+# The site's WebAssembly modules: built from the tree (nix build .#docs-wasm) and
+# staged by docs:dev / docs:build (`ci --stage-docs-wasm`), never committed (TCM3)
+docs/public/spk-text.wasm
 docs/public/spk-table.wasm
 
 # Twoslash showcase: rendered `hue --twoslash --html` gallery, rebuilt by

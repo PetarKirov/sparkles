@@ -4,7 +4,7 @@
   "packageManager": "yarn@4.18.0",
   "type": "module",
   "scripts": {
-    "build:wasm": "bash docs/scripts/build-wasm.sh",
+    "build:wasm": "nix run .#ci-minimal -- --stage-docs-wasm",
     "build:credits": "bash docs/scripts/build-credits.sh",
     "build:twoslash-showcase": "bash docs/scripts/build-twoslash-showcase.sh",
     "docs:dev": "yarn build:wasm && yarn build:credits && yarn build:twoslash-showcase && yarn build:listings && vitepress dev docs --host",

@@ -105,6 +105,13 @@
         description = "drawTable as a WebAssembly module (the docs' table playground)";
       };
 
+      # Both modules, as the documentation site serves them (TCM3): `ci
+      # --stage-docs-wasm` copies them into docs/public/ before VitePress builds.
+      packages.docs-wasm = pkgs.runCommand "docs-wasm" { } ''
+        install -Dm644 ${config.packages.text-wasm}/spk-text.wasm $out/spk-text.wasm
+        install -Dm644 ${config.packages.table-wasm}/spk-table.wasm $out/spk-table.wasm
+      '';
+
       # TCM9: each module, under node, agrees with the same functions run
       # natively over a fixed corpus (apps/ci/src/wasm_modules_check.d).
       checks.wasm-modules =

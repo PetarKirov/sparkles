@@ -53,8 +53,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      # `yarn docs:build` first runs `build:wasm`, which invokes
-      # `nix build .#table-wasm` to compile the drawTable playground module.
+      # `yarn docs:build` first runs `build:wasm` (`ci --stage-docs-wasm`), which
+      # builds the site's WebAssembly modules with `nix build .#docs-wasm`.
       # Install Nix and wire up the binary cache so the toolchain (the
       # project's LDC and its WASI runtime) is pulled from the cache rather
       # than built from source.
