@@ -11,9 +11,8 @@ The $(B widget) view (`sparkles.ui.components.table.widgets`) is deliberately
 $(B not) re-exported: it imports the whole toolkit — canvas, chrome, state,
 widget, wrap — where the three modules above reach no further than
 `sparkles:base`. Re-exporting it would put that closure on every consumer of
-`drawTable`, including the wasm playground, which compiles a hand-listed set
-of source directories and fails outright when the closure widens. Import it by
-its own module path where the widget view is actually wanted.
+`drawTable`. Import it by its own module path where the widget view is
+actually wanted.
 +/
 module sparkles.ui.components.table;
 

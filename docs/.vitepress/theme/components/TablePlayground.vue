@@ -62,9 +62,9 @@ onMounted(async () => {
     }
     const { exports } = await WebAssembly.instantiate(mod, imports as any);
     exp = exports;
-    // Runs the C-level init_array (sets up the GC). D `static this()` ctors do not
-    // run under this druntime, but drawTable needs none (presets are a pure fn).
-    (exports as any).__wasm_call_ctors?.();
+    // A WASI reactor: `_initialize` starts druntime (the GC) and runs the module
+    // constructors, once, before any other export.
+    (exports as any)._initialize();
     status.value = '';
     render();
   } catch (e: any) {
@@ -296,11 +296,20 @@ function render() {
   }
   new Uint8Array(exp.memory.buffer).set(bytes, p);
   const outP = (p + OUT_OFF) & ~3;
+  // n >= 0: n bytes of rendering; -1: it does not fit; -(k + 1): an invalid
+  // specification, with a k-byte message.
   const n = exp.spk_table_render(p, bytes.length, outP, cap - OUT_OFF);
-  const bytesOut = new Uint8Array(exp.memory.buffer, outP, Math.abs(n));
-  const text = new TextDecoder().decode(bytesOut);
+  const length = n >= 0 ? n : n < -1 ? -n - 1 : 0;
+  const text = new TextDecoder().decode(
+    new Uint8Array(exp.memory.buffer, outP, length),
+  );
   errored.value = n < 0;
-  output.value = n < 0 ? 'render error: ' + text : text;
+  output.value =
+    n >= 0
+      ? text
+      : n === -1
+        ? 'render error: the table is too large'
+        : 'render error: ' + text;
 }
 
 // Re-render on any control change.
@@ -685,7 +694,8 @@ const gridOut = computed(() => {
   const p = exp.spk_buf_ptr();
   new Uint8Array(exp.memory.buffer).set(bytes, p);
   const tripOff = (p + TRIP_OFF) & ~3;
-  const n = exp.spk_segment(p, bytes.length, tripOff, MAX_TRIPLES);
+  // -1: more units than MAX_TRIPLES.
+  const n = Math.max(exp.spk_segment(p, bytes.length, tripOff, MAX_TRIPLES), 0);
   const tri = new Uint32Array(exp.memory.buffer, tripOff, n * 3);
   const dec = new TextDecoder();
   const sgrRe = /^\u001b\[([0-9;]*)m$/;

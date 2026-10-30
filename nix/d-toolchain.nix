@@ -35,7 +35,7 @@
 
               # dlang.nix's `ldc-vulkan`: the PetarKirov/ldc fork that also
               # compiles the shaders (dcompute's Vulkan target) and, as
-              # `ldc-sparkles`, the wasm modules (nix/packages/build-d-wasm-module.nix).
+              # `ldc-sparkles`, the wasm modules (nix/packages/wasm-modules.nix).
               # One compiler and one LLVM for the host, the shaders and WASI.
               # The WASI runtime and sysroot stay out of this package's closure:
               # only the wasm builds need them.

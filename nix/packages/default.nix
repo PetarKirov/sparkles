@@ -24,6 +24,10 @@
       # wasm-ld + a runtime, so those go on PATH even when DMD is the
       # default compiler.
       ciCompiler = if pkgs.stdenv.hostPlatform.system == "x86_64-linux" then pkgs.dmd else pkgs.ldc;
+
+      # The LDC with the WASI runtimes: `--build` and `--build-each-commit`
+      # compile the WebAssembly modules with it (`$SPARKLES_WASI_LDC`).
+      wasiLdc = inputs'.dlang-nix.packages.ldc-sparkles;
     in
     {
       # Sources retained by ci's runtime closure and published with all-desktop.
@@ -51,6 +55,7 @@
         # Runtime deps subtracted from buildSparklesApp's default scrub set:
         # - `ciCompiler` — shells out via PATH (see postFixup)
         # - `pkgs.ldc` / `pkgs.lld` / `pkgs.nodejs` — `--test-extracted --wasm`
+        # - `wasiLdc` — the WebAssembly modules' builds
         # - `pkgs.curl.out` — `--ci-stats` uses std.net.curl; Phobos bakes an
         #   absolute libcurl path
         # - `pkgs.tree-sitter` — `libs "tree-sitter"` in libs/tree-sitter
@@ -58,6 +63,7 @@
           ciCompiler
           pkgs.ldc
           pkgs.lld-sparkles
+          wasiLdc
           pkgs.nodejs
           pkgs.coreutils
           pkgs.curl.out
@@ -96,6 +102,7 @@
             wrapProgram $out/bin/${finalAttrs.pname} \
               --prefix PATH : ${path} \
               --set-default SPARKLES_DUB_SOURCES ${config.packages.dub-sources} \
+              --set-default SPARKLES_WASI_LDC ${lib.getExe' wasiLdc "ldc2"} \
               ${setEnv} \
               ${exampleLibArgs} \
               --run ${lib.escapeShellArg d-toolchain.nofileCommand}
