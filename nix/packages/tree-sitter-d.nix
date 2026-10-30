@@ -10,20 +10,26 @@
   perSystem =
     { pkgs, ... }:
     {
-      packages.tree-sitter-d = pkgs.tree-sitter.buildGrammar {
-        language = "d";
-        # package.json version at the pinned rev.
-        version = "0.8.2";
-        # feat/dub-single-file-injections — query-only change on top of main.
-        src = inputs.tree-sitter-d-src;
-        # No `generate = true`: `src/parser.c` is committed; the pin only
-        # changes queries/injections.scm (and helix-injections.scm).
+      packages.tree-sitter-d =
+        let
+          args = {
+            language = "d";
+            # package.json version at the pinned rev.
+            version = "0.8.2";
+            # feat/dub-single-file-injections — query-only change on top of main.
+            src = inputs.tree-sitter-d-src;
+            # No `generate = true`: `src/parser.c` is committed; the pin only
+            # changes queries/injections.scm (and helix-injections.scm).
 
-        meta = {
-          description = "D grammar for tree-sitter (with DUB single-file recipe injections)";
-          homepage = "https://github.com/PetarKirov/tree-sitter-d";
-          license = pkgs.lib.licenses.mit;
-        };
-      };
+            meta = {
+              description = "D grammar for tree-sitter (with DUB single-file recipe injections)";
+              homepage = "https://github.com/PetarKirov/tree-sitter-d";
+              license = pkgs.lib.licenses.mit;
+            };
+          };
+        in
+        # `grammarArgs`: the same grammar by another builder
+        # (nix/packages/terminal-static.nix).
+        pkgs.tree-sitter.buildGrammar (args // { passthru.grammarArgs = args; });
     };
 }
