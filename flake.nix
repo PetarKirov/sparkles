@@ -237,7 +237,6 @@
         ./nix/d-toolchain.nix
         ./nix/packages/all.nix
         ./nix/packages/android
-        ./nix/packages/build-d-wasm-module.nix
         ./nix/packages/build-sparkles-app.nix
         ./nix/packages/credits.nix
         ./nix/packages/default.nix
@@ -256,8 +255,7 @@
         ./nix/packages/android-dev-env-probe.nix
         ./nix/packages/ui-shaders.nix
         ./nix/packages/skia.nix
-        ./nix/packages/text-wasm.nix
-        ./nix/packages/table-wasm.nix
+        ./nix/packages/wasm-modules.nix
         ./nix/packages/tree-sitter-d.nix
         ./nix/packages/tree-sitter-sdl.nix
         ./nix/packages/ts-grammars.nix

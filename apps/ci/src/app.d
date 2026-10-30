@@ -3326,8 +3326,27 @@ private string resolvedCompiler(string repoRoot, in string[] subPackages)
     return null;
 }
 
+/++
+The WASI-enabled `ldc2` that $(MREF each_commit)'s WebAssembly packages build
+with, from `$SPARKLES_WASI_LDC`; `false`, reported, when one of `pkgPaths`
+needs it and it is unset.
++/
+private bool findWasiCompiler(in string[] pkgPaths, out string compiler)
+{
+    import std.algorithm.searching : any, canFind;
+    import each_commit : wasiCompilerVariable, wasiPackages;
+
+    compiler = environment.get(wasiCompilerVariable, "");
+    if (compiler.length || !pkgPaths.any!(p => wasiPackages.canFind(p.baseName)))
+        return true;
+    error(i"$(wasiCompilerVariable) is unset: the WebAssembly modules need an ldc2 with the WASI runtime (the ci package sets it: nix run .#ci)");
+    return false;
+}
+
 private int runDubBuildMode(bool failFast)
 {
+    import each_commit : targetBuildArgs;
+
     info(i"resolving repository root");
     const repoRoot = detectRepoRoot();
     if (repoRoot is null)
@@ -3345,6 +3364,9 @@ private int runDubBuildMode(bool failFast)
         return 1;
     }
     info(i"$(subPackages.length) sub-package(s) to build");
+    string wasiCompiler;
+    if (!findWasiCompiler(subPackages, wasiCompiler))
+        return 1;
 
     i"Building $(subPackages.length) sub-package(s)".text
         .drawHeader(HeaderProps(style: HeaderStyle.banner, width: uiWidth()))
@@ -3368,7 +3390,8 @@ private int runDubBuildMode(bool failFast)
         const header = styledText(i"{dim $(progress)} {cyan $(pkgName)} {dim › dub build :$(pkgName)}");
 
         mkdirRecurse(buildPath(repoRoot, pkg, "build"));
-        auto buildCmd = dubBuildCommand(repoRoot, pkg, pkgName);
+        auto buildCmd = dubBuildCommand(repoRoot, pkg, pkgName,
+            targetBuildArgs(pkgName, wasiCompiler));
         auto lines = executeMonitoredLines(
             buildCmd, 250.msecs, &onSample, ChildStdin.empty, Duration.zero,
             withLdcDflags(null));
@@ -3409,7 +3432,7 @@ private int runBuildEachCommitMode(string base, string[] requested, bool failFas
     import std.process : thisProcessID;
     import sparkles.build_primitives.git_env : runGit;
     import each_commit : CommitFailure, defaultEachCommitPackages, failureReport,
-        parseCommitRange, selectPackages;
+        parseCommitRange, selectPackages, targetBuildArgs;
 
     const repoRoot = detectRepoRoot();
     if (repoRoot is null)
@@ -3426,6 +3449,9 @@ private int runBuildEachCommitMode(string base, string[] requested, bool failFas
         error(i"--packages: no sub-package named $(unknown.join(", "))");
         return 1;
     }
+    string wasiCompiler;
+    if (!findWasiCompiler(pkgs, wasiCompiler))
+        return 1;
 
     if (base.length == 0)
     {
@@ -3511,7 +3537,8 @@ private int runBuildEachCommitMode(string base, string[] requested, bool failFas
             }
             mkdirRecurse(buildPath(wt, pkg, "build"));
             auto lines = executeMonitoredLines(
-                dubBuildCommand(wt, pkg, pkgName), 250.msecs, &onSample,
+                dubBuildCommand(wt, pkg, pkgName, targetBuildArgs(pkgName, wasiCompiler)),
+                250.msecs, &onSample,
                 ChildStdin.empty, Duration.zero, withLdcDflags(null));
             streamResultBox(header, lines,
                 () => resultVerdict(lines.result.status == 0),

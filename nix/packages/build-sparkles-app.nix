@@ -12,7 +12,7 @@
 # only after the replace.
 #
 # Exposed as `legacyPackages.buildSparklesApp` (flake-parts' escape hatch for
-# non-derivation values — see `build-d-wasm-module` for precedent); internal
+# non-derivation values — see `d-toolchain` for precedent); internal
 # consumers call it via `config.legacyPackages.buildSparklesApp`.
 { lib, inputs, ... }:
 {

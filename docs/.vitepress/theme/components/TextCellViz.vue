@@ -103,8 +103,10 @@ function update() {
   }
   new Uint8Array(exp.memory.buffer).set(bytes, p);
   const outP = (p + 40000) & ~3;
-  const n = exp.spk_segment(p, bytes.length, outP, MAX_CELLS);
-  truncated.value = n >= MAX_CELLS;
+  // -1: more units than MAX_CELLS.
+  const r = exp.spk_segment(p, bytes.length, outP, MAX_CELLS);
+  truncated.value = r < 0 || r >= MAX_CELLS;
+  const n = Math.max(r, 0);
   const o = new Uint32Array(exp.memory.buffer, outP, n * 3);
   const dec = new TextDecoder();
   const out: Cell[] = [];
@@ -158,15 +160,30 @@ onMounted(async () => {
     const mod = await WebAssembly.compileStreaming(
       fetch(withBase('spk-text.wasm')),
     );
-    // The compute exports never call WASI at runtime, so stub every import.
-    const imports: Record<string, Record<string, () => number>> = {};
+    // The compute exports never call WASI at runtime, so stub every import
+    // but the clock queries: druntime's initialization reads the clock's
+    // resolution, which must not be zero.
+    const imports: Record<string, Record<string, (...a: any[]) => number>> = {};
     for (const imp of WebAssembly.Module.imports(mod)) {
       (imports[imp.module] ||= {})[imp.name] = () => 0;
     }
+    const W = imports.wasi_snapshot_preview1;
+    if (W) {
+      W.clock_res_get = (_id: number, resPtr: number) => {
+        new DataView(exp.memory.buffer).setBigUint64(resPtr, 1n, true);
+        return 0;
+      };
+      W.clock_time_get = (_id: number, _p: number, resPtr: number) => {
+        new DataView(exp.memory.buffer).setBigUint64(resPtr, 0n, true);
+        return 0;
+      };
+    }
     const { exports } = await WebAssembly.instantiate(mod, imports as any);
-    if ((exports as any).__wasm_call_ctors)
-      (exports as any).__wasm_call_ctors();
     exp = exports;
+    // A WASI reactor runs druntime's initialization in _initialize, once.
+    // The committed module predates it and exports __wasm_call_ctors.
+    if (exp._initialize) exp._initialize();
+    else exp.__wasm_call_ctors?.();
     update();
   } catch (e: any) {
     status.value = 'failed to load wasm: ' + (e?.message ?? e);

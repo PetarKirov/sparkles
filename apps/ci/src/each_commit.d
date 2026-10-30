@@ -7,7 +7,9 @@ repository asks each one to build on its own ([Git hygiene](../../docs/guideline
 Nothing checked that. The gap is widest for the apps whose default configuration
 is a GUI build: `dub test` compiles their `unittest` configuration and never the
 one a user runs (`hue`'s `gui`, the gallery's and the diagram board's `full`).
-Before this mode, that loop was run by hand before every push.
+Before this mode, that loop was run by hand before every push. The documentation
+site's WebAssembly modules are the same case: their default configuration is a
+`wasm32-unknown-wasip1` reactor, which no native build or test compiles.
 
 The loop is a scratch worktree, detached, walked from the oldest commit to the
 newest. It is one worktree, not one per commit, so each build is incremental
@@ -27,7 +29,42 @@ The packages built when `--packages` names none: the ones whose default
 configuration `dub test` never compiles, which is exactly where a commit that
 passes its tests can still fail to build.
 +/
-immutable string[] defaultEachCommitPackages = ["hue", "ui-gallery", "diagram"];
+immutable string[] defaultEachCommitPackages = ["hue", "ui-gallery", "diagram",
+    "text-wasm", "table-wasm"];
+
+/++
+The packages whose default configuration is a WebAssembly module
+(docs/specs/toolchain/wasm-modules.md): built for `wasm32-unknown-wasip1` by an
+LDC that has the WASI runtime, which `$SPARKLES_WASI_LDC` names.
++/
+immutable string[] wasiPackages = ["text-wasm", "table-wasm"];
+
+/// The variable naming the WASI-enabled `ldc2` (the `ci` package sets it).
+enum wasiCompilerVariable = "SPARKLES_WASI_LDC";
+
+/++
+The `dub build` arguments that select `pkg`'s target beyond the defaults:
+the WASI triple and compiler for a $(LREF wasiPackages) member, none otherwise.
++/
+string[] targetBuildArgs(string pkg, string wasiCompiler) @safe pure
+{
+    import std.algorithm.searching : canFind;
+
+    if (!wasiPackages.canFind(pkg))
+        return null;
+    return ["--arch=wasm32-unknown-wasip1", "--compiler=" ~ wasiCompiler];
+}
+
+@("each_commit.targetBuildArgs.wasiPackagesCrossCompile")
+@safe pure
+unittest
+{
+    assert(targetBuildArgs("hue", "/w/ldc2") is null);
+    assert(targetBuildArgs("table-wasm", "/w/ldc2")
+        == ["--arch=wasm32-unknown-wasip1", "--compiler=/w/ldc2"]);
+    foreach (pkg; wasiPackages)
+        assert(defaultEachCommitPackages.canFind(pkg), "every module is built by default");
+}
 
 /// One commit of the range.
 struct RangeCommit
@@ -98,7 +135,8 @@ string[] selectPackages(in string[] requested, in string[] subPackagePaths,
 @safe pure
 unittest
 {
-    const paths = ["apps/hue", "apps/ui-gallery", "libs/ui", "apps/diagram"];
+    const paths = ["apps/hue", "apps/ui-gallery", "libs/ui", "apps/diagram",
+        "libs/base/text-wasm", "libs/core-cli/table-wasm"];
     string[] unknown;
     const chosen = selectPackages(["ui", "hue", "hue", "gallery"], paths, unknown);
     assert(chosen == ["libs/ui", "apps/hue"], "in request order, once each");

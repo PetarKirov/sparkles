@@ -169,9 +169,7 @@ immutable string[] builtinPresetNames = [
 ];
 
 /// The built-in glyph preset for `name` (one of `builtinPresetNames`); an unknown
-/// name falls back to the `rounded` default. Pure and self-contained, so it works
-/// **without** the module constructor that seeds `stylePresets` — e.g. in a wasm
-/// build where `static this()` module ctors do not run.
+/// name falls back to the `rounded` default. The pure lookup behind `stylePresets`.
 TableGlyphs presetGlyphs(string name) @safe pure nothrow
 {
     switch (name)
@@ -238,8 +236,6 @@ TableGlyphs presetGlyphs(string name) @safe pure nothrow
 /// Seeded from `presetGlyphs` with `rounded` (the default, `== TableGlyphs.init`),
 /// `square`, `ascii`, `double`, and `heavy`; callers may register or override their
 /// own entries. Thread local (each thread gets the built-ins), so reads stay `@safe`.
-/// Prefer `presetGlyphs(name)` where a pure lookup that needs no module ctor helps
-/// (e.g. a wasm build).
 TableGlyphs[string] stylePresets;
 
 static this()
