@@ -43,10 +43,6 @@
         nixCLibs.nix-main-c.dev
       ];
 
-      envExports = lib.concatStringsSep "\n" (
-        lib.mapAttrsToList (name: value: "export ${name}=${lib.escapeShellArg value}") d-toolchain.env
-      );
-
       exclusions = import ../flake-exclusions.nix;
 
       # Every flake input as a `/nix/store` path. `self` is omitted — interpolating
@@ -399,9 +395,9 @@
         # low macOS default can also starve parallel dub/ldc builds. This
         # was part of the original Darwin toolchain workaround but was
         # lost when the dev shell moved behind the shared toolchain module.
-        ulimit -n ${toString d-toolchain.nofileLimit} 2>/dev/null || true
+        ${d-toolchain.nofileCommand}
 
-        ${envExports}
+        ${d-toolchain.shellExports}
 
         # Raw flake-input store paths (`SPARKLES_FLAKE_INPUT_*` plus the
         # `$SPARKLES_ALL_FLAKE_INPUTS` JSON map). dmd-fmt corpus tests assert
@@ -445,17 +441,17 @@
 
         # druntime/phobos sources matching the pinned dmd:frontend, for
         # sparkles:dmd-lsp semantic analysis (BLD3). Tests skip when unset.
-        export SPARKLES_DMD_IMPORT_PATH=${config.packages.dmd-import-paths}/druntime:${config.packages.dmd-import-paths}/phobos
+        export SPARKLES_DMD_IMPORT_PATH=${config.packages.dmd-import-paths.importPath}
 
         # The dcompute LDC's druntime/phobos sources, for sparkles:dmd-lsp's
         # LDC profiles — shader (device) code imports `ldc.dcompute` (TGT3).
-        export SPARKLES_LDC_IMPORT_PATH=${config.packages.ldc-import-paths}/druntime:${config.packages.ldc-import-paths}/phobos
+        export SPARKLES_LDC_IMPORT_PATH=${config.packages.ldc-import-paths.importPath}
 
         ${lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
           # libdw/libelf (elfutils), libpfm, libkqueue — for `dub run --single`
           # linking (`libs "dw" "elf"` / `libs "pfm"` / `libs "kqueue"`).
-          export LIBRARY_PATH="${pkgs.elfutils.out}/lib:${pkgs.libpfm}/lib:${pkgs.libkqueue}/lib''${LIBRARY_PATH:+:$LIBRARY_PATH}"
-          export LD_LIBRARY_PATH="${pkgs.elfutils.out}/lib:${pkgs.libpfm}/lib:${pkgs.libkqueue}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          export LIBRARY_PATH="${d-toolchain.libraryPath}''${LIBRARY_PATH:+:$LIBRARY_PATH}"
+          export LD_LIBRARY_PATH="${d-toolchain.libraryPath}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
         ''}
 
         ${lib.optionalString pkgs.stdenv.hostPlatform.isDarwin ''

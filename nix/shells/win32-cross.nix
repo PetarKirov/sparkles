@@ -140,9 +140,7 @@
         ]
         ++ d-toolchain.packages;
         shellHook = ''
-          ${lib.concatStringsSep "\n" (
-            lib.mapAttrsToList (name: value: "export ${name}=${lib.escapeShellArg value}") d-toolchain.env
-          )}
+          ${d-toolchain.shellExports}
           export LDC_WINDOWS_LIBDIR=${ldcWindowsLibs}
           export WIN32_SDK=${winSdk}
         '';

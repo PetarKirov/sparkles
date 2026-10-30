@@ -78,46 +78,27 @@
               pkgs.coreutils
               pkgs.gitMinimal
             ];
-            # Render `--set NAME VALUE` triples for wrapProgram from the toolchain
-            # env (non-empty on darwin: CC/CXX/SDKROOT/MACOSX_DEPLOYMENT_TARGET).
-            # Not lib.cli.toCommandLine*: its option-spec model renders `--flag
-            # value` pairs, not wrapProgram's three-token `--set KEY VALUE` form.
-            setEnv = lib.escapeShellArgs (
-              lib.concatLists (
-                lib.mapAttrsToList (name: value: [
-                  "--set"
-                  name
-                  value
-                ]) d-toolchain.env
-              )
-            );
-            # The cpu-pmu research probes (docs/research/cpu-pmu/examples) link
-            # C libraries via `libs "dw" "elf"` / `libs "pfm"`. Inside the
-            # devshell the shellHook exports these paths (nix/shells); carry
-            # them in the wrapper too so `nix run .#ci -- --example-files`
-            # links them outside any shell.
-            exampleLibPath = lib.optionalString pkgs.stdenv.hostPlatform.isLinux (
-              lib.makeSearchPath "lib" [
-                pkgs.elfutils.out
-                pkgs.libpfm
-              ]
-            );
+            # The toolchain env (non-empty on darwin: CC/CXX/SDKROOT/
+            # MACOSX_DEPLOYMENT_TARGET).
+            setEnv = lib.escapeShellArgs d-toolchain.wrapperArgs;
+            # The examples link C libraries (the cpu-pmu research probes' `libs
+            # "dw" "elf"` / `libs "pfm"`). Inside the devshell the shellHook
+            # exports their paths (nix/shells); carry them in the wrapper too so
+            # `nix run .#ci -- --example-files` links them outside any shell.
+            inherit (d-toolchain) libraryPath;
             exampleLibArgs = lib.optionalString (
-              exampleLibPath != ""
-            ) "--prefix LIBRARY_PATH : ${exampleLibPath} --prefix LD_LIBRARY_PATH : ${exampleLibPath}";
+              libraryPath != ""
+            ) "--prefix LIBRARY_PATH : ${libraryPath} --prefix LD_LIBRARY_PATH : ${libraryPath}";
           in
           # Best-effort bump of NOFILE: dub/ldc can open many files in parallel
-          # builds. Redirect stderr and '|| true' so that on environments where
-          # the hard cap is below nofileLimit (some CI runners, restricted
-          # sandboxes) the wrapper does not abort under makeWrapper --run's set
-          # -e semantics — we just fall back to the inherited limit.
+          # builds.
           ''
             wrapProgram $out/bin/${finalAttrs.pname} \
               --prefix PATH : ${path} \
               --set-default SPARKLES_DUB_SOURCES ${config.packages.dub-sources} \
               ${setEnv} \
               ${exampleLibArgs} \
-              --run 'ulimit -n ${toString d-toolchain.nofileLimit} 2>/dev/null || true'
+              --run ${lib.escapeShellArg d-toolchain.nofileCommand}
           '';
 
         meta = {
@@ -256,8 +237,6 @@
           inputs'.ghostty.packages.libghostty-vt.dev
         ];
 
-        env = d-toolchain.env;
-
         links = config.legacyPackages.terminalLinks;
 
         # The credits page (`TPG15`), beside the executable: the document and
@@ -325,8 +304,6 @@
           inputs'.ghostty.packages.libghostty-vt.dev
         ];
 
-        env = d-toolchain.env;
-
         postFixup = ''
           wrapProgram $out/bin/${finalAttrs.pname} \
             --prefix PATH : ${lib.makeBinPath [ pkgs.fontconfig ]}
@@ -357,8 +334,6 @@
           inputs'.ghostty.packages.libghostty-vt.dev
         ];
 
-        env = d-toolchain.env;
-
         installPhase = ''
           install -Dm755 build/ui-gallery $out/bin/${finalAttrs.pname}
         '';
@@ -377,8 +352,6 @@
 
         nativeBuildInputs = [ pkgs.pkg-config ];
         buildInputs = [ pkgs.raylib ];
-
-        env = d-toolchain.env;
 
         installPhase = ''
           install -Dm755 build/text-lab $out/bin/${finalAttrs.pname}
@@ -403,8 +376,6 @@
           inputs'.ghostty.packages.libghostty-vt
           inputs'.ghostty.packages.libghostty-vt.dev
         ];
-
-        env = d-toolchain.env;
 
         installPhase = ''
           install -Dm755 build/terminal $out/bin/${finalAttrs.pname}

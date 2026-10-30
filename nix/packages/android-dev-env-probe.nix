@@ -11,7 +11,6 @@
         sourceDirs = config.legacyPackages.sparklesSources.libsClosure [ "core-cli" ] ++ [
           "docs/research/android-dev-env/device-validation/examples"
         ];
-        env = config.legacyPackages.d-toolchain.env;
         buildPhase = ''
           runHook preBuild
           dub build --single contributor-probe.d --compiler=${lib.getExe' pkgs.ldc.reproducible "ldc2"} \

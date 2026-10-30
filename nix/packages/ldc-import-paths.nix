@@ -18,19 +18,30 @@
     { inputs', pkgs, ... }:
     let
       ldcSrc = inputs'.dlang-nix.packages.ldc-vulkan.src;
+      # `importPath`: the pair as the colon-separated value of
+      # $SPARKLES_LDC_IMPORT_PATH.
+      withImportPath =
+        farm:
+        farm.overrideAttrs (old: {
+          passthru = (old.passthru or { }) // {
+            importPath = "${farm}/druntime:${farm}/phobos";
+          };
+        });
     in
     {
       packages = {
-        ldc-import-paths = pkgs.linkFarm "sparkles-ldc-import-paths" [
-          {
-            name = "druntime";
-            path = "${ldcSrc}/runtime/druntime/src";
-          }
-          {
-            name = "phobos";
-            path = "${ldcSrc}/runtime/phobos";
-          }
-        ];
+        ldc-import-paths = withImportPath (
+          pkgs.linkFarm "sparkles-ldc-import-paths" [
+            {
+              name = "druntime";
+              path = "${ldcSrc}/runtime/druntime/src";
+            }
+            {
+              name = "phobos";
+              path = "${ldcSrc}/runtime/phobos";
+            }
+          ]
+        );
       };
     };
 }

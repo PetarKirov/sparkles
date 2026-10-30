@@ -41,77 +41,82 @@
               # only the wasm builds need them.
               rawLdc = inputs'.dlang-nix.packages.ldc-vulkan;
 
-              # The compiler's own `ldc2.conf/` drop-ins without dlang.nix's
-              # `50-nix.conf`: its `-link-defaultlib-shared` breaks standalone
-              # binaries once `buildDubPackage` scrubs compiler references. What
-              # remains links druntime/Phobos statically, and keeps upstream's
-              # wasm sections (bare `wasm32-unknown-unknown` for `--wasm` tests).
-              cleanLdcConfig = prev.runCommand "ldc2.conf" { } ''
-                mkdir $out
-                for f in ${rawLdc}/etc/ldc2.conf/*; do
-                  [ "$(basename "$f")" = 50-nix.conf ] || cp -L "$f" $out/
-                done
-              '';
-
-              # For Nix builds (`ldc.reproducible`): the same, plus a map from
-              # the compiler's store paths to `/ldc` in `__FILE__`, assertion
-              # messages and debug info (toolchain spec TC15). druntime's and
-              # Phobos' templates instantiate in the program and name their
-              # source files, which would otherwise keep the compiler in the
-              # program's closure. Development shells keep the real paths, where
-              # a debugger finds the sources.
-              reproducibleLdcConfig = prev.runCommand "ldc2.conf-reproducible" { } ''
-                mkdir $out
-                cp ${cleanLdcConfig}/* $out/
-                cat > $out/40-file-prefix-map.conf <<'EOF'
-                "default":
-                {
-                    switches ~= [
-                        ${
-                          lib.concatMapStringsSep ",\n" (p: ''"-ffile-prefix-map=${p}=/ldc"'') (
-                            lib.unique [
-                              "${rawLdc}"
-                              "${rawLdc.unwrapped or rawLdc}"
-                            ]
-                          )
-                        }
-                    ];
-                };
-                EOF
-              '';
-
-              # The project `ldc`: dlang.nix's with one of the configurations above.
-              wrapLdc =
-                conf:
-                prev.symlinkJoin {
-                  name = "ldc-${rawLdc.version}";
-                  paths = [ rawLdc ];
-                  nativeBuildInputs = [ prev.makeWrapper ];
-                  postBuild = ''
-                    for drv in ldc2 ldmd2; do
-                      wrapProgram "$out/bin/$drv" --add-flags "-conf=${conf}"
+              # The project's wrapping of a dlang.nix LDC: its drivers read one of the
+              # configurations below. `pkgs.ldc` wraps `rawLdc`.
+              ldcFrom =
+                rawLdc:
+                let
+                  # The compiler's own `ldc2.conf/` drop-ins without dlang.nix's
+                  # `50-nix.conf`: its `-link-defaultlib-shared` breaks standalone
+                  # binaries once `buildDubPackage` scrubs compiler references. What
+                  # remains links druntime/Phobos statically, and keeps upstream's
+                  # wasm sections (bare `wasm32-unknown-unknown` for `--wasm` tests).
+                  cleanLdcConfig = prev.runCommand "ldc2.conf" { } ''
+                    mkdir $out
+                    for f in ${rawLdc}/etc/ldc2.conf/*; do
+                      [ "$(basename "$f")" = 50-nix.conf ] || cp -L "$f" $out/
                     done
                   '';
-                  passthru =
-                    lib.optionalAttrs (rawLdc ? include) {
-                      inherit (rawLdc) include;
-                    }
-                    // {
-                      # The package this joins over. Consumers scrubbing compiler
-                      # paths out of a built binary need it: druntime bakes
-                      # `__FILE__` strings naming *this* store path into every
-                      # assert, and scrubbing the join is scrubbing the wrong one.
-                      unwrapped = rawLdc;
-                      # The C compiler `ldc2` links through (the macOS shell's `CC`).
-                      inherit (rawLdc) linkCc;
-                      # The same compiler for Nix builds, mapping its store paths.
-                      reproducible = wrapLdc reproducibleLdcConfig;
-                      mapsStorePaths = conf == reproducibleLdcConfig;
+
+                  # For Nix builds (`ldc.reproducible`): the same, plus a map from
+                  # the compiler's store paths to `/ldc` in `__FILE__`, assertion
+                  # messages and debug info (toolchain spec TC15). druntime's and
+                  # Phobos' templates instantiate in the program and name their
+                  # source files, which would otherwise keep the compiler in the
+                  # program's closure. Development shells keep the real paths, where
+                  # a debugger finds the sources.
+                  reproducibleLdcConfig = prev.runCommand "ldc2.conf-reproducible" { } ''
+                    mkdir $out
+                    cp ${cleanLdcConfig}/* $out/
+                    cat > $out/40-file-prefix-map.conf <<'EOF'
+                    "default":
+                    {
+                        switches ~= [
+                            ${lib.concatMapStringsSep ",\n" (p: ''"-ffile-prefix-map=${p}=/ldc"'') (
+                              lib.unique [
+                                "${rawLdc}"
+                                "${rawLdc.unwrapped or rawLdc}"
+                              ]
+                            )}
+                        ];
                     };
-                  meta = rawLdc.meta // {
-                    mainProgram = "ldc2";
-                  };
-                };
+                    EOF
+                  '';
+
+                  # The project `ldc`: dlang.nix's with one of the configurations above.
+                  wrapLdc =
+                    conf:
+                    prev.symlinkJoin {
+                      name = "ldc-${rawLdc.version}";
+                      paths = [ rawLdc ];
+                      nativeBuildInputs = [ prev.makeWrapper ];
+                      postBuild = ''
+                        for drv in ldc2 ldmd2; do
+                          wrapProgram "$out/bin/$drv" --add-flags "-conf=${conf}"
+                        done
+                      '';
+                      passthru =
+                        lib.optionalAttrs (rawLdc ? include) {
+                          inherit (rawLdc) include;
+                        }
+                        // {
+                          # The package this joins over. Consumers scrubbing compiler
+                          # paths out of a built binary need it: druntime bakes
+                          # `__FILE__` strings naming *this* store path into every
+                          # assert, and scrubbing the join is scrubbing the wrong one.
+                          unwrapped = rawLdc;
+                          # The C compiler `ldc2` links through (the macOS shell's `CC`).
+                          inherit (rawLdc) linkCc;
+                          # The same compiler for Nix builds, mapping its store paths.
+                          reproducible = wrapLdc reproducibleLdcConfig;
+                          mapsStorePaths = conf == reproducibleLdcConfig;
+                        };
+                      meta = rawLdc.meta // {
+                        mainProgram = "ldc2";
+                      };
+                    };
+                in
+                wrapLdc cleanLdcConfig;
 
             in
             {
@@ -124,7 +129,7 @@
               # `${ldc}/lib` (druntime/phobos) and may invoke `ldmd2` — so we
               # `symlinkJoin` the real package and only wrap the two drivers,
               # rather than substituting a bare `ldc2` shim.
-              ldc = wrapLdc cleanLdcConfig;
+              ldc = ldcFrom rawLdc;
 
               # Build `dtools` (rdmd, dustmite, …) against the *unwrapped* ldc.
               # Its check phase (`test_rdmd`) copies `ldmd2` into a temp dir and
@@ -191,18 +196,7 @@
       legacyPackages.d-toolchain =
         let
           inherit (pkgs) lib;
-          inherit (pkgs.stdenv.hostPlatform) isDarwin isx86_64;
-        in
-        {
-          packages = [
-            pkgs.ldc
-            pkgs.dub
-            pkgs.dtools
-            pkgs.dub-to-nix
-          ]
-          ++ lib.optionals (isx86_64) [
-            pkgs.dmd
-          ];
+          inherit (pkgs.stdenv.hostPlatform) isDarwin isLinux isx86_64;
 
           # The shell's stdenv exports its own `CC`, which `ldc2` would link
           # with; name the wrapped `clang-sparkles` its wrapper defaults to
@@ -217,6 +211,52 @@
           # Caps open-file limit so D's std.process.fork() child doesn't overflow
           # when casting rlim_cur to int (phobos bug with unlimited NOFILE).
           nofileLimit = 131072;
+        in
+        {
+          packages = [
+            pkgs.ldc
+            pkgs.dub
+            pkgs.dtools
+            pkgs.dub-to-nix
+          ]
+          ++ lib.optionals (isx86_64) [
+            pkgs.dmd
+          ];
+
+          # The variables every D build and tool needs, as an attribute set (a
+          # derivation's `env`; `buildSparklesApp`'s default) and rendered for
+          # the two other consumers: a shell hook and a `makeWrapper` call.
+          inherit env nofileLimit;
+          shellExports = lib.concatStringsSep "\n" (
+            lib.mapAttrsToList (name: value: "export ${name}=${lib.escapeShellArg value}") env
+          );
+          # Not lib.cli.toCommandLine*: its option-spec model renders `--flag
+          # value` pairs, not makeWrapper's three-token `--set KEY VALUE` form.
+          wrapperArgs = lib.concatLists (
+            lib.mapAttrsToList (name: value: [
+              "--set"
+              name
+              value
+            ]) env
+          );
+
+          # Raises the open-file limit to `nofileLimit`, best effort: where the
+          # hard cap is lower (some CI runners, restricted sandboxes) the
+          # inherited limit stays, and the command still succeeds (makeWrapper's
+          # `--run` is under `set -e`).
+          nofileCommand = "ulimit -n ${toString nofileLimit} 2>/dev/null || true";
+
+          # The C libraries in-repo programs and examples link outside a Nix
+          # build (`libs "dw" "elf"`, `libs "pfm"`, `libs "kqueue"` under `dub
+          # run --single`): the shell's and the `ci` wrapper's `LIBRARY_PATH`
+          # and `LD_LIBRARY_PATH`. Linux-only; empty elsewhere.
+          libraryPath = lib.optionalString isLinux (
+            lib.makeSearchPath "lib" [
+              pkgs.elfutils.out
+              pkgs.libpfm
+              pkgs.libkqueue
+            ]
+          );
         };
     };
 }

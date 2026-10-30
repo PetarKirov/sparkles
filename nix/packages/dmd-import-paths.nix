@@ -16,17 +16,28 @@
     let
       dmdSrc = inputs.dmd-src;
       phobosSrc = inputs.phobos-src;
+      # `importPath`: the pair as the colon-separated value of
+      # $SPARKLES_DMD_IMPORT_PATH.
+      withImportPath =
+        farm:
+        farm.overrideAttrs (old: {
+          passthru = (old.passthru or { }) // {
+            importPath = "${farm}/druntime:${farm}/phobos";
+          };
+        });
     in
     {
-      packages.dmd-import-paths = pkgs.linkFarm "sparkles-dmd-import-paths" [
-        {
-          name = "druntime";
-          path = "${dmdSrc}/druntime/src";
-        }
-        {
-          name = "phobos";
-          path = phobosSrc;
-        }
-      ];
+      packages.dmd-import-paths = withImportPath (
+        pkgs.linkFarm "sparkles-dmd-import-paths" [
+          {
+            name = "druntime";
+            path = "${dmdSrc}/druntime/src";
+          }
+          {
+            name = "phobos";
+            path = phobosSrc;
+          }
+        ]
+      );
     };
 }

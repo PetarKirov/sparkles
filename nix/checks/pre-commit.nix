@@ -300,11 +300,7 @@ in
                         pkgs.gitMinimal
                       ]
                     }:$PATH
-                    ${lib.concatStringsSep "\n" (
-                      lib.mapAttrsToList (
-                        name: value: "export ${name}=${lib.escapeShellArg value}"
-                      ) config.legacyPackages.d-toolchain.env
-                    )}
+                    ${config.legacyPackages.d-toolchain.shellExports}
                     repo_root=$(git rev-parse --show-toplevel)
                     exec dub run --single --temp-build --build=checked --compiler=ldc2 \
                       "$repo_root/libs/base/examples/text-cell-svg.d" \
