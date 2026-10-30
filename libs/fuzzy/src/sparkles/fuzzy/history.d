@@ -358,14 +358,15 @@ private uint decayWeight(ulong ageSeconds, AccessDecayProfile profile)
         if (hours >= tenDayRetentionHours)
             return hours == tenDayRetentionHours && remainder == 0
                 ? tenDayDecay[$ - 1] : 0;
-        return interpolate(tenDayDecay[hours], tenDayDecay[hours + 1],
-            remainder);
+        // Below the retention bound, so an index on every platform.
+        return interpolate(tenDayDecay[cast(size_t) hours],
+            tenDayDecay[cast(size_t) hours + 1], remainder);
     case AccessDecayProfile.threeDay:
         if (hours >= threeDayRetentionHours)
             return hours == threeDayRetentionHours && remainder == 0
                 ? threeDayDecay[$ - 1] : 0;
-        return interpolate(threeDayDecay[hours], threeDayDecay[hours + 1],
-            remainder);
+        return interpolate(threeDayDecay[cast(size_t) hours],
+            threeDayDecay[cast(size_t) hours + 1], remainder);
     default:
         return 0;
     }
