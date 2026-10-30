@@ -46,7 +46,9 @@ immutable string[2][] specimen = [
     ["CJK", "漢字 かな カナ 한국어 中文字体"],
     ["Emoji", "😀 😎 ❤️ ❤ ✨ 👍 👍🏽 🎉 🚀"],
     ["Sequences", "👩‍💻 👨‍👩‍👧 🇧🇬 1️⃣ #️⃣ ❤️‍🔥"],
-    ["Icons", "       "],
+    // Nerd Font icons (Powerline branch and arrow, folders, gear, git,
+    // D, octicon), written as escapes so no editor strips them again.
+    ["Icons", "\uE0A0 \uE0B0 \uF115 \uF07B \uF013 \uF1D3 \uE7A8 \uF489"],
     ["Symbols", "←→↑↓ ⇐⇒ ✓✗ ∑∫√∞≈≠ ±×÷ °§¶ ©®™ ½¾"],
     ["Box", "┌─┬─┐ ╔═╦═╗ ╭─╮ │ ├┼┤ ░▒▓█ ▁▂▃▄▅▆▇ ⣿⠿⠛"],
 ];
@@ -789,6 +791,27 @@ version (unittest)
     lab.shotPath = "never-written.png";
     const rec = runAppRecorded(lab, RunConfig.init, []);
     assert(rec.quitRequested && rec.frames.length < 10);
+}
+
+@("text_lab.theIconsAreNerdFontCodePoints")
+@safe unittest
+{
+    import std.algorithm : count, filter;
+    import std.utf : byDchar;
+
+    // Each icon is a private-use code point, which a font's character map
+    // and nothing else gives meaning to; a pass through a tool that drops
+    // them leaves only spaces.
+    foreach (line; specimen)
+        if (line[0] == "Icons")
+        {
+            auto icons = line[1].byDchar.filter!(c => c != ' ');
+            assert(icons.save.count == 8);
+            foreach (c; icons)
+                assert(c >= 0xE000 && c <= 0xF8FF);
+            return;
+        }
+    assert(false, "the specimen has an Icons line");
 }
 
 @("text_lab.keysSwitchTheSettings")
