@@ -36,10 +36,5 @@
           platforms = lib.platforms.linux ++ lib.platforms.darwin;
         };
       };
-      apps.android-dev-env-probe = {
-        type = "app";
-        program = lib.getExe config.packages.android-dev-env-probe;
-        meta.description = config.packages.android-dev-env-probe.meta.description;
-      };
     };
 }

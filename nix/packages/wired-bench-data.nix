@@ -144,12 +144,6 @@ in
           dub test -b bench-unchecked -c unittest-foreign -- --bench --perf --group-by=dataset,operation "$@"
         '';
       };
-
-      apps.run-wired-bench = {
-        type = "app";
-        program = lib.getExe config.packages.run-wired-bench;
-        meta.description = config.packages.run-wired-bench.meta.description;
-      };
       apps.wired-bench = {
         type = "app";
         program = lib.getExe config.packages.run-wired-bench;

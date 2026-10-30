@@ -103,11 +103,5 @@
               };
             };
           });
-
-      apps.twoslash-extract = {
-        type = "app";
-        program = lib.getExe config.packages.twoslash-extract;
-        meta.description = config.packages.twoslash-extract.meta.description;
-      };
     };
 }
