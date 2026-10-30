@@ -48,6 +48,29 @@ in
 {
   perSystem =
     { config, pkgs, ... }:
+    let
+      # A hook that runs one `ci` mode. Whole-tree checks take no file names
+      # and run alone (`require_serial`); a mode that takes them gets them
+      # after its `args` (`passFilenames`).
+      mkCiHook =
+        {
+          name,
+          files,
+          args,
+          passFilenames ? false,
+          requireSerial ? true,
+          excludes ? null,
+        }:
+        {
+          enable = true;
+          inherit name files args;
+          entry = lib.getExe config.packages.ci;
+          language = "system";
+          pass_filenames = passFilenames;
+          require_serial = requireSerial;
+        }
+        // lib.optionalAttrs (excludes != null) { inherit excludes; };
+    in
     {
       devShells.pre-commit =
         let
@@ -228,22 +251,19 @@ in
                 excludes = builtins.map lib.escapeRegex (generatedJsonFiles ++ yarnPnPFiles);
               };
 
-              fix-markdown-reference-links = {
-                enable = true;
-                files = "\\.md$";
-                language = "system";
+              fix-markdown-reference-links = mkCiHook {
                 name = "fix-markdown-reference-links";
-                require_serial = false;
-                pass_filenames = true;
-                entry = lib.getExe config.packages.ci;
+                files = "\\.md$";
                 args = [
                   "--fix-reference-links"
                   "--files"
                 ];
+                passFilenames = true;
+                requireSerial = false;
               };
 
-              verify-md-examples = {
-                enable = true;
+              verify-md-examples = mkCiHook {
+                name = "verify-md-examples";
                 files = "\\.md$";
                 # The markdown RENDERING fixtures are inputs to the golden
                 # suite, not runnable examples — a fixture may hold any code
@@ -253,8 +273,6 @@ in
                   "^libs/syntax/test/data/"
                   "^libs/source-view/test/data/"
                 ];
-                language = "system";
-                name = "verify-md-examples";
                 # Hand every matched *.md to ONE `ci` invocation instead of letting
                 # prek fan out file batches across parallel processes. `ci` then
                 # parallelizes the per-example builds itself, capped by available
@@ -263,14 +281,12 @@ in
                 # prek processes (~32 here) cannot. The build-artifact race itself is
                 # fixed in `ci` via dub `--temp-build`; serializing here is about
                 # bounded, predictable parallelism rather than correctness.
-                require_serial = true;
-                pass_filenames = true;
-                entry = lib.getExe config.packages.ci;
                 args = [
                   "--verify"
                   "--fail-fast"
                   "--files"
                 ];
+                passFilenames = true;
               };
 
               # Regenerate the cell-grid SVG for docs/specs/base/text/ whenever the
@@ -352,18 +368,14 @@ in
                 });
               };
 
-              check-vcs-urls = {
-                enable = true;
+              check-vcs-urls = mkCiHook {
                 name = "check-vcs-urls";
                 files = "\\.md$";
-                entry = lib.getExe config.packages.ci;
                 args = [
                   "--check-vcs-urls"
                   "--files"
                 ];
-                language = "system";
-                pass_filenames = true;
-                require_serial = true;
+                passFilenames = true;
               };
 
               # VitePress sidebar ↔ published docs/**/*.md consistency (pages must
@@ -372,29 +384,19 @@ in
               # that substantial hook logic must not be shell. pass_filenames=false:
               # the check is whole-tree (orphans are about files *not* staged), and
               # runs when any path under docs/ changes — including the sidebar config.
-              check-docs-sidebar = {
-                enable = true;
+              check-docs-sidebar = mkCiHook {
                 name = "check-docs-sidebar";
                 files = "^docs/";
-                entry = lib.getExe config.packages.ci;
                 args = [ "--check-docs-sidebar" ];
-                language = "system";
-                pass_filenames = false;
-                require_serial = true;
               };
 
               # The glossary data (docs/.vitepress/glossary.json) and every docs
               # link into it (apps/ci --check-glossary). Whole-tree like the
               # sidebar check: removing an entry breaks pages nobody staged.
-              check-glossary = {
-                enable = true;
+              check-glossary = mkCiHook {
                 name = "check-glossary";
                 files = "^docs/";
-                entry = lib.getExe config.packages.ci;
                 args = [ "--check-glossary" ];
-                language = "system";
-                pass_filenames = false;
-                require_serial = true;
               };
 
               # The credits document against the build inputs (apps/ci
@@ -403,15 +405,10 @@ in
               # part names something shipped. Whole-tree, triggered by the
               # document and by everything that names a component — the dub
               # lock and manifests, and the Nix builders.
-              check-credits = {
-                enable = true;
+              check-credits = mkCiHook {
                 name = "check-credits";
                 files = "(^docs/credits/|dub\\.sdl$|dub\\.selections\\.json$|^nix/)";
-                entry = lib.getExe config.packages.ci;
                 args = [ "--check-credits" ];
-                language = "system";
-                pass_filenames = false;
-                require_serial = true;
               };
 
               # Every symbol a spec's evidence column cites must exist in the
@@ -420,15 +417,10 @@ in
               # and triggered by D sources as well as specs: a citation goes
               # stale when the code it names is renamed, not when the spec is
               # edited. Runs in CI through the lint job's `prek run --all-files`.
-              check-spec-evidence = {
-                enable = true;
+              check-spec-evidence = mkCiHook {
                 name = "check-spec-evidence";
                 files = "(^docs/specs/|\\.d$|dub\\.sdl$)";
-                entry = lib.getExe config.packages.ci;
                 args = [ "--check-spec-evidence" ];
-                language = "system";
-                pass_filenames = false;
-                require_serial = true;
               };
             };
 
