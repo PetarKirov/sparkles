@@ -61,7 +61,7 @@ PR — which gets no secrets — still run the pipeline.
 | `prepare-cloud-env.sh`       | One-line setup for an ephemeral agent container: Nix, reachable inputs, toolchain        |
 | `with-cachix.sh`             | Runs a command under `cachix watch-exec`, pushing paths as they are built                |
 | `release-pin.sh`             | Highest-tag guard, then `cachix push` + `cachix pin --keep-revisions`                    |
-| `toolchain-pin.d`            | Pushes and pins toolchains, heavy libraries, and Android cross libraries to Cachix       |
+| `toolchain-pin.d`            | Pins the pin set (`nix/pin-targets.nix`) to Cachix, prunes the rest, checks it is cached |
 | `notify-dub-registry.sh`     | Pokes code.dlang.org to ingest a new tag                                                 |
 | `deploy-cloudflare-pages.sh` | `wrangler pages deploy`, then upserts the preview-URL comment                            |
 | `pr-comment.sh`              | Marker-keyed comment upsert, so re-runs edit instead of appending                        |
@@ -77,14 +77,39 @@ Cloud setup verification prints the complete `ldc2 --version` output. Do not
 pipe it into an early-exiting reader: LLVM treats a closed stdout pipe as an
 error, so `head` can turn successful toolchain setup into a failed CI check.
 
-### `toolchain-pin.d` — supervised derivation pinning
+### `toolchain-pin.d` — the pin set
 
-Run the D launcher directly from the repository root:
+`toolchain-pin.d` keeps Sparkles' Cachix pins equal to the pin set,
+`legacyPackages.<system>.pinTargets` (`nix/pin-targets.nix`, TC24), and checks
+that the set's outputs are cached (TC23). Run it from the repository root:
 
 ```bash
 dub run --single ci/toolchain-pin.d -- --help
-dub run --single ci/toolchain-pin.d -b checked -- --dry-run --all -j 4
-dub run --single ci/toolchain-pin.d -b checked -- --libs
+dub run --single ci/toolchain-pin.d -b checked -- --dry-run -j 4
+dub run --single ci/toolchain-pin.d -b checked -- --system x86_64-linux
+dub run --single ci/toolchain-pin.d -b checked -- --check
+```
+
+The tool evaluates the set for x86_64-linux, aarch64-darwin and aarch64-linux
+and pins each entry as `<name>-<system>`, keeping one revision. Selectors are
+name filters: `--toolchains` (`toolchain-*`), `--android` (`*-android`) and
+`--libs` (the rest) combine as a union; positional entry names
+(`toolchain-dmd`) and a repeatable `--system` narrow further. Building an
+output needs a builder for its system, so each host pins its own with
+`--system`.
+
+After every selected pin succeeds, the tool deletes each of the cache's pins
+that the whole set — not the selection — does not name. A dry run evaluates,
+measures and lists those deletions, and pushes, pins or deletes nothing.
+
+`--check` builds nothing and needs no token. It evaluates every selected out
+path and asks `https://<cache>.cachix.org/<hash>.narinfo`, then exits non-zero
+listing each output that is missing or unanswered. No workflow runs it yet; as
+the gate before a lock update merges, it is one step in a job with the dev
+shell:
+
+```bash
+dub run --single ci/toolchain-pin.d -b checked -- --check
 ```
 
 The implementation lives in `apps/ci/src/derivation_pin*.d`. One Event Horizon
@@ -95,25 +120,28 @@ run, stops new targets, and waits for supervised children to terminate and reap
 before the summary is printed. Cancellation does not undo a completed push or
 pin, and a Nix daemon's work is outside the client's process group.
 
-`--token` overrides `CACHIX_AUTH_TOKEN` in child environments only. Without a
+`--token` overrides `CACHIX_AUTH_TOKEN` in child environments and in the
+deletion requests' `Authorization` header, never on a command line. Without a
 token, the tool defaults to dry-run; `CI_DRY_RUN=1` also selects dry-run.
 `--revisions` and `CI_PIN_REVISIONS` must be positive. `--cache` overrides
 `CACHIX_CACHE`, with `sparkles` as the final default.
 
 Storage is the deduplicated NAR size of the closure outside `cache.nixos.org`,
-not compressed upload size or additional space relative to the target cache.
-Remote measurements follow transitive references. A `*` marks a partial row;
-the footer says **Partial** when any measurement is partial or unavailable.
-Failed upstream queries can leave unclassified paths in that estimate. Unknown
-size is reported as unavailable, rather than claiming the path is unbuilt.
+not compressed upload size or additional space relative to the target cache;
+the footer states it against the cache's 10 GiB cap. Remote measurements follow
+transitive references. A `*` marks a partial row; the footer says **Partial**
+when any measurement is partial or unavailable. Failed upstream queries can
+leave unclassified paths in that estimate. Unknown size is reported as
+unavailable, rather than claiming the path is unbuilt.
 
 The launcher targets POSIX hosts: Linux requires a working io_uring backend;
 macOS uses kqueue. Native macOS validation is required before claiming parity.
 Captured output is bounded to 64 MiB per stream; incomplete output is rejected
 before parsing. No command deadline is imposed by default.
 
-Tests are discovered through the `ci` package, rather than the single-file
-launcher:
+`dub run --single` rebuilds when `ci/toolchain-pin.d` changes, not when a module
+under `apps/ci/src` does: after editing one, pass `--force`. Tests are
+discovered through the `ci` package, rather than the single-file launcher:
 
 ```bash
 dub test :ci -- -i 'derivation_pin' -v

@@ -78,42 +78,38 @@ build) and are recorded in the forks' commit messages.
 ## Cache pins
 
 [TC24](./SPEC.md#_8-platforms-tests-and-caches) makes `nix/pin-targets.nix`
-the pin set. Until a tool applies it, the set is applied by hand from each
-host. For every name in
-`nix eval --json .#legacyPackages.<system>.pinTargets --apply builtins.attrNames`,
-build `.#legacyPackages.<system>.pinTargets.<name>`, `cachix push` the result,
-and `cachix pin sparkles <name>-<system> <path> --keep-revisions 1`. Then delete
-every pin the set does not name. aarch64-linux is applied from a host with an
-aarch64-linux builder.
+the pin set, and `ci/toolchain-pin.d` (implementation in
+`apps/ci/src/derivation_pin*.d`) applies it:
 
-The tool is the D pin launcher on Sparkles' `refactor/ci-toolchain-pin` branch
-(`ci/toolchain-pin.d`, `apps/ci/src/derivation_pin*.d`). It predates TC24, and
-before it lands it is rebased onto this plan's pull request with these changes:
+- **The set, not a catalogue.** The tool evaluates
+  `legacyPackages.<system>.pinTargets` for x86_64-linux, aarch64-darwin and
+  aarch64-linux, one `nix eval` per system, and pins each entry as
+  `<name>-<system>` from `.#legacyPackages.<system>.pinTargets.<name>`. A
+  system that fails to evaluate, or evaluates to nothing, fails the run.
+- **Name filters.** `--toolchains` keeps the names with the `toolchain-`
+  prefix, `--android` those with the `-android` suffix, `--libs` the rest;
+  positional entry names and a repeatable `--system` narrow further. A name or
+  system outside the set, or a selection that matches nothing, is an error.
+- **One revision.** `--revisions` and `CI_PIN_REVISIONS` default to 1 and must
+  be positive.
+- **No pin outside the set.** After every selected pin succeeds, the tool lists
+  the cache's pins (`GET https://app.cachix.org/api/v1/cache/<cache>/pin`) and
+  deletes each one the whole expansion does not name (`DELETE …/pin/<name>`),
+  whatever the selection, so a run narrowed to one host keeps the others'
+  pins. A dry run lists the deletions and makes none.
+- **The cap.** The summary states the selected closures' non-upstream size
+  against the cache's 10 GiB.
+- **The TC23 gate.** `--check` evaluates every selected out path, from any
+  host for all three systems, and asks
+  `https://<cache>.cachix.org/<hash>.narinfo`; it exits non-zero listing each
+  output that is missing or unanswered. It builds nothing and needs no token.
 
-1. **Read the set, keep no catalogue.** Its `toolchainCatalog`,
-   `heavyLibCatalog` and `androidCatalog` are replaced by the attribute names
-   of `legacyPackages.<system>.pinTargets` for x86_64-linux, aarch64-darwin and
-   aarch64-linux, each pinned as `<name>-<system>` from installable
-   `.#legacyPackages.<system>.pinTargets.<name>`. The `--toolchain`, `--libs`
-   and `--android` selectors become filters on those names: the `toolchain-`
-   prefix and the `-android` suffix. The catalogue tests become tests of that
-   expansion.
-2. **Drop its `pinTargets`.** The branch defines its own
-   `legacyPackages.pinTargets` in `nix/shells/default.nix`, with a `nix-c-api`
-   join over the `nix` flake input. That input is gone (TC-M2): the Nix C API
-   libraries come from nixpkgs' `nixVersions.latest.libs`, which
-   cache.nixos.org serves. The definition and `nixCApiLibs` are deleted.
-3. **Remove the stale targets.** `toolchain-ldc-wasm` names a package removed
-   in TC-M1. `toolchain-dub`, `toolchain-dtools`, `raylib`, `notcurses-core`
-   and `tracy` are cheap to rebuild and are not in the set.
-4. **One revision.** The `--revisions` default and `CI_PIN_REVISIONS` default
-   become 1; the positive-integer check stays.
-5. **Delete pins outside the set.** After pinning, the tool lists the cache's
-   pins (`GET https://app.cachix.org/api/v1/cache/<cache>/pin`) and deletes
-   each one that the expansion does not name
-   (`DELETE …/pin/<name>`). A dry run lists the deletions without making them.
-6. **Report against the cap.** The storage summary states the pinned closures'
-   size beside the cache's 10 GiB.
+Building aarch64-linux and aarch64-darwin outputs needs a builder for that
+system, so each host pins its own with `--system`. CI does not run the gate
+yet: wired in, it is one step before a lock update merges, in a job with the
+dev shell, `dub run --single ci/toolchain-pin.d -b checked -- --check`, whose
+non-zero exit blocks the update.
 
 Acceptance: a dry run on each host lists exactly the set and no deletion; a
 real run leaves the cache's pin list equal to the set for all three hosts.
+`--check` passes before every lock move.
