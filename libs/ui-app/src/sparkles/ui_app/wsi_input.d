@@ -173,13 +173,20 @@ struct WsiInput
             (in ReadyEvent r) { scale = r.metrics.scale.value; sink(Event(ResizeEvent())); },
             (in SurfaceMetricsChangedEvent m)
             {
+                // A surface gone takes its touches with it: Android sends
+                // no cancel for the fingers down when it destroys one.
+                if (m.metrics.suspended)
+                    loseTouch();
                 scale = m.metrics.scale.value;
                 sink(Event(ResizeEvent()));
             },
             (in FocusChangedEvent f)
             {
                 if (!f.focused)
+                {
                     held_[] = false;
+                    loseTouch();
+                }
                 sink(Event(FocusEvent(f.focused)));
             },
             (in sparkles.wsi.events.PointerEvent p) { pointer(p, cellW, cellH, sink); },
@@ -198,6 +205,28 @@ struct WsiInput
             },
             (in _) {},
         );
+    }
+
+    /**
+    Forgets every finger without resolving anything: what focus or the
+    surface going away means for a touch whose end will never be reported.
+    The contacts empty, the first finger stops being the left button, and
+    an in-flight gesture — a hold, a pinch, a fling, an event not yet
+    delivered — is abandoned, so the next touch starts afresh and
+    $(LREF gesturing) is `false`. The counters of touches begun stay.
+    */
+    void loseTouch() @safe pure nothrow @nogc
+    {
+        import sparkles.input.gesture : PointF;
+
+        if (touching_)
+            held_[PointerButton.left] = false;
+        touching_ = false;
+        contacts_.count = 0;
+        contacts_.at = Point.init;
+        gestures.cancel();
+        gestures.setContacts(0, PointF(), PointF());
+        while (!isNoEvent(gestures.next())) {}
     }
 
     /// Delivers a keystroke still waiting for text. The host calls it at the
@@ -802,6 +831,72 @@ version (unittest)
     assert(held == [Event(GestureEvent(Gesture.longPress, Point(6, 2)))]);
     cast(void) translated(input, wsi, [touch(TouchPhase.ended, 1, 65, 45)]);
     assert(!input.gesturing, "a lifted long-press leaves nothing to resolve");
+}
+
+@("ui_app.wsi_input.losingFocusForgetsTheFingers")
+@system unittest
+{
+    // A cancel lost with the focus must not leave the next touch ignored:
+    // the first finger as the left button presses again, and no contact
+    // lingers.
+    static WindowEvent touch(TouchPhase phase, uint contact, int x, int y)
+    {
+        TouchEvent t;
+        t.contact = PointerId(contact);
+        t.phase = phase;
+        t.physicalPosition = PhysicalPosition(x, y);
+        return ev(t);
+    }
+
+    WsiInput input;
+    FakeTexts wsi;
+    cast(void) translated(input, wsi, [touch(TouchPhase.began, 1, 25, 45),
+        touch(TouchPhase.began, 2, 5, 5)]);
+    assert(translated(input, wsi, [ev(FocusChangedEvent(false))]) == [Event(FocusEvent(false))],
+        "losing focus resolves nothing");
+    assert(input.contacts.count == 0 && input.contacts.began == 1);
+    assert(translated(input, wsi, [touch(TouchPhase.began, 3, 39, 61),
+        touch(TouchPhase.ended, 3, 39, 61)]) == [
+        Event(PointerEvent(action: PointerAction.press, button: PointerButton.left, pos: Point(3, 3))),
+        Event(PointerEvent(action: PointerAction.release, button: PointerButton.left, pos: Point(3, 3))),
+    ], "the next finger is the left button again");
+}
+
+@("ui_app.wsi_input.aLostSurfaceAbandonsTheGesture")
+@system unittest
+{
+    import sparkles.wsi.types : SurfaceMetrics;
+
+    static WindowEvent touch(TouchPhase phase, uint contact, int x, int y)
+    {
+        TouchEvent t;
+        t.contact = PointerId(contact);
+        t.phase = phase;
+        t.physicalPosition = PhysicalPosition(x, y);
+        return ev(t);
+    }
+
+    // Android destroys the surface under a held finger and never cancels
+    // it: without the reset the host would park on `gesturing` forever.
+    WsiInput input;
+    input.touchGestures = true;
+    input.gestures.cfg.cellH = 20;
+    FakeTexts wsi;
+    cast(void) translated(input, wsi, [touch(TouchPhase.began, 1, 25, 45),
+        touch(TouchPhase.began, 2, 125, 45)]);
+    assert(input.gesturing, "a pinch in flight");
+    assert(SurfaceMetrics.init.suspended);
+    assert(translated(input, wsi, [ev(SurfaceMetricsChangedEvent(SurfaceMetrics.init))])
+        == [Event(ResizeEvent())], "the loss resolves no gesture");
+    assert(!input.gesturing && input.contacts.count == 0);
+    Event[] later;
+    input.tickGestures(MonoTime.currTime + 1000.msecs, 10, 20, (Event e) { later ~= e; });
+    assert(later.length == 0, "no long-press fires for the finger that went");
+    assert(translated(input, wsi, [touch(TouchPhase.began, 3, 25, 45),
+        touch(TouchPhase.ended, 3, 25, 45)]) == [
+        Event(PointerEvent(action: PointerAction.press, button: PointerButton.left, pos: Point(2, 2))),
+        Event(PointerEvent(action: PointerAction.release, button: PointerButton.left, pos: Point(2, 2))),
+    ], "the next touch taps");
 }
 
 @("ui_app.wsi_input.pixelsWithAOneByOneCell")
