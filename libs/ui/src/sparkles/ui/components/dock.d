@@ -1077,11 +1077,15 @@ struct DockContainer
     private PaneId pendingScrollPane;
 
     // Capture ids (STM11): panes and dividers must not collide, and `0`
-    // means "free" to the machine, so both spaces start above it.
-    private enum size_t paneCapBase = 1;
-    private enum size_t divCapBase = size_t(1) << 32;
-    private enum size_t scrollCapBase = size_t(1) << 40;
-    private enum size_t tabCapBase = size_t(1) << 48;
+    // means "free" to the machine, so both spaces start above it. A hit id
+    // is a `size_t`; with 32 bits each space is a quarter of it, and a pane
+    // id must stay below the dividers' base.
+    static if (size_t.sizeof >= 8)
+        private enum size_t paneCapBase = 1, divCapBase = size_t(1) << 32,
+            scrollCapBase = size_t(1) << 40, tabCapBase = size_t(1) << 48;
+    else
+        private enum size_t paneCapBase = 1, divCapBase = size_t(1) << 29,
+            scrollCapBase = size_t(1) << 30, tabCapBase = size_t(1) << 31;
 
     private struct PaneScroll
     {
@@ -1861,6 +1865,7 @@ struct DockContainer
                 if (cell.action == PointerAction.press
                     && cell.button == PointerButton.left)
                 {
+                    assert(under < divCapBase - paneCapBase, "a pane id past the capture space");
                     capture = capture.capturedBy(paneCapBase + under);
                     focused = under; // click-to-focus (DCK6)
                 }
