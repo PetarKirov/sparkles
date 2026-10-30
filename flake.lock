@@ -132,7 +132,9 @@
     },
     "flake-parts": {
       "inputs": {
-        "nixpkgs-lib": "nixpkgs-lib"
+        "nixpkgs-lib": [
+          "nixpkgs"
+        ]
       },
       "locked": {
         "lastModified": 1778716662,
@@ -443,8 +445,12 @@
       "inputs": {
         "home-manager": "home-manager_2",
         "nix-formatter-pack": "nix-formatter-pack",
-        "nixpkgs": "nixpkgs",
-        "nixpkgs-docs": "nixpkgs-docs",
+        "nixpkgs": [
+          "nixpkgs"
+        ],
+        "nixpkgs-docs": [
+          "nixpkgs"
+        ],
         "nixpkgs-for-bootstrap": "nixpkgs-for-bootstrap",
         "nmd": "nmd"
       },
@@ -465,31 +471,16 @@
     },
     "nixpkgs": {
       "locked": {
-        "lastModified": 1708172716,
-        "narHash": "sha256-3M94oln0b61m3dUmLyECCA9hYAHXZEszM4saE3CmQO4=",
-        "owner": "NixOS",
+        "lastModified": 1793363981,
+        "narHash": "sha256-Ru8rtvBrBwagkQR7+V290MdNwBlxHtlY0qgqdxDfUHw=",
+        "owner": "PetarKirov",
         "repo": "nixpkgs",
-        "rev": "5d874ac46894c896119bce68e758e9e80bdb28f1",
+        "rev": "b32e1eb268f8a32ec738297d6a0cc0374c184fa8",
         "type": "github"
       },
       "original": {
-        "owner": "NixOS",
-        "repo": "nixpkgs",
-        "type": "github"
-      }
-    },
-    "nixpkgs-docs": {
-      "locked": {
-        "lastModified": 1705957679,
-        "narHash": "sha256-Q8LJaVZGJ9wo33wBafvZSzapYsjOaNjP/pOnSiKVGHY=",
-        "owner": "NixOS",
-        "repo": "nixpkgs",
-        "rev": "9a333eaa80901efe01df07eade2c16d183761fa3",
-        "type": "github"
-      },
-      "original": {
-        "owner": "NixOS",
-        "ref": "release-23.05",
+        "owner": "PetarKirov",
+        "ref": "glfw3-3.5.1-nixos-unstable-2026-10-27",
         "repo": "nixpkgs",
         "type": "github"
       }
@@ -510,21 +501,6 @@
         "type": "github"
       }
     },
-    "nixpkgs-lib": {
-      "locked": {
-        "lastModified": 1777168982,
-        "narHash": "sha256-GOkGPcboWE9BmGCRMLX3worL4EMnsnG8MyKmXNeYuhQ=",
-        "owner": "nix-community",
-        "repo": "nixpkgs.lib",
-        "rev": "f5901329dade4a6ea039af1433fb087bd9c1fe14",
-        "type": "github"
-      },
-      "original": {
-        "owner": "nix-community",
-        "repo": "nixpkgs.lib",
-        "type": "github"
-      }
-    },
     "nixpkgs-upstream-glfw": {
       "flake": false,
       "locked": {
@@ -539,22 +515,6 @@
         "owner": "NixOS",
         "repo": "nixpkgs",
         "rev": "31ecbaca1bdefa45dffc409f0250bd8039ea0010",
-        "type": "github"
-      }
-    },
-    "nixpkgs_2": {
-      "locked": {
-        "lastModified": 1793363981,
-        "narHash": "sha256-Ru8rtvBrBwagkQR7+V290MdNwBlxHtlY0qgqdxDfUHw=",
-        "owner": "PetarKirov",
-        "repo": "nixpkgs",
-        "rev": "b32e1eb268f8a32ec738297d6a0cc0374c184fa8",
-        "type": "github"
-      },
-      "original": {
-        "owner": "PetarKirov",
-        "ref": "glfw3-3.5.1-nixos-unstable-2026-10-27",
-        "repo": "nixpkgs",
         "type": "github"
       }
     },
@@ -651,7 +611,7 @@
         "maple-font-cn-base": "maple-font-cn-base",
         "nativejson-benchmark": "nativejson-benchmark",
         "nix-on-droid": "nix-on-droid",
-        "nixpkgs": "nixpkgs_2",
+        "nixpkgs": "nixpkgs",
         "nixpkgs-upstream-glfw": "nixpkgs-upstream-glfw",
         "phobos-src": "phobos-src",
         "roboto-src": "roboto-src",
