@@ -282,7 +282,8 @@
         # an additional dependency, that dep needs to be added to the
         # shared lockfile or split out into its own.
         dubLock = fromRoot "nix/dub-lock.json";
-        compiler = pkgs.ldc;
+        # Maps its own store paths out of the examples (nix/d-toolchain.nix).
+        compiler = pkgs.ldc.reproducible;
 
         # `checked` — the repo-wide artifact build (see the note on
         # `buildSparklesApp`). Assertions live, which is the whole point of
@@ -358,12 +359,16 @@
         artifacts: examplePath:
         let
           info = exampleInfo examplePath;
-          leaks = [
-            pkgs.ldc
+          compiler = commonExampleArgs.compiler;
+          # Every layer of the compiler, asserted absent: it maps its own paths
+          # out of `__FILE__` and debug info, so nothing of it is removed.
+          compilerPaths = [
+            compiler
+            compiler.unwrapped
           ]
-          ++ lib.optionals (pkgs.ldc ? unwrapped) [ pkgs.ldc.unwrapped ]
-          ++ lib.optionals (pkgs.ldc ? include) [ pkgs.ldc.include ]
-          ++ [
+          ++ lib.optional (compiler.unwrapped ? unwrapped) compiler.unwrapped.unwrapped;
+          # Phobos' service paths, removed (see below).
+          servicePaths = [
             pkgs.curl.out
             pkgs.tzdata
           ];
@@ -381,23 +386,16 @@
             # tree root is pinned so artifacts hash identically).
             dubSubdir = info.parentDirRel;
 
-            # Phobos bakes store paths into every binary that must not leak into
-            # the runtime closure: assert/`__FILE__` strings referencing ldc's
-            # separate `include` output (~19 MiB; the builder scrubs and
-            # disallows only the compiler's `out` — same story as `release` in
-            # ./default.nix), plus the nixpkgs-patched `libcurl.so.4` dlopen
-            # path (which alone pulls the ~18 MiB openssl/krb5/nghttp tail) and
-            # the tzdata dir. The curl/tzdata paths are phobos *service* paths,
-            # but no example touches std.net.curl or named time zones — the
-            # run-all-examples runner exercises them all — so scrub and
-            # disallow all three. NB: `pkgs.curl.out` — libcurl's output; bare
-            # `pkgs.curl` coerces to the `-bin` output.
-            # The compiler underneath the `pkgs.ldc` join goes too: druntime's
-            # asserts name *its* path, not the join's (build-sparkles-app.nix).
-            disallowedReferences = leaks;
+            # Phobos compiles two store paths into itself: the nixpkgs-patched
+            # `libcurl.so.4` dlopen path (which alone pulls the ~18 MiB
+            # openssl/krb5/nghttp tail) and the tzdata dir. No example touches
+            # std.net.curl or named time zones — the run-all-examples runner
+            # exercises them all — so they are removed. NB: `pkgs.curl.out` is
+            # libcurl's output; bare `pkgs.curl` coerces to the `-bin` output.
+            disallowedReferences = compilerPaths ++ servicePaths;
             preFixup = ''
               find "$out" -type f -exec remove-references-to \
-                ${lib.concatMapStringsSep " " (r: "-t ${r}") leaks} '{}' +
+                ${lib.concatMapStringsSep " " (r: "-t ${r}") servicePaths} '{}' +
             '';
 
             # The example carries its own inline `dub.sdl` block, so this is

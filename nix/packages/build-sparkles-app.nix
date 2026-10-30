@@ -656,44 +656,51 @@
                 buildInfoComponents =
                   inTreeComponents (shippedComponentNames appDir) // nativeComponents buildInputs;
 
-                # Default leak set. `buildDubPackage` already scrubs the compiler
-                # itself in its `preFixup`, so this only adds the Phobos-baked paths
-                # it does *not* handle: ldc's separate `include` output (dead
-                # assert/`__FILE__` strings) and the curl/tzdata dlopen fallbacks a
-                # static binary never reaches. A runtime dep the caller lists in
-                # `buildInputs` is a genuine reference, so it is subtracted (never
-                # scrubbed) — and a package needing a compiler at runtime (e.g. `ci`)
-                # just puts it on PATH via `postFixup`; its store path is not the
-                # *build* compiler's, so nothing disallows it.
-                compiler = args.compiler or pkgs.ldc;
-                # `compiler` itself is the assertion `buildDubPackage`'s built-in
-                # `disallowedReferences = [ compiler ]` provides; supplying our own
-                # list replaces it, so re-add it here. It only *asserts* what the
-                # preFixup scrub already removes — a genuine runtime compiler (ci's
-                # DMD on PATH) is a different store path and is unaffected.
-                defaultDisallowed = [
+                # The build compiler. `ldc.reproducible` maps its own store paths
+                # out of `__FILE__`, assertion messages and debug info
+                # (nix/d-toolchain.nix, toolchain spec TC15), so none reaches the
+                # program. A compiler without that map (`ci` builds with DMD on
+                # x86_64 Linux) leaves them, and they are removed after the build.
+                compiler = args.compiler or pkgs.ldc.reproducible;
+                # Every layer of it — the driver join, the compiler it joins
+                # over, and that one's own, inner package (whose `include/d`
+                # druntime's and Phobos' sources are read from) — asserted absent.
+                compilerPaths = [
                   compiler
                 ]
                 ++ lib.optionals (compiler ? include) [ compiler.include ]
-                # The compiler underneath, when `compiler` is a wrapper — which the
-                # repo's is: `nix/d-toolchain.nix` `symlinkJoin`s over dlang.nix's
-                # ldc to fix its config and dynamic linker. druntime's asserts bake
-                # `__FILE__` strings naming the *inner* path into every binary
-                # (`…-ldc-1.42.0/include/d/core/atomic.d`), so scrubbing only the
-                # join removed a path that was never there while `disallowedReferences`
-                # asserted against that same absent path — the leak passed straight
-                # through the check meant to catch it. One surviving dead string was
-                # worth 1.4 GiB of closure (ldc-binary + llvm-lib + gcc-wrapper).
-                ++ lib.optionals (compiler ? unwrapped) [ compiler.unwrapped ]
-                ++ [
+                ++ lib.optionals (compiler ? unwrapped) (
+                  [ compiler.unwrapped ] ++ lib.optional (compiler.unwrapped ? unwrapped) compiler.unwrapped.unwrapped
+                );
+                # Phobos' service paths, the nixpkgs-patched `libcurl.so.4` dlopen
+                # path and the tzdata directory: compiled into Phobos itself, and
+                # never reached by a static program that loads neither, so they are
+                # removed. A runtime dependency the caller lists in `buildInputs`
+                # is a genuine reference, and stays.
+                servicePaths = [
                   pkgs.curl.out
                   pkgs.tzdata
                 ];
-                disallowed = lib.subtractLists buildInputs (args.disallowedReferences or defaultDisallowed);
-                scrubFlags = lib.concatMapStringsSep " " (r: "-t ${r}") disallowed;
+                # A caller's own `disallowedReferences` is removed as it was given.
+                removed =
+                  if args ? disallowedReferences then
+                    disallowed
+                  else
+                    lib.subtractLists buildInputs (
+                      servicePaths ++ lib.optionals (!(compiler.mapsStorePaths or false)) compilerPaths
+                    );
+                # The assertion. A package needing a compiler at run time (`ci`)
+                # puts one on PATH in `postFixup`: not the build compiler's path,
+                # so nothing here disallows it.
+                disallowed = lib.subtractLists buildInputs (
+                  args.disallowedReferences or (compilerPaths ++ servicePaths)
+                );
+                scrubFlags = lib.concatMapStringsSep " " (r: "-t ${r}") removed;
               in
               {
                 # All sparkles nix packages share the one Nix-format lockfile.
+                inherit compiler;
+
                 dubLock = args.dubLock or (fromRoot "nix/dub-lock.json");
 
                 # Which dub build type the app is compiled with (the build hook's
@@ -766,7 +773,7 @@
                 # stamped app's wrapper runs in step 2, after the JSON replaces
                 # it; an unstamped app's runs here.
                 postFixup =
-                  (lib.optionalString (disallowed != [ ]) ''
+                  (lib.optionalString (removed != [ ]) ''
                     find "$out" -type f -exec remove-references-to ${scrubFlags} '{}' +
                   '')
                   + ''

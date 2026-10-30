@@ -14,7 +14,7 @@
         env = config.legacyPackages.d-toolchain.env;
         buildPhase = ''
           runHook preBuild
-          dub build --single contributor-probe.d --compiler=${lib.getExe' pkgs.ldc "ldc2"} \
+          dub build --single contributor-probe.d --compiler=${lib.getExe' pkgs.ldc.reproducible "ldc2"} \
             --skip-registry=all --build=checked
           runHook postBuild
         '';
