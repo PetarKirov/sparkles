@@ -19,10 +19,11 @@
 #   sparkles:raylib-text's `library` configuration (ui-vulkan PLAN, V7); that
 #   move drops raylib, FreeType and libpng from this list.
 # - libghostty-vt's own static archive (zig-built, with simdutf and highway
-#   inside), less two things: the debug info that names zig's store paths,
-#   and zig's `compiler_rt.o`, whose weak `memcpy`, `memset` and `memmove`
-#   would otherwise replace glibc's for the whole program. Everything that
-#   object provides comes from glibc, libm or compiler-rt's builtins.
+#   inside), less the debug info that names zig's store paths. Its
+#   `compiler_rt.o` stays (aarch64 needs its `__extendxftf2`, which LLVM's
+#   builtins have only for x86), but with the C library's names in it
+#   (`memcpy`, `memset`, `ceil`, …, all weak) made local: in a static link
+#   they would replace glibc's and libm's for the whole program.
 #
 # dub asks pkg-config for every library in one call; `bundledPkgConfig` asks
 # for the bundled ones with `--static` (their private dependencies) and for
@@ -212,7 +213,13 @@ in
               mkdir -p $out/lib/pkgconfig
               install -m644 ${vt.dev}/lib/libghostty-vt.a $out/lib/
               strip -g $out/lib/libghostty-vt.a
-              ar d $out/lib/libghostty-vt.a compiler_rt.o
+              (
+                cd $TMPDIR
+                ar x $out/lib/libghostty-vt.a compiler_rt.o
+                nm --defined-only compiler_rt.o | awk '$2 == "W" && $3 !~ /^__/ { print $3 }' > libc-names
+                objcopy --localize-symbols=libc-names compiler_rt.o
+                ar r $out/lib/libghostty-vt.a compiler_rt.o
+              )
               cp -r ${vt.dev}/include $out/include
               cat > $out/lib/pkgconfig/libghostty-vt.pc <<EOF
               Name: libghostty-vt
@@ -412,6 +419,8 @@ in
                 echo "a GCC or LLVM runtime is linked dynamically"
                 exit 1
               fi
+              # The C library's memcpy, not a bundled library's.
+              nm -D --undefined-only $exe | grep -qw memcpy
               $exe --help > help.txt
               grep -q 'SYNOPSIS' help.txt
               LD_DEBUG=libs $exe --version 2> loaded.txt > /dev/null
