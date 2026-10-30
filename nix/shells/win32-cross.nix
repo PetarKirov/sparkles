@@ -8,26 +8,31 @@
 #
 #     nix develop .#win32
 #
-# Pipeline (verified end-to-end on 2026-06-10) — one command compiles AND
-# links, because the project `ldc` is the official release binary with
-# integrated LLD (see nix/d-toolchain.nix):
+# Pipeline (verified end-to-end on 2026-10-30) — one command compiles AND
+# links, because the project `ldc` (dlang.nix's `ldc-vulkan`, the
+# PetarKirov/ldc fork; see nix/d-toolchain.nix) has LLD built in:
 #
 #     win32-ldc2 app.d -of=build/app.exe
 #     WINEPREFIX=$(mktemp -d) WINEDEBUG=-all wine build/app.exe
 #
 # `win32-ldc2` is `ldc2 -mtriple=x86_64-pc-windows-msvc -link-internally
-# -mscrtlib=msvcrt` plus the /LIBPATHs below. Notes baked into the wiring:
+# -L/DEFAULTLIB:msvcrt` plus the /LIBPATHs below. Notes baked into the wiring:
 #
-#   - The Windows druntime/phobos import libs come from the official LDC
-#     release archive for the *same version* as the host compiler.
-#     TODO(dlang.nix): replace the local fetch with
-#     `inputs'.dlang-nix.packages.ldc-binary-windows-libs.override { … }`
-#     once the `feat/ldc-windows-cross-libs` branch lands in the pinned input.
-#   - LDC's bundled mingw import libs are NOT a substitute for the SDK: exes
-#     linked against them page-fault at startup under Wine (UCRT-built
-#     druntime vs classic-msvcrt startup stubs).
-#   - `-mscrtlib=msvcrt` is required: LDC otherwise selects `vcruntime140`
-#     as the CRT lib and the link dies on `wmainCRTStartup`.
+#   - druntime and Phobos for the target are cross-built by the host
+#     compiler's own `ldc-build-runtime`, from its own source
+#     (nix/packages/ldc-win32-runtime.nix), so their version is the
+#     compiler's; evaluation asserts it. Their C parts, and ImportC's
+#     preprocessing, go through the fork LLVM's `clang --driver-mode=cl`.
+#   - MinGW import libs (as LDC's release archives bundle) are NOT a
+#     substitute for the SDK: exes linked against them page-fault at startup
+#     under Wine (UCRT-built druntime vs classic-msvcrt startup stubs).
+#   - The CRT is msvcrt, named with `/DEFAULTLIB:msvcrt`. LDC's own default,
+#     `vcruntime140`, maps (case shim) to SDK's `vcruntime.lib`, which lacks
+#     the startup code: alone, the link dies on `wmainCRTStartup`. And
+#     `-mscrtlib=msvcrt` trips an assertion in linker-msvc.cpp: off Windows
+#     LDC always takes its "internal toolchain" (MinGW libs) path, which
+#     asserts a vcruntime CRT name. Release builds compile the assert out;
+#     the fork's does not.
 #   - The case shim covers LDC's default-lib names that the xwin splat spells
 #     differently on a case-sensitive filesystem (`Bcrypt.lib`,
 #     `vcruntime140.lib`).
@@ -46,6 +51,7 @@
     {
       system,
       config,
+      inputs',
       pkgs,
       ...
     }:
@@ -76,20 +82,23 @@
         });
       });
 
-      # Windows druntime/phobos import libs from the official LDC release
-      # archive — fixed-output fetch, in lockstep with the pinned host LDC.
-      ldcVersion = "1.42.0";
-      ldcWindowsLibs = pkgs.stdenvNoCC.mkDerivation {
-        pname = "ldc-windows-x64-libs";
-        version = ldcVersion;
-        src = inputs.ldc-windows-x64;
-        nativeBuildInputs = [ pkgs.p7zip ];
-        unpackPhase = "7z x $src";
-        installPhase = ''
-          mkdir -p $out
-          cp -r ldc2-${ldcVersion}-windows-x64/lib/* $out/
-        '';
+      # The raw clang of the LLVM the host LDC is built on: in cl mode, for the
+      # runtime's C parts and ImportC's preprocessor.
+      clang = inputs'.dlang-nix.packages.clang-sparkles-unwrapped;
+
+      # druntime/Phobos for the MSVC target, cross-built from the source of
+      # the `ldc2` on the shell's PATH. `pkgs.ldc` wraps dlang.nix's package
+      # (nix/d-toolchain.nix), which wraps the compiler build itself.
+      hostLdc = pkgs.ldc.unwrapped;
+      ldcWin32Runtime = pkgs.callPackage ../packages/ldc-win32-runtime.nix {
+        ldc = hostLdc.unwrapped;
+        inherit clang winSdk;
       };
+      ldcWindowsLibs =
+        assert lib.assertMsg (
+          ldcWin32Runtime.version == hostLdc.version
+        ) "the Win32 runtime is LDC ${ldcWin32Runtime.version}, the host compiler ${hostLdc.version}";
+        "${ldcWin32Runtime}/lib";
 
       caseShim = pkgs.runCommand "win-sdk-case-shim" { } ''
         mkdir -p $out
@@ -97,13 +106,17 @@
         ln -s ${winSdk}/crt/lib/x64/vcruntime.lib $out/vcruntime140.lib
       '';
 
-      clangCl = pkgs.writeShellScriptBin "clang-cl" ''
-        exec ${pkgs.clang}/bin/clang --driver-mode=cl "$@"
+      # Only `clang-cl` (the runtime's `clang --driver-mode=cl` wrapper) on
+      # PATH: the rest of the unwrapped LLVM view would shadow the native
+      # toolchain.
+      clangCl = pkgs.runCommand "clang-cl" { } ''
+        mkdir -p $out/bin
+        ln -s ${ldcWin32Runtime.clangCl} $out/bin/clang-cl
       '';
 
       win32Ldc2 = pkgs.writeShellScriptBin "win32-ldc2" ''
-        exec ldc2 -mtriple=x86_64-pc-windows-msvc -link-internally -mscrtlib=msvcrt \
-          --gcc=${clangCl}/bin/clang-cl \
+        exec ldc2 -mtriple=x86_64-pc-windows-msvc -link-internally -L/DEFAULTLIB:msvcrt \
+          --gcc=${ldcWin32Runtime.clangCl} \
           "-L/LIBPATH:${ldcWindowsLibs}" \
           "-L/LIBPATH:${winSdk}/crt/lib/x64" \
           "-L/LIBPATH:${winSdk}/sdk/lib/um/x64" \
@@ -117,7 +130,6 @@
           # `stable`, not `minimal`: only it has the X11 driver, without which
           # Wine creates no window at all.
           pkgs.wine64Packages.stable
-          pkgs.clang
           clangCl
           win32Ldc2
           # What the Wine lanes (`libs/*/scripts/verify-*-wine.sh`) run: a
