@@ -32,8 +32,7 @@
       # read its stamp, hence the tool's sources. Placed with the tree's
       # normalised mtime, so a lib's bundle and its examples see one tree.
       selectsVulkanWsiShaders =
-        libName:
-        builtins.any (p: lib.hasInfix ''"gpu-shaders"'' (builtins.readFile p)) (exampleFilesIn libName);
+        libName: builtins.any (p: lib.hasInfix ''"gpu-shaders"'' (textOf p)) (exampleFilesIn libName);
       vulkanWsiShadersFor =
         libName:
         lib.optionalString (selectsVulkanWsiShaders libName) (
@@ -65,11 +64,10 @@
       # helper modules they import (`libs/wsi/examples/`). `dub --single`
       # requires the inline `/+ dub.sdl:` comment, so a file without one can
       # never build here — skip it instead of failing the whole example set.
-      exampleFilesIn =
+      candidateFilesIn =
         libName:
         let
           top = fromRoot "libs/${libName}/examples";
-          hasInlineRecipe = file: lib.hasInfix "dub.sdl:" (builtins.readFile file);
           # `nested` is false only at the `examples/` root, where a `.d` child
           # needs no directory to match.
           walk =
@@ -83,7 +81,6 @@
                   type == "regular"
                   && lib.hasSuffix ".d" entry
                   && (!nested || lib.removeSuffix ".d" entry == baseNameOf dir)
-                  && hasInlineRecipe (dir + "/${entry}")
                 then
                   [ (dir + "/${entry}") ]
                 else
@@ -94,11 +91,27 @@
         in
         if !builtins.pathExists top then [ ] else walk top false;
 
-      allExampleFiles = lib.pipe (builtins.readDir (fromRoot "libs")) [
-        (lib.filterAttrs (_: type: type == "directory"))
-        (lib.mapAttrsToList (name: _: exampleFilesIn name))
-        lib.concatLists
-      ];
+      libNames = lib.attrNames (
+        lib.filterAttrs (_: type: type == "directory") (builtins.readDir (fromRoot "libs"))
+      );
+
+      # Evaluation reads each candidate file once, and works out each
+      # example's files, info and run spec once, however many places ask:
+      # these attribute sets are the memo (a function call is not).
+      texts = lib.listToAttrs (
+        map (p: lib.nameValuePair (toString p) (builtins.readFile p)) (
+          lib.concatMap candidateFilesIn libNames
+        )
+      );
+      textOf = p: texts.${toString p} or (builtins.readFile p);
+      linesOf = p: lib.splitString "\n" (textOf p);
+
+      examplesIn = lib.genAttrs libNames (
+        libName: builtins.filter (p: lib.hasInfix "dub.sdl:" (textOf p)) (candidateFilesIn libName)
+      );
+      exampleFilesIn = libName: examplesIn.${libName} or [ ];
+
+      allExampleFiles = lib.concatMap exampleFilesIn libNames;
 
       # The `src/` trees a lib's examples compile against, as one fileset.
       #
@@ -123,36 +136,31 @@
       libSourcesFor =
         libName:
         fs.unions (
-          map
-            (
-              dir:
-              fs.fileFilter (
-                # `.h`: libs/wsi's ImportC bridges include vendored protocol
-                # headers (`wayland_xdg_shell_client_protocol.h`) from src/.
-                # `.spv`: libs/vulkan-wsi string-imports its test pattern's
-                # shaders from `src/shaders/`.
-                file:
-                file.hasExt "d"
-                || file.hasExt "c"
-                || file.hasExt "i"
-                || file.hasExt "h"
-                || file.hasExt "spv"
-                # sparkles:ui's generated effect GLSL, string-imported by effect.d
-                || file.hasExt "frag"
-              ) (fromRoot dir)
-            )
-            (
-              libsClosure (
-                [ libName ] ++ lib.concatMap (p: refsIn (builtins.readFile p)) (exampleFilesIn libName)
-              )
-            )
+          map (
+            dir:
+            fs.fileFilter (
+              # `.h`: libs/wsi's ImportC bridges include vendored protocol
+              # headers (`wayland_xdg_shell_client_protocol.h`) from src/.
+              # `.spv`: libs/vulkan-wsi string-imports its test pattern's
+              # shaders from `src/shaders/`.
+              file:
+              file.hasExt "d"
+              || file.hasExt "c"
+              || file.hasExt "i"
+              || file.hasExt "h"
+              || file.hasExt "spv"
+              # sparkles:ui's generated effect GLSL, string-imported by effect.d
+              || file.hasExt "frag"
+            ) (fromRoot dir)
+          ) (libsClosure ([ libName ] ++ lib.concatMap (p: refsIn (textOf p)) (exampleFilesIn libName)))
         );
 
       # Decompose an absolute example path into the metadata needed for the
       # derivation (lib name, file basename, attribute name, sub-paths).
-      exampleInfo =
+      mkExampleInfo =
         examplePath:
         let
+          lines = linesOf examplePath;
           subpath = lib.path.removePrefix root examplePath;
           parts = lib.splitString "/" (lib.removePrefix "./" subpath);
           libName = builtins.elemAt parts 1;
@@ -166,9 +174,7 @@
           # `name "event_horizon_pty_drain"`. Parse it, falling back to the
           # basename when no `name` line is present.
           nameRe = "[[:space:]]*name[[:space:]]+\"([^\"]+)\".*";
-          nameMatches = builtins.filter (l: builtins.match nameRe l != null) (
-            lib.splitString "\n" (builtins.readFile examplePath)
-          );
+          nameMatches = builtins.filter (l: builtins.match nameRe l != null) lines;
           dubName =
             if nameMatches == [ ] then
               fileBase
@@ -180,9 +186,7 @@
           # handed to the Darwin builder and fails the whole example set, even
           # though its own manifest says it is Linux-only.
           platformsRe = "[[:space:]]*platforms[[:space:]]+(.*)";
-          platformsMatches = builtins.filter (l: builtins.match platformsRe l != null) (
-            lib.splitString "\n" (builtins.readFile examplePath)
-          );
+          platformsMatches = builtins.filter (l: builtins.match platformsRe l != null) lines;
           platforms =
             if platformsMatches == [ ] then
               [ ] # unrestricted
@@ -209,6 +213,8 @@
           parentDirRel = lib.concatStringsSep "/" (lib.init parts);
           examplePathRel = lib.concatStringsSep "/" parts;
         };
+      infos = lib.listToAttrs (map (p: lib.nameValuePair (toString p) (mkExampleInfo p)) allExampleFiles);
+      exampleInfo = p: infos.${toString p} or (mkExampleInfo p);
 
       # What a manifest's `platforms` entries may name. dub's vocabulary is not
       # nix's — it says `osx` where the system string says `aarch64-darwin`, and
@@ -456,7 +462,7 @@
       # program's arguments (`// ci: run --help`). Keep both in step with ci's
       # reader — an example that needs arguments to exit zero fails here
       # otherwise.
-      exampleSpec =
+      mkExampleSpec =
         examplePath:
         let
           step =
@@ -508,12 +514,14 @@
             mode = null;
             runArgs = [ ];
             insideDubSdl = false;
-          } (lib.splitString "\n" (builtins.readFile examplePath));
+          } (linesOf examplePath);
         in
         {
           mode = if result.mode == null then "run" else result.mode;
           inherit (result) runArgs;
         };
+      specs = lib.listToAttrs (map (p: lib.nameValuePair (toString p) (mkExampleSpec p)) allExampleFiles);
+      exampleSpec = p: specs.${toString p};
 
       # Every example paired with its derivation and ci-equivalent mode.
       # Filtered exactly like `examplesByLib`: a manifest that restricts its
