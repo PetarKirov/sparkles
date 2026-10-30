@@ -23,7 +23,12 @@
 { inputs }:
 system:
 let
-  ldcAndroid = (inputs.dlang-nix.packages.${system} or { }).ldc-android or null;
+  ldcAndroid' = (inputs.dlang-nix.packages.${system} or { }).ldc-android or null;
+  # Its links go through the NDK clang of the API level the APKs declare
+  # (./min-sdk.nix), not dlang.nix's default, so every libc symbol resolves
+  # against that level's stubs.
+  ldcAndroid =
+    if ldcAndroid' != null then ldcAndroid'.override { apiLevel = import ./min-sdk.nix; } else null;
 in
 {
   supported = ldcAndroid != null;
