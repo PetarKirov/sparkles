@@ -333,18 +333,6 @@
         "url": "https://github.com/PetarKirov/ldc"
       }
     },
-    "ldc-windows-x64": {
-      "flake": false,
-      "locked": {
-        "narHash": "sha256-aQjpG32S5QIK85Oa8SxkJjt/o0/jLYPQV2uH9wa7DDw=",
-        "type": "file",
-        "url": "https://github.com/ldc-developers/ldc/releases/download/v1.42.0/ldc2-1.42.0-windows-x64.7z"
-      },
-      "original": {
-        "type": "file",
-        "url": "https://github.com/ldc-developers/ldc/releases/download/v1.42.0/ldc2-1.42.0-windows-x64.7z"
-      }
-    },
     "libpng-src": {
       "flake": false,
       "locked": {
@@ -658,7 +646,6 @@
         "glfw": "glfw",
         "harfbuzz-src": "harfbuzz-src",
         "json-test-suite": "json-test-suite",
-        "ldc-windows-x64": "ldc-windows-x64",
         "libpng-src": "libpng-src",
         "maple-font": "maple-font",
         "maple-font-cn-base": "maple-font-cn-base",

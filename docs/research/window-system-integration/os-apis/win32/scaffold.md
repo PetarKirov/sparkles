@@ -263,10 +263,10 @@ WINEPREFIX=$(mktemp -d) WINEDEBUG=-all WSI_AUTO_EXIT=1 \
     nix develop .#win32 -c wine64 ./build/scaffold.exe
 ```
 
-`win32-ldc2` wraps `ldc2 -mtriple=x86_64-pc-windows-msvc -link-internally -mscrtlib=msvcrt`
-plus the `/LIBPATH`s for the LDC Windows release libs and the `windows.sdk` import libs — the
-project `ldc` is the official release binary with integrated LLD, so one command compiles and
-links (see `nix/shells/win32-cross.nix`).
+`win32-ldc2` wraps `ldc2 -mtriple=x86_64-pc-windows-msvc -link-internally -L/DEFAULTLIB:msvcrt`
+plus the `/LIBPATH`s for the Windows druntime/Phobos, which the host compiler cross-builds from
+its own source, and the `windows.sdk` import libs — the project `ldc` has LLD built in, so one
+command compiles and links (see `nix/shells/win32-cross.nix`).
 
 Exit code `0`, 68 `frame_callback` events (60 timer frames + 8 storm frames), full event
 sequence on stderr. Without `WSI_AUTO_EXIT=1` the program runs (and animates) until the user

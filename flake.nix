@@ -162,11 +162,6 @@
       url = "github:ibireme/yyjson/0.12.0";
       flake = false;
     };
-    ldc-windows-x64 = {
-      type = "file";
-      url = "https://github.com/ldc-developers/ldc/releases/download/v1.42.0/ldc2-1.42.0-windows-x64.7z";
-      flake = false;
-    };
     wcwidth-src = {
       url = "https://files.pythonhosted.org/packages/source/w/wcwidth/wcwidth-0.8.2.tar.gz";
       flake = false;
