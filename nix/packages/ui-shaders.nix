@@ -39,7 +39,6 @@
         config.legacyPackages.buildSparklesApp (finalAttrs: {
           inherit pname;
           version = "0.1.0";
-          dubBuildType = "checked";
 
           # The tool, and what `dub describe` reads to find the unit: the
           # package's closure (sources and recipes) plus its device-only

@@ -108,8 +108,13 @@
               pkgs.lld-sparkles
             ];
 
-            # Read by the hooks and by the default build phase.
-            dubBuildType = args.dubBuildType or "release";
+            # Read by the hooks and by the default build phase. `checked`, the
+            # repo-wide artifact build (see the note on `buildSparklesApp`):
+            # assertions live. Under `-release` an example that asserts its own
+            # result and exits 0 has verified nothing, and one that performs I/O
+            # inside an assert does not even do the I/O, which is how
+            # `fiber-echo` came to hang for 13 minutes on a 20-minute-capped job.
+            dubBuildType = args.dubBuildType or "checked";
             dubCompiler = lib.getExe compiler;
 
             buildPhase =
