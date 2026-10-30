@@ -58,7 +58,7 @@ import sparkles.ui.components.theme : makeTheme;
 
 import derivation_pin_cachix : liveDelete, liveGet, prunePins;
 import derivation_pin_process : Captured, SupervisedCommands;
-import derivation_pin_set : Category, Selection, Target,
+import derivation_pin_set : Category, Selection, Target, capReport,
     expandPinSet, parsePinSet, pinSetEvalArgs, pinSystems, selectTargets;
 import derivation_pin_signals : ShutdownSignals;
 
@@ -1356,7 +1356,7 @@ private TableProps summaryProps(RunPlan plan, ulong totalBytes, size_t pathCount
         footer: format(
             " %sUnique Cache Storage: %s (%d non-upstream paths)%s ",
             incomplete ? "Partial " : "Total ",
-            formatted!writeBytes(totalBytes),
+            capReport(totalBytes),
             pathCount,
             incomplete ? " — * incomplete measurements" : "",
         ),
@@ -1372,7 +1372,8 @@ unittest
     assert(sizeCell(report) == "1.0KiB*");
     assert(completionDetail(report, true) == "1.0KiB (partial)  [/nix/store/root]");
     const props = summaryProps(RunPlan.init, 1024, 1, true);
-    assert(props.footer.startsWith(" Partial Unique Cache Storage:"));
+    assert(props.footer == " Partial Unique Cache Storage: 1.0KiB of the 10.0GiB cap (0%) "
+        ~ "(1 non-upstream paths) — * incomplete measurements ");
     bool rejected;
     try
         cast(void) narSize(parseJSON(`{"narSize":-1}`));
