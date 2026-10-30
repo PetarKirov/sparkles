@@ -37,29 +37,62 @@ in
         else
           "x86_64-linux-android.${ndk.minSdk}";
 
+      # Zig has no prefix map for Zig code, so the DWARF of its compiler_rt,
+      # its std and the package dependencies names wherever zig read them
+      # from. Read them from copies in the build directory instead of the
+      # store, which keeps zig and the dependency cache out of the closure
+      # (toolchain spec TC15; the archives stay unstripped).
+      unstoreZig =
+        old:
+        let
+          zig = lib.findFirst (
+            p: (p.pname or "") == "zig"
+          ) (throw "libghostty-vt: no zig") old.nativeBuildInputs;
+        in
+        {
+          zigBuildFlags = map (f: if f == "${old.deps}" then "../zig-deps" else f) old.zigBuildFlags ++ [
+            "--zig-lib-dir"
+            "../zig-lib"
+          ];
+          preBuild = (old.preBuild or "") + ''
+            cp -r ${old.deps} ../zig-deps
+            cp -r ${zig}/lib/zig ../zig-lib
+            chmod -R u+w ../zig-deps ../zig-lib
+          '';
+          disallowedReferences = ndk.toolchainPaths ++ [
+            zig
+            old.deps
+          ];
+        };
+
       vtFor =
         t:
         (vt.override {
           simd = false;
           optimize = "ReleaseFast";
         }).overrideAttrs
-          (old: {
-            pname = "libghostty-vt-android-${t.abi}";
-            zigBuildFlags = old.zigBuildFlags ++ [
-              "-Dtarget=${zigTarget t.abi}"
-            ];
-            env = (old.env or { }) // {
-              ANDROID_NDK_HOME = ndk.ndkRoot;
-            };
-            doCheck = false;
+          (
+            old:
+            unstoreZig old
+            // {
+              pname = "libghostty-vt-android-${t.abi}";
+              zigBuildFlags = (unstoreZig old).zigBuildFlags ++ [
+                "-Dtarget=${zigTarget t.abi}"
+              ];
+              env = (old.env or { }) // {
+                ANDROID_NDK_HOME = ndk.ndkRoot;
+              };
+              doCheck = false;
 
-            # Target code: the host's strip/ranlib must not touch it (ndk.nix).
-            dontStrip = true;
-          });
+              # Target code: the host's strip/ranlib must not touch it (ndk.nix).
+              dontStrip = true;
+            }
+          );
 
       libghostty-vt-android =
         pkgs.runCommand "libghostty-vt-android-${vt.version}"
           {
+            disallowedReferences = ndk.toolchainPaths;
             meta = {
               description = "Ghostty VT static library cross-built for Android, per ABI";
               platforms = (androidHost system).platforms;

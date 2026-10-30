@@ -112,6 +112,7 @@ in
 
           # Target code: the host's strip/ranlib must not touch it (ndk.nix).
           dontStrip = true;
+          disallowedReferences = ndk.toolchainPaths;
 
           buildPhase = ''
             runHook preBuild
@@ -172,6 +173,7 @@ in
               fi
               # shellcheck disable=SC2086
               "$cc" -shared -fPIC -O2 -I"$gsrc" "$pick" $scanner $extra \
+                ${ndk.cPrefixMapFlags} \
                 ${ndk.pageAlignFlags} \
                 -o ${soname lang}-${t.abi}
             '') (lib.attrValues ndk.targets)}

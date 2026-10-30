@@ -56,6 +56,7 @@ in
 
           ${lib.concatMapStrings (t: ''
             ldc2 -mtriple=${t.triple} -relocation-model=pic -O2 \
+              ${ndk.dPrefixMapFlags} \
               -I="$raylibDSrc" -i=raylib \
               apps/hue/android/hello/main.d \
               ${config.packages.raylib-android}/lib/${t.abi}/libraylib.a \
@@ -81,6 +82,7 @@ in
         # Keep the unstripped libraries: ndk-stack needs the symbols, and the
         # APK assembler below is the shipping artifact anyway.
         dontStrip = true;
+        disallowedReferences = ndk.toolchainPaths;
 
         meta = {
           description = "M1 Android smoke-test shared library (D + raylib), per ABI";

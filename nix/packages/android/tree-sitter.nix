@@ -31,6 +31,7 @@ in
 
         # Target code: the host's strip/ranlib must not touch it (ndk.nix).
         dontStrip = true;
+        disallowedReferences = ndk.toolchainPaths;
 
         buildPhase = ''
           runHook preBuild
@@ -38,7 +39,7 @@ in
           ${lib.concatMapStrings (t: ''
             mkdir -p out-${t.abi}
             ${t.cc} -c lib/src/lib.c -o out-${t.abi}/lib.o \
-              -Ilib/include -Ilib/src -O2 -fPIC
+              -Ilib/include -Ilib/src -O2 -fPIC ${ndk.cPrefixMapFlags}
             ${ndk.ar} rcs out-${t.abi}/libtree-sitter.a out-${t.abi}/lib.o
           '') (lib.attrValues ndk.targets)}
 

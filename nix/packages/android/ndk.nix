@@ -32,7 +32,7 @@ let
 in
 {
   perSystem =
-    { system, ... }:
+    { pkgs, system, ... }:
     let
       inherit (androidHost system) ldcAndroid;
       ndkRoot = ldcAndroid.ndkRoot;
@@ -40,6 +40,31 @@ in
 
       # The API level every Android build targets (./min-sdk.nix).
       minSdk = import ./min-sdk.nix;
+
+      # The toolchain store paths a compile writes into its output (toolchain
+      # spec TC15): the NDK's headers and clang resource directory in DWARF and
+      # `__FILE__` (assert messages), and the compiler's druntime/Phobos
+      # sources wherever their templates instantiate. The libraries stay
+      # unstripped for ndk-stack, so these are mapped at compile time rather
+      # than stripped, and every Android library forbids them as references.
+      # `match` drops the string context: naming a path here adds no
+      # dependency.
+      storePathOf = p: lib.head (builtins.match "(${builtins.storeDir}/[^/]+).*" p);
+      ndkStorePath = storePathOf ndkRoot;
+      # `ldc-android` joins dlang.nix's compiler, the project's `ldc` before its
+      # wrapper (nix/d-toolchain.nix); the include directory resolves into the
+      # compiler build beneath both.
+      hostLdc = pkgs.ldc.unwrapped;
+      ldcStorePaths =
+        assert lib.assertMsg (
+          map toString ldcAndroid.paths == [ "${hostLdc}" ]
+        ) "ldc-android no longer wraps the project's compiler; update ldcStorePaths";
+        map storePathOf [
+          "${ldcAndroid}"
+          "${hostLdc}"
+          "${hostLdc.unwrapped}"
+        ];
+      ndkPrefixMap = "-ffile-prefix-map=${ndkStorePath}=/ndk";
 
       mkTarget =
         {
@@ -59,6 +84,15 @@ in
         ar = "${clangBin}/llvm-ar";
         strip = "${clangBin}/llvm-strip";
         nm = "${clangBin}/llvm-nm";
+        # For every C/C++ compile: the NDK's store path as `/ndk`.
+        cPrefixMapFlags = ndkPrefixMap;
+        # For every `ldc2` compile: the compiler's store paths as `/ldc`, and
+        # the NDK's (ImportC preprocesses the sysroot headers).
+        dPrefixMapFlags = toString (
+          map (p: "-ffile-prefix-map=${p}=/ldc") ldcStorePaths ++ [ ndkPrefixMap ]
+        );
+        # `disallowedReferences` for every Android library and APK.
+        toolchainPaths = [ ndkStorePath ] ++ ldcStorePaths;
         # raylib's PLATFORM_ANDROID backend compiles this glue in; it defines
         # `ANativeActivity_onCreate`, which only the framework references —
         # final links need `-Wl,-u,ANativeActivity_onCreate` to keep it.
