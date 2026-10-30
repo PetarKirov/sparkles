@@ -4,13 +4,18 @@
 #
 #   packages.libtext-lab-android   apps/text-lab as lib<abi>/libtextlab.so
 #   packages.text-lab-assets       its fonts, as an extractable asset bundle
-#   packages.text-lab-apk          the APK
+#   packages.text-lab-apk          the APK, debuggable and signed with the
+#                                  in-tree debug key like every development
+#                                  APK here: a release build needs a key from
+#                                  outside the tree (build-apk.nix), and the
+#                                  lab's screenshots are read with `run-as`
 #   packages.text-lab-apk-debug    the same, under the examples' shared
 #                                  `.debug` application id, so a device that
 #                                  asks before each new package asks once
 #
-# The activity is sparkles:wsi's (`AndroidWsiMain` in apps/text-lab/src/app.d),
-# so nothing of raylib's `native_app_glue` is linked.
+# The activity is sparkles:wsi's (`AndroidWsiMain`, mixed in by
+# apps/text-lab/src/android_entry.d), so nothing of raylib's
+# `native_app_glue` is linked.
 { inputs, lib, ... }:
 let
   androidHost = import ./host.nix { inherit inputs; };
