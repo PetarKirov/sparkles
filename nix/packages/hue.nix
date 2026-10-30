@@ -83,11 +83,5 @@
           mainProgram = finalAttrs.pname;
         };
       });
-
-      apps.hue = {
-        type = "app";
-        program = lib.getExe config.packages.hue;
-        meta.description = config.packages.hue.meta.description;
-      };
     };
 }
