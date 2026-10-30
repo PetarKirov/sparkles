@@ -80,6 +80,16 @@ int tableRender(const(char)[] spec, scope char[] output) @safe
     assert(output[0 .. -r - 1] == "headerRows: a size must not be negative");
 }
 
+@("spk_table_wasm.tableRender.propsAreOptional")
+@safe unittest
+{
+    char[256] withProps, without;
+    const n = tableRender(`{"cells": [["a"]], "props": {}}`, withProps[]);
+    assert(n > 0);
+    assert(tableRender(`{"cells": [["a"]]}`, without[]) == n);
+    assert(without[0 .. n] == withProps[0 .. n]);
+}
+
 @("spk_table_wasm.tableRender.tooSmall")
 @safe unittest
 {
@@ -150,7 +160,7 @@ private struct OutputBuffer
 
 private void render(ref scope OutputBuffer w, const JSONValue spec) @safe
 {
-    const props = parseProps(spec["props"]);
+    const props = parseProps(member(spec, "props"));
 
     if (str(spec, "mode", "dense") == "sparse")
     {
@@ -207,6 +217,14 @@ private TableProps parseProps(const JSONValue j) @safe
 }
 
 // Optional members: absent gives the default; present must have the type.
+
+// The member `key` of the object `j`, or an empty object.
+private JSONValue member(const JSONValue j, string key) @safe
+{
+    if (auto v = key in j)
+        return *v;
+    return JSONValue.emptyObject;
+}
 
 private string str(const JSONValue j, string key, string default_) @safe
 {
