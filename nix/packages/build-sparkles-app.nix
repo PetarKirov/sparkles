@@ -75,15 +75,22 @@
           if builtins.elem name seen then
             grow seen rest
           else
-            grow (seen ++ [ name ]) (rest ++ refsOf (readManifest "libs/${name}"));
+            grow (seen ++ [ name ]) (rest ++ refsOf (readManifest (libDir name)));
+
+      # A library's directory: `libs/<name>`, or, for a package nested in
+      # another's (`sparkles:table-wasm` in libs/core-cli/table-wasm), the
+      # declared sub-package directory whose last component is its name.
+      libDir =
+        name:
+        lib.findFirst (d: lib.hasPrefix "libs/" d && baseNameOf d == name) "libs/${name}" subPackageDirs;
 
       # A library's source directories: `src`, and the `src-engine` an optional
       # configuration compiles (`sparkles:font`'s HarfBuzz engine, which
       # `sparkles:ui-vulkan` selects) where the library has one.
       libSrcDirs =
         n:
-        [ "libs/${n}/src" ]
-        ++ lib.optional (builtins.pathExists (root + "/libs/${n}/src-engine")) "libs/${n}/src-engine";
+        [ "${libDir n}/src" ]
+        ++ lib.optional (builtins.pathExists (root + "/${libDir n}/src-engine")) "${libDir n}/src-engine";
 
       sparklesSrcClosure =
         appDir: [ "${appDir}/src" ] ++ lib.concatMap libSrcDirs (grow [ ] (refsOf (readManifest appDir)));
@@ -201,7 +208,7 @@
             growShipped seen rest
           else
             let
-              file = recipeOf "libs/${name}";
+              file = recipeOf (libDir name);
               cfg = if head.cfg != null then head.cfg else firstConfig file;
               text = selectedRecipe file (if head.link then cfg else null);
               overrides = subOverrides text;
