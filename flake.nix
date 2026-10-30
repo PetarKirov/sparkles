@@ -249,6 +249,8 @@
         ./nix/packages/harfbuzz.nix
         ./nix/packages/freebsd-vm.nix
         ./nix/packages/hue.nix
+        ./nix/packages/example-catalogue.nix
+        ./nix/packages/run-all-examples.nix
         ./nix/packages/manifest-graph.nix
         ./nix/packages/build-info.nix
         ./nix/packages/native-libs.nix
