@@ -104,5 +104,20 @@
         targetName = "spk-table";
         description = "drawTable as a WebAssembly module (the docs' table playground)";
       };
+
+      # TCM9: each module, under node, agrees with the same functions run
+      # natively over a fixed corpus (apps/ci/src/wasm_modules_check.d).
+      checks.wasm-modules =
+        pkgs.runCommand "wasm-modules-agree"
+          {
+            nativeBuildInputs = [ pkgs.nodejs ];
+          }
+          ''
+            set -o pipefail
+            ${lib.getExe config.packages.ci-minimal} --check-wasm-modules \
+              --text-module ${config.packages.text-wasm}/spk-text.wasm \
+              --table-module ${config.packages.table-wasm}/spk-table.wasm \
+              | tee "$out"
+          '';
     };
 }
