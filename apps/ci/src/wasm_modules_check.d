@@ -5,8 +5,9 @@ with the same D functions run natively (docs/specs/toolchain/wasm-modules.md,
 
 A fixed corpus goes through both. Natively, through the functions the
 modules export: `visibleWidthOf` and `segmentInto` for the text module,
-`tableRender` for the table module. In the modules, under node, through a
-WASI preview 1 host with a real clock that calls `_initialize` once before
+`tableRender` for the table module. In the modules, under node, through the
+site's own loader (docs/.vitepress/theme/wasi.ts, `TCM7`): WASI preview 1 on
+@bjorn3/browser_wasi_shim with a real clock, `_initialize` called once before
 any export. The check names every case whose results differ: a miscompile,
 a runtime feature missing on WebAssembly, or an interface mismatch. Whether
 the functions are right is their packages' tests' business.
@@ -181,22 +182,16 @@ Mismatch[] compare(const JSONValue results) @safe
 }
 
 /++
-The node host: a WASI preview 1 instance of each module (`node:wasi`, real
-clock, stdout and stderr through), `_initialize` called once, then the
-request's cases through the exports. Arguments: the text module, the table
-module, the request file and the file the JSON reply is written to; stdout and
-stderr stay the modules'.
+The node host: each module instantiated by the site's loader, `wasi.ts` beside
+the host, then the request's cases through the exports. Arguments: the text
+module, the table module, the request file and the file the JSON reply is
+written to; stdout and stderr stay the modules'.
 +/
 enum string nodeHost = q{
-import { WASI } from "node:wasi";
 import { readFileSync, writeFileSync } from "node:fs";
+import { instantiateModule } from "./wasi.ts";
 
-async function load(path) {
-    const wasi = new WASI({ version: "preview1", args: [], env: {}, returnOnExit: true });
-    const { instance } = await WebAssembly.instantiate(readFileSync(path), wasi.getImportObject());
-    wasi.initialize(instance); // `_initialize`, once, before any other export
-    return instance.exports;
-}
+const load = (path) => instantiateModule(readFileSync(path));
 
 const [textPath, tablePath, requestPath, replyPath] = process.argv.slice(2);
 const request = JSON.parse(readFileSync(requestPath, "utf8"));
@@ -233,22 +228,23 @@ writeFileSync(replyPath, JSON.stringify({ texts, tables }));
 
 /++
 Runs the corpus through the modules at `textModule` and `tableModule` under
-`node` and compares with the native functions. Returns the process exit
+`node`, loaded by the site's `loader` (`wasi.ts`) with the WASI shim package
+at `shim`, and compares with the native functions. Returns the process exit
 status: `0` when every case agrees.
 +/
-int runCheckWasmModules(string textModule, string tableModule)
+int runCheckWasmModules(string textModule, string tableModule, string loader, string shim)
 {
-    import std.file : exists, mkdirRecurse, readText, rmdirRecurse, tempDir, write;
-    import std.path : buildPath;
+    import std.file : copy, exists, mkdirRecurse, readText, rmdirRecurse, symlink, tempDir, write;
+    import std.path : absolutePath, buildPath;
     import std.process : execute, thisProcessID;
     import std.conv : text;
     import std.stdio : stderr, writeln;
 
-    foreach (path; [textModule, tableModule])
+    foreach (path; [textModule, tableModule, loader, shim])
         if (path.length == 0 || !path.exists)
         {
-            stderr.writeln("--check-wasm-modules: no module at '", path,
-                "' (pass --text-module and --table-module)");
+            stderr.writeln("--check-wasm-modules: '", path, "' does not exist ",
+                "(pass --text-module, --table-module, --wasi-loader and --wasi-shim)");
             return 1;
         }
 
@@ -259,6 +255,10 @@ int runCheckWasmModules(string textModule, string tableModule)
     const host = buildPath(dir, "host.mjs"), request = buildPath(dir, "request.json"),
         reply = buildPath(dir, "reply.json");
     write(host, nodeHost);
+    // The loader beside the host, resolving the shim through node_modules.
+    copy(loader, buildPath(dir, "wasi.ts"));
+    mkdirRecurse(buildPath(dir, "node_modules", "@bjorn3"));
+    symlink(absolutePath(shim), buildPath(dir, "node_modules", "@bjorn3", "browser_wasi_shim"));
     write(request, requestJson());
 
     const run = execute(["node", "--no-warnings", host, textModule, tableModule, request, reply]);

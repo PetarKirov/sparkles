@@ -22,6 +22,7 @@ import {
 import { useData } from 'vitepress';
 import TpgPanel from './TpgPanel.vue';
 import { tpgKey } from './tpg-store';
+import { loadModule } from '../wasi';
 
 // Site light/dark, used to pick the matching Shiki theme for the code panels.
 const { isDark } = useData();
@@ -39,32 +40,7 @@ function withBase(p: string) {
 
 onMounted(async () => {
   try {
-    const mod = await WebAssembly.compileStreaming(
-      fetch(withBase('spk-table.wasm')),
-    );
-    // drawTable allocates (GC) and reads the clock at init. Stub every WASI import
-    // with a no-op EXCEPT the clock queries, which must return a non-zero value or
-    // core.time's ctor divides by zero and traps.
-    const imports: Record<string, Record<string, (...a: any[]) => number>> = {};
-    for (const imp of WebAssembly.Module.imports(mod)) {
-      (imports[imp.module] ||= {})[imp.name] = () => 0;
-    }
-    const W = imports.wasi_snapshot_preview1;
-    if (W) {
-      W.clock_res_get = (_id: number, resPtr: number) => {
-        new DataView(exp.memory.buffer).setBigUint64(resPtr, 1n, true);
-        return 0;
-      };
-      W.clock_time_get = (_id: number, _p: number, resPtr: number) => {
-        new DataView(exp.memory.buffer).setBigUint64(resPtr, 0n, true);
-        return 0;
-      };
-    }
-    const { exports } = await WebAssembly.instantiate(mod, imports as any);
-    exp = exports;
-    // A WASI reactor: `_initialize` starts druntime (the GC) and runs the module
-    // constructors, once, before any other export.
-    (exports as any)._initialize();
+    exp = await loadModule(withBase('spk-table.wasm'));
     status.value = '';
     render();
   } catch (e: any) {

@@ -32,7 +32,7 @@ nix run .#ci -- --check-vcs-urls [--include-files GLOB|FILE...] [--exclude-files
 nix run .#ci -- --check-docs-sidebar
 nix run .#ci -- --check-glossary
 nix run .#ci -- --check-credits
-nix run .#ci -- --check-wasm-modules --text-module FILE --table-module FILE
+nix run .#ci -- --check-wasm-modules --text-module FILE --table-module FILE --wasi-loader FILE --wasi-shim DIR
 nix run .#ci -- --stage-docs-wasm
 nix run .#ci -- --check-blob-paths [--clone-root DIR] [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]
 nix run .#ci -- [--log-level trace|info|warning|error]
@@ -389,6 +389,14 @@ struct CliParams
         description: "With --check-wasm-modules: the table module (spk-table.wasm)."))
     string tableModule;
 
+    @(Option(`wasi-loader`,
+        description: "With --check-wasm-modules: the site's loader (docs/.vitepress/theme/wasi.ts)."))
+    string wasiLoader;
+
+    @(Option(`wasi-shim`,
+        description: "With --check-wasm-modules: the @bjorn3/browser_wasi_shim package directory."))
+    string wasiShim;
+
     @(Option(`stage-docs-wasm`,
         description: "Build the documentation site's WebAssembly modules (nix build .#docs-wasm) "
         ~ "and copy them into docs/public/."))
@@ -689,7 +697,7 @@ int ciMain(string[] args)
     if (mode == ProgramMode.checkPinCache)
         return runCheckPinCache();
     if (mode == ProgramMode.checkWasmModules)
-        return runCheckWasmModules(cli.textModule, cli.tableModule);
+        return runCheckWasmModules(cli.textModule, cli.tableModule, cli.wasiLoader, cli.wasiShim);
     if (mode == ProgramMode.stageDocsWasm)
         return stageDocsWasm(detectRepoRoot());
 

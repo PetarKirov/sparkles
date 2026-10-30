@@ -7,6 +7,7 @@
 // SSR-safe: all WebAssembly/DOM work happens in onMounted (client only).
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import TerminalCellGrid from './TerminalCellGrid.vue';
+import { loadModule } from '../wasi';
 
 // Column width in rem; keep in sync with `--cell-w` in TerminalCellGrid.vue.
 // Small enough that ~45+ columns fit the component width without overflowing.
@@ -157,31 +158,7 @@ function applyPreset(value: string) {
 
 onMounted(async () => {
   try {
-    const mod = await WebAssembly.compileStreaming(
-      fetch(withBase('spk-text.wasm')),
-    );
-    // The compute exports never call WASI at runtime, so stub every import
-    // but the clock queries: druntime's initialization reads the clock's
-    // resolution, which must not be zero.
-    const imports: Record<string, Record<string, (...a: any[]) => number>> = {};
-    for (const imp of WebAssembly.Module.imports(mod)) {
-      (imports[imp.module] ||= {})[imp.name] = () => 0;
-    }
-    const W = imports.wasi_snapshot_preview1;
-    if (W) {
-      W.clock_res_get = (_id: number, resPtr: number) => {
-        new DataView(exp.memory.buffer).setBigUint64(resPtr, 1n, true);
-        return 0;
-      };
-      W.clock_time_get = (_id: number, _p: number, resPtr: number) => {
-        new DataView(exp.memory.buffer).setBigUint64(resPtr, 0n, true);
-        return 0;
-      };
-    }
-    const { exports } = await WebAssembly.instantiate(mod, imports as any);
-    exp = exports;
-    // A WASI reactor: `_initialize` starts druntime, once, before any other export.
-    exp._initialize();
+    exp = await loadModule(withBase('spk-text.wasm'));
     update();
   } catch (e: any) {
     status.value = 'failed to load wasm: ' + (e?.message ?? e);
