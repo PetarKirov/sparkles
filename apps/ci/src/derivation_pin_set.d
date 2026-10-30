@@ -1,10 +1,10 @@
 /**
 The pin set as values: the flake's `legacyPackages.<system>.pinTargets`
-(`nix/pin-targets.nix`, TC24) expanded across Sparkles' hosts, and the
-selectors that filter it.
+(`nix/pin-targets.nix`, TC24) expanded across Sparkles' hosts, the selectors
+that filter it, and the cache's pins that fall outside it.
 
 Nothing here runs a command or touches the network: the launcher evaluates
-the set, then hands the answers to these functions.
+the set and talks to Cachix, then hands the answers to these functions.
 */
 module derivation_pin_set;
 
@@ -52,8 +52,8 @@ string[] pinSetEvalArgs(string system) @safe pure nothrow => [
 
 /**
 The targets of one system from `nix eval` output: an object from pin name to
-out path. Entries come out sorted by name. Anything else is an error, and so
-is an empty set.
+out path. Entries come out sorted by name. Anything else is an error, never
+an empty set: an empty set would mark every pin of `system` for deletion.
 */
 Expected!(Target[], string) parsePinSet(string system, string json) @safe
 {
@@ -219,4 +219,78 @@ unittest
     const typo = selectTargets(set, Selection(names: ["skia"]));
     assert(typo.hasError && typo.error == "'skia' is not in the pin set");
     assert(selectTargets(set, Selection(systems: ["x86_64-darwin"])).hasError);
+}
+
+/// `https://app.cachix.org/api/v1/cache/<cache>/pin`: list (GET) the cache's pins.
+string pinsUrl(string cache) @safe pure nothrow =>
+    "https://app.cachix.org/api/v1/cache/" ~ cache ~ "/pin";
+
+/// `…/pin/<name>`: delete (DELETE) one pin.
+string pinUrl(string cache, string pinName) @safe pure nothrow =>
+    pinsUrl(cache) ~ "/" ~ pinName;
+
+/// Pin names from the Cachix pin list (an array of objects with a `name`), sorted.
+Expected!(string[], string) parsePinList(string json) @safe
+{
+    JSONValue root;
+    try
+        root = parseJSON(json);
+    catch (JSONException e)
+        return err!(string[])("the pin list is not JSON: " ~ e.msg);
+    if (root.type != JSONType.array)
+        return err!(string[])("the pin list is not an array");
+
+    string[] names;
+    foreach (entry; (() @trusted => root.array)())
+    {
+        if (entry.type != JSONType.object || "name" !in entry || entry["name"].type != JSONType.string)
+            return err!(string[])("a pin has no name");
+        names ~= entry["name"].str;
+    }
+    return ok(names.sort.release);
+}
+
+@("pinSet.parsePinList.names")
+@safe
+unittest
+{
+    const listed = parsePinList(
+        `[{"name":"ts-grammars-aarch64-linux","keep":{"contents":1,"tag":"Revisions"}},`
+        ~ `{"name":"harfbuzz-x86_64-linux"}]`);
+    assert(listed.value == ["harfbuzz-x86_64-linux", "ts-grammars-aarch64-linux"]);
+    assert(parsePinList(`[]`).value.length == 0);
+    assert(parsePinList(`{"error":"no"}`).hasError);
+    assert(parsePinList(`[{"keep":1}]`).hasError);
+}
+
+/**
+The cache's pins that `set` does not name, sorted: what TC24 says the cache
+must not hold. `set` is the whole expansion, never a selection — a run that
+pins one system must not delete the other systems' pins.
+*/
+string[] stalePins(in string[] cachePins, in Target[] set) @safe pure nothrow
+{
+    bool[string] wanted;
+    foreach (target; set)
+        wanted[target.pinName] = true;
+    string[] stale;
+    foreach (pin; cachePins)
+        if (pin !in wanted)
+            stale ~= pin;
+    stale.sort();
+    return stale;
+}
+
+@("pinSet.stalePins.outsideTheSet")
+@safe pure nothrow
+unittest
+{
+    const set = sampleSet();
+    assert(stalePins([
+        "toolchain-dub-x86_64-linux", "skia-sparkles-x86_64-linux",
+        "nix-c-api-aarch64-darwin", "toolchain-ldc-vulkan-aarch64-darwin",
+    ], set) == ["nix-c-api-aarch64-darwin", "toolchain-dub-x86_64-linux"]);
+    assert(stalePins(set.map!(t => t.pinName).array, set).length == 0, "the set itself is never stale");
+    assert(stalePins(["skia-sparkles-aarch64-linux"], set) == ["skia-sparkles-aarch64-linux"],
+        "an entry pinned for a system the set leaves it out of is stale");
 }
