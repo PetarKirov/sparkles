@@ -298,8 +298,9 @@ editing. Preserve package-specific compiler workarounds outside the managed bloc
 After adding a `dub.sdl`, stage it before running the generator's tracked-file audit.
 Default `dub test` uses `unittest` (debug mode, assertions live; LDC line tables);
 `-b unittest-debug` retains full debugger information. Shipping stays `checked`.
-Linux defaults to lld. Nix environments must use `nix/wrapped-lld.nix`: raw
-`pkgs.lld` omits runtime search paths for external store libraries. Re-enter the
+Linux defaults to lld. Nix environments must use `pkgs.lld-sparkles` (the fork
+LLVM's lld, `nix/d-toolchain.nix`): a raw `ld.lld` omits runtime search paths
+for external store libraries. Re-enter the
 development shell after linker-tool changes; do not mask missing paths with
 `LD_LIBRARY_PATH`.
 Benchmarks use assertion-preserving `-b bench`. Use `bench-unchecked`/`bench-static` for peak

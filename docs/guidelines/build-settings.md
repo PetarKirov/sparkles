@@ -12,8 +12,9 @@ runtime search paths for store libraries passed with `-L`, so six of the ten app
 test executables fail dynamic-library resolution. For example, `ci --help`
 exits 127 because `libtree-sitter.so.0.26` cannot be found.
 
-`nix/wrapped-lld.nix` preserves the lld tool suite (including `wasm-ld` and
-`lld-link`) and replaces only `ld.lld` with the pinned LLVM bintools wrapper.
+`pkgs.lld-sparkles` (`nix/d-toolchain.nix`) is the fork LLVM's lld tool suite
+(including `wasm-ld` and `lld-link`) with only `ld.lld` behind the bintools
+wrapper.
 Development/CI shells, the CI runtime compiler environment, Nix DUB builders,
 and the wired benchmark wrapper use this package. The wrapper discovers runtime
 paths from linker inputs; no machine-specific store paths enter DUB manifests,

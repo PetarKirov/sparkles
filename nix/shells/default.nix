@@ -166,7 +166,7 @@
         # PATH (WTD27). Without it the mode skips rather than runs (and
         # `--require-toolchain` turns that skip into a failure).
         # The wasm runtime it hands off to is `pkgs.nodejs` below.
-        (import ../wrapped-lld.nix { inherit pkgs; })
+        pkgs.lld-sparkles
         pkgs.nodejs
         # Yarn Berry 4 for the VitePress site (`yarn docs:build`) and the
         # twoslash fixture generator. `package.json#packageManager` selects

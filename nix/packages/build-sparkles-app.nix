@@ -751,8 +751,8 @@
                   (args.nativeBuildInputs or [ ])
                   ++ [
                     pkgs.makeWrapper
-                    pkgs.llvmPackages.llvm
-                    (import ../wrapped-lld.nix { inherit pkgs; })
+                    pkgs.llvm-binutils-sparkles
+                    pkgs.lld-sparkles
                   ]
                   ++ lib.optional (shapingInputs != [ ]) pkgs.pkg-config;
                 inherit buildInputs;
@@ -818,7 +818,7 @@
                 inherit pname version;
                 dontStrip = true;
                 nativeBuildInputs = [
-                  pkgs.llvmPackages.llvm
+                  pkgs.llvm-binutils-sparkles
                   pkgs.makeWrapper
                 ];
                 passthru = {
@@ -888,8 +888,8 @@
           # which checks the prebuilt shaders' stamp), as for any app.
           nativeBuildInputs = [
             pkgs.pkg-config-unwrapped
-            pkgs.llvmPackages.llvm
-            (import ../wrapped-lld.nix { inherit pkgs; })
+            pkgs.llvm-binutils-sparkles
+            pkgs.lld-sparkles
           ];
           preBuild = ''
             chmod -R u+w "$NIX_BUILD_TOP"
