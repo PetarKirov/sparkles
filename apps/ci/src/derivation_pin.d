@@ -1,5 +1,6 @@
 /**
- * Push and pin Sparkles' pin set to Cachix (TC24).
+ * Push and pin Sparkles' pin set to Cachix (TC24), and delete the cache's
+ * pins outside it.
  *
  * The set is the flake output `legacyPackages.<system>.pinTargets`
  * (`nix/pin-targets.nix`) for every system of `derivation_pin_set.pinSystems`;
@@ -9,7 +10,7 @@
  * `-android` suffix, `--libs` the rest; positional names and `--system`
  * narrow further.
  *
- * Target choice, storage totals and the summary table are
+ * Target choice, storage totals, the deletion set and the summary table are
  * pure values. Nix and Cachix run as supervised children of bounded worker
  * fibers; one reporter fiber owns the live checklist. Scope exit joins all work.
  *
@@ -55,21 +56,23 @@ import sparkles.ui.components.table :
 import sparkles.ui.components.tasklist : TaskReporter;
 import sparkles.ui.components.theme : makeTheme;
 
+import derivation_pin_cachix : liveDelete, liveGet, prunePins;
 import derivation_pin_process : Captured, SupervisedCommands;
 import derivation_pin_set : Category, Selection, Target,
     expandPinSet, parsePinSet, pinSetEvalArgs, pinSystems, selectTargets;
 import derivation_pin_signals : ShutdownSignals;
 
 /**
-CLI arguments. `run` resolves the environment, evaluates the pin set, and
-drives every selected pin. It returns a message without an `Error:` prefix — `runCli` adds that prefix.
+CLI arguments. `run` resolves the environment, evaluates the pin set, drives
+every selected pin, and deletes the pins outside the set. It returns a message without an `Error:` prefix — `runCli` adds that prefix.
 */
 @(Command("toolchain-pin",
     shortDescription: "Push and pin Sparkles' pin set (nix/pin-targets.nix) to Cachix.",
 ))
 struct ToolchainPin
 {
-    @(Option("dry-run|n", description: "Evaluate store paths and display the summary without pushing or pinning."))
+    @(Option("dry-run|n", description: "Evaluate store paths, list the pins a run would delete, and display "
+        ~ "the summary without pushing, pinning or deleting."))
     bool dryRun;
 
     @(Option("jobs|j", description: "Number of concurrent workers for evaluation and cache queries (default: 4)."))
@@ -125,7 +128,8 @@ struct ToolchainPin
                         stderr.writeln("NOTICE: CACHIX_AUTH_TOKEN is unset; running in dry-run summary mode.");
                     auto pinned = drive(chosen, plan, repoRoot);
                     renderSummary(pinned.reports, plan, pinned.interactive);
-                    return announce(plan, pinned.reports);
+                    return announce(plan, pinned.reports)
+                        .andThen!(() => prune(set, plan));
                 }));
         });
     }
@@ -133,7 +137,8 @@ struct ToolchainPin
 
 /**
  * The whole pin set, evaluated once per system in the repository at
- * `repoRoot`. Any system that fails to evaluate fails the run.
+ * `repoRoot`. Any system that fails to evaluate fails the run: a partial set
+ * would mark the missing system's pins for deletion.
  */
 private Expected!(Target[], string) evaluatePinSet(string repoRoot) @safe
 {
@@ -1414,6 +1419,36 @@ private Expected!(void, string) announce(RunPlan plan, JobReport[] reports) @sys
             plan.revisions,
             plan.revisions == 1 ? "" : "s",
         );
+    }
+    return ok();
+}
+
+/**
+ * Delete the cache's pins outside `set`, the whole expansion; a dry run lists
+ * them. Runs only after every selected pin succeeded.
+ */
+private Expected!(void, string) prune(in Target[] set, RunPlan plan) @system
+{
+    auto pruned = prunePins!(liveGet, liveDelete)(plan.cache, set, plan.token, plan.dryRun);
+    if (pruned.hasError)
+        return err!void(pruned.error);
+    const report = pruned.value;
+    if (report.stale.length == 0)
+    {
+        writefln("No pins outside the set in %s.", plan.cache);
+        return ok();
+    }
+    writefln("%s %d pin%s outside the set from %s:",
+        plan.dryRun ? "Would delete" : "Deleting",
+        report.stale.length, report.stale.length == 1 ? "" : "s", plan.cache);
+    foreach (pin; report.stale)
+        writefln("  %s", pin);
+    if (report.failures.length)
+    {
+        foreach (failure; report.failures)
+            stderr.writeln(failure);
+        return err!void(format("%d of %d stale pins were not deleted.",
+            report.failures.length, report.stale.length));
     }
     return ok();
 }
