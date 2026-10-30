@@ -17,8 +17,14 @@ import std.json : JSONException, JSONType, JSONValue, parseJSON;
 
 import expected : Expected, err, ok;
 
+import sparkles.base.text.writers : formatted, writeBytes;
+
 /// The hosts whose pin set the cache holds, in expansion order (TC21).
 immutable string[] pinSystems = ["x86_64-linux", "aarch64-darwin", "aarch64-linux"];
+
+/// The Cachix cache's storage limit; the pinned closures must fit beside CI's
+/// working set (TC24's rationale).
+enum ulong cacheCapBytes = 10UL << 30;
 
 /// One `pinTargets` entry for one system, pinned as `<name>-<system>`.
 struct Target
@@ -293,4 +299,21 @@ unittest
     assert(stalePins(set.map!(t => t.pinName).array, set).length == 0, "the set itself is never stale");
     assert(stalePins(["skia-sparkles-aarch64-linux"], set) == ["skia-sparkles-aarch64-linux"],
         "an entry pinned for a system the set leaves it out of is stale");
+}
+
+/// `7.2GiB of the 10.0GiB cap (72%)`: pinned bytes beside the cache's limit.
+string capReport(ulong bytes, ulong cap = cacheCapBytes) @safe pure
+in (cap > 0)
+{
+    return format("%s of the %s cap (%d%%)",
+        formatted!writeBytes(bytes), formatted!writeBytes(cap), bytes * 100 / cap);
+}
+
+@("pinSet.capReport.percent")
+@safe
+unittest
+{
+    assert(capReport(0) == "0B of the 10.0GiB cap (0%)");
+    assert(capReport(cacheCapBytes / 2) == "5.0GiB of the 10.0GiB cap (50%)");
+    assert(capReport(cacheCapBytes + cacheCapBytes / 4) == "12.5GiB of the 10.0GiB cap (125%)");
 }
