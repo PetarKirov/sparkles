@@ -126,6 +126,12 @@
 
             doCheck = args.doCheck or false;
 
+            # The D compiler, for `checks.d-compiler-is-fork` (toolchain spec
+            # TC1).
+            passthru = (args.passthru or { }) // {
+              inherit compiler;
+            };
+
             meta = {
               platforms = dub.meta.platforms;
             }
