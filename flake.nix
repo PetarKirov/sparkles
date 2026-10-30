@@ -25,13 +25,15 @@
     systems.url = "github:nix-systems/triplet";
 
     dlang-nix = {
-      # feat/ldc-sparkles: `ldc-sparkles`, the project's one LDC — the
+      # feat/ldc-sparkles: `ldc-vulkan`, the project's one LDC — the
       # PetarKirov/ldc `sparkles/main` fork (LDC master, dcompute's Vulkan
       # target from ldc-developers/ldc#5132 and its shader stages) against
       # LLVM main with llvm/llvm-project#216919 (`llvm-spirv-vulkan`, with
       # clang and lld), plus a druntime/Phobos and a sysroot built from source
-      # for each production WASI preview (`wasm32-wasip1`, `wasm32-wasip2`). It is `pkgs.ldc` (nix/d-toolchain.nix), `ldc2-vulkan`
-      # (nix/packages/shader-compile.nix) and the wasm modules' compiler.
+      # for each production WASI preview (`wasm32-wasip1`, `wasm32-wasip2`), which
+      # `ldc-sparkles` adds. It is `pkgs.ldc` (nix/d-toolchain.nix), `ldc2-vulkan`
+      # (nix/packages/shader-compile.nix) and, as `ldc-sparkles`, the wasm
+      # modules' compiler.
       # It extends feat/ldc-android-darwin: `ldc-android` (the aarch64 cross-
       # compiler of `devShells.android`) on Linux and macOS hosts, and
       # unstripped Android runtimes. Fold back once the upstream PRs and the

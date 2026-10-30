@@ -166,10 +166,9 @@
         lib.getBin pkgs.fontconfig
       )
       ++ [
-        # wasm-ld, for the test runner's `--wasm` mode: nixpkgs' LDC is
-        # built without -link-internally, so the wasm32 link needs an
-        # external linker. Without it the mode skips rather than runs
-        # (and `--require-toolchain` turns that skip into a failure).
+        # wasm-ld, for the test runner's `--wasm` mode, which looks for it on
+        # PATH (WTD27). Without it the mode skips rather than runs (and
+        # `--require-toolchain` turns that skip into a failure).
         # The wasm runtime it hands off to is `pkgs.nodejs` below.
         (import ../wrapped-lld.nix { inherit pkgs; })
         pkgs.nodejs
