@@ -19,6 +19,7 @@ import std.exception : enforce;
 import std.json : JSONType, JSONValue, parseJSON;
 
 import sparkles.base.text.width : Align;
+import sparkles.test_runner.attributes : wasm;
 import sparkles.ui.components.table : Cell, drawTable, EmphasisGlyphs, Placement,
     stylePresets, TableGlyphs, TableProps, VAlign;
 
@@ -51,7 +52,7 @@ int tableRender(const(char)[] spec, scope char[] output) @safe
 }
 
 ///
-@("spk_table_wasm.tableRender.renders")
+@("spk_table_wasm.tableRender.renders") @wasm
 @safe unittest
 {
     char[256] output;
@@ -59,7 +60,7 @@ int tableRender(const(char)[] spec, scope char[] output) @safe
     assert(output[0 .. n] == "+-----+----+\n| a   | bb |\n| ccc | d  |\n+-----+----+\n");
 }
 
-@("spk_table_wasm.tableRender.invalidJson")
+@("spk_table_wasm.tableRender.invalidJson") @wasm
 @safe unittest
 {
     char[256] output;
@@ -68,7 +69,7 @@ int tableRender(const(char)[] spec, scope char[] output) @safe
     assert(output[0 .. -r - 1] == "Unexpected end of data. (Line 1:16)");
 }
 
-@("spk_table_wasm.tableRender.invalidSpecification")
+@("spk_table_wasm.tableRender.invalidSpecification") @wasm
 @safe unittest
 {
     char[256] output;
@@ -80,7 +81,7 @@ int tableRender(const(char)[] spec, scope char[] output) @safe
     assert(output[0 .. -r - 1] == "headerRows: a size must not be negative");
 }
 
-@("spk_table_wasm.tableRender.propsAreOptional")
+@("spk_table_wasm.tableRender.propsAreOptional") @wasm
 @safe unittest
 {
     char[256] withProps, without;
@@ -90,7 +91,7 @@ int tableRender(const(char)[] spec, scope char[] output) @safe
     assert(without[0 .. n] == withProps[0 .. n]);
 }
 
-@("spk_table_wasm.tableRender.tooSmall")
+@("spk_table_wasm.tableRender.tooSmall") @wasm
 @safe unittest
 {
     char[8] output;

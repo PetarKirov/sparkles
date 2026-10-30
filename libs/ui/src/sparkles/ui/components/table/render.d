@@ -12,6 +12,7 @@ import std.typecons : Nullable, nullable;
 import expected : Expected, ok, err;
 
 import sparkles.base.text.grapheme : visibleWidth;
+import sparkles.test_runner.attributes : wasm;
 import sparkles.base.text.width : Align, alignField;
 import sparkles.base.text.wrap : cellWrapPlan, CellWidth, CellExtent, WrapOptions,
     WhitespaceMode, TabPolicy, CellWrapProjection, projectWrapCells;
@@ -705,9 +706,13 @@ version (unittest) private void checkRender(T)(in T rendered, string expected)
         "+----+----+\n");
 }
 
-@("drawTable.presets.registry")
+@("drawTable.presets.registry") @wasm
 @system unittest
 {
+    // Its own imports: as an `@wasm` test it is compiled outside this module.
+    import sparkles.base.buffer : checkToString;
+    import sparkles.ui.components.table.layout : stylePresets, TableGlyphs, TableProps;
+
     // The default glyphs are the rounded preset, and every built-in style is seeded.
     assert(stylePresets["rounded"] == TableGlyphs.init);
     foreach (name; ["rounded", "square", "ascii", "double", "heavy"])
