@@ -350,6 +350,12 @@ struct CliParams
         ~ "something shipped, and each application page includes exactly its parts."))
     bool checkCredits;
 
+    @(Option(`check-pin-cache`,
+        description: "Verify that Sparkles' Cachix cache serves every pinned system's toolchain "
+        ~ "outputs (the pin set's toolchain-* entries; TC23). Evaluates the flake, builds nothing, "
+        ~ "needs no token. The cache is $CACHIX_CACHE, or sparkles."))
+    bool checkPinCache;
+
     @(Option(`check-blob-paths`,
         description: "Verify that every SHA-pinned GitHub blob citation names a path that "
         ~ "exists at that commit, using local clones under --clone-root. "
@@ -497,6 +503,7 @@ enum ProgramMode
     checkSpecEvidence,
     checkGlossary,
     checkCredits,
+    checkPinCache,
     checkBlobPaths,
     ciStats,
     mirrorChecks,
@@ -652,6 +659,8 @@ int ciMain(string[] args)
         return runCheckGlossary();
     if (mode == ProgramMode.checkCredits)
         return runCheckCredits();
+    if (mode == ProgramMode.checkPinCache)
+        return runCheckPinCache();
 
     // The audit resolves its own corpus (docs/**/*.md + README.md, or --files),
     // so it must not fall through to the shared "no input files" usage error.
@@ -756,7 +765,7 @@ private string validateCliMode(
             || cli.testExtracted || cli.testSanitize || cli.buildEachCommit || cli.auditFences
             || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkCommitScope
             || cli.checkVcsUrls || cli.checkDocsSidebar || cli.checkSpecEvidence || cli.checkGlossary
-            || cli.checkBlobPaths || cli.ciStats || cli.mirrorChecks || cli.reportLinkRot || cli.linuxHostProbe
+            || cli.checkPinCache || cli.checkBlobPaths || cli.ciStats || cli.mirrorChecks || cli.reportLinkRot || cli.linuxHostProbe
             || cli.hostSystem.length || cli.files.length || cli.exclude.length))
         return "--seed-dub-cache cannot be combined with other modes or file selection";
 
@@ -972,6 +981,8 @@ private ProgramMode resolveProgramMode(in CliParams cli)
         return ProgramMode.checkGlossary;
     if (cli.checkCredits)
         return ProgramMode.checkCredits;
+    if (cli.checkPinCache)
+        return ProgramMode.checkPinCache;
 
     if (cli.checkBlobPaths)
         return ProgramMode.checkBlobPaths;
@@ -1003,6 +1014,7 @@ private string programModeName(ProgramMode mode) @safe pure nothrow @nogc
         case ProgramMode.checkSpecEvidence:  return "--check-spec-evidence";
         case ProgramMode.checkGlossary:      return "--check-glossary";
         case ProgramMode.checkCredits:       return "--check-credits";
+        case ProgramMode.checkPinCache:      return "--check-pin-cache";
         case ProgramMode.checkBlobPaths:     return "--check-blob-paths";
         case ProgramMode.ciStats:            return "--ci-stats";
         case ProgramMode.mirrorChecks:       return "--mirror-checks";
@@ -1586,6 +1598,7 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
             case ProgramMode.checkSpecEvidence:
             case ProgramMode.checkGlossary:
             case ProgramMode.checkCredits:
+            case ProgramMode.checkPinCache:
             case ProgramMode.checkBlobPaths:
                 rc = 1;
                 break;
@@ -2354,6 +2367,26 @@ private int runCheckGlossary()
 
     info(i"✓ Glossary is consistent: $(entries.value.length) entries, $(refs.length) links from $(files) docs pages.");
     return 0;
+}
+
+/// TC23's gate; see `derivation_pin.checkToolchainCached`.
+private int runCheckPinCache()
+{
+    version (Posix)
+    {
+        import derivation_pin : checkToolchainCached;
+
+        auto checked = checkToolchainCached(environment.get("CACHIX_CACHE", "sparkles"));
+        if (!checked.hasError)
+            return 0;
+        error(i"$(checked.error)");
+        return 1;
+    }
+    else
+    {
+        error(i"--check-pin-cache needs a POSIX host");
+        return 1;
+    }
 }
 
 /// `--check-credits`: the credits document against the build inputs (`credits`).

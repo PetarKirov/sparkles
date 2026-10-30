@@ -104,12 +104,12 @@ measures and lists those deletions, and pushes, pins or deletes nothing.
 
 `--check` builds nothing and needs no token. It evaluates every selected out
 path and asks `https://<cache>.cachix.org/<hash>.narinfo`, then exits non-zero
-listing each output that is missing or unanswered. No workflow runs it yet; as
-the gate before a lock update merges, it is one step in a job with the dev
-shell:
+listing each output that is missing or unanswered. CI's `pin-cache` job runs
+the same check on the set's `toolchain-*` entries, the outputs TC23 names, on
+every trigger, from the compiler-free `ci-minimal` binary:
 
 ```bash
-dub run --single ci/toolchain-pin.d -b checked -- --check
+nix run .#ci-minimal -- --check-pin-cache
 ```
 
 The implementation lives in `apps/ci/src/derivation_pin*.d`. One Event Horizon

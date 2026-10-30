@@ -1483,3 +1483,14 @@ private Expected!(void, string) checkTargets(Target[] targets, string cache) @sy
     return err!void(format("%d of %d pin-set outputs are not cached in %s.",
         lines.length, checks.length, uri));
 }
+
+/**
+ * TC23's gate as a `ci` mode (`ci --check-pin-cache`): every pinned system's
+ * toolchain entries (`toolchain-*`) are in `cache`. The other entries change
+ * with ordinary pull requests and are pinned after they merge, so the gate
+ * leaves them to `toolchain-pin --check`.
+ */
+Expected!(void, string) checkToolchainCached(string cache) @system =>
+    evaluatePinSet(findRepoRoot())
+        .andThen!((Target[] set) => selectTargets(set, Selection(categories: Category.toolchain)))
+        .andThen!((Target[] toolchain) => checkTargets(toolchain, cache));
