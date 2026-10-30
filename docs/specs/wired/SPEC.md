@@ -1130,7 +1130,7 @@ The number and UTF-8 machinery lives in `sparkles.base.text`
 `parseJsonDocument` produces an immutable **`JsonDocument`**: one contiguous
 arena of 16-byte value cells plus one string pool holding every string
 unescaped and NUL-terminated. Values are exposed through **`JsonValue`** — a
-copyable, `@safe`, 8-byte borrowed view whose lifetime is tied to the
+copyable, `@safe`, pointer-sized borrowed view whose lifetime is tied to the
 document under `dip1000` (`return scope`); a view or string slice must not
 outlive its document.
 
