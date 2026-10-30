@@ -72,7 +72,7 @@ in
             (androidHost system).ldcAndroid
             pkgs.unzip
           ]
-          ++ lib.optional emptyBuildInfo pkgs.llvmPackages.llvm;
+          ++ lib.optional emptyBuildInfo pkgs.llvm-binutils-sparkles;
 
           buildPhase = ''
             runHook preBuild
@@ -202,7 +202,7 @@ in
         pkgs.runCommand "lib${libName}-android-build-info"
           {
             dontStrip = true;
-            nativeBuildInputs = [ pkgs.llvmPackages.llvm ];
+            nativeBuildInputs = [ pkgs.llvm-binutils-sparkles ];
             passthru = {
               inherit unstamped;
               buildInfo = lib.listToAttrs (

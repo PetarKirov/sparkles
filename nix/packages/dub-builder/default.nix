@@ -105,7 +105,7 @@
               compiler
               dub
               removeReferencesTo
-              (import ../../wrapped-lld.nix { inherit pkgs; })
+              pkgs.lld-sparkles
             ];
 
             # Read by the hooks and by the default build phase.

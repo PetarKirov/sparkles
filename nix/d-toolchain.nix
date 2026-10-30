@@ -41,6 +41,17 @@
               # only the wasm builds need them.
               rawLdc = inputs'.dlang-nix.packages.ldc-vulkan;
 
+              clangSparkles = inputs'.dlang-nix.packages.clang-sparkles-unwrapped;
+              llvmToolsView =
+                name: tools:
+                prev.runCommand "${name}-${clangSparkles.version}" { inherit (clangSparkles) version; } ''
+                  mkdir -p $out/bin
+                  for tool in ${lib.escapeShellArgs tools}; do
+                    test -e ${clangSparkles}/bin/$tool || { echo "no $tool in ${clangSparkles}" >&2; exit 1; }
+                    ln -s ${clangSparkles}/bin/$tool $out/bin/
+                  done
+                '';
+
               # The project's wrapping of a dlang.nix LDC: its drivers read one of the
               # configurations below. `pkgs.ldc` wraps `rawLdc`.
               ldcFrom =
@@ -152,6 +163,41 @@
               dmd = inputs'.dlang-nix.packages.dmd-2_112_1;
 
               dub = inputs'.dlang-nix.packages.dub-1_43_0-alpha-5efed36;
+
+              # The fork LLVM's linkers and binary tools (toolchain spec TC2):
+              # one LLVM in every build, not the fork's for compiling and
+              # nixpkgs' for linking and patching. Views of
+              # `clang-sparkles-unwrapped` with only the tools named, so that
+              # being on PATH does not also put an unwrapped `clang` there.
+              #
+              # `lld-sparkles`: `ld.lld`, `wasm-ld`, `lld-link` and `ld64.lld`.
+              # On Linux it is dlang.nix's, whose `ld.lld` is behind nixpkgs'
+              # bintools wrapper: a link through it records the store paths of
+              # its `-L` libraries as RUNPATH entries, as a link through `ld`
+              # does. On macOS, where ELF links are cross links, all are raw.
+              lld-sparkles =
+                if prev.stdenv.hostPlatform.isLinux then
+                  inputs'.dlang-nix.packages.lld-sparkles
+                else
+                  llvmToolsView "lld-sparkles" [
+                    "lld"
+                    "ld.lld"
+                    "ld64.lld"
+                    "lld-link"
+                    "wasm-ld"
+                  ];
+              # `llvm-objcopy` (the build-info section) and its siblings.
+              llvm-binutils-sparkles = llvmToolsView "llvm-binutils-sparkles" [
+                "llvm-ar"
+                "llvm-nm"
+                "llvm-objcopy"
+                "llvm-objdump"
+                "llvm-ranlib"
+                "llvm-readelf"
+                "llvm-readobj"
+                "llvm-size"
+                "llvm-strip"
+              ];
 
               # GNOME/Adwaita dropped XCursor files. Stock GLFW 3.5.1 still
               # uploads pixmap cursors, so hue's ew/ns resize shapes fail.
