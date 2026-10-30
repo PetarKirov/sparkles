@@ -1,5 +1,5 @@
 /**
- * Process orchestration for the `--better-c` and `--wasm` runner modes:
+ * Process orchestration for the `--better-c`, `--wasm` and `--wasm-bare` runner modes:
  * extract the annotated tests (see $(MREF sparkles,test_runner,extract)),
  * generate a standalone program, compile it for the special environment, and
  * execute it.
@@ -11,7 +11,7 @@ module sparkles.test_runner.driver;
 
 import sparkles.test_runner.extract : CtfeTarget, ExtractedTest,
     extractUnittestBody, generateBetterCProgram, generateCtfeProgram,
-    generateWasmJsShim, generateWasmProgram, sourceRootOf;
+    generateWasiProgram, generateWasmBareJsShim, generateWasmBareProgram, sourceRootOf;
 import sparkles.test_runner.model : Test;
 
 /// Options shared by both driver modes.
@@ -185,6 +185,44 @@ private string[] dubDescribeImportPaths(in string[] sourceRoots, bool verbose)
                 paths ~= line;
     }
     return paths;
+}
+
+/++
+The language-semantics switches (`-preview=`, `-revert=`, `-transition=`) that
+`dub describe` reports for the packages containing the derived source roots.
+A program compiled outside dub needs them to see the packages' code the way
+their own builds do (`-preview=dip1000` changes attribute inference).
+Best-effort: failures yield an empty list.
++/
+private string[] dubDescribeLanguageFlags(in string[] sourceRoots, bool verbose)
+{
+    import std.algorithm.searching : canFind, startsWith;
+    import std.string : lineSplitter;
+
+    if (!inPath("dub"))
+        return null;
+
+    string[] packageRoots;
+    foreach (root; sourceRoots)
+    {
+        const packageRoot = findPackageRoot(root);
+        if (packageRoot !is null && !packageRoots.canFind(packageRoot))
+            packageRoots ~= packageRoot;
+    }
+
+    string[] flags;
+    foreach (packageRoot; packageRoots)
+    {
+        const result = run(["dub", "describe", "--root", packageRoot,
+            "--data=dflags", "--data-list"], verbose);
+        if (result.status != 0)
+            continue;
+        foreach (line; result.output.lineSplitter)
+            if ((line.startsWith("-preview=") || line.startsWith("-revert=")
+                    || line.startsWith("-transition=")) && !flags.canFind(line))
+                flags ~= line.idup;
+    }
+    return flags;
 }
 
 /// Slices the bodies of `tests` out of their source files. Files are read
@@ -618,10 +656,154 @@ DriverOutcome runBetterCTests(Test[] betterCTests, Test[] allTests, in DriverOpt
 // --wasm
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Extracts the `@wasm` tests, cross-compiles them to `wasm32` with LDC, and
-/// runs them with the first available WebAssembly-capable runtime
-/// (`node`, `deno`, `bun`, or `wasmtime`).
+/// The WASI target of `--wasm` (docs/specs/test-runner/SPEC.md, `@wasm`).
+enum wasiTriple = "wasm32-unknown-wasip1";
+
+/// The variable naming an LDC that has the WASI runtime, when `$DC` does not.
+enum wasiCompilerVariable = "SPARKLES_WASI_LDC";
+
+/++
+The compiler for `--wasm`: `--compiler`, then `$SPARKLES_WASI_LDC`, then the
+usual choice (`$DC`, `ldc2`); empty when none resolves.
++/
+private string wasiCompiler(string preferred) @safe
+{
+    import std.process : environment;
+
+    if (!preferred.length)
+        if (const wasi = environment.get(wasiCompilerVariable, null))
+            return detectCompiler(wasi);
+    return detectCompiler(preferred);
+}
+
+/++
+The `-i` flags of a `--wasm` program. With the full druntime and Phobos there
+is no codegen restriction, so every module the tests import is compiled in
+(`-i`, which leaves out druntime and Phobos), except the owning modules of
+tests that are all `selfContained`. `--no-auto-include` compiles in nothing.
++/
+string[] wasiIncludeFlags(in Test[] extracted, in DriverOptions options) @safe pure
+{
+    import std.algorithm.searching : all, canFind;
+
+    if (options.noAutoInclude)
+        return null;
+    string[] flags = ["-i"];
+    foreach (ref test; extracted)
+    {
+        const name = probeModuleName(test);
+        const exclude = "-i=-" ~ name;
+        if (!flags.canFind(exclude)
+            && extracted.all!(t => probeModuleName(t) != name || t.traits.selfContained))
+            flags ~= exclude;
+    }
+    return flags;
+}
+
+@("driver.wasiIncludeFlags.everythingButSelfContainedModules")
+@safe pure
+unittest
+{
+    static Test at(string fullName, bool selfContained = false)
+    {
+        Test t;
+        t.fullName = fullName;
+        t.traits.selfContained = selfContained;
+        return t;
+    }
+
+    assert(wasiIncludeFlags([at("pkg.a.__unittest_L1_C1")], DriverOptions.init) == ["-i"]);
+    assert(wasiIncludeFlags([
+        at("pkg.a.__unittest_L1_C1", true),
+        at("pkg.b.__unittest_L2_C1", true),
+        at("pkg.b.__unittest_L3_C1"),
+    ], DriverOptions.init) == ["-i", "-i=-pkg.a"]);
+    assert(wasiIncludeFlags([at("pkg.a.__unittest_L1_C1")],
+        DriverOptions(noAutoInclude: true)) is null);
+}
+
+/// Extracts the `@wasm` tests, compiles them for `wasm32-unknown-wasip1` with
+/// the full druntime and Phobos of an LDC that has the WASI runtime (linked
+/// through that runtime's compiler driver, so no `wasm-ld` is needed), and
+/// runs the program under `wasmtime`. A missing runtime or `wasmtime` skips,
+/// naming what is missing.
 DriverOutcome runWasmTests(Test[] wasmTests, Test[] allTests, in DriverOptions options)
+{
+    import std.file : write;
+    import std.path : buildPath;
+    import std.stdio : stdout, stderr;
+
+    DriverOutcome outcome;
+    outcome.testCount = wasmTests.length;
+    if (!wasmTests.length)
+    {
+        stdout.writeln("no @wasm tests found");
+        return outcome;
+    }
+
+    const compiler = wasiCompiler(options.compiler);
+    if (!compiler.length)
+    {
+        stderr.writeln("skipping @wasm tests: no D compiler found (set $", wasiCompilerVariable,
+            ", --compiler or $DC)");
+        outcome.skipped = true;
+        return outcome;
+    }
+    if (!inPath("wasmtime"))
+    {
+        stderr.writeln("skipping @wasm tests: wasmtime not found on PATH");
+        outcome.skipped = true;
+        return outcome;
+    }
+
+    const workDir = makeWorkDir("wasi");
+    // A compiler without the WASI runtime fails this, not the tests.
+    const probeSource = buildPath(workDir, "probe.d");
+    write(probeSource, "void main() {}\n");
+    const probe = run([compiler, "-mtriple=" ~ wasiTriple, "-of=" ~ buildPath(workDir, "probe.wasm"),
+        probeSource], options.verbose);
+    if (probe.status != 0)
+    {
+        stderr.writeln("skipping @wasm tests: ", compiler, " cannot link a ", wasiTriple,
+            " program (no WASI runtime; set $", wasiCompilerVariable, "):\n", probe.output);
+        outcome.skipped = true;
+        return outcome;
+    }
+
+    const sourceFile = buildPath(workDir, "wasm_tests.d");
+    const wasmFile = buildPath(workDir, "wasm_tests.wasm");
+    write(sourceFile, generateWasiProgram(extractTests(wasmTests)));
+    const compile = run(
+        [compiler, "-mtriple=" ~ wasiTriple, "-of=" ~ wasmFile]
+            ~ wasiIncludeFlags(wasmTests, options) ~ includeFlags(options)
+            ~ dubDescribeLanguageFlags(deriveImportPaths(wasmTests, options.importPaths), options.verbose)
+            ~ allImportFlags(allTests, options) ~ [sourceFile],
+        options.verbose);
+    if (compile.status != 0)
+    {
+        stderr.writeln(compile.output);
+        stderr.writeln("failed to compile the extracted @wasm tests for ", wasiTriple, " (see above)");
+        outcome.succeeded = false;
+        return outcome;
+    }
+
+    const result = run(["wasmtime", "run", wasmFile], options.verbose);
+    stdout.write(result.output);
+    outcome.succeeded = result.status == 0;
+    if (options.keep)
+        stdout.writeln("generated files kept in ", workDir);
+    return outcome;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// --wasm-bare
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Extracts the `@wasm` tests, cross-compiles them to bare `wasm32` with
+/// `-betterC` and LDC's internal linker, and runs them with the first
+/// available WebAssembly-capable runtime (`node`, `deno`, `bun`, or
+/// `wasmtime`).
+DriverOutcome runWasmBareTests(Test[] wasmTests, Test[] allTests, in DriverOptions options)
 {
     import std.algorithm.iteration : map;
     import std.algorithm.searching : canFind;
@@ -648,28 +830,19 @@ DriverOutcome runWasmTests(Test[] wasmTests, Test[] allTests, in DriverOptions o
         return outcome;
     }
 
-    // The wasm32 link needs an external wasm-ld (nixpkgs LDC bundles no
-    // internal linker); a missing linker is a toolchain gap, documented as a
-    // skip, not a failure. An LDC built with -link-internally would skip
-    // unnecessarily here — acceptable per the docs' toolchain requirements.
-    if (!inPath("wasm-ld"))
-    {
-        stderr.writeln("skipping @wasm tests: wasm-ld not found on PATH (nixpkgs: the lld package)");
-        outcome.skipped = true;
-        return outcome;
-    }
-
     const workDir = makeWorkDir("wasm");
     const sourceFile = buildPath(workDir, "wasm_tests.d");
     const wasmFile = buildPath(workDir, "wasm_tests.wasm");
     const shimFile = buildPath(workDir, "wasm_tests.js");
     const extracted = extractTests(wasmTests);
-    write(sourceFile, generateWasmProgram(extracted));
-    write(shimFile, generateWasmJsShim(extracted, wasmFile));
+    write(sourceFile, generateWasmBareProgram(extracted));
+    write(shimFile, generateWasmBareJsShim(extracted, wasmFile));
 
     const importFlags = allImportFlags(allTests, options);
     const compile = run(
         [compiler, "-mtriple=wasm32-unknown-unknown-wasm", "-betterC",
+            // LDC's own LLD: bare wasm32 has no C compiler driver to link with
+            "-link-internally",
             // reactor-style module: no _start, tests are individual exports
             "-L--no-entry",
             // `export` alone does not make wasm-ld export a symbol; only some

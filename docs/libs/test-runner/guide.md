@@ -130,10 +130,11 @@ unittest { /* ... */ }
 
 ### `@wasm` — run on WebAssembly
 
-`@wasm` tests run normally under `dub test`; `--wasm` cross-compiles them to
-`wasm32` with LDC and runs them under `node`/`deno`/`bun`/`wasmtime` (missing
-toolchain is a skip, not a failure). All `@betterC` constraints apply, plus
-the module's whole import chain must be wasm-compatible. See
+`@wasm` tests run normally under `dub test`; `--wasm` compiles them for
+`wasm32-unknown-wasip1` with the full druntime and Phobos (exceptions, module
+constructors and the GC all work) and runs them under `wasmtime` (a missing
+WASI runtime or `wasmtime` is a skip, not a failure). `--wasm-bare` keeps the
+bare `-betterC` mode. See
 [Write `@wasm` tests](./how-to/write-wasm-tests.md).
 
 ### `@benchmark` — measure
@@ -333,7 +334,8 @@ Everything after `--` in `dub test -- <options>`. Full table:
 | `--bench-json=FILE`        | With `--bench`: also dump the results as JSON (baseline snapshots)                     |
 | `--bench-min-time=MS`      | With `--bench`: per-case measurement budget in ms (default 5)                          |
 | `--better-c`               | Extract and run `@betterC` tests under `-betterC`                                      |
-| `--wasm`                   | Cross-compile and run `@wasm` tests on `wasm32`                                        |
+| `--wasm`                   | Compile and run `@wasm` tests on `wasm32-unknown-wasip1` under `wasmtime`              |
+| `--wasm-bare`              | Compile and run `@wasm` tests on bare `wasm32` with `-betterC`                         |
 | `--ctfe-trace FILE`        | Evaluate `@ctfe` tests under LDC `-ftime-trace`; per-test cost                         |
 | `--self-test`              | Also run the runner's own unittests                                                    |
 | `--compiler DC`            | Compiler for `@ctfe`/`--better-c`/`--wasm` (`$DC`, then ldc2/dmd)                      |

@@ -89,6 +89,7 @@ private struct RunnerOptions
     string ctfeTrace;
     bool betterC;
     bool wasm;
+    bool wasmBare;
     string compiler;
     string[] importPaths;
     string[] includeImports;
@@ -326,10 +327,16 @@ private auto parseInto(ref string[] args, ref RunnerOptions options)
             "Extract @betterC tests, compile them with -betterC, and run them",
             &options.betterC,
         "wasm",
-            "Extract @wasm tests, cross-compile them to wasm32, and run them",
+            "Extract @wasm tests, compile them for wasm32-unknown-wasip1 with the full " ~
+            "druntime and Phobos, and run them under wasmtime",
             &options.wasm,
+        "wasm-bare",
+            "Extract @wasm tests, compile them for bare wasm32 with -betterC, and run them " ~
+            "under node, deno, bun or wasmtime",
+            &options.wasmBare,
         "compiler",
-            "D compiler for @ctfe/--better-c/--wasm (default: $DC, then ldc2, dmd)",
+            "D compiler for @ctfe/--better-c/--wasm/--wasm-bare (default: $DC, then ldc2, dmd; " ~
+            "--wasm tries $SPARKLES_WASI_LDC first)",
             &options.compiler,
         "I|import-path",
             "Extra import path for @ctfe/--better-c/--wasm (repeatable)",
@@ -431,10 +438,15 @@ private UnitTestResult runnerMain(Test[] discovered, bool hostIsRunner)
     // `--list-metrics` remain winning queries on top of any mode.
     const requestedModes = (options.bench ? 1 : 0)
         + (options.ctfeTrace.length ? 1 : 0)
-        + (options.betterC || options.wasm ? 1 : 0);
+        + (options.betterC || options.wasm || options.wasmBare ? 1 : 0);
     if (requestedModes > 1)
     {
         stderr.writeln("error: pick one mode — --bench, --ctfe-trace, or --better-c/--wasm");
+        return UnitTestResult(1, 0, false, false);
+    }
+    if (options.wasm && options.wasmBare)
+    {
+        stderr.writeln("error: --wasm and --wasm-bare are mutually exclusive");
         return UnitTestResult(1, 0, false, false);
     }
 
@@ -497,7 +509,7 @@ private UnitTestResult runnerMain(Test[] discovered, bool hostIsRunner)
         return runBenchMode(tests, options, colored);
     if (options.ctfeTrace.length)
         return runCtfeTraceMode(tests, options, colored);
-    if (options.betterC || options.wasm)
+    if (options.betterC || options.wasm || options.wasmBare)
         return runDriverModes(tests, options);
     return runDefaultMode(tests, options, colored, width, slowSkipped);
 }
@@ -564,7 +576,7 @@ private UnitTestResult runDriverModes(Test[] tests, in RunnerOptions options)
 {
     import std.algorithm.iteration : filter;
     import std.array : array;
-    import sparkles.test_runner.driver : runBetterCTests, runWasmTests;
+    import sparkles.test_runner.driver : runBetterCTests, runWasmBareTests, runWasmTests;
 
     const driverOptions = toDriverOptions(options);
 
@@ -593,6 +605,9 @@ private UnitTestResult runDriverModes(Test[] tests, in RunnerOptions options)
             tests.filter!(t => t.traits.isBetterC).array, tests, driverOptions));
     if (options.wasm)
         account(runWasmTests(
+            tests.filter!(t => t.traits.isWasm).array, tests, driverOptions));
+    if (options.wasmBare)
+        account(runWasmBareTests(
             tests.filter!(t => t.traits.isWasm).array, tests, driverOptions));
 
     return UnitTestResult(failed ? (executed ? executed : 1) : executed, passed, false, false);

@@ -39,10 +39,12 @@ The test runs at **compile time instead of runtime**.
 The test is WebAssembly-compatible.
 
 - Runs normally under `dub test`.
-- `--wasm` cross-compiles it to `wasm32` with LDC and runs it under
-  `node`/`deno`/`bun`/`wasmtime`.
-- All `@betterC` constraints apply, and with a stock LDC the module's import
-  chain must avoid druntime headers that do not support `wasm32`.
+- `--wasm` compiles it for `wasm32-unknown-wasip1` with the full druntime and
+  Phobos of an LDC that has the WASI runtime, and runs it under `wasmtime`.
+- `--wasm-bare` compiles it for bare `wasm32` with `-betterC` instead; there
+  all `@betterC` constraints apply.
+- `@wasm(selfContained: true)` keeps the test's own module out of the
+  extracted program.
 
 ## `@benchmark` / `@benchmark(iterations: N)`
 
