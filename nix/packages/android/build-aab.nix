@@ -40,6 +40,7 @@ in
     }:
     let
       sdk = config.legacyPackages.androidSdk;
+      packaging = config.legacyPackages.androidPackaging;
     in
     lib.optionalAttrs (androidHost system).supported {
       legacyPackages.buildAndroidAab =
@@ -74,14 +75,7 @@ in
           buildPhase = ''
             runHook preBuild
 
-            ${lib.optionalString (resDir != null) ''
-              # Same explicitly sorted input list as the APK path: aapt2 assigns
-              # resource IDs in input order, and `--dir` walks the filesystem.
-              mkdir -p compiled
-              find ${resDir} -type f | LC_ALL=C sort > res-inputs.txt
-              xargs -a res-inputs.txt ${sdk.buildTools}/aapt2 compile --no-crunch -o compiled/
-              LC_ALL=C ls compiled/*.flat | LC_ALL=C sort > res-flats.txt
-            ''}
+            ${lib.optionalString (resDir != null) (packaging.compileRes resDir)}
 
             # `--proto-format` is what makes this a bundle rather than an APK:
             # the manifest and resource table come out as protobuf, which is
@@ -110,17 +104,11 @@ in
               cp -r ${assetsDir}/. module/assets/
             ''}
 
-            ${lib.concatStrings (
-              lib.mapAttrsToList (
-                abi: sos:
-                lib.concatStrings (
-                  lib.mapAttrsToList (name: path: ''
-                    install -Dm644 ${path} module/lib/${abi}/${name}
-                    ${lib.optionalString stripLibs "${config.legacyPackages.androidNdk.strip} --strip-unneeded module/lib/${abi}/${name}"}
-                  '') sos
-                )
-              ) libs
-            )}
+            ${packaging.installLibs {
+              dir = "module";
+              inherit libs;
+              strip = stripLibs;
+            }}
 
             # Store native libraries COMPRESSED. bundletool's default is
             # uncompressed so the loader can mmap them in place, which is better

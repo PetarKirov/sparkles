@@ -63,10 +63,47 @@ in
     }:
     let
       sdk = config.legacyPackages.androidSdk;
+      packaging = config.legacyPackages.androidPackaging;
       inTreeDebugKeystore = ../../../apps/hue/android/debug-only.keystore;
       inTreeDebugKeystoreName = baseNameOf (toString inTreeDebugKeystore);
     in
     lib.optionalAttrs (androidHost system).supported {
+      # The build steps an APK and an App Bundle share (build-aab.nix).
+      legacyPackages.androidPackaging = {
+        # The native libraries, per ABI, under `<dir>/lib/<abi>/`, stripped
+        # with the NDK's `strip` when `strip` is set.
+        installLibs =
+          {
+            dir,
+            libs,
+            strip,
+          }:
+          lib.concatStrings (
+            lib.mapAttrsToList (
+              abi: sos:
+              lib.concatStrings (
+                lib.mapAttrsToList (name: path: ''
+                  install -Dm644 ${path} ${dir}/lib/${abi}/${name}
+                  ${lib.optionalString strip "${config.legacyPackages.androidNdk.strip} --strip-unneeded ${dir}/lib/${abi}/${name}"}
+                '') sos
+              )
+            ) libs
+          );
+
+        # Compiles a res/ tree into `compiled/*.flat` and lists them, sorted,
+        # in res-flats.txt.
+        compileRes = resDir: ''
+          # NOT `aapt2 compile --dir`: aapt2 assigns resource IDs in input
+          # order, and --dir's order is a filesystem walk. An explicit
+          # LC_ALL=C-sorted list makes the resource table — and so the whole
+          # APK — reproducible.
+          mkdir -p compiled
+          find ${resDir} -type f | LC_ALL=C sort > res-inputs.txt
+          xargs -a res-inputs.txt ${sdk.buildTools}/aapt2 compile --no-crunch -o compiled/
+          LC_ALL=C ls compiled/*.flat | LC_ALL=C sort > res-flats.txt
+        '';
+      };
+
       legacyPackages.buildAndroidApk =
         {
           pname,
@@ -187,28 +224,13 @@ in
           buildPhase = ''
             runHook preBuild
 
-            ${lib.concatStrings (
-              lib.mapAttrsToList (
-                abi: sos:
-                lib.concatStrings (
-                  lib.mapAttrsToList (name: path: ''
-                    install -Dm644 ${path} apk/lib/${abi}/${name}
-                    ${lib.optionalString stripLibs "${config.legacyPackages.androidNdk.strip} --strip-unneeded apk/lib/${abi}/${name}"}
-                  '') sos
-                )
-              ) libs
-            )}
+            ${packaging.installLibs {
+              dir = "apk";
+              inherit libs;
+              strip = stripLibs;
+            }}
 
-            ${lib.optionalString (resDir != null) ''
-              # NOT `aapt2 compile --dir`: aapt2 assigns resource IDs in input
-              # order, and --dir's order is a filesystem walk. An explicit
-              # LC_ALL=C-sorted list makes the resource table — and so the whole
-              # APK — reproducible.
-              mkdir -p compiled
-              find ${resDir} -type f | LC_ALL=C sort > res-inputs.txt
-              xargs -a res-inputs.txt ${sdk.buildTools}/aapt2 compile --no-crunch -o compiled/
-              LC_ALL=C ls compiled/*.flat | LC_ALL=C sort > res-flats.txt
-            ''}
+            ${lib.optionalString (resDir != null) (packaging.compileRes resDir)}
 
             # --min/--target-sdk-version are *defaults* aapt2 applies only when
             # the manifest declares no <uses-sdk>. Ours deliberately does not,
