@@ -12,7 +12,8 @@
 #   libpng and zlib beneath it, and no GLib, Graphite2 or ICU. It needs no C++
 #   runtime, so the terminal links no libc++ at all.
 # - tree-sitter's runtime (sparkles:doc-view's highlighting), one C file.
-#   Grammars stay plugins, loaded from `SPARKLES_TS_GRAMMAR_PATH`.
+#   Grammars stay plugins, loaded from `SPARKLES_TS_GRAMMAR_PATH`, built by the
+#   same clang (`grammars`).
 # - raylib with its own GLFW, which loads GL and the X libraries at run time.
 #   It draws the selection handles alone, until the terminal leaves
 #   sparkles:raylib-text's `library` configuration (ui-vulkan PLAN, V7); that
@@ -222,6 +223,40 @@ in
               EOF
             '';
 
+        # The grammar bundle (./ts-grammars.nix) over the same sources, built
+        # by the profile's clang. A grammar links as C unless its scanner is
+        # C++; then libc++ and LLVM's unwinder link in statically and hidden,
+        # so no grammar needs a C++ runtime or loads a second unwinder (TC19).
+        buildGrammar =
+          args:
+          (pkgs.callPackage "${pkgs.path}/pkgs/by-name/tr/tree-sitter/grammars/build-grammar.nix" {
+            stdenv = dlang.legacyPackages.clangStdenv-sparkles-llvm-runtimes;
+          } args).overrideAttrs
+            {
+              buildPhase = ''
+                runHook preBuild
+                link=($CC -static-libgcc)
+                if [[ -e src/scanner.cc ]]; then
+                  $CXX -fPIC -c src/scanner.cc -o scanner.o $CXXFLAGS
+                  link=($CXX -static-libstdc++ -static-libgcc -Wl,--exclude-libs,ALL)
+                elif [[ -e src/scanner.c ]]; then
+                  $CC -fPIC -c src/scanner.c -o scanner.o $CFLAGS
+                fi
+                $CC -fPIC -c src/parser.c -o parser.o $CFLAGS
+                rm -rf parser
+                "''${link[@]}" -shared -o parser *.o
+                runHook postBuild
+              '';
+            };
+        grammars = config.legacyPackages.tsGrammarBundleWith {
+          g = builtins.mapAttrs (_: buildGrammar) pkgs.tree-sitter.grammars;
+          inherit buildGrammar;
+          inHouse = {
+            d = buildGrammar config.packages.tree-sitter-d.grammarArgs;
+            sdl = buildGrammar config.packages.tree-sitter-sdl.grammarArgs;
+          };
+        };
+
         bundledPkgConfig = pkgs.writeShellScriptBin "pkg-config" ''
           opts=() bundled=() platform=()
           for a in "$@"; do
@@ -244,11 +279,10 @@ in
           echo "$out"
         '';
 
-        terminal-static = config.legacyPackages.buildSparklesApp (finalAttrs: {
-          pname = "terminal-static";
-          version = "0.1.0";
+        # The terminal, by the profile's LDC against the bundled libraries; the
+        # program and its test suite alike.
+        staticBuild = {
           appDir = "apps/terminal";
-          dubBuildFlags = [ "--config=vulkan" ];
           compiler = pkgs.ldc-llvm-runtimes.reproducible;
 
           # Ahead of `pkgs.pkg-config`, which buildSparklesApp adds.
@@ -272,38 +306,94 @@ in
             raylib.dev
             ghostty
           ];
+        };
 
-          installPhase = ''
-            install -Dm755 build/terminal $out/bin/${finalAttrs.pname}
-          '';
+        terminal-static = config.legacyPackages.buildSparklesApp (
+          finalAttrs:
+          staticBuild
+          // {
+            pname = "terminal-static";
+            version = "0.1.0";
+            dubBuildFlags = [ "--config=vulkan" ];
 
-          # As `terminal`: grammars and `fc-match` come from the store.
-          postFixup = ''
-            wrapProgram $out/bin/${finalAttrs.pname} \
-              --set-default SPARKLES_TS_GRAMMAR_PATH ${config.packages.ts-grammars} \
-              --prefix PATH : ${lib.makeBinPath [ pkgs.fontconfig ]}
-          '';
+            installPhase = ''
+              install -Dm755 build/terminal $out/bin/${finalAttrs.pname}
+            '';
 
-          passthru.bundled = {
-            inherit
-              zlib
-              libpng
-              freetype
-              harfbuzz
-              tree-sitter
-              raylib
-              ghostty
-              ;
-          };
+            # As `terminal`: grammars and `fc-match` come from the store.
+            postFixup = ''
+              wrapProgram $out/bin/${finalAttrs.pname} \
+                --set-default SPARKLES_TS_GRAMMAR_PATH ${grammars} \
+                --prefix PATH : ${lib.makeBinPath [ pkgs.fontconfig ]}
+            '';
 
-          meta = {
-            description = "The terminal on the Vulkan arm, linked self-contained under the all-LLVM runtime profile";
-            mainProgram = finalAttrs.pname;
-          };
-        });
+            passthru.bundled = {
+              inherit
+                zlib
+                libpng
+                freetype
+                harfbuzz
+                tree-sitter
+                raylib
+                ghostty
+                ;
+            };
+
+            meta = {
+              description = "The terminal on the Vulkan arm, linked self-contained under the all-LLVM runtime profile";
+              mainProgram = finalAttrs.pname;
+            };
+          }
+        );
+
+        # The terminal's `unittest-vulkan` suite, built as `terminal-static` is
+        # and run headless: Xvfb for the window system, Mesa's lavapipe for
+        # Vulkan. dub's unittest build type asks for the shared druntime; the
+        # profile links the static one all the same (dlang.nix TC19).
+        terminal-static-tests = config.legacyPackages.buildSparklesApp (
+          staticBuild
+          // {
+            pname = "terminal-static-tests";
+            version = "0.1.0";
+            # The application's closure and the test runner's.
+            sourceDirs =
+              config.legacyPackages.sparklesSources.srcClosure "apps/terminal"
+              ++ config.legacyPackages.sparklesSources.libsClosure [
+                "test-runner"
+                "test-runner-impl"
+                "test-utils"
+              ];
+            nativeBuildInputs = staticBuild.nativeBuildInputs ++ [ pkgs.xvfb-run ];
+
+            dontDubBuild = true;
+            buildPhase = ''
+              runHook preBuild
+              runHook postBuild
+            '';
+            doCheck = true;
+            checkPhase = ''
+              runHook preCheck
+              export VK_DRIVER_FILES=${pkgs.mesa}/share/vulkan/icd.d/lvp_icd.${pkgs.stdenv.hostPlatform.uname.processor}.json
+              export SPARKLES_TS_GRAMMAR_PATH=${grammars}
+              # `keymap.bindingsMarkdown.matchesTheReference` reads the reference page.
+              install -Dm644 ${../../docs/apps/terminal/reference/bindings.md} \
+                ../../docs/apps/terminal/reference/bindings.md
+              xvfb-run -a -s '-screen 0 1280x800x24' \
+                dub test --skip-registry=all --config=unittest-vulkan -- -v 2>&1 \
+                | tee $NIX_BUILD_TOP/test.log
+              grep -E '^Summary: [0-9]+ passed, 0 failed' $NIX_BUILD_TOP/test.log
+              runHook postCheck
+            '';
+            installPhase = ''
+              mkdir -p $out
+              grep -E '^Summary:' $NIX_BUILD_TOP/test.log > $out/summary
+            '';
+          }
+        );
       in
       {
         packages.terminal-static = terminal-static;
+        checks.terminal-static-tests = terminal-static-tests;
 
         checks.terminal-static =
           pkgs.runCommand "terminal-static-check"
@@ -327,6 +417,24 @@ in
               LD_DEBUG=libs $exe --version 2> loaded.txt > /dev/null
               if grep -E 'libgcc_s|libstdc\+\+' loaded.txt; then
                 echo "the program loaded a GCC runtime"
+                exit 1
+              fi
+
+              # The grammars it opens need only the C library, and GCC's C++
+              # runtime is nowhere in its closure (glibc's own `libgcc_s`, which
+              # `pthread_cancel` loads, is the C library's).
+              for parser in ${grammars}/*/parser; do
+                readelf -d $parser | grep -oP '(?<=Shared library: \[)[^]]+'
+              done | sort -u > grammars-needed.txt
+              cat grammars-needed.txt
+              if grep -vxE 'libc\.so\.6|libm\.so\.6|ld-linux-[a-z0-9_-]+\.so\.[0-9]+' grammars-needed.txt; then
+                echo "a grammar needs more than the C library (above)"
+                exit 1
+              fi
+              if grep -E -- '-gcc-[0-9.]+-lib$' ${
+                pkgs.closureInfo { rootPaths = [ terminal-static ]; }
+              }/store-paths; then
+                echo "GCC's C++ runtime is in the closure"
                 exit 1
               fi
               touch $out
