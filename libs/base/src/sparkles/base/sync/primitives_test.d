@@ -5,6 +5,9 @@ checks (oracle 6) and native stress (oracle 3).
 */
 module sparkles.base.sync.primitives_test;
 
+// The model platform's fibers do not exist on WebAssembly.
+version (WebAssembly) {} else:
+
 import core.thread : Thread;
 import core.time : MonoTime, msecs;
 

@@ -403,7 +403,11 @@ private void checkProtocol(P)(Bucket!P* b, size_t key, ubyte protocol) @trusted
 // ---------------------------------------------------------------------------
 // Fork (SYX1).
 
-version (Posix)
+// WASI is POSIX-like but has no processes to fork, nor `pthread_atfork`.
+version (WASI) {} else version (Posix)
+    version = Fork;
+
+version (Fork)
 {
     /// Set once the child handler is registered. The slow paths read it: the
     /// lock code is all templates, which a program may instantiate in its own
@@ -449,7 +453,7 @@ version (Posix)
 private void enterSlowPath(P)()
 {
     static if (!P.isModel)
-        version (Posix)
+        version (Fork)
             checkForkHandler();
 }
 

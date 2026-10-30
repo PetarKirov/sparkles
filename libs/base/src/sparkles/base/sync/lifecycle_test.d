@@ -4,6 +4,9 @@ exit (SYX2) and the allocation audit (oracle 7, SYA1).
 */
 module sparkles.base.sync.lifecycle_test;
 
+// WASI has neither threads nor processes to fork.
+version (WASI) {} else:
+
 import core.atomic : atomicLoad, atomicOp, atomicStore;
 import core.thread : Thread;
 import core.time : MonoTime, msecs;

@@ -34,6 +34,9 @@ scheduler (PCT) instead, with recorded seeds.
 */
 module sparkles.base.sync.model;
 
+// Simulated threads are fibers, and druntime has none on WebAssembly.
+version (WebAssembly) {} else:
+
 import core.thread : Fiber;
 import std.traits : functionAttributes, functionLinkage, FunctionAttribute,
     isDelegate, isFunctionPointer, SetFunctionAttributes;

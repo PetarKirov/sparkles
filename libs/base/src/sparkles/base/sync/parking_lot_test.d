@@ -5,6 +5,9 @@ its seeded fault, and native tests (oracle 3).
 */
 module sparkles.base.sync.parking_lot_test;
 
+// The model platform's fibers do not exist on WebAssembly.
+version (WebAssembly) {} else:
+
 import core.thread : Thread;
 import core.time : msecs;
 
