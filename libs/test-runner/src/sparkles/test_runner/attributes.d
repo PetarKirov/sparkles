@@ -168,10 +168,9 @@ struct serial
 unittest
 {
     // Dogfoods @wasm (and @betterC) end to end, and dogfoods `selfContained`
-    // itself. It lives in this import-free module on purpose: with a stock
-    // LDC, a `@wasm` test's module import chain must avoid druntime headers
-    // that don't support wasm32 (a wasm-enabled LDC with full
-    // druntime/Phobos lifts that restriction).
+    // itself. It lives in this import-free module on purpose, so that it also
+    // compiles for `--wasm-bare`, whose bare wasm32 druntime headers reject
+    // most of `core.stdc`; `--wasm` has the full druntime and Phobos.
     int parity;
     foreach (c; "wasm")
         parity ^= c;
