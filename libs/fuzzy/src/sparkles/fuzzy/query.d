@@ -533,7 +533,7 @@ private FuzzyExpected!(QueryStorage!Caps) parseQueryImpl(Caps)(
         Location location;
         size_t suffixBytes;
         ubyte[Caps.maxQueryBytes] locationValues = void;
-        bool[Caps.maxQueryBytes] locationEscaped = void;
+        bool[Caps.maxQueryBytes] locationEscaped;
         auto parsed = parseLocationSuffix(last, options.pathFlavor,
             locationValues[], locationEscaped[], location, suffixBytes);
         if (parsed.hasError)
