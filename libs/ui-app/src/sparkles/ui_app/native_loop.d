@@ -618,14 +618,29 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         return work();
     }
 
+    // Set when the GPU did not finish in time for a surface to go: its next
+    // frame reports the device lost, so a fresh one replaces it.
+    bool deviceSuspect;
+
     // The surface scope ends: what the targets need, then the native
     // surface itself (`RES12`, `RES22`). The device stays.
     void releaseSurface()
     {
         if (!gpu.up)
             return;
+        // Bounded: Android takes the window back 2 s after asking for it,
+        // whether or not it was released (`sparkles.wsi.platform.android`).
+        // A GPU that has not finished by then is treated as lost, and the
+        // release goes on while the window still exists.
         if (gpu.sync.imageCount)
-            cast(void) gpu.sync.waitAll(gpu.vk);
+        {
+            const finished = gpu.sync.finishedWithin(gpu.vk, surfaceReleaseWait.total!"nsecs");
+            if (finished.hasError || !finished.value)
+            {
+                whyNot(i"the native arm's frames did not finish within $(surfaceReleaseWait); replacing the device");
+                deviceSuspect = true;
+            }
+        }
         gpu.canvas.releaseTargets();
         gpu.views.destroy(gpu.vk);
         gpu.swapchain.destroy(gpu.vk);
@@ -687,7 +702,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         return !synced.hasError;
     }
 
-    bool bringUp()
+    bool bringUpOnce()
     {
         auto handles = wsi.nativeHandles(window);
         if (handles.hasError)
@@ -732,6 +747,17 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         session.canvas = &gpu.canvas;
         bindFont();
         return true;
+    }
+
+    // A device brought up partway is torn down again, so every retry starts
+    // from nothing: no device of an earlier attempt is leaked, and no fence
+    // of one is waited on by another.
+    bool bringUp()
+    {
+        if (bringUpOnce())
+            return true;
+        gpu.destroy();
+        return false;
     }
 
     // A window can lose its surface before the device comes up — an Android
@@ -956,12 +982,23 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
             // Mesa's Wayland present round-trips for a compositor's colour
             // management, and its acquire waits for buffer releases — and a
             // read the window system holds prepared would block them forever.
+            // Without the borrow the frame is not drawn — the same rule as
+            // `nativeIo` — and is asked for again.
+            if (deviceSuspect)
+            {
+                deviceSuspect = false;
+                lc.frameDone(FrameResult.deviceLost, now());
+                continue;
+            }
             static if (__traits(hasMember, Wsi, "beginNativeIo"))
-                const borrowed = !wsi.beginNativeIo().hasError;
+                if (wsi.beginNativeIo().hasError)
+                {
+                    lc.frameDone(FrameResult.again, now());
+                    continue;
+                }
             auto outcome = drawFrame!draw(*gpu, host, session, request.ground);
             static if (__traits(hasMember, Wsi, "beginNativeIo"))
-                if (borrowed)
-                    cast(void) wsi.endNativeIo();
+                cast(void) wsi.endNativeIo();
             if (presented + 1 == loseDeviceAt)
             {
                 loseDeviceAt = 0;
@@ -1038,6 +1075,10 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
 
 // How often a gesture in flight is ticked while nothing else arrives.
 private enum gestureTick = 16.msecs;
+
+// How long a surface's release waits for the frames still in flight: under
+// the 2 s Android allows before taking the window back.
+private enum surfaceReleaseWait = 1500.msecs;
 
 // The recogniser's thresholds are physical, so they follow the cell: a
 // pinch or a font-size change moves it, as on the raylib arm.
