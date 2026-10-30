@@ -80,6 +80,7 @@
               pkgs.ldc
               pkgs.lld-sparkles
               pkgs.nodejs
+              pkgs.wasmtime
               pkgs.dub
               pkgs.coreutils
               pkgs.gitMinimal
