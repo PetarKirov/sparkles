@@ -18,11 +18,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1793264816,
-        "narHash": "sha256-3lvddr1YywnKpGXomJlyvGF7QzZq3t6dGyOT5ZDMcIM=",
+        "lastModified": 1793354063,
+        "narHash": "sha256-hWvi6SlvY0qmQMjk2PRnKpnWJ5LC6FlrAUTTf1yPWGc=",
         "owner": "PetarKirov",
         "repo": "dlang.nix",
-        "rev": "97a27bd30ef872782ee0dbd7b3b49eb3479b8958",
+        "rev": "857a8a98775fc4d915330810a1b791e84f76bb40",
         "type": "github"
       },
       "original": {
