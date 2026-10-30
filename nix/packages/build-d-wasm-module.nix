@@ -4,7 +4,8 @@
 # its `wasm32-wasip1` runtime and sysroot), shrinks the result with `wasm-opt`,
 # and guarantees a closure-free output: druntime/phobos assert messages bake
 # `__FILE__` strings pointing into the toolchain's store path into the binary
-# (LDC has no -ffile-prefix-map), so all store-path references are zeroed with
+# (`ldc-sparkles` is dlang.nix's driver, without the store-path map of
+# `ldc.reproducible`), so all store-path references are zeroed with
 # `nuke-refs` — targeted scrubbing is fragile here, as the leaked path is the
 # *unwrapped* inner ldc, not the wrapper — and
 # `allowedReferences = [ ]` enforces that the installed .wasm references

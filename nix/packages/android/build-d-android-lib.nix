@@ -92,7 +92,6 @@ in
                 ${toString (map (d: ''-I="$(echo dub-imports/${d.name}/*/source)"'') dubDeps)} \
                 -P-U__SIZEOF_INT128__ \
                 ${toString (map (inc: "-P-I${inc}") cIncludes)} \
-                -P-I${ndk.sysrootInclude} \
                 -i \
                 ${mainFile} \
                 ${toString cFiles} \

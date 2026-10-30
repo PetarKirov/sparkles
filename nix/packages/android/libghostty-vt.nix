@@ -28,8 +28,8 @@ in
       vt = inputs'.ghostty.packages.libghostty-vt;
 
       # Zig target triple (single-dash; only LDC's -mtriple wants the
-      # double-dash spelling). The `.21` suffix pins the Android API level the
-      # NDK crt/libs are selected for (matches ndk.minSdk).
+      # double-dash spelling). The `.<minSdk>` suffix pins the Android API level
+      # the NDK crt/libs are selected for (./min-sdk.nix).
       zigTarget =
         abi:
         if abi == "arm64-v8a" then

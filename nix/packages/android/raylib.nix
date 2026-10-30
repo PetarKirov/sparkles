@@ -7,7 +7,8 @@
 # Built straight from compiler invocations (the way raylib's own
 # `src/Makefile PLATFORM=PLATFORM_ANDROID` does, minus make): nix's cmake cross
 # hooks buy nothing here and the unit list is stable. Two facts the consumers
-# (hello.nix, hue.nix) must honor, both from raylib's Android link recipe:
+# (hello.nix, and build-d-android-lib.nix with `raylibGlue`) must honor, both
+# from raylib's Android link recipe:
 #
 #   - the glue's `ANativeActivity_onCreate` is referenced only by the Android
 #     framework, so final links need `-Wl,-u,ANativeActivity_onCreate` or the
@@ -17,7 +18,7 @@
 #     provides the `__real_fopen` the wrap calls through to).
 #
 # `src = pkgs.raylib.src` deliberately FOLLOWS the flake-pinned nixpkgs (raylib
-# 6.0, a released tag) rather than pinning a rev of its own: the desktop build
+# 6.2, a released tag) rather than pinning a rev of its own: the desktop build
 # links nixpkgs' compiled `pkgs.raylib`, so taking the source from anywhere
 # else would let the two raylibs drift apart —
 # a worse failure than the one pinning would prevent, because the D bindings
@@ -65,9 +66,9 @@ in
           version = pkgs.raylib.version;
           src = pkgs.raylib.src;
 
-          # Upstream raylib — the 6.0 line and 6.2, verified identical in the released 6.0
-          # tag — never resizes on Android: APP_CMD_CONFIG_CHANGED is an
-          # empty stub ("Check screen orientation here!"), APP_CMD_WINDOW_RESIZED
+          # Upstream raylib — 6.2, as in the 6.0 release before it — never resizes
+          # on Android: APP_CMD_CONFIG_CHANGED is an empty stub ("Check screen
+          # orientation here!"), APP_CMD_WINDOW_RESIZED
           # is unhandled, and the pause/resume rebind pins the buffer geometry to
           # the old size — so an in-place rotation keeps rendering the stale
           # orientation, compositor-scaled. The patch refreshes every

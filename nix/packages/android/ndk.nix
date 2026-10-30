@@ -97,11 +97,6 @@ in
         # `ANativeActivity_onCreate`, which only the framework references —
         # final links need `-Wl,-u,ANativeActivity_onCreate` to keep it.
         nativeAppGlue = "${ndkRoot}/sources/android/native_app_glue";
-        # ImportC's preprocessor is the HOST cc (ldc2 shells out to it), so a
-        # cross build must point it at the NDK's headers explicitly — this is
-        # what lets `jni_c.c` resolve <jni.h> and the JNI bridge live in D
-        # instead of a hand-written C file. ABI-independent.
-        sysrootInclude = "${ldcAndroid.ndkToolchain}/sysroot/usr/include";
         # Mandatory for every shipped .so with targetSdk 35: Android 15+
         # devices with 16 KB pages reject 4 KB-aligned native libraries.
         pageAlignFlags = "-Wl,-z,max-page-size=16384";
