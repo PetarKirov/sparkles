@@ -18,14 +18,14 @@
       pkgs,
       inputs',
       lib,
+      system,
       ...
     }:
     let
-      inherit (pkgs.stdenv.hostPlatform) isLinux isx86_64;
       toolchain = inputs'.dlang-nix.packages;
       # CI builds the Android closure and the WebAssembly modules on
       # x86_64 Linux only (.github/workflows/ci.yml; WTD8).
-      onX86Linux = isLinux && isx86_64;
+      onX86Linux = system == "x86_64-linux";
     in
     {
       legacyPackages.pinTargets = {

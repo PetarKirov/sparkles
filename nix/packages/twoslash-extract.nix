@@ -25,6 +25,7 @@
       config,
       inputs',
       pkgs,
+      system,
       ...
     }:
     let
@@ -36,10 +37,7 @@
       # compiles (`-c -o-`), and the link compiler (clang-sparkles, with GCC
       # and compiler-rt) would add ~0.6 GiB to the closure.
       dubCompiler =
-        if pkgs.stdenv.hostPlatform.system == "x86_64-linux" then
-          pkgs.dmd
-        else
-          inputs'.dlang-nix.packages.ldc-vulkan.unwrapped;
+        if system == "x86_64-linux" then pkgs.dmd else inputs'.dlang-nix.packages.ldc-vulkan.unwrapped;
 
       unwrapped = config.legacyPackages.buildSparklesApp (finalAttrs: {
         pname = "twoslash-extract";
