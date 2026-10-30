@@ -115,6 +115,10 @@
                           inherit (rawLdc) include;
                         }
                         // {
+                          # As a package's, for consumers keyed on them (dlang.nix's
+                          # `getDCInfo`, which builds dub).
+                          pname = "ldc";
+                          inherit (rawLdc) version;
                           # The package this joins over. Consumers scrubbing compiler
                           # paths out of a built binary need it: druntime bakes
                           # `__FILE__` strings naming *this* store path into every
@@ -166,7 +170,13 @@
 
               dmd = inputs'.dlang-nix.packages.dmd-2_112_1;
 
-              dub = inputs'.dlang-nix.packages.dub-1_43_0-alpha-5efed36;
+              # dub, compiled by the fork (toolchain spec TC1): dlang.nix builds it
+              # with a released LDC by default, which brought a second LDC and
+              # nixpkgs' LLVM 18 into every build closure. `ldc.reproducible` maps
+              # the compiler's store paths out of the binary.
+              dub = inputs'.dlang-nix.packages.dub-1_43_0-alpha-5efed36.override {
+                dCompiler = final.ldc.reproducible;
+              };
 
               # The fork LLVM's linkers and binary tools (toolchain spec TC2):
               # one LLVM in every build, not the fork's for compiling and
