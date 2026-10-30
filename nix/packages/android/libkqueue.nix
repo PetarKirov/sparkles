@@ -117,6 +117,6 @@ in
       };
     in
     lib.optionalAttrs (androidHost system).supported {
-      packages.libkqueue-android = libkqueue-android;
+      androidPackages.libkqueue-android = libkqueue-android;
     };
 }

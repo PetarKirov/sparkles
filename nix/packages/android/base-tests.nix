@@ -22,7 +22,7 @@ in
   perSystem =
     { config, system, ... }:
     lib.optionalAttrs (androidHost system).supported {
-      packages.base-android-tests = config.legacyPackages.buildDAndroidTests {
+      androidPackages.base-android-tests = config.legacyPackages.buildDAndroidTests {
         pname = "base-android-tests";
         exeName = "base-tests";
         sharedLibrary = true;

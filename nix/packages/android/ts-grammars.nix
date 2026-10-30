@@ -218,7 +218,7 @@ in
           '';
     in
     lib.optionalAttrs (androidHost system).supported {
-      packages.ts-grammars-android = ts-grammars-android;
+      androidPackages.ts-grammars-android = ts-grammars-android;
 
       # The soname set as *data*, so consumers never have to look inside the
       # derivation to learn what it contains. `builtins.readDir` on a store

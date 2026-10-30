@@ -15,7 +15,7 @@ in
   perSystem =
     { config, system, ... }:
     lib.optionalAttrs (androidHost system).supported {
-      packages.font-android-tests = config.legacyPackages.buildDAndroidTests {
+      androidPackages.font-android-tests = config.legacyPackages.buildDAndroidTests {
         pname = "font-android-tests";
         exeName = "font-tests";
         testedDirs = [
@@ -46,7 +46,7 @@ in
       # against the pinned, patched HarfBuzz built for Android (shaping.nix),
       # whose FreeType, PNG and zlib follow it on the static link line. Run
       # with the bundle pushed, as SPARKLES_FONTS_PATH names it.
-      packages.font-engine-android-tests = config.legacyPackages.buildDAndroidTests {
+      androidPackages.font-engine-android-tests = config.legacyPackages.buildDAndroidTests {
         pname = "font-engine-android-tests";
         exeName = "font-engine-tests";
         testedDirs = [

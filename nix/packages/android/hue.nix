@@ -266,9 +266,9 @@ in
       }) ndk.targets;
     in
     lib.optionalAttrs (androidHost system).supported {
-      packages.libhue-android = libhue;
-      packages.hue-android-assets = hueAssets;
-      packages.hue-apk = config.legacyPackages.buildAndroidApk {
+      androidPackages.libhue-android = libhue;
+      androidPackages.hue-android-assets = hueAssets;
+      androidPackages.hue-apk = config.legacyPackages.buildAndroidApk {
         pname = "hue";
         manifest = ../../../apps/hue/android/AndroidManifest.xml;
         resDir = "${config.packages.hue-icon}/res";
@@ -284,7 +284,7 @@ in
       # emitted `$out/hue.apk` from a store path named `hue-…`, so nothing
       # on disk distinguished them and `hue-adb-install`'s default picked
       # whichever landed on ./result.
-      packages.hue-apk-repo = config.legacyPackages.buildAndroidApk {
+      androidPackages.hue-apk-repo = config.legacyPackages.buildAndroidApk {
         pname = "hue-repo";
         manifest = ../../../apps/hue/android/AndroidManifest.xml;
         renamePackage = "dev.petar_kirov.sparkles.hue.repo";
@@ -344,7 +344,7 @@ in
           description = "hue — release App Bundle, unsigned (signed outside nix for Play)";
         };
 
-      packages.hue-aab-unsigned = config.legacyPackages.mkHueAab {
+      androidPackages.hue-aab-unsigned = config.legacyPackages.mkHueAab {
         versionName = "0.0.0";
         versionCode = 1;
       };
@@ -352,7 +352,7 @@ in
       # The same artifact at the development stamp, so `nix build` and CI can
       # exercise the unsigned path without a tag. Never published: the
       # publisher always goes through mkHueApk with a real version.
-      packages.hue-apk-unsigned = config.legacyPackages.buildAndroidApk {
+      androidPackages.hue-apk-unsigned = config.legacyPackages.buildAndroidApk {
         pname = "hue";
         manifest = ../../../apps/hue/android/AndroidManifest.xml;
         resDir = "${config.packages.hue-icon}/res";

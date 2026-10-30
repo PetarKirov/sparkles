@@ -125,6 +125,6 @@ in
         };
     in
     lib.optionalAttrs (androidHost system).supported {
-      packages.raylib-android = raylib-android;
+      androidPackages.raylib-android = raylib-android;
     };
 }

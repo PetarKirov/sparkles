@@ -91,7 +91,7 @@ in
         '';
     in
     lib.optionalAttrs (androidHost system).supported {
-      packages.android-pkg-config = pkgs.runCommand "android-pkg-config" { } (
+      androidPackages.android-pkg-config = pkgs.runCommand "android-pkg-config" { } (
         lib.concatMapStrings (t: pcFiles t.abi) (lib.attrValues ndk.targets)
       );
     };
