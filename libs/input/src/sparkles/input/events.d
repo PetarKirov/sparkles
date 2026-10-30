@@ -916,7 +916,17 @@ a target that cannot says so (`InputCapabilities.pasteEvents`).
 struct PasteEvent
 {
     InlineBuffer!(char, pasteChunkBytes) text; /// this chunk's bytes
-    bool last; /// the paste ends with this chunk
+
+    /// the paste ends with this chunk
+    bool last() const @safe pure nothrow @nogc => lastFlag != 0;
+    /// ditto
+    void last(bool value) @safe pure nothrow @nogc { lastFlag = value; }
+
+    // A byte, not a `bool`: a `bool` has bit patterns that are not a value,
+    // and `SumType` builds a member with an elaborate assignment (the text
+    // buffer's) in place through an overlapped field — `@safe` only when the
+    // member holds no such type.
+    private ubyte lastFlag;
 }
 
 /**
