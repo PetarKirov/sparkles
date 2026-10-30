@@ -1,6 +1,6 @@
 /**
- * Push and pin Sparkles' pin set to Cachix (TC24), and delete the cache's
- * pins outside it.
+ * Push and pin Sparkles' pin set to Cachix (TC24), delete the cache's pins
+ * outside it, and check that the set's outputs are cached (TC23).
  *
  * The set is the flake output `legacyPackages.<system>.pinTargets`
  * (`nix/pin-targets.nix`) for every system of `derivation_pin_set.pinSystems`;
@@ -18,6 +18,7 @@
  *   dub run --single ci/toolchain-pin.d -- [--dry-run|-n] [-j N]
  *   dub run --single ci/toolchain-pin.d -- [--dry-run|-n] [--toolchains|-t] [--libs|-l] [--android|-a]
  *   dub run --single ci/toolchain-pin.d -- [--dry-run|-n] [--system <system>]... [<name>...]
+ *   dub run --single ci/toolchain-pin.d -- --check [--system <system>]... [<name>...]
  */
 module derivation_pin;
 
@@ -56,24 +57,30 @@ import sparkles.ui.components.table :
 import sparkles.ui.components.tasklist : TaskReporter;
 import sparkles.ui.components.theme : makeTheme;
 
-import derivation_pin_cachix : liveDelete, liveGet, prunePins;
+import derivation_pin_cachix : allCached, checkCached, liveDelete, liveGet, liveHead,
+    prunePins, uncachedLines;
 import derivation_pin_process : Captured, SupervisedCommands;
-import derivation_pin_set : Category, Selection, Target, capReport,
+import derivation_pin_set : Category, Selection, Target, cacheUri, capReport,
     expandPinSet, parsePinSet, pinSetEvalArgs, pinSystems, selectTargets;
 import derivation_pin_signals : ShutdownSignals;
 
 /**
-CLI arguments. `run` resolves the environment, evaluates the pin set, drives
-every selected pin, and deletes the pins outside the set. It returns a message without an `Error:` prefix — `runCli` adds that prefix.
+CLI arguments. `run` resolves the environment, evaluates the pin set, then
+either checks it or drives every selected pin and deletes the pins outside the
+set. It returns a message without an `Error:` prefix — `runCli` adds that prefix.
 */
 @(Command("toolchain-pin",
-    shortDescription: "Push and pin Sparkles' pin set (nix/pin-targets.nix) to Cachix.",
+    shortDescription: "Push and pin Sparkles' pin set (nix/pin-targets.nix) to Cachix, or check that it is cached.",
 ))
 struct ToolchainPin
 {
     @(Option("dry-run|n", description: "Evaluate store paths, list the pins a run would delete, and display "
         ~ "the summary without pushing, pinning or deleting."))
     bool dryRun;
+
+    @(Option("check", description: "Exit non-zero unless the cache serves every selected output "
+        ~ "(a narinfo query per out path; needs no token, builds nothing)."))
+    bool check;
 
     @(Option("jobs|j", description: "Number of concurrent workers for evaluation and cache queries (default: 4)."))
     int jobs = 4;
@@ -124,6 +131,8 @@ struct ToolchainPin
             const repoRoot = findRepoRoot();
             return evaluatePinSet(repoRoot).andThen!((Target[] set) =>
                 selectTargets(set, selection).andThen!((Target[] chosen) {
+                    if (check)
+                        return checkTargets(chosen, plan.cache);
                     if (plan.announcedDryRun)
                         stderr.writeln("NOTICE: CACHIX_AUTH_TOKEN is unset; running in dry-run summary mode.");
                     auto pinned = drive(chosen, plan, repoRoot);
@@ -1452,4 +1461,25 @@ private Expected!(void, string) prune(in Target[] set, RunPlan plan) @system
             report.failures.length, report.stale.length));
     }
     return ok();
+}
+
+/**
+ * TC23's gate: every target's out path has a narinfo in the cache. Prints the
+ * outputs that do not, and fails when there are any.
+ */
+private Expected!(void, string) checkTargets(Target[] targets, string cache) @system
+{
+    const uri = cacheUri(cache);
+    const checks = checkCached!liveHead(targets, uri);
+    if (allCached(checks))
+    {
+        writefln("All %d pin-set outputs are cached in %s.", checks.length, uri);
+        return ok();
+    }
+    const lines = uncachedLines(checks);
+    foreach (line; lines)
+        writeln(line);
+    stdout.flush();
+    return err!void(format("%d of %d pin-set outputs are not cached in %s.",
+        lines.length, checks.length, uri));
 }

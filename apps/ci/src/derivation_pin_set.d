@@ -1,7 +1,8 @@
 /**
 The pin set as values: the flake's `legacyPackages.<system>.pinTargets`
 (`nix/pin-targets.nix`, TC24) expanded across Sparkles' hosts, the selectors
-that filter it, and the cache's pins that fall outside it.
+that filter it, the cache's pins that fall outside it, and the narinfo URLs
+that prove an output is cached (TC23).
 
 Nothing here runs a command or touches the network: the launcher evaluates
 the set and talks to Cachix, then hands the answers to these functions.
@@ -9,11 +10,12 @@ the set and talks to Cachix, then hands the answers to these functions.
 module derivation_pin_set;
 
 import std.algorithm.iteration : filter, map;
-import std.algorithm.searching : canFind, endsWith, startsWith;
+import std.algorithm.searching : all, canFind, endsWith, startsWith;
 import std.algorithm.sorting : sort;
 import std.array : array, join;
 import std.format : format;
 import std.json : JSONException, JSONType, JSONValue, parseJSON;
+import std.string : representation;
 
 import expected : Expected, err, ok;
 
@@ -300,6 +302,45 @@ unittest
     assert(stalePins(["skia-sparkles-aarch64-linux"], set) == ["skia-sparkles-aarch64-linux"],
         "an entry pinned for a system the set leaves it out of is stale");
 }
+
+/// Nix's base-32 alphabet (no `e`, `o`, `t`, `u`).
+private enum nixBase32 = "0123456789abcdfghijklmnpqrsvwxyz";
+
+/**
+`<cacheUri>/<hash>.narinfo` for `storePath`, the URL a substituter asks; it
+exists exactly when the cache holds the path. `cacheUri` has no trailing `/`.
+*/
+Expected!(string, string) narinfoUrl(string cacheUri, string storePath) @safe pure
+{
+    enum prefix = "/nix/store/";
+    enum hashLength = 32;
+    if (!storePath.startsWith(prefix))
+        return err!string("not a store path: " ~ storePath);
+    const base = storePath[prefix.length .. $];
+    if (base.length <= hashLength || base[hashLength] != '-'
+        || !base[0 .. hashLength].representation.all!(c => nixBase32.canFind(c)))
+        return err!string("not a store path: " ~ storePath);
+    return ok(cacheUri ~ "/" ~ base[0 .. hashLength] ~ ".narinfo");
+}
+
+@("pinSet.narinfoUrl.hashOnly")
+@safe pure
+unittest
+{
+    enum uri = "https://sparkles.cachix.org";
+    assert(narinfoUrl(uri, "/nix/store/45iz365bm9kwm02x4ll7njn7vfqphq8h-dmd-2.112.1").value
+        == "https://sparkles.cachix.org/45iz365bm9kwm02x4ll7njn7vfqphq8h.narinfo");
+    assert(narinfoUrl(uri, "/nix/store/45iz365bm9kwm02x4ll7njn7vfqphq8h-dmd/bin/dmd").value
+        == "https://sparkles.cachix.org/45iz365bm9kwm02x4ll7njn7vfqphq8h.narinfo",
+        "a path inside an output names that output");
+    assert(narinfoUrl(uri, "/tmp/45iz365bm9kwm02x4ll7njn7vfqphq8h-dmd").hasError);
+    assert(narinfoUrl(uri, "/nix/store/short-dmd").hasError);
+    assert(narinfoUrl(uri, "/nix/store/45iz365bm9kwm02x4ll7njn7vfqphq8e-dmd").hasError,
+        "e is not in Nix's base-32 alphabet");
+}
+
+/// The cache URI substituters use: `https://<cache>.cachix.org`.
+string cacheUri(string cache) @safe pure nothrow => "https://" ~ cache ~ ".cachix.org";
 
 /// `7.2GiB of the 10.0GiB cap (72%)`: pinned bytes beside the cache's limit.
 string capReport(ulong bytes, ulong cap = cacheCapBytes) @safe pure
