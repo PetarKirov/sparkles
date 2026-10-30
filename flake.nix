@@ -12,7 +12,11 @@
 
   inputs = {
     nixpkgs.url = "github:PetarKirov/nixpkgs?ref=glfw3-3.5.1-nixos-unstable-2026-10-27";
-    flake-parts.url = "github:hercules-ci/flake-parts";
+    flake-parts = {
+      url = "github:hercules-ci/flake-parts";
+      # Its `lib` from our nixpkgs, not a second, `nixpkgs.lib`-only checkout.
+      inputs.nixpkgs-lib.follows = "nixpkgs";
+    };
 
     git-hooks-nix = {
       url = "github:cachix/git-hooks.nix";
@@ -53,7 +57,17 @@
     # nix/packages/android/terminal-nix.nix): `lib.bootstrapPackages` builds
     # the bootstrap that app installs. The branch is the upstreamable one with
     # `build.androidAppId`, until a release branch has it.
-    nix-on-droid.url = "github:PetarKirov/nix-on-droid/feat/android-app-id";
+    #
+    # Its bootstrap builds from its own pinned `nixpkgs-for-bootstrap`, which
+    # stays pinned (nix-on-droid fixes the proot-termux store paths to it).
+    # Its `nixpkgs` and `nixpkgs-docs` serve only outputs we do not use (the
+    # `nix-on-droid` CLI package, home-manager, the docs), so they follow ours
+    # rather than locking two more nixpkgs.
+    nix-on-droid = {
+      url = "github:PetarKirov/nix-on-droid/feat/android-app-id";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.nixpkgs-docs.follows = "nixpkgs";
+    };
 
     ghostty = {
       url = "github:ghostty-org/ghostty";
