@@ -258,19 +258,23 @@ in
         "yml"
         "zig"
       ];
-      repoDocsTree = lib.fileset.toSource {
-        root = ../../..;
-        fileset = lib.fileset.difference (lib.fileset.fileFilter (
-          file:
-          lib.any file.hasExt repoTextExts
-          || lib.elem file.name [
-            "LICENSE"
-            "Makefile"
-          ]
-        ) ../../..) ../../../docs/.vitepress;
-      };
+      # Selected at build time from the flake source: a fileset filter here
+      # would walk the whole repository on every evaluation.
       hueAssetsRepo = mkAssets "hue-android-assets-repo" ''
-        cp -r ${repoDocsTree}/. $out/docs/
+        (
+          cd ${inputs.self}
+          find . -path ./docs/.vitepress -prune -o \( -type f -o -type l \) \( \
+            ${
+              lib.concatMapStringsSep " -o " (n: "-name ${lib.escapeShellArg n}") (
+                map (ext: "*.${ext}") repoTextExts
+                ++ [
+                  "LICENSE"
+                  "Makefile"
+                ]
+              )
+            } \) -print0 \
+            | xargs -0 cp -P --parents --no-preserve=mode -t $out/docs/
+        )
         # aapt2 silently excludes dot-entries (files AND directories) from
         # assets — prune them so the manifest never lists what can't ship.
         chmod -R u+w $out/docs
