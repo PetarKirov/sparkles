@@ -108,6 +108,6 @@ in
           '';
     in
     lib.optionalAttrs (androidHost system).supported {
-      packages.libghostty-vt-android = libghostty-vt-android;
+      androidPackages.libghostty-vt-android = libghostty-vt-android;
     };
 }

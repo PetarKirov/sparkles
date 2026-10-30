@@ -136,7 +136,7 @@ in
       };
     in
     lib.optionalAttrs (androidHost system).supported {
-      packages.freetype-android = freetype;
-      packages.harfbuzz-android = harfbuzz;
+      androidPackages.freetype-android = freetype;
+      androidPackages.harfbuzz-android = harfbuzz;
     };
 }

@@ -73,12 +73,12 @@ in
             find $out -exec touch -h -d "@$SOURCE_DATE_EPOCH" {} +
           '';
 
-      packages.hue-icon = legacyPackages.mkAndroidIcon {
+      androidPackages.hue-icon = legacyPackages.mkAndroidIcon {
         name = "hue-icon";
         source = ../../../apps/hue/android/icon/ic_launcher.svg;
       };
 
-      packages.terminal-icon = legacyPackages.mkAndroidIcon {
+      androidPackages.terminal-icon = legacyPackages.mkAndroidIcon {
         name = "terminal-icon";
         source = ../../../apps/terminal/android/icon/ic_launcher.svg;
       };

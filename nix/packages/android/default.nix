@@ -9,7 +9,12 @@
 # toolchain for (./host.nix: x86_64-linux and macOS), and pulls *unfree*
 # Android SDK components through a scoped nixpkgs import — nothing in the
 # default package set references it.
-{ inputs, lib, ... }:
+{
+  inputs,
+  lib,
+  flake-parts-lib,
+  ...
+}:
 let
   # Whether this system can build Android at all (./host.nix).
   androidHost = import ./host.nix { inherit inputs; };
@@ -40,14 +45,33 @@ in
     ./ts-grammars.nix
   ];
 
-  perSystem =
+  # Every Android output, declared here rather than in `packages` directly so
+  # that the set of names is known (`androidPackageNames`): nix/packages/all.nix
+  # subtracts it from the desktop aggregate. A heuristic guarding a multi-GB
+  # unfree closure leaks both ways (an Android output whose name does not
+  # say "android" would join the desktop aggregate and build on macOS; a
+  # desktop package whose name does would drop out of CI), and a hand-kept
+  # list drifts.
+  options.perSystem = flake-parts-lib.mkPerSystemOption {
+    options.androidPackages = lib.mkOption {
+      type = lib.types.lazyAttrsOf lib.types.package;
+      default = { };
+      description = "The Android outputs; each is also in `packages`.";
+    };
+  };
+
+  config.perSystem =
     {
       config,
       pkgs,
       system,
       ...
     }:
-    lib.optionalAttrs (androidHost system).supported {
+    {
+      packages = config.androidPackages;
+      legacyPackages.androidPackageNames = lib.attrNames config.androidPackages;
+    }
+    // lib.optionalAttrs (androidHost system).supported {
       # The Android CI aggregate (the `nix-build-android` job). Kept out of
       # `all-desktop` (see nix/packages/all.nix).
       #
@@ -75,7 +99,7 @@ in
       #     `hue-apk` and differs only in aapt2's debug flag and the absent
       #     signature, so covering it costs one more aapt2+zipalign run and
       #     keeps the release path from rotting between releases.
-      packages.all-android = pkgs.linkFarm "sparkles-all-android" {
+      androidPackages.all-android = pkgs.linkFarm "sparkles-all-android" {
         hue-apk = config.packages.hue-apk;
         hue-apk-repo = config.packages.hue-apk-repo;
         hue-apk-unsigned = config.packages.hue-apk-unsigned;
@@ -96,49 +120,5 @@ in
         # The same terminal on the native arm (sparkles:wsi, Vulkan).
         terminal-vulkan-apk = config.packages.terminal-vulkan-apk;
       };
-
-      # The names this module owns, so nix/packages/all.nix can subtract them
-      # instead of guessing from the string "android". A heuristic guarding a
-      # multi-GB unfree closure leaks both ways: an Android output that does
-      # not happen to contain "android" joins the desktop aggregate (and gets
-      # built on macOS), and a *desktop* package that does is silently dropped
-      # from CI. Declaring the set makes both impossible.
-      #
-      # Keep in sync with the `packages.*` assignments across this directory —
-      # `all-android` itself included, since the desktop aggregate must not
-      # contain it either.
-      legacyPackages.androidPackageNames = [
-        "all-android"
-        "android-pkg-config"
-        "base-android-tests"
-        "font-android-tests"
-        "font-engine-android-tests"
-        "freetype-android"
-        "harfbuzz-android"
-        "hello-apk"
-        "hue-aab-unsigned"
-        "hue-android-assets"
-        "hue-apk"
-        "hue-apk-repo"
-        "hue-apk-unsigned"
-        "hue-icon"
-        "libghostty-vt-android"
-        "libhello-android"
-        "libhue-android"
-        "libkqueue-android"
-        "libterminal-android"
-        "libterminal-vulkan-android"
-        "libtext-lab-android"
-        "libtext-lab-android-raw"
-        "raylib-android"
-        "terminal-apk"
-        "terminal-icon"
-        "terminal-vulkan-apk"
-        "text-lab-apk"
-        "text-lab-apk-debug"
-        "text-lab-assets"
-        "tree-sitter-android"
-        "ts-grammars-android"
-      ];
     };
 }

@@ -64,6 +64,6 @@ in
       };
     in
     lib.optionalAttrs (androidHost system).supported {
-      packages.tree-sitter-android = tree-sitter-android;
+      androidPackages.tree-sitter-android = tree-sitter-android;
     };
 }

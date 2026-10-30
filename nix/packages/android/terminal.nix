@@ -213,8 +213,8 @@ in
         }) ndk.targets;
     in
     lib.optionalAttrs (androidHost system).supported {
-      packages.libterminal-android = libterminal;
-      packages.libterminal-vulkan-android = libterminalVulkan;
+      androidPackages.libterminal-android = libterminal;
+      androidPackages.libterminal-vulkan-android = libterminalVulkan;
 
       /**
         The terminal APK. Every argument but `session` is packaging; `session`
@@ -342,8 +342,8 @@ in
             '';
           });
 
-      packages.terminal-apk = config.legacyPackages.mkTerminalApk { };
-      packages.terminal-vulkan-apk = config.legacyPackages.mkTerminalApk {
+      androidPackages.terminal-apk = config.legacyPackages.mkTerminalApk { };
+      androidPackages.terminal-vulkan-apk = config.legacyPackages.mkTerminalApk {
         renderer = "vulkan";
         appId = "dev.petar_kirov.sparkles.terminal.vulkan";
         label = "terminal (Vulkan)";

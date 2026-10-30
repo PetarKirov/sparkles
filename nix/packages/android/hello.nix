@@ -91,8 +91,8 @@ in
       };
     in
     lib.optionalAttrs (androidHost system).supported {
-      packages.libhello-android = libhello;
-      packages.hello-apk = config.legacyPackages.buildAndroidApk {
+      androidPackages.libhello-android = libhello;
+      androidPackages.hello-apk = config.legacyPackages.buildAndroidApk {
         pname = "hello";
         manifest = ../../../apps/hue/android/hello/AndroidManifest.xml;
         libs = lib.mapAttrs' (name: t: {

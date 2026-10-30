@@ -167,7 +167,7 @@ in
         };
     in
     lib.optionalAttrs (androidHost system).supported {
-      packages = {
+      androidPackages = {
         libtext-lab-android = library;
         libtext-lab-android-raw = rawLibrary;
         text-lab-assets = assets;
