@@ -27,6 +27,21 @@
     let
       inherit (config.legacyPackages.sparklesSources) libsClosure;
 
+      # Copies a generated-shaders package, with its `prebuilt` stamp, into
+      # `libs/<lib>/generated/shaders/` of the source tree at `rootDir`.
+      placeShaders =
+        {
+          package,
+          lib',
+          ext,
+        }:
+        rootDir: ''
+          chmod -R u+w "${rootDir}"
+          install -d "${rootDir}/libs/${lib'}/generated/shaders"
+          cp ${package}/*.${ext} ${package}/.stamp \
+            "${rootDir}/libs/${lib'}/generated/shaders/"
+        '';
+
       # The output of `shader-compile` for the package `libs/<lib>`, whose
       # device-only entry points (if any) are in `extraDirs`.
       prebuiltShaders =
@@ -74,6 +89,41 @@
         });
     in
     {
+      # Where a build's source tree gets the generated shaders. sparkles:ui's
+      # `gpu-effects` configuration generates its effect GLSL in a
+      # pre-generate step that takes the dcompute-enabled LDC; Nix runs that
+      # once (`ui-shaders`) and every build that reaches the configuration
+      # (through `sparkles:ui-raylib`, whose dependents select it) gets the
+      # output copied in, so the step finds it fresh and no app build needs
+      # LLVM. The step still builds the tool to read the stamp, hence its
+      # sources. (The closure is read from the manifests, so it can
+      # over-approximate: an unused copy, nothing more.) sparkles:ui-vulkan's
+      # canvas SPIR-V likewise, for every build that reaches the native
+      # canvas, and sparkles:vulkan-wsi's `gpu-shaders` configuration, which
+      # the triangle examples select. Re-exported by `sparklesSources`.
+      legacyPackages.uiShaderPlacement = rec {
+        needsUiShaders = srcDirs: builtins.elem "libs/ui-raylib/src" srcDirs;
+        needsUiVulkanShaders = srcDirs: builtins.elem "libs/ui-vulkan/src" srcDirs;
+        uiShaderDirs =
+          srcDirs:
+          lib.optional (needsUiShaders srcDirs || needsUiVulkanShaders srcDirs) "apps/shader-compile/src";
+        placeUiShaders = placeShaders {
+          package = config.packages.ui-shaders;
+          lib' = "ui";
+          ext = "frag";
+        };
+        placeUiVulkanShaders = placeShaders {
+          package = config.packages.ui-vulkan-shaders;
+          lib' = "ui-vulkan";
+          ext = "spv";
+        };
+        placeVulkanWsiShaders = placeShaders {
+          package = config.packages.vulkan-wsi-shaders;
+          lib' = "vulkan-wsi";
+          ext = "spv";
+        };
+      };
+
       packages = {
         ui-shaders = prebuiltShaders {
           pname = "ui-shaders";
