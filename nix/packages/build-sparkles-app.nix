@@ -19,6 +19,7 @@
   perSystem =
     { config, pkgs, ... }:
     let
+      inherit (config.legacyPackages) nativeLibs;
       fs = lib.fileset;
       root = ../..;
       fromRoot = lib.path.append root;
@@ -631,32 +632,12 @@
                 srcDirs = args.sourceDirs or (sparklesSrcClosure appDir);
                 # ImportC's headers and the linked shaping libraries travel with
                 # every raylib-text consumer, including transitive UI consumers.
-                shapingInputs = lib.optionals (builtins.elem "libs/raylib-text/src" srcDirs) [
-                  pkgs.freetype
-                  pkgs.freetype.dev
-                  config.packages.harfbuzz
-                  config.packages.harfbuzz.dev
-                ];
+                shapingInputs = lib.optionals (builtins.elem "libs/raylib-text/src" srcDirs) nativeLibs.shaping;
                 # The window system's native libraries (`libs "wayland-client"
                 # "xcb" … "xkbcommon-x11"` in libs/wsi, Linux-only) and the Vulkan
                 # loader travel the same way, with every consumer of the native arm.
-                wsiInputs =
-                  lib.optionals (builtins.elem "libs/wsi/src" srcDirs && pkgs.stdenv.hostPlatform.isLinux)
-                    [
-                      pkgs.wayland
-                      pkgs.wayland.dev
-                      pkgs.libxkbcommon
-                      pkgs.libxkbcommon.dev
-                      pkgs.libxcb
-                      pkgs.libxcb.dev
-                      pkgs.xcb-imdkit
-                      pkgs.libxcb-util
-                      pkgs.libxcb-util.dev
-                    ];
-                vulkanInputs = lib.optionals (builtins.elem "libs/vulkan/src" srcDirs) [
-                  pkgs.vulkan-loader
-                  pkgs.vulkan-loader.dev
-                ];
+                wsiInputs = lib.optionals (builtins.elem "libs/wsi/src" srcDirs) nativeLibs.wsi;
+                vulkanInputs = lib.optionals (builtins.elem "libs/vulkan/src" srcDirs) nativeLibs.vulkan;
                 buildInputs = (args.buildInputs or [ ]) ++ shapingInputs ++ wsiInputs ++ vulkanInputs;
                 dubBuildType = args.dubBuildType or "checked";
                 stamp = args.stampBuildInfo or false;

@@ -3,6 +3,7 @@
   perSystem =
     { config, pkgs, ... }:
     let
+      inherit (config.legacyPackages) nativeLibs;
       inherit (config.legacyPackages.dubBuilder)
         mkDubDerivation
         buildDubDeps
@@ -308,37 +309,16 @@
         buildInputs = [
           pkgs.tree-sitter
           pkgs.raylib
-          pkgs.freetype
-          pkgs.freetype.dev
-          config.packages.harfbuzz
-          config.packages.harfbuzz.dev
-
-          # `libs "vulkan"` in libs/vulkan. `vulkan.pc` lives in the loader's
-          # `.dev` output and points `includedir` at vulkan-headers, so one
-          # entry gives ImportC the header path and the linker its flags.
-          # The dev shell has these; this derivation is a separate closure and
-          # needs them too, or `<vulkan/vulkan.h>` is simply absent.
-          pkgs.vulkan-loader
-          pkgs.vulkan-loader.dev
-
+        ]
+        ++ nativeLibs.shaping
+        ++ nativeLibs.vulkan
+        ++ [
           # `libs "SDL3"` in libs/ui-sdl3, same reasoning: `.dev` carries
           # `sdl3.pc`, `.lib` is what the built example loads at runtime.
           pkgs.sdl3
           pkgs.sdl3.dev
         ]
-        ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [
-          # `libs "wayland-client" "xcb" ... "xkbcommon-x11"` in libs/wsi
-          # (Linux-only, like the dev shell's copies of the same packages).
-          pkgs.wayland
-          pkgs.wayland.dev
-          pkgs.libxkbcommon
-          pkgs.libxkbcommon.dev
-          pkgs.libxcb
-          pkgs.libxcb.dev
-          pkgs.xcb-imdkit
-          pkgs.libxcb-util
-          pkgs.libxcb-util.dev
-        ];
+        ++ nativeLibs.wsi;
       };
 
       # One bundle per lib, primed by compiling every one of that lib's
