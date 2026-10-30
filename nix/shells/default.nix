@@ -3,6 +3,7 @@
   perSystem =
     {
       config,
+      inputs',
       pkgs,
       ...
     }:
@@ -162,12 +163,14 @@
         lib.getBin pkgs.fontconfig
       )
       ++ [
-        # wasm-ld, for the test runner's `--wasm` mode, which looks for it on
-        # PATH (WTD27). Without it the mode skips rather than runs (and
-        # `--require-toolchain` turns that skip into a failure).
-        # The wasm runtime it hands off to is `pkgs.nodejs` below.
+        # lld, which links D programs on Linux, and node, which runs the
+        # test runner's `--wasm-bare` modules and the WebAssembly modules'
+        # agreement check.
         pkgs.lld-sparkles
         pkgs.nodejs
+        # The test runner's `--wasm` runs the `@wasm` tests' WASI program here
+        # (WTD27); the WASI LDC it compiles with is `$SPARKLES_WASI_LDC`.
+        pkgs.wasmtime
         # Yarn Berry 4 for the VitePress site (`yarn docs:build`) and the
         # twoslash fixture generator. `package.json#packageManager` selects
         # the release. `corepack enable` cannot write shims into the Nix
@@ -384,6 +387,9 @@
         # Seed writable sources, preserving any existing user versions. The
         # packaged helper retains the bundle through its runtime closure.
         export SPARKLES_DUB_SOURCES=${config.packages.dub-sources}
+        # The LDC with the WASI runtimes: the test runner's `--wasm` and the
+        # WebAssembly modules' builds (`ci --build`).
+        export SPARKLES_WASI_LDC=${lib.getExe' inputs'.dlang-nix.packages.ldc-sparkles "ldc2"}
         ${lib.getExe config.packages.ci} --seed-dub-cache >/dev/null 2>&1 || {
           echo 'Failed to seed DUB sources; run ci --seed-dub-cache for details.' >&2
           return 1
