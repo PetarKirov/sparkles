@@ -10,41 +10,7 @@
     let
       inherit (config.legacyPackages) nativeLibs;
       inherit (pkgs) lib;
-      inherit (config.legacyPackages) d-toolchain;
-
-      # The Nix C API libraries `sparkles:nix` binds, as nixpkgs builds them:
-      # cache.nixos.org has them, so no Nix source build.
-      nixCLibs = pkgs.nixVersions.latest.libs;
-
-      # LDC's ImportC cannot parse the C23 `[[deprecated(...)]]` attribute that
-      # `nix_api_value.h` / `nix_api_expr.h` put on the deprecated `Value`
-      # typedef (which `sparkles:nix` does not use). Strip it from a copy of
-      # `nix-expr-c`'s dev output and repoint the pkg-config includedir at the
-      # patched headers. Prepending this on PKG_CONFIG_PATH (below) makes it
-      # win over the unpatched copy that `nix-flake-c` propagates.
-      nix-expr-c-dev-patched = pkgs.runCommand "nix-expr-c-dev-patched" { } ''
-        cp -r ${nixCLibs.nix-expr-c.dev} $out
-        chmod -R u+w $out
-        sed -i -E 's/\[\[[^]]*\]\]//g' \
-          $out/include/nix_api_value.h \
-          $out/include/nix_api_expr.h
-        substituteInPlace $out/lib/pkgconfig/nix-expr-c.pc \
-          --replace-quiet ${nixCLibs.nix-expr-c.dev} $out
-      '';
-
-      # All Nix C API headers are supplied via pkg-config (PKG_CONFIG_PATH),
-      # NOT via buildInputs `.dev` outputs — otherwise the nix cc wrapper would
-      # inject the unpatched nix-expr-c include dir into NIX_CFLAGS_COMPILE and
-      # shadow nix-expr-c-dev-patched. The patched expr dev is listed first.
-      nixCApiPkgConfigPath = lib.makeSearchPath "lib/pkgconfig" [
-        nix-expr-c-dev-patched
-        nixCLibs.nix-util-c.dev
-        nixCLibs.nix-store-c.dev
-        nixCLibs.nix-fetchers-c.dev
-        nixCLibs.nix-flake-c.dev
-        nixCLibs.nix-main-c.dev
-      ];
-
+      inherit (config.legacyPackages) d-toolchain nixCApi textOracles;
       exclusions = import ../flake-exclusions.nix;
 
       # Every flake input as a `/nix/store` path. `self` is omitted — interpolating
@@ -66,66 +32,6 @@
         ]
       );
 
-      # Python (3.11, the newest CPython PyD supports) with jquast wcwidth, for
-      # the text-conformance harness Layer 10 (PyD-embedded Python wcwidth oracle).
-      # PyD is hard-pinned to 3.11 (dub `subConfiguration "pyd" "python311"`), so
-      # this can't reuse another interpreter. To keep the closure to this *single*
-      # Python, the ci and pre-commit tooling use `gitMinimal` rather than full
-      # git — full git drags in a second CPython via git-p4's shebang.
-      wcwidth = pkgs.python311Packages.buildPythonPackage rec {
-        pname = "wcwidth";
-        version = "0.8.2";
-        pyproject = true;
-
-        src = inputs.wcwidth-src;
-
-        build-system = [ pkgs.python311Packages.hatchling ];
-        pythonImportsCheck = [ "wcwidth" ];
-      };
-      pythonEnv = pkgs.python311.withPackages (_: [ wcwidth ]);
-
-      # The harness only calls `ncstrwidth` (Layer 8), which lives in
-      # libnotcurses-core. The default `notcurses` links the whole multimedia
-      # backend (ffmpeg + audio/video codecs, ~140 MiB of closure) that we never
-      # touch — drop it. `.dev` still carries the pkg-config the binding needs.
-      notcursesCore = pkgs.notcurses.override { multimediaSupport = false; };
-
-      # ISA presets for the nix-built engines of the wired runtime JSON bench:
-      # the sandbox forbids -march=native, so each native engine is built once
-      # per preset and the best one the host supports is picked at shell entry
-      # below ($WIRED_BENCH_ISA + PKG_CONFIG_PATH). One pkgconfig search dir
-      # per preset, grown by each bench engine module (yyjson, C++/Rust shims).
-      benchIsaPresets = import ../packages/wired-bench-isa-presets.nix pkgs;
-      benchPkgsFor = preset: [
-        config.packages."wired-bench-yyjson-${preset.attr}"
-        config.packages."wired-bench-cpp-shim-${preset.attr}"
-        config.packages."wired-bench-rs-${preset.attr}"
-      ];
-      benchPcPath = preset: lib.makeSearchPath "lib/pkgconfig" (benchPkgsFor preset);
-      benchIsaHook =
-        if builtins.length benchIsaPresets == 2 then
-          # x86_64: runtime pick between the v4 and v2 presets.
-          let
-            v2 = builtins.elemAt benchIsaPresets 0;
-            v4 = builtins.elemAt benchIsaPresets 1;
-          in
-          ''
-            if grep -q avx512f /proc/cpuinfo 2>/dev/null; then
-              export WIRED_BENCH_ISA=${v4.isa}
-              export PKG_CONFIG_PATH=${benchPcPath v4}''${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}
-            else
-              export WIRED_BENCH_ISA=${v2.isa}
-              export PKG_CONFIG_PATH=${benchPcPath v2}''${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}
-            fi
-          ''
-        else
-          let
-            only = builtins.head benchIsaPresets;
-          in
-          ''
-            export WIRED_BENCH_ISA=${only.isa}
-            export PKG_CONFIG_PATH=${benchPcPath only}''${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}
-          '';
       # ── Package tiers ──────────────────────────────────────────────────
       #
       # `ciPackages` is the floor: exactly what `ci --test`,
@@ -193,19 +99,11 @@
         pkgs.pkg-config
         config.packages.libghostty-vt
 
-        # Nix C API — bound by `sparkles:nix` via ImportC. Only the `out`
-        # outputs (the .so's) go here, for linking; headers come via
-        # PKG_CONFIG_PATH (see nixCApiPkgConfigPath above) so the patched
-        # nix-expr-c headers are used and the unpatched ones never reach
-        # NIX_CFLAGS_COMPILE. `ci --test` links `:nix`, so this is the CI
-        # floor, not the interactive tier.
-        nixCLibs.nix-util-c
-        nixCLibs.nix-store-c
-        nixCLibs.nix-expr-c
-        nixCLibs.nix-fetchers-c
-        nixCLibs.nix-flake-c
-        nixCLibs.nix-main-c
-
+      ]
+      # The Nix C API `sparkles:nix` binds (nix/shells/nix-c-api.nix): `ci
+      # --test` links `:nix`, so this is the CI floor, not the interactive tier.
+      ++ nixCApi.libs
+      ++ [
         # tree-sitter runtime for sparkles:tree-sitter / sparkles:syntax
         # (single-output: headers + .so + .pc all in `out`). Grammars come
         # from the ts-grammars bundle via $SPARKLES_TS_GRAMMAR_PATH below.
@@ -321,25 +219,15 @@
         pkgs.capstone
         pkgs.mold
 
-        # Independent oracle libraries for the text-conformance harness
-        # (bindings under libs/base/tools/text-conformance/bindings). utf8proc
-        # is single-output (headers + .pc in `out`); icu/notcurses carry their
-        # pkg-config in the `.dev` output. Only the opt-in `oracles.sdl`
-        # recipe needs these; CI gates official corpora offline.
-        pkgs.utf8proc
-        pkgs.icu
-        pkgs.icu.dev
-        notcursesCore
-        notcursesCore.dev
-
-        # Rust unicode-width oracle helper (Layer 9), built from the in-tree
-        # crate under the harness's oracles/ dir.
-        config.packages.uwidth-rs
-
+      ]
+      # The text-conformance harness's oracle libraries
+      # (nix/shells/text-oracles.nix).
+      ++ textOracles.libraries
+      ++ [
         # wired runtime JSON bench: the cpp shim's `Requires: simdjson`
         # resolves against this simdjson.pc (generic build — simdjson
         # dispatches SIMD kernels at runtime, unlike the preset-built
-        # engines wired up via the benchIsaHook below). The bench is not a
+        # engines wired up via `wiredBenchIsaHook` below). The bench is not a
         # root sub-package either.
         pkgs.simdjson
 
@@ -350,7 +238,7 @@
         pkgs.libblake3.dev
 
         # Python + wcwidth for the PyD-embedded Layer 10.
-        pythonEnv
+        textOracles.pythonEnv
 
         # terminal benchmarking: the third-party tools the harness pairs
         # with (see apps/terminal-benchmark/README.md)
@@ -403,9 +291,9 @@
         ${flakeInputExports}
 
         # Supply the Nix C API headers via pkg-config only (patched expr
-        # first); see nixCApiPkgConfigPath. Must live in the CI hook so
+        # first); see nix/shells/nix-c-api.nix. Must live in the CI hook so
         # `dub test :nix` ImportC sees the headers.
-        export PKG_CONFIG_PATH="${nixCApiPkgConfigPath}''${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+        export PKG_CONFIG_PATH="${nixCApi.pkgConfigPath}''${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 
         # tree-sitter grammar bundle for sparkles:syntax (one dir per
         # language: parser + queries/). Tests skip when unset.
@@ -493,13 +381,13 @@
         # (libs/wired/bench/runtime; its --data-dir flag overrides this).
         export WIRED_BENCH_DATA=${config.packages.wired-bench-data}
 
-        ${benchIsaHook}
+        ${config.legacyPackages.wiredBenchIsaHook}
 
         # PyD-embedded Python (text-conformance Layer 10): make libpython
         # linkable and let the embedded interpreter find wcwidth + the stdlib.
-        export LIBRARY_PATH="${pythonEnv}/lib''${LIBRARY_PATH:+:$LIBRARY_PATH}"
-        export LD_LIBRARY_PATH="${pythonEnv}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-        export PYTHONPATH="${pythonEnv}/${pythonEnv.sitePackages}''${PYTHONPATH:+:$PYTHONPATH}"
+        export LIBRARY_PATH="${textOracles.pythonEnv}/lib''${LIBRARY_PATH:+:$LIBRARY_PATH}"
+        export LD_LIBRARY_PATH="${textOracles.pythonEnv}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+        export PYTHONPATH="${textOracles.pythonEnv}/${textOracles.pythonEnv.sitePackages}''${PYTHONPATH:+:$PYTHONPATH}"
 
         ${lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
           # Browser for the sparkles:twoslash visual-regression check.
