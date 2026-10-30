@@ -8,7 +8,6 @@
       ...
     }:
     let
-      inherit (config.legacyPackages) d-toolchain;
     in
     {
       # The default build is GUI-enabled (BLD1): it compiles the raylib backend
@@ -54,8 +53,6 @@
           inputs'.ghostty.packages.libghostty-vt
           inputs'.ghostty.packages.libghostty-vt.dev
         ];
-
-        env = d-toolchain.env;
 
         # `hue credits` (`TPG17`): the credits document and its staged
         # licence texts, beside the executable — the docs site's files (`TPG16`).

@@ -698,6 +698,10 @@
                 scrubFlags = lib.concatMapStringsSep " " (r: "-t ${r}") removed;
               in
               {
+                # The toolchain's variables (nix/d-toolchain.nix): on macOS, the C
+                # compiler `ldc2` links with and the SDK.
+                env = args.env or config.legacyPackages.d-toolchain.env;
+
                 # All sparkles nix packages share the one Nix-format lockfile.
                 inherit compiler;
 

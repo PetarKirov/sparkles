@@ -28,8 +28,6 @@
       ...
     }:
     let
-      inherit (config.legacyPackages) d-toolchain;
-
       # Only needed to answer `dub describe`'s compiler probe. Prefer DMD on
       # x86_64-linux (no LLVM backend — roughly half LDC's closure), matching
       # the `ci` package's reasoning; DMD only targets x86_64/i686-linux and
@@ -64,17 +62,15 @@
         # the fetched source has no `.git`.
         nativeBuildInputs = [ pkgs.gitMinimal ];
 
-        env = d-toolchain.env;
-
         meta = {
           description = "Extract a twoslash node payload from an annotated D sample via DMD-as-a-library";
           mainProgram = finalAttrs.pname;
         };
       });
 
-      importPaths = "${config.packages.dmd-import-paths}/druntime:${config.packages.dmd-import-paths}/phobos";
+      importPaths = config.packages.dmd-import-paths.importPath;
       # The device side of a `@compute` module (TGT3).
-      ldcImportPaths = "--set-default SPARKLES_LDC_IMPORT_PATH ${config.packages.ldc-import-paths}/druntime:${config.packages.ldc-import-paths}/phobos";
+      ldcImportPaths = "--set-default SPARKLES_LDC_IMPORT_PATH ${config.packages.ldc-import-paths.importPath}";
 
       wrap =
         { name, tools }:

@@ -46,8 +46,6 @@
           version = "0.1.0";
           dubBuildType = "checked";
 
-          env = config.legacyPackages.d-toolchain.env;
-
           postFixup = ''
             wrapProgram $out/bin/${finalAttrs.pname} \
               --prefix PATH : ${

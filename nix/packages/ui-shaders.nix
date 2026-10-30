@@ -48,8 +48,6 @@
           sourceRoot = "${finalAttrs.src.name}/apps/shader-compile";
           generatesShaders = true;
 
-          env = config.legacyPackages.d-toolchain.env;
-
           nativeBuildInputs = [
             config.packages.ldc2-vulkan
             pkgs.spirv-tools
