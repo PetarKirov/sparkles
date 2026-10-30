@@ -269,6 +269,7 @@
         ./nix/packages/wired-bench-rs.nix
         ./nix/pin-targets.nix
         ./nix/checks/pre-commit.nix
+        ./nix/checks/d-compiler.nix
         ./nix/shells/default.nix
         ./nix/shells/android.nix
         ./nix/shells/win32-cross.nix

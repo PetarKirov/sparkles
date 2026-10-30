@@ -733,6 +733,9 @@
                 # Not part of the derivation hash. Step 2 reads these; step 1's
                 # builder must not.
                 passthru = (args.passthru or { }) // {
+                  # The D compiler, for `checks.d-compiler-is-fork` (toolchain
+                  # spec TC1).
+                  inherit compiler;
                   stampBuildInfo = stamp;
                   checkBuildInfo = args.checkBuildInfo or (doc: doc);
                   callerPostFixup = args.postFixup or "";
