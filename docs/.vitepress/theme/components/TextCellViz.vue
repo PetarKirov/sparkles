@@ -180,10 +180,8 @@ onMounted(async () => {
     }
     const { exports } = await WebAssembly.instantiate(mod, imports as any);
     exp = exports;
-    // A WASI reactor runs druntime's initialization in _initialize, once.
-    // The committed module predates it and exports __wasm_call_ctors.
-    if (exp._initialize) exp._initialize();
-    else exp.__wasm_call_ctors?.();
+    // A WASI reactor: `_initialize` starts druntime, once, before any other export.
+    exp._initialize();
     update();
   } catch (e: any) {
     status.value = 'failed to load wasm: ' + (e?.message ?? e);

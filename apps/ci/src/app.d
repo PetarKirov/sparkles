@@ -33,6 +33,7 @@ nix run .#ci -- --check-docs-sidebar
 nix run .#ci -- --check-glossary
 nix run .#ci -- --check-credits
 nix run .#ci -- --check-wasm-modules --text-module FILE --table-module FILE
+nix run .#ci -- --stage-docs-wasm
 nix run .#ci -- --check-blob-paths [--clone-root DIR] [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]
 nix run .#ci -- [--log-level trace|info|warning|error]
 ---
@@ -63,6 +64,7 @@ $(LIST
     $(ITEM `--check-glossary` — verify `docs/.vitepress/glossary.json` (ids, owners, plain-text summaries, cross-references) and that every docs link into the glossary names an existing entry; entries no page links to are reported, not failed)
     $(ITEM `--check-credits` — verify the credits document (`docs/credits/`) against the build inputs: every dub package, native library, static archive, bundled font and grammar bundle the applications link or ship has a part, every part names something shipped, and each application page includes exactly its own parts (see the `credits` module))
     $(ITEM `--check-wasm-modules` — run a fixed corpus through the documentation site's WebAssembly modules under `node` and through the same D functions natively, and fail on any difference (docs/specs/toolchain/wasm-modules.md, TCM9; see `wasm_modules_check`))
+    $(ITEM `--stage-docs-wasm` — build the documentation site's WebAssembly modules (`nix build .#docs-wasm`) and copy them into `docs/public/` (TCM3; see `docs_wasm`))
     $(ITEM `--check-blob-paths` — verify every SHA-pinned GitHub blob citation names a path that exists at that commit, using local clones under `--clone-root` (default `$REPOS`). Complements `--check-vcs-urls`, which only checks the ref; a wrong path is a 404 no ref check can see. $(B Local only) — a citation whose repository is not cloned is reported as unchecked, never failed, so this is not wired into CI or a pre-commit hook)
 )
 
@@ -175,6 +177,7 @@ import coverage : collectCoverage, PackageCoverage;
 import example_manifest : exampleRunsOnHost;
 import fence_audit : AuditScope, FenceAuditOptions, runFenceAudit, wrapperFenceEnd;
 import wasm_modules_check : runCheckWasmModules;
+import docs_wasm : stageDocsWasm;
 import linux_host :
     alreadyOnHostSystem, linuxHostSystems, runLinuxHostProbe, runOnLinuxHost;
 
@@ -386,6 +389,11 @@ struct CliParams
         description: "With --check-wasm-modules: the table module (spk-table.wasm)."))
     string tableModule;
 
+    @(Option(`stage-docs-wasm`,
+        description: "Build the documentation site's WebAssembly modules (nix build .#docs-wasm) "
+        ~ "and copy them into docs/public/."))
+    bool stageDocsWasm;
+
     @(Option(`coverage`,
         description: "With --test, build each sub-package's tests under -cov and merge their "
         ~ "listings into build/coverage, then report covered/coverable lines per package, "
@@ -523,6 +531,7 @@ enum ProgramMode
     checkPinCache,
     checkBlobPaths,
     checkWasmModules,
+    stageDocsWasm,
     ciStats,
     mirrorChecks,
     reportLinkRot,
@@ -681,6 +690,8 @@ int ciMain(string[] args)
         return runCheckPinCache();
     if (mode == ProgramMode.checkWasmModules)
         return runCheckWasmModules(cli.textModule, cli.tableModule);
+    if (mode == ProgramMode.stageDocsWasm)
+        return stageDocsWasm(detectRepoRoot());
 
     // The audit resolves its own corpus (docs/**/*.md + README.md, or --files),
     // so it must not fall through to the shared "no input files" usage error.
@@ -1010,6 +1021,9 @@ private ProgramMode resolveProgramMode(in CliParams cli)
     if (cli.checkWasmModules)
         return ProgramMode.checkWasmModules;
 
+    if (cli.stageDocsWasm)
+        return ProgramMode.stageDocsWasm;
+
     return ProgramMode.runExamples;
 }
 
@@ -1040,6 +1054,7 @@ private string programModeName(ProgramMode mode) @safe pure nothrow @nogc
         case ProgramMode.checkPinCache:      return "--check-pin-cache";
         case ProgramMode.checkBlobPaths:     return "--check-blob-paths";
         case ProgramMode.checkWasmModules:   return "--check-wasm-modules";
+        case ProgramMode.stageDocsWasm:      return "--stage-docs-wasm";
         case ProgramMode.ciStats:            return "--ci-stats";
         case ProgramMode.mirrorChecks:       return "--mirror-checks";
         case ProgramMode.reportLinkRot:      return "--report-link-rot";
@@ -1625,6 +1640,7 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
             case ProgramMode.checkPinCache:
             case ProgramMode.checkBlobPaths:
             case ProgramMode.checkWasmModules:
+            case ProgramMode.stageDocsWasm:
                 rc = 1;
                 break;
             case ProgramMode.ciStats:

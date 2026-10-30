@@ -460,12 +460,9 @@ in
                 { id = "trailing-whitespace"; }
                 {
                   id = "check-added-large-files";
-                  # The cell-explorer wasm (real sparkles.base.text + Phobos, built
-                  # by `nix build .#text-wasm`) is ~2.5 MB; it is an intentional,
-                  # reproducible docs asset. Regenerate with that command.
                   # Unicode tables are generated from the authenticated manifest;
                   # their fused property pages intentionally exceed the size cap.
-                  exclude = "^(docs/public/spk-text\\.wasm|libs/base/src/sparkles/base/text/unicode_tables\\.d)$";
+                  exclude = "^libs/base/src/sparkles/base/text/unicode_tables\\.d$";
                 }
                 { id = "check-case-conflict"; }
                 { id = "check-illegal-windows-names"; }
