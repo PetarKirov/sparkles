@@ -4,7 +4,6 @@
     {
       config,
       pkgs,
-      inputs',
       ...
     }:
     let
@@ -41,12 +40,6 @@
           # aggregate or it never reaches the binary cache, and every runner
           # rebuilds it from source.
           devshell-ci = config.devShells.ci;
-
-          # `pkgs.ldc` plus its WASI runtimes and sysroots. Only a
-          # *build-time* dependency of `table-wasm`/`text-wasm`, so no output's
-          # runtime closure keeps it; without this pin Cachix evicts it and
-          # every wasm build rebuilds the runtime.
-          ldc-sparkles = inputs'.dlang-nix.packages.ldc-sparkles;
         }
         // builtins.removeAttrs config.packages (
           [ "all-desktop" ] ++ androidNames ++ exclusions.excludedCiPackages
