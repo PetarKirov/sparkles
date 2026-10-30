@@ -52,7 +52,11 @@ bool setPointerIcon(PointerIconType type) @trusted nothrow @nogc
 // runner reports and clears.
 private void applyJob(JNIEnv* env, void*) nothrow @nogc
 {
-    auto activity = cast(jobject) nativeActivity().clazz;
+    // No activity recorded yet: nothing to set the icon on.
+    auto native = nativeActivity();
+    if (native is null)
+        return;
+    auto activity = cast(jobject) native.clazz;
     if (activity is null)
         return;
     auto getWindow = (*env).GetMethodID(env, (*env).GetObjectClass(env, activity), "getWindow",
