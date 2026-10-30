@@ -311,32 +311,26 @@
       uiShaderDirs =
         srcDirs:
         lib.optional (needsUiShaders srcDirs || needsUiVulkanShaders srcDirs) "apps/shader-compile/src";
-      placeUiShaders =
-        rootDir:
-        lib.optionalString (config.packages ? ui-shaders) ''
-          chmod -R u+w "${rootDir}"
-          install -d "${rootDir}/libs/ui/generated/shaders"
-          cp ${config.packages.ui-shaders}/*.frag ${config.packages.ui-shaders}/.stamp \
-            "${rootDir}/libs/ui/generated/shaders/"
-        '';
+      placeUiShaders = rootDir: ''
+        chmod -R u+w "${rootDir}"
+        install -d "${rootDir}/libs/ui/generated/shaders"
+        cp ${config.packages.ui-shaders}/*.frag ${config.packages.ui-shaders}/.stamp \
+          "${rootDir}/libs/ui/generated/shaders/"
+      '';
       # The same for sparkles:vulkan-wsi's `gpu-shaders` configuration, which
       # the triangle examples select (`vulkan-wsi-shaders`).
-      placeUiVulkanShaders =
-        rootDir:
-        lib.optionalString (config.packages ? ui-vulkan-shaders) ''
-          chmod -R u+w "${rootDir}"
-          install -d "${rootDir}/libs/ui-vulkan/generated/shaders"
-          cp ${config.packages.ui-vulkan-shaders}/*.spv ${config.packages.ui-vulkan-shaders}/.stamp \
-            "${rootDir}/libs/ui-vulkan/generated/shaders/"
-        '';
-      placeVulkanWsiShaders =
-        rootDir:
-        lib.optionalString (config.packages ? vulkan-wsi-shaders) ''
-          chmod -R u+w "${rootDir}"
-          install -d "${rootDir}/libs/vulkan-wsi/generated/shaders"
-          cp ${config.packages.vulkan-wsi-shaders}/*.spv ${config.packages.vulkan-wsi-shaders}/.stamp \
-            "${rootDir}/libs/vulkan-wsi/generated/shaders/"
-        '';
+      placeUiVulkanShaders = rootDir: ''
+        chmod -R u+w "${rootDir}"
+        install -d "${rootDir}/libs/ui-vulkan/generated/shaders"
+        cp ${config.packages.ui-vulkan-shaders}/*.spv ${config.packages.ui-vulkan-shaders}/.stamp \
+          "${rootDir}/libs/ui-vulkan/generated/shaders/"
+      '';
+      placeVulkanWsiShaders = rootDir: ''
+        chmod -R u+w "${rootDir}"
+        install -d "${rootDir}/libs/vulkan-wsi/generated/shaders"
+        cp ${config.packages.vulkan-wsi-shaders}/*.spv ${config.packages.vulkan-wsi-shaders}/.stamp \
+          "${rootDir}/libs/vulkan-wsi/generated/shaders/"
+      '';
 
       # ELF `.build_info`, Mach-O `__DATA,__build_info`, PE `.bldinfo`.
       # Android `.so` files are ELF even when the builder is Linux; that
