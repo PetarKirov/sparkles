@@ -105,10 +105,14 @@ the pin set, and `ci/toolchain-pin.d` (implementation in
   output that is missing or unanswered. It builds nothing and needs no token.
 
 Building aarch64-linux and aarch64-darwin outputs needs a builder for that
-system, so each host pins its own with `--system`. CI does not run the gate
-yet: wired in, it is one step before a lock update merges, in a job with the
-dev shell, `dub run --single ci/toolchain-pin.d -b checked -- --check`, whose
-non-zero exit blocks the update.
+system, so each host pins its own with `--system`.
+
+CI's `pin-cache` job runs the gate on every trigger:
+`nix run .#ci-minimal -- --check-pin-cache` checks the set's `toolchain-*`
+entries for all three hosts, the outputs TC23 names. A pull request that
+leaves the toolchain alone passes it; one that moves the lock stays red until
+the new outputs are pinned. The other entries change with ordinary pull
+requests and are pinned after they merge, so the job leaves them to `--check`.
 
 Acceptance: a dry run on each host lists exactly the set and no deletion; a
 real run leaves the cache's pin list equal to the set for all three hosts.

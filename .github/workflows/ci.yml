@@ -1085,6 +1085,34 @@ jobs:
       - name: Every shipped component is credited
         run: nix run .#ci-minimal -- --check-credits
 
+  # TC23 (docs/specs/toolchain/SPEC.md): a lock update merges only once the
+  # toolchain it names is in Sparkles' cache for every host, because a cold
+  # toolchain build exceeds CI's job limits. The check evaluates the pin set's
+  # `toolchain-*` entries for x86_64-linux, aarch64-darwin and aarch64-linux
+  # and asks the public cache for each out path's narinfo; it builds nothing
+  # and needs no token. It runs on every trigger like every job here: a pull
+  # request that leaves the toolchain alone passes it, and one that moves the
+  # lock stays red until `ci/toolchain-pin.d` has pinned the new outputs.
+  # `.#ci-minimal` is the binary the job above already uses, with no compiler
+  # in its closure.
+  pin-cache:
+    name: Toolchain cached
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Nix
+        uses: ./.github/actions/setup-nix
+        with:
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
+          use-nix-cache: false
+
+      - name: Every pinned toolchain output is in the cache
+        run: nix run .#ci-minimal -- --check-pin-cache
+
   ci:
     name: CI
     needs:
@@ -1100,6 +1128,7 @@ jobs:
       - docs
       - cloud-env
       - spec-evidence
+      - pin-cache
       - text-conformance
       - sync
       - freebsd
