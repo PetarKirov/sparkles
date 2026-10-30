@@ -83,7 +83,7 @@ in
             '') dubDeps}
 
             ${lib.concatMapStrings (t: ''
-              ldc2 -mtriple=${t.triple} -relocation-model=pic -O2 \
+              ldc2 -mtriple=${t.triple} -relocation-model=pic -O2 -g \
                 -preview=in -preview=dip1000 \
                 ${toString (map (v: "-d-version=${v}") versions)} \
                 ${toString (map (dir: "-J=${dir}") stringImportDirs)} \
