@@ -66,19 +66,23 @@ struct CreditedApp
     string[] nixBuilders;  /// other Nix files naming what it links or ships
 }
 
+/// Where the native half both apps' Android libraries link is listed
+/// (`legacyPackages.androidAppNative`): their static archives and dub packages.
+enum androidAppNativePath = "nix/packages/android/build-d-android-lib.nix";
+
 /// The applications whose credits pages the check composes.
 immutable CreditedApp[] creditedApps = [
     CreditedApp(
         name: "terminal",
         appDir: "apps/terminal",
-        apkBuilders: ["nix/packages/android/terminal.nix"],
-        nixBuilders: [],
+        apkBuilders: [androidAppNativePath],
+        nixBuilders: ["nix/packages/android/terminal.nix"],
     ),
     CreditedApp(
         name: "hue",
         appDir: "apps/hue",
-        apkBuilders: ["nix/packages/android/hue.nix"],
-        nixBuilders: ["nix/packages/hue.nix"],
+        apkBuilders: [androidAppNativePath],
+        nixBuilders: ["nix/packages/android/hue.nix", "nix/packages/hue.nix"],
     ),
 ];
 
@@ -726,8 +730,8 @@ version (unittest)
 {
     private enum fixtureLock = `{"dependencies": {"bolts": {}}}`;
     private enum fixtureFonts = "cp ${pkgs.dejavu_fonts}/share/fonts/truetype/$f $out/\n";
-    private enum fixtureApk = `"${config.packages.raylib-android}/lib/${abi}/libraylib.a"`
-        ~ "\ncp -rL ${fonts.fontBundle}/fonts $out/fonts\n";
+    private enum fixtureApk = `"${config.packages.raylib-android}/lib/${abi}/libraylib.a"`;
+    private enum fixtureAssets = "cp -rL ${fonts.fontBundle}/fonts $out/fonts\n";
 
     private string[string] fixtureTree() @safe pure
     {
@@ -738,8 +742,9 @@ version (unittest)
             "libs/base/dub.sdl": `dependency "bolts" version="~>1.3"` ~ "\n"
                 ~ `libs "raylib"`,
             "apps/hue/dub.sdl": `dependency "sparkles:base" path="../.."`,
-            "nix/packages/android/terminal.nix": fixtureApk,
-            "nix/packages/android/hue.nix": fixtureApk,
+            androidAppNativePath: fixtureApk,
+            "nix/packages/android/terminal.nix": fixtureAssets,
+            "nix/packages/android/hue.nix": fixtureAssets,
             "nix/packages/hue.nix": "",
         ];
     }
@@ -808,8 +813,7 @@ version (unittest)
 {
     auto tree = fixtureTree();
     // hue bundles no fonts here, so its page must not credit DejaVu.
-    tree["nix/packages/android/hue.nix"] =
-        `"${config.packages.raylib-android}/lib/${abi}/libraylib.a"`;
+    tree["nix/packages/android/hue.nix"] = "";
     const report = checkCredits((p) => p in tree ? tree[p] : null, fixtureParts(),
         [
             "index": allParts, "terminal": "<!-- @include: ./parts/raylib.md -->\n",

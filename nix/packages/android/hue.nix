@@ -27,33 +27,6 @@ in
       ndk = config.legacyPackages.androidNdk;
       sources = config.legacyPackages.sparklesSources;
 
-      # The dub-registry dependencies compiled into the closure (same pins as
-      # nix/dub-lock.json / the `dub-*` flake inputs; `-i` compiles their
-      # modules like the in-tree ones).
-      dubDeps = [
-        {
-          name = "raylib-d";
-          src = inputs.dub-raylib-d;
-        }
-        {
-          name = "expected";
-          src = inputs.dub-expected;
-        }
-        {
-          name = "optional";
-          src = inputs.dub-optional;
-        }
-        {
-          name = "bolts";
-          src = inputs.dub-bolts;
-        }
-        # NOTE: `during` (event-horizon's io_uring binding) is deliberately
-        # absent: the uring backend is version-gated OFF the Android triple
-        # (app seccomp denies io_uring_setup), and the triple selects the
-        # kqueue backend over the statically linked libkqueue-android
-        # instead — see backend/select.d and libkqueue.nix.
-      ];
-
       # The version identifiers dub would define for the android configuration
       # (HueGui + the Have_* set of the dependency graph).
       versions = [
@@ -100,32 +73,17 @@ in
         pname = "libhue-android";
         libName = "hue";
         mainFile = "apps/hue/src/app.d";
-        inherit srcDirs versions dubDeps;
-        cFiles = [
-          "libs/android/c/jni_c.c"
-          "libs/ghostty/src/sparkles/ghostty/ghostty_modes.c"
-          "libs/raylib-text/src/sparkles/raylib_text/shaping_c.c"
-        ];
+        inherit srcDirs versions;
+        inherit (config.legacyPackages.androidAppNative)
+          cFiles
+          cIncludes
+          staticLibs
+          dubDeps
+          ;
         stringImportDirs = [
           "apps/hue/src"
           "libs/twoslash/src/sparkles/twoslash/views"
           "${config.packages.ui-shaders}"
-        ];
-        cIncludes = [
-          "${config.packages.tree-sitter-android}/include"
-          "${config.packages.libghostty-vt-android}/include"
-          "${config.packages.freetype-android}/include/freetype2"
-          "${config.packages.harfbuzz-android}/include/harfbuzz"
-        ];
-        staticLibs = abi: [
-          "${config.packages.raylib-android}/lib/${abi}/libraylib.a"
-          "${config.packages.harfbuzz-android}/lib/${abi}/libharfbuzz.a"
-          "${config.packages.freetype-android}/lib/${abi}/libfreetype.a"
-          "${config.packages.freetype-android}/lib/${abi}/libpng16.a"
-          "${config.packages.freetype-android}/lib/${abi}/libz.a"
-          "${config.packages.tree-sitter-android}/lib/${abi}/libtree-sitter.a"
-          "${config.packages.libghostty-vt-android}/lib/${abi}/libghostty-vt.a"
-          "${config.packages.libkqueue-android}/lib/${abi}/libkqueue.a"
         ];
         emptyBuildInfo = true;
         description = "hue (full GUI closure) as an Android shared library, per ABI";

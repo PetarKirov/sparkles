@@ -40,11 +40,12 @@ in
         libName = "terminal";
         mainFile = "apps/terminal/src/app.d";
         srcDirs = sources.srcClosure "apps/terminal" ++ [ "libs/android/c" ];
-        cFiles = [
-          "libs/android/c/jni_c.c"
-          "libs/ghostty/src/sparkles/ghostty/ghostty_modes.c"
-          "libs/raylib-text/src/sparkles/raylib_text/shaping_c.c"
-        ];
+        inherit (config.legacyPackages.androidAppNative)
+          cFiles
+          cIncludes
+          staticLibs
+          dubDeps
+          ;
         # dub's version set for `:terminal`'s `application` configuration
         # (`dub describe :terminal --data=versions`), plus sparkles:android.
         versions = [
@@ -75,46 +76,12 @@ in
           "Have_sparkles_ui_raylib"
           "Have_sparkles_wired"
         ];
-        dubDeps = [
-          {
-            name = "raylib-d";
-            src = inputs.dub-raylib-d;
-          }
-          {
-            name = "expected";
-            src = inputs.dub-expected;
-          }
-          {
-            name = "optional";
-            src = inputs.dub-optional;
-          }
-          {
-            name = "bolts";
-            src = inputs.dub-bolts;
-          }
-        ];
         stringImportDirs = [
           "${config.packages.ui-shaders}"
           # The document viewer (sparkles:doc-view) renders twoslash payloads.
           "libs/twoslash/src/sparkles/twoslash/views"
         ];
         emptyBuildInfo = true;
-        cIncludes = [
-          "${config.packages.tree-sitter-android}/include"
-          "${config.packages.libghostty-vt-android}/include"
-          "${config.packages.freetype-android}/include/freetype2"
-          "${config.packages.harfbuzz-android}/include/harfbuzz"
-        ];
-        staticLibs = abi: [
-          "${config.packages.raylib-android}/lib/${abi}/libraylib.a"
-          "${config.packages.harfbuzz-android}/lib/${abi}/libharfbuzz.a"
-          "${config.packages.freetype-android}/lib/${abi}/libfreetype.a"
-          "${config.packages.freetype-android}/lib/${abi}/libpng16.a"
-          "${config.packages.freetype-android}/lib/${abi}/libz.a"
-          "${config.packages.tree-sitter-android}/lib/${abi}/libtree-sitter.a"
-          "${config.packages.libghostty-vt-android}/lib/${abi}/libghostty-vt.a"
-          "${config.packages.libkqueue-android}/lib/${abi}/libkqueue.a"
-        ];
         description = "apps/terminal as an Android shared library, per ABI";
       };
       libterminal = mkLibterminal;
