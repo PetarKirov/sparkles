@@ -42,6 +42,7 @@ version (UiAppGuiVulkan):
 
 import core.time : Duration, MonoTime, msecs;
 
+import sparkles.appearance.types : ButtonLayout, WindowButton;
 import sparkles.base.term_color : RgbColor;
 import sparkles.ui.pixel_geometry : densityPx;
 import sparkles.ui.style : Palette, Slot;
@@ -198,6 +199,10 @@ struct ClientFrame
     enum int dragThresholdCss = 4;
 
     WindowState state;      /// as the window system last reported it
+    /// Where the controls go, as the desktop lays them out (GNOME's
+    /// `button-layout`); a control the window manager does not offer is
+    /// left out. By default all three at the end, close last.
+    ButtonLayout layout = defaultLayout;
     FramePart hover;        /// the part under the pointer
     FramePart pressed;      /// the button a press began on, until its release
     private MonoTime lastTitlePress;
@@ -245,26 +250,109 @@ struct ClientFrame
             density)), barPx(density) + 3 * cellH);
     }
 
-    /// The buttons the window manager offers, right to left: close first.
-    private FramePart[3] buttons(out size_t count) const
+    /// `:minimize,maximize,close`: GNOME's controls, all at the end.
+    static immutable ButtonLayout defaultLayout = () {
+        ButtonLayout l;
+        foreach (b; [WindowButton.minimize, WindowButton.maximize, WindowButton.close])
+            l.end[l.endCount++] = b;
+        return l;
+    }();
+
+    /**
+    The buttons drawn, each with its side and its place counted from that
+    side's edge: the end's right to left, then the start's left to right.
+    The menu control is not drawn: the window has no menu to show.
+    */
+    private Placed[2 * ButtonLayout.end.length] buttons(out size_t count) const
     {
-        FramePart[3] b;
-        b[count++] = FramePart.close;
-        if (state.offers(WindowCapability.maximize))
-            b[count++] = FramePart.maximize;
-        if (state.offers(WindowCapability.minimize))
-            b[count++] = FramePart.minimize;
+        Placed[2 * ButtonLayout.end.length] b;
+        void side(const(WindowButton)[] controls, bool atStart)
+        {
+            size_t slot;
+            foreach (i; 0 .. controls.length)
+            {
+                const c = atStart ? controls[i] : controls[$ - 1 - i];
+                FramePart part;
+                final switch (c)
+                {
+                    case WindowButton.close: part = FramePart.close; break;
+                    case WindowButton.maximize:
+                        if (!state.offers(WindowCapability.maximize))
+                            continue;
+                        part = FramePart.maximize;
+                        break;
+                    case WindowButton.minimize:
+                        if (!state.offers(WindowCapability.minimize))
+                            continue;
+                        part = FramePart.minimize;
+                        break;
+                    case WindowButton.menu: continue;
+                }
+                b[count++] = Placed(part, atStart, slot++);
+            }
+        }
+        side(layout.atEnd, false);
+        side(layout.atStart, true);
         return b;
     }
 
-    // The `i`th button from the right: its box's left edge and top, and its
-    // side, in device pixels.
-    private static void buttonBox(size_t i, in FrameGeometry g, out int x, out int y, out int side)
+    private static struct Placed
+    {
+        FramePart part;
+        bool atStart;
+        size_t slot; // from that side's edge
+    }
+
+    // A button's box: its left edge and top, and its side, in device pixels.
+    private static void buttonBox(in Placed p, in FrameGeometry g, out int x, out int y,
+        out int side)
     {
         side = densityPx(buttonCss, g.density);
         const step = side + densityPx(spacingCss, g.density);
-        x = g.right - densityPx(padSideCss, g.density) - side - cast(int) i * step;
+        const pad = densityPx(padSideCss, g.density);
+        x = p.atStart ? g.left + pad + cast(int) p.slot * step
+            : g.right - pad - side - cast(int) p.slot * step;
         y = g.top + densityPx(padTopCss, g.density);
+    }
+
+    /**
+    The buttons that fit `g`, with their boxes: inside the window, and clear
+    of one another. On a window too narrow for both sides, the outermost of
+    each side are kept first, alternately, and an inner one that would
+    overlap a kept one is not drawn — so close, at an edge, stays.
+    `build` draws these and `hitTest` hits these: what is seen is what is
+    pressed.
+    */
+    private Shown[2 * ButtonLayout.end.length] shown(in FrameGeometry g, out size_t count) const
+    {
+        size_t n;
+        const b = buttons(n);
+        Shown[2 * ButtonLayout.end.length] out_;
+        // Outermost first: slot 0 of each side, then slot 1, …
+        foreach (slot; 0 .. ButtonLayout.end.length)
+            foreach (i; 0 .. n)
+            {
+                if (b[i].slot != slot)
+                    continue;
+                Shown s;
+                s.part = b[i].part;
+                buttonBox(b[i], g, s.x, s.y, s.side);
+                if (s.x < g.left || s.x + s.side > g.right)
+                    continue;
+                bool clear = true;
+                foreach (ref k; out_[0 .. count])
+                    if (s.x < k.x + k.side && k.x < s.x + s.side)
+                        clear = false;
+                if (clear)
+                    out_[count++] = s;
+            }
+        return out_;
+    }
+
+    private static struct Shown
+    {
+        FramePart part;
+        int x, y, side;
     }
 
     /// What `(x, y)`, device pixels from the surface's corner, lands on.
@@ -315,17 +403,10 @@ struct ClientFrame
         if (y < g.top || y >= g.top + barPx(g.density))
             return FrameHit(FramePart.content);
         size_t count;
-        const b = buttons(count);
-        foreach (i; 0 .. count)
-        {
-            int bx, by, side;
-            buttonBox(i, g, bx, by, side);
-            // One that `build` does not draw, past the left edge, is not hit.
-            if (bx < g.left)
-                break;
-            if (x >= bx && x < bx + side && y >= by && y < by + side)
-                return FrameHit(b[i]);
-        }
+        const b = shown(g, count);
+        foreach (ref k; b[0 .. count])
+            if (x >= k.x && x < k.x + k.side && y >= k.y && y < k.y + k.side)
+                return FrameHit(k.part);
         return FrameHit(FramePart.title);
     }
 
@@ -490,14 +571,11 @@ struct ClientFrame
         const stroke = near(1) > 0 ? near(1) : 1;
 
         size_t count;
-        const b = buttons(count);
+        const b = shown(g, count);
         foreach (i; 0 .. count)
         {
-            const part = b[i];
-            int bx, by, side;
-            buttonBox(i, g, bx, by, side);
-            if (bx < g.left)
-                continue;
+            const part = b[i].part;
+            const bx = b[i].x, by = b[i].y, side = b[i].side;
             const dx = bx + (side - disc) / 2, dy = by + (side - disc) / 2;
             // 10% of the foreground, 15% hovered, 30% pressed.
             const tint = pressed == part ? 77 : hover == part ? 38 : 26;
@@ -614,11 +692,19 @@ struct ClientFrame
     {
         if (!active)
             return 0;
+        // Centred, so as far from both edges as the fuller side needs.
         size_t count;
-        cast(void) buttons(count);
-        int bx, by, side;
-        buttonBox(count - 1, g, bx, by, side);
-        const keep = g.right - bx + densityPx(titleGapCss, g.density);
+        const b = buttons(count);
+        int keep = densityPx(padSideCss, g.density);
+        foreach (i; 0 .. count)
+        {
+            int bx, by, side;
+            buttonBox(b[i], g, bx, by, side);
+            const reach = b[i].atStart ? bx + side - g.left : g.right - bx;
+            if (reach > keep)
+                keep = reach;
+        }
+        keep += densityPx(titleGapCss, g.density);
         const room = g.width - 2 * keep;
         return room > 0 ? room : 0;
     }
@@ -726,6 +812,60 @@ unittest
     assert(f.hitTest(776, 23, geometry).part == FramePart.close);
     assert(f.hitTest(740, 23, geometry).part == FramePart.minimize, "no maximize offered");
     assert(f.hitTest(700, 23, geometry).part == FramePart.title);
+}
+
+@("ui_app.client_frame.buttonsFollowTheDesktopsLayout")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.appearance.types : parseButtonLayout;
+
+    // `close,minimize:maximize`: close then minimize from the left edge,
+    // 7 px in, 34 px each, 3 apart; maximize at the right.
+    auto f = clientFrame();
+    f.layout = parseButtonLayout("close,minimize:maximize");
+    assert(f.hitTest(24, 23, geometry).part == FramePart.close);
+    assert(f.hitTest(61, 23, geometry).part == FramePart.minimize);
+    assert(f.hitTest(776, 23, geometry).part == FramePart.maximize);
+    assert(f.hitTest(740, 23, geometry).part == FramePart.title);
+    // The title keeps clear of the fuller side on both: two buttons, 7 + 34
+    // + 3 + 34, and the gap of 6.
+    assert(f.titleRoom(geometry) == 800 - 2 * (7 + 34 + 3 + 34 + 6));
+
+    // GNOME's default, `appmenu:close`: close alone, and no menu drawn.
+    f.layout = parseButtonLayout("appmenu:close");
+    assert(f.hitTest(776, 23, geometry).part == FramePart.close);
+    assert(f.hitTest(740, 23, geometry).part == FramePart.title);
+    assert(f.hitTest(24, 23, geometry).part == FramePart.title);
+    FrameShape[ClientFrame.maxShapes] shapes;
+    const n = f.build(shapes[], geometry, FrameColours.init);
+    size_t discs;
+    foreach (ref s; shapes[0 .. n])
+        discs += s.kind == FrameShape.Kind.disc;
+    assert(discs == 1);
+}
+
+@("ui_app.client_frame.aNarrowWindowDrawsNoButtonOverAnother")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.appearance.types : parseButtonLayout;
+
+    // 100 px wide: `maximize:minimize,close` puts maximize at 7–41 and
+    // minimize at 22–56. The outermost of each side stay; minimize, inner
+    // and overlapping, is neither drawn nor hit.
+    auto f = clientFrame();
+    f.layout = parseButtonLayout("maximize:minimize,close");
+    FrameGeometry g = geometry;
+    g.surfaceW = 100;
+    assert(f.hitTest(30, 23, g).part == FramePart.maximize);
+    assert(f.hitTest(76, 23, g).part == FramePart.close);
+    FrameShape[ClientFrame.maxShapes] shapes;
+    const n = f.build(shapes[], g, FrameColours.init);
+    size_t discs;
+    foreach (ref s; shapes[0 .. n])
+        discs += s.kind == FrameShape.Kind.disc;
+    assert(discs == 2);
 }
 
 @("ui_app.client_frame.heldEdgesHaveNoGrips")

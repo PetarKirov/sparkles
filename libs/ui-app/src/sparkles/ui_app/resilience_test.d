@@ -704,6 +704,42 @@ version (unittest)
     assert(changed.shutdowns == 1 && changed.token == fresh.token);
 }
 
+@("resilience.RSC33.recorder.aSchemeFlipSettlesLikeAColdStart")
+@safe unittest
+{
+    import sparkles.input : ColorSchemeEvent;
+
+    // A probe drawn in the scheme it was last told, as an application
+    // following the desktop's is (`RES45`): the native arm tells it at
+    // start and at each change.
+    static struct SchemeProbe
+    {
+        bool dark;
+
+        WidgetTree view(H)(ref H h)
+        {
+            import sparkles.ui.canvas : fillRectOp;
+            import sparkles.ui.geometry : Rect;
+
+            h.ops() ~= fillRectOp(Rect(0, 0, dark ? 2 : 1, 1));
+            return WidgetTree.init;
+        }
+
+        void handle(H)(ref H h, in Event e)
+        {
+            e.match!((in ColorSchemeEvent c) { dark = c.dark; }, (in _) {});
+        }
+    }
+    const light = Event(ColorSchemeEvent(dark: false)), dark = Event(ColorSchemeEvent(dark: true));
+    SchemeProbe flipped, toDark, coldLight, coldDark;
+    const settled = runAppRecorded(flipped, RunConfig.init, [light, dark, light]);
+    assert(settled.lastOps == runAppRecorded(coldLight, RunConfig.init, [light]).lastOps,
+        "light again equals a cold start in light (`RES3`)");
+    const darkened = runAppRecorded(toDark, RunConfig.init, [light, dark]);
+    assert(darkened.lastOps == runAppRecorded(coldDark, RunConfig.init, [dark]).lastOps);
+    assert(darkened.lastOps != settled.lastOps, "the schemes differ");
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // The page and the suite stay in step (resilience §9.3).
 // ─────────────────────────────────────────────────────────────────────────────
