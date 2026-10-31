@@ -60,7 +60,7 @@
               # The project's wrapping of a dlang.nix LDC: its drivers read one of the
               # configurations below. `pkgs.ldc` wraps `rawLdc`; on Linux,
               # `pkgs.ldc-llvm-runtimes` wraps dlang.nix's all-LLVM runtime profile
-              # (toolchain spec TC18), which nix/packages/terminal-static.nix builds with.
+              # (toolchain spec TC18), which nix/packages/static-apps.nix builds with.
               ldcFrom =
                 rawLdc:
                 let
