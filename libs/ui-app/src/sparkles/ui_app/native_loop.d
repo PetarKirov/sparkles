@@ -32,7 +32,11 @@ import std.algorithm.comparison : max, min;
 import sparkles.base.term_color : RgbColor;
 import sparkles.base.term_control : PointerShape;
 import sparkles.event_horizon : DefaultLoop, LoopConfig;
-import sparkles.input : Event, InputCapabilities, InputTextPool, mousePointer, PointerButton, touchPointer;
+import sparkles.appearance : overriddenBy, SystemAppearance;
+version (Android) {} else version (linux)
+    import sparkles.appearance.portal : PortalAppearance;
+import sparkles.input : ColorSchemeEvent, Event, InputCapabilities, InputTextPool, mousePointer, PointerButton,
+    touchPointer;
 import sparkles.ui.canvas : DrawOp;
 import sparkles.ui.effect : EffectRegistry;
 import sparkles.ui.geometry : Size;
@@ -42,7 +46,8 @@ import sparkles.ui_app.gui_options : FontRequest, WindowCells;
 import sparkles.ui_app.host : HostState, isHost, noDraw, noSetup, noShutdown, PointerUnit,
     RunConfig, withRealSize;
 import sparkles.ui_app.lifecycle : Failure, FrameResult, Lifecycle, Rebuild, Surface;
-import sparkles.ui_app.frame_title : fitTitle, TitleFace, titleCssPx, TitleStrip;
+import sparkles.ui_app.frame_title : fitTitle, TitleFace, titleCssPx, titleCssPxOf,
+    titleFacePattern, titlePatternOf, TitleStrip;
 import sparkles.ui_app.client_frame : ClientFrame, crossCoverage, FrameAction, FrameColours,
     FrameGeometry, FrameHit, FramePart, FrameShape;
 import sparkles.ui_app.wsi_input : TouchContacts, WsiInput;
@@ -276,6 +281,15 @@ struct NativeSession
     /// title set in it.
     TitleFace titleFace;
     TitleStrip titleStrip; /// ditto
+    /// A face being looked up for a title font the desktop changed to, and
+    /// its pattern and size: the title stays in the old one until it is
+    /// found, so no frame waits on the font database.
+    TitleFace nextTitleFace;
+    string nextTitlePattern; /// ditto
+    float nextTitleCss = 0;  /// ditto
+    /// The title's face and size, as the desktop names them (`RES45`).
+    string titlePattern = titleFacePattern;
+    float titleCss = titleCssPx; /// ditto
     void delegate(in char[]) @system setTitle; ///
     /// The transparent margin round the window, each side, in device pixels
     /// (`SurfaceMetrics.frameMargin`): the frame's shadow and outer resize
@@ -590,10 +604,75 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         whyNot(i"the native window was never configured");
         return false;
     }
+    /*
+    The desktop's appearance (`RES45`): read before the first frame, the
+    portal given a short budget to answer, then followed as it changes
+    (`drainEvents`). The client frame takes its controls' layout and its
+    title's font; the application, the colour scheme. `SPARKLES_APPEARANCE`
+    (`dark`, `light`, `high-contrast`) pins it over what the desktop says.
+    */
+    SystemAppearance appearance;
+    const(char)[] pinnedAppearance;
+    {
+        import core.stdc.stdlib : getenv;
+        import core.stdc.string : strlen;
+
+        if (auto pinned = getenv("SPARKLES_APPEARANCE"))
+            pinnedAppearance = (() @trusted => pinned[0 .. strlen(pinned)])();
+    }
+    version (Android) {} else version (linux)
+    {
+        // Watched by the loop through its address: it must not move, and
+        // goes before the loop does.
+        auto portal = new PortalAppearance;
+        scope (exit)
+            portal.close();
+        if (!PortalAppearance.open(*portal).hasError)
+        {
+            appearance = portal.current;
+            // Not watched is not followed: closed, it is not serviced.
+            if (portal.arm(loop).hasError)
+                portal.close();
+        }
+    }
+    appearance = appearance.overriddenBy(pinnedAppearance);
+    // The frame's share: the layout and the title's face, set again only
+    // when they change.
+    void frameAppearance(in SystemAppearance a, bool started)
+    {
+        const layout = a.hasButtons ? a.buttons : ClientFrame.defaultLayout;
+        if (layout != session.frame.layout)
+        {
+            session.frame.layout = layout;
+            // What the pointer was over may have moved or gone.
+            session.frame.hover = session.frame.pressed = FramePart.content;
+        }
+        const pattern = a.hasTitleFont ? titlePatternOf(a.titleFont) : titleFacePattern;
+        const css = a.hasTitleFont ? titleCssPxOf(a.titleFont) : titleCssPx;
+        if (!started)
+        {
+            session.titlePattern = pattern;
+            session.titleCss = css;
+            return;
+        }
+        if (pattern == session.titlePattern && css == session.titleCss)
+        {
+            session.nextTitlePattern = null; // a change undone before it landed
+            return;
+        }
+        if (pattern != session.nextTitlePattern)
+        {
+            session.nextTitleFace = TitleFace.init;
+            session.nextTitleFace.prepare(pattern);
+        }
+        session.nextTitlePattern = pattern;
+        session.nextTitleCss = css;
+    }
+    frameAppearance(appearance, false);
     // The title face is looked up while the cells are measured and the
     // device is made, not in the first frame.
     if (session.frame.active)
-        session.titleFace.prepare();
+        session.titleFace.prepare(session.titlePattern);
 
     // Every lifecycle decision is the machine's (`sparkles.ui_app.lifecycle`,
     // resilience §1); this loop executes its plans. Cell font sizes are in
@@ -1094,6 +1173,9 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
     scope (exit)
         shutdown(host);
     setup(host);
+    // The scheme the application starts in, as the desktop prefers it.
+    if (appearance.hasScheme)
+        handle(host, Event(ColorSchemeEvent(dark: appearance.prefersDark)));
 
     const unitW = () => cfg.pointerUnit == PointerUnit.pixels ? 1 : session.font.cellW;
     const unitH = () => cfg.pointerUnit == PointerUnit.pixels ? 1 : session.font.cellH;
@@ -1263,6 +1345,10 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
             }
             e.payload.match!(
                 (in WindowStateChangedEvent w) {
+                    // A frame drawn from now on looks its title face up now,
+                    // not in its first frame (a no-op once looked up).
+                    if (ClientFrame(state: w.state).active)
+                        session.titleFace.prepare(session.titlePattern);
                     // A crop refused once is tried again with the next resize.
                     if (w.state.has(ToplevelState.resizing)
                         && !session.frame.state.has(ToplevelState.resizing))
@@ -1306,6 +1392,20 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
             });
         session.touches = input.contacts;
         flushInput!handle(host, input, delivered);
+        version (Android) {} else version (linux)
+            if (portal.isOpen && portal.service())
+            {
+                const next = portal.current.overriddenBy(pinnedAppearance);
+                frameAppearance(next, true);
+                lc.exposed();
+                if (next.hasScheme && (!appearance.hasScheme
+                    || next.prefersDark != appearance.prefersDark))
+                {
+                    handle(host, Event(ColorSchemeEvent(dark: next.prefersDark)));
+                    delivered = true;
+                }
+                appearance = next;
+            }
         if (delivered)
             lc.input();
     }
@@ -1514,8 +1614,9 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
             if (left < timeout)
                 timeout = left;
         }
-        // A gesture in flight is ticked at the display's rate until it rests.
-        if (input.gesturing && timeout > gestureTick)
+        // A gesture in flight is ticked at the display's rate until it rests;
+        // a title face being looked up is checked as often.
+        if ((input.gesturing || session.nextTitlePattern.length) && timeout > gestureTick)
             timeout = gestureTick;
         if (cfg.idleTimeoutMs >= 0 && cfg.idleTimeoutMs.msecs < timeout)
             timeout = cfg.idleTimeoutMs.msecs;
@@ -1523,6 +1624,8 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         if (wsi.runIntegratedOnce(loop, timeout).hasError)
             break;
         drainEvents();
+        if (session.nextTitlePattern.length && session.nextTitleFace.settled)
+            lc.exposed(); // the frame takes the new face
         // A wake with nothing to draw is still a frame pass for an
         // application that asked to be woken (`HST16`), or for an idle
         // timeout.
@@ -1706,8 +1809,20 @@ private void drawClientFrame(C)(ref C canvas, ref NativeSession session, RgbColo
     }
     // The title in the desktop's title face at its fixed size, set again
     // only when the text, the room or the density changes.
-    session.titleFace.load();
-    const ppem = cast(int)(titleCssPx * density + 0.5f);
+    // A face the desktop changed to, once found: never waited for here.
+    if (session.nextTitlePattern.length && session.nextTitleFace.settled)
+    {
+        import core.lifetime : move;
+
+        session.nextTitleFace.load(session.nextTitlePattern);
+        session.titleFace = move(session.nextTitleFace);
+        session.titlePattern = session.nextTitlePattern;
+        session.titleCss = session.nextTitleCss;
+        session.titleStrip = TitleStrip.init;
+        session.nextTitlePattern = null;
+    }
+    session.titleFace.load(session.titlePattern);
+    const ppem = cast(int)(session.titleCss * density + 0.5f);
     if (session.titleFace.set(session.titleStrip, session.title,
             session.frame.titleRoom(geometry), ppem) && session.titleStrip.width > 0)
     {

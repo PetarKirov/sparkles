@@ -13,6 +13,7 @@ dflags "-preview=in" "-preview=dip1000"
 // The backend-free half. The concrete canvases arrive with a configuration.
 dependency "sparkles:ui" path="../.."
 dependency "sparkles:input" path="../.."
+dependency "sparkles:appearance" path="../.."
 dependency "sparkles:core-cli" path="../.."
 // The loop substrate (event-horizon SPEC §15): the live arms run the frame
 // loop as fibers on one ring wait. Backend-free code never touches it, and

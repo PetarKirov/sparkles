@@ -17,6 +17,7 @@ module sparkles.ui_app.frame_title;
 // The native arm's alone, like the frame it titles.
 version (UiAppGuiVulkan):
 
+import sparkles.appearance.types : FontDescription;
 import sparkles.base.text.utf : decodeToken, UtfMode, UtfStatus, UtfTokenKind;
 import sparkles.font : advance, charMap, Face, FlattenPolicy, FontErrorKind, FontLimit,
     instance, Instance, InstanceSize, lineMetrics, OutlinePoint, OutlineSegment, OverlapMode,
@@ -71,6 +72,29 @@ enum float titleCssPx = 11 * 96 / 72.0f;
 
 /// The fontconfig pattern the title face is matched by.
 enum string titleFacePattern = "Adwaita Sans,Cantarell,sans-serif:bold";
+
+/// The fontconfig pattern a title in `f` is matched by; the default face's
+/// where `f` names no family.
+string titlePatternOf(in FontDescription f) @safe pure nothrow
+    => f.family.length == 0 ? titleFacePattern
+    : f.family[].idup ~ ",sans-serif" ~ (f.bold ? ":bold" : "") ~ (f.italic ? ":italic" : "");
+
+/// A title's size in `f`, in CSS pixels; GNOME's 11 pt where `f` gives none.
+float titleCssPxOf(in FontDescription f) @safe pure nothrow @nogc
+    => !(f.size > 0) ? titleCssPx : f.sizeInPixels ? f.size : f.size * 96 / 72.0f;
+
+///
+@("ui_app.frame_title.titleFontOfTheDesktops")
+@safe pure nothrow unittest
+{
+    import sparkles.appearance.types : parseFontDescription;
+
+    assert(titlePatternOf(parseFontDescription("Adwaita Sans Bold 11"))
+        == "Adwaita Sans,sans-serif:bold");
+    assert(titleCssPxOf(parseFontDescription("Adwaita Sans Bold 11")) == titleCssPx);
+    assert(titleCssPxOf(parseFontDescription("Cantarell 16px")) == 16);
+    assert(titlePatternOf(FontDescription.init) == titleFacePattern);
+}
 
 /// A title set into coverage: `width` × `height` bytes, the baseline at
 /// `baseline` pixels from the top.
@@ -170,6 +194,11 @@ struct TitleFace
         Thread thread;
         const(ubyte)[] bytes;
     }
+
+    /// Whether $(LREF load) would not wait: nothing is being looked up, or
+    /// the lookup is done.
+    bool settled() const @system
+        => lookup_ is null || !(cast() lookup_).thread.isRunning;
 
     /// Uses `bytes` as the face: for a test, or a face the host found itself.
     void use(const(ubyte)[] bytes) @safe pure nothrow @nogc

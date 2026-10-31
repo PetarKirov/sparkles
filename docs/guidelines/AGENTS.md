@@ -21,11 +21,12 @@ the detailed descriptions and the module map live there.
 | `ui-gallery`, `diagram`, `text-lab`                                                    | `sparkles:ui-app` apps: the toolkit catalog; a diagram board; the Vulkan text lab            |
 | `nix-eval`, `twoslash-extract`                                                         | `sparkles:nix` demo; batch D twoslash extractor                                              |
 | `base`, `text-buffer`                                                                  | `Buffer`, `@nogc` text, lifetime, logging, caps; persistent editable text and undo           |
+| `appearance`                                                                           | the desktop's scheme, accent, contrast, title-bar controls and fonts (the settings portal)   |
 | `core-cli`                                                                             | argument parsing, help, prompts, process utilities                                           |
 | `ui`, `ui-app`, `ui-tui`, `ui-raylib`, `ui-sdl3`, `ui-vulkan`, `input`, `tui`          | the one UI stack: toolkit, host, backends, input vocabulary, cell grid                       |
 | `syntax`, `tree-sitter`, `source-view`, `doc-view`, `diff`, `dsv`                      | highlighting, markdown model, code/markdown views, the document viewer, diff and DSV engines |
 | `twoslash`, `twoslash-d`, `twoslash-protocol`, `dmd-lsp`, `dmd-fmt`                    | type overlays, the DMD-frontend semantic core, the D formatter                               |
-| `event-horizon`, `http`                                                                | completion-first event loop with effects; HTTP/1.1 over it                                   |
+| `event-horizon`, `http`, `dbus`                                                        | completion-first event loop with effects; HTTP/1.1 and D-Bus over it                         |
 | `wsi`, `vulkan`, `vulkan-wsi`, `raylib-text`, `ghostty`, `terminal-view`, `shaders`    | windowing, GPU, fonts, VT engine, embeddable terminal, shader vocabulary                     |
 | `font`, `font-oracle`                                                                  | font files parsed in D; its HarfBuzz differential tests                                      |
 | `wired`, `reflection`, `metadata`, `dql`, `fuzzy`                                      | serialization, reflection kernel, UDA vocabulary, query engine, fuzzy search                 |
