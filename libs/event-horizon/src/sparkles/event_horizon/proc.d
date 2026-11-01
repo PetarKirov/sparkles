@@ -432,6 +432,9 @@ struct SupervisedProcessResult
     bool residualPolicyDegraded; /// `wait` fell back to `bounded`
     IoError residualPolicyError; /// why
     bool cgroupCleanupLeaked;   /// the run's cgroup directory remained (removal only)
+    /// Windows: the graceful stage found no console control channel to the
+    /// tree (§13.9), so the grace ran without a soft signal. Never set on POSIX.
+    bool softSignalUndelivered;
     ReapOutcome reap;           /// `status` is valid ONLY when `reap == reaped`
 }
 

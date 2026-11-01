@@ -59,13 +59,23 @@ cancellation is delivered only after cleanup and the final event.
 */
 module sparkles.event_horizon.supervise;
 
-version (Posix)  :
+// POSIX process groups and signals, or Windows Job Objects (SPEC §13.9).
+version (Posix) version = EhSupervise;
+version (Windows) version = EhSupervise;
+version (EhSupervise)  :
 
 import core.lifetime : move;
 import core.stdc.errno : EAGAIN, ECANCELED, ECHILD, EINTR, EINVAL, EIO, ENOBUFS,
     EOPNOTSUPP, EPERM, ESRCH;
-import core.sys.posix.signal : SIGCONT, SIGKILL, SIGTERM;
 import core.time : Duration, MonoTime, msecs, seconds;
+
+version (Posix)
+    import core.sys.posix.signal : SIGCONT, SIGKILL, SIGTERM;
+else
+{
+    // The three stages `signalGroup` maps to the console break and the job.
+    private enum int SIGTERM = 15, SIGKILL = 9, SIGCONT = 18;
+}
 
 import sparkles.base.buffer : SharedBuffer;
 import sparkles.event_horizon.backend.concept : canSubmitOp;
@@ -78,9 +88,22 @@ import sparkles.event_horizon.errors : ioError, IoError, IoErrorStage, IoResult,
     ioErr, ioOk;
 import sparkles.event_horizon.io : read, sleep, write;
 import sparkles.event_horizon.sys.descriptor : BorrowedFd;
-import sparkles.event_horizon.live : ChildProcess, observeExit, spawnProcess,
-    wait, waitPidOnLane;
-import sparkles.event_horizon.op : OpWaitid;
+import sparkles.event_horizon.live : ChildProcess, observeExit, spawnProcess, wait;
+version (Windows)
+{
+    import sparkles.event_horizon.live_windows : detachJob, exitStatusOf, probeExited,
+        reapOnLane, sendConsoleBreak;
+    import sparkles.event_horizon.op : OpWaitHandle;
+
+    private enum bool canWaitProcesses = canSubmitOp!(DefaultBackend, OpWaitHandle);
+}
+else
+{
+    import sparkles.event_horizon.live : waitPidOnLane;
+    import sparkles.event_horizon.op : OpWaitid;
+
+    private enum bool canWaitProcesses = canSubmitOp!(DefaultBackend, OpWaitid);
+}
 import sparkles.event_horizon.proc : ExitStatus, KillOutcome, KillResult,
     LineFramer, MetricQuality, MetricSource, ProcessConfig, ProcessEnd,
     ProcessEvent, ProcessEventKind, ProcessEventSink, ProcessLine,
@@ -96,7 +119,7 @@ version (linux)
         TreeEvidence, cgroupCleanup, cgroupCreate, cgroupKill, evidenceCall,
         migrateInto;
 
-static if (canSubmitOp!(DefaultBackend, OpWaitid))  :
+static if (canWaitProcesses)  :
 
 /**
 Runs `argv` under full supervision (SPEC §13.5–§13.8). Guarantees:
@@ -278,6 +301,7 @@ private struct Run
     ProcessEnd end = ProcessEnd.exited;
     bool endDecided;
     bool termSent;
+    bool softSignalUndelivered; /// Windows: no console break could reach the tree
     ReapOutcome reap;
     ExitStatus status;
     ExitStatus observedStatus;
@@ -508,6 +532,33 @@ version (OSX)
     }
 }
 
+version (Windows)
+private KillOutcome signalGroup(ref Run run, int signal) @trusted nothrow
+{
+    // The handle and the job pin identity until the reap: no stale target.
+    if (run.processGroup <= 0)
+        return KillOutcome(KillResult.notAttempted, 0);
+    version (unittest)
+        if (run.signalAttempts !is null)
+            ++*run.signalAttempts;
+    if (signal == SIGCONT)
+        return KillOutcome(KillResult.notAttempted, 0); // nothing is stopped
+    if (signal == SIGTERM)
+    {
+        // A console break to the child's group, when it shares a console;
+        // otherwise no soft signal is deliverable and the grace still runs.
+        if (sendConsoleBreak(*run.child))
+            return KillOutcome(KillResult.delivered, 0);
+        run.softSignalUndelivered = true;
+        return KillOutcome(KillResult.notAttempted, 0);
+    }
+    // The hard stage: the whole job, descendants and nested jobs included.
+    auto killed = run.child.killGroup();
+    return killed.hasError ? KillOutcome(KillResult.failed, killed.error.code)
+        : KillOutcome(KillResult.delivered, 0);
+}
+
+version (Posix)
 private KillOutcome signalGroup(ref Run run, int signal) @trusted nothrow
 {
     import core.stdc.errno : errno;
@@ -667,7 +718,7 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
         run.sampler.anchor(child.pid, run.migrated ? &run.cgroup : null);
     }
     else
-        run.sampler.anchor(child.pid, null);
+        run.sampler.anchor(child.pid, rootJobOf(child)); // the job on Windows
     scope (exit) run.sampler.finish();
 
     if (stdinBytes !is null)
@@ -718,7 +769,7 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
 
         if (!admissionFailed)
         {
-            if (childP.stdoutR.borrowFd().fd >= 0)
+            if (childP.stdoutR.valid)
                 spawnWorker(&rp.stdoutCtx,
                     &(new DrainWorker(rp, schedP, childP.stdoutR.borrowFd(), ProcessStream.stdout_)).run);
             else
@@ -726,7 +777,7 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
         }
         if (!admissionFailed)
         {
-            if (childP.stderrR.borrowFd().fd >= 0)
+            if (childP.stderrR.valid)
                 spawnWorker(&rp.stderrCtx,
                     &(new DrainWorker(rp, schedP, childP.stderrR.borrowFd(), ProcessStream.stderr_)).run);
             else
@@ -734,7 +785,7 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
         }
 
         // The stdin worker: sole owner of the descriptor while it lives.
-        if (childP.stdinW.borrowFd().fd >= 0 && !admissionFailed)
+        if (childP.stdinW.valid && !admissionFailed)
             spawnWorker(&rp.stdinCtx, &(new StdinWorker(rp, schedP, childP)).run);
 
         // The clock: six one-shot alarms, armed on request, ring-free.
@@ -1297,6 +1348,11 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
                     return; // consumed or proven lost already
                 if (rp.observer == RootObserverState.lost)
                     return; // recorded once, at observation time
+                // The reap closes the job, whose kill-on-close would end a
+                // residual that `detach` promised to leave alone.
+                version (Windows)
+                    if (policy == ResidualPolicy.detach)
+                        detachJob(*childP);
                 uint retries;
                 for (;;)
                 {
@@ -1323,7 +1379,7 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
                     }
                     // Any other in-ring error: the identity is still pinned, so
                     // the termination-critical lane consumes it.
-                    auto fallback = waitPidOnLane(*schedP, childP.pid);
+                    auto fallback = laneReap(*schedP, *childP);
                     if (fallback.hasValue)
                     {
                         rp.status = fallback.value;
@@ -1381,7 +1437,7 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
                 Duration backoff = 10.msecs;
                 for (;;)
                 {
-                    ProbeJob job = {pid: childP.pid};
+                    ProbeJob job = {pid: childP.pid, child: childP};
                     auto ran = rp.pool.runMandatory(*schedP, &probeCall, &job);
                     if (ran.hasError)
                         schedP.fatal(ran.error);
@@ -1619,6 +1675,7 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
     result.residualPolicyDegraded = run.residualDegraded;
     result.residualPolicyError = run.residualError;
     result.cgroupCleanupLeaked = run.cleanupLeaked;
+    result.softSignalUndelivered = run.softSignalUndelivered;
     return ioOk(move(result));
 }
 
@@ -1698,7 +1755,7 @@ private final class ObserverWorker
             auto observed = rp.testObserverErrno != 0
                 ? ioErr!ExitStatus(rp.testObserverErrno, OpKind.waitid,
                     IoErrorStage.submit, "injected observer failure")
-                : observeExit(*s, child.pid);
+                : observeRoot(*s, *child);
             RelayMessage msg;
             if (observed.hasValue)
             {
@@ -1756,7 +1813,7 @@ private final class LaneObserverWorker
         Duration backoff = 10.msecs;
         while (!rp.stopLane && child.pid > 0)
         {
-            ProbeJob job = {pid: child.pid};
+            ProbeJob job = {pid: child.pid, child: child};
             auto ran = rp.pool.runMandatory(*s, &probeCall, &job);
             if (ran.hasError)
             {
@@ -2119,11 +2176,65 @@ private enum ProbeKind : ubyte
 private struct ProbeJob
 {
     int pid;
+    ChildProcess* child; /// Windows: the handle the probe asks
     ProbeKind kind;
     ExitStatus status;
     int errnoValue;
 }
 
+// ── platform seams: observation, the lane reap, the sampler anchor ──────────
+
+/// The root observer's one non-consuming wait.
+private IoResult!ExitStatus observeRoot(ref Sched s, ref ChildProcess child) @trusted
+{
+    version (Windows)
+        return observeExit(s, child);
+    else
+        return observeExit(s, child.pid);
+}
+
+/// The termination-critical lane reap (§13.8 fallback).
+private IoResult!ExitStatus laneReap(ref Sched s, ref ChildProcess child) @trusted
+{
+    version (Windows)
+        return reapOnLane(s, child);
+    else
+        return waitPidOnLane(s, child.pid);
+}
+
+/// What the sampler anchors besides the root pid: the run's Job Object on
+/// Windows, nothing elsewhere (Linux passes its cgroup itself).
+private void* rootJobOf(ref ChildProcess child) @trusted nothrow @nogc
+{
+    version (Windows)
+        return cast(void*) child.job.borrowFd.fd;
+    else
+        return null;
+}
+
+version (Windows)
+private void probeCall(void* p) nothrow
+{
+    auto job = cast(ProbeJob*) p;
+    if (!probeExited(*job.child))
+    {
+        job.kind = job.child.process.valid ? ProbeKind.pending : ProbeKind.fatal;
+        job.errnoValue = EINVAL;
+        return;
+    }
+    auto status = exitStatusOf(*job.child);
+    if (status.hasError)
+    {
+        job.kind = ProbeKind.fatal;
+        job.errnoValue = status.error.code;
+        return;
+    }
+    job.child.exited = true;
+    job.kind = ProbeKind.observed;
+    job.status = status.value;
+}
+
+version (Posix)
 private void probeCall(void* p) nothrow
 {
     import core.stdc.errno : errno;
