@@ -38,7 +38,7 @@ JsonResult!TwoslashReturn fromTwoslashJson(JSONValue root)
 /// Parses and decodes a twoslash JSON payload from a string, without throwing.
 JsonResult!TwoslashReturn parseTwoslash(scope const(char)[] json)
 {
-    import expected : err;
+    import sparkles.base.expected : err;
     import sparkles.base.text.errors : ParseErrorCode;
     import sparkles.wired.json.error : JsonError, JsonStage;
 

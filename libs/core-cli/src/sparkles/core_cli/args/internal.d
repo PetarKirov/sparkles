@@ -1913,7 +1913,7 @@ unittest
 @system
 unittest
 {
-    static import expected;
+    import expected = sparkles.base.expected;
 
     @(Command("success-void"))
     static struct SuccessVoid

@@ -5,7 +5,6 @@
     dependency "sparkles:vulkan" path="../../.."
     dependency "sparkles:wsi" path="../../.."
     dependency "sparkles:event-horizon" path="../../.."
-    dependency "expected" version="~>0.4.1"
     targetPath "build"
     platforms "android"
     buildType "checked" {
@@ -62,7 +61,7 @@ import core.time : Duration, MonoTime, seconds;
 import std.conv : text;
 import std.string : toStringz;
 
-import expected : Expected, err, ok;
+import sparkles.base.expected : Expected, err, ok;
 
 import sparkles.android.activity : internalDataPath;
 import sparkles.event_horizon.loop : DefaultLoop, LoopConfig;

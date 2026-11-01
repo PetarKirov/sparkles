@@ -11,7 +11,7 @@ module sparkles.base.text.errors;
 
 import std.traits : isInstanceOf, Unqual;
 
-import expected : Expected, err, ok;
+import sparkles.base.expected : Expected, err, ok;
 
 /// Machine-readable, scheme-agnostic text-parse error code.
 enum ParseErrorCode

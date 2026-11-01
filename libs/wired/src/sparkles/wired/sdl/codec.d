@@ -2265,7 +2265,7 @@ if (is(T == struct))
 @("wired.sdl.codec.sharedChecks")
 @system unittest
 {
-    import expected : Expected, err, ok;
+    import sparkles.base.expected : Expected, err, ok;
     import sparkles.wired.policy : WireCheck, WireCheckFailure, isBetween, isOneOf;
 
     static Expected!(void, string) positive(int value) @safe pure

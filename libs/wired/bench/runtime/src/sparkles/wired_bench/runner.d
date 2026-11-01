@@ -21,7 +21,7 @@ $(MREF sparkles,wired_bench,data)).
 */
 module sparkles.wired_bench.runner;
 
-import expected : err, ok;
+import sparkles.base.expected : err, ok;
 import std.conv : to;
 
 import sparkles.test_runner.attributes : benchmark;

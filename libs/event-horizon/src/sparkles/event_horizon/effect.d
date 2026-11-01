@@ -26,7 +26,7 @@ import core.time : Duration;
 import sparkles.event_horizon.cause : Cause, InterruptKind, Interrupt, Outcome,
     outcomeErr, outcomeOk;
 import sparkles.event_horizon.clock : isClock;
-import expected : Expected;
+import sparkles.base.expected : Expected;
 import std.traits : TemplateArgsOf;
 
 import sparkles.event_horizon.errors : ioError, IoError, NoGcHook;
@@ -195,7 +195,7 @@ auto effectOf(alias fn, T, E = IoError)() => Lifted!(fn, T, E)();
 /// `effectOf!(fn, T, E)`. This reuses the existing interpreter and combinators.
 auto effectOf(alias fn)()
 {
-    import expected : Expected;
+    import sparkles.base.expected : Expected;
     import std.traits : ReturnType, TemplateArgsOf;
 
     alias R = ReturnType!fn;
@@ -324,7 +324,7 @@ if (isEffect!Eff && isScope!Sc)
 
 // ── helpers (bridge Outcome ⇄ Expected for the driver callbacks) ────────────
 
-private import expected : Expected;
+private import sparkles.base.expected : Expected;
 
 private Expected!(T, E, NoGcHook) okExpected(T, E)()
 if (is(T == void))
@@ -337,14 +337,14 @@ if (is(T == void))
 private Expected!(T, E, NoGcHook) okExpected(T, E)(T v)
 if (!is(T == void))
 {
-    import expected : ok;
+    import sparkles.base.expected : ok;
 
     return ok!(E, NoGcHook)(move(v));
 }
 
 private Expected!(T, E, NoGcHook) failToExpected(T, E)(Cause!E cause)
 {
-    import expected : err;
+    import sparkles.base.expected : err;
 
     // The drivers only look at the fail channel; a die/interrupt cause maps
     // to a synthetic error is avoided by carrying the fail payload through.

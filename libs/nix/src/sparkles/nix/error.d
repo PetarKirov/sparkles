@@ -11,7 +11,7 @@
 module sparkles.nix.error;
 
 import sparkles.nix.c;
-import expected : Expected, ok, err;
+import sparkles.base.expected : Expected, ok, err;
 
 /// Mirror of the C `nix_err` enum as a clean D enum, so consumers never
 /// touch the enum-scoped raw names. Values match the C ABI exactly.

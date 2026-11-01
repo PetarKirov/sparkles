@@ -11,7 +11,7 @@ module sparkles.event_horizon.cause;
 import core.atomic : atomicOp;
 import core.time : MonoTime;
 
-import expected : Expected, err, ok;
+import sparkles.base.expected : Expected, err, ok;
 
 import sparkles.event_horizon.errors : ioError, IoError, NoGcHook;
 

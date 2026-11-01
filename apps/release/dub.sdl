@@ -12,7 +12,6 @@ mainSourceFile "src/app.d"
 
 dflags "-preview=in" "-preview=dip1000"
 
-dependency "expected" version="~>0.4.1"
 dependency "sparkles:base" path="../.."
 dependency "sparkles:core-cli" path="../.."
 dependency "sparkles:versions" path="../.."

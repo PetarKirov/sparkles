@@ -21,7 +21,7 @@ module sparkles.vulkan.result;
 
 import std.algorithm : canFind;
 
-import expected : Expected, err, ok;
+import sparkles.base.expected : Expected, err, ok;
 
 import sparkles.vulkan.vulkan_c;
 

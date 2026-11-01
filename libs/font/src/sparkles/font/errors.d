@@ -6,7 +6,7 @@ naming what went wrong, in which table, and where.
 */
 module sparkles.font.errors;
 
-import expected : Expected, err, ok;
+import sparkles.base.expected : Expected, err, ok;
 
 import sparkles.base.text.errors : NoGcHook;
 import sparkles.font.corrections : Correction;

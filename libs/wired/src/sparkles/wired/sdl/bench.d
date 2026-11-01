@@ -9,7 +9,7 @@ version (unittest):
 @("wired.sdl.writeScalars") @benchmark @system unittest
 {
     import std.datetime : Date;
-    import expected : ok;
+    import sparkles.base.expected : ok;
     import sparkles.base.buffer : UniqueBuffer;
     import sparkles.test_runner.bench : benchCase;
     import sparkles.wired.sdl.document : SdlScalar, SdlDateTime;

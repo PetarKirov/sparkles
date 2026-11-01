@@ -7,7 +7,7 @@ import core.stdc.errno : errno;
 import core.sys.posix.unistd : close;
 import core.lifetime : move;
 import std.traits : ReturnType, TemplateArgsOf;
-import expected : Expected;
+import sparkles.base.expected : Expected;
 import sparkles.event_horizon.errors : IoResult, IoError, NoGcHook, OpKind, ioErr;
 import sparkles.event_horizon.io : Stream, Listener, DgramSocket;
 

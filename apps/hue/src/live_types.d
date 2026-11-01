@@ -26,7 +26,7 @@ import core.time : Duration, msecs, seconds;
 import std.algorithm.iteration : map;
 import std.json : JSONType, JSONValue, parseJSON;
 
-import expected : err, Expected, ok;
+import sparkles.base.expected : err, Expected, ok;
 
 import sparkles.core_cli.process_utils : isInPath, ResidentProcess;
 import sparkles.twoslash : parseTwoslash, TwoslashReturn;

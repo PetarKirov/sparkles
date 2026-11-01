@@ -5,7 +5,6 @@
     dependency "sparkles:core-cli" path="../../.."
     dependency "sparkles:base" path="../../.."
     dependency "sparkles:wired" path="../../.."
-    dependency "expected" version="~>0.4.1"
     targetPath "build"
     buildType "checked" {
         buildOptions "optimize" "inline" "debugInfo"
@@ -30,7 +29,7 @@ import std.stdio : stdout, writeln;
 import std.string : fromStringz, strip;
 import std.traits : EnumMembers, FieldNameTuple;
 
-import expected : Expected, err, ok;
+import sparkles.base.expected : Expected, err, ok;
 
 import sparkles.base.prettyprint : prettyPrint, PrettyPrintOptions;
 import sparkles.base.text : writeBytes, writeInteger, writeIntegerPadded;

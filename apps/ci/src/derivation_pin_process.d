@@ -12,7 +12,7 @@ import core.time : Duration;
 
 import std.conv : text;
 
-import expected : Expected, err, ok;
+import sparkles.base.expected : Expected, err, ok;
 
 import sparkles.event_horizon.proc : EnvironmentChange, ExitStatus, ProcessConfig,
     ProcessEnd, ReapOutcome, StdioMode, StdioSpec, SupervisedProcessConfig,

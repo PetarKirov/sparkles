@@ -17,7 +17,7 @@ module sparkles.event_horizon.vfs;
 
 import core.lifetime : move, moveEmplace;
 
-import expected : Expected;
+import sparkles.base.expected : Expected;
 
 import sparkles.base.io.errors : ErrorKind, IoError, IoResult, NoGcHook, ioErr, ioOk;
 import sparkles.base.vfs.concept : isVfs, openDirAtFor, openRootDirFor, reopenFor, resolveWholeFor;

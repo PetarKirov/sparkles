@@ -16,7 +16,7 @@ NOTE: no module-level `@safe:` — the wired decode this module fronts infers
 */
 module settings_io;
 
-import expected : Expected;
+import sparkles.base.expected : Expected;
 
 import sparkles.wired.config_file : renderConfigShowWith = renderConfigShow,
     renderStarterSections, saveSparseConfig, sparseTextOf = sparseText;

@@ -1,7 +1,7 @@
 module sparkles.dql.engine;
 
 import core.lifetime : move;
-import expected : Expected, err, ok;
+import sparkles.base.expected : Expected, err, ok;
 import sparkles.base.buffer : HeapBuffer, Storage;
 import sparkles.base.text.span : TextSpan;
 import sparkles.base.unique : Unique, makeUnique;

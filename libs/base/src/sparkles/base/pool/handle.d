@@ -10,7 +10,7 @@ See `docs/specs/base/pool.md` (`POOL1`, `POOL2`, `POOL7`).
 */
 module sparkles.base.pool.handle;
 
-import expected : Expected, err, ok;
+import sparkles.base.expected : Expected, err, ok;
 import sparkles.base.text.errors : NoGcHook;
 import sparkles.base.text.writers : writeText;
 

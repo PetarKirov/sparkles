@@ -11,7 +11,7 @@ excludes the optional terminator.
 */
 module sparkles.base.text.utf16;
 
-import expected : Expected, err, ok;
+import sparkles.base.expected : Expected, err, ok;
 
 import sparkles.base.text.errors : NoGcHook;
 import sparkles.base.text.utf8 : utf8SequenceLength;

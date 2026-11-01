@@ -14,7 +14,7 @@ it through $(LREF readJsoncFile) and write it back as strict JSON.
 */
 module sparkles.wired.json.jsonc;
 
-import expected : Expected, err;
+import sparkles.base.expected : Expected, err;
 
 import sparkles.wired.json.codec : fromJSON;
 import sparkles.wired.json.error : JsonError, JsonStage;

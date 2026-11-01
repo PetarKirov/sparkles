@@ -45,11 +45,6 @@ dependency "sparkles:fuzzy" path="../.."
 // this edge closes no cycle).
 dependency "sparkles:wired" path="../.."
 
-// `expected` is declared rather than inherited through base's import paths: the
-// table component returns `Expected` in its public API, so it is this package's
-// dependency (`PKG2`).
-dependency "expected" version="~>0.4.1"
-
 dflags "-preview=in" "-preview=dip1000"
 
 configuration "library" {

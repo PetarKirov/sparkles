@@ -14,7 +14,7 @@ path above still runs.
 */
 module forge_client;
 
-import expected : err;
+import sparkles.base.expected : err;
 
 import forge : CommentThread, discoverToken, ForgeError, ForgeErrorKind,
     ForgeFileRef, ForgeResult, hasCapability, HttpRequest, HttpResponse,

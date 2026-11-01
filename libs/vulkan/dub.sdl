@@ -20,7 +20,6 @@ dflags "-preview=in" "-preview=dip1000"
 // unused DT_NEEDED anyway.
 libs "vulkan"
 
-dependency "expected" version="~>0.4.1"
 
 // `sparkles:base` for the text primitives this binding builds on: the
 // duplicate-tolerant enum naming in `sparkles.base.text.enums` (ImportC turns

@@ -13,7 +13,7 @@ needs, not a model of the API.
 */
 module forge_github;
 
-import expected : err;
+import sparkles.base.expected : err;
 
 import forge : Comment, CommentThread, ForgeError, ForgeErrorKind,
     ForgeFileRef, ForgeResult, HttpRequest, HttpResponse, isForge, PrFile, PrRef,
@@ -606,7 +606,7 @@ private ForgeResult!T parse(T)(scope const(char)[] json) @safe
 @("forge_github.pullRequest.walksThePagesWithoutANetwork")
 @system unittest
 {
-    import expected : ok;
+    import sparkles.base.expected : ok;
     import forge : HttpRequest;
 
     // The transport seam earning its keep: the whole fetch path — URL

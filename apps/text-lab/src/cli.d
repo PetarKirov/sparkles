@@ -102,7 +102,7 @@ CliExpected!Lab configure(in LabOptions o)
     import std.math : isNaN;
     import std.string : split;
     import sparkles.ui.geometry : Point;
-    import expected : err, ok;
+    import sparkles.base.expected : err, ok;
 
     static CliExpected!Lab reject(string message)
         => err!Lab(CliError(kind: CliError.Kind.parse, message: message));

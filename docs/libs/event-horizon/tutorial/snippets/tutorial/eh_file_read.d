@@ -12,7 +12,7 @@ import std.path : buildPath;
 import std.process : thisProcessID;
 import std.conv : to;
 import std.stdio : writeln, stderr;
-import expected : andThen;
+import sparkles.base.expected : andThen;
 import sparkles.base.vfs : OpenMode, Rights, ambientAuthority, openRoot;
 import sparkles.event_horizon : runApplication, RootScope, Env, ioErr, ioOk, readText;
 

@@ -28,7 +28,7 @@ module format_preview;
 
 import core.lifetime : move;
 
-import expected : Expected, err, ok;
+import sparkles.base.expected : Expected, err, ok;
 
 import sparkles.base.buffer : SharedBuffer;
 import sparkles.syntax : HighlightEvent;

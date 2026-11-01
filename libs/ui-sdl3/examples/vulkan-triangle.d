@@ -8,7 +8,6 @@
     dependency "sparkles:core-cli" path="../../.."
     dependency "sparkles:base" path="../../.."
     dependency "sparkles:wired" path="../../.."
-    dependency "expected" version="~>0.4.1"
     stringImportPaths "../../vulkan-wsi/src/shaders" "../../vulkan-wsi/generated/shaders"
     targetPath "build"
     buildType "checked" {
@@ -81,7 +80,7 @@ module vulkan_triangle_example;
 
 import std.format : format;
 
-import expected : Expected, err, ok;
+import sparkles.base.expected : Expected, err, ok;
 
 import sparkles.base.prettyprint : prettyPrint, PrettyPrintOptions;
 import sparkles.core_cli.args;

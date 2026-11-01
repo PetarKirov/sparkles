@@ -13,7 +13,7 @@ partially staged selection behind.
 */
 module staging;
 
-import expected : err, Expected;
+import sparkles.base.expected : err, Expected;
 
 // The patch a selection stands for is the viewer's (`sparkles:doc-view`);
 // applying it to a repository is hue's.

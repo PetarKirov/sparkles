@@ -13,7 +13,7 @@ declaration. Accepting one records it in the project state
 */
 module dub_config_picker;
 
-import expected : err, Expected, ok;
+import sparkles.base.expected : err, Expected, ok;
 
 import sparkles.build_primitives.dub_recipe : readDubRecipe;
 

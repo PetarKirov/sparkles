@@ -7,7 +7,7 @@ constructor helpers.
 */
 module sparkles.tree_sitter.errors;
 
-import expected : Expected, err, ok;
+import sparkles.base.expected : Expected, err, ok;
 import sparkles.base.text.errors : NoGcHook;
 
 /// Machine-readable binding/engine error code.

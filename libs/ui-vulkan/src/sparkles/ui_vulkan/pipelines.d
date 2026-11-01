@@ -10,7 +10,7 @@ framebuffers, which name a target's views or extent, belong to a target
 */
 module sparkles.ui_vulkan.pipelines;
 
-import expected : err, ok;
+import sparkles.base.expected : err, ok;
 
 import sparkles.base.buffer : UniqueBuffer;
 import sparkles.shaders.layout : layoutOf, Rule;

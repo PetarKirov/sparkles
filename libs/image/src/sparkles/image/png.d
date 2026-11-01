@@ -34,7 +34,7 @@ module sparkles.image.png;
 
 import sparkles.base.text.errors : NoGcHook;
 
-import expected : Expected, err, ok;
+import sparkles.base.expected : Expected, err, ok;
 
 /// The largest image decoded, in pixels: 256 MiB of RGBA.
 enum ulong maxPngPixels = 1UL << 26;

@@ -9,7 +9,7 @@ import std.range : iota;
 import std.range.primitives : isOutputRange;
 import std.typecons : Nullable, nullable;
 
-import expected : Expected, ok, err;
+import sparkles.base.expected : Expected, ok, err;
 
 import sparkles.base.text.grapheme : visibleWidth;
 import sparkles.test_runner.attributes : wasm;

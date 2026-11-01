@@ -1,7 +1,7 @@
 /** Typed failures at the native-window/Vulkan boundary. */
 module sparkles.vulkan_wsi.error;
 
-import expected : Expected, err, ok;
+import sparkles.base.expected : Expected, err, ok;
 
 import sparkles.vulkan : VkResult;
 import sparkles.base.buffer : InlineBuffer;

@@ -37,7 +37,7 @@ import std.range : enumerate;
 import std.stdio : stderr, stdout, write, writefln, writeln;
 import std.string : indexOf, lineSplitter, strip;
 
-import expected : Expected, andThen, err, ok;
+import sparkles.base.expected : Expected, andThen, err, ok;
 
 import sparkles.base.buffer : UniqueBuffer;
 import sparkles.base.term_caps : detectTermCaps;

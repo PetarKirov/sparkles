@@ -11,7 +11,7 @@ staged, so a later update of the same pixels wins.
 */
 module sparkles.ui_vulkan.upload;
 
-import expected : err, ok;
+import sparkles.base.expected : err, ok;
 
 import sparkles.base.buffer : UniqueBuffer;
 import sparkles.ui_vulkan.frame_buffers : BufferSlice, FrameBuffers;

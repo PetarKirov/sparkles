@@ -5,7 +5,6 @@
     dependency "sparkles:input" path="../../.."
     dependency "sparkles:dql" path="../../.."
     dependency "sparkles:core-cli" path="../../.."
-    dependency "expected" version="~>0.4.1"
     stringImportPaths "../../vulkan-wsi/src/shaders"
     targetPath "build"
     buildType "checked" {
@@ -53,7 +52,7 @@ import std.algorithm.comparison : among;
 import std.format : format;
 import std.stdio : writeln;
 
-import expected : Expected, err, ok;
+import sparkles.base.expected : Expected, err, ok;
 
 import sparkles.core_cli.args;
 import sparkles.dql : DqlSchema, DqlEngine, DqlFilter, evalDql, parseDql,

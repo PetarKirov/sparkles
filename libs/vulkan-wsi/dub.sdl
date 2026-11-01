@@ -17,7 +17,7 @@ libs "vulkan"
 // regeneration command.
 stringImportPaths "src/shaders"
 
-dependency "expected" version="~>0.4.1"
+dependency "sparkles:base" path="../.."
 dependency "sparkles:shaders" path="../.."
 dependency "sparkles:vulkan" path="../.."
 dependency "sparkles:wsi" path="../.."

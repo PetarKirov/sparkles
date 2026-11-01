@@ -22,7 +22,7 @@ flight may still read it is destroyed once every such frame has completed
 */
 module sparkles.ui_vulkan.canvas;
 
-import expected : err, ok;
+import sparkles.base.expected : err, ok;
 
 import sparkles.base.buffer : UniqueBuffer;
 import sparkles.base.term_color : RgbColor;

@@ -22,7 +22,7 @@ import core.sys.posix.poll : poll, pollfd, POLLIN;
 import core.sys.posix.stdlib : grantpt, posix_openpt, ptsname, unlockpt;
 import core.sys.posix.unistd : closeFd = close, read, write;
 
-import expected : Expected, ok, err;
+import sparkles.base.expected : Expected, ok, err;
 
 import sparkles.base.text.errors : NoGcHook;
 import sparkles.tui.cell : Cell, CellStyle, Color, Grid;

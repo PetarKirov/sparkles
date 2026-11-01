@@ -12,7 +12,7 @@ module sparkles.vulkan.loader;
 
 import std.array : join;
 
-import expected : Expected, err, ok;
+import sparkles.base.expected : Expected, err, ok;
 
 import sparkles.vulkan.vulkan_c;
 

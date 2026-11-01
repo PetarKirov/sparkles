@@ -16,7 +16,7 @@ module sparkles.base.io.errors;
 
 import std.traits : Unqual;
 
-import expected : Expected, err, ok;
+import sparkles.base.expected : Expected, err, ok;
 
 public import sparkles.base.text.errors : NoGcHook;
 
@@ -201,7 +201,7 @@ unittest
 @("io.errors.composition")
 @safe unittest
 {
-    import expected : andThen, map;
+    import sparkles.base.expected : andThen, map;
 
     auto doubled = ioOk(21).map!(x => x * 2, NoGcHook);
     static assert(is(typeof(doubled) == IoResult!int));

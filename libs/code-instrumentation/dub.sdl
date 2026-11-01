@@ -10,7 +10,6 @@ dflags "-preview=in" "-preview=dip1000"
 
 importPaths "src"
 
-dependency "expected" version="~>0.4.1"
 dependency "sparkles:base" path="../.."
 dependency "sparkles:wired" path="../.."
 
