@@ -36,7 +36,7 @@ import sparkles.test_runner.skip : skipTest;
 // A test that bounds a run's wall-clock time is `@serial`, as the supervise
 // tests are: beside the other parallel tests the bound would measure the
 // host's load, not the channel.
-import sparkles.test_runner.attributes : serial;
+import sparkles.test_runner.attributes : benchmark, serial;
 
 private:
 
@@ -750,4 +750,57 @@ unittest
         (cast(ubyte*) mem)[0 .. Ch.sizeof] = 0xA5;
         pureFree(mem);
     }
+}
+
+// ── contention benchmark ────────────────────────────────────────────────────
+
+/// The benchmark's fixture, on the heap: `benchIter` runs its body after the
+/// unittest returns, when a stack fixture would be gone.
+final class ContentionBench
+{
+    enum uint batch = 65_536;
+    LoopGroup group;
+    CrossChannel!(ulong, 16) ch;
+    shared uint failures;
+}
+
+/// Moves one batch through `b.ch` with `producers[w]` putting and
+/// `consumers[w]` taking fibers on worker `w`, each moving an equal share.
+void transfer(ContentionBench b, uint[2] producers, uint[2] consumers) @system
+{
+    const putShare = ContentionBench.batch / (producers[0] + producers[1]);
+    const takeShare = ContentionBench.batch / (consumers[0] + consumers[1]);
+    b.group.runEach((uint id, ref RootScope root, ref env) {
+        foreach (_; 0 .. producers[id])
+            root.spawn(() {
+                foreach (i; 0 .. putShare)
+                    expect(b.failures, !b.ch.put(currentScheduler(), i).hasError);
+            });
+        foreach (_; 0 .. consumers[id])
+            root.spawn(() {
+                foreach (_; 0 .. takeShare)
+                    expect(b.failures, b.ch.take(currentScheduler()).hasValue);
+            });
+    });
+    assert(atomicLoad(b.failures) == 0 && b.ch.length == 0, "the batch went through");
+}
+
+@("crossChannel.bench.contention")
+@benchmark
+@system
+unittest
+{
+    import sparkles.test_runner.bench : benchIter;
+
+    // Each iteration moves 65 536 items through a 16-slot channel on the
+    // default park path and pays one `runEach` (a worker thread's start and
+    // join), which the first row measures alone.
+    auto b = new ContentionBench;
+    startGroup(b.group, FiberPark.auto_);
+    benchIter(() { b.group.runEach((uint id, ref RootScope root, ref env) {}); },
+        ["shape": "runEach alone"]);
+    benchIter(() => transfer(b, [1, 0], [1, 0]), ["shape": "1 → 1, same worker"]);
+    benchIter(() => transfer(b, [1, 0], [0, 1]), ["shape": "1 → 1, across workers"]);
+    benchIter(() => transfer(b, [2, 2], [2, 2]), ["shape": "4 → 4, both workers"]);
+    benchIter(() => transfer(b, [4, 0], [0, 4]), ["shape": "4 → 4, across workers"]);
 }
