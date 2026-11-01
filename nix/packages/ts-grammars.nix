@@ -50,7 +50,7 @@
 
       # The bundle over one build of the grammars: nixpkgs' (`g`, by attribute
       # name), the builder of the pinned ones, and ours (`inHouse`). `ts-grammars`
-      # is nixpkgs' own; nix/packages/terminal-static.nix passes the same grammars
+      # is nixpkgs' own; nix/packages/static-apps.nix passes the same grammars
       # built by another compiler.
       bundleWith =
         {

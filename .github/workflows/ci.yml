@@ -684,6 +684,55 @@ jobs:
           CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
         run: ci/with-cachix.sh nix build --print-build-logs --max-jobs 1 .#all-android
 
+  # Toolchain spec TC20: terminal and hue as self-contained programs under the
+  # all-LLVM runtime profile (nix/packages/static-apps.nix), their checks and
+  # their test suites, on both Linux architectures. Not flake `checks`: the
+  # `test` legs' `nix flake check` would rebuild both programs and run both
+  # suites under Xvfb on every source change.
+  static-apps:
+    name: Static apps (TC20, ${{ matrix.system }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-latest, system: x86_64-linux }
+          - { runner: ubuntu-24.04-arm, system: aarch64-linux }
+    runs-on: ${{ matrix.runner }}
+    # The bundled C and C++ libraries and the profile-built grammars come
+    # from the cache; a cold cache compiles them (OpenSSL's tests are the
+    # longest part) before the two programs and their suites.
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Nix
+        uses: ./.github/actions/setup-nix
+        with:
+          push-to-cache: true
+          cachix-cache: ${{ vars.CACHIX_CACHE }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
+          use-nix-cache: true
+          nix-cache-key: nix-v2-${{ matrix.system }}-staticapps-${{ hashFiles('**/flake.lock') }}
+          nix-cache-restore-prefixes: |
+            nix-v2-${{ matrix.system }}-staticapps-
+            nix-v2-${{ matrix.system }}-
+
+      # `with-cachix.sh` pushes each path as it completes, so a run that fails
+      # or hits the cap still leaves its progress in the cache.
+      - name: Build & push the static programs, their checks and test suites
+        env:
+          CACHIX_CACHE: ${{ vars.CACHIX_CACHE }}
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+        run: |
+          ci/with-cachix.sh nix build --print-build-logs --keep-going \
+            .#legacyPackages.${{ matrix.system }}.staticAppChecks.terminal-static \
+            .#legacyPackages.${{ matrix.system }}.staticAppChecks.terminal-static-tests \
+            .#legacyPackages.${{ matrix.system }}.staticAppChecks.hue-static \
+            .#legacyPackages.${{ matrix.system }}.staticAppChecks.hue-static-tests
+
   lint:
     name: Lint & markdown link check
     runs-on: ubuntu-latest
@@ -1123,6 +1172,7 @@ jobs:
       - sanitize
       - nix-build
       - nix-build-android
+      - static-apps
       - shader-reproducibility
       - lint
       - docs

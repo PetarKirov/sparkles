@@ -31,7 +31,7 @@
           };
         in
         # `grammarArgs`: the same grammar by another builder
-        # (nix/packages/terminal-static.nix).
+        # (nix/packages/static-apps.nix).
         pkgs.tree-sitter.buildGrammar (args // { passthru.grammarArgs = args; });
     };
 }
