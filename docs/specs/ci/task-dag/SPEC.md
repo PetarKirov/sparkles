@@ -257,7 +257,9 @@ failure replay, and summaries.
 The process variant contains argv, environment delta, cwd, stdin policy,
 timeout, and sandbox policy as data. In-process actions identify a typed command
 handler. Secrets may be marked redacted and are never included in events or dry
-runs.
+runs. A redacted value is passed to the child, and every occurrence of it in a
+line the child prints is masked as `<redacted>` before the line reaches an
+event or a spool.
 
 ### 5.2 Edges
 
@@ -332,9 +334,11 @@ package overrides:
 
 The host-derived capacity starts from `hwParallelism`, is constrained by the
 existing memory/load policy, and retains a hard safety cap. Explicit `--jobs`
-sets capacity exactly. Compiler subprocesses receive an LDC codegen-thread cap
-derived from their claim and currently free capacity so task-level parallelism
-does not multiply into unbounded compiler threads.
+sets capacity exactly. LDC compiles a module set on one thread, so a compiler
+subprocess needs no codegen-thread cap. Work that does spawn its own threads,
+such as the test runner's `-t N`, takes its thread count from the claim the
+planner gives it, so task-level parallelism does not multiply into unbounded
+threads.
 
 Exclusive keys protect semantic resources, not implementation mutexes. Examples
 are `workspace-write:README.md`, `coverage-publish`, and a final destination

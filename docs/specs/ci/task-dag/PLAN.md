@@ -133,6 +133,14 @@ Gate: real short-lived process integration tests leave no child behind and pass
 under sanitizers where available; executor modules contain no `TaskPool`,
 detached thread, sleep polling, or `std.process.execute` task path.
 
+Status: delivered for POSIX. `apps/ci/src/task/process.d` holds
+`ProcessDriver` over `supervise`, compiled only where Event Horizon exports it
+(`processActionsAvailable`). `apps/ci/src/task/output.d` holds the bounded
+`OutputSpool`, which spills to `<sandbox>/<task path>/output.log`. The
+integration tests run real children. They were not run under the sanitizer leg.
+The only `Thread.sleep` is a test helper that waits for a reparented grandchild
+to be reaped. There is no thread cap to route; see SPEC section 5.3.
+
 ## M6: Reporter stack
 
 - Add the reporter interface and shared ordered block buffer.
