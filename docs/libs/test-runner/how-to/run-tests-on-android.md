@@ -13,7 +13,7 @@ Call the builder from a file under `nix/packages/android/`, as
 `sparkles:font`:
 
 ```nix
-packages.font-android-tests = config.legacyPackages.buildDAndroidTests {
+androidPackages.font-android-tests = config.legacyPackages.buildDAndroidTests {
   pname = "font-android-tests";
   exeName = "font-tests";
   testedDirs = [ "libs/font/src" "libs/font/test" ];
@@ -29,8 +29,10 @@ packages.font-android-tests = config.legacyPackages.buildDAndroidTests {
 - `dubDeps` unzips registry dependencies from their flake inputs. Their own
   unittests are not built.
 
-List the package in `androidPackageNames` and in the `all-android` aggregate
-in `nix/packages/android/default.nix`, so CI builds it.
+Declaring it under `androidPackages` rather than `packages` both publishes it
+and keeps it out of the desktop aggregate (`androidPackageNames` is derived
+from that set). Add it to the `all-android` aggregate in
+`nix/packages/android/default.nix` too, so CI builds it.
 
 ## Build and run
 
