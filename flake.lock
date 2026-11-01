@@ -102,6 +102,23 @@
         "type": "github"
       }
     },
+    "during-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1791547099,
+        "narHash": "sha256-kfTDjQ/OnblHvFf0ZUec6Ms7O7jCX1sX/JykuCZRsIg=",
+        "owner": "tchaloupka",
+        "repo": "during",
+        "rev": "3cd81909a4204b94da7de9f7b9d8e707a7360e74",
+        "type": "github"
+      },
+      "original": {
+        "owner": "tchaloupka",
+        "repo": "during",
+        "rev": "3cd81909a4204b94da7de9f7b9d8e707a7360e74",
+        "type": "github"
+      }
+    },
     "expected-src": {
       "flake": false,
       "locked": {
@@ -603,6 +620,7 @@
         "dub-optional": "dub-optional",
         "dub-raylib-d": "dub-raylib-d",
         "dub-sdl-src": "dub-sdl-src",
+        "during-src": "during-src",
         "expected-src": "expected-src",
         "flake-compat": "flake-compat",
         "flake-parts": "flake-parts",

@@ -98,7 +98,8 @@ section the tutorial conveniences. Delivery order and progress live in
 
 `sparkles:event-horizon` is a completion-first (proactor) event loop with a
 native algebraic-effect layer. On Linux it drives `io_uring` directly (via the
-[`during`](https://github.com/tchaloupka/during) binding) — there is **no
+[`during`](https://github.com/tchaloupka/during) binding, vendored into
+`sparkles:event-horizon-sys` as `sparkles.event_horizon.sys.uring`) — there is **no
 epoll fallback**: a Linux system without a working `io_uring` fails loop
 creation with a structured error (§3.4). macOS (kqueue) and Windows (IOCP)
 are peer backends behind the same seam (§3.1), not degraded fallbacks.
@@ -214,7 +215,7 @@ ok: echoed 20 bytes
 | Package module  | `sparkles.event_horizon`                         |
 
 Modules are split into two strata by an **import firewall**: _effects-side_
-modules never import ring, loop, or scheduler modules (nor `during`), so a
+modules never import ring, loop, or scheduler modules (nor the io_uring binding), so a
 future extraction into a standalone `sparkles:effects` package is mechanical.
 _Loop-side_ modules may import anything.
 
@@ -233,7 +234,7 @@ _Loop-side_ modules may import anything.
 | `handle`           | loop-side    | `LoopHandle` — opt-in type-erased loop access for loop-side plumbing and `-betterC` users (§5.5)                                                                        |
 | `backend.concept`  | loop-side    | `isCompletionBackend` + optional-capability traits, `RawCompletion`, `BackendConfig`, `Waker` (§3.1)                                                                    |
 | `backend.probe`    | loop-side    | `BackendCaps`, `LoopMode`, `ModePolicy`, `probeSystem` (§3.2–3.4)                                                                                                       |
-| `backend.uring`    | loop-side    | `UringBackend` over `during` (§3.5); `backend.kqueue` / `backend.iocp` follow in M10/M11                                                                                |
+| `backend.uring`    | loop-side    | `UringBackend` over the io_uring binding (§3.5); `backend.kqueue` / `backend.iocp` follow in M10/M11                                                                    |
 | `loop`             | loop-side    | `EventLoop!Backend`, `LoopConfig`, `DefaultLoop` — tier A (§5)                                                                                                          |
 | `sched`            | loop-side    | `Sched`, `SchedOptions`, `FiberTask`, `currentTask`, `RootScope` — tier B scheduler (§7)                                                                                |
 | `io`               | loop-side    | direct-style verbs (`read`/`write`/`recv`/`send`/`accept`/`connect`/`sleep`) and the `Stream`/`Listener`/`DgramSocket` handles (§7.3)                                   |
@@ -253,8 +254,9 @@ _Loop-side_ modules may import anything.
 
 **Foundation:** `sparkles:base` supplies the `Buffer` family (staging buffers,
 test helpers) and `recycledErrorInstance`; `sparkles.base.expected`
-(tchaloupka/expected, vendored) supplies `Expected`. `during` (`~>0.5.0`) is the Linux substrate and is not
-re-exported — user code never sees an SQE.
+(tchaloupka/expected, vendored) supplies `Expected`. `sparkles:event-horizon-sys`
+supplies the Linux substrate, `sparkles.event_horizon.sys.uring` (tchaloupka/during
+0.6.0, vendored), which is not re-exported — user code never sees an SQE.
 
 ## 3. Backends and capability probing
 
@@ -393,7 +395,7 @@ cannot be produced, so a degraded host reports skips rather than passes.
 
 ### 3.5 The uring backend
 
-`UringBackend` wraps a `during` `Uring` handle. Lowering is an overload set:
+`UringBackend` wraps the binding's `Uring` handle. Lowering is an overload set:
 each `trySubmit(op, token)` fills the next SQE via the matching `prepXxx`
 helper and sets `user_data = token.raw`. `Buf.origin == registered` selects
 `prepReadFixed`/`prepWriteFixed` automatically — "fixed" is an optimization
@@ -486,7 +488,7 @@ enum bool isOpDesc(Op) = __traits(compiles, { enum OpKind k = Op.kind; });
 `net` with its construction helpers (`ipv4`, …) — effects-side address
 vocabulary usable by test doubles — and is re-exported by `op`;
 `KernelTimespec` (a `__kernel_timespec` mirror) is a library-owned POD in
-`op`. Peer backends satisfy the concept without importing `during`.
+`op`. Peer backends satisfy the concept without importing the io_uring binding.
 
 `accept` returns the new fd only; the peer address is fetched on demand
 (`getpeername`) rather than inflating every op slot by a `sockaddr_storage`.

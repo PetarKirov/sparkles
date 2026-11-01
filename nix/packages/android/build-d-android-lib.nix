@@ -138,8 +138,8 @@ in
       # `-i` compiles (the same pins as nix/dub-lock.json). Spread into a
       # `buildDAndroidLib` call.
       #
-      # `during` (event-horizon's io_uring binding) is deliberately absent:
-      # the uring backend is version-gated off the Android triple (the app
+      # The io_uring binding (sparkles.event_horizon.sys.uring) never compiles
+      # here: the uring backend is version-gated off the Android triple (the app
       # seccomp policy denies io_uring_setup), and the triple selects the
       # kqueue backend over the statically linked libkqueue-android instead
       # (backend/select.d, libkqueue.nix).

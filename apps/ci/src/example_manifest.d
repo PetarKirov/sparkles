@@ -3,8 +3,9 @@
  *
  * `--example-files` runs each tracked example with `dub run --single`. Some
  * examples are platform-specific (e.g. the `io_uring` examples depend on the
- * Linux-only `during` binding). dub's `platforms` directive is only advisory —
- * it does not stop dub from *building* a single-file package on an unlisted
+ * Linux-only io_uring binding, `sparkles.event_horizon.sys.uring`). dub's
+ * `platforms` directive is only advisory — it does not stop dub from
+ * *building* a single-file package on an unlisted
  * platform — so the runner honors the declaration itself: an example whose
  * manifest declares `platforms` the host does not satisfy is skipped rather than
  * built. This keeps the runner generic (it understands the standard dub

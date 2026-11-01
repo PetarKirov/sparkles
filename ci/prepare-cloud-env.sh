@@ -387,9 +387,8 @@ for name, version in sorted(wanted.items()):
 ' >"$plan" || ci_die 'could not resolve registry dependencies'
 
   # `--depth 1` on the tag: these are consumed as sources, not history. A miss
-  # is a warning, never fatal — `silly` is pinned in several selections at a
-  # version that was never tagged upstream, and nothing builds against it any
-  # more (the repo has its own test runner).
+  # is a warning, never fatal: a selection can pin a version that was never
+  # tagged upstream, and these clones are reading material, not build inputs.
   while IFS=$'\t' read -r name version url reason; do
     [ -n "$name" ] || continue
 

@@ -183,6 +183,12 @@
       url = "github:tchaloupka/expected/0793e8b7dc06dd05b3fa3103e5a99bf0bfd5f638";
       flake = false;
     };
+    # The upstream of `sparkles.event_horizon.sys.uring` at the revision vendored
+    # into libs/event-horizon-sys: its licence text, for the credits.
+    during-src = {
+      url = "github:tchaloupka/during/3cd81909a4204b94da7de9f7b9d8e707a7360e74";
+      flake = false;
+    };
     wcwidth-src = {
       url = "https://files.pythonhosted.org/packages/source/w/wcwidth/wcwidth-0.8.2.tar.gz";
       flake = false;

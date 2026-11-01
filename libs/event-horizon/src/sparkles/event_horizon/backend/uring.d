@@ -1,5 +1,6 @@
 /**
-The reference backend: `io_uring` via the `during` binding (SPEC §3.5).
+The reference backend: `io_uring` via the vendored `during` binding,
+sparkles.event_horizon.sys.uring (SPEC §3.5).
 
 Lowering is a statically dispatched overload set: each `trySubmit(op, token)`
 fills the next SQE via the matching `prep` helper and sets
@@ -12,7 +13,7 @@ module sparkles.event_horizon.backend.uring;
 
 // io_uring is Linux-only — and OFF on Android, where the app seccomp policy
 // denies io_uring_setup: the Android triple takes the kqueue-over-libkqueue
-// peer backend instead (backend.select), and `during` never enters its build.
+// peer backend instead (backend.select), and the binding never enters its build.
 //
 // The `libkqueue` configuration is the same exclusion for the same reason: it
 // selects the kqueue peer on Linux so the stack can be tested without a Mac,
@@ -28,7 +29,7 @@ else version (Android)
 }
 else version (linux)  :
 
-import during : AcceptFlags, CancelFlags, CQE_BUFFER_SHIFT, CQEFlags, FsyncFlags,
+import sparkles.event_horizon.sys.uring : AcceptFlags, CancelFlags, CQE_BUFFER_SHIFT, CQEFlags, FsyncFlags,
     FUTEX2_PRIVATE, FUTEX2_SIZE_U32, FUTEX_BITSET_MATCH_ANY,
     MsgFlags, Operation,
     SetupFlags, SubmissionEntry, SubmissionEntryFlags, TimeoutFlags, Uring, futex_waitv,
@@ -40,7 +41,7 @@ import during : AcceptFlags, CancelFlags, CQE_BUFFER_SHIFT, CQEFlags, FsyncFlags
     prepSendMsg, prepStatx, prepSymlinkat, prepTimeout, prepUnlinkat, prepWaitid, prepWrite,
     prepWriteFixed,
     setup;
-import during : DuringTimespec = KernelTimespec, DuringPollEvents = PollEvents;
+import sparkles.event_horizon.sys.uring : DuringTimespec = KernelTimespec, DuringPollEvents = PollEvents;
 
 import sparkles.event_horizon.backend.concept : BackendConfig, RawCompletion, WakeTarget;
 import sparkles.event_horizon.backend.probe;
@@ -117,7 +118,7 @@ struct UringBackend
         return ioOk();
     }
 
-    /// Releases the ring (the `during` handle is RAII/refcounted).
+    /// Releases the ring (the binding's `Uring` handle is RAII/refcounted).
     void close() @safe nothrow @nogc
     {
         _io = Uring.init;
@@ -358,7 +359,7 @@ struct UringBackend
     }
 
     /// Lowers a relative timer (in-ring `TIMEOUT`); the timespec lives in
-    /// the operand store (layout-identical to during's).
+    /// the operand store (layout-identical to the binding's).
     bool trySubmit(in OpTimeout op, OpToken token, ref OpSlot slot) @trusted nothrow @nogc
     {
         if (_io.full)
@@ -423,8 +424,8 @@ struct UringBackend
     /// Lowers an openat2 (the path and `open_how` must be kernel-stable).
     bool trySubmit(in OpOpenAt2 op, OpToken token, ref OpSlot) @trusted nothrow @nogc
     {
-        import during : prepOpenat2;
-        import during.openat2 : DuringOpenHow = OpenHow;
+        import sparkles.event_horizon.sys.uring : prepOpenat2;
+        import sparkles.event_horizon.sys.uring.openat2 : DuringOpenHow = OpenHow;
 
         static assert(DuringOpenHow.sizeof == 3 * ulong.sizeof, "open_how is three ulongs");
 
@@ -719,7 +720,7 @@ struct UringBackend
     IoResult!void registerBufRing(ushort gid, uint entries, void* ringAddr)
         @trusted nothrow @nogc
     {
-        import during : io_uring_buf_reg;
+        import sparkles.event_horizon.sys.uring : io_uring_buf_reg;
 
         io_uring_buf_reg reg;
         reg.ring_addr = cast(ulong) ringAddr;
@@ -813,7 +814,7 @@ unittest
 {
     // Lock in the inferred attributes of the generic members the loop's hot
     // path calls (the non-templates are explicitly attributed above).
-    // (Not `pure`: during's refcounted Uring destructor is impure.)
+    // (Not `pure`: the binding's refcounted Uring destructor is impure.)
     UringBackend b;
     OpSlot dummySlot;
     static assert(is(typeof(() @safe nothrow @nogc {

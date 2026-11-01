@@ -10,9 +10,9 @@ targetType "library"
 dflags "-preview=in" "-preview=dip1000"
 
 dependency "sparkles:base" path="../.."
-// The loop-free layer: error classification and the blocking VFS backend.
+// The loop-free layer: error classification, the blocking VFS backend and the
+// io_uring binding (Linux).
 dependency "sparkles:event-horizon-sys" path="../.."
-dependency "during" version="~>0.5.0" platform="linux"
 
 // Android: the kqueue backend is the only one there (backend/concept.d), over
 // libkqueue built for Android (`android-pkg-config` resolves `kqueue`). First,

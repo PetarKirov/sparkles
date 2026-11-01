@@ -70,7 +70,7 @@ struct OpHandle
 }
 
 /// `__kernel_timespec` mirror — library-owned so peer backends satisfy the
-/// concept without importing `during` (SPEC §4.1).
+/// concept without importing the io_uring binding (SPEC §4.1).
 struct KernelTimespec
 {
     long tv_sec;  /// seconds
