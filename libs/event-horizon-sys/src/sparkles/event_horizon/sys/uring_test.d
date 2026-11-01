@@ -56,3 +56,42 @@ unittest
     assert(io.empty, "the backstop completed: the deadline was dropped");
     assert(waited < 1.seconds);
 }
+
+@("uring.prepCancel64.cancelsByRawUserData")
+@safe nothrow @nogc
+unittest
+{
+    import core.stdc.errno : ECANCELED;
+
+    enum ulong target = 0xDEAD_BEEF_0000_0001, canceller = 2;
+
+    Uring io;
+    openRing(io);
+
+    KernelTimespec forever = {tv_sec: 10};
+    SubmissionEntry e;
+    e.prepTimeout(forever);
+    e.user_data = target;
+    io.put(e);
+
+    // A raw `user_data` token, the kind event-horizon tags its operations
+    // with: no variable holds it, so the by-reference `prepCancel` (which
+    // cancels by the variable's address) cannot name it.
+    SubmissionEntry c;
+    c.prepCancel64(target);
+    c.user_data = canceller;
+    io.put(c);
+    assert(io.submitAndWait(2) == 2);
+
+    int cancelRes = int.min, targetRes = int.min;
+    foreach (_; 0 .. 2)
+    {
+        if (io.front.user_data == canceller)
+            cancelRes = io.front.res;
+        else if (io.front.user_data == target)
+            targetRes = io.front.res;
+        io.popFront();
+    }
+    assert(cancelRes == 0);
+    assert(targetRes == -ECANCELED);
+}

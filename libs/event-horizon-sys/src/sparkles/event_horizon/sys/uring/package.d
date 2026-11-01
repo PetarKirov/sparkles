@@ -21,6 +21,9 @@
  *       the two prototypes clash;
  *     * `Uring.submitAndWait(want, args)` with nothing to submit waits with `args`: upstream
  *       dropped them there, so a wait with a deadline blocked until a completion arrived.
+ *     * `prepCancel64` (liburing's `io_uring_prep_cancel64`) cancels by a raw `user_data`
+ *       value: `prepCancel` cancels by the address of a variable, which cannot name a request
+ *       tagged with `setUserDataRaw`.
  * )
  *
  * Why vendored: Sparkles' `io_uring` backend (`sparkles:event-horizon`) stands on this
@@ -1887,6 +1890,26 @@ ref SubmissionEntry prepMultishotAcceptDirect(ADDR)(return ref SubmissionEntry e
 ref SubmissionEntry prepCancel(D)(return ref SubmissionEntry entry, ref D userData, uint flags = 0) @trusted
 {
     entry.prepRW(Operation.ASYNC_CANCEL, -1, cast(void*)&userData);
+    entry.cancel_flags = cast(CancelFlags)flags;
+    return entry;
+}
+
+/**
+ * Like `prepCancel`, but names the request to cancel by the `user_data` value itself rather than
+ * by the address of a variable holding it: for requests tagged with a raw 64-bit token (see
+ * `setUserDataRaw`). Mirrors liburing's `io_uring_prep_cancel64`.
+ *
+ * Params:
+ *      entry = `SubmissionEntry` to prepare
+ *      userData = `user_data` value of the request that should be cancelled
+ *      flags = `CancelFlags`
+ *
+ * Note: Available from Linux 5.5
+ */
+ref SubmissionEntry prepCancel64(return ref SubmissionEntry entry, ulong userData, uint flags = 0) @safe
+{
+    entry.prepRW(Operation.ASYNC_CANCEL, -1, null, 0, 0);
+    entry.addr = userData;
     entry.cancel_flags = cast(CancelFlags)flags;
     return entry;
 }
