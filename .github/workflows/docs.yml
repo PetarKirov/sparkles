@@ -42,7 +42,10 @@ jobs:
     # yarn install + the wasm nix build + VitePress build + Cloudflare deploy run ~5m
     # uncontended; runner contention during stacked-PR storms stretches the
     # nix setup/teardown past 15m, cancelling after the deploy had succeeded.
-    timeout-minutes: 30
+    # A change to a shared library rebuilds what the site build runs (`hue`,
+    # `twoslash-extract`): run 41348859258 (PR #709) spent 23m in the VitePress
+    # step, 13m on #708, and was cancelled at 30m during the deploy.
+    timeout-minutes: 45
 
     permissions:
       contents: read
