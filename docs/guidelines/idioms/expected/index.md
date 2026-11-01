@@ -1,10 +1,10 @@
 # Expected Error Handling Idioms
 
-This guide provides idiomatic patterns for error handling in D using the [`github:tchaloupka/expected`][expected-repo] library (a core dependency in this codebase), with side-by-side comparisons for developers coming from Rust.
+This guide provides idiomatic patterns for error handling in D using `sparkles.base.expected`: Tomáš Chaloupka's [`github:tchaloupka/expected`][expected-repo] library, vendored into `sparkles:base` (its module header names the upstream revision), with side-by-side comparisons for developers coming from Rust.
 
 ## Motivation
 
-In standard `@safe pure nothrow @nogc` D code, throwing garbage-collected exceptions is disallowed. The [`github:tchaloupka/expected`][expected-repo] library provides an algebraic data type [`Expected!(T, Error, Hook)`][Expected] that represents either a successful result `T` (via [`ok`][ok]) or a structured failure `Error` (via [`err`][err]), with zero heap allocations.
+In standard `@safe pure nothrow @nogc` D code, throwing garbage-collected exceptions is disallowed. The library provides an algebraic data type [`Expected!(T, Error, Hook)`][Expected] that represents either a successful result `T` (via [`ok`][ok]) or a structured failure `Error` (via [`err`][err]), with zero heap allocations.
 
 ### Design by Introspection (Hooks)
 

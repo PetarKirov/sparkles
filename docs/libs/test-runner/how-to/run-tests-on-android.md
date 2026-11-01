@@ -17,8 +17,7 @@ packages.font-android-tests = config.legacyPackages.buildDAndroidTests {
   pname = "font-android-tests";
   exeName = "font-tests";
   testedDirs = [ "libs/font/src" "libs/font/test" ];
-  versions = [ "Have_expected" "Have_sparkles_base" ];
-  dubDeps = [ { name = "expected"; src = inputs.dub-expected; } ];
+  versions = [ "Have_sparkles_base" ];
 };
 ```
 

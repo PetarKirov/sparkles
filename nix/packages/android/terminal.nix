@@ -55,7 +55,6 @@ in
           # through ui-raylib; its GLSL comes prebuilt from `ui-shaders`.
           "SparklesUiGpuEffects"
           "Have_bolts"
-          "Have_expected"
           "Have_optional"
           "Have_raylib_d"
           "Have_sparkles_android"

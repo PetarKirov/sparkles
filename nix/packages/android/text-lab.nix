@@ -63,7 +63,6 @@ in
           # sparkles:font's HarfBuzz engine (the canvas shapes clusters).
           "UiAppGuiVulkan"
           "SparklesFontEngine"
-          "Have_expected"
           "Have_optional"
           "Have_bolts"
         ]
@@ -71,10 +70,6 @@ in
           lib.subtractLists [ "test-runner" "test-runner-impl" ] closure
         );
         dubDeps = [
-          {
-            name = "expected";
-            src = inputs.dub-expected;
-          }
           # sparkles:wired's.
           {
             name = "optional";

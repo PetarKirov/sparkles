@@ -61,18 +61,6 @@
         "url": "https://code.dlang.org/packages/bolts/1.3.1.zip"
       }
     },
-    "dub-expected": {
-      "flake": false,
-      "locked": {
-        "narHash": "sha256-uSpeNU8FFpvb11alGkSF6E5QH57rpUUf6FR5dEdQmkY=",
-        "type": "file",
-        "url": "https://code.dlang.org/packages/expected/0.4.1.zip"
-      },
-      "original": {
-        "type": "file",
-        "url": "https://code.dlang.org/packages/expected/0.4.1.zip"
-      }
-    },
     "dub-optional": {
       "flake": false,
       "locked": {
@@ -111,6 +99,23 @@
         "owner": "dlang",
         "repo": "dub",
         "rev": "5efed360e1c9342453bc5dd19339c75981526d83",
+        "type": "github"
+      }
+    },
+    "expected-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1791551789,
+        "narHash": "sha256-9dU63MaetK8m17gHaGd+O6FS45y4TrKgaLUIQoVwhjA=",
+        "owner": "tchaloupka",
+        "repo": "expected",
+        "rev": "0793e8b7dc06dd05b3fa3103e5a99bf0bfd5f638",
+        "type": "github"
+      },
+      "original": {
+        "owner": "tchaloupka",
+        "repo": "expected",
+        "rev": "0793e8b7dc06dd05b3fa3103e5a99bf0bfd5f638",
         "type": "github"
       }
     },
@@ -595,10 +600,10 @@
         "dlang-nix": "dlang-nix",
         "dmd-src": "dmd-src",
         "dub-bolts": "dub-bolts",
-        "dub-expected": "dub-expected",
         "dub-optional": "dub-optional",
         "dub-raylib-d": "dub-raylib-d",
         "dub-sdl-src": "dub-sdl-src",
+        "expected-src": "expected-src",
         "flake-compat": "flake-compat",
         "flake-parts": "flake-parts",
         "ghostty": "ghostty",

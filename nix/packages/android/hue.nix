@@ -48,7 +48,6 @@ in
         "Have_sparkles_docs"
         "Have_sparkles_core_cli"
         "Have_sparkles_raylib_text"
-        "Have_expected"
         "Have_sparkles_base"
         "Have_sparkles_ui"
         "Have_sparkles_tui"

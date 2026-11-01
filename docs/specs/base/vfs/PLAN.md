@@ -114,7 +114,7 @@ for Linux, macOS, Windows and a generic POSIX arm; the test-only switches for
 forcing the component walk and forcing probe absence.
 **Acceptance.** Oracles 1, 3, 4 (with two backends) and 6 pass on every leg.
 `dub describe :event-horizon-sys` shows no dependency beyond base,
-`expected`, `sparkles:reflection` and `sparkles:metadata` (`VFB6`).
+`sparkles:reflection` and `sparkles:metadata` (`VFB6`).
 **Excludes.** The event loop; consumers.
 
 ## M3: the asynchronous backend and event-horizon's migration

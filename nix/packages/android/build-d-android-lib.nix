@@ -172,10 +172,6 @@ in
             src = inputs.dub-raylib-d;
           }
           {
-            name = "expected";
-            src = inputs.dub-expected;
-          }
-          {
             name = "optional";
             src = inputs.dub-optional;
           }
