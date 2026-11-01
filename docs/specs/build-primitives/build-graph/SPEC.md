@@ -334,7 +334,12 @@ produce a declared one.
 **BGA4: Explicit environment.** Every action **must** run with the environment
 its key declares (invariant 2). An ambient `DFLAGS`, `CC`, `NIX_CFLAGS_COMPILE`
 or any other variable is not inherited. A caller that wants extra compiler
-flags requests them as variant options.
+flags requests them as variant options. The declared environment **must** set
+`SOURCE_DATE_EPOCH` to a fixed value, so `__DATE__` and `__TIME__` do not
+follow the clock, and **must** fix the variables that change diagnostics
+(`TERM`, `NO_COLOR`) and the target (`MACOSX_DEPLOYMENT_TARGET`). An action
+passes no `@file` response file, because LDC reads an environment variable of
+the same name instead when one is set.
 
 **BGA5: Relocatable invocation.**
 
@@ -402,10 +407,13 @@ as a root-relative or store path with a content digest:
 - its string imports;
 - the C headers its ImportC sources included.
 
-It also lists every **absent candidate**: each path the compiler's D import,
-string import or C include search probed and found missing before the path it
-resolved to, and every path probed by a lookup that failed. An absent
-candidate also stands for each missing parent directory on its path.
+It also lists every **absent candidate**: each path the compiler's D import or
+string import search probed and found missing before the path it resolved to,
+and every path probed by a lookup that failed. An absent candidate also stands
+for each missing parent directory on its path. The C preprocessor cannot
+report its failed lookups (`__has_include`, the includer's own directory,
+`#include_next`), so a compile with ImportC sources also keys on the paths and
+content digests of every file under its C include roots, as BGK6 does.
 
 The manifest comes from the compiler's dependency output. On LDC, that is
 `--makedeps` plus the fork's extensions for C headers and absent candidates

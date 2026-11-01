@@ -314,7 +314,7 @@ as needed.
 **Revisit when** the runner's implementation sheds its dependencies on the
 rest of the repository.
 
-## D17: Library targets see their own C headers (proposed)
+## D17: Library targets see their own C headers (accepted)
 
 **Question.** dub runs `pkg-config` only for executable and dynamic-library
 targets. Library targets with ImportC sources compiled only because the Nix dev
