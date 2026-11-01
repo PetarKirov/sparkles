@@ -201,7 +201,7 @@ techniques that were evaluated.
 
 ### Expected Error Handling
 
-To support `@nogc nothrow` code paths, the project uses the [`github:tchaloupka/expected`][expected] library. This allows functions to return either a valid payload or a structured error, without allocating on the garbage collected heap.
+To support `@nogc nothrow` code paths, the project uses `sparkles.base.expected`, the [`github:tchaloupka/expected`][expected] library vendored into `sparkles:base`. This allows functions to return either a valid payload or a structured error, without allocating on the garbage collected heap.
 
 See [Expected Error Handling](idioms/expected/) for comprehensive guidelines on how to chain, transform, and flatten `Expected` values, with handy comparisons for developers coming from Rust.
 

@@ -11,7 +11,7 @@
 # - sources: the recipe's `sparkles:*` closure, as `buildSparklesApp` computes
 #   it, plus the example's own directory;
 # - versions: a `Have_*` per library in that closure (the unittest-only test
-#   runner excepted, which code tests for) and `Have_expected`;
+#   runner excepted, which code tests for);
 # - native libraries: libkqueue when Event Horizon is in the closure (its
 #   Android backend);
 # - the manifest: generated, with the application id
@@ -110,16 +110,11 @@ in
               lib.optional (has "event-horizon") "${config.packages.libkqueue-android}/lib/${abi}/libkqueue.a";
             raylibGlue = false;
             versions = [
-              "Have_expected"
             ]
             ++ map (name: "Have_sparkles_${javaName name}") (
               lib.subtractLists [ "test-runner" "test-runner-impl" ] closure
             );
             dubDeps = [
-              {
-                name = "expected";
-                src = inputs.dub-expected;
-              }
             ];
             description = "${info.examplePathRel} as an Android shared library";
           };

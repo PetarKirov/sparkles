@@ -26,7 +26,8 @@ $(LIST
     $(ITEM `nix/dub-lock.json` and each application's `dub.selections.json`
         — every dub package, project-wide;)
     $(ITEM each application's dub manifest and its `sparkles:*` closure — the
-        dub packages (`dub:<name>`) and native libraries (`-l<name>`) it links;)
+        dub packages (`dub:<name>`) and native libraries (`-l<name>`) it links,
+        and the in-tree packages themselves (`sparkles:<name>`);)
     $(ITEM the APK builders — the static archives they link (`libX.a`), the
         dub packages they compile in (`dubDeps`, transitive ones included), the
         font files they bundle, and the tree-sitter grammar bundle;)
@@ -35,7 +36,9 @@ $(LIST
 )
 
 A part provides the tokens in its $(B Ships as) row, plus `dub:<name>` when its
-version source is a dub package. Every scanned token must be provided by a part,
+version source is a dub package. Code vendored into an in-tree package ships as
+that package (`sparkles:base`). Every scanned token but an in-tree package's must
+be provided by a part,
 every part must provide a scanned token, and each application page must include
 exactly the parts its own tokens are provided by.
 
@@ -579,6 +582,8 @@ ShippedToken[] scanShipped(scope FileReader read, ref string[] problems) @safe
                 }
                 const name = dir.startsWith("libs/") ? dir["libs/".length .. $] : null;
                 const settings = shippedSettings(parsed.value, chosen.get(name, null));
+                if (name.length)
+                    closure ~= ShippedToken("sparkles:" ~ name, app.name, manifest);
                 foreach (t; manifestTokens(settings))
                     closure ~= ShippedToken(t, app.name, manifest);
                 foreach (lib; sparklesEdges(settings))
@@ -629,6 +634,11 @@ ShippedToken[] scanShipped(scope FileReader read, ref string[] problems) @safe
     return found;
 }
 
+/// Whether `token` names an in-tree package: Sparkles' own code, which needs a part
+/// only for what is vendored into it.
+bool isInTree(string token) @safe pure nothrow @nogc
+    => token.startsWith("sparkles:");
+
 /// What `--check-credits` found.
 struct CreditsReport
 {
@@ -673,14 +683,16 @@ CreditsReport checkCredits(scope FileReader read, in string[string] parts,
         parsed ~= part;
     }
     report.partCount = parsed.length;
-    report.tokenCount = shipped.map!(s => s.token[]).array.sort.uniq.array.length;
+    report.tokenCount = shipped.filter!(s => !isInTree(s.token))
+        .map!(s => s.token[]).array.sort.uniq.array.length;
 
     bool answers(ref const CreditPart p, string token)
         => p.provides.any!(pattern => tokenMatches(token, pattern));
 
     string[] reported;
     foreach (s; shipped)
-        if (!parsed.any!(p => answers(p, s.token)) && !reported.canFind(s.token))
+        if (!isInTree(s.token) && !parsed.any!(p => answers(p, s.token))
+            && !reported.canFind(s.token))
         {
             report.uncredited ~= s;
             reported ~= s.token;
@@ -823,4 +835,26 @@ version (unittest)
         "docs/credits/terminal.md does not include parts/bolts.md"));
     assert(report.pageErrors.canFind(
         "docs/credits/hue.md includes parts/dejavu.md, which hue does not ship"));
+}
+
+@("credits.checkCredits.vendoredCodeShipsAsItsPackage")
+@safe unittest
+{
+    import std.array : replace;
+
+    const tree = fixtureTree();
+    auto parts = fixtureParts();
+    parts["upstream"] = "### upstream\n\n| Field | Value |\n| - | - |\n"
+        ~ "| Version source | flake input `upstream-src` |\n| Licence | `BSL-1.0` |\n"
+        ~ "| Home | https://example.org |\n| Ships as | `sparkles:base` |\n\n"
+        ~ "<!-- @include: ../licenses/upstream/LICENSE -->\n";
+    const page = allParts ~ "<!-- @include: ./parts/upstream.md -->\n";
+    const pages = ["index": page, "terminal": page, "hue": page];
+    const report = checkCredits((p) => p in tree ? tree[p] : null, parts, pages);
+    assert(report.ok, report.problems.join("; ") ~ report.pageErrors.join("; "));
+
+    // Vendored into a package no application reaches, it ships nothing.
+    parts["upstream"] = parts["upstream"].replace("`sparkles:base`", "`sparkles:nowhere`");
+    const stale = checkCredits((p) => p in tree ? tree[p] : null, parts, pages);
+    assert(stale.unshipped == ["upstream"]);
 }

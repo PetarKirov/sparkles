@@ -28,16 +28,11 @@ in
           "libs/event-horizon-sys/src"
         ];
         versions = [
-          "Have_expected"
           "Have_sparkles_base"
           "Have_sparkles_event_horizon_sys"
           "Have_sparkles_image"
         ];
         dubDeps = [
-          {
-            name = "expected";
-            src = inputs.dub-expected;
-          }
         ];
         description = "sparkles:font unit tests as Android executables, per ABI";
       };
@@ -60,17 +55,12 @@ in
           "libs/event-horizon-sys/src"
         ];
         versions = [
-          "Have_expected"
           "Have_sparkles_base"
           "Have_sparkles_event_horizon_sys"
           "Have_sparkles_image"
           "SparklesFontEngine"
         ];
         dubDeps = [
-          {
-            name = "expected";
-            src = inputs.dub-expected;
-          }
         ];
         extraLinkFlags =
           t:

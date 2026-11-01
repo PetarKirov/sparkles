@@ -177,6 +177,12 @@
       url = "github:ibireme/yyjson/0.12.0";
       flake = false;
     };
+    # The upstream of `sparkles.base.expected` at the revision vendored into
+    # libs/base: its licence text, for the credits (nix/packages/credits.nix).
+    expected-src = {
+      url = "github:tchaloupka/expected/0793e8b7dc06dd05b3fa3103e5a99bf0bfd5f638";
+      flake = false;
+    };
     wcwidth-src = {
       url = "https://files.pythonhosted.org/packages/source/w/wcwidth/wcwidth-0.8.2.tar.gz";
       flake = false;
@@ -187,11 +193,6 @@
     dub-raylib-d = {
       type = "file";
       url = "https://code.dlang.org/packages/raylib-d/6.0.1.zip";
-      flake = false;
-    };
-    dub-expected = {
-      type = "file";
-      url = "https://code.dlang.org/packages/expected/0.4.1.zip";
       flake = false;
     };
     dub-optional = {

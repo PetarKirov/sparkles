@@ -312,8 +312,8 @@ publishing new baselines.
 
 ### Error handling — `Expected` in `@nogc nothrow` code
 
-`@safe pure nothrow @nogc` code reports errors with
-[`expected`](https://github.com/tchaloupka/expected) (`~>0.4.1`): `ok(v)` /
+`@safe pure nothrow @nogc` code reports errors with `sparkles.base.expected`
+([tchaloupka/expected](https://github.com/tchaloupka/expected), vendored): `ok(v)` /
 `err!T(e)`, `hasValue`/`hasError`, chained with `map`, `mapError`, `andThen`,
 `orElse`. An `Expected` is a range, so `joiner` flattens results and drops
 errors. A path that must still throw in `@nogc` uses
@@ -609,6 +609,7 @@ Hooks run on commit and may modify or block it; each bypasses with
 
 ## Dependencies
 
-D dependencies are pinned in `dub.selections.json` and `nix/dub-lock.json`;
-`expected` (`~>0.4.1`) is a runtime dependency of `base` and `versions`. System
-tools, `delta` included, come from the flake.
+D dependencies are pinned in `dub.selections.json` and `nix/dub-lock.json`.
+`Expected` is not one of them: it is vendored into `sparkles:base` as
+`sparkles.base.expected` (from tchaloupka/expected; its header names the
+revision). System tools, `delta` included, come from the flake.

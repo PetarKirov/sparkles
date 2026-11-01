@@ -30,16 +30,11 @@ in
           "libs/base/src"
         ];
         versions = [
-          "Have_expected"
           "Have_sparkles_base"
           "Have_sparkles_metadata"
           "Have_sparkles_reflection"
         ];
         dubDeps = [
-          {
-            name = "expected";
-            src = inputs.dub-expected;
-          }
         ];
         description = "sparkles:base unit tests as Android executables, per ABI";
       };

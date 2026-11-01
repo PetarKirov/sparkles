@@ -252,8 +252,8 @@ _Loop-side_ modules may import anything.
 | `package`          | —            | public re-exports                                                                                                                                                       |
 
 **Foundation:** `sparkles:base` supplies the `Buffer` family (staging buffers,
-test helpers) and `recycledErrorInstance`; the `expected` package (`~>0.4.1`)
-supplies `Expected`. `during` (`~>0.5.0`) is the Linux substrate and is not
+test helpers) and `recycledErrorInstance`; `sparkles.base.expected`
+(tchaloupka/expected, vendored) supplies `Expected`. `during` (`~>0.5.0`) is the Linux substrate and is not
 re-exported — user code never sees an SQE.
 
 ## 3. Backends and capability probing
