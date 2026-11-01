@@ -1,7 +1,7 @@
 #!/usr/bin/env dub
 /+ dub.sdl:
     name "io_uring_send_zc"
-    dependency "during" version="~>0.5.0"
+    dependency "sparkles:event-horizon-sys" path="../../../../.."
     platforms "linux"
     targetPath "build"
 +/
@@ -43,7 +43,7 @@
  */
 module io_uring_send_zc;
 
-import during;
+import sparkles.event_horizon.sys.uring;
 
 import core.sys.linux.errno : EINVAL, EOPNOTSUPP, ENOSYS;
 import core.sys.posix.arpa.inet : htonl;

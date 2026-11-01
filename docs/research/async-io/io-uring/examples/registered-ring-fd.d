@@ -1,7 +1,7 @@
 #!/usr/bin/env dub
 /+ dub.sdl:
     name "io_uring_registered_ring_fd"
-    dependency "during" version="~>0.5.0"
+    dependency "sparkles:event-horizon-sys" path="../../../../.."
     platforms "linux"
     targetPath "build"
 +/
@@ -34,7 +34,7 @@
  */
 module io_uring_registered_ring_fd;
 
-import during;
+import sparkles.event_horizon.sys.uring;
 
 import core.stdc.errno : EINVAL, EOPNOTSUPP, ENOSYS;
 
