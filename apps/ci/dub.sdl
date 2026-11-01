@@ -76,6 +76,9 @@ configuration "unittest" {
     // workspace), so this build declares the import path itself.
     dependency "sparkles:test-utils" path="../.."
 
+    // The `--since` tests build fixture repositories with `TmpGitRepo`.
+    subConfiguration "sparkles:build-primitives" "testing"
+
     dflags "-checkaction=context" "-allinst"
 }
 
