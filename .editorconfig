@@ -25,6 +25,11 @@ indent_style = space
 [libs/core-cli/src/sparkles/core_cli/prettyprint.d]
 indent_size = unset
 
+# Vendored upstream (tchaloupka/expected), kept in its own formatting: its DDoc
+# tables and aligned conditions indent by 2 and by alignment.
+[libs/base/src/sparkles/base/expected.d]
+indent_size = unset
+
 # Test data files contain exact byte sequences — no trailing newline
 [libs/ui/test/data/**]
 charset = unset
