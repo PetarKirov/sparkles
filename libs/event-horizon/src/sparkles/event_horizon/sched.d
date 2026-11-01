@@ -180,6 +180,10 @@ struct Sched
 {
     @disable this(this);
 
+    /// Installs the fiber parker around every resume (fiber-parker.md EFP1),
+    /// which `hasFiberParker` detects.
+    enum bool installsFiberParker = true;
+
     /// Builds the loop and pre-allocates the fiber slab (the only
     /// GC-allocating phase; steady-state operation is allocation-free).
     static IoResult!void create(out Sched s, in SchedOptions opts = SchedOptions(),

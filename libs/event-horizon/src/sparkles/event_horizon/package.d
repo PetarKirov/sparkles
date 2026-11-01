@@ -10,6 +10,7 @@ public import sparkles.event_horizon.errors;
 public import sparkles.event_horizon.cause;
 public import sparkles.event_horizon.capability;
 public import sparkles.event_horizon.channel;
+public import sparkles.event_horizon.cross_channel;
 public import sparkles.event_horizon.scope_;
 public import sparkles.event_horizon.schedule;
 public import sparkles.event_horizon.clock;
