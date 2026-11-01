@@ -1,5 +1,5 @@
 /++
-Per-task output spooling ([SPEC §5.5, §10.3](../../../../../../docs/specs/ci/task-dag/SPEC.md)):
+Per-task output spooling ([SPEC TDM14, TDO3](../../../../../../docs/specs/build-primitives/task-dag/SPEC.md)):
 a task's output lines are kept in memory up to a byte budget; past it the
 whole transcript continues in a spill file, and memory keeps only the most
 recent lines — the diagnostic tail.

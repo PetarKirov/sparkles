@@ -1,5 +1,5 @@
 /++
-The subprocess action adapter ([SPEC §5.1, §7, §8](../../../../../../docs/specs/ci/task-dag/SPEC.md)):
+The subprocess action adapter ([SPEC TDM3, TDE1, TDC2](../../../../../../docs/specs/build-primitives/task-dag/SPEC.md)):
 runs a $(REF ProcessAction, sparkles,build_primitives,task,action) through Event Horizon's
 `supervise` (event-horizon SPEC §13.5) and maps its result to a task outcome.
 
@@ -101,7 +101,7 @@ struct ProcessRecord
     ExitStatus status;            /// valid once a child existed and was reaped
     ProcessResourceUsage usage;   ///
     /// RSS/CPU sampling was unavailable: `Degraded(usageUnavailable)`
-    /// metadata, never an outcome change ([SPEC §6.7]).
+    /// metadata, never an outcome change ([SPEC TDM11]).
     bool usageUnavailable;
     IoError spawnError;           /// valid for `ProcessEnd.spawnFailed`
     OutputSpool output;           /// the task's lines, bounded

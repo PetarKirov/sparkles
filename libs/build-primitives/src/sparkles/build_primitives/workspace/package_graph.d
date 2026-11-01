@@ -1,5 +1,5 @@
 /++
-The repository's package graph ([SPEC §4.1](../../../../../../docs/specs/ci/task-dag/SPEC.md)):
+The repository's package graph ([SPEC TDS1, TDS2](../../../../../../docs/specs/build-primitives/task-dag/SPEC.md)):
 every root `dub.sdl` sub-package with its stable qualified id, directory,
 platforms, and the in-tree dependencies its active configuration declares.
 
@@ -72,7 +72,7 @@ struct Package
     string configuration;
 }
 
-/// Which configuration a command mode activates ([SPEC §4.1]).
+/// Which configuration a command mode activates ([SPEC TDS2]).
 @WireCase(CaseStyle.kebabCase)
 enum RecipeRole
 {
@@ -344,7 +344,7 @@ private PackageId[] uniqueSorted(PackageId[] ids) @safe pure nothrow @nogc
 /**
 Reads the root `dub.sdl` under `repoRoot` and every sub-package recipe it
 lists, then builds the graph ($(LREF buildPackageGraph)). A bounded,
-synchronous planning read ([SPEC §7]).
+synchronous planning read ([SPEC TDE3]).
 */
 PlanExpected!(PackageGraph, DiscoveryError) discoverPackages(string repoRoot, RecipeRole role,
     scope const(string)[] hostTokens) @safe

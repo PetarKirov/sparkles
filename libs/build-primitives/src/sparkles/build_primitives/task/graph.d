@@ -1,5 +1,5 @@
 /++
-Task graphs ([SPEC §5, §9, §12](../../../../../../docs/specs/ci/task-dag/SPEC.md)):
+Task graphs ([SPEC TDM5, TDD2, TDY3](../../../../../../docs/specs/build-primitives/task-dag/SPEC.md)):
 a builder, validation, stable topological order, edge-condition resolution,
 blocked propagation, and the dry-run projection.
 
@@ -58,7 +58,7 @@ index — so ranking the nodes before numbering them makes the order stable.
 On a cycle, `order` is empty and `cycle` holds the shortest cycle among the
 nodes Kahn's algorithm could not release, found by breadth-first search from
 each in index order (the first shortest wins), rotated to start at its lowest
-member ([SPEC §9]).
+member ([SPEC TDD2]).
 */
 StableOrder stableTopologicalOrder(size_t count, scope const(IndexEdge)[] edges) @safe pure nothrow
 {
@@ -903,7 +903,7 @@ unittest
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
-Writes the dry-run plan of `graph` ([SPEC §12]): nodes in presentation order
+Writes the dry-run plan of `graph` ([SPEC TDY3]): nodes in presentation order
 with their kind, claim, and redacted action summary; edges with condition and
 reason; counts by kind; and the total weighted capacity.
 

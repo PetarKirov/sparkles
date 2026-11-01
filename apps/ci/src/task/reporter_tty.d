@@ -1,5 +1,5 @@
 /++
-The interactive reporter ([SPEC §10.2, §10.4](../../../../docs/specs/ci/task-dag/SPEC.md)):
+The interactive reporter ([SPEC TDO2, TDO4](../../../../docs/specs/build-primitives/task-dag/SPEC.md)):
 `sparkles.ui`'s `TaskReporter` over a `LiveRegion`, driven by task events.
 
 Every planned task registers before any runs, so totals never move. A running

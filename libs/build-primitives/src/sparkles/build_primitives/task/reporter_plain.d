@@ -1,5 +1,5 @@
 /++
-The plain reporter ([SPEC §10.3, §10.4](../../../../../../docs/specs/ci/task-dag/SPEC.md)):
+The plain reporter ([SPEC TDO3, TDO4](../../../../../../docs/specs/build-primitives/task-dag/SPEC.md)):
 the deterministic non-TTY transcript, and `--interlaced` streaming.
 
 $(B Default.) Each task's output is spooled, and its block — every line
@@ -15,7 +15,7 @@ arrives; across tasks the order is the run's. The terminal lines, a replay
 of each failed task's output tail, and the summary still come at the end, in
 presentation order.
 
-$(B CI providers) ([task-DAG SPEC §7.6](../../../../../../docs/specs/build-primitives/task-dag/SPEC.md)).
+$(B CI providers) ([task-DAG SPEC TDO6, TDO7](../../../../../../docs/specs/build-primitives/task-dag/SPEC.md)).
 With `PlainOptions.ci` set to a provider that has groups, each replayed
 block with output is wrapped in a group titled `<id>: <outcome>`, its
 terminal line following the group. Interlaced lines are never grouped,

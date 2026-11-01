@@ -1,5 +1,5 @@
 /++
-What every reporter shares ([SPEC §10](../../../../../../docs/specs/ci/task-dag/SPEC.md)):
+What every reporter shares ([SPEC TDO1–TDO4](../../../../../../docs/specs/build-primitives/task-dag/SPEC.md)):
 the reporter and event-source concepts, the consumer loop, the ordered block
 buffer, outcome wording, and the run summary.
 
@@ -68,7 +68,7 @@ if (isFiberExecutor!X && isEventSource!(Src, X) && isReporter!R)
 /**
 Buffers each task's output and releases complete blocks in presentation
 order: task `i`'s block is released once it and every task before it are
-terminal ([SPEC §10.3]). Output beyond the memory budget spills under
+terminal ([SPEC TDO3]). Output beyond the memory budget spills under
 `spillRoot`, as the process adapter's does.
 */
 struct OrderedBlocks
@@ -224,7 +224,7 @@ struct SummaryFacts
 }
 
 /**
-Writes the final summary ([SPEC §10.2]): every outcome count — succeeded,
+Writes the final summary ([SPEC TDO2]): every outcome count — succeeded,
 failed, degraded, skipped, blocked, cancelled — then the cancellation, the
 failed and blocked-by-failure tasks in presentation order, the wall time when
 wanted, and the exit status.

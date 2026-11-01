@@ -1,5 +1,5 @@
 /++
-The task vocabulary ([SPEC §5](../../../../../../docs/specs/ci/task-dag/SPEC.md)):
+The task vocabulary ([SPEC TDM1–TDM14](../../../../../../docs/specs/build-primitives/task-dag/SPEC.md)):
 task ids, nodes, edges, resource claims, outcomes, and events.
 
 This module is a leaf: beside Phobos and `sparkles:base` it imports only the
@@ -47,7 +47,7 @@ semantic identity — `test:sparkles.base:unittest`,
 `docs:verify:README.md:readme_versions`.
 
 It never contains a memory address, random number, temporary path, or
-discovery index ([SPEC §5.1]). Ids order by their text.
+discovery index ([SPEC TDM1]). Ids order by their text.
 */
 struct TaskId
 {
@@ -181,7 +181,7 @@ enum TaskKind
 
 /**
 Where a node sits in dry-run output, buffered replay, failure replay, and
-summaries ([SPEC §5.1]): command phase, then package/file key, then work-kind
+summaries ([SPEC TDM2]): command phase, then package/file key, then work-kind
 key, then within-owner ordinal, compared in that order.
 */
 struct PresentationKey
@@ -204,7 +204,7 @@ struct PresentationKey
 }
 
 /**
-What a node holds while it runs ([SPEC §5.3]). The executor admits a node only
+What a node holds while it runs ([SPEC TDM7]). The executor admits a node only
 when every exclusive key is free and `jobsWeight` tokens are available.
 */
 struct ResourceClaim
@@ -220,7 +220,7 @@ struct ResourceClaim
 }
 
 /**
-The default claim for a `kind` of work ([SPEC §5.3]'s weight table). A
+The default claim for a `kind` of work ([SPEC TDM9]'s weight table). A
 compiler-bearing node weighs 2; everything else 1. A mutating rewrite also
 needs its `workspace-write:<path>` key — see $(LREF rewriteClaim). Package
 overrides (a DMD-frontend-heavy package weighs 4) are the planner's.
@@ -271,7 +271,7 @@ enum FailurePolicy
     /// A failure is the package's or file's result and may trigger fail-fast.
     authoritative,
     /// A failure is classified by a later node (a coverage attempt whose
-    /// plain retry decides): it never triggers fail-fast ([SPEC §8]).
+    /// plain retry decides): it never triggers fail-fast ([SPEC TDC4]).
     provisional,
 }
 
@@ -287,7 +287,7 @@ enum OutputPolicy
     none,
 }
 
-/// A unit of work in a task graph ([SPEC §5.1]).
+/// A unit of work in a task graph ([SPEC TDM1–TDM3]).
 struct TaskNode
 {
     TaskId id;                   ///
@@ -304,7 +304,7 @@ struct TaskNode
 // Edges
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// When an edge lets its dependent start ([SPEC §5.2]).
+/// When an edge lets its dependent start ([SPEC TDM5]).
 @WireCase(CaseStyle.kebabCase)
 enum EdgeCondition
 {
@@ -418,7 +418,7 @@ enum BlockReason
 A required prerequisite did not succeed or its edge condition became
 impossible. `cause` is the immediate prerequisite; `root` is the task whose
 outcome started the chain. `fromFailure` says whether that root failed —
-the block then fails the command ([SPEC §5.4]).
+the block then fails the command ([SPEC TDM6]).
 */
 struct Blocked
 {
@@ -445,7 +445,7 @@ struct Degraded
     DegradedReason reason; ///
 }
 
-/// A task's terminal outcome ([SPEC §5.4]). Every member is pointer-free.
+/// A task's terminal outcome ([SPEC TDM11]). Every member is pointer-free.
 alias TaskOutcome = SumType!(Succeeded, Failed, Skipped, Cancelled, Blocked, Degraded);
 
 /// The member a $(LREF TaskOutcome) holds, as a plain enum: what edge
@@ -472,7 +472,7 @@ OutcomeKind kindOf(const TaskOutcome outcome) @safe pure nothrow @nogc
         (const Degraded _) => OutcomeKind.degraded,
     );
 
-/// Whether `outcome` fails the command on its own ([SPEC §5.4]): a failure,
+/// Whether `outcome` fails the command on its own ([SPEC TDM6]): a failure,
 /// or a block that descends from one.
 bool failsCommand(const TaskOutcome outcome) @safe pure nothrow @nogc
     => outcome.match!(
@@ -535,7 +535,7 @@ enum OutputStream
 /**
 One assembled output line of a task; its text is `TaskEvent.text`,
 without the terminator. `unterminated` marks the final fragment of a stream
-that did not end in a newline, emitted exactly once ([SPEC §5.5]).
+that did not end in a newline, emitted exactly once ([SPEC TDM14]).
 */
 struct TaskOutput
 {
@@ -585,7 +585,7 @@ struct RunFinished
     int exitCode; ///
 }
 
-/// What happened ([SPEC §5.5]).
+/// What happened ([SPEC TDM12, TDM13]).
 alias TaskEventPayload = SumType!(GraphPlanned, TaskReady, TaskStarted, TaskOutput,
     TaskUsage, TaskFinished, CancellationRequested, RunFinished);
 
