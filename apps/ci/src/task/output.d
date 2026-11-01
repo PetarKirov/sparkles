@@ -91,7 +91,7 @@ struct OutputSpool
 
     /// Calls `sink(line)` for every line kept, in order: the spill file's
     /// when spilled, else memory's.
-    void replay(scope void delegate(const ref SpooledLine) @safe sink) @trusted
+    void replay(Sink)(scope Sink sink)
     {
         if (!spilled_)
         {
