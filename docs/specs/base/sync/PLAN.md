@@ -71,10 +71,10 @@ changes.
 **Acceptance.** `ci --test` and the example and documentation checks pass; no
 `core.sync.mutex`, `core.sync.condition` or `pthread_mutex_t` remains outside
 the seam and the portable thread parker.
-**Exceptions.** event-horizon's `raw_pool` and `pool` move with its fiber
-parker, in its M20. `blocking_pool` moves independently for M19: its worker
-condition waits are thread-level and its scheduler-side sections never suspend.
-Code that shows another library's idiom (the hunt-net tutorial
+**Exceptions.** None remain in event-horizon: `raw_pool` moved with its fiber
+parker (M20, #699), `blocking_pool` moved for M19 (#684) because its worker
+condition waits are thread-level and its scheduler-side sections never
+suspend, and `pool` takes no lock. Code that shows another library's idiom (the hunt-net tutorial
 snippets) or measures `core.sync` (the locking survey's benchmarks) keeps
 it.
 
@@ -82,9 +82,9 @@ it.
 
 `sparkles:event-horizon` specifies the fiber parker (SYK2, SYK5, SYK8, SYK9,
 SPEC §4a) in its [fiber-parker.md](../../event-horizon/fiber-parker.md), with
-latched cancellation, and delivers it, `raw_pool` and `pool` on these primitives
-and its use of the address wait in its milestone M20, which owns their
-acceptance.
+latched cancellation. Its milestone M20 (#699) delivered the parker, `raw_pool`
+on these primitives and its use of the address wait, and owns their
+acceptance; `pool`'s deques are lock-free and need no primitive here.
 
 ## Deferred
 
@@ -98,10 +98,10 @@ acceptance.
 
 ## Progress
 
-| Milestone | State       | Pull request |
-| --------- | ----------- | ------------ |
-| S0        | delivered   | #648         |
-| S1        | delivered   | #657         |
-| S2        | delivered   | #657         |
-| S3        | delivered   | #677         |
-| S4        | implemented | —            |
+| Milestone | State     | Pull request     |
+| --------- | --------- | ---------------- |
+| S0        | delivered | #648             |
+| S1        | delivered | #657             |
+| S2        | delivered | #657             |
+| S3        | delivered | #677             |
+| S4        | delivered | #682, #684, #699 |
