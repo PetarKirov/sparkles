@@ -1,5 +1,6 @@
 module sparkles.core_cli.args.help_formatting;
 
+import sparkles.core_cli.args.switches : isSwitches;
 import std.algorithm : map, sort, startsWith;
 import std.array : array, join, split;
 import std.format : format;
@@ -485,9 +486,9 @@ private string[] optionValues(T)(Option optionInfo)
     {
         // Same table `parseValue` matches against: `@WireCase` recasing and
         // `@WireName` renames, not the D identifier.
-        import sparkles.wired.policy : AnyFormat, resolveCaseStyle, wireNames;
+        import sparkles.wired.policy : CommandLine, resolveCaseStyle, wireNames;
 
-        auto vals = wireNames!(AnyFormat, T, resolveCaseStyle!(AnyFormat, T)).dup;
+        auto vals = wireNames!(CommandLine, T, resolveCaseStyle!(CommandLine, T)).dup;
         static foreach (i, m; __traits(allMembers, T))
         {
             static if (m.length > 1 && m[$ - 1] == '_')
@@ -500,6 +501,8 @@ private string[] optionValues(T)(Option optionInfo)
     }
     else static if (is(T == bool))
         return ["true, yes  (or bare flag)", "false, no"];
+    else static if (isSwitches!T)
+        return T.help();
     else
     {
         if (optionInfo.allowedValues_.length)

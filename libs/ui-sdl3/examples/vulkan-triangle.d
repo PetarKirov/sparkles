@@ -34,7 +34,10 @@
  *
  * What the library owns instead is everything that was genuinely hard:
  * `FrameSync` (per-image `renderFinished`, the suboptimal-finishes-its-frame
- * rule, the fence reset that must not happen early) and `CommandPool`.
+ * rule, the fence reset that must not happen early), `CommandPool`, and the
+ * `Presenter` that drives them with the swapchain — promoted once this,
+ * the native Wayland triangle and the Android test pattern all repeated the
+ * same rebuild and present.
  *
  * Native Wayland (no SDL / no libdecor) is the next WSI step. The session
  * that measured SDL+Mutter vs X11 and decided that is
@@ -86,26 +89,11 @@ import sparkles.base.prettyprint : prettyPrint, PrettyPrintOptions;
 import sparkles.core_cli.args;
 import sparkles.ui_sdl3;
 import sparkles.vulkan;
+import sparkles.vulkan_wsi.frame_stats : FrameStats;
+import sparkles.vulkan_wsi.presenter : Presenter, presentFrame;
+import sparkles.vulkan_wsi.swapchain : PresentMode, toVk;
 import sparkles.vulkan_wsi.triangle;
 import sparkles.wired;
-
-/**
-CLI / report spelling of a present mode, including `auto`.
-
-`@WireCase` kebab-cases the identifiers (`fifoRelaxed` → `fifo-relaxed`);
-the trailing underscore on `auto_` is a word separator, so the wire name
-is `auto`. Values match `VkPresentModeKHR` so a non-`auto` choice is a
-cast, not a table. Same shape as `VendorId` in `vulkaninfo.d`.
-*/
-@WireCase(CaseStyle.kebabCase)
-enum PresentMode : uint
-{
-    immediate   = VkPresentModeKHR.VK_PRESENT_MODE_IMMEDIATE_KHR,
-    mailbox     = VkPresentModeKHR.VK_PRESENT_MODE_MAILBOX_KHR,
-    fifo        = VkPresentModeKHR.VK_PRESENT_MODE_FIFO_KHR,
-    fifoRelaxed = VkPresentModeKHR.VK_PRESENT_MODE_FIFO_RELAXED_KHR,
-    auto_       = uint.max,
-}
 
 /**
 Wayland client-side decorations.
@@ -176,7 +164,7 @@ struct VulkanTriangle
         description: "SDL video driver (auto / wayland / x11). x11 uses XWayland and avoids Mutter's sync configure"))
     VideoDriver videoDriver = VideoDriver.auto_;
 
-    Expected!(void, string) run()
+    RunExpected!void run()
     {
         if (videoDriver != VideoDriver.auto_)
         {
@@ -194,7 +182,7 @@ struct VulkanTriangle
         // No display is a degraded environment, not a failure: CI runs this
         // with --help, and a developer on a tty should get a clear skip.
         if (opened.hasError)
-            return skip("cannot open a window", opened.error);
+            return skipRun("cannot open a window", opened.error);
 
         VulkanContext vk;
         auto brought = VulkanContext.create(vk, window, ContextRequest(
@@ -203,19 +191,17 @@ struct VulkanTriangle
             validation: validation,
         ));
         if (brought.hasError)
-            return skip("cannot bring up Vulkan", brought.error);
+            return skipRun("cannot bring up Vulkan", brought.error);
 
-        const preferred = presentMode == PresentMode.auto_
-            ? anyPresentMode
-            : cast(VkPresentModeKHR) presentMode;
+        const preferred = presentMode.toVk;
 
         auto drawn = draw(vk, window, frames, resizeStress, preferred, traceMs, decor);
         if (drawn.hasError)
-            return err!void(drawn.error);
+            return failRun(drawn.error);
 
         auto opt = PrettyPrintOptions!void(colored: !noColor, softMaxWidth: 100);
         writeln(prettyPrint(drawn.value, opt));
-        return ok();
+        return ranOk();
     }
 }
 
@@ -325,13 +311,6 @@ extern (C) bool liveResizeWatch(void* userdata, SDL_Event* event) nothrow @nogc
     return true;
 }
 
-/// A skip is a success: the environment lacks a display or a driver.
-Expected!(void, string) skip(string what, string detail)
-{
-    writeln("SKIP: ", what, " — ", detail);
-    return ok();
-}
-
 /// What the run actually did, so a headless invocation is verifiable.
 struct RunReport
 {
@@ -357,9 +336,7 @@ struct RunReport
     uint maxPixelSizeEvents;
     uint eventsDrained;
     uint maxEventsDrained;
-    uint framesOver50ms;
-    uint framesOver100ms;
-    double maxFrameMs = 0;
+    FrameStats frames; /// each loop turn, start to end
     double maxPollMs = 0;
     double maxPumpMs = 0;
     double maxPeepMs = 0;
@@ -389,9 +366,12 @@ Expected!(RunReport, string) draw(ref VulkanContext vk, ref Window window,
         videoDriver: driverName is null ? "unknown" : driverName.fromStringz.idup,
     };
 
-    Swapchain sc;
-    RenderTarget target;
-    FrameSync sync;
+    // The swapchain, the views over its images and the frame
+    // synchronization, rebuilt and presented as one.
+    Presenter presenter;
+    ref sc = presenter.swapchain;
+    ref sync = presenter.sync;
+    ref target = presenter.target;
     CommandPool pool;
     Pipeline pipeline;
     // Quiet frames since the last swapchain build. Retired present
@@ -450,47 +430,16 @@ Expected!(RunReport, string) draw(ref VulkanContext vk, ref Window window,
         if (force)
             report.rebuildsForced++;
 
-        const waitStarted = MonoTime.currTime;
-        auto waited = sync.waitAll(vk);
-        lastWaitAllUs = (MonoTime.currTime - waitStarted).total!"usecs";
+        auto updated = presenter.rebuild(vk, px.value, force, typeof(px.value).init,
+            preferredPresentMode);
+        lastWaitAllUs = presenter.timing.waitAll.total!"usecs";
         noteMax(report.maxWaitAllMs, lastWaitAllUs);
-        if (waited.hasError)
-            return err!void("vkWaitForFences: " ~ describeResult(waited.error));
-
-        const createStarted = MonoTime.currTime;
-        auto updated = Swapchain.recreate(sc, vk, px.value, force);
-        lastCreateUs = (MonoTime.currTime - createStarted).total!"usecs";
+        lastCreateUs = presenter.timing.create.total!"usecs";
         noteMax(report.maxCreateMs, lastCreateUs);
         if (updated.hasError)
             return err!void(updated.error);
-        if (updated.value != SwapchainResize.rebuilt)
-            return ok!string();
-
-        auto retargeted = target.views.length == 0
-            ? RenderTarget.create(target, vk, sc)
-            : target.rebind(vk, sc);
-        if (retargeted.hasError)
-            return retargeted;
-
-        const images = cast(uint) sc.images.length;
-        if (sync.imageCount == 0)
-        {
-            auto resynced = FrameSync.create(sync, vk, images);
-            if (resynced.hasError)
-                return resynced;
-        }
-        else
-        {
-            // New renderFinished, not a reuse: a present may still be
-            // waiting on the old set. replaceImages retires them; they
-            // are destroyed a few quiet frames later once the queue is idle.
-            auto replaced = sync.replaceImages(vk, images);
-            if (replaced.hasError)
-                return replaced;
-        }
-
-        report.swapchainsBuilt++;
-        framesSinceRebuild = 0;
+        if (updated.value == SwapchainResize.rebuilt)
+            framesSinceRebuild = 0;
         return ok!string();
     }
 
@@ -516,9 +465,7 @@ Expected!(RunReport, string) draw(ref VulkanContext vk, ref Window window,
         cast(void) vk.device.deviceWaitIdle(vk.device.device);
         pipeline.destroy(vk);
         pool.destroy(vk);
-        sync.destroy(vk);
-        target.destroy(vk);
-        sc.destroy(vk);
+        presenter.destroy(vk);
     }
 
     // The pipeline outlives a resize: viewport and scissor are dynamic state,
@@ -544,92 +491,34 @@ Expected!(RunReport, string) draw(ref VulkanContext vk, ref Window window,
         if (px.value.width <= 0 || px.value.height <= 0)
             return ok!string();
 
-        if (sc.handle is null || sc.extent.width == 0 || sc.extent.height == 0)
-            return ok!string();
-
-        const waitFrameStarted = MonoTime.currTime;
-        if (mayBlock)
-        {
-            auto waited = sync.waitForFrame(vk);
-            waitFrameUs = (MonoTime.currTime - waitFrameStarted).total!"usecs";
-            noteMax(report.maxWaitFrameMs, waitFrameUs);
-            if (waited.hasError)
-                return err!void("vkWaitForFences: " ~ describeResult(waited.error));
-        }
-        else
-        {
-            // Inside PumpEvents: never block. Skip if this slot is still busy.
-            auto fence = sync.inFlight;
-            const r = vk.device.waitForFences(
-                vk.device.device, 1, &fence, VK_TRUE, 0);
-            waitFrameUs = (MonoTime.currTime - waitFrameStarted).total!"usecs";
-            noteMax(report.maxWaitFrameMs, waitFrameUs);
-            if (r != VkResult.VK_SUCCESS)
-                return ok!string();
-        }
-
-        uint index;
-        const acquireStarted = MonoTime.currTime;
-        acquired = vk.device.acquireNextImageKHR(vk.device.device, sc.handle,
-            mayBlock ? ulong.max : 0, sync.imageAvailable, null, &index);
-        acquireUs = (MonoTime.currTime - acquireStarted).total!"usecs";
-        noteMax(report.maxAcquireMs, acquireUs);
-        if (acquired == VkResult.VK_SUBOPTIMAL_KHR)
-            report.acquireSuboptimal++;
-        else if (acquired == VkResult.VK_ERROR_OUT_OF_DATE_KHR)
-            report.acquireOutOfDate++;
-        const decision = decideAcquire(acquired);
-
-        if (decision.failed)
-            return err!void("vkAcquireNextImageKHR: " ~ describeResult(acquired));
-
-        if (!decision.proceed)
-        {
-            if (decision.recreate && mayBlock)
-            {
-                auto again = rebuild(true);
-                if (again.hasError)
-                    return again;
-                rebuiltThisFrame = true;
-            }
-            return ok!string();
-        }
-
-        auto held = sync.waitForImage(vk, index);
-        if (held.hasError)
-            return err!void("vkWaitForFences (image): " ~ describeResult(held.error));
-
-        auto begun = sync.beginFrame(vk, index);
-        if (begun.hasError)
-            return err!void("vkResetFences: " ~ describeResult(begun.error));
-
+        // Inside PumpEvents (`mayBlock` false) nothing waits: a slot still
+        // in use or no image ready is a frame skipped.
         const extent = drawableExtent(sc, px.value);
         const view = triangleView(extent);
-        auto recorded = record(vk, pool, pipeline, target, sc, sync.frame, index,
-            extent, view[]);
-        if (recorded.hasError)
-            return recorded;
-
-        auto submitted = sync.submit(vk, pool.buffers[sync.frame], index);
-        if (submitted.hasError)
-            return err!void("vkQueueSubmit: " ~ describeResult(submitted.error));
-
-        const presentStarted = MonoTime.currTime;
-        const presented = sc.present(vk, index, sync.renderFinished(index));
-        presentUs = (MonoTime.currTime - presentStarted).total!"usecs";
+        auto shown = presenter.presentFrame!((uint index) => record(vk, pool, pipeline, target,
+            sc, sync.frame, index, extent, view[]))(vk, pool, mayBlock);
+        waitFrameUs = presenter.timing.waitFrame.total!"usecs";
+        noteMax(report.maxWaitFrameMs, waitFrameUs);
+        acquireUs = presenter.timing.acquire.total!"usecs";
+        noteMax(report.maxAcquireMs, acquireUs);
+        presentUs = presenter.timing.present.total!"usecs";
         noteMax(report.maxPresentMs, presentUs);
-        presentedResult = presented.hasError ? presented.error : presented.value;
-        if (presentedResult == VkResult.VK_SUBOPTIMAL_KHR)
-            report.presentSuboptimal++;
-        else if (presentedResult == VkResult.VK_ERROR_OUT_OF_DATE_KHR)
-            report.presentOutOfDate++;
-        sync.advance();
-        report.framesPresented++;
-        framesSinceRebuild++;
-
-        if (presented.hasError && !Swapchain.needsRecreation(presented.error))
-            return err!void("vkQueuePresentKHR: " ~ describeResult(presented.error));
-
+        if (shown.hasError)
+            return err!void(shown.error);
+        acquired = shown.value.acquired;
+        presentedResult = shown.value.presentResult;
+        if (shown.value.presented)
+            framesSinceRebuild++;
+        // Out of date: nothing was drawn, and the driver has retired the
+        // handle, so the same size rebuilds. A suboptimal frame was shown;
+        // the main loop's grow check follows the size.
+        else if (shown.value.stale && mayBlock)
+        {
+            auto again = rebuild(true);
+            if (again.hasError)
+                return again;
+            rebuiltThisFrame = true;
+        }
         return ok!string();
     }
 
@@ -655,14 +544,14 @@ Expected!(RunReport, string) draw(ref VulkanContext vk, ref Window window,
         stderr.flush();
     }
 
-    while (frameBudget == 0 || report.framesPresented < frameBudget)
+    while (frameBudget == 0 || presenter.stats.framesPresented < frameBudget)
     {
         if (resizeStress)
         {
             // Sweep a band that both shrinks and grows past the default
             // 960×540 window. The older 480–872 range never exceeded that,
             // so grow-only skipped every rebuild after the first create.
-            const i = report.framesPresented;
+            const i = presenter.stats.framesPresented;
             SDL_SetWindowSize(window.handle,
                 400 + cast(int)(i % 80) * 16,
                 240 + cast(int)(i % 60) * 12);
@@ -764,11 +653,11 @@ Expected!(RunReport, string) draw(ref VulkanContext vk, ref Window window,
         if (sizeChanged || hook.didThisPump)
             lastSizeChange = MonoTime.currTime;
 
-        const builtBefore = report.swapchainsBuilt;
+        const builtBefore = presenter.stats.swapchainsBuilt;
         auto grown = rebuild();
         if (grown.hasError)
             return err!RunReport(grown.error);
-        if (report.swapchainsBuilt != builtBefore)
+        if (presenter.stats.swapchainsBuilt != builtBefore)
             rebuiltThisFrame = true;
 
         auto drawn = presentOnce(true);
@@ -780,23 +669,17 @@ Expected!(RunReport, string) draw(ref VulkanContext vk, ref Window window,
         // on a 5K swapchain — and destroy at most one swapchain (plus a
         // handful of semaphores) per frame so a batch of grows does not
         // hitch when the drag stops.
-        if ((sync.hasRetired || sc.hasRetired)
-            && MonoTime.currTime - lastSizeChange >= 100.msecs)
+        if (presenter.hasRetired && MonoTime.currTime - lastSizeChange >= 100.msecs)
         {
             const reapStarted = MonoTime.currTime;
-            sync.reap(vk, 8);
-            sc.reap(vk, 1);
+            presenter.reap(vk);
             reapUs = (MonoTime.currTime - reapStarted).total!"usecs";
             noteMax(report.maxReapMs, reapUs);
-            report.reaps++;
         }
 
-        const frameUs = (MonoTime.currTime - frameStarted).total!"usecs";
-        noteMax(report.maxFrameMs, frameUs);
-        if (frameUs >= 50_000)
-            report.framesOver50ms++;
-        if (frameUs >= 100_000)
-            report.framesOver100ms++;
+        const took = MonoTime.currTime - frameStarted;
+        report.frames.note(took);
+        const frameUs = took.total!"usecs";
         if (traceMs > 0 && frameUs >= cast(long) traceMs * 1_000)
         {
             const win = pxNow.hasError ? PixelSize.init : pxNow.value;
@@ -804,7 +687,7 @@ Expected!(RunReport, string) draw(ref VulkanContext vk, ref Window window,
                 "trace frame=%s %.1fms win=%sx%s sc=%sx%s events=%s [%s] sizeEvents=%s " ~
                 "rebuilt=%s watch=%s poll=%.1fms pump=%.1fms peep=%.1fms waitFrame=%.1fms " ~
                 "acq=%s/%.1fms pres=%s/%.1fms waitAll=%.1fms create=%.1fms reap=%.1fms",
-                report.framesPresented, msOf(frameUs),
+                presenter.stats.framesPresented, msOf(frameUs),
                 win.width, win.height, sc.extent.width, sc.extent.height,
                 drained, evKindsBuf[0 .. evKindsLen], sizeEvents,
                 rebuiltThisFrame, hook.didThisPump,
@@ -835,5 +718,15 @@ Expected!(RunReport, string) draw(ref VulkanContext vk, ref Window window,
 
     report.extent = format("%dx%d", sc.extent.width, sc.extent.height);
     report.watchPresents = hook.presented;
+    with (presenter.stats)
+    {
+        report.framesPresented = framesPresented;
+        report.swapchainsBuilt = swapchainsBuilt;
+        report.acquireSuboptimal = acquireSuboptimal;
+        report.acquireOutOfDate = acquireOutOfDate;
+        report.presentSuboptimal = presentSuboptimal;
+        report.presentOutOfDate = presentOutOfDate;
+        report.reaps = reaps;
+    }
     return ok!string(report);
 }

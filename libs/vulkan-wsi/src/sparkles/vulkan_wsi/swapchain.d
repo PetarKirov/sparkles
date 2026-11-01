@@ -13,6 +13,8 @@ module sparkles.vulkan_wsi.swapchain;
 
 import sparkles.base.expected : err, ok;
 
+import sparkles.metadata.case_style : CaseStyle;
+import sparkles.metadata.wire : WireCase;
 import sparkles.vulkan;
 import sparkles.vulkan_wsi.error;
 
@@ -148,6 +150,34 @@ bool offersPresentMode(scope const VkPresentModeKHR[] available, VkPresentModeKH
 
 /// Sentinel for "no preference": $(LREF choosePresentMode) then picks.
 enum VkPresentModeKHR anyPresentMode = cast(VkPresentModeKHR) uint.max;
+
+/**
+A present mode as a command line names it, `auto` included: `@WireCase`
+kebab-cases the members (`fifoRelaxed` is `fifo-relaxed`), and the trailing
+underscore of `auto_` is a word separator, so its name is `auto`. The values
+are `VkPresentModeKHR`'s, and `auto_` is $(LREF anyPresentMode).
+*/
+@WireCase(CaseStyle.kebabCase)
+enum PresentMode : uint
+{
+    immediate   = VkPresentModeKHR.VK_PRESENT_MODE_IMMEDIATE_KHR, ///
+    mailbox     = VkPresentModeKHR.VK_PRESENT_MODE_MAILBOX_KHR, ///
+    fifo        = VkPresentModeKHR.VK_PRESENT_MODE_FIFO_KHR, ///
+    fifoRelaxed = VkPresentModeKHR.VK_PRESENT_MODE_FIFO_RELAXED_KHR, ///
+    auto_       = anyPresentMode, /// the swapchain picks
+}
+
+/// The Vulkan present mode `mode` asks for; $(LREF anyPresentMode) for `auto`.
+VkPresentModeKHR toVk(PresentMode mode) @safe pure nothrow @nogc
+    => cast(VkPresentModeKHR) mode;
+
+///
+@("vulkan_wsi.swapchain.presentModeNamesTheVulkanOne")
+@safe pure nothrow @nogc unittest
+{
+    assert(PresentMode.mailbox.toVk == VkPresentModeKHR.VK_PRESENT_MODE_MAILBOX_KHR);
+    assert(PresentMode.auto_.toVk == anyPresentMode);
+}
 
 /**
 How many images to ask for.

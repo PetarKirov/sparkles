@@ -4,8 +4,13 @@ public import sparkles.core_cli.args.error :
     CliError,
     CliExpected,
     Expected,
+    RunError,
+    RunExpected,
     error,
-    ok;
+    failRun,
+    ok,
+    ranOk,
+    skipRun;
 
 public import sparkles.core_cli.args.help_formatting :
     importSections,
@@ -20,6 +25,8 @@ public import sparkles.core_cli.args.internal :
     reportCliError,
     runCli,
     runParsedCli;
+
+public import sparkles.core_cli.args.switches : isSwitches, Switches;
 
 public import sparkles.core_cli.args.uda :
     Argument,

@@ -91,7 +91,7 @@ import sparkles.doc_view.table_select : TableRegion, TableCopyFormat, tableSelec
 import dsv_browser : DsvBrowser, PaletteRow, paletteRows, rowMaskFor;
 import sparkles.doc_view.dsv_view : adaptDsv, DsvCopy, DsvInfo, DsvModel, dsvStatusNote,
     DsvWindow, modelFor,
-    flagsOf, resolveTableCopy, serializeGridCopy;
+    flagsOf, serializeGridCopy;
 
 // Selective import avoids sparkles.syntax.Color clashing with raylib.Color:
 // bare `Color` is unambiguously raylib's; the theme color type is reached only
@@ -158,7 +158,8 @@ import sparkles.docs.source_set : SourceEntry, SourceSet;
 import gui_state;
 import crt_config : applyCrtCapture, applyCrtConfig;
 import project_state : dubBuildFor, mutableCopy, PackageSlot, selectDubConfiguration;
-import settings : DubBuildSettings, HueConfig, PointerMode, searchPolicy;
+import settings : DubBuildSettings, HueConfig, PointerMode, resolveTableCopy,
+    searchPolicy, TableCopyMode;
 import settings_pane : ApplyMask, SettingsGeometry, settingsGeometryFor,
     SettingsResult;
 import settings_store : ConfigStore, SettingsPane;
@@ -250,7 +251,7 @@ struct GuiArgs
     bool codeLineNumbers = true;
     bool ansiCopyStrip = false;          // --ansi-copy=strip (SEL7/CLI10); default raw
     TableCopyFormat tableCopy = TableCopyFormat.tsv; // --table-copy (TBL2/CLI11), resolved
-    string tableCopyFlag = "auto";       // the raw flag, re-resolved on doc swap (DSC2)
+    TableCopyMode tableCopyMode;         // the flag's mode, re-resolved on doc swap (DSC2)
     string dsvText;                      // DSV: the original bytes (DSC2/DSC4)
     DsvInfo dsvInfo;                     // DSV: dialect/header/chrome facts
     string dsvNote;                      // DSV: the DSK5 status readout
@@ -970,7 +971,7 @@ int runGui(GuiArgs guiArgs) @system
             ? DsvCopy.of(dsvModel, doc.dsvInfo) : DsvCopy.of(doc.dsvText, doc.dsvInfo);
         dsvBrowser = DsvBrowser.init; // a new document starts unprojected (DSB2)
         dsvPalOpen = false;
-        cm.tableFmt = resolveTableCopy(tableCopyFlag, doc.dsvInfo.present);
+        cm.tableFmt = resolveTableCopy(tableCopyMode, doc.dsvInfo.present);
         inp.close();
         window.title(text(i"sparkles:hue — $(name)"));
         pn.tree.reveal(path); // the explorer follows the open document (XPL3/4)

@@ -14,7 +14,9 @@ geometry the app reported.
 
 The capture is `adb exec-out screencap` without `-p`: a header of width,
 height, pixel format (and, from Android 9, colour space) as 32-bit words,
-then RGBA8888 rows. The geometry is the app's `pattern:` log line: the display
+then RGBA8888 rows. A wide-gamut panel captures in Display P3 (colour space
+2), where sRGB red reads (234,51,35): such a capture is converted back to sRGB
+before any check. The geometry is the app's `pattern:` log line: the display
 size it drew for and the safe insets. Every check samples pixels where the
 pattern's design puts something exact, so a stretched, scaled, cropped,
 mis-rotated or stale image fails one of them:
@@ -61,6 +63,42 @@ struct Capture
     }
 }
 
+/// `screencap`'s colour-space word for Display P3 (`COLORSPACE_DISPLAY_P3`).
+enum uint displayP3 = 2;
+
+/// RGBA8888 pixels in Display P3, converted to sRGB: both use the sRGB
+/// transfer function, so decode, change primaries (D65 both), encode.
+const(ubyte)[] p3ToSrgb(const(ubyte)[] p3)
+{
+    import std.math : pow;
+
+    static immutable double[3][3] toSrgb = [
+        [1.2249401763, -0.2249401763, 0.0],
+        [-0.0420569547, 1.0420569547, 0.0],
+        [-0.0196375546, -0.0786360456, 1.0982736001],
+    ];
+    static double decode(ubyte v)
+    {
+        const c = v / 255.0;
+        return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4);
+    }
+    static ubyte encode(double l)
+    {
+        l = l < 0 ? 0 : l > 1 ? 1 : l;
+        const c = l <= 0.0031308 ? l * 12.92 : 1.055 * pow(l, 1 / 2.4) - 0.055;
+        return cast(ubyte) round(c * 255);
+    }
+    auto srgb = p3.dup;
+    for (size_t i = 0; i + 3 < p3.length; i += 4)
+    {
+        const double[3] lin = [decode(p3[i]), decode(p3[i + 1]), decode(p3[i + 2])];
+        foreach (k; 0 .. 3)
+            srgb[i + k] = encode(toSrgb[k][0] * lin[0] + toSrgb[k][1] * lin[1]
+                + toSrgb[k][2] * lin[2]);
+    }
+    return srgb;
+}
+
 int main(string[] args)
 {
     if (args.length != 4)
@@ -79,7 +117,8 @@ int main(string[] args)
             capture.width, "x", capture.height);
         return 2;
     }
-    capture.pixels = bytes[header .. $];
+    capture.pixels = header == 16 && word(3) == displayP3
+        ? p3ToSrgb(bytes[header .. $]) : bytes[header .. $];
 
     const size = args[2].split("x").map!(to!int).array;
     const inset = args[3].split(",").map!(to!int).array;
@@ -145,10 +184,13 @@ int main(string[] args)
         }
         expect(red && dark, "no caution hatch in the " ~ band ~ " inset");
     }
+    // A sixth of the way in: the gesture bar's pill, centred in the bottom
+    // inset, covers a third.
+    const x6 = l + (W - l - r) / 6;
     if (t > 4)
-        hatch(x3, t / 2, 1, 0, "top");
+        hatch(x6, t / 2, 1, 0, "top");
     if (b > 4)
-        hatch(x3, H - b / 2 - 1, 1, 0, "bottom");
+        hatch(x6, H - b / 2 - 1, 1, 0, "bottom");
     if (l > 4)
         hatch(l / 2, y3, 0, 1, "left");
     if (r > 4)

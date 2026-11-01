@@ -786,33 +786,6 @@ bool contentLooksDsv(const(char)[] sourceText) @safe pure nothrow @nogc
 
 // ── Grid copy (`DSC2`/`DSC4`) ───────────────────────────────────────────────
 
-/// Resolves `--table-copy` (`CLI11` × `DSC2`): explicit names win; `auto`
-/// (the default) picks `source` for a DSV document and `tsv` otherwise.
-TableCopyFormat resolveTableCopy(string name, bool isDsv) @safe
-{
-    import sparkles.base.logger : warning;
-
-    switch (name)
-    {
-        case "markdown": return TableCopyFormat.markdown;
-        case "tsv": return TableCopyFormat.tsv;
-        case "source": return TableCopyFormat.source;
-        case "auto", "": break;
-        default:
-            warning(i"unknown --table-copy '$(name)'; using 'auto'");
-    }
-    return isDsv ? TableCopyFormat.source : TableCopyFormat.tsv;
-}
-
-@("dsv_view.resolveTableCopy.autoByKind")
-@safe unittest
-{
-    assert(resolveTableCopy("auto", true) == TableCopyFormat.source);
-    assert(resolveTableCopy("auto", false) == TableCopyFormat.tsv);
-    assert(resolveTableCopy("markdown", true) == TableCopyFormat.markdown);
-    assert(resolveTableCopy("source", false) == TableCopyFormat.source);
-}
-
 
 /// The grid-copy side of a DSV document: raw cell bytes for the `source`
 /// format (original quoting preserved — the serializer never re-quotes), the

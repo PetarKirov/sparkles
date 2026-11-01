@@ -335,8 +335,10 @@ design system's [`ACC5`](../design-system/SPEC.md)). An application that
 follows them re-themes without a restart, and the result is cold-start
 equivalent (`RES3`; [`THM7`](../ui/theme.md)). On Linux the native arm reads
 the scheme from the settings portal (`sparkles:appearance`) before the first
-frame and delivers it, then delivers each change; `SPARKLES_APPEARANCE` pins
-it.
+frame and delivers it, then delivers each change; `--appearance` pins
+it. The client frame the host draws follows the contrast itself: high
+contrast draws the bar's foot and the window's rings as libadwaita's
+high-contrast stylesheet does.
 
 **RES46: Insets.** Changes to the safe area (a soft keyboard, a cutout, a
 system bar) **must** arrive as metrics changes and be cold-start equivalent.
@@ -525,7 +527,7 @@ lead to.
 | RES25 | partial     | `resilience.RSC20.model.aCloseDuringRecoveryStillStops` — model                                                                                                                                                                                                                                                                                    |
 | RES26 | not started | no decision                                                                                                                                                                                                                                                                                                                                        |
 | RES27 | partial     | `resilience.RSC15.model.recoveryIsBounded` — model                                                                                                                                                                                                                                                                                                 |
-| RES30 | partial     | V4 gate, manual (`SPARKLES_NATIVE_TRACE_FRAMES`)                                                                                                                                                                                                                                                                                                   |
+| RES30 | partial     | V4 gate, manual (`--debug trace-frames`)                                                                                                                                                                                                                                                                                                           |
 | RES31 | partial     | `resilience.RSC27.model.inputIsInTheSameIterationsFrame` — model                                                                                                                                                                                                                                                                                   |
 | RES32 | partial     | `resilience.RSC28.model.pacedFramesWaitAndMissedOnesAreNotQueued` — model; frame opportunities on every backend wait on `F04`                                                                                                                                                                                                                      |
 | RES33 | partial     | `resilience.RSC5.model.aFloodOfChangesIsOneRebuildAndOneFrame`, `wsi.loop.eventQueueSurvivesAResizeFloodByCoalescing`                                                                                                                                                                                                                              |

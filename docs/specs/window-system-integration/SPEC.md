@@ -414,6 +414,9 @@ installed `.desktop` file for the dock's name and icon), the graphics driver's
 application name and version, and the title of a window that gives none. On Android
 the installed package is authoritative. `setTitle` retitles a window on every backend
 (Android has no window title and accepts it).
+`setLogicalSize` asks for a window's size on X11, where a client may (Wayland's
+compositor sizes a toplevel itself, so there the request is a maximize); a window
+manager may adjust it, and the size that results arrives as metrics, as any resize does.
 
 The frame is reported, not assumed. A backend whose window manager may leave the frame
 to the client reports a `WindowState` — who draws the frame (`DecorationMode`), the

@@ -46,3 +46,56 @@ auto error(T = void)(CliError e)
     else
         return expected.err!T(e);
 }
+
+/**
+How a command's `run()` reports what is not success: a failure, or a skip —
+the environment lacks what the program needs (no display, no GPU driver),
+which is not the program's fault. `runCli` writes a skip as `SKIP: …` on
+standard output and exits 0, and a failure as `Error: …` on standard error,
+exiting 1.
+*/
+struct RunError
+{
+    string message;   ///
+    bool skipped;     /// a degraded environment, not a failure
+    int exitCode = 1; /// a failure's exit status (a skip exits 0)
+}
+
+/// A `run()` result: a value, or a $(LREF RunError).
+alias RunExpected(T = void) = Expected!(T, RunError);
+
+/// A skip: `what` the program could not do, and the environment's `detail`.
+RunExpected!T skipRun(T = void)(string what, string detail = null)
+{
+    const message = detail.length ? what ~ " — " ~ detail : what;
+    static if (is(T == void))
+        return expected.err(RunError(message, skipped: true));
+    else
+        return expected.err!T(RunError(message, skipped: true));
+}
+
+/// A failure, described by `message`, exiting with `exitCode`.
+RunExpected!T failRun(T = void)(string message, int exitCode = 1)
+{
+    static if (is(T == void))
+        return expected.err(RunError(message, exitCode: exitCode));
+    else
+        return expected.err!T(RunError(message, exitCode: exitCode));
+}
+
+/// The success of a `RunExpected!void` `run()`.
+RunExpected!void ranOk() @safe pure nothrow @nogc => expected.ok!RunError();
+
+///
+@("args.error.runError")
+@safe unittest
+{
+    const skipped = skipRun("no display", "WAYLAND_DISPLAY unset");
+    assert(skipped.hasError && skipped.error.skipped);
+    assert(skipped.error.message == "no display — WAYLAND_DISPLAY unset");
+    assert(skipRun!int("no GPU").error.message == "no GPU");
+    const failed = failRun("createWindow failed");
+    assert(failed.hasError && !failed.error.skipped && failed.error.exitCode == 1);
+    assert(failRun("bad theme", 2).error.exitCode == 2);
+    assert(!ranOk().hasError);
+}

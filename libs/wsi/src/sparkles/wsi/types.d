@@ -16,6 +16,7 @@ import sparkles.base.text.cstring : hasInteriorNul;
 public import sparkles.base.app_identity : AppIdentity;
 import sparkles.base.text.utf8 : validateUtf8;
 import sparkles.math : ScreenPosition, ScreenSize;
+import sparkles.metadata.wire : WireName;
 
 @safe:
 
@@ -137,7 +138,7 @@ enum BackendKind : ubyte
 /// Backend request. `automatic` uses platform/runtime availability.
 enum BackendPreference : ubyte
 {
-    automatic,
+    @WireName("auto") automatic,
     wayland,
     x11,
     win32,

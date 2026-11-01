@@ -69,7 +69,8 @@ import sparkles.input.events : KeyAction;
 import sparkles.vulkan;
 import sparkles.vulkan_wsi;
 import sparkles.vulkan_wsi.test_pattern;
-import sparkles.vulkan_wsi.triangle : Pipeline, RenderTarget, record;
+import sparkles.vulkan_wsi.presenter : Presenter, presentFrame;
+import sparkles.vulkan_wsi.triangle : Pipeline, record;
 import sparkles.wsi;
 import sparkles.wsi.platform.android : AndroidWsi, AndroidWsiMain;
 
@@ -140,9 +141,7 @@ private struct DeviceScope
 private struct SurfaceScope
 {
     WindowSurface vk;
-    Swapchain swapchain;
-    RenderTarget target;
-    FrameSync sync;
+    Presenter presenter; // the swapchain, its views and frame synchronization
 
     @disable this(this);
 
@@ -153,14 +152,8 @@ private struct SurfaceScope
         if (!live)
             return;
         vk.device.deviceWaitIdle(vk.device.device);
-        sync.destroy(vk);
-        target.destroy(vk);
-        swapchain.destroy(vk);
+        presenter.destroy(vk); // back to its initial state: the next surface builds it afresh
         vk.destroy();
-        // Back to their initial state: the next surface builds them afresh.
-        sync = FrameSync.init;
-        target = RenderTarget.init;
-        swapchain = Swapchain.init;
     }
 }
 
@@ -294,35 +287,18 @@ private Expected!(void, string) drive() @system
                 return err!void(text("no Vulkan surface: ", made.error.diagnostic[]));
             ++surfacesBuilt;
         }
-        auto waited = s.sync.waitAll(s.vk);
-        if (waited.hasError)
-            return err!void("vkWaitForFences: " ~ describeResult(waited.error));
         // FIFO: one frame per display refresh, not as many as the GPU can.
-        const swapchainStarted = MonoTime.currTime;
-        auto updated = Swapchain.recreate(s.swapchain, s.vk, metrics.physicalSize,
-            force, PhysicalSize.init, VkPresentModeKHR.VK_PRESENT_MODE_FIFO_KHR);
-        swapchainTime += MonoTime.currTime - swapchainStarted;
+        auto updated = s.presenter.rebuild(s.vk, metrics.physicalSize, force, PhysicalSize.init,
+            VkPresentModeKHR.VK_PRESENT_MODE_FIFO_KHR);
+        swapchainTime += s.presenter.timing.create;
         if (updated.hasError)
             return err!void(updated.error);
         if (updated.value != SwapchainResize.rebuilt)
             return ok!string();
         ++swapchainsBuilt;
-        auto retargeted = s.target.views.length == 0
-            ? RenderTarget.create(s.target, s.vk, s.swapchain)
-            : s.target.rebind(s.vk, s.swapchain);
-        if (retargeted.hasError)
-            return err!void(retargeted.error);
-        const images = cast(uint) s.swapchain.images.length;
-        if (s.sync.imageCount == 0)
-        {
-            if (FrameSync.create(s.sync, s.vk, images).hasError)
-                return err!void("frame synchronization failed");
-        }
-        else if (s.sync.replaceImages(s.vk, images).hasError)
-            return err!void("frame synchronization failed");
         // The pipeline outlives the surface: it is rebuilt only for a device
         // it was not made on, or a format it was not made for.
-        if (d.pipeline.handle !is null && d.pipelineFormat != s.swapchain.format)
+        if (d.pipeline.handle !is null && d.pipelineFormat != s.presenter.swapchain.format)
         {
             d.device.device.deviceWaitIdle(d.device.device.device);
             d.pipeline.destroy(d.device);
@@ -332,15 +308,15 @@ private Expected!(void, string) drive() @system
         {
             const pipelineStarted = MonoTime.currTime;
             scope (exit) pipelineTime += MonoTime.currTime - pipelineStarted;
-            if (createTestPattern(d.pipeline, s.vk, s.swapchain, s.target.renderPass).hasError)
+            if (createTestPattern(d.pipeline, s.vk, s.presenter.swapchain, s.presenter.target.renderPass).hasError)
                 return err!void("the pipeline failed");
-            d.pipelineFormat = s.swapchain.format;
+            d.pipelineFormat = s.presenter.swapchain.format;
             d.cacheDirty = !d.pipeline.fromCache;
             ++pipelinesBuilt;
             pipelineBuiltNow = true;
         }
         if (d.commands.buffers.length == 0
-            && CommandPool.create(d.commands, d.device, s.sync.framesInFlight).hasError)
+            && CommandPool.create(d.commands, d.device, s.presenter.sync.framesInFlight).hasError)
             return err!void("the command pool failed");
         return ok!string();
     }
@@ -348,56 +324,39 @@ private Expected!(void, string) drive() @system
     string logged; // the last `pattern:` line
     Expected!(void, string) present()
     {
-        if (s.sync.waitForFrame(s.vk).hasError)
-            return err!void("vkWaitForFences failed");
-        uint image;
-        const acquired = s.vk.device.acquireNextImageKHR(s.vk.device.device,
-            s.swapchain.handle, ulong.max, s.sync.imageAvailable, null, &image);
-        const decision = decideAcquire(acquired);
-        if (decision.failed)
-            return err!void("vkAcquireNextImageKHR: " ~ describeResult(acquired));
-        if (!decision.proceed)
-            return rebuild(true);
-        if (s.sync.waitForImage(s.vk, image).hasError || s.sync.beginFrame(s.vk, image).hasError)
-            return err!void("frame synchronization failed");
-
         // The display's own size and insets; the whole (panel-oriented) image
         // is drawn, and the shader turns the pattern upright.
-        const shown = displayExtent(s.swapchain);
+        const shown = displayExtent(s.presenter.swapchain);
         const insets = metrics.safeInsets;
         FrameContext context;
         context.resolution = [shown.width, shown.height];
         context.safeInsets = [insets.left, insets.top, insets.right, insets.bottom];
-        context.preTransform = cast(uint) s.swapchain.transform;
+        context.preTransform = cast(uint) s.presenter.swapchain.transform;
         context.frameCount = frames;
         // What this frame draws for, logged whenever it changes: a rebuild
         // and the metrics that settle a turn arrive separately, and the lane
         // checks a capture against the latest line.
         const state = text("pattern: display ", shown.width, "x", shown.height,
             " insets ", insets.left, ",", insets.top, ",", insets.right, ",", insets.bottom,
-            " swapchain ", s.swapchain.extent.width, "x", s.swapchain.extent.height,
-            " transform ", cast(uint) s.swapchain.transform,
-            " format ", cast(uint) s.swapchain.format,
-            s.target.dynamicRendering ? " dynamic-rendering" : " render-pass",
+            " swapchain ", s.presenter.swapchain.extent.width, "x", s.presenter.swapchain.extent.height,
+            " transform ", cast(uint) s.presenter.swapchain.transform,
+            " format ", cast(uint) s.presenter.swapchain.format,
+            s.presenter.target.dynamicRendering ? " dynamic-rendering" : " render-pass",
             " device ", d.device.deviceName);
         if (state != logged)
         {
             logged = state;
             say(state);
         }
-        auto recorded = record(s.vk, d.commands, d.pipeline, s.target, s.swapchain,
-            s.sync.frame, image, s.swapchain.extent, (cast(const(void)*) &context)[0 .. context.sizeof]);
-        if (recorded.hasError)
-            return recorded;
-        if (s.sync.submit(s.vk, d.commands.buffers[s.sync.frame], image).hasError)
-            return err!void("vkQueueSubmit failed");
-        auto shownResult = s.swapchain.present(s.vk, image, s.sync.renderFinished(image));
-        s.sync.advance();
+        auto drawn = s.presenter.presentFrame!((uint image) => record(s.vk, d.commands, d.pipeline,
+            s.presenter.target, s.presenter.swapchain, s.presenter.sync.frame, image,
+            s.presenter.swapchain.extent, (cast(const(void)*) &context)[0 .. context.sizeof]))(
+            s.vk, d.commands);
+        if (drawn.hasError)
+            return err!void(drawn.error);
+        if (!drawn.value.presented)
+            return drawn.value.stale ? rebuild(true) : ok!string();
         ++frames;
-        const stale = shownResult.hasError ? Swapchain.needsRecreation(shownResult.error)
-            : Swapchain.needsRecreation(shownResult.value);
-        if (shownResult.hasError && !stale)
-            return err!void("vkQueuePresentKHR: " ~ describeResult(shownResult.error));
         if (!firstFrameLogged)
         {
             firstFrameLogged = true;
@@ -417,7 +376,7 @@ private Expected!(void, string) drive() @system
                 " swapchains; ", frames, " frames presented"));
             say(text("ok: Android test pattern presenting (", d.device.deviceName, ")"));
         }
-        if (stale || decision.recreate)
+        if (drawn.value.stale)
             return rebuild(true);
         return ok!string();
     }
@@ -446,7 +405,7 @@ private Expected!(void, string) drive() @system
             continue;
         // A turn arrives as a new window size and a new surface transform,
         // separately: ask the surface before every frame, not only on an event.
-        if (changed || (s.live && frameDue && s.swapchain.outdated(s.vk, metrics.physicalSize)))
+        if (changed || (s.live && frameDue && s.presenter.swapchain.outdated(s.vk, metrics.physicalSize)))
         {
             changed = false;
             auto rebuilt = rebuild(false);
@@ -456,18 +415,15 @@ private Expected!(void, string) drive() @system
         if (!frameDue)
             continue;
         frameDue = false;
-        if (!s.live || s.swapchain.handle is null)
+        if (!s.live || s.presenter.swapchain.handle is null)
             continue;
         auto presented = present();
         if (presented.hasError)
             return presented;
         // The pattern animates, so it asks for the next frame after each.
         assert(!wsi.requestFrame(window).hasError);
-        if (s.swapchain.hasRetired || s.sync.hasRetired)
-        {
-            s.sync.reap(s.vk, 8);
-            s.swapchain.reap(s.vk, 1);
-        }
+        if (s.presenter.hasRetired)
+            s.presenter.reap(s.vk);
     }
     say(text("ok: Android test pattern ended (", frames, " frames, ", swapchainsBuilt, " swapchains)"));
     return ok!string();

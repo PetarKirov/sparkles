@@ -5,28 +5,48 @@ options, plus `--shot`, which captures a frame and exits (for a headless check).
 */
 module cli;
 
-import std.traits : isDynamicArray, isSomeString;
-
-import sparkles.core_cli.args : CliError, CliExpected, HelpInfo, Option, parseCli,
-    reportCliError;
-import sparkles.ui_app.gui_options : GuiCliFields, GuiOptions;
+import sparkles.base.logger : LogLevel;
+import sparkles.core_cli.args : CliError, CliExpected, Command, Flatten, Option, RunExpected;
+import sparkles.ui_app.gui_options : GuiOptions, NativeOptions;
 import sparkles.ui_app.host : PointerUnit, RunConfig;
-import sparkles.ui_app.run : RunOutcome;
+import sparkles.ui_app.run : asRunResult;
 import sparkles.ui_app.run_app : runApp;
 import sparkles.ui_vulkan.text_rendering : Compositing, Hinting;
 import sparkles.base.term_color : RgbColor;
 
 import lab : framePalette, Lab;
 
-/// The shared window/font/theme options, and the lab's own.
-struct LabOptions
+/// The lab from `args`, as `main` receives them; the process's exit status.
+int run(string[] args)
 {
-    mixin GuiCliFields;
+    import sparkles.core_cli.args : runCli;
+
+    return runCli!TextLab(args);
+}
+
+/// The lab's command line: the shared window, font and native-window options,
+/// and the lab's own.
+@(Command("text-lab",
+    shortDescription: "The Vulkan canvas's text rendering, switched live and seen through a loupe.",
+))
+struct TextLab
+{
+    @(Option("log-level", description: "Log level: trace | info | warning | error | critical | off."))
+    LogLevel logLevel = LogLevel.warning;
+
+    /// A specimen wants more lines, at a smaller size, than the shared
+    /// defaults leave room for.
+    @Flatten("GUI Options")
+    GuiOptions gui = GuiOptions(fontSize: 12, windowHeight: 40);
+
+    @Flatten("Native Window Options")
+    NativeOptions native;
+
     @(Option("shot", description: "Capture a frame into this PNG, then exit.", placeholder: "PATH"))
     string shot;
-    @(Option("compositing", description: "gamma, linear or linearCorrected."))
+    @(Option("compositing", description: "gamma, linear or linear-corrected."))
     Compositing compositing = Compositing.linearCorrected;
-    @(Option("contrast", description: "Coverage contrast for linearCorrected, 0–1."))
+    @(Option("contrast", description: "Coverage contrast for linear-corrected, 0–1."))
     float contrast = 0.25f;
     @(Option("hinting", description: "none or light."))
     Hinting hinting = Hinting.light;
@@ -34,68 +54,41 @@ struct LabOptions
     bool noShaping;
     @(Option("loupe-at", description: "Point the loupe at this pixel (x,y) instead of the pointer.", placeholder: "X,Y"))
     string loupeAt;
-}
 
-/// The lab from `args`, as `main` receives them; the process's exit status.
-int run(string[] args)
-{
-    auto parsed = parseCli!LabOptions(args, HelpInfo("text-lab",
-        "The Vulkan canvas's text rendering, switched live and seen through a loupe.", null));
-    if (!parsed)
-        return reportCliError(parsed.error);
-    auto configured = configure(parsed.value);
-    if (!configured)
-        return reportCliError(configured.error);
-    Lab lab = configured.value;
-    GuiOptions gui;
-    static foreach (i, T; typeof(GuiOptions.tupleof))
-    {{
-        static if (isDynamicArray!T && !isSomeString!T)
-            gui.tupleof[i] = parsed.value.tupleof[i].dup;
-        else
-            gui.tupleof[i] = parsed.value.tupleof[i];
-    }}
-    // A specimen wants more lines than the shared default size leaves room for.
-    import sparkles.ui_app.gui_options : defaultFontSizePoints, defaultWindowRows;
-
-    if (gui.fontSize == defaultFontSizePoints)
-        gui.fontSize = 12;
-    if (gui.windowHeight == defaultWindowRows)
-        gui.windowHeight = 40;
-    // The lab has no terminal form: its window is the point, so it opens one
-    // without being asked.
-    if (!gui.noGui && !gui.tui)
-        gui.gui = true;
-    RunConfig cfg = {
-        gui: gui,
-        framePalette: framePalette,
-        hasFramePalette: true,
-        launchBackground: RgbColor(0x11, 0x11, 0x1b),
-        hasLaunchBackground: true,
-        motion: true, // the loupe follows the pointer
-        pointerUnit: PointerUnit.pixels,
-    };
-    // The desktop's and the driver's name for the lab; its APK is the same
-    // package (`nix/packages/android/text-lab.nix`).
-    cast(void) cfg.app.id.assign("dev.petar_kirov.sparkles.text_lab");
-    cast(void) cfg.app.name.assign("Sparkles Text Lab");
-    version (Android)
+    /// Opens the lab the options describe.
+    RunExpected!void run()
     {
-        import sparkles.android.activity : internalDataPath;
+        import sparkles.core_cli.args : failRun;
 
-        lab.screenshotDir = internalDataPath;
-    }
-    final switch (runApp(lab, cfg))
-    {
-        case RunOutcome.ok:
-            return 0;
-        case RunOutcome.notInteractive:
-        case RunOutcome.noBackend:
-        case RunOutcome.openFailed:
-            import std.stdio : stderr;
+        auto configured = configure(this);
+        if (configured.hasError)
+            return failRun(configured.error.message);
+        Lab lab = configured.value;
+        RunConfig cfg = {
+            gui: gui,
+            native: native,
+            framePalette: framePalette,
+            hasFramePalette: true,
+            launchBackground: RgbColor(0x11, 0x11, 0x1b),
+            hasLaunchBackground: true,
+            motion: true, // the loupe follows the pointer
+            pointerUnit: PointerUnit.pixels,
+        };
+        // The lab has no terminal form: its window is the point, so it opens
+        // one without being asked.
+        if (!cfg.gui.noGui && !cfg.gui.tui)
+            cfg.gui.gui = true;
+        // The desktop's and the driver's name for the lab; its APK is the
+        // same package (`nix/packages/android/text-lab.nix`).
+        cast(void) cfg.app.id.assign("dev.petar_kirov.sparkles.text_lab");
+        cast(void) cfg.app.name.assign("Sparkles Text Lab");
+        version (Android)
+        {
+            import sparkles.android.activity : internalDataPath;
 
-            stderr.writeln("text-lab needs a window: run it with --gui on a display");
-            return 1;
+            lab.screenshotDir = internalDataPath;
+        }
+        return asRunResult(runApp(lab, cfg), "text-lab");
     }
 }
 
@@ -104,7 +97,7 @@ The lab the options describe, or the error that rejects them: what the
 parser cannot judge alone — a contrast outside 0–1, a loupe point that is
 not two pixel coordinates, a shot with no window to capture.
 */
-CliExpected!Lab configure(in LabOptions o)
+CliExpected!Lab configure(in TextLab o)
 {
     import std.conv : ConvException, to;
     import std.math : isNaN;
@@ -117,7 +110,7 @@ CliExpected!Lab configure(in LabOptions o)
 
     if (o.contrast.isNaN || o.contrast < 0 || o.contrast > 1)
         return reject("--contrast must be between 0 and 1");
-    if (o.shot.length && (o.tui || o.noGui))
+    if (o.shot.length && (o.gui.tui || o.gui.noGui))
         return reject("--shot captures the window: it needs the GUI, not --tui or --no-gui");
     Lab lab;
     lab.shotPath = o.shot;
@@ -147,7 +140,7 @@ CliExpected!Lab configure(in LabOptions o)
 @("text_lab.cli.optionsBecomeTheLab")
 @system unittest
 {
-    LabOptions o;
+    TextLab o;
     o.compositing = Compositing.gamma;
     o.hinting = Hinting.none;
     o.contrast = 0.5f;
@@ -165,9 +158,9 @@ CliExpected!Lab configure(in LabOptions o)
 @("text_lab.cli.whatTheParserCannotJudgeIsRejected")
 @system unittest
 {
-    static string why(void delegate(ref LabOptions) @safe set)
+    static string why(void delegate(ref TextLab) @safe set)
     {
-        LabOptions o;
+        TextLab o;
         set(o);
         const r = configure(o);
         return r.hasError ? r.error.message : null;
@@ -179,18 +172,41 @@ CliExpected!Lab configure(in LabOptions o)
     assert(why((ref o) { o.contrast = float.nan; }) !is null);
     foreach (bad; ["5", "1,2,3", "x,2", "1,", "-1,2", ",7"])
         assert(why((ref o) { o.loupeAt = bad; }) !is null, bad);
-    assert(why((ref o) { o.shot = "a.png"; o.tui = true; }) !is null);
-    assert(why((ref o) { o.shot = "a.png"; o.noGui = true; }) !is null);
+    assert(why((ref o) { o.shot = "a.png"; o.gui.tui = true; }) !is null);
+    assert(why((ref o) { o.shot = "a.png"; o.gui.noGui = true; }) !is null);
 }
 
 @("text_lab.cli.anUnknownCompositingIsAParseError")
 @system unittest
 {
-    auto parsed = parseCli!LabOptions(["text-lab", "--compositing", "bogus"],
-        HelpInfo("text-lab", "", null));
+    import sparkles.core_cli.args : parseCli;
+
+    auto parsed = parseCli!TextLab(["text-lab", "--compositing", "bogus"]);
     assert(!parsed && parsed.error.kind == CliError.Kind.parse);
-    auto good = parseCli!LabOptions(["text-lab", "--compositing", "linear", "--hinting", "none"],
-        HelpInfo("text-lab", "", null));
-    assert(good && good.value.compositing == Compositing.linear
+    auto good = parseCli!TextLab(["text-lab", "--compositing", "linear-corrected", "--hinting", "none"]);
+    assert(good, good.error.message);
+    assert(good.value.compositing == Compositing.linearCorrected
         && good.value.hinting == Hinting.none);
+}
+
+@("text_lab.cli.theLabsDefaultsYieldToWhatIsTyped")
+@system unittest
+{
+    import sparkles.core_cli.args : parseCli;
+    import sparkles.ui_app.gui_options : defaultFontSizePoints, defaultWindowRows, WindowSystem;
+
+    auto bare = parseCli!TextLab(["text-lab"]);
+    assert(bare, bare.error.message);
+    assert(bare.value.gui.fontSize == 12 && bare.value.gui.windowHeight == 40);
+    // The shared default, typed, is what the user asked for: it stays.
+    auto typed = parseCli!TextLab(["text-lab", "--font-size", "18", "--window-height", "30"]);
+    assert(typed, typed.error.message);
+    assert(typed.value.gui.fontSize == defaultFontSizePoints);
+    assert(typed.value.gui.windowHeight == defaultWindowRows);
+    auto native = parseCli!TextLab(["text-lab", "--window-system", "x11", "--debug", "log-events",
+        "--debug=lose-device-at=3", "--appearance", "dark"]);
+    assert(native, native.error.message);
+    with (native.value.native)
+        assert(windowSystem == WindowSystem.x11 && debugging.logEvents
+            && debugging.loseDeviceAt == 3 && appearance == "dark");
 }

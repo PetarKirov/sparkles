@@ -30,7 +30,7 @@ dependency "sparkles:android" path="../.."
 configuration "android" {
     platforms "android"
     targetType "library"
-    excludedSourceFiles "src/sparkles/wsi/platform/x11.d" "src/sparkles/wsi/platform/wayland.d" "src/*.c"
+    excludedSourceFiles "src/sparkles/wsi/platform/x11.d" "src/sparkles/wsi/platform/wayland.d" "src/sparkles/wsi/platform/wayland_shm.d" "src/*.c"
 }
 
 configuration "library" {

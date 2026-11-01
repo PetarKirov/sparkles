@@ -481,20 +481,19 @@ void writeEscapedChar(Writer, C)(ref Writer w, C c) if (isSomeChar!C)
         default:
             if (c >= 0x20 && c < 0x7F)
                 put(w, cast(char) c);
-            else if (c < 0x20)
+            else if (c < 0x20 || c == 0x7F || (isUtf8Unit!C && c >= 0x80))
             {
-                // Hex escape for non-printable. Deliberately upper-case
-                // (`\xAB`), unlike the lower-case numeral digits — the
-                // escape convention predates the shared alphabet.
+                // Hex escape for a control character, and for a lone UTF-8
+                // unit above ASCII, which is no character on its own (a
+                // string's units go through `writeEscapedString`, which
+                // decodes them). Deliberately upper-case (`\xAB`), unlike
+                // the lower-case numeral digits — the escape convention
+                // predates the shared alphabet.
                 import sparkles.base.text.base_codecs : base16;
 
                 put(w, `\x`);
                 put(w, base16.digits[(c >> 4) & 0xF]);
                 put(w, base16.digits[c & 0xF]);
-            }
-            else static if (is(C == char))
-            {
-                put(w, c); // one code unit of a multi-byte sequence
             }
             else
             {
@@ -507,6 +506,8 @@ void writeEscapedChar(Writer, C)(ref Writer w, C c) if (isSomeChar!C)
             }
     }
 }
+
+private enum isUtf8Unit(C) = is(immutable C == immutable char);
 
 @("writeEscapedChar.newline")
 @safe pure nothrow @nogc
@@ -533,9 +534,29 @@ void writeEscapedString(Writer, S)(ref Writer w, S s) if (isSomeString!S)
 {
     import std.range.primitives : put;
 
+    import std.range.primitives : ElementEncodingType;
+    import sparkles.base.text.utf : decodeToken, UtfMode, UtfTokenKind;
+    import sparkles.base.text.base_codecs : base16;
+
+    // Decoded, so a multi-unit character is written whole: UTF-8 kept as it
+    // is, a UTF-16 surrogate pair as its one code point. A byte that is not
+    // UTF-8 is hex-escaped; an unpaired surrogate becomes U+FFFD.
+    alias C = immutable ElementEncodingType!S;
+    enum mode = isUtf8Unit!C ? UtfMode.opaque : UtfMode.replacement;
     put(w, '"');
-    foreach (c; s)
-        writeEscapedChar(w, c);
+    for (size_t i = 0; i < s.length;)
+    {
+        const decoded = decodeToken(s[i .. $], mode);
+        i += decoded.result.consumed ? decoded.result.consumed : 1;
+        if (decoded.token.kind == UtfTokenKind.opaqueByte)
+        {
+            put(w, `\x`);
+            put(w, base16.digits[decoded.token.byteValue >> 4]);
+            put(w, base16.digits[decoded.token.byteValue & 0xF]);
+        }
+        else
+            writeEscapedChar(w, decoded.token.scalar);
+    }
     put(w, '"');
 }
 
@@ -546,6 +567,39 @@ unittest
     SharedBuffer!(char, 64) buf;
     writeEscapedString(buf, "hello\nworld");
     assert(buf[] == `"hello\nworld"`);
+}
+
+@("writeEscapedString.keepsUtf8Whole")
+@safe pure unittest
+{
+    import std.array : appender;
+
+    // A writer that takes code points as well as code units.
+    auto w = appender!string;
+    writeEscapedString(w, "héllo 😀");
+    assert(w[] == `"héllo 😀"`);
+}
+
+@("writeEscapedString.decodesEveryWidth")
+@safe pure nothrow @nogc
+unittest
+{
+    SharedBuffer!(char, 64) buf;
+    writeEscapedString(buf, "é😀"w);
+    writeEscapedString(buf, "\xFF\x7F"c);
+    writeEscapedString(buf, [cast(wchar) 0xD800]);
+    assert(buf[] == `"é😀""\xFF\x7F""�"`);
+}
+
+@("writeEscapedChar.loneUtf8Unit")
+@safe pure nothrow @nogc
+unittest
+{
+    SharedBuffer!(char, 32) buf;
+    writeEscapedChar(buf, char.init);
+    writeEscapedChar(buf, cast(char) 0x7F);
+    writeEscapedChar(buf, cast(dchar) 0xFF);
+    assert(buf[] == `\xFF\x7Fÿ`);
 }
 
 /// Writes an escaped character literal to an output range (with single quotes). @nogc-compatible.

@@ -40,8 +40,10 @@ import sparkles.doc_view.viewer_model : ScrollAnchorMode;
 
 import sparkles.source_view.search : SearchPolicy;
 import sparkles.diff.normalize : WhitespaceMode;
+import sparkles.doc_view.table_select : TableCopyFormat;
 import sparkles.ui.components.lantern_view : Placement;
 import sparkles.wired.overlay : WireCompose, WireSection;
+import sparkles.wired.policy : CommandLine, WireName;
 import sparkles.ui_app.gui_options : defaultFontSizePoints, defaultGuiFont,
     defaultGuiFontFamily, defaultTheme, defaultWindowCols, defaultWindowRows,
     uiuaCodepointMap;
@@ -89,17 +91,43 @@ enum AnsiCopyMode : ubyte
 }
 
 /// `CFG5`: how a table grid selection copies (`--table-copy`). The CLI spells
-/// the first member `auto`; the wire name is the honest `detect`.
+/// the first member `auto`; the config file's name is the honest `detect`.
 enum TableCopyMode : ubyte
 {
     /// Source for DSV documents, TSV otherwise.
-    detect,
+    @WireName!CommandLine("auto") detect,
     /// Tab-separated values.
     tsv,
     /// A markdown table.
     markdown,
     /// The DSV dialect's own source text.
     source,
+}
+
+/// Resolves `--table-copy` (`CLI11` × `DSC2`) for one document: an explicit
+/// format wins; `detect` (the default) picks `source` for a DSV document and
+/// `tsv` otherwise.
+TableCopyFormat resolveTableCopy(TableCopyMode mode, bool isDsv)
+    @safe pure nothrow @nogc
+{
+    final switch (mode)
+    {
+        case TableCopyMode.detect:
+            return isDsv ? TableCopyFormat.source : TableCopyFormat.tsv;
+        case TableCopyMode.tsv:      return TableCopyFormat.tsv;
+        case TableCopyMode.markdown: return TableCopyFormat.markdown;
+        case TableCopyMode.source:   return TableCopyFormat.source;
+    }
+}
+
+///
+@("settings.resolveTableCopy.detectByKind")
+@safe pure nothrow @nogc unittest
+{
+    assert(resolveTableCopy(TableCopyMode.detect, true) == TableCopyFormat.source);
+    assert(resolveTableCopy(TableCopyMode.detect, false) == TableCopyFormat.tsv);
+    assert(resolveTableCopy(TableCopyMode.markdown, true) == TableCopyFormat.markdown);
+    assert(resolveTableCopy(TableCopyMode.source, false) == TableCopyFormat.source);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

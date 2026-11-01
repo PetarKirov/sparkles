@@ -84,19 +84,19 @@ struct OverlayOptions
 struct DiffOptions
 {
     @(Option("diff-ignore-whitespace", description: "Whitespace difference mode: exact | trailing | change | all."))
-    string diffIgnoreWhitespace = "exact";
+    WhitespaceMode diffIgnoreWhitespace = WhitespaceMode.exact;
 
     @(Option("diff-preview", description: "Diff rendered Markdown documents instead of raw source."))
     bool diffPreview;
 
-    @(Option("diff-structural", description: "Grammar-aware structural diff: auto | on | off."))
-    string diffStructural = "auto";
+    @(Option("diff-structural", description: "Grammar-aware structural diff: auto | on | off | view."))
+    StructuralPolicy diffStructural = StructuralPolicy.automatic;
 
     @(Option("diff-commutative", description: "Containers whose child order carries no meaning (e.g. D imports)."))
     string diffCommutative = "default";
 
     @(Option("diff-layout", description: "Diff layout: unified (default) or split."))
-    string diffLayout = "unified";
+    DiffLayout diffLayout = DiffLayout.unified;
 
     @(Option("diff-show-formatting", description: "Show whitespace-only hunks in full instead of folding them to a badge."))
     bool diffShowFormatting;
@@ -157,7 +157,7 @@ struct RenderSinkOptions
 struct ViewRenderOptions
 {
     string theme;
-    string background = "full";
+    BackgroundMode background = BackgroundMode.full;
     int width;
     int height;
     bool groupThemes = true;
@@ -171,19 +171,19 @@ struct ViewRenderOptions
     int codeMaxLines = -1;
     string tableOverflow = "scroll";
     int tableMaxLines = -1;
-    string ansiCopy = "raw";
-    string tableCopy = "auto";
+    AnsiCopyMode ansiCopy = AnsiCopyMode.raw;
+    TableCopyMode tableCopy = TableCopyMode.detect;
     string[] include;
     string[] exclude;
     bool noLiveTypes = false;
-    string diffLayout = "unified";
+    DiffLayout diffLayout = DiffLayout.unified;
     bool diffShowFormatting;
     bool diffChrome = true;
     GuiOptions gui;
     bool formatPreview = false;  /// `FMV8`: start in the format preview
     int formatWidth = 0;         /// ruler column (0 = discover)
     string formatter;            /// preferred formatter name
-    string scrollAnchor = "segment"; /// `NAV5`: what a re-layout pins
+    ScrollAnchorMode scrollAnchor = ScrollAnchorMode.segment; /// `NAV5`: what a re-layout pins
 }
 
 // ── Subcommands ─────────────────────────────────────────────────────────────
@@ -257,10 +257,10 @@ struct View
     bool groupThemes = true;
 
     @(Option("ansi-copy", description: "--gui: how a selection over a ```ansi block copies: 'raw' or 'strip'."))
-    string ansiCopy = "raw";
+    AnsiCopyMode ansiCopy = AnsiCopyMode.raw;
 
     @(Option("table-copy", description: "How a table grid selection copies: 'auto' (source for DSV, else tsv), 'tsv', 'markdown' or 'source' (the DSV dialect)."))
-    string tableCopy = "auto";
+    TableCopyMode tableCopy = TableCopyMode.detect;
 
     @(Option("include", description: "Explorer glob(s) to always show. Repeatable."))
     string[] include;
@@ -281,7 +281,7 @@ struct View
     string formatter;
 
     @(Option("scroll-anchor", description: "What a resize or font change keeps at the top: segment (the exact wrapped segment, default) or line (the source line's first segment)."))
-    string scrollAnchor = "segment";
+    ScrollAnchorMode scrollAnchor = ScrollAnchorMode.segment;
 
     @Flatten
     DiffOptions diffOptions;
@@ -593,7 +593,7 @@ struct HueCli
     string theme = defaultTheme;
 
     @(Option("background", description: "Terminal background mode: no-background, spans, or full."))
-    string background = "full";
+    BackgroundMode background = BackgroundMode.full;
 
     @(Option("width", description: "Columns a one-shot (--ansi/--html) render lays out in (default: the terminal's, capped at 120)."))
     int width;
@@ -611,71 +611,11 @@ struct HueCli
     SumType!(View, Diff, Pr, Gallery, Site, ThemeCmd, OverlayCmd, ConfigCmd, CreditsCmd) command;
 }
 
-// ── CLI value parsing (string → enum, warn-and-default) ─────────────────────
-
-/// Parses a `--background` value; unknown spellings warn and fall back.
-BackgroundMode parseBackgroundMode(string name) @safe
-{
-    switch (name)
-    {
-        case "no-background": return BackgroundMode.noBackground;
-        case "spans":         return BackgroundMode.spans;
-        case "full":          return BackgroundMode.full;
-        default:
-            warning(i"unknown --background '$(name)'; using 'full'");
-            return BackgroundMode.full;
-    }
-}
-
-DiffLayout parseDiffLayout(string spelling) @safe
-{
-    switch (spelling)
-    {
-        case "unified": return DiffLayout.unified;
-        case "split":   return DiffLayout.split;
-        default:
-            warning(i"unknown --diff-layout '$(spelling)'; using unified");
-            return DiffLayout.unified;
-    }
-}
-
-/// `NAV5`: the anchor mode named on the command line.
-ScrollAnchorMode parseScrollAnchor(string spelling) @safe
-{
-    switch (spelling)
-    {
-        case "segment": return ScrollAnchorMode.segment;
-        case "line":    return ScrollAnchorMode.line;
-        default:
-            warning(i"unknown --scroll-anchor '$(spelling)'; using segment");
-            return ScrollAnchorMode.segment;
-    }
-}
-
-WhitespaceMode parseWhitespaceMode(string spelling) @safe
-{
-    switch (spelling)
-    {
-        case "exact":    return WhitespaceMode.exact;
-        case "trailing": return WhitespaceMode.trailing;
-        case "change":   return WhitespaceMode.change;
-        case "all":      return WhitespaceMode.all;
-        default:
-            warning(i"unknown --diff-ignore-whitespace '$(spelling)'; using exact");
-            return WhitespaceMode.exact;
-    }
-}
-
-StructuralPolicy parseStructural(string spelling) @safe
-{
-    import sparkles.doc_view.diff_structural : parseStructuralPolicy;
-
-    bool ok;
-    const p = parseStructuralPolicy(spelling, ok);
-    if (!ok)
-        warning(i"unknown --diff-structural '$(spelling)'; using auto");
-    return p;
-}
+// ── CLI value parsing (the open-domain flags) ───────────────────────────────
+//
+// The closed-domain flags are enum-typed options: core-cli parses them by
+// their `CommandLine` wire names and rejects an unknown spelling, listing the
+// valid ones. Only the flags whose values are not a closed enum parse here.
 
 CommutativeKind[] parseCommutative(string spelling) @safe
 {
@@ -686,32 +626,6 @@ CommutativeKind[] parseCommutative(string spelling) @safe
     if (!ok)
         warning(i"--diff-commutative wants language:node entries; ignoring the malformed ones in '$(spelling)'");
     return kinds;
-}
-
-AnsiCopyMode parseAnsiCopy(string spelling) @safe
-{
-    switch (spelling)
-    {
-        case "raw":   return AnsiCopyMode.raw;
-        case "strip": return AnsiCopyMode.strip;
-        default:
-            warning(i"unknown --ansi-copy '$(spelling)'; using raw");
-            return AnsiCopyMode.raw;
-    }
-}
-
-TableCopyMode parseTableCopy(string spelling) @safe
-{
-    switch (spelling)
-    {
-        case "auto":     return TableCopyMode.detect;
-        case "tsv":      return TableCopyMode.tsv;
-        case "markdown": return TableCopyMode.markdown;
-        case "source":   return TableCopyMode.source;
-        default:
-            warning(i"unknown --table-copy '$(spelling)'; using auto");
-            return TableCopyMode.detect;
-    }
 }
 
 /// Parses a `--code-overflow`/`--table-overflow` value into the shared
@@ -744,67 +658,14 @@ OverflowPolicy parseOverflow(string name, string flag)
     }
 }
 
-// ── Enum → CLI spelling (the sinks still speak the flag vocabulary) ─────────
-//
-// `ViewRenderOptions` keeps its historical string fields; these unparse the
-// config's enums back into the exact flag spellings its consumers parse.
-// Total by construction, and pinned against the parsers by test below.
-
-string cliText(BackgroundMode m) @safe pure nothrow @nogc
-{
-    final switch (m)
-    {
-        case BackgroundMode.noBackground: return "no-background";
-        case BackgroundMode.spans:        return "spans";
-        case BackgroundMode.full:         return "full";
-    }
-}
-
-string cliText(DiffLayout l) @safe pure nothrow @nogc
-{
-    final switch (l)
-    {
-        case DiffLayout.unified: return "unified";
-        case DiffLayout.split:   return "split";
-    }
-}
-
-string cliText(ScrollAnchorMode m) @safe pure nothrow @nogc
-{
-    final switch (m)
-    {
-        case ScrollAnchorMode.segment: return "segment";
-        case ScrollAnchorMode.line:    return "line";
-    }
-}
-
-string cliText(AnsiCopyMode m) @safe pure nothrow @nogc
-{
-    final switch (m)
-    {
-        case AnsiCopyMode.raw:   return "raw";
-        case AnsiCopyMode.strip: return "strip";
-    }
-}
-
-string cliText(TableCopyMode m) @safe pure nothrow @nogc
-{
-    final switch (m)
-    {
-        case TableCopyMode.detect:   return "auto";
-        case TableCopyMode.tsv:      return "tsv";
-        case TableCopyMode.markdown: return "markdown";
-        case TableCopyMode.source:   return "source";
-    }
-}
-
 // ── The CLI layer (CFG2's highest) ──────────────────────────────────────────
 
 /**
 The parsed command line as a sparse overlay: a field is set iff its flag was
 explicitly typed (`CommandNode.seenOptions`), so an untouched flag can never
-shadow a config file. String-domain flags parse to their enums here — the one
-place CLI spellings and wire spellings meet.
+shadow a config file. The closed-domain flags arrive as enums already
+(core-cli parsed their `CommandLine` spellings); the open-domain ones parse
+here.
 */
 Sparse!HueConfig cliOverlay(in CommandNode!HueCli root)
 {
@@ -819,7 +680,7 @@ Sparse!HueConfig cliOverlay(in CommandNode!HueCli root)
     if ("theme" in rs)
         o.appearance.theme = root.value.theme;
     if ("background" in rs)
-        o.appearance.background = parseBackgroundMode(root.value.background);
+        o.appearance.background = root.value.background;
     if ("width" in rs)
         o.appearance.width = root.value.width;
     if ("height" in rs)
@@ -873,13 +734,13 @@ Sparse!HueConfig cliOverlay(in CommandNode!HueCli root)
                 if ("groupThemes" in s)
                     o.appearance.groupThemes = v.value.groupThemes;
                 if ("ansiCopy" in s)
-                    o.behaviour.ansiCopy = parseAnsiCopy(v.value.ansiCopy);
+                    o.behaviour.ansiCopy = v.value.ansiCopy;
                 if ("tableCopy" in s)
-                    o.behaviour.tableCopy = parseTableCopy(v.value.tableCopy);
+                    o.behaviour.tableCopy = v.value.tableCopy;
                 if ("noLiveTypes" in s)
                     o.behaviour.liveTypes = !v.value.noLiveTypes;
                 if ("scrollAnchor" in s)
-                    o.behaviour.scrollAnchor = parseScrollAnchor(v.value.scrollAnchor);
+                    o.behaviour.scrollAnchor = v.value.scrollAnchor;
                 if ("raw" in s && v.value.raw)
                     o.behaviour.defaultView = DefaultView.raw;
                 if ("formatPreview" in s)
@@ -934,11 +795,11 @@ private void diffFlagsInto(ref Sparse!HueConfig o, const bool[string] seen,
     in DiffOptions dopt, string prefix)
 {
     if (prefix ~ "diffIgnoreWhitespace" in seen)
-        o.diff.ignoreWhitespace = parseWhitespaceMode(dopt.diffIgnoreWhitespace);
+        o.diff.ignoreWhitespace = dopt.diffIgnoreWhitespace;
     if (prefix ~ "diffStructural" in seen)
-        o.diff.structural = parseStructural(dopt.diffStructural);
+        o.diff.structural = dopt.diffStructural;
     if (prefix ~ "diffLayout" in seen)
-        o.diff.layout = parseDiffLayout(dopt.diffLayout);
+        o.diff.layout = dopt.diffLayout;
     if (prefix ~ "diffPreview" in seen)
         o.diff.preview = dopt.diffPreview;
     if (prefix ~ "diffShowFormatting" in seen)
@@ -1031,7 +892,7 @@ ViewRenderOptions viewRenderOptionsOf(const HueConfig eff) @safe
 {
     ViewRenderOptions opt;
     opt.theme = eff.appearance.theme;
-    opt.background = cliText(eff.appearance.background);
+    opt.background = eff.appearance.background;
     opt.groupThemes = eff.appearance.groupThemes;
     opt.width = eff.appearance.width;
     opt.height = eff.appearance.height;
@@ -1045,16 +906,16 @@ ViewRenderOptions viewRenderOptionsOf(const HueConfig eff) @safe
     opt.codeMaxLines = eff.panes.viewer.codeMaxLines;
     opt.tableOverflow = eff.panes.viewer.tableOverflow;
     opt.tableMaxLines = eff.panes.viewer.tableMaxLines;
-    opt.ansiCopy = cliText(eff.behaviour.ansiCopy);
-    opt.tableCopy = cliText(eff.behaviour.tableCopy);
+    opt.ansiCopy = eff.behaviour.ansiCopy;
+    opt.tableCopy = eff.behaviour.tableCopy;
     opt.include = eff.panes.tree.include.dup;
     opt.exclude = eff.panes.tree.exclude.dup;
     opt.noLiveTypes = !eff.behaviour.liveTypes;
-    opt.diffLayout = cliText(eff.diff.layout);
+    opt.diffLayout = eff.diff.layout;
     opt.diffShowFormatting = eff.diff.showFormatting;
     opt.diffChrome = eff.diff.chrome;
     opt.gui = guiOptionsOf(eff);
-    opt.scrollAnchor = cliText(eff.behaviour.scrollAnchor);
+    opt.scrollAnchor = eff.behaviour.scrollAnchor;
     opt.formatPreview = eff.format.preview;
     opt.formatWidth = eff.format.width;
     opt.formatter = eff.format.formatter;
@@ -1123,29 +984,40 @@ GuiOptions guiOptionsOf(const HueConfig eff) @safe
     assert(eff.panes.viewer.tabWidth == 8);
 }
 
-@("cli.cliText.pinnedToParsers")
-@safe unittest
+@("cli.closedDomainFlags.commandLineSpellings")
+@system unittest
 {
-    import std.meta : AliasSeq;
+    import std.algorithm.searching : canFind;
 
-    // The unparse helpers must speak exactly what the parsers accept — a
-    // drift here silently reroutes a config value through a parser's
-    // warn-and-default arm.
-    static foreach (m; __traits(allMembers, BackgroundMode))
-        assert(parseBackgroundMode(cliText(__traits(getMember, BackgroundMode, m)))
-            == __traits(getMember, BackgroundMode, m));
-    static foreach (m; __traits(allMembers, DiffLayout))
-        assert(parseDiffLayout(cliText(__traits(getMember, DiffLayout, m)))
-            == __traits(getMember, DiffLayout, m));
-    static foreach (m; __traits(allMembers, ScrollAnchorMode))
-        assert(parseScrollAnchor(cliText(__traits(getMember, ScrollAnchorMode, m)))
-            == __traits(getMember, ScrollAnchorMode, m));
-    static foreach (m; __traits(allMembers, AnsiCopyMode))
-        assert(parseAnsiCopy(cliText(__traits(getMember, AnsiCopyMode, m)))
-            == __traits(getMember, AnsiCopyMode, m));
-    static foreach (m; __traits(allMembers, TableCopyMode))
-        assert(parseTableCopy(cliText(__traits(getMember, TableCopyMode, m)))
-            == __traits(getMember, TableCopyMode, m));
+    // The flags keep the spellings the hand-written parsers accepted, while
+    // the config file keeps the identifiers (`settings.enums.wireNamesRoundTrip`).
+    auto parsed = parseCli!HueCli([
+        "hue", "--background", "no-background", "view",
+        "--table-copy", "auto", "--ansi-copy", "strip",
+        "--scroll-anchor", "line", "--diff-structural", "auto",
+        "--diff-ignore-whitespace", "change", "--diff-layout", "split", "x.d",
+    ]);
+    assert(parsed, parsed.error.message);
+    auto o = cliOverlay(parsed.value);
+    assert(o.appearance.background.get == BackgroundMode.noBackground);
+    assert(o.behaviour.tableCopy.get == TableCopyMode.detect);
+    assert(o.behaviour.ansiCopy.get == AnsiCopyMode.strip);
+    assert(o.behaviour.scrollAnchor.get == ScrollAnchorMode.line);
+    assert(o.diff.structural.get == StructuralPolicy.automatic);
+    assert(o.diff.ignoreWhitespace.get == WhitespaceMode.change);
+    assert(o.diff.layout.get == DiffLayout.split);
+
+    // The config file's spelling is not a flag value, and an unknown value is
+    // a parse error that lists the valid ones — no warn-and-default.
+    auto bad = parseCli!HueCli(["hue", "--background", "noBackground", "x.d"]);
+    assert(!bad);
+    assert(bad.error.message.canFind("no-background, spans, full"),
+        bad.error.message);
+    auto badCopy = parseCli!HueCli(["hue", "view", "--table-copy", "detect", "x.d"]);
+    assert(!badCopy);
+    assert(badCopy.error.message.canFind("auto, tsv, markdown, source"),
+        badCopy.error.message);
+    assert(!parseCli!HueCli(["hue", "diff", "--diff-structural=automatic"]));
 }
 
 @("cli.projections.roundTrip")
@@ -1165,9 +1037,9 @@ GuiOptions guiOptionsOf(const HueConfig eff) @safe
     assert(opt.theme == "builtin-dark");
     assert(opt.treeWidth == 40);
     assert(opt.lineNumbers == false);
-    assert(opt.tableCopy == "source");
+    assert(opt.tableCopy == TableCopyMode.source);
     assert(opt.noLiveTypes == true);
-    assert(opt.diffLayout == "split");
+    assert(opt.diffLayout == DiffLayout.split);
     assert(opt.gui.font == eff.appearance.fonts.family);
     assert(opt.gui.fontSize == 13);
     assert(opt.gui.theme == "builtin-dark");
