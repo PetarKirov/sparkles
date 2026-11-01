@@ -356,7 +356,7 @@ low-level POSIX API:
    and no blocking call or sleep runs on a scheduler thread.
 5. Add native Windows spawning with `CreateProcessW`, UTF-16 argv/environment/
    cwd staging, restricted handle inheritance, IOCP-associated overlapped named
-   pipes, process-handle wait registration posting to IOCP, and Job Object tree
+   pipes, process-handle wait completion packets on the IOCP, and Job Object tree
    ownership/termination/resource accounting.
 6. Deliver the `apps/ci` process adapter through
    [task-DAG M5](../build-primitives/task-dag/PLAN.md#m5-event-horizon-subprocess-actions),
@@ -431,12 +431,19 @@ their libproc counterpart. Without a run cgroup, a group the lost root
 unpinned may not be signalled again (§13.7), so the residual lives on until it
 exits; the auto-reap test ends its own orphan.
 
-Windows spawning,
-Job Objects and wait packets, async file opens/flush, native Windows
-certification and bounded cross-worker channels remain open prerequisites.
-The installed Wine lacks both wait-packet exports; it may explicitly skip
-those cases, but native Windows must run them, without a polling or
-threadpool-callback fallback.
+Item 5 shipped (2026-11-01) as SPEC §13.9: `live_windows` spawns with
+`CreateProcessW` (suspended, assigned to a kill-on-close Job Object, then
+resumed), inverse-`CommandLineToArgvW` argv, UTF-16 strings and a sorted
+overlay block, a handle list restricting inheritance, and overlapped named
+pipes on the port; exits arrive through one wait completion packet per wait
+(`OpWaitHandle`), timers through a high-resolution waitable timer on a
+persistent packet. `supervise` runs over it unchanged in shape (console break,
+`TerminateJobObject`, the Job Object sampler), and the supervision cases run
+on native `windows-latest`. The installed Wine lacks both wait-packet exports:
+exactly the cases that wait on a process skip there, and nothing falls back
+to polling or a threadpool callback. `capture`, `spawnPty` and `RingProc` stay
+POSIX-only. Async file opens/flush and bounded cross-worker channels remain
+open prerequisites.
 
 ## M20 — The fiber parker for `sparkles.base.sync`
 

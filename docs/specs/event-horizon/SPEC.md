@@ -1719,12 +1719,15 @@ by `package`, so consumer spellings do not change).
 
 **Delivery status.** §§13.1–13.4 describe the shipped M15 POSIX baseline. It
 is publicly re-exported and tested on Linux and macOS; on macOS the reap
-lowers to `EVFILT_PROC`. Windows has no process surface: its IOCP backend
-currently covers sockets, timers, and wakes only. §§13.5–13.8 shipped in M19
-(the `supervise`, `sampling`, `cgroup` and `blocking_pool` modules). The
-supervision suite runs on Linux and native macOS; macOS has no containment
-tier, so it supervises by process group, and it samples through libproc.
-§13.9 and the `apps/ci` port remain M19 targets — see
+lowers to `EVFILT_PROC`. On Windows, §13.9 shipped in M19: `live_windows`
+(spawn, wait, kill), the Job Object sampler and `supervise` are exported and
+run the supervision cases on native Windows (`windows-latest`); under Wine,
+which lacks the wait packets, only the cases that need no process wait run;
+`capture`, `spawnPty` and `RingProc` remain POSIX-only. §§13.5–13.8 shipped
+in M19 (the `supervise`, `sampling`, `cgroup` and `blocking_pool` modules).
+The supervision suite runs on Linux and native macOS; macOS has no
+containment tier, so it supervises by process group, and it samples through
+libproc. The `apps/ci` port remains an M19 target — see
 [PLAN M19](./PLAN.md#m19--cross-platform-supervised-processes-for-appsci) for
 the delivery status.
 
@@ -1876,7 +1879,8 @@ can never depend on a resource acquired afterwards.
 Portability as shipped: io_uring lowers `OpWaitid` to `WAITID`; kqueue lowers
 it to `EVFILT_PROC`/`NOTE_EXIT` and closes the register-vs-exit race with a
 `waitpid(WNOHANG)` back-check. The kqueue lowering is not yet reachable through
-the public package import. IOCP process waits are an M19 target (§13.9). The
+the public package import. IOCP lowers the wait to a wait completion packet on
+the process handle (§13.9). The
 descriptor is portable-shaped; peer backends implement it without changing
 the fiber-level wait contract.
 
@@ -2357,39 +2361,82 @@ bound to one pool rather than constructing a pool per operation.
 
 ### 13.9 Windows lowering (M19)
 
-Windows process parity is native Win32, not a POSIX emulation:
+Windows process parity is native Win32, not a POSIX emulation (module
+`live_windows`, re-exported by `live`; the research behind it is
+[Windows IOCP Waits, Timers & Jobs](../../research/async-io/windows-iocp-waits.md)):
 
 - spawn uses `CreateProcessW`; argv is encoded with the documented
-  `CommandLineToArgvW` inverse quoting rules, strings/cwd are UTF-16, and the
-  double-NUL environment block is case-insensitively sorted after applying
-  §13.1's overlay;
-- the child is created suspended, assigned to a per-run Job Object, then
-  resumed, so descendants cannot escape between creation and supervision;
-  inability to assign the requested job fails spawn and terminates/reaps the
+  `CommandLineToArgvW` inverse quoting rules (the program name by that
+  function's first-token rule, so it may not contain a quote), strings/cwd are
+  UTF-16, and the double-NUL environment block is case-insensitively sorted
+  after applying §13.1's overlay. The PATH search is §13.1's, over the child's
+  PATH: each candidate is attempted by `CreateProcessW`, a bare name gets
+  `.exe`, a relative candidate resolves against the child's cwd, neither the
+  parent's directory nor its cwd is searched implicitly, and batch files are
+  refused (they are run as `cmd.exe /c …` explicitly);
+- the child is created suspended, assigned to its own Job Object, then
+  resumed, so no child instruction runs outside the job and descendants cannot
+  escape it; inability to assign fails spawn and terminates/reaps the
   suspended child;
-- piped streams use uniquely named pipes whose parent ends are opened with
-  `FILE_FLAG_OVERLAPPED` and associated with the scheduler's IOCP. Child ends
-  alone are inheritable; `STARTUPINFOEXW` plus a handle list prevents accidental
+- piped streams use uniquely named single-instance pipes rejecting remote
+  clients, whose parent ends are opened with `FILE_FLAG_OVERLAPPED` and
+  associated with the scheduler's IOCP. Child ends alone are inheritable;
+  `STARTUPINFOEXW` plus `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` prevents accidental
   inheritance. `ReadFile`/`WriteFile` completions use the ordinary op-slot
   lifetime rule (§4.3), including `CancelIoEx` terminal completion;
-- process exit uses one `RegisterWaitForSingleObject` registration. Its callback
-  posts the wait result to IOCP; unregister and process/thread-handle closure
-  happen only after that completion is consumed. The process exit code is read
-  once and represented as `ExitStatus(signaled: false, code: value)`;
-- the Job Object has `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`. `newProcessGroup`
-  additionally requests `CREATE_NEW_PROCESS_GROUP`; graceful termination sends
-  `CTRL_BREAK_EVENT` when the child has a compatible console group. If no
-  console control channel exists, the graceful stage records that no soft
-  signal was deliverable and still observes the configured grace. Hard kill is
-  `TerminateJobObject`, covering the whole descendant tree;
-- sampling uses `QueryInformationJobObject` accounting and process/memory
-  classes. If Job Object accounting is unavailable, the sample has
-  `sampled == false`; wall time remains valid.
+- process exit is `OpWaitHandle` on the process handle: one wait completion
+  packet (`NtCreateWaitCompletionPacket` + `NtAssociateWaitCompletionPacket`)
+  associated with the scheduler's port, whose APC context is the op's
+  `OVERLAPPED`, so the exit dequeues like any completion — no threadpool wait,
+  no callback, no helper thread. Cancellation is
+  `NtCancelWaitCompletionPacket(…, TRUE)`: `STATUS_SUCCESS` synthesizes the
+  target's `ECANCELED`, any other status leaves delivery to the queued packet.
+  The packet is closed only after its pickup or a successful cancel. The
+  process handle is not consumed by the wait and pins identity until the reap;
+  the reap reads the exit code once, as
+  `ExitStatus(signaled: false, code: value)`, then closes the process and job
+  handles. The exports are resolved at
+  run time; where any is missing (installed Wine) the `waitid` capability bit is
+  clear, the op is a terminal `EOPNOTSUPP`, and there is no polling or
+  threadpool fallback;
+- the Job Object has `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, so the reap ends
+  any descendant still in it; `ResidualPolicy.detach` clears the limit before
+  the reap, and `ResidualPolicy.wait` is refused (no populated evidence, as on
+  the non-cgroup POSIX tiers). `newProcessGroup` additionally requests
+  `CREATE_NEW_PROCESS_GROUP` (`supervise` always does); graceful termination
+  sends `CTRL_BREAK_EVENT` to the child's group when the child is attached to
+  this process's console (`GetConsoleProcessList`) — never a console-wide
+  broadcast. If no console control channel exists, the graceful stage records
+  `softSignalUndelivered` and still observes the configured grace. Hard kill
+  is `TerminateJobObject`, covering the whole descendant tree and nested jobs;
+  a killed child's status is `ExitStatus(false, 1)`;
+- sampling uses `QueryInformationJobObject`: basic-and-I/O accounting
+  (cumulative user/kernel CPU over every member, exited ones included, and the
+  active-process count) and the extended limit information (the job's peak
+  commit, reported as `peakCgroupMemoryBytes`). CPU is tick-sampled and so a
+  `lowerBound`; per-process resident sizes are not read. If Job Object
+  accounting is unavailable, the sample has `sampled == false`; wall time
+  remains valid.
+
+IOCP timers follow the same bridge: a software timer list whose earliest
+deadline (and the caller's wait deadline) arms one
+`CREATE_WAITABLE_TIMER_HIGH_RESOLUTION` timer, connected to the port by one
+persistent wait packet that is re-associated after each pickup and consumed
+inside the dequeue. A port-wait timeout is quantised to the clock interval
+(~15.6 ms by default); the timer wakes within about 0.5 ms. The rounded-up
+port timeout remains the backstop, and is the whole mechanism where the timer
+class or the packet exports are missing, or when `BackendConfig.coarseTimers`
+forces it for A/B measurement. A native Win32 message host waits on the
+backend's host event, which a packet does not set, so there a process exit or
+timer is noticed at the host's next wake.
 
 There are no anonymous blocking pipes, polling `PeekNamedPipe`, helper wait
 loops, or per-process threads in the Windows path. IOCP remains the single I/O
-wait. This Windows work does not alter Linux backend selection: Linux continues
-to require `io_uring` with no epoll fallback (§3.4).
+wait. The termination-critical lane (§13.8) holds the one blocking fallback —
+a `WaitForSingleObject` reap taken only after an in-ring wait failed — and the
+observer-failure probes, as on POSIX. This Windows work does not alter Linux
+backend selection: Linux continues to require `io_uring` with no epoll
+fallback (§3.4).
 
 ## 14. Channels
 
