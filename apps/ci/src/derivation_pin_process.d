@@ -189,6 +189,10 @@ struct SupervisedCommands
 @system
 unittest
 {
+    import core.stdc.stdlib : free;
+    import core.sys.posix.stdlib : realpath;
+    import std.string : fromStringz;
+
     import sparkles.event_horizon.sched : Sched;
     import sparkles.test_runner.skip : skipTest;
 
@@ -197,11 +201,17 @@ unittest
     if (created.hasError)
         skipTest("completion backend unavailable: " ~ created.error.context);
     scope (exit) scheduler.destroy();
+    // The child reports its physical directory: on macOS `/tmp` is a symlink
+    // to `/private/tmp`.
+    auto resolved = realpath("/tmp", null);
+    assert(resolved !is null);
+    const tmp = resolved.fromStringz.idup;
+    free(resolved);
     auto commands = SupervisedCommands(repoRoot: "/tmp", token: "synthetic-token");
     auto ran = scheduler.run(() {
         auto result = commands.run(["sh", "-c",
-            `printf '%s\n' "$CACHIX_AUTH_TOKEN"; pwd; printf diagnostic >&2; exit 7`]);
-        assert(!result.ok && result.stdout == "synthetic-token\n/tmp\n" && result.stderr == "diagnostic");
+            `printf '%s\n' "$CACHIX_AUTH_TOKEN"; pwd -P; printf diagnostic >&2; exit 7`]);
+        assert(!result.ok && result.stdout == "synthetic-token\n" ~ tmp ~ "\n" && result.stderr == "diagnostic");
         result = commands.run(["sh", "-c", "printf stdout; printf stderr >&2"]);
         assert(result.ok && result.stdout == "stdout" && result.stderr == "stderr");
     });

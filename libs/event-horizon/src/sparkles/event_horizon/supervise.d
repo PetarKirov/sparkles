@@ -63,7 +63,7 @@ version (Posix)  :
 
 import core.lifetime : move;
 import core.stdc.errno : EAGAIN, ECANCELED, ECHILD, EINTR, EINVAL, EIO, ENOBUFS,
-    EOPNOTSUPP, ESRCH;
+    EOPNOTSUPP, EPERM, ESRCH;
 import core.sys.posix.signal : SIGCONT, SIGKILL, SIGTERM;
 import core.time : Duration, MonoTime, msecs, seconds;
 
@@ -451,6 +451,62 @@ private shared uint runCounter;
 
 // ── signals (bounded syscalls; the supervisor is the only caller) ───────────
 
+version (OSX)
+{
+    private extern (C) int proc_listpids(uint type, uint typeinfo, void* buffer,
+        int bufferSize) nothrow @nogc;
+
+    /**
+    Whether `root` is the only member of process group `pgid`. The caller has
+    observed the root's exit, so that member is its zombie.
+
+    Linux delivers a group signal to a group that holds only the root's
+    WNOWAIT-pinned zombie; XNU refuses it with `EPERM`. `proc_listpids(PROC_PGRP_ONLY)` lists the zombie, so a
+    group listing nothing but the root has no live member left to kill — the
+    group signal's outcome on Linux. Any other member, or a failed listing,
+    leaves `EPERM` standing.
+    */
+    private bool onlyMemberIs(int pgid, int root) @trusted nothrow @nogc
+    {
+        enum uint PROC_PGRP_ONLY = 2; // <sys/proc_info.h>
+        int[2] members;
+        const bytes = proc_listpids(PROC_PGRP_ONLY, cast(uint) pgid,
+            members.ptr, cast(int) members.sizeof);
+        return bytes == int.sizeof && members[0] == root;
+    }
+
+    @("supervise.signalGroup.darwinZombieOnlyGroup")
+    @system
+    unittest
+    {
+        import core.stdc.errno : errno;
+        import core.sys.posix.signal : kill;
+        import core.sys.posix.spawn : posix_spawn, posix_spawnattr_destroy,
+            posix_spawnattr_init, posix_spawnattr_setflags, posix_spawnattr_t,
+            POSIX_SPAWN_SETPGROUP;
+        import core.sys.posix.sys.wait : idtype_t, siginfo_t, waitid, waitpid,
+            WEXITED, WNOWAIT;
+        import core.sys.posix.unistd : pid_t;
+
+        posix_spawnattr_t attr;
+        posix_spawnattr_init(&attr);
+        scope (exit) posix_spawnattr_destroy(&attr);
+        posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETPGROUP); // pgroup 0: its own
+        pid_t pid;
+        char*[2] argv = [cast(char*) "/usr/bin/true".ptr, null];
+        assert(posix_spawn(&pid, argv[0], null, &attr, argv.ptr, null) == 0);
+        siginfo_t info;
+        assert(waitid(idtype_t.P_PID, pid, &info, WEXITED | WNOWAIT) == 0);
+        scope (exit) cast(void) waitpid(pid, null, 0);
+
+        // The pinned zombie is the group's one member, and XNU refuses the
+        // group signal that Linux delivers.
+        assert(kill(-pid, SIGKILL) != 0 && errno == EPERM);
+        assert(onlyMemberIs(pid, pid));
+        assert(!onlyMemberIs(pid, pid + 1));
+    }
+}
+
 private KillOutcome signalGroup(ref Run run, int signal) @trusted nothrow
 {
     import core.stdc.errno : errno;
@@ -464,6 +520,10 @@ private KillOutcome signalGroup(ref Run run, int signal) @trusted nothrow
     if (kill_(-run.processGroup, signal) == 0)
         return KillOutcome(KillResult.delivered, 0);
     const err = errno;
+    version (OSX)
+        if (err == EPERM && run.observer == RootObserverState.observed
+            && onlyMemberIs(run.processGroup, run.child.pid))
+            return KillOutcome(KillResult.delivered, 0);
     // The root-only fallback never proves the tree terminated.
     if (run.child.pid > 0)
         cast(void) kill_(run.child.pid, signal);
