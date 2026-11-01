@@ -1,5 +1,5 @@
 /++
-The task executor ([SPEC §5, §7–§9](../../../../../../docs/specs/ci/task-dag/SPEC.md)):
+The task executor ([SPEC TDM7, TDE1, TDC1–TDC6, TDD1](../../../../../../docs/specs/build-primitives/task-dag/SPEC.md)):
 weighted admission with exclusive keys, conditional edge resolution, outcomes,
 the event stream, structured fail-fast, external cancellation, and protected
 cleanup.
@@ -18,7 +18,7 @@ $(LIST
         producer; it never closes it.
 )
 
-Admission ([SPEC §5.3, §9]): ready tasks are considered in presentation
+Admission ([SPEC TDM8]): ready tasks are considered in presentation
 order — the graph's index order, by `PresentationKey` then `TaskId`. A task
 starts when its exclusive keys are free and its weight, clamped to the
 capacity, fits. A ready task that waits for $(I capacity) stops admission of
@@ -26,7 +26,7 @@ every later task until it starts — no backfilling past it — so a heavy task
 cannot be starved by a stream of light ones. A task that waits only for a
 key does not hold back the rest.
 
-Fail-fast ([SPEC §8]): the first authoritative failure — the lowest index
+Fail-fast ([SPEC TDC2]): the first authoritative failure — the lowest index
 among those that complete in the same turn — emits `CancellationRequested`
 once, closes admission, and interrupts every running task except cleanup.
 A task decided after admission closed becomes `Blocked` when its block
@@ -109,7 +109,7 @@ struct RunResult
     /// Why the run was cancelled, when it was.
     bool cancelled;
     CancelCause cancelCause; /// meaningful when `cancelled`
-    /// `0` success, `1` failure, `130` SIGINT, `143` SIGTERM ([SPEC §8]).
+    /// `0` success, `1` failure, `130` SIGINT, `143` SIGTERM ([SPEC TDC5]).
     int exitCode;
 }
 
@@ -158,7 +158,7 @@ struct TaskExecutor(X, C, D, S)
     }
 
     /**
-    Requests external cancellation ([SPEC §8]): emits `CancellationRequested`
+    Requests external cancellation ([SPEC TDC5]): emits `CancellationRequested`
     with `cause` (unless the run is already cancelling), closes admission,
     and interrupts running tasks. Callable from any fiber of the executor.
     */

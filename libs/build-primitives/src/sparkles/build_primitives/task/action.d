@@ -1,6 +1,6 @@
 /++
 The closed vocabulary of work a task node performs
-([SPEC §5.1](../../../../../../docs/specs/ci/task-dag/SPEC.md)): a typed process
+([SPEC TDM3](../../../../../../docs/specs/build-primitives/task-dag/SPEC.md)): a typed process
 invocation, an in-process command handler, or — for graph and executor tests
 — an inert action whose outcome the test driver declares.
 
@@ -42,7 +42,7 @@ enum SandboxPolicy
     /// No private directory: pure readers and git queries.
     none,
     /// A private task directory holding its `DUB_HOME`, build root, spilled
-    /// output, and coverage listings ([SPEC §11]).
+    /// output, and coverage listings ([SPEC TDM3]).
     taskDirectory,
 }
 

@@ -1,5 +1,5 @@
 /++
-Focused package selection ([SPEC §4.2–4.4](../../../../../../docs/specs/ci/task-dag/SPEC.md)):
+Focused package selection ([SPEC TDS4–TDS8](../../../../../../docs/specs/build-primitives/task-dag/SPEC.md)):
 `--from` selectors, `--since` change ownership and repository-wide
 invalidators, dependency and dependent closure, platform eligibility, and the
 reasons each package was selected.
@@ -41,7 +41,7 @@ struct Invalidator
 }
 
 /**
-The declarative list of repository-wide inputs ([SPEC §4.3]): the root
+The declarative list of repository-wide inputs ([SPEC TDS6]): the root
 recipe and lockfiles, the compiler and package builders, and the `ci` modules
 that discover packages and construct their tasks. Anything else outside every
 package selects nothing. The list grows only by editing it.
@@ -204,7 +204,7 @@ bool isGlob(scope const(char)[] selector) @safe pure nothrow @nogc
 }
 
 /**
-Evaluates [SPEC §4.4]'s algebra: seed from `--from` and/or `--since` (their
+Evaluates [SPEC TDS7]'s algebra: seed from `--from` and/or `--since` (their
 union), or every package; add the transitive dependency and/or dependent
 closure of the $(I seed) — both closures computed from the original seed and
 unioned, so neither expands the other's result; mark platform-ineligible
@@ -516,7 +516,7 @@ PlanExpected!(SinceChanges, SelectionError) gitChangesSince(string repoRoot, str
 // The focused-selection planner
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// `ci test`'s focused-selection options ([SPEC §2.1]).
+/// `ci test`'s focused-selection options ([SPEC TDS4, TDS5]).
 struct FocusOptions
 {
     const(string)[] from; /// `--from`
@@ -537,7 +537,7 @@ struct PackagePlan
 
 /**
 Discovers the package graph under `repoRoot` for `role`, queries git when
-`--since` is given, and selects ([SPEC §4.4] steps 1–10). Side-effect free
+`--since` is given, and selects ([SPEC TDS7] steps 1–10). Side-effect free
 apart from reading recipes and running read-only git queries, so a dry run
 may call it.
 */
