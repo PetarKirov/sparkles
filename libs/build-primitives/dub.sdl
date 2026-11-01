@@ -17,6 +17,8 @@ dependency "sparkles:wired" path="../.."
 // run on Event Horizon. Event Horizon depends only on `sparkles:base` and
 // `sparkles:event-horizon-sys`, so this closes no cycle either.
 dependency "sparkles:event-horizon" path="../.."
+// The plain reporter writes CI-provider groups and masks. A leaf package.
+dependency "sparkles:ci-provider" path="../.."
 
 configuration "library" {
     targetType "library"
