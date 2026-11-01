@@ -44,6 +44,12 @@ clean; the two documents are internally consistent.
 Gate: `dub test :ci` and `dub build :ci` pass; existing CLI behavior is
 unchanged; pure graph tests import neither Event Horizon nor UI modules.
 
+Status: delivered. `apps/ci/src/task/action.d` holds the action vocabulary and
+its redacting dry-run summary. `apps/ci/src/task/model.d` holds ids, keys,
+claims, nodes, edges, pointer-free outcomes and events. `apps/ci/src/task/graph.d`
+holds the builder, validation, stable topological order, edge resolution,
+blocked propagation, and `writePlan`.
+
 ## M2: SDL-backed package graph and focused selectors
 
 - Decode root and package `dub.sdl` files through the completed
@@ -60,6 +66,13 @@ unchanged; pure graph tests import neither Event Horizon nor UI modules.
 
 Gate: a test-only planner API can print deterministic selected package ids and
 edges for fixture repositories; production commands still use the old executor.
+
+Status: delivered. `apps/ci/src/workspace/package_graph.d` discovers the graph
+through the `sparkles.build_primitives.dub_manifest` schema.
+`apps/ci/src/workspace/select.d` holds the selection algebra, `gitChangesSince`
+(through `runGit`), and the test-only planner `planPackages` with
+`writeSelectionPlan`. `--from` globs use `gitGlobMatch`, newly public in
+`sparkles.build_primitives.gitignore`. No CLI option exists yet.
 
 ## M3: Prerequisite integration gate
 

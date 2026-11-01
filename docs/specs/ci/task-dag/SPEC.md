@@ -153,7 +153,13 @@ An edge `A -> B` means B depends on A. Graph validation rejects duplicate ids,
 unknown in-tree dependencies, self-edges, and cycles before execution. Lists are
 normalized by `PackageId`, never associative-array iteration order.
 
-The selected command mode determines the active dub configuration. Dependency
+The selected command mode determines the active dub configuration. A test
+mode activates the `unittest` configuration when the recipe declares one;
+otherwise, and for build modes, it activates the first configuration whose
+`platforms` allow the host, as dub does. A package's edges are its top-level
+in-tree dependencies plus those of its active configuration. A dependency on
+the root package adds no edge, and neither does an optional dependency that is
+not on by default. Dependency
 edges are induced only between selected packages. An unselected dependency may
 still be compiled by dub, but it does not acquire a separate CI task unless
 closure expansion selected it.
@@ -167,7 +173,8 @@ selector matches any of:
 - Qualified name, such as `sparkles:base`.
 - Repository-relative directory, such as `libs/base`.
 - A git-style glob over any of those forms, such as `sparkles:ui-*` or
-  `libs/ui*`.
+  `libs/ui*`. `*` and `?` stop at `/` and `**` crosses it. `\` escapes the
+  next character. There are no `[...]` classes.
 
 Matches from all `--from` selectors are unioned. A non-glob selector that
 matches nothing is an error. A glob that matches nothing is also an error, so a
@@ -181,8 +188,10 @@ resolves the current branch's upstream; if there is none, it tries
 `origin/main`. Failure to resolve a base is an actionable selection error.
 
 A path belongs to the package with the longest directory-prefix match. A
-deleted path is resolved against both the base tree and current package map.
-Changes outside every package do not normally select a package.
+deleted path selects both its owner in the current package map and the package
+that owned it in the base tree, if that package still exists. A package that
+moved therefore stays selected. Changes outside every package do not normally
+select a package. Renames count as a deletion plus an addition.
 
 These repository-wide inputs select every package because they can change all
 builds:
@@ -190,8 +199,9 @@ builds:
 - Root `dub.sdl`, `dub.selections.json`, and `nix/dub-lock.json`.
 - Compiler and package construction under `nix/d-toolchain.nix` and
   `nix/packages/dub-builder/`.
-- CI command construction or package-discovery modules under `apps/ci/` when
-  the selected set would otherwise omit `ci`.
+- The `ci` modules that discover packages and construct their tasks:
+  `apps/ci/src/task/`, `apps/ci/src/workspace/`, and `apps/ci/src/commands/`.
+  Other `apps/ci/` changes select only `ci`, which owns them.
 
 The invalidator list is declarative and unit-tested. It must not silently grow
 from arbitrary top-level changes.
@@ -268,8 +278,23 @@ work use `onCompletion`. Cleanup uses `always`. Coverage fallback uses
 `onFailure`, with the first attempt's failure policy suppressing fail-fast until
 the fallback classifies the package result.
 
+A prerequisite's terminal outcome satisfies an edge as follows:
+
+| Condition      | Satisfied by                       |
+| -------------- | ---------------------------------- |
+| `onSuccess`    | `Succeeded`, `Degraded`, `Skipped` |
+| `onFailure`    | `Failed`                           |
+| `onCompletion` | every outcome except `Cancelled`   |
+| `always`       | every outcome                      |
+
+A skipped prerequisite satisfies `onSuccess`. A skip is an eligibility rule,
+not a broken contract, and dub still compiles a dependency that has no task.
+
 An edge condition that becomes impossible produces a blocked outcome for the
-dependent. Cleanup nodes are idempotent and execute under a cancellation
+dependent. A node is decided only once every prerequisite is terminal, so its
+outcome never depends on completion order. A blocked node names its
+lowest-index impossible prerequisite that descends from a failure, or else its
+lowest-index impossible prerequisite. Cleanup nodes are idempotent and execute under a cancellation
 protection region.
 
 ### 5.3 Resource claims
@@ -333,8 +358,11 @@ alias TaskOutcome = SumType!(
 | `Blocked`   | A required predecessor did not succeed or its edge condition was impossible.            | Yes if the block descends from failure; otherwise reported with the cancellation cause. |
 | `Degraded`  | The authoritative contract passed, but optional evidence or measurement is unavailable. | No                                                                                      |
 
-Every non-success outcome carries a typed reason and causal task ids where
-applicable. Process status, timeout, signal, bounded output references, elapsed
+Every non-success outcome carries a typed reason and causal tasks where
+applicable. Outcomes and events name tasks by their index in the validated
+graph's presentation order, not by `TaskId`. Their members then hold no
+pointers, so a `SumType` of them stays `@safe` to assign and crosses a channel
+without borrowing. The graph maps an index back to its node and id. Process status, timeout, signal, bounded output references, elapsed
 time, and sampled usage are observations attached to an outcome, not booleans
 that replace it.
 
@@ -740,10 +768,10 @@ The target layout keeps models and planners independent from execution and UI:
 | `ci_main.d`                  | Executable entry point only.                                                                                                                                                           |
 | `app.d`                      | Composition root during migration; domain code leaves it as planners move out.                                                                                                         |
 | `cli.d`                      | Canonical subcommands, validation, and help.                                                                                                                                           |
-| `task/model.d`               | Task ids, nodes, edges, resources, outcomes, events. Leaf module.                                                                                                                      |
+| `task/model.d`               | Task ids, nodes, edges, resources, outcomes, events. A leaf apart from the action vocabulary.                                                                                          |
 | `task/graph.d`               | Graph builder, validation, stable topological utilities, dry-run projection.                                                                                                           |
 | `task/executor.d`            | Weighted admission, edge resolution, Event Horizon scopes, cancellation. No command knowledge.                                                                                         |
-| `task/action.d`              | Closed action vocabulary and handler dispatch.                                                                                                                                         |
+| `task/action.d`              | Closed action vocabulary (a leaf, imported by `task/model.d`) and, from M4, handler dispatch.                                                                                          |
 | `task/process.d`             | Event Horizon child-process adapter, pipe events, timeout, process-group termination.                                                                                                  |
 | `task/reporter.d`            | Event consumer interface and shared ordered buffering.                                                                                                                                 |
 | `task/reporter_tty.d`        | `TaskReporter` live implementation.                                                                                                                                                    |
