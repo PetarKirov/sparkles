@@ -194,6 +194,66 @@ auto valuesOf(return scope const(DubPlatformValues)[] entries) @safe pure nothro
     return entries.map!(entry => entry.values).joiner;
 }
 
+/// dub platform OS tokens describing the host this binary was built for.
+string[] hostPlatformTokens() @safe pure nothrow
+{
+    version (Windows)
+        return ["windows"];
+    else version (OSX)
+        return ["osx", "darwin", "posix"];
+    else version (linux)
+        return ["linux", "posix"];
+    else version (FreeBSD)
+        return ["freebsd", "posix"];
+    else version (Posix)
+        return ["posix"];
+    else
+        return [];
+}
+
+/**
+Whether a recipe declaring `declared` platforms is buildable on a host
+described by `hostTokens` ($(LREF hostPlatformTokens)). No declaration means
+no restriction. A dub platform spec may be `os`, `os-arch`, or
+`os-arch-compiler`; only the leading OS component is matched.
+*/
+bool platformsAllowHost(const(string)[] declared, const(string)[] hostTokens) @safe pure nothrow
+{
+    import std.algorithm.searching : canFind;
+
+    if (declared.length == 0)
+        return true;
+
+    foreach (spec; declared)
+    {
+        size_t dash = spec.length;
+        foreach (i, c; spec)
+            if (c == '-')
+            {
+                dash = i;
+                break;
+            }
+        if (hostTokens.canFind(spec[0 .. dash]))
+            return true;
+    }
+    return false;
+}
+
+///
+@("build_primitives.dub_manifest.platformsAllowHost.matching")
+@safe pure nothrow unittest
+{
+    // No declaration => runs anywhere.
+    assert(platformsAllowHost([], ["osx", "darwin", "posix"]));
+    // Linux-only: runs on Linux, skipped on macOS.
+    assert(platformsAllowHost(["linux"], ["linux", "posix"]));
+    assert(!platformsAllowHost(["linux"], ["osx", "darwin", "posix"]));
+    // `posix` matches any POSIX host; OS component of a compound spec is matched.
+    assert(platformsAllowHost(["posix"], ["linux", "posix"]));
+    assert(platformsAllowHost(["linux-x86_64"], ["linux", "posix"]));
+    assert(!platformsAllowHost(["windows"], ["linux", "posix"]));
+}
+
 /// Parses `dub.sdl` text.
 SdlExpected!DubManifest parseDubManifest(scope const(char)[] text, scope const(char)[] sourceName = null) @safe pure
     => fromSDL!(DubManifest, sdlDubRecipe)(text, sourceName);

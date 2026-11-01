@@ -13,10 +13,8 @@
  */
 module example_manifest;
 
-import std.string : indexOf;
-import std.algorithm : canFind;
-
-import sparkles.build_primitives.dub_manifest : parseEmbeddedDubManifest;
+import sparkles.build_primitives.dub_manifest : hostPlatformTokens, parseEmbeddedDubManifest,
+    platformsAllowHost;
 
 /**
  * Platform specifiers declared by an example's embedded `/+ dub.sdl: … +/`
@@ -28,44 +26,6 @@ string[] exampleDeclaredPlatforms(scope const(char)[] source) @safe pure
 {
     auto manifest = parseEmbeddedDubManifest(source);
     return manifest.hasValue ? manifest.value.platforms : null;
-}
-
-/// dub platform OS tokens describing the host this binary was built for.
-string[] hostPlatformTokens() @safe pure nothrow
-{
-    version (Windows)
-        return ["windows"];
-    else version (OSX)
-        return ["osx", "darwin", "posix"];
-    else version (linux)
-        return ["linux", "posix"];
-    else version (FreeBSD)
-        return ["freebsd", "posix"];
-    else version (Posix)
-        return ["posix"];
-    else
-        return [];
-}
-
-/**
- * Whether an example declaring `declared` platforms is buildable on a host
- * described by `hostTokens`. No declaration means no restriction (always true).
- * A dub platform spec may be `os`, `os-arch`, or `os-arch-compiler`; only the
- * leading OS component is matched.
- */
-bool platformsAllowHost(const(string)[] declared, const(string)[] hostTokens) @safe pure nothrow
-{
-    if (declared.length == 0)
-        return true;
-
-    foreach (spec; declared)
-    {
-        const dash = spec.indexOf('-');
-        const os = dash < 0 ? spec : spec[0 .. cast(size_t) dash];
-        if (hostTokens.canFind(os))
-            return true;
-    }
-    return false;
 }
 
 /// Whether a single-file example's manifest permits building on this host.
@@ -101,18 +61,4 @@ bool exampleRunsOnHost(scope const(char)[] source) @safe pure
 {
     assert(exampleDeclaredPlatforms("/+ dub.sdl:\n    platforms \"linux\" \"osx\"\n+/\n")
         == ["linux", "osx"]);
-}
-
-@("example_manifest.platformsAllowHost.matching")
-@safe pure nothrow unittest
-{
-    // No declaration => runs anywhere.
-    assert(platformsAllowHost([], ["osx", "darwin", "posix"]));
-    // Linux-only example: runs on Linux, skipped on macOS.
-    assert(platformsAllowHost(["linux"], ["linux", "posix"]));
-    assert(!platformsAllowHost(["linux"], ["osx", "darwin", "posix"]));
-    // `posix` matches any POSIX host; OS component of a compound spec is matched.
-    assert(platformsAllowHost(["posix"], ["linux", "posix"]));
-    assert(platformsAllowHost(["linux-x86_64"], ["linux", "posix"]));
-    assert(!platformsAllowHost(["windows"], ["linux", "posix"]));
 }

@@ -23,7 +23,7 @@ import sparkles.base.text.wire_names : AnyFormat, WireCase;
 import sparkles.base.text.writers : writeEnumMemberName;
 import sparkles.build_primitives.dub_manifest : DubConfiguration, DubManifest;
 
-import example_manifest : platformsAllowHost;
+import sparkles.build_primitives.dub_manifest : platformsAllowHost;
 import task.graph : IndexEdge, stableTopologicalOrder;
 import task.model : PlanExpected, planErr, planOk;
 
@@ -513,7 +513,7 @@ unittest
 unittest
 {
     import std.path : buildNormalizedPath;
-    import example_manifest : hostPlatformTokens;
+    import sparkles.build_primitives.dub_manifest : hostPlatformTokens;
 
     // This file is apps/ci/src/workspace/package_graph.d.
     const root = buildNormalizedPath(__FILE_FULL_PATH__, "../../../../..");
