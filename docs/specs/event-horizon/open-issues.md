@@ -406,12 +406,14 @@ flake rate was O31's.
   unchanged) is sound in principle but is **not** a drop-in: routing every wait
   through the deadline path changes _when SQEs are submitted_. The
   null-deadline path submits and waits atomically (`submitAndWait(want)`);
-  the deadline path is `flush()` then `wait(want, arg)` — itself a workaround
+  the deadline path was `flush()` then `wait(want, arg)` — itself a workaround
   for a `during` 0.5.0 trap. Measured: `io.steadyState.zeroAllocations` went
   from milliseconds to **~66 ms per round**, every wait burning its full slice
   instead of waking on a completion. A correct (E) needs a backend primitive
   that submits _and_ waits with a timeout in one call — a change to the backend
-  seam, not to `runOnce`.
+  seam, not to `runOnce`. The deadline path is now that primitive: with the trap
+  fixed in the vendored binding, it submits and waits in one `io_uring_enter`,
+  so (E) can be measured again.
 
 ## O23 — Pool per-worker setup weight vs short batch workloads
 
