@@ -313,6 +313,11 @@ exclusive keys are free and `jobsWeight` tokens are available. A claim larger
 than total capacity is clamped to total capacity so it runs alone rather than
 deadlocking.
 
+Ready nodes are admitted in presentation order. A node that waits only for an
+exclusive key does not hold back later nodes. A node that waits for capacity
+stops admission of every later node until it starts. There is no backfilling
+past it, so a stream of light nodes cannot starve a heavy one.
+
 Default weights are declared by work kind and may have narrowly documented
 package overrides:
 
@@ -389,7 +394,9 @@ between scheduler workers. Cross-worker delivery preserves ownership and
 backpressure; the intra-worker-only `Channel` is not sufficient. Reporters are
 consumers and cannot alter scheduling.
 
-Events contain no borrowed child buffers. Output is line-assembled at the
+Events contain no borrowed child buffers. Event payloads hold no pointers and
+name tasks by graph index. An output line travels in the event envelope's
+`text` field beside the payload, which keeps the payload `@safe` to move. Output is line-assembled at the
 boundary, with an explicit final unterminated line event. Per-task output is
 bounded in memory and spills to its sandbox when necessary. A failed task's
 diagnostic tail and spill path remain available until final reporting.
@@ -593,7 +600,13 @@ On an authoritative task failure with `--fail-fast`:
 7. stdout/stderr pipes are drained through terminal completion and every child
    is reaped.
 8. Cleanup, sandbox removal, and final reporters run inside a protected cleanup
-   scope.
+   scope. A `cleanup` node still starts once ready, and its action runs under
+   `protect`.
+
+The primary cause is the lowest-index authoritative failure among the
+completions the executor collects in one turn. A node the executor interrupted
+that then reports `Failed` is recorded as `Cancelled(interrupted)`, because the
+interrupt, not the node, caused the failure.
 
 Coverage-attempt failure is provisional and does not initiate fail-fast. Its
 plain fallback classifies the authoritative package result. A degraded result

@@ -108,6 +108,13 @@ Gate: executor tests pass under `TestSched` or the deterministic action driver;
 there is no child-process integration yet; existing production work remains on
 the old path.
 
+Status: delivered. `apps/ci/src/task/executor.d` holds `runGraph` and
+`TaskExecutor`, generic over the fiber executor, clock, action driver
+(`isActionDriver`), and event sink (`isEventSink`, the `Channel.put` shape). Its
+tests run a fake driver under `TestSched` and `TestClock`. The `event-horizon`
+dependency was already present, so no preparation commit was needed. The sink
+is the intra-worker `Channel` until the cross-worker channel lands.
+
 ## M5: Event Horizon subprocess actions
 
 - Implement `task/process.d` as the CI adapter over Event Horizon M19's
