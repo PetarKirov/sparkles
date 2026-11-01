@@ -1271,6 +1271,10 @@
           {
             "text": "Commands delivery plan",
             "link": "/specs/ci/task-dag/PLAN"
+          },
+          {
+            "text": "Commands testing",
+            "link": "/specs/ci/task-dag/testing"
           }
         ]
       },

@@ -23,7 +23,7 @@ prerequisite gate and the command cutovers.
   - the complete `sparkles.wired.sdl` backend;
   - Event Horizon M19 items 1–5;
   - bounded cross-worker channels;
-  - build graph E3.
+  - build graph E1a (the pinned test runner) and E3.
 - Event Horizon M19 item 6 is delivered by the cutovers below, not by a
   separate port of the legacy process layer. `apps/ci` carries no second
   process executor.
@@ -75,7 +75,8 @@ Status: Linux and macOS are met.
   test-root compiles, dependency-library builds, test binary links and test
   runs, with no ordering edges between tests.
 - Add the CI-provider grouping to the plain reporter (task DAG M6b), and switch
-  workflows to `--interlaced`.
+  workflows to `--interlaced`. Workflows that set `SPARKLES_CI_JOBS` convert it to
+  weighted units (CIC1).
 - Remove `--test`, `--build` and their loops in the same change.
 
 Gate:

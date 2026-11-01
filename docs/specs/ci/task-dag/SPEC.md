@@ -72,8 +72,8 @@ ci docs wasm check|stage [module options]
 ci commits build-each [--base REF] [--packages NAME...]
 ci commit-scope [COMMIT_MESSAGE_FILE|-]
 ci cache seed-dub | check-pins | stats | list | gc
-ci host probe [--host-system SYSTEM] [--host-ci-rev REV]
-ci checks mirror [--repo R] [--sha SHA] [--no-write]
+ci host probe
+ci checks mirror [--repo R] [--sha SHA] [--skip-check NAME...] [--no-write]
 ci stats [statistics options]
 ci link-rot report [report options]
 ci slow-tests list
@@ -92,7 +92,9 @@ Every command that executes a graph accepts:
 **CIC1: Common options.** `--jobs 0` and negative values **must** be errors.
 `--dry-run --interlaced` **must** be rejected, because a dry run has no task
 output to interlace. Without `--jobs`, `SPARKLES_CI_JOBS` sets the capacity,
-and an explicit `--jobs` wins over both. Invalid combinations fail before any
+and an explicit `--jobs` wins over both. Both count weighted capacity units
+(TDM7), not concurrent tasks, so a workflow that meant two concurrent builds
+sets 4. Invalid combinations fail before any
 task runs. Repository workflows pass `--interlaced`.
 
 **CIC2: One-node graphs.** A command that is a single check, such as
@@ -105,6 +107,10 @@ local executor and the shared store. `--backend nix` lowers them to Nix
 derivations, which run on the configured remote builders as well
 ([build graph §10](../../build-primitives/build-graph/SPEC.md#10-the-nix-backend)).
 Non-build tasks run locally under both.
+
+`ci test`, `ci pipeline` and the `ci docs` commands that build also accept
+`--host-system SYSTEM` and `--host-ci-rev REV`, which re-run the command inside
+a Linux VM from macOS, as the old flags did.
 
 `ci checks mirror` reads the GitHub API even when it writes nothing. So its
 rehearsal option is `--no-write`, not the common `--dry-run`, which forbids
@@ -146,7 +152,13 @@ the `@slow` tests instead of the ordinary ones, optionally only those named by
 - every `ci test` mode CI runs;
 - `ci docs examples` and the markdown verification CI runs;
 - every `ci docs … check`;
-- `ci commit-scope` for the commits of the range.
+- `ci commit-scope` for the commits of the range;
+- `ci cache check-pins`, the build-settings check
+  (`standardize-build-settings --check`), and the native comparison archives
+  that the Event Horizon examples link;
+- the configuration-specific test jobs CI runs, such as `terminal`'s
+  `unittest-vulkan` and `base`'s `unittest-portable`, and the GPU shader lane,
+  which is skipped where no GPU exists.
 
 It runs on the build graph's shared store. Its `--from` and `--since` narrow
 the package-derived tasks only. Tasks that require another host operating
@@ -156,9 +168,8 @@ they run on remote builders of that system.
 
 ## 2. Removed flags
 
-The flat mode flags are removed at cutover, and active workflows, hooks and
-documentation migrate in the same change. There is no legacy parser, alias,
-precedence table, or fallback dispatch.
+The flags in the first column below are not part of the command line. There is
+no legacy parser, alias, precedence table, or fallback dispatch.
 
 | Removed flag                      | Replacement                            |
 | --------------------------------- | -------------------------------------- |
@@ -193,6 +204,7 @@ precedence table, or fallback dispatch.
 | `--check-pin-cache`               | `ci cache check-pins`                  |
 | `--linux-host-probe`              | `ci host probe`                        |
 | `--mirror-checks`                 | `ci checks mirror`                     |
+| `--mirror-checks --dry-run`       | `ci checks mirror --no-write`          |
 | `--ci-stats`, `-C`                | `ci stats`                             |
 | `--report-link-rot`               | `ci link-rot report`                   |
 
@@ -244,7 +256,10 @@ commands keep their file selectors.
 - `libs/build-primitives/src/sparkles/build_primitives/task/`,
   `libs/build-primitives/src/sparkles/build_primitives/workspace/`,
   the build graph's modules and `dub_manifest.d` under the same directory;
-- `apps/ci/src/commands/`, `apps/ci/src/cli.d` and `apps/ci/src/ci_main.d`.
+- `apps/ci/src/commands/`, `apps/ci/src/cli.d`, `apps/ci/src/ci_main.d`,
+  `apps/ci/src/app.d` and `apps/ci/tools/standardize-build-settings.d`;
+- `nix/packages/`, which builds the native libraries and import paths that
+  every package's actions read.
 
 Other `apps/ci/` changes select only `ci`, which owns them.
 
@@ -268,9 +283,10 @@ A failed build blocks the builds that link against it.
 
 ```text
 discover -> select -> plan builds
-coverage attempt A = [coverage compile -> coverage link -> coverage test]   (provisional)
-coverage attempt A --onFailure--> [plain compile -> plain link -> plain test]
-coverage attempt A, plain attempt A --onCompletion--> classify A
+coverage build A = [-cov dependency libraries -> -cov compile -> -cov link]   (provisional)
+coverage build A --onSuccess--> coverage test A                               (authoritative)
+coverage build A --onFailure--> [plain compile -> plain link -> plain test]
+coverage test A, plain test A --onCompletion--> classify A
 all classifications --onCompletion--> merge coverage -> coverage-publish
 all classifications --onCompletion--> run summary
 ```
@@ -281,21 +297,34 @@ dependency-library archives it links. No test waits for another package's test.
 A dependency whose library fails to build blocks the link of each test binary
 that needs it.
 
+An ordinary test runs in two legs, `-t 1` and then `-t N`, both with
+`--skip-slow`, so a test that overflows a worker's stack cannot hide on the main
+thread. `N` is the test node's claimed weight. A sanitizer test runs one `-t N`
+leg on 4 MiB workers.
+
 **CIC7: Coverage attempts.** Without coverage, each package has one test node
 and one classification node. With coverage:
 
-- **The attempt:** the coverage compile, link and test of a package form one
-  attempt. Every node in it has a provisional failure policy, so a failure
-  anywhere in it, including a `-cov` compile or link failure, neither triggers
-  fail-fast nor becomes the primary cause.
-- **The fallback:** the plain compile, link and test sit behind an
-  `onFailure` edge from the attempt. They are planned eagerly but run only
-  after a failure. After a green attempt they end
-  `Blocked(conditionUnmet)`, which the summary counts as unneeded.
-- **Classification:** a passing attempt classifies the package `Succeeded`.
-  A failed attempt with passing plain tests is `Degraded(noCoverage)`. If the
-  plain tests fail too, it is `Failed`, retaining both attempts.
-- **Listings:** each attempt writes its listings to its own task directory.
+- **The coverage build:** the `-cov` builds of a package's test binary form one
+  chain: the `-cov` dependency libraries, the compile and the link. Every node
+  in it has a provisional failure policy. A failure anywhere in it, and the
+  provisional blocks it causes, neither triggers fail-fast nor fails the
+  command (TDC4).
+- **The fallback:** the plain compile, link and test sit behind an `onFailure`
+  edge from the coverage link. They run only when the coverage build failed, and
+  otherwise end `Blocked(conditionUnmet)`, which the summary counts as
+  unneeded.
+- **The test is authoritative:** once the coverage build succeeded, the
+  coverage test is the package's only test. A failing coverage test is a
+  failure, never retried without coverage.
+- **Classification:** a passing coverage test classifies the package
+  `Succeeded`. A failed coverage build with passing plain tests is
+  `Degraded(noCoverage)`. A failing plain or coverage test is `Failed`.
+- **Listings:** each coverage test writes its listings to its own task
+  directory. LDC coverage variants use `--cov-increment=atomic`, because tests
+  run on several threads. The test binary receives `--DRT-covopt` with
+  `dstpath:` set to its task directory and `srcpath:` set to the worktree root,
+  so the root-relative paths it records resolve.
 
 ### 5.3 Extracted test modes
 
@@ -332,9 +361,11 @@ file reducer --onSuccess--> atomic rewrite(file)
 - **Concurrency:** multiple files may rewrite in parallel; one file has one
   exclusive write key and one atomic rename.
 
-**CIC8: Examples build like applications.** Each example **must** be a
-single-file package, built under the `checked` build type against the shared
-dependency-library variants of application builds. Its extracted source
+**CIC8: Examples reuse planned variants.** Each example **must** be a
+single-file package. Its planner picks the build type whose dependency-library
+variants the same run already plans, so examples add no library compiles.
+Without tests in the run, it picks the application variants. A build type that
+removes assertions is never chosen. Its extracted source
 **must** live at a content-addressed path (build graph BGG4), so an unchanged
 example is not recompiled. Input order defines presentation order even when
 execution is parallel.
@@ -414,12 +445,23 @@ inherited by subprocess tasks. `ci commits build-each` plans one build of the
 selected packages per commit of the range, each in its own scratch worktree,
 all on the shared store.
 
+### 5.9 Maintenance commands
+
+**CIC10: Slow-test listing.** `ci slow-tests list` **must** print the `@slow` tests
+as the JSON array the `slow-tests` CI matrix expands, and set it as the
+`matrix` output through the CI-provider module (TDO6). A `@slow` test without a
+name, or an empty list, is an error.
+
+The other maintenance commands, `ci cache`, `ci host probe`, `ci checks mirror`
+and `ci link-rot report`, are one-node graphs (CIC2) over their existing
+behaviour.
+
 ## 6. Build and coverage locations
 
 Compiled output lives in the build graph's shared store, never in a package's
 checked-in `build/` directory, the repository root or a private `DUB_HOME`.
 Each task that writes anything else gets a task directory under
-`build/ci/runs/<run-id>/<task-key>/`. The printable task id stays stable, and
+`$XDG_CACHE_HOME/sparkles/ci/runs/<run-id>/<task-key>/`, outside the worktree. The printable task id stays stable, and
 `run-id` is a filesystem name only, never an ordering input. A task directory
 holds:
 
@@ -489,8 +531,9 @@ concrete reporters.
   completion order.
 - TTY output uses `TaskReporter`, degrades without control sequences, and
   restores the terminal on interruption.
-- Interlaced output is immediate, line-atomic and prefixed. Replayed task
-  blocks are grouped on CI providers that support groups.
+- Interlaced output is immediate, line-atomic and prefixed. On CI providers that
+  support groups, block-mode task blocks, and the closing sections of an
+  interlaced run, are grouped (TDO7).
 - Coverage fallback cannot trigger fail-fast before plain-test classification.
 - Degraded stats and coverage are visibly distinct from complete success.
 - The parser exposes only the canonical command tree and rejects every removed

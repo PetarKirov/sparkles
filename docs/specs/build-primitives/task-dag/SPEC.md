@@ -165,7 +165,8 @@ is part of the [`apps/ci` command specification](../../ci/task-dag/SPEC.md#4-sel
    original seed. The result is the union, not an order-dependent expansion.
 9. Apply platform eligibility. Ineligible packages remain visible as skipped
    nodes rather than disappearing.
-10. Sort by stable package id and build the induced task graph.
+10. Sort by stable package id and induce the package edges among the selected
+    packages.
 
 **TDS8: Empty selections.** An empty final selection **must** be an error
 unless every seed is represented by an explicit platform-skipped node.
@@ -232,24 +233,31 @@ edge as follows:
 | Condition      | Satisfied by                       |
 | -------------- | ---------------------------------- |
 | `onSuccess`    | `Succeeded`, `Degraded`, `Skipped` |
-| `onFailure`    | `Failed`                           |
+| `onFailure`    | `Failed`, provisional `Blocked`    |
 | `onCompletion` | every outcome except `Cancelled`   |
 | `always`       | every outcome                      |
 
 A skipped prerequisite satisfies `onSuccess`: a skip is an eligibility rule, not
-a broken contract.
+a broken contract. A **provisional block** is a `Blocked` outcome whose root
+cause is a failure under a provisional policy (TDC4). It satisfies `onFailure`,
+so a fallback attached to the last node of a provisional chain still fires when
+an earlier node of that chain failed.
 
 **TDM6: Blocked and unneeded nodes.** A node is decided only once every
 prerequisite is terminal, so its outcome never depends on completion order.
 When one of its edge conditions is impossible:
 
 - **Unneeded:** if every impossible edge is an `onFailure` edge whose
-  prerequisite succeeded, the node is `Blocked(conditionUnmet)`. That outcome
+  prerequisite ended `Succeeded`, `Degraded` or `Skipped`, the node is
+  `Blocked(conditionUnmet)`. That outcome
   never fails the command, and summaries count it apart from other blocks: a
   fallback that was not needed.
+- **Cancelled:** if an impossible prerequisite was cancelled, the node is
+  `Cancelled(notAdmitted)`.
 - **Blocked:** otherwise the node is `Blocked` and names its lowest-index
-  impossible prerequisite that descends from a failure, or else its lowest-index
-  impossible prerequisite.
+  impossible prerequisite that descends from a failure. A block whose root cause
+  is a provisional failure is a provisional block, which does not fail the
+  command.
 
 Cleanup nodes are idempotent and run under a cancellation protection region.
 
@@ -401,8 +409,8 @@ executor **must**:
 1. record `TaskFinished(Failed)` completely;
 2. emit `CancellationRequested(failFast, causalTaskId)` exactly once;
 3. close admission, so no newly ready ordinary node starts;
-4. turn pending nodes into `Cancelled(notAdmitted)`, unless a failed
-   dependency makes them `Blocked`;
+4. turn pending nodes into `Cancelled(notAdmitted)`, unless TDM6 decides them
+   `Blocked`, for a failed dependency or an unneeded fallback;
 5. let running in-process tasks observe scope cancellation at defined yield
    points;
 6. send running child process groups `SIGTERM` on POSIX, then `SIGKILL` after a
@@ -419,8 +427,8 @@ A node the executor interrupted that then reports `Failed` is recorded as
 failure.
 
 **TDC4: Provisional failures.** A failure of a node with a provisional failure
-policy **must not** initiate fail-fast and **must not** become the primary
-cause. Its `onFailure` fallback classifies the authoritative result. A degraded
+policy, and a provisional block descending from one, **must not** initiate
+fail-fast, fail the command or become the primary cause. Its `onFailure` fallback classifies the authoritative result. A degraded
 result does not initiate fail-fast either.
 
 **TDC5: Signals and exit codes.** SIGINT and SIGTERM **must** follow the
@@ -493,7 +501,9 @@ capabilities disable it. Each task's output is buffered or spooled and emitted
 as one block in `PresentationKey` order, once all earlier blocks are terminal.
 
 A block is the task's lines, each prefixed `[<id> <stream>] `, followed by
-exactly one `<id>: <outcome>` line. Elapsed times are the only part that varies
+exactly one `<id>: <outcome>` line. The node's output policy decides which lines
+the block holds: `replay` holds all of them, `tailOnFailure` only the bounded
+tail and only when the task did not succeed, and `none` holds none. Elapsed times are the only part that varies
 with execution, and they are optional. With them off, the transcript is
 byte-identical for the same graph and outcomes.
 
@@ -537,14 +547,15 @@ use that service's log conventions through one provider module, never by
 testing environment variables itself. The module detects the provider and
 exposes these operations:
 
-| Operation       | GitHub Actions                   | GitLab CI                                                             | Buildkite                  | Azure Pipelines                                                  | CircleCI and others        |
-| --------------- | -------------------------------- | --------------------------------------------------------------------- | -------------------------- | ---------------------------------------------------------------- | -------------------------- |
-| Detect          | `GITHUB_ACTIONS=true`            | `GITLAB_CI=true`                                                      | `BUILDKITE=true`           | `TF_BUILD=True`                                                  | `CIRCLECI=true`, else none |
-| Open a group    | `::group::<title>`               | `\e[0Ksection_start:<unix-time>:<name>[collapsed=true]\r\e[0K<title>` | `--- <title>`              | `##[group]<title>`                                               | a plain heading line       |
-| Close a group   | `::endgroup::`                   | `\e[0Ksection_end:<unix-time>:<name>\r\e[0K`                          | none                       | `##[endgroup]`                                                   | none                       |
-| Annotate a line | `::error file=…,line=…::<msg>`   | none                                                                  | none                       | `##vso[task.logissue type=error;sourcepath=…;linenumber=…]<msg>` | none                       |
-| Mask a secret   | `::add-mask::<value>`            | none (configured masking)                                             | none                       | `##vso[task.setvariable variable=<name>;issecret=true]<value>`   | none                       |
-| Step summary    | append to `$GITHUB_STEP_SUMMARY` | none                                                                  | `buildkite-agent annotate` | none                                                             | none                       |
+| Operation       | GitHub Actions                   | GitLab CI                                                             | Buildkite                       | Azure Pipelines                                                  | CircleCI and others        |
+| --------------- | -------------------------------- | --------------------------------------------------------------------- | ------------------------------- | ---------------------------------------------------------------- | -------------------------- |
+| Detect          | `GITHUB_ACTIONS=true`            | `GITLAB_CI=true`                                                      | `BUILDKITE=true`                | `TF_BUILD=True`                                                  | `CIRCLECI=true`, else none |
+| Open a group    | `::group::<title>`               | `\e[0Ksection_start:<unix-time>:<name>[collapsed=true]\r\e[0K<title>` | `--- <title>`                   | `##[group]<title>`                                               | a plain heading line       |
+| Close a group   | `::endgroup::`                   | `\e[0Ksection_end:<unix-time>:<name>\r\e[0K`                          | none                            | `##[endgroup]`                                                   | none                       |
+| Annotate a line | `::error file=…,line=…::<msg>`   | none                                                                  | none                            | `##vso[task.logissue type=error;sourcepath=…;linenumber=…]<msg>` | none                       |
+| Mask a secret   | `::add-mask::<value>`            | none (configured masking)                                             | none                            | `##vso[task.setvariable variable=<name>;issecret=true]<value>`   | none                       |
+| Step summary    | append to `$GITHUB_STEP_SUMMARY` | none                                                                  | `buildkite-agent annotate`      | none                                                             | none                       |
+| Set an output   | append to `$GITHUB_OUTPUT`       | none (dotenv artifacts)                                               | `buildkite-agent meta-data set` | `##vso[task.setvariable variable=<name>;isOutput=true]<value>`   | none                       |
 
 The provider module's golden tests are checked against each provider's
 published syntax, cited in its sources.
@@ -602,8 +613,8 @@ and emits no `TaskStarted` events.
 | `sparkles.build_primitives.task.testing`        | The fake action driver for executor and reporter tests.                                           |
 | `sparkles.build_primitives.workspace.*`         | Package discovery and focused selection (§2).                                                     |
 
-The CI-provider module lives where the decision on its placement puts it (see
-[decisions.md](./decisions.md#t8-the-ci-provider-module-lives-in-sparklesbase)).
+The CI-provider module is its own leaf package, `sparkles:ci-provider` (see
+[decisions.md](./decisions.md#t8-the-ci-provider-module-is-a-leaf-package)).
 
 The pure modules — `action`, `model`, `graph` and `workspace` — import neither
 Event Horizon nor UI modules. No module in this package imports a UI library.

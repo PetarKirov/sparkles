@@ -6,9 +6,9 @@ reviewed: 2026-11-01
 
 # Task DAG — Decisions
 
-The owner accepted T1–T4 on 2026-11-01, in a design interview held to rework
-the `apps/ci` task DAG. T5–T7 were settled while delivering M4–M6 and are
-recorded in the SPEC.
+The owner accepted T1–T4 and T8 on 2026-11-01, in a design interview held to
+rework the `apps/ci` task DAG. T5–T7 and T9 were settled while delivering and
+reviewing M4–M6, and are recorded in the SPEC.
 
 ## T1: Package edges are not ordering edges for tests
 
@@ -53,7 +53,8 @@ until the end. What should a CI log show?
 **Choice.**
 
 - The model, graph, executor, process adapter, plain reporter, workspace
-  selection and the CI-provider module live in `sparkles:build-primitives`.
+  selection live in `sparkles:build-primitives`. The CI-provider module has a
+  package of its own (T8).
 - Commands, the CLI and the TTY reporter stay in `apps/ci`.
 
 **Alternatives rejected.**
@@ -80,7 +81,7 @@ counting it would invent a second primary cause.
 output line travels beside the payload. A `SumType` holding a pointer is
 `@system` to assign, and pointer-free events cross channels without borrowing.
 
-## T8: The CI-provider module lives in `sparkles:base` (proposed)
+## T8: The CI-provider module is a leaf package (accepted)
 
 **Question.** `sparkles:build-primitives`' unittest configuration depends on the
 test runner, so the test runner cannot import a module of that package without
@@ -90,14 +91,15 @@ failures can become provider annotations.
 **Alternatives.**
 
 - Keep the module in `sparkles:build-primitives`, unused by the test runner.
-- Put it in `sparkles:base`, which the test runner already includes through
-  its cycle-safe integration.
-- Create a new leaf package.
+- Put it in `sparkles:base`.
+- Create a leaf package.
 
-**Choice.** `sparkles:base`, as `sparkles.base.ci_provider`. Provider detection
-and log syntax depend on nothing else.
+**Choice.** A leaf package, `sparkles:ci-provider`. It may depend on
+`sparkles:base` only if it needs something there.
 
-## T9: An unneeded fallback is not a failure
+**Revisit when** `sparkles:base` needs provider conventions itself.
+
+## T9: An unneeded fallback is not a failure (accepted)
 
 **Choice.** A node behind an `onFailure` edge whose prerequisite succeeded is
 `Blocked(conditionUnmet)`. It never fails the command, and summaries count it

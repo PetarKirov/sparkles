@@ -16,17 +16,18 @@ the code under test.
 | 1. dub agreement         | BGR1–BGR7, BGV1–BGV2, invariant 4 |
 | 2. build equivalence     | BGA1–BGA4, BGA7, BGV1–BGV3        |
 | 3. manifest completeness | BGK2–BGK4, BGK6                   |
-| 4. digest audit          | BGK5, BGS5                        |
+| 4. digest audit          | BGK5, BGS6                        |
 | 5. relocation            | BGA5–BGA6, BGG4, invariant 3      |
 | 6. backend agreement     | BGN1, BGN5                        |
-| 7. concurrency           | BGS1–BGS4, BGS6                   |
+| 7. concurrency           | BGS1–BGS5, BGS7                   |
 | 8. layout lint           | BGV4–BGV5                         |
-| 9. toolchain sensitivity | BGT1–BGT3                         |
+| 9. key sensitivity       | BGK1, BGT1–BGT3                   |
 | 10. generators           | BGG1–BGG3                         |
 | 11. test actions         | BGX1–BGX3                         |
 | 12. Nix inputs           | BGN2–BGN4                         |
 | 13. hidden edges         | BGR8                              |
 | 14. task exposure        | BGA8                              |
+| 15. pinned test runner   | BGT4                              |
 
 ## Oracles
 
@@ -44,7 +45,10 @@ the code under test.
    build settings for the same request by using dub as a library.
 3. Compare every resolved field: source files, import, C import and string
    import paths, versions, debug versions, dflags, lflags, libs, target type and
-   target name. Compare ordered lists in order and sets as sets.
+   target name. Compare ordered lists in order and sets as sets. Fields before
+   library resolution are compared with `dub describe`; fields after it, such as
+   `pkg-config` results, with dub's own `prepareBuildSettings`, called as a
+   library.
 4. Remove from dub's side the downward-inherited versions that BGV1 prunes, and
    check separately that no source of the variant mentions any of them.
 
@@ -94,7 +98,8 @@ not required, because dub orders objects differently.
 1. On Linux, run each compile under `strace -f -e trace=%file`.
 2. Collect every file the compiler or its C preprocessor opened for reading,
    and every lookup that failed with `ENOENT` under an import, C import or
-   string import root.
+   string import root. A failed lookup of a missing directory is satisfied by
+   any absent candidate beneath it.
 3. The opened files, excluding the toolchain files BGT1 covers, must be a
    subset of the manifest's file entries. The failed lookups that precede a
    successful resolution must be a subset of its absent candidates.
@@ -184,12 +189,13 @@ a `unittest` block must pass.
 **Revert check:** with the lint disabled, the field fixture plans and links,
 and its test binary misreads the aggregate.
 
-### Oracle 9: toolchain sensitivity
+### Oracle 9: key sensitivity
 
-**Method:** for each component BGT1 lists, substitute a variant of it: another
-compiler build, another configuration file, another C driver wrapper, another
-linker, another generator binary. Every affected key must change, and no
-unaffected one may.
+**Method:** for each component of the declared key (BGK1) and each component
+BGT1 lists, substitute a variant of it: another argument, environment entry or
+recipe file; another compiler build, configuration file, C driver wrapper,
+linker or generator binary; another pinned test runner. Every affected key must
+change, and no unaffected one may.
 
 ### Oracle 10: generators
 
@@ -206,11 +212,12 @@ unaffected one may.
 
 **Method:**
 
-1. Run a test binary with `dub` absent from its environment. Its
-   compile-time-probe mode must still find its import paths.
-2. A sandboxed result's key must change with the kernel release and the CPU
-   model.
-3. A test that declares no runtime inputs must run on every request.
+1. Put a `dub` on the test binary's `PATH` that records any call and fails.
+   No test binary may call it, and the compile-time-probe and extracted modes
+   must still find their import paths and flags.
+2. A test that declares no runtime inputs must run on every request.
+3. With the Nix backend (E4), a sandboxed result's key must change with the
+   kernel release and the CPU model.
 
 ### Oracle 12: Nix inputs
 
@@ -228,11 +235,29 @@ unaffected one may.
 `dependency` must be reported. The cycle-safe test-runner integration must
 not be.
 
+### Oracle 15: pinned test runner
+
+**Method:**
+
+1. Change the working tree's test-runner implementation. Only that package's
+   own test root may rebuild, and every other test binary must still link the
+   pinned library.
+2. Bump the pin. Every test root's key must change.
+
 ### Oracle 14: task exposure
 
 **Method:** plan the same request twice. The task ids, claims and edges must be
 identical. Every action edge must be `onSuccess`, and a link's argument vector
 must carry its claimed thread count.
+
+## The recipe vocabulary
+
+BGR2's supported set is the vocabulary of the recipes in scope. E0's directive
+scan writes it here, one row per directive with the recipes that use it, and
+oracle 1 checks each row. Until the scan runs, this table is empty.
+
+| Directive or form | Used by |
+| ----------------- | ------- |
 
 ## Evidence ledger
 
@@ -242,8 +267,8 @@ must carry its claimed thread count.
 | BGV1–BGV5   | unverified | —        |
 | BGA1–BGA8   | unverified | —        |
 | BGK1–BGK6   | unverified | —        |
-| BGS1–BGS6   | unverified | —        |
+| BGS1–BGS7   | unverified | —        |
 | BGG1–BGG4   | unverified | —        |
-| BGT1–BGT3   | unverified | —        |
+| BGT1–BGT4   | unverified | —        |
 | BGX1–BGX3   | unverified | —        |
 | BGN1–BGN5   | unverified | —        |

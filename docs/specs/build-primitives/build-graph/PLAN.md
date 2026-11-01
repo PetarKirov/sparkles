@@ -48,14 +48,27 @@ in [decisions.md](./decisions.md).
 Gate: each spike's result is recorded; the LDC fork's tests pass in the
 toolchain the flake pins.
 
+## E1a: The pinned test runner
+
+- Build the test runner's implementation from a pinned revision of this
+  repository, expose the library and its import directory through the flake,
+  and link it from the shim (D16, BGT4).
+- Replace every source include of the implementation with an ordinary
+  dependency on the shim.
+
+Gate: `ci --test` and every package's `dub test` pass with the pinned runner;
+oracle 15's first scenario passes.
+
 ## E1: Recipe resolution and the oracle
 
-- Resolved settings (§2) on top of `dub_manifest`'s typed recipes, for every
-  directive BGR2 lists, with all three directions of inheritance (BGR3).
+- `dub_manifest` rejects unknown directives, reads registry packages'
+  `dub.json`, and represents every form BGR2 lists.
+- Resolved settings (§2) for every directive BGR2 lists, following dub's
+  configuration steps (BGR3).
 - Registry packages from both lockfiles (BGR4) and `pkg-config` for compiles
   and links (BGR5).
-- The hidden-edge report (BGR8), and the repository's recipes fixed to declare
-  their dependencies.
+- The hidden-edge report (BGR8), the repository's recipes fixed to declare
+  their dependencies, and test-only reaches moved (D15).
 - The dub agreement oracle over every package and request in scope.
 
 Gate: oracle 1 has zero unaccepted disagreements, and oracle 13 passes.
@@ -81,17 +94,18 @@ scenarios and oracle 14 pass.
 - Declared keys, manifests and result keys (§5).
 - The shared store with staging, leases, eviction and inspection (§6).
 - Typed generators, the test-root module and content-addressed generated
-  sources (§7).
+  sources (§7), with the shader compiler's direct invocation mode and its
+  specification amended.
 - Toolchain identity (§8).
 - Test actions with declared runtime inputs, no reuse, and the test runner
-  taking its import paths and flags as arguments (BGX1–BGX2). This includes
-  making `sparkles.base.source_uri` work with root-relative
-  `__FILE_FULL_PATH__`.
+  taking its import paths, string import paths, dflags, versions and probe
+  directory as arguments, never calling dub (BGX1–BGX2). This includes making
+  `sparkles.base.source_uri` work with root-relative `__FILE_FULL_PATH__`.
 
 Gate:
 
-- Oracles 2–5, 7, 9, 10 and 11, and oracle 8's revert check, pass through the
-  test-only driver.
+- Oracles 2–5, 7, 9 and 10, steps 1–2 of oracle 11, and oracle 8's revert
+  check pass through the test-only driver.
 - A second run of the driver in another worktree, with no source change,
   compiles nothing.
 - An edit to one `sparkles:base` module recompiles only the variants whose
@@ -104,14 +118,15 @@ Gate:
 - Remote builders from `/etc/nix/machines`.
 - Sandboxed test actions whose results may be reused (BGX3).
 
-Gate: oracles 6 and 12 pass for the repository's test roots on x86_64-linux,
-with one remote builder of another system type.
+Gate: oracles 6 and 12, and step 3 of oracle 11, pass for the repository's test
+roots on x86_64-linux, with one remote builder of another system type.
 
 ## Progress
 
 | Milestone | State       |
 | --------- | ----------- |
 | E0        | in progress |
+| E1a       | not started |
 | E1        | not started |
 | E2        | not started |
 | E3        | not started |

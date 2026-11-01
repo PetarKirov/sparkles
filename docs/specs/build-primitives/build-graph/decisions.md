@@ -107,8 +107,9 @@ per worktree; one per machine.
 **Choice.**
 
 - **Digest:** SHA-256 for file contents and keys. Nix's flat and recursive
-  content addressing is computed from the same SHA-256, which keeps the Nix
-  backend's source inputs cheap to derive. Store-path names and action keys
+  content addressing use the same algorithm: a flat path derives from the
+  file's SHA-256, while a recursive path needs a NAR hash over its file set,
+  which the build graph computes itself. Store-path names and action keys
   are not comparable, and need not be.
 - **Store:** one per user and machine, at `$XDG_CACHE_HOME/sparkles/build`.
 - **Publication:** atomic.
@@ -171,15 +172,21 @@ where enabled.
 test roots that consume them import their modules with `version (unittest)`
 on. Is that safe?
 
-**Choice.** Only if no declaration's presence, layout or meaning in a dependency
-library changes under `version (unittest)`. A semantic planning lint enforces
-this. The repository's known violations, in `supervise.Run` and
-`sampling.TreeSampler`, are fixed.
+**Choice.** Only if `version (unittest)` changes nothing a dependent can observe:
+visible declarations, aggregate members, template bodies and the bodies of
+functions a dependent compiles. Private, non-template helpers that only the
+module's unittests use are exempt. A planning lint over the parsed modules
+enforces this. `supervise.Run` and `sampling.TreeSampler` are already fixed;
+the lint's first run lists the rest, and they are fixed before it gates.
 
 **Revisit when** D gains a way to compile a library's test-only declarations
 out of its importers.
 
 ## D11: Toolchain identity off Nix (accepted)
+
+**Question.** How is a toolchain identified on a host without Nix?
+
+**Alternatives.** Require Nix; hash the host toolchain's files.
 
 **Choice.** A store toolchain is identified by its store-path closure, wrapper
 scripts included. A host toolchain is identified by the digests of its compiler,
@@ -250,7 +257,7 @@ the flag is uniform and forks nothing.
 one worktree runs correctly in another. The E0 relocation spike checks all
 uses.
 
-## D15: No hidden source edges (proposed)
+## D15: No hidden source edges (accepted)
 
 **Question.** `libs/ui`, `libs/tui` and `libs/wsi` compile or import other
 packages' sources through `importPaths`/`sourcePaths` without a `dependency`.
@@ -260,8 +267,15 @@ variants.
 **Alternatives.** Derive package edges from such paths; forbid them with a
 lint; both.
 
-**Choice.** Forbid them, with BGR8. The recipes gain real dependencies. The
-cycle-safe test-runner integration remains the declared exception.
+**Choice.** Forbid them, with BGR8, with no exception: D16 removes the reason the
+test-runner integration needed one.
+
+- **Real dependencies:** the recipes gain real dependencies, such as
+  `core-cli`, `input`, `tui`, `ui` and `wsi` on `math`.
+- **Test-only reaches:** a reach that only a unittest configuration makes, such
+  as `tree-sitter`'s tests compiling `syntax`, whose dependency would close a
+  cycle, is resolved by moving those tests into the package that can depend on
+  both.
 
 ## Open questions
 
@@ -271,3 +285,44 @@ cycle-safe test-runner integration remains the declared exception.
   blocks cross-worktree reuse for the affected variants.
 - **O3:** whether DMD variants share across worktrees at all. They do only if
   relative paths alone suffice; E0 spike 1 covers DMD too.
+
+## D16: The test runner's implementation is pinned and prebuilt (accepted)
+
+**Question.** The test runner's implementation depends on `sparkles:ui` and much
+of the repository, while every package's tests depend on the runner. So the
+packages in its closure source-include it, a hidden-edge exception that
+hides those packages from selection and from sharing.
+
+**Alternatives.**
+
+- Keep the cycle-safe source includes.
+- Build the implementation from the working tree as a separate root.
+- Build it from a pinned, recent revision of `main`, like a bootstrap
+  compiler.
+
+**Choice.** Build it from a pinned revision of this repository, bumped as often
+as needed.
+
+- **The seam:** the shim talks to the implementation across an `extern(C)`
+  seam, so the shim stays an in-tree `sourceLibrary` and links the pinned,
+  prebuilt library.
+- **Delivery:** the flake exposes that library, and its import directory, to
+  the dev shell and to the build graph as a toolchain component (BGT4).
+- **Plain dub:** plain `dub test` links the same library through the shim's
+  recipe.
+
+**Revisit when** the runner's implementation sheds its dependencies on the
+rest of the repository.
+
+## D17: Library targets see their own C headers (proposed)
+
+**Question.** dub runs `pkg-config` only for executable and dynamic-library
+targets. Library targets with ImportC sources compiled only because the Nix dev
+shell's ambient `NIX_CFLAGS_COMPILE` put the headers on the C search path,
+which BGA4 forbids.
+
+**Choice.** A library target's compiles also receive the `--cflags` of its own
+`libs`. This is a recorded divergence from dub, so oracle 1 excludes these
+flags from its comparison.
+
+**Revisit when** dub resolves `pkg-config` for library targets.
