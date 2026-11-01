@@ -45,7 +45,9 @@ import sparkles.event_horizon.backend.concept : BackendConfig, RawCompletion, Wa
 import sparkles.event_horizon.backend.probe : BackendCaps, BackendId, LoopMode;
 import sparkles.event_horizon.errors;
 import sparkles.event_horizon.op : KernelTimespec, OpAccept, OpConnect, OpNop,
-    OpRead, OpRecv, OpSend, OpSlot, OpTimeout, OpToken, OpWrite, NativeHandle;
+    OpRead, OpRecv, OpSend, OpSlot, OpTimeout, OpToken, OpWaitHandle, OpWrite,
+    NativeHandle;
+import sparkles.event_horizon.sys.nt : waitPacketApi;
 
 // ── minimal winsock2 / IOCP bindings (only what the data path needs) ────────
 
@@ -352,6 +354,7 @@ enum IoKind : ubyte
     accept,   // AcceptEx: res is the new socket fd
     connect,  // ConnectEx: res is 0 / -errno
     wake,     // external waker post (SPEC §5.6): persistent, res is 0
+    waitHandle, // a signalled wait completion packet (SPEC §13.9): res is 0
 }
 
 /// A backend-owned op context. `ov` is first so `OVERLAPPED*` casts back to it.
@@ -367,6 +370,7 @@ struct IocpOp
     uint nextFree;      // freelist link (uint.max = none)
     bool inUse;
     HANDLE handle;      // the exact handle CancelIoEx must target
+    HANDLE waitPacket;  // waitHandle: the packet, closed once its association ends
 }
 
 public:
@@ -441,6 +445,8 @@ struct IocpBackend
             _caps.opBits |= 1UL << OpKind.accept;
         if (_connectEx !is null)
             _caps.opBits |= 1UL << OpKind.connect;
+        if (waitPacketApi() !is null)
+            _caps.opBits |= 1UL << OpKind.waitid;
         return ioOk();
     }
 
@@ -735,6 +741,46 @@ struct IocpBackend
         return true;
     }
 
+    /**
+    Waits for a handle to signal (a process exit) through one wait
+    completion packet associated with this port: no threadpool wait and no
+    helper thread. The packet's APC context is the op's `OVERLAPPED`, so it
+    dequeues like any I/O completion; the handle itself is not consumed.
+    Without the `ntdll` exports (Wine) the op is rejected with `EOPNOTSUPP`
+    and the `waitid` capability bit is clear.
+
+    A native Win32 message host waits on the host event, which a packet
+    does not set: there, an exit is noticed at the host's next wake.
+    */
+    bool trySubmit(in OpWaitHandle o, OpToken token, ref OpSlot) @safe nothrow @nogc
+    {
+        if (_readyCount == _ready.length)
+            return false;
+        auto op = acquire();
+        if (op is null)
+            return false;
+        op.token = token.raw;
+        auto api = waitPacketApi();
+        if (api is null)
+            return reject(op, -EOPNOTSUPP);
+        enum uint GENERIC_ALL = 0x1000_0000;
+        HANDLE packet;
+        const created = (() @trusted => api.create(&packet, GENERIC_ALL, null))();
+        if (created < 0)
+            return reject(op, -ntErrno(created));
+        // An already-signalled target queues its packet at once.
+        const associated = (() @trusted => api.associate(packet, _port,
+            cast(HANDLE) o.handle, null, &op.ov, 0, 0, null))();
+        if (associated < 0)
+        {
+            CloseHandle(packet);
+            return reject(op, -ntErrno(associated));
+        }
+        op.kind = IoKind.waitHandle;
+        op.waitPacket = packet;
+        return true;
+    }
+
     /// A relative timer, driven off the completion-port wait timeout (no
     /// threadpool): the deadline is tracked and its completion synthesized
     /// when it expires. `res` is 0 on expiry.
@@ -960,6 +1006,21 @@ struct IocpBackend
         {
             if (!op.inUse || op.token != target.raw || op.kind == IoKind.wake)
                 continue;
+            if (op.kind == IoKind.waitHandle)
+            {
+                // Removing a signalled-but-queued packet as well: success
+                // means no packet will be dequeued for this op. Any other
+                // status means it is queued or taken — completion won.
+                const status = (() @trusted => waitPacketApi().cancel(op.waitPacket, 1))();
+                if (status == 0)
+                {
+                    CloseHandle(op.waitPacket);
+                    release(&op);
+                    enqueue(RawCompletion(target.raw, -ECANCELED, 0));
+                    res = 0;
+                }
+                break;
+            }
             if (op.handle !is null)
             {
                 if ((() @trusted => CancelIoEx(op.handle, &op.ov))())
@@ -1092,6 +1153,11 @@ private:
                 // Persistent (SPEC §5.6): the op context is the posting
                 // target for every future wake — never released here.
                 return RawCompletion(token, 0, 0);
+            case IoKind.waitHandle:
+                // Picked up: the association is over and the packet unused.
+                CloseHandle(op.waitPacket);
+                res = ok ? 0 : failure;
+                break;
         }
         if (op.kind == IoKind.read
             && (status == 0xc000_014b || status == 0xc000_0011)) // PIPE_BROKEN / END_OF_FILE
@@ -1183,6 +1249,119 @@ private:
     assert(b.caps.supports(OpKind.read));
     assert(b.caps.supports(OpKind.write));
     assert(!b.caps.supports(OpKind.fsync));
+    assert(b.caps.supports(OpKind.waitid) == (waitPacketApi() !is null));
+}
+
+version (unittest)
+private void requireWaitPackets() @safe
+{
+    import sparkles.event_horizon.sys.nt : runningUnderWine;
+    import sparkles.test_runner.skip : skipTest;
+
+    if (waitPacketApi() is null)
+    {
+        // Only Wine may lack them: native Windows has had them since 8.
+        assert(runningUnderWine(), "native Windows without wait completion packets");
+        skipTest("Wine exports no NtAssociateWaitCompletionPacket");
+    }
+}
+
+/// A wait packet completes once when its handle signals — or at once when
+/// it is already signalled — and leaves the handle open.
+@("iocp.waitHandle.signalAndAlreadySignalled")
+@system unittest
+{
+    import core.sys.windows.winbase : CreateEventW;
+    import sparkles.event_horizon.op : OpClass;
+
+    requireWaitPackets();
+    IocpBackend b;
+    assert(!b.open(BackendConfig()).hasError);
+    scope (exit) b.close();
+    auto event = CreateEventW(null, TRUE, FALSE, null);
+    assert(event !is null);
+    scope (exit) CloseHandle(event);
+    OpSlot slot;
+    const first = OpToken.pack(1, 1, OpClass.user);
+    assert(b.trySubmit(OpWaitHandle(event), first, slot));
+    assert(b.reap((ref const RawCompletion c) {}) == 0, "nothing before the signal");
+    SetEvent(event);
+    assert(b.submitAndWait(1, null).value == 1);
+    assert(b.reap((ref const RawCompletion c) {
+        assert(c.userData == first.raw && c.res == 0);
+    }) == 1);
+    // Signalled already: the association queues its packet immediately.
+    const second = OpToken.pack(2, 1, OpClass.user);
+    assert(b.trySubmit(OpWaitHandle(event), second, slot));
+    assert(b.submitAndWait(1, null).value == 1);
+    assert(b.reap((ref const RawCompletion c) {
+        assert(c.userData == second.raw && c.res == 0);
+    }) == 1);
+    assert(WaitForSingleObject(event, 0) == 0, "the handle is not consumed");
+}
+
+/// Cancelling a pending wait packet yields exactly the target's ECANCELED
+/// and the acknowledgment; a later signal delivers nothing.
+@("iocp.waitHandle.cancelBeforeSignal")
+@system unittest
+{
+    import core.sys.windows.winbase : CreateEventW;
+    import sparkles.event_horizon.op : OpClass;
+
+    requireWaitPackets();
+    IocpBackend b;
+    assert(!b.open(BackendConfig()).hasError);
+    scope (exit) b.close();
+    auto event = CreateEventW(null, TRUE, FALSE, null);
+    assert(event !is null);
+    scope (exit) CloseHandle(event);
+    OpSlot slot;
+    const target = OpToken.pack(1, 1, OpClass.user);
+    const cancel = OpToken.pack(2, 1, OpClass.internal);
+    assert(b.trySubmit(OpWaitHandle(event), target, slot));
+    assert(b.trySubmitCancel(cancel, target));
+    uint targets, cancels;
+    assert(b.reap((ref const RawCompletion c) {
+        if (c.userData == target.raw)
+        {
+            ++targets;
+            assert(c.res == -ECANCELED);
+        }
+        else
+        {
+            ++cancels;
+            assert(c.userData == cancel.raw && c.res == 0);
+        }
+    }) == 2);
+    assert(targets == 1 && cancels == 1);
+    SetEvent(event);
+    const brief = KernelTimespec(0, 50_000_000);
+    assert(b.submitAndWait(1, &brief).value == 0);
+}
+
+/// The waitid bit is clear exactly where the exports are missing, and the
+/// op is then a terminal EOPNOTSUPP rather than a hang.
+@("iocp.waitHandle.missingExportsReject")
+@system unittest
+{
+    import core.sys.windows.winbase : CreateEventW;
+    import sparkles.event_horizon.op : OpClass;
+
+    if (waitPacketApi() !is null)
+    {
+        import sparkles.test_runner.skip : skipTest;
+
+        skipTest("this host has the wait-packet exports");
+    }
+    IocpBackend b;
+    assert(!b.open(BackendConfig()).hasError);
+    scope (exit) b.close();
+    assert(!b.caps.supports(OpKind.waitid));
+    auto event = CreateEventW(null, TRUE, FALSE, null);
+    scope (exit) CloseHandle(event);
+    OpSlot slot;
+    assert(b.trySubmit(OpWaitHandle(event), OpToken.pack(1, 1, OpClass.user), slot));
+    assert(b.reap((ref const RawCompletion c) { assert(c.res == -EOPNOTSUPP); }) == 1);
 }
 
 /// A full dequeue batch, an overflow batch, and callback-side submission all

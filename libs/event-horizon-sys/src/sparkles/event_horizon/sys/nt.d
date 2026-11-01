@@ -156,3 +156,83 @@ enum NTSTATUS STATUS_NAME_TOO_LONG = cast(NTSTATUS) 0xC0000106;
 
 /// Whether `s` is a success or informational status.
 bool ntSuccess(NTSTATUS s) @safe pure nothrow @nogc => s >= 0;
+
+// ── wait completion packets ─────────────────────────────────────────────────
+
+/// `NtCreateWaitCompletionPacket(handle*, access, attributes)`.
+alias NtCreateWaitCompletionPacketFn = extern (Windows) NTSTATUS function(
+    HANDLE* packet, ULONG desiredAccess, OBJECT_ATTRIBUTES* attributes) nothrow @nogc;
+/// `NtAssociateWaitCompletionPacket(packet, port, target, key, apcContext,
+/// ioStatus, ioStatusInformation, alreadySignaled*)`.
+alias NtAssociateWaitCompletionPacketFn = extern (Windows) NTSTATUS function(
+    HANDLE packet, HANDLE port, HANDLE target, void* keyContext, void* apcContext,
+    NTSTATUS ioStatus, size_t ioStatusInformation, ubyte* alreadySignaled) nothrow @nogc;
+/// `NtCancelWaitCompletionPacket(packet, removeSignaledPacket)`.
+alias NtCancelWaitCompletionPacketFn = extern (Windows) NTSTATUS function(
+    HANDLE packet, ubyte removeSignaledPacket) nothrow @nogc;
+
+/**
+The wait-completion-packet exports of `ntdll` (documented in the Windows
+devnotes). One association queues one packet to a completion port when a
+waitable object signals: the bridge from a process handle's exit to IOCP
+without a threadpool wait or a helper thread. Installed Wine exports
+neither, so the exports are resolved at run time rather than linked.
+*/
+struct WaitPacketApi
+{
+    NtCreateWaitCompletionPacketFn create;
+    NtAssociateWaitCompletionPacketFn associate;
+    NtCancelWaitCompletionPacketFn cancel;
+}
+
+private __gshared WaitPacketApi resolvedWaitPackets;
+private shared ubyte waitPacketState; // 0 unresolved, 1 present, 2 absent
+
+/// The resolved exports, or null when this host lacks any of them. Racing
+/// first calls store identical values, so resolution needs no lock.
+const(WaitPacketApi)* waitPacketApi() @trusted nothrow @nogc
+{
+    import core.atomic : atomicLoad, atomicStore;
+    import core.sys.windows.winbase : GetModuleHandleW, GetProcAddress;
+
+    auto state = atomicLoad(waitPacketState);
+    if (state == 0)
+    {
+        auto ntdll = GetModuleHandleW("ntdll.dll"w.ptr);
+        WaitPacketApi api;
+        if (ntdll !is null)
+        {
+            api.create = cast(NtCreateWaitCompletionPacketFn) GetProcAddress(ntdll,
+                "NtCreateWaitCompletionPacket");
+            api.associate = cast(NtAssociateWaitCompletionPacketFn) GetProcAddress(ntdll,
+                "NtAssociateWaitCompletionPacket");
+            api.cancel = cast(NtCancelWaitCompletionPacketFn) GetProcAddress(ntdll,
+                "NtCancelWaitCompletionPacket");
+        }
+        const present = api.create !is null && api.associate !is null
+            && api.cancel !is null;
+        if (present)
+            resolvedWaitPackets = api;
+        state = present ? 1 : 2;
+        atomicStore(waitPacketState, state);
+    }
+    return state == 1 ? &resolvedWaitPackets : null;
+}
+
+/// Whether this process runs under Wine (`ntdll` exports `wine_get_version`).
+/// Tests use it to tell an expected Wine gap from a native regression.
+bool runningUnderWine() @trusted nothrow @nogc
+{
+    import core.sys.windows.winbase : GetModuleHandleW, GetProcAddress;
+
+    auto ntdll = GetModuleHandleW("ntdll.dll"w.ptr);
+    return ntdll !is null && GetProcAddress(ntdll, "wine_get_version") !is null;
+}
+
+/// Native Windows has every wait-packet export; only Wine may lack them.
+@("sys.nt.waitPacketExportsOnNativeWindows")
+@safe nothrow @nogc unittest
+{
+    assert(waitPacketApi() !is null || runningUnderWine());
+    assert(waitPacketApi() is waitPacketApi(), "resolution is stable");
+}

@@ -312,6 +312,16 @@ struct OpWaitid
     int options;   /// `WEXITED`, …
 }
 
+/// Waits until a waitable native handle signals — a Windows process
+/// handle's exit — without consuming it: the handle stays open and valid,
+/// and the completion's `res` is 0. IOCP lowers it to a wait completion
+/// packet associated with the port (SPEC §13.9).
+struct OpWaitHandle
+{
+    enum kind = OpKind.waitid;
+    NativeHandle handle; /// borrowed; must outlive the operation
+}
+
 /**
 Portable readiness-event bits for `OpPollAdd` — the `POLLIN`/`POLLOUT`/
 `POLLERR`/`POLLHUP` subset every backend can honour. The values match
