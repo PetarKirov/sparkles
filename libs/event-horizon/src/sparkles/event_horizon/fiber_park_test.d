@@ -258,6 +258,58 @@ unittest
     }
 }
 
+@("fiberPark.semaphore.aWorkerThatNeverIdlesStillDeliversItsWake")
+@system
+unittest
+{
+    // EFP9: a wake one worker owes another worker's fiber is delivered while
+    // the waking worker always has a fiber to run. On the ring path its
+    // `IORING_OP_FUTEX_WAKE` must leave in a busy tick, not wait for the
+    // worker's next idle wait.
+    foreach (path; parkPaths)
+    {
+        {
+            Sched probe;
+            schedOrSkip(probe, SchedOptions(fiberPark: path));
+            probe.destroy();
+        }
+        LoopGroup group;
+        LoopGroupConfig cfg;
+        cfg.topology = Topology.threadPerCore;
+        cfg.workers = 2;
+        cfg.pinToCpu = No.pinToCpu;
+        cfg.fiberPark = path;
+        auto started = LoopGroup.start(group, cfg);
+        if (started.hasError)
+            skipTest(skipReason(started.error));
+
+        auto sem = new Semaphore;
+        shared bool waiting, resumed, woken;
+        group.runEach((uint id, ref RootScope root, ref env) {
+            auto s = &currentScheduler();
+            if (id == 0)
+            {
+                atomicStore(waiting, true);
+                // A wake that waited for the deadline still ends the wait
+                // `ok` (the lot dequeued the record), so time it.
+                const t0 = MonoTime.currTime;
+                const st = sem.acquireUntil(bound());
+                atomicStore(woken, st == WaitStatus.ok && MonoTime.currTime - t0 < 1.seconds);
+                atomicStore(resumed, true);
+                return;
+            }
+            while (!atomicLoad(waiting))
+                s.yieldNow();
+            Thread.sleep(20.msecs); // the waiter's sleep reaches its kernel wait
+            sem.release();
+            const until = MonoTime.currTime + 5.seconds;
+            while (!atomicLoad(resumed) && MonoTime.currTime < until)
+                s.yieldNow(); // busy: never idle until the waiter resumes
+        });
+        assert(atomicLoad(woken), "the wake waited for the waking worker to go idle");
+    }
+}
+
 @("fiberPark.mutex.blockingPoolThreadHandsTheLockToAFiber")
 @system
 unittest

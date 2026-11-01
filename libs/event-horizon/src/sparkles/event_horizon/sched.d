@@ -39,7 +39,7 @@ import sparkles.event_horizon.cause : CancelContext, FiberContext, Interrupt,
     InterruptKind, cancelTree, interruptFiber, interruptRequested;
 import sparkles.event_horizon.errors;
 import sparkles.event_horizon.fiber_park : FiberParkState, fiberParker, resumeIfAsleep,
-    writeRingSleep;
+    ringWakesPending, writeRingSleep;
 import sparkles.event_horizon.loop : DefaultLoop, LoopConfig, RunStatus;
 import sparkles.event_horizon.op;
 
@@ -1110,9 +1110,10 @@ private:
     The end of a tick's resumes: the ring path's submission point (EFP8),
     then whether the tick is done without waiting — fibers ran, or are
     ready. A tick whose fibers ran does not wait for completions, so while
-    ring waits are written it still flushes and reaps without blocking: a
-    worker that always has a fiber to run must not starve its parked fibers'
-    wakes and deadlines.
+    ring waits are written, or ring wakes of other workers' park words are
+    unreaped, it still flushes and reaps without blocking: a worker that
+    always has a fiber to run must not starve its parked fibers' wakes and
+    deadlines, nor the wakes it owes other workers' fibers (EFP9).
     */
     bool ringSubmissionPoint(uint ran) @trusted nothrow @nogc
     {
@@ -1120,7 +1121,7 @@ private:
         if (ran == 0 && _readyHead is null && !resolved)
             return false;
         static if (ringParkLowerable)
-            if (_ringWaits > 0)
+            if (_ringWaits > 0 || ringWakesPending())
                 cast(void) _loop.runOnce(Duration.zero);
         return true;
     }
