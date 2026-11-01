@@ -1152,9 +1152,10 @@ yields an interrupt outcome ("you cannot silently drop a cancel").
 For a fiber parked on I/O, the installed cancel function does **not** wake
 the fiber; it submits `ASYNC_CANCEL` for the awaited op on the owner ring
 (via a group message when invoked cross-worker). The single wake is always
-the terminal CQE. For non-I/O parks (a `JoinHandle.join` — the only non-I/O
-park in v1; a cross-fiber channel primitive is a recognized gap, see
-[open-issues](./open-issues.md) O20), the cancel function latches the
+the terminal CQE. For non-I/O parks — a `JoinHandle.join`, a `Channel`'s
+`put` or `take` (§14), and an interruptible `sparkles.base.sync` wait through
+the fiber parker, which `CrossChannel` uses across workers (§14.1;
+[open-issues](./open-issues.md) O20) — the cancel function latches the
 interrupt and wakes immediately.
 
 ### 8.5 In-flight cancellation state machine

@@ -330,7 +330,14 @@ exactly the deferred-to consumer: the input-fiber → UI-fiber and
 PTY-reader → render-fiber handoffs. v1 is the bounded **intra-worker**
 channel parking through the executor seam (effects-side, ring-free), with
 close-then-drain semantics and cancellation checkpoints; the cross-worker
-variant stays open with the M9 `MSG_RING`/futex machinery it needs.
+variant stayed open.
+
+**Cross-worker variant resolved (2026-11-01): SPEC §14.1's `CrossChannel`.**
+Its first consumer is the `apps/ci` task DAG, whose scheduler workers report
+to one reporter. It needs no `MSG_RING` handoff: a base.sync `Mutex` guards
+the buffer and two `Condition`s park putters and takers through the fiber
+parker (M20, [fiber-parker.md](./fiber-parker.md)), whose ring or inbox path
+carries a wake to the fiber's owner on every backend.
 
 ## O21 — How far the `Allocator` parameters spread
 
