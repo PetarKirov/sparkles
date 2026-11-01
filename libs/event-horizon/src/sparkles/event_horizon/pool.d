@@ -626,22 +626,41 @@ private final class Deque
     /// instead of O(n), the difference between event-horizon's and rayon's
     /// parallel scaling on wide fan-out (`benchmarks.md` §2). `false` = empty or
     /// the CAS race lost.
+    ///
+    /// The jobs are claimed one CAS at a time, each read before its CAS and
+    /// each bounded by a fresh `bottom`, as `stealHead` claims its one: the
+    /// owner pops the tail without a CAS while more than one job is left, so a
+    /// single CAS over several jobs races those pops for the same jobs, and a
+    /// slot `top` has already passed may be refilled by the owner before it
+    /// is read. Either way a job ran twice and another never.
     bool stealBatch(out Job first, Deque mine) @trusted nothrow
     {
-        const t = atomicLoad!(MemoryOrder.acq)(_top);
+        long t = atomicLoad!(MemoryOrder.acq)(_top);
         atomicFence();
-        const b = atomicLoad!(MemoryOrder.acq)(_bottom);
+        long b = atomicLoad!(MemoryOrder.acq)(_bottom);
         const n = b - t;
         if (n <= 0)
             return false;
-        const k = n < 2 ? 1 : cast(long)((n + 1) / 2); // take half, at least one
-        auto buf = loadBuf(_buf);
-        // One CAS claims the whole range [t, t+k); losers retry via the scan.
-        if (!cas(&_top, t, t + k))
-            return false;
-        first = buf.items[t & buf.mask];
-        foreach (i; t + 1 .. t + k)
-            mine.push(buf.items[i & buf.mask]);
+        const k = n < 2 ? 1 : (n + 1) / 2; // take half, at least one
+        foreach (i; 0 .. k)
+        {
+            if (i > 0)
+            {
+                atomicFence(); // seq_cst, as in stealHead
+                b = atomicLoad!(MemoryOrder.acq)(_bottom);
+                if (b - t <= 0)
+                    break;
+            }
+            auto buf = loadBuf(_buf);
+            auto j = buf.items[t & buf.mask];
+            if (!cas(&_top, t, t + 1))
+                return i > 0; // another thief or the owner's last pop won
+            if (i == 0)
+                first = j;
+            else
+                mine.push(j);
+            ++t;
+        }
         return true;
     }
 
@@ -650,6 +669,76 @@ private final class Deque
     bool maybeEmpty() @trusted nothrow
         => atomicLoad!(MemoryOrder.raw)(_bottom)
             - atomicLoad!(MemoryOrder.raw)(_top) <= 0;
+}
+
+@("pool.Deque.batchStealTakesEachJobOnce")
+@system
+unittest
+{
+    import core.atomic : atomicLoad, atomicOp, atomicStore;
+    import core.thread : Thread;
+
+    // The owner pushes and pops (LIFO, without a CAS unless one job is left)
+    // in bursts while thieves batch-steal into their own deques and drain
+    // them: every job must be taken exactly once. A job's delegate never
+    // runs; its context pointer is the job's number.
+    enum thieves = 3, total = 1_600_000;
+    auto counts = new shared(uint)[](total);
+    shared bool stop;
+    auto victim = new Deque;
+
+    static Job job(size_t n)
+    {
+        void delegate() dg;
+        dg.ptr = cast(void*) n;
+        return Job(dg, true);
+    }
+    void take(ref Job j)
+    {
+        atomicOp!"+="(counts[cast(size_t) j.body_.ptr], 1);
+    }
+
+    Thread[thieves] ts;
+    foreach (ref t; ts)
+        t = new Thread({
+            auto mine = new Deque;
+            Job j;
+            while (!atomicLoad(stop))
+                if (victim.stealBatch(j, mine))
+                {
+                    take(j);
+                    while (mine.popTail(j))
+                        take(j);
+                }
+        }).start();
+
+    size_t next;
+    while (next < total)
+    {
+        // Bursts long enough to wrap and grow the ring; pops leave a tail.
+        foreach (_; 0 .. 100)
+            if (next < total)
+                victim.push(job(next++));
+        Job j;
+        foreach (_; 0 .. 70)
+            if (victim.popTail(j))
+                take(j);
+    }
+    Job j;
+    while (victim.popTail(j))
+        take(j);
+    atomicStore(stop, true);
+    foreach (t; ts)
+        t.join();
+
+    size_t lost, twice;
+    foreach (ref c; counts)
+    {
+        const n = atomicLoad(c);
+        lost += n == 0;
+        twice += n > 1;
+    }
+    assert(lost == 0 && twice == 0, "every job taken exactly once");
 }
 
 @("pool.workStealing.distributesTasksAcrossWorkers")
