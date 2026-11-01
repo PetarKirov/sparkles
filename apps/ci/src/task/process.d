@@ -37,14 +37,27 @@ import sparkles.event_horizon.errors : IoError;
 import sparkles.event_horizon.proc : EnvironmentChange, ExitStatus, ProcessEnd, ProcessEvent,
     ProcessEventKind, ProcessResourceUsage, ProcessStream, StdioMode, StdioSpec,
     SupervisedProcessConfig;
+import sparkles.event_horizon.cross_channel : CrossChannel;
 import sparkles.event_horizon.sched : Sched;
 import sparkles.event_horizon.supervise : supervise;
 import sparkles.test_runner.attributes : serial;
 
 import task.action : InProcessAction, InertAction, ProcessAction, StdinPolicy;
-import task.executor : TaskContext;
+import task.executor : isEventSink, TaskContext;
+import task.reporter : isEventSource;
 import task.model;
 import task.output : OutputSpool;
+
+/**
+The production event channel, executor to reporter: bounded and
+cross-worker, so the reporter fiber may run on another worker (or thread)
+than the tasks. `TestSched` runs use the intra-worker `Channel` instead,
+since `CrossChannel`'s fiber verbs need a fiber parker.
+*/
+alias EventChannel = CrossChannel!(TaskEvent, 64);
+
+static assert(isEventSink!(EventChannel, Sched));
+static assert(isEventSource!(EventChannel, Sched));
 
 /// The monotonic wall clock, as the executor's clock capability: the live
 /// counterpart of `TestClock` for timestamps.
@@ -65,6 +78,11 @@ struct ProcessDriverOptions
     /// Each task's spill file is `<sandboxRoot>/<task path>/output.log`; null
     /// keeps output in memory only, dropping the oldest lines past the budget.
     string sandboxRoot;
+    /// The sandbox seam: when set, it names each task's spill file instead
+    /// (null keeps that task's output in memory). The driver creates nothing
+    /// else under a sandbox; where a task's `DUB_HOME` or build root lives is
+    /// the planner's, through the action's environment.
+    string delegate(const ref TaskNode node) spillPath;
     /// Bytes of output text a task keeps in memory.
     size_t outputMemoryBudget = 1024 * 1024;
     /// SIGTERM-to-SIGKILL grace for a timed-out or cancelled process group.
@@ -144,8 +162,9 @@ private:
         auto rec = &records[ctx.task.value];
         rec.ran = true;
         rec.output = OutputSpool(options.outputMemoryBudget,
-            options.sandboxRoot.length ? options.sandboxRoot.buildPath(sandboxPath(ctx.node.id), "output.log")
-                : null);
+            options.spillPath !is null ? options.spillPath(*ctx.node)
+            : options.sandboxRoot.length ? options.sandboxRoot.buildPath(sandboxPath(ctx.node.id), "output.log")
+            : null);
 
         SupervisedProcessConfig cfg;
         cfg.timeout = action.timeout;
@@ -289,7 +308,6 @@ version (unittest)
 {
     import std.algorithm.searching : canFind;
 
-    import sparkles.event_horizon.channel : Channel;
     import sparkles.event_horizon.loop : LoopConfig;
     import sparkles.event_horizon.sched : SchedOptions;
     import sparkles.event_horizon.scope_ : withScope;
@@ -334,7 +352,7 @@ version (unittest)
             outputMemoryBudget: budget, terminateGrace: 200.msecs, sampleInterval: Duration.zero),
             graph.nodes.length);
         MonotonicClock clock;
-        Channel!(TaskEvent, 16) sink;
+        EventChannel sink;
         LiveRun run;
         auto r = s.run(() {
             cast(void) withScope!((ref sc) {
@@ -472,4 +490,77 @@ unittest
     assert(run.linesOf[0].length == 5000);
     assert(run.spilled[0] && run.spooledLines[0] == 5000);
     assert(tmp.dir.buildPath("big", "output.log").exists);
+}
+
+/// The production shape across workers: process tasks run on worker 0, the
+/// plain reporter consumes their events on worker 1 through `EventChannel`.
+@("task.process.run.reporterOnAnotherWorker")
+@serial
+@system
+unittest
+{
+    import core.atomic : atomicLoad, atomicStore;
+    import core.thread : Thread;
+    import std.array : appender;
+    import std.typecons : No;
+
+    import sparkles.event_horizon.group : LoopGroup, LoopGroupConfig, RootScope, Topology;
+    import sparkles.event_horizon.sched : currentScheduler;
+    import task.reporter : consumeEvents;
+    import task.reporter_plain : PlainOptions, PlainReporter;
+
+    LoopGroupConfig cfg;
+    cfg.topology = Topology.threadPerCore;
+    cfg.workers = 2;
+    cfg.pinToCpu = No.pinToCpu;
+    LoopGroup group;
+    auto started = LoopGroup.start(group, cfg);
+    if (started.hasError)
+        return skipTest("no two-worker loop group: " ~ started.error.context);
+    scope (exit)
+        cast(void) group.shutdown();
+
+    TaskGraphBuilder b;
+    b.add(processNode("a", ["sh", "-c", "echo a1; echo a2"]));
+    b.add(processNode("b", ["sh", "-c", "echo b1 >&2; exit 4"]));
+    b.add(processNode("c", ["true"]));
+    b.add(TaskEdge(taskId("a").value, taskId("c").value, EdgeCondition.onSuccess,
+        EdgeReason.packageDependency));
+    const graph = b.build().value;
+
+    auto channel = new EventChannel;
+    auto driver = ProcessDriver(ProcessDriverOptions(sampleInterval: Duration.zero), graph.nodes.length);
+    auto w = appender!string;
+    auto reporter = PlainReporter!(typeof(w))(&w, &graph, PlainOptions(timings: false));
+    RunResult result;
+    shared Thread executorThread, reporterThread;
+
+    group.runEach((uint id, ref RootScope root, ref env) {
+        ref Sched s = currentScheduler();
+        if (id == 0)
+        {
+            atomicStore(executorThread, cast(shared) Thread.getThis());
+            MonotonicClock clock;
+            result = runGraph(s, clock, graph, driver, *channel, ExecutorOptions(capacity: 2));
+            channel.close();
+        }
+        else
+        {
+            atomicStore(reporterThread, cast(shared) Thread.getThis());
+            consumeEvents(s, *channel, reporter);
+        }
+    });
+
+    assert(atomicLoad(executorThread) !is atomicLoad(reporterThread), "two workers, two threads");
+    assert(result.exitCode == 1);
+    assert(w[] ==
+        "[a stdout] a1\n"
+        ~ "[a stdout] a2\n"
+        ~ "a: succeeded\n"
+        ~ "[b stderr] b1\n"
+        ~ "b: failed: exit-status 4\n"
+        ~ "c: succeeded\n"
+        ~ "summary: 3 tasks: 2 succeeded, 1 failed, 0 degraded, 0 skipped, 0 blocked, 0 cancelled\n"
+        ~ "failed: b\n"
+        ~ "exit: 1\n", w[]);
 }
