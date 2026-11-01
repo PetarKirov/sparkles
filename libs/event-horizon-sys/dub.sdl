@@ -7,8 +7,9 @@ license "BSL-1.0"
 targetPath "build"
 targetType "library"
 
-// No event loop, no `during`, no sparkles:event-horizon (VFB6): test fixtures
-// in every package's test build reach the blocking backend through here.
+// No event loop and no sparkles:event-horizon (VFB6); kernel-interface
+// bindings without a loop (the io_uring one) are allowed. Test fixtures in
+// every package's test build reach the blocking backend through here.
 dependency "sparkles:base" path="../.."
 
 importPaths "src" "../test-runner/src"
