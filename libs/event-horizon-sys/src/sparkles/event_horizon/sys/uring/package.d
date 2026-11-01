@@ -18,10 +18,10 @@
  *     * the `io_uring_*` system-call wrappers call druntime's
  *       `core.sys.linux.unistd.syscall` (`c_long syscall(c_long, ...)`) instead of declaring
  *       their own `int syscall(int, ...)`: compiled into one LDC module set with druntime's,
- *       the two prototypes clash.
+ *       the two prototypes clash;
+ *     * `Uring.submitAndWait(want, args)` with nothing to submit waits with `args`: upstream
+ *       dropped them there, so a wait with a deadline blocked until a completion arrived.
  * )
- * Later commits in this repository fix defects at the source; `git log` on this
- * directory lists them.
  *
  * Why vendored: Sparkles' `io_uring` backend (`sparkles:event-horizon`) stands on this
  * binding and worked around two of its defects in its own code instead of fixing them
@@ -590,7 +590,10 @@ struct Uring
             payload.sq.submitted(r);
             return r;
         }
-        return wait(want); // just simple wait
+        // Nothing to submit: just wait, keeping `args` (its deadline or
+        // sigmask). Upstream waited without them, so a bounded wait blocked
+        // until a completion arrived.
+        return wait(want, args);
     }
 
     /// ditto
