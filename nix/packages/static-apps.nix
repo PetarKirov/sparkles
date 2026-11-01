@@ -37,11 +37,20 @@
 # for the bundled ones with `--static` (their private dependencies) and for
 # the platform's without (wayland's private libffi has no `.pc` here).
 #
-# `checks.<app>` asserts each program: its `NEEDED` entries are all platform
-# interfaces, none is a GCC or LLVM runtime, it starts, the grammars it opens
-# need only the C library, and neither the program nor the grammars refer to
-# GCC's C++ runtime.
-# `checks.<app>-tests` runs its test suite, built the same way, headless.
+# `legacyPackages.staticAppChecks.<app>` asserts each program: its `NEEDED`
+# entries are all platform interfaces, none is a GCC or LLVM runtime, it
+# starts, the grammars it opens need only the C library, and neither the
+# program nor the grammars refer to GCC's C++ runtime.
+# `legacyPackages.staticAppChecks.<app>-tests` runs its test suite, built the
+# same way, headless.
+#
+# They are not flake `checks`: CI's `test` legs run `nix flake check`, and
+# these four rebuild both programs and run both suites under Xvfb whenever a
+# source changes, which took those legs past their time limits. The
+# `static-apps` job in .github/workflows/ci.yml builds them instead, on
+# x86_64-linux and aarch64-linux:
+#
+#     nix build .#legacyPackages.x86_64-linux.staticAppChecks.{hue-static,hue-static-tests,terminal-static,terminal-static-tests}
 { inputs, lib, ... }:
 let
   # The libraries these programs link statically, by pkg-config name.
@@ -595,7 +604,7 @@ in
           inherit terminal-static hue-static;
         };
 
-        checks.terminal-static = staticCheck {
+        legacyPackages.staticAppChecks.terminal-static = staticCheck {
           name = "terminal-static";
           app = terminal-static;
           smoke = ''
@@ -603,7 +612,7 @@ in
             grep -q 'SYNOPSIS' help.txt
           '';
         };
-        checks.terminal-static-tests = staticTests {
+        legacyPackages.staticAppChecks.terminal-static-tests = staticTests {
           pname = "terminal-static-tests";
           appDir = "apps/terminal";
           configuration = "unittest-vulkan";
@@ -616,7 +625,7 @@ in
           ];
         };
 
-        checks.hue-static = staticCheck {
+        legacyPackages.staticAppChecks.hue-static = staticCheck {
           name = "hue-static";
           app = hue-static;
           # A render: hue prints a highlighted file when its output is not a
@@ -639,7 +648,7 @@ in
             fi
           '';
         };
-        checks.hue-static-tests = staticTests {
+        legacyPackages.staticAppChecks.hue-static-tests = staticTests {
           pname = "hue-static-tests";
           appDir = "apps/hue";
           configuration = "unittest";
