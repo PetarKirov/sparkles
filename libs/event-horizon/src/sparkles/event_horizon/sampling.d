@@ -1460,6 +1460,8 @@ version (linux)
             "sleep 0.05; (while :; do :; done) >/dev/null 2>&1 & exit 0"]);
         assert(spawned.hasValue);
         auto child = move(spawned.value);
+        // A failed assertion below must not orphan the burning daemon.
+        scope (exit) cast(void) killTree(run);
         assert(migrateInto(run, child.pid) == 0);
         TreeSampler sampler;
         sampler.anchor(child.pid, &run);

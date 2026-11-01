@@ -1353,10 +1353,13 @@ version (unittest)
         static assert(hasCaps!(Env, "clock", "net", "proc"));
     }
 
+    /// Skips unless this is the only test thread: the shared pool's daemon
+    /// workers are not test threads and do not count.
     private void requireSingleThreadedProcess() @system
     {
-        if (Thread.getAll().length != 1)
-            skipTest("mutates process-global descriptors/signals; run with -t 1");
+        foreach (t; Thread.getAll())
+            if (t !is Thread.getThis() && !t.isDaemon)
+                skipTest("mutates process-global descriptors/signals; run with -t 1");
     }
 }
 

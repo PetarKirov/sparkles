@@ -487,6 +487,7 @@ version (OSX)
         import core.sys.posix.sys.wait : idtype_t, siginfo_t, waitid, waitpid,
             WEXITED, WNOWAIT;
         import core.sys.posix.unistd : pid_t;
+        import sparkles.event_horizon.live : SigInfo; // druntime's is undersized
 
         posix_spawnattr_t attr;
         posix_spawnattr_init(&attr);
@@ -495,8 +496,8 @@ version (OSX)
         pid_t pid;
         char*[2] argv = [cast(char*) "/usr/bin/true".ptr, null];
         assert(posix_spawn(&pid, argv[0], null, &attr, argv.ptr, null) == 0);
-        siginfo_t info;
-        assert(waitid(idtype_t.P_PID, pid, &info, WEXITED | WNOWAIT) == 0);
+        SigInfo info;
+        assert(waitid(idtype_t.P_PID, pid, cast(siginfo_t*) &info, WEXITED | WNOWAIT) == 0);
         scope (exit) cast(void) waitpid(pid, null, 0);
 
         // The pinned zombie is the group's one member, and XNU refuses the
@@ -2181,7 +2182,7 @@ version (unittest)
 // ── supervised runs (SPEC §13.5–§13.8) ──────────────────────────────────────
 
 version (unittest):
-version (linux):
+version (Posix):
 
 import core.thread : Thread;
 
@@ -2884,9 +2885,10 @@ unittest
 @system
 unittest
 {
-    import core.sys.posix.signal : SIGCHLD, SIG_IGN, sigaction,
+    import core.sys.posix.signal : SIGCHLD, SIGKILL, SIG_IGN, kill, sigaction,
         sigaction_t, sigemptyset;
     import core.time : MonoTime, msecs, seconds;
+    import std.conv : to;
 
     requireSingleThreadedProcess();
     sigaction_t ignored, previous;
@@ -2904,22 +2906,28 @@ unittest
     }
 
     bool bounded, preservedEchild;
+    EventLog log;
     auto r = s.run(() {
         SupervisedProcessConfig cfg;
         cfg.timeout = 50.msecs;
         cfg.terminateGrace = 100.msecs;
         cfg.process.stdinSpec = StdioSpec(StdioMode.nullDev);
         const before = MonoTime.currTime;
-        auto got = supervise(s, ["sh", "-c", "sleep 30 & exit 0"], cfg);
+        auto got = supervise(s, ["sh", "-c", "sleep 30 & echo $!; exit 0"], cfg,
+            null, log.sink());
         bounded = MonoTime.currTime - before < 2.seconds;
         preservedEchild = got.hasError && got.error.code == ECHILD;
     });
     const restored = sigaction(SIGCHLD, &previous, null);
+    // The lost root unpinned its group, so a run without a cgroup may not
+    // signal it again (§13.7): the orphaned `sleep` is the test's to end.
+    if (log.lineBytes.length != 0)
+        cast(void) kill((cast(const(char)[]) log.lineBytes[0]).to!int, SIGKILL);
 
     assert(restored == 0);
     assert(!r.hasError);
     assert(bounded && preservedEchild,
-        "ECHILD still terminates/drains the saved process group promptly");
+        "ECHILD still forces the drains and returns within the bound");
 }
 
 @("supervise.scopeCancellationLatchesThenConverges")
@@ -3256,7 +3264,6 @@ unittest
     assert(!r.hasError);
 }
 
-version (linux)
 @("supervise.repeatedRunsDoNotLeakDescriptors")
 @system
 unittest
@@ -3266,7 +3273,11 @@ unittest
 
     static size_t fdCount()
     {
-        auto dir = opendir("/proc/self/fd");
+        // Darwin has no procfs; its fdesc mount lists the same table.
+        version (linux)
+            auto dir = opendir("/proc/self/fd");
+        else
+            auto dir = opendir("/dev/fd");
         assert(dir !is null);
         scope (exit) closedir(dir);
         size_t count;
@@ -3439,19 +3450,12 @@ unittest
                 lastCount = ev.usage.sampleCount;
                 assert(ev.usage.wallTime > Duration.zero);
             }
-        version (linux)
-        {
-            assert(samples >= 3, "interval sampling fired repeatedly");
-            assert(lastCount >= samples);
-            assert(got.value.usage.sampled);
-            assert(got.value.usage.peakProcesses >= 1,
-                "the tree sampler saw at least the root");
-        }
-        else
-        {
-            assert(samples == 0, "darwin stub emits no fabricated samples");
-            assert(!got.value.usage.sampled);
-        }
+        // procfs on Linux, libproc on Darwin: both sample for real.
+        assert(samples >= 3, "interval sampling fired repeatedly");
+        assert(lastCount >= samples);
+        assert(got.value.usage.sampled);
+        assert(got.value.usage.peakProcesses >= 1,
+            "the tree sampler saw at least the root");
         assert(got.value.usage.wallTime >= 300.msecs);
     });
     assert(!r.hasError);
@@ -3484,7 +3488,7 @@ unittest
                 lastUser = ev.usage.userTime;
                 lastSystem = ev.usage.systemTime;
             }
-        version (linux)
+        version (Posix)
             assert(got.value.usage.peakProcesses >= 2,
                 "same-group descendant remains visible after root exit");
     });
@@ -3521,7 +3525,7 @@ unittest
         assert(two.hasValue, two.hasError ? two.error.context : "");
         assert(two.value.status.ok, "both CPU workers completed their budgets");
 
-        version (linux)
+        version (Posix)
         {
             const oneCpu = one.value.usage.userTime
                 + one.value.usage.systemTime;
@@ -3741,32 +3745,29 @@ unittest
         auto got = supervise(s, ["sh", "-c",
             "i=0; while [ $i -lt 20000 ]; do i=$((i+1)); done"], cfg);
         assert(got.hasValue, got.hasError ? got.error.context : "");
-        version (linux)
+        assert(got.value.usage.sampled && got.value.usage.sampleCount >= 2);
+        assert(got.value.usage.peakProcesses >= 1, "the final sample saw the root");
+        assert(!got.value.usage.samplingDegraded, "no sample was skipped or aborted");
+        assert(got.value.usage.memoryQuality == MetricQuality.lowerBound);
+        assert(got.value.usage.cpuQuality == MetricQuality.lowerBound,
+            "tree CPU is a lower bound under unenforced containment");
+        final switch (got.value.usage.source)
         {
-            assert(got.value.usage.sampled && got.value.usage.sampleCount >= 2);
-            assert(got.value.usage.peakProcesses >= 1, "the final sample saw the root");
-            assert(!got.value.usage.samplingDegraded, "no sample was skipped or aborted");
-            assert(got.value.usage.memoryQuality == MetricQuality.lowerBound);
-            assert(got.value.usage.cpuQuality == MetricQuality.lowerBound,
-                "tree CPU is a lower bound under unenforced containment");
-            final switch (got.value.usage.source)
-            {
-            case SampleSource.cgroupFull:
-            case SampleSource.cgroupMembers:
-                assert(got.value.usage.cgroupCpuSource == MetricSource.cgroup
-                    && got.value.usage.cgroupCpuQuality == MetricQuality.exact,
-                    "the run cgroup's own counter is exact");
-                break;
-            case SampleSource.procScan:
-                assert(got.value.usage.cgroupCpuSource == MetricSource.none);
-                break;
-            case SampleSource.none:
-            case SampleSource.darwinTree:
-                assert(0, "Linux always has a source");
-            }
+        case SampleSource.cgroupFull:
+        case SampleSource.cgroupMembers:
+            assert(got.value.usage.cgroupCpuSource == MetricSource.cgroup
+                && got.value.usage.cgroupCpuQuality == MetricQuality.exact,
+                "the run cgroup's own counter is exact");
+            break;
+        case SampleSource.procScan:
+        case SampleSource.darwinTree:
+            assert(got.value.usage.cgroupCpuSource == MetricSource.none);
+            break;
+        case SampleSource.none:
+            assert(0, "every supported host has a source");
         }
-        else
-            assert(!got.value.usage.sampled);
+        version (OSX)
+            assert(got.value.usage.source == SampleSource.darwinTree);
     });
     assert(!r.hasError);
 }
@@ -4043,6 +4044,7 @@ unittest
     assert(!r.hasError);
 }
 
+version (linux)
 @("supervise.cancel.fromTheFinalFragmentCallbackStillKillsTheCgroup")
 @serial
 @system
@@ -4203,6 +4205,13 @@ unittest
         Thread.sleep(1.msecs);
     assert(!stillLive(), "the captured descendant identity is no longer live");
     assert(!got.cgroupCleanupLeaked, "no survivor in the run cgroup");
+}
+else
+@("supervise.cancel.fromTheFinalFragmentCallbackStillKillsTheCgroup")
+@system
+unittest
+{
+    skipTest("needs a cgroup v2 run cgroup and procfs process identities");
 }
 
 @("supervise.observer.failureWithNoReplacementFiberStillKillsAndReaps")
