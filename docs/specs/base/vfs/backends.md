@@ -73,12 +73,17 @@ the `fs` member of its capability row on every loop backend
 
 <a id="vfb6-the-blocking-package-has-no-loop"></a>
 **VFB6: The blocking package has no loop.** `sparkles:event-horizon-sys`
-**must not** depend on `sparkles:event-horizon`, `during`, or any event-loop
-module.
+**must not** depend on `sparkles:event-horizon` or any event-loop module. It
+**may** hold bindings to a kernel interface that carry no loop, such as the
+`io_uring` binding `sparkles.event_horizon.sys.uring`.
 
 _Rationale:_ Test fixtures in every package's test build depend on the
 blocking backend, and must not pull the loop's platform arms into each of them
 ([DV1](./decisions.md#dv1-the-vocabulary-lives-in-base-syscalls-live-in-event-horizon)).
+A binding is the same layer as the system-call declarations the package
+already holds: declarations and thin wrappers, with no scheduler, no completion
+dispatch and no dependency of its own. Housing it costs a test build compile
+time, not the loop.
 
 <a id="vfb7-mapping"></a>
 **VFB7: Mapping.** A backend **may** offer mapping: a `Mapping` type and
