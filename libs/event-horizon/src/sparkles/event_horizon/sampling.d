@@ -502,13 +502,12 @@ version (linux)
         private bool _cgroupCpuFailed, _cgroupMemFailed, _cgroupTasksFailed;
         private bool _rootZombie;
 
-        version (unittest)
-        {
-            /// Test hook: runs between the two root validations of a sample.
-            package void delegate() nothrow testBetweenValidations;
-            /// Test hook: every member open fails with `EMFILE` while set.
-            package bool testFailMemberOpens;
-        }
+        // Test seams, declared in every build so a `-unittest` consumer
+        // agrees with the library on the layout.
+        /// Test hook: runs between the two root validations of a sample.
+        package void delegate() nothrow testBetweenValidations;
+        /// Test hook: every member open fails with `EMFILE` while set.
+        package bool testFailMemberOpens;
 
         /// Whether pid-based sampling is possible for this run.
         bool anchored() const @safe pure nothrow @nogc => _anchored;

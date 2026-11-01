@@ -351,12 +351,12 @@ private struct Run
         cast(void) relay.tryPut(move(token));
     }
 
-    version (unittest)
-    {
-        int* signalAttempts;
-        RelayTestHook beforeHandle;
-        RelayHandledTestHook afterHandle;
-    }
+    // Test seams, set only by unittests but declared in every build: a
+    // consumer compiled with `-unittest` must agree with the library on
+    // this struct's layout.
+    int* signalAttempts;
+    RelayTestHook beforeHandle;
+    RelayHandledTestHook afterHandle;
 
     bool streamsTerminal() const @safe pure nothrow @nogc
         => stdoutFinished && stderrFinished;
