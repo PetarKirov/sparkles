@@ -25,5 +25,8 @@ in
     "freebsd-vm"
     # Unfree fonts whose licence forbids redistributing them (nix/packages/font-unfree-corpus.nix).
     "sparkles-font-unfree-corpus"
+    # Built, checked and pushed by CI's `static-apps` job (nix/packages/static-apps.nix).
+    "hue-static"
+    "terminal-static"
   ];
 }
