@@ -346,12 +346,13 @@ the same name instead when one is set.
 - **Working directory:** a compile action **must** run in the repository root,
   passing sources and in-tree paths as root-relative paths.
 - **Prefix map:** with a compiler that supports it, the action **must** map the
-  absolute repository root, with its trailing separator, to the empty string in
-  debug information, `__FILE__`, `__FILE_FULL_PATH__`, coverage registration
-  and the C preprocessor's output (`--ffile-prefix-map=<root>/=` on LDC). So
-  every in-tree path the outputs record is root-relative, such as
-  `libs/base/src/…`. Store paths are not remapped: they already name no
-  worktree.
+  absolute repository root, without a trailing separator, to `.` in debug
+  information, `__FILE__`, `__FILE_FULL_PATH__`, coverage registration and the
+  C preprocessor's output (`--ffile-prefix-map=<root>=.` on LDC). So every
+  in-tree path the outputs record is relative to the root, such as
+  `./libs/base/src/…`, and so is the debug information's compilation
+  directory, which is the root itself. Store paths are not remapped: they
+  already name no worktree.
 - **Fallback:** with a compiler that cannot map them, the repository root's
   absolute path is part of the action key.
 

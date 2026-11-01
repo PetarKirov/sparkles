@@ -279,12 +279,13 @@ test-runner integration needed one.
 
 ## Open questions
 
+O2 and O3 are resolved; O1 remains:
+
 - **O1:** which resolved fields `dub describe` cannot show. E0 spike 3 resolves
   it. It blocks oracle 1's completeness.
-- **O2:** whether LDC removes every worktree path. E0 spike 1 resolves it. It
-  blocks cross-worktree reuse for the affected variants.
-- **O3:** whether DMD variants share across worktrees at all. They do only if
-  relative paths alone suffice; E0 spike 1 covers DMD too.
+- **O2:** whether LDC removes every worktree path. Resolved by D18: it does.
+- **O3:** whether DMD variants share across worktrees at all. Resolved by D19:
+  they do not.
 
 ## D16: The test runner's implementation is pinned and prebuilt (accepted)
 
@@ -326,3 +327,86 @@ which BGA4 forbids.
 flags from its comparison.
 
 **Revisit when** dub resolves `pkg-config` for library targets.
+
+## D18: LDC relocates with the root mapped to `.` (proposed)
+
+**Question.** E0 spike 1 (O2): with root-relative sources and a prefix map, do
+LDC's objects, archives and test binaries name no worktree, and do the
+repository's uses of `__FILE_FULL_PATH__` still work?
+
+**Result.** They name none, with the map `--ffile-prefix-map=<root>=.`.
+
+- **Byte-identical outputs:** `sparkles:base`, `sparkles:event-horizon` and
+  `sparkles:ui` were each built as a test root with its dependency libraries,
+  one compile per target from `dub describe`, with the `unittest` build type
+  plus `-g`, `-cov` and `-checkaction=context`, in two worktrees at different
+  paths. Their 12, 330 and 246 objects, archives and test binaries were
+  byte-identical, and none contained either worktree's path.
+- **The map's form:** LDC rejects an empty replacement, so
+  `--ffile-prefix-map=<root>/=` is an error. A build that accepts it still
+  leaves the debug information's compilation directory absolute, because the
+  working directory has no trailing separator to match. Mapping `<root>` to `.`
+  maps that directory too. BGA5 now says so.
+- **The environment:** the dev shell's `NIX_LDFLAGS` carries
+  `-rpath <worktree>/outputs/out/lib`, which puts the worktree into every test
+  binary's run path. BGA4 already keeps it out of actions; this is the
+  variable that breaks byte identity when it leaks.
+- **Generated sources:** dub's test main lives in its cache, under a path
+  derived from the package's location. The spike wrote it to a root-relative
+  path. A generated source compiled from outside the root names that directory
+  in the outputs, so the graph writes generated sources where a map covers
+  them.
+- **Running elsewhere:** a test binary built in one worktree ran in the other's
+  root. Only `sparkles.base.source_uri` failed (below). One
+  `sparkles:event-horizon` sampling test failed under load and passed alone.
+
+**`__FILE_FULL_PATH__`.** Each of the 52 uses in `libs` and `apps` (53 lines,
+one a comment) was classified. Then the 19 packages with a use ran `dub test`
+from their worktree's root through a compiler that adds the map. Apart from
+the three breaking uses below, every test passed. Each package that skipped a
+test skipped the same tests in an unmapped run.
+
+| Use                                                                                                      | Count | Mapped                                 |
+| -------------------------------------------------------------------------------------------------------- | ----- | -------------------------------------- |
+| Reads a fixture, golden or corpus, or runs `git`/`dub` in the working directory                          | 38    | works                                  |
+| Probes for the source tree and skips without it                                                          | 7     | works (same skips)                     |
+| A tool or benchmark run with `dub run`, outside test actions                                             | 4     | works only from the root               |
+| Names the checkout to a process with another working directory (`wired`'s conformance, `shader-compile`) | 2     | breaks: 1 and 21 tests                 |
+| Needs an absolute path (`sparkles.base.source_uri`)                                                      | 1     | breaks: `base`'s tests fail to compile |
+
+No test changes its working directory. `terminal-view` and `event-horizon` set
+one only for the children they spawn.
+
+**Choice.** Keep D14's map, spelled `--ffile-prefix-map=<root>=.`. The three
+breaking uses are fixed instead of keying their variants on the root:
+
+- `source_uri` resolves a relative path against the working directory at run
+  time;
+- the two tests make the checkout's path absolute before they hand it to a
+  process or a recipe elsewhere.
+
+**Revisit when** LDC's map gains a form that drops the root without a `./`
+prefix and still maps the compilation directory.
+
+## D19: DMD variants key on the root (proposed)
+
+**Question.** E0 spike 1 (O3): do relative paths alone make DMD's outputs
+independent of the worktree?
+
+**Result.** No. DMD has no prefix map. `sparkles:base` with its dependencies,
+compiled with DMD 2.112.1 from root-relative paths in two worktrees, gave
+different archives each time:
+
+- **Plain, and with `-cov`:** the one `__FILE_FULL_PATH__` default argument
+  (`source_uri`) embeds the absolute path.
+- **With `-g`:** every object's compilation directory is the absolute working
+  directory, 7,090 occurrences in that archive.
+
+The `unittest` and `checked` build types both turn debug information on.
+
+**Choice.** Every DMD variant takes BGA5's fallback: the repository root's
+absolute path is part of its key. DMD variants share within a worktree, never
+across worktrees.
+
+**Revisit when** DMD gains a prefix map for debug information and
+`__FILE_FULL_PATH__`.
