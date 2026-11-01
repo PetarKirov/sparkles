@@ -156,6 +156,20 @@ Gate: fake-action graphs are usable interactively and through a pipe; default
 plain transcripts are identical across completion permutations; interlaced
 tests assert line atomicity rather than cross-task order.
 
+Status: delivered.
+
+- `apps/ci/src/task/reporter.d` holds the concepts, `consumeEvents`,
+  `OrderedBlocks`, outcome wording, and the summary.
+- `apps/ci/src/task/reporter_plain.d` holds the ordered and interlaced plain
+  reporter. Its snapshot test covers all 120 completion orders of a
+  six-outcome graph.
+- `apps/ci/src/task/reporter_tty.d` holds `TaskReporter` over `LiveRegion`.
+- `apps/ci/src/task/testing.d` holds the shared fake driver.
+
+Not done: the optional stderr heartbeat and collapsing pending rows past a
+height limit. The spinner advances on output only, because there is no tick
+timer yet.
+
 ## M7: Canonical CLI and package build/test cutover
 
 - Add `cli.d` with the core-cli nested command tree and common execution fields.

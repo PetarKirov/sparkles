@@ -682,6 +682,11 @@ node and emitted as a complete prefixed block in `PresentationKey` order once
 all earlier blocks are terminal. Each task has exactly one terminal transition
 line. This transcript is stable even when jobs finish in a different order.
 
+A block is the task's lines, each prefixed `[<id> <stream>] ` as in interlaced
+mode, followed by `<id>: <outcome>`. Elapsed times are the only part that
+varies with execution, and they are optional. With them off, the transcript is
+byte-identical for the same graph and outcomes.
+
 A heartbeat may report aggregate `completed/total` progress to stderr for a
 long silent run, but it contains no task output and is disabled when stderr is
 not independently writable. Heartbeats are omitted from machine-readable
@@ -701,7 +706,8 @@ Prefixes are mandatory even when only one task currently runs. A line is never
 split by another task, stdout and stderr identity is retained, and an
 unterminated final fragment is emitted once. Ordering across tasks is explicitly
 nondeterministic. Final terminal lines, failure summaries, and aggregate tables
-remain sorted.
+remain sorted. The terminal lines are therefore written together at the end,
+in presentation order, rather than as tasks finish.
 
 On a TTY, `--interlaced` disables per-task live tails and prints above a compact
 aggregate TaskReporter frame. On non-TTY it is the opt-in path for immediate CI
