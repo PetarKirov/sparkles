@@ -192,7 +192,7 @@ The C runtime's `errno` for a Win32 or Winsock error code, as `RawCompletion`
 reports it: the values `errnoKind` reads, not Linux's numbers. Unlisted codes
 are `EIO`.
 */
-int winErrno(uint code) @safe pure nothrow @nogc
+package(sparkles.event_horizon) int winErrno(uint code) @safe pure nothrow @nogc
 {
     import core.stdc.errno;
 

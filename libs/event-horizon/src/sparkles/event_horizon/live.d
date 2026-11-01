@@ -12,6 +12,11 @@ lives here for the same reason — `proc` keeps the effects-side vocabulary.
 */
 module sparkles.event_horizon.live;
 
+// Windows spawns natively (SPEC §13.9); the same names come from there.
+version (Windows)
+    public import sparkles.event_horizon.live_windows;
+else:
+
 version (Posix)  :  // POSIX sockets; rides the selected backend
 
 import core.time : Duration, MonoTime;
