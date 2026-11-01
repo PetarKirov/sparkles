@@ -24,6 +24,7 @@
  *     * `prepCancel64` (liburing's `io_uring_prep_cancel64`) cancels by a raw `user_data`
  *       value: `prepCancel` cancels by the address of a variable, which cannot name a request
  *       tagged with `setUserDataRaw`.
+ *     * `prepCmdGetsockname` notes Linux 6.19, where the kernel added the command, not 6.7.
  * )
  *
  * Why vendored: Sparkles' `io_uring` backend (`sparkles:event-horizon`) stands on this
@@ -2842,7 +2843,8 @@ ref SubmissionEntry prepCmdSock(return ref SubmissionEntry entry, uint cmdOp, in
  * (`peer = 1`). The socket name is written to `*sockaddr_len` bytes of `*sockaddr`; on
  * completion `*sockaddr_len` is updated.
  *
- * Note: Available from Linux 6.7
+ * Note: Available from Linux 6.19 (`SOCKET_URING_OP_GETSOCKNAME`; older kernels complete it
+ * with `-EOPNOTSUPP`)
  */
 ref SubmissionEntry prepCmdGetsockname(return ref SubmissionEntry entry, int fd,
     sockaddr* sockaddr_, socklen_t* sockaddr_len, int peer) @trusted
