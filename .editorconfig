@@ -30,6 +30,12 @@ indent_size = unset
 [libs/base/src/sparkles/base/expected.d]
 indent_size = unset
 
+# Vendored upstream (tchaloupka/during), kept in its own formatting: aligned
+# continuation lines and one tab-indented DDoc line.
+[libs/event-horizon-sys/src/sparkles/event_horizon/sys/uring/*.d]
+indent_style = unset
+indent_size = unset
+
 # Test data files contain exact byte sequences — no trailing newline
 [libs/ui/test/data/**]
 charset = unset
