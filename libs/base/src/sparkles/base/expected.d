@@ -1,0 +1,2134 @@
+/++
+This module is implementing the Expected idiom.
+
+See the [Andrei Alexandrescu’s talk (Systematic Error Handling in C++](http://channel9.msdn.com/Shows/Going+Deep/C-and-Beyond-2012-Andrei-Alexandrescu-Systematic-Error-Handling-in-C)
+and [its slides](https://skydrive.live.com/?cid=f1b8ff18a2aec5c5&id=F1B8FF18A2AEC5C5!1158).
+
+Or more recent ["Expect the Expected"](https://www.youtube.com/watch?v=nVzgkepAg5Y) by Andrei Alexandrescu for further background.
+
+It is also inspired by C++'s proposed [std::expected](https://wg21.link/p0323) and [Rust's](https://www.rust-lang.org/) [Result](https://doc.rust-lang.org/std/result/).
+
+Similar work is [expectations](http://code.dlang.org/packages/expectations) by Paul Backus.
+
+## Main features
+
+$(LIST
+    * lightweight, no other external dependencies
+    * works with `pure`, `@safe`, `@nogc`, `nothrow`, and `immutable`
+    * provides methods: `ok`, `err`, `consume`, `expect`, `expectErr`, `andThen`, `orElse`, `map`, `mapError`, `mapOrElse`
+    * type inference for ease of use with `ok` and `err`
+    * allows to use same types for `T` and `E`
+    * allows to define $(LREF Expected) without value (`void` for `T`) - can be disabled with custom `Hook`
+    * provides facility to change the $(LREF Expected) behavior by custom `Hook` implementation using the Design by introspection paradigm.
+    * can enforce result check (with a cost)
+    * can behave like a normal `Exception` handled code by changing the used `Hook` implementation
+    * range interface
+)
+
+## Description
+
+Actual $(LREF Expected) type is defined as $(D Expected!(T, E, Hook)), where:
+
+$(LIST
+    * `T` defines type of the success value
+    * `E` defines type of the error
+    * `Hook` defines behavior of the $(LREF Expected)
+)
+
+Default type for error is `string`, i.e. `Expected!int` is the same as `Expected!(int, string)`.
+
+$(LREF Abort) is used as a default hook.
+
+### Hooks
+
+$(LREF Expected) has customizable behavior with the help of a third type parameter,
+`Hook`. Depending on what methods `Hook` defines, core operations on the
+$(LREF Expected) may be verified or completely redefined.
+If `Hook` defines no method at all and carries no state, there is no change in
+default behavior.
+
+This module provides a few predefined hooks (below) that add useful behavior to
+$(LREF Expected):
+
+$(BOOKTABLE ,
+    $(TR $(TD $(LREF Abort)) $(TD
+        Fails every incorrect operation with a call to `assert(0)`.
+        It is the default third parameter, i.e. $(D Expected!short) is the same as
+        $(D Expected!(short, string, Abort)).
+    ))
+    $(TR $(TD $(LREF Throw)) $(TD
+        Fails every incorrect operation by throwing an exception.
+    ))
+    $(TR $(TD $(LREF AsException)) $(TD
+        With this hook implementation $(LREF Expected) behaves just like regular
+        $(D Exception) handled code.
+
+        That means when function returns $(LREF expected) value, it returns instance
+        of $(LREF Expected) with a success value.
+        But when it tries to return error, $(D Exception) is thrown right away,
+        i.e. $(LREF Expected) fails in constructor.
+    ))
+    $(TR $(TD $(LREF RCAbort)) $(TD
+        Similar to $(LREF Abort) hook but uses reference counted payload instead
+        which enables checking if the caller properly checked result of the
+        $(LREF Expected).
+    ))
+)
+
+The hook's members are looked up statically in a Design by Introspection manner
+and are all optional. The table below illustrates the members that a hook type
+may define and their influence over the behavior of the `Checked` type using it.
+In the table, `hook` is an alias for `Hook` if the type `Hook` does not
+introduce any state, or an object of type `Hook` otherwise.
+
+$(TABLE_ROWS
+    * + Hook member
+      + Semantics in Expected!(T, E, Hook)
+    * - `enableDefaultConstructor`
+      - If defined, $(LREF Expected) would have enabled or disabled default constructor
+        based on it's `bool` value. Default constructor is disabled by default.
+        `opAssign` for value and error types is generated if default constructor is enabled.
+    * - `enableCopyConstructor`
+      - If defined, $(LREF Expected) would have enabled or disabled copy constructor based
+        on it's `bool` value. It is enabled by default. When disabled, it enables automatic
+        check if the result was checked either for value or error.
+        When not checked it calls $(D hook.onUnchecked) if provided.
+
+        $(NOTE WARNING: As currently it's not possible to change internal state of `const`
+        or `immutable` object, automatic checking would't work on these. Hopefully with
+        `__mutable` proposal..)
+    * - `enableRefCountedPayload`
+      - Set $(LREF Expected) instances to use reference counted payload storage. It's usefull
+        when combined with `onUnchecked` to forcibly check that the result was checked for value
+        or error.
+    * - `enableVoidValue`
+      - Defines if $(LREF Expected) supports `void` values. It's enabled by default so this
+        hook can be used to disable it.
+    * - `onAccessEmptyValue`
+      - If value is accessed on unitialized $(LREF Expected) or $(LREF Expected) with error
+        value, $(D hook.onAccessEmptyValue!E(err)) is called. If hook doesn't implement the
+        handler, `T.init` is returned.
+    * - `onAccessEmptyError`
+      - If error is accessed on unitialized $(LREF Expected) or $(LREF Expected) with value,
+        $(D hook.onAccessEmptyError()) is called. If hook doesn't implement the handler,
+        `E.init` is returned.
+    * - `onUnchecked`
+      - If the result of $(LREF Expected) isn't checked, $(D hook.onUnchecked()) is called to
+        handle the error. If hook doesn't implement the handler, assert is thrown.
+        $(NOTE Note that `hook.enableCopyConstructor` must be `false` or `hook.enableRefCountedPayload`
+        must be `true` for checks to work.)
+    * - `onValueSet`
+      - $(D hook.onValueSet!T(val)) function is called when success value is being set to
+        $(LREF Expected). It can be used for loging purposes, etc.
+    * - `onErrorSet`
+      - $(D hook.onErrorSet!E(err)) function is called when error value is being set to
+        $(LREF Expected). This hook function is used by $(LREF AsException) hook implementation
+        to change `Expected` idiom to normal `Exception` handling behavior.
+)
+
+Vendored from
+$(LINK2 https://github.com/tchaloupka/expected/tree/0793e8b7dc06dd05b3fa3103e5a99bf0bfd5f638, tchaloupka/expected)
+by Tomáš Chaloupka, at commit `0793e8b7dc06dd05b3fa3103e5a99bf0bfd5f638`: release 0.4.1
+plus the five commits upstream made after it, which no release tags:
+$(LIST
+    * `e35db58c5b454aceffcc2f90fb6aa2a9e4e2e132` makes the advanced usage example work
+      outside the module;
+    * `60afab8725bb4c48542884174bb67a68548fe0a0` keeps the source hook in `map`/`mapError`
+      and lets `map` return void;
+    * `5f1f2083381fdfcfa22428541be98694087fcd30` makes `isVoidValueEnabled` read the
+      member it checks;
+    * `5ee6c2a531b3d66964795274b1bcbdbd9cb7294f` allocates the reference-counted payload
+      of a void `Expected`;
+    * `0793e8b7dc06dd05b3fa3103e5a99bf0bfd5f638` tests that `map` to void keeps the source
+      hook.
+)
+It stops before 0.5.0, which marks `Expected` `@mustuse` by making it an explicit
+template around the struct: that breaks matching `Expected!(T, E, H)` in `is`
+expressions, which Sparkles relies on, and turns every discarded result into an
+error.
+
+Changed from upstream only where Sparkles' build flags require it: the module name
+(and the advanced example's imports of it), the `expected.` prefix on its test
+names, `const` for `in` on the `extern(C)` GC declarations (`-preview=in` rejects
+`in` there), and the `Throw` hook throwing an error object read through an `inout`
+accessor unqualified (base disallows deprecations). No other changes.
+
+Why vendored: it is one module of about 2000 lines under Sparkles' own licence
+(BSL-1.0). As a dub package it put `expected` and, through its unittest
+configuration, `silly` (which Sparkles does not use) into nearly every one of the
+repository's 88 `dub.selections.json` files and into the Nix dub locks. The fixes
+upstream made after 0.4.1 are untagged, so dub could not take them. Owning the
+copy keeps it building under Sparkles' flags and conventions.
+
+Copyright: Copyright © 2019, Tomáš Chaloupka
+Authors: Tomáš Chaloupka, with contributions from Kostiantyn Tokar, Jan Jurzitza, Beyar
+    and Petar Kirov (the upstream history to the vendored commit)
+License: $(LINK2 https://www.boost.org/LICENSE_1_0.txt, BSL-1.0)
++/
+
+//TODO: collect errno function call - see https://dlang.org/phobos/std_exception.html#ErrnoException
+
+module sparkles.base.expected;
+
+/// $(H3 Basic usage)
+@("expected.Basic usage example")
+@safe unittest
+{
+    auto foo(int i) {
+        if (i == 0) return err!int("oops");
+        return ok(42 / i);
+    }
+
+    version (D_Exceptions)
+    {
+        auto bar(int i) {
+            if (i == 0) throw new Exception("err");
+            return i-1;
+        }
+    }
+
+    // basic checks
+    assert(foo(2));
+    assert(foo(2).hasValue);
+    assert(!foo(2).hasError);
+    assert(foo(2).value == 21);
+
+    assert(!foo(0));
+    assert(!foo(0).hasValue);
+    assert(foo(0).hasError);
+    assert(foo(0).error == "oops");
+
+    // void result
+    assert(ok()); // no error -> success
+    assert(!ok().hasError);
+    // assert(err("foo").hasValue); // doesn't have hasValue and value properties
+
+    version (D_Exceptions)
+    {
+        // expected from throwing function
+        assert(consume!bar(1) == 0);
+        assert(consume!bar(0).error.msg == "err");
+    }
+
+    // orElse
+    assert(foo(2).orElse!(() => 0) == 21);
+    assert(foo(0).orElse(100) == 100);
+
+    // andThen
+    assert(foo(2).andThen(foo(6)) == 7);
+    assert(foo(0).andThen(foo(6)).error == "oops");
+
+    // map
+    assert(foo(2).map!(a => a*2).map!(a => a - 2) == 40);
+    assert(foo(0).map!(a => a*2).map!(a => a - 2).error == "oops");
+
+    // mapError
+    assert(foo(0).mapError!(e => "OOPS").error == "OOPS");
+    assert(foo(2).mapError!(e => "OOPS") == 21);
+
+    // mapOrElse
+    assert(foo(2).mapOrElse!(v => v*2, e => 0) == 42);
+    assert(foo(0).mapOrElse!(v => v*2, e => 0) == 0);
+}
+
+version (D_Exceptions)
+{
+    /// $(H3 Advanced usage - behavior modification)
+    @("expected.Advanced usage example")
+    @safe unittest
+    {
+        import exp = sparkles.base.expected;
+        import sparkles.base.expected : orElse; // UFCS doesn't work with renamed imports
+        import std.exception : assertThrown;
+
+        // define our Expected type using Exception as Error values
+        // and Throw hook, which throws when empty value or error is accessed
+        template Expected(T)
+        {
+            alias Expected = exp.Expected!(T, Exception, exp.Throw);
+        }
+
+        // create wrappers for simplified usage of our Expected
+        auto ok(T)(T val) { return exp.ok!(Exception, exp.Throw)(val); }
+        auto err(T)(Exception err) { return exp.err!(T, exp.Throw)(err); }
+
+        // use it as normal
+        assert(ok(42) == 42);
+        assert(err!int(new Exception("foo")).orElse(0) == 0);
+        assertThrown(ok(42).error);
+        assertThrown(err!int(new Exception("bar")).value);
+    }
+}
+
+version (unittest) {
+    import std.algorithm : reverse;
+    import std.exception : assertThrown, collectException, collectExceptionMsg;
+}
+
+/++
+    `Expected!(T, E)` is a type that represents either success or failure.
+
+    Type `T` is used for success value.
+    If `T` is `void`, then $(LREF Expected) can only hold error value and is considered a success when there is no error value.
+
+    Type `E` is used for error value.
+    The default type for the error value is `string`.
+
+    Default behavior of $(LREF Expected) can be modified by the `Hook` template parameter.
+
+    Params:
+        T    = represents type of the expected value
+        E    = represents type of the error value.
+        Hook = defines the $(LREF Expected) type behavior
++/
+struct Expected(T, E = string, Hook = Abort)
+    if (!is(E == void) && (isVoidValueEnabled!Hook || !is(T == void)))
+{
+    import core.lifetime : forward;
+    import std.meta : AliasSeq, Filter, NoDuplicates;
+    import std.traits: isAssignable, isCopyable, hasIndirections, Unqual;
+
+    private template noVoid(T) { enum noVoid = !is(T == void); } // Erase removes qualifiers
+    private alias Types = NoDuplicates!(Filter!(noVoid, AliasSeq!(T, E)));
+
+    static foreach (i, CT; Types)
+    {
+        /++
+            Constructs an $(LREF Expected) with value or error based on the tye of the provided.
+
+            In case when `T == E`, it constructs $(LREF Expected) with value.
+
+            In case when `T == void`, it constructs $(LREF Expected) with error value.
+
+            Default constructor (if enabled) initializes $(LREF Expected) to `T.init` value.
+            If `T == void`, it initializes $(LREF Expected) with no error.
+        +/
+        this()(auto ref CT val)
+        {
+            static if (isRefCountedPayloadEnabled!Hook)
+            {
+                initialize(forward!val);
+            }
+            else
+            {
+                storage = Payload(forward!val);
+            }
+            setState!CT();
+
+            static if (hasOnValueSet!(Hook, CT)) { if (state == State.value) __traits(getMember, Hook, "onValueSet")(getValue()); }
+            static if (hasOnErrorSet!(Hook, CT)) { if (state == State.error) __traits(getMember, Hook, "onErrorSet")(getError()); }
+        }
+
+        // static if (isCopyable!CT)
+        // {
+        //     / ditto
+        //     this()(auto ref const(CT) val) const
+        //     {
+        //         storage = const(Payload)(val);
+        //         setState!CT();
+
+        //         static if (hasOnValueSet!(Hook, CT)) { if (state == State.value) __traits(getMember, Hook, "onValueSet")(val); }
+        //         static if (hasOnErrorSet!(Hook, CT)) { if (state == State.error) __traits(getMember, Hook, "onErrorSet")(val); }
+        //     }
+
+        //     /// ditto
+        //     this()(auto ref immutable(CT) val) immutable
+        //     {
+        //         storage = immutable(Payload)(val);
+        //         setState!CT();
+
+        //         static if (hasOnValueSet!(Hook, CT)) { if (state == State.value) __traits(getMember, Hook, "onValueSet")(val); }
+        //         static if (hasOnErrorSet!(Hook, CT)) { if (state == State.error) __traits(getMember, Hook, "onErrorSet")(val); }
+        //     }
+        // }
+        // else
+        // {
+        //     @disable this(const(CT) val) const;
+        //     @disable this(immutable(CT) val) immutable;
+        // }
+    }
+
+    // generate constructor with flag to determine type of value
+    static if (Types.length == 1 && !is(T == void))
+    {
+        /++ Constructs an $(LREF Expected) with value or error based on the provided flag.
+            This constructor is available only for cases when value and error has the same type,
+            so we can still construct $(LREF Expected) with value or error.
+
+            Params:
+                val     = Value to set as value or error
+                success = If `true`, $(LREF Expected) with value is created, $(LREF Expected) with error otherwise.
+        +/
+        this()(auto ref E val, bool success)
+        {
+            static if (isRefCountedPayloadEnabled!Hook)
+            {
+                initialize(forward!val);
+            }
+            else
+            {
+                storage = Payload(forward!val);
+            }
+            setState!E(success ? State.value : State.error);
+
+            static if (hasOnValueSet!(Hook, E)) { if (state == State.value) __traits(getMember, Hook, "onValueSet")(getValue()); }
+            static if (hasOnErrorSet!(Hook, E)) { if (state == State.error) __traits(getMember, Hook, "onErrorSet")(getError()); }
+        }
+
+        // static if (isCopyable!E)
+        // {
+        //     /// ditto
+        //     this()(auto ref const(E) val, bool success) const
+        //     {
+        //         storage = const(Payload)(val);
+        //         setState!E(success ? State.value : State.error);
+
+        //         static if (hasOnValueSet!(Hook, E)) { if (state == State.value) __traits(getMember, Hook, "onValueSet")(val); }
+        //         static if (hasOnErrorSet!(Hook, E)) { if (state == State.error) __traits(getMember, Hook, "onErrorSet")(val); }
+        //     }
+
+        //     /// ditto
+        //     this()(auto ref immutable(E) val, bool success) immutable
+        //     {
+        //         storage = immutable(Payload)(val);
+        //         setState!E(success ? State.value : State.error);
+
+        //         static if (hasOnValueSet!(Hook, E)) { if (state == State.value) __traits(getMember, Hook, "onValueSet")(val); }
+        //         static if (hasOnErrorSet!(Hook, E)) { if (state == State.error) __traits(getMember, Hook, "onErrorSet")(val); }
+        //     }
+        // }
+        // else
+        // {
+        //     @disable this(const(E) val, bool success) const;
+        //     @disable this(immutable(E) val, bool success) immutable;
+        // }
+    }
+
+    static if (!is(T == void) && !isDefaultConstructorEnabled!Hook) @disable this();
+
+    static if (!isCopyConstructorEnabled!Hook) @disable this(this);
+
+    static if (isChecked!Hook || isRefCountedPayloadEnabled!Hook)
+    {
+        ~this()
+        {
+            static void onUnchecked()
+            {
+                static if (hasOnUnchecked!Hook) __traits(getMember, Hook, "onUnchecked")();
+                else assert(0, "unchecked result");
+            }
+
+            static if (isRefCountedPayloadEnabled!Hook)
+            {
+                if (!storage) return;
+                assert(storage.count > 0);
+
+                if (--storage.count) return;
+
+                // Done, deallocate
+                static if (isChecked!Hook) bool ch = checked;
+                destroy(storage.payload);
+                static if (enableGCScan) () @trusted { pureGcRemoveRange(&storage.payload); } ();
+
+                () @trusted
+                {
+                    pureFree(storage);
+                    storage = null;
+                }();
+
+                static if (isChecked!Hook) { if (!ch) onUnchecked(); }
+            }
+            else static if (isChecked!Hook) { if (!checked) onUnchecked(); }
+        }
+    }
+
+    static if (isDefaultConstructorEnabled!Hook)
+    {
+        static foreach (i, CT; Types)
+        {
+            static if (isAssignable!CT)
+            {
+                /++ Assigns a value or error to an $(LREF Expected).
+
+                    Note: This is only allowed when default constructor is also enabled.
+                +/
+                void opAssign()(auto ref CT rhs)
+                {
+                    setState!CT(); // check state asserts before change
+                    auto s = state;
+                    static if (isRefCountedPayloadEnabled!Hook)
+                    {
+                        if (!storage) initialize(forward!rhs);
+                        else storage.payload = Payload(forward!rhs);
+                    }
+                    else storage = Payload(forward!rhs);
+                    setState!(CT)(s); // set previous state
+
+                    static if (hasOnValueSet!(Hook, CT)) { if (state == State.value) __traits(getMember, Hook, "onValueSet")(getValue()); }
+                    static if (hasOnErrorSet!(Hook, CT)) { if (state == State.error) __traits(getMember, Hook, "onErrorSet")(getError()); }
+                }
+            }
+        }
+    }
+
+    //damn these are ugly :(
+    static if (!isChecked!Hook) {
+        /++ Implicit conversion to bool.
+            Returns: `true` if there is no error set, `false` otherwise.
+        +/
+        bool opCast(T)() const if (is(T == bool)) { return !this.hasError; }
+    } else {
+        /// ditto
+        bool opCast(T)() if (is(T == bool)) { return !this.hasError; }
+    }
+
+    static if (!is(T == void))
+    {
+        static if (!isChecked!Hook) {
+            /++ Checks whether this $(LREF Expected) object contains a specific expected value.
+
+                * `opEquals` for the value is available only when `T != void`.
+                * `opEquals` for the error isn't available, use equality test for $(LREF Expected) in that case.
+            +/
+            bool opEquals()(const auto ref T rhs) const
+            {
+                return hasValue && value == rhs;
+            }
+        } else {
+            /// ditto
+            bool opEquals()(auto ref T rhs) { return hasValue && value == forward!rhs; }
+        }
+    }
+
+    static if (!isChecked!Hook) {
+        /// Checks whether this $(LREF Expected) object and `rhs` contain the same expected value or error value.
+        bool opEquals()(const auto ref Expected!(T, E, Hook) rhs) const
+        {
+            if (state != rhs.state) return false;
+            static if (!is(T == void)) { if (hasValue) return value == rhs.value; }
+            return error == rhs.error;
+        }
+    } else {
+        /// ditto
+        bool opEquals()(auto ref Expected!(T, E, Hook) rhs)
+        {
+            if (state != rhs.state) return false;
+            static if (!is(T == void)) { if (hasValue) return value == forwardValue!rhs; }
+            return error == forwardError!rhs;
+        }
+    }
+
+    static if (!isChecked!Hook) {
+        /++ Calculates the hash value of the $(LREF Expected) in a way that iff it has a value,
+            it returns hash of the value.
+            Hash is computed using internal state and storage of the $(LREF Expected) otherwise.
+        +/
+        size_t toHash()() const nothrow
+        {
+            static if (!is(T == void)) { if (hasValue) return value.hashOf; }
+            return storage.hashOf(state);
+        }
+    } else {
+        /// ditto
+        size_t toHash()() nothrow
+        {
+            static if (!is(T == void)) { if (hasValue) return value.hashOf; }
+            return storage.hashOf(state);
+        }
+    }
+
+    static if (!is(T == void))
+    {
+        static if (!isChecked!Hook) {
+            /// Checks if $(LREF Expected) has value
+            @property bool hasValue()() const { return state == State.value; }
+        }
+        else {
+            /// ditto
+            @property bool hasValue()()
+            {
+                checked = true;
+                return state == State.value;
+            }
+        }
+
+        static if (!isChecked!Hook) {
+            /++
+                Returns the expected value if there is one.
+
+                With default `Abort` hook, it asserts when there is no value.
+                It calls hook's `onAccessEmptyValue` otherwise.
+
+                It returns `T.init` when hook doesn't provide `onAccessEmptyValue`.
+
+                Note: Value is returned by reference only when hook provides `onAccessEmptyValue`.
+                Otherwise the `T.init` fallback forces it to be returned by value (a copy).
+            +/
+            @property auto ref inout(T) value()() inout
+            {
+                if (state != State.value)
+                {
+                    static if (hasOnAccessEmptyValue!(Hook, E))
+                        __traits(getMember, Hook, "onAccessEmptyValue")(state == State.error ? getError() : E.init);
+                    else return T.init;
+                }
+                return getValue();
+            }
+        } else {
+            @property auto ref T value()()
+            {
+                checked = true;
+
+                if (state != State.value)
+                {
+                    static if (hasOnAccessEmptyValue!(Hook, E))
+                        __traits(getMember, Hook, "onAccessEmptyValue")(state == State.error ? getError() : E.init);
+                    else return T.init;
+                }
+                return getValue();
+            }
+        }
+    }
+
+    static if (!isChecked!Hook) {
+        /// Checks if $(LREF Expected) has error
+        @property bool hasError()() const { return state == State.error; }
+    } else {
+        /// ditto
+        @property bool hasError()()
+        {
+            checked = true;
+            return state == State.error;
+        }
+    }
+
+    static if (!isChecked!Hook) {
+        /++
+            Returns the error value. May only be called when `hasValue` returns `false`.
+
+            If there is no error value, it calls hook's `onAccessEmptyError`.
+
+            It returns `E.init` when hook doesn't provide `onAccessEmptyError`.
+
+            Note: Error is returned by reference only when hook provides `onAccessEmptyError`.
+            Otherwise the `E.init` fallback forces it to be returned by value (a copy).
+        +/
+        @property auto ref inout(E) error() inout
+        {
+            if (state != State.error)
+            {
+                static if (hasOnAccessEmptyError!Hook) __traits(getMember, Hook, "onAccessEmptyError")();
+                else return E.init;
+            }
+            return getError;
+        }
+    } else {
+        @property auto ref E error()
+        {
+            checked = true;
+
+            if (state != State.error)
+            {
+                static if (hasOnAccessEmptyError!Hook) __traits(getMember, Hook, "onAccessEmptyError")();
+                else return E.init;
+            }
+            return getError;
+        }
+    }
+
+    // range interface
+    static if (!is(T == void))
+    {
+        static if (!isChecked!Hook) {
+            /++ Range interface defined by `empty`, `front`, `popFront`.
+                Yields one value if $(LREF Expected) has value.
+
+                If `T == void`, range interface isn't defined.
+            +/
+            @property bool empty() const { return state != State.value; }
+
+            /// ditto
+            @property auto ref inout(T) front() inout { return value; }
+        } else {
+            @property bool empty() { checked = true; return state != State.value; }
+
+            /// ditto
+            @property auto ref T front() { return value; }
+        }
+
+        /// ditto
+        void popFront() { state = State.empty; }
+    }
+
+    private:
+
+    //FIXME: can probably be union instead, but that doesn't work well with destructors and copy constructors/postblits
+    //and need to be handled manually - so for now we use a safer variant
+    struct Payload
+    {
+        Types values;
+
+        // generate payload constructors
+        static foreach (i, CT; Types)
+        {
+            this()(auto ref CT val)
+            {
+                __traits(getMember, Payload, "values")[i] = forward!val;
+            }
+
+            // static if (isCopyable!CT)
+            // {
+            //     this()(auto ref const(CT) val) const { __traits(getMember, Payload, "values")[i] = val; }
+            //     this()(auto ref immutable(CT) val) immutable { __traits(getMember, Payload, "values")[i] = val; }
+            // }
+            // else
+            // {
+            //     @disable this(const(CT) val) const;
+            //     @disable this(immutable(CT) val) immutable;
+            // }
+        }
+    }
+
+    static if (isRefCountedPayloadEnabled!Hook)
+    {
+        version (D_BetterC) enum enableGCScan = false;
+        else enum enableGCScan = hasIndirections!Payload;
+
+        // purify memory management functions - see https://github.com/dlang/phobos/pull/4832
+        extern(C) pure nothrow @nogc static
+        {
+            pragma(mangle, "malloc") void* pureMalloc(size_t);
+            pragma(mangle, "free") void pureFree( void *ptr );
+            static if (enableGCScan)
+            {
+                pragma(mangle, "calloc") void* pureCalloc(size_t nmemb, size_t size);
+                pragma(mangle, "gc_addRange") void pureGcAddRange( const void* p, size_t sz, const TypeInfo ti = null );
+                pragma(mangle, "gc_removeRange") void pureGcRemoveRange( const void* p );
+            }
+        }
+
+        struct Impl
+        {
+            Payload payload;
+            State state;
+            size_t count;
+            static if (isChecked!Hook) bool checked;
+        }
+
+        void initialize(A...)(auto ref A args)
+        {
+            import std.conv : emplace;
+
+            allocateStore();
+            emplace(&storage.payload, forward!args);
+            storage.count = 1;
+            storage.state = State.empty;
+            static if (isChecked!Hook) storage.checked = false;
+        }
+
+        void allocateStore() nothrow pure @trusted
+        {
+            assert(!storage);
+            static if (enableGCScan)
+            {
+                storage = cast(Impl*) pureCalloc(1, Impl.sizeof);
+                if (!storage) assert(0, "Memory allocation failed");
+                pureGcAddRange(&storage.payload, Payload.sizeof);
+            }
+            else
+            {
+                storage = cast(Impl*) pureMalloc(Impl.sizeof);
+                if (!storage) assert(0, "Memory allocation failed");
+            }
+        }
+
+        Impl* storage;
+
+        @property nothrow @safe pure @nogc
+        size_t refCount() const { return storage !is null ? storage.count : 0; }
+
+        @property nothrow @safe pure @nogc
+        State state() const { return storage !is null ? storage.state : State.empty; }
+
+        @property nothrow @safe pure @nogc
+        void state(State state) { assert(storage); storage.state = state; }
+
+        static if (isChecked!Hook)
+        {
+            // default constructed Expected!void has no storage, so there is nothing to check
+            @property nothrow @safe pure @nogc
+            bool checked() const { return storage is null || storage.checked; }
+
+            @property nothrow @safe pure @nogc
+            void checked(bool ch) { if (storage) storage.checked = ch; }
+        }
+
+        auto ref inout(E) getError()() inout
+        {
+            assert(storage);
+            static if (__VERSION__ < 2078) // workaround - see: https://issues.dlang.org/show_bug.cgi?id=15094
+            {
+                auto p = &storage.payload;
+                static if (Types.length == 1) return __traits(getMember, p, "values")[0];
+                else return __traits(getMember, p, "values")[1];
+            }
+            else
+            {
+                static if (Types.length == 1) return __traits(getMember, storage.payload, "values")[0];
+                else return __traits(getMember, storage.payload, "values")[1];
+            }
+        }
+
+        static if (!is(T == void))
+        {
+            auto ref inout(T) getValue()() inout
+            {
+                assert(storage);
+                static if (__VERSION__ < 2078) // workaround - see: https://issues.dlang.org/show_bug.cgi?id=15094
+                {
+                    auto p = &storage.payload;
+                    return __traits(getMember, p, "values")[0];
+                }
+                else return __traits(getMember, storage.payload, "values")[0];
+            }
+        }
+
+        this(this) @safe pure nothrow @nogc
+        {
+            if (!storage) return;
+            ++storage.count;
+        }
+    }
+    else
+    {
+        Payload storage;
+        State state = State.empty;
+        static if (isChecked!Hook) bool checked = false;
+
+        auto ref inout(E) getError()() inout
+        {
+            static if (Types.length == 1) return __traits(getMember, storage, "values")[0];
+            else return __traits(getMember, storage, "values")[1];
+        }
+
+        static if (!is(T == void))
+        {
+            auto ref inout(T) getValue()() inout
+            {
+                return __traits(getMember, storage, "values")[0];
+            }
+        }
+    }
+
+    enum State : ubyte { empty, value, error }
+
+    void setState(MT)(State known = State.empty)
+    {
+        State s;
+        if (known != State.empty) s = known;
+        else
+        {
+            static if (Types.length == 1 && is(T == void)) s = State.error;
+            else static if (Types.length == 1 || is(MT == T)) s = State.value;
+            else s = State.error;
+        }
+
+        //TODO: change with Hook?
+        assert(state == State.empty || state == s, "Can't change meaning of already set Expected type");
+        state = s;
+    }
+}
+
+/++ Template to determine if hook enables or disables copy constructor.
+
+    It is enabled by default.
+
+    See $(LREF hasOnUnchecked) handler, which can be used in combination with disabled
+    copy constructor to enforce that the result is checked.
+
+    $(WARNING If copy constructor is disabled, it severely limits function chaining
+    as $(LREF Expected) needs to be passed as rvalue in that case.)
++/
+template isCopyConstructorEnabled(Hook)
+{
+    static if (__traits(hasMember, Hook, "enableCopyConstructor"))
+    {
+        static assert(
+            is(typeof(__traits(getMember, Hook, "enableCopyConstructor")) : bool),
+            "Hook's enableCopyConstructor is expected to be of type bool"
+        );
+        enum isCopyConstructorEnabled = __traits(getMember, Hook, "enableCopyConstructor");
+    }
+    else enum isCopyConstructorEnabled = true;
+}
+
+///
+@("expected.isCopyConstructorEnabled")
+@safe unittest
+{
+    struct Foo {}
+    struct Bar { static immutable bool enableCopyConstructor = false; }
+    static assert(isCopyConstructorEnabled!Foo);
+    static assert(!isCopyConstructorEnabled!Bar);
+}
+
+/++ Template to determine if hook defines that the $(LREF Expected) storage should
+    use refcounted state storage.
+
+    If this is enabled, payload is mallocated on the heap and dealocated with the
+    destruction of last $(Expected) instance.
+
+    See $(LREF hasOnUnchecked) handler, which can be used in combination with refcounted
+    payload to enforce that the result is checked.
++/
+template isRefCountedPayloadEnabled(Hook)
+{
+    static if (__traits(hasMember, Hook, "enableRefCountedPayload"))
+    {
+        static assert(
+            is(typeof(__traits(getMember, Hook, "enableRefCountedPayload")) : bool),
+            "Hook's enableCopyConstructor is expected to be of type bool"
+        );
+        enum isRefCountedPayloadEnabled = __traits(getMember, Hook, "enableRefCountedPayload");
+        static assert (
+            !isRefCountedPayloadEnabled || isCopyConstructorEnabled!Hook,
+            "Refcounted payload wouldn't work without copy constructor enabled"
+        );
+    }
+    else enum isRefCountedPayloadEnabled = false;
+}
+
+///
+@("expected.isRefCountedPayloadEnabled")
+@safe unittest
+{
+    struct Foo {}
+    struct Bar {
+        static immutable bool enableCopyConstructor = false;
+        static immutable bool enableRefCountedPayload = true;
+    }
+    struct Hook { static immutable bool enableRefCountedPayload = true; }
+    static assert(!isRefCountedPayloadEnabled!Foo);
+    static assert(!__traits(compiles, isRefCountedPayloadEnabled!Bar));
+    static assert(isRefCountedPayloadEnabled!Hook);
+}
+
+// just a helper to determine check behavior
+private template isChecked(Hook)
+{
+    enum isChecked = !isCopyConstructorEnabled!Hook || isRefCountedPayloadEnabled!Hook;
+}
+
+/// Template to determine if provided Hook enables default constructor for $(LREF Expected)
+template isDefaultConstructorEnabled(Hook)
+{
+    static if (__traits(hasMember, Hook, "enableDefaultConstructor"))
+    {
+        static assert(
+            is(typeof(__traits(getMember, Hook, "enableDefaultConstructor")) : bool),
+            "Hook's enableDefaultConstructor is expected to be of type bool"
+        );
+        enum isDefaultConstructorEnabled = __traits(getMember, Hook, "enableDefaultConstructor");
+    }
+    else enum isDefaultConstructorEnabled = false;
+}
+
+///
+@("expected.isDefaultConstructorEnabled")
+@safe unittest
+{
+    struct Foo {}
+    struct Bar { static immutable bool enableDefaultConstructor = true; }
+    static assert(!isDefaultConstructorEnabled!Foo);
+    static assert(isDefaultConstructorEnabled!Bar);
+}
+
+/// Template to determine if provided Hook enables void values for $(LREF Expected)
+template isVoidValueEnabled(Hook)
+{
+    static if (__traits(hasMember, Hook, "enableVoidValue"))
+    {
+        static assert(
+            is(typeof(__traits(getMember, Hook, "enableVoidValue")) : bool),
+            "Hook's enableVoidValue is expected to be of type bool"
+        );
+        enum isVoidValueEnabled = __traits(getMember, Hook, "enableVoidValue");
+    }
+    else enum isVoidValueEnabled = true;
+}
+
+///
+@("expected.isVoidValueEnabled")
+@safe unittest
+{
+    struct Hook { static immutable bool enableVoidValue = false; }
+    assert(!ok().hasError); // void values are enabled by default
+    static assert(!isVoidValueEnabled!Hook);
+    static assert(!__traits(compiles, ok!(string, Hook)())); // won't compile
+    assert(ok!(string, Hook)(42) == 42); // non void values are still usable
+
+    struct Hook2 { static immutable bool enableVoidValue = true; }
+    static assert(isVoidValueEnabled!Hook2);
+    assert(!ok!(string, Hook2)().hasError);
+}
+
+/// Template to determine if hook provides function called on empty value.
+template hasOnAccessEmptyValue(Hook, E)
+{
+    static if (__traits(hasMember, Hook, "onAccessEmptyValue"))
+    {
+        static assert(
+            is(typeof(__traits(getMember, Hook, "onAccessEmptyValue")(E.init))),
+            "Hook's onAccessEmptyValue is expected to be callable with error value type"
+        );
+        enum hasOnAccessEmptyValue = true;
+    }
+    else enum hasOnAccessEmptyValue = false;
+}
+
+///
+@("expected.hasOnAccessEmptyValue")
+@safe unittest
+{
+    struct Foo {}
+    struct Bar { static void onAccessEmptyValue(E)(E err) {} }
+    static assert(!hasOnAccessEmptyValue!(Foo, string));
+    static assert(hasOnAccessEmptyValue!(Bar, string));
+}
+
+/++ Template to determine if hook provides function called on empty error.
++/
+template hasOnAccessEmptyError(Hook)
+{
+    static if (__traits(hasMember, Hook, "onAccessEmptyError"))
+    {
+        static assert(
+            is(typeof(__traits(getMember, Hook, "onAccessEmptyError")())),
+            "Hook's onAccessEmptyValue is expected to be callable with no arguments"
+        );
+        enum hasOnAccessEmptyError = true;
+    }
+    else enum hasOnAccessEmptyError = false;
+}
+
+///
+@("expected.hasOnAccessEmptyError")
+@safe unittest
+{
+    struct Foo {}
+    struct Bar { static void onAccessEmptyError() {} }
+    static assert(!hasOnAccessEmptyError!Foo);
+    static assert(hasOnAccessEmptyError!Bar);
+}
+
+/++ Template to determine if hook provides custom handler for case
+    when the $(LREF Expected) result is not checked.
+
+    For this to work it currently also has to pass $(LREF isCopyConstructorEnabled)
+    as this is implemented by simple flag controled on $(LREF Expected) destructor.
++/
+template hasOnUnchecked(Hook)
+{
+    static if (__traits(hasMember, Hook, "onUnchecked"))
+    {
+        static assert(
+            is(typeof(__traits(getMember, Hook, "onUnchecked")())),
+            "Hook's onUnchecked is expected to be callable with no arguments"
+        );
+        static assert(
+            !isCopyConstructorEnabled!Hook || isRefCountedPayloadEnabled!Hook,
+            "For unchecked check to work, it is needed to also have disabled copy constructor or enabled reference counted payload"
+        );
+        enum hasOnUnchecked = true;
+    }
+    else enum hasOnUnchecked = false;
+}
+
+version (D_Exceptions)
+{
+    ///
+    @("expected.hasOnUnchecked")
+    @safe unittest
+    {
+        struct Foo {}
+        struct Bar { static void onUnchecked() { } }
+        struct Hook {
+            static immutable bool enableCopyConstructor = false;
+            static void onUnchecked() @safe { throw new Exception("result unchecked"); }
+        }
+
+        // template checks
+        static assert(!hasOnUnchecked!Foo);
+        static assert(!__traits(compiles, hasOnUnchecked!Bar)); // missing disabled constructor
+        static assert(hasOnUnchecked!Hook);
+
+        // copy constructor
+        auto exp = ok!(string, Hook)(42);
+        auto exp2 = err!(int, Hook)("foo");
+        static assert(!__traits(compiles, exp.andThen(ok!(string, Hook)(42)))); // disabled cc
+        assert(exp.andThen(exp2).error == "foo"); // passed by ref so no this(this) called
+
+        // check for checked result
+        assertThrown({ ok!(string, Hook)(42); }());
+        assertThrown({ err!(void, Hook)("foo"); }());
+    }
+}
+
+/++ Template to determine if hook provides function called when value is set.
++/
+template hasOnValueSet(Hook, T)
+{
+    static if (__traits(hasMember, Hook, "onValueSet"))
+    {
+        static assert(
+            is(typeof(__traits(getMember, Hook, "onValueSet")(T.init))),
+            "Hook's onValueSet is expected to be callable with value argument"
+        );
+        enum hasOnValueSet = true;
+    }
+    else enum hasOnValueSet = false;
+}
+
+///
+@("expected.hasOnValueSet")
+@safe unittest
+{
+    struct Hook {
+        static int lastValue;
+        static void onValueSet(T)(auto ref T val) { lastValue = val; }
+    }
+
+    static assert(hasOnValueSet!(Hook, int));
+    auto res = ok!(string, Hook)(42);
+    assert(res.hasValue);
+    assert(Hook.lastValue == 42);
+}
+
+/++ Template to determine if hook provides function called when error is set.
++/
+template hasOnErrorSet(Hook, T)
+{
+    static if (__traits(hasMember, Hook, "onErrorSet"))
+    {
+        static assert(
+            is(typeof(__traits(getMember, Hook, "onErrorSet")(T.init))),
+            "Hook's onErrorSet is expected to be callable with error argument"
+        );
+        enum hasOnErrorSet = true;
+    }
+    else enum hasOnErrorSet = false;
+}
+
+///
+@("expected.hasOnErrorSet")
+@safe unittest
+{
+    struct Hook {
+        static string lastErr;
+        static void onErrorSet(E)(auto ref E err) { lastErr = err; }
+    }
+
+    static assert(hasOnErrorSet!(Hook, string));
+    auto res = err!(int, Hook)("foo");
+    assert(res.hasError);
+    assert(Hook.lastErr == "foo");
+}
+
+/++ Default hook implementation for $(LREF Expected)
++/
+struct Abort
+{
+static:
+    /++ Default constructor for $(LREF Expected) is disabled.
+        Same with the `opAssign`, so $(LREF Expected) can be only constructed
+        once and not modified afterwards.
+    +/
+    immutable bool enableDefaultConstructor = false;
+
+    /// Handler for case when empty value is accessed.
+    void onAccessEmptyValue(E)(E err) nothrow @nogc @safe
+    {
+        assert(0, "Value not set");
+    }
+
+    /// Handler for case when empty error is accessed.
+    void onAccessEmptyError() nothrow @nogc @safe
+    {
+        assert(0, "Error not set");
+    }
+}
+
+///
+@("expected.Abort")
+@system unittest
+{
+    static assert(!isDefaultConstructorEnabled!Abort);
+    static assert(hasOnAccessEmptyValue!(Abort, string));
+    static assert(hasOnAccessEmptyValue!(Abort, int));
+    static assert(hasOnAccessEmptyError!Abort);
+
+    version (D_Exceptions)
+    {
+        assertThrown!Throwable(ok(42).error);
+        assertThrown!Throwable(err!int("foo").value);
+    }
+}
+
+@("expected.accessors return by ref only with access handlers")
+@safe unittest
+{
+    static struct NoHandlers {}
+
+    auto a = ok(42);
+    auto ae = err!int("foo");
+    static assert(__traits(compiles, { auto p = &a.value(); }));
+    static assert(__traits(compiles, { auto p = &ae.error(); }));
+
+    auto b = ok!(string, NoHandlers)(42);
+    auto be = err!(int, NoHandlers)("foo");
+    static assert(!__traits(compiles, { auto p = &b.value(); }));
+    static assert(!__traits(compiles, { auto p = &be.error(); }));
+}
+
+version (D_Exceptions)
+{
+    /++ Hook implementation that throws exceptions instead of default assert behavior.
+    +/
+    struct Throw
+    {
+    static:
+
+        /++ Default constructor for $(LREF Expected) is disabled.
+            Same with the `opAssign`, so $(LREF Expected) can be only constructed
+            once and not modified afterwards.
+        +/
+        immutable bool enableDefaultConstructor = false;
+
+        /++ Handler for case when empty value is accessed.
+
+            Throws:
+                If `E` inherits from `Throwable`, the error value is thrown.
+                Otherwise, an [Unexpected] instance containing the error value is
+                thrown.
+        +/
+        void onAccessEmptyValue(E)(E err)
+        {
+            import std.traits : Unqual;
+            // An error read through an `inout` accessor arrives qualified, and
+            // throwing a qualified object is deprecated.
+            static if(is(Unqual!E : Throwable)) throw (() @trusted => cast(Unqual!E) err)();
+            else throw new Unexpected!E(err);
+        }
+
+        /// Handler for case when empty error is accessed.
+        void onAccessEmptyError() @safe
+        {
+            throw new Unexpected!string("Can't access error on expected value");
+        }
+    }
+
+    ///
+    @("expected.Throw")
+    @safe unittest
+    {
+        static assert(!isDefaultConstructorEnabled!Throw);
+        static assert(hasOnAccessEmptyValue!(Throw, string));
+        static assert(hasOnAccessEmptyValue!(Throw, int));
+        static assert(hasOnAccessEmptyError!Throw);
+
+        assertThrown!(Unexpected!string)(ok!(string, Throw)(42).error);
+        assertThrown!(Unexpected!string)(err!(int, Throw)("foo").value);
+        assertThrown!(Unexpected!int)(err!(bool, Throw)(-1).value);
+
+        // the error value must be stored on the thrown exception
+        {
+            auto ex = collectException!(Unexpected!string)(err!(int, Throw)("foo").value);
+            assert(ex !is null && ex.error == "foo");
+        }
+        {
+            auto ex = collectException!(Unexpected!int)(err!(bool, Throw)(-1).value);
+            assert(ex !is null && ex.error == -1);
+        }
+    }
+
+    /++ Hook implementation that behaves like a thrown exception.
+        It throws $(D Exception) right when the $(LREF Expected) with error is initialized.
+
+        With this, one can easily change the code behavior between `Expected` idiom or plain `Exception`s.
+    +/
+    struct AsException
+    {
+    static:
+
+        /++ Default constructor for $(LREF Expected) is disabled.
+            Same with the `opAssign`, so $(LREF Expected) can be only constructed
+            once and not modified afterwards.
+        +/
+        immutable bool enableDefaultConstructor = false;
+
+        /++ Handler for case when empty error is accessed.
+        +/
+        void onErrorSet(E)(auto ref E err)
+        {
+            import core.lifetime : forward;
+            static if (is(E : Throwable)) throw E;
+            else throw new Unexpected!E(forward!err);
+        }
+    }
+
+    ///
+    @("expected.AsException")
+    @safe unittest
+    {
+        static assert(!isDefaultConstructorEnabled!AsException);
+        static assert(hasOnErrorSet!(AsException, string));
+
+        auto div(int a, int b) {
+            if (b != 0) return ok!(string, AsException)(a / b);
+            return err!(int, AsException)("oops");
+        }
+
+        assert(div(10, 2) == 5);
+        assert(collectExceptionMsg!(Unexpected!string)(div(1, 0)) == "oops");
+    }
+}
+
+/++ Hook implementation that behaves same as $(LREF Abort) hook, but uses refcounted payload
+    instead, which also enables us to check, if the result was properly checked before it is
+    discarded.
++/
+struct RCAbort
+{
+static:
+    /++ Default constructor for $(LREF Expected) is disabled.
+        Same with the `opAssign`, so $(LREF Expected) can be only constructed
+        once and not modified afterwards.
+    +/
+    immutable bool enableDefaultConstructor = false;
+
+    /// Copy constructor is enabled so the reference counting makes sense
+    immutable bool enableCopyConstructor = true;
+
+    /// Enabled reference counted payload
+    immutable bool enableRefCountedPayload = true;
+
+    void onUnchecked() pure nothrow @nogc @safe { assert(0, "result unchecked"); }
+}
+
+///
+@("expected.RCAbort")
+@safe unittest
+{
+    // behavior checks
+    static assert(!isDefaultConstructorEnabled!RCAbort);
+    static assert(isCopyConstructorEnabled!RCAbort);
+    static assert(isRefCountedPayloadEnabled!RCAbort);
+
+    // basics
+    assert(ok!(string, RCAbort)(42) == 42);
+    assert(err!(int, RCAbort)("foo").error == "foo");
+
+    // checked
+    {
+        auto res = ok!(string, RCAbort)(42);
+        assert(!res.checked);
+        assert(res);
+        assert(res.checked);
+    }
+
+    // unchecked - throws assert
+    version (D_Exceptions) () @trusted { assertThrown!Throwable({ ok!(string, RCAbort)(42); }()); }();
+
+    {
+        auto res = ok!(string, RCAbort)(42);
+        {
+            auto res2 = res;
+            assert(!res.checked);
+            assert(res.refCount == 2);
+            assert(res2.refCount == 2);
+        }
+        assert(res.refCount == 1);
+        assert(res.hasValue);
+    }
+
+    // void value
+    {
+        assert(!ok!(string, RCAbort)().hasError);
+        assert(err!(void, RCAbort)("foo").error == "foo");
+        Expected!(void, string, RCAbort) def;
+        assert(!def.hasError);
+        assert(!ok!(string, RCAbort)(42).map!((int a) {}).hasError);
+        assert(!ok!(string, RCAbort)().mapError!(e => e.length).hasError);
+        version (D_Exceptions) () @trusted { assertThrown!Throwable({ ok!(string, RCAbort)(); }()); }();
+    }
+
+    // chaining
+    assert(err!(int, RCAbort)("foo").orElse!(() => ok!(string, RCAbort)(42)) == 42);
+    assert(ok!(string, RCAbort)(42).andThen!(() => err!(int, RCAbort)("foo")).error == "foo");
+    version (D_Exceptions)
+    {
+        () @trusted
+        {
+            assertThrown!Throwable(err!(int, RCAbort)("foo").orElse!(() => ok!(string, RCAbort)(42)));
+            assertThrown!Throwable(ok!(string, RCAbort)(42).andThen!(() => err!(int, RCAbort)("foo")));
+        }();
+    }
+}
+
+version (D_Exceptions)
+{
+    /++ An exception that represents an error value.
+
+        This is used by $(LREF Throw) hook when undefined value or error is
+        accessed on $(LREF Expected)
+    +/
+    class Unexpected(T) : Exception
+    {
+        // remove possible inout qualifier
+        static if (is(T U == inout U)) alias ET = U;
+        else alias ET = T;
+
+        ET error; /// error value
+
+        /// Constructs an `Unexpected` exception from an error value.
+        pure @safe @nogc nothrow
+        this()(auto ref T value, string file = __FILE__, size_t line = __LINE__)
+        {
+            import core.lifetime : forward;
+            import std.traits : isAssignable;
+            static if (isAssignable!(string, T)) super(value, file, line);
+            else super("Unexpected error", file, line);
+
+            this.error = forward!value;
+        }
+    }
+}
+
+/++
+    Creates an $(LREF Expected) object from an expected value, with type inference.
++/
+Expected!(T, E, Hook) ok(E = string, Hook = Abort, T)(auto ref T value)
+{
+    import core.lifetime : forward, move;
+    static if (__traits(compiles, Expected!(T, E, Hook)(forward!value)))
+        return Expected!(T, E, Hook)(forward!value);
+    else
+        return Expected!(T, E, Hook)(value.move());
+}
+
+/// ditto
+Expected!(void, E, Hook) ok(E = string, Hook = Abort)()
+{
+    auto res = Expected!(void, E, Hook)();
+    static if (isRefCountedPayloadEnabled!Hook) res.initialize(); // so the result can be checked
+    return res;
+}
+
+///
+@("expected.Expected from value")
+@safe unittest
+{
+    // void
+    {
+        auto res = ok();
+        static assert(is(typeof(res) == Expected!(void, string)));
+        assert(res);
+    }
+
+    // int
+    {
+        auto res = ok(42);
+        static assert(is(typeof(res) == Expected!(int, string)));
+        assert(res);
+        assert(res.value == 42);
+    }
+
+    // string
+    {
+        auto res = ok("42");
+        static assert(is(typeof(res) == Expected!(string, string)));
+        assert(res);
+        assert(res.value == "42");
+    }
+
+    // other error type
+    {
+        auto res = ok!bool(42);
+        static assert(is(typeof(res) == Expected!(int, bool)));
+        assert(res);
+        assert(res.value == 42);
+    }
+}
+
+/++ Constructs $(LREF Expected) from the result of the provided function.
+
+    If the function is `nothrow`, it just returns it's result using $(LREF Expected).
+
+    If not, then it consumes it's possible $(D Exception) using `try catch` block and
+    constructs $(LREF Expected) in regards of the result.
++/
+template consume(alias fun, Hook = Abort)
+{
+    import core.lifetime : forward;
+    auto consume(Args...)(auto ref Args args) if (is(typeof(fun(forward!args))))
+    {
+        import std.traits : hasFunctionAttributes;
+
+        alias T = typeof(fun(forward!args));
+        static if (is(hasFunctionAttributes!(fun, "nothrow"))) return ok!Exception(fun(forward!args));
+        else
+        {
+            try return Expected!(T, Exception)(fun(forward!args));
+            catch (Exception ex) return err!T(ex);
+        }
+    }
+}
+
+version (D_Exceptions)
+{
+    ///
+    @("expected.consume from function call")
+    @safe unittest
+    {
+        auto fn(int v) { if (v == 42) throw new Exception("don't panic"); return v; }
+
+        assert(consume!fn(1) == 1);
+        assert(consume!fn(42).error.msg == "don't panic");
+    }
+}
+
+/++
+    Creates an $(LREF Expected) object from an error value, with type inference.
++/
+Expected!(T, E, Hook) err(T = void, Hook = Abort, E)(auto ref E err)
+{
+    import core.lifetime : forward;
+    static if (Expected!(T, E, Hook).Types.length == 1 && !is(T == void))
+        return Expected!(T, E, Hook)(forward!err, false);
+    else return Expected!(T, E, Hook)(forward!err);
+}
+
+///
+@("expected.Expected from error value")
+@safe unittest
+{
+    // implicit void value type
+    {
+        auto res = err("foo");
+        static assert(is(typeof(res) == Expected!(void, string)));
+        assert(!res);
+        assert(res.error == "foo");
+    }
+
+    // bool
+    {
+        auto res = err!int("42");
+        static assert(is(typeof(res) == Expected!(int, string)));
+        assert(!res);
+        assert(res.error == "42");
+    }
+
+    // other error type
+    {
+        auto res = err!bool(42);
+        static assert(is(typeof(res) == Expected!(bool, int)));
+        assert(!res);
+        assert(res.error == 42);
+    }
+}
+
+/++ Unwraps a result, yielding the content of expected value.
+    If there is none, or error value, it throws $(D assert(0)) with the provided message.
+
+    Params:
+        res     = $(LREF Expected) to check the result of
+        msg     = message to use with assert
+        handler = custom handler to be called on error
++/
+auto ref T expect(EX : Expected!(T, E, H), T, E, H)(auto ref EX res, lazy string msg)
+{
+    //TODO: hook for customization
+
+    static if (!is(T == void)) {
+        if (res.hasValue) return forwardValue!res;
+    }
+    else { if (!res.hasError) return; }
+
+    version (D_BetterC) assert(0, msg);
+    else
+    {
+        import std.format : format;
+        if (res.hasError) assert(0, format!"%s: %s"(msg, res.error));
+        else assert(0, format!"%s: empty"(msg));
+    }
+}
+
+/// ditto
+auto ref T expect(alias handler, EX : Expected!(T, E, H), T, E, H)(auto ref EX res)
+{
+    static if (!is(T == void)) { if (res.hasValue) return forwardValue!res; }
+    else { if (!res.hasError) return; }
+
+    static if (!is(typeof(handler(forwardError!res)) == noreturn) && !is(typeof(handler(forwardError!res)) == void))
+        return handler(forwardError!res);
+    else
+    {
+        handler(forwardError!res);
+        static if (__VERSION__ < 2096) {
+            static if (!is(T == void))
+                return T.init;
+        } else {
+            static if (!is(T == void) && !is(typeof(handler(forwardError!res)) == noreturn)) // avoid 'statement is not reachable'
+                return T.init;
+        }
+    }
+}
+
+///
+@("expected.expect")
+@safe unittest
+{
+    assert(ok(42).expect("oops") == 42);
+    ok().expect("oops"); // void value
+
+    version (D_Exceptions)
+    {
+        () @trusted
+        {
+            assert(collectExceptionMsg!Throwable(Expected!int.init.expect("oops")) == "oops: empty");
+            assert(collectExceptionMsg!Throwable(err!int("foo").expect("oops")) == "oops: foo");
+        }();
+    }
+
+    assert(ok("foo").expect!(a => "bar") == "foo");
+    assert(err!string("foo").expect!(a => "bar") == "bar");
+    assert(err!string("foo").expect!((a) {}) is null);
+
+    static struct NonCopyable { @disable this(this); int foo; }
+    assert(err!NonCopyable(42).expect!((e) {}) == NonCopyable.init);
+    err!void(42).expect!((e) {});
+    ok!int().expect!(e => assert(0));
+    ok!int(42).expect!(e => assert(0));
+}
+
+/++ Unwraps a result, yielding the content of an error value.
+    If there is none, or success value, it throws $(D assert(0)) with the provided message.
+
+    Params:
+        res = $(LREF Expected) to check the result of
+        msg = message to use with assert
+        handler = custom handler to be called on value
++/
+auto ref E expectErr(EX : Expected!(T, E, H), T, E, H)(auto ref EX res, lazy string msg)
+{
+    //TODO: hook for customization
+
+    if (res.hasError) return forwardError!res;
+
+    version (D_BetterC) assert(0, msg);
+    else
+    {
+        import std.format : format;
+        static if (!is(T == void))
+        {
+            if (res.hasValue) assert(0, format!"%s: %s"(msg, forwardValue!res));
+        }
+        assert(0, format!"%s: empty"(msg));
+    }
+}
+
+/// ditto
+auto ref E expectErr(alias handler, EX : Expected!(T, E, H), T, E, H)(auto ref EX res)
+{
+    if (res.hasError) return forwardError!res;
+
+    static if (!is(typeof(handler(forwardError!res)) == noreturn) && !is(typeof(handler(T.init)) == void))
+    {
+        static if (!is(T == void)) return handler(res.hasValue ? forwardValue!res : T.init);
+        else return handler();
+    }
+    else
+    {
+        static if (!is(T == void)) handler(res.hasValue ? forwardValue!res : T.init);
+        else handler();
+        static if (__VERSION__ < 2096)
+            return E.init;
+        else static if (!is(typeof(handler(forwardError!res)) == noreturn)) // avoid 'statement is not reachable'
+            return E.init;
+    }
+}
+
+///
+@("expected.expectErr")
+@safe unittest
+{
+    assert(err("foo").expectErr("oops") == "foo");
+    version (D_Exceptions)
+    {
+        () @trusted
+        {
+            assert(collectExceptionMsg!Throwable(Expected!int.init.expectErr("oops")) == "oops: empty");
+            assert(collectExceptionMsg!Throwable(ok(42).expectErr("oops")) == "oops: 42");
+            assert(collectExceptionMsg!Throwable(ok().expectErr("oops")) == "oops: empty"); // void value
+        }();
+    }
+
+    assert(ok("foo").expectErr!(a => "bar") == "bar");
+    assert(err!string("foo").expectErr!(a => "bar") == "foo");
+    assert(ok!string("foo").expectErr!((a) {}) is null);
+    assert(ok!string(42).expectErr!((a) {}) is null);
+    err!int(42).expectErr!(a => assert(0));
+}
+
+/++
+    Returns the error contained within the $(LREF Expected) _and then_ another value if there's no error.
+    This function can be used for control flow based on $(LREF Expected) values.
+
+    Predicate can accept no arguments, variable arguments, or previous result value with additional variable arguments.
+    It must return $(LREF Expected) wth the same error type. But can provide different value type.
+
+    Params:
+        exp = The $(LREF Expected) to call andThen on
+        value = The value to return if there isn't an error
+        pred = The predicate to call if the there isn't an error
++/
+auto ref andThen(EX : Expected!(T, E, H), VEX : Expected!(VT, E, H), T, VT, E, H)(
+    auto ref EX exp, auto ref VEX value)
+{
+    import core.lifetime : forward;
+    static if (is(T == VT)) return exp.hasError ? exp : value;
+    else return exp.hasError ? err!(VT, H)(forwardError!exp) : value;
+}
+
+/// ditto
+auto ref andThen(alias pred, EX : Expected!(T, E, H), T, E, H, Args...)(auto ref EX exp, auto ref Args args)
+{
+    import core.lifetime : forward;
+    static if (!is(T == void) && is(typeof(pred(forwardValue!exp, forward!args)) : Expected!(VT, E, H), VT))
+    {
+        static if (is(T == VT)) return exp.hasError ? exp : pred(forwardValue!exp, forward!args);
+        else return exp.hasError ? err!(VT, H)(forwardError!exp) : pred(forwardValue!exp, forward!args);
+    }
+    else static if (is(typeof(pred(forward!args)) : Expected!(VT, E, H), VT))
+    {
+        static if (is(T == VT)) return exp.hasError ? exp : pred(forward!args);
+        else return exp.hasError ? err!(VT, H)(forwardError!exp) : pred(forward!args);
+    }
+    else
+    {
+        static assert(0, "Expected predicate of Expected type with optional args receiving previous value");
+    }
+}
+
+///
+@("expected.andThen")
+@safe unittest
+{
+    import std.format : format;
+
+    assert(ok(42).andThen(ok(1)) == 1);
+    assert(ok(42).andThen!(() => ok(0)) == 0);
+    assert(ok(42).andThen(err!int("foo")).error == "foo");
+    assert(ok(42).andThen!(() => err!int("foo")).error == "foo");
+    assert(err!int("foo").andThen(ok(42)).error == "foo");
+    assert(err!int("foo").andThen!(() => ok(42)).error == "foo");
+    assert(err!int("foo").andThen(err!int("bar")).error == "foo");
+    assert(err!int("foo").andThen!(() => err!int("bar")).error == "foo");
+
+    // with void value
+    assert(ok().andThen!(() => ok()));
+    assert(ok().andThen!(() => err("foo")).error == "foo");
+    assert(err("foo").andThen!(() => ok()).error == "foo");
+
+    // with different value type
+    assert(ok(42).andThen(ok("foo")) == "foo");
+    assert(err!int("bug").andThen(ok("foo")).error == "bug");
+    assert(ok(42).andThen!(() => err!bool("foo")).error == "foo");
+    assert(err!int("bug").andThen!(() => err!bool("foo")).error == "bug");
+
+    // with args
+    assert(ok(42).andThen!((v) => err!bool(v))("foo").error == "foo"); // doesn't use previous value
+    version (D_BetterC)
+        assert(ok(42).andThen!((i, v)
+            {
+                assert(i == 42);
+                assert(v == "foo");
+                return err!bool("betterc");
+            })("foo").error == "betterc"); // pass previous value to predicate
+    else
+        assert(ok(42).andThen!((i, v) => err!bool(format!"%s: %s"(v, i)))("foo").error == "foo: 42"); // pass previous value to predicate
+    assert(ok().andThen!((v) => ok(v))(42) == 42); // void type on first ok
+}
+
+/++
+    Returns the value contained within the $(LREF Expected) _or else_ another value if there's an error.
+    This function can be used for control flow based on $(LREF Expected) values.
+
+    Predicate can accept no arguments, variable arguments, or previous result error value with additional variable arguments.
+    It must return $(LREF Expected) wth the same value type. But can provide different error value type.
+
+    Params:
+        exp = The $(LREF Expected) to call orElse on
+        value = The value to return if there is an error
+        pred = The predicate to call if the there is an error
++/
+auto ref U orElse(EX, U)(auto ref EX exp, lazy U value)
+    if (is(EX : Expected!(T, E, H), T, E, H) && is(U : T))
+{
+    import core.lifetime : forward;
+    return forward!exp.orElse!value;
+}
+
+/// ditto
+auto ref orElse(alias pred, EX : Expected!(T, E, H), T, E, H, Args...)(
+    auto ref EX exp, auto ref Args args)
+{
+    import core.lifetime : forward;
+    static if (is(typeof(pred(forward!args)) : T))
+        return exp.hasError ? pred(forward!args) : exp.value;
+    else static if (is(typeof(pred(forwardError!exp, forward!args)) : T))
+        return exp.hasError ? pred(forwardError!exp, forward!args) : exp.value;
+    else static if (is(typeof(pred(forward!args)) : Expected!(T, VE, H), VE))
+    {
+        static if (is(E == VE)) return exp.hasError ? pred(forward!args) : exp;
+        else return exp.hasError ? pred(forward!args) : ok!VE(forwardValue!exp);
+    }
+    else static if (is(typeof(pred(forwardError!exp, forward!args)) : Expected!(T, VE, H), VE))
+    {
+        static if (is(E == VE)) return exp.hasError ? pred(forwardError!exp, forward!args) : exp;
+        else return exp.hasError ? pred(forwardError!exp, forward!args) : ok!VE(forwardValue!exp);
+    }
+    else static assert(0, "Expecting predicate of same value type");
+}
+
+///
+@("expected.orElse")
+@safe unittest
+{
+    assert(ok(42).orElse(0) == 42);
+    assert(ok(42).orElse!(() => 0) == 42);
+    assert(err!int("foo").orElse(0) == 0);
+    assert(err!int("foo").orElse!(() => 0) == 0);
+    assert(ok(42).orElse!(() => ok(0)) == 42);
+    assert(err!int("foo").orElse!(() => ok(42)) == 42);
+    assert(err!int("foo").orElse!(() => err!int("bar")).error == "bar");
+
+    // with void value
+    assert(ok().orElse!(() => err("foo")));
+    assert(err("foo").orElse!(() => ok()));
+    assert(err("foo").orElse!(() => err("bar")).error == "bar");
+
+    // with args
+    assert(err!int("foo").orElse!((v) => v)(42) == 42);
+
+    // with different error type
+    assert(err!int("foo").orElse!((v) => ok!int(v))(42).value == 42); // string -> int
+    assert(err!int("foo").orElse!((v) => err!int(v))(42).error == 42);
+    assert(err!int("foo").orElse!((e, v) => err!int(e.length + v))(42).error == 45); // with previous error
+}
+
+/++
+    Applies a function to the expected value in an $(LREF Expected) object.
+
+    If no expected value is present, the original error value is passed through
+    unchanged, and the function is not called.
+
+    Function can return `void`, in which case $(LREF Expected) with no value is returned.
+
+    Params:
+        op = function called to map $(LREF Expected) value
+        hook = use another hook for mapped $(LREF Expected), hook of the source $(LREF Expected) is used by default
+
+    Returns:
+        A new $(LREF Expected) object containing the result.
++/
+template map(alias op, Hook = void)
+{
+    /++
+        The actual `map` function.
+
+        Params:
+            self = an [Expected] object
+    +/
+    auto ref map(T, E, H)(auto ref Expected!(T, E, H) self)
+        if ((is(T == void) && is(typeof(op()))) || (!is(T == void) && is(typeof(op(forwardValue!self)))))
+    {
+        static if (is(Hook == void)) alias RH = H;
+        else alias RH = Hook;
+
+        static if (is(T == void)) alias U = typeof(op());
+        else alias U = typeof(op(forwardValue!self));
+
+        if (self.hasError) return err!(U, RH)(forwardError!self);
+        else
+        {
+            static if (is(U == void))
+            {
+                static if (is(T == void)) op();
+                else op(forwardValue!self);
+                return ok!(E, RH)();
+            }
+            else static if (is(T == void)) return ok!(E, RH)(op());
+            else return ok!(E, RH)(op(forwardValue!self));
+        }
+    }
+}
+
+///
+@("expected.map")
+@safe unittest
+{
+    {
+        assert(ok(42).map!(a => a/2).value == 21);
+        assert(ok().map!(() => 42).value == 42);
+        assert(err!int("foo").map!(a => 42).error == "foo");
+        assert(err("foo").map!(() => 42).error == "foo");
+    }
+
+    // remap hook
+    {
+        static struct Hook {}
+        auto res = ok(42).map!(a => a/2, Hook);
+        assert(res == 21);
+        static assert(is(typeof(res) == Expected!(int, string, Hook)));
+    }
+
+    // keeps source hook by default
+    {
+        static struct SrcHook {}
+        static assert(is(typeof(ok!(string, SrcHook)(42).map!(a => a/2)) == Expected!(int, string, SrcHook)));
+        static assert(is(typeof(err!(int, SrcHook)("foo").map!(a => a/2)) == Expected!(int, string, SrcHook)));
+        static assert(is(typeof(ok!(string, SrcHook)().map!(() => 42)) == Expected!(int, string, SrcHook)));
+        static assert(is(typeof(ok!(string, SrcHook)(42).map!((int a) {})) == Expected!(void, string, SrcHook)));
+    }
+
+    // map to void
+    {
+        int calls;
+        auto res = ok(42).map!((int a) { calls += a; });
+        static assert(is(typeof(res) == Expected!(void, string, Abort)));
+        assert(!res.hasError);
+        assert(calls == 42);
+
+        auto res2 = err!int("foo").map!((int a) { calls += a; });
+        static assert(is(typeof(res2) == Expected!(void, string, Abort)));
+        assert(res2.error == "foo");
+        assert(calls == 42);
+
+        auto res3 = ok().map!(() { calls++; });
+        static assert(is(typeof(res3) == Expected!(void, string, Abort)));
+        assert(!res3.hasError);
+        assert(calls == 43);
+    }
+}
+
+/++
+    Applies a function to the expected error in an $(LREF Expected) object.
+
+    If no error is present, the original value is passed through
+    unchanged, and the function is not called.
+
+    Params:
+        op = function called to map $(LREF Expected) error
+        hook = use another hook for mapped $(LREF Expected), hook of the source $(LREF Expected) is used by default
+
+    Returns:
+        A new $(LREF Expected) object containing the result.
++/
+template mapError(alias op, Hook = void)
+{
+    /++
+        The actual `mapError` function.
+
+        Params:
+            self = an [Expected] object
+    +/
+    auto ref mapError(T, E, H)(auto ref Expected!(T, E, H) self)
+        if (is(typeof(op(forwardError!self))))
+    {
+        static if (is(Hook == void)) alias RH = H;
+        else alias RH = Hook;
+
+        alias U = typeof(op(forwardError!self));
+
+        static if (!is(T == void))
+        {
+            if (self.hasValue) return ok!(U, RH)(forwardValue!self);
+        }
+        else
+        {
+            if (!self.hasError) return ok!(U, RH)();
+        }
+        return err!(T, RH)(op(forwardError!self));
+    }
+}
+
+///
+@("expected.mapError")
+@safe unittest
+{
+    {
+        assert(ok(42).mapError!(e => e).value == 42);
+        assert(err("foo").mapError!(e => 42).error == 42);
+        version (D_Exceptions) assert(err("foo").mapError!(e => new Exception(e)).error.msg == "foo");
+    }
+
+    // remap hook
+    {
+        static struct Hook {}
+        auto res = ok(42).mapError!(e => e, Hook);
+        assert(res == 42);
+        static assert(is(typeof(res) == Expected!(int, string, Hook)));
+
+        auto res2 = err!int("foo").mapError!(e => "bar", Hook);
+        assert(res2.error == "bar");
+        static assert(is(typeof(res2) == Expected!(int, string, Hook)));
+    }
+
+    // keeps source hook by default
+    {
+        static struct SrcHook {}
+        static assert(is(typeof(ok!(string, SrcHook)(42).mapError!(e => e.length)) == Expected!(int, size_t, SrcHook)));
+        static assert(is(typeof(err!(int, SrcHook)("foo").mapError!(e => e.length)) == Expected!(int, size_t, SrcHook)));
+    }
+
+    // void value
+    {
+        auto res = ok().mapError!(e => e.length);
+        static assert(is(typeof(res) == Expected!(void, size_t, Abort)));
+        assert(!res.hasError);
+        assert(err("foo").mapError!(e => e.length).error == 3);
+    }
+}
+
+/++
+    Maps a `Expected<T, E>` to `U` by applying a function to a contained value, or a fallback function to a contained error value.
+
+    Both functions has to be of the same return type.
+
+    This function can be used to unpack a successful result while handling an error.
+
+    Params:
+        valueOp = function called to map $(LREF Expected) value
+        errorOp = function called to map $(LREF Expected) error
+        hook = use another hook for mapped $(LREF Expected)
+
+    Returns:
+        A new $(LREF Expected) object containing the result.
++/
+template mapOrElse(alias valueOp, alias errorOp)
+{
+    /++
+        The actual `mapOrElse` function.
+
+        Params:
+            self = an [Expected] object
+    +/
+    auto ref mapOrElse(T, E, H)(auto ref Expected!(T, E, H) self)
+        if (
+            is(typeof(errorOp(forwardError!self))) &&
+            (
+                (is(T == void) && is(typeof(valueOp()) == typeof(errorOp(forwardError!self)))) ||
+                (!is(T == void) && is(typeof(valueOp(self.value)) == typeof(errorOp(forwardError!self))))
+            )
+        )
+    {
+        alias U = typeof(errorOp(forwardError!self));
+
+        if (self.hasError) return errorOp(forwardError!self);
+        else
+        {
+            static if (is(T == void)) return valueOp();
+            else return valueOp(forwardValue!self);
+        }
+    }
+}
+
+///
+@("expected.mapOrElse")
+@safe unittest
+{
+    assert(ok(42).mapOrElse!(v => v/2, e => 0) == 21);
+    assert(ok().mapOrElse!(() => true, e => false));
+    assert(err!int("foo").mapOrElse!(v => v/2, e => 42) == 42);
+    assert(!err("foo").mapOrElse!(() => true, e => false));
+}
+
+private template forwardMember(alias arg, string member)
+{
+    import core.lifetime : move;
+    // lvalue arg or non-moveable member (rvalue or const/immutable)
+    static if (__traits(isRef,  arg) ||
+               __traits(isOut,  arg) ||
+               __traits(isLazy, arg) ||
+               !is(typeof(move(__traits(getMember, arg, member)))))
+        @property auto ref forwardMember(){ return __traits(getMember, arg, member); }
+    // rvalue arg and moveable member (mutable lvalue)
+    else
+        @property auto forwardMember(){ return move(__traits(getMember, arg, member)); }
+}
+
+private alias forwardValue(alias arg) = forwardMember!(arg, "value");
+private alias forwardError(alias arg) = forwardMember!(arg, "error");
+
+@("expected.forwardMember")
+@safe unittest
+{
+    struct A
+    {
+        int i;
+        ~this() {}
+    }
+    struct S
+    {
+        A a;
+        A rvalue() { return a; }
+        ref A lvalue() { return a; }
+    }
+
+    bool foo(T)(auto ref T val)
+    {
+        return __traits(isRef, val);
+    }
+    bool bar(string member, T)(auto ref T val, out int after)
+    {
+        auto res = foo(forwardMember!(val, member));
+        after = val.a.i;
+        return res;
+    }
+
+    int after;
+
+    // rvalue arg, member -> foo gets rvalue by move
+    assert(bar!"a"(S(A(1729)), after) == false);
+    assert(after == 0);
+
+    // rvalue arg, rvalue method -> foo gets rvalue as return value of `rvalue` method, no moves
+    assert(bar!"rvalue"(S(A(1729)), after) == false);
+    assert(after == 1729);
+
+    // rvalue arg, lvalue method -> foo gets rvalue by move
+    assert(bar!"lvalue"(S(A(1729)), after) == false);
+    assert(after == 0);
+
+    auto s = S(A(42));
+
+    // lvalue arg, member -> foo gets lvalue
+    assert(bar!"a"(s, after) == true);
+    assert(after == 42);
+    assert(s.a.i == 42);
+
+    // lvalue arg, rvalue method -> foo gets rvalue as return value of `rvalue` method, no moves
+    assert(bar!"rvalue"(s, after) == false);
+    assert(after == 42);
+    assert(s.a.i == 42);
+
+    // lvalue arg, lvalue method -> foo gets lvalue
+    assert(bar!"lvalue"(s, after) == true);
+    assert(after == 42);
+    assert(s.a.i == 42);
+}
+
+static if (__VERSION__ < 2096) {
+    private alias noreturn = void;
+}
