@@ -262,6 +262,7 @@ enum SampleSource : ubyte
     cgroupMembers, /// owned cgroup: roster + `cpu.stat`, peaks from procfs
     procScan,      /// `/proc` scan over the descendants and the process group
     darwinTree,    /// libproc rusage and child rosters, identity-validated
+    jobObject,     /// the run's Windows Job Object accounting (§13.9)
 }
 
 /// Which subsystem produced a metric.
@@ -271,6 +272,7 @@ enum MetricSource : ubyte
     procfs, /// `/proc/<pid>/stat` (stat, statm, children)
     cgroup, /// a cgroup v2 counter file
     rusage, /// the platform's per-process rusage call
+    jobObject, /// `QueryInformationJobObject` on the run's job (Windows)
 }
 
 /// What a metric's value is the truth about (SPEC §13.8 truth table).

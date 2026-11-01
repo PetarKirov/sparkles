@@ -970,6 +970,7 @@ package extern (Windows) nothrow @nogc
 {
     BOOL QueryInformationJobObject(HANDLE job, int infoClass, void* info, uint length,
         uint* returned);
+    HANDLE CreateJobObjectW(void* attributes, const(wchar)* name);
 }
 
 private extern (Windows) nothrow @nogc
@@ -983,7 +984,6 @@ private extern (Windows) nothrow @nogc
     BOOL TerminateProcess(HANDLE process, uint exitCode);
     BOOL GetExitCodeProcess(HANDLE process, uint* exitCode);
     uint WaitForSingleObject(HANDLE handle, uint milliseconds);
-    HANDLE CreateJobObjectW(void* attributes, const(wchar)* name);
     BOOL SetInformationJobObject(HANDLE job, int infoClass, void* info, uint length);
     BOOL AssignProcessToJobObject(HANDLE job, HANDLE process);
     BOOL TerminateJobObject(HANDLE job, uint exitCode);

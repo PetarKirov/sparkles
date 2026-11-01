@@ -619,6 +619,7 @@ version (linux)
                     break;
                 case SampleSource.none:
                 case SampleSource.darwinTree:
+                case SampleSource.jobObject:
                     break;
                 }
             }
@@ -1085,6 +1086,10 @@ version (linux)
 else version (OSX)
 {
     package import sparkles.event_horizon.sampling_darwin : TreeSampler;
+}
+else version (Windows)
+{
+    package import sparkles.event_horizon.sampling_windows : TreeSampler;
 }
 else
 {

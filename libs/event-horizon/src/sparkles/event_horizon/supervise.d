@@ -3764,6 +3764,7 @@ unittest
             assert(got.value.usage.cgroupCpuSource == MetricSource.none);
             break;
         case SampleSource.none:
+        case SampleSource.jobObject:
             assert(0, "every supported host has a source");
         }
         version (OSX)
