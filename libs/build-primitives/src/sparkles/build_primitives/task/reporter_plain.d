@@ -11,8 +11,17 @@ finished in. Timings are the one exception and are written only when
 `PlainOptions.timings` asks for them.
 
 $(B Interlaced.) Each output line is written, prefixed, as soon as it
-arrives; across tasks the order is the run's. The terminal lines and the
-summary still come at the end, in presentation order.
+arrives; across tasks the order is the run's. The terminal lines, a replay
+of each failed task's output tail, and the summary still come at the end, in
+presentation order.
+
+$(B CI providers) ([task-DAG SPEC §7.6](../../../../../../docs/specs/build-primitives/task-dag/SPEC.md)).
+With `PlainOptions.ci` set to a provider that has groups, each replayed
+block with output is wrapped in a group titled `<id>: <outcome>`, its
+terminal line following the group. Interlaced lines are never grouped,
+since several tasks' lines interleave; instead the final terminal-line
+section and the failure replay become one group each. Before any output,
+every redacted environment value in the graph is masked on the provider.
 
 Every write is one whole line, so a line is never split by another task's.
 No cursor movement, spinner, or colour is ever written.
@@ -24,6 +33,9 @@ import std.range.primitives : put;
 import std.sumtype : match;
 
 import sparkles.base.text.writers : writeDuration;
+
+import sparkles.build_primitives.ci_provider : CiLog;
+import sparkles.build_primitives.task.action : ProcessAction;
 
 import sparkles.build_primitives.task.graph : TaskGraph;
 import sparkles.build_primitives.task.model;
@@ -42,6 +54,9 @@ struct PlainOptions
     size_t memoryBudget = 1024 * 1024;
     /// Where buffered output past the budget spills; null drops the oldest.
     string spillRoot;
+    /// The CI provider's conventions (`CiLog.detect(&systemEnvironment)`);
+    /// the default has none, and writes no group or mask.
+    CiLog ci;
 }
 
 /**
@@ -70,14 +85,14 @@ struct PlainReporter(Writer)
         {
             started = true;
             firstAt = e.at;
+            writeMasks();
         }
         lastAt = e.at;
         e.payload.match!(
             (const TaskOutput o) {
                 if (options.interlaced)
                     writeLine(o.task, o.stream, e.text);
-                else
-                    blocks.output(o.task, o.stream, e.text, o.unterminated);
+                blocks.output(o.task, o.stream, e.text, o.unterminated);
             },
             (const TaskFinished f) {
                 blocks.finished(f.task, f.outcome, f.elapsed);
@@ -105,7 +120,14 @@ struct PlainReporter(Writer)
             return;
         finished = true;
         if (options.interlaced)
+        {
+            if (options.ci.groups)
+                options.ci.openGroup(*writer, "results", collapsed: false);
             blocks.releaseAll(&writeTerminal);
+            if (options.ci.groups)
+                options.ci.closeGroup(*writer);
+            writeFailureReplay();
+        }
         else
             blocks.releaseAll(&writeBlock);
         facts.timings = options.timings;
@@ -137,8 +159,69 @@ private:
 
     void writeBlock(TaskIndex t)
     {
+        const grouped = options.ci.groups && blocks.spool(t).lines > 0;
+        if (grouped)
+            options.ci.openGroup(*writer, blockTitle(t));
         blocks.spool(t).replay((const ref SpooledLine l) { writeLine(t, l.stream, l.text); });
+        if (grouped)
+            options.ci.closeGroup(*writer);
         writeTerminal(t);
+    }
+
+    // `<id>: <outcome>`: a group's title.
+    string blockTitle(TaskIndex t)
+    {
+        import std.array : appender;
+
+        auto title = appender!string;
+        title.put((*graph)[t].id.text);
+        title.put(": ");
+        if (blocks.isDone(t))
+            writeOutcome(title, *graph, blocks.outcome(t));
+        else
+            title.put("unfinished");
+        return title[];
+    }
+
+    // Interlaced: each failed task's output tail again, in presentation
+    // order, so a failure's lines read together.
+    void writeFailureReplay()
+    {
+        bool any;
+        foreach (i; 0 .. graph.nodes.length)
+        {
+            const t = TaskIndex(cast(uint) i);
+            if (!blocks.isDone(t) || kindOf(blocks.outcome(t)) != OutcomeKind.failed
+                || blocks.spool(t).lines == 0)
+                continue;
+            if (!any)
+            {
+                any = true;
+                if (options.ci.groups)
+                    options.ci.openGroup(*writer, "failures", collapsed: false);
+            }
+            put(*writer, "failure ");
+            put(*writer, blockTitle(t));
+            put(*writer, '\n');
+            foreach (ref line; blocks.spool(t).tail)
+                writeLine(t, line.stream, line.text);
+        }
+        if (any && options.ci.groups)
+            options.ci.closeGroup(*writer);
+    }
+
+    // Masks every redacted environment value the graph's actions carry.
+    void writeMasks()
+    {
+        foreach (ref node; graph.nodes)
+            node.action.match!(
+                (const ref ProcessAction p) {
+                    foreach (entry; p.envDelta)
+                        if (entry.redacted)
+                            options.ci.mask(*writer, entry.name, entry.value);
+                },
+                (_) {},
+            );
     }
 
     void writeTerminal(TaskIndex t)
@@ -337,4 +420,105 @@ unittest
     advanceAndSettle(sched, clock);
     assert(w[].canFind("summary: 6 tasks:"));
     assert(w[].canFind("exit: 1\n"));
+}
+
+@("build_primitives.task.reporter_plain.ci.groupsReplayedBlocks")
+@system
+unittest
+{
+    import sparkles.build_primitives.ci_provider : CiProvider;
+
+    const g = mixedGraph();
+    auto run = runFake(g, mixedScripts([1, 2, 3, 4, 5]), ExecutorOptions(capacity: 3));
+    CiLog github;
+    github.provider = CiProvider.githubActions;
+    const text = transcript(g, run.events, PlainOptions(timings: false, ci: github));
+    assert(text ==
+        "::group::a: succeeded\n"
+        ~ "[a stdout] a1\n"
+        ~ "[a stdout] a2\n"
+        ~ "::endgroup::\n"
+        ~ "a: succeeded\n"
+        ~ "::group::b: succeeded\n"
+        ~ "[b stdout] b1\n"
+        ~ "::endgroup::\n"
+        ~ "b: succeeded\n"
+        ~ "::group::c: failed: exit-status 3\n"
+        ~ "[c stdout] oops\n"
+        ~ "::endgroup::\n"
+        ~ "c: failed: exit-status 3\n"
+        ~ "d: blocked: prerequisite-failed c\n"
+        ~ "e: skipped: platform\n"
+        ~ "::group::f: degraded: no-coverage\n"
+        ~ "[f stdout] f1\n"
+        ~ "::endgroup::\n"
+        ~ "f: degraded: no-coverage\n"
+        ~ "summary: 6 tasks: 2 succeeded, 1 failed, 1 degraded, 1 skipped, 1 blocked, 0 cancelled\n"
+        ~ "failed: c, d\n"
+        ~ "exit: 1\n", text);
+
+    // Without a provider, the transcript is the plain one: no group syntax.
+    const plain = transcript(g, run.events, PlainOptions(timings: false));
+    assert(!plain.canFind("::"));
+}
+
+@("build_primitives.task.reporter_plain.ci.interlacedGroupsOnlyTheFinalSections")
+@system
+unittest
+{
+    import sparkles.build_primitives.ci_provider : CiProvider;
+
+    static long pinned() @safe nothrow @nogc => 42;
+
+    const g = mixedGraph();
+    auto run = runFake(g, mixedScripts([5, 4, 3, 2, 1]), ExecutorOptions(capacity: 3));
+    CiLog gitlab;
+    gitlab.provider = CiProvider.gitlabCi;
+    gitlab.unixTime = &pinned;
+    const text = transcript(g, run.events, PlainOptions(interlaced: true, timings: false, ci: gitlab));
+    const lines = text.split('\n')[0 .. $ - 1];
+
+    // The interleaved output comes first, ungrouped.
+    size_t i;
+    while (lines[i].startsWith("["))
+        ++i;
+    assert(i == 5);
+    assert(lines[i .. $] == [
+        "\x1b[0Ksection_start:42:task_1\r\x1b[0Kresults",
+        "a: succeeded", "b: succeeded", "c: failed: exit-status 3",
+        "d: blocked: prerequisite-failed c", "e: skipped: platform", "f: degraded: no-coverage",
+        "\x1b[0Ksection_end:42:task_1\r\x1b[0K",
+        "\x1b[0Ksection_start:42:task_2\r\x1b[0Kfailures",
+        "failure c: failed: exit-status 3",
+        "[c stdout] oops",
+        "\x1b[0Ksection_end:42:task_2\r\x1b[0K",
+        "summary: 6 tasks: 2 succeeded, 1 failed, 1 degraded, 1 skipped, 1 blocked, 0 cancelled",
+        "failed: c, d",
+        "exit: 1",
+    ], text);
+}
+
+@("build_primitives.task.reporter_plain.ci.masksRedactedValuesFirst")
+@system
+unittest
+{
+    import sparkles.build_primitives.ci_provider : CiProvider;
+    import sparkles.build_primitives.task.action : EnvEntry, ProcessAction;
+    import sparkles.build_primitives.task.graph : TaskGraphBuilder;
+
+    TaskGraphBuilder b;
+    b.add(TaskNode(taskId("a").value, TaskKind.fetch, "a", PresentationKey(0, "a"), ResourceClaim(1),
+        TaskAction(ProcessAction(["gh", "api"], [EnvEntry("GH_TOKEN", "hunter2", redacted: true),
+            EnvEntry("PLAIN", "visible")]))));
+    const g = b.build().value;
+    auto run = runFake(g, null, ExecutorOptions(capacity: 1));
+
+    CiLog github;
+    github.provider = CiProvider.githubActions;
+    const masked = transcript(g, run.events, PlainOptions(timings: false, ci: github));
+    assert(masked.startsWith("::add-mask::hunter2\n"));
+    assert(!masked.canFind("visible"), "only redacted values are masked");
+
+    // A provider without masks never sees the value.
+    assert(!transcript(g, run.events, PlainOptions(timings: false)).canFind("hunter2"));
 }
