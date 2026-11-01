@@ -1,7 +1,7 @@
 #!/usr/bin/env dub
 /+ dub.sdl:
     name "io_uring_splice_tee"
-    dependency "during" version="~>0.5.0"
+    dependency "sparkles:event-horizon-sys" path="../../../../.."
     platforms "linux"
     targetPath "build"
 +/
@@ -42,7 +42,7 @@
  */
 module io_uring_splice_tee;
 
-import during;
+import sparkles.event_horizon.sys.uring;
 
 import core.stdc.errno : EINVAL, ENOSYS, EOPNOTSUPP;
 import core.sys.posix.unistd : close, pipe, read, write;

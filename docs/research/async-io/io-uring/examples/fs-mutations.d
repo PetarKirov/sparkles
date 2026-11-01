@@ -1,7 +1,7 @@
 #!/usr/bin/env dub
 /+ dub.sdl:
     name "io_uring_fs_mutations"
-    dependency "during" version="~>0.5.0"
+    dependency "sparkles:event-horizon-sys" path="../../../../.."
     platforms "linux"
     targetPath "build"
 +/
@@ -37,7 +37,7 @@
  */
 module io_uring_fs_mutations;
 
-import during;
+import sparkles.event_horizon.sys.uring;
 
 import core.stdc.string : strlen;
 import core.sys.posix.stdlib : mkdtemp;

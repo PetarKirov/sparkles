@@ -1,7 +1,7 @@
 #!/usr/bin/env dub
 /+ dub.sdl:
     name "io_uring_epoll_wait"
-    dependency "during" version="~>0.5.0"
+    dependency "sparkles:event-horizon-sys" path="../../../../.."
     platforms "linux"
     targetPath "build"
 +/
@@ -35,7 +35,7 @@
  */
 module io_uring_epoll_wait;
 
-import during;
+import sparkles.event_horizon.sys.uring;
 
 import core.sys.linux.epoll : epoll_create1, epoll_ctl, epoll_event, EPOLL_CTL_ADD, EPOLLIN;
 import core.sys.posix.unistd : close, pipe, write;

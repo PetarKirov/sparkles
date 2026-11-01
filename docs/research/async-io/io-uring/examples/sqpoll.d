@@ -1,7 +1,7 @@
 #!/usr/bin/env dub
 /+ dub.sdl:
     name "io_uring_sqpoll"
-    dependency "during" version="~>0.5.0"
+    dependency "sparkles:event-horizon-sys" path="../../../../.."
     platforms "linux"
     targetPath "build"
 +/
@@ -50,7 +50,7 @@
  */
 module io_uring_sqpoll;
 
-import during;
+import sparkles.event_horizon.sys.uring;
 
 import core.sys.linux.errno : EPERM, EINVAL, ENOSYS, EOPNOTSUPP;
 import core.thread : Thread;

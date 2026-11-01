@@ -1,7 +1,7 @@
 #!/usr/bin/env dub
 /+ dub.sdl:
     name "io_uring_async_cancel"
-    dependency "during" version="~>0.5.0"
+    dependency "sparkles:event-horizon-sys" path="../../../../.."
     platforms "linux"
     targetPath "build"
 +/
@@ -38,7 +38,7 @@
  */
 module io_uring_async_cancel;
 
-import during;
+import sparkles.event_horizon.sys.uring;
 
 import core.sys.linux.errno : ECANCELED, EALREADY, EINVAL, EOPNOTSUPP, ENOSYS;
 import core.sys.posix.unistd : pipe, close, read;
