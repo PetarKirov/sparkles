@@ -29,10 +29,11 @@ version (UiAppGuiVulkan):
 import core.time : dur, Duration, MonoTime, msecs, seconds;
 import std.algorithm.comparison : max, min;
 
+import sparkles.base.prettyprint : prettyPrint, PrettyPrintOptions;
 import sparkles.base.term_color : RgbColor;
 import sparkles.base.term_control : PointerShape;
 import sparkles.event_horizon : DefaultLoop, LoopConfig;
-import sparkles.appearance : overriddenBy, SystemAppearance;
+import sparkles.appearance : ContrastLevel, overriddenBy, SystemAppearance;
 version (Android) {} else version (linux)
     import sparkles.appearance.portal : PortalAppearance;
 import sparkles.input : ColorSchemeEvent, Event, InputCapabilities, InputTextPool, mousePointer, PointerButton,
@@ -42,7 +43,7 @@ import sparkles.ui.effect : EffectRegistry;
 import sparkles.ui.geometry : Size;
 import sparkles.ui.image : ImageRegistry;
 import sparkles.ui_app.backend : Backend;
-import sparkles.ui_app.gui_options : FontRequest, WindowCells;
+import sparkles.ui_app.gui_options : FontRequest, WindowCells, WindowSystem;
 import sparkles.ui_app.host : HostState, isHost, noDraw, noSetup, noShutdown, PointerUnit,
     RunConfig, withRealSize;
 import sparkles.ui_app.lifecycle : Failure, FrameResult, Lifecycle, Rebuild, Surface;
@@ -228,7 +229,11 @@ bool measureCellFont(in FontRequest request, in string[] extraSources, int px,
 /// Why the native arm did not open, on standard error — logcat on Android,
 /// where standard error goes nowhere: the run reports only that it failed,
 /// and an application need not have set up a logger.
-private void whyNot(Args...)(Args args) @system
+private void whyNot(Args...)(Args args) @system => note(args);
+
+/// A line of what the native arm reports — why it failed, `--debug log-events`,
+/// `--debug trace-frames` — where $(LREF whyNot) writes it.
+private void note(Args...)(Args args) @system
 {
     import std.conv : text;
 
@@ -277,6 +282,7 @@ struct NativeSession
     ClientFrame frame;
     char[] title;  /// ditto
     Palette framePalette; /// ditto
+    bool frameHighContrast; /// the desktop asks for more contrast (`RES45`)
     /// The title's face, found the first time a frame is drawn, and the
     /// title set in it.
     TitleFace titleFace;
@@ -426,8 +432,6 @@ the window closes. `false` when no window, font or device could be opened.
 bool runNative(alias present, alias handle, alias draw = noDraw, alias setup = noSetup,
     alias shutdown = noShutdown)(in RunConfig cfg, in NativeRequest request) @system
 {
-    import core.stdc.stdlib : getenv;
-
     DefaultLoop loop;
     if (DefaultLoop.create(loop, LoopConfig()).hasError)
     {
@@ -441,48 +445,49 @@ bool runNative(alias present, alias handle, alias draw = noDraw, alias setup = n
         whyNot(i"the application's identity is malformed: $(fault)");
         return false;
     }
-    // Before `linux`, which Android also is: it has neither Wayland nor X11.
-    // The window is the activity's, its frames paced by `AChoreographer`.
+    // Android is `linux` too, and has neither Wayland nor X11: its window is
+    // the activity's, its frames paced by `AChoreographer`. Wayland's are
+    // paced by the compositor's frame callbacks; X11 presents at once, and
+    // its FIFO swapchain paces it.
     version (Android)
-    {
-        AndroidWsi wsi;
-        if (AndroidWsi.open(wsi, wsiConfig).hasError || wsi.attach(loop).hasError)
-        {
-            whyNot(i"the native arm has no activity: start the app through AndroidWsiMain");
-            return false;
-        }
-        return drive!(present, handle, draw, setup, shutdown)(wsi, loop, cfg, request,
-            paced: true);
-    }
+        enum integrated = true;
     else version (linux)
+        enum integrated = true;
+    else
+        enum integrated = false;
+    static if (!integrated)
     {
-        if (getenv("WAYLAND_DISPLAY") !is null)
-        {
-            WaylandWsi wsi;
-            if (!WaylandWsi.open(wsi, loop, wsiConfig).hasError)
-            {
-                const deadline = MonoTime.currTime + 5.seconds;
-                while (!wsi.bootstrapComplete && MonoTime.currTime < deadline)
-                    if (wsi.runIntegratedOnce(loop, 100.msecs).hasError)
-                        break;
-                if (wsi.bootstrapComplete && wsi.canCreateWindows)
-                    return drive!(present, handle, draw, setup, shutdown)(wsi, loop, cfg,
-                        request, paced: true);
-            }
-        }
-        X11Wsi wsi;
-        if (X11Wsi.open(wsi, wsiConfig).hasError || wsi.attach(loop).hasError)
-        {
-            whyNot(i"the native arm found no Wayland compositor or X server");
-            return false;
-        }
-        return drive!(present, handle, draw, setup, shutdown)(wsi, loop, cfg, request,
-            paced: false);
+        whyNot(i"the native arm runs on Wayland, X11 and Android only so far");
+        return false;
     }
     else
     {
-        whyNot(i"the native arm runs on Wayland and X11 only so far");
-        return false;
+        bool drove;
+        const opened = openNative!((ref wsi) {
+            enum paced = backendKindOf!(typeof(wsi)) != BackendKind.x11;
+            drove = drive!(present, handle, draw, setup, shutdown)(wsi, loop, cfg, request,
+                paced: paced);
+        })(loop, preferenceOf(cfg.native.windowSystem), wsiConfig);
+        if (opened.hasError)
+        {
+            whyNot(i"the native arm opened no window system: $(opened.error.diagnostic[])");
+            return false;
+        }
+        return drove;
+    }
+}
+
+/// The window system `system` asks the native arm for.
+private BackendPreference preferenceOf(WindowSystem system) @safe pure nothrow @nogc
+{
+    // Android has only its own window system, whatever is asked.
+    version (Android)
+        return BackendPreference.automatic;
+    else final switch (system)
+    {
+        case WindowSystem.auto_: return BackendPreference.automatic;
+        case WindowSystem.wayland: return BackendPreference.wayland;
+        case WindowSystem.x11: return BackendPreference.x11;
     }
 }
 
@@ -559,6 +564,24 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
     import sparkles.ui.interp.immediate : paint;
 
     NativeSession session;
+    // `--debug log-events`: each event as the drain delivers it — text read there,
+    // the one place it can be (`ED8`) — and the counts by kind when the
+    // window closes.
+    EventStats events;
+    const eventPretty = PrettyPrintOptions!void(colored: false, softMaxWidth: 120);
+    // What each presented frame took, from the draw decision to the present,
+    // summarized when the window closes under any frame switch.
+    FrameStats frameTimes;
+    const summarizeFrames = cfg.native.debugging.traceFrames
+        || cfg.native.debugging.traceFramesOver > 0 || cfg.native.debugging.frames > 0
+        || cfg.native.debugging.resizeStress;
+    void noteEvent(in WindowEvent e) @trusted
+    {
+        if (!cfg.native.debugging.logEvents)
+            return;
+        events.count(e);
+        note(eventLine(wsi, e, eventPretty));
+    }
     // Cells measured at scale 1 size the window; the surface's real scale
     // re-measures them once it is known.
     int pxAt(double scale) => request.fontSizePxOverride > 0 ? request.fontSizePxOverride
@@ -580,6 +603,12 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         return false;
     }
     const window = created.value;
+    scope (exit)
+        if (cfg.native.debugging.logEvents)
+            note(i"native window events: $(events)");
+    scope (exit)
+        if (summarizeFrames)
+            note(i"native window frames: $(frameTimes)");
 
     // ── the first configure ──
     SurfaceMetrics metrics;
@@ -590,6 +619,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         if (wsi.runIntegratedOnce(loop, 100.msecs).hasError)
             break;
         cast(void) wsi.drain((WindowEvent e) {
+            noteEvent(e);
             if (e.window != window)
                 return;
             e.payload.match!(
@@ -608,18 +638,11 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
     The desktop's appearance (`RES45`): read before the first frame, the
     portal given a short budget to answer, then followed as it changes
     (`drainEvents`). The client frame takes its controls' layout and its
-    title's font; the application, the colour scheme. `SPARKLES_APPEARANCE`
+    title's font; the application, the colour scheme. `--appearance`
     (`dark`, `light`, `high-contrast`) pins it over what the desktop says.
     */
     SystemAppearance appearance;
-    const(char)[] pinnedAppearance;
-    {
-        import core.stdc.stdlib : getenv;
-        import core.stdc.string : strlen;
-
-        if (auto pinned = getenv("SPARKLES_APPEARANCE"))
-            pinnedAppearance = (() @trusted => pinned[0 .. strlen(pinned)])();
-    }
+    const(char)[] pinnedAppearance = cfg.native.appearance;
     version (Android) {} else version (linux)
     {
         // Watched by the loop through its address: it must not move, and
@@ -640,6 +663,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
     // when they change.
     void frameAppearance(in SystemAppearance a, bool started)
     {
+        session.frameHighContrast = a.hasContrast && a.contrast == ContrastLevel.high;
         const layout = a.hasButtons ? a.buttons : ClientFrame.defaultLayout;
         if (layout != session.frame.layout)
         {
@@ -921,7 +945,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
     // before the next frame is drawn: drawn first, a frame of the old size
     // would be committed with the new window geometry (`extentsPending`).
     bool extentsAsked, extentsPending;
-    // What the traced frame spent (`SPARKLES_NATIVE_TRACE_FRAMES`).
+    // What the traced frame spent (`--debug trace-frames`).
     FrameTiming timing;
     void askFrameExtents()
     {
@@ -1027,8 +1051,6 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
             whyNot(i"the native arm found no native handles for the window: $(handles.error.diagnostic[])");
             return false;
         }
-        import core.stdc.stdlib : getenv;
-
         bool made;
         cast(void) nativeIo(() {
             auto context = VulkanContext.create(gpu.vk, handles.value, ContextRequest(
@@ -1036,7 +1058,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                 applicationVersion: makeApiVersion(0, request.app.version_[0],
                     request.app.version_[1], request.app.version_[2]),
                 apiVersion: apiVersion13,
-                validation: getenv("SPARKLES_VULKAN_VALIDATION") !is null));
+                validation: cfg.native.debugging.vulkanValidation));
             made = !context.hasError;
             if (!made)
                 whyNot(i"the native arm found no Vulkan device for the window: $(context.error.diagnostic[])");
@@ -1098,6 +1120,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
             if (wsi.runIntegratedOnce(loop, 1.seconds).hasError)
                 return false;
             cast(void) wsi.drain((WindowEvent e) {
+                noteEvent(e);
                 if (e.window != window)
                     return;
                 e.payload.match!(
@@ -1180,24 +1203,23 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
     const unitW = () => cfg.pointerUnit == PointerUnit.pixels ? 1 : session.font.cellW;
     const unitH = () => cfg.pointerUnit == PointerUnit.pixels ? 1 : session.font.cellH;
 
-    // `SPARKLES_NATIVE_TRACE_FRAMES`: a line on standard error per frame
-    // presented, and per frame the swapchain turned out stale for, so a run
-    // can show an idle window drawing nothing, or one rebuilding forever.
-    import core.stdc.stdlib : getenv;
-    const traceFrames = getenv("SPARKLES_NATIVE_TRACE_FRAMES") !is null;
+    // `--debug trace-frames`: a line on standard error per frame presented,
+    // and per frame the swapchain turned out stale for, so a run can show an
+    // idle window drawing nothing, or one rebuilding forever.
+    // `trace-frames-over=N` collects the same detail and logs only the frames
+    // that took N ms or more.
+    const traceFrames = cfg.native.debugging.traceFrames
+        || cfg.native.debugging.traceFramesOver > 0;
+    const traceOver = dur!"msecs"(cfg.native.debugging.traceFramesOver);
     const opened = MonoTime.currTime;
     Duration now() => MonoTime.currTime - opened;
     uint presented;
     // Since when the traced frame's size has waited.
     MonoTime resizedAt;
-    // `SPARKLES_NATIVE_LOSE_DEVICE_AT=<n>`: treat frame `n` as a lost
-    // device, which no software driver produces on demand, so the rebuild
-    // can be shown to redraw.
-    import std.conv : to;
-    import std.string : fromStringz;
-    uint loseDeviceAt;
-    if (const at = getenv("SPARKLES_NATIVE_LOSE_DEVICE_AT"))
-        loseDeviceAt = (() @trusted => at.fromStringz.to!uint)();
+    // `--debug lose-device-at=N`: treat frame N as a lost device, which no
+    // software driver produces on demand, so the rebuild can be shown to
+    // redraw.
+    uint loseDeviceAt = cfg.native.debugging.loseDeviceAt;
 
     /*
     The frame answers the pointer before the application (`F13`): a press on
@@ -1317,6 +1339,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
     {
         bool delivered;
         cast(void) wsi.drain((WindowEvent e) @trusted {
+            noteEvent(e);
             // `@trusted` for the one call it exists for: the WSI asks for a
             // `@safe` sink, and the event goes to the application, whose
             // handler it cannot vouch for. Text is read only here (`ED8`).
@@ -1416,10 +1439,56 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
     // waking the loop with nothing to deliver (Android's inset poll while the
     // keyboard is up) would otherwise restart forever.
     MonoTime lastPass = MonoTime.currTime;
+    // `--debug resize-stress`: every 30 frames a new size — a maximize toggle
+    // where the compositor sizes the window (Wayland), a step through a band
+    // of sizes where the client may (X11). `--debug frames=N`: close after N.
+    // A window system with neither verb (Android) cannot be stressed: the
+    // switch is reported once and changes nothing.
+    enum canStress = __traits(hasMember, Wsi, "setMaximized")
+        || __traits(hasMember, Wsi, "setLogicalSize");
+    const resizeStress = canStress && cfg.native.debugging.resizeStress;
+    if (cfg.native.debugging.resizeStress && !canStress)
+        whyNot(i"resize-stress: this window system cannot resize a window");
+    // A scripted run that stops presenting — a window minimized, a surface
+    // lost for good — ends, failed, rather than waiting out a lane's timeout.
+    const scripted = resizeStress || cfg.native.debugging.frames > 0;
+    enum stalledAfter = 10.seconds;
+    MonoTime lastProgress = MonoTime.currTime;
+    uint stressStep;
+    bool drawsContinuously() => resizeStress
+        || (cfg.native.debugging.frames > 0 && presented < cfg.native.debugging.frames);
+    void stressAndBudget()
+    {
+        lastProgress = MonoTime.currTime;
+        if (cfg.native.debugging.frames > 0 && presented >= cfg.native.debugging.frames)
+            host.quit();
+        if (!resizeStress || presented % 30 != 0)
+            return;
+        static if (__traits(hasMember, Wsi, "setMaximized"))
+        {
+            // From the state the compositor reports, not a guess: a window
+            // that starts maximized is restored first.
+            cast(void) wsi.setMaximized(window,
+                !session.frame.state.has(ToplevelState.maximized));
+        }
+        else static if (__traits(hasMember, Wsi, "setLogicalSize"))
+        {
+            ++stressStep;
+            cast(void) wsi.setLogicalSize(window, LogicalSize(480 + (stressStep % 7) * 160,
+                320 + (stressStep % 5) * 120));
+        }
+    }
+
     for (;;)
     {
         if (host.quitRequested)
             lc.close();
+        if (scripted && MonoTime.currTime - lastProgress >= stalledAfter)
+        {
+            whyNot(i"the scripted run presented nothing for $(stalledAfter.total!"seconds") s, after $(presented) frames");
+            ok = false;
+            break;
+        }
         const plan = lc.step(now(), host.wakeAsk);
         if (plan.stop)
         {
@@ -1480,9 +1549,13 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
             }
             const started = MonoTime.currTime;
             lastPass = started;
-            buildFrame!present(host, plan.mustDraw);
+            // A scripted run (`frames=N`, `resize-stress`) draws continuously:
+            // an idle application presents nothing, and neither would end. Its
+            // frames may not be skipped either: a skipped frame keeps the
+            // request standing and the opportunity open, and the loop spun.
+            buildFrame!present(host, plan.mustDraw || drawsContinuously);
             timing.build = MonoTime.currTime - started;
-            lc.requested(host.frameRequested);
+            lc.requested(host.frameRequested || drawsContinuously);
             if (host.frameSkipped)
                 continue;
             // Acquire and present may read the shared display themselves —
@@ -1553,14 +1626,19 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                 case FrameOutcome.presented:
                     lc.frameDone(FrameResult.presented, now());
                     ++presented;
+                    // The frame's time includes the rebuild that preceded it
+                    // in this pass: a stall in a resize is the one to see.
+                    const done = MonoTime.currTime;
+                    const took = done - started + timing.rebuild;
+                    frameTimes.note(took);
                     if (!pipelinesSaved)
                         savePipelines();
-                    if (traceFrames)
+                    stressAndBudget();
+                    if (traceFrames && (cfg.native.debugging.traceFrames || took >= traceOver))
                     {
-                        const done = MonoTime.currTime;
                         const resize = resizedAt == MonoTime.init ? Duration.zero
                             : done - resizedAt;
-                        whyNot(i"native frame $(presented) at $((started - opened).total!"msecs") ms, $(session.pixelW)x$(session.pixelH) in $(gpu.swapchain.extent.width)x$(gpu.swapchain.extent.height): rebuild $(timing.rebuild.total!"usecs") us, build $(timing.build.total!"usecs"), wait $(timing.wait.total!"usecs"), acquire $(timing.acquire.total!"usecs"), record $(timing.record.total!"usecs"), present $(timing.present.total!"usecs"), gpu $(timing.gpu.total!"usecs") (frame -$(gpu.sync.framesInFlight)); resize shown after $(resize.total!"usecs") us; rebuild: settle $(timing.settle.total!"usecs"), release $(timing.release.total!"usecs"), swapchain $(timing.swapchain.total!"usecs"), views $(timing.views.total!"usecs"), sync $(timing.sync.total!"usecs")");
+                        note(i"native frame $(presented) at $((started - opened).total!"msecs") ms, $(session.pixelW)x$(session.pixelH) in $(gpu.swapchain.extent.width)x$(gpu.swapchain.extent.height): rebuild $(timing.rebuild.total!"usecs") us, build $(timing.build.total!"usecs"), wait $(timing.wait.total!"usecs"), acquire $(timing.acquire.total!"usecs"), record $(timing.record.total!"usecs"), present $(timing.present.total!"usecs"), gpu $(timing.gpu.total!"usecs") (frame -$(gpu.sync.framesInFlight)); resize shown after $(resize.total!"usecs") us; rebuild: settle $(timing.settle.total!"usecs"), release $(timing.release.total!"usecs"), swapchain $(timing.swapchain.total!"usecs"), views $(timing.views.total!"usecs"), sync $(timing.sync.total!"usecs")");
                         resizedAt = MonoTime.init;
                     }
                     timing = FrameTiming.init;
@@ -1582,8 +1660,9 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                     break;
                 case FrameOutcome.rebuild:
                     lc.frameDone(FrameResult.outOfDate, now());
-                    if (traceFrames)
-                        whyNot(i"native frame: the swapchain is stale at $((started - opened).total!"msecs") ms, $(session.pixelW)x$(session.pixelH): acquire $(timing.acquired), present $(timing.presented), rebuild $(timing.rebuild.total!"usecs") us");
+                    if (cfg.native.debugging.traceFrames
+                        || (traceFrames && MonoTime.currTime - started >= traceOver))
+                        note(i"native frame: the swapchain is stale at $((started - opened).total!"msecs") ms, $(session.pixelW)x$(session.pixelH): acquire $(timing.acquired), present $(timing.presented), rebuild $(timing.rebuild.total!"usecs") us");
                     break;
                 case FrameOutcome.deviceLost:
                     trace(i"native arm: the device was lost");
@@ -1593,7 +1672,10 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                     lc.frameDone(FrameResult.failed, now());
                     break;
             }
-            if (outcome != FrameOutcome.presented && !pollNow())
+            // X11 presents unpaced, so a continuously drawing run must read
+            // its events between frames, or input, a close and its own resizes
+            // wait until a frame fails.
+            if ((outcome != FrameOutcome.presented || !paced) && !pollNow())
                 break;
             continue;
         }
@@ -1775,7 +1857,8 @@ private void drawClientFrame(C)(ref C canvas, ref NativeSession session, RgbColo
     const geometry = FrameGeometry(surfaceW: session.pixelW, surfaceH: session.pixelH,
         top: session.insets.top - session.frame.barPx(density), cellW: session.font.cellW,
         cellH: session.font.cellH, density: density, margin: session.margin);
-    const colours = FrameColours.of(session.framePalette, ground);
+    auto colours = FrameColours.of(session.framePalette, ground);
+    colours.highContrast = session.frameHighContrast;
     FrameShape[ClientFrame.maxShapes] shapes;
     const n = session.frame.build(shapes[], geometry, colours);
     canvas.pushOffsetPx(-session.insets.left, -session.insets.top);
@@ -1850,7 +1933,7 @@ private void drawClientFrame(C)(ref C canvas, ref NativeSession session, RgbColo
 
 /*
 The device's time for each frame slot's commands, from a timestamp at their
-start and one at their end, for `SPARKLES_NATIVE_TRACE_FRAMES`. A slot's
+start and one at their end, for `--debug trace-frames`. A slot's
 pair is read when the slot comes round again, its fence waited: the time is
 that of the frame drawn `framesInFlight` frames before. A queue whose
 timestamps carry no valid bits gets no timer.
@@ -1931,7 +2014,7 @@ private struct GpuTimer
     }
 }
 
-// Where a frame's time went, for `SPARKLES_NATIVE_TRACE_FRAMES`.
+// Where a frame's time went, for `--debug trace-frames`.
 private struct FrameTiming
 {
     /// Time the device's work too (`GpuTimer`).

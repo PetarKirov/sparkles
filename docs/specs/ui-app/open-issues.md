@@ -8,18 +8,22 @@ requirement statuses are reconciled, and the closing commit is recorded._
 
 ## UIAPP-O1 — One point size for every application {#uiapp-o1}
 
-**Status:** open (decision taken, consequence outstanding). **Requirements:** `CLI3`.
+**Status:** open (decision taken and shipped in code, release notes outstanding).
+**Requirements:** `CLI3`.
 
-The two applications ship different default point sizes today — 13 in
+The two applications shipped different default point sizes — 13 in
 `apps/terminal`, 14 in `apps/hue` — and the shared vocabulary (`CLI1`) can only have
-one. The decision is **14 everywhere**; terminal's default changes.
+one. The decision is **one shared default, `defaultFontSizePoints` (18 pt)**; both
+applications' defaults change.
 
-The reason no per-application override is offered is a property of the argument
-parser, not a preference: the parsing entry point **default-constructs the parameter
-struct internally**, so an application cannot seed a field before parsing and then
-have the parse leave it alone. The alternatives were to parameterize the mixin
-template for the benefit of one application, or to accept the unified default. The
-latter was taken.
+The decision was first forced by the argument parser: it default-constructs the
+parameter struct internally, and while the fields were mixed into each application's
+struct, an application could not seed one. Applications now embed `GuiOptions` with
+`@Flatten`, and the parse starts from the struct's initial value, so a default given
+in the field's initializer holds until the user types the flag (`CLI3`). hue and the
+terminal keep the shared default (`defaultFontSizePoints`); an application
+whose content needs another size, such as the text lab's specimen, sets it
+there.
 
 Close this entry when both applications ship the unified default and the change is
 noted in their release notes — a default point size is user-visible.

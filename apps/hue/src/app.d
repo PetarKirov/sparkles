@@ -57,7 +57,6 @@ import sparkles.diff : WhitespaceMode;
 import sparkles.docs.assets : markdownPreviewCss;
 import sparkles.docs.source_set : SourceEntry, SourceSet;
 import sparkles.doc_view.table_select : TableCopyFormat;
-import sparkles.doc_view.dsv_view : resolveTableCopy;
 
 import sparkles.ui_app.gui_options : defaultGuiFont, defaultGuiFontFamily,
     defaultTheme, GuiOptions;
@@ -69,7 +68,7 @@ import sparkles.ui_app.display : displayAvailable;
 import cli;
 import source_loc : SourceLoc;
 import project_state : dubBuildFor;
-import settings : HueConfig;
+import settings : AnsiCopyMode, HueConfig, resolveTableCopy;
 import settings_load : LoadedConfig;
 import settings_store : ConfigStore;
 
@@ -246,7 +245,7 @@ int executeView(in HueCli root, in View view)
                     codeMaxLines: opt.codeMaxLines,
                     tableOverflow: parseOverflow(opt.tableOverflow, "--table-overflow"),
                     tableMaxLines: opt.tableMaxLines,
-                    tableCopyFlag: opt.tableCopy,
+                    tableCopyMode: opt.tableCopy,
                     configStore: &gStore);
                 // A terminal that would not enter raw mode drew nothing: fall
                 // through and print the directory as a stream gets it (`MOD5`).
@@ -1046,7 +1045,7 @@ private int renderDocument(Backend backend, in ViewRenderOptions opt, ref Docume
                 docSet, pipeline, dirTarget, loc);
         case Backend.html:
             return runHtmlSink(doc, theme, registry, cache,
-                parseDiffLayout(opt.diffLayout), opt.gutter, opt.lineNumbers, loc,
+                opt.diffLayout, opt.gutter, opt.lineNumbers, loc,
                 opt.diffShowFormatting, opt.diffChrome);
         case Backend.tui:
             return runTuiSink(opt, doc, labels, theme, cache,
@@ -1142,9 +1141,6 @@ private int runDirectoryTarget(string dir, bool twoslash, string themeName,
     stderr.writeln("hue: wrote ", n, " page(s) + index.html to ", outDir);
     return 0;
 }
-
-/// Parses the `--background` value (`CLI8`) into a `BackgroundMode`; an unknown
-/// name warns and falls back to `full` (mirrors the `--theme` fallback).
 
 private DiffViewOptions htmlDiffOptions(DiffLayout layout,
     bool showFormatting = false, bool chrome = true) @safe pure nothrow @nogc
@@ -1393,7 +1389,7 @@ private int runAnsiSink(in ViewRenderOptions opt, ref Document doc,
 
     SharedBuffer!char output;
     const depth = detectColorDepth();
-    const bgMode = parseBackgroundMode(opt.background);
+    const bgMode = opt.background;
     final switch (doc.kind) with (ContentKind)
     {
         case twoslash:
@@ -1531,7 +1527,7 @@ private int runAnsiSink(in ViewRenderOptions opt, ref Document doc,
             const pageFg = toRgb(theme.defaults.fg, hardFallbackFg);
             const pageBg = toRgb(theme.defaults.bg, hardFallbackBg);
             DiffViewOptions dopt;
-            dopt.layout = parseDiffLayout(opt.diffLayout);
+            dopt.layout = opt.diffLayout;
             // One-shot renders have no keystroke to expand a folded hunk with,
             // so a diff that is entirely whitespace — a formatter's output,
             // say — would otherwise print nothing but the badge.
@@ -1777,7 +1773,7 @@ private int runTuiSink(in ViewRenderOptions opt, ref Document doc, in LabelSet l
             loader, themeSet.names, themeSet.themes, themeSet.idx, labels,
             &cache, opt.include.dup, opt.exclude.dup, opt.treeWidth,
             opt.tabWidth, opt.listWhitespace, liveTypes: !opt.noLiveTypes,
-            diffLayout: parseDiffLayout(opt.diffLayout),
+            diffLayout: opt.diffLayout,
             codeOverflow: parseOverflow(opt.codeOverflow, "--code-overflow"),
             codeMaxLines: opt.codeMaxLines,
             tableOverflow: parseOverflow(opt.tableOverflow, "--table-overflow"),
@@ -1787,8 +1783,8 @@ private int runTuiSink(in ViewRenderOptions opt, ref Document doc, in LabelSet l
             formatPreview: opt.formatPreview,
             formatWidth: opt.formatWidth,
             formatterName: opt.formatter,
-            tableCopyFlag: opt.tableCopy,
-            scrollAnchor: parseScrollAnchor(opt.scrollAnchor),
+            tableCopyMode: opt.tableCopy,
+            scrollAnchor: opt.scrollAnchor,
             gutter: opt.gutter, lineNumbers: opt.lineNumbers,
             configStore: &gStore,
             initialLine: loc.line, initialCol: loc.col,
@@ -1881,10 +1877,10 @@ private int runGuiSink(in ViewRenderOptions opt, ref Document doc, in LabelSet l
             lineNumbers: opt.lineNumbers,
             gutter: opt.gutter,
             codeLineNumbers: opt.codeLineNumbers,
-            ansiCopyStrip: opt.ansiCopy == "strip",
+            ansiCopyStrip: opt.ansiCopy == AnsiCopyMode.strip,
             tableCopy: resolveTableCopy(opt.tableCopy,
                 doc.kind == ContentKind.dsv),
-            tableCopyFlag: opt.tableCopy,
+            tableCopyMode: opt.tableCopy,
             dsvText: doc.dsvText,
             dsvInfo: doc.dsvInfo,
             dsvNote: doc.dsvNote,
@@ -1907,7 +1903,7 @@ private int runGuiSink(in ViewRenderOptions opt, ref Document doc, in LabelSet l
             formatPreview: opt.formatPreview,
             formatWidth: opt.formatWidth,
             formatterName: opt.formatter,
-            scrollAnchor: parseScrollAnchor(opt.scrollAnchor),
+            scrollAnchor: opt.scrollAnchor,
             treeWidth: opt.treeWidth,
             tabWidth: opt.tabWidth,
             listWhitespace: opt.listWhitespace,

@@ -100,6 +100,7 @@ int launchDesktop(ref CommandNode!TerminalCli node)
     RunConfig cfg = {
         title: "sparkles:terminal",
         gui: guiOptionsFrom(lc.effective, windowCols, windowRows),
+        native: node.value.native,
         keyRelease: true, // the terminal-grade keyboard (kitty releases)
         uiFollowsCellFont: true, // chrome text at the terminal's size
         fractionalScroll: true, // scrolled between cells (`LAY7`)

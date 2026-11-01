@@ -10,10 +10,13 @@ module sparkles.wsi;
 public import sparkles.wsi.clipboard;
 public import sparkles.wsi.clipboard_conformance;
 public import sparkles.wsi.conformance;
+public import sparkles.wsi.event_log;
+public import sparkles.wsi.event_stats;
 public import sparkles.wsi.events;
 public import sparkles.wsi.handles;
 public import sparkles.wsi.history;
 public import sparkles.wsi.loop;
+public import sparkles.wsi.platform.native;
 public import sparkles.wsi.platform.select;
 
 version (Windows)

@@ -10,9 +10,14 @@ import sparkles.base.text.case_text : asciiLower;
 import std.sumtype : match, SumType;
 import std.traits : FieldNameTuple, getUDAs, isDynamicArray, isIntegral, isSomeString;
 
+import sparkles.core_cli.args.switches : isSwitches;
 import sparkles.core_cli.args.error :
     CliError,
     CliExpected,
+    RunError,
+    RunExpected,
+    failRun,
+    skipRun,
     Expected,
     error,
     ok;
@@ -805,7 +810,30 @@ private CliExpected!void applyOption(string field, T)(
 
     auto originalArg = args[index];
 
-    static if (is(T == bool))
+    static if (isSwitches!T)
+    {
+        // Each occurrence adds to the set; `?` or `help` lists the switches,
+        // as neither can be one.
+        auto values = collectValues(args, index, inlineValue, hasInlineValue, false,
+            commandBoundary);
+        if (values.empty)
+            return error(CliError(
+                kind: CliError.Kind.parse,
+                message: "Missing value for " ~ originalArg,
+            ));
+        if (isOptionHelpToken(values[0]))
+            return error(CliError(
+                kind: CliError.Kind.help,
+                help: formatOptionValueHelp!T(optionInfo, field),
+                exitCode: 0,
+            ));
+        auto applied = target.apply(values[0]);
+        if (!applied)
+            return error(CliError(kind: CliError.Kind.parse,
+                message: displayOption(optionInfo, field) ~ ": " ~ applied.error.message));
+        return ok();
+    }
+    else static if (is(T == bool))
     {
         if (hasInlineValue)
         {
@@ -926,7 +954,11 @@ private string[] collectValues(
 {
     if (hasInlineValue)
     {
+        // Only an option that takes many splits on commas: `--name=a,b` is
+        // the one value `a,b` (a `Switches` set splits its own).
         index++;
+        if (!variadic)
+            return inlineValue.length ? [inlineValue] : null;
         return inlineValue.split(",");
     }
 
@@ -1094,9 +1126,9 @@ private CliExpected!T parseValue(T)(string value, Option optionInfo)
         // and the kebab/snake/renamed form when it does — so a
         // `--present-mode fifo-relaxed` matches `PresentMode.fifoRelaxed`
         // the same way `fromJSON` would, without quoting JSON around it.
-        import sparkles.wired.policy : AnyFormat, resolveCaseStyle, wireNames;
+        import sparkles.wired.policy : CommandLine, resolveCaseStyle, wireNames;
 
-        alias names = wireNames!(AnyFormat, T, resolveCaseStyle!(AnyFormat, T));
+        alias names = wireNames!(CommandLine, T, resolveCaseStyle!(CommandLine, T));
         static foreach (i, m; __traits(allMembers, T))
         {
             if (value == names[i])
@@ -1136,7 +1168,7 @@ private CliExpected!T parseValue(T)(string value, Option optionInfo)
     }
 }
 
-private CliExpected!bool parseBool(string value) @safe
+package CliExpected!bool parseBool(string value) @safe
 {
     switch (value.asciiLower)
     {
@@ -1482,6 +1514,18 @@ private int invokeReturning0(alias call)()
         {
             static if (is(E == CliError))
                 return reportCliError(res.error);
+            else static if (is(E == RunError))
+            {
+                import std.stdio : stderr, stdout;
+
+                if (res.error.skipped)
+                {
+                    stdout.writeln("SKIP: ", res.error.message);
+                    return 0;
+                }
+                stderr.writeln("Error: ", res.error.message);
+                return res.error.exitCode;
+            }
             else static if (is(E == string))
             {
                 import std.stdio : stderr;
@@ -1974,6 +2018,32 @@ unittest
 
     FailCliError fc;
     assert(runParsedCli(fc) == 5);
+
+    @(Command("skipped"))
+    static struct Skipped
+    {
+        RunExpected!void run() => skipRun("no display");
+    }
+
+    @(Command("failed"))
+    static struct Failed
+    {
+        RunExpected!void run() => failRun("no window");
+    }
+
+    Skipped sk;
+    assert(runParsedCli(sk) == 0, "a skip is a success");
+    Failed fr;
+    assert(runParsedCli(fr) == 1);
+
+    @(Command("usage"))
+    static struct Usage
+    {
+        RunExpected!void run() => failRun("bad flag", 2);
+    }
+
+    Usage us;
+    assert(runParsedCli(us) == 2, "a failure's own exit status");
 }
 
 @("args.runCli.initsLoggerWhenLogLevelPresent")
@@ -2570,6 +2640,24 @@ unittest
     assert(help.canFind("warn"));
 }
 
+@("args.parseCli.inlineValueIsOneValue")
+@system
+unittest
+{
+    @(Command("app"))
+    struct Cli
+    {
+        @(Option("appearance")) string appearance;
+        @(Option("files")) string[] files;
+    }
+
+    auto parsed = parseCli!Cli(["app", "--appearance=dark,high-contrast", "--files=a.d,b.d"]);
+    assert(parsed, parsed.error.message);
+    assert(parsed.value.appearance == "dark,high-contrast", "a scalar keeps its commas");
+    assert(parsed.value.files == ["a.d", "b.d"], "a list splits on them");
+    assert(!parseCli!Cli(["app", "--appearance="]), "an empty inline value is a missing one");
+}
+
 @("args.parseCli.wiredEnumUsesKebabWireNames")
 @system
 unittest
@@ -2608,6 +2696,48 @@ unittest
     assert(help.error.help.canFind("fifo-relaxed"));
     assert(help.error.help.canFind("auto"));
     assert(!help.error.help.canFind("fifoRelaxed"));
+}
+
+@("args.parseCli.commandLineWireNameOverridesOnlyTheFlag")
+@system
+unittest
+{
+    import sparkles.base.text.wire_names : enumNames;
+    import sparkles.wired : AnyFormat, CommandLine, WireName;
+
+    struct Json
+    {
+    }
+
+    enum Copy
+    {
+        @WireName!CommandLine("auto") detect,
+        raw,
+    }
+
+    @(Command("copy"))
+    struct Cli
+    {
+        @(Option("table-copy"))
+        Copy copy = Copy.raw;
+    }
+
+    auto parsed = parseCli!Cli(["copy", "--table-copy=auto"]);
+    assert(parsed);
+    assert(parsed.value.copy == Copy.detect);
+
+    // The flag spells the member `auto` only: its identifier is no longer a
+    // valid value, and the help lists the flag's spelling.
+    assert(!parseCli!Cli(["copy", "--table-copy=detect"]));
+    auto help = parseCli!Cli(["copy", "--table-copy=help"]);
+    assert(!help);
+    assert(help.error.help.canFind("auto"));
+    assert(!help.error.help.canFind("detect"));
+
+    // Every other format keeps the identifier.
+    static assert(enumNames!(AnyFormat, Copy) == ["detect", "raw"]);
+    static assert(enumNames!(Json, Copy) == ["detect", "raw"]);
+    static assert(enumNames!(CommandLine, Copy) == ["auto", "raw"]);
 }
 
 @("args.optionHelp.bool")

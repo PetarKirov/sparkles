@@ -61,7 +61,7 @@ struct VulkanWindow
     @(Option("no-color", description: "Disable colored output"))
     bool noColor;
 
-    Expected!(void, string) run()
+    RunExpected!void run()
     {
         Window window;
         auto opened = Window.open(window, WindowRequest(
@@ -72,7 +72,7 @@ struct VulkanWindow
         // No display is a degraded environment, not a failure: CI runs this
         // with --help, but a developer on a tty should get a clear skip.
         if (opened.hasError)
-            return skip("cannot open a window", opened.error);
+            return skipRun("cannot open a window", opened.error);
 
         VulkanContext vk;
         auto brought = VulkanContext.create(vk, window, ContextRequest(
@@ -80,7 +80,7 @@ struct VulkanWindow
             validation: validation,
         ));
         if (brought.hasError)
-            return skip("cannot bring up Vulkan", brought.error);
+            return skipRun("cannot bring up Vulkan", brought.error);
 
         auto report = describe(vk, window);
         auto opt = PrettyPrintOptions!void(
@@ -95,22 +95,15 @@ struct VulkanWindow
             SDL_Event ev;
             while (SDL_PollEvent(&ev))
                 if (ev.type == SDL_EventType.SDL_EVENT_QUIT)
-                    return ok();
+                    return ranOk();
             SDL_Delay(16);
         }
 
-        return ok();
+        return ranOk();
     }
 }
 
 import std.stdio : writeln;
-
-/// A skip is a success: the environment lacks a display or a driver.
-Expected!(void, string) skip(string what, string detail)
-{
-    writeln("SKIP: ", what, " — ", detail);
-    return ok();
-}
 
 // -----------------------------------------------------------------------------
 // Report model

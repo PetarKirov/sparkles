@@ -23,9 +23,9 @@ import std.traits : getUDAs, TemplateArgsOf, TemplateOf;
 // in `sparkles:metadata`, so `sparkles:base` can resolve names through it; the
 // type-level resolution rule is `sparkles.base.text.wire_names`. Both are part
 // of this module's public surface, re-exported unchanged.
-public import sparkles.metadata.wire : AnyFormat, CaseStyle, DSource, NameSource,
-    nameSourceOf, Pretty, Repr, WireCase, WireCaseAttr, WireName, WireNameAttr,
-    WireRepr, WireReprAttr, WireTarget;
+public import sparkles.metadata.wire : AnyFormat, CaseStyle, CommandLine, DSource,
+    NameSource, nameSourceOf, Pretty, Repr, WireCase, WireCaseAttr, WireName,
+    WireNameAttr, WireRepr, WireReprAttr, WireTarget;
 public import sparkles.base.text.wire_names : hasExplicitWireName, resolveCaseStyle,
     resolveRepr;
 import sparkles.base.text.case_style : convertCase;

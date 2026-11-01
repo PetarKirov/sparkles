@@ -7,16 +7,17 @@ different help text, different resolution order, and different defaults for the
 same setting. Nothing made them disagree on purpose; there was simply no one
 place to put them.
 
-$(B The fields live in a mixin, and the struct is defined by it.) Two parallel
-declarations of one vocabulary is the defect being removed, so this module does
-not contain a second copy that could drift from the first: $(LREF GuiOptions) is
-`mixin GuiCliFields` and nothing else. An application either embeds that struct
-or mixes the fields into its own parameter type, so an application whose flags
-are flat stays flat.
+$(B The fields live in one struct, and every application embeds it.) Two parallel
+declarations of one vocabulary is the defect being removed, so this module holds
+the only copy: $(LREF GuiOptions), which an application flattens into its own
+command struct (`@Flatten`), so its flags stay flat and nothing copies them field
+by field.
 */
 module sparkles.ui_app.gui_options;
 
-import sparkles.core_cli.args : Option;
+import sparkles.core_cli.args : Description, Option, Switches;
+import sparkles.metadata.case_style : CaseStyle;
+import sparkles.metadata.wire : WireCase;
 import sparkles.ui.theme : Theme;
 
 /**
@@ -60,10 +61,10 @@ enum defaultGuiFont =
     "CaskaydiaCove Nerd Font Mono,Cascadia Code,Hack Nerd Font Mono,Hack," ~
     "Iosevka Term,Iosevka,Source Code Pro,DejaVu Sans Mono,monospace";
 
-/// The default `--font-size`, in points. One value for every application
-/// (`CLI3`): `apps/terminal` used 13 and `apps/hue` 14, and there is no
-/// per-application override — see `UIAPP-O1` for why the argument parser makes
-/// one impossible to express as a field initializer.
+/// The default `--font-size`, in points: one value shared by every application
+/// (`CLI3`, `UIAPP-O1`; `apps/terminal` used 13 and `apps/hue` 14). An
+/// application whose content needs another size gives it in its flattened
+/// `GuiOptions` field's initializer, so a typed `--font-size` still wins.
 ///
 /// Points, not pixels: the setup path resolves this against the display's real
 /// density, so the same number is the same physical size on a HiDPI panel.
@@ -108,19 +109,18 @@ enum int defaultWindowCols = 100;
 enum int defaultWindowRows = 30;
 
 /**
-The window/font flags, as fields.
+The window/font/theme options, declared once (`CLI1`). Every field carries its
+`@(Option(...))` here, so the help text is written once and two applications
+cannot describe the same flag differently.
 
-Mixed into an application's own parameter struct, or into $(LREF GuiOptions) for
-one that keeps them separate. Every field carries its `@(Option(...))` here, so
-the help text is written once and two applications cannot describe the same flag
-differently.
+An application embeds it in its command struct as `@Flatten("GUI Options")
+GuiOptions gui;` — the flags stay flat (`--font`, not `--gui.font`) — and
+passes it on in `RunConfig.gui` (`CLI2`). An application that needs other
+defaults gives them in that field's initializer, `GuiOptions gui =
+GuiOptions(fontSize: 12);`, so a flag the user types still wins (`CLI3`).
 */
-mixin template GuiCliFields()
+struct GuiOptions
 {
-    import sparkles.core_cli.args : Option;
-    import sparkles.ui_app.gui_options : defaultFontSizePoints, defaultGuiFont,
-        defaultGuiFontFamily, defaultTheme, defaultWindowCols, defaultWindowRows,
-        uiuaCodepointMap;
 
     @(Option("font|f", description:
         "Font for the window: a path, a family name, or a fontconfig "
@@ -190,14 +190,67 @@ mixin template GuiCliFields()
 }
 
 /**
-The window/font options as a standalone value.
-
-Defined $(B by) the mixin, so there is exactly one declaration of these fields
-in the repository and no second copy to drift.
+Which window system the native (Vulkan) arm opens. `auto` takes Wayland where
+`$WAYLAND_DISPLAY` names a compositor that answers, and X11 otherwise; Android
+has only its own, whatever is asked.
 */
-struct GuiOptions
+@WireCase(CaseStyle.kebabCase)
+enum WindowSystem : ubyte
 {
-    mixin GuiCliFields;
+    auto_,   ///
+    wayland, ///
+    x11,     ///
+}
+
+/**
+The native (Vulkan) arm's debug switches, taken by `--debug` as a
+comma-separated list or one at a time (`--debug log-events --debug
+lose-device-at=120`); `--debug=?` lists them.
+*/
+struct NativeDebug
+{
+    @Description("Log every window-system event the window receives, and their counts by kind when it closes.")
+    bool logEvents; ///
+
+    @Description("Log each frame's CPU and GPU time, and each frame its swapchain turned out stale for.")
+    bool traceFrames; ///
+
+    @Description("Run the device under the Vulkan validation layer, where it is installed.")
+    bool vulkanValidation; ///
+
+    @Description("Log only the frames that took N ms or more, with trace-frames' detail.")
+    uint traceFramesOver; ///
+
+    @Description("Close the window after N frames are presented: a scripted run's end.")
+    uint frames; ///
+
+    @Description("Resize the window every 30 frames: toggle maximize on Wayland, step through a band of sizes on X11.")
+    bool resizeStress; ///
+
+    @Description("Treat frame N as a lost device, which no software driver produces on demand, so the rebuild can be seen to redraw.")
+    uint loseDeviceAt; ///
+}
+
+/**
+The native (Vulkan) arm's options: the window system it opens, an appearance
+pinned over the desktop's, and its debug switches, which report on standard
+error (logcat on Android). An application flattens them beside $(LREF
+GuiOptions) — `@Flatten("Native Window Options") NativeOptions native;` — and
+passes them on in `RunConfig.native`; the other arms ignore them.
+*/
+struct NativeOptions
+{
+    @(Option("window-system", description:
+        "The native window's window system: auto (Wayland where a compositor answers, else X11), wayland or x11."))
+    WindowSystem windowSystem; ///
+
+    @(Option("appearance", placeholder: "PREFS", description:
+        "Pin the appearance over what the desktop says, comma-separated: dark or light, high-contrast, reduced-motion — what a golden capture or a test wants."))
+    string appearance; ///
+
+    @(Option("debug", placeholder: "SWITCH[,SWITCH…]", description:
+        "The native window's debug switches, comma-separated or repeated; --debug=? lists them."))
+    Switches!NativeDebug debugging; ///
 }
 
 /**
@@ -271,36 +324,35 @@ WindowCells windowCellsOf(O)(in O o) @safe pure nothrow @nogc
 // Tests
 // ---------------------------------------------------------------------------
 
-// Not `pure nothrow`: mixing the fields in evaluates their `@(Option(...))`
-// UDAs in this function's context, and `Option`'s constructor claims only
-// `@safe`.
-@("ui_app.gui_options.oneDeclaration")
-@safe
+@("ui_app.gui_options.flattenedFlagsStayFlat")
+@system
 unittest
 {
-    // The struct IS the mixin, so a field can only be declared once. If these
-    // ever diverge, this stops compiling rather than drifting quietly.
-    struct Mixed
+    import sparkles.core_cli.args : Flatten, Option, parseCli;
+
+    // An application embeds the options, flattened: the flags keep their own
+    // names beside the application's, and a default it gives in the field's
+    // initializer holds until the user types the flag (`CLI2`, `CLI3`).
+    struct App
     {
-        mixin GuiCliFields;
+        @Flatten("GUI Options") GuiOptions gui = GuiOptions(fontSize: 12);
+        @(Option("other", description: "")) bool other;
     }
 
-    static assert(GuiOptions.tupleof.length == Mixed.tupleof.length);
-    static foreach (i, _; GuiOptions.tupleof)
-    {
-        static assert(is(typeof(GuiOptions.tupleof[i]) == typeof(Mixed.tupleof[i])));
-        static assert(__traits(identifier, GuiOptions.tupleof[i])
-            == __traits(identifier, Mixed.tupleof[i]));
-    }
+    auto bare = parseCli!App(["app", "--font", "Iosevka", "--other"]);
+    assert(bare, bare.error.message);
+    assert(bare.value.gui.font == "Iosevka" && bare.value.other);
+    assert(bare.value.gui.fontSize == 12, "the application's default");
+    auto typed = parseCli!App(["app", "--font-size", "18"]);
+    assert(typed && typed.value.gui.fontSize == 18, "what is typed wins");
 }
 
 @("ui_app.gui_options.defaultsAreShared")
 @safe pure nothrow
 unittest
 {
-    // One set of defaults for every application (`CLI3`). The point size in
-    // particular: `apps/terminal` used 13 and `apps/hue` 14, and the parser
-    // cannot express a per-application override (`UIAPP-O1`).
+    // One set of shared defaults (`CLI3`). The point size in particular:
+    // `apps/terminal` used 13 and `apps/hue` 14 (`UIAPP-O1`).
     const o = GuiOptions.init;
     assert(o.fontSize == 18);
     assert(o.font == defaultGuiFont);
@@ -347,7 +399,7 @@ unittest
     // declaration order. With `gui` declared first, `--no-gui` would land on
     // it as a negation — a silent no-op (it was already false) — and the
     // force-terminal request would be lost. The declaration order in
-    // `GuiCliFields` is load-bearing; this is its regression test.
+    // `GuiOptions` is load-bearing; this is its regression test.
     auto parsed = parseCli!GuiOptions(["app", "--no-gui"]);
     assert(parsed);
     assert(parsed.value.noGui, "--no-gui must set the flag, not negate --gui");
@@ -360,20 +412,11 @@ unittest
     assert(t && t.value.tui);
 }
 
-// Not `pure nothrow`, for the same reason as `oneDeclaration` above.
 @("ui_app.gui_options.fontRequest")
 @safe
 unittest
 {
-    // A mixed-in parameter struct projects to the same request as the standalone
-    // one, which is what lets an application keep its flags flat.
-    struct AppParams
-    {
-        mixin GuiCliFields;
-        string somethingElse;
-    }
-
-    AppParams p;
+    GuiOptions p;
     p.fontBold = "Iosevka Bold";
     p.fontDir = ["/opt/fonts"];
 

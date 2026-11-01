@@ -15,6 +15,7 @@ module sparkles.ui_app.run;
 
 import sparkles.ui_app.backend : Backend, BackendPolicy, isInteractive,
     pickBackend, platformForcedBackend;
+import sparkles.core_cli.args : failRun, ranOk, RunExpected;
 import sparkles.ui_app.host : noDraw, noSetup, noShutdown, RunConfig, windowTitle;
 
 /// Why a run did not happen. `ok` is the only value that means a loop ran.
@@ -24,6 +25,36 @@ enum RunOutcome : ubyte
     notInteractive, /// the chosen sink is static — the application renders it
     noBackend,      /// neither arm is available in this build on this platform
     openFailed,     /// the arm was there but would not open
+}
+
+/**
+`outcome` as a command's `run()` result (`RunExpected`, from
+`sparkles:core-cli`): success for `ok`, and otherwise a failure that says
+what `program` lacked, so `runCli` reports it and exits 1.
+*/
+RunExpected!void asRunResult(RunOutcome outcome, string program) @safe pure nothrow
+{
+    final switch (outcome)
+    {
+        case RunOutcome.ok:
+            return ranOk();
+        case RunOutcome.notInteractive:
+            return failRun(program ~ " needs an interactive target: a terminal or a display");
+        case RunOutcome.noBackend:
+            return failRun(program ~ ": this build carries no interactive backend");
+        case RunOutcome.openFailed:
+            return failRun(program ~ ": the backend would not open");
+    }
+}
+
+///
+@("ui_app.run.asRunResult")
+@safe nothrow unittest
+{
+    assert(!asRunResult(RunOutcome.ok, "lab").hasError);
+    const failed = asRunResult(RunOutcome.openFailed, "lab");
+    assert(failed.hasError && !failed.error.skipped);
+    assert(failed.error.message == "lab: the backend would not open");
 }
 
 /// The backends this build actually carries — what `BKD5` falls back across.

@@ -365,6 +365,30 @@ struct X11Wsi
         return hasStickyError_ ? wsiErr!void(stickyError_) : wsiOk();
     }
 
+    /**
+    Asks for the window's size, in logical units — pixels, X11 having no
+    scale. A window manager may refuse or adjust the request; the size that
+    results arrives as a `SurfaceMetricsChangedEvent`, as any resize does.
+    Without one (Xvfb) it applies as asked.
+    */
+    WsiResult!void setLogicalSize(WindowId id, LogicalSize size)
+    {
+        auto checked = checkedSlot(id, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!void(checked.error);
+        if (!(size.width >= 1 && size.height >= 1 && size.width <= ushort.max
+                && size.height <= ushort.max))
+            return x11Failure!void(WsiOperation.command, 0,
+                "a window is 1 to 65535 pixels on each side", WsiErrorKind.invalidArgument);
+        const uint[2] values = [cast(uint) size.width, cast(uint) size.height];
+        xcb_configure_window(connection_, windows_.at(checked.value).window,
+            XCB_CONFIG_WINDOW_WIDTH | XCB_CONFIG_WINDOW_HEIGHT, values.ptr);
+        auto flushed = flushCommands();
+        if (flushed.hasError)
+            return flushed;
+        return hasStickyError_ ? wsiErr!void(stickyError_) : wsiOk();
+    }
+
     /*
     The title both ways: `_NET_WM_NAME` as UTF-8, which every current window
     manager reads, and ICCCM's `WM_NAME` for one that reads nothing else.

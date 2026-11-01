@@ -8,18 +8,19 @@ which backend opens is the host's decision, and the same `view` runs on either.
 module app;
 
 import std.array : join;
-import std.stdio : stderr, write, writefln, writeln;
-import std.traits : isDynamicArray, isSomeString;
+import std.conv : text;
+import std.stdio : write, writefln, writeln;
 
-import sparkles.core_cli.args : HelpInfo, Option, parseCli, reportCliError;
-import sparkles.ui_app.gui_options : GuiCliFields, GuiOptions, resolveTheme;
+import sparkles.base.logger : LogLevel;
+import sparkles.core_cli.args : Command, failRun, Flatten, Option, ranOk, runCli, RunExpected;
+import sparkles.ui_app.gui_options : GuiOptions, NativeOptions, resolveTheme;
 import sparkles.ui_app.host : PointerUnit, RunConfig;
 
-import sparkles.ui_app.run : RunOutcome;
+import sparkles.ui_app.run : asRunResult, RunOutcome;
 import sparkles.ui_app.run_app : runApp;
 import gallery : Gallery;
 import registry : pageIndexOf, pages;
-import render : renderAnsi, renderDegradations, renderPlain, RenderRequest;
+import render : plainFrame = renderPlain, renderAnsi, renderDegradations, RenderRequest;
 import sparkles.ui.emulators : emulatorNames;
 import sparkles.ui.tokens : Profile;
 import state : EmulatorChoice, GalleryState, ProfileChoice, profileOf, themeNames;
@@ -27,13 +28,24 @@ import state : EmulatorChoice, GalleryState, ProfileChoice, profileOf, themeName
 /**
 The gallery's command line.
 
-The window/font/theme flags come from the shared mixin rather than being
+The window/font/theme flags are the shared `GuiOptions`, flattened, rather than
 declared again here — that is what `CLI1`–`CLI3` exist for, and it means
 `--font-size` means the same thing in every application in the repository.
 */
-struct Params
+@(Command("ui-gallery",
+    shortDescription: "A browsable catalog of the sparkles:ui toolkit — the same widget "
+        ~ "trees, laid out and painted in a terminal or in a window.",
+))
+struct UiGallery
 {
-    mixin GuiCliFields;
+    @(Option("log-level", description: "Log level: trace | info | warning | error | critical | off."))
+    LogLevel logLevel = LogLevel.warning;
+
+    @Flatten("GUI Options")
+    GuiOptions gui;
+
+    @Flatten("Native Window Options")
+    NativeOptions native;
 
     @(Option("page|p", description:
         "Start on this page, by name prefix or 1-based number."))
@@ -91,138 +103,107 @@ struct Params
         "The Terminal page's narrow tab list, one glyph per position — "
         ~ "overrides the default circled-number series."))
     string termTabGlyphs;
-}
 
-int main(string[] args)
-{
-    auto parsed = parseCli!Params(args, HelpInfo(
-        "ui-gallery",
-        "A browsable catalog of the sparkles:ui toolkit — the same widget "
-        ~ "trees, laid out and painted in a terminal or in a window.",
-        null,
-    ));
-    if (!parsed)
-        return reportCliError(parsed.error);
-    const cli = parsed.value;
-
-    if (cli.listPages)
+    /// Lists, renders, or opens the catalog.
+    RunExpected!void run()
     {
-        foreach (i, ref p; pages)
-            writefln("%2d  %-14s %s", i + 1, p.title, p.blurb);
-        return 0;
-    }
+        if (listPages)
+        {
+            foreach (i, ref p; pages)
+                writefln("%2d  %-14s %s", i + 1, p.title, p.blurb);
+            return ranOk();
+        }
 
-    if (cli.listThemes)
-    {
-        foreach (n; themeNames)
-            writeln(n);
-        return 0;
-    }
+        if (listThemes)
+        {
+            foreach (n; themeNames)
+                writeln(n);
+            return ranOk();
+        }
 
-    if (cli.listKeys)
-    {
-        import std.stdio : stdout;
-        import keymap : writeKeys;
+        if (listKeys)
+        {
+            import std.stdio : stdout;
+            import keymap : writeKeys;
 
-        auto w = stdout.lockingTextWriter;
-        writeKeys(w);
-        return 0;
-    }
+            auto w = stdout.lockingTextWriter;
+            writeKeys(w);
+            return ranOk();
+        }
 
-    // A theme name no built-in carries is reported rather than silently
-    // substituted — the resolver returns the reason precisely so this layer,
-    // the one that can print, decides what to do about a typo.
-    const lookup = resolveTheme(cli);
-    if (lookup.hasError)
-    {
-        stderr.writefln("ui-gallery: theme '%s': %s (try --list-themes)",
-            cli.theme, lookup.reason);
-        return 2;
-    }
+        // A theme name no built-in carries is reported rather than silently
+        // substituted — the resolver returns the reason precisely so this layer,
+        // the one that can print, decides what to do about a typo.
+        const lookup = resolveTheme(gui);
+        if (lookup.hasError)
+            return failRun(text("theme '", gui.theme, "': ", lookup.reason,
+                " (try --list-themes)"), 2);
 
-    if (cli.render || cli.renderPlain)
-    {
-        const req = RenderRequest(
-            page: pageIndexOf(cli.page),
-            keys: cli.keys,
-            width: cli.windowWidth,
-            height: cli.windowHeight,
-            // A render has no host to be native to: it paints the grid's own
-            // reach, which is exactly `full`.
-            profile: cli.profile == ProfileChoice.native ? Profile.full
-                : profileOf(cli.profile),
-            emulator: cli.emulator,
-        );
-        write(cli.degradations ? renderDegradations(req)
-            : cli.renderPlain ? renderPlain(req) : renderAnsi(req));
-        return 0;
-    }
+        if (render || renderPlain)
+        {
+            const req = RenderRequest(
+                page: pageIndexOf(page),
+                keys: keys,
+                width: gui.windowWidth,
+                height: gui.windowHeight,
+                // A render has no host to be native to: it paints the grid's own
+                // reach, which is exactly `full`.
+                profile: profile == ProfileChoice.native ? Profile.full
+                    : profileOf(profile),
+                emulator: emulator,
+            );
+            write(degradations ? renderDegradations(req)
+                : renderPlain ? plainFrame(req) : renderAnsi(req));
+            return ranOk();
+        }
 
-    // `Params` is `mixin GuiCliFields` plus this application's own flags, so
-    // the shared fields are its first N in declaration order and the copy is
-    // structural rather than a list that could fall out of date. The array
-    // fields are duplicated because the parsed value arrives `const`.
-    GuiOptions gui;
-    static foreach (i, T; typeof(GuiOptions.tupleof))
-    {
-        static if (isDynamicArray!T && !isSomeString!T)
-            gui.tupleof[i] = cli.tupleof[i].dup;
-        else
-            gui.tupleof[i] = cli.tupleof[i];
-    }
+        RunConfig cfg = {
+            title: "sparkles ui gallery",
+            gui: gui,
+            native: native,
+            targetFps: 60,
+            // Keep the GUI scrollbar track in device pixels. Gallery widgets still
+            // receive cell positions: the component converts ordinary pointer
+            // handling back after the dock has consumed the precise coordinate.
+            pointerUnit: PointerUnit.pixels,
+            // The Terminal page: Ctrl+letter never reaches the pty encoder
+            // without the terminal-grade keyboard.
+            keyRelease: true,
+            // No `idleTimeoutMs`. A shell's output must appear without a
+            // keypress, and this used to buy that with a startup-fixed 50 ms tick
+            // — which every page paid for the one that needed it. The component
+            // asks per frame instead (`HST16`'s `wakeIn`), and only for a pane the
+            // ring is not already driving (`TVW8`), so an idle catalog parks on
+            // input alone. `UGL-O9`.
+            // Bare-motion reporting (DEC 1003): without it the terminal arm sees
+            // no motion events, so hover-revealed affordances — the tab list's
+            // close button — would be drawn as if hover worked and never light
+            // up. Costs one input event per pointer move.
+            motion: true,
+        };
 
-    RunConfig cfg = {
-        title: "sparkles ui gallery",
-        gui: gui,
-        targetFps: 60,
-        // Keep the GUI scrollbar track in device pixels. Gallery widgets still
-        // receive cell positions: the component converts ordinary pointer
-        // handling back after the dock has consumed the precise coordinate.
-        pointerUnit: PointerUnit.pixels,
-        // The Terminal page: Ctrl+letter never reaches the pty encoder
-        // without the terminal-grade keyboard.
-        keyRelease: true,
-        // No `idleTimeoutMs`. A shell's output must appear without a
-        // keypress, and this used to buy that with a startup-fixed 50 ms tick
-        // — which every page paid for the one that needed it. The component
-        // asks per frame instead (`HST16`'s `wakeIn`), and only for a pane the
-        // ring is not already driving (`TVW8`), so an idle catalog parks on
-        // input alone. `UGL-O9`.
-        // Bare-motion reporting (DEC 1003): without it the terminal arm sees
-        // no motion events, so hover-revealed affordances — the tab list's
-        // close button — would be drawn as if hover worked and never light
-        // up. Costs one input event per pointer move.
-        motion: true,
-    };
+        auto app = Gallery(GalleryState(
+            page: pageIndexOf(page),
+            themeIndex: themeIndexOf(gui.theme),
+            useFileTheme: loadFileTheme(gui.theme),
+            profileCeiling: profile,
+            profile: profile,
+            emulator: emulator,
+            termTabGlyphs: termTabGlyphs,
+        ));
+        // A real run may fork shells; the recorded tests and --render, which
+        // construct their own Gallery, leave this off and the request flags inert.
+        app.spawnEnabled = true;
 
-    auto app = Gallery(GalleryState(
-        page: pageIndexOf(cli.page),
-        themeIndex: themeIndexOf(cli.theme),
-        useFileTheme: loadFileTheme(cli.theme),
-        profileCeiling: cli.profile,
-        profile: cli.profile,
-        emulator: cli.emulator,
-        termTabGlyphs: cli.termTabGlyphs,
-    ));
-    // A real run may fork shells; the recorded tests and --render, which
-    // construct their own Gallery, leave this off and the request flags inert.
-    app.spawnEnabled = true;
-
-    final switch (runApp(app, cfg))
-    {
-        case RunOutcome.ok:
-            return 0;
-        case RunOutcome.notInteractive:
-            stderr.writeln("ui-gallery needs a terminal or a display");
-            return 2;
-        case RunOutcome.noBackend:
-            stderr.writeln("ui-gallery: this build carries no interactive backend");
-            return 1;
-        case RunOutcome.openFailed:
-            stderr.writeln("ui-gallery: the backend would not open");
-            return 1;
+        // Exit 2, as for a usage error: neither a terminal nor a display.
+        const outcome = runApp(app, cfg);
+        if (outcome == RunOutcome.notInteractive)
+            return failRun("ui-gallery needs a terminal or a display", 2);
+        return asRunResult(outcome, "ui-gallery");
     }
 }
+
+int main(string[] args) => runCli!UiGallery(args);
 
 
 /// Loads the theme file `spec` names into `state.fileTheme`; `false` when `spec` is a

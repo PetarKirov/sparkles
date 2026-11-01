@@ -7,6 +7,7 @@ public import sparkles.vulkan_wsi.context;
 public import sparkles.vulkan_wsi.device;
 public import sparkles.vulkan_wsi.error;
 public import sparkles.vulkan_wsi.frame;
+public import sparkles.vulkan_wsi.frame_stats;
 public import sparkles.vulkan_wsi.surface;
 public import sparkles.vulkan_wsi.swapchain;
 public import sparkles.vulkan_wsi.window_surface;

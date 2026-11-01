@@ -19,7 +19,7 @@ void main(string[] args)
 {
     Hello app;
     RunConfig cfg = { title: "hello" };
-    // parse `cfg.gui` from args (`GuiCliFields`), then:
+    // parse `cfg.gui` from args (a `@Flatten`ed `GuiOptions`), then:
     runApp(app, cfg);
 }
 ---

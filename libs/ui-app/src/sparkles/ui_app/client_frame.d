@@ -109,6 +109,10 @@ struct FrameColours
     RgbColor bg = RgbColor(0x2e, 0x2e, 0x32); /// the bar; Adwaita's dark header bar
     RgbColor fg = RgbColor(0xff, 0xff, 0xff); /// title, icons and the discs' tint
     bool dark = true;                         /// the shade and outline follow it
+    /// The desktop asks for more contrast: libadwaita's high-contrast
+    /// stylesheet draws the bar's foot as a border and the window's rings
+    /// all but opaque.
+    bool highContrast;
 
     /**
     The application's `chrome` colours where its palette sets them, and
@@ -553,8 +557,14 @@ struct ClientFrame
         const bar = barPx(g.density);
         put(FrameShape.Kind.fill, g.left, g.top, g.width, bar, c.bg, 255);
         // The shade along the bar's foot: rgb(0 0 6 / 36%) dark, 12% light.
-        put(FrameShape.Kind.fill, g.left, g.top + bar - 1, g.width, 1, RgbColor(0, 0, 6),
-            c.dark ? 92 : 31);
+        // High contrast, the header bar's border at the 50% border opacity:
+        // white dark, rgb(0 0 6 / 80%) light.
+        if (c.highContrast)
+            put(FrameShape.Kind.fill, g.left, g.top + bar - 1, g.width, 1,
+                c.dark ? RgbColor(0xff, 0xff, 0xff) : RgbColor(0, 0, 6), c.dark ? 128 : 102);
+        else
+            put(FrameShape.Kind.fill, g.left, g.top + bar - 1, g.width, 1, RgbColor(0, 0, 6),
+                c.dark ? 92 : 31);
 
         const disc = densityPx(discCss, g.density);
         int icon = densityPx(iconCss, g.density);
@@ -639,8 +649,9 @@ struct ClientFrame
         if (radius > 0)
             put(FrameShape.Kind.erase, x0, y0, w, h, black, 0, radius);
         // The window's outline, a light pixel inside its edge, while it
-        // floats: rgb(255 255 255 / 7%). A maximized or tiled window has none.
-        enum ubyte outline = 18;
+        // floats: rgb(255 255 255 / 7%), 30% in high contrast. A maximized or
+        // tiled window has none.
+        const ubyte outline = c.highContrast ? 77 : 18;
         if (!state.edgesHeld && g.margin > 0)
             put(FrameShape.Kind.shadow, x0 + 1, y0 + 1, w - 2, h - 2, white, outline,
                 radius > 1 ? radius - 1 : 0, 0, 1);
@@ -669,7 +680,9 @@ struct ClientFrame
                     put(FrameShape.Kind.shadow, x0, y0, w, h, black, 38, radius, px(14), px(5));
                     put(FrameShape.Kind.shadow, x0, y0, w, h, black, 26, radius, px(5), px(2));
                 }
-                put(FrameShape.Kind.shadow, x0, y0, w, h, black, 13, radius, 0, px(1));
+                // The ring: rgb(0 0 0 / 5%), 80% in high contrast.
+                put(FrameShape.Kind.shadow, x0, y0, w, h, black, c.highContrast ? 204 : 13,
+                    radius, 0, px(1));
             }
         }
         return n;
@@ -1216,4 +1229,32 @@ unittest
     // The bar spans the window, not the surface.
     n = f.build(shapes[], g, FrameColours.init);
     assert(shapes[0].kind == FrameShape.Kind.fill && shapes[0].x == 20 && shapes[0].w == 760);
+}
+
+@("ui_app.client_frame.highContrastStrengthensTheEdges")
+@safe pure nothrow @nogc unittest
+{
+    // libadwaita's high-contrast stylesheet: the bar's foot is the header
+    // bar's border at 50%, the outline 30% white, the outer ring 80% black.
+    FrameShape[ClientFrame.maxShapes] shapes;
+    const g = FrameGeometry(surfaceW: 800, surfaceH: 600, top: 20, cellW: 8, cellH: 16,
+        margin: 20);
+    auto f = clientFrame(WindowCapability.all, ToplevelState.activated);
+    FrameColours c;
+    c.highContrast = true;
+    const n = f.build(shapes[], g, c);
+    const foot = shapes[1];
+    assert(foot.kind == FrameShape.Kind.fill && foot.h == 1
+        && foot.colour == RgbColor(0xff, 0xff, 0xff) && foot.alpha == 128);
+    bool outline, ring;
+    foreach (ref s; shapes[0 .. n])
+        if (s.kind == FrameShape.Kind.shadow && s.blur == 0)
+        {
+            outline |= s.colour == RgbColor(0xff, 0xff, 0xff) && s.alpha == 77;
+            ring |= s.colour == RgbColor(0, 0, 0) && s.alpha == 204;
+        }
+    assert(outline && ring);
+    c.dark = false;
+    assert(f.build(shapes[], g, c) == n && shapes[1].colour == RgbColor(0, 0, 6)
+        && shapes[1].alpha == 102, "light: the bar's dark border");
 }

@@ -50,8 +50,7 @@ import sparkles.doc_view.diff_view : DiffLayout;
 import sparkles.doc_view.document : Document;
 import dsv_browser : DsvBrowser, PaletteRow, paletteRows, rowMaskFor;
 import sparkles.doc_view.dsv_view : adaptDsv, DsvCopy, DsvModel, dsvStatusNote, DsvWindow,
-    flagsOf, modelFor,
-    resolveTableCopy;
+    flagsOf, modelFor;
 import sparkles.source_view.markdown : TableScroll;
 import explorer : ExplorerTui;
 import inspector_pane : InspectorPane;
@@ -63,7 +62,8 @@ import picker_sources : ChoiceFinder, PickerTarget;
 import picker_preview : PickerDocPane;
 import picker_view : PickerGeometry;
 import project_state : dubBuildFor, mutableCopy, PackageSlot, selectDubConfiguration;
-import settings : DubBuildSettings, HueConfig, searchPolicy;
+import settings : DubBuildSettings, HueConfig, resolveTableCopy, searchPolicy,
+    TableCopyMode;
 import settings_pane : ApplyMask, SettingsGeometry, settingsGeometryFor,
     SettingsResult;
 import settings_store : ConfigStore, SettingsPane;
@@ -98,7 +98,7 @@ struct WorkspaceTui
     ExplorerTui tree;
     PreviewTui viewer;
     WsLoader loadDoc;
-    string tableCopyFlag = "auto"; /// `--table-copy` raw flag (`DSC2`)
+    TableCopyMode tableCopyMode; /// `--table-copy`, re-resolved per document (`DSC2`)
     DsvBrowser dsvBrowser; /// the data browser's projection state (`DSB1`)
     /// `DSN7`: the open document's retained DSV model — the parse, the column
     /// types, the header names and the memoized projection. Rebuilt only when
@@ -913,7 +913,7 @@ struct WorkspaceTui
         viewer.dsvCopy = dsvModel !is null
             ? DsvCopy.of(dsvModel, doc.dsvInfo)
             : DsvCopy.of(doc.dsvText, doc.dsvInfo);
-        viewer.tableFmt = resolveTableCopy(tableCopyFlag, doc.dsvInfo.present);
+        viewer.tableFmt = resolveTableCopy(tableCopyMode, doc.dsvInfo.present);
         dsvBrowser = DsvBrowser.init;
         dsvPalOpen = false;
         wireDsvHooks();
@@ -2172,7 +2172,7 @@ WorkspaceExit runWorkspace(string target, bool isDir, WorkspaceDoc initial,
     ReviewSession review = null,
     bool formatPreview = false, int formatWidth = 0,
     string formatterName = null,
-    string tableCopyFlag = "auto",
+    TableCopyMode tableCopyMode = TableCopyMode.detect,
     ScrollAnchorMode scrollAnchor = ScrollAnchorMode.segment,
     string gutter = "all", bool lineNumbers = true,
     ConfigStore* configStore = null,
@@ -2187,7 +2187,7 @@ WorkspaceExit runWorkspace(string target, bool isDir, WorkspaceDoc initial,
     scope (exit) if (!w.picker.empty) w.picker.get.shutdown();
     scope (exit) if (w.pickerDoc !is null) w.pickerDoc.shutdown();
     w.loadDoc = loadDoc;
-    w.tableCopyFlag = tableCopyFlag;
+    w.tableCopyMode = tableCopyMode;
     // The gutter selection reaches the terminal too, now that the terminal has
     // one (`GUT5`). `--line-numbers=false` stays a shorthand layered over the
     // channel list rather than a fourth thing to reconcile.
@@ -2210,7 +2210,7 @@ WorkspaceExit runWorkspace(string target, bool isDir, WorkspaceDoc initial,
             w.viewer.dsvCopy = w.dsvModel !is null
                 ? DsvCopy.of(w.dsvModel, fresh.dsvInfo)
                 : DsvCopy.of(fresh.dsvText, fresh.dsvInfo);
-            w.viewer.tableFmt = resolveTableCopy(w.tableCopyFlag,
+            w.viewer.tableFmt = resolveTableCopy(w.tableCopyMode,
                 fresh.dsvInfo.present);
             w.dsvBrowser = DsvBrowser.init;
             w.dsvPalOpen = false;
@@ -2277,7 +2277,7 @@ WorkspaceExit runWorkspace(string target, bool isDir, WorkspaceDoc initial,
         w.viewer.dsvCopy = w.dsvModel !is null
             ? DsvCopy.of(w.dsvModel, initial.dsvInfo)
             : DsvCopy.of(initial.dsvText, initial.dsvInfo);
-        w.viewer.tableFmt = resolveTableCopy(tableCopyFlag,
+        w.viewer.tableFmt = resolveTableCopy(tableCopyMode,
             initial.dsvInfo.present);
         w.dsvBrowser = DsvBrowser.init;
         w.dsvPalOpen = false;

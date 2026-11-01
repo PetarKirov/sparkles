@@ -12,12 +12,12 @@ import std.sumtype : SumType;
 import sparkles.base.assert_handler : AssertHandlerKind;
 import sparkles.base.logger : LogLevel;
 import sparkles.core_cli.args : Argument, Command, CommandNode, Option, parseCli,
-    Subcommands;
+    Flatten, Subcommands;
 import sparkles.terminal_view.component : TerminalViewOptions;
 import sparkles.terminal_view.input : ExitBehavior;
 import sparkles.terminal_view.notification_log : NotifyWhen;
 import sparkles.terminal_view.protocols : ProtocolPolicy;
-import sparkles.ui_app.gui_options : GuiOptions;
+import sparkles.ui_app.gui_options : GuiOptions, NativeOptions;
 import sparkles.wired.overlay : Sparse;
 
 import settings : OnExit, TerminalConfig;
@@ -177,6 +177,11 @@ struct TerminalCli
 
     @(Option("debug-take-screenshot-and-exit", description: "Takes a screenshot after 2 seconds and exits."))
     bool debugScreenshot;
+
+    /// The native (Vulkan) window's window system and diagnostics; the
+    /// raylib window ignores them.
+    @Flatten("Native Window Options")
+    NativeOptions native;
 
     /// Not `command`: `CommandNode` already uses that name for the selected child.
     @Subcommands

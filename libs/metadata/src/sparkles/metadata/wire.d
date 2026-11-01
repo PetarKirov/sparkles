@@ -11,7 +11,7 @@ tagged with the format it applies under: `@WireName!Json("x")` for one format,
 
 $(B Name sources.) A format tag may declare `enum nameSource`
 ($(LREF NameSource)). A $(LREF NameSource.wire) format (the default: JSON, a
-theme file, CLI arguments) honours `AnyFormat` names. A
+theme file, $(LREF CommandLine) arguments) honours `AnyFormat` names. A
 $(LREF NameSource.identifier) format ($(LREF Pretty), $(LREF DSource)) spells
 a member by its D identifier and honours only attributes tagged with itself, so
 a type annotated for serde needs nothing extra to be dumped or turned into
@@ -49,6 +49,15 @@ struct Pretty
 struct DSource
 {
     enum nameSource = NameSource.identifier; ///
+}
+
+/// The command-line format: an enum-typed option's value (`--mode fifo-relaxed`)
+/// as `sparkles:core-cli` parses it and lists it in `--help`. A wire format, so
+/// `AnyFormat` names and recasings apply; `@WireName!CommandLine` and
+/// `@WireCase!CommandLine` give a flag its own spelling without changing the
+/// one a config file or JSON uses.
+struct CommandLine
+{
 }
 
 /// The name source of format `F`: its `nameSource` member, else `wire`.
@@ -134,4 +143,5 @@ WireReprAttr!Format WireRepr(Format = AnyFormat)(
     static assert(nameSourceOf!AnyFormat == NameSource.wire);
     static assert(nameSourceOf!Pretty == NameSource.identifier);
     static assert(nameSourceOf!DSource == NameSource.identifier);
+    static assert(nameSourceOf!CommandLine == NameSource.wire);
 }

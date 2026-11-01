@@ -9,9 +9,14 @@ depending on Vulkan.
 */
 module sparkles.ui_vulkan.text_rendering;
 
+import sparkles.metadata.case_style : CaseStyle;
+import sparkles.metadata.wire : WireCase;
+
 @safe pure nothrow @nogc:
 
-/// How a glyph's coverage meets what is under it.
+/// How a glyph's coverage meets what is under it; on a command line,
+/// `gamma`, `linear` or `linear-corrected`.
+@WireCase(CaseStyle.kebabCase)
 enum Compositing : ubyte
 {
     /// Coverage as alpha, blended in gamma-encoded space: what stb_truetype

@@ -6,12 +6,15 @@
 module sparkles.doc_view.ansi_model;
 
 import sparkles.base.term_color : RgbColor;
+import sparkles.metadata.wire : CaseStyle, CommandLine, WireCase;
 import sparkles.syntax : AnsiOptions, ColorDepth;
 import sparkles.ui.widget : TextSpan;
 
 /// How the theme background is applied in terminal rendering (`--background`,
 /// hue spec `BGM`) — shared by the whole-file ANSI emit, the markdown-preview
-/// painter and the TUI. (Moved here from the retired `previewer.d`.)
+/// painter and the TUI. (Moved here from the retired `previewer.d`.) The
+/// flag spells the members in kebab case; a config file by identifier.
+@WireCase!CommandLine(CaseStyle.kebabCase)
 enum BackgroundMode
 {
     /// `no-background`: foreground only; the terminal's own background shows

@@ -20,6 +20,7 @@
 // be dismissed as noise.
 module sparkles.doc_view.diff_structural;
 
+import sparkles.metadata.wire : CommandLine, WireName;
 import sparkles.syntax.ts.injection : TsConfigCache;
 import sparkles.tree_sitter : nodeChild, nodeChildCount, nodeRange,
     ParseGuards, TsError, TsParser, TSNode;
@@ -45,13 +46,14 @@ enum StructuralVerdict : ubyte
 }
 
 /// Whether to consult the grammar at all (decision 6: the pass auto-engages
-/// when it is cheap, and `--diff-structural` is the override).
+/// when it is cheap, and `--diff-structural` is the override). The flag spells
+/// `automatic` as `auto`; a config file keeps the identifier.
 enum StructuralPolicy : ubyte
 {
     /// Never parse — the text-level layers (`DVN1`/`DVN2`) stand alone.
     off,
     /// Parse when a grammar exists and both sides are under the size ceiling.
-    automatic,
+    @WireName!CommandLine("auto") automatic,
     /// Parse whenever a grammar exists, ceiling or not. For the case the
     /// ceiling exists for: a generated or vendored file large enough to trip
     /// it is exactly the one worth proving is noise.
@@ -71,24 +73,6 @@ bool parses(StructuralPolicy p) @safe pure nothrow @nogc
 /// Does this policy waive the size ceiling?
 bool waivesCeiling(StructuralPolicy p) @safe pure nothrow @nogc
     => p == StructuralPolicy.on || p == StructuralPolicy.view;
-
-/// Parses a `--diff-structural` spelling; `ok` is false for an unknown one,
-/// so the caller can warn in its own voice.
-StructuralPolicy parseStructuralPolicy(scope const(char)[] spelling,
-    out bool ok) @safe pure nothrow @nogc
-{
-    ok = true;
-    switch (spelling)
-    {
-        case "off":  return StructuralPolicy.off;
-        case "auto": return StructuralPolicy.automatic;
-        case "on":   return StructuralPolicy.on;
-        case "view": return StructuralPolicy.view;
-        default:
-            ok = false;
-            return StructuralPolicy.automatic;
-    }
-}
 
 /**
 Compares the two sides' token streams under `language`'s grammar.
@@ -597,15 +581,17 @@ private bool haveGrammars() @safe
     assert(verdicts[0] == StructuralVerdict.differs);
 }
 
-@("diff_structural.parseStructuralPolicy")
+@("diff_structural.StructuralPolicy.commandLineNames")
 @safe pure nothrow @nogc unittest
 {
-    bool ok;
-    assert(parseStructuralPolicy("off", ok) == StructuralPolicy.off && ok);
-    assert(parseStructuralPolicy("auto", ok) == StructuralPolicy.automatic && ok);
-    assert(parseStructuralPolicy("on", ok) == StructuralPolicy.on && ok);
-    assert(parseStructuralPolicy("yes", ok) == StructuralPolicy.automatic);
-    assert(!ok);
+    import sparkles.base.text.wire_names : AnyFormat, enumNames;
+
+    // `--diff-structural` spells `automatic` as `auto`; every other format
+    // keeps the identifier.
+    static assert(enumNames!(CommandLine, StructuralPolicy)
+        == ["off", "auto", "on", "view"]);
+    static assert(enumNames!(AnyFormat, StructuralPolicy)
+        == ["off", "automatic", "on", "view"]);
 }
 
 @("diff_structural.compareTokenStreams.declinesRatherThanGuessing")

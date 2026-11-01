@@ -253,7 +253,7 @@ struct SystemAppearance
 }
 
 /**
-`SPARKLES_APPEARANCE`'s value (`dark`, `light`, `high-contrast`, comma
+An `--appearance` value (`dark`, `light`, `high-contrast`, comma
 separated) laid over `a`: what a golden capture or a test pins, whatever the
 desktop says. Unknown words are ignored.
 */

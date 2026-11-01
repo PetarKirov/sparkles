@@ -68,7 +68,7 @@ EOF
 env -u WAYLAND_DISPLAY xvfb-run -a -s "-screen 0 1280x800x24" \
   bash "$work/present.sh" | tee "$work/present.log"
 grep -q 'framesPresented: 150' "$work/present.log"
-grep -q 'framesOver100ms: 0' "$work/present.log"
+grep -qE '(, |^)0 over 100 ms' "$work/present.log"
 grep -q 'outOfDate: 0' "$work/present.log"
 
 echo ">> native triangle presentation verified under Weston/Xvfb."
