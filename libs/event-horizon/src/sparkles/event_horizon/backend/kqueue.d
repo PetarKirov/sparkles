@@ -551,11 +551,20 @@ struct KqueueBackend
         return ioOk(_synthCount + _readyCount);
     }
 
-    /// Non-blocking drain: the synthesized completions plus the readiness ones.
+    /**
+    Non-blocking drain: the synthesized completions plus the readiness ones.
+
+    The sink may synthesize more while the drain runs: a cancellation's
+    internal completion frees the loop's reserved cancel slot, and the loop
+    submits the next queued cancellation from inside that dispatch, appending
+    its pair here. So the bound is re-read every step — a `foreach` over the
+    count at entry, followed by `_synthCount = 0`, dropped that pair, and its
+    target (already released) never completed: a fiber parked for good.
+    */
     uint reap(Sink)(scope Sink sink)
     {
         uint n;
-        foreach (i; 0 .. _synthCount)
+        for (uint i = 0; i < _synthCount; ++i)
         {
             const c = _synth[i];
             sink(c);
@@ -1309,6 +1318,48 @@ unittest
     assert(!b.flush().hasError);
     const n = b.reap((ref const RawCompletion c) { cast(void) c; });
     assert(n == 2, "exactly the cancel pair — the delete produced no completion");
+}
+
+/// The loop issues its next queued cancellation from inside the dispatch of
+/// the previous one's internal completion — that is, from `reap`'s sink. The
+/// pair it synthesizes must still be delivered; dropping it parked a
+/// supervised drain forever once two in-flight reads were cancelled together.
+@("kqueue.cancel.aCancelSubmittedDuringReapIsDelivered")
+@system
+unittest
+{
+    KqueueBackend b;
+    if (!openOrSkip(b))
+        return;
+    scope (exit)
+        b.close();
+
+    const first = OpToken.pack(3, 1, OpClass.user);
+    const second = OpToken.pack(5, 1, OpClass.user);
+    const cancelSlot = OpToken.pack(4, 1, OpClass.internal);
+    OpSlot slot;
+    assert(b.trySubmit(OpTimeout(KernelTimespec(9, 0)), first, slot));
+    assert(b.trySubmit(OpTimeout(KernelTimespec(9, 0)), second, slot));
+    assert(!b.flush().hasError);
+
+    assert(b.trySubmitCancel(cancelSlot, first));
+    int firstRes = 1, secondRes = 1;
+    uint cancels;
+    void sink(ref const RawCompletion c)
+    {
+        if (c.userData == first.raw)
+            firstRes = c.res;
+        else if (c.userData == second.raw)
+            secondRes = c.res;
+        else if (++cancels == 1)
+            // The reserved slot is free again: the queued cancellation goes
+            // out from inside the dispatch, as `EventLoop` does it.
+            assert(b.trySubmitCancel(cancelSlot, second));
+    }
+    uint n = b.reap(&sink);
+    n += b.reap(&sink);
+    assert(n == 4, "both cancellation pairs are delivered");
+    assert(firstRes == -ECANCELED && secondRes == -ECANCELED && cancels == 2);
 }
 
 // ── O28: EV_DISPATCH re-arm + explicit delete ───────────────────────────────
