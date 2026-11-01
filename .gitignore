@@ -115,6 +115,7 @@ bazel-*
 /apps/hue/tools/preview_widget
 /apps/hue/tools/tui_ab
 /apps/ci/tools/add_sidebar_entry
+/apps/ci/tools/dub_resolve_probe
 /apps/hue/tools/gui_ab
 /apps/hue/tools/resize_probe
 /apps/hue/tools/gen-dsv-corpus
