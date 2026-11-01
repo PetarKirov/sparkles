@@ -136,7 +136,7 @@ version (EventHorizonLibkqueue) {} else version (Android) {} else version (linux
         bool singleIssuer, bool deferTaskrun, bool coopTaskrun, ulong hiddenOps = 0)
         nothrow @nogc
     {
-        import during : Operation, SetupFeatures;
+        import sparkles.event_horizon.sys.uring : Operation, SetupFeatures;
 
         BackendCaps caps;
         caps.backend = BackendId.uring;
@@ -224,7 +224,7 @@ version (EventHorizonLibkqueue) {} else version (Android) {} else version (linux
         LoopMode requested = LoopMode.exclusive,
         ModePolicy policy = ModePolicy.bestAvailable) @trusted nothrow @nogc
     {
-        import during : SetupFlags, Uring, setup;
+        import sparkles.event_horizon.sys.uring : SetupFlags, Uring, setup;
 
         static IoResult!BackendCaps tryMode(LoopMode mode) @trusted nothrow @nogc
         {

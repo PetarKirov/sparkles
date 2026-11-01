@@ -80,5 +80,3 @@ names something nothing ships.
 <!-- @include: ./parts/during.md -->
 
 <!-- @include: ./parts/dmd.md -->
-
-<!-- @include: ./parts/silly.md -->

@@ -61,7 +61,8 @@ Both M1 spikes ran on DMD 2.112.1 and LDC 1.42.0 with `-preview=dip1000
 
 The io_uring opcodes `VFB5` needs (`openat2`, `statx`, `mkdirat`, `unlinkat`,
 `renameat`, `symlinkat`) are all exposed by the `during` binding the
-repository pins; no spike is needed for them. `during` has no
+repository vendors (`sparkles.event_horizon.sys.uring`); no spike is needed for
+them. `during` has no
 directory-listing or `readlinkat` opcode, which is why those run on the
 blocking pool.
 

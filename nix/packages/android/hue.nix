@@ -61,7 +61,6 @@ in
         "Have_raylib_d"
         "Have_optional"
         "Have_bolts"
-        "Have_during"
       ];
 
       # Raw ldc2 -i follows imports, but cannot discover unimported C bodies.
