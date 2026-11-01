@@ -64,11 +64,11 @@ jobs:
           - runner: ubuntu-latest
             system: x86_64-linux
             DC: dmd
-            timeout: 60
+            timeout: 75
           - runner: macos-latest
             system: aarch64-darwin
             DC: ldc2
-            timeout: 90
+            timeout: 110
           # The one host where `real` is binary128 (`real.mant_dig == 113`):
           # the leg that compiles and runs the wide-format conversion paths
           # natively. Scoped to `ci --test` for now; the example and OS-API
@@ -103,6 +103,10 @@ jobs:
     # 75m during the steps after them: x86_64 LDC now has 95m. x86_64 DMD
     # takes 33-37m, and runs 39435191749 and 39436564680 were cancelled at
     # its 40m cap while building the examples: it now has 60m.
+    # Run 41293450019 (PR #708) spent ~57m in the x86_64 DMD steps and ~87m in
+    # the macOS ones (a cold `ci` and shell: Setup Nix took 19m, the tests 58m),
+    # and both were cancelled at their caps while saving caches after every
+    # step had passed: x86_64 DMD now has 75m and macOS 110m.
     timeout-minutes: ${{ matrix.timeout }}
     steps:
       - name: Checkout
@@ -562,14 +566,15 @@ jobs:
           - macos-latest
     runs-on: ${{ matrix.runner }}
     # `.#all-desktop` builds the whole closure; normally 2-4m from cache, but
-    # a cold-cache rebuild (after a flake.lock bump) needs real margin. The
+    # a cold rebuild needs real margin: a change to a shared library rebuilds
+    # every application, which took 26m on x86_64 in run 41293450019. The
     # toolchain itself is pinned in Cachix (nix/pin-targets.nix, TC24), so
     # no run compiles LLVM or the LDC fork.
     # `with-cachix.sh` pushes each path as it completes, so even a run that
     # hits this cap leaves progress in the cache for the next one.
     # The macOS cold aggregate in run 37375104839 was still compiling desktop
     # applications at its 40m cap; allow the remaining closure and example run.
-    timeout-minutes: ${{ matrix.runner == 'ubuntu-latest' && 30 || 90 }}
+    timeout-minutes: ${{ matrix.runner == 'ubuntu-latest' && 60 || 90 }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
