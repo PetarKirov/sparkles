@@ -449,3 +449,46 @@ show, and can the pinned dub be linked to obtain them?
 flake's `dub-sdl-src` input and the dev shell's `dub` are bumped together.
 
 **Revisit when** `dub describe` reports compiler-ready settings.
+
+## D21: BGR2's supported set is the scanned vocabulary (proposed)
+
+**Question.** E0 spike 4: which directives, attributes, forms and variable
+references do the recipes in scope use?
+
+**Result.** `apps/ci/tools/scan-recipe-vocabulary.d` scanned 556 recipes, and
+every one parsed, under the `sdlDubRecipe` profile or as JSON:
+
+- the root `dub.sdl` and its 63 sub-packages;
+- the 8 packages the two DUB locks pin, with their 11 sub-packages, from the
+  flake's `dub-sources`;
+- the 289 single-file examples `ci --example-files` runs;
+- the 184 single-file programs in tracked Markdown fences.
+
+The vocabulary is in [testing.md](./testing.md#the-recipe-vocabulary).
+
+- **Used beyond BGR2's list:**
+  - `preGenerateCommands`: in-repo inside configurations, and in the
+    registry's dmd sub-packages;
+  - `mainSourceFile`, `debugVersions` and `buildRequirements`;
+  - `buildOptions` values, `betterC` among them;
+  - `targetType "none"` and `"dynamicLibrary"`;
+  - `toolchainRequirements` with `dub` and `frontend`;
+  - configuration-level `platforms`;
+  - version ranges;
+  - a comma-separated platform specifier (`linux,freebsd`).
+- **Not used, of BGR2's list:**
+  - `dependency`'s `optional` and `default` attributes;
+  - the variables `$ROOT_PACKAGE_DIR`, `$<NAME>_PACKAGE_DIR`, `$PLATFORM`,
+    `$PLATFORM_POSIX` and `$BUILD_TYPE`.
+
+  They stay supported, as dub defines them, but only oracle 1's fixtures
+  exercise them.
+
+- **Environment:** one recipe names an environment variable:
+  `$SPARKLES_ANDROID_MIN_SDK`, in `sparkles:android`'s dflags.
+- **Globs:** they appear only in `excludedSourceFiles`.
+
+**Choice.** BGR2's supported set is the table, plus BGR2's named items.
+
+**Revisit when** a recipe in scope adopts a directive the table lacks: rerun
+the scan, and BGR2's resolution error names it first.
