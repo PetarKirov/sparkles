@@ -279,10 +279,9 @@ test-runner integration needed one.
 
 ## Open questions
 
-O2 and O3 are resolved; O1 remains:
+None remain from E0:
 
-- **O1:** which resolved fields `dub describe` cannot show. E0 spike 3 resolves
-  it. It blocks oracle 1's completeness.
+- **O1:** which resolved fields `dub describe` cannot show. Resolved by D20.
 - **O2:** whether LDC removes every worktree path. Resolved by D18: it does.
 - **O3:** whether DMD variants share across worktrees at all. Resolved by D19:
   they do not.
@@ -410,3 +409,43 @@ across worktrees.
 
 **Revisit when** DMD gains a prefix map for debug information and
 `__FILE_FULL_PATH__`.
+
+## D20: dub's final step is the oracle's second source (proposed)
+
+**Question.** E0 spike 3 (O1): which resolved fields does `dub describe` not
+show, and can the pinned dub be linked to obtain them?
+
+**Result.**
+
+- **What `dub describe` covers:** each target's build settings as dub's
+  generator leaves them, after per-package settings, version inheritance,
+  sourceLibrary merging and the build type. That covers:
+  - source files, and import, C import and string import paths;
+  - versions, debug versions, dflags, lflags, and libs by name;
+  - build options and requirements;
+  - each package's configuration, and the target's type and name.
+- **What it cannot show:** everything the compiler's `prepareBuildSettings`
+  and `setTarget` compute after that point:
+  - the `pkg-config --libs` and `--cflags` results: the `-L`/`-l` link flags
+    and the `-P` C preprocessor flags;
+  - that a library target drops its `libs` (D17);
+  - the flags that build options and versions become;
+  - the target flags (`-lib -oq -cleanup-obj`, `-of`);
+  - `-relocation-model=pic`, `-vcolumns`, and the compiler's environment;
+  - the dependency libraries added to an executable's link;
+  - command-line build options other than `lowmem`.
+- **The pinned dub as a library:** it links from source:
+  - the source is the flake's `dub-sdl-src` input, at the revision the dev
+    shell's `dub` is built from;
+  - it is compiled with `-i`, and `DubUseCurl` set so that it compiles;
+    nothing is downloaded.
+- **The probe:** `apps/ci/tools/dub-resolve-probe.d` resolves a package
+  offline through a `ProjectGenerator` subclass and applies dub's own final
+  step to every target. It sets `GeneratorSettings.cache` itself, because dub
+  keeps its cache path package-private.
+
+**Choice.** Oracle 1 compares fields before library resolution with
+`dub describe`, and the rest with that final step called as a library. The
+flake's `dub-sdl-src` input and the dev shell's `dub` are bumped together.
+
+**Revisit when** `dub describe` reports compiler-ready settings.
