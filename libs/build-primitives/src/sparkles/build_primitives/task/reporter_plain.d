@@ -34,7 +34,7 @@ import std.sumtype : match;
 
 import sparkles.base.text.writers : writeDuration;
 
-import sparkles.build_primitives.ci_provider : CiLog;
+import sparkles.ci_provider : CiLog;
 import sparkles.build_primitives.task.action : ProcessAction;
 
 import sparkles.build_primitives.task.graph : TaskGraph;
@@ -426,7 +426,7 @@ unittest
 @system
 unittest
 {
-    import sparkles.build_primitives.ci_provider : CiProvider;
+    import sparkles.ci_provider : CiProvider;
 
     const g = mixedGraph();
     auto run = runFake(g, mixedScripts([1, 2, 3, 4, 5]), ExecutorOptions(capacity: 3));
@@ -466,7 +466,7 @@ unittest
 @system
 unittest
 {
-    import sparkles.build_primitives.ci_provider : CiProvider;
+    import sparkles.ci_provider : CiProvider;
 
     static long pinned() @safe nothrow @nogc => 42;
 
@@ -502,7 +502,7 @@ unittest
 @system
 unittest
 {
-    import sparkles.build_primitives.ci_provider : CiProvider;
+    import sparkles.ci_provider : CiProvider;
     import sparkles.build_primitives.task.action : EnvEntry, ProcessAction;
     import sparkles.build_primitives.task.graph : TaskGraphBuilder;
 
