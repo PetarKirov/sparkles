@@ -721,13 +721,15 @@ jobs:
             nix-v2-${{ matrix.system }}-
 
       # `with-cachix.sh` pushes each path as it completes, so a run that fails
-      # or hits the cap still leaves its progress in the cache.
+      # or hits the cap still leaves its progress in the cache. One build at a
+      # time: each of the four compiles the DMD frontend, and four at once
+      # exhausted the arm runner's memory and took the runner down.
       - name: Build & push the static programs, their checks and test suites
         env:
           CACHIX_CACHE: ${{ vars.CACHIX_CACHE }}
           CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
         run: |
-          ci/with-cachix.sh nix build --print-build-logs --keep-going \
+          ci/with-cachix.sh nix build --print-build-logs --keep-going --max-jobs 1 \
             .#legacyPackages.${{ matrix.system }}.staticAppChecks.terminal-static \
             .#legacyPackages.${{ matrix.system }}.staticAppChecks.terminal-static-tests \
             .#legacyPackages.${{ matrix.system }}.staticAppChecks.hue-static \
