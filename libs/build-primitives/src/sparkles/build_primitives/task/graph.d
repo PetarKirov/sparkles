@@ -1,17 +1,17 @@
 /++
-Task graphs ([SPEC §5, §9, §12](../../../../docs/specs/ci/task-dag/SPEC.md)):
+Task graphs ([SPEC §5, §9, §12](../../../../../../docs/specs/ci/task-dag/SPEC.md)):
 a builder, validation, stable topological order, edge-condition resolution,
 blocked propagation, and the dry-run projection.
 
 A $(LREF TaskGraph) exists only validated. Its nodes are in presentation order
-— by $(REF PresentationKey, task,model), then $(REF TaskId, task,model) —
-whatever order they were added in, and a $(REF TaskIndex, task,model) is a
+— by $(REF PresentationKey, sparkles,build_primitives,task,model), then $(REF TaskId, sparkles,build_primitives,task,model) —
+whatever order they were added in, and a $(REF TaskIndex, sparkles,build_primitives,task,model) is a
 position in that order. Nothing here iterates an associative array or depends
 on insertion order, completion order, or time.
 
 Pure: no Event Horizon, process, or UI import.
 +/
-module task.graph;
+module sparkles.build_primitives.task.graph;
 
 import std.algorithm.sorting : sort;
 import std.range.primitives : put;
@@ -23,8 +23,8 @@ import sparkles.base.text.case_style : CaseStyle;
 import sparkles.base.text.wire_names : AnyFormat, WireCase;
 import sparkles.base.text.writers : writeEnumMemberName, writeValue;
 
-import task.action : writeActionSummary;
-import task.model;
+import sparkles.build_primitives.task.action : writeActionSummary;
+import sparkles.build_primitives.task.model;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Index-level ordering, shared with the package graph
@@ -88,7 +88,7 @@ StableOrder stableTopologicalOrder(size_t count, scope const(IndexEdge)[] edges)
 }
 
 /// A chain, a diamond, and a cycle.
-@("task.graph.stableTopologicalOrder.tiesAndCycles")
+@("build_primitives.task.graph.stableTopologicalOrder.tiesAndCycles")
 @safe pure nothrow
 unittest
 {
@@ -516,7 +516,7 @@ version (unittest)
 
     private TaskNode node(string text, uint phase = 0, uint ordinal = 0) @safe pure nothrow
     {
-        import task.action : InertAction;
+        import sparkles.build_primitives.task.action : InertAction;
 
         return TaskNode(id(text), TaskKind.test, text, PresentationKey(phase, null, 0, ordinal),
             defaultClaim(TaskKind.test), TaskAction(InertAction(text)));
@@ -537,7 +537,7 @@ version (unittest)
     }
 }
 
-@("task.graph.build.rejectsDuplicatesAndUnknownEdges")
+@("build_primitives.task.graph.build.rejectsDuplicatesAndUnknownEdges")
 @safe
 unittest
 {
@@ -576,7 +576,7 @@ unittest
     assert(errorText(weightless.build().error) == "zero-weight: a");
 }
 
-@("task.graph.build.reportsTheShortestCycleFromItsLowestMember")
+@("build_primitives.task.graph.build.reportsTheShortestCycleFromItsLowestMember")
 @safe
 unittest
 {
@@ -602,7 +602,7 @@ unittest
     assert(errorText(three.build().error) == "cycle: c -> e -> d -> c");
 }
 
-@("task.graph.build.orderIsIndependentOfInsertionOrder")
+@("build_primitives.task.graph.build.orderIsIndependentOfInsertionOrder")
 @safe pure nothrow
 unittest
 {
@@ -649,7 +649,7 @@ unittest
     assert(!g.indexOf(id("t:zz")).valid);
 }
 
-@("task.graph.build.topologicalOrderRespectsEdgesOverPresentation")
+@("build_primitives.task.graph.build.topologicalOrderRespectsEdgesOverPresentation")
 @safe pure nothrow
 unittest
 {
@@ -705,7 +705,7 @@ EdgeState resolveEdge(EdgeCondition condition, OutcomeKind prerequisite) @safe p
 }
 
 ///
-@("task.graph.resolveEdge.conditions")
+@("build_primitives.task.graph.resolveEdge.conditions")
 @safe pure nothrow @nogc
 unittest
 {
@@ -778,7 +778,7 @@ Readiness readiness(const ref TaskGraph graph, TaskIndex task, scope const(Outco
 }
 
 /**
-Marks every task that can no longer run as $(REF Blocked, task,model), in
+Marks every task that can no longer run as $(REF Blocked, sparkles,build_primitives,task,model), in
 topological order so a block cascades through a chain in one pass. Tasks that
 are ready or waiting keep a null slot. Returns how many tasks it blocked.
 */
@@ -817,7 +817,7 @@ private Blocked blockedBy(TaskIndex cause, const TaskOutcome outcome) @safe pure
     );
 }
 
-@("task.graph.propagateBlocked.cascadesAndKeepsTheRoot")
+@("build_primitives.task.graph.propagateBlocked.cascadesAndKeepsTheRoot")
 @safe pure nothrow
 unittest
 {
@@ -857,7 +857,7 @@ unittest
     assert(readiness(g, at("cleanup"), outcomes).kind == ReadinessKind.ready);
 }
 
-@("task.graph.propagateBlocked.successBlocksTheFallbackWithoutFailing")
+@("build_primitives.task.graph.propagateBlocked.successBlocksTheFallbackWithoutFailing")
 @safe pure nothrow
 unittest
 {
@@ -875,7 +875,7 @@ unittest
     assert(!failsCommand(plain), "an unneeded fallback is no failure");
 }
 
-@("task.graph.readiness.preferAFailureCauseRegardlessOfCompletionOrder")
+@("build_primitives.task.graph.readiness.preferAFailureCauseRegardlessOfCompletionOrder")
 @safe pure nothrow
 unittest
 {
@@ -985,12 +985,12 @@ void writePlan(Writer)(ref Writer w, const ref TaskGraph graph, uint capacity)
     put(w, '\n');
 }
 
-@("task.graph.writePlan.dryRun")
+@("build_primitives.task.graph.writePlan.dryRun")
 @safe pure nothrow
 unittest
 {
     import sparkles.base.buffer : checkWriter;
-    import task.action : EnvEntry, InProcessAction, ProcessAction;
+    import sparkles.build_primitives.task.action : EnvEntry, InProcessAction, ProcessAction;
 
     TaskGraphBuilder builder;
     builder.add(TaskNode(id("test:sparkles.ui:unittest"), TaskKind.test, "ui",

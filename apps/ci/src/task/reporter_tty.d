@@ -26,10 +26,10 @@ import sparkles.ui.components.live : LiveRegion;
 import sparkles.ui.components.tasklist : TaskReporter;
 import sparkles.ui.components.theme : Theme;
 
-import task.graph : TaskGraph;
-import task.model;
-import task.output : SpooledLine;
-import task.reporter;
+import sparkles.build_primitives.task.graph : TaskGraph;
+import sparkles.build_primitives.task.model;
+import sparkles.build_primitives.task.output : SpooledLine;
+import sparkles.build_primitives.task.reporter;
 
 /// TTY reporter settings.
 struct TtyOptions
@@ -194,8 +194,8 @@ version (unittest)
     import core.time : msecs;
     import std.algorithm.searching : canFind, count;
 
-    import task.executor : ExecutorOptions;
-    import task.testing;
+    import sparkles.build_primitives.task.executor : ExecutorOptions;
+    import sparkles.build_primitives.task.testing;
 
     private enum Theme plain = Theme(colors: false, unicode: true);
 

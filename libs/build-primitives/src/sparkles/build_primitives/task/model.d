@@ -1,9 +1,9 @@
 /++
-The task vocabulary ([SPEC §5](../../../../docs/specs/ci/task-dag/SPEC.md)):
+The task vocabulary ([SPEC §5](../../../../../../docs/specs/ci/task-dag/SPEC.md)):
 task ids, nodes, edges, resource claims, outcomes, and events.
 
 This module is a leaf: beside Phobos and `sparkles:base` it imports only the
-action vocabulary ($(MREF task,action)). It knows no command, executor,
+action vocabulary ($(MREF sparkles,build_primitives,task,action)). It knows no command, executor,
 reporter, Event Horizon, or UI module.
 
 Within a validated graph a task is referred to by its $(LREF TaskIndex) — its
@@ -11,7 +11,7 @@ position in presentation order. Outcomes and events carry indices rather than
 ids, so they hold no pointers: a `SumType` of pointer-free members stays
 `@safe` to assign, and an event can cross a channel without borrowing.
 +/
-module task.model;
+module sparkles.build_primitives.task.model;
 
 import core.time : Duration, MonoTime;
 import std.range.primitives : put;
@@ -23,7 +23,7 @@ import sparkles.base.text.errors : NoGcHook;
 import sparkles.base.text.case_style : CaseStyle;
 import sparkles.base.text.wire_names : AnyFormat, WireCase;
 
-public import task.action : TaskAction;
+public import sparkles.build_primitives.task.action : TaskAction;
 
 /**
 A fallible planning result: `Expected` under `NoGcHook`, so `value` and
@@ -110,7 +110,7 @@ PlanExpected!(TaskId, TaskIdError) taskId(scope const(char[])[] segments...) @sa
 }
 
 ///
-@("task.model.taskId.formatting")
+@("build_primitives.task.model.taskId.formatting")
 @safe pure nothrow
 unittest
 {
@@ -251,7 +251,7 @@ ResourceClaim defaultClaim(TaskKind kind) @safe pure nothrow @nogc
 ResourceClaim rewriteClaim(string path) @safe pure nothrow
     => ResourceClaim(jobsWeight: 1, exclusiveKeys: ["workspace-write:" ~ path]);
 
-@("task.model.ResourceClaim.defaultsAndClamp")
+@("build_primitives.task.model.ResourceClaim.defaultsAndClamp")
 @safe pure nothrow
 unittest
 {
@@ -481,7 +481,7 @@ bool failsCommand(const TaskOutcome outcome) @safe pure nothrow @nogc
         _ => false,
     );
 
-@("task.model.TaskOutcome.kindAndFailure")
+@("build_primitives.task.model.TaskOutcome.kindAndFailure")
 @safe pure nothrow @nogc
 unittest
 {

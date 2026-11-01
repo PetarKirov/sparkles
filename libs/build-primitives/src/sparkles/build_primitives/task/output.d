@@ -1,5 +1,5 @@
 /++
-Per-task output spooling ([SPEC §5.5, §10.3](../../../../docs/specs/ci/task-dag/SPEC.md)):
+Per-task output spooling ([SPEC §5.5, §10.3](../../../../../../docs/specs/ci/task-dag/SPEC.md)):
 a task's output lines are kept in memory up to a byte budget; past it the
 whole transcript continues in a spill file, and memory keeps only the most
 recent lines — the diagnostic tail.
@@ -9,11 +9,11 @@ stdout, `e` stderr; upper case for an unterminated final fragment), a space,
 and the text. $(LREF OutputSpool.replay) reads it back, so a spilled
 transcript replays exactly like an in-memory one.
 +/
-module task.output;
+module sparkles.build_primitives.task.output;
 
 import std.stdio : File;
 
-import task.model : OutputStream;
+import sparkles.build_primitives.task.model : OutputStream;
 
 /// One spooled line.
 struct SpooledLine
@@ -149,7 +149,7 @@ private:
     }
 }
 
-@("task.output.OutputSpool.keepsEverythingWithinBudget")
+@("build_primitives.task.output.OutputSpool.keepsEverythingWithinBudget")
 @safe
 unittest
 {
@@ -163,7 +163,7 @@ unittest
     assert(spool.tail[1].stream == OutputStream.stderr && spool.tail[1].unterminated);
 }
 
-@("task.output.OutputSpool.withoutSpillDropsTheOldest")
+@("build_primitives.task.output.OutputSpool.withoutSpillDropsTheOldest")
 @safe
 unittest
 {
@@ -174,7 +174,7 @@ unittest
     assert(spool.tail.length == 2 && spool.tail[0].text == "bbbb");
 }
 
-@("task.output.OutputSpool.spillsLosslesslyAndKeepsATail")
+@("build_primitives.task.output.OutputSpool.spillsLosslesslyAndKeepsATail")
 @system
 unittest
 {

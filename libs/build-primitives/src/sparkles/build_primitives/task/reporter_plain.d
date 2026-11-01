@@ -1,5 +1,5 @@
 /++
-The plain reporter ([SPEC §10.3, §10.4](../../../../docs/specs/ci/task-dag/SPEC.md)):
+The plain reporter ([SPEC §10.3, §10.4](../../../../../../docs/specs/ci/task-dag/SPEC.md)):
 the deterministic non-TTY transcript, and `--interlaced` streaming.
 
 $(B Default.) Each task's output is spooled, and its block — every line
@@ -17,7 +17,7 @@ summary still come at the end, in presentation order.
 Every write is one whole line, so a line is never split by another task's.
 No cursor movement, spinner, or colour is ever written.
 +/
-module task.reporter_plain;
+module sparkles.build_primitives.task.reporter_plain;
 
 import core.time : Duration, MonoTime;
 import std.range.primitives : put;
@@ -25,10 +25,10 @@ import std.sumtype : match;
 
 import sparkles.base.text.writers : writeDuration;
 
-import task.graph : TaskGraph;
-import task.model;
-import task.output : SpooledLine;
-import task.reporter;
+import sparkles.build_primitives.task.graph : TaskGraph;
+import sparkles.build_primitives.task.model;
+import sparkles.build_primitives.task.output : SpooledLine;
+import sparkles.build_primitives.task.reporter;
 
 /// Plain reporter settings.
 struct PlainOptions
@@ -170,8 +170,8 @@ version (unittest)
     import std.algorithm.iteration : map;
     import std.array : appender, array, split;
 
-    import task.executor : ExecutorOptions, runGraph;
-    import task.testing;
+    import sparkles.build_primitives.task.executor : ExecutorOptions, runGraph;
+    import sparkles.build_primitives.task.testing;
 
     private string transcript(const ref TaskGraph g, const(TaskEvent)[] events, PlainOptions options) @system
     {
@@ -199,7 +199,7 @@ version (unittest)
         ];
 }
 
-@("task.reporter_plain.transcriptIsIdenticalAcrossCompletionOrders")
+@("build_primitives.task.reporter_plain.transcriptIsIdenticalAcrossCompletionOrders")
 @system
 unittest
 {
@@ -231,7 +231,7 @@ unittest
     assert(runs == 120);
 }
 
-@("task.reporter_plain.spilledBlocksReplayInFull")
+@("build_primitives.task.reporter_plain.spilledBlocksReplayInFull")
 @system
 unittest
 {
@@ -252,7 +252,7 @@ unittest
     assert(lines[52] == "b: succeeded");
 }
 
-@("task.reporter_plain.interlacedIsImmediateLineAtomicAndPrefixed")
+@("build_primitives.task.reporter_plain.interlacedIsImmediateLineAtomicAndPrefixed")
 @system
 unittest
 {
@@ -297,7 +297,7 @@ unittest
     }
 }
 
-@("task.reporter_plain.cancellationAndTimings")
+@("build_primitives.task.reporter_plain.cancellationAndTimings")
 @system
 unittest
 {
@@ -312,7 +312,7 @@ unittest
     assert(!text.canFind("\x1b"), "plain output carries no control sequence");
 }
 
-@("task.reporter_plain.consumeEventsThroughAChannel")
+@("build_primitives.task.reporter_plain.consumeEventsThroughAChannel")
 @system
 unittest
 {

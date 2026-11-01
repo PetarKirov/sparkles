@@ -13,18 +13,24 @@ dflags "-preview=in" "-preview=dip1000"
 // `dub_recipe` reads `dub.sdl` through wired's SDLang reader. wired depends
 // only on `sparkles:base`, so this closes no dependency cycle.
 dependency "sparkles:wired" path="../.."
+// The task-DAG executor and process actions (`task.executor`, `task.process`)
+// run on Event Horizon. Event Horizon depends only on `sparkles:base` and
+// `sparkles:event-horizon-sys`, so this closes no cycle either.
+dependency "sparkles:event-horizon" path="../.."
 
 configuration "library" {
     targetType "library"
     // `testing.d` hosts the git-repository fixtures and is the only module
-    // needing `sparkles:test-utils`; excluding it here keeps test helpers out
-    // of every consumer's closure.
-    excludedSourceFiles "src/app.d" "src/sparkles/build_primitives/testing.d"
+    // needing `sparkles:test-utils`; `task/testing.d` is the task-DAG fake
+    // driver. Excluding both keeps test helpers out of every consumer's
+    // closure.
+    excludedSourceFiles "src/app.d" "src/sparkles/build_primitives/testing.d" "src/sparkles/build_primitives/task/testing.d"
 }
 
-// The library plus `testing.d`, for a consumer whose *tests* want the
-// repository fixtures. Select it from the consumer's unittest configuration
-// with `subConfiguration "sparkles:build-primitives" "testing"`; never from a
+// The library plus `testing.d` and `task/testing.d`, for a consumer whose
+// *tests* want the repository fixtures or the task-DAG fake driver. Select it
+// from the consumer's unittest configuration with
+// `subConfiguration "sparkles:build-primitives" "testing"`; never from a
 // shipped configuration, or the test helpers travel with the binary.
 configuration "testing" {
     targetType "library"

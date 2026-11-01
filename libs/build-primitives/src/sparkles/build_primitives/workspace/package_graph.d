@@ -1,5 +1,5 @@
 /++
-The repository's package graph ([SPEC §4.1](../../../../docs/specs/ci/task-dag/SPEC.md)):
+The repository's package graph ([SPEC §4.1](../../../../../../docs/specs/ci/task-dag/SPEC.md)):
 every root `dub.sdl` sub-package with its stable qualified id, directory,
 platforms, and the in-tree dependencies its active configuration declares.
 
@@ -12,7 +12,7 @@ Packages are sorted by id and edges by their ends' indices, so nothing depends
 on associative-array or directory iteration order. The root package is
 metadata, not a member: a dependency on it adds no edge.
 +/
-module workspace.package_graph;
+module sparkles.build_primitives.workspace.package_graph;
 
 import std.algorithm.searching : startsWith;
 import std.algorithm.sorting : sort;
@@ -24,8 +24,8 @@ import sparkles.base.text.writers : writeEnumMemberName;
 import sparkles.build_primitives.dub_manifest : DubConfiguration, DubManifest;
 
 import sparkles.build_primitives.dub_manifest : platformsAllowHost;
-import task.graph : IndexEdge, stableTopologicalOrder;
-import task.model : PlanExpected, planErr, planOk;
+import sparkles.build_primitives.task.graph : IndexEdge, stableTopologicalOrder;
+import sparkles.build_primitives.task.model : PlanExpected, planErr, planOk;
 
 /// A package's stable qualified name: `sparkles:base`.
 struct PackageId
@@ -395,7 +395,7 @@ version (unittest)
     private enum string[] linux = ["linux", "posix"];
 }
 
-@("workspace.package_graph.buildPackageGraph.configurationAwareEdges")
+@("build_primitives.workspace.package_graph.buildPackageGraph.configurationAwareEdges")
 @safe
 unittest
 {
@@ -457,7 +457,7 @@ configuration "library" {
     assert(tested.owner("README.md") < 0);
 }
 
-@("workspace.package_graph.buildPackageGraph.rejectsInvalidGraphs")
+@("build_primitives.workspace.package_graph.buildPackageGraph.rejectsInvalidGraphs")
 @safe
 unittest
 {
@@ -485,7 +485,7 @@ configuration "unittest" {
     ]) == "cycle: sparkles:a -> sparkles:b -> sparkles:c -> sparkles:a");
 }
 
-@("workspace.package_graph.discoverPackages.readsTheRepositoryRecipes")
+@("build_primitives.workspace.package_graph.discoverPackages.readsTheRepositoryRecipes")
 @safe
 unittest
 {
@@ -508,15 +508,15 @@ unittest
 }
 
 /// The repository's own graph discovers and validates in both roles.
-@("workspace.package_graph.discoverPackages.thisRepository")
+@("build_primitives.workspace.package_graph.discoverPackages.thisRepository")
 @safe
 unittest
 {
     import std.path : buildNormalizedPath;
     import sparkles.build_primitives.dub_manifest : hostPlatformTokens;
 
-    // This file is apps/ci/src/workspace/package_graph.d.
-    const root = buildNormalizedPath(__FILE_FULL_PATH__, "../../../../..");
+    // This file is libs/build-primitives/src/sparkles/build_primitives/workspace/package_graph.d.
+    const root = buildNormalizedPath(__FILE_FULL_PATH__, "../../../../../../..");
     foreach (role; [RecipeRole.build, RecipeRole.test])
     {
         auto graph = discoverPackages(root, role, hostPlatformTokens());

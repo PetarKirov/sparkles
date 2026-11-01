@@ -1,13 +1,13 @@
 /++
-The subprocess action adapter ([SPEC §5.1, §7, §8](../../../../docs/specs/ci/task-dag/SPEC.md)):
-runs a $(REF ProcessAction, task,action) through Event Horizon's
+The subprocess action adapter ([SPEC §5.1, §7, §8](../../../../../../docs/specs/ci/task-dag/SPEC.md)):
+runs a $(REF ProcessAction, sparkles,build_primitives,task,action) through Event Horizon's
 `supervise` (event-horizon SPEC §13.5) and maps its result to a task outcome.
 
 It reimplements none of supervision: spawn, line framing, timeout, the
 process-group TERM→KILL escalation, drain, and reap are `supervise`'s. This
 module only translates — argv and environment in, framed lines and samples
 out as task events, the end of the run as an outcome — and keeps each task's
-output in a bounded $(REF OutputSpool, task,output) that spills into the
+output in a bounded $(REF OutputSpool, sparkles,build_primitives,task,output) that spills into the
 task's sandbox directory.
 
 Cancellation needs no code here: the executor interrupts the task's fiber,
@@ -21,7 +21,7 @@ prints, before the line reaches an event or the spool.
 POSIX only for now: everything below exists where Event Horizon exports
 `supervise` (`processActionsAvailable`).
 +/
-module task.process;
+module sparkles.build_primitives.task.process;
 
 /// Whether this host's Event Horizon build provides `supervise`.
 enum bool processActionsAvailable = __traits(compiles, {
@@ -42,11 +42,11 @@ import sparkles.event_horizon.sched : Sched;
 import sparkles.event_horizon.supervise : supervise;
 import sparkles.test_runner.attributes : serial;
 
-import task.action : InProcessAction, InertAction, ProcessAction, StdinPolicy;
-import task.executor : isEventSink, TaskContext;
-import task.reporter : isEventSource;
-import task.model;
-import task.output : OutputSpool;
+import sparkles.build_primitives.task.action : InProcessAction, InertAction, ProcessAction, StdinPolicy;
+import sparkles.build_primitives.task.executor : isEventSink, TaskContext;
+import sparkles.build_primitives.task.reporter : isEventSource;
+import sparkles.build_primitives.task.model;
+import sparkles.build_primitives.task.output : OutputSpool;
 
 /**
 The production event channel, executor to reporter: bounded and
@@ -270,7 +270,7 @@ string sandboxPath(const TaskId id) @safe pure nothrow
 }
 
 ///
-@("task.process.sandboxPath.staysUnderTheRoot")
+@("build_primitives.task.process.sandboxPath.staysUnderTheRoot")
 @safe pure nothrow
 unittest
 {
@@ -292,7 +292,7 @@ string redact(scope const(char)[] line, scope const(string)[] secrets) @safe pur
 }
 
 ///
-@("task.process.redact.masksEveryOccurrence")
+@("build_primitives.task.process.redact.masksEveryOccurrence")
 @safe pure nothrow
 unittest
 {
@@ -313,9 +313,9 @@ version (unittest)
     import sparkles.event_horizon.scope_ : withScope;
     import sparkles.test_runner.skip : skipTest;
 
-    import task.action : EnvEntry;
-    import task.executor : ExecutorOptions, RunResult, runGraph;
-    import task.graph : TaskGraph, TaskGraphBuilder;
+    import sparkles.build_primitives.task.action : EnvEntry;
+    import sparkles.build_primitives.task.executor : ExecutorOptions, RunResult, runGraph;
+    import sparkles.build_primitives.task.graph : TaskGraph, TaskGraphBuilder;
 
     private struct LiveRun
     {
@@ -407,7 +407,7 @@ version (unittest)
     }
 }
 
-@("task.process.run.exitStatusesArgvAndFraming")
+@("build_primitives.task.process.run.exitStatusesArgvAndFraming")
 @serial
 @system
 unittest
@@ -433,7 +433,7 @@ unittest
     assert(run.result.exitCode == 1);
 }
 
-@("task.process.run.timeoutAndRedaction")
+@("build_primitives.task.process.run.timeoutAndRedaction")
 @serial
 @system
 unittest
@@ -450,7 +450,7 @@ unittest
         assert(!e.text.canFind("hunter2"));
 }
 
-@("task.process.run.failFastTearsDownTheTree")
+@("build_primitives.task.process.run.failFastTearsDownTheTree")
 @serial
 @system
 unittest
@@ -474,7 +474,7 @@ unittest
     assert(processGone(run.linesOf[1][0].to!int), "the cancelled task's grandchild survived");
 }
 
-@("task.process.run.largeOutputSpillsToTheSandbox")
+@("build_primitives.task.process.run.largeOutputSpillsToTheSandbox")
 @serial
 @system
 unittest
@@ -494,7 +494,7 @@ unittest
 
 /// The production shape across workers: process tasks run on worker 0, the
 /// plain reporter consumes their events on worker 1 through `EventChannel`.
-@("task.process.run.reporterOnAnotherWorker")
+@("build_primitives.task.process.run.reporterOnAnotherWorker")
 @serial
 @system
 unittest
@@ -506,8 +506,8 @@ unittest
 
     import sparkles.event_horizon.group : LoopGroup, LoopGroupConfig, RootScope, Topology;
     import sparkles.event_horizon.sched : currentScheduler;
-    import task.reporter : consumeEvents;
-    import task.reporter_plain : PlainOptions, PlainReporter;
+    import sparkles.build_primitives.task.reporter : consumeEvents;
+    import sparkles.build_primitives.task.reporter_plain : PlainOptions, PlainReporter;
 
     LoopGroupConfig cfg;
     cfg.topology = Topology.threadPerCore;

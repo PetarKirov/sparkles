@@ -1,5 +1,5 @@
 /++
-What every reporter shares ([SPEC §10](../../../../docs/specs/ci/task-dag/SPEC.md)):
+What every reporter shares ([SPEC §10](../../../../../../docs/specs/ci/task-dag/SPEC.md)):
 the reporter and event-source concepts, the consumer loop, the ordered block
 buffer, outcome wording, and the run summary.
 
@@ -11,7 +11,7 @@ only on the events' content, never on their arrival order.
 Reporters know events and the graph, not commands. No concrete reporter is
 imported here.
 +/
-module task.reporter;
+module sparkles.build_primitives.task.reporter;
 
 import core.time : Duration, MonoTime;
 import std.range.primitives : put;
@@ -22,9 +22,9 @@ import sparkles.base.text.writers : writeDuration, writeEnumMemberName, writeVal
 import sparkles.event_horizon.capability : isFiberExecutor;
 import sparkles.event_horizon.scope_ : protect;
 
-import task.graph : TaskGraph;
-import task.model;
-import task.output : OutputSpool, SpooledLine;
+import sparkles.build_primitives.task.graph : TaskGraph;
+import sparkles.build_primitives.task.model;
+import sparkles.build_primitives.task.output : OutputSpool, SpooledLine;
 
 /// Whether `R` consumes task events: `onEvent(const ref TaskEvent)` per
 /// event, then `finish()` once.
@@ -136,7 +136,7 @@ private:
     size_t next;
 }
 
-@("task.reporter.OrderedBlocks.releasesInPresentationOrder")
+@("build_primitives.task.reporter.OrderedBlocks.releasesInPresentationOrder")
 @safe
 unittest
 {

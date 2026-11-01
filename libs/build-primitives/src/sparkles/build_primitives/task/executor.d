@@ -1,5 +1,5 @@
 /++
-The task executor ([SPEC §5, §7–§9](../../../../docs/specs/ci/task-dag/SPEC.md)):
+The task executor ([SPEC §5, §7–§9](../../../../../../docs/specs/ci/task-dag/SPEC.md)):
 weighted admission with exclusive keys, conditional edge resolution, outcomes,
 the event stream, structured fail-fast, external cancellation, and protected
 cleanup.
@@ -38,7 +38,7 @@ A task the executor interrupted that then reports `Failed` is recorded as
 `Cancelled(interrupted)`: a child killed because the run was cancelled adds
 no failure of its own.
 +/
-module task.executor;
+module sparkles.build_primitives.task.executor;
 
 import core.lifetime : move;
 import core.stdc.errno : ECANCELED;
@@ -51,8 +51,8 @@ import sparkles.event_horizon.channel : Channel;
 import sparkles.event_horizon.capability : isFiberExecutor;
 import sparkles.event_horizon.scope_ : OnChildFailure, protect, ScopeOptions, withScope;
 
-import task.graph;
-import task.model;
+import sparkles.build_primitives.task.graph;
+import sparkles.build_primitives.task.model;
 
 /// Whether `D` can run a task's action on executor `X`.
 enum bool isActionDriver(D, X) = __traits(compiles, (ref D d, ref TaskContext!X ctx) {
@@ -474,10 +474,10 @@ version (unittest)
     import std.algorithm.iteration : filter, map;
     import std.array : array;
 
-    import task.testing;
+    import sparkles.build_primitives.task.testing;
 }
 
-@("task.executor.run.eventsAreSequencedAndMonotonic")
+@("build_primitives.task.executor.run.eventsAreSequencedAndMonotonic")
 @system
 unittest
 {
@@ -500,7 +500,7 @@ unittest
     assert(run.finishedAt["b"] - MonoTime.zero == 8.msecs);
 }
 
-@("task.executor.admission.capacityAndPresentationOrder")
+@("build_primitives.task.executor.admission.capacityAndPresentationOrder")
 @system
 unittest
 {
@@ -521,7 +521,7 @@ unittest
     assert(serial.startOrder == ["a", "b", "c", "d", "e", "f"]);
 }
 
-@("task.executor.admission.noStarvationOfAHeavyTask")
+@("build_primitives.task.executor.admission.noStarvationOfAHeavyTask")
 @system
 unittest
 {
@@ -535,7 +535,7 @@ unittest
     assert(run.startedAt["c"] - MonoTime.zero == 15.msecs);
 }
 
-@("task.executor.admission.overCapacityClaimRunsAlone")
+@("build_primitives.task.executor.admission.overCapacityClaimRunsAlone")
 @system
 unittest
 {
@@ -547,7 +547,7 @@ unittest
     assert(run.startedAt["c"] - MonoTime.zero == 10.msecs);
 }
 
-@("task.executor.admission.exclusiveKeysSerializeOnlyTheirHolders")
+@("build_primitives.task.executor.admission.exclusiveKeysSerializeOnlyTheirHolders")
 @system
 unittest
 {
@@ -559,7 +559,7 @@ unittest
     assert(run.startedAt["c"] - MonoTime.zero == 0.msecs, "a key wait holds back nothing else");
 }
 
-@("task.executor.failFast.simultaneousFailuresPickTheLowestKey")
+@("build_primitives.task.executor.failFast.simultaneousFailuresPickTheLowestKey")
 @system
 unittest
 {
@@ -590,7 +590,7 @@ unittest
     }
 }
 
-@("task.executor.failFast.blockedCancelledAndCleanup")
+@("build_primitives.task.executor.failFast.blockedCancelledAndCleanup")
 @system
 unittest
 {
@@ -628,7 +628,7 @@ unittest
     assert(countOf!((CancellationRequested _) => true)(patient.events) == 0);
 }
 
-@("task.executor.failFast.provisionalFailureFallsBackWithoutCancelling")
+@("build_primitives.task.executor.failFast.provisionalFailureFallsBackWithoutCancelling")
 @system
 unittest
 {
@@ -653,7 +653,7 @@ unittest
     assert(clean.result.exitCode == 0);
 }
 
-@("task.executor.cancel.externalInterrupt")
+@("build_primitives.task.executor.cancel.externalInterrupt")
 @system
 unittest
 {
@@ -674,7 +674,7 @@ unittest
     assert(terminated.result.exitCode == 143);
 }
 
-@("task.executor.run.outcomesIndependentOfCompletionOrder")
+@("build_primitives.task.executor.run.outcomesIndependentOfCompletionOrder")
 @system
 unittest
 {

@@ -1,16 +1,16 @@
 /++
-Focused package selection ([SPEC §4.2–4.4](../../../../docs/specs/ci/task-dag/SPEC.md)):
+Focused package selection ([SPEC §4.2–4.4](../../../../../../docs/specs/ci/task-dag/SPEC.md)):
 `--from` selectors, `--since` change ownership and repository-wide
 invalidators, dependency and dependent closure, platform eligibility, and the
 reasons each package was selected.
 
 $(LREF selectPackages) is pure: it evaluates the selection algebra over a
-$(REF PackageGraph, workspace,package_graph) and a description of what
+$(REF PackageGraph, sparkles,build_primitives,workspace,package_graph) and a description of what
 changed. $(LREF gitChangesSince) is the one part that runs git — through
 `runGit`, so an inherited `GIT_DIR` cannot redirect it — and produces that
 description.
 +/
-module workspace.select;
+module sparkles.build_primitives.workspace.select;
 
 import std.algorithm.searching : canFind, startsWith;
 import std.algorithm.sorting : sort;
@@ -21,8 +21,8 @@ import sparkles.base.text.wire_names : AnyFormat, WireCase;
 import sparkles.base.text.writers : writeEnumMemberName, writeValue;
 import sparkles.build_primitives.gitignore : gitGlobMatch;
 
-import task.model : PlanExpected, planErr, planOk;
-import workspace.package_graph : longestPrefixOwner, normalizeRepoPath, PackageEdge,
+import sparkles.build_primitives.task.model : PlanExpected, planErr, planOk;
+import sparkles.build_primitives.workspace.package_graph : longestPrefixOwner, normalizeRepoPath, PackageEdge,
     PackageGraph, PackageId, RecipeRole;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -67,7 +67,7 @@ const(Invalidator)* invalidatorFor(scope const(char)[] path) @safe pure nothrow 
 }
 
 ///
-@("workspace.select.repositoryInvalidators.declarative")
+@("build_primitives.workspace.select.repositoryInvalidators.declarative")
 @safe pure nothrow @nogc
 unittest
 {
@@ -546,7 +546,7 @@ PlanExpected!(PackagePlan, SelectionError) planPackages(string repoRoot, RecipeR
 {
     import std.conv : text;
     import core.lifetime : move;
-    import workspace.package_graph : discoverPackages;
+    import sparkles.build_primitives.workspace.package_graph : discoverPackages;
 
     PackagePlan plan;
     auto graph = discoverPackages(repoRoot, role, hostTokens);
@@ -577,7 +577,7 @@ PlanExpected!(PackagePlan, SelectionError) planPackages(string repoRoot, RecipeR
 
 version (unittest)
 {
-    import workspace.package_graph : buildPackageGraph, recipe;
+    import sparkles.build_primitives.workspace.package_graph : buildPackageGraph, recipe;
 
     private enum string[] linux = ["linux", "posix"];
 
@@ -617,7 +617,7 @@ dependency "sparkles:ui-tui" path="../.."`),
     }
 }
 
-@("workspace.select.selectPackages.allWithoutSelectors")
+@("build_primitives.workspace.select.selectPackages.allWithoutSelectors")
 @safe
 unittest
 {
@@ -640,7 +640,7 @@ unittest
         ~ "  sparkles:base -> sparkles:wsi\n");
 }
 
-@("workspace.select.selectPackages.fromExactAndGlob")
+@("build_primitives.workspace.select.selectPackages.fromExactAndGlob")
 @safe
 unittest
 {
@@ -669,7 +669,7 @@ unittest
     assert(!plan(graph, SelectionRequest(from: ["libs/*"])).canFind("text-wasm"));
 }
 
-@("workspace.select.selectPackages.emptyMatchesAreErrors")
+@("build_primitives.workspace.select.selectPackages.emptyMatchesAreErrors")
 @safe
 unittest
 {
@@ -684,7 +684,7 @@ unittest
         == "empty-selection: no package owns a path changed since the base revision");
 }
 
-@("workspace.select.selectPackages.sinceOwnershipDeletionsAndInvalidators")
+@("build_primitives.workspace.select.selectPackages.sinceOwnershipDeletionsAndInvalidators")
 @safe
 unittest
 {
@@ -722,7 +722,7 @@ unittest
     assert(all.startsWith("packages (7):\n  sparkles:base: invalidator=dub.selections.json\n"));
 }
 
-@("workspace.select.selectPackages.closuresAreAFixedPointUnion")
+@("build_primitives.workspace.select.selectPackages.closuresAreAFixedPointUnion")
 @safe
 unittest
 {
@@ -753,7 +753,7 @@ unittest
     assert(diamond.canFind("  sparkles:base: dependency-of=sparkles:fuzzy, dependency-of=sparkles:text-wasm\n"));
 }
 
-@("workspace.select.selectPackages.platformSkippedSeedsAreNotEmpty")
+@("build_primitives.workspace.select.selectPackages.platformSkippedSeedsAreNotEmpty")
 @safe
 unittest
 {
@@ -764,7 +764,7 @@ unittest
         ~ "edges (0):\n");
 }
 
-@("workspace.select.selectPackages.cyclicGraphsNeverReachSelection")
+@("build_primitives.workspace.select.selectPackages.cyclicGraphsNeverReachSelection")
 @safe
 unittest
 {
@@ -778,13 +778,13 @@ dependency "sparkles:a" path="../.."`),
     assert(cyclic.hasError);
 }
 
-@("workspace.select.gitChangesSince.fixtureRepository")
+@("build_primitives.workspace.select.gitChangesSince.fixtureRepository")
 @system
 unittest
 {
     import sparkles.build_primitives.testing : gitAvailable, TmpGitRepo;
     import sparkles.test_runner.skip : skipTest;
-    import workspace.package_graph : discoverPackages;
+    import sparkles.build_primitives.workspace.package_graph : discoverPackages;
 
     if (!gitAvailable)
         return skipTest("git is not on PATH");
@@ -873,7 +873,7 @@ unittest
 
 /// The planner end to end on a fixture repository: `--from c --since main
 /// --dependents` prints a deterministic plan.
-@("workspace.select.planPackages.fixtureRepository")
+@("build_primitives.workspace.select.planPackages.fixtureRepository")
 @system
 unittest
 {
@@ -918,7 +918,7 @@ unittest
         == SelectionError(SelectionErrorKind.unmatchedSelector, "zz"));
 }
 
-@("workspace.select.gitChangesSince.defaultBaseAndErrors")
+@("build_primitives.workspace.select.gitChangesSince.defaultBaseAndErrors")
 @system
 unittest
 {

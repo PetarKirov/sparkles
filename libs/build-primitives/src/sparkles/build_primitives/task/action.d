@@ -1,6 +1,6 @@
 /++
 The closed vocabulary of work a task node performs
-([SPEC §5.1](../../../../docs/specs/ci/task-dag/SPEC.md)): a typed process
+([SPEC §5.1](../../../../../../docs/specs/ci/task-dag/SPEC.md)): a typed process
 invocation, an in-process command handler, or — for graph and executor tests
 — an inert action whose outcome the test driver declares.
 
@@ -8,7 +8,7 @@ An action is data. Nothing here spawns, runs, or dispatches; the executor owns
 that. What this module does own is the dry-run rendering of an action, which
 never prints a redacted value.
 +/
-module task.action;
+module sparkles.build_primitives.task.action;
 
 import core.time : Duration;
 import std.range.primitives : put;
@@ -170,7 +170,7 @@ private void writeArgument(Writer)(ref Writer w, scope const(char)[] arg)
     put(w, '"');
 }
 
-@("task.action.writeActionSummary.process")
+@("build_primitives.task.action.writeActionSummary.process")
 @safe pure nothrow
 unittest
 {
@@ -189,7 +189,7 @@ unittest
         ~ ` (in libs/base) (timeout 1.5m) (sandbox task-directory)`);
 }
 
-@("task.action.writeActionSummary.inProcessAndInert")
+@("build_primitives.task.action.writeActionSummary.inProcessAndInert")
 @safe pure nothrow
 unittest
 {

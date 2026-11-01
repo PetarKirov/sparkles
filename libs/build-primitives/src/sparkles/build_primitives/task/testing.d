@@ -1,11 +1,13 @@
 /++
 Test fixtures for the task DAG: a deterministic fake action driver run
 under `TestSched` and `TestClock`, and helpers to build graphs and capture
-a run's events. Compiled only into unittest builds.
-+/
-module task.testing;
+a run's events.
 
-version (unittest):
+Like `sparkles.build_primitives.testing`, it is excluded from the library
+configuration and shipped by the `testing` one, so a consumer's tests (the
+`ci` TTY reporter's) link it from a library built without `-unittest`.
++/
+module sparkles.build_primitives.task.testing;
 
 import core.lifetime : move;
 import core.time : Duration, MonoTime;
@@ -14,9 +16,9 @@ import std.sumtype : match;
 import sparkles.event_horizon.channel : Channel;
 import sparkles.event_horizon.scope_ : withScope;
 
-import task.executor;
-import task.graph;
-import task.model;
+import sparkles.build_primitives.task.executor;
+import sparkles.build_primitives.task.graph;
+import sparkles.build_primitives.task.model;
 
 import core.time : msecs;
 import std.algorithm.iteration : filter, map;
@@ -24,7 +26,7 @@ import std.array : array;
 
 import sparkles.event_horizon.clock : TestClock;
 import sparkles.event_horizon.testing : advanceAndSettle, TestSched;
-import task.action : InertAction;
+import sparkles.build_primitives.task.action : InertAction;
 
 alias Clock = TestClock!(TestSched.Waker);
 
