@@ -29,14 +29,14 @@ else version (Android)
 }
 else version (linux)  :
 
-import sparkles.event_horizon.sys.uring : AcceptFlags, CancelFlags, CQE_BUFFER_SHIFT, CQEFlags, FsyncFlags,
+import sparkles.event_horizon.sys.uring : AcceptFlags, CQE_BUFFER_SHIFT, CQEFlags, FsyncFlags,
     FUTEX2_PRIVATE, FUTEX2_SIZE_U32, FUTEX_BITSET_MATCH_ANY,
-    MsgFlags, Operation,
+    MsgFlags,
     SetupFlags, SubmissionEntry, SubmissionEntryFlags, TimeoutFlags, Uring, futex_waitv,
     io_uring_getevents_arg,
-    prepAccept, prepClose, prepConnect, prepFsync, prepFutexWait, prepFutexWaitv, prepFutexWake,
+    prepAccept, prepCancel64, prepClose, prepConnect, prepFsync, prepFutexWait, prepFutexWaitv, prepFutexWake,
     prepLinkTimeout, prepMultishotAccept, prepNop,
-    prepMkdirat, prepOpenat, prepPollAdd, prepPollMultishot, prepRW, prepRead, prepReadFixed,
+    prepMkdirat, prepOpenat, prepPollAdd, prepPollMultishot, prepRead, prepReadFixed,
     prepRecv, prepRecvMsg, prepRenameat, prepSend,
     prepSendMsg, prepStatx, prepSymlinkat, prepTimeout, prepUnlinkat, prepWaitid, prepWrite,
     prepWriteFixed,
@@ -583,15 +583,13 @@ struct UringBackend
     }
 
     /// Submits an `ASYNC_CANCEL` keyed on `target.raw`, tagged with the
-    /// internal `cancelSlot` token. Hand-rolled: during 0.5.0's `prepCancel`
-    /// default-flag path is mis-typed (SPEC §3.5).
+    /// internal `cancelSlot` token.
     bool trySubmitCancel(OpToken cancelSlot, OpToken target) @trusted nothrow @nogc
     {
         if (_io.full)
             return false;
         _io.putWith!((ref SubmissionEntry e, ulong targetRaw, ulong ud) {
-            e.prepRW(Operation.ASYNC_CANCEL, -1, cast(void*) targetRaw);
-            e.cancel_flags = CancelFlags.init;
+            e.prepCancel64(targetRaw);
             e.user_data = ud;
         })(target.raw, cancelSlot.raw);
         return true;
@@ -608,14 +606,21 @@ struct UringBackend
         return f;
     }
 
-    /// Pushes queued SQEs to the kernel without waiting; the count consumed.
-    IoResult!uint flush() @safe nothrow @nogc
+    /// Re-arms the wake futex wait if a wake consumed it, so the next
+    /// submission carries it.
+    private void rearmWake() @safe nothrow @nogc
     {
         if (_wakeTokenRaw != 0 && !_wakeWaitInFlight)
         {
             _wakeExpected = _wakeWord;
             cast(void) submitFutexWait();
         }
+    }
+
+    /// Pushes queued SQEs to the kernel without waiting; the count consumed.
+    IoResult!uint flush() @safe nothrow @nogc
+    {
+        rearmWake();
         const r = _io.submit(0u);
         return r < 0
             ? ioErr!uint(-r, OpKind.none, IoErrorStage.submit)
@@ -639,23 +644,19 @@ struct UringBackend
                 : ioOk(cast(uint) r);
         }
 
-        // Substrate trap (during 0.5.0): `submitAndWait(want, args)` silently
-        // DROPS `args` when the submission queue is empty (it falls back to
-        // the bare `wait(want)`), turning a deadline wait into an unbounded
-        // block. Flush explicitly, then wait with the EXT_ARG deadline.
-        auto flushed = flush();
-        if (flushed.hasError)
-            return flushed;
-
+        // One `io_uring_enter` submits what is queued and waits with the
+        // EXT_ARG deadline. It returns the count submitted, or -ETIME when it
+        // submitted nothing and the deadline passed first.
+        rearmWake();
         DuringTimespec ts = {tv_sec: deadline.tv_sec, tv_nsec: deadline.tv_nsec};
         io_uring_getevents_arg arg;
         arg.ts = cast(ulong) &ts;
-        const r = _io.wait(want, &arg);
+        const r = _io.submitAndWait(want, &arg);
         if (r == -ETIME)
-            return ioOk(flushed.value);
+            return ioOk(0u);
         return r < 0
             ? ioErr!uint(-r, OpKind.none, IoErrorStage.submit)
-            : ioOk(flushed.value);
+            : ioOk(cast(uint) r);
     }
 
     /// Non-blocking completion drain into a `scope` sink (no closure
