@@ -2355,7 +2355,7 @@ after its completion, including when cancellation arrived meanwhile. The
 parked frame therefore remains the ordinary lifetime proof. `Sched` owns or is
 bound to one pool rather than constructing a pool per operation.
 
-### 13.9 Windows lowering (target M19)
+### 13.9 Windows lowering (M19)
 
 Windows process parity is native Win32, not a POSIX emulation:
 

@@ -197,6 +197,7 @@ at `6.13` and later are forward-dated "as observed in the v7.3-rc4 checkout" —
 - **[Implementation Techniques][techniques]** — reactor/proactor, ring batching, scheduler topologies, wakers, timer wheels, buffer ownership, cancellation, feature probing.
 - **[kqueue, PTYs & Signals on macOS][kqueue-ptys]** — what kqueue will and will not watch, `EVFILT_SIGNAL` vs `signalfd`, `EVFILT_PROC`, and PTY creation, across ten C/Zig/Rust implementations.
 - **[Process Supervision][process-supervision]** — observing exit without consuming it, concurrent drains, tree containment (pgid / cgroup / job object / namespace), termination policy, blocking-work lanes and honest tree accounting — the survey behind `event-horizon`'s supervised runs.
+- **[Windows IOCP Waits, Timers & Jobs][windows-iocp-waits]** — wait completion packets as the one bridge from process exit and high-resolution timers to a single completion port, and what Job Objects promise about containment, accounting and assignment.
 - **[Grand Central Dispatch][gcd]** — the same kernel interfaces from above: queues, sources, QoS, and the kernel-owned thread pool macOS actually schedules on.
 - **[Comparison][comparison]** — the head-to-head matrix and design recommendations for Sparkles.
 - **[Effects & Event Loops][effects]** — how completions resume fibers, continuations, and effect handlers.
@@ -256,6 +257,7 @@ this index's classifications are:
 [techniques]: ./techniques.md
 [kqueue-ptys]: ./kqueue-and-ptys.md
 [process-supervision]: ./process-supervision.md
+[windows-iocp-waits]: ./windows-iocp-waits.md
 [comparison]: ./comparison.md
 [effects]: ./effects-and-event-loops.md
 [d-landscape]: ./d-landscape.md
