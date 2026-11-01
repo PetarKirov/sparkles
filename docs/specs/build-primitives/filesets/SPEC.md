@@ -44,8 +44,8 @@ specified but not delivered until a Merkle scheme exists to key it; see
 
 Normative, and every later requirement is read against them.
 
-1. **The library performs no I/O.** No module under
-   `sparkles.build_primitives` opens, reads, stats, or enumerates anything. All
+1. **The fileset library performs no I/O.** No fileset module opens, reads,
+   stats, or enumerates anything. All
    filesystem effects are performed by a driver outside the library and
    supplied as responses to explicit requests (`FSM*`).
 2. **Evaluation is `@safe pure nothrow @nogc` and allocation-free.**

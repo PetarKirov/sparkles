@@ -1205,6 +1205,46 @@
                 "link": "/specs/build-primitives/filesets/decisions"
               }
             ]
+          },
+          {
+            "text": "Task DAG",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "SPEC",
+                "link": "/specs/build-primitives/task-dag/SPEC"
+              },
+              {
+                "text": "PLAN",
+                "link": "/specs/build-primitives/task-dag/PLAN"
+              },
+              {
+                "text": "Decisions",
+                "link": "/specs/build-primitives/task-dag/decisions"
+              }
+            ]
+          },
+          {
+            "text": "Build graph",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "SPEC",
+                "link": "/specs/build-primitives/build-graph/SPEC"
+              },
+              {
+                "text": "PLAN",
+                "link": "/specs/build-primitives/build-graph/PLAN"
+              },
+              {
+                "text": "Testing",
+                "link": "/specs/build-primitives/build-graph/testing"
+              },
+              {
+                "text": "Decisions",
+                "link": "/specs/build-primitives/build-graph/decisions"
+              }
+            ]
           }
         ]
       },
@@ -1221,11 +1261,11 @@
             "link": "/specs/ci/stats/PLAN"
           },
           {
-            "text": "Task DAG specification",
+            "text": "Commands specification",
             "link": "/specs/ci/task-dag/SPEC"
           },
           {
-            "text": "Task DAG delivery plan",
+            "text": "Commands delivery plan",
             "link": "/specs/ci/task-dag/PLAN"
           }
         ]
