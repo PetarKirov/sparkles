@@ -142,7 +142,12 @@ of inheritance (dub `source/dub/generators/generator.d`, functions
   versions, version filters, import, C import and string import paths, and,
   from library targets, libraries, frameworks, lflags and linker files.
 
-Downward versions are pruned per BGV1.
+Downward versions are pruned per BGV1. A build option selects the divergent
+mode of [D13](./decisions.md#d13-prune-downward-inherited-versions-accepted)
+instead: a dependent's configuration-level versions and debug versions do not
+pass down, and resolution rejects a dependency whose sources test one. Both
+modes pass build-type options and ABI-critical flags down, and the mode is
+part of every variant key.
 
 **BGR4: Registry packages.** A dependency that is not an in-tree sub-package
 **must** resolve to the source the repository's dub lockfiles (`nix/dub-lock.json`

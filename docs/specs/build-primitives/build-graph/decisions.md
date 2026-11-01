@@ -211,7 +211,7 @@ conservative key.
 **Revisit when** the extensions are upstreamed, or a rebase of the fork drops
 them.
 
-## D13: Prune downward-inherited versions (proposed)
+## D13: Prune downward-inherited versions (accepted)
 
 **Question.** dub passes a root's versions down to every dependency, so a root
 with a configuration-local version forks its whole dependency closure. How
@@ -225,14 +225,17 @@ much of that does a variant key keep?
 - **Pruned faithful:** keep an inherited version only where a compiled or
   imported source mentions it.
 
-**Choice.** Pruned faithful. Separately, the repository moves `-checkaction=context`
+**Choice.** Pruned faithful, the default. A build option selects the divergent
+mode instead, in which configuration-level versions and debug versions never
+pass down and the lint rejects a dependency that tests one; build-type options
+and ABI-critical flags pass down in both modes. Separately, the repository moves `-checkaction=context`
 from each `configuration "unittest"` into the managed `unittest` build type, so
 the flag is uniform and forks nothing.
 
 **Revisit when** a version is found that affects code without being named in a
 `version` or `debug` condition, for example through a string mixin.
 
-## D14: Relocation maps the root to `.` (proposed)
+## D14: Relocation maps the root to `.` (accepted)
 
 **Question.** How do outputs avoid naming their worktree, given that 53 uses of
 `__FILE_FULL_PATH__` open fixtures at run time?
