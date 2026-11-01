@@ -79,3 +79,27 @@ counting it would invent a second primary cause.
 **Choice.** Outcomes and event payloads name tasks by graph index, and an
 output line travels beside the payload. A `SumType` holding a pointer is
 `@system` to assign, and pointer-free events cross channels without borrowing.
+
+## T8: The CI-provider module lives in `sparkles:base` (proposed)
+
+**Question.** `sparkles:build-primitives`' unittest configuration depends on the
+test runner, so the test runner cannot import a module of that package without
+a dependency cycle. Yet the test runner is a natural second consumer: its
+failures can become provider annotations.
+
+**Alternatives.**
+
+- Keep the module in `sparkles:build-primitives`, unused by the test runner.
+- Put it in `sparkles:base`, which the test runner already includes through
+  its cycle-safe integration.
+- Create a new leaf package.
+
+**Choice.** `sparkles:base`, as `sparkles.base.ci_provider`. Provider detection
+and log syntax depend on nothing else.
+
+## T9: An unneeded fallback is not a failure
+
+**Choice.** A node behind an `onFailure` edge whose prerequisite succeeded is
+`Blocked(conditionUnmet)`. It never fails the command, and summaries count it
+apart from blocks caused by failures. Without this, every green coverage run
+would report one blocked plain retry per package.

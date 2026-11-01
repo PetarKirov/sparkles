@@ -48,12 +48,14 @@ criteria. Delivery order is in [PLAN.md](./PLAN.md).
 ### 1.1 Canonical commands
 
 ```text
-ci pipeline [--from SELECTOR...] [--since REF] [--jobs N] [--fail-fast]
+ci pipeline [--from SELECTOR...] [--since REF] [--dependencies] [--dependents]
+            [--backend local|nix]
 
 ci test [--build-only | --special-modes betterc|wasm|all]
         [--from SELECTOR...] [--since REF]
         [--dependencies] [--dependents]
-        [--coverage | --no-coverage] [--sanitize address] [--slow]
+        [--coverage | --no-coverage] [--sanitize address]
+        [--slow [--tests NAME...]] [--backend local|nix]
 
 ci docs examples [--include-files SELECTOR...] [--exclude-files SELECTOR...]
 ci docs run|verify|update [--include-files SELECTOR...] [--exclude-files SELECTOR...]
@@ -69,9 +71,9 @@ ci docs wasm check|stage [module options]
 
 ci commits build-each [--base REF] [--packages NAME...]
 ci commit-scope [COMMIT_MESSAGE_FILE|-]
-ci cache seed-dub | check-pins | stats | gc
+ci cache seed-dub | check-pins | stats | list | gc
 ci host probe [--host-system SYSTEM] [--host-ci-rev REV]
-ci checks mirror [--repo R] [--sha SHA] [--dry-run]
+ci checks mirror [--repo R] [--sha SHA] [--no-write]
 ci stats [statistics options]
 ci link-rot report [report options]
 ci slow-tests list
@@ -87,22 +89,36 @@ Every command that executes a graph accepts:
 | `--fail-fast`       | off                   | On the first authoritative failure, stop admission and cancel the command scope.                                                                   |
 | `--log-level LEVEL` | `info`                | Standard Sparkles logger level.                                                                                                                    |
 
-`--jobs 0` and negative values are errors. `--dry-run --interlaced` is rejected,
-because a dry run has no task output to interlace. `SPARKLES_CI_JOBS` remains an
-environment fallback, and an explicit `--jobs` wins. Invalid combinations fail
-before any task runs. Repository workflows pass `--interlaced`.
+**CIC1: Common options.** `--jobs 0` and negative values **must** be errors.
+`--dry-run --interlaced` **must** be rejected, because a dry run has no task
+output to interlace. Without `--jobs`, `SPARKLES_CI_JOBS` sets the capacity,
+and an explicit `--jobs` wins over both. Invalid combinations fail before any
+task runs. Repository workflows pass `--interlaced`.
 
-A command that is a single check, such as `ci docs sidebar check`, plans a
-one-node graph. It still runs through the executor and reporter, so its
-outcome, exit status and output follow the same rules as every other command.
+**CIC2: One-node graphs.** A command that is a single check, such as
+`ci docs sidebar check`, **must** plan a one-node graph. It runs through the
+executor and reporter, so its outcome, exit status and output follow the same
+rules as every other command.
+
+**CIC3: Backends.** `--backend local`, the default, runs build actions on the
+local executor and the shared store. `--backend nix` lowers them to Nix
+derivations, which run on the configured remote builders as well
+([build graph §10](../../build-primitives/build-graph/SPEC.md#10-the-nix-backend)).
+Non-build tasks run locally under both.
+
+`ci checks mirror` reads the GitHub API even when it writes nothing. So its
+rehearsal option is `--no-write`, not the common `--dry-run`, which forbids
+network access.
 
 ### 1.2 `ci test` modes
 
 With no mode option, `ci test` creates ordinary unittest tasks. Coverage is on
 by default for this mode and can be disabled with `--no-coverage`.
 
-`ci test --build-only` builds each selected package's library and application
-variants and runs nothing. Coverage is invalid.
+`ci test --build-only` builds, for each selected package, its test binary, its
+dependency-library variant when a selected package depends on it, and its
+application variant when it is an executable. It runs nothing. Coverage is
+invalid.
 
 `ci test --special-modes MODE` creates the test runner's extracted special-mode
 tasks:
@@ -118,7 +134,8 @@ tasks:
 
 `--sanitize address` builds and tests every selected package under
 AddressSanitizer, as a separate variant; it requires LDC on Linux. `--slow` runs
-the `@slow` tests instead of the ordinary ones.
+the `@slow` tests instead of the ordinary ones, optionally only those named by
+`--tests`.
 
 `--build-only` and `--special-modes` are mutually exclusive.
 
@@ -143,42 +160,47 @@ The flat mode flags are removed at cutover, and active workflows, hooks and
 documentation migrate in the same change. There is no legacy parser, alias,
 precedence table, or fallback dispatch.
 
-| Removed flag                     | Replacement                            |
-| -------------------------------- | -------------------------------------- |
-| `--test`, `-t`                   | `ci test`                              |
-| `--build`                        | `ci test --build-only`                 |
-| `--test-extracted`               | `ci test --special-modes all`          |
-| `--test-sanitize`                | `ci test --sanitize address`           |
-| `--test-slow`, `--tests`         | `ci test --slow`                       |
-| `--list-slow-tests`              | `ci slow-tests list`                   |
-| `--coverage`                     | `ci test --coverage`                   |
-| `--example-files`, `-x`          | `ci docs examples`                     |
-| default markdown mode            | `ci docs run`                          |
-| `--verify`, `-V`                 | `ci docs verify`                       |
-| `--update`, `-u`                 | `ci docs update`                       |
-| `--dedup-reference-links`, `-d`  | `ci docs links check`                  |
-| `--fix-reference-links`, `-f`    | `ci docs links fix`                    |
-| `--check-vcs-urls`               | `ci docs vcs-urls check`               |
-| `--check-docs-sidebar`           | `ci docs sidebar check`                |
-| `--check-glossary`               | `ci docs glossary check`               |
-| `--check-credits`                | `ci docs credits check`                |
-| `--check-spec-evidence`          | `ci docs spec-evidence check`          |
-| `--update-spec-evidence-backlog` | `ci docs spec-evidence update-backlog` |
-| `--check-blob-paths`             | `ci docs blob-paths check`             |
-| `--audit-fences`                 | `ci docs fences audit`                 |
-| `--check-wasm-modules`           | `ci docs wasm check`                   |
-| `--stage-docs-wasm`              | `ci docs wasm stage`                   |
-| `--build-each-commit`            | `ci commits build-each`                |
-| `--check-commit-scope`           | `ci commit-scope`                      |
-| `--seed-dub-cache`               | `ci cache seed-dub`                    |
-| `--check-pin-cache`              | `ci cache check-pins`                  |
-| `--linux-host-probe`             | `ci host probe`                        |
-| `--mirror-checks`                | `ci checks mirror`                     |
-| `--ci-stats`, `-C`               | `ci stats`                             |
-| `--report-link-rot`              | `ci link-rot report`                   |
+| Removed flag                      | Replacement                            |
+| --------------------------------- | -------------------------------------- |
+| `--test`, `-t`                    | `ci test`                              |
+| `--build`                         | `ci test --build-only`                 |
+| `--test-extracted`                | `ci test --special-modes all`          |
+| `--test-sanitize`                 | `ci test --sanitize address`           |
+| `--test-slow`                     | `ci test --slow`                       |
+| `--packages` (with `--test-slow`) | `ci test --slow --from`                |
+| `--files`                         | `--include-files`                      |
+| `--list-slow-tests`               | `ci slow-tests list`                   |
+| `--coverage`                      | `ci test --coverage`                   |
+| `--example-files`, `-x`           | `ci docs examples`                     |
+| default markdown mode             | `ci docs run`                          |
+| `--verify`, `-V`                  | `ci docs verify`                       |
+| `--update`, `-u`                  | `ci docs update`                       |
+| `--dedup-reference-links`, `-d`   | `ci docs links check`                  |
+| `--fix-reference-links`, `-f`     | `ci docs links fix`                    |
+| `--check-vcs-urls`                | `ci docs vcs-urls check`               |
+| `--check-docs-sidebar`            | `ci docs sidebar check`                |
+| `--check-glossary`                | `ci docs glossary check`               |
+| `--check-credits`                 | `ci docs credits check`                |
+| `--check-spec-evidence`           | `ci docs spec-evidence check`          |
+| `--update-spec-evidence-backlog`  | `ci docs spec-evidence update-backlog` |
+| `--check-blob-paths`              | `ci docs blob-paths check`             |
+| `--audit-fences`                  | `ci docs fences audit`                 |
+| `--check-wasm-modules`            | `ci docs wasm check`                   |
+| `--stage-docs-wasm`               | `ci docs wasm stage`                   |
+| `--build-each-commit`             | `ci commits build-each`                |
+| `--check-commit-scope`            | `ci commit-scope`                      |
+| `--seed-dub-cache`                | `ci cache seed-dub`                    |
+| `--check-pin-cache`               | `ci cache check-pins`                  |
+| `--linux-host-probe`              | `ci host probe`                        |
+| `--mirror-checks`                 | `ci checks mirror`                     |
+| `--ci-stats`, `-C`                | `ci stats`                             |
+| `--report-link-rot`               | `ci link-rot report`                   |
 
-Option-only flags keep their spelling on the command that owns them; for
-example, `--json`, `--root` and `--audit-scope` move to `ci docs fences audit`.
+**CIC4: No removed flag survives.** The parser **must** reject every flag in the
+table's first column, with a diagnostic naming its replacement. Option-only
+flags keep their spelling on the command that owns them; for example, `--json`,
+`--root` and `--audit-scope` move to `ci docs fences audit`, and `--tests` to
+`ci test --slow`.
 
 ## 3. Yarn inspiration and Sparkles differences
 
@@ -213,17 +235,20 @@ algebra](../../build-primitives/task-dag/SPEC.md#2-package-discovery-and-focused
 Only `ci test` and `ci pipeline` accept focused selectors; docs and example
 commands keep their file selectors.
 
-The repository's invalidators, which select every package, are:
+**CIC5: The repository's invalidators.** These repository-relative paths
+**must** select every package, ahead of package ownership:
 
-- the root `dub.sdl`, `dub.selections.json` and `nix/dub-lock.json`;
-- toolchain construction under `nix/d-toolchain.nix`;
-- the modules that discover packages, construct tasks or build:
-  `sparkles.build_primitives.task`, `.workspace` and the build graph, and
-  `apps/ci/src/commands/`.
+- `dub.sdl`, `dub.selections.json`, `nix/dub-lock.json` and
+  `nix/ci-dub-lock.json`;
+- `flake.nix`, `flake.lock`, `nix/d-toolchain.nix` and `nix/shells/`;
+- `libs/build-primitives/src/sparkles/build_primitives/task/`,
+  `libs/build-primitives/src/sparkles/build_primitives/workspace/`,
+  the build graph's modules and `dub_manifest.d` under the same directory;
+- `apps/ci/src/commands/`, `apps/ci/src/cli.d` and `apps/ci/src/ci_main.d`.
 
 Other `apps/ci/` changes select only `ci`, which owns them.
 
-## 5. Graphs for current work
+## 5. Command graphs
 
 The diagrams show graph shape. Real node ids include package and file
 identity. Build nodes are the build graph's actions, shared by every command in
@@ -243,28 +268,34 @@ A failed build blocks the builds that link against it.
 
 ```text
 discover -> select -> plan builds
-dependency-library builds of A --onSuccess--> link test binary A -> coverage test A --failure--> plain test A
-                                                                  \--success--+-----------------+-> classify A
+coverage attempt A = [coverage compile -> coverage link -> coverage test]   (provisional)
+coverage attempt A --onFailure--> [plain compile -> plain link -> plain test]
+coverage attempt A, plain attempt A --onCompletion--> classify A
 all classifications --onCompletion--> merge coverage -> coverage-publish
 all classifications --onCompletion--> run summary
 ```
 
-A package's test task depends only on its own test binary. Its binary depends
-on its test-root compile and on the dependency-library archives it links. No
-test waits for another package's test. A dependency whose library fails to
-build blocks the link of each test binary that needs it.
+**CIC6: Test edges.** A package's test task **must** depend only on its own test
+binary. Its binary depends on its test-root compile and on the
+dependency-library archives it links. No test waits for another package's test.
+A dependency whose library fails to build blocks the link of each test binary
+that needs it.
 
-Without coverage, each package has one test node and one classification node.
-With coverage, the test binary is a coverage variant, and each attempt writes
-listings to its own task directory:
+**CIC7: Coverage attempts.** Without coverage, each package has one test node
+and one classification node. With coverage:
 
-- **Retry:** a failed coverage attempt schedules a plain retry against the
-  plain variant.
-- **Classification:** if the plain tests pass, the package is
-  `Degraded(noCoverage)`. If they fail, it is `Failed`, retaining both
-  attempts.
-- **Fail-fast:** the initial coverage failure is provisional and does not
-  trigger fail-fast.
+- **The attempt:** the coverage compile, link and test of a package form one
+  attempt. Every node in it has a provisional failure policy, so a failure
+  anywhere in it, including a `-cov` compile or link failure, neither triggers
+  fail-fast nor becomes the primary cause.
+- **The fallback:** the plain compile, link and test sit behind an
+  `onFailure` edge from the attempt. They are planned eagerly but run only
+  after a failure. After a green attempt they end
+  `Blocked(conditionUnmet)`, which the summary counts as unneeded.
+- **Classification:** a passing attempt classifies the package `Succeeded`.
+  A failed attempt with passing plain tests is `Degraded(noCoverage)`. If the
+  plain tests fail too, it is `Failed`, retaining both attempts.
+- **Listings:** each attempt writes its listings to its own task directory.
 
 ### 5.3 Extracted test modes
 
@@ -301,9 +332,12 @@ file reducer --onSuccess--> atomic rewrite(file)
 - **Concurrency:** multiple files may rewrite in parallel; one file has one
   exclusive write key and one atomic rename.
 
-Each example is a single-file package. The build graph builds it against the
-same shared library variants as the package tests. Input order defines
-presentation order even when execution is parallel.
+**CIC8: Examples build like applications.** Each example **must** be a
+single-file package, built under the `checked` build type against the shared
+dependency-library variants of application builds. Its extracted source
+**must** live at a content-addressed path (build graph BGG4), so an unchanged
+example is not recompiled. Input order defines presentation order even when
+execution is parallel.
 
 ### 5.5 Standalone examples
 
@@ -389,7 +423,6 @@ Each task that writes anything else gets a task directory under
 `run-id` is a filesystem name only, never an ordering input. A task directory
 holds:
 
-- generated source material for markdown examples;
 - spilled output;
 - the coverage listings of one coverage attempt, written there through the test
   binary's coverage destination option.
@@ -398,8 +431,10 @@ Coverage publication has two stages:
 
 1. Successful coverage attempts are parsed from their task directories and
    merged by normalized source path and line. Hit counts are summed with
-   saturation. A coverability disagreement is an error in that file's
-   evidence and degrades its report rather than guessing.
+   saturation. A line is coverable if any listing compiled code for it, because
+   a test root and a dependency library compile different code from one file.
+   Only listings of one file that disagree on its source lines are an error,
+   which degrades that file's report rather than guessing.
 2. A single `coverage-publish` node writes a fresh, versioned destination and
    then atomically replaces the `build/coverage` pointer. A cancelled or failed
    run leaves no half-published result. Whether the previous result is kept or
@@ -417,21 +452,21 @@ creates none.
 
 ## 7. Module layout
 
-| Module                       | Responsibility                                                                                                                 |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `ci_main.d`                  | Executable entry point only.                                                                                                   |
-| `app.d`                      | Composition root during migration; domain code leaves it as planners move out.                                                 |
-| `cli.d`                      | Canonical subcommands, validation, and help.                                                                                   |
-| `reporter_tty.d`             | The interactive reporter over `sparkles:ui`'s `TaskReporter`.                                                                  |
-| `commands/test_.d`           | Build-only, ordinary, coverage-fallback, sanitizer, slow and special test planners.                                            |
-| `commands/pipeline.d`        | The union graph of every CI job.                                                                                               |
-| `commands/docs.d`            | Docs subcommand dispatch and shared file selection.                                                                            |
-| `commands/docs_examples.d`   | Markdown run/verify/update graph and reducers.                                                                                 |
-| `commands/docs_standalone.d` | Standalone example planner and directives.                                                                                     |
-| `commands/docs_checks.d`     | Reference, URL, sidebar, glossary, credits, spec-evidence, blob, fence-audit and WebAssembly planners.                         |
-| `commands/stats.d`           | Statistics graph; pure stats remain in `ci_stats.d`.                                                                           |
-| `commands/maintenance.d`     | `commits`, `commit-scope`, `cache`, `host`, `checks`, `link-rot` and `slow-tests` planners.                                    |
-| Existing pure modules        | `coverage.d`, `dub_deps.d`, `example_manifest.d`, `blob_paths.d`, `docs_sidebar.d` and `fence_audit.d` remain reusable leaves. |
+| Module                       | Responsibility                                                                                                              |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `ci_main.d`                  | Executable entry point only.                                                                                                |
+| `app.d`                      | The composition root: commands wire planners to the executor and reporters.                                                 |
+| `cli.d`                      | Canonical subcommands, validation, and help.                                                                                |
+| `reporter_tty.d`             | The interactive reporter over `sparkles:ui`'s `TaskReporter`.                                                               |
+| `commands/test_.d`           | Build-only, ordinary, coverage-fallback, sanitizer, slow and special test planners.                                         |
+| `commands/pipeline.d`        | The union graph of every CI job.                                                                                            |
+| `commands/docs.d`            | Docs subcommand dispatch and shared file selection.                                                                         |
+| `commands/docs_examples.d`   | Markdown run/verify/update graph and reducers.                                                                              |
+| `commands/docs_standalone.d` | Standalone example planner and directives.                                                                                  |
+| `commands/docs_checks.d`     | Reference, URL, sidebar, glossary, credits, spec-evidence, blob, fence-audit and WebAssembly planners.                      |
+| `commands/stats.d`           | Statistics graph; pure stats remain in `ci_stats.d`.                                                                        |
+| `commands/maintenance.d`     | `commits`, `commit-scope`, `cache`, `host`, `checks`, `link-rot` and `slow-tests` planners.                                 |
+| Pure domain modules          | `coverage.d`, `dub_deps.d`, `example_manifest.d`, `blob_paths.d`, `docs_sidebar.d` and `fence_audit.d`, as reusable leaves. |
 
 The generic layers live in `sparkles:build-primitives` (see the [task DAG's
 module layout](../../build-primitives/task-dag/SPEC.md#9-module-layout)).
@@ -440,9 +475,9 @@ concrete reporters.
 
 ## 8. Acceptance criteria
 
-The implementation is complete when all of these hold:
+**CIC9: Completion.** The implementation is complete when all of these hold:
 
-- Every current work class reaches execution through a validated task graph.
+- Every command reaches execution through a validated task graph.
 - There is no `std.parallelism` or task-status polling path in `apps/ci`.
 - A failed or cancelled command leaves no live child or unreaped process.
 - No compile runs through dub, and no library variant is compiled twice in one

@@ -87,68 +87,72 @@ struct Package
     PackageId id;            // stable qualified package name
     string shortName;        // e.g. "base"
     string path;             // e.g. "libs/base"
+    string configuration;    // the active configuration
     PackageId[] dependencies;
     PlatformSet platforms;
 }
 ```
 
-An edge `A -> B` means B depends on A. Graph validation rejects duplicate ids,
-unknown in-tree dependencies, self-edges, and cycles before execution. Lists are
-normalized by `PackageId`, never associative-array iteration order.
+**TDS1: Graph validation.** Discovery **must** reject duplicate ids, unknown
+in-tree dependencies, self-edges and cycles before execution. An edge `A -> B`
+means B depends on A. Lists are normalized by `PackageId`, never by
+associative-array iteration order.
 
-The selected command mode determines the active dub configuration. A test
-mode activates the `unittest` configuration when the recipe declares one;
-otherwise, and for build modes, it activates the first configuration whose
-`platforms` allow the host, as dub does. A package's edges are its top-level
-in-tree dependencies plus those of its active configuration. A dependency on
-the root package adds no edge, and neither does an optional dependency that is
-not on by default.
+**TDS2: The active configuration.** A test mode **must** activate the
+`unittest` configuration when the recipe declares one. Otherwise, and for build
+modes, it activates the first configuration whose `platforms` allow the host,
+as dub does. A package's edges are its top-level in-tree dependencies plus
+those of its active configuration. A dependency on the root package adds no
+edge, and neither does an optional dependency that is not on by default.
 
-Package edges are selection data, not ordering edges. They drive the
-`--dependencies` and `--dependents` closures (§2.4). A consumer decides which of
-them become task edges. A package's test never waits for another package's
-test. It waits only for the build actions its own binary needs, which the
-[build graph](../build-graph/SPEC.md) derives from these same edges. An
-unselected dependency is still built when a selected package needs it. It
-acquires no test task of its own unless closure expansion selected it.
+**TDS3: Package edges are selection data.** Package edges **must** drive only
+the `--dependencies` and `--dependents` closures (TDS7). A consumer decides
+which of them become task edges.
+
+_Rationale:_ a package's test never waits for another package's test. It
+waits only for the build actions its own binary needs, which the
+[build graph](../build-graph/SPEC.md) derives from these same edges.
 
 ### 2.2 `--from`
 
-`--from` may be repeated and each occurrence may take one or more selectors. A
-selector matches any of:
+**TDS4: Selector matching.** `--from` **may** be repeated, and each occurrence
+**may** take one or more selectors. A selector **must** match any of:
 
-- Short package name, such as `base`.
-- Qualified name, such as `sparkles:base`.
-- Repository-relative directory, such as `libs/base`.
-- A git-style glob over any of those forms, such as `sparkles:ui-*` or
-  `libs/ui*`. `*` and `?` stop at `/` and `**` crosses it. `\` escapes the
+- a short package name, such as `base`;
+- a qualified name, such as `sparkles:base`;
+- a repository-relative directory, such as `libs/base`;
+- a git-style glob over any of those forms, such as `sparkles:ui-*` or
+  `libs/ui*`. `*` and `?` stop at `/`, `**` crosses it, and `\` escapes the
   next character. There are no `[...]` classes.
 
-Matches from all `--from` selectors are unioned. A non-glob selector that
-matches nothing is an error. A glob that matches nothing is also an error, so a
-misspelled CI selector cannot become a green no-op.
+Matches from all `--from` selectors are unioned. A selector, glob or not, that
+matches nothing **must** be an error, so a misspelled CI selector cannot become
+a green no-op.
 
 ### 2.3 `--since`
 
-`--since REF` computes changes from `merge-base(REF, HEAD)` through the working
-tree, including staged, unstaged, and untracked paths. `--since` with no value
-resolves the current branch's upstream; if there is none, it tries
-`origin/main`. Failure to resolve a base is an actionable selection error.
+**TDS5: The base revision.** `--since REF` **must** compute changes from
+`merge-base(REF, HEAD)` through the working tree, including staged, unstaged
+and untracked paths. `--since` with no value resolves the current branch's
+upstream, and `origin/main` when there is none. Failure to resolve a base is an
+actionable selection error.
 
-A path belongs to the package with the longest directory-prefix match. A
-deleted path selects both its owner in the current package map and the package
-that owned it in the base tree, if that package still exists. A package that
-moved therefore stays selected. Changes outside every package do not normally
-select a package. Renames count as a deletion plus an addition.
+**TDS6: Path ownership.** A changed path **must** select:
 
-Paths that can change every build select every package. The consumer supplies
-these **invalidators** as a declarative list, and the list is unit-tested. It
-must not silently grow from arbitrary top-level changes. The repository's list
-is part of the [`apps/ci` command specification](../../ci/task-dag/SPEC.md).
+- every package, if it matches one of the consumer's **invalidators**, checked
+  before package ownership;
+- otherwise, the package with the longest directory-prefix match;
+- for a deleted path, also the package that owned it in the base tree, if that
+  package still exists, so a package that moved stays selected.
+
+A rename counts as a deletion plus an addition. A path outside every package
+selects nothing. The invalidator list is declarative and unit-tested, and it
+does not silently grow from arbitrary top-level changes. The repository's list
+is part of the [`apps/ci` command specification](../../ci/task-dag/SPEC.md#4-selection-policy).
 
 ### 2.4 Selection algebra
 
-Selection is evaluated in this order:
+**TDS7: Evaluation order.** Selection **must** be evaluated in this order:
 
 1. Discover and validate the full package graph.
 2. If neither `--from` nor `--since` is present, seed all packages.
@@ -163,9 +167,8 @@ Selection is evaluated in this order:
    nodes rather than disappearing.
 10. Sort by stable package id and build the induced task graph.
 
-An empty final selection is an error unless every seed was represented by an
-explicit platform-skipped node. Which commands accept focused selectors is the
-consumer's choice.
+**TDS8: Empty selections.** An empty final selection **must** be an error
+unless every seed is represented by an explicit platform-skipped node.
 
 ## 3. Core model
 
@@ -185,21 +188,25 @@ struct TaskNode
 }
 ```
 
-`TaskId` is derived from semantic identity, for example
-`test:sparkles.base:unittest` or `docs:verify:README.md:readme_versions`. It does
-not contain a memory address, random number, temporary path, or discovery index.
+**TDM1: Stable ids.** A `TaskId` **must** be derived from semantic identity, for
+example `test:sparkles.base:unittest` or
+`docs:verify:README.md:readme_versions`. It **must not** contain a memory
+address, random number, temporary path or discovery index.
 
-`PresentationKey` is a tuple of command phase, package/file key, work-kind key,
-and within-owner ordinal. It defines dry-run output, buffered output replay,
-failure replay, and summaries.
+**TDM2: Presentation keys.** A `PresentationKey` is a tuple of command phase,
+package or file key, work-kind key, and within-owner ordinal. It **must** define
+the order of dry-run output, buffered output replay, failure replay and
+summaries.
 
-`TaskAction` is a closed sum type for known work, not an arbitrary shell string.
-The process variant contains argv, environment delta, cwd, stdin policy,
-timeout, and task-directory policy as data. In-process actions identify a typed command
-handler. Secrets may be marked redacted and are never included in events or dry
-runs. A redacted value is passed to the child, and every occurrence of it in a
-line the child prints is masked as `<redacted>` before the line reaches an
-event or a spool.
+**TDM3: Closed actions.** A `TaskAction` **must** be a closed sum type for known
+work, not an arbitrary shell string. A process action carries its argument
+vector, environment delta, working directory, stdin policy, timeout and
+task-directory policy as data. An in-process action names a typed handler.
+
+**TDM4: Redaction.** An environment value marked redacted **must** be passed to
+the child and **must never** appear in an event or a dry run. Every occurrence
+of it in a line the child prints is masked as `<redacted>` before the line
+reaches an event or a spool.
 
 ### 3.2 Edges
 
@@ -215,12 +222,12 @@ struct TaskEdge
 }
 ```
 
-Normal dependency edges use `onSuccess`. Reducers that must summarize failed
-work use `onCompletion`. Cleanup uses `always`. Coverage fallback uses
-`onFailure`, with the first attempt's failure policy suppressing fail-fast until
-the fallback classifies the package result.
+Normal dependency edges use `onSuccess`. Reducers that summarize failed work
+use `onCompletion`. Cleanup uses `always`. A fallback uses `onFailure` on its
+prerequisite, which has a provisional failure policy (TDC4).
 
-A prerequisite's terminal outcome satisfies an edge as follows:
+**TDM5: Edge satisfaction.** A prerequisite's terminal outcome **must** satisfy an
+edge as follows:
 
 | Condition      | Satisfied by                       |
 | -------------- | ---------------------------------- |
@@ -229,15 +236,22 @@ A prerequisite's terminal outcome satisfies an edge as follows:
 | `onCompletion` | every outcome except `Cancelled`   |
 | `always`       | every outcome                      |
 
-A skipped prerequisite satisfies `onSuccess`. A skip is an eligibility rule,
-not a broken contract, and the build graph still compiles a dependency that has no task.
+A skipped prerequisite satisfies `onSuccess`: a skip is an eligibility rule, not
+a broken contract.
 
-An edge condition that becomes impossible produces a blocked outcome for the
-dependent. A node is decided only once every prerequisite is terminal, so its
-outcome never depends on completion order. A blocked node names its
-lowest-index impossible prerequisite that descends from a failure, or else its
-lowest-index impossible prerequisite. Cleanup nodes are idempotent and execute under a cancellation
-protection region.
+**TDM6: Blocked and unneeded nodes.** A node is decided only once every
+prerequisite is terminal, so its outcome never depends on completion order.
+When one of its edge conditions is impossible:
+
+- **Unneeded:** if every impossible edge is an `onFailure` edge whose
+  prerequisite succeeded, the node is `Blocked(conditionUnmet)`. That outcome
+  never fails the command, and summaries count it apart from other blocks: a
+  fallback that was not needed.
+- **Blocked:** otherwise the node is `Blocked` and names its lowest-index
+  impossible prerequisite that descends from a failure, or else its lowest-index
+  impossible prerequisite.
+
+Cleanup nodes are idempotent and run under a cancellation protection region.
 
 ### 3.3 Resource claims
 
@@ -250,39 +264,39 @@ struct ResourceClaim
 }
 ```
 
-The executor owns `--jobs N` weighted tokens. A node starts only when all its
-exclusive keys are free and `jobsWeight` tokens are available. A claim larger
-than total capacity is clamped to total capacity so it runs alone rather than
-deadlocking.
+**TDM7: Weighted admission.** The executor **must** own `--jobs N` weighted tokens.
+A node starts only when all its exclusive keys are free and `jobsWeight` tokens
+are available. A claim larger than total capacity is clamped to total capacity,
+so it runs alone rather than deadlocking.
 
-Ready nodes are admitted in presentation order. A node that waits only for an
-exclusive key does not hold back later nodes. A node that waits for capacity
-stops admission of every later node until it starts. There is no backfilling
-past it, so a stream of light nodes cannot starve a heavy one.
+**TDM8: Admission order.** Ready nodes **must** be admitted in presentation order.
+A node that waits only for an exclusive key does not hold back later nodes. A
+node that waits for capacity stops admission of every later node until it
+starts. There is no backfilling past it, so a stream of light nodes cannot
+starve a heavy one.
 
-Default weights are declared by work kind and may have narrowly documented
-package overrides:
+**TDM9: Default weights.** Default weights are declared by work kind. A planner
+**may** override them for documented packages:
 
-| Work kind                               | Default weight                  |
-| --------------------------------------- | ------------------------------- |
-| Pure scan, parse, reduce, or git query  | 1                               |
-| One standalone or markdown D build/run  | 2                               |
-| A package build or ordinary test run    | 2                               |
-| Extracted `--better-c` or `--wasm` test | 2                               |
-| Known DMD-frontend-heavy package task   | 4                               |
-| Mutating docs rewrite                   | 1 plus `workspace-write:<path>` |
+| Work kind                              | Default weight                  |
+| -------------------------------------- | ------------------------------- |
+| Pure scan, parse, reduce, or git query | 1                               |
+| Build-graph actions                    | per the build graph's BGA8      |
+| One standalone or markdown example run | 2                               |
+| Known DMD-frontend-heavy package task  | 4                               |
+| Mutating docs rewrite                  | 1 plus `workspace-write:<path>` |
 
-The host-derived capacity starts from `hwParallelism`, is constrained by the
-existing memory/load policy, and retains a hard safety cap. Explicit `--jobs`
-sets capacity exactly. LDC compiles a module set on one thread, so a compiler
-subprocess needs no codegen-thread cap. Work that does spawn its own threads,
-such as the test runner's `-t N`, takes its thread count from the claim the
-planner gives it, so task-level parallelism does not multiply into unbounded
-threads.
+**TDM10: Capacity.** Without `--jobs`, capacity **must** be the smaller of
+`sparkles.base.hw_caps.hwParallelism()`, which already folds in CPU quotas,
+available memory, load and swap, and one unit per GiB of total memory, so a
+weight-2 compile has 2 GiB. Explicit `--jobs` sets capacity exactly. Work that
+starts its own threads, such as the test runner's `-t N` or a linker, takes its
+thread count from its claim, so task-level parallelism does not multiply into
+unbounded threads. A single LDC compile is single-threaded and needs no cap.
 
 Exclusive keys protect semantic resources, not implementation mutexes. Examples
 are `workspace-write:README.md`, `coverage-publish`, and a final destination
-artifact. stdout is not an exclusive task resource because the reporter is its
+artifact. stdout is not an exclusive task resource, because the reporter is its
 only writer.
 
 ### 3.4 Outcomes
@@ -298,22 +312,21 @@ alias TaskOutcome = SumType!(
 );
 ```
 
-| Outcome     | Meaning                                                                                 | Fails command                                                                           |
-| ----------- | --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `Succeeded` | Authoritative work completed and its contract holds.                                    | No                                                                                      |
-| `Failed`    | Work ran, or could not start, and its authoritative contract does not hold.             | Yes                                                                                     |
-| `Skipped`   | A declared eligibility rule excluded the work, such as platform support.                | No                                                                                      |
-| `Cancelled` | Work was admitted or pending but interrupted by fail-fast, signal, or shutdown.         | No additional failure; the initiating cause controls exit.                              |
-| `Blocked`   | A required predecessor did not succeed or its edge condition was impossible.            | Yes if the block descends from failure; otherwise reported with the cancellation cause. |
-| `Degraded`  | The authoritative contract passed, but optional evidence or measurement is unavailable. | No                                                                                      |
+| Outcome     | Meaning                                                                                 | Fails command                                                                                                    |
+| ----------- | --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `Succeeded` | Authoritative work completed and its contract holds.                                    | No                                                                                                               |
+| `Failed`    | Work ran, or could not start, and its authoritative contract does not hold.             | Yes                                                                                                              |
+| `Skipped`   | A declared eligibility rule excluded the work, such as platform support.                | No                                                                                                               |
+| `Cancelled` | Work was admitted or pending but interrupted by fail-fast, signal, or shutdown.         | No additional failure; the initiating cause controls exit.                                                       |
+| `Blocked`   | A required predecessor did not succeed or its edge condition was impossible.            | Yes if the block descends from failure; no for `conditionUnmet`; otherwise reported with the cancellation cause. |
+| `Degraded`  | The authoritative contract passed, but optional evidence or measurement is unavailable. | No                                                                                                               |
 
-Every non-success outcome carries a typed reason and causal tasks where
-applicable. Outcomes and events name tasks by their index in the validated
-graph's presentation order, not by `TaskId`. Their members then hold no
-pointers, so a `SumType` of them stays `@safe` to assign and crosses a channel
-without borrowing. The graph maps an index back to its node and id. Process status, timeout, signal, bounded output references, elapsed
-time, and sampled usage are observations attached to an outcome, not booleans
-that replace it.
+**TDM11: Causes and observations.** Every non-success outcome **must** carry a
+typed reason and, where applicable, its causal tasks. Outcomes and events name
+tasks by their index in the validated graph's presentation order, not by
+`TaskId`, so their members hold no pointers. Process status, timeout, signal,
+bounded output references, elapsed time and sampled usage are observations
+attached to an outcome, not booleans that replace it.
 
 ### 3.5 Events
 
@@ -330,241 +343,249 @@ alias TaskEvent = SumType!(
 );
 ```
 
-Every event has a run-local monotonic sequence number and monotonic timestamp.
-Task output additionally has task-local stream and chunk sequence numbers. The
-executor is the sole producer of lifecycle events; process and CPU adapters
-send observations back to it through bounded Event Horizon channels, including
-between scheduler workers. Cross-worker delivery preserves ownership and
-backpressure; the intra-worker-only `Channel` is not sufficient. Reporters are
-consumers and cannot alter scheduling.
+**TDM12: Event sequence.** Every event **must** carry a run-local monotonic
+sequence number and a monotonic timestamp. Task output also carries task-local
+stream and chunk sequence numbers.
 
-Events contain no borrowed child buffers. Event payloads hold no pointers and
-name tasks by graph index. An output line travels in the event envelope's
-`text` field beside the payload, which keeps the payload `@safe` to move. Output is line-assembled at the
-boundary, with an explicit final unterminated line event. Per-task output is
-bounded in memory and spills to its task directory when necessary. A failed task's
-diagnostic tail and spill path remain available until final reporting.
+**TDM13: Event producers.** The executor **must** be the sole producer of
+lifecycle events. Process and CPU adapters send observations back to it through
+bounded Event Horizon channels that deliver across scheduler workers, preserving
+ownership and backpressure. Reporters consume events and cannot alter
+scheduling.
+
+**TDM14: Owned output.** Events **must not** borrow child buffers. Event payloads
+hold no pointers. An output line travels in the event envelope's `text` field,
+beside the payload. Output is line-assembled at the boundary, with an explicit
+final unterminated line event. Per-task output is bounded in memory and spills
+to its task directory when necessary. A failed task's diagnostic tail and spill
+path remain available until final reporting.
 
 ## 4. Event Horizon-only execution
 
-`sparkles:event-horizon` is the sole concurrency and asynchronous-I/O runtime
-inside a task-DAG consumer.
+**TDE1: One runtime.** `sparkles:event-horizon` **must** be the sole concurrency
+and asynchronous-I/O runtime inside a task-DAG consumer:
 
 - The command starts one `LoopGroup` and one root structured scope.
 - Scheduler tasks are Event Horizon fibers.
-- Subprocesses use Event Horizon M19's `supervise` API, piped stdio, async reap,
-  and an owned POSIX process group or Windows Job Object.
-- Timers and timeouts use the Event Horizon clock. There is no sleep/poll loop.
-- Executor communication uses bounded Event Horizon channels with cross-worker
-  delivery; the executor is not restricted to one scheduler worker.
-- Blocking or CPU work that should leave the loop thread uses Event Horizon's
-  scheduler-integrated `BlockingPool`; completion wakes the loop through its
-  supported seam.
-- Legacy blocking adapters, including an HTTP implementation not yet native to
-  `sparkles:http`, run only through that Event Horizon-owned CPU-job path. They
-  never block a scheduler worker.
-- `std.parallelism.TaskPool`, detached `core.thread.Thread` workers,
-  `std.process.execute` for task execution, and ad hoc atomic status polling are
-  forbidden in command and executor modules.
+- Subprocesses use Event Horizon's supervised runs (`supervise`), with piped
+  stdio, asynchronous reap, and an owned POSIX process group or Windows Job
+  Object.
+- Timers and timeouts use the Event Horizon clock.
+- Executor communication uses bounded cross-worker Event Horizon channels.
+- Blocking work, including a blocking HTTP client, runs on Event Horizon's
+  scheduler-integrated `BlockingPool`, never on a scheduler worker.
 
-Small bounded planning reads may run synchronously before `LoopGroup.run`.
-Anything represented as a `TaskNode` executes through the Event Horizon
-executor. There is no fallback executor when Event Horizon loop creation fails;
-the command reports a structured setup failure.
+**TDE2: Forbidden constructs.** Command and executor modules **must not** use
+`std.parallelism.TaskPool`, detached `core.thread.Thread` workers,
+`std.process.execute` for task execution, sleep or poll loops, or ad hoc
+atomic status polling.
+
+**TDE3: No fallback executor.** Anything represented as a `TaskNode` **must**
+execute through the Event Horizon executor. If loop creation fails, the command
+reports a structured setup failure. Small bounded planning reads **may** run
+synchronously before `LoopGroup.run`.
 
 The executor is generic over the Event Horizon capability row where practical.
-Pure graph tests use a deterministic fake action driver and `TestSched`/fake
-clock. Process integration tests use real short-lived children.
+Pure graph tests use a deterministic fake action driver and `TestSched` with a
+fake clock. Process integration tests use real short-lived children.
 
 ## 5. Structured cancellation and fail-fast
 
-The root command scope owns all scheduler fibers, child processes, channels,
-task directories, and the reporter. A task may not outlive it.
+**TDC1: Scope ownership.** The root command scope **must** own all scheduler
+fibers, child processes, channels, task directories and the reporter. A task
+does not outlive it.
 
-On an authoritative task failure with `--fail-fast`:
+**TDC2: Fail-fast.** On an authoritative task failure with `--fail-fast`, the
+executor **must**:
 
-1. The executor records `TaskFinished(Failed)` completely.
-2. It emits `CancellationRequested(failFast, causalTaskId)` exactly once.
-3. It closes admission. No newly ready ordinary node starts.
-4. Pending nodes become `Cancelled(notAdmitted)` unless a failed dependency
-   makes them `Blocked`.
-5. Running in-process tasks observe scope cancellation at defined yield points.
-6. Running child process groups receive `SIGTERM` on POSIX, then `SIGKILL`
-   after a bounded grace period. Peer platforms use the equivalent owned-tree
-   termination primitive.
-7. stdout/stderr pipes are drained through terminal completion and every child
-   is reaped.
-8. Cleanup, task-directory removal, and final reporters run inside a protected cleanup
-   scope. A `cleanup` node still starts once ready, and its action runs under
-   `protect`.
+1. record `TaskFinished(Failed)` completely;
+2. emit `CancellationRequested(failFast, causalTaskId)` exactly once;
+3. close admission, so no newly ready ordinary node starts;
+4. turn pending nodes into `Cancelled(notAdmitted)`, unless a failed
+   dependency makes them `Blocked`;
+5. let running in-process tasks observe scope cancellation at defined yield
+   points;
+6. send running child process groups `SIGTERM` on POSIX, then `SIGKILL` after a
+   bounded grace period; peer platforms use their owned-tree termination;
+7. drain stdout and stderr through terminal completion and reap every child;
+8. run cleanup, task-directory removal and the final reporters inside a
+   protected cleanup scope. A `cleanup` node still starts once ready, and its
+   action runs under `protect`.
 
-The primary cause is the lowest-index authoritative failure among the
-completions the executor collects in one turn. A node the executor interrupted
-that then reports `Failed` is recorded as `Cancelled(interrupted)`, because the
-interrupt, not the node, caused the failure.
+**TDC3: The primary cause.** The primary cause **must** be the lowest-index
+authoritative failure among the completions the executor collects in one turn.
+A node the executor interrupted that then reports `Failed` is recorded as
+`Cancelled(interrupted)`, because the interrupt, not the node, caused the
+failure.
 
-Coverage-attempt failure is provisional and does not initiate fail-fast. Its
-plain fallback classifies the authoritative package result. A degraded result
-does not initiate fail-fast.
+**TDC4: Provisional failures.** A failure of a node with a provisional failure
+policy **must not** initiate fail-fast and **must not** become the primary
+cause. Its `onFailure` fallback classifies the authoritative result. A degraded
+result does not initiate fail-fast either.
 
-SIGINT and SIGTERM follow the same path with an external-interrupt cause. Exit
-codes are `130` for SIGINT, `143` for SIGTERM, and `1` for task/planning failure.
-Success, skips, and degradations return `0`. A second interrupt shortens the
-grace period but still attempts child reap and terminal restoration.
+**TDC5: Signals and exit codes.** SIGINT and SIGTERM **must** follow the
+fail-fast path with an external-interrupt cause. Exit codes are `130` for
+SIGINT, `143` for SIGTERM, and `1` for task or planning failure. Success,
+skips and degradations return `0`. A second interrupt shortens the grace
+period but still reaps children and restores the terminal.
 
-Without `--fail-fast`, independent branches continue. Nodes with unsuccessful
-required predecessors become blocked; reducers connected by `onCompletion`
-still run and summarize the complete attempted set.
+**TDC6: Without fail-fast.** Without `--fail-fast`, independent branches
+**must** continue. Nodes with unsuccessful required predecessors are blocked,
+and reducers connected by `onCompletion` still run and summarize the complete
+attempted set.
 
 ## 6. Determinism
 
-The following are deterministic for the same repository state, options, and
-declared action outcomes:
+**TDD1: Deterministic results.** For the same repository state, options and
+action results, these **must** be identical:
 
-- Node ids, edge set, resource claims, and dry-run plan.
-- Package and file selection.
-- Ready-queue tie-breaking by `PresentationKey`, then `TaskId`.
-- Buffered task-block replay, diagnostics within a block, failure replay, and
-  final summaries.
-- Coverage merge and report ordering.
-- Exit status and causal failure selection. If multiple failures arrive in one
-  loop turn, the lowest presentation key is the primary cause.
+- node ids, the edge set, resource claims and the dry-run plan;
+- package and file selection;
+- ready-queue tie-breaking, by `PresentationKey` then `TaskId`;
+- buffered task-block replay, diagnostics within a block, failure replay and
+  final summaries;
+- reducer output order;
+- the exit status and the primary cause (TDC3).
 
-Actual task completion times are not deterministic. TTY live animation reflects
-real completion order, and `--interlaced` intentionally exposes runtime output
-order. Neither may affect final ordering or outcome selection.
+Task completion times are not deterministic. TTY animation reflects real
+completion order, and `--interlaced` exposes runtime output order. Neither
+affects final ordering or outcome selection.
 
-Graph construction must not depend on associative-array iteration, directory
-iteration, completion order, wall-clock timestamps, random ids, or temporary
-paths. A graph cycle reports the stable shortest discovered cycle with ids
-ordered from its lowest member.
+**TDD2: Order-independent planning.** Graph construction **must not** depend on
+associative-array iteration, directory iteration, completion order, wall-clock
+timestamps, random ids or temporary paths. A graph cycle reports the stable
+shortest discovered cycle, with ids ordered from its lowest member.
 
 ## 7. Reporting and output
 
 ### 7.1 Single writer
 
-One reporter fiber is the only writer to stdout/stderr UI streams. Logger
-records that are part of task presentation enter the event channel rather than
-writing from workers. This makes every emitted line atomic and keeps terminal
-control sequences owned by one component.
+**TDO1: One writer.** One reporter fiber **must** be the only writer to the
+user-facing stdout and stderr streams. Logger records that are part of task
+presentation enter the event channel rather than being written from workers.
+So every emitted line is atomic, and terminal control sequences have one owner.
 
 ### 7.2 Interactive TTY
 
 The TTY reporter is supplied by the consumer, because it depends on a UI
-library this package must not import. `apps/ci`'s adapts `sparkles:ui`'s
-`TaskReporter` over task events, and must behave as follows:
+library this package does not import. `apps/ci`'s reporter adapts
+`sparkles:ui`'s `TaskReporter` over task events.
 
-- All planned nodes register before execution so totals do not move.
-- Running tasks show spinner, elapsed time, and a bounded tail.
-- Pending tasks may be collapsed after a height limit, with visible counts.
-- Terminal transitions graduate into scrollback.
-- Failures retain a bounded diagnostic tail and are replayed in deterministic
-  presentation order after the live region finishes.
-- The final summary contains succeeded, failed, degraded, skipped, blocked, and
-  cancelled counts plus wall/CPU/RSS statistics when available.
+**TDO2: TTY behaviour.** A TTY reporter **must**:
 
-TaskReporter graduation follows real event order because it is a live view. The
-post-live failure replay and summary are deterministic. Terminal restoration is
-protected cleanup and runs on success, failure, or cancellation.
+- register all planned nodes before execution, so totals do not move;
+- show each running task's spinner, elapsed time and a bounded tail;
+- graduate terminal transitions into scrollback, in real event order;
+- retain a bounded diagnostic tail per failure, and replay failures in
+  presentation order after the live region finishes;
+- end with a summary of succeeded, failed, degraded, skipped, blocked and
+  cancelled counts, plus wall, CPU and RSS statistics when available;
+- restore the terminal on success, failure or cancellation, as protected
+  cleanup.
+
+It **may** collapse pending tasks past a height limit, with visible counts.
 
 ### 7.3 Non-TTY default
 
-Non-TTY output contains no cursor movement, spinner frames, color when terminal
-capabilities disable it, or rewritten lines. Task output is buffered/spooled per
-node and emitted as a complete prefixed block in `PresentationKey` order once
-all earlier blocks are terminal. Each task has exactly one terminal transition
-line. This transcript is stable even when jobs finish in a different order.
+**TDO3: Deterministic blocks.** Non-TTY output **must** contain no cursor
+movement, spinner frames or rewritten lines, and no colour when terminal
+capabilities disable it. Each task's output is buffered or spooled and emitted
+as one block in `PresentationKey` order, once all earlier blocks are terminal.
 
-A block is the task's lines, each prefixed `[<id> <stream>] ` as in interlaced
-mode, followed by `<id>: <outcome>`. Elapsed times are the only part that
-varies with execution, and they are optional. With them off, the transcript is
+A block is the task's lines, each prefixed `[<id> <stream>] `, followed by
+exactly one `<id>: <outcome>` line. Elapsed times are the only part that varies
+with execution, and they are optional. With them off, the transcript is
 byte-identical for the same graph and outcomes.
 
-A heartbeat may report aggregate `completed/total` progress to stderr for a
-long silent run, but it contains no task output and is disabled when stderr is
-not independently writable. Heartbeats are omitted from machine-readable
-output.
+A heartbeat **may** report aggregate `completed/total` progress to stderr during
+a long silent run. It carries no task output, is disabled when stderr is not
+independently writable, and is omitted from machine-readable output.
 
 ### 7.4 `--interlaced`
 
-Interlaced mode emits each assembled output line as soon as the reporter
-receives it:
+**TDO4: Interlaced lines.** Interlaced mode **must** emit each assembled output
+line as soon as the reporter receives it:
 
 ```text
 [test:sparkles.base:unittest stdout] ...
 [test:sparkles.ui:unittest stderr] ...
 ```
 
-Prefixes are mandatory even when only one task currently runs. A line is never
-split by another task, stdout and stderr identity is retained, and an
-unterminated final fragment is emitted once. Ordering across tasks is explicitly
-nondeterministic. Final terminal lines, failure summaries, and aggregate tables
-remain sorted. The terminal lines are therefore written together at the end,
-in presentation order, rather than as tasks finish.
+- Prefixes are mandatory even when one task runs.
+- A line is never split by another task, and stdout and stderr identity is
+  retained.
+- An unterminated final fragment is emitted once.
+- Ordering across tasks is nondeterministic.
+
+The terminal lines, the failure replay and the summary are written together at
+the end, sorted in presentation order.
 
 On a TTY, `--interlaced` disables per-task live tails and prints above a compact
-aggregate TaskReporter frame. On non-TTY it is the opt-in path for immediate CI
-logs. With `--jobs 1` it still prefixes output but naturally does not mix tasks.
+aggregate `TaskReporter` frame. With `--jobs 1` it still prefixes output.
 
 ### 7.5 Machine output
 
-A command that owns a JSON mode emits one JSON document and no human UI on
-stdout. Logs and warnings go to stderr. Task events may later gain a separate
-JSON-lines option, but that is outside v1 and must not be conflated with a
-command's report JSON.
+**TDO5: JSON documents.** A command that owns a JSON mode **must** emit one JSON
+document and no human UI on stdout. Logs and warnings go to stderr. A command's
+report JSON is not a task-event stream, and a JSON-lines event stream is out of
+scope.
 
 ### 7.6 CI-provider integration
 
-A reporter that runs under a CI service **must** use that service's log
-conventions through one provider module, never by testing environment
-variables itself. The module detects the provider and exposes these
-operations:
+**TDO6: One provider module.** A reporter that runs under a CI service **must**
+use that service's log conventions through one provider module, never by
+testing environment variables itself. The module detects the provider and
+exposes these operations:
 
-| Operation       | GitHub Actions                   | GitLab CI                                   | Buildkite                  | Azure Pipelines                                             | CircleCI and others        |
-| --------------- | -------------------------------- | ------------------------------------------- | -------------------------- | ----------------------------------------------------------- | -------------------------- |
-| Detect          | `GITHUB_ACTIONS=true`            | `GITLAB_CI=true`                            | `BUILDKITE=true`           | `TF_BUILD=True`                                             | `CIRCLECI=true`, else none |
-| Open a group    | `::group::<title>`               | `section_start:<time>:<id>[collapsed=true]` | `--- <title>`              | `##[group]<title>`                                          | a plain heading line       |
-| Close a group   | `::endgroup::`                   | `section_end:<time>:<id>`                   | none                       | `##[endgroup]`                                              | none                       |
-| Annotate a line | `::error file=…,line=…::<msg>`   | none                                        | none                       | `##vso[task.logissue type=error;sourcepath=…;linenumber=…]` | none                       |
-| Mask a secret   | `::add-mask::<value>`            | none (configured masking)                   | none                       | `##vso[task.setvariable issecret=true]`                     | none                       |
-| Step summary    | append to `$GITHUB_STEP_SUMMARY` | none                                        | `buildkite-agent annotate` | none                                                        | none                       |
+| Operation       | GitHub Actions                   | GitLab CI                                                             | Buildkite                  | Azure Pipelines                                                  | CircleCI and others        |
+| --------------- | -------------------------------- | --------------------------------------------------------------------- | -------------------------- | ---------------------------------------------------------------- | -------------------------- |
+| Detect          | `GITHUB_ACTIONS=true`            | `GITLAB_CI=true`                                                      | `BUILDKITE=true`           | `TF_BUILD=True`                                                  | `CIRCLECI=true`, else none |
+| Open a group    | `::group::<title>`               | `\e[0Ksection_start:<unix-time>:<name>[collapsed=true]\r\e[0K<title>` | `--- <title>`              | `##[group]<title>`                                               | a plain heading line       |
+| Close a group   | `::endgroup::`                   | `\e[0Ksection_end:<unix-time>:<name>\r\e[0K`                          | none                       | `##[endgroup]`                                                   | none                       |
+| Annotate a line | `::error file=…,line=…::<msg>`   | none                                                                  | none                       | `##vso[task.logissue type=error;sourcepath=…;linenumber=…]<msg>` | none                       |
+| Mask a secret   | `::add-mask::<value>`            | none (configured masking)                                             | none                       | `##vso[task.setvariable variable=<name>;issecret=true]<value>`   | none                       |
+| Step summary    | append to `$GITHUB_STEP_SUMMARY` | none                                                                  | `buildkite-agent annotate` | none                                                             | none                       |
 
-Rules:
+The provider module's golden tests are checked against each provider's
+published syntax, cited in its sources.
 
-- A provider without an operation degrades to plain output. It never emits
-  another provider's syntax.
+**TDO7: Provider rules.**
+
+- A provider without an operation **must** degrade to plain output. It never
+  emits another provider's syntax.
 - A group never contains a partial line. Opening and closing a group are
   ordinary line-atomic writes by the single writer.
-- The plain reporter wraps each replayed task block in a group, titled with
-  the task id and outcome. In interlaced mode, groups are not used, because
-  lines of several tasks interleave.
+- In block mode, each replayed task block is wrapped in a group titled with the
+  task id and outcome.
+- In interlaced mode, interleaved lines are never grouped. The closing terminal
+  lines and the failure replay are each wrapped in one group.
 - A failure that carries a source location is annotated where the provider
   supports it.
-- Redacted values are masked on the provider as well as in the task output
-  (§3.1).
+- Redacted values (TDM4) are masked on the provider as well as in task output.
 
-The module has no dependency on the task DAG and may be used by any tool,
-such as the test runner, that reports to a CI service.
+The provider module has no dependency on the task DAG, so other tools that
+report to a CI service, such as the test runner, can use it.
 
 ## 8. Dry-run contract
 
-`--dry-run` performs all side-effect-free discovery needed for a faithful plan,
-including manifest reads, package graph construction, git change queries for
-`--since`, markdown extraction, marker scans, platform evaluation, and graph
-validation.
+**TDY1: What a dry run does.** `--dry-run` **must** perform all side-effect-free
+discovery needed for a faithful plan: manifest reads, package graph
+construction, git change queries for `--since`, the planner's own extraction
+and scans, platform evaluation and graph validation.
 
-It does not:
+**TDY2: What a dry run does not do.** A dry run **must not**:
 
-- Spawn task actions or contact GitHub.
-- Create build, temp, coverage, cache, or output directories.
-- Rewrite documentation.
-- Probe optional toolchains by executing them.
-- Claim success for tasks.
+- run task actions or make network requests;
+- create build, temporary, coverage, cache or output directories;
+- write any file;
+- probe optional toolchains by executing them;
+- report success for tasks.
 
-The output lists selection reasons, nodes in presentation order, resource
-claims, redacted action summaries, and edges with conditions/reasons. It ends
-with counts by kind and total weighted capacity. A planning error still exits
-nonzero. A valid dry run exits zero and emits no `TaskStarted` events.
+**TDY3: Dry-run output.** The output **must** list selection reasons, nodes in
+presentation order, resource claims, redacted action summaries, and edges with
+their conditions and reasons. It ends with counts by kind and the total
+weighted capacity. A planning error exits nonzero. A valid dry run exits zero
+and emits no `TaskStarted` events.
 
 ## 9. Module layout
 
@@ -580,7 +601,9 @@ nonzero. A valid dry run exits zero and emits no `TaskStarted` events.
 | `sparkles.build_primitives.task.reporter_plain` | The deterministic non-TTY and interlaced reporter.                                                |
 | `sparkles.build_primitives.task.testing`        | The fake action driver for executor and reporter tests.                                           |
 | `sparkles.build_primitives.workspace.*`         | Package discovery and focused selection (§2).                                                     |
-| `sparkles.build_primitives.ci_provider`         | CI-provider detection and log conventions (§7.6).                                                 |
+
+The CI-provider module lives where the decision on its placement puts it (see
+[decisions.md](./decisions.md#t8-the-ci-provider-module-lives-in-sparklesbase)).
 
 The pure modules — `action`, `model`, `graph` and `workspace` — import neither
 Event Horizon nor UI modules. No module in this package imports a UI library.

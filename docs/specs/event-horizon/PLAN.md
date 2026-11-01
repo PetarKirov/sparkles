@@ -359,7 +359,7 @@ low-level POSIX API:
    pipes, process-handle wait registration posting to IOCP, and Job Object tree
    ownership/termination/resource accounting.
 6. Deliver the `apps/ci` process adapter through
-   [task-DAG M5](../ci/task-dag/PLAN.md#m5-event-horizon-subprocess-actions),
+   [task-DAG M5](../build-primitives/task-dag/PLAN.md#m5-event-horizon-subprocess-actions),
    preserving user-visible line streaming, timeout status, separate capture,
    and resource reporting. Its M3 supervision probes establish prerequisite
    parity; M5 supplies the adapter and M7–M12 remove the legacy execution paths.

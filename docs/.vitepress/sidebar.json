@@ -1219,6 +1219,10 @@
                 "link": "/specs/build-primitives/task-dag/PLAN"
               },
               {
+                "text": "Testing",
+                "link": "/specs/build-primitives/task-dag/testing"
+              },
+              {
                 "text": "Decisions",
                 "link": "/specs/build-primitives/task-dag/decisions"
               }

@@ -9,88 +9,109 @@ reviewed: 2026-11-01
 _Companion to [SPEC.md](./SPEC.md). Each milestone is independently green, and
 its gate names the oracles in [testing.md](./testing.md) it must pass._
 
-The first consumer is `apps/ci`. Its `ci test` command moves onto the build
-graph directly after E3; see the [`apps/ci` task DAG plan](../../ci/task-dag/PLAN.md).
-The task-DAG executor that runs the actions is specified in
-[the task DAG](../task-dag/SPEC.md).
+The first consumer is `apps/ci`, whose `ci test` command moves onto the build
+graph after E3 (see the [`apps/ci` commands plan](../../ci/task-dag/PLAN.md)).
+Until then, every gate here runs through a test-only driver in this package,
+not through a `ci` command. The executor that runs the actions is specified
+in [the task DAG](../task-dag/SPEC.md).
 
-## E0: Feasibility spikes
+## E0: Feasibility spikes and compiler support
 
-Three spikes, each with a question and a decision criterion:
+Each spike states a question and a decision criterion. Its result is recorded
+in [decisions.md](./decisions.md).
 
 1. **Relocation.**
-   - _Question:_ do LDC's `--ffile-prefix-map` and root-relative sources remove
-     every absolute worktree path from objects, archives and test binaries,
+   - _Question:_ does LDC's prefix map, with root-relative sources, remove every
+     absolute worktree path from objects, archives and test binaries,
      including `-cov` and `-checkaction=context` builds?
-   - _Decision:_ if any path survives, BGA5's fallback (the root path in the
-     key) applies to the affected variants, and the spike records which ones.
-2. **Manifest.**
-   - _Question:_ do `--makedeps` and `--deps` together list every file
-     `strace` shows an LDC and a DMD compile reading?
-   - _Decision:_ a gap that cannot be closed from compiler output makes the
-     affected inputs declared inputs instead.
-3. **dub as a library.**
-   - _Question:_ which §2 fields does `dub describe` not expose, and can the
-     pinned dub be linked as a library to obtain them?
-   - _Decision:_ the oracle's second source, or a recorded gap.
+   - _Question:_ do the repository's 53 uses of `__FILE_FULL_PATH__` still work
+     with the root mapped to `.` and test actions run in their worktree's root?
+   - _Decision:_ any surviving path, or any use that cannot be fixed, puts the
+     root path in the affected variants' keys.
+2. **Complete dependency output.** Add to the LDC fork:
+   - the ImportC headers in `--makedeps`;
+   - an opt-in list of absent candidates;
+   - coverage registration that honours the prefix map.
 
-Gate: each spike's result is recorded in [decisions.md](./decisions.md).
+   Each comes with tests that fail without it. Bump the toolchain to the
+   result.
+   - _Decision:_ a gap the fork cannot close keeps BGK6's conservative key for
+     the affected compiles.
+
+3. **dub as a library.**
+   - _Question:_ which resolved fields does `dub describe` not expose, and can
+     the pinned dub be linked as a library to obtain them?
+   - _Decision:_ the oracle's second source, or a recorded gap.
+4. **Directive scan.** Scan every recipe in scope for directives and variable
+   references, and complete BGR2's list.
+
+Gate: each spike's result is recorded; the LDC fork's tests pass in the
+toolchain the flake pins.
 
 ## E1: Recipe resolution and the oracle
 
 - Resolved settings (§2) on top of `dub_manifest`'s typed recipes, for every
-  directive BGR2 lists.
-- Registry packages from the dub lockfile's store paths (BGR4) and `pkg-config`
-  libraries (BGR5).
-- The dub agreement oracle over every package and request in the repository.
+  directive BGR2 lists, with all three directions of inheritance (BGR3).
+- Registry packages from both lockfiles (BGR4) and `pkg-config` for compiles
+  and links (BGR5).
+- The hidden-edge report (BGR8), and the repository's recipes fixed to declare
+  their dependencies.
+- The dub agreement oracle over every package and request in scope.
 
-Gate: oracle 1 has zero unaccepted disagreements. `dub test :build-primitives`
-is green.
+Gate: oracle 1 has zero unaccepted disagreements, and oracle 13 passes.
+`dub test :build-primitives` is green.
 
 ## E2: Variants and the action graph
 
-- Variant keys and roles (BGV1–BGV3), with dedup across requests.
-- The unittest layout rule and lint (BGV4–BGV5). The repository's remaining
+- Variant keys with pruned downward versions, and roles (BGV1–BGV3), with dedup
+  across requests.
+- The unittest layout rule and its lint (BGV4–BGV5). The repository's remaining
   violations are fixed first, so the lint gates from its first commit.
-- The action graph (BGA1–BGA3, BGA7) as task nodes, without execution.
+- The action graph and its task-node exposure (BGA1–BGA3, BGA8), without
+  execution.
 
-Gate: a dry-run planner prints a deterministic action graph for `ci test`'s
-selection, with one compile per variant. Oracle 8 passes.
+Gate: a test-only planner prints a deterministic action graph for the
+repository's test selection, with one compile per variant. Oracle 8's planning
+scenarios and oracle 14 pass.
 
-## E3: Local execution and the shared cache
+## E3: Local execution and the shared store
 
 - Compile, archive, link and test actions on the task-DAG executor, with the
-  explicit environment and relocatable invocation (BGA4–BGA6).
-- Declared keys, input manifests and result keys (§5).
-- The shared store with atomic publication, concurrency, size bound and
-  inspection (§6).
-- Typed generators for the shader compiler (§7).
-- Toolchain identity for store and host toolchains (§8).
-- Test actions without result reuse (BGX1–BGX2).
+  explicit environment, relocation and argument normalization (BGA4–BGA7).
+- Declared keys, manifests and result keys (§5).
+- The shared store with staging, leases, eviction and inspection (§6).
+- Typed generators, the test-root module and content-addressed generated
+  sources (§7).
+- Toolchain identity (§8).
+- Test actions with declared runtime inputs, no reuse, and the test runner
+  taking its import paths and flags as arguments (BGX1–BGX2). This includes
+  making `sparkles.base.source_uri` work with root-relative
+  `__FILE_FULL_PATH__`.
 
 Gate:
 
-- Oracles 2–5 and 7 pass.
-- A second `ci test` run in another worktree, with no source change, compiles
-  nothing.
+- Oracles 2–5, 7, 9, 10 and 11, and oracle 8's revert check, pass through the
+  test-only driver.
+- A second run of the driver in another worktree, with no source change,
+  compiles nothing.
 - An edit to one `sparkles:base` module recompiles only the variants whose
   manifests contain it.
 
 ## E4: The Nix backend
 
-- Content-addressed source inputs and derivations created without evaluation
+- Content-addressed source inputs, and derivations created without evaluation
   (BGN1–BGN4).
 - Remote builders from `/etc/nix/machines`.
-- Sandboxed test actions whose results may be reused (BGX2).
+- Sandboxed test actions whose results may be reused (BGX3).
 
-Gate: oracle 6 passes for the repository's test roots on x86_64-linux, with
-one remote builder of another system type.
+Gate: oracles 6 and 12 pass for the repository's test roots on x86_64-linux,
+with one remote builder of another system type.
 
 ## Progress
 
 | Milestone | State       |
 | --------- | ----------- |
-| E0        | not started |
+| E0        | in progress |
 | E1        | not started |
 | E2        | not started |
 | E3        | not started |

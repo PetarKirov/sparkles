@@ -28,9 +28,9 @@ that must pass.
 Gate: `dub test :ci` and `dub build :ci` pass; existing CLI behavior is
 unchanged; pure graph tests import neither Event Horizon nor UI modules.
 
-Status: delivered. `apps/ci/src/task/action.d` holds the action vocabulary and
-its redacting dry-run summary. `apps/ci/src/task/model.d` holds ids, keys,
-claims, nodes, edges, pointer-free outcomes and events. `apps/ci/src/task/graph.d`
+Status: delivered. `libs/build-primitives/src/sparkles/build_primitives/task/action.d` holds the action vocabulary and
+its redacting dry-run summary. `libs/build-primitives/src/sparkles/build_primitives/task/model.d` holds ids, keys,
+claims, nodes, edges, pointer-free outcomes and events. `libs/build-primitives/src/sparkles/build_primitives/task/graph.d`
 holds the builder, validation, stable topological order, edge resolution,
 blocked propagation, and `writePlan`.
 
@@ -51,9 +51,9 @@ blocked propagation, and `writePlan`.
 Gate: a test-only planner API can print deterministic selected package ids and
 edges for fixture repositories; production commands still use the old executor.
 
-Status: delivered. `apps/ci/src/workspace/package_graph.d` discovers the graph
+Status: delivered. `libs/build-primitives/src/sparkles/build_primitives/workspace/package_graph.d` discovers the graph
 through the `sparkles.build_primitives.dub_manifest` schema.
-`apps/ci/src/workspace/select.d` holds the selection algebra, `gitChangesSince`
+`libs/build-primitives/src/sparkles/build_primitives/workspace/select.d` holds the selection algebra, `gitChangesSince`
 (through `runGit`), and the test-only planner `planPackages` with
 `writeSelectionPlan`. `--from` globs use `gitGlobMatch`, newly public in
 `sparkles.build_primitives.gitignore`. No CLI option exists yet.
@@ -75,7 +75,7 @@ Gate: executor tests pass under `TestSched` or the deterministic action driver;
 there is no child-process integration yet; existing production work remains on
 the old path.
 
-Status: delivered. `apps/ci/src/task/executor.d` holds `runGraph` and
+Status: delivered. `libs/build-primitives/src/sparkles/build_primitives/task/executor.d` holds `runGraph` and
 `TaskExecutor`, generic over the fiber executor, clock, action driver
 (`isActionDriver`), and event sink (`isEventSink`, the `Channel.put` shape). Its
 tests run a fake driver under `TestSched` and `TestClock`. The `event-horizon`
@@ -100,13 +100,13 @@ Gate: real short-lived process integration tests leave no child behind and pass
 under sanitizers where available; executor modules contain no `TaskPool`,
 detached thread, sleep polling, or `std.process.execute` task path.
 
-Status: delivered for POSIX. `apps/ci/src/task/process.d` holds
+Status: delivered for POSIX. `libs/build-primitives/src/sparkles/build_primitives/task/process.d` holds
 `ProcessDriver` over `supervise`, compiled only where Event Horizon exports it
-(`processActionsAvailable`). `apps/ci/src/task/output.d` holds the bounded
+(`processActionsAvailable`). `libs/build-primitives/src/sparkles/build_primitives/task/output.d` holds the bounded
 `OutputSpool`, which spills to `<sandbox>/<task path>/output.log`. The
 integration tests run real children. They were not run under the sanitizer leg.
 The only `Thread.sleep` is a test helper that waits for a reparented grandchild
-to be reaped. There is no thread cap to route; see SPEC section 5.3.
+to be reaped. There is no thread cap to route; see SPEC TDM10.
 
 ## M6: Reporter stack
 
@@ -125,13 +125,13 @@ tests assert line atomicity rather than cross-task order.
 
 Status: delivered.
 
-- `apps/ci/src/task/reporter.d` holds the concepts, `consumeEvents`,
+- `libs/build-primitives/src/sparkles/build_primitives/task/reporter.d` holds the concepts, `consumeEvents`,
   `OrderedBlocks`, outcome wording, and the summary.
-- `apps/ci/src/task/reporter_plain.d` holds the ordered and interlaced plain
+- `libs/build-primitives/src/sparkles/build_primitives/task/reporter_plain.d` holds the ordered and interlaced plain
   reporter. Its snapshot test covers all 120 completion orders of a
   six-outcome graph.
 - `apps/ci/src/task/reporter_tty.d` holds `TaskReporter` over `LiveRegion`.
-- `apps/ci/src/task/testing.d` holds the shared fake driver.
+- `libs/build-primitives/src/sparkles/build_primitives/task/testing.d` holds the shared fake driver.
 
 Not done: the optional stderr heartbeat and collapsing pending rows past a
 height limit. The spinner advances on output only, because there is no tick
@@ -151,7 +151,7 @@ builds.
 
 ## M6b: CI-provider integration
 
-- The provider module (SPEC §7.6) with detection, groups, annotations, masks
+- The provider module (SPEC TDO6–TDO7), in `sparkles:base`, with detection, groups, annotations, masks
   and step summaries for GitHub Actions, GitLab CI, Buildkite and Azure
   Pipelines, and plain output elsewhere.
 - The plain reporter groups replayed blocks on providers that support it.
@@ -168,5 +168,5 @@ that each provider's output contains no other provider's syntax.
 | M4        | delivered   |
 | M5        | delivered   |
 | M6        | delivered   |
-| M6a       | in progress |
-| M6b       | not started |
+| M6a       | delivered   |
+| M6b       | in progress |
