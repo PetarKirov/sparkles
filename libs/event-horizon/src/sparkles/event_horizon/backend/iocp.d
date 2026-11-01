@@ -18,9 +18,10 @@ Status: verified under Wine two ways — the raw backend's data path
 verbs). accept (`AcceptEx`), connect (`ConnectEx`, extension pointers loaded
 via `WSAIoctl`), recv and send all run through the loop — full parity with the
 kqueue backend; sockets are lazily associated with the port on first use.
-`OpTimeout` is driven off the completion-port wait timeout (no threadpool), so
-`sleep`, deadlines, `timeout`, and schedules work on Windows too — the peer
-backend is at full parity with io_uring for the socket + timer surface.
+`OpTimeout` is a software timer list (no threadpool) whose earliest deadline
+wakes the port through a high-resolution waitable timer and a wait completion
+packet, falling back to the rounded-up port-wait timeout where either is
+missing; `sleep`, deadlines, `timeout`, and schedules work on Windows too.
 
 Native file/pipe reads and writes require overlapped handles; synchronous
 handles are rejected with `-EINVAL` before I/O is issued. Regular files also
@@ -111,6 +112,11 @@ extern (Windows) nothrow @nogc
         OVERLAPPED* ov);
     HANDLE CreateEventW(void* attributes, int manualReset, int initialState,
         const(wchar)* name);
+    HANDLE CreateWaitableTimerExW(void* attributes, const(wchar)* name,
+        DWORD flags, DWORD access);
+    int SetWaitableTimer(HANDLE timer, const(long)* dueTime, int period,
+        void* completion, void* context, int resume);
+    int CancelWaitableTimer(HANDLE timer);
 
     // Socket setup + the async accept/connect machinery.
     SOCKET WSASocketW(int af, int type, int protocol, void* protocolInfo,
@@ -355,6 +361,7 @@ enum IoKind : ubyte
     connect,  // ConnectEx: res is 0 / -errno
     wake,     // external waker post (SPEC §5.6): persistent, res is 0
     waitHandle, // a signalled wait completion packet (SPEC §13.9): res is 0
+    timerTick,  // the high-resolution timer's packet: backend-internal, never surfaced
 }
 
 /// A backend-owned op context. `ov` is first so `OVERLAPPED*` casts back to it.
@@ -447,8 +454,52 @@ struct IocpBackend
             _caps.opBits |= 1UL << OpKind.connect;
         if (waitPacketApi() !is null)
             _caps.opBits |= 1UL << OpKind.waitid;
+        if (!cfg.coarseTimers)
+            openHighResolutionTimer();
         return ioOk();
     }
+
+    /**
+    The timer fast path: one `CREATE_WAITABLE_TIMER_HIGH_RESOLUTION` timer,
+    armed to the earliest deadline, and one persistent wait packet bridging
+    it to the port (~0.5 ms instead of the ~15.6 ms clock interval that
+    quantises a port-wait timeout). Absent the timer class (Windows 10 before
+    1803) or the packet exports (Wine), timers stay on the port timeout.
+    */
+    private void openHighResolutionTimer() @safe nothrow @nogc
+    {
+        auto api = waitPacketApi();
+        if (api is null)
+            return;
+        enum DWORD CREATE_WAITABLE_TIMER_HIGH_RESOLUTION = 0x2;
+        enum DWORD TIMER_ALL_ACCESS = 0x1F_0003;
+        auto timer = (() @trusted => CreateWaitableTimerExW(null, null,
+            CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS))();
+        if (timer is null)
+            return;
+        auto op = acquire();
+        if (op is null)
+        {
+            CloseHandle(timer);
+            return;
+        }
+        enum uint GENERIC_ALL = 0x1000_0000;
+        HANDLE packet;
+        if ((() @trusted => api.create(&packet, GENERIC_ALL, null))() < 0)
+        {
+            release(op);
+            CloseHandle(timer);
+            return;
+        }
+        op.kind = IoKind.timerTick;
+        op.waitPacket = packet;
+        _timerOp = op;
+        _hiresTimer = timer;
+        _timerArmedFor = MonoTime.max;
+    }
+
+    /// Whether timers ride the high-resolution waitable timer.
+    bool highResolutionTimers() const @safe pure nothrow @nogc => _hiresTimer !is null;
 
     /// Each query writes exactly one function pointer into its own field.
     private void loadExtensions(SOCKET s) @trusted nothrow @nogc
@@ -465,6 +516,18 @@ struct IocpBackend
     /// backend can open again. A second call does nothing.
     void close() @safe nothrow @nogc
     {
+        if (_hiresTimer !is null)
+        {
+            // Never close a packet while it is associated.
+            if (_timerAssociated)
+                (() @trusted => waitPacketApi().cancel(_timerOp.waitPacket, 1))();
+            CloseHandle(_timerOp.waitPacket);
+            CloseHandle(_hiresTimer);
+            _hiresTimer = null;
+            _timerOp = null;
+            _timerAssociated = false;
+            _timerArmedFor = MonoTime.max;
+        }
         if (_ops !is null)
         {
             (() @trusted => pureFree(_ops.ptr))();
@@ -781,7 +844,7 @@ struct IocpBackend
         return true;
     }
 
-    /// A relative timer, driven off the completion-port wait timeout (no
+    /// A relative timer on the software list (no
     /// threadpool): the deadline is tracked and its completion synthesized
     /// when it expires. `res` is 0 on expiry.
     bool trySubmit(in OpTimeout o, OpToken token, ref OpSlot) @safe nothrow @nogc
@@ -943,14 +1006,23 @@ struct IocpBackend
             : deadline.tv_sec >= uint.max / 1000 ? uint.max - 1
             : waitMilliseconds(deadline.tv_sec.seconds + deadline.tv_nsec.nsecs);
         const now = MonoTime.currTime;
+        MonoTime earliest = MonoTime.max;
+        if (deadline !is null && deadline.tv_sec < uint.max / 1000)
+            earliest = now + deadline.tv_sec.seconds + deadline.tv_nsec.nsecs;
         foreach (i; 0 .. _timerCount)
         {
             const rem = waitMilliseconds(_timers[i].deadline - now);
             if (rem < waitMs)
                 waitMs = rem;
+            if (_timers[i].deadline < earliest)
+                earliest = _timers[i].deadline;
         }
         const timeout = waitMs == ulong.max ? INFINITE
             : (waitMs > uint.max ? uint.max : cast(DWORD) waitMs);
+        // The high-resolution timer wakes the port at the deadline itself;
+        // the rounded-up timeout stays as the backstop.
+        if (timeout != 0)
+            armHighResolutionTimer(earliest);
 
         dequeue(timeout);
         if (_dequeueError != 0)
@@ -1090,8 +1162,47 @@ private:
             return 0;
         }
         foreach (ref entry; entries[0 .. removed])
+        {
+            // The timer's packet only woke the port: the software timer list
+            // decides what expired, and the packet is free to associate again.
+            if (opOf(entry.ov) is _timerOp)
+            {
+                _timerAssociated = false;
+                _timerArmedFor = MonoTime.max;
+                continue;
+            }
             enqueue(ovToCompletion(entry.ov, entry.bytes, cast(uint) entry.status));
+        }
         return removed;
+    }
+
+    /// Arms the high-resolution timer for `at` (`MonoTime.max`: disarm) and
+    /// keeps its packet associated. A failure leaves the port-wait timeout,
+    /// which every wait still passes, as the only wake: latency, never a hang.
+    void armHighResolutionTimer(MonoTime at) @safe nothrow @nogc
+    {
+        if (_hiresTimer is null || (_timerAssociated && at == _timerArmedFor))
+            return;
+        if (at == MonoTime.max)
+        {
+            if (_timerArmedFor != MonoTime.max)
+                (() @trusted => CancelWaitableTimer(_hiresTimer))();
+            _timerArmedFor = MonoTime.max;
+            return;
+        }
+        // Negative due times are relative, in 100 ns units; never zero.
+        const rel = at - MonoTime.currTime;
+        long due = rel > Duration.zero ? -rel.total!"hnsecs" : -1;
+        if (due == 0)
+            due = -1;
+        if (!(() @trusted => SetWaitableTimer(_hiresTimer, &due, 0, null, null, FALSE))())
+            return;
+        _timerArmedFor = at;
+        if (_timerAssociated)
+            return;
+        auto api = waitPacketApi();
+        _timerAssociated = (() @trusted => api.associate(_timerOp.waitPacket, _port,
+            _hiresTimer, null, &_timerOp.ov, 0, 0, null))() >= 0;
     }
 
     /// Moves any now-due timers into the synthesized-completion buffer.
@@ -1153,6 +1264,8 @@ private:
                 // Persistent (SPEC §5.6): the op context is the posting
                 // target for every future wake — never released here.
                 return RawCompletion(token, 0, 0);
+            case IoKind.timerTick:
+                assert(0, "the timer packet is consumed by the dequeue");
             case IoKind.waitHandle:
                 // Picked up: the association is over and the packet unused.
                 CloseHandle(op.waitPacket);
@@ -1229,6 +1342,10 @@ private:
     uint _dequeueError;
     Associations _associated;
     bool _winsockStarted;
+    HANDLE _hiresTimer;      // null: timers ride the port-wait timeout
+    IocpOp* _timerOp;        // the timer's persistent packet context
+    bool _timerAssociated;   // its packet is associated (one-shot: re-armed after pickup)
+    MonoTime _timerArmedFor = MonoTime.max;
     IocpOp[] _ops;
     uint _cap;
     uint _freeHead = uint.max;
@@ -1337,6 +1454,98 @@ private void requireWaitPackets() @safe
     SetEvent(event);
     const brief = KernelTimespec(0, 50_000_000);
     assert(b.submitAndWait(1, &brief).value == 0);
+}
+
+/// Signalled but not yet dequeued: whichever way the cancel races the
+/// queued packet, the target gets exactly one terminal completion and the
+/// cancel exactly one acknowledgment (the claim no source states).
+@("iocp.waitHandle.cancelAfterSignal")
+@system unittest
+{
+    import core.sys.windows.winbase : CreateEventW;
+    import sparkles.event_horizon.op : OpClass;
+
+    requireWaitPackets();
+    IocpBackend b;
+    assert(!b.open(BackendConfig()).hasError);
+    scope (exit) b.close();
+    auto event = CreateEventW(null, TRUE, TRUE, null);
+    assert(event !is null);
+    scope (exit) CloseHandle(event);
+    OpSlot slot;
+    const target = OpToken.pack(1, 1, OpClass.user);
+    const cancel = OpToken.pack(2, 1, OpClass.internal);
+    assert(b.trySubmit(OpWaitHandle(event), target, slot));
+    assert(b.trySubmitCancel(cancel, target));
+    uint targets, cancels;
+    foreach (round; 0 .. 2)
+    {
+        b.reap((ref const RawCompletion c) {
+            if (c.userData == target.raw)
+            {
+                ++targets;
+                assert(c.res == 0 || c.res == -ECANCELED);
+            }
+            else
+            {
+                ++cancels;
+                assert(c.userData == cancel.raw);
+            }
+        });
+        const brief = KernelTimespec(0, 20_000_000);
+        cast(void) b.submitAndWait(1, &brief);
+    }
+    assert(targets == 1 && cancels == 1);
+}
+
+/// The timer fast path is chosen wherever the timer class and packets
+/// exist, `coarseTimers` forces the fallback, and both fire a 2 ms timer
+/// never early. Only the fast path is held to sub-tick latency.
+@("iocp.timer.highResolutionAndCoarseFallback")
+@serial
+@system unittest
+{
+    import core.time : MonoTime, msecs;
+    import sparkles.event_horizon.op : OpClass;
+
+    static Duration fire(ref IocpBackend b)
+    {
+        OpSlot slot;
+        const before = MonoTime.currTime;
+        assert(b.trySubmit(OpTimeout(KernelTimespec(0, 2_000_000)),
+            OpToken.pack(1, 1, OpClass.user), slot));
+        uint got;
+        while (got == 0)
+        {
+            cast(void) b.submitAndWait(1, null);
+            got += b.reap((ref const RawCompletion c) { assert(c.res == 0); });
+        }
+        return MonoTime.currTime - before;
+    }
+
+    foreach (coarse; [false, true])
+    {
+        BackendConfig cfg;
+        cfg.coarseTimers = coarse;
+        IocpBackend b;
+        assert(!b.open(cfg).hasError);
+        scope (exit) b.close();
+        if (coarse || waitPacketApi() is null)
+            assert(!b.highResolutionTimers, "the fallback: forced, or no packets");
+        Duration[5] runs;
+        foreach (ref run; runs)
+        {
+            run = fire(b);
+            assert(run >= 2.msecs, "a timer never fires early");
+        }
+        if (b.highResolutionTimers)
+        {
+            import std.algorithm.sorting : sort;
+
+            sort(runs[]);
+            assert(runs[2] < 8.msecs, "high-resolution timers beat the clock interval");
+        }
+    }
 }
 
 /// The waitid bit is clear exactly where the exports are missing, and the
@@ -1695,6 +1904,7 @@ version (unittest)
     import sparkles.event_horizon.buffer : Buf;
     import sparkles.event_horizon.op : OpSlot;
     import sparkles.test_runner.skip : skipTest;
+    import sparkles.test_runner.attributes : serial;
 }
 
 /// Synchronous pipe handles must be rejected before issuing I/O: even an

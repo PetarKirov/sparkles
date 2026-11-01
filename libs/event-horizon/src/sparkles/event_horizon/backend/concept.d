@@ -37,6 +37,10 @@ struct BackendConfig
     /// a test runs an older kernel's paths on this one (bit `k` hides
     /// `cast(OpKind) k`).
     ulong hiddenOps;
+    /// IOCP: drive timers off the port-wait timeout (clock-interval
+    /// resolution) even where a high-resolution waitable timer is available —
+    /// the knob that A/B-measures the fast path against its fallback.
+    bool coarseTimers;
 }
 
 /**
