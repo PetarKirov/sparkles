@@ -275,6 +275,26 @@ struct GitIgnoreStack
     }
 }
 
+/**
+Whether `text` matches the git-style glob `pattern` as a whole: `*` and `?`
+stop at `/`, `**` crosses it, and `\` escapes the next character. The
+matcher a `.gitignore` rule uses, for tools selecting by the same syntax.
+*/
+bool gitGlobMatch(in string pattern, in const(char)[] text) pure nothrow
+    => globMatch(pattern, text);
+
+///
+@("buildPrimitives.gitIgnore.gitGlobMatch")
+@safe pure nothrow unittest
+{
+    assert(gitGlobMatch("sparkles:ui-*", "sparkles:ui-tui"));
+    assert(gitGlobMatch("libs/ui*", "libs/ui-sdl3"));
+    assert(!gitGlobMatch("libs/*", "libs/ui/nested"), "`*` stops at `/`");
+    assert(gitGlobMatch("libs/**", "libs/ui/nested"));
+    assert(gitGlobMatch("ba?e", "base"));
+    assert(!gitGlobMatch(`b\*`, "bx"));
+}
+
 private:
 
 struct ParseResult
@@ -409,12 +429,12 @@ bool matchesAnySegment(in string pattern, in const(char)[] path) pure
     }
 }
 
-bool globMatch(in string pattern, in const(char)[] text) pure
+bool globMatch(in string pattern, in const(char)[] text) pure nothrow
 {
     return globMatchAt(pattern, 0, text, 0);
 }
 
-bool globMatchAt(in string pattern, size_t patternIndex, in const(char)[] text, size_t textIndex) pure
+bool globMatchAt(in string pattern, size_t patternIndex, in const(char)[] text, size_t textIndex) pure nothrow
 {
     while (patternIndex < pattern.length)
     {
