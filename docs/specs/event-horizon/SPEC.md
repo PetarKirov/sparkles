@@ -1716,13 +1716,14 @@ double; the spawn machinery (`ChildProcess`, `spawnProcess`, `spawnPty`,
 `wait`) and the `RingProc` handler are loop-side in `live` (all re-exported
 by `package`, so consumer spellings do not change).
 
-**Delivery status.** §§13.1–13.4 describe the shipped M15 POSIX baseline.
-Today it is publicly re-exported and tested on Linux; kqueue has a shipped
-`EVFILT_PROC` reap lowering, but the process modules are not yet exported or
-covered by the package test suite on macOS. Windows has no process surface:
-its IOCP backend currently covers sockets, timers, and wakes only. §§13.5–13.8
-shipped in M19 on Linux (the `supervise`, `sampling`, `cgroup` and
-`blocking_pool` modules); §13.9 and the `apps/ci` port remain M19 targets — see
+**Delivery status.** §§13.1–13.4 describe the shipped M15 POSIX baseline. It
+is publicly re-exported and tested on Linux and macOS; on macOS the reap
+lowers to `EVFILT_PROC`. Windows has no process surface: its IOCP backend
+currently covers sockets, timers, and wakes only. §§13.5–13.8 shipped in M19
+(the `supervise`, `sampling`, `cgroup` and `blocking_pool` modules). The
+supervision suite runs on Linux and native macOS; macOS has no containment
+tier, so it supervises by process group, and it samples through libproc.
+§13.9 and the `apps/ci` port remain M19 targets — see
 [PLAN M19](./PLAN.md#m19--cross-platform-supervised-processes-for-appsci) for
 the delivery status.
 

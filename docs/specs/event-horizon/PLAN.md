@@ -394,7 +394,7 @@ package-private shielded scope children (`scope_`, SPEC §8.2). The
 "no polling loop" gate holds: an idle three-second supervised `sleep` makes
 nine `io_uring_enter` calls, no `epoll_*`, and no timer loop
 (`strace -f -c`). Remaining: item 1's complete macOS process-test matrix
-(portable exports exist; Darwin sampling progress is recorded below), item 5
+(closed on 2026-11-01, recorded below), item 5
 (Windows, §13.9), item 6
 (folded into task-DAG M5 and its later cutovers), and a
 `clone3(CLONE_INTO_CGROUP)` spawn path so that a
@@ -411,9 +411,27 @@ timeout/KILL/drain, cancellation and admission-failure reap. The latter
 exposed a short Darwin `siginfo_t` in the blocking-lane probe; it now uses
 the full native layout already used by `live`.
 
-Item 1 is **not complete**: lifting the entire legacy Linux supervision
-test gate exposed a macOS auto-reaped-root hang and residual-tree edge cases.
-The shared probes do not replace that remaining matrix. Windows spawning,
+Item 1's macOS process matrix is complete (2026-11-01). The supervision
+suite runs on every POSIX host: native macOS passes 255 tests with 11 skips
+at `-t 1`, and Linux passes 306 with 4 skips. The auto-reaped-root hang was in
+the kqueue backend, not in supervision. When a cancellation's internal
+completion is dispatched, the loop submits its next queued cancellation from
+inside that dispatch. `reap` iterated the synthesized completions up to the
+count it saw at entry, then cleared it, so the new pair was dropped and its
+target (already released) never completed. A lost root forces both drains
+while a reparented descendant still holds the pipes, which made that the
+first case to cancel two reads back to back. Darwin sampling now also walks
+the root's process group, as Linux's procfs scan does, so a member
+reparented away from its exited parent is still counted. Every `supervise`,
+`live` and shared-probe test is compiled on both hosts. On macOS only two
+skip: the cgroup kill of a `setsid` descendant, and a PTY master kqueue
+cannot poll. The `cgroup` module and the Linux
+procfs/cgroup sampler tests stay Linux-only; the `sampling_darwin` suite is
+their libproc counterpart. Without a run cgroup, a group the lost root
+unpinned may not be signalled again (§13.7), so the residual lives on until it
+exits; the auto-reap test ends its own orphan.
+
+Windows spawning,
 Job Objects and wait packets, async file opens/flush, native Windows
 certification and bounded cross-worker channels remain open prerequisites.
 The installed Wine lacks both wait-packet exports; it may explicitly skip
