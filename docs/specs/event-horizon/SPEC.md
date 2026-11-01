@@ -2399,8 +2399,8 @@ input-fiber → UI-fiber handoffs of §15.3).
 
 ```d
 /// Bounded intra-worker SPSC-ish channel (any number of fibers may put or
-/// take, but all belong to ONE executor — cross-worker channels are the
-/// M9 MSG_RING work). Capacity is fixed at creation.
+/// take, but all belong to ONE executor — across workers, use
+/// `CrossChannel`, §14.1). Capacity is fixed at creation.
 struct Channel(T, uint N = 16)
 {
     IoResult!void put(X)(ref X exec, T item);   // parks while full
@@ -2421,6 +2421,76 @@ loss on graceful shutdown. Elements move in and out (`T` need not be
 copyable). The channel itself is address-pinned like every intrusive
 structure (§8.1): create it in a frame that outlives all users — scope
 join order makes that natural.
+
+### 14.1 Cross-worker channels
+
+Module `cross_channel`. `CrossChannel!(T, N)` has `Channel`'s semantics —
+fixed capacity, close-then-drain, cancellation checkpoints, move-only
+elements, address-pinned — for producers and consumers on any workers of a
+`LoopGroup` or `WorkStealingPool`, and on threads no scheduler runs, such as
+`BlockingPool` jobs.
+
+```d
+struct CrossChannel(T, uint N = 16)
+{
+    // Fibers of an executor that installs the fiber parker (`hasFiberParker`):
+    IoResult!void put(X)(ref X exec, T item); // checkpoint; parks while full
+    IoResult!T take(X)(ref X exec);           // checkpoint; parks while empty
+    // Any thread; parks through the caller's current base.sync parker:
+    IoResult!void put(T item);
+    IoResult!T take();
+    bool tryPut(ref T item);   // non-parking; moves `item` out only on success
+    bool tryTake(out T item);  // non-parking
+    void close();              // idempotent: put fails EPIPE; take drains, then EPIPE
+    bool closed();
+    uint length();
+    uint parkedPutters();      // snapshots, for tests and diagnostics
+    uint parkedTakers();
+}
+```
+
+It adds no wake mechanism of its own. The ring buffer, its count, the closed
+flag and the parked counts are guarded by one `sparkles.base.sync.Mutex`, and
+the two sides wait on two `Condition`s, "not full" and "not empty". A wait
+therefore parks through the caller's current parker
+([fiber-parker.md](./fiber-parker.md) EFP1). A fiber of a `Sched` suspends
+alone, and a wake from another worker or thread reaches its owner through the
+parker's inbox or ring path (EFP9, EFP12). A thread outside any scheduler
+sleeps on the thread parker. Nothing spins, sleeps or polls, and the channel
+works on every backend that has the parker (`io_uring`, kqueue, IOCP).
+
+- **Critical sections never suspend.** Holding the `Mutex` pins the caller
+  (base.sync SYK9), and the channel only moves one element and notifies
+  inside it. A waiting fiber's `Condition` wait drops the lock, and with it
+  the pin, before it sleeps.
+- **Notification.** A put notifies one "not empty" waiter, and a take one
+  "not full" waiter. Both notify with the lock held, so the waiter is moved
+  onto the mutex's queue rather than woken into contention (SYC5). `close`
+  notifies every waiter on both conditions.
+- **Cancellation** follows §8.4. The fiber verbs check the latched interrupt
+  before they lock, as `Channel` does, so they are checkpoints even when they
+  do not park. A parked fiber waits with `Condition.waitInterruptible`, so
+  the parker's one-shot cancel function resumes it (EFP14), and the verb
+  returns `ECANCELED` without touching the buffer. A wait that reports
+  cancelled was not selected by a notification (SYC7), so no notification is
+  lost to a cancelled waiter. A waiter that is selected and also cancelled
+  reports the notification: a selected taker takes, a selected putter
+  stores, and cancellation is observed at the next checkpoint (EFP16).
+- **Exactly once.** Every slot transition happens under the lock, so each
+  stored element is moved out by exactly one take. A put that fails stores
+  nothing, and a take that fails removes nothing.
+- **Threads.** The thread verbs have no up-front checkpoint and park with the
+  same interruptible waits. On the thread parker those waits never report
+  cancelled, so a thread's verbs fail only with `EPIPE`. A fiber may call
+  them too, and observes cancellation only when it parks.
+- **Teardown.** The channel must outlive every user. Close it, then join
+  every scope that puts or takes, then destroy it. Destruction with a waiter
+  still parked is a defect, which an assertion reports. Elements still
+  buffered are destroyed with the channel.
+
+The executor-gated fiber verbs exist because the single-threaded `TestSched`
+has no fiber parker: there, a `Condition` wait would block its only thread.
+Deterministic single-executor code keeps using `Channel`.
 
 ## 15. The UI event loop
 

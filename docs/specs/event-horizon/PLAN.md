@@ -475,3 +475,14 @@ shutdown requested during a run cancels every scope and leaks a worker that
 outlives the grace period. `raw_pool` locks with base.sync. The
 [ledger](./fiber-parker.md#evidence-ledger) records what is verified; the
 bucket waits (EFP11, EFP15) lack a test hook in base.sync.
+
+Cross-worker channels (November 1, 2026) build on the parker: SPEC §14.1's
+`CrossChannel` guards its buffer with a base.sync `Mutex` and parks putters
+and takers on two `Condition`s, so its waits go through this parker on every
+backend that has it. It is the bounded cross-worker channel that the task-DAG
+plan's M3 gate requires. Native tests on both paths cover delivery across
+workers and threads, backpressure, close-then-drain, cancellation of a parked
+put and of a parked take (alone and racing a delivery), an exactly-once
+stress, move-only elements and teardown. The work fixed one ring-path defect:
+a worker that never went idle held its ring wakes for other workers' fibers
+until it next waited (EFP9).

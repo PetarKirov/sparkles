@@ -5,8 +5,9 @@ render fiber; SPEC §15.3, open-issues O20).
 
 Effects-side: parking goes through the `isFiberExecutor` seam, never the
 ring, so a channel works identically on the live `Sched` and on the
-deterministic `TestSched`. All users belong to ONE executor — cross-worker
-channels are the M9 `MSG_RING` work.
+deterministic `TestSched`. All users belong to ONE executor; across workers
+and threads, use `CrossChannel` (`sparkles.event_horizon.cross_channel`,
+SPEC §14.1).
 
 `put`/`take` are cancellation checkpoints: a parked fiber's one-shot cancel
 function (SPEC §8.4) wakes it, and the verb returns `ECANCELED` without
