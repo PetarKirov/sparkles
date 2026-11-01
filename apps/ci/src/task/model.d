@@ -533,9 +533,9 @@ enum OutputStream
 }
 
 /**
-One assembled output line of a task. `line` excludes the terminator;
-`unterminated` marks the final fragment of a stream that did not end in a
-newline, emitted exactly once ([SPEC §5.5]).
+One assembled output line of a task; its text is `TaskEvent.text`,
+without the terminator. `unterminated` marks the final fragment of a stream
+that did not end in a newline, emitted exactly once ([SPEC §5.5]).
 */
 struct TaskOutput
 {
@@ -543,7 +543,6 @@ struct TaskOutput
     OutputStream stream; ///
     ulong streamSeq;     /// this stream's line number, from 0
     ulong chunkSeq;      /// the task's line number across both streams, from 0
-    string line;         ///
     bool unterminated;   ///
 }
 
@@ -590,11 +589,19 @@ struct RunFinished
 alias TaskEventPayload = SumType!(GraphPlanned, TaskReady, TaskStarted, TaskOutput,
     TaskUsage, TaskFinished, CancellationRequested, RunFinished);
 
-/// An event: a run-local sequence number and monotonic timestamp around
-/// its payload. The executor is the sole producer.
+/**
+An event: a run-local sequence number and monotonic timestamp around its
+payload. The executor is the sole producer.
+
+The one variable-length datum, a `TaskOutput` line, travels in `text`
+beside the payload rather than in it: a `SumType` with an indirection is
+`@system` to assign, and keeping the payload pointer-free keeps every event
+`@safe` to move through a channel. `text` is empty for every other payload.
+*/
 struct TaskEvent
 {
     ulong sequence;           ///
     MonoTime at;              ///
     TaskEventPayload payload; ///
+    string text;              /// a `TaskOutput` line
 }
