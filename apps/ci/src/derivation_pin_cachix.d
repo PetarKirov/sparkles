@@ -13,7 +13,7 @@ import std.algorithm.iteration : filter, map;
 import std.array : array;
 import std.format : format;
 
-import expected : Expected, err, ok;
+import sparkles.base.expected : Expected, err, ok;
 
 import derivation_pin_set : Target, narinfoUrl, parsePinList, pinUrl, pinsUrl, stalePins;
 

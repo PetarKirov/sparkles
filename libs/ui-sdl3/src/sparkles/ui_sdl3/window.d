@@ -9,7 +9,7 @@ with the `SDL_InitFlags` passed to `SDL_Init`.
 */
 module sparkles.ui_sdl3.window;
 
-import expected : err, ok;
+import sparkles.base.expected : err, ok;
 
 import sparkles.ui_sdl3.sdl3_c;
 import sparkles.ui_sdl3.error;

@@ -12,7 +12,7 @@ silently.
 */
 module sparkles.ui_sdl3.error;
 
-import expected : Expected, err, ok;
+import sparkles.base.expected : Expected, err, ok;
 
 import sparkles.ui_sdl3.sdl3_c;
 

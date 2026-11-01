@@ -33,7 +33,7 @@ module sparkles.vulkan.memory;
 import core.memory : pureFree, pureMalloc;
 import std.typecons : Ternary;
 
-import expected : err, ok;
+import sparkles.base.expected : err, ok;
 
 import sparkles.base.buffer : UniqueBuffer;
 import sparkles.vulkan.dispatch : DeviceCommands, InstanceCommands;

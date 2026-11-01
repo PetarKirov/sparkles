@@ -323,7 +323,7 @@ unittest
 unittest
 {
     import std.exception : assertThrown;
-    import expected : err;
+    import sparkles.base.expected : err;
 
     // Outside --bench (a foreign runner executing the test) a soft `Expected`
     // error from `after` must fail the test, not vanish; teardown still runs.
@@ -1309,7 +1309,7 @@ unittest
 unittest
 {
     import core.time : usecs;
-    import expected : Expected, err, ok;
+    import sparkles.base.expected : Expected, err, ok;
 
     alias Res = Expected!(bool, string);
     static Res check(int r) => r == 5 ? ok!string(true) : err!bool("expected 5");
@@ -1390,7 +1390,7 @@ unittest
 unittest
 {
     import core.time : usecs;
-    import expected : err, ok;
+    import sparkles.base.expected : err, ok;
 
     // A soft error yields an error row; teardown still runs (it is scope-guarded),
     // so a scheduled case never leaks its per-case state on the failure path.

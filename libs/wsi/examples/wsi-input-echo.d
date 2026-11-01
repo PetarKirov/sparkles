@@ -7,7 +7,6 @@
     dependency "sparkles:core-cli" path="../../.."
     dependency "sparkles:base" path="../../.."
     dependency "sparkles:wired" path="../../.."
-    dependency "expected" version="~>0.4.1"
     targetPath "build"
     buildType "checked" {
         buildOptions "optimize" "inline" "debugInfo"
@@ -50,7 +49,7 @@ import core.time : Duration, msecs;
 import std.stdio : writeln;
 import std.traits : EnumMembers;
 
-import expected : Expected, err, ok;
+import sparkles.base.expected : Expected, err, ok;
 
 import sparkles.base.logger : LogLevel, error, info, initLogger, trace, warning;
 import sparkles.base.prettyprint : PrettyPrintOptions, prettyPrint;

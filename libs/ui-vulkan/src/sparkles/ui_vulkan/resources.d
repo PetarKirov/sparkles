@@ -9,7 +9,7 @@ here allocates device memory itself (`UVK27`).
 */
 module sparkles.ui_vulkan.resources;
 
-import expected : err, ok;
+import sparkles.base.expected : err, ok;
 
 import sparkles.vulkan;
 

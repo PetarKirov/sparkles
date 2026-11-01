@@ -30,7 +30,7 @@ import std.uri : encodeComponent;
 
 import core.time : Duration;
 
-import expected : Expected, ok, err;
+import sparkles.base.expected : Expected, ok, err;
 
 import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.styled_template : styledWriteln;

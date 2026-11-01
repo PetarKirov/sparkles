@@ -18,7 +18,7 @@ module project_state;
 
 import std.path : buildPath, dirName;
 
-import expected : err, Expected, ok;
+import sparkles.base.expected : err, Expected, ok;
 
 import sparkles.build_primitives.dub_recipe : dubRecipeFor;
 

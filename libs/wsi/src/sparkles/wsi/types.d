@@ -7,7 +7,7 @@ display connection.
 */
 module sparkles.wsi.types;
 
-import expected : Expected, err, ok;
+import sparkles.base.expected : Expected, err, ok;
 import std.math : isFinite;
 
 import sparkles.base.buffer : InlineBuffer;

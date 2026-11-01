@@ -11,7 +11,6 @@ dflags "-preview=in" "-preview=dip1000"
 
 dependency "sparkles:base" path="../.."
 dependency "sparkles:event-horizon" path="../.."
-dependency "expected" version="~>0.4.1"
 
 configuration "library" {
     targetType "library"

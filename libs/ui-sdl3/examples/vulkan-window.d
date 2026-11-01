@@ -5,7 +5,6 @@
     dependency "sparkles:vulkan" path="../../.."
     dependency "sparkles:core-cli" path="../../.."
     dependency "sparkles:base" path="../../.."
-    dependency "expected" version="~>0.4.1"
     stringImportPaths "../../vulkan-wsi/src/shaders"
     targetPath "build"
     buildType "checked" {
@@ -33,7 +32,7 @@ import std.algorithm : map;
 import std.array : array;
 import std.format : format;
 
-import expected : Expected, err, ok;
+import sparkles.base.expected : Expected, err, ok;
 
 import sparkles.base.prettyprint : prettyPrint, PrettyPrintOptions;
 import sparkles.core_cli.args;

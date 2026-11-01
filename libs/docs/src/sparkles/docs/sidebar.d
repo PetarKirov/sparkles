@@ -27,7 +27,7 @@ import std.array : Appender, appender;
 import std.regex : matchFirst, regex;
 import std.string : indexOf;
 
-import expected : Expected;
+import sparkles.base.expected : Expected;
 import sparkles.wired.json : JsonError, readJSONFile;
 import sparkles.wired.policy : WireOptional;
 

@@ -14,7 +14,7 @@ import core.lifetime : move;
 import core.stdc.errno : ECANCELED, ENOBUFS;
 import core.time : Duration;
 
-import expected : Expected;
+import sparkles.base.expected : Expected;
 
 import sparkles.event_horizon.capability : SpawnOptions, hasDeadlineTimer, isFiberExecutor;
 import sparkles.event_horizon.cause;

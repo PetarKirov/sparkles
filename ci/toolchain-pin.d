@@ -5,7 +5,6 @@
     dependency "sparkles:base" path=".."
     dependency "sparkles:ui" path=".."
     dependency "sparkles:event-horizon" path=".."
-    dependency "expected" version="~>0.4.1"
     targetPath "build"
     dflags "-preview=in" "-preview=dip1000"
     dflags "-i=derivation_pin" "-i=derivation_pin_cachix" "-i=derivation_pin_process"

@@ -17,7 +17,6 @@ lflags "-framework" "AppKit" "-framework" "CoreFoundation" "-framework" "Uniform
 importPaths "src" "../math/src"
 sourcePaths "src"
 
-dependency "expected" version="~>0.4.1"
 dependency "sparkles:base" path="../.."
 dependency "sparkles:input" path="../.."
 dependency "sparkles:event-horizon" path="../.."

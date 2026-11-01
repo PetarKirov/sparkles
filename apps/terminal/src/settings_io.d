@@ -9,7 +9,7 @@ NOTE: no module-level `@safe:` — the encode/decode walks infer `@system`.
 */
 module settings_io;
 
-import expected : Expected;
+import sparkles.base.expected : Expected;
 
 import sparkles.metadata : Description;
 import sparkles.wired.config_file : renderConfigShowWith = renderConfigShow,

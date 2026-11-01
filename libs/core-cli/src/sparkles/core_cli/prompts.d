@@ -17,7 +17,7 @@ numbered flow otherwise.
 +/
 module sparkles.core_cli.prompts;
 
-import expected : Expected, err, ok;
+import sparkles.base.expected : Expected, err, ok;
 
 import sparkles.base.term_style : Style, stylize;
 import sparkles.core_cli.key_input : Key, KeySession;

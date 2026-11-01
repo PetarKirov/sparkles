@@ -1,8 +1,8 @@
 module sparkles.core_cli.args.error;
 
-static import expected;
+import expected = sparkles.base.expected;
 
-public import expected : Expected;
+public import sparkles.base.expected : Expected;
 
 struct CliError
 {

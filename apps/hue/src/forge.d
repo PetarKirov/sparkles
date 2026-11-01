@@ -19,7 +19,7 @@ does is `forge_http`.
 */
 module forge;
 
-import expected : err, Expected, ok;
+import sparkles.base.expected : err, Expected, ok;
 
 /// A repository on some forge. `host` is what picks the adapter.
 struct RepoId

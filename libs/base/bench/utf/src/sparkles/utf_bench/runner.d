@@ -1,6 +1,6 @@
 module sparkles.utf_bench.runner;
 
-import expected : err, ok;
+import sparkles.base.expected : err, ok;
 import std.conv : to;
 import std.process : environment;
 import std.algorithm.iteration : splitter;

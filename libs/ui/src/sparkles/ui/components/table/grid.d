@@ -14,7 +14,7 @@ import std.algorithm.comparison : max;
 import std.array : array;
 import std.range : iota;
 
-import expected : Expected, err, ok;
+import sparkles.base.expected : Expected, err, ok;
 
 import sparkles.base.text.grapheme : visibleWidth;
 import sparkles.base.text.width : Align;

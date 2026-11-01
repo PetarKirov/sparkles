@@ -470,10 +470,10 @@ test against miniature stand-ins for the registry-generated types:
 #!/usr/bin/env dub
 /+ dub.sdl:
     name "vulkan_delta_sketch"
-    dependency "expected" version="~>0.4.0"
+    dependency "sparkles:base" version="*"
 +/
 import std.stdio : writeln;
-import expected : Expected, ok, err;
+import sparkles.base.expected : Expected, ok, err;
 
 // vk.xml's per-struct sType tag becomes a default field initializer (the
 // ErupteD-proven win) — no builder, no runtime setter, no way to forget it.

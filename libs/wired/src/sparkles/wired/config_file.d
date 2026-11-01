@@ -18,7 +18,7 @@ module sparkles.wired.config_file;
 import std.array : appender;
 import std.traits : FieldNameTuple, getUDAs, hasUDA;
 
-import expected : Expected, err, ok;
+import sparkles.base.expected : Expected, err, ok;
 
 import sparkles.wired.json : fromJSON, JsonError, JsonKind, JsonStage, JsonValue;
 import sparkles.wired.overlay : mergeSparse, Sparse, WireSection;

@@ -214,7 +214,7 @@ since VitePress toggles that class and follows the system itself.
 DtcgResult!string siteStylesheet(string root) @safe
 {
     import std.path : buildPath;
-    import expected : ok;
+    import sparkles.base.expected : ok;
     import sparkles.ui.dtcg : DtcgError;
     import sparkles.ui.theme_file : loadThemeFile;
 

@@ -10,7 +10,7 @@ extra ranges are freed.
 */
 module sparkles.ui_vulkan.frame_buffers;
 
-import expected : err, ok;
+import sparkles.base.expected : err, ok;
 
 import sparkles.base.buffer : UniqueBuffer;
 import sparkles.vulkan;

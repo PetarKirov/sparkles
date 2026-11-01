@@ -8,7 +8,7 @@
 /// before promoting it into `core-cli`.
 module sparkles.terminal_view.posix_util;
 
-import expected : Expected, ok, err;
+import sparkles.base.expected : Expected, ok, err;
 import sparkles.base.text.errors : NoGcHook;
 
 /// Which POSIX step failed.

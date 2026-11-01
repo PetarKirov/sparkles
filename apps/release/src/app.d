@@ -1242,7 +1242,7 @@ private Result!string acquireNotesRange(
 
 private Result!(AgentSpec) pickAgent(in CliParams cli, in Theme theme)
 {
-    import expected : mapError;
+    import sparkles.base.expected : mapError;
 
     import sparkles.release.result : success, failure;
 

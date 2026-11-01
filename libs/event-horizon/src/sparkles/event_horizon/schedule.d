@@ -15,7 +15,7 @@ module sparkles.event_horizon.schedule;
 
 import core.time : Duration, MonoTime, msecs;
 
-import expected : Expected;
+import sparkles.base.expected : Expected;
 
 import sparkles.event_horizon.capability : isFiberExecutor;
 import sparkles.event_horizon.cause;

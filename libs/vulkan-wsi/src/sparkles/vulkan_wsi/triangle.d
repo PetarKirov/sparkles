@@ -13,7 +13,7 @@ pipeline still builds from any SPIR-V a caller passes: the test pattern's.
 */
 module sparkles.vulkan_wsi.triangle;
 
-import expected : Expected, err, ok;
+import sparkles.base.expected : Expected, err, ok;
 
 import sparkles.base.text.cstring : toTempStringz;
 import sparkles.shaders.layout : layoutOf, Rule, writeLayout;

@@ -21,7 +21,6 @@ dependency "sparkles:vulkan-wsi" path="../.."
 // queue is translated into it in `events.d`; nothing above that boundary ever
 // sees an `SDL_Event`.
 dependency "sparkles:input" path="../.."
-dependency "expected" version="~>0.4.1"
 
 configuration "library" {
     // `sourceLibrary`, not `library`: dub skips pkg-config for `library` and

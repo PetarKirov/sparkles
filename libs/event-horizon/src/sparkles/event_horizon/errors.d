@@ -12,7 +12,7 @@ module sparkles.event_horizon.errors;
 
 public import sparkles.base.io.errors;
 
-import expected : err;
+import sparkles.base.expected : err;
 
 import sparkles.event_horizon.sys.error_kinds : errnoKind;
 

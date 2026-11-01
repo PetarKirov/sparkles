@@ -1,7 +1,7 @@
 /** Common bounded values shared by every `sparkles:fuzzy` module. */
 module sparkles.fuzzy.common;
 
-import expected : Expected, err, ok;
+import sparkles.base.expected : Expected, err, ok;
 
 import sparkles.base.text.analysis : AnalysisWorkspace, StopwordLexicon;
 import sparkles.base.text.errors : NoGcHook;

@@ -57,7 +57,7 @@
  */
 module uom_quantity_runtime_expected;
 
-import expected : Expected, ok, err;
+import sparkles.base.expected : Expected, ok, err;
 import sparkles.math.vector : Vector;
 
 /// The raytracer's numeric payload for a 3-vector quantity.

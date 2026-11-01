@@ -35,7 +35,7 @@ unchanged.
 */
 module sparkles.vulkan_wsi.frame;
 
-import expected : err, ok;
+import sparkles.base.expected : err, ok;
 
 import sparkles.vulkan;
 import sparkles.vulkan_wsi.error;

@@ -6,7 +6,7 @@ the IO modules (`git.d`, `agents.d`, `notes.d`, `preflight.d`) report failures a
 +/
 module sparkles.release.result;
 
-import expected : Expected, ok, err;
+import sparkles.base.expected : Expected, ok, err;
 
 /// Either a `T` or an error message.
 alias Result(T) = Expected!(T, string);

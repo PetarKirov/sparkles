@@ -6,7 +6,7 @@ import std.regex : regex;
 import std.string : strip;
 import std.sumtype : SumType, get, match;
 
-import expected : Expected, err, ok;
+import sparkles.base.expected : Expected, err, ok;
 import sparkles.base.buffer : UniqueBuffer;
 import sparkles.base.text.float_conv : readDecimalFloat;
 import sparkles.base.text.readers : readQuotedString;

@@ -13,7 +13,7 @@ and in `libs/wsi/scripts/check-test-pattern.d`.
 */
 module sparkles.vulkan_wsi.test_pattern;
 
-import expected : Expected;
+import sparkles.base.expected : Expected;
 
 import sparkles.vulkan;
 import sparkles.vulkan_wsi.swapchain : Swapchain;

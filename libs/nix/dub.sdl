@@ -12,7 +12,6 @@ dflags "-preview=in" "-preview=dip1000"
 // -lnix*c link flags, via each .pc's Libs:/Requires: fields).
 libs "nix-util-c" "nix-store-c" "nix-expr-c" "nix-fetchers-c" "nix-flake-c" "nix-main-c"
 
-dependency "expected" version="~>0.4.1"
 dependency "sparkles:base" path="../.."
 
 configuration "library" {

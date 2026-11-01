@@ -36,7 +36,7 @@ import std.format : format;
 import std.math : round;
 import std.traits : getUDAs, hasUDA;
 
-import expected : err, ok;
+import sparkles.base.expected : err, ok;
 
 import sparkles.base.term_color : Color, ColorChannel, RgbColor, xterm256ToRgb;
 import sparkles.base.text.wire_names : enumNames;

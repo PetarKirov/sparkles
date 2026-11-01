@@ -10,7 +10,6 @@ importPaths "src" "../test-runner/src"
 
 dflags "-preview=in" "-preview=dip1000"
 
-dependency "expected" version="~>0.4.1"
 
 // Resolved via pkg-config (nixpkgs tree-sitter provides tree-sitter.pc);
 // dub feeds the --cflags include path to ImportC (-P-I) in dependents'

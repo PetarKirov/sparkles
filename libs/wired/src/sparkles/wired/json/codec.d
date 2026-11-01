@@ -21,7 +21,7 @@ import std.traits : isFloatingPoint, isIntegral, isSomeChar, OriginalType,
     TemplateArgsOf, Unqual;
 import std.typecons : Nullable, Ternary;
 
-import expected : Expected, ok, err;
+import sparkles.base.expected : Expected, ok, err;
 import optional : Optional, some;
 
 import sparkles.wired.policy;

@@ -11,7 +11,7 @@ and format chosen here are part of that contract rather than local taste.
 */
 module sparkles.vulkan_wsi.swapchain;
 
-import expected : err, ok;
+import sparkles.base.expected : err, ok;
 
 import sparkles.vulkan;
 import sparkles.vulkan_wsi.error;

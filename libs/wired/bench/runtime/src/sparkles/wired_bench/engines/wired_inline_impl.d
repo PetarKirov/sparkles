@@ -12,7 +12,7 @@
 // modules, and unittest blocks removed). Edit the originals, not this.
 module sparkles.wired_bench.engines.wired_inline_impl;
 
-import expected : Expected, err, ok;
+import sparkles.base.expected : Expected, err, ok;
 import std.experimental.allocator.common : stateSize;
 import std.experimental.allocator.mallocator : Mallocator;
 

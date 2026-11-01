@@ -9,7 +9,6 @@ importPaths "src"
 
 dflags "-preview=in" "-preview=dip1000"
 
-dependency "expected" version="~>0.4.1"
 dependency "sparkles:base" path="../.."
 dependency "sparkles:syntax" path="../.."
 dependency "sparkles:tree-sitter" path="../.."

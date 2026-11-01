@@ -35,7 +35,7 @@ import std.format : format;
 import std.math : round;
 import std.range.primitives : put;
 
-import expected : err, Expected, ok;
+import sparkles.base.expected : err, Expected, ok;
 
 import sparkles.base.term_color : RgbColor;
 import sparkles.base.text.writers : formatted;

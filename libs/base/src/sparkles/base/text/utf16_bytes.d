@@ -13,7 +13,7 @@ the source. A BOM is decoded as U+FEFF, never stripped.
 */
 module sparkles.base.text.utf16_bytes;
 
-import expected : err, ok;
+import sparkles.base.expected : err, ok;
 
 import sparkles.base.text.errors : NoGcHook;
 import sparkles.base.text.utf : addUtfCount, UtfMode, UtfReason, utfStorageOverlaps;

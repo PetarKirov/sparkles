@@ -17,7 +17,7 @@ import std.format : format;
 import std.json : JSONException, JSONType, JSONValue, parseJSON;
 import std.string : representation;
 
-import expected : Expected, err, ok;
+import sparkles.base.expected : Expected, err, ok;
 
 import sparkles.base.text.writers : formatted, writeBytes;
 

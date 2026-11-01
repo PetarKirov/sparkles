@@ -21,7 +21,7 @@ import std.string : fromStringz;
 
 import sparkles.base.text.cstring : CString, tryToCString;
 
-import expected : err, ok;
+import sparkles.base.expected : err, ok;
 
 import sparkles.ui_sdl3.error;
 import sparkles.ui_sdl3.sdl3_c;

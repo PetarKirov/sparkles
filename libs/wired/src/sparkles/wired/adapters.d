@@ -7,7 +7,7 @@ module sparkles.wired.adapters;
 import std.traits : ForeachType, isDynamicArray, isFloatingPoint, isIntegral,
     isStaticArray, KeyType, Unqual, ValueType;
 
-import expected : Expected, err, ok;
+import sparkles.base.expected : Expected, err, ok;
 
 import sparkles.base.buffer : UniqueBuffer;
 import sparkles.base.text.float_conv : readDecimalFloat, writeShortest;

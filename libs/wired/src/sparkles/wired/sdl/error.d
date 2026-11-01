@@ -1,7 +1,7 @@
 /** Structured errors shared by the SDL reader, writer, and typed codec. */
 module sparkles.wired.sdl.error;
 
-import expected : Expected, err, ok;
+import sparkles.base.expected : Expected, err, ok;
 
 import sparkles.base.buffer : SharedBuffer, checkWriter;
 import sparkles.base.text.errors : NoGcHook;
