@@ -1910,6 +1910,12 @@ requested size, resized by `ResizePseudoConsole`), fed through two uniquely
 named pipes whose parent ends are overlapped and ride the port. A
 pseudoconsole takes its input and output on separate pipes, so `ptyMaster`
 reads the console's output (VT sequences) and input is written to `stdinW`.
+End of input is in-band, as on a POSIX tty (`^D` at the start of a line):
+Ctrl-Z then Enter (`"\x1a\r"`) makes the child's console read return no
+bytes, and a reading child exits cleanly. Closing `stdinW` is not end of
+input but a hangup: conhost ends the session and the child dies of the
+console's close event (`STATUS_CONTROL_C_EXIT`, `0xC000013A`). Both are
+tested.
 The child inherits no handle; its console is the ConPTY. It is started with
 `STARTF_USESTDHANDLES` and null standard handles, so a parent whose own stdio
 is redirected never hands those handles to a console child: the child's

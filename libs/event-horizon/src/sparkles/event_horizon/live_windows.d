@@ -2075,9 +2075,10 @@ version (unittest)
 }
 
 /// A ConPTY child sees a console of the preset size; resizing reaches the
-/// pseudoconsole; input written to `stdinW` reaches the child, and output
-/// arrives on `ptyMaster` over the port. The reap closes the pseudoconsole,
-/// and the master then reaches EOF.
+/// pseudoconsole; input written to `stdinW` reaches the child, Ctrl-Z then
+/// Enter ends it cleanly (closing the input instead hangs the console up),
+/// and output arrives on `ptyMaster` over the port. The reap closes the
+/// pseudoconsole, and the master then reaches EOF.
 @("live.windows.spawnPtyConsoleSizeInputAndEof")
 @system unittest
 {
@@ -2102,10 +2103,28 @@ version (unittest)
         SharedBuffer!(ubyte, 64) typed;
         typed ~= cast(const(ubyte)[]) "typed\r";
         assert(!write(cat.stdinW, move(typed)).res.hasError);
-        cast(void) readUntil(cat.ptyMaster.borrowFd, "typed");
-        assert(!cat.killGroup().hasError);
-        assert(wait(s, cat).value == ExitStatus(false, killedExitCode));
-        cast(void) drainAll(cat.ptyMaster.borrowFd);
+        const seen = readUntil(cat.ptyMaster.borrowFd, "typed");
+        // End of input on a console is Ctrl-Z then Enter: the child's read
+        // returns no bytes, and it exits cleanly. Its own copy of the line
+        // follows the console's echo, so "typed" appears twice.
+        SharedBuffer!(ubyte, 64) eof;
+        eof ~= cast(const(ubyte)[]) "\x1a\r";
+        assert(!write(cat.stdinW, move(eof)).res.hasError);
+        assert(wait(s, cat).value.ok, "a clean exit at end of input");
+        const echoed = cast(string) (seen ~ drainAll(cat.ptyMaster.borrowFd));
+        import std.algorithm.searching : count;
+        assert(echoed.count("typed") >= 2, "the child read the line, not only the echo");
+
+        // Closing the input pipe is a hangup, not end of input: conhost
+        // ends the session and the child dies of the console's close event.
+        auto hung = move(spawnPty(childArgv("cat"), 80, 24).value);
+        SharedBuffer!(ubyte, 64) line;
+        line ~= cast(const(ubyte)[]) "typed\r";
+        assert(!write(hung.stdinW, move(line)).res.hasError);
+        cast(void) readUntil(hung.ptyMaster.borrowFd, "typed");
+        hung.stdinW.close();
+        assert(wait(s, hung).value == ExitStatus(false, cast(int) 0xC000_013A));
+        cast(void) drainAll(hung.ptyMaster.borrowFd);
     });
     assert(!r.hasError);
 }

@@ -1523,6 +1523,45 @@ unittest
     }
 }
 
+/// Input written to the master reaches the child, and `^D` at the start of
+/// a line is end of input: `cat` exits cleanly — the POSIX counterpart of
+/// the ConPTY test's Ctrl-Z then Enter.
+@("live.spawnPty.inputThenEndOfInput")
+@safe
+unittest
+{
+    version (OSX)
+    {
+        import sparkles.test_runner.skip : skipTest;
+
+        skipTest("PTY master is not pollable via kqueue on macOS");
+    }
+    else
+    {
+        import std.algorithm.searching : count;
+        import sparkles.event_horizon.io : write;
+
+        Sched s;
+        schedOrSkip(s);
+
+        auto r = s.run(() {
+            auto child = move(spawnPty(["cat"], 80, 24).value);
+            SharedBuffer!(ubyte, 64) typed;
+            typed ~= cast(const(ubyte)[]) "typed\n\x04";
+            assert(!write(child.ptyMaster, move(typed)).res.hasError);
+
+            SharedBuffer!(ubyte, 512) out_;
+            drainInto(s, child.ptyMaster.borrowFd(), out_);
+            assert((cast(const(char)[]) out_[]).count("typed") == 2,
+                "the tty's echo, then cat's own copy");
+            auto st = wait(s, child);
+            assert(st.hasValue && st.value.ok, "a clean exit at end of input");
+            child.ptyMaster.close();
+        });
+        assert(!r.hasError);
+    }
+}
+
 // ── environment overlays (SPEC §13.1) ───────────────────────────────────────
 
 @("live.env.overlaySetReplaceUnsetInherit")
