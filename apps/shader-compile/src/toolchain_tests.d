@@ -21,8 +21,8 @@ import std.conv : octal, to;
 import std.file : copy, dirEntries, exists, mkdirRecurse, readText, remove, rmdirRecurse,
     setAttributes, SpanMode, tempDir, write;
 import std.format : format;
-import std.path : baseName, buildNormalizedPath, buildPath, dirName, pathSeparator,
-    relativePath;
+import std.path : absolutePath, baseName, buildNormalizedPath, buildPath, dirName,
+    pathSeparator, relativePath;
 import std.process : Config, environment, execute, Pid, spawnProcess, thisProcessID, wait;
 import std.stdio : File;
 import std.string : indexOf, lineSplitter, strip;
@@ -60,9 +60,11 @@ private string missingTool()
     return null;
 }
 
-/// This package, and the repository its fixture depends on.
-private enum here = __FILE_FULL_PATH__.dirName.buildNormalizedPath("..");
-private enum repoRoot = here.buildNormalizedPath("..", "..");
+/// This package, and the repository its fixture depends on: absolute, since
+/// the fixture is copied to and built in a temporary directory, and a
+/// relocated build records `__FILE_FULL_PATH__` relative to the root.
+private string here() => __FILE_FULL_PATH__.dirName.absolutePath.buildNormalizedPath("..");
+private string repoRoot() => here.buildNormalizedPath("..", "..");
 
 /// The tool, built once per test run.
 private string tool()
