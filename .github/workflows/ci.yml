@@ -848,8 +848,10 @@ jobs:
     # stretched past a 15m cap and cancelled after every real step had
     # succeeded. 30m matches the test job's headroom.
     # The site embeds the wasm modules, whose toolchain is pinned in Cachix
-    # (TC24), so it is never rebuilt here.
-    timeout-minutes: 30
+    # (TC24), so it is never rebuilt here; but a change to a shared library
+    # rebuilds the tools the site build runs, as in the docs deploy
+    # (docs.yml): #708 took 29m of this cap, #709 17m. It has 45m.
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v7
