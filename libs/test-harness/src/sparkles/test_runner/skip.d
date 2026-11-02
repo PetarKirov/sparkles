@@ -13,8 +13,6 @@
  */
 module sparkles.test_runner.skip;
 
-import sparkles.base.lifetime : recycledErrorInstance;
-
 /// Thrown by `skipTest`; the runner records the test as skipped, not failed.
 /// NB: instances come from a recycled thread-local buffer — catchers must
 /// `.idup` the message before the next `skipTest` on the same thread.
@@ -31,10 +29,24 @@ class TestSkipped : Error
 /// counters, a root-only tracefs, a missing toolchain binary). Callable from
 /// the strictest test bodies: throwing an `Error` is `nothrow`-legal, and the
 /// recycled instance keeps it `@nogc` (the minimal `@trusted` covers only the
-/// deliberately-`@system` `recycledErrorInstance`).
+/// deliberately-`@system` `recycledSkip`).
 noreturn skipTest(string reason) @safe pure nothrow @nogc
 {
-    throw (() @trusted => recycledErrorInstance!TestSkipped(reason))();
+    throw (() @trusted => (cast(TestSkipped function(in char[]) @system pure nothrow @nogc)
+        &recycledSkip)(reason))();
+}
+
+/// The thread's one `TestSkipped`, re-initialized with a copy of `reason` in
+/// a thread-local buffer, so the message survives the caller's frame.
+private TestSkipped recycledSkip(in char[] reason) @system nothrow @nogc
+{
+    import core.lifetime : emplace;
+
+    static char[16 * 1024] message;
+    align(16) static ubyte[__traits(classInstanceSize, TestSkipped)] slot;
+    const n = reason.length < message.length ? reason.length : message.length;
+    message[0 .. n] = reason[0 .. n];
+    return emplace!TestSkipped(cast(void[]) slot[], cast(string) message[0 .. n]);
 }
 
 @("skip.skipTest.throwsTestSkipped")

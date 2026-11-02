@@ -35,11 +35,11 @@ configuration "tracy" {
 }
 
 configuration "unittest" {
-    // Cycle-safe: the runner's impl depends on this package for its counters,
-    // so this package source-includes the shim and the impl, and takes the
-    // impl's own dependencies.
-    sourcePaths "src" "../test-runner/src" "../test-runner-impl/src"
-    importPaths "src" "../test-runner/src" "../test-runner-impl/src"
+    // The harness compiles this package's counters, so this package source-
+    // includes the shim, the impl and the harness, takes the impl's own
+    // dependencies, and compiles the counters once, as its own.
+    sourcePaths "src" "../test-runner/src" "../test-runner-impl/src" "../test-harness/src" "../test-attributes/src"
+    importPaths "src" "../test-runner/src" "../test-runner-impl/src" "../test-harness/src" "../test-attributes/src"
     dependency "sparkles:base" path="../.."
     dependency "sparkles:ui" path="../.."
     // `FrameSummary` round-trips through JSON without custom code (PRF17).

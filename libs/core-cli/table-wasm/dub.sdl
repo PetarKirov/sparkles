@@ -10,7 +10,7 @@ dependency "sparkles:base" path="../../.."
 dependency "sparkles:ui" path="../../.."
 
 // The marker attributes (`@wasm`) resolve against the runner shim.
-importPaths "src" "../../test-runner/src"
+importPaths "src" "../../test-attributes/src"
 
 dflags "-preview=in" "-preview=dip1000"
 

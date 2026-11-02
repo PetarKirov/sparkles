@@ -10,8 +10,7 @@ targetPath "build"
 // on `sparkles:base` alone (its tests source-include the runner), so this edge
 // closes no cycle.
 dependency "sparkles:math" path="../.."
-// `../test-runner/src` is here for the cycle-safe unittest integration below.
-importPaths "src" "../test-runner/src"
+importPaths "src" "../test-attributes/src"
 // sparkles:base supplies the color/style vocabulary (RgbColor/Color/toRgb — the
 // toolkit adds no color type of its own). Concrete canvas backends adapt to
 // sparkles:ui, never the reverse.
@@ -80,8 +79,8 @@ configuration "unittest" {
     // shim would close `ui -> test-runner -> impl -> core-cli -> ui`. Source-
     // include the shim and the impl instead, as `base`/`core-cli`/`test-utils`
     // do for the same reason.
-    sourcePaths "../test-runner/src" "../test-runner-impl/src" "../profiling/src/sparkles/profiling/counters"
-    importPaths "src" "../test-runner/src" "../test-runner-impl/src" "../profiling/src"
+    sourcePaths "../test-runner/src" "../test-runner-impl/src" "../test-harness/src" "../test-attributes/src" "../dql/src" "../profiling/src/sparkles/profiling/counters"
+    importPaths "src" "../test-runner/src" "../test-runner-impl/src" "../test-harness/src" "../test-attributes/src" "../dql/src" "../profiling/src"
 
     // The component tests use the diff/outdent helpers. `test-utils` depends on
     // `base` alone, so this edge closes no cycle.

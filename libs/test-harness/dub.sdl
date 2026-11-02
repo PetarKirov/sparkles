@@ -1,0 +1,95 @@
+name "test-harness"
+description "The in-binary half of sparkles:test-runner: discovery, execution, the fallback, and the measurement layer"
+authors "Petar Kirov"
+copyright "Copyright © 2026, Petar Kirov"
+license "BSL-1.0"
+
+targetPath "build"
+
+dflags "-preview=in" "-preview=dip1000"
+
+// What must run beside a test body: the test model, discovery, execution
+// with the stack budget, skipTest, the fallback, and the benchmark and
+// workload measurement layer. Every package's tests depend on it, so it
+// depends on no repository package but the attributes (process-model TRP1).
+dependency "sparkles:test-attributes" path="../.."
+
+// The counters are `sparkles:profiling`'s (`sparkles.profiling.counters`), so a
+// frame loop reads what a benchmark does. The harness compiles them from that
+// directory, which keeps it free of repository packages; `frame.d` is the
+// frame loop's, not a benchmark's.
+sourcePaths "src" "../profiling/src/sparkles/profiling/counters"
+importPaths "src" "../profiling/src"
+excludedSourceFiles "../profiling/src/sparkles/profiling/counters/frame.d"
+
+targetType "library"
+
+configuration "library" {
+    targetType "library"
+}
+
+configuration "unittest" {
+    // Self-host: the harness cannot depend on the shim, whose registration
+    // depends on the harness, so its own module registers the tests
+    // (process-model TRP4).
+    versions "SparklesTestHarnessSelfHost"
+
+    dflags "-checkaction=context" "-allinst"
+}
+
+// BEGIN managed build types — apps/ci/tools/standardize-build-settings.d
+dflags "--linker=lld" platform="linux-ldc"
+dflags "-L-fuse-ld=lld" platform="linux-dmd"
+
+buildType "unittest" {
+    buildOptions "unittests" "debugMode" "debugInfo"
+    dflags "--gline-tables-only" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "unittest-debug" {
+    buildOptions "unittests" "debugMode" "debugInfo"
+    dflags "-defaultlib=libphobos2.so" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "unittest-cov" {
+    buildOptions "unittests" "coverage" "debugMode" "debugInfo"
+    dflags "--gline-tables-only" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "unittest-cov-ctfe" {
+    buildOptions "unittests" "coverageCTFE" "debugMode" "debugInfo"
+    dflags "--gline-tables-only" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "checked" {
+    buildOptions "optimize" "inline" "debugInfo"
+}
+buildType "bench" {
+    buildOptions "unittests" "optimize" "inline"
+    dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "bench-unchecked" {
+    buildOptions "unittests" "releaseMode" "optimize" "inline"
+    dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "bench-static" {
+    buildOptions "unittests" "releaseMode" "optimize" "inline"
+    dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
+    dflags "--link-defaultlib-shared=false" platform="linux-ldc"
+    dflags "-defaultlib=libphobos2.a" platform="linux-dmd"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+// END managed build types

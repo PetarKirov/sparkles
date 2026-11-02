@@ -97,14 +97,10 @@ unittest
     Test[] tests;
     foreach (i; 0 .. 8)
         tests ~= Test(fullName: "w.p", name: "p", ptr: &ok);
-    import sparkles.base.sync.mutex : Mutex;
-
-    Mutex mutex;
-    size_t seen;
+    shared size_t seen;
     runTests(tests, 2, (TestResult r) {
-        auto held = mutex.guard();
         if (r.succeeded)
-            ++seen;
+            atomicOp!"+="(seen, 1);
     });
     assert(seen == 8);
 }

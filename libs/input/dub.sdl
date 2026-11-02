@@ -5,10 +5,7 @@ license "BSL-1.0"
 targetType "library"
 targetPath "../../build"
 
-// The runner shim is on importPaths for the cycle-safe unittest integration
-// below: this package sits inside the test-runner-impl's dependency closure
-// (impl → ui → input).
-importPaths "src" "../test-runner/src"
+importPaths "src" "../test-attributes/src"
 sourcePaths "src"
 
 dflags "-preview=in" "-preview=dip1000"
@@ -25,8 +22,8 @@ configuration "library" {
 // Cycle-safe unittest integration: source-include the runner shim + impl
 // rather than `dependency "sparkles:test-runner"` (see the note above).
 configuration "unittest" {
-    sourcePaths "../test-runner/src" "../test-runner-impl/src" "../profiling/src/sparkles/profiling/counters"
-    importPaths "src" "../test-runner/src" "../test-runner-impl/src" "../profiling/src"
+    sourcePaths "../test-runner/src" "../test-runner-impl/src" "../test-harness/src" "../test-attributes/src" "../profiling/src/sparkles/profiling/counters"
+    importPaths "src" "../test-runner/src" "../test-runner-impl/src" "../test-harness/src" "../test-attributes/src" "../profiling/src"
     dflags "-checkaction=context" "-allinst"
 }
 

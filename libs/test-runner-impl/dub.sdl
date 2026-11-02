@@ -15,15 +15,16 @@ dflags "-preview=in" "-preview=dip1000" "-allinst"
 // whose dependency selection uses the ordinary library configuration.
 dflags "-singleobj" platform="ldc"
 
-// The marker UDAs live in the shim. Import-only (not `sourcePaths`): the shim's
-// registration modules are not compiled into this library.
-importPaths "src" "../test-runner/src"
 
+// The in-binary half (model, discovery, execution, measurement) is the
+// harness; this package is the runner proper.
+//
 // The heavy runner machinery: CLI dispatch, execution, reporting, drivers,
 // benchmarking. Built once as a prebuilt library and reached across a thin
 // `extern(C)` seam by the `sparkles:test-runner` shim, so consumers never
 // recompile it. In-monorepo `base`/`core-cli` cannot depend on this package
 // (dub rejects the resulting cycle); they source-include it instead.
+dependency "sparkles:test-harness" path="../.."
 dependency "sparkles:base" path="../.."
 
 // The reporting UI (result tables, progress lines, OSC-8 links, the live
@@ -37,10 +38,9 @@ dependency "sparkles:base" path="../.."
 dependency "sparkles:ui" path="../.."
 
 // The counters a benchmark reads (perf groups, rdpmc, syscalls, pressure
-// stalls) are `sparkles.profiling.counters`, shared with frame profiling.
-// `profiling`'s library depends only on `base`, so this edge closes no cycle;
-// the packages that source-include this impl source-include those counters too.
-dependency "sparkles:profiling" path="../.."
+// stalls) are `sparkles.profiling.counters`, shared with frame profiling. They
+// arrive with `sparkles:test-harness`, which compiles them from source; a
+// dependency on `sparkles:profiling` as well would link them twice.
 
 targetType "library"
 

@@ -229,7 +229,7 @@ version (linux)
 
         private int encode(string name, ref perf_event_attr attr) @trusted
         {
-            import sparkles.base.text.cstring : CString, tryToCString;
+            import sparkles.test_runner.text : StackCString;
 
             attr = perf_event_attr.init;
             attr.size = perf_event_attr.sizeof;
@@ -242,8 +242,8 @@ version (linux)
             // here from `--metrics=pfm:<name>`, so its length is not ours to
             // assume; a named local both roots the bytes and drops the
             // allocation this made on every lookup.
-            CString!256 nameZ;
-            if (!tryToCString(nameZ, [name]))
+            StackCString!256 nameZ;
+            if (!nameZ.tryAppend(name))
                 return encodeNameTooLong;
 
             return pfmGetOsEventEncoding(nameZ.ptr,
@@ -262,13 +262,11 @@ version (linux)
             if (pfmStrerror !is null)
                 if (auto p = pfmStrerror(rc))
                     return p[0 .. strlen(p)].idup;
-            import sparkles.base.buffer : SharedBuffer;
-            import sparkles.base.text.writers : writeInteger;
+            import sparkles.test_runner.text : putDecimal;
 
-            SharedBuffer!(char, 32) buf;
-            buf ~= "pfm error ";
-            writeInteger(buf, rc);
-            return buf[].idup;
+            string text = "pfm error ";
+            putDecimal(text, rc);
+            return text;
         }
     }
 

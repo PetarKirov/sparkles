@@ -6,10 +6,10 @@ license "BSL-1.0"
 
 targetPath "build"
 
-// The test-runner shim is on the import path for its marker UDAs (`@wasm`,
+// The attributes package is on the import path for its marker UDAs (`@wasm`,
 // `@betterC`) alone: nothing of it is compiled or linked into the library,
 // which depends on no other package.
-importPaths "src" "../test-runner/src"
+importPaths "src" "../test-attributes/src"
 
 dflags "-preview=in" "-preview=dip1000"
 

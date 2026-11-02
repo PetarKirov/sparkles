@@ -292,7 +292,7 @@
             -Ilibs/metadata/src \
             -Ilibs/reflection/src \
             -Ilibs/core-cli/src \
-            -Ilibs/test-runner/src \
+            -Ilibs/test-attributes/src \
             -L-lcurl \
             -of=toolchain-pin-check \
             apps/ci/tools/check-pin-cache.d
