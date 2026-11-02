@@ -23,7 +23,7 @@ import core.time : Duration, MonoTime;
 import sparkles.test_runner.bench : BenchConfig, BenchStats;
 import sparkles.profiling.counters.capability : Capability, capabilityName, CapabilityReport;
 import sparkles.test_runner.client : Hello, ProtocolError, Worker;
-import sparkles.test_runner.driver : detectCompiler, DriverOptions, runCtfeTests;
+import sparkles.test_runner.driver : detectCompiler, DriverOptions, ModeReport, runCtfeTests;
 import sparkles.test_runner.pool : joinTestWorkers, startTestWorkers;
 import sparkles.test_runner.options : ParsedArgs, parseRunnerOptions, RunnerOptions;
 import sparkles.test_runner.plan : selectTests, testPhases, verdict;
@@ -206,7 +206,35 @@ private DriverOptions toDriverOptions(const RunnerOptions options)
         probeDir: options.probeDir,
         noDub: options.noDub,
         harnessRoots: hello.roots.dup,
+        report: consoleReport,
     );
+}
+
+/// The modes' messages, on this process's console: their reports on stdout,
+/// their diagnostics on stderr.
+private ModeReport consoleReport()
+{
+    import std.stdio : stderr, stdout;
+
+    static void output(string text) @trusted
+    {
+        stdout.write(text);
+        stdout.flush();
+    }
+
+    static void diagnostics(string text) @trusted
+    {
+        stderr.write(text);
+    }
+
+    return ModeReport(output: toDelegate(&output), diagnostics: toDelegate(&diagnostics));
+}
+
+private auto toDelegate(F)(F fn) @trusted
+{
+    import std.functional : toDelegate;
+
+    return fn.toDelegate;
 }
 
 /// Evaluates the (already filtered) `@ctfe` tests through the driver's probe
@@ -315,7 +343,7 @@ private UnitTestResult runCtfeTraceMode(Test[] tests, in RunnerOptions options, 
         return UnitTestResult(0, 0, false, false);
     }
 
-    const compiler = detectCompiler(options.compiler);
+    const compiler = detectCompiler(options.compiler, consoleReport);
     if (!compiler.canFind("ldc"))
     {
         stderr.writeln("--ctfe-trace requires an LDC compiler for -ftime-trace " ~

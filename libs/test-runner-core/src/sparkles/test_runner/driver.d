@@ -14,6 +14,47 @@ import sparkles.test_runner.extract : CtfeTarget, ExtractedTest,
     generateWasiProgram, generateWasmBareJsShim, generateWasmBareProgram, sourceRootOf;
 import sparkles.test_runner.model : Test;
 
+/// Where the modes' messages go. The core prints nothing (process-model
+/// TRM1): its client renders these, to a terminal or as task output.
+struct ModeReport
+{
+    /// A mode's report: per-test lines, the tests' own output.
+    void delegate(string) @safe output;
+    /// Why a mode skipped or failed, and the commands echoed under `-v`.
+    void delegate(string) @safe diagnostics;
+}
+
+/// `args` and a line feed, to `report`'s output.
+private void say(Args...)(in DriverOptions options, Args args)
+{
+    import std.conv : text;
+
+    if (options.report.output !is null)
+        options.report.output(text(args, "\n"));
+}
+
+/// `text`, as it is, to `report`'s output.
+private void sayRaw(in DriverOptions options, string text)
+{
+    if (options.report.output !is null)
+        options.report.output(text);
+}
+
+/// `args` and a line feed, to `report`'s diagnostics.
+private void warn(Args...)(in DriverOptions options, Args args)
+{
+    warnTo(options.report, args);
+}
+
+/// ditto
+private void warnTo(Args...)(in ModeReport report, Args args)
+{
+    import std.conv : text;
+
+    if (report.diagnostics !is null)
+        report.diagnostics(text(args, "\n"));
+}
+
 /// Options shared by both driver modes.
 struct DriverOptions
 {
@@ -23,6 +64,7 @@ struct DriverOptions
     bool noAutoInclude; /// don't compile the extracted tests' own modules in
     bool keep; /// keep the generated files and print their location
     bool verbose; /// echo the commands that are run
+    ModeReport report; /// where the modes' messages go
     string[] stringImportPaths; /// extra `-J` paths
     string[] versions; /// version identifiers
     string[] dflags; /// extra compiler flags
@@ -75,10 +117,10 @@ private bool inPath(string name) @safe
 
 /// The D compiler to use: explicit choice, `$DC`, or the first of
 /// `ldc2`/`dmd` found in `$PATH` (empty string when none). An explicit choice
-/// that doesn't resolve is reported on stderr and treated as "no compiler", so
+/// that doesn't resolve is reported to `report` and treated as "no compiler", so
 /// the caller's toolchain-missing skip fires instead of a raw
 /// `ProcessException` escaping from the spawn.
-string detectCompiler(string preferred) @safe
+string detectCompiler(string preferred, in ModeReport report = ModeReport.init) @safe
 {
     import std.process : environment;
 
@@ -91,14 +133,12 @@ string detectCompiler(string preferred) @safe
             ? compiler.exists && compiler.isFile : inPath(compiler);
     }
 
-    static string checked(string compiler, string origin) @safe
+    string checked(string compiler, string origin) @safe
     {
-        import std.stdio : stderr;
 
         if (resolves(compiler))
             return compiler;
-        // Minimal @trusted: only the __gshared stderr handle access is unsafe.
-        (() @trusted => stderr)().writeln(origin, ": compiler '", compiler, "' not found");
+        warnTo(report, origin, ": compiler '", compiler, "' not found");
         return null;
     }
 
@@ -167,7 +207,7 @@ private string findPackageRoot(string sourceRoot) @safe
 /// Import paths reported by `dub describe` for the packages containing the
 /// derived source roots — this is how paths of registry dependencies (e.g.
 /// `expected`) are found. Best-effort: failures yield an empty list.
-private string[] dubDescribeImportPaths(in string[] sourceRoots, bool verbose)
+private string[] dubDescribeImportPaths(in string[] sourceRoots, in DriverOptions options)
 {
     import std.algorithm.iteration : filter;
     import std.algorithm.searching : canFind;
@@ -191,10 +231,10 @@ private string[] dubDescribeImportPaths(in string[] sourceRoots, bool verbose)
         // only it depends on (`sparkles:dql`'s integration schemas import
         // `sparkles:input`). A package without one falls back to its default.
         auto result = run(["dub", "describe", "--root", packageRoot, "--config=unittest",
-            "--data=import-paths", "--data-list"], verbose);
+            "--data=import-paths", "--data-list"], options);
         if (result.status != 0)
             result = run(["dub", "describe", "--root", packageRoot,
-                "--data=import-paths", "--data-list"], verbose);
+                "--data=import-paths", "--data-list"], options);
         if (result.status != 0)
             continue;
         foreach (line; result.output.lineSplitter.filter!(l => l.length))
@@ -211,7 +251,7 @@ A program compiled outside dub needs them to see the packages' code the way
 their own builds do (`-preview=dip1000` changes attribute inference).
 Best-effort: failures yield an empty list.
 +/
-private string[] dubDescribeLanguageFlags(in string[] sourceRoots, bool verbose)
+private string[] dubDescribeLanguageFlags(in string[] sourceRoots, in DriverOptions options)
 {
     import std.algorithm.searching : canFind, startsWith;
     import std.string : lineSplitter;
@@ -231,7 +271,7 @@ private string[] dubDescribeLanguageFlags(in string[] sourceRoots, bool verbose)
     foreach (packageRoot; packageRoots)
     {
         const result = run(["dub", "describe", "--root", packageRoot,
-            "--data=dflags", "--data-list"], verbose);
+            "--data=dflags", "--data-list"], options);
         if (result.status != 0)
             continue;
         foreach (line; result.output.lineSplitter)
@@ -299,16 +339,15 @@ private string makeWorkDir(string flavor)
 /// A spawn failure (compiler binary vanished between the `detectCompiler`
 /// check and here, or an unlaunchable absolute path) becomes a failed result
 /// instead of a `ProcessException` stack trace.
-private auto run(const(string)[] command, bool verbose)
+private auto run(const(string)[] command, in DriverOptions options)
 {
     import std.process : execute, ProcessException;
-    import std.stdio : stderr;
 
-    if (verbose)
+    if (options.verbose)
     {
         import std.string : join;
 
-        stderr.writeln("$ ", command.join(" "));
+        warn(options, "$ ", command.join(" "));
     }
     try
         return execute(command);
@@ -413,10 +452,10 @@ private string[] allImportFlags(in Test[] allTests, in DriverOptions options)
 
     auto roots = deriveImportPaths(allTests, options.importPaths ~ options.harnessRoots);
     if (!options.noDub)
-        foreach (path; dubDescribeImportPaths(roots, options.verbose))
+        foreach (path; dubDescribeImportPaths(roots, options))
             if (!roots.canFind(path))
                 roots ~= path;
-    const ldc = detectCompiler(options.compiler).baseName.canFind("ldc");
+    const ldc = detectCompiler(options.compiler, options.report).baseName.canFind("ldc");
     return roots.map!(p => "-I" ~ p).array
         ~ options.stringImportPaths.map!(p => "-J" ~ p).array
         ~ options.versions.map!(v => (ldc ? "-d-version=" : "-version=") ~ v).array
@@ -539,11 +578,10 @@ CtfeOutcome runCtfeTests(
     import std.algorithm.searching : canFind;
     import std.file : mkdirRecurse, write;
     import std.path : buildPath, dirName;
-    import std.stdio : stdout;
 
     CtfeOutcome outcome;
 
-    const compiler = detectCompiler(options.compiler);
+    const compiler = detectCompiler(options.compiler, options.report);
     if (!compiler.length)
     {
         outcome.skipped = true;
@@ -597,14 +635,14 @@ CtfeOutcome runCtfeTests(
         [compiler, "-o-", "-unittest", "-checkaction=context", "-verrors=0"]
             ~ traceFlags ~ includeFlags(options)
             ~ allImportFlags(allTests, options) ~ moduleFiles ~ [sourceFile],
-        options.verbose);
+        options);
 
     outcome.succeeded = compile.status == 0;
     outcome.output = compile.output;
     if (!outcome.succeeded)
         outcome.failedNames = parseCtfeFailures(compile.output);
     if (options.keep)
-        stdout.writeln("generated files kept in ", workDir);
+        say(options, "generated files kept in ", workDir);
     return outcome;
 }
 
@@ -620,20 +658,19 @@ DriverOutcome runBetterCTests(Test[] betterCTests, Test[] allTests, in DriverOpt
     import std.algorithm.iteration : map;
     import std.file : write;
     import std.path : buildPath;
-    import std.stdio : stdout, stderr;
 
     DriverOutcome outcome;
     outcome.testCount = betterCTests.length;
     if (!betterCTests.length)
     {
-        stdout.writeln("no @betterC tests found");
+        say(options, "no @betterC tests found");
         return outcome;
     }
 
-    const compiler = detectCompiler(options.compiler);
+    const compiler = detectCompiler(options.compiler, options.report);
     if (!compiler.length)
     {
-        stderr.writeln("skipping @betterC tests: no D compiler found (set $DC or --compiler)");
+        warn(options, "skipping @betterC tests: no D compiler found (set $DC or --compiler)");
         outcome.skipped = true;
         return outcome;
     }
@@ -660,20 +697,20 @@ DriverOutcome runBetterCTests(Test[] betterCTests, Test[] allTests, in DriverOpt
         [compiler, "-betterC", "-checkaction=C", "-of=" ~ binary]
             ~ autoIncludeFlags(betterCTests, options) ~ includeFlags(options)
             ~ importFlags ~ [sourceFile],
-        options.verbose);
+        options);
     if (compile.status != 0)
     {
-        stderr.writeln(compile.output);
-        stderr.writeln("failed to compile the extracted @betterC tests (see above)");
+        warn(options, compile.output);
+        warn(options, "failed to compile the extracted @betterC tests (see above)");
         outcome.succeeded = false;
         return outcome;
     }
 
-    const result = run([binary], options.verbose);
-    stdout.write(result.output);
+    const result = run([binary], options);
+    sayRaw(options, result.output);
     outcome.succeeded = result.status == 0;
     if (options.keep)
-        stdout.writeln("generated files kept in ", workDir);
+        say(options, "generated files kept in ", workDir);
     return outcome;
 }
 
@@ -691,14 +728,14 @@ enum wasiCompilerVariable = "SPARKLES_WASI_LDC";
 The compiler for `--wasm`: `--compiler`, then `$SPARKLES_WASI_LDC`, then the
 usual choice (`$DC`, `ldc2`); empty when none resolves.
 +/
-private string wasiCompiler(string preferred) @safe
+private string wasiCompiler(string preferred, in ModeReport report) @safe
 {
     import std.process : environment;
 
     if (!preferred.length)
         if (const wasi = environment.get(wasiCompilerVariable, null))
-            return detectCompiler(wasi);
-    return detectCompiler(preferred);
+            return detectCompiler(wasi, report);
+    return detectCompiler(preferred, report);
 }
 
 /++
@@ -756,27 +793,26 @@ DriverOutcome runWasmTests(Test[] wasmTests, Test[] allTests, in DriverOptions o
 {
     import std.file : write;
     import std.path : buildPath;
-    import std.stdio : stdout, stderr;
 
     DriverOutcome outcome;
     outcome.testCount = wasmTests.length;
     if (!wasmTests.length)
     {
-        stdout.writeln("no @wasm tests found");
+        say(options, "no @wasm tests found");
         return outcome;
     }
 
-    const compiler = wasiCompiler(options.compiler);
+    const compiler = wasiCompiler(options.compiler, options.report);
     if (!compiler.length)
     {
-        stderr.writeln("skipping @wasm tests: no D compiler found (set $", wasiCompilerVariable,
+        warn(options, "skipping @wasm tests: no D compiler found (set $", wasiCompilerVariable,
             ", --compiler or $DC)");
         outcome.skipped = true;
         return outcome;
     }
     if (!inPath("wasmtime"))
     {
-        stderr.writeln("skipping @wasm tests: wasmtime not found on PATH");
+        warn(options, "skipping @wasm tests: wasmtime not found on PATH");
         outcome.skipped = true;
         return outcome;
     }
@@ -786,10 +822,10 @@ DriverOutcome runWasmTests(Test[] wasmTests, Test[] allTests, in DriverOptions o
     const probeSource = buildPath(workDir, "probe.d");
     write(probeSource, "void main() {}\n");
     const probe = run([compiler, "-mtriple=" ~ wasiTriple, "-of=" ~ buildPath(workDir, "probe.wasm"),
-        probeSource], options.verbose);
+        probeSource], options);
     if (probe.status != 0)
     {
-        stderr.writeln("skipping @wasm tests: ", compiler, " cannot link a ", wasiTriple,
+        warn(options, "skipping @wasm tests: ", compiler, " cannot link a ", wasiTriple,
             " program (no WASI runtime; set $", wasiCompilerVariable, "):\n", probe.output);
         outcome.skipped = true;
         return outcome;
@@ -802,22 +838,22 @@ DriverOutcome runWasmTests(Test[] wasmTests, Test[] allTests, in DriverOptions o
         [compiler, "-mtriple=" ~ wasiTriple, "-of=" ~ wasmFile]
             ~ wasiIncludeFlags(wasmTests, options) ~ includeFlags(options)
             ~ (options.noDub ? null : dubDescribeLanguageFlags(
-                deriveImportPaths(wasmTests, options.importPaths), options.verbose))
+                deriveImportPaths(wasmTests, options.importPaths), options))
             ~ allImportFlags(allTests, options) ~ [sourceFile],
-        options.verbose);
+        options);
     if (compile.status != 0)
     {
-        stderr.writeln(compile.output);
-        stderr.writeln("failed to compile the extracted @wasm tests for ", wasiTriple, " (see above)");
+        warn(options, compile.output);
+        warn(options, "failed to compile the extracted @wasm tests for ", wasiTriple, " (see above)");
         outcome.succeeded = false;
         return outcome;
     }
 
-    const result = run(["wasmtime", "run", wasmFile], options.verbose);
-    stdout.write(result.output);
+    const result = run(["wasmtime", "run", wasmFile], options);
+    sayRaw(options, result.output);
     outcome.succeeded = result.status == 0;
     if (options.keep)
-        stdout.writeln("generated files kept in ", workDir);
+        say(options, "generated files kept in ", workDir);
     return outcome;
 }
 
@@ -837,21 +873,20 @@ DriverOutcome runWasmBareTests(Test[] wasmTests, Test[] allTests, in DriverOptio
     import std.conv : text;
     import std.file : write;
     import std.path : buildPath;
-    import std.stdio : stdout, stderr;
 
     DriverOutcome outcome;
     outcome.testCount = wasmTests.length;
     if (!wasmTests.length)
     {
-        stdout.writeln("no @wasm tests found");
+        say(options, "no @wasm tests found");
         return outcome;
     }
 
     // llvm_trap + -mtriple make this LDC-specific.
-    const compiler = detectCompiler(options.compiler);
+    const compiler = detectCompiler(options.compiler, options.report);
     if (!compiler.canFind("ldc"))
     {
-        stderr.writeln("skipping @wasm tests: an LDC compiler is required (set $DC or --compiler)");
+        warn(options, "skipping @wasm tests: an LDC compiler is required (set $DC or --compiler)");
         outcome.skipped = true;
         return outcome;
     }
@@ -877,12 +912,12 @@ DriverOutcome runWasmBareTests(Test[] wasmTests, Test[] allTests, in DriverOptio
             "-of=" ~ wasmFile]
             ~ autoIncludeFlags(wasmTests, options) ~ includeFlags(options)
             ~ importFlags ~ [sourceFile],
-        options.verbose);
+        options);
     if (compile.status != 0)
     {
-        stderr.writeln(compile.output);
-        stderr.writeln("failed to cross-compile the extracted @wasm tests (see above)");
-        stderr.writeln("note: with a stock LDC, the import chain of a @wasm test's " ~
+        warn(options, compile.output);
+        warn(options, "failed to cross-compile the extracted @wasm tests (see above)");
+        warn(options, "note: with a stock LDC, the import chain of a @wasm test's " ~
             "module must avoid druntime headers that do not support wasm32;\n" ~
             "point --compiler (or $DC) at a wasm-enabled LDC build for full " ~
             "druntime/Phobos support");
@@ -903,32 +938,32 @@ DriverOutcome runWasmBareTests(Test[] wasmTests, Test[] allTests, in DriverOptio
         foreach (i, ref test; extracted)
         {
             const result = run(["wasmtime", "run",
-                "--invoke", text("run_test_", i), wasmFile], options.verbose);
+                "--invoke", text("run_test_", i), wasmFile], options);
             const ok = result.status == 0;
-            stdout.writeln(ok ? " ✓ " : " ✗ ", test.name,
+            say(options, ok ? " ✓ " : " ✗ ", test.name,
                 " [", test.file, ":", test.line, "]");
             if (!ok)
             {
-                stdout.write(result.output);
+                sayRaw(options, result.output);
                 outcome.succeeded = false;
             }
         }
         if (options.keep)
-            stdout.writeln("generated files kept in ", workDir);
+            say(options, "generated files kept in ", workDir);
         return outcome;
     }
     else
     {
-        stderr.writeln("skipping @wasm tests: no WebAssembly runtime found " ~
+        warn(options, "skipping @wasm tests: no WebAssembly runtime found " ~
             "(looked for node, deno, bun, wasmtime)");
         outcome.skipped = true;
         return outcome;
     }
 
-    const result = run(runCommand, options.verbose);
-    stdout.write(result.output);
+    const result = run(runCommand, options);
+    sayRaw(options, result.output);
     outcome.succeeded = result.status == 0;
     if (options.keep)
-        stdout.writeln("generated files kept in ", workDir);
+        say(options, "generated files kept in ", workDir);
     return outcome;
 }
