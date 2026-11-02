@@ -23,6 +23,21 @@ struct DriverOptions
     bool noAutoInclude; /// don't compile the extracted tests' own modules in
     bool keep; /// keep the generated files and print their location
     bool verbose; /// echo the commands that are run
+    string[] stringImportPaths; /// extra `-J` paths
+    string[] versions; /// version identifiers
+    string[] dflags; /// extra compiler flags
+    string probeDir; /// where generated programs go; empty = the temp directory
+    bool noDub; /// never run `dub describe` (process-model TRX2)
+    string[] harnessRoots; /// the source roots the test binary reported
+}
+
+/// The probe directory of the current run (`DriverOptions.probeDir`).
+private __gshared string probeRoot;
+
+/// Sets where generated programs go for the rest of the run.
+void setProbeDir(string dir)
+{
+    probeRoot = dir;
 }
 
 /// The outcome of one driver run.
@@ -97,19 +112,16 @@ string detectCompiler(string preferred) @safe
     return null;
 }
 
-/// This package's own source root — extracted modules are compiled with
-/// `-unittest`, so their `version (unittest)` imports of
-/// `sparkles.test_runner.attributes` must resolve.
-private enum string runnerSourceRoot =
-    sourceRootOf(__FILE_FULL_PATH__, "sparkles.test_runner.driver");
-
 /// `-I` roots derived from every discovered test's module-name ↔ file-path
-/// pair, plus the runner's own root and the user-supplied extras.
+/// pair, after the extras: the user's, then the harness roots the binary
+/// reported. Never the runner's own root: the pinned runner's copy of the
+/// attributes is not the one the tested package was compiled against
+/// (process-model TRX4).
 string[] deriveImportPaths(in Test[] allTests, in string[] extra) @safe pure
 {
     import std.algorithm.searching : canFind;
 
-    string[] roots = extra.dup ~ runnerSourceRoot;
+    string[] roots = extra.dup;
     foreach (ref test; allTests)
     {
         const root = sourceRootOf(test.location.file, test.moduleName);
@@ -133,8 +145,7 @@ unittest
         Test(fullName: "other.c.__unittest_L1_C1", name: "c",
             location: TestLocation(file: "lib2/src/other/c.d", line: 1, column: 1)),
     ];
-    assert(deriveImportPaths(tests, ["extra"]) ==
-        ["extra", runnerSourceRoot, "src", "lib2/src"]);
+    assert(deriveImportPaths(tests, ["extra"]) == ["extra", "src", "lib2/src"]);
 }
 
 /// The dub package root containing `sourceRoot`: the nearest ancestor
@@ -176,8 +187,14 @@ private string[] dubDescribeImportPaths(in string[] sourceRoots, bool verbose)
     string[] paths;
     foreach (packageRoot; packageRoots)
     {
-        const result = run(["dub", "describe", "--root", packageRoot,
+        // The unittest configuration first: the tests' modules import what
+        // only it depends on (`sparkles:dql`'s integration schemas import
+        // `sparkles:input`). A package without one falls back to its default.
+        auto result = run(["dub", "describe", "--root", packageRoot, "--config=unittest",
             "--data=import-paths", "--data-list"], verbose);
+        if (result.status != 0)
+            result = run(["dub", "describe", "--root", packageRoot,
+                "--data=import-paths", "--data-list"], verbose);
         if (result.status != 0)
             continue;
         foreach (line; result.output.lineSplitter.filter!(l => l.length))
@@ -272,7 +289,7 @@ private string makeWorkDir(string flavor)
     import std.path : buildPath;
     import std.process : thisProcessID;
 
-    const dir = buildPath(tempDir,
+    const dir = probeRoot.length ? buildPath(probeRoot, flavor) : buildPath(tempDir,
         text("sparkles-test-runner-", flavor, "-", thisProcessID));
     mkdirRecurse(dir);
     return dir;
@@ -383,19 +400,27 @@ unittest
         DriverOptions(noAutoInclude: true)) == []);
 }
 
-/// The complete `-I` flag list: derived source roots, `dub describe`d
-/// dependency paths, and user extras.
+/// The compile context's flags: `-I` for the derived source roots, the
+/// harness roots, `dub describe`d dependency paths unless `noDub`, and the
+/// user's extras, then the string import paths, versions and flags
+/// (process-model TRX1–TRX4).
 private string[] allImportFlags(in Test[] allTests, in DriverOptions options)
 {
     import std.algorithm.iteration : map;
     import std.algorithm.searching : canFind;
     import std.array : array;
+    import std.path : baseName;
 
-    auto roots = deriveImportPaths(allTests, options.importPaths);
-    foreach (path; dubDescribeImportPaths(roots, options.verbose))
-        if (!roots.canFind(path))
-            roots ~= path;
-    return roots.map!(p => "-I" ~ p).array;
+    auto roots = deriveImportPaths(allTests, options.importPaths ~ options.harnessRoots);
+    if (!options.noDub)
+        foreach (path; dubDescribeImportPaths(roots, options.verbose))
+            if (!roots.canFind(path))
+                roots ~= path;
+    const ldc = detectCompiler(options.compiler).baseName.canFind("ldc");
+    return roots.map!(p => "-I" ~ p).array
+        ~ options.stringImportPaths.map!(p => "-J" ~ p).array
+        ~ options.versions.map!(v => (ldc ? "-d-version=" : "-version=") ~ v).array
+        ~ options.dflags.dup;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -776,7 +801,8 @@ DriverOutcome runWasmTests(Test[] wasmTests, Test[] allTests, in DriverOptions o
     const compile = run(
         [compiler, "-mtriple=" ~ wasiTriple, "-of=" ~ wasmFile]
             ~ wasiIncludeFlags(wasmTests, options) ~ includeFlags(options)
-            ~ dubDescribeLanguageFlags(deriveImportPaths(wasmTests, options.importPaths), options.verbose)
+            ~ (options.noDub ? null : dubDescribeLanguageFlags(
+                deriveImportPaths(wasmTests, options.importPaths), options.verbose))
             ~ allImportFlags(allTests, options) ~ [sourceFile],
         options.verbose);
     if (compile.status != 0)

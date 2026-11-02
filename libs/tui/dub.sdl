@@ -24,9 +24,6 @@ configuration "library" {
 }
 
 configuration "unittest" {
-    // Fast path: depend on the runner shim (pulls the prebuilt impl library).
-    // `tui` is not in the impl library's dependency closure, so — unlike
-    // `core-cli`/`base` — it can take the normal `dependency` route.
     dependency "sparkles:test-runner" path="../.."
     dependency "sparkles:base" path="../.."
     dependency "sparkles:input" path="../.."

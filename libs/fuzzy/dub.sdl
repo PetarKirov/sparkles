@@ -7,7 +7,8 @@ license "BSL-1.0"
 targetPath "build"
 // The marker-only benchmark UDA must remain resolvable when a parent package
 // enables unittests while selecting this package's library configuration.
-importPaths "src" "../test-attributes/src"
+importPaths "src"
+dependency "sparkles:test-attributes" path="../.."
 
 dflags "-preview=in" "-preview=dip1000"
 
@@ -18,17 +19,11 @@ configuration "library" {
 }
 
 configuration "unittest" {
-    // Cycle-safe path: `sparkles:ui` depends on this package (the property
-    // tree's search projection), and `ui` is in the impl library's dependency
-    // closure (impl -> ui), so a `dependency` on the runner shim would close
-    // `ui -> fuzzy -> test-runner -> impl -> ui`. Source-include the shim and
-    // the impl instead, as `base`/`core-cli`/`test-utils`/`ui` do for the
-    // same reason.
-    sourcePaths "../test-runner/src" "../test-runner-impl/src" "../test-harness/src" "../test-attributes/src" "../profiling/src/sparkles/profiling/counters"
-    importPaths "src" "../test-runner/src" "../test-runner-impl/src" "../test-harness/src" "../test-attributes/src" "../profiling/src"
+    importPaths "src"
     dependency "sparkles:base" path="../.."
 
     dflags "-checkaction=context" "-allinst"
+    dependency "sparkles:test-runner" path="../.."
 }
 
 // Linux release audit: the test module wraps the libc allocation family and
@@ -36,14 +31,13 @@ configuration "unittest" {
 // Keeping this separate avoids imposing GNU ld's --wrap on library consumers.
 configuration "allocation-audit" {
     targetType "library"
-    // The same cycle-safe runner integration as the unittest configuration.
-    sourcePaths "../test-runner/src" "../test-runner-impl/src" "../test-harness/src" "../test-attributes/src" "../profiling/src/sparkles/profiling/counters"
-    importPaths "src" "../test-runner/src" "../test-runner-impl/src" "../test-harness/src" "../test-attributes/src" "../profiling/src"
+    importPaths "src"
     dependency "sparkles:base" path="../.."
 
     versions "FuzzyAllocationAudit"
     dflags "-checkaction=context" "-allinst"
     lflags "--wrap=malloc" "--wrap=calloc" "--wrap=realloc" platform="linux"
+    dependency "sparkles:test-runner" path="../.."
 }
 
 // BEGIN managed build types — apps/ci/tools/standardize-build-settings.d

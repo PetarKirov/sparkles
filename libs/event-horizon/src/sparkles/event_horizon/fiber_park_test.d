@@ -771,7 +771,9 @@ unittest
     // parked fiber's record and every later wake would name the scheduler
     // the defect unwound, so the run cannot be leaked; the defect is still
     // reported first.
-    const r = execute([thisExePath, "-i", `fiberPark\.abandon\.childBody`, "-t", "1"],
+    // `--no-runner`: the child runs its test in its own process, whose exit
+    // status is the observation.
+    const r = execute([thisExePath, "--no-runner", "-i", `fiberPark\.abandon\.childBody`, "-t", "1"],
         ["EH_ABANDON_CHILD": "1"]);
     assert(r.status == 42, r.output);
     assert(r.output.canFind("with 1 fiber(s) parked"), r.output);

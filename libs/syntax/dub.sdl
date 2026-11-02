@@ -6,10 +6,11 @@ license "BSL-1.0"
 
 targetPath "build"
 
-importPaths "src" "../test-attributes/src"
+importPaths "src"
 
 dflags "-preview=in" "-preview=dip1000"
 
+dependency "sparkles:test-attributes" path="../.."
 dependency "sparkles:base" path="../.."
 dependency "sparkles:tree-sitter" path="../.."
 
@@ -21,13 +22,10 @@ configuration "library" {
 }
 
 configuration "unittest" {
-    // Cycle-safe path: test-runner-impl depends on sparkles:syntax, so a
-    // dependency on sparkles:test-runner would close a cycle. Source-include
-    // the shim and impl instead.
-    sourcePaths "src" "../test-runner/src" "../test-runner-impl/src" "../test-harness/src" "../test-attributes/src" "../profiling/src/sparkles/profiling/counters"
-    importPaths "src" "../test-runner/src" "../test-runner-impl/src" "../test-harness/src" "../test-attributes/src" "../profiling/src"
+    importPaths "src"
 
     dflags "-checkaction=context" "-allinst"
+    dependency "sparkles:test-runner" path="../.."
 }
 
 // BEGIN managed build types — apps/ci/tools/standardize-build-settings.d

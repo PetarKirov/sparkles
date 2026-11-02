@@ -167,6 +167,8 @@ Test[] discoverTests(Modules...)()
     Test[] tests;
     static foreach (m; Modules)
         tests ~= moduleTests!(moduleOf!m)();
+    foreach (i, ref test; tests)
+        test.id = i;
     return tests;
 }
 

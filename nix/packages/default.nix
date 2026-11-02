@@ -391,7 +391,7 @@
       # CPU benchmark harness for the terminal. Pure D + core-cli (it only spawns
       # terminal binaries handed to it and reads /proc), so no raylib/ghostty
       # build inputs and no runtime wrapper are needed — just the default
-      # `buildSparklesApp` closure (core-cli → base, math, test-runner shim+impl).
+      # `buildSparklesApp` closure (core-cli → base, math, test-attributes).
       packages.terminal-benchmark = config.legacyPackages.buildSparklesApp (finalAttrs: {
         pname = "terminal-benchmark";
         version = "0.1.0";

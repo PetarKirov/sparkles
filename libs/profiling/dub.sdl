@@ -35,11 +35,11 @@ configuration "tracy" {
 }
 
 configuration "unittest" {
-    // The harness compiles this package's counters, so this package source-
-    // includes the shim, the impl and the harness, takes the impl's own
-    // dependencies, and compiles the counters once, as its own.
-    sourcePaths "src" "../test-runner/src" "../test-runner-impl/src" "../test-harness/src" "../test-attributes/src"
-    importPaths "src" "../test-runner/src" "../test-runner-impl/src" "../test-harness/src" "../test-attributes/src"
+    dependency "sparkles:test-runner" path="../.."
+    // The harness compiles the counters (`src/sparkles/profiling/counters`),
+    // and their tests run with its own; compiled here too, they would be
+    // linked twice. `frame.d`, which the harness leaves out, stays.
+    excludedSourceFiles "src/sparkles/profiling/counters/capability.d" "src/sparkles/profiling/counters/perf.d" "src/sparkles/profiling/counters/perf_group.d" "src/sparkles/profiling/counters/psi.d" "src/sparkles/profiling/counters/raw.d" "src/sparkles/profiling/counters/rdpmc.d" "src/sparkles/profiling/counters/syscalls.d"
     dependency "sparkles:base" path="../.."
     dependency "sparkles:ui" path="../.."
     // `FrameSummary` round-trips through JSON without custom code (PRF17).

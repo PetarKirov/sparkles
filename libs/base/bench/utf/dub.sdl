@@ -9,8 +9,6 @@ targetPath "build"
 dflags "-preview=in" "-preview=dip1000"
 dependency "sparkles:base" path="../../../.."
 dependency "sparkles:test-runner" path="../../../.."
-dependency "sparkles:test-runner-impl" path="../../../.."
-subConfiguration "sparkles:test-runner-impl" "benchmark"
 
 // Default is usable without foreign tooling. The real competitive matrix is
 // unittest-simdutf; its separately compiled shim is deliberately not a base dep.

@@ -6,7 +6,10 @@ license "BSL-1.0"
 
 targetPath "build"
 
-dflags "-preview=in" "-preview=dip1000"
+// `-allinst` makes the library self-contained: it emits every template
+// instance it references (`-checkaction=context`'s assert formatting, `std.uni`),
+// which a consumer's build may not re-instantiate.
+dflags "-preview=in" "-preview=dip1000" "-allinst"
 
 // What must run beside a test body: the test model, discovery, execution
 // with the stack budget, skipTest, the fallback, and the benchmark and

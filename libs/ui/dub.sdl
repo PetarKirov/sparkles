@@ -7,10 +7,10 @@ license "BSL-1.0"
 targetPath "build"
 
 // `ui.geometry` specializes math's `Vector` into `Point`/`Size`. math depends
-// on `sparkles:base` alone (its tests source-include the runner), so this edge
-// closes no cycle.
+// on `sparkles:base` alone, so this edge closes no cycle.
 dependency "sparkles:math" path="../.."
-importPaths "src" "../test-attributes/src"
+importPaths "src"
+dependency "sparkles:test-attributes" path="../.."
 // sparkles:base supplies the color/style vocabulary (RgbColor/Color/toRgb — the
 // toolkit adds no color type of its own). Concrete canvas backends adapt to
 // sparkles:ui, never the reverse.
@@ -33,15 +33,12 @@ dependency "sparkles:reflection" path="../.."
 // `__xtoHash`/`__xopEquals` that exist only in fuzzy's own objects — so an
 // import-only ui.a left every dmd consumer of this package with undefined
 // references through property_tree.o (which the ModuleInfo import chain
-// always pulls). The cycle that once forced import-only (`ui -> fuzzy ->
-// test-runner -> impl -> ui`) is gone: fuzzy integrates the runner
-// cycle-safely (source-include), so it has no runner dependency edge.
+// always pulls).
 dependency "sparkles:fuzzy" path="../.."
 // The design-system token paths are `@WireName` data on the `Slot` members
 // (`TOK2`), resolved by wired's `wireNames` — the same table the JSON writer
 // and the DTCG theme file use — rather than a hand-kept enum -> string switch.
-// `wired` depends on `base` alone (its tests source-include the runner, so
-// this edge closes no cycle).
+// `wired` depends on `base` alone, so this edge closes no cycle.
 dependency "sparkles:wired" path="../.."
 
 dflags "-preview=in" "-preview=dip1000"
@@ -74,13 +71,10 @@ configuration "gpu-effects" {
 }
 
 configuration "unittest" {
-    // Cycle-safe path: `core-cli` depends on this package, and `core-cli` is in
-    // the impl library's dependency closure, so a `dependency` on the runner
-    // shim would close `ui -> test-runner -> impl -> core-cli -> ui`. Source-
-    // include the shim and the impl instead, as `base`/`core-cli`/`test-utils`
-    // do for the same reason.
-    sourcePaths "../test-runner/src" "../test-runner-impl/src" "../test-harness/src" "../test-attributes/src" "../dql/src" "../profiling/src/sparkles/profiling/counters"
-    importPaths "src" "../test-runner/src" "../test-runner-impl/src" "../test-harness/src" "../test-attributes/src" "../dql/src" "../profiling/src"
+    // `../dql/src` is a test-only reach; the build graph's E1 moves these
+    // tests where they can depend on dql (D15).
+    sourcePaths "../dql/src"
+    importPaths "src" "../dql/src"
 
     // The component tests use the diff/outdent helpers. `test-utils` depends on
     // `base` alone, so this edge closes no cycle.
@@ -95,6 +89,7 @@ configuration "unittest" {
     versions "UiKeymapFixtures" "UiPropertyFixtures" "UiSettingsFixtures"
 
     dflags "-checkaction=context" "-allinst"
+    dependency "sparkles:test-runner" path="../.."
 }
 // The device build: what LDC's dcompute target compiles for the GPU. Never
 // built by dub — `shader-compile` asks `dub describe` for it and compiles the

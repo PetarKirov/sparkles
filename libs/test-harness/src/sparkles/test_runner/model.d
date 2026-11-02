@@ -75,8 +75,13 @@ struct Test
     TestLocation location;
     TestTraits traits;
 
-    /// The unittest function itself.
+    /// The unittest function itself; `null` in a runner's copy of the
+    /// listing.
     void function() ptr;
+
+    /// The test's position in discovery order: its id on the runner
+    /// protocol (process-model TRP13).
+    size_t id;
 
     /// The module part of `fullName` (everything before the last `.`).
     string moduleName() const @safe pure nothrow @nogc return scope
@@ -118,4 +123,7 @@ struct TestResult
     Duration duration;
     immutable(Thrown)[] thrown;
     bool stackBudgetExceeded; /// body crossed the 384 KiB worker-stack watermark
+    /// What the test wrote to its standard output and error, as the runner
+    /// read it from the worker (process-model TRP24).
+    string output;
 }
