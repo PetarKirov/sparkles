@@ -535,7 +535,11 @@ the test runner's process-model amendment (`docs/specs/test-runner/process-model
 
 ## Sources
 
-- [ziglang/zig at `8e8cf3835a96`][repo-rev] — the source of every cited path
+- [ziglang/zig at `8e8cf3835a96`][repo-rev] — the source of every cited path.
+  The links point at Codeberg, Zig's canonical repository, pinned to that full
+  SHA. `ci --check-blob-paths` reads only GitHub URLs, so it does not check
+  them; every cited path was verified with `git cat-file -e <sha>:<path>` in a
+  clone at that revision instead.
 - [`lib/std/Build/Step.zig`][step-cfg] — configure-time steps, `max_rss`
 - [`lib/std/Build/Step/Run.zig`][run-cfg] — the Run step's configuration API
 - [`lib/std/Build/Cache.zig`][cache] — the manifest cache
