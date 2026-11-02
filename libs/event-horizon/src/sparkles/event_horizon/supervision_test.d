@@ -253,6 +253,42 @@ version (Windows)
         assert(!ran.hasError && cancelled && tally.exits == 1);
     }
 
+    /// Peak memory: a root that touches 64 MiB reaches a working-set peak
+    /// (`peakRssBytes`) and a job commit peak (`peakCgroupMemoryBytes`) of at
+    /// least that; a root and a grandchild touching 64 MiB each sum over the
+    /// tree to at least 128 MiB.
+    @("supervision.windows.peakWorkingSetAndCommit")
+    @system unittest
+    {
+        import sparkles.event_horizon.proc : MetricQuality;
+
+        requireProcessWait();
+        Sched s;
+        schedOrSkip(s);
+        enum size_t mib = 1 << 20;
+        auto ran = s.run(() {
+            auto config = quiet();
+            config.sampleInterval = 50.msecs;
+            auto one = supervise(s, childArgv("alloc", "64", "400"), config);
+            assert(one.hasValue && one.value.status.ok);
+            const u = one.value.usage;
+            assert(u.peakRssBytes >= 64 * mib, "the root's working-set peak");
+            assert(u.peakCgroupMemoryBytes >= 64 * mib, "the job's commit peak");
+            assert(u.memorySource == MetricSource.rusage
+                && u.memoryQuality == MetricQuality.lowerBound);
+            assert(u.cgroupMemorySource == MetricSource.jobObject
+                && u.cgroupMemoryQuality == MetricQuality.exact);
+
+            auto tree = supervise(s, childArgv("alloc-tree", "64", "600"), config);
+            assert(tree.hasValue && tree.value.status.ok);
+            assert(tree.value.usage.peakRssBytes >= 128 * mib,
+                "summed over the root and its grandchild");
+            assert(tree.value.usage.peakCgroupMemoryBytes >= 128 * mib);
+            assert(tree.value.usage.peakProcesses >= 2);
+        });
+        assert(!ran.hasError);
+    }
+
     /// Worker admission failure runs the emergency phase: kill, observe,
     /// reap, and `ENOBUFS`.
     @("supervision.windows.admissionFailureReaps")

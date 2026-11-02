@@ -719,6 +719,8 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
     }
     else
         run.sampler.anchor(child.pid, rootJobOf(child)); // the job on Windows
+    version (Windows)
+        run.sampler.anchorRoot(cast(void*) child.process.borrowFd.fd);
     scope (exit) run.sampler.finish();
 
     if (stdinBytes !is null)

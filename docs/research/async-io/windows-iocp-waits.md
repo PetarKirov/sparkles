@@ -175,11 +175,11 @@ From Windows Internals 7th ed., Part 1, ch. 3 ([WI7][wi7]):
 
 ## What changes in SPEC §13.9
 
-| SPEC said                                                        | Finding                                                                                                     | Now                                                                               |
-| ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| process exit uses one `RegisterWaitForSingleObject` registration | that is a threadpool wait over the same packet, plus a callback on a worker                                 | one wait completion packet per process wait, associated with the scheduler's port |
-| sampling uses "process/memory classes"                           | the job's basic-and-I/O accounting (class 8) and extended limit information (class 9) carry everything used | `QueryInformationJobObject` classes 8 and 9; CPU quality `lowerBound`             |
-| (silent on timers)                                               | port-wait timeouts are clock-interval quantised                                                             | high-resolution waitable timer through a wait packet; port timeout as fallback    |
+| SPEC said                                                        | Finding                                                                                       | Now                                                                               |
+| ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| process exit uses one `RegisterWaitForSingleObject` registration | that is a threadpool wait over the same packet, plus a callback on a worker                   | one wait completion packet per process wait, associated with the scheduler's port |
+| sampling uses "process/memory classes"                           | job accounting (class 8) and limits (class 9) give CPU and commit; working set is per process | classes 8, 9 and 3 (members), `K32GetProcessMemoryInfo`; CPU quality `lowerBound` |
+| (silent on timers)                                               | port-wait timeouts are clock-interval quantised                                               | high-resolution waitable timer through a wait packet; port timeout as fallback    |
 
 ---
 
