@@ -318,19 +318,30 @@ unittest
     assert(errorCell("") == "");
 }
 
+version (unittest)
+{
+    /// An `Expected`-shaped result for the tests: `benchCase` finds a soft
+    /// error by the `hasError` and `error` members alone, so the harness's
+    /// tests need no repository package (process-model TRP1).
+    private struct SoftResult
+    {
+        string error;
+        bool hasError() const @safe pure nothrow @nogc => error.length != 0;
+    }
+}
+
 @("benchCase.inertPathSurfacesExpectedError")
 @system
 unittest
 {
     import std.exception : assertThrown;
-    import sparkles.base.expected : err;
 
     // Outside --bench (a foreign runner executing the test) a soft `Expected`
     // error from `after` must fail the test, not vanish; teardown still runs.
     static bool teardownRan;
     teardownRan = false;
     assertThrown(benchCase(name: "bad", timed: () {},
-        after: () => err!bool("mismatch"),
+        after: () => SoftResult("mismatch"),
         teardown: () { teardownRan = true; }));
     assert(teardownRan, "teardown runs on the inert failure path");
 }
@@ -1309,10 +1320,8 @@ unittest
 unittest
 {
     import core.time : usecs;
-    import sparkles.base.expected : Expected, err, ok;
 
-    alias Res = Expected!(bool, string);
-    static Res check(int r) => r == 5 ? ok!string(true) : err!bool("expected 5");
+    static SoftResult check(int r) => r == 5 ? SoftResult.init : SoftResult("expected 5");
 
     static void body_()
     {
@@ -1390,7 +1399,6 @@ unittest
 unittest
 {
     import core.time : usecs;
-    import sparkles.base.expected : err, ok;
 
     // A soft error yields an error row; teardown still runs (it is scope-guarded),
     // so a scheduled case never leaks its per-case state on the failure path.
@@ -1402,7 +1410,7 @@ unittest
         benchCase(
             name: "bad",
             timed: () {},
-            after: () => err!bool("boom"),
+            after: () => SoftResult("boom"),
             teardown: () { teardowns++; },
         );
     }

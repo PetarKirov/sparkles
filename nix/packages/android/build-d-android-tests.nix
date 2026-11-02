@@ -30,6 +30,8 @@ in
       runnerDirs = sources.libsClosure [ "base" ] ++ [
         "libs/test-runner/src"
         "libs/test-runner-impl/src"
+        "libs/test-harness/src"
+        "libs/test-attributes/src"
         "libs/profiling/src"
       ];
     in

@@ -400,22 +400,13 @@ package void appendNote(ref string note, string add) @safe pure nothrow
     note = note.length ? note ~ "; " ~ add : add;
 }
 
-/// ditto, an interpolated note, written through `writeText` into the note
-/// itself, so a number in it needs no `string` of its own.
+/// ditto, an interpolated note of integers and strings.
 package void appendNote(Args...)(ref string note, InterpolationHeader, Args args,
     InterpolationFooter)
 {
-    import std.array : appender;
-    import sparkles.base.text.writers : writeText;
+    import sparkles.test_runner.text : interpolatedText;
 
-    auto w = appender!string;
-    if (note.length)
-    {
-        w ~= note;
-        w ~= "; ";
-    }
-    writeText(w, InterpolationHeader(), args, InterpolationFooter());
-    note = w[];
+    appendNote(note, interpolatedText(args));
 }
 
 @("cache_regime.appendNote.joinsAndInterpolates")

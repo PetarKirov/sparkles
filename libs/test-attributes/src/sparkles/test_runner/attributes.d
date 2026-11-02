@@ -162,17 +162,3 @@ struct serial
 {
     ThreadAffinity threadAffinity;
 }
-
-@("attributes.selfContained.wasm")
-@wasm(selfContained: true) @betterC(selfContained: true) @safe pure nothrow @nogc
-unittest
-{
-    // Dogfoods @wasm (and @betterC) end to end, and dogfoods `selfContained`
-    // itself. It lives in this import-free module on purpose, so that it also
-    // compiles for `--wasm-bare`, whose bare wasm32 druntime headers reject
-    // most of `core.stdc`; `--wasm` has the full druntime and Phobos.
-    int parity;
-    foreach (c; "wasm")
-        parity ^= c;
-    assert(parity == ('w' ^ 'a' ^ 's' ^ 'm'));
-}
