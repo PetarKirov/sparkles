@@ -11,12 +11,14 @@ reviewed: 2026-11-02
 `sparkles:test-runner` splits a test run between two processes. The test
 binary, built from the working tree, holds the tests and executes them, along
 with the measurement code that times and counts them. A separate runner
-executable, built from a pinned revision of the repository, parses the
-command line, schedules tests across worker processes, renders the reports,
+executable, built from a pinned revision of the repository for `dub test`
+users, parses the command line, schedules tests across worker processes, renders the reports,
 and drives the compile-time and extracted modes. The two speak a versioned,
 line-framed protocol over the binary's standard streams, which opens with a
 handshake, so a runner never misreads a binary built for another protocol
-version. A test binary started without a runner still runs its tests on its
+version. `sparkles:ci` drives the same protocol through the same core library,
+its task executor admitting the work and its reporters rendering it. A test binary
+started without a runner still runs its tests on its
 own, sequentially and with a minimal report.
 
 ## Introduction
@@ -48,8 +50,9 @@ pinned revision and replaced without relinking a single test binary.
 
 This page specifies the process boundary: which package owns which code, how a
 binary finds its runner, the wire protocol, the scheduling, crash and coverage
-rules, the fallback, how a test runs without dub, and the Windows
-obligations. [SPEC.md](./SPEC.md) owns the measurement protocol, the metric
+rules, the fallback, how a test runs without dub, the Windows
+obligations, and the two clients of the protocol: the standalone runner and
+`ci`, over the library they share. [SPEC.md](./SPEC.md) owns the measurement protocol, the metric
 catalog and the command line's options; this page only says which process
 carries each of them out. Timeouts for hung tests, sharding a run across
 machines, and reusing results across runs are out of scope. The build graph
@@ -59,8 +62,8 @@ owns result reuse
 The choices behind this page, and the alternatives they rejected, are in
 [decisions.md](./decisions.md). Delivery is milestone
 [P1 in PLAN.md](./PLAN.md#p1--the-out-of-process-runner). Questions this page
-leaves open are in [open-issues.md](./open-issues.md). The build graph's
-treatment of the pinned runner as a toolchain component is
+leaves open are in [open-issues.md](./open-issues.md). How the build graph
+keys test actions run through the core is
 [BGT4](../build-primitives/build-graph/SPEC.md#_8-toolchain-identity).
 
 ## 1. The contract at a glance
@@ -76,15 +79,18 @@ treatment of the pinned runner as a toolchain component is
 5. **Plain `dub test` always works.** With no runner found, the binary runs
    its own tests.
 6. **A runner told not to use dub never starts it.**
+7. **One core, two clients.** The standalone runner and `ci` drive workers
+   through the same library, which schedules nothing and prints nothing.
 
 ## 2. Packages
 
-| Package                     | Kind                  | Holds                                                                                                                                                               | Depends on                                      |
-| --------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
-| `sparkles:test-attributes`  | library               | The marker attributes, `sparkles.test_runner.attributes`                                                                                                            | nothing                                         |
-| `sparkles:test-harness`     | library               | The test model, discovery, the protocol's binary side, execution with the stack budget, the fallback, `skipTest`, the measurement layer                             | `sparkles:test-attributes`                      |
-| `sparkles:test-runner`      | `sourceLibrary`, shim | The registration hook, compiled into each test root                                                                                                                 | `sparkles:test-harness`                         |
-| `sparkles:test-runner-impl` | executable            | The [runner](../../glossary.md#test-runner-executable), `sparkles-test-runner`: command line, scheduling, reports, compile-time and extracted modes, `--bench-json` | `sparkles:test-harness`, `base`, `ui`, `syntax` |
+| Package                     | Kind                  | Holds                                                                                                                                                  | Depends on                                  |
+| --------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------- |
+| `sparkles:test-attributes`  | library               | The marker attributes, `sparkles.test_runner.attributes`                                                                                               | nothing                                     |
+| `sparkles:test-harness`     | library               | The test model, discovery, the protocol's binary side, execution with the stack budget, the fallback, `skipTest`, the measurement layer                | `sparkles:test-attributes`                  |
+| `sparkles:test-runner`      | `sourceLibrary`, shim | The registration hook, compiled into each test root                                                                                                    | `sparkles:test-harness`                     |
+| `sparkles:test-runner-core` | library               | The runner core both clients share: options, the protocol client, worker sessions, the run plan and verdict, the compile-time and extracted modes (§9) | `sparkles:test-harness`, `base`             |
+| `sparkles:test-runner-impl` | executable            | The standalone [runner](../../glossary.md#test-runner-executable), `sparkles-test-runner`: a `main`, the worker pool, the reports, `--bench-json`      | `sparkles:test-runner-core`, `ui`, `syntax` |
 
 **TRP1: The in-binary packages depend on no other repository package.** The
 recipes of `sparkles:test-attributes`, `sparkles:test-harness` and
@@ -98,14 +104,18 @@ to another repository package is a cycle for that package.
 **TRP2: Tests depend on the shim the ordinary way.** A package's unittest
 configuration **must** reach the runner through `dependency
 "sparkles:test-runner"` alone. No recipe **may** name
-`sparkles:test-runner-impl` as a dependency, or reach into the directory of
-the attributes, the shim, the harness or the runner through a path setting.
+`sparkles:test-runner-impl` as a dependency, no recipe but `apps/ci`'s and
+`sparkles:test-runner-impl`'s **may** name `sparkles:test-runner-core`, and none
+**may** reach into the directory of
+the attributes, the shim, the harness, the core or the runner through a path
+setting.
 
 **TRP3: Library builds see only the attributes.** A package whose modules
 import `sparkles.test_runner.attributes` outside `unittest` code **must**
 depend on `sparkles:test-attributes` in its library configuration, directly
-or transitively. A library configuration **must not** depend on the harness
-or the shim.
+or transitively. A library configuration of any other package **must not**
+depend on the harness or the shim; the shim's own library configuration
+depends on the harness, and the core's on the harness.
 
 _Rationale:_ modules carry the marker attributes in every build, so library
 builds import them; they need nothing else from the runner. Keeping the
@@ -165,8 +175,8 @@ workers merged (TRS5).
 **TRL4: Direct invocation.** A runner started directly with `--test-binary`
 **must** behave as it does when a launcher starts it.
 
-_Rationale:_ the build engine starts the runner directly, as a toolchain
-component, and never starts a launcher.
+_Rationale:_ a developer or a script may start the standalone runner on a
+binary it already built, with no launcher in between.
 
 **TRL5: Debugging.** `--no-runner` runs every test in the process that a
 debugger started. A worker can also be started by hand with
@@ -185,7 +195,7 @@ debugger started. A worker can also be started by hand with
 - **output:** its standard error, a pipe the runner reads. Before any test
   runs, the worker points file descriptor 1 at the same pipe as descriptor 2.
 
-**TRP7: Frames.** A frame is the byte `0x1E` (ASCII record separator), a JSON
+**TRP7: Frames.** A [frame](../../glossary.md#runner-frame) is the byte `0x1E` (ASCII record separator), a JSON
 object in UTF-8 with no unescaped line feed, and a line feed. Its `"t"`
 member names its type. Commands use the same framing. A worker **must**
 write a line feed before its first frame.
@@ -271,7 +281,8 @@ The runner never sends `run` for a `@ctfe` test.
 **TRP17: Thread placement.** A worker **must** run a test on a fresh thread
 with the worker-stack budget, unless the test's traits ask for the main
 thread or the command's `mainThread` is true; then it **must** run the test
-on its main thread. The runner sets `mainThread` under `-t 1`.
+on its main thread, under the same 384 KiB stack watermark. The runner sets
+`mainThread` under `-t 1`.
 
 **TRP18: Register.** `{"t":"register","ids":[…],"config":{…}}` runs the
 listed `@benchmark` tests' bodies to register their cases, measuring
@@ -337,7 +348,9 @@ signal or an exception, while a command runs, the runner **must** report that
 test as failed, with the exit status, signal or exception code, and the
 output read for it. A crash while registering or measuring fails that test,
 or that case's row. The runner **must** then start a new worker for the work
-that remains, registering again before it measures.
+that remains. Registration is deterministic: the new worker registers the
+same tests in the same order, so a case keeps its id, which is its index in
+that registration order.
 
 **TRP27: A crash between commands.** When a worker exits between commands
 without being asked to, the runner **must** fail the run with the exit status
@@ -463,10 +476,109 @@ launcher's process image.
 **TRW4: No object-file tricks.** No part of the runner, the harness, or the
 pin's build **may** depend on rewriting symbols in object files or archives.
 
-## 9. The pinned runner
+## 9. Two clients: the standalone runner and `ci`
 
-The runner executable is built from a pinned revision of this repository and
-exposed as a toolchain component. The pin is one file,
+The protocol has two clients. The **standalone** runner, `sparkles-test-runner`,
+is what a `dub test` user gets, inside this repository or outside it: it
+starts its own worker processes, schedules them, and renders its own reports.
+**`ci`** runs the same test binaries as actions of its task graph: the
+task-DAG executor admits them, ci's reporters render them, and the build
+graph's result reuse covers them
+([ci task DAG](../ci/task-dag/SPEC.md#_5-2-ordinary-package-tests-and-coverage)).
+Both are built on one library, the
+[runner core](../../glossary.md#test-runner-core), so a binary means the same
+thing to either. §2 owns the package table; the core is
+`sparkles:test-runner-core`.
+
+In this page "the runner" names whichever client drives a worker. The
+requirements of §3–§7 bind both clients; where one differs, the requirement
+below says so.
+
+**TRM1: The core performs no I/O.** The core **must** be a protocol state
+machine: it consumes the bytes a client read from a worker's frames and
+output channels, and that worker's end, and produces the commands to write
+to the worker and events for the client. It **must not** start processes,
+create threads, read or write a file descriptor, or print, and **must not**
+depend on `sparkles:ui`, on `sparkles:event-horizon`, or on any package of
+`sparkles:ci`.
+
+_Rationale:_ the clients' process models differ. The standalone runner may
+use threads and pipes; ci must run children as supervised process groups that
+fail-fast can end ([TDE1, TDE2](../build-primitives/task-dag/SPEC.md#_4-event-horizon-only-execution)). A core
+that did its own I/O would fit one of them.
+
+**TRM2: The events.** The core **must** produce, in the order the worker's
+frames and output imply:
+
+| Event            | Carries                                                                          |
+| ---------------- | -------------------------------------------------------------------------------- |
+| `WorkerReady`    | The session, its `hello` and listing                                             |
+| `TestStarted`    | The session and the test                                                         |
+| `TestOutput`     | The session, the test or none, and one chunk of output, in the order it was read |
+| `TestFinished`   | The session and the test's `TestResult`                                          |
+| `CaseRegistered` | A registered bench case                                                          |
+| `Provenance`     | A suite provenance line                                                          |
+| `BenchRow`       | A measured row                                                                   |
+| `WorkloadWindow` | A measured window                                                                |
+| `Note`           | A header line, such as an absent-but-requested capability                        |
+| `Catalog`        | The metric catalog and capability reports of a probe (TRP21)                     |
+| `WorkerEnded`    | The session and how its process ended                                            |
+
+**TRM3: The core does not schedule.** The core **must not** decide how many
+sessions run at once or which test a session runs next. It supplies the run
+plan its clients follow: the selected tests, their phases (TRS2), and the
+order and coverage-merge flags of the workers' exits (TRS4, TRS5) as data.
+The client places tests on sessions.
+
+**TRM4: One meaning for the options.** Both clients **must** parse the runner's
+options with the core's parser, and **must** compute a run's exit status with
+the core's verdict: `0` if and only if everything selected passed or was
+skipped. The selection and runtime options, `-i`, `-e`, `-t`, `--skip-slow`
+and `--only-slow`, select the same tests in both. `-v`, `-l`, `--no-colors`,
+live progress and the failure recap are each client's rendering of the same
+events. `--bench`, `--list-metrics` and their options are the standalone
+runner's: ci has no bench mode.
+
+**TRM5: A test action in `ci`.** In ci a test action is one leg of one test
+binary ([CIC11](../ci/task-dag/SPEC.md#_5-2-ordinary-package-tests-and-coverage)),
+and it is the build graph's unit of reuse
+([BGX3](../build-primitives/build-graph/SPEC.md#_9-test-actions-and-result-reuse)).
+Its node claims `N` weighted tokens and runs up to `N` worker sessions, the
+thread-count rule of
+[TDM10](../build-primitives/task-dag/SPEC.md#_3-3-resource-claims):
+like a linker's threads, the sessions are work inside one admitted node, and
+the executor's admission decides which nodes run across packages. The node
+places its tests on its sessions as the standalone runner's pool does, and
+runs the `@serial` tests after the others.
+
+**TRM6: What a test action reports.** A test action's output **must** be the
+lines the core's plain-text renderer makes of its events, one test's lines
+together, in the order its tests finished, so ci's reporters show it like any
+other task's output (TDM12–TDM14). Its observations **must** include the
+counts of passed, failed and skipped tests and the failed tests' names
+(TDM11). A reused result replays the same lines.
+
+**TRM7: Coverage in `ci`.** A coverage leg's workers **must** write their
+listings to the leg's own task directory, and **must** follow TRS4 and TRS5
+there; a worker that replaces a crashed one (TRP26) merges. ci's merge then
+combines the legs' directories (CIC7).
+
+**TRM8: Which client the pin is.** The pinned artifact **must** be the
+standalone runner. ci links the core compiled into ci itself, and a test
+action's key **must** cover that core's identity: the identity of the ci
+build that runs it
+([BGT4](../build-primitives/build-graph/SPEC.md#_8-toolchain-identity)).
+
+_Rationale:_ the source includes existed because the runner was linked into
+test binaries. Out of process, the core is a tool's library like ci's others.
+The handshake rejects a protocol mismatch between that tool and a binary; it
+cannot see a change to the core's selection or verdict, which is why the key
+covers the core.
+
+## 10. The pinned runner
+
+The standalone runner is built from a pinned revision of this repository and
+exported to the dev shell (TRM8). The pin is one file,
 `nix/test-runner-pin.json`, holding the revision and its source hash, so that
 a host without Nix can read it.
 
@@ -475,8 +587,10 @@ that builds it without Nix, **must** take the revision from
 `nix/test-runner-pin.json`. When the file names no revision, they build the
 runner from the repository's own source.
 
-**TRN2: The dev shell.** The dev shell and the `ci` wrapper **must** export
-`SPARKLES_TEST_RUNNER` as the absolute path of the pinned runner.
+**TRN2: The dev shell.** The dev shell **must** export
+`SPARKLES_TEST_RUNNER` as the absolute path of the pinned runner, and so
+**must** the `ci` wrapper as long as `ci --test` runs `dub test`, before ci
+runs tests through the core (CIC11).
 
 **TRN3: Protocol overlap across a pin move.** A change to the protocol
 **must** keep the harness speaking every version the pinned runner speaks
@@ -488,29 +602,33 @@ _Rationale:_ the pin moves only to a revision of `main`, and a revision of
 working tree's harness and the pinned runner overlap for at least one pin
 move.
 
-## 10. Verification
+## 11. Verification
 
 Each scenario names the requirements it falsifies and its oracle.
 
-| Scenario                                                                                                                      | Falsifies          | Oracle                                                                               |
-| ----------------------------------------------------------------------------------------------------------------------------- | ------------------ | ------------------------------------------------------------------------------------ |
-| Scan every recipe and the in-binary packages' imports for a `sparkles:` edge                                                  | TRP1–TRP3          | The recipes, read by a script independent of dub                                     |
-| `dub test :test-harness` runs the harness's own tests, and the count equals the number of its `unittest` blocks               | TRP4               | A count of `unittest` blocks in its sources                                          |
-| Start a binary with `--sparkles-test-protocol=99-99`: one `hello` with `version: null`, exit status 3                         | TRP10, TRP11       | The frame stream, read byte by byte                                                  |
-| A runner whose range excludes the binary's: the error names both ranges; no test runs                                         | TRP11              | The runner's output and exit status                                                  |
-| A module constructor prints `x` with no line feed before `hello`: shown as unattributed output; the run passes                | TRP7, TRP8         | The runner's output and exit status                                                  |
-| A test writes to `stdout`, `stderr`, `printf` and `write(2, …)`: all four appear in that test's output, in order              | TRP6, TRP23, TRP24 | The test's reported output against the order it wrote                                |
-| A test prints a line, then calls `abort()`: it fails with the signal and the line; the tests after it run and pass            | TRP25, TRP26       | The report against the listing                                                       |
-| A test starts a child that keeps descriptor 2 open, then crashes: the run ends within a few seconds                           | TRP28              | Wall time and exit status                                                            |
-| Every `-t` from 1 to 8 runs the same tests with the same results                                                              | TRS1, TRS2, TRP17  | The per-test statuses, compared across `-t`                                          |
-| A `@serial` test asserts no other test is running                                                                             | TRS2               | A process-shared count of running tests, in a fixture directory                      |
-| `--bench --group-by=list`, `--list-datasets` and `--datasets=X` give the output the in-process runner gave for the same tests | TRP18, TRS3        | Outputs recorded from the in-process runner on the same sources                      |
-| A coverage build under `-t 4`: the set of covered lines equals a `-t 1` run's, and the launcher's own start-up is not counted | TRL3, TRS4, TRS5   | The covered-line sets of the `.lst` files                                            |
-| `--no-dub` with a `@ctfe` test and `PATH` holding no `dub`: the probe compiles from the arguments and `roots` only            | TRX2, TRX4         | A wrapper on `PATH` that records every program started                               |
-| `--no-runner -i X`: only matching tests run; `--no-runner --bench` stops before any test                                      | TRF1, TRF2         | The fallback's lines and exit status                                                 |
-| `SPARKLES_TEST_RUNNER=/nonexistent`: the run stops naming the variable                                                        | TRL2               | The exit status and message                                                          |
-| The Windows CI leg runs the output, crash and fallback scenarios                                                              | TRW1–TRW3          | The same assertions, on `windows-latest`                                             |
-| Change the runner's sources in the working tree: only `test-runner-impl`'s test root rebuilds                                 | TRP2, BGT4         | [Oracle 15](../build-primitives/build-graph/testing.md#oracle-15-pinned-test-runner) |
+| Scenario                                                                                                                                                                                            | Falsifies          | Oracle                                                                               |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ | ------------------------------------------------------------------------------------ |
+| Scan every recipe and the in-binary packages' imports for a `sparkles:` edge                                                                                                                        | TRP1–TRP3          | The recipes, read by a script independent of dub                                     |
+| `dub test :test-harness` runs the harness's own tests, and the count equals the number of its `unittest` blocks                                                                                     | TRP4               | A count of `unittest` blocks in its sources                                          |
+| Start a binary with `--sparkles-test-protocol=99-99`: one `hello` with `version: null`, exit status 3                                                                                               | TRP10, TRP11       | The frame stream, read byte by byte                                                  |
+| A runner whose range excludes the binary's: the error names both ranges; no test runs                                                                                                               | TRP11              | The runner's output and exit status                                                  |
+| A module constructor prints `x` with no line feed before `hello`: shown as unattributed output; the run passes                                                                                      | TRP7, TRP8         | The runner's output and exit status                                                  |
+| A test writes to `stdout`, `stderr`, `printf` and `write(2, …)`: all four appear in that test's output, in order                                                                                    | TRP6, TRP23, TRP24 | The test's reported output against the order it wrote                                |
+| A test prints a line, then calls `abort()`: it fails with the signal and the line; the tests after it run and pass                                                                                  | TRP25, TRP26       | The report against the listing                                                       |
+| A test starts a child that keeps descriptor 2 open, then crashes: the run ends within a few seconds                                                                                                 | TRP28              | Wall time and exit status                                                            |
+| Every `-t` from 1 to 8 runs the same tests with the same results                                                                                                                                    | TRS1, TRS2, TRP17  | The per-test statuses, compared across `-t`                                          |
+| A `@serial` test asserts no other test is running                                                                                                                                                   | TRS2               | A process-shared count of running tests, in a fixture directory                      |
+| `--bench --group-by=list`, `--list-datasets` and `--datasets=X` give the output the in-process runner gave for the same tests                                                                       | TRP18, TRS3        | Outputs recorded from the in-process runner on the same sources                      |
+| A coverage build under `-t 4`: the set of covered lines equals a `-t 1` run's, and the launcher's own start-up is not counted                                                                       | TRL3, TRS4, TRS5   | The covered-line sets of the `.lst` files                                            |
+| `--no-dub` with a `@ctfe` test and `PATH` holding no `dub`: the probe compiles from the arguments and `roots` only                                                                                  | TRX2, TRX4         | A wrapper on `PATH` that records every program started                               |
+| `--no-runner -i X`: only matching tests run; `--no-runner --bench` stops before any test                                                                                                            | TRF1, TRF2         | The fallback's lines and exit status                                                 |
+| `SPARKLES_TEST_RUNNER=/nonexistent`: the run stops naming the variable                                                                                                                              | TRL2               | The exit status and message                                                          |
+| The Windows CI leg runs the output, crash and fallback scenarios                                                                                                                                    | TRW1–TRW3          | The same assertions, on `windows-latest`                                             |
+| Change the runner's sources in the working tree: only `test-runner-impl`'s test root rebuilds                                                                                                       | TRP2, BGT4         | [Oracle 15](../build-primitives/build-graph/testing.md#oracle-15-pinned-test-runner) |
+| The runner core's sources import none of `std.process`, `std.stdio`, `core.thread`, `core.sys.*.unistd` or `core.stdc.stdio`, nor a `sparkles.ui`, `sparkles.event_horizon` or `sparkles.ci` module | TRM1               | A scan of the core's sources                                                         |
+| The core fed a recorded worker transcript produces the same events whether the bytes arrive whole or one at a time                                                                                  | TRM1, TRM2         | The event lists, compared                                                            |
+| A binary run standalone and under `ci test` reports the same per-test statuses and exit status for the same `-i`, `-e`, `--skip-slow`                                                               | TRM4               | The two runs' results, compared                                                      |
+| `ci test` with capacity `2N` runs the `-t N` legs of two packages at once; a reused leg replays its lines                                                                                           | TRM5, TRM6         | The executor's event log                                                             |
 
 ## Requirement status
 
@@ -531,4 +649,5 @@ unverified.
 | TRX1–TRX4  | partial    | `sparkles.test_runner.driver.DriverOptions`; the `PATH`-without-dub scenario not run                       |
 | TRF1–TRF4  | partial    | `sparkles.test_runner.fallback.runFallback`; `--no-runner` scenarios by hand                               |
 | TRW1–TRW4  | unverified | The Windows code paths type-check for `x86_64-windows-msvc`; the Windows leg has not run them              |
+| TRM1–TRM8  | unverified | —                                                                                                          |
 | TRN1–TRN3  | partial    | `nix/packages/test-runner.nix` builds the bootstrap; no revision is pinned yet                             |

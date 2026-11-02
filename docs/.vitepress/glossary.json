@@ -1734,5 +1734,35 @@
     ],
     "owner": "sparkles:test-runner",
     "seeAlso": ["test-runner-executable", "test-launcher"]
+  },
+  {
+    "id": "runner-frame",
+    "term": "frame",
+    "aliases": ["runner frame", "protocol frame"],
+    "summary": "One message of the test runner protocol: a record-separator byte, a JSON object naming its type, and a line feed.",
+    "definition": "A worker writes frames on a duplicate of its original standard output, and the runner writes commands as frames on the worker's standard input. Bytes outside a frame are stray output, shown, never a protocol error.",
+    "authority": [
+      {
+        "text": "sparkles:test-runner process model §4.1",
+        "link": "/specs/test-runner/process-model#_4-1-transport-and-framing"
+      }
+    ],
+    "owner": "sparkles:test-runner",
+    "seeAlso": ["test-worker", "test-runner-core"]
+  },
+  {
+    "id": "test-runner-core",
+    "term": "runner core",
+    "aliases": ["test runner core", "sparkles:test-runner-core"],
+    "summary": "The library both clients of the test runner protocol share: a protocol state machine that turns a worker's bytes into events and commands, and performs no I/O.",
+    "definition": "`sparkles:test-runner-core` holds the option model, the protocol client, the run plan and verdict, the bench session, and the compile-time and extracted modes. Its clients supply process spawning, I/O, scheduling and rendering: the standalone runner with threads, its pool and its reporter; `ci` with supervised processes, one task node per leg of a binary, and its reporters.",
+    "authority": [
+      {
+        "text": "sparkles:test-runner process model §9",
+        "link": "/specs/test-runner/process-model#_9-two-clients-the-standalone-runner-and-ci"
+      }
+    ],
+    "owner": "sparkles:test-runner",
+    "seeAlso": ["test-runner-executable", "test-worker"]
   }
 ]

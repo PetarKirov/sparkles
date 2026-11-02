@@ -141,7 +141,7 @@ tasks:
   core-cli's `?`/`help` value-help forms list them.
 - A selected package gets a task only for marker attributes present in its
   sources, and only if it integrates `sparkles:test-runner`.
-- Every special invocation passes `--self-test` and `--require-toolchain`.
+- Every special invocation passes `--require-toolchain`.
 - An empty repository-wide special-mode plan is an error, not a successful
   no-op.
 - Coverage is invalid.
@@ -375,8 +375,26 @@ that needs it.
 
 An ordinary test runs in two legs, `-t 1` and then `-t N`, both with
 `--skip-slow`, so a test that overflows a worker's stack cannot hide on the main
-thread. `N` is the test node's claimed weight. A sanitizer test runs one `-t N`
-leg on 4 MiB workers.
+thread. A sanitizer test runs one `-t N` leg on 4 MiB workers.
+
+**CIC11: Tests through the runner core.** ci **must** run a test binary through
+the test runner's core library, never through the standalone runner or dub
+([test-runner §9](../../test-runner/process-model.md#_9-two-clients-the-standalone-runner-and-ci)):
+
+- **Nodes:** each leg is one test action and one node, the build graph's unit
+  of reuse. Its claimed weight `N` is its `-t N`: it runs up to `N` worker
+  sessions as supervised process groups (TDE1), places the binary's tests on
+  them, and runs the `@serial` tests after the others. The `-t 1` leg has
+  weight one and runs each test on its worker's main thread.
+- **Output:** the leg's output is the lines the core's plain-text renderer
+  makes of its events, and its observations include the passed, failed and
+  skipped counts and the failed tests' names (TDM11). ci's reporters render
+  them as any task's output; ci has no test reporter of its own.
+- **Options:** ci passes the runner options through the core's parser, and a
+  leg's outcome is the core's verdict, so `ci test` and a plain `dub test`
+  agree on which tests ran and on what failed.
+- **Coverage:** a coverage leg's workers write to the leg's task directory,
+  ended one at a time with the coverage merge (CIC7).
 
 **CIC7: Coverage attempts.** Without coverage, each package has one test node
 and one classification node. With coverage:

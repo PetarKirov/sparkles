@@ -76,6 +76,11 @@ Status: Linux and macOS are met.
   §4). Plan ordinary tests and build-only runs as the build graph's actions:
   test-root compiles, dependency-library builds, test binary links and test
   runs, with no ordering edges between tests.
+- Run each test binary through the test runner's core library, as worker
+  nodes whose events are the nodes' output (CIC11). It needs the core that
+  the test runner's
+  [P1 slice 6](../../test-runner/PLAN.md#p1--the-out-of-process-runner)
+  delivers, so M7 closes only after it.
 - Add the CI-provider grouping to the plain reporter (task DAG M6b), and switch
   workflows to `--interlaced`. Workflows that set `SPARKLES_CI_JOBS` convert it to
   weighted units (CIC1).
@@ -94,6 +99,7 @@ Gate:
   fixture fails it.
 - Fail-fast kills a deliberately nested child tree.
 - The removed flags are rejected.
+- A binary run under `ci test` and standalone agrees on every test (CIC11).
 
 ## M8: Coverage, sanitizers, slow tests and special modes
 

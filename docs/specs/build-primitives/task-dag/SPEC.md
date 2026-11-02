@@ -340,7 +340,9 @@ typed reason and, where applicable, its causal tasks. Outcomes and events name
 tasks by their index in the validated graph's presentation order, not by
 `TaskId`, so their members hold no pointers. Process status, timeout, signal,
 bounded output references, elapsed time and sampled usage are observations
-attached to an outcome, not booleans that replace it.
+attached to an outcome, not booleans that replace it. A test action also
+attaches its passed, failed and skipped counts and its failed tests' names
+([CIC11](../../ci/task-dag/SPEC.md#_5-2-ordinary-package-tests-and-coverage)).
 
 Which measurements an observation carries, with their units and qualities, is
 specified by [observability](../observability/SPEC.md#_4-action-metrics),

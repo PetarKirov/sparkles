@@ -139,6 +139,14 @@ Slices, each a green commit series:
    entry in the cache's pin set
    ([TC24](../toolchain/SPEC.md#_8-platforms-tests-and-caches)), and
    `SPARKLES_TEST_RUNNER` in the dev shell and the `ci` wrapper (TRN1–TRN3).
+6. **The core.** `sparkles:test-runner-core` takes the option model, the
+   protocol client, worker sessions, the run plan and verdict, the bench
+   session and the compile-time and extracted modes, as a protocol state
+   machine that performs no I/O (§9, TRM1–TRM4, TRD7, TRD8). The standalone runner
+   becomes a `main`, its pool and its reporter over it. `ci` drives the core
+   in its own milestone, the task DAG's
+   [M7](../ci/task-dag/PLAN.md#m7-canonical-cli-and-the-ci-test-cutover-onto-the-build-graph)
+   (TRM5–TRM8).
 
 Until a revision of `main` carries the runner, the pin file names no
 revision and the derivation builds the runner from the flake's own source.
@@ -147,13 +155,14 @@ The pin moves to `main` once P1 lands there.
 Gate: `dub test` passes for `base`, `event-horizon`, `test-harness` and
 `test-runner-impl`, and `nix run .#ci -- --test --fail-fast` passes, with the
 runner pinned; `-i`, `-e`, `-v`, `-t` and `-l` behave as in the CLI
-reference; the §10 scenarios of process-model.md pass; and no recipe names
+reference; the §11 scenarios of process-model.md pass; and no recipe names
 `test-runner-impl` or a path inside the attributes, shim, harness or runner.
 
-Status: slices 1–5 are implemented; the pin names no revision yet, so the
+Status: slices 1–5 are implemented, and slice 6 is not started. The pin names
+no revision yet, so the
 runner builds from the flake's own source. Open: pinning a revision of
 `main` once P1 lands there, the Windows leg's first run, and turning the
-§10 scenarios run by hand into tests.
+§11 scenarios run by hand into tests.
 
 ## W1 — `@wasm` on WASI
 
