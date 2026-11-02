@@ -116,7 +116,8 @@ workers, then the `@serial` ones, one at a time.
 - `threadAffinity` (a `ThreadAffinity`) says which thread runs them:
   - `none` (the default, and a bare `@serial`): any thread; the runner uses
     one worker for all of them.
-  - `mainThread`: the runner's main thread, after the `none` ones. For a
+  - `mainThread`: the main thread of the process that runs them — the
+    worker's, or the binary's own in the fallback — after the `none` ones. For a
     library confined to the thread that initialized it: `sparkles:nix`'s
     tests use it, because the Nix evaluator registers only the thread that
     called `initNix` with its garbage collector, and evaluating on another

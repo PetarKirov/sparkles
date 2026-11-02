@@ -40,8 +40,8 @@ interface the two copies share is far wider than one `extern(C)` entry point.
 The approach is the one cargo-nextest takes for Rust: keep the runner out of
 the test process. What must run beside a test body stays in the binary: the
 registration hook, the execution of one test at a time, and the benchmark and
-workload measurement layer. That in-binary code depends on nothing but
-druntime and Phobos, so every package can depend on it without a cycle.
+workload measurement layer. That in-binary code depends on no other package
+of this repository, so every package can depend on it without a cycle.
 Everything else lives in a runner executable that talks to the binary over
 pipes. The runner is a tool, like the compiler, so it can be built from a
 pinned revision and replaced without relinking a single test binary.
@@ -68,7 +68,7 @@ treatment of the pinned runner as a toolchain component is
 1. **Test bodies run only in a test binary.** So do the timing and counting
    of benchmarks and workloads, because they bracket a test body.
 2. **No test binary links the runner.** The runner is a separate executable.
-3. **The in-binary code depends on druntime and Phobos only.** No package's
+3. **The in-binary code depends on no other repository package.** No package's
    tests close a cycle through it.
 4. **Every session opens with a handshake.** A binary and a runner without a
    common protocol version stop with an error that names both ranges, and run
@@ -200,7 +200,9 @@ error.
 `"t"` for the negotiated version is a protocol error. Within one protocol
 version, unknown members of a known frame **must** be ignored. On a protocol
 error the runner **must** stop that worker, report
-`protocol error from <binary>: <detail>`, and fail the run.
+`protocol error from <binary>: <detail>`, and fail the run. A worker that
+reads a malformed command, or one it cannot run, **must** write an `error`
+frame with a `message` and exit with status 4.
 
 ### 4.2 Handshake
 
@@ -226,6 +228,7 @@ runner's pin.
 | `compiler`  | `{vendor, version}`, from `__VENDOR__` and `__VERSION__`                                 |
 | `build`     | `{asserts, coverage}`: whether assertions and coverage are compiled in                   |
 | `roots`     | The source roots of the attributes, the harness and the shim, as the binary was compiled |
+| `token`     | The token of this worker's output sentinels (TRP24)                                      |
 | `tests`     | The number of `test` frames that follow                                                  |
 
 **TRP13: The listing.** The `hello` frame **must** be followed by one `test`
@@ -272,29 +275,34 @@ on its main thread. The runner sets `mainThread` under `-t 1`.
 
 **TRP18: Register.** `{"t":"register","ids":[…],"config":{…}}` runs the
 listed `@benchmark` tests' bodies to register their cases, measuring
-nothing. `config` carries the bench options of the
-[command line](./SPEC.md#_7-cli-contract). The worker **must** reply, for
-each test, its `case` frames, then a `result` frame for the registration
-itself, then `registered`. A `case` frame carries the worker's case id, the
-test's id, the case's name, labels and declared client metrics. The worker
-keeps the registered cases until it exits, and also writes a `provenance`
-frame for each suite provenance line registered.
+nothing. `config` is the bench configuration the runner derives from the
+[command line](./SPEC.md#_7-cli-contract) for those tests. The worker
+**must** reply, for each test, its `case` frames, then a `result` frame for
+the registration itself; then one `provenance` frame per suite provenance
+line not reported before; then `registered`. A `case` frame carries the
+worker's case id, the test's id, the case's name, labels and declared client
+metrics. The worker keeps the registered cases until it exits.
 
-**TRP19: Measure.** `{"t":"measure","case":C}` measures registered case `C`.
-The worker **must** reply `caseStarted`, then one `row` frame, with the
-members of a `--bench-json` row
-([SPEC §8.3](./SPEC.md#_8-3-the-bench-json-document)) and the rendered metric
-cells, then `measured`.
+**TRP19: Measure.** `{"t":"measure","case":C,"config":{…}}` measures
+registered case `C`. The worker **must** reply `caseStarted`, then one `row`
+frame, then `measured`. The `row` frame carries `stats`, the measured
+statistics a table row and a `--bench-json` row
+([SPEC §8.3](./SPEC.md#_8-3-the-bench-json-document)) are rendered from, and
+`thrown`, what a hard throw during the measurement carried. A `skipTest`
+during the measurement yields a skipped row, not a `thrown`.
 
-**TRP20: Workload.** `{"t":"workload","id":N,"config":{…}}` runs `@workload`
-test `N`. The worker **must** reply with one `window` frame per measured
-window, with the members of a `--bench-json` window, then a `result` frame.
+**TRP20: Workload.** `{"t":"workload","id":N}` runs `@workload` test `N`.
+The worker **must** reply with any `note` frames, then one `window` frame per
+measured window, carrying the window's totals and decomposition as `window`,
+then a `result` frame.
 
-**TRP21: Probe.** `{"t":"probe","config":{…}}` opens the measurement sources
-the bench options select. The worker **must** reply with one `catalog` frame:
-the available metric descriptors, every backend's capability report, and one
-`note` per header line, such as an absent-but-requested capability.
-`--list-metrics` and the bench header render it.
+**TRP21: Probe.** `{"t":"probe","options":{…},"list":B}` opens the
+measurement sources the bench options select, closing any a previous probe
+opened. The worker **must** reply with one `note` frame per header line, such
+as an absent-but-requested capability; with `list` true, a `catalog` frame:
+the metric descriptors and every backend's capability report, with every
+source probed; and then a `probed` frame naming the tracepoints and raw
+events the run counts. `--list-metrics` and the bench header render them.
 
 **TRP22: Exit.** On `{"t":"exit","coverageMerge":B}`, or on end of file on its
 standard input between commands, a worker **must** exit with status 0. With
@@ -419,7 +427,8 @@ no `@ctfe` test.
 
 **TRF2: Fallback options.** Fallback **must** accept `-i`, `-e`, `-v`, `-l`,
 `-t`, `--no-colors`, `--skip-slow`, `--only-slow` and `--help`, with the
-runner's meanings, except that `-t` still runs one test at a time. The
+runner's meanings, except that `-t` still runs one test at a time, on the main
+thread under `-t 1` as TRP17 places it. The
 compile-context arguments are accepted and unused. Any other option **must**
 stop the run, before any test, with a one-line error saying the option needs
 the runner and how to provide one (TRL2), and a non-zero exit status.
@@ -505,12 +514,21 @@ Each scenario names the requirements it falsifies and its oracle.
 
 ## Requirement status
 
-| ID         | Status     | Evidence |
-| ---------- | ---------- | -------- |
-| TRP1–TRP28 | unverified | —        |
-| TRL1–TRL5  | unverified | —        |
-| TRS1–TRS5  | unverified | —        |
-| TRX1–TRX4  | unverified | —        |
-| TRF1–TRF4  | unverified | —        |
-| TRW1–TRW4  | unverified | —        |
-| TRN1–TRN3  | unverified | —        |
+Evidence below was observed on Linux x86_64 with LDC, at the commits that
+delivered P1. A requirement is `partial` where its scenario of §10 has been
+run by hand but is not yet an automated test, or where a platform is
+unverified.
+
+| ID         | Status     | Evidence                                                                                                   |
+| ---------- | ---------- | ---------------------------------------------------------------------------------------------------------- |
+| TRP1–TRP3  | partial    | A scan of every `dub.sdl` and of the harness's imports finds no edge; not yet a `ci` check                 |
+| TRP4       | verified   | `dub test :test-harness` runs its 154 tests through `sparkles.test_runner.self_host`                       |
+| TRP5       | partial    | `sparkles.test_runner.entry.installHarnessHandlers`; the macOS handler unverified                          |
+| TRP6–TRP28 | partial    | `sparkles.test_runner.worker`, `sparkles.test_runner.client`; mismatch, output and crash scenarios by hand |
+| TRL1–TRL5  | partial    | `sparkles.test_runner.entry.harnessMain`; `SPARKLES_TEST_RUNNER=/nonexistent` scenario by hand             |
+| TRS1–TRS4  | partial    | `sparkles.test_runner.pool.startTestWorkers`; `-t 1` and `-t N` legs of `ci --test`                        |
+| TRS5       | partial    | `sparkles.test_runner.pool.retire`; `ci --test` coverage listings; the covered-line comparison not run     |
+| TRX1–TRX4  | partial    | `sparkles.test_runner.driver.DriverOptions`; the `PATH`-without-dub scenario not run                       |
+| TRF1–TRF4  | partial    | `sparkles.test_runner.fallback.runFallback`; `--no-runner` scenarios by hand                               |
+| TRW1–TRW4  | unverified | The Windows code paths type-check for `x86_64-windows-msvc`; the Windows leg has not run them              |
+| TRN1–TRN3  | partial    | `nix/packages/test-runner.nix` builds the bootstrap; no revision is pinned yet                             |
