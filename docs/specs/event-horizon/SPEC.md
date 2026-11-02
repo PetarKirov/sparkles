@@ -1722,8 +1722,9 @@ is publicly re-exported and tested on Linux and macOS; on macOS the reap
 lowers to `EVFILT_PROC`. On Windows, §13.9 shipped in M19: `live_windows`
 (spawn, wait, kill), the Job Object sampler and `supervise` are exported and
 run the supervision cases on native Windows (`windows-latest`); under Wine,
-which lacks the wait packets, only the cases that need no process wait run;
-`capture`, `spawnPty` and `RingProc` remain POSIX-only. §§13.5–13.8 shipped
+which lacks the wait packets, only the cases that need no process wait run.
+`capture`, `RingProc` and the `liveEnv` row are shared by both (module
+`live_shared`), and `spawnPty`/`resizePty` run over ConPTY there. §§13.5–13.8 shipped
 in M19 (the `supervise`, `sampling`, `cgroup` and `blocking_pool` modules).
 The supervision suite runs on Linux and native macOS; macOS has no
 containment tier, so it supervises by process group, and it samples through
@@ -1903,6 +1904,16 @@ are ignored for a PTY spawn: all three point at the slave. The master is an
 `OwnedFd` like any other — `apps/terminal`'s per-frame `EAGAIN` drain
 becomes one parked ring read (the `pty-drain` example, completed by the
 in-ring reap that `forkpty` could not offer).
+
+On Windows (§13.9) the PTY is a ConPTY (`CreatePseudoConsole` of the
+requested size, resized by `ResizePseudoConsole`), fed through two uniquely
+named pipes whose parent ends are overlapped and ride the port. A
+pseudoconsole takes its input and output on separate pipes, so `ptyMaster`
+reads the console's output (VT sequences) and input is written to `stdinW`.
+The child inherits no handle; its console is the ConPTY. The reap closes the
+pseudoconsole, which ends conhost and so the output pipe: the master is
+drained concurrently, as a terminal does, and reaches EOF after the reap.
+ConPTY is resolved at run time (`ENOSYS` where it is missing).
 
 ### 13.4 The proc capability
 

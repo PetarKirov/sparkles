@@ -66,12 +66,15 @@ enum uint killedExitCode = 1;
 struct ChildProcess
 {
     int pid = -1;       /// the process id; -1 after a successful `wait`
-    OwnedFd stdinW;     /// write end of the child's stdin  (piped only)
+    OwnedFd stdinW;     /// write end of the child's stdin  (piped, or the ConPTY input)
     OwnedFd stdoutR;    /// read end of the child's stdout  (piped only)
     OwnedFd stderrR;    /// read end of the child's stderr  (piped only)
-    OwnedFd ptyMaster;  /// always empty: Windows has no PTY spawn here
+    /// `spawnPty` only: the read end of the ConPTY's output. A ConPTY takes
+    /// its input and output on two pipes, so input is written to `stdinW`.
+    OwnedFd ptyMaster;
     OwnedFd process;    /// the process handle: pins identity until the reap
     OwnedFd job;        /// the child's Job Object (kill on close)
+    package PseudoConsole pty;  /// `spawnPty` only; closed by the reap
     package bool exited;       /// the handle signalled (`observeExit`)
     package bool processGroup; /// created with `CREATE_NEW_PROCESS_GROUP`
 
@@ -560,6 +563,12 @@ inside its own Job Object from its first instruction.
 */
 IoResult!ChildProcess spawnProcess(scope const(char[])[] argv,
     in ProcessConfig cfg = ProcessConfig()) @trusted
+    => spawnImpl(argv, cfg, null);
+
+/// The one spawn path. A `pseudoConsole` (`spawnPty`) replaces the stdio
+/// wiring: the child's console is the ConPTY, and it inherits no handle.
+private IoResult!ChildProcess spawnImpl(scope const(char[])[] argv,
+    in ProcessConfig cfg, void* pseudoConsole) @trusted
 {
     if (argv.length == 0)
         return ioErr!ChildProcess(EINVAL, OpKind.none, IoErrorStage.submit, "empty argv");
@@ -620,7 +629,7 @@ IoResult!ChildProcess spawnProcess(scope const(char[])[] argv,
     enum uint STD_INPUT_HANDLE = cast(uint) -10;
     static immutable uint[3] stdIds = [STD_INPUT_HANDLE, STD_INPUT_HANDLE - 1,
         STD_INPUT_HANDLE - 2];
-    foreach (i, spec; specs)
+    foreach (i, spec; pseudoConsole is null ? specs[] : specs[0 .. 0])
     {
         bool ok = true;
         final switch (spec.mode)
@@ -673,6 +682,11 @@ IoResult!ChildProcess spawnProcess(scope const(char[])[] argv,
             null, null))
         return ioErr!ChildProcess(winErrno(GetLastError()), OpKind.none,
             IoErrorStage.submit, "PROC_THREAD_ATTRIBUTE_HANDLE_LIST failed");
+    enum size_t PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE = 0x2_0016;
+    if (pseudoConsole !is null && !UpdateProcThreadAttribute(attrs, 0,
+            PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, pseudoConsole, (void*).sizeof, null, null))
+        return ioErr!ChildProcess(winErrno(GetLastError()), OpKind.none,
+            IoErrorStage.submit, "PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE failed");
 
     STARTUPINFOEXW si;
     si.StartupInfo.cb = STARTUPINFOEXW.sizeof;
@@ -747,6 +761,209 @@ IoResult!ChildProcess spawnProcess(scope const(char[])[] argv,
     return ioOk(move(child));
 }
 
+// ── PTY spawning over ConPTY (SPEC §13.3, §13.9) ────────────────────────────
+
+/// The ConPTY entry points (`kernel32`, Windows 10 1809+), resolved at run
+/// time so an older host fails `spawnPty` with `ENOSYS` instead of loading.
+private struct ConPtyApi
+{
+    extern (Windows) nothrow @nogc
+    {
+        int function(uint size, HANDLE input, HANDLE output, uint flags, void** pc) create;
+        int function(void* pc, uint size) resize;
+        void function(void* pc) close;
+    }
+}
+
+private __gshared ConPtyApi conPtyApi_;
+private shared ubyte conPtyState; // 0 unresolved, 1 present, 2 absent
+
+private const(ConPtyApi)* conPtyApi() @trusted nothrow @nogc
+{
+    import core.atomic : atomicLoad, atomicStore;
+
+    auto state = atomicLoad(conPtyState);
+    if (state == 0)
+    {
+        auto kernel32 = GetModuleHandleW("kernel32.dll"w.ptr);
+        ConPtyApi api;
+        if (kernel32 !is null)
+        {
+            api.create = cast(typeof(api.create)) GetProcAddress(kernel32, "CreatePseudoConsole");
+            api.resize = cast(typeof(api.resize)) GetProcAddress(kernel32, "ResizePseudoConsole");
+            api.close = cast(typeof(api.close)) GetProcAddress(kernel32, "ClosePseudoConsole");
+        }
+        const present = api.create !is null && api.resize !is null && api.close !is null;
+        if (present)
+            conPtyApi_ = api;
+        state = present ? 1 : 2;
+        atomicStore(conPtyState, state);
+    }
+    return state == 1 ? &conPtyApi_ : null;
+}
+
+/// A `COORD` packed the way the ConPTY calls take it by value.
+private uint coord(ushort cols, ushort rows) @safe pure nothrow @nogc
+    => cast(uint) cols | (cast(uint) rows << 16);
+
+/// The move-only owner of an `HPCON`.
+package struct PseudoConsole
+{
+    private void* _pc;
+
+    @disable this(this);
+    ~this() @safe nothrow @nogc { close(); }
+
+    bool valid() const @safe pure nothrow @nogc => _pc !is null;
+
+    /// Ends conhost; its output pipe then reaches EOF. A second call does
+    /// nothing.
+    void close() @trusted nothrow @nogc
+    {
+        if (_pc is null)
+            return;
+        conPtyApi().close(_pc);
+        _pc = null;
+    }
+}
+
+/**
+Spawns `argv` on a fresh pseudoconsole (SPEC §13.3, §13.9): a ConPTY of
+`cols` × `rows`, fed through two uniquely named pipes whose parent ends are
+overlapped and ride the port — `ptyMaster` reads the console's output (VT
+sequences), `stdinW` writes its input. `stdinSpec`/`stdoutSpec`/`stderrSpec`
+are ignored: the child's console is the ConPTY, and it inherits no handle.
+Everything else is `spawnProcess`'s: the PATH search, the overlay, the cwd,
+the suspended start inside its own Job Object.
+
+The pseudoconsole is closed by the reap, which ends conhost and so the
+output pipe: drain `ptyMaster` concurrently, as a terminal does, or at least
+until the reap, then to EOF. `ENOSYS` where ConPTY is missing.
+*/
+IoResult!ChildProcess spawnPty(scope const(char[])[] argv,
+    ushort cols, ushort rows, in ProcessConfig cfg = ProcessConfig()) @trusted
+{
+    import core.stdc.errno : ENOSYS;
+
+    auto api = conPtyApi();
+    if (api is null)
+        return ioErr!ChildProcess(ENOSYS, OpKind.none, IoErrorStage.setup,
+            "this host has no ConPTY");
+    OwnedFd input, output;
+    HANDLE consoleReads, consoleWrites;
+    if (!openStdioPipe(false, input, consoleReads))
+        return ioErr!ChildProcess(winErrno(GetLastError()), OpKind.none,
+            IoErrorStage.setup, "pty input pipe failed");
+    scope (exit) CloseHandle(consoleReads);
+    if (!openStdioPipe(true, output, consoleWrites))
+        return ioErr!ChildProcess(winErrno(GetLastError()), OpKind.none,
+            IoErrorStage.setup, "pty output pipe failed");
+    scope (exit) CloseHandle(consoleWrites);
+    PseudoConsole pty;
+    const hr = api.create(coord(cols, rows), consoleReads, consoleWrites, 0, &pty._pc);
+    if (hr < 0)
+        return ioErr!ChildProcess(EIO, OpKind.none, IoErrorStage.setup,
+            "CreatePseudoConsole failed");
+    auto spawned = spawnImpl(argv, cfg, pty._pc);
+    if (spawned.hasError)
+        return ioErr!ChildProcess(spawned.error);
+    auto child = move(spawned.value);
+    child.pty = move(pty);
+    child.stdinW = move(input);
+    child.ptyMaster = move(output);
+    return ioOk(move(child));
+}
+
+/// Propagates a resize to the pseudoconsole (SPEC §13.3); the child's
+/// console buffer and window follow.
+IoResult!void resizePty(ref ChildProcess child, ushort cols, ushort rows)
+    @trusted nothrow @nogc
+{
+    import core.stdc.errno : EBADF;
+
+    if (!child.pty.valid)
+        return ioErr!void(EBADF, OpKind.none, IoErrorStage.submit, "not a PTY child");
+    if (conPtyApi().resize(child.pty._pc, coord(cols, rows)) < 0)
+        return ioErr!void(EIO, OpKind.none, IoErrorStage.submit,
+            "ResizePseudoConsole failed");
+    return ioOk();
+}
+
+// ── the live net capability on Winsock (SPEC §10.3, §11) ────────────────────
+
+/// The live net capability: TCP sockets through Winsock, connections over
+/// the port (`ConnectEx`, `AcceptEx`). `Stream`/`Listener` are the tier-B
+/// `io` handles, as on POSIX. The backend has started Winsock.
+struct RingNet
+{
+    import sparkles.event_horizon.io : IoListener = Listener, IoStream = Stream;
+    import sparkles.event_horizon.net : SockAddr;
+
+    enum string capName = "net";
+
+    /// The connected-stream handle type (SPEC §10.3 `isNet`).
+    alias Stream = IoStream;
+
+    /// The listening-socket handle type.
+    alias Listener = IoListener;
+
+    private Sched* _sched;
+
+    /// Binds to the scheduler whose port backs the socket ops.
+    this(Sched* sched) @safe pure nothrow @nogc
+    {
+        _sched = sched;
+    }
+
+    /// Creates a TCP socket, binds it to `at`, and listens.
+    IoResult!Listener listen(SockAddr at, int backlog = 128) @trusted nothrow
+    {
+        const s = socket(2 /* AF_INET */, 1 /* SOCK_STREAM */, 0);
+        if (s == size_t.max)
+            return ioErr!Listener(winErrno(WSAGetLastError()), OpKind.none,
+                IoErrorStage.setup, "socket() failed");
+        if (bind(s, at.storage.ptr, at.len) != 0 || listen_(s, backlog) != 0)
+        {
+            const err = winErrno(WSAGetLastError());
+            closesocket(s);
+            return ioErr!Listener(err, OpKind.none, IoErrorStage.setup,
+                "bind/listen failed");
+        }
+        return ioOk(Listener(cast(int) s));
+    }
+
+    /// Creates a TCP socket and connects it to `to` (parks on the port).
+    IoResult!Stream connect(SockAddr to)
+    {
+        import sparkles.event_horizon.io : connect_ = connect;
+
+        const s = (() @trusted => socket(2 /* AF_INET */, 1 /* SOCK_STREAM */, 0))();
+        if (s == size_t.max)
+            return ioErr!Stream(winErrno((() @trusted => WSAGetLastError())()),
+                OpKind.none, IoErrorStage.setup, "socket() failed");
+        auto stream = Stream(cast(int) s);
+        auto r = connect_(stream, to);
+        if (r.hasError)
+        {
+            stream.close();
+            return ioErr!Stream(r.error);
+        }
+        return ioOk(stream);
+    }
+}
+
+private extern (Windows) nothrow @nogc
+{
+    size_t socket(int af, int type, int protocol);
+    int bind(size_t s, const(void)* addr, uint length);
+    pragma(mangle, "listen") int listen_(size_t s, int backlog);
+    int closesocket(size_t s);
+    int WSAGetLastError();
+    HANDLE GetModuleHandleW(const(wchar)* name);
+    void* GetProcAddress(HANDLE module_, const(char)* name);
+}
+pragma(lib, "ws2_32");
+
 // ── exit (SPEC §13.9) ───────────────────────────────────────────────────────
 
 /// The exit status of a signalled process handle, read once.
@@ -775,6 +992,9 @@ package void detachJob(ref ChildProcess child) @trusted nothrow @nogc
 /// ends any descendant left in it) and nulls the pid.
 private void consume(ref ChildProcess child) @safe nothrow @nogc
 {
+    // Closing the pseudoconsole ends conhost, which closes the output pipe:
+    // the master's reader then sees EOF.
+    child.pty.close();
     child.process.close();
     child.job.close();
     child.pid = -1;
@@ -1036,6 +1256,8 @@ version (unittest)
             `ready`, exits 0;)
         $(LI `alloc MB MS` — commits and touches MB MiB, prints `ready`, sleeps;
             `alloc-tree MB MS` does the same beside a grandchild `alloc MB MS`;)
+        $(LI `feed` — stdin to stdout, then `err` to stderr, exit 3;
+            `console-size MS` — prints its console window's `cols rows`, sleeps;)
         $(LI `chatty N` — N lines to each stream, interleaved;)
         $(LI `has-handle H` — `yes` if handle value H is open in the child.))
     */
@@ -1070,6 +1292,15 @@ version (unittest)
     }
 
     private extern (Windows) BOOL ignoreConsoleEvent(uint) nothrow @nogc => TRUE;
+
+    /// `CONSOLE_SCREEN_BUFFER_INFO`, flattened.
+    private struct ConsoleBufferInfo
+    {
+        short sizeX, sizeY, cursorX, cursorY;
+        ushort attributes;
+        short left, top, right, bottom;
+        short maxX, maxY;
+    }
 
     /// Starts `[self, "--eh-child", script…]` sharing this child's stdio
     /// wholesale: the descendant holds the supervised pipes open after its
@@ -1164,6 +1395,23 @@ version (unittest)
             childWrite(OUT, "ready\n");
             Sleep(number(2));
             return 0;
+        case "feed":
+            ubyte[4096] fed;
+            uint n;
+            while (ReadFile(GetStdHandle(IN), fed.ptr, fed.length, &n, null) && n != 0)
+                childWrite(OUT, cast(const(char)[]) fed[0 .. n]);
+            childWrite(ERR, "err");
+            return 3;
+        case "console-size":
+            ConsoleBufferInfo info;
+            if (!GetConsoleScreenBufferInfo(GetStdHandle(OUT), &info))
+                return 4;
+            import std.conv : to;
+
+            childWrite(OUT, (info.right - info.left + 1).to!string ~ " "
+                ~ (info.bottom - info.top + 1).to!string ~ "\n");
+            Sleep(number(1));
+            return 0;
         case "chatty":
             foreach (i; 0 .. number(1))
             {
@@ -1217,6 +1465,7 @@ version (unittest)
         void ExitProcess(uint code);
         BOOL SetConsoleCtrlHandler(BOOL function(uint) nothrow @nogc handler, BOOL add);
         BOOL GetHandleInformation(HANDLE, uint*);
+        BOOL GetConsoleScreenBufferInfo(HANDLE console, ConsoleBufferInfo* info);
         HANDLE CreateEventW(SECURITY_ATTRIBUTES* attributes, BOOL manual, BOOL initial,
             const(wchar)* name);
     }
@@ -1610,3 +1859,221 @@ version (unittest)
     assert(runs[0] >= 3.msecs, "never early");
     assert(runs[3] < 10.msecs, "the timer's packet, not a ~15.6 ms tick, woke the host");
 }
+
+// ── capture, ConPTY and the capability row on Windows ──────────────────────
+
+version (unittest)
+{
+    import sparkles.event_horizon.capability : hasCaps;
+    import sparkles.event_horizon.clock : isClock;
+    import sparkles.event_horizon.live_shared : Env, RingClock, RingProc, capture,
+        canWaitProcesses, liveEnv, testCaptureReadErrno;
+    import sparkles.event_horizon.net : isNet;
+    import sparkles.event_horizon.proc : isProc;
+
+    static assert(isClock!RingClock);
+    static assert(isNet!RingNet);
+    static assert(isProc!RingProc);
+    static assert(canWaitProcesses);
+    static assert(hasCaps!(Env, "clock", "net", "proc", "fs"));
+
+    /// Skips unless ConPTY can run here: Wine's is not a test target.
+    private void requireConPty() @safe
+    {
+        import sparkles.event_horizon.sys.nt : runningUnderWine;
+        import sparkles.test_runner.skip : skipTest;
+
+        requireProcessWait();
+        if (conPtyApi() is null)
+        {
+            assert(runningUnderWine(), "native Windows 10 1809+ has ConPTY");
+            skipTest("no ConPTY on this host");
+        }
+    }
+
+    /// Reads `from` until `needle` appears; the bytes read so far.
+    private const(ubyte)[] readUntil(BorrowedFd from, scope const(char)[] needle) @trusted
+    {
+        import std.algorithm.searching : canFind;
+        import sparkles.base.buffer : SharedBuffer;
+        import sparkles.event_horizon.io : read;
+
+        const(ubyte)[] all;
+        while (!(cast(const(char)[]) all).canFind(needle))
+        {
+            SharedBuffer!(ubyte, 512) chunk;
+            chunk.length = 512;
+            auto got = read(from, move(chunk));
+            assert(!got.res.hasError && got.res.value != 0, "EOF before the needle");
+            all ~= got.buf[][0 .. got.res.value];
+        }
+        return all;
+    }
+}
+
+/// `capture` runs to completion over the port: stdin fed, both streams
+/// separate, the exit code as data — and merged streams in output order.
+@("live.windows.captureStreamsStdinStatusAndMerge")
+@system unittest
+{
+    requireProcessWait();
+    Sched s;
+    schedOrSkip(s);
+    auto r = s.run(() {
+        ProcessConfig cfg;
+        cfg.stderrSpec = StdioSpec(StdioMode.pipe);
+        auto got = capture(s, childArgv("feed"), cfg, cast(const(ubyte)[]) "fed via stdin");
+        assert(got.hasValue, got.hasError ? got.error.context : "");
+        assert(got.value.stdout_[] == cast(const(ubyte)[]) "fed via stdin");
+        assert(got.value.stderr_[] == cast(const(ubyte)[]) "err");
+        assert(got.value.status == ExitStatus(false, 3));
+
+        ProcessConfig merged;
+        merged.stderrSpec = StdioSpec(StdioMode.mergeStdout);
+        auto one = capture(s, childArgv("lines"), merged);
+        assert(one.hasValue && one.value.status.ok);
+        assert(one.value.stdout_[] == cast(const(ubyte)[]) "a\r\nb\0\xff\nc\nlast");
+        assert(one.value.stderr_.length == 0);
+    });
+    assert(!r.hasError);
+}
+
+/// A failed read ends a chatty run (the job is terminated, so the child
+/// cannot block on its pipe forever) and is reported, never posing as EOF;
+/// a cancellation kills and reaps; a drain that cannot be admitted fails
+/// the run with `ENOBUFS`, still reaping.
+@("live.windows.captureReadErrorCancellationAndAdmission")
+@system unittest
+{
+    import core.time : MonoTime, msecs, seconds;
+    import sparkles.event_horizon.scope_ : withDeadline;
+    import sparkles.event_horizon.sched : SchedOptions;
+
+    requireProcessWait();
+    {
+        Sched s;
+        schedOrSkip(s);
+        testCaptureReadErrno = EIO;
+        scope (exit) testCaptureReadErrno = 0;
+        auto r = s.run(() {
+            const started = MonoTime.currTime;
+            auto got = capture(s, childArgv("chatty", "100000000"));
+            assert(got.hasError && got.error.code == EIO);
+            assert(MonoTime.currTime - started < 10.seconds);
+        });
+        assert(!r.hasError);
+    }
+    {
+        Sched s;
+        schedOrSkip(s);
+        auto r = s.run(() {
+            import core.stdc.errno : ECANCELED;
+
+            const started = MonoTime.currTime;
+            bool sawCancel;
+            auto outcome = withDeadline!((ref sc) {
+                auto got = capture(s, childArgv("sleep", "30000"));
+                sawCancel = got.hasError && got.error.code == ECANCELED;
+                return 0;
+            })(s, 100.msecs);
+            assert(outcome.hasError && outcome.error.isTimeout && sawCancel);
+            assert(MonoTime.currTime - started < 10.seconds, "killed, not waited out");
+        });
+        assert(!r.hasError);
+    }
+    {
+        import core.stdc.errno : ENOBUFS;
+
+        Sched s;
+        SchedOptions opts;
+        opts.maxFibers = 2;
+        schedOrSkip(s, opts);
+        auto r = s.run(() {
+            ProcessConfig cfg;
+            cfg.stderrSpec = StdioSpec(StdioMode.pipe);
+            auto got = capture(s, childArgv("chatty", "100000000"), cfg);
+            assert(got.hasError && got.error.code == ENOBUFS);
+        });
+        assert(!r.hasError);
+    }
+}
+
+/// A ConPTY child sees a console of the preset size; resizing reaches the
+/// pseudoconsole; input written to `stdinW` reaches the child, and output
+/// arrives on `ptyMaster` over the port. The reap closes the pseudoconsole,
+/// and the master then reaches EOF.
+@("live.windows.spawnPtyConsoleSizeInputAndEof")
+@system unittest
+{
+    requireConPty();
+    Sched s;
+    schedOrSkip(s);
+    auto r = s.run(() {
+        auto spawned = spawnPty(childArgv("console-size", "200"), 80, 24);
+        assert(spawned.hasValue, spawned.hasError ? spawned.error.context : "");
+        auto child = move(spawned.value);
+        assert(child.ptyMaster.valid && child.stdinW.valid && !child.stdoutR.valid);
+        cast(void) readUntil(child.ptyMaster.borrowFd, "80 24");
+        assert(!resizePty(child, 100, 30).hasError);
+        assert(wait(s, child).value.ok);
+        cast(void) drainAll(child.ptyMaster.borrowFd); // EOF after the reap
+        assert(resizePty(child, 80, 24).error.code == 9 /* EBADF */);
+
+        auto cat = move(spawnPty(childArgv("cat"), 80, 24).value);
+        import sparkles.base.buffer : SharedBuffer;
+        import sparkles.event_horizon.io : write;
+
+        SharedBuffer!(ubyte, 64) typed;
+        typed ~= cast(const(ubyte)[]) "typed\r";
+        assert(!write(cat.stdinW, move(typed)).res.hasError);
+        cast(void) readUntil(cat.ptyMaster.borrowFd, "typed");
+        assert(!cat.killGroup().hasError);
+        assert(wait(s, cat).value == ExitStatus(false, killedExitCode));
+        cast(void) drainAll(cat.ptyMaster.borrowFd);
+    });
+    assert(!r.hasError);
+}
+
+/// The live row on Windows carries every capability: `RingProc` spawns
+/// and reaps through the port, and `RingNet` listens and connects over
+/// Winsock and IOCP.
+@("live.windows.liveEnvProcAndNet")
+@system unittest
+{
+    import sparkles.event_horizon.io : accept, recv, send;
+    import sparkles.event_horizon.net : SockAddr, ipv4;
+
+    requireProcessWait();
+    Sched s;
+    schedOrSkip(s);
+    auto r = s.run(() {
+        auto env = liveEnv(&s);
+        auto child = move(env.proc.spawn(childArgv("exit", "5")).value);
+        assert(env.proc.wait(child).value == ExitStatus(false, 5));
+
+        auto listener = env.net.listen(ipv4("127.0.0.1", 0)).value;
+        scope (exit) listener.close();
+        SockAddr bound;
+        int length = bound.storage.length;
+        assert(getsockname(cast(size_t) listener.fd, bound.storage.ptr, &length) == 0);
+        bound.len = length;
+        bool served;
+        import sparkles.event_horizon.scope_ : withScope;
+
+        auto outcome = withScope!((ref sc) {
+            sc.spawn(() {
+                auto peer = accept(listener).value;
+                scope (exit) peer.close();
+                served = true;
+            });
+            auto stream = env.net.connect(bound);
+            assert(stream.hasValue, stream.hasError ? stream.error.context : "");
+            stream.value.close();
+        })(s);
+        assert(!outcome.hasError && served);
+    });
+    assert(!r.hasError);
+}
+
+version (unittest)
+private extern (Windows) int getsockname(size_t s, void* addr, int* length) nothrow @nogc;
