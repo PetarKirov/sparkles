@@ -45,6 +45,9 @@ struct DubDependency
     @SdlAttribute() string repository; /// a repository dependency's URL
     @SdlAttribute() bool optional;     ///
     @WireName!Sdl("default") @SdlAttribute() bool default_; /// whether an optional dependency is on by default
+    /// The platform the dependency applies on (`platform="posix"`); empty
+    /// for every platform.
+    @SdlAttribute() string platform;
 
     /// The root package of `name`: `sparkles` for `sparkles:base`.
     string rootName() const @safe pure nothrow @nogc => name[0 .. separator];
