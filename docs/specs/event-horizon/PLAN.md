@@ -441,9 +441,16 @@ persistent packet. `supervise` runs over it unchanged in shape (console break,
 `TerminateJobObject`, the Job Object sampler), and the supervision cases run
 on native `windows-latest`. The installed Wine lacks both wait-packet exports:
 exactly the cases that wait on a process skip there, and nothing falls back
-to polling or a threadpool callback. `capture`, `spawnPty` and `RingProc` stay
-POSIX-only. Async file opens/flush and bounded cross-worker channels remain
-open prerequisites.
+to polling or a threadpool callback.
+
+Follow-ups (2026-11-02): a Win32 message-loop host now waits on the
+completion port itself, so wait packets (process exits, the high-resolution
+timer) wake it; `capture`, `RingProc` and the `liveEnv` row moved to the
+shared `live_shared` module and run on Windows beside a Winsock `RingNet`,
+and `spawnPty`/`resizePty` run over ConPTY; the Job Object sampler measures
+the tree's peak working set as `peakRssBytes` beside the job's commit peak.
+Async file opens/flush and bounded cross-worker channels remain open
+prerequisites.
 
 ## M20 — The fiber parker for `sparkles.base.sync`
 
