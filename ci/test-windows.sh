@@ -58,6 +58,7 @@ default_packages=(
   input
   test-attributes
   test-harness
+  test-runner-core
   test-runner
   test-runner-impl
   build-primitives

@@ -1,8 +1,9 @@
 /**
- * The runner's end of the protocol (process-model §4–§5): starting a test
- * binary as a worker, the handshake, sending commands and collecting their
- * frames, reading the tests' output and attributing it, and noticing a worker
- * that died.
+ * The standalone runner's I/O around a worker session (process-model TRM1):
+ * it starts a test binary as a worker, reads its two channels on threads of
+ * its own, feeds the bytes to the core's
+ * $(MREF sparkles,test_runner,session) state machine, and writes the commands
+ * the session returns. Callers block on a command's outcome.
  */
 module sparkles.test_runner.client;
 
@@ -10,18 +11,19 @@ import core.sync.condition : Condition;
 import core.sync.mutex : Mutex;
 import core.thread : Thread;
 import std.json : JSONValue;
-import std.process : Pid, ProcessPipes;
+import std.process : ProcessPipes;
 
 import sparkles.test_runner.model : Test, TestResult, Thrown;
-import sparkles.test_runner.protocol;
+import sparkles.test_runner.session;
+
+public import sparkles.test_runner.session : decodeResult, describeEnding, Hello;
 
 /// Thrown when a worker exits, or is killed, before a command's last frame.
 class WorkerDied : Exception
 {
-    /// A description of how the worker ended: an exit status, a signal or an
-    /// exception code.
+    /// How the worker ended: an exit status, a signal or an exception code.
     string ending;
-    /// The output the worker wrote since its last attributed test.
+    /// Output the worker wrote for the command that died with it.
     string output;
 
     this(string ending, string output) @safe pure nothrow
@@ -41,20 +43,6 @@ class ProtocolError : Exception
     }
 }
 
-/// The facts `hello` carries (TRP12).
-struct Hello
-{
-    uint version_;
-    VersionRange supported;
-    string harness;
-    string compilerVendor;
-    string compilerVersion;
-    bool asserts;
-    bool coverage;
-    string[] roots;
-    string token;
-}
-
 /// Where unattributed worker output goes; the runner prints it.
 alias StrayHandler = void delegate(string text);
 
@@ -64,22 +52,18 @@ final class Worker
     private ProcessPipes pipes;
     private Mutex mutex;
     private Condition changed;
-    private JSONValue[] frames;
-    private bool framesEnded;
-    private bool outputEnded;
-    private string pending;          // output since the last sentinel
-    private string[size_t] finished; // a test's output, once its sentinel arrived
-    private Thread frameReader, outputReader;
+    private WorkerSession session;
+    private RunnerEvent[] queue;
     private StrayHandler onStray;
-    private bool exited;
-    private int exitStatus;
+    private bool outputClosed;
 
-    /// What the handshake said.
-    Hello hello;
-    /// The listing (TRP13), each test's `ptr` null.
-    Test[] listing;
     /// Whether the process has ended.
     bool dead;
+
+    /// What the handshake said.
+    Hello hello() => session.hello;
+    /// The listing (TRP13), each test's `ptr` null.
+    Test[] listing() => session.listing;
 
     /**
     Starts `binary` as a worker and completes the handshake. `druntimeOptions`
@@ -88,109 +72,54 @@ final class Worker
     */
     this(string binary, string[] druntimeOptions, StrayHandler onStray)
     {
-        import std.conv : text;
         import std.process : pipeProcess, Redirect;
 
         this.onStray = onStray;
         mutex = new Mutex;
         changed = new Condition(mutex);
-        pipes = pipeProcess([binary,
-            text(protocolFlag, protocolMin, "-", protocolMax)] ~ druntimeOptions,
-            Redirect.all);
-        frameReader = new Thread(&readFrames);
-        frameReader.isDaemon = true;
-        frameReader.start();
-        outputReader = new Thread(&readOutput);
-        outputReader.isDaemon = true;
-        outputReader.start();
-        handshake(binary);
+        session = WorkerSession(binary);
+        pipes = pipeProcess(workerArguments(binary, druntimeOptions), Redirect.all);
+        auto frames = new Thread(&readFrames);
+        frames.isDaemon = true;
+        frames.start();
+        auto output = new Thread(&readOutput);
+        output.isDaemon = true;
+        output.start();
+
+        foreach (ref e; await((ref RunnerEvent e) => e.kind == EventKind.workerReady))
+            cast(void) e;
     }
 
-    private void handshake(string binary)
-    {
-        import std.conv : text;
-        import std.json : JSONType;
-
-        JSONValue first;
-        try
-            first = nextFrame();
-        catch (WorkerDied e)
-            throw new ProtocolError(text("the test binary ", binary,
-                " does not speak the runner protocol: it ", e.ending,
-                " before saying hello", e.output.length ? ":\n" ~ e.output : ""));
-        if (first["t"].str != "hello")
-            throw new ProtocolError(text("the test binary ", binary,
-                " does not speak the runner protocol: its first frame is ",
-                first.toString));
-        const supported = VersionRange(
-            fromJson!uint(first["supported"][0]), fromJson!uint(first["supported"][1]));
-        if (first["version"].type == JSONType.null_)
-            throw new ProtocolError(text("the test binary ", binary,
-                " speaks runner protocol ", supported.min, "–", supported.max,
-                "; this runner speaks ", protocolMin, "–", protocolMax,
-                ". Rebuild the binary against a matching sparkles:test-harness,",
-                " or move the runner's pin (nix/test-runner-pin.json)"));
-        hello = Hello(
-            version_: fromJson!uint(first["version"]),
-            supported: supported,
-            harness: fromJson!string(first["harness"]),
-            compilerVendor: fromJson!string(first["compiler"]["vendor"]),
-            compilerVersion: first["compiler"]["version"].toString,
-            asserts: fromJson!bool(first["build"]["asserts"]),
-            coverage: fromJson!bool(first["build"]["coverage"]),
-            roots: fromJson!(string[])(first["roots"]),
-            token: fromJson!string(first["token"]),
-        );
-        const count = fromJson!size_t(first["tests"]);
-        foreach (i; 0 .. count)
-        {
-            auto frame = nextFrame();
-            if (frame["t"].str != "test")
-                throw new ProtocolError("protocol error: expected a test frame, got "
-                    ~ frame.toString);
-            listing ~= fromJson!Test(frame);
-        }
-        if (nextFrame()["t"].str != "listed")
-            throw new ProtocolError("protocol error: the listing does not end with listed");
-    }
-
-    /// Sends `command` and returns every frame up to and including the first
-    /// one of type `last`. Throws `WorkerDied` when the worker ends first.
+    /// Sends a bench or probe command and returns its frames, up to and
+    /// including the one of type `last`. Throws `WorkerDied` when the worker
+    /// ends first.
     JSONValue[] request(JSONValue command, string last)
     {
-        send(command);
-        JSONValue[] reply;
-        for (;;)
-        {
-            auto frame = nextFrame();
-            reply ~= frame;
-            const type = frame["t"].str;
-            if (type == "error")
-                throw new ProtocolError("protocol error reported by the test binary: "
-                    ~ frame["message"].str);
-            if (type == last)
-                return reply;
-        }
+        string bytes;
+        synchronized (mutex)
+            bytes = session.request(command, last);
+        send(bytes);
+        JSONValue[] frames;
+        foreach (ref e; await((ref RunnerEvent e) => e.kind == EventKind.commandFinished))
+            if (e.kind == EventKind.commandFrame)
+                frames ~= e.frame;
+        return frames;
     }
 
-    /// Runs test `id` (TRP16) and returns its result, with the output it
-    /// wrote. A worker that dies during the test yields a failed result
-    /// (TRP26), and this worker is then dead.
+    /// Runs test `id` (TRP16) and returns its result, with its output. A
+    /// worker that dies during the test yields a failed result (TRP26), and
+    /// this worker is then dead.
     TestResult run(size_t id, bool mainThread)
     {
-        import core.time : nsecs;
-
-        auto test = listing[id];
-        JSONValue[] reply;
-        try
-            reply = request(frameOf("run", [
-                "id": JSONValue(id),
-                "mainThread": JSONValue(mainThread),
-            ]), "result");
-        catch (WorkerDied e)
-            return crashed(test, e);
-        auto result = decodeResult(test, reply[$ - 1]);
-        result.output = outputOf(id);
+        string bytes;
+        synchronized (mutex)
+            bytes = session.run(id, mainThread);
+        send(bytes);
+        TestResult result;
+        foreach (ref e; await((ref RunnerEvent e) => e.kind == EventKind.testFinished,
+                diesAfterResult: true))
+            if (e.kind == EventKind.testFinished)
+                result = e.result;
         return result;
     }
 
@@ -209,282 +138,179 @@ final class Worker
     {
         import std.process : wait;
 
+        string bytes;
+        synchronized (mutex)
+            bytes = session.exit(coverageMerge);
         try
-            send(frameOf("exit", ["coverageMerge": JSONValue(coverageMerge)]));
+        {
+            send(bytes);
+            pipes.stdin.close();
+        }
         catch (Exception)
         {
             // Already gone: its status is all that is left.
         }
-        try
-            pipes.stdin.close();
-        catch (Exception)
-        {
-        }
-        wait(pipes.pid);
-        dead = true;
-        // The readers are daemon threads: a child the last test started may
-        // hold the output pipe open, so give its output a second, no more.
-        string rest;
         synchronized (mutex)
         {
             import core.time : seconds;
 
-            if (!outputEnded)
-                changed.wait(1.seconds);
-            rest = pending;
-            pending = null;
+            while (!session.over)
+                if (!changed.wait(5.seconds))
+                    break;
         }
-        if (rest.length)
-            onStray(rest);
+        dead = true;
+        drainStrays();
     }
 
-    private void send(JSONValue command)
+    private void send(string bytes)
     {
-        pipes.stdin.write(frameText(command));
+        pipes.stdin.write(bytes);
         pipes.stdin.flush();
     }
 
-    /// The next frame, or `WorkerDied` once the frames channel has ended.
-    private JSONValue nextFrame()
+    /**
+    Waits until an event satisfies `done`, and returns every event up to it.
+    A protocol error throws `ProtocolError`; the worker's end throws
+    `WorkerDied`, unless `diesAfterResult` and `done` already held.
+    */
+    private RunnerEvent[] await(scope bool delegate(ref RunnerEvent) done,
+        bool diesAfterResult = false)
     {
-        synchronized (mutex)
+        RunnerEvent[] taken;
+        bool finished;
+        for (;;)
         {
-            while (!frames.length && !framesEnded)
-                changed.wait();
-            if (frames.length)
+            RunnerEvent[] batch;
+            synchronized (mutex)
             {
-                auto frame = frames[0];
-                frames = frames[1 .. $];
-                return frame;
+                while (!queue.length)
+                    changed.wait();
+                batch = queue;
+                queue = null;
             }
+            foreach (ref e; batch)
+            {
+                if (e.kind == EventKind.testOutput && e.test == noTest)
+                {
+                    onStray(e.text ~ "\n");
+                    continue;
+                }
+                if (e.kind == EventKind.protocolError)
+                {
+                    dead = true;
+                    throw new ProtocolError(e.text);
+                }
+                if (e.kind == EventKind.workerEnded)
+                {
+                    dead = true;
+                    if (finished && diesAfterResult)
+                        return taken;
+                    throw new WorkerDied(e.text, null);
+                }
+                taken ~= e;
+                if (done(e))
+                    finished = true;
+            }
+            if (finished && !(diesAfterResult && isCrash(taken)))
+                return taken;
         }
-        throw died();
     }
 
-    /// The output of test `id`: up to its sentinel, or, when the worker died,
-    /// whatever arrived before its output ended (TRP28).
-    private string outputOf(size_t id)
+    /// Whether the last `testFinished` in `events` is a crash, after which
+    /// the worker's end follows.
+    private static bool isCrash(in RunnerEvent[] events)
     {
-        import core.time : seconds;
-
-        synchronized (mutex)
-        {
-            for (;;)
-            {
-                if (auto p = id in finished)
-                {
-                    auto text = *p;
-                    finished.remove(id);
-                    return text;
-                }
-                if (outputEnded)
-                    break;
-                changed.wait(1.seconds);
-            }
-            auto text = pending;
-            pending = null;
-            return text;
-        }
+        foreach_reverse (ref e; events)
+            if (e.kind == EventKind.testFinished)
+                return e.result.thrown.length && e.result.thrown[0].type == "worker crashed";
+        return false;
     }
 
-    /// The `WorkerDied` for a worker whose frames channel ended.
-    private WorkerDied died()
+    private void drainStrays()
     {
-        import core.time : MonoTime, msecs, seconds;
-        import std.conv : text;
-        import std.process : wait;
-
-        const status = wait(pipes.pid);
-        dead = true;
-        string output;
+        RunnerEvent[] batch;
         synchronized (mutex)
         {
-            // A child the test started may hold the output pipe open after
-            // the worker died: stop at end of file or after a second of
-            // silence, whichever is first (TRP28).
-            auto quietSince = MonoTime.currTime;
-            size_t seen = pending.length;
-            while (!outputEnded && MonoTime.currTime - quietSince < 1.seconds)
-            {
-                changed.wait(100.msecs);
-                if (pending.length != seen)
-                {
-                    seen = pending.length;
-                    quietSince = MonoTime.currTime;
-                }
-            }
-            output = pending;
-            pending = null;
+            batch = queue;
+            queue = null;
         }
-        return new WorkerDied(describeEnding(status), output);
+        foreach (ref e; batch)
+            if (e.kind == EventKind.testOutput && e.test == noTest)
+                onStray(e.text ~ "\n");
+    }
+
+    private void publish()
+    {
+        queue ~= session.takeEvents();
+        changed.notifyAll();
     }
 
     private void readFrames()
     {
-        import std.stdio : KeepTerminator;
+        import core.time : MonoTime, msecs, seconds;
+        import std.process : wait;
 
-        try
-            foreach (line; pipes.stdout.byLineCopy(KeepTerminator.no))
-            {
-                string stray;
-                JSONValue frame;
-                bool isFrame;
-                try
-                    isFrame = splitFrame(line, stray, frame);
-                catch (Exception e)
-                {
-                    stray = line;
-                    onStray("protocol error from the test binary: " ~ e.msg ~ "\n");
-                }
-                if (stray.length)
-                    onStray(stray ~ "\n");
-                if (isFrame)
-                    synchronized (mutex)
-                    {
-                        frames ~= frame;
-                        changed.notifyAll();
-                    }
-            }
-        catch (Exception)
+        ubyte[4096] buffer;
+        for (;;)
         {
-            // A closed pipe ends the channel like end of file.
+            const n = readSome(pipes.stdout.fileno, buffer[]);
+            if (n <= 0)
+                break;
+            synchronized (mutex)
+            {
+                session.feedFrames(cast(const(char)[]) buffer[0 .. n]);
+                publish();
+            }
         }
+        const status = wait(pipes.pid);
         synchronized (mutex)
         {
-            framesEnded = true;
-            changed.notifyAll();
+            session.feedEnd(describeEnding(status));
+            publish();
+            // A child the test started may hold the output pipe open after
+            // the worker died: stop at end of file or after a second of
+            // quiet (TRP28).
+            const deadline = MonoTime.currTime + 1.seconds;
+            while (!outputClosed && MonoTime.currTime < deadline)
+                changed.wait(100.msecs);
+            if (!outputClosed)
+            {
+                outputClosed = true;
+                session.feedOutputClosed();
+                publish();
+            }
         }
     }
 
     private void readOutput()
     {
-        import std.conv : to;
-        import std.string : indexOf;
-
-        const marker = frameMark ~ sentinelWord ~ " ";
-        string line;
-        void take(string complete)
+        ubyte[4096] buffer;
+        for (;;)
         {
-            // A sentinel line: `marker id token`. Anything before the mark on
-            // the same line is the test's last, unterminated output.
-            const at = complete.indexOf(marker);
-            if (at >= 0)
-            {
-                import std.algorithm.iteration : splitter;
-                import std.array : array;
-
-                auto words = complete[at + marker.length .. $].splitter(' ').array;
-                if (words.length == 2 && words[1] == hello.token)
-                {
-                    synchronized (mutex)
-                    {
-                        pending ~= complete[0 .. at];
-                        try
-                            finished[words[0].to!size_t] = pending;
-                        catch (Exception)
-                        {
-                        }
-                        pending = null;
-                        changed.notifyAll();
-                    }
-                    return;
-                }
-            }
+            const n = readSome(pipes.stderr.fileno, buffer[]);
+            if (n <= 0)
+                break;
             synchronized (mutex)
             {
-                pending ~= complete ~ "\n";
-                changed.notifyAll();
+                session.feedOutput(cast(const(char)[]) buffer[0 .. n]);
+                publish();
             }
-        }
-
-        try
-        {
-            ubyte[4096] buffer;
-            for (;;)
-            {
-                // `File.rawRead` is `fread`, which blocks until the buffer is
-                // full; a pipe needs what has arrived, so read the descriptor.
-                const n = readSome(pipes.stderr.fileno, buffer[]);
-                if (n <= 0)
-                    break;
-                line ~= cast(const(char)[]) buffer[0 .. n];
-                for (;;)
-                {
-                    const nl = line.indexOf('\n');
-                    if (nl < 0)
-                        break;
-                    take(line[0 .. nl]);
-                    line = line[nl + 1 .. $];
-                }
-            }
-        }
-        catch (Exception)
-        {
         }
         synchronized (mutex)
         {
-            pending ~= line;
-            outputEnded = true;
-            changed.notifyAll();
+            if (!outputClosed)
+            {
+                outputClosed = true;
+                session.feedOutputClosed();
+                publish();
+            }
         }
     }
 }
 
-/// How a process ended, from `std.process.wait`'s status.
-string describeEnding(int status) @safe pure
-{
-    import std.conv : text, to;
-
-    version (Posix)
-        if (status < 0)
-            return text("was killed by signal ", -status, signalName(-status));
-    version (Windows)
-        if (cast(uint) status >= 0xC0000000)
-            return text("ended with exception code 0x", (cast(uint) status).to!string(16));
-    return text("exited with status ", status);
-}
-
-private string signalName(int signal) @safe pure nothrow
-{
-    switch (signal)
-    {
-        case 4:  return " (SIGILL)";
-        case 6:  return " (SIGABRT)";
-        case 7:  return " (SIGBUS)";
-        case 8:  return " (SIGFPE)";
-        case 9:  return " (SIGKILL)";
-        case 11: return " (SIGSEGV)";
-        default: return "";
-    }
-}
-
-@("client.describeEnding")
-@safe pure
-unittest
-{
-    assert(describeEnding(0) == "exited with status 0");
-    version (Posix)
-        assert(describeEnding(-11) == "was killed by signal 11 (SIGSEGV)");
-}
-
-/// The `TestResult` a `result` frame describes (TRP16).
-TestResult decodeResult(Test test, in JSONValue frame)
-{
-    import core.time : nsecs;
-
-    auto result = TestResult(test: test);
-    const status = frame["status"].str;
-    result.succeeded = status == "passed";
-    result.skipped = status == "skipped";
-    result.skipReason = fromJson!string(frame["skip"]);
-    result.duration = fromJson!long(frame["durationNs"]).nsecs;
-    result.thrown = fromJson!(immutable(Thrown)[])(frame["failures"]);
-    result.stackBudgetExceeded = fromJson!bool(frame["stackBudget"]);
-    return result;
-}
-
 /// Reads what has arrived on `fd`, at most `buffer.length` bytes; `0` at end
-/// of file, negative on an error.
+/// of file, negative on an error. `File.rawRead` is `fread`, which blocks
+/// until the buffer is full; a pipe needs what has arrived.
 private ptrdiff_t readSome(int fd, ubyte[] buffer) @trusted
 {
     version (Posix)
@@ -500,9 +326,7 @@ private ptrdiff_t readSome(int fd, ubyte[] buffer) @trusted
         }
     }
     else version (Windows)
-    {
         return _read(fd, buffer.ptr, cast(uint) buffer.length);
-    }
 }
 
 version (Windows)

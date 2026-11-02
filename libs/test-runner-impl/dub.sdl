@@ -15,7 +15,7 @@ dflags "-preview=in" "-preview=dip1000"
 // test binaries run it from a pinned revision (nix/test-runner-pin.json) and
 // a change here reaches only this package's own tests until the pin moves
 // (docs/specs/test-runner/process-model.md).
-dependency "sparkles:test-harness" path="../.."
+dependency "sparkles:test-runner-core" path="../.."
 dependency "sparkles:base" path="../.."
 
 // The reporting UI (result tables, progress lines, OSC-8 links, the live
