@@ -252,8 +252,10 @@ When one of its edge conditions is impossible:
   `Blocked(conditionUnmet)`. That outcome
   never fails the command, and summaries count it apart from other blocks: a
   fallback that was not needed.
-- **Cancelled:** if an impossible prerequisite was cancelled, the node is
-  `Cancelled(notAdmitted)`.
+- **Cancelled:** if an impossible prerequisite was cancelled and none
+  descends from a failure, the node is `Cancelled(notAdmitted)`. A failed
+  prerequisite outranks a cancelled one: when both are present, the failure
+  explains the node, and it is `Blocked` (TDC2 item 4).
 - **Blocked:** otherwise the node is `Blocked` and names its lowest-index
   impossible prerequisite that descends from a failure. A block whose root cause
   is a provisional failure is a provisional block, which does not fail the
