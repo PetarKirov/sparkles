@@ -65,19 +65,25 @@ oracle 15's first scenario passes.
   `dub.json`, and represents every form BGR2 lists.
 - Resolved settings (§2) for every directive BGR2 lists, following dub's
   configuration steps (BGR3).
-- Registry packages from both lockfiles (BGR4) and `pkg-config` for compiles
-  and links (BGR5).
+- Registry packages from both lockfiles, with Nix (BGR4), and `pkg-config`
+  for compiles and links (BGR5). BGR4's fetch without Nix comes with the
+  store, in E3.
 - The hidden-edge report (BGR8), the repository's recipes fixed to declare
   their dependencies, and test-only reaches moved (D15).
-- The dub agreement oracle over every package and request in scope.
+- The dub agreement oracle over every package and request in scope, comparing
+  unpruned settings: pruning, and with it D13's divergent-mode lint, is E2's.
 
-Gate: oracle 1 has zero unaccepted disagreements, and oracle 13 passes.
-`dub test :build-primitives` is green.
+Gate: oracle 1 has zero unaccepted disagreements, and oracle 13 passes: its
+fixture is reported, and so are the cycle-safe packages' source includes of
+the test runner until E1a removes them. `dub test :build-primitives` is
+green.
 
 ## E2: Variants and the action graph
 
 - Variant keys with pruned downward versions, and roles (BGV1–BGV3), with dedup
-  across requests.
+  across requests. D13's divergent mode gains its lint, which rejects a
+  dependency whose sources test a version withheld from it, on the same
+  source lexer.
 - The unittest layout rule and its lint (BGV4–BGV5). The repository's remaining
   violations are fixed first, so the lint gates from its first commit.
 - The action graph and its task-node exposure (BGA1–BGA3, BGA8), without
@@ -93,6 +99,8 @@ scenarios and oracle 14 pass.
   explicit environment, relocation and argument normalization (BGA4–BGA7).
 - Declared keys, manifests and result keys (§5).
 - The shared store with staging, leases, eviction and inspection (§6).
+- Registry sources without Nix: fetched by the lockfile's URL into the store
+  and verified by its hash (BGR4).
 - Typed generators, the test-root module and content-addressed generated
   sources (§7), with the shader compiler's direct invocation mode and its
   specification amended.
@@ -127,7 +135,7 @@ roots on x86_64-linux, with one remote builder of another system type.
 | --------- | ----------- |
 | E0        | in progress |
 | E1a       | not started |
-| E1        | not started |
+| E1        | in progress |
 | E2        | not started |
 | E3        | not started |
 | E4        | not started |
