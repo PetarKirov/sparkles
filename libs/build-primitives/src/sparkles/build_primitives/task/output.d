@@ -6,7 +6,8 @@ recent lines — the diagnostic tail.
 
 The spill file is line-oriented: each line is a one-byte stream tag (`o`
 stdout, `e` stderr; upper case for an unterminated final fragment), a space,
-and the text. $(LREF OutputSpool.replay) reads it back, so a spilled
+and the text, with `\` written `\\`, a line feed `\n`, and a carriage return
+`\r`, so a record is always one line. $(LREF OutputSpool.replay) reads it back, so a spilled
 transcript replays exactly like an in-memory one.
 +/
 module sparkles.build_primitives.task.output;
@@ -106,7 +107,7 @@ struct OutputSpool
                 continue;
             const tag = raw[0];
             auto line = SpooledLine(tag == 'e' || tag == 'E' ? OutputStream.stderr : OutputStream.stdout,
-                raw[2 .. $].idup, tag == 'O' || tag == 'E');
+                unescape(raw[2 .. $]), tag == 'O' || tag == 'E');
             sink(line);
         }
     }
@@ -144,8 +145,38 @@ private:
             tag -= 'a' - 'A';
         char[2] head = [tag, ' '];
         file.rawWrite(head[]);
-        file.rawWrite(text);
+        // Escaped, so one record stays one line: `\` → `\\`, LF → `\n`,
+        // CR → `\r`.
+        size_t from;
+        foreach (i, c; text)
+        {
+            const escape = c == '\\' ? `\\` : c == '\n' ? `\n` : c == '\r' ? `\r` : null;
+            if (escape is null)
+                continue;
+            file.rawWrite(text[from .. i]);
+            file.rawWrite(escape);
+            from = i + 1;
+        }
+        file.rawWrite(text[from .. $]);
         file.rawWrite("\n");
+    }
+
+    // The inverse of `writeSpilled`'s escaping.
+    static string unescape(scope const(char)[] text) @safe pure nothrow
+    {
+        auto result = new char[](0);
+        result.reserve(text.length);
+        for (size_t i; i < text.length; ++i)
+        {
+            if (text[i] != '\\' || i + 1 == text.length)
+            {
+                result ~= text[i];
+                continue;
+            }
+            const next = text[++i];
+            result ~= next == 'n' ? '\n' : next == 'r' ? '\r' : next;
+        }
+        return (() @trusted => cast(string) result)();
     }
 }
 
@@ -199,4 +230,28 @@ unittest
         SpooledLine(OutputStream.stdout, "third"), SpooledLine(OutputStream.stdout, "tail", true)]);
     spool.flush();
     assert(readText(path) == "o first\ne second\no third\nO tail\n");
+}
+
+@("build_primitives.task.output.OutputSpool.spillEscapesLineBreaks")
+@system
+unittest
+{
+    import std.file : readText;
+    import std.path : buildPath;
+    import sparkles.test_utils.tmpfs : TmpFS;
+
+    // A line with an embedded CR, LF, or backslash must replay as itself,
+    // not as several lines.
+    auto tmp = TmpFS.create();
+    const path = tmp.dir.buildPath("output.log");
+    auto spool = OutputSpool(1, path);
+    const tricky = ["progress\r50%", "two\nlines", `C:\path\n`, "", `\`];
+    foreach (line; tricky)
+        spool.append(OutputStream.stdout, line);
+    assert(spool.spilled);
+
+    string[] back;
+    spool.replay((const ref SpooledLine l) { back ~= l.text; });
+    assert(back == tricky);
+    assert(readText(path) == "o progress\\r50%\no two\\nlines\no C:\\\\path\\\\n\no \no \\\\\n");
 }
