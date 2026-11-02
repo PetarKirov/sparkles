@@ -314,6 +314,23 @@ host and the workers on the device, carrying the protocol over `adb shell`.
 **Leaning:** (A) until a device-only failure needs the runner's isolation;
 (C) reuses the protocol unchanged, because it needs only standard streams.
 
+## O17 — Timeouts for a hung test
+
+**Where it bites:** [process-model.md](./process-model.md) leaves timeouts out
+of scope, so a test that never returns holds its worker, and the run, forever.
+
+**Options:** (A) none, as now; (B) Zig's two clocks, as its build runner
+drives `--listen` test binaries (Zig `master` at 8e8cf3835a96,
+`lib/compiler/Maker/Step/Run.zig`): a per-test
+deadline that starts at the worker's `started` frame, so a loaded host's
+scheduling delay before the test counts against nothing, and a longer
+deadline for any reply between tests. A deadline that passes is TRP26's
+crash: kill the worker, fail the test, start a new worker.
+
+**Leaning:** (B). Both clocks hang off the frames TRP16 already has, so the
+protocol needs no new frame, only the runner's `--test-timeout` option and a
+`timedOut` cause in the result.
+
 ## Validation cross-references
 
 Findings from the wired-bench validation that are covered by shipped work or
