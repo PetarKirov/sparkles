@@ -41,51 +41,31 @@ struct Invalidator
 }
 
 /**
-The declarative list of repository-wide inputs ([SPEC TDS6]): the root
-recipe and lockfiles, the compiler and package builders, and the `ci` modules
-that discover packages and construct their tasks. Anything else outside every
-package selects nothing. The list grows only by editing it.
+The rule in `rules` that `path` hits, or null. The consumer owns the list
+([SPEC TDS6]): it is declarative and grows only by editing it — `ci`'s is
+`repository_invalidators.repositoryInvalidators`.
 */
-immutable Invalidator[] repositoryInvalidators = [
-    Invalidator("dub.sdl"),
-    Invalidator("dub.selections.json"),
-    Invalidator("nix/dub-lock.json"),
-    Invalidator("nix/d-toolchain.nix"),
-    Invalidator("nix/packages/dub-builder/"),
-    Invalidator("apps/ci/src/task/"),
-    Invalidator("apps/ci/src/workspace/"),
-    Invalidator("apps/ci/src/commands/"),
-];
-
-/// The invalidator `path` hits, or null.
-const(Invalidator)* invalidatorFor(scope const(char)[] path) @safe pure nothrow @nogc
+const(Invalidator)* invalidatorFor(return scope const(Invalidator)[] rules, scope const(char)[] path)
+    @safe pure nothrow @nogc
 {
-    foreach (ref rule; repositoryInvalidators)
+    foreach (ref rule; rules)
         if (rule.matches(path))
             return &rule;
     return null;
 }
 
 ///
-@("build_primitives.workspace.select.repositoryInvalidators.declarative")
+@("build_primitives.workspace.select.invalidatorFor.filesAndPrefixes")
 @safe pure nothrow @nogc
 unittest
 {
-    assert(invalidatorFor("dub.sdl"));
-    assert(invalidatorFor("dub.selections.json"));
-    assert(invalidatorFor("nix/dub-lock.json"));
-    assert(invalidatorFor("nix/d-toolchain.nix"));
-    assert(invalidatorFor("nix/packages/dub-builder/default.nix"));
-    assert(invalidatorFor("apps/ci/src/workspace/select.d"));
-    assert(invalidatorFor("apps/ci/src/task/graph.d"));
-
-    // A sub-package's own recipe, other top-level files, and the rest of
-    // `ci` are ordinary paths.
-    assert(!invalidatorFor("libs/base/dub.sdl"));
-    assert(!invalidatorFor("README.md"));
-    assert(!invalidatorFor("flake.nix"));
-    assert(!invalidatorFor("nix/packages/dub-builderx"));
-    assert(!invalidatorFor("apps/ci/src/app.d"));
+    static immutable Invalidator[2] rules = [Invalidator("dub.sdl"), Invalidator("nix/packages/")];
+    assert(invalidatorFor(rules[], "dub.sdl") is &rules[0]);
+    assert(invalidatorFor(rules[], "nix/packages/dub-builder/default.nix") is &rules[1]);
+    // A file rule is exact; a prefix rule stops at its `/`.
+    assert(!invalidatorFor(rules[], "libs/base/dub.sdl"));
+    assert(!invalidatorFor(rules[], "nix/packagesx"));
+    assert(!invalidatorFor(null, "dub.sdl"));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -118,6 +98,9 @@ struct SelectionRequest
     bool since;
     const(ChangedPath)[] changes; ///
     const(BasePackage)[] basePackages; ///
+    /// Paths that select every package when changed, checked before
+    /// ownership ([SPEC TDS6]).
+    const(Invalidator)[] invalidators;
     bool dependencies; /// `--dependencies`
     bool dependents;   /// `--dependents`
 }
@@ -254,7 +237,7 @@ PlanExpected!(Selection, SelectionError) selectPackages(const ref PackageGraph g
     if (request.since)
         foreach (ref change; request.changes)
         {
-            if (invalidatorFor(change.path))
+            if (invalidatorFor(request.invalidators, change.path))
             {
                 foreach (i; 0 .. count)
                     seed(i, ReasonKind.invalidator, change.path);
@@ -524,6 +507,8 @@ struct FocusOptions
     string sinceRef;      /// its value; null resolves the upstream, else `origin/main`
     bool dependencies;    /// `--dependencies`
     bool dependents;      /// `--dependents`
+    /// The consumer's repository-wide inputs ([SPEC TDS6]).
+    const(Invalidator)[] invalidators;
 }
 
 /// A discovered graph and the selection made from it.
@@ -562,7 +547,7 @@ PlanExpected!(PackagePlan, SelectionError) planPackages(string repoRoot, RecipeR
         plan.since = move(since.value);
     }
     const request = SelectionRequest(options.from, options.since, plan.since.changes,
-        plan.since.basePackages, options.dependencies, options.dependents);
+        plan.since.basePackages, options.invalidators, options.dependencies, options.dependents);
     auto selection = selectPackages(plan.graph, request, hostTokens);
     if (selection.hasError)
         return planErr!PackagePlan(selection.error);
@@ -580,6 +565,11 @@ version (unittest)
     import sparkles.build_primitives.workspace.package_graph : buildPackageGraph, recipe;
 
     private enum string[] linux = ["linux", "posix"];
+
+    // A consumer's list, as `ci` declares its own.
+    private static immutable Invalidator[2] fixtureInvalidatorRules = [
+        Invalidator("dub.sdl"), Invalidator("dub.selections.json")];
+    private const(Invalidator)[] fixtureInvalidators() @safe pure nothrow @nogc => fixtureInvalidatorRules[];
 
     // base <- wsi (osx-only) <- ui <- ui-tui <- hue; base <- fuzzy; and
     // text-wasm, nested in base's directory, depends on it.
@@ -717,9 +707,20 @@ unittest
         ~ "  sparkles:ui: changed=libs/old-ui/src/x.d\n"
         ~ "edges (0):\n");
 
-    // A repository-wide input selects everything.
-    const all = plan(graph, SelectionRequest(since: true, changes: [ChangedPath("dub.selections.json")]));
+    // A repository-wide input selects everything; without the consumer's
+    // list it is an ordinary path outside every package.
+    const all = plan(graph, SelectionRequest(since: true, changes: [ChangedPath("dub.selections.json")],
+        invalidators: fixtureInvalidators));
     assert(all.startsWith("packages (7):\n  sparkles:base: invalidator=dub.selections.json\n"));
+    assert(plan(graph, SelectionRequest(since: true, changes: [ChangedPath("dub.selections.json")]))
+        .startsWith("empty-selection"));
+
+    // Invalidators are checked before ownership: a rule inside a package
+    // directory selects every package, not just its owner.
+    static immutable Invalidator[1] inside = [Invalidator("libs/base/src/core.d")];
+    const owned = plan(graph, SelectionRequest(since: true, changes: [ChangedPath("libs/base/src/core.d")],
+        invalidators: inside[]));
+    assert(owned.startsWith("packages (7):\n  sparkles:base: invalidator=libs/base/src/core.d\n"), owned);
 }
 
 @("build_primitives.workspace.select.selectPackages.closuresAreAFixedPointUnion")
@@ -851,7 +852,7 @@ unittest
     // that invalidator, ownership alone decides.
     auto graph = discoverPackages(repo.dir, RecipeRole.test, linux).value;
     auto request = SelectionRequest(since: true, changes: since.value.changes,
-        basePackages: since.value.basePackages);
+        basePackages: since.value.basePackages, invalidators: fixtureInvalidators);
     auto all = selectPackages(graph, request, linux).value;
     assert(all.packages.length == 4);
     assert(all.packages[0].reasons[$ - 1] == SelectionReason(ReasonKind.invalidator, "dub.sdl"));
