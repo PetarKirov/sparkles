@@ -560,7 +560,7 @@ unittest
         ~ "[b stderr] b1\n"
         ~ "b: failed: exit-status 4\n"
         ~ "c: succeeded\n"
-        ~ "summary: 3 tasks: 2 succeeded, 1 failed, 0 degraded, 0 skipped, 0 blocked, 0 cancelled\n"
+        ~ "summary: 3 tasks: 2 succeeded, 1 failed, 0 degraded, 0 skipped, 0 blocked, 0 unneeded, 0 cancelled\n"
         ~ "failed: b\n"
         ~ "exit: 1\n", w[]);
 }
