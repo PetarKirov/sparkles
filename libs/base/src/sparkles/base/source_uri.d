@@ -26,7 +26,7 @@ string resolveSourcePath(
 ) @safe pure
 {
     // Already absolute — return as-is
-    if (path.length > 0 && (path[0] == '/' || path[0] == '\\' || (path.length > 1 && path[1] == ':')))
+    if (isRootedSourcePath(path))
         return path;
 
     // Derive compiler working directory: strip relative suffix from full path
@@ -47,14 +47,48 @@ string resolveSourcePath(
 ///
 /// A relative path, as a relocated build records it, is completed with the
 /// process's working directory, which that build's test actions set to the
-/// repository root. An absolute path is returned unchanged.
+/// repository root. A rooted path (see `isRootedSourcePath`) is returned
+/// unchanged.
 string absoluteSourcePath(string path) @safe pure nothrow
 {
-    import std.path : isAbsolute;
-
-    if (path.isAbsolute)
+    if (isRootedSourcePath(path))
         return path;
     return (workingDirectory ~ "/" ~ withoutDotPrefix(path)).idup;
+}
+
+/// Whether `path` is rooted: it starts with `/` or `\`, or names a drive
+/// (`D:`). Judged the same way on every platform, so a location recorded in
+/// either form is completed, or left alone, alike everywhere.
+private bool isRootedSourcePath(scope const(char)[] path) @safe pure nothrow @nogc
+    => path.length > 0
+        && (path[0] == '/' || path[0] == '\\' || (path.length > 1 && path[1] == ':'));
+
+/// `path` as a `file` URI's path (RFC 8089): `/` separators, and a drive
+/// path rooted as `/D:/…`.
+string fileUriPath(string path) @safe pure nothrow
+{
+    string result = path.length > 1 && path[1] == ':' ? "/" : "";
+    foreach (c; path)
+        result ~= c == '\\' ? '/' : c;
+    return result;
+}
+
+/// Writes `path` as `fileUriPath` would return it, without allocating.
+private void putFileUriPath(Writer)(ref Writer w, scope const(char)[] path)
+{
+    import std.range.primitives : put;
+
+    if (path.length > 1 && path[1] == ':')
+        put(w, "/");
+    size_t start;
+    foreach (i, c; path)
+        if (c == '\\')
+        {
+            put(w, path[start .. i]);
+            put(w, "/");
+            start = i + 1;
+        }
+    put(w, path[start .. $]);
 }
 
 /// The process's working directory, read once per thread.
@@ -219,19 +253,19 @@ template hasWriteSourceUri(Hook, Writer)
 
 /// Writes the URI `editorAlias`'s scheme gives a compile-time location.
 ///
-/// An absolute `path` gives a URI computed at compile time. A relative one,
-/// as a relocated build records it, is completed at run time with the
-/// working directory (see `absoluteSourcePath`), around the scheme's
-/// compile-time prefix and suffix.
+/// A rooted `path` gives a URI computed at compile time. A relative one, as a
+/// relocated build records it, is completed at run time with the working
+/// directory (see `absoluteSourcePath`), around the scheme's compile-time
+/// prefix and suffix. Either way the path takes the `file` URI form
+/// (`fileUriPath`).
 private void writeLocationUri(string editorAlias, string path, size_t line, size_t col, Writer)(
     ref Writer w)
 {
-    import std.path : isAbsolute;
     import std.range.primitives : put;
 
-    static if (path.isAbsolute)
+    static if (isRootedSourcePath(path))
     {
-        enum uri = findScheme(editorAlias).uriFun(path, line, col);  // CTFE
+        enum uri = findScheme(editorAlias).uriFun(fileUriPath(path), line, col);  // CTFE
         put(w, uri);
     }
     else
@@ -244,11 +278,11 @@ private void writeLocationUri(string editorAlias, string path, size_t line, size
         static assert(at >= 0, "a URI scheme must contain the path");
         enum prefix = shape[0 .. at];
         enum suffix = shape[at + marker.length .. $];
-        enum relative = withoutDotPrefix(path);
+        enum relative = fileUriPath(withoutDotPrefix(path));
         put(w, prefix);
         if (!__ctfe)
         {
-            put(w, workingDirectory);
+            putFileUriPath(w, workingDirectory);
             put(w, "/");
         }
         put(w, relative);
@@ -328,7 +362,7 @@ Unknown and terminal editors use the portable `file://` fallback.
 string editorSourceUri(string path, size_t line = 0, size_t col = 0) @safe
 {
     const absolute = absoluteSourcePath(resolveSourcePath(path));
-    return editorSourceUriFor(absolute, line, col, detectedEditorName());
+    return editorSourceUriFor(fileUriPath(absolute), line, col, detectedEditorName());
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -414,17 +448,16 @@ unittest
 @safe pure nothrow
 unittest
 {
-    import std.path : isAbsolute;
-
     enum resolved = resolveSourcePath(
         "libs/base/src/sparkles/base/source_uri.d");
     // Must end with the relative path
     assert(resolved.length > 40
         && resolved[$ - 40 .. $] == "libs/base/src/sparkles/base/source_uri.d");
-    // Absolute once completed — a drive-letter root on Windows, where dub
-    // hands the compiler `D:\a\...` full paths, a leading slash elsewhere.
+    // Rooted once completed, in the form the build recorded: a drive letter
+    // where dub hands the compiler `D:\a\...` full paths, a leading slash
+    // elsewhere, a cross build for Windows included.
     const absolute = absoluteSourcePath(resolved);
-    assert(absolute.isAbsolute, absolute);
+    assert(isRootedSourcePath(absolute), absolute);
     assert(absolute[$ - 40 .. $] == "libs/base/src/sparkles/base/source_uri.d");
 }
 
@@ -461,8 +494,7 @@ unittest
 @safe pure
 unittest
 {
-    import std.algorithm.searching : startsWith;
-    import std.path : isAbsolute;
+    import std.algorithm.searching : canFind, startsWith;
     import sparkles.base.buffer : SharedBuffer;
 
     static struct Probe {}
@@ -470,9 +502,36 @@ unittest
     SharedBuffer!(char, 512) w;
     FileUriHook.writeSourceUri!(resolveSourcePath(loc[0]), loc[1], loc[2])(w);
     const uri = w[].idup;
-    assert(uri.startsWith("file://"), uri);
-    const path = uri["file://".length .. $];
-    assert(path.isAbsolute, uri);
+    // RFC 8089: an absolute path, `/D:/…` for a drive path
+    assert(uri.startsWith("file:///"), uri);
+    assert(!uri.canFind('\\'), uri);
+}
+
+/// fileUriPath gives a path the `file` URI form (RFC 8089).
+@("sourceUri.fileUriPath.forms")
+@safe pure nothrow
+unittest
+{
+    assert(fileUriPath("/home/user/main.d") == "/home/user/main.d");
+    assert(fileUriPath(`D:\a\project\main.d`) == "/D:/a/project/main.d");
+    assert(fileUriPath("D:/a/main.d") == "/D:/a/main.d");
+    assert(fileUriPath(`libs\base\x.d`) == "libs/base/x.d");
+}
+
+/// A drive path is a rooted location on every platform, and takes the
+/// `file:///D:/…` form.
+@("sourceUri.hooks.drivePath")
+@safe pure
+unittest
+{
+    import sparkles.base.buffer : checkWriter;
+
+    checkWriter!((ref w) => FileUriHook.writeSourceUri!(
+        `D:\a\project\main.d`, size_t(42), size_t(5))(w))(
+        "file:///D:/a/project/main.d#L42");
+    checkWriter!((ref w) => SchemeHook!"code".writeSourceUri!(
+        `D:\a\project\main.d`, size_t(10), size_t(3))(w))(
+        "vscode://file/D:/a/project/main.d:10:3");
 }
 
 /// FileUriHook produces file:// URIs.
