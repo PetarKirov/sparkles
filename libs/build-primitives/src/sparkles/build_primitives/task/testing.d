@@ -35,6 +35,7 @@ struct Script
 {
     Duration duration;
     TaskOutcome outcome = TaskOutcome(Succeeded());
+    /// Output lines, on stdout; a leading `!` sends the rest to stderr.
     string[] lines;
     /// Times to yield to the back of the ready queue after sleeping:
     /// reorders completions that land in one turn.
@@ -65,7 +66,10 @@ struct FakeDriver
         scope (exit)
             weight -= ctx.node.resources.jobsWeight;
         foreach (line; script.lines)
-            ctx.output(OutputStream.stdout, line);
+            if (line.length && line[0] == '!')
+                ctx.output(OutputStream.stderr, line[1 .. $]);
+            else
+                ctx.output(OutputStream.stdout, line);
         cast(void) clock.sleep(script.duration);
         foreach (_; 0 .. script.yields)
         {

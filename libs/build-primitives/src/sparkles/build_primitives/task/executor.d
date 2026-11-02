@@ -750,6 +750,46 @@ unittest
     }
 }
 
+@("build_primitives.task.executor.failFast.interruptedFailureIsACancellation")
+@system
+unittest
+{
+    // `b` is interrupted by `a`'s failure but reports `Failed` anyway, as a
+    // child killed by the teardown does: it is recorded as interrupted, and
+    // `a` alone is the cause (TDC3).
+    const g = graphOf([tnode("a"), tnode("b")], null);
+    auto run = runFake(g, ["a": Script(1.msecs, TaskOutcome(Failed(FailureReason.exitStatus, 1))),
+        "b": Script(10.msecs, TaskOutcome(Failed(FailureReason.signal, 15)), ignoresCancel: true)],
+        ExecutorOptions(capacity: 2, failFast: true));
+    assert(run.result.outcomes[g.indexOf(tid("b")).value] == TaskOutcome(Cancelled(CancelReason.interrupted)));
+    assert(g[run.result.primaryFailure].id.text == "a");
+}
+
+@("build_primitives.task.executor.run.outputSequenceNumbersAreMonotonic")
+@system
+unittest
+{
+    // TDM12: per task, `streamSeq` counts each stream from 0 and `chunkSeq`
+    // counts both streams together from 0, whatever interleaves between.
+    const g = graphOf([tnode("a"), tnode("b")], null);
+    auto run = runFake(g, ["a": Script(1.msecs, lines: ["a0", "a1", "a2"]),
+        "b": Script(1.msecs, lines: ["b0", "!b1", "b2", "!b3"])], ExecutorOptions(capacity: 2));
+    ulong[2] nextChunk;
+    ulong[2][2] nextStream;
+    size_t seen;
+    foreach (ref e; run.events)
+        e.payload.match!(
+            (TaskOutput o) {
+                assert(o.chunkSeq == nextChunk[o.task.value]++);
+                assert(o.streamSeq == nextStream[o.task.value][o.stream]++);
+                ++seen;
+            },
+            (_) {});
+    assert(seen == 7);
+    assert(nextChunk == [3, 4]);
+    assert(nextStream[1] == [2, 2], "b's two streams count separately");
+}
+
 @("build_primitives.task.executor.run.outcomesIndependentOfCompletionOrder")
 @system
 unittest
