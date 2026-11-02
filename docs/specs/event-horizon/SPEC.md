@@ -2412,11 +2412,19 @@ Windows process parity is native Win32, not a POSIX emulation (module
   a killed child's status is `ExitStatus(false, 1)`;
 - sampling uses `QueryInformationJobObject`: basic-and-I/O accounting
   (cumulative user/kernel CPU over every member, exited ones included, and the
-  active-process count) and the extended limit information (the job's peak
-  commit, reported as `peakCgroupMemoryBytes`). CPU is tick-sampled and so a
-  `lowerBound`; per-process resident sizes are not read. If Job Object
-  accounting is unavailable, the sample has `sampled == false`; wall time
-  remains valid.
+  active-process count), the extended limit information, and the job's
+  process-id list, each member read with `K32GetProcessMemoryInfo`. The two
+  memory measures stay apart: `peakCgroupMemoryBytes` is **commit** — the job's
+  own `PeakJobMemoryUsed`, `exact`, the container-level peak like a cgroup's
+  `memory.peak`; `peakRssBytes` is **working set**, the RSS-like measure, over
+  the **whole tree** — the peak over samples of the members' summed working
+  sets, raised to the largest single member's kernel-kept `PeakWorkingSetSize`
+  (the root's through its own handle, valid after its exit until the reap).
+  Both terms are lower bounds of the tree's true summed peak, so its quality is
+  `lowerBound` (source `rusage`). A member is opened by id and counted only when
+  `IsProcessInJob` confirms it, so a recycled id never is. CPU is tick-sampled
+  and so a `lowerBound`. If Job Object accounting is unavailable, the sample has
+  `sampled == false`; wall time remains valid.
 
 IOCP timers follow the same bridge: a software timer list whose earliest
 deadline (and the caller's wait deadline) arms one

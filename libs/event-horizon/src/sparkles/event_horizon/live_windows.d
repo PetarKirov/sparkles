@@ -1034,6 +1034,8 @@ version (unittest)
             the latter survives `CTRL_BREAK_EVENT`);)
         $(LI `grandchild MS` — starts `sleep MS` sharing its stdio, prints
             `ready`, exits 0;)
+        $(LI `alloc MB MS` — commits and touches MB MiB, prints `ready`, sleeps;
+            `alloc-tree MB MS` does the same beside a grandchild `alloc MB MS`;)
         $(LI `chatty N` — N lines to each stream, interleaved;)
         $(LI `has-handle H` — `yes` if handle value H is open in the child.))
     */
@@ -1068,6 +1070,34 @@ version (unittest)
     }
 
     private extern (Windows) BOOL ignoreConsoleEvent(uint) nothrow @nogc => TRUE;
+
+    /// Starts `[self, "--eh-child", script…]` sharing this child's stdio
+    /// wholesale: the descendant holds the supervised pipes open after its
+    /// parent exits.
+    private bool spawnSelf(string script) @trusted nothrow
+    {
+        wchar[] line;
+        cast(void) toWide("\"" ~ selfPath() ~ "\" --eh-child " ~ script, line, true);
+        STARTUPINFOW si;
+        si.cb = STARTUPINFOW.sizeof;
+        PROCESS_INFORMATION pi;
+        if (!CreateProcessW(null, line.ptr, null, null, TRUE, 0, null, null, &si, &pi))
+            return false;
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+        return true;
+    }
+
+    /// Commits and touches `mb` MiB, so it is all in the working set.
+    private void touchMegabytes(int mb) @trusted nothrow @nogc
+    {
+        const size = cast(size_t) mb << 20;
+        auto p = cast(ubyte*) VirtualAlloc(null, size, 0x3000, 4); // COMMIT|RESERVE, RW
+        if (p is null)
+            ExitProcess(3);
+        for (size_t at = 0; at < size; at += 4096)
+            p[at] = 1;
+    }
 
     private int runChild(scope const(wchar[])[] args) @trusted nothrow
     {
@@ -1118,19 +1148,21 @@ version (unittest)
             Sleep(number(1));
             return 0;
         case "grandchild":
-            auto line = ("\"" ~ selfPath() ~ "\" --eh-child sleep " ~ fromWide(args[1]));
-            wchar[] wline;
-            cast(void) toWide(line, wline, true);
-            STARTUPINFOW si;
-            si.cb = STARTUPINFOW.sizeof;
-            PROCESS_INFORMATION pi;
-            // Inherits this child's stdio wholesale: the descendant holds
-            // the supervised pipes open after its parent exits.
-            if (!CreateProcessW(null, wline.ptr, null, null, TRUE, 0, null, null, &si, &pi))
+            if (!spawnSelf("sleep " ~ fromWide(args[1])))
                 return 2;
-            CloseHandle(pi.hThread);
-            CloseHandle(pi.hProcess);
             childWrite(OUT, "ready\n");
+            return 0;
+        case "alloc":
+            touchMegabytes(number(1));
+            childWrite(OUT, "ready\n");
+            Sleep(number(2));
+            return 0;
+        case "alloc-tree":
+            if (!spawnSelf("alloc " ~ fromWide(args[1]) ~ " " ~ fromWide(args[2])))
+                return 2;
+            touchMegabytes(number(1));
+            childWrite(OUT, "ready\n");
+            Sleep(number(2));
             return 0;
         case "chatty":
             foreach (i; 0 .. number(1))
@@ -1181,6 +1213,7 @@ version (unittest)
         uint GetEnvironmentVariableW(const(wchar)* name, wchar* buffer, uint size);
         uint GetCurrentDirectoryW(uint size, wchar* buffer);
         void Sleep(uint ms);
+        void* VirtualAlloc(void* address, size_t size, uint type, uint protect);
         void ExitProcess(uint code);
         BOOL SetConsoleCtrlHandler(BOOL function(uint) nothrow @nogc handler, BOOL add);
         BOOL GetHandleInformation(HANDLE, uint*);
