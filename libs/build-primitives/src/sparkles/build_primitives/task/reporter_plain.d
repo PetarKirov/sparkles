@@ -86,6 +86,9 @@ struct PlainReporter(Writer)
             started = true;
             firstAt = e.at;
             writeMasks();
+            // Interlaced lines stream until `finish`: fence them all at once.
+            if (options.interlaced)
+                options.ci.beginUntrusted(*writer);
         }
         lastAt = e.at;
         e.payload.match!(
@@ -121,6 +124,8 @@ struct PlainReporter(Writer)
         finished = true;
         if (options.interlaced)
         {
+            if (started)
+                options.ci.endUntrusted(*writer);
             if (options.ci.groups)
                 options.ci.openGroup(*writer, "results", collapsed: false);
             blocks.releaseAll(&writeTerminal);
@@ -153,16 +158,23 @@ private:
     void writeLine(TaskIndex t, OutputStream stream, scope const(char)[] text)
     {
         writeLinePrefix(*writer, *graph, t, stream);
-        put(*writer, text);
+        options.ci.writeUntrusted(*writer, text);
         put(*writer, '\n');
     }
 
+    // A block's lines, fenced from the provider's command parser.
     void writeBlock(TaskIndex t)
     {
-        const grouped = options.ci.groups && blocks.spool(t).lines > 0;
+        const hasLines = blocks.spool(t).lines > 0;
+        const grouped = options.ci.groups && hasLines;
         if (grouped)
             options.ci.openGroup(*writer, blockTitle(t));
-        blocks.spool(t).replay((const ref SpooledLine l) { writeLine(t, l.stream, l.text); });
+        if (hasLines)
+        {
+            options.ci.beginUntrusted(*writer);
+            blocks.spool(t).replay((const ref SpooledLine l) { writeLine(t, l.stream, l.text); });
+            options.ci.endUntrusted(*writer);
+        }
         if (grouped)
             options.ci.closeGroup(*writer);
         writeTerminal(t);
@@ -203,8 +215,10 @@ private:
             put(*writer, "failure ");
             put(*writer, blockTitle(t));
             put(*writer, '\n');
+            options.ci.beginUntrusted(*writer);
             foreach (ref line; blocks.spool(t).tail)
                 writeLine(t, line.stream, line.text);
+            options.ci.endUntrusted(*writer);
         }
         if (any && options.ci.groups)
             options.ci.closeGroup(*writer);
@@ -432,25 +446,36 @@ unittest
     auto run = runFake(g, mixedScripts([1, 2, 3, 4, 5]), ExecutorOptions(capacity: 3));
     CiLog github;
     github.provider = CiProvider.githubActions;
+    github.stopToken = "feedfacefeedfacefeedfacefeedface";
     const text = transcript(g, run.events, PlainOptions(timings: false, ci: github));
+    enum stop = "::stop-commands::feedfacefeedfacefeedfacefeedface\n";
+    enum resume = "::feedfacefeedfacefeedfacefeedface::\n";
     assert(text ==
         "::group::a: succeeded\n"
+        ~ stop
         ~ "[a stdout] a1\n"
         ~ "[a stdout] a2\n"
+        ~ resume
         ~ "::endgroup::\n"
         ~ "a: succeeded\n"
         ~ "::group::b: succeeded\n"
+        ~ stop
         ~ "[b stdout] b1\n"
+        ~ resume
         ~ "::endgroup::\n"
         ~ "b: succeeded\n"
         ~ "::group::c: failed: exit-status 3\n"
+        ~ stop
         ~ "[c stdout] oops\n"
+        ~ resume
         ~ "::endgroup::\n"
         ~ "c: failed: exit-status 3\n"
         ~ "d: blocked: prerequisite-failed c\n"
         ~ "e: skipped: platform\n"
         ~ "::group::f: degraded: no-coverage\n"
+        ~ stop
         ~ "[f stdout] f1\n"
+        ~ resume
         ~ "::endgroup::\n"
         ~ "f: degraded: no-coverage\n"
         ~ "summary: 6 tasks: 2 succeeded, 1 failed, 1 degraded, 1 skipped, 1 blocked, 0 unneeded, 0 cancelled\n"
@@ -460,6 +485,49 @@ unittest
     // Without a provider, the transcript is the plain one: no group syntax.
     const plain = transcript(g, run.events, PlainOptions(timings: false));
     assert(!plain.canFind("::"));
+}
+
+@("build_primitives.task.reporter_plain.ci.childOutputIsNeverACommand")
+@system
+unittest
+{
+    import sparkles.ci_provider : CiProvider;
+
+    // A child prints workflow commands of both providers; the reporter
+    // must not let the provider read any of them (TDO7).
+    const g = graphOf([tnode("a")], null);
+    auto run = runFake(g, ["a": Script(1.msecs, TaskOutcome(Failed(FailureReason.exitStatus, 1)),
+        ["::add-mask::x", "::error::boom", "##vso[task.complete result=Failed]"])],
+        ExecutorOptions(capacity: 1));
+    enum token = "0123456789abcdef0123456789abcdef";
+    enum fenced = "::stop-commands::" ~ token ~ "\n"
+        ~ "[a stdout] ::add-mask::x\n"
+        ~ "[a stdout] ::error::boom\n"
+        ~ "[a stdout] ##vso[task.complete result=Failed]\n"
+        ~ "::" ~ token ~ "::\n";
+
+    CiLog github;
+    github.provider = CiProvider.githubActions;
+    github.stopToken = token;
+    foreach (interlaced; [false, true])
+    {
+        const text = transcript(g, run.events, PlainOptions(interlaced: interlaced, timings: false, ci: github));
+        assert(text.canFind(fenced), text);
+        // Outside the fences, only the reporter's own commands remain.
+        foreach (line; text.split('\n'))
+            if (line.startsWith("::"))
+                assert(line.startsWith("::group::") || line.startsWith("::endgroup::")
+                    || line.startsWith("::stop-commands::") || line == "::" ~ token ~ "::", line);
+    }
+
+    CiLog azure;
+    azure.provider = CiProvider.azurePipelines;
+    foreach (interlaced; [false, true])
+    {
+        const text = transcript(g, run.events, PlainOptions(interlaced: interlaced, timings: false, ci: azure));
+        assert(!text.canFind("##vso["), "an Azure command is broken in the child's line");
+        assert(text.canFind("[a stdout] #​#vso[task.complete result=Failed]\n"));
+    }
 }
 
 @("build_primitives.task.reporter_plain.ci.interlacedGroupsOnlyTheFinalSections")
