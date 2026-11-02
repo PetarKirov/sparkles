@@ -637,17 +637,19 @@ delivered P1. A requirement is `partial` where its scenario of §10 has been
 run by hand but is not yet an automated test, or where a platform is
 unverified.
 
-| ID         | Status     | Evidence                                                                                                   |
-| ---------- | ---------- | ---------------------------------------------------------------------------------------------------------- |
-| TRP1–TRP3  | partial    | A scan of every `dub.sdl` and of the harness's imports finds no edge; not yet a `ci` check                 |
-| TRP4       | verified   | `dub test :test-harness` runs its 154 tests through `sparkles.test_runner.self_host`                       |
-| TRP5       | partial    | `sparkles.test_runner.entry.installHarnessHandlers`; the macOS handler unverified                          |
-| TRP6–TRP28 | partial    | `sparkles.test_runner.worker`, `sparkles.test_runner.client`; mismatch, output and crash scenarios by hand |
-| TRL1–TRL5  | partial    | `sparkles.test_runner.entry.harnessMain`; `SPARKLES_TEST_RUNNER=/nonexistent` scenario by hand             |
-| TRS1–TRS4  | partial    | `sparkles.test_runner.pool.startTestWorkers`; `-t 1` and `-t N` legs of `ci --test`                        |
-| TRS5       | partial    | `sparkles.test_runner.pool.retire`; `ci --test` coverage listings; the covered-line comparison not run     |
-| TRX1–TRX4  | partial    | `sparkles.test_runner.driver.DriverOptions`; the `PATH`-without-dub scenario not run                       |
-| TRF1–TRF4  | partial    | `sparkles.test_runner.fallback.runFallback`; `--no-runner` scenarios by hand                               |
-| TRW1–TRW4  | unverified | The Windows code paths type-check for `x86_64-windows-msvc`; the Windows leg has not run them              |
-| TRM1–TRM8  | unverified | —                                                                                                          |
-| TRN1–TRN3  | partial    | `nix/packages/test-runner.nix` builds the bootstrap; no revision is pinned yet                             |
+| ID         | Status     | Evidence                                                                                                     |
+| ---------- | ---------- | ------------------------------------------------------------------------------------------------------------ |
+| TRP1–TRP3  | partial    | A scan of every `dub.sdl` and of the harness's imports finds no edge; not yet a `ci` check                   |
+| TRP4       | verified   | `dub test :test-harness` runs its 154 tests through `sparkles.test_runner.self_host`                         |
+| TRP5       | partial    | `sparkles.test_runner.entry.installHarnessHandlers`; the macOS handler unverified                            |
+| TRP6–TRP28 | partial    | `sparkles.test_runner.worker`, `sparkles.test_runner.client`; mismatch, output and crash scenarios by hand   |
+| TRL1–TRL5  | partial    | `sparkles.test_runner.entry.harnessMain`; `SPARKLES_TEST_RUNNER=/nonexistent` scenario by hand               |
+| TRS1–TRS4  | partial    | `sparkles.test_runner.pool.startTestWorkers`; `-t 1` and `-t N` legs of `ci --test`                          |
+| TRS5       | partial    | `sparkles.test_runner.pool.retire`; `ci --test` coverage listings; the covered-line comparison not run       |
+| TRX1–TRX4  | partial    | `sparkles.test_runner.driver.DriverOptions`; the `PATH`-without-dub scenario not run                         |
+| TRF1–TRF4  | partial    | `sparkles.test_runner.fallback.runFallback`; `--no-runner` scenarios by hand                                 |
+| TRW1–TRW4  | unverified | The Windows code paths type-check for `x86_64-windows-msvc`; the Windows leg has not run them                |
+| TRM1–TRM3  | partial    | `sparkles.test_runner.session.WorkerSession`; its transcript tests; the import scan not automated            |
+| TRM4       | partial    | `sparkles.test_runner.plan.selectTests`, `sparkles.test_runner.options.parseRunnerOptions`; no ci client yet |
+| TRM5–TRM8  | unverified | The ci client is the task DAG's M7                                                                           |
+| TRN1–TRN3  | partial    | `nix/packages/test-runner.nix` builds the bootstrap; no revision is pinned yet                               |

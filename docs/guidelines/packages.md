@@ -72,6 +72,7 @@ live under `docs/libs/<name>/` and specs under `docs/specs/`.
 - **`sparkles:ui-sdl3`** (`libs/ui-sdl3`) — SDL3 window system for `sparkles:ui`: window, input source, and the Vulkan surface (frame machinery from `sparkles:vulkan-wsi`)
 - **`sparkles:ui-vulkan`** (`libs/ui-vulkan`) — `sparkles:ui`'s canvas drawn with Vulkan on `sparkles:wsi` ([spec](../specs/ui-vulkan/SPEC.md)): buffers and images bound to memory from `sparkles:vulkan`'s sub-allocator, per-frame buffer space over a frame arena, and image uploads staged in that space and recorded before a frame's rendering; an effect bracketed at the frame's root runs through it
 - **`sparkles:test-runner-impl`** (`libs/test-runner-impl`) — internal: the runner executable, `sparkles-test-runner`, built from the pinned revision in `nix/test-runner-pin.json`; test binaries reach it through `$SPARKLES_TEST_RUNNER`
+- **`sparkles:test-runner-core`** (`libs/test-runner-core`) — internal: the runner core both clients share — the worker session as a sans-IO protocol state machine, the option model, the run plan and verdict, the compile-time and extracted modes, and a plain-text renderer; performs no I/O
 - **`sparkles:test-harness`** (`libs/test-harness`) — internal: what runs inside a test binary (discovery, execution, the fallback, the measurement layer); depends on no other repository package, and compiles `sparkles:profiling`'s counters from source
 - **`sparkles:test-attributes`** (`libs/test-attributes`) — the marker attributes (`@ctfe`, `@betterC`, `@wasm`, `@benchmark`, `@workload`, `@serial`, `@slow`), the one part of the runner a library build depends on
 
@@ -179,12 +180,16 @@ sparkles/
 │   │   └── bench.d, workload.d, …  # the measurement layer (perf, tier0, syscalls, psi, …)
 │   ├── test-runner/src/sparkles/test_runner/   # the shim (sourceLibrary, compiled into each test root)
 │   │   └── register.d              # extendedModuleUnitTester hook → the harness
-│   ├── test-runner-impl/src/sparkles/test_runner/  # the runner executable, sparkles-test-runner (pinned)
-│   │   ├── app.d, runner_impl.d    # entry, CLI, mode dispatch
-│   │   ├── client.d, pool.d        # the protocol's runner side; worker processes
-│   │   ├── reporting.d, bench_json.d # styled result rendering; --bench-json
-│   │   ├── extract.d, driver.d     # unittest-body extraction; -betterC/wasm drivers
+│   ├── test-runner-core/src/sparkles/test_runner/  # the runner core: no I/O, shared by both clients
+│   │   ├── session.d               # the worker session: bytes in, commands and events out
+│   │   ├── options.d, plan.d       # the option model; selection, phases, verdict
+│   │   ├── render.d                # plain-text lines of a session's events
+│   │   ├── extract.d, driver.d     # unittest-body extraction; @ctfe/-betterC/wasm drivers
 │   │   └── ctfe_trace.d            # -ftime-trace CTFE cost attribution
+│   ├── test-runner-impl/src/sparkles/test_runner/  # the standalone runner, sparkles-test-runner (pinned)
+│   │   ├── app.d, runner_impl.d    # entry, mode dispatch
+│   │   ├── client.d, pool.d        # the I/O around a session; worker processes
+│   │   └── reporting.d, bench_json.d # styled result rendering; --bench-json
 │   ├── test-utils/src/sparkles/test_utils/
 │   │   └── diff_tools.d, tmpfs.d, string.d, package.d
 │   ├── text-buffer/src/sparkles/text_buffer/

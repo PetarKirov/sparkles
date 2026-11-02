@@ -158,7 +158,7 @@ runner pinned; `-i`, `-e`, `-v`, `-t` and `-l` behave as in the CLI
 reference; the §11 scenarios of process-model.md pass; and no recipe names
 `test-runner-impl` or a path inside the attributes, shim, harness or runner.
 
-Status: slices 1–5 are implemented, and slice 6 is not started. The pin names
+Status: slices 1–6 are implemented. The pin names
 no revision yet, so the
 runner builds from the flake's own source. Open: pinning a revision of
 `main` once P1 lands there, the Windows leg's first run, and turning the
