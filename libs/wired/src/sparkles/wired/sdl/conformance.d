@@ -59,14 +59,16 @@ private auto normalizedScalar(scope const ref SdlScalar value)
 
     import std.algorithm.searching : canFind;
     import std.file : write;
-    import std.path : buildNormalizedPath, buildPath, dirName;
+    import std.path : absolutePath, buildNormalizedPath, buildPath, dirName;
     import std.process : execute;
 
     import sparkles.test_utils.tmpfs : TmpFS;
 
     auto tmp = TmpFS.create();
     const source = buildPath(tmp.dir(), "recipe.d");
-    const root = buildNormalizedPath(__FILE_FULL_PATH__.dirName, "../../../../../..");
+    // Absolute: the recipe is built in `tmp`, and a relocated build records
+    // the path relative to the repository root.
+    const root = buildNormalizedPath(__FILE_FULL_PATH__.dirName.absolutePath, "../../../../../..");
     write(source, "/+ dub.sdl:\nname \"sdl-recipe-symbol-probe\"\n"
         ~ "dependency \"sparkles:wired\" path=\"" ~ root ~ "\"\n+/\n"
         ~ q{
