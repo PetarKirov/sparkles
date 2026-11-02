@@ -268,6 +268,7 @@
         ./nix/packages/libghostty-vt.nix
         ./nix/packages/static-apps.nix
         ./nix/packages/shader-compile.nix
+        ./nix/packages/test-runner.nix
         ./nix/packages/android-dev-env-probe.nix
         ./nix/packages/ui-shaders.nix
         ./nix/packages/skia.nix

@@ -26,6 +26,7 @@
       # CI builds the Android closure and the WebAssembly modules on
       # x86_64 Linux only (.github/workflows/ci.yml; WTD8).
       onX86Linux = system == "x86_64-linux";
+      pinnedRunner = (lib.importJSON ./test-runner-pin.json).rev != null;
     in
     {
       legacyPackages.pinTargets = {
@@ -59,6 +60,12 @@
         harfbuzz-source = inputs.harfbuzz-src;
         maple-font-cn-base-src = inputs.maple-font-cn-base;
         json-test-suite-src = inputs.json-test-suite;
+      }
+      // lib.optionalAttrs pinnedRunner {
+        # The test runner executable at its pinned revision (test-runner
+        # process-model §9). The bootstrap build, from the flake's own source,
+        # changes with every commit and stays unpinned.
+        test-runner = config.packages.test-runner;
       }
       // lib.optionalAttrs onX86Linux {
         # DMD, whose test suite runs on every build.
