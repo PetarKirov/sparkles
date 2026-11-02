@@ -3,8 +3,10 @@
 dub cannot cross-compile, so an Android test build skips it: the Nix builder
 `legacyPackages.buildDAndroidTests`
 (`nix/packages/android/build-d-android-tests.nix`) compiles a package's unittests into one executable per ABI (arm64-v8a and
-x86_64) with `ldc2 -i`. The executable runs the tests through this runner, so
-it takes the same flags and prints the same report as `dub test`.
+x86_64) with `ldc2 -i`. A device has no runner executable, so the binary runs
+its tests itself, one at a time: the `-i`, `-e`, `-v`, `-l` and `-t` flags work, and
+benchmarks, workloads and `@ctfe` tests do not run (see the CLI reference's
+[runner section](../reference/cli.md#the-runner-and-the-test-binary)).
 
 ## Declare the package
 

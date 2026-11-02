@@ -70,8 +70,10 @@ live under `docs/libs/<name>/` and specs under `docs/specs/`.
 - **`sparkles:wsi`** (`libs/wsi`) — Dependency-light native desktop window-system integration: unit-explicit geometry, generation-safe ids, typed errors/raw handles, lossless Regular events and a deterministic recording backend; native Wayland, X11, Win32 and AppKit lifecycle adapters share Event Horizon's only wait (Wayland/XCB over uring, User32/IOCP and CFRunLoop/kqueue), with immediate Wayland configure ack, a renderer native-I/O borrow, and IMM32 text input on Win32; XIM and remaining features follow `docs/specs/window-system-integration/`
 - **`sparkles:wired`** (`libs/wired`) — Serialization: a compile-time-reflected wire format with a JSON surface (`fromJSON`/`toJSON`), used for opaque payload ingest (e.g. the twoslash node model)
 - **`sparkles:ui-sdl3`** (`libs/ui-sdl3`) — SDL3 window system for `sparkles:ui`: window, input source, and the Vulkan surface (frame machinery from `sparkles:vulkan-wsi`)
-- **`sparkles:ui-vulkan`** (`libs/ui-vulkan`) — `sparkles:ui`'s canvas drawn with Vulkan on `sparkles:wsi` ([spec](../specs/ui-vulkan/SPEC.md)): buffers and images bound to memory from `sparkles:vulkan`'s sub-allocator, per-frame buffer space over a frame arena, and image uploads staged in that space and recorded before a frame's rendering; an effect bracketed at the frame's root runs through its record's SPIR-V passes (`EffectChain`, `spirv_interface`)
-- **`sparkles:test-runner-impl`** (`libs/test-runner-impl`) — internal: the prebuilt implementation library behind the `sparkles:test-runner` shim
+- **`sparkles:ui-vulkan`** (`libs/ui-vulkan`) — `sparkles:ui`'s canvas drawn with Vulkan on `sparkles:wsi` ([spec](../specs/ui-vulkan/SPEC.md)): buffers and images bound to memory from `sparkles:vulkan`'s sub-allocator, per-frame buffer space over a frame arena, and image uploads staged in that space and recorded before a frame's rendering; an effect bracketed at the frame's root runs through it
+- **`sparkles:test-runner-impl`** (`libs/test-runner-impl`) — internal: the runner executable, `sparkles-test-runner`, built from the pinned revision in `nix/test-runner-pin.json`; test binaries reach it through `$SPARKLES_TEST_RUNNER`
+- **`sparkles:test-harness`** (`libs/test-harness`) — internal: what runs inside a test binary (discovery, execution, the fallback, the measurement layer); depends on no other repository package, and compiles `sparkles:profiling`'s counters from source
+- **`sparkles:test-attributes`** (`libs/test-attributes`) — the marker attributes (`@ctfe`, `@betterC`, `@wasm`, `@benchmark`, `@workload`, `@serial`, `@slow`), the one part of the runner a library build depends on
 
 ## Module map
 
@@ -167,15 +169,20 @@ sparkles/
 │   │   ├── operations.d, ranges.d, parsing.d, traits.d, any.d
 │   │   ├── purl.d, vers.d          # pURL / VERS interop
 │   │   └── testing.d               # checkRoundTrip / checkRejects / checkAscending
-│   ├── test-runner/src/sparkles/test_runner/   # the shim (sourceLibrary, compiled into consumers)
-│   │   ├── attributes.d            # @betterC / @ctfe / @wasm / @benchmark marker UDAs
-│   │   ├── discovery.d             # compile-time unittest discovery → Test[]
-│   │   └── register.d              # extendedModuleUnitTester hook + extern(C) seam
-│   ├── test-runner-impl/src/sparkles/test_runner/  # prebuilt impl library (internal)
-│   │   ├── runner_impl.d           # extern(C) entry, CLI, mode dispatch
-│   │   ├── model.d, filter.d       # Test/TestResult data model; regex include/exclude
-│   │   ├── execution.d, reporting.d # parallel execution; styled result rendering
-│   │   ├── bench.d                 # benchIter/blackBox, auto-scaling measurement
+│   ├── test-attributes/src/sparkles/test_runner/  # the marker attributes, all a library build imports
+│   │   └── attributes.d            # @betterC / @ctfe / @wasm / @benchmark / @workload / @serial / @slow UDAs
+│   ├── test-harness/src/sparkles/test_runner/     # the in-binary half: no other repository package
+│   │   ├── discovery.d, model.d    # compile-time unittest discovery → Test[]; Test/TestResult
+│   │   ├── entry.d, worker.d       # worker / launcher / fallback mode; the protocol's binary side
+│   │   ├── protocol.d, fallback.d  # versions, framing, JSON values; in-process sequential runs
+│   │   ├── execution.d, skip.d     # one test on a budgeted thread; skipTest
+│   │   └── bench.d, workload.d, …  # the measurement layer (perf, tier0, syscalls, psi, …)
+│   ├── test-runner/src/sparkles/test_runner/   # the shim (sourceLibrary, compiled into each test root)
+│   │   └── register.d              # extendedModuleUnitTester hook → the harness
+│   ├── test-runner-impl/src/sparkles/test_runner/  # the runner executable, sparkles-test-runner (pinned)
+│   │   ├── app.d, runner_impl.d    # entry, CLI, mode dispatch
+│   │   ├── client.d, pool.d        # the protocol's runner side; worker processes
+│   │   ├── reporting.d, bench_json.d # styled result rendering; --bench-json
 │   │   ├── extract.d, driver.d     # unittest-body extraction; -betterC/wasm drivers
 │   │   └── ctfe_trace.d            # -ftime-trace CTFE cost attribution
 │   ├── test-utils/src/sparkles/test_utils/

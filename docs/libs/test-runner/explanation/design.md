@@ -3,66 +3,54 @@
 ## The seam: druntime's extended module unit tester
 
 `dub test` generates a `dub_test_root` module whose `allModules` alias lists
-the tested package's modules. The shim's `discovery` (active only in unittest
-builds) walks that list with `__traits(getUnitTests)` — module level plus
+the tested package's modules. The harness's `discovery`, instantiated by the shim
+in unittest builds, walks that list with `__traits(getUnitTests)` — module level plus
 aggregates — and `register` installs a `Runtime.extendedModuleUnitTester`, the
-same seam silly used. That `shared static this` is `@standalone`: under the
-in-tree integration `dub_test_root` imports the shim's modules back, and
+same seam silly used. That `shared static this` is `@standalone`: the
+generated `dub_test_root` imports the shim's module back, and
 without the attribute druntime rejects the module-constructor cycle.
 
 Builds without dub write the same module themselves: the Android test builder
 generates `dub_test_root` from the tested directories
 ([Run tests on Android](../how-to/run-tests-on-android.md)).
 
-## Two packages: a thin shim and a prebuilt impl
+## Two processes: the test binary and the runner
 
-The runner renders through `sparkles.base` (styled templates, `@nogc`
-duration writers) and optionally `sparkles.core_cli` (tables, OSC 8 links), and
-pulls in `std.regex` (filtering) and `std.parallelism` (the pool). Compiling
-all of that into every consumer's test binary — the original source-inclusion
-integration — cost ~2.8s on every `dub test`. So the runner is split:
+The runner's reports use the `sparkles:ui` toolkit, which depends on
+`sparkles:base`, whose own tests need the runner. Linked into a test binary,
+the runner closes a dependency cycle for every package below the toolkit. So
+it runs out of process, as cargo-nextest does for Rust
+([process model](../../../specs/test-runner/process-model.md)):
 
-- **`sparkles:test-runner`** — a `sourceLibrary` shim. Only `discovery` and
-  `register` compile into each test binary; between them they import just the
-  data-only `model`, `attributes`, and `std.traits`/`std.meta`. No `base`,
-  `std.regex`, or `std.parallelism`.
-- **`sparkles:test-runner-impl`** — a prebuilt `library` holding the CLI
-  dispatch (`runner_impl`), `execution`, `reporting`, the `--better-c`/`--wasm`
-  drivers, and benchmarking. Built once, linked by everyone.
+- **The test binary** holds the tests and everything that must run beside a
+  test body: discovery, execution on a budgeted thread, `skipTest`, and the
+  benchmark and workload measurement layer. That code is
+  `sparkles:test-harness`, with the marker attributes in
+  `sparkles:test-attributes`; neither depends on another repository package,
+  so every package can depend on them. The shim, `sparkles:test-runner`,
+  compiles one module into each test root: the hook that hands the
+  discovered tests to the harness.
+- **The runner executable**, `sparkles-test-runner`
+  (`sparkles:test-runner-impl`), holds the command line, scheduling, the
+  reports, `--bench-json`, and the compile-time and extracted modes. It is
+  built from the revision `nix/test-runner-pin.json` names, like a bootstrap
+  compiler, so editing it changes no test binary.
 
-The seam between them is one `extern(C)` function:
+A binary started by `dub test` finds the runner through
+`$SPARKLES_TEST_RUNNER` (or `--runner=PATH`) and starts it on itself. The
+runner then starts the binary again as **workers**, `T` of them for `-t T`,
+and sends each one test at a time over its standard input. A worker answers
+with line frames — `0x1E`, a JSON object, a line feed — on its original
+standard output, and the test's own output goes to its standard error, a pipe
+the runner reads up to a sentinel the worker writes after each test. So a
+test's output is reported with that test, and a test that crashes its worker
+fails alone: the runner reports its signal and output and starts a new
+worker. Both ends announce the protocol versions they speak before anything
+else, and a mismatch stops the run with both ranges named.
 
-```d
-extern (C) void sparkles_test_runner_run(
-    Test* tests, size_t count, bool hostIsRunner, uint* executed, uint* passed);
-```
-
-`register` discovers the tests, then _calls_ this — a direct call forces the
-linker to pull in the impl (so its `shared static this` runs) while the local
-`extern(C)` prototype means the consumer never _imports_, and so never parses,
-the heavy modules. That parse-avoidance is what drops a consumer's `dub test`
-to ~0.8s, near a vanilla build. The library is built with `-allinst` so every
-template instance it references (notably `std.uni`, via base's grapheme-aware
-width) is emitted on its side of the link.
-
-A consumer depends on the shim (`dependency "sparkles:test-runner"`) and gets
-both packages.
-
-Two consequences of the split are handled explicitly:
-
-- Rendering degrades by introspection rather than by requirement: `core_cli`
-  use is gated with `__traits(compiles, import …)`, so a test binary without
-  it in its closure still reports, with space-aligned tables and plain
-  `file:line` instead of box-drawn tables and OSC 8 links.
-- The shim's modules land in every host's `allModules`, so its own tests are
-  discoverable everywhere. They are hidden unless `--self-test` is given or the
-  tested package _is_ the runner — decided from `allModules` module names plus
-  the test-binary name, because a host whose only D modules are
-  `package.d`s/ImportC shims (e.g. `ghostty`) has an `allModules` that looks
-  identical to the runner's own.
-- The runner tests itself in two suites: `dub test :test-runner-impl` exercises
-  the heavy modules, and `dub test :test-runner` runs the shim's own discovery
-  tests through the linked impl.
+With no runner, or with `--no-runner`, the binary runs its tests itself, one
+at a time, with one line per test. That is how a test gets debugged:
+`gdb --args ./binary --no-runner -i name`.
 
 ## `@ctfe`: a probe compile as the executor
 
@@ -143,7 +131,7 @@ runs on `proc_pid_rusage`'s free-running fixed counters (per-bracket
 snapshot pairs with the bracket's own syscall cost calibrated out — not
 ioctl-excluded like Linux); on other platforms it is skipped entirely.
 
-## Worker stacks and the 256 KiB budget
+## Worker stacks and the 384 KiB budget
 
 `std.parallelism.TaskPool` uses the OS default pthread stack: ~8 MiB on
 Linux, **512 KiB on macOS**. A 1 MiB stack local therefore passes Linux CI
@@ -154,14 +142,14 @@ The runner no longer uses `TaskPool` for the default suite:
 
 - Workers are `core.thread.Thread`s constructed with a 512 KiB stack on
   every OS.
-- When `-t > 1` the main thread only joins (and, on a tty, paints). It
-  never runs a test body.
+- A worker runs each test on a fresh thread of its own, so its main thread
+  never runs a test body unless `-t 1` or `@serial(mainThread)` asks for it.
 - Before each body the unused stack below a 384 KiB watermark is
   `mprotect`'d `PROT_NONE`. A fault there is a named
   `StackBudgetExceeded` failure, not a process abort. Nested
   `executeTest` calls (the runner's own tests) reuse the outer watermark.
 
-`-t 1` still runs on the main thread so a developer can debug without the
+`-t 1` runs each test on the worker's main thread, so a developer can debug without the
 tight stack; `ci --test` always follows it with a `-t N` (`N ≥ 2`) leg.
 
 Under AddressSanitizer (`LDC_AddressSanitizer`) the watermark is disabled:

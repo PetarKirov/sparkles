@@ -132,7 +132,7 @@ The runner spans four dub packages and two processes;
 - **`sparkles:test-harness`** (`libs/test-harness`) — the code that runs
   inside a test binary: the test model, discovery, execution with the stack
   budget, the fallback, the protocol's binary side, and the measurement
-  layer. It depends on the attributes, druntime and Phobos only.
+  layer. It depends on no repository package but the attributes.
 - **`sparkles:test-runner`** (`libs/test-runner`) — a `sourceLibrary` shim,
   the registration hook compiled into each test root.
 - **`sparkles:test-runner-impl`** (`libs/test-runner-impl`) — the runner

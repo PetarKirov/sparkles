@@ -150,6 +150,11 @@ runner pinned; `-i`, `-e`, `-v`, `-t` and `-l` behave as in the CLI
 reference; the §10 scenarios of process-model.md pass; and no recipe names
 `test-runner-impl` or a path inside the attributes, shim, harness or runner.
 
+Status: slices 1–5 are implemented; the pin names no revision yet, so the
+runner builds from the flake's own source. Open: pinning a revision of
+`main` once P1 lands there, the Windows leg's first run, and turning the
+§10 scenarios run by hand into tests.
+
 ## W1 — `@wasm` on WASI
 
 > **Shipped** (branch `feat/wasm-modules`): `driver.d`'s `runWasmTests`

@@ -56,7 +56,7 @@ Which process measures?
 **Choice.** The binary measures. `benchIter`, `benchCase` and
 `workloadWindow` mark regions inside a body, and a timing loop that crossed a
 pipe on every sample would time the pipe. The measurement layer moves into
-the harness, so it depends on druntime and Phobos only (TRP1), and the runner
+the harness, which depends on no other repository package (TRP1), and the runner
 receives finished rows.
 
 **Revisit when** a source can only be read from outside the measured process.
