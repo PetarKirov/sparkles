@@ -167,11 +167,10 @@
 
       depRefs = text: matchAll ''dependency "sparkles:([a-z-]+)"'' text;
 
-      # `test-runner` and `test-attributes` are UDA import paths, not linked
-      # libraries.
+      # `test-runner` is the UDA import path, not a linked library.
       pathRefs =
         text:
-        lib.filter (n: n != "test-runner" && n != "test-attributes") (
+        lib.filter (n: n != "test-runner") (
           matchAll ''\.\./([a-z-]+)/src'' text ++ matchAll ''\.\./\.\./libs/([a-z-]+)/src'' text
         );
 

@@ -162,3 +162,7 @@ struct serial
 {
     ThreadAffinity threadAffinity;
 }
+
+/// The path of this module as the compiler saw it, from which the harness
+/// derives the attributes' source root (process-model TRX4).
+package(sparkles.test_runner) enum string attributesSourcePath = __FILE_FULL_PATH__;

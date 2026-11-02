@@ -27,7 +27,6 @@ dependency "sparkles:test-runner" path="../../../.."
 // The bench build propagates -O3 -allinst to the prebuilt runner. Its
 // single-object configuration avoids duplicate nested reporting symbols
 // emitted by LDC into separate objects under those flags.
-subConfiguration "sparkles:test-runner" "benchmark"
 
 // The SDL rows' `decode` reads the repository's own `dub.sdl` schema
 // (`sparkles.build_primitives.dub_manifest`), which depends only on wired.

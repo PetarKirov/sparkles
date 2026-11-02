@@ -8,25 +8,14 @@ targetPath "build"
 
 dflags "-preview=in" "-preview=dip1000"
 
-// The registration shim: only `attributes` (the marker UDAs), `discovery`
-// (compile-time reflection over the tested package's modules) and `register`
-// (the druntime hook + a thin `extern(C)` seam) compile into each consumer's
-// test binary. The heavy machinery lives in the prebuilt
-// `sparkles:test-runner-impl` library, so a consumer's `dub test` stays close to
-// a vanilla build — an external project pulls this package as one dependency and
-// gets both automatically.
-//
-// The UDAs live here, not in the impl: a module carrying one imports them in
-// every build, so only this package needs to be on a consumer's top-level
-// `importPaths`.
-//
-// In-monorepo `base`/`core-cli` cannot depend on this package (dub rejects the
-// resulting cycle: impl → base); they source-include both the shim and the impl
-// in their `configuration "unittest"`.
-//
-// Every other in-monorepo consumer depends on this package like an external
-// one (`dependency "sparkles:test-runner" path="../.."`).
-dependency "sparkles:test-runner-impl" path="../.."
+// The registration shim: the one module compiled into each test root. It
+// hands the discovered tests to sparkles:test-harness, which runs them as a
+// worker of the pinned runner executable, as a launcher of it, or on its own
+// (docs/specs/test-runner/process-model.md). A package's unittest
+// configuration depends on this package like any other dependency
+// (process-model TRP2); its library configuration depends on
+// sparkles:test-attributes only (TRP3).
+dependency "sparkles:test-harness" path="../.."
 
 targetType "sourceLibrary"
 
@@ -34,15 +23,7 @@ configuration "library" {
     targetType "sourceLibrary"
 }
 
-// Forward the optimized consumer's choice to the implementation: DUB's
-// subConfiguration directives only apply to direct dependencies.
-configuration "benchmark" {
-    targetType "sourceLibrary"
-    subConfiguration "sparkles:test-runner-impl" "benchmark"
-}
-
 configuration "unittest" {
-    // The shim's own tests (discovery) run through the linked impl library.
     targetType "library"
 
     dflags "-checkaction=context" "-allinst"

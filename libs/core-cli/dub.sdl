@@ -6,36 +6,34 @@ license "BSL-1.0"
 
 dflags "-preview=in" "-preview=dip1000"
 
+dependency "sparkles:test-attributes" path="../.."
 dependency "sparkles:base" path="../.."
 dependency "sparkles:metadata" path="../.."
 dependency "sparkles:wired" path="../.."
 
 // The UI components moved to the canvas-first toolkit; `core-cli` keeps
 // command-line concerns and consumes them (prompts style their output with the
-// theme and drive a live region). `sparkles:ui` takes the cycle-safe recipe
-// precisely so this edge is legal — see `libs/ui/dub.sdl`.
+// theme and drive a live region). `sparkles:ui` does not depend on this
+// package, so this edge closes no cycle.
 dependency "sparkles:ui" path="../.."
 
 targetType "library"
 targetPath "build"
 
-// For `Vector`/`ScreenSize`. math depends on `sparkles:base` alone (its tests
-// source-include the runner), so this edge closes no cycle.
+// For `Vector`/`ScreenSize`. math depends on `sparkles:base` alone, so this
+// edge closes no cycle.
 dependency "sparkles:math" path="../.."
-importPaths "src" "../test-attributes/src"
+importPaths "src"
 
 configuration "library" {
     targetType "library"
 }
 
 configuration "unittest" {
-    // `core-cli` is imported by the impl (UI niceties), so it cannot depend on
-    // the impl library — it source-includes the shim and the impl instead.
-    sourcePaths "../test-runner/src" "../test-runner-impl/src" "../test-harness/src" "../test-attributes/src" "../profiling/src/sparkles/profiling/counters"
-    importPaths "src" "../test-runner/src" "../test-runner-impl/src" "../test-harness/src" "../test-attributes/src" "../profiling/src"
     dependency "sparkles:test-utils" path="../.."
 
     dflags "-checkaction=context" "-allinst"
+    dependency "sparkles:test-runner" path="../.."
 }
 
 // BEGIN managed build types — apps/ci/tools/standardize-build-settings.d

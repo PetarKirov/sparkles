@@ -18,8 +18,8 @@ import std.range : walkLength;
 import std.array : array, join, replace, split;
 import std.concurrency : initOnce;
 import std.conv : octal, to;
-import std.file : copy, dirEntries, exists, mkdirRecurse, readText, remove, rmdirRecurse,
-    setAttributes, SpanMode, tempDir, write;
+import std.file : copy, dirEntries, exists, mkdirRecurse, PreserveAttributes, readText, remove,
+    rmdirRecurse, setAttributes, SpanMode, tempDir, write;
 import std.format : format;
 import std.path : absolutePath, baseName, buildNormalizedPath, buildPath, dirName,
     pathSeparator, relativePath;
@@ -66,19 +66,38 @@ private string missingTool()
 private string here() => __FILE_FULL_PATH__.dirName.absolutePath.buildNormalizedPath("..");
 private string repoRoot() => here.buildNormalizedPath("..", "..");
 
-/// The tool, built once per test run.
+/// The tool, built once per worker process and run from that process's copy.
 private string tool()
 {
     static string build()
     {
+        // Every worker process of the test run builds it once; a lock file
+        // keeps their dub builds of the same tree from racing each other. A
+        // build can still relink the binary while another worker runs it
+        // (`EACCES` on exec), so each worker runs a copy of its own.
+        here.buildPath("build").mkdirRecurse;
+        auto lock = File(here.buildPath("build", ".tool-build.lock"), "w");
+        lock.lock();
+        scope (exit)
+            lock.unlock();
         const r = execute(["dub", "build", "-q", "--root=" ~ here, "--config=application"]);
         assert(r.status == 0, r.output);
-        return here.buildPath("build", "shader-compile");
+        copy(here.buildPath("build", "shader-compile"), toolCopy, PreserveAttributes.yes);
+        return toolCopy;
     }
 
     static shared string path;
     return initOnce!path(build());
 }
+
+// The worker's copy of the tool, if it built one.
+shared static ~this()
+{
+    if (toolCopy.exists)
+        toolCopy.remove;
+}
+
+private string toolCopy() => here.buildPath("build", format("shader-compile.%s", thisProcessID));
 
 /**
 A scratch copy of `tests/fixture/`, whose `--out` is `generated/`. Removed when

@@ -6,10 +6,9 @@ license "BSL-1.0"
 
 targetPath "build"
 
-// The attributes package is on the import path for its marker UDAs (`@wasm`,
-// `@betterC`) alone: nothing of it is compiled or linked into the library,
-// which depends on no other package.
-importPaths "src" "../test-attributes/src"
+// The marker attributes (`@wasm`, `@betterC`): the one runner package a
+// library build depends on, holding nothing that is compiled into this one.
+dependency "sparkles:test-attributes" path="../.."
 
 dflags "-preview=in" "-preview=dip1000"
 
@@ -18,8 +17,6 @@ configuration "library" {
 }
 
 configuration "unittest" {
-    // Fast path: depend on the runner shim (pulls the prebuilt impl library),
-    // so `dub test` recompiles only this package, not the runner sources.
     dependency "sparkles:test-runner" path="../.."
 
     dflags "-checkaction=context" "-allinst"

@@ -109,7 +109,8 @@ int runFallback(Test[] tests, string[] args)
             "e|exclude", "Skip tests whose name matches the regular expression",
                 &options.exclude,
             "v|verbose", "Show full stack traces", &options.verbose,
-            "t|threads", "Accepted; the fallback runs one test at a time", &options.threads,
+            "t|threads", "Accepted; one test runs at a time, on the main thread under -t 1",
+                &options.threads,
             "no-colors", "Accepted; the fallback prints no colors", &options.noColors,
             "l|list", "List discovered tests without running them", &options.list,
             "skip-slow", "Leave out @slow tests", &options.skipSlow,
@@ -173,7 +174,8 @@ int runFallback(Test[] tests, string[] args)
             ++measured;
             continue;
         }
-        const result = runPlaced(test);
+        // `-t 1` runs on the main thread, as under the runner (TRP17).
+        const result = runPlaced(test, onMainThread: options.threads == 1);
         report(result, options.verbose);
         if (result.skipped)
             ++skipped;

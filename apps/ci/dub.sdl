@@ -59,17 +59,7 @@ configuration "unittest" {
     // builds its own package races with the file it is running from.
     targetType "library"
 
-    // `dub test :ci` compiles its dependency sources with -unittest — and since
-    // `--audit-fences` pulls in sparkles:syntax / sparkles:tree-sitter, their
-    // env-gated tests call `skipTest` (in the impl package). Pulling the runner
-    // as a plain `dependency` links impl as a static archive positioned before
-    // those objects, so ld.bfd (single-pass) never pulls `skip.o` → undefined
-    // reference. Source-include the shim + impl instead (the cycle-safe recipe
-    // base/core-cli use) so `skipTest` compiles directly into this build.
-    sourcePaths "src" "../../libs/test-runner/src" "../../libs/test-runner-impl/src" "../../libs/test-harness/src" "../../libs/test-attributes/src" "../../libs/profiling/src/sparkles/profiling/counters"
-    importPaths "src" "../../libs/test-runner/src" "../../libs/test-runner-impl/src" "../../libs/test-harness/src" "../../libs/test-attributes/src" "../../libs/profiling/src"
-
-    // The same -unittest flattening compiles wired's `sdl/files.d`, whose
+    // `dub test :ci` compiles wired's `sdl/files.d` with -unittest, and its
     // `version (unittest)` block imports the temporary-filesystem helpers.
     // wired keeps its own test-utils edge unittest-scoped (a main-recipe edge
     // races concurrent single-file example builds in the shared dub
@@ -82,6 +72,7 @@ configuration "unittest" {
     subConfiguration "sparkles:build-primitives" "testing"
 
     dflags "-checkaction=context" "-allinst"
+    dependency "sparkles:test-runner" path="../.."
 }
 
 // BEGIN managed build types — apps/ci/tools/standardize-build-settings.d
