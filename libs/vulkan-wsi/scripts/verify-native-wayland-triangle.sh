@@ -70,5 +70,7 @@ env -u WAYLAND_DISPLAY xvfb-run -a -s "-screen 0 1280x800x24" \
 grep -q 'framesPresented: 150' "$work/present.log"
 grep -qE '(, |^)0 over 100 ms' "$work/present.log"
 grep -q 'outOfDate: 0' "$work/present.log"
+# The device's time, read frames late from timestamp queries (`PRF10`).
+grep -qE 'gpuFrames: [1-9][0-9]* frames: mean' "$work/present.log"
 
 echo ">> native triangle presentation verified under Weston/Xvfb."

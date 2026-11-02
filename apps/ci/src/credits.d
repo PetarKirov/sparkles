@@ -295,18 +295,31 @@ string[] dubPackagesIn(string json) @safe
 
 /**
 The build settings a build selecting `configurations` reads from `manifest`:
-its top level, and those configurations. With none selected, every
-configuration a build might select. The `unittest` configuration ships
-nothing, so it never counts.
+its top level, and those configurations. With none selected, those dub
+defaults to on some platform: it takes the first configuration whose
+platforms match, so each platform-restricted one up to the first
+unrestricted one, which ends the list. A configuration after that ships only
+where a build names it (an opt-in, such as `sparkles:profiling`'s `tracy`),
+and the walk then reads it as a selection. The `unittest` configuration
+ships nothing, so it never counts.
 */
 const(DubBuildSettings)[] shippedSettings(const DubManifest manifest,
     scope const string[] configurations) @safe pure nothrow
 {
     const(DubBuildSettings)[] settings = [manifest.buildSettings];
     foreach (ref config; manifest.configurations)
-        if (config.name != "unittest"
-            && (!configurations.length || configurations.canFind(config.name)))
+    {
+        if (config.name == "unittest")
+            continue;
+        if (!configurations.length)
+        {
             settings ~= config.buildSettings;
+            if (!config.platforms.length)
+                break;
+        }
+        else if (configurations.canFind(config.name))
+            settings ~= config.buildSettings;
+    }
     return settings;
 }
 
@@ -341,8 +354,22 @@ configuration "unittest" {
 }`).value;
     assert(sparklesEdges(shippedSettings(manifest, ["tui"])) == ["ui", "ui-tui"]);
     assert(manifestTokens(shippedSettings(manifest, ["tui"])).length == 0);
-    assert(sparklesEdges(shippedSettings(manifest, null)) == ["ui", "ui-tui", "wsi"],
-        "nothing selected: every configuration a build might pick");
+    assert(sparklesEdges(shippedSettings(manifest, null)) == ["ui", "ui-tui"],
+        "nothing selected: the configuration dub defaults to");
+    const restricted = parseDubManifest(`configuration "android" {
+    platforms "android"
+    libs "log"
+}
+configuration "library" {
+    libs "vulkan"
+}
+configuration "tracy" {
+    libs "TracyClient"
+}`).value;
+    assert(manifestTokens(shippedSettings(restricted, null)).sort.release
+        == ["-llog", "-lvulkan"],
+        "each platform's default, not an opt-in after them");
+    assert(manifestTokens(shippedSettings(restricted, ["tracy"])) == ["-lTracyClient"]);
     const selecting = parseDubManifest(`subConfiguration "sparkles:ui-app" "gui"
 configuration "unittest" {
     subConfiguration "sparkles:ui" "testing"

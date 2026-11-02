@@ -56,6 +56,10 @@ import sparkles.ui.style : Palette;
 import sparkles.ui_vulkan;
 import sparkles.vulkan;
 import sparkles.vulkan_wsi;
+import sparkles.profiling : FrameClock, FrameFlags, FrameHistory, FramePhase, FrameRecord,
+    FrameStats, writeChromeTrace;
+// `PRF20`: empty inline functions unless built with `version (SparklesTracy)`.
+import sparkles.profiling.tracy : tracyFrameMark, tracyPlot, tracyZone;
 import sparkles.wsi;
 
 /// The pointer shape over a resize border's edge or corner.
@@ -532,7 +536,9 @@ private struct Gpu
     FrameSync sync;
     CommandPool commands;
     NativeCanvas canvas;
-    GpuTimer timer;
+    GpuProfiler profiler; /// the device's time, in named scopes (`PRF10`)
+    bool profilerTried;   /// made once per device, where a switch asks
+    FrameClock clock;     /// the run's, for calibrated scopes
     bool up;
 
     @disable this(this);
@@ -543,7 +549,8 @@ private struct Gpu
             return;
         if (vk.device.device !is null)
             vk.device.deviceWaitIdle(vk.device.device);
-        timer.destroy(vk);
+        profiler.destroy(vk);
+        profilerTried = false;
         canvas.destroy();
         commands.destroy(vk);
         sync.destroy(vk);
@@ -572,9 +579,23 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
     // What each presented frame took, from the draw decision to the present,
     // summarized when the window closes under any frame switch.
     FrameStats frameTimes;
+    // `--debug gpu-timing`: the device's time per frame, summarized the same
+    // way. `--debug frame-trace=PATH`: the last frames, each a `FrameRecord`,
+    // written as a Chrome trace at the end (`PRF19`).
+    FrameStats gpuTimes;
+    // The device's memory under any frame switch, read at most once a second
+    // and reported at its peak (`PRF15`).
+    MemoryPeaks memory;
+    FrameHistory!4096* history;
+    const(string)[] traceNames; // the device scopes' names, for the trace
     const summarizeFrames = cfg.native.debugging.traceFrames
         || cfg.native.debugging.traceFramesOver > 0 || cfg.native.debugging.frames > 0
-        || cfg.native.debugging.resizeStress;
+        || cfg.native.debugging.resizeStress || cfg.native.debugging.gpuTiming
+        || cfg.native.debugging.frameTrace.length;
+    // Kept under any frame switch: a display time arrives frames after its
+    // frame, and finds its record here (`PRF13`).
+    if (summarizeFrames)
+        history = new FrameHistory!4096;
     void noteEvent(in WindowEvent e) @trusted
     {
         if (!cfg.native.debugging.logEvents)
@@ -608,7 +629,16 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
             note(i"native window events: $(events)");
     scope (exit)
         if (summarizeFrames)
+        {
             note(i"native window frames: $(frameTimes)");
+            if (gpuTimes.frames)
+                note(i"native window gpu: $(gpuTimes)");
+            if (memory.samples)
+                note(i"native window memory: $(memory)");
+        }
+    scope (exit)
+        if (cfg.native.debugging.frameTrace.length)
+            writeFrameTrace(*history, traceNames, cfg.native.debugging.frameTrace);
 
     // ── the first configure ──
     SurfaceMetrics metrics;
@@ -1058,7 +1088,9 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                 applicationVersion: makeApiVersion(0, request.app.version_[0],
                     request.app.version_[1], request.app.version_[2]),
                 apiVersion: apiVersion13,
-                validation: cfg.native.debugging.vulkanValidation));
+                validation: cfg.native.debugging.vulkanValidation,
+                // Scopes as debug labels too, for RenderDoc and Nsight.
+                debugLabels: cfg.native.debugging.gpuTiming));
             made = !context.hasError;
             if (!made)
                 whyNot(i"the native arm found no Vulkan device for the window: $(context.error.diagnostic[])");
@@ -1212,6 +1244,89 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         || cfg.native.debugging.traceFramesOver > 0;
     const traceOver = dur!"msecs"(cfg.native.debugging.traceFramesOver);
     const opened = MonoTime.currTime;
+    // The device's time is measured where a switch reports it.
+    const timeDevice = traceFrames || cfg.native.debugging.gpuTiming
+        || cfg.native.debugging.frameTrace.length;
+    gpu.clock = FrameClock.since(opened);
+    ulong recorded; // frames recorded, presented or not
+    // Pipelines the driver built (not served from its cache) so far: a frame
+    // that built one carries `pipelineCompiled` (`PRF16`). A new canvas, after
+    // a lost device, counts from zero again.
+    uint pipelinesBuilt;
+    // A frame drawn (presented or not) as a `FrameRecord`: its phases in the
+    // order the pass ran them, the rebuild before it included.
+    FrameRecord recordOf(MonoTime started, in FrameTiming timing, FrameFlags flags)
+    {
+        FrameRecord r;
+        r.number = recorded++;
+        r.start = started - opened - timing.rebuild;
+        r.flags = flags;
+        if (timing.rebuild > Duration.zero)
+            r.flags |= FrameFlags.rebuilt;
+        if (timing.acquired == VkResult.VK_SUBOPTIMAL_KHR
+            || timing.presented == VkResult.VK_SUBOPTIMAL_KHR)
+            r.flags |= FrameFlags.suboptimal;
+        const made = gpu.canvas.pipelineCompiles;
+        const built = made.compiled + made.unreported;
+        if (built < pipelinesBuilt)
+            pipelinesBuilt = 0;
+        if (built > pipelinesBuilt)
+        {
+            r.flags |= FrameFlags.pipelineCompiled;
+            pipelinesBuilt = built;
+        }
+        Duration at;
+        void phase(FramePhase p, Duration took)
+        {
+            r.phases[p].start = at;
+            r.phases[p].took = took;
+            at += took;
+        }
+        phase(FramePhase.rebuild, timing.rebuild);
+        phase(FramePhase.build, timing.build);
+        phase(FramePhase.wait, timing.wait);
+        phase(FramePhase.acquire, timing.acquire);
+        phase(FramePhase.record, timing.record);
+        phase(FramePhase.present, timing.present);
+        r.cpu = MonoTime.currTime - opened - r.start;
+        return r;
+    }
+    // The device's time arrives `framesInFlight` frames late: it belongs to
+    // the record of the frame that slot drew last.
+    void noteDeviceTime(in FrameRecord late, ulong frame)
+    {
+        if (late.gpu <= Duration.zero)
+            return;
+        gpuTimes.note(late.gpu);
+        tracyPlot!"gpu ms"(late.gpu.total!"hnsecs" / 1e4);
+        if (history is null)
+            return;
+        if (auto r = history.find(frame))
+        {
+            r.gpu = late.gpu;
+            foreach (ref s; late.scopes)
+                r.addGpuScope(s);
+        }
+    }
+    // When a frame reached the display, where the window system says
+    // (`PRF13`, Wayland's presentation feedback): its record is marked, its
+    // latency counted, and the display's refresh measures the hitches.
+    void onPresented(in PresentedEvent p)
+    {
+        if (p.discarded || !p.shownKnown)
+            return;
+        frameTimes.noteRefresh(p.refresh);
+        if (history is null)
+            return;
+        if (auto r = history.markShown(p.tag, p.shown - opened))
+        {
+            Duration latency;
+            if (!r.has(FrameFlags.skipped) && r.latency(latency))
+                frameTimes.noteLatency(latency);
+        }
+    }
+    // Which recorded frame each slot drew last.
+    ulong[8] slotFrame = ulong.max;
     Duration now() => MonoTime.currTime - opened;
     uint presented;
     // Since when the traced frame's size has waited.
@@ -1396,6 +1511,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                 (in ReadyEvent r) { onMetrics(r.metrics); },
                 (in SurfaceMetricsChangedEvent m) { onMetrics(m.metrics); },
                 (in FrameReadyEvent _) { lc.frameReady(); input_ = false; },
+                (in PresentedEvent p) { onPresented(p); input_ = false; },
                 (in ExposedEvent _) { lc.exposed(); input_ = false; },
                 (in OccludedEvent o) { lc.occluded(o.occluded); input_ = false; },
                 (in CloseRequestedEvent _) { lc.close(); input_ = false; },
@@ -1515,6 +1631,11 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                 continue;
             }
             lc.rebuilt(Rebuild.device);
+            // A new device: no slot holds a frame, no pipeline is built, and
+            // the lost pass's times are nobody's.
+            slotFrame[] = ulong.max;
+            pipelinesBuilt = 0;
+            timing = FrameTiming.init;
         }
         if (plan.createSurface)
         {
@@ -1531,6 +1652,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
             const rebuildStarted = MonoTime.currTime;
             scope (exit)
                 timing.rebuild += MonoTime.currTime - rebuildStarted;
+            auto rebuildZone = tracyZone!"rebuild";
             if (!rebuildSwapchain(plan.createSurface || plan.replaceTargets))
             {
                 lc.rebuildFailed(Rebuild.targets);
@@ -1549,12 +1671,17 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
             }
             const started = MonoTime.currTime;
             lastPass = started;
+            // Tracy's zones for the pass: the frame, and within it the phases
+            // `FrameTiming` laps (the rebuild before it stands alone).
+            auto frameZone = tracyZone!"frame";
+            auto buildZone = tracyZone!"build";
             // A scripted run (`frames=N`, `resize-stress`) draws continuously:
             // an idle application presents nothing, and neither would end. Its
             // frames may not be skipped either: a skipped frame keeps the
             // request standing and the opportunity open, and the loop spun.
             buildFrame!present(host, plan.mustDraw || drawsContinuously);
             timing.build = MonoTime.currTime - started;
+            buildZone.end();
             lc.requested(host.frameRequested || drawsContinuously);
             if (host.frameSkipped)
                 continue;
@@ -1611,9 +1738,18 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                         lc.retarget();
                     }
                 }
-                timing.traced = traceFrames;
+                timing.traced = timeDevice;
+                // Asked once the frame is submitted, just before the present
+                // whose commit it answers for: such a pass is always a
+                // record, numbered `recorded`.
+                void beforePresent() @system
+                {
+                    static if (__traits(hasMember, Wsi, "requestPresentationFeedback"))
+                        if (history !is null && wsi.canReportPresentation)
+                            cast(void) wsi.requestPresentationFeedback(window, recorded);
+                }
                 outcome = cropped
-                    ? drawFrame!draw(*gpu, host, session, request.ground, timing)
+                    ? drawFrame!draw(*gpu, host, session, request.ground, timing, &beforePresent)
                     : FrameOutcome.again;
             }
             if (presented + 1 == loseDeviceAt)
@@ -1621,16 +1757,55 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                 loseDeviceAt = 0;
                 outcome = FrameOutcome.deviceLost;
             }
+            // The pass as a record (`PRF1`): every pass that submitted is
+            // one, presented or not, so the presentation feedback it asked
+            // for finds it; one that queued nothing is one only for the
+            // trace. A frame presented suboptimal or before a rebuild was
+            // still shown, and counts as shown.
+            const took = MonoTime.currTime - started + timing.rebuild;
+            const shown = timing.shown && outcome != FrameOutcome.again;
+            bool recordMade;
+            if (timing.collected)
+            {
+                // What the slot measured belongs to the frame it drew last,
+                // whatever became of this pass.
+                const slot = timing.slot % slotFrame.length;
+                if (slotFrame[slot] != ulong.max)
+                    noteDeviceTime(timing.late, slotFrame[slot]);
+                slotFrame[slot] = timing.submitted ? recorded : ulong.max;
+            }
+            if (timing.submitted || (history !is null
+                && (outcome == FrameOutcome.rebuild || outcome == FrameOutcome.deviceLost)))
+            {
+                FrameFlags flags = frameTimes.frames == 0 && shown ? FrameFlags.firstFrame
+                    : FrameFlags.none;
+                if (!shown)
+                    flags |= FrameFlags.skipped;
+                if (outcome == FrameOutcome.deviceLost)
+                    flags |= FrameFlags.deviceLost;
+                else if (outcome == FrameOutcome.rebuild && !shown)
+                    flags |= FrameFlags.outOfDate;
+                auto r = recordOf(started, timing, flags);
+                r.cpu = took;
+                if (shown)
+                    frameTimes.note(r);
+                if (history !is null)
+                    history.add(r);
+                recordMade = true;
+            }
+            if (timing.collected && traceNames.length != gpu.profiler.names.length)
+                traceNames = gpu.profiler.names.dup; // a copy: the table goes with the device
             final switch (outcome)
             {
                 case FrameOutcome.presented:
                     lc.frameDone(FrameResult.presented, now());
                     ++presented;
-                    // The frame's time includes the rebuild that preceded it
-                    // in this pass: a stall in a resize is the one to see.
                     const done = MonoTime.currTime;
-                    const took = done - started + timing.rebuild;
-                    frameTimes.note(took);
+                    frameZone.end();
+                    tracyFrameMark();
+                    tracyPlot!"frame ms"(took.total!"hnsecs" / 1e4);
+                    if (summarizeFrames)
+                        cast(void) memory.sample(gpu.vk, done);
                     if (!pipelinesSaved)
                         savePipelines();
                     stressAndBudget();
@@ -1641,7 +1816,6 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                         note(i"native frame $(presented) at $((started - opened).total!"msecs") ms, $(session.pixelW)x$(session.pixelH) in $(gpu.swapchain.extent.width)x$(gpu.swapchain.extent.height): rebuild $(timing.rebuild.total!"usecs") us, build $(timing.build.total!"usecs"), wait $(timing.wait.total!"usecs"), acquire $(timing.acquire.total!"usecs"), record $(timing.record.total!"usecs"), present $(timing.present.total!"usecs"), gpu $(timing.gpu.total!"usecs") (frame -$(gpu.sync.framesInFlight)); resize shown after $(resize.total!"usecs") us; rebuild: settle $(timing.settle.total!"usecs"), release $(timing.release.total!"usecs"), swapchain $(timing.swapchain.total!"usecs"), views $(timing.views.total!"usecs"), sync $(timing.sync.total!"usecs")");
                         resizedAt = MonoTime.init;
                     }
-                    timing = FrameTiming.init;
                     session.frameSeconds = lc.frameSeconds;
                     // What a rebuild retired goes once nothing can still be
                     // presenting it; destroyed at the next present, a quick
@@ -1661,7 +1835,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                 case FrameOutcome.rebuild:
                     lc.frameDone(FrameResult.outOfDate, now());
                     if (cfg.native.debugging.traceFrames
-                        || (traceFrames && MonoTime.currTime - started >= traceOver))
+                        || (traceFrames && took >= traceOver))
                         note(i"native frame: the swapchain is stale at $((started - opened).total!"msecs") ms, $(session.pixelW)x$(session.pixelH): acquire $(timing.acquired), present $(timing.presented), rebuild $(timing.rebuild.total!"usecs") us");
                     break;
                 case FrameOutcome.deviceLost:
@@ -1672,6 +1846,10 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                     lc.frameDone(FrameResult.failed, now());
                     break;
             }
+            // A record took the pass's times, its rebuild's included: the next
+            // pass starts from none.
+            if (recordMade)
+                timing = FrameTiming.init;
             // X11 presents unpaced, so a continuously drawing run must read
             // its events between frames, or input, a close and its own resizes
             // wait until a frame fails.
@@ -1931,107 +2109,31 @@ private void drawClientFrame(C)(ref C canvas, ref NativeSession session, RgbColo
     }
 }
 
-/*
-The device's time for each frame slot's commands, from a timestamp at their
-start and one at their end, for `--debug trace-frames`. A slot's
-pair is read when the slot comes round again, its fence waited: the time is
-that of the frame drawn `framesInFlight` frames before. A queue whose
-timestamps carry no valid bits gets no timer.
-*/
-private struct GpuTimer
-{
-    VkQueryPool pool;
-    uint slots;
-    double nanosPerTick = 0;
-    ulong validMask; // the bits a timestamp counts in; it wraps at their width
-    bool[] written;
-
-    // Tried once per device: `slots` stays set where the queue has no
-    // timestamps and `pool` null.
-    void create(ref VulkanContext vk, uint slots) @system
-    {
-        this.slots = slots;
-        uint families;
-        vk.instance.getPhysicalDeviceQueueFamilyProperties(vk.physicalDevice, &families, null);
-        auto props = new VkQueueFamilyProperties[families];
-        vk.instance.getPhysicalDeviceQueueFamilyProperties(vk.physicalDevice, &families,
-            props.ptr);
-        if (vk.queueFamily >= families || props[vk.queueFamily].timestampValidBits == 0)
-            return;
-        auto info = vkInfo(VkQueryPoolCreateInfo(
-            queryType: VkQueryType.VK_QUERY_TYPE_TIMESTAMP, queryCount: 2 * slots));
-        if (vk.device.createQueryPool(vk.device.device, &info, null, &pool) != VkResult.VK_SUCCESS)
-        {
-            pool = null;
-            return;
-        }
-        nanosPerTick = vk.properties.limits.timestampPeriod;
-        const bits = props[vk.queueFamily].timestampValidBits;
-        validMask = bits >= 64 ? ulong.max : (1UL << bits) - 1;
-        written = new bool[slots];
-    }
-
-    void destroy(ref VulkanContext vk) @system
-    {
-        if (pool !is null && vk.device.device !is null)
-            vk.device.destroyQueryPool(vk.device.device, pool, null);
-        this = GpuTimer.init;
-    }
-
-    // What the slot's last frame took on the device; `Duration.zero` when
-    // it has none.
-    Duration read(ref VulkanContext vk, uint slot) @system
-    {
-        if (pool is null || slot >= slots || !written[slot])
-            return Duration.zero;
-        ulong[2] ticks;
-        const got = vk.device.getQueryPoolResults(vk.device.device, pool, 2 * slot, 2,
-            ticks.sizeof, ticks.ptr, ulong.sizeof, VkQueryResultFlagBits.VK_QUERY_RESULT_64_BIT);
-        if (got != VkResult.VK_SUCCESS)
-            return Duration.zero;
-        // Only the valid bits count, and a frame across the counter's wrap
-        // is measured modulo it.
-        const elapsed = ((ticks[1] & validMask) - (ticks[0] & validMask)) & validMask;
-        return dur!"nsecs"(cast(long)(elapsed * nanosPerTick));
-    }
-
-    void begin(ref VulkanContext vk, VkCommandBuffer cmd, uint slot) @system
-    {
-        if (pool is null || slot >= slots)
-            return;
-        vk.device.cmdResetQueryPool(cmd, pool, 2 * slot, 2);
-        vk.device.cmdWriteTimestamp(cmd,
-            VkPipelineStageFlagBits.VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, pool, 2 * slot);
-    }
-
-    void end(ref VulkanContext vk, VkCommandBuffer cmd, uint slot) @system
-    {
-        if (pool is null || slot >= slots)
-            return;
-        vk.device.cmdWriteTimestamp(cmd,
-            VkPipelineStageFlagBits.VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, pool, 2 * slot + 1);
-        written[slot] = true;
-    }
-}
-
 // Where a frame's time went, for `--debug trace-frames`.
 private struct FrameTiming
 {
-    /// Time the device's work too (`GpuTimer`).
+    /// Time the device's work too (`GpuProfiler`).
     bool traced;
     /// The device's time for the frame drawn `framesInFlight` before.
     Duration gpu;
+    /// That frame's device scopes, read when its slot came round again.
+    FrameRecord late;
     Duration rebuild, build, wait, acquire, record, present;
     /// The rebuild's parts: the wait for frames in flight, the canvas's
     /// targets released, the swapchain, its views, the frames' sync.
     Duration settle, release, swapchain, views, sync;
     VkResult acquired, presented; /// what each call said, for a stale frame
+    uint slot; /// the frame slot it was drawn in, whose device time `gpu` is
+    bool collected; /// the slot's previous frame was read (into `late`)
+    bool submitted; /// the frame's commands were submitted
+    bool shown;     /// and presented without an error
 }
 
 // Acquires an image, draws the host's operations and the draw phase into it,
 // and presents it.
 private FrameOutcome drawFrame(alias draw)(ref Gpu gpu, ref NativeHost host,
-    ref NativeSession session, RgbColor ground, ref FrameTiming timing) @system
+    ref NativeSession session, RgbColor ground, ref FrameTiming timing,
+    scope void delegate() @system beforePresent) @system
 {
     import sparkles.ui.interp.immediate : paint;
 
@@ -2043,16 +2145,29 @@ private FrameOutcome drawFrame(alias draw)(ref Gpu gpu, ref NativeHost host,
         mark = at;
         return since;
     }
+    // Tracy's zone for each lapped phase, ended however the frame ends.
+    auto zone = tracyZone!"wait";
     if (gpu.sync.waitForFrame(*vk).hasError)
         return FrameOutcome.deviceLost;
     timing.wait = lap();
-    if (timing.traced && gpu.timer.pool is null && gpu.timer.slots == 0)
-        gpu.timer.create(*vk, gpu.sync.framesInFlight);
-    timing.gpu = gpu.timer.read(*vk, gpu.sync.frame);
+    zone.next!"acquire";
+    if (timing.traced && !gpu.profilerTried)
+    {
+        gpu.profilerTried = true;
+        cast(void) GpuProfiler.create(gpu.profiler, *vk, gpu.sync.framesInFlight);
+    }
+    timing.late = FrameRecord.init;
+    gpu.profiler.collect(*vk, gpu.sync.frame, timing.late, gpu.clock);
+    timing.gpu = timing.late.gpu;
+    timing.slot = gpu.sync.frame;
+    timing.collected = true;
+    // Reading the queries is the profiler's cost, not the acquire's.
+    mark = MonoTime.currTime;
     uint index;
     const acquired = vk.device.acquireNextImageKHR(vk.device.device, gpu.swapchain.handle,
         ulong.max, gpu.sync.imageAvailable, null, &index);
     timing.acquire = lap();
+    zone.next!"record";
     timing.acquired = acquired;
     const decision = decideAcquire(acquired);
     if (decision.failed)
@@ -2066,7 +2181,16 @@ private FrameOutcome drawFrame(alias draw)(ref Gpu gpu, ref NativeHost host,
     if (begun.hasError)
         return FrameOutcome.deviceLost;
     auto cmd = begun.value;
-    gpu.timer.begin(*vk, cmd, gpu.sync.frame);
+    // The frame's commands, and the canvas's inside them; reset outside any
+    // render pass.
+    gpu.profiler.beginFrame(*vk, cmd, gpu.sync.frame);
+    // Not submitted, its queries were never reset: they are not read as new.
+    const slot = gpu.sync.frame;
+    scope (exit)
+        if (!timing.submitted)
+            gpu.profiler.abandon(slot);
+    gpu.profiler.begin(*vk, cmd, gpu.sync.frame, gpu.profiler.name("frame"));
+    gpu.profiler.begin(*vk, cmd, gpu.sync.frame, gpu.profiler.name("canvas"));
 
     VkImage image = gpu.swapchain.images[index];
     const corner = cornerOf(gpu.swapchain.extent, session.pixelW, session.pixelH,
@@ -2091,6 +2215,7 @@ private FrameOutcome drawFrame(alias draw)(ref Gpu gpu, ref NativeHost host,
     if (session.frame.active)
         drawClientFrame(gpu.canvas, session, ground);
     auto ended = gpu.canvas.endFrame();
+    gpu.profiler.end(*vk, cmd, gpu.sync.frame);
     FrameOutcome outcome = FrameOutcome.presented;
     if (ended.hasError)
     {
@@ -2106,16 +2231,21 @@ private FrameOutcome drawFrame(alias draw)(ref Gpu gpu, ref NativeHost host,
     if (session.shotPath.length && outcome == FrameOutcome.presented
         && (gpu.swapchain.usage & VkImageUsageFlagBits.VK_IMAGE_USAGE_TRANSFER_SRC_BIT))
         recordCapture(gpu, cmd, image, corner.width ? corner : gpu.swapchain.extent, shotBuffer);
-    gpu.timer.end(*vk, cmd, gpu.sync.frame);
+    gpu.profiler.end(*vk, cmd, gpu.sync.frame);
     if (gpu.commands.end(*vk, gpu.sync.frame).hasError)
         return FrameOutcome.deviceLost;
     const submitted = gpu.sync.submit(*vk, cmd, index);
     if (submitted.hasError)
         return submitted.error == VkResult.VK_ERROR_DEVICE_LOST ? FrameOutcome.deviceLost
             : FrameOutcome.failed;
+    timing.submitted = true;
     timing.record = lap();
+    zone.next!"present";
+    beforePresent();
     const presented = gpu.swapchain.present(*vk, index, gpu.sync.renderFinished(index));
+    timing.shown = !presented.hasError;
     timing.present = lap();
+    zone.end();
     timing.presented = presented.hasError ? presented.error : presented.value;
     gpu.sync.advance();
     if (shotBuffer.handle !is null)
@@ -2485,4 +2615,23 @@ private double pointsForPixels(int px, double scale) @safe pure nothrow @nogc
         foreach (scale; [1.0, 1.25, 1.5, 2.0, 2.625])
             assert(pixelsForPoints(pointsForPixels(px, scale),
                 DisplayMetrics(scale: cast(float) scale)) == px);
+}
+
+// `--debug frame-trace=PATH`: the history as a Chrome trace, said where it
+// went or why it did not.
+private void writeFrameTrace(in FrameHistory!4096 history, scope const(string)[] gpuNames,
+    string path) @system
+{
+    import std.array : appender;
+    import std.file : write;
+
+    auto text = appender!string;
+    writeChromeTrace(text, history[], gpuNames, "sparkles native window");
+    try
+    {
+        write(path, text[]);
+        note(i"native window frame trace: $(history.length) frames in $(path)");
+    }
+    catch (Exception e)
+        whyNot(i"native window frame trace: $(path): $(e.msg)");
 }

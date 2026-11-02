@@ -7,7 +7,7 @@ and physical coordinates and the source metadata needed to make that policy.
 */
 module sparkles.wsi.events;
 
-import core.time : MonoTime;
+import core.time : Duration, MonoTime, nsecs;
 import std.sumtype : SumType;
 import std.traits : EnumMembers;
 public import std.sumtype : match;
@@ -59,6 +59,53 @@ struct FrameReadyEvent
 {
     ulong token;
     long predictedPresentationNanoseconds;
+}
+
+/// How a commit reached the display: `wp_presentation_feedback.kind`'s bits.
+enum PresentationFlags : ubyte
+{
+    none = 0,                   ///
+    vsync = 1 << 0,             /// tied to the output's refresh: no tearing
+    hardwareClock = 1 << 1,     /// the display hardware measured the time
+    hardwareCompletion = 1 << 2, /// the hardware signalled the switch
+    zeroCopy = 1 << 3,          /// the buffer was scanned out as is
+}
+
+/**
+What became of the commit a `requestPresentationFeedback(window, tag)` asked
+about (`PRF13`): shown at `shown`, or `discarded` — superseded by a later
+commit before it reached the display, or its window destroyed first. While
+the backend is open, every request is answered by exactly one of these;
+closing the backend answers none, as it delivers no more events.
+
+`shown` is on the loop's monotonic clock (druntime's `MonoTime`), and
+`MonoTime.init` when the time is unknown: the commit was discarded, or the
+compositor's presentation clock is one that does not convert to it (on
+Wayland, `CLOCK_MONOTONIC` is `MonoTime`'s own, and `CLOCK_MONOTONIC_RAW` and
+`CLOCK_BOOTTIME` convert through an offset sampled as the answer arrives). `refreshNanoseconds` is the
+compositor's prediction of the time to the output's next refresh after
+`shown`, zero when it cannot predict one (a variable refresh rate under
+protocol version 1); `outputSequence` is the output's vertical retrace
+counter at the scan-out, zero when the output has none. The envelope's
+`timestamp` is when this client learned of it.
+*/
+struct PresentedEvent
+{
+    ulong tag;                 /// the request's
+    MonoTime shown;            ///
+    long refreshNanoseconds;   ///
+    ulong outputSequence;      ///
+    PresentationFlags flags;   ///
+    bool discarded;            ///
+
+    /// The refresh interval, or `Duration.zero` when unknown.
+    Duration refresh() const @safe pure nothrow @nogc => refreshNanoseconds.nsecs;
+
+    /// Whether `shown` is known.
+    bool shownKnown() const @safe pure nothrow @nogc => shown != MonoTime.init;
+
+    /// Whether every flag in `f` is set.
+    bool has(PresentationFlags f) const @safe pure nothrow @nogc => (flags & f) == f;
 }
 
 enum KeyLocation : ubyte
@@ -368,7 +415,8 @@ alias WindowEventPayload = SumType!(NoWindowEvent, ReadyEvent, ExposedEvent,
     KeyboardEvent, TextCommittedEvent, CompositionEvent, PointerEvent,
     RelativePointerEvent, ScrollEvent, TouchEvent, OutputEvent, DataOfferEvent,
     PopupConfiguredEvent, PopupDismissedEvent, CursorChangedEvent,
-    EventsDroppedEvent, MemoryPressureEvent, WindowStateChangedEvent);
+    EventsDroppedEvent, MemoryPressureEvent, WindowStateChangedEvent,
+    PresentedEvent);
 
 /**
 Sequence-stamped event. Sequence zero is reserved for uninitialized data.
@@ -516,6 +564,23 @@ unittest
     WindowEvent b;
     b = a;
     assert(a == b);
+}
+
+@("wsi.events.presentedEventReadsItsTimes")
+@safe pure nothrow @nogc
+unittest
+{
+    import core.time : usecs;
+
+    PresentedEvent e = { tag: 7, refreshNanoseconds: 16_666_667,
+        flags: cast(PresentationFlags)(PresentationFlags.vsync | PresentationFlags.zeroCopy) };
+    assert(!e.shownKnown && e.refresh == 16_666_667.nsecs);
+    assert(e.has(PresentationFlags.zeroCopy) && !e.has(PresentationFlags.hardwareClock));
+    e.shown = MonoTime.zero + 5.usecs;
+    assert(e.shownKnown);
+    // Plain data, as every payload (`ED8`).
+    auto w = WindowEvent(1, WindowId(1, 1), WindowEventPayload(e));
+    assert(w.payload.match!((in PresentedEvent p) => p.tag, _ => 0UL) == 7);
 }
 
 @("wsi.events.compositionClampsToTheKeptText")

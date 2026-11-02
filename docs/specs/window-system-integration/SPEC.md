@@ -255,6 +255,33 @@ deadlines become a coalesced `FrameReady` event. Event Horizon `Ticker` is used 
 where the platform has no usable frame signal or a caller explicitly asks for a capped
 cadence. Missed frame ticks are skipped, never replayed.
 
+When a frame reached the display is reported separately, as presentation feedback
+(`PRF13` of [the profiling specification](../profiling/SPEC.md)). A backend that can
+report it offers `canReportPresentation` and `requestPresentationFeedback(window,
+tag)`; the request applies to the surface's next commit, whoever makes it (for a
+Vulkan swapchain, `vkQueuePresentKHR`), so a renderer asks before it presents. Each
+request is answered exactly once by a `PresentedEvent` carrying its tag:
+
+| Field                | Meaning                                                                         |
+| -------------------- | ------------------------------------------------------------------------------- |
+| `tag`                | the request's                                                                   |
+| `shown`              | when the commit turned into light, on `MonoTime`; `MonoTime.init` if unknown    |
+| `refreshNanoseconds` | the compositor's prediction of the next refresh after `shown`; 0 if none        |
+| `outputSequence`     | the output's vertical retrace counter at the scan-out; 0 if it has none         |
+| `flags`              | `PresentationFlags`: `vsync`, `hardwareClock`, `hardwareCompletion`, `zeroCopy` |
+| `discarded`          | superseded by a later commit before it was shown, or its window destroyed       |
+
+The event's envelope `timestamp` is when the client learned of it. On Wayland the
+backend binds `wp_presentation` (up to v2) and answers from `wp_presentation_feedback`;
+`maxPresentationFeedbacks` (32) requests may be in flight, more report `capacity`, and
+a compositor without the global reports `unsupported`. `presentationClock` names the
+compositor's clock: `CLOCK_MONOTONIC` is `MonoTime`'s own, `CLOCK_MONOTONIC_RAW`
+(headless Weston's) and `CLOCK_BOOTTIME` are converted through an offset sampled as
+the answer arrives (their rate differs from the monotonic clock's by NTP's slew, at
+most 500 ppm, so a time a frame old converts within microseconds), and under any other
+clock `shown` is unknown. X11, Win32, AppKit and Android do not offer the request yet;
+a consumer detects it by introspection, as it does `setBufferCrop`.
+
 ### 4.5 Event delivery under load
 
 A consumer that drains slowly must not be able to stop the loop. The rationale,

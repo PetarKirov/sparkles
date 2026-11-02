@@ -1039,6 +1039,9 @@ struct VulkanCanvas(B)
     /// How many target formats have a pipeline.
     size_t pipelineCount() const => pipelines_.formatCount;
 
+    /// What making its pipelines cost, as the driver reported it (`PRF16`).
+    PipelineCompiles pipelineCompiles() const => pipelines_.compiles;
+
     /// How many image uploads the canvas has staged since it was created
     /// (`UVK23`).
     ulong imageUploads() const => imageUploads_;

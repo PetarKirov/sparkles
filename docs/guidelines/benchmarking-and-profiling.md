@@ -268,6 +268,75 @@ of tiny quads per frame — but three targeted fixes recovered most of the easy 
 
 ---
 
+## Frame statistics on the native (Vulkan) arm
+
+Every `sparkles:ui-app` application on the native arm (text-lab, ui-gallery,
+diagram, the terminal) takes `--debug` switches that record its frames with
+[`sparkles:profiling`](../specs/profiling/SPEC.md); `--debug=?` lists them all.
+A scripted run that ends by itself and reports its distribution:
+
+```bash
+text-lab --debug resize-stress,frames=300,gpu-timing,frame-trace=/tmp/run.json
+```
+
+It prints one summary line for the CPU and, with `gpu-timing`, one for the
+device: the mean, the slowest, p50/p95/p99, the 1% low, and hitches counted
+against the refresh interval, each attributed to what its frame did
+(`rebuilt`, `first`, `compiled`, or `plain`). `frame-trace=PATH` writes the
+last 4096 frames as a Chrome trace — open it in
+[Perfetto](https://ui.perfetto.dev) to see each frame's phases (rebuild,
+build, wait, acquire, record, present), its device time and its flags.
+`trace-frames-over=N` logs only the frames that took N ms or more.
+
+### A live view in Tracy
+
+Built with `version (SparklesTracy)`, the native arm also sends each
+presented frame to Tracy as a frame mark,
+its passes as CPU zones (`frame`, and inside it `build`, `wait`, `acquire`,
+`record`, `present`; a swapchain rebuild as `rebuild`), and a `frame ms` plot
+(`gpu ms` too, with `gpu-timing`). Without the version nothing of Tracy is
+compiled: `sparkles.profiling.tracy` is then a set of empty inline functions,
+and the binary neither links nor names `libTracyClient`.
+
+An application opts in through `sparkles:profiling`'s `tracy` configuration,
+which sets the version and links the client from the dev shell's
+`$SPARKLES_TRACY_PREFIX` (Tracy ships no pkg-config file). text-lab has one:
+
+```bash
+dub build :text-lab -c tracy
+```
+
+Another application adds the same configuration: a sub-configuration names
+only a direct dependency, so it lists `sparkles:profiling` too.
+
+```sdl
+configuration "tracy" {
+    targetType "executable"
+    mainSourceFile "src/app.d"
+    subConfiguration "sparkles:ui-app" "gui-vulkan"
+    dependency "sparkles:profiling" path="../.."
+    subConfiguration "sparkles:profiling" "tracy"
+}
+```
+
+dub applies the root's versions to every package it builds, so the version
+reaches `sparkles:ui-app` and the first Tracy build recompiles the whole
+graph. The client is nixpkgs' build: `TRACY_ENABLE` without
+`TRACY_ON_DEMAND`, so it records from the program's start and keeps what it
+records until a profiler connects. Open the `tracy` GUI and connect, or
+capture headless and read the zones back:
+
+```bash
+tracy-capture -o /tmp/run.tracy -a 127.0.0.1 -f &
+text-lab --debug frames=120,gpu-timing
+tracy-csvexport /tmp/run.tracy           # zones: count, mean, min, max
+tracy-csvexport -u -p /tmp/run.tracy     # every zone and plot point
+```
+
+`TRACY_PORT` (the client's) and `tracy-capture -p` move it off port 8086.
+`libs/ui-app/scripts/verify-native-tracy.sh` runs exactly this on headless
+Weston and checks the frames, zones and plots.
+
 ## Gotchas
 
 - **Screenshots on a skipped frame are stale.** With dirty-skipping (or any
@@ -309,5 +378,5 @@ of tiny quads per frame — but three targeted fixes recovered most of the easy 
 - [Code Style](./code-style.md) — `@nogc`/`nothrow` discipline that keeps the core
   loop allocation- and GC-pause-free (a prerequisite for stable measurements).
 - Tools: [`vtebench`](https://github.com/alacritty/vtebench) ·
-  [`termbench`](https://github.com/cmuratori/termbench) ·
+  [`termbench` (archived upstream)](https://web.archive.org/web/20260109072000/https://github.com/cmuratori/termbench) ·
   perf docs: <https://perfwiki.github.io/main/>

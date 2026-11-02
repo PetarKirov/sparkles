@@ -1475,6 +1475,16 @@
         ]
       },
       {
+        "text": "Profiling",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Specification",
+            "link": "/specs/profiling/SPEC"
+          }
+        ]
+      },
+      {
         "text": "Vulkan Canvas (proposal)",
         "collapsed": true,
         "items": [

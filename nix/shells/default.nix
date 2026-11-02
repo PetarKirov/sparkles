@@ -381,6 +381,11 @@
         # (libs/wired/bench/runtime; its --data-dir flag overrides this).
         export WIRED_BENCH_DATA=${config.packages.wired-bench-data}
 
+        # Tracy's prefix, for `sparkles:profiling`'s `tracy` configuration
+        # (PRF20): Tracy ships CMake files but no pkg-config file, so the
+        # dub.sdl takes its headers and client library from here.
+        export SPARKLES_TRACY_PREFIX=${pkgs.tracy}
+
         ${config.legacyPackages.wiredBenchIsaHook}
 
         # PyD-embedded Python (text-conformance Layer 10): make libpython

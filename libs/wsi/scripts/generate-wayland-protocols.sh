@@ -79,3 +79,14 @@ wayland-scanner private-code "$viewporter_xml" \
     "$repo/libs/wsi/src/wayland_viewporter_protocol.c"
 sed -i -e 's/#include <stdlib.h>/#include <stddef.h>/' -e '${/^$/d;}' \
     "$repo/libs/wsi/src/wayland_viewporter_protocol.c"
+
+# Presentation feedback (stable presentation-time): when a commit reached the
+# display, the refresh interval and whether it was zero-copy (`PRF13`).
+presentation_xml="$(pkg-config --variable=pkgdatadir wayland-protocols)/stable/presentation-time/presentation-time.xml"
+
+wayland-scanner client-header "$presentation_xml" \
+    "$repo/libs/wsi/src/wayland_presentation_time_client_protocol.h"
+wayland-scanner private-code "$presentation_xml" \
+    "$repo/libs/wsi/src/wayland_presentation_time_protocol.c"
+sed -i -e 's/#include <stdlib.h>/#include <stddef.h>/' -e '${/^$/d;}' \
+    "$repo/libs/wsi/src/wayland_presentation_time_protocol.c"

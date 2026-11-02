@@ -24,7 +24,9 @@ import core.sys.posix.pthread : pthread_equal, pthread_self, pthread_t;
 import core.sys.posix.sys.mman : MAP_FAILED, MAP_PRIVATE, PROT_READ, mmap,
     munmap;
 import core.sys.posix.unistd : getpid, posixClose = close, read, write;
-import core.time : Duration, MonoTime, msecs;
+import core.sys.linux.time : CLOCK_BOOTTIME, CLOCK_MONOTONIC_RAW;
+import core.sys.posix.time : CLOCK_MONOTONIC, clock_gettime, timespec;
+import core.time : Duration, MonoTime, msecs, nsecs, seconds, usecs;
 import std.math : isFinite;
 import std.traits : Parameters;
 
@@ -60,6 +62,9 @@ struct WaylandWsi
 {
     enum maxWindows = 16;
     enum maxEvents = 128;
+    /// The most presentation feedback requests in flight at once: a few
+    /// frames' worth for every window.
+    enum maxPresentationFeedbacks = 32;
 
     @disable this(this);
 
@@ -124,9 +129,24 @@ struct WaylandWsi
     }
 
     private Output[8] outputs_;
+
+    private struct PendingFeedback
+    {
+        WaylandWsi* owner;
+        PresentationFeedback* proxy;
+        WindowId window;
+        ulong tag;
+    }
     private wl_pointer* pointer_;
     private wp_cursor_shape_manager_v1* cursorShapeManager_;
     private wp_viewporter* viewporter_;
+    /// `wp_presentation` and its clock (`PRF13`): `clock_id`'s value, or
+    /// `uint.max` until the compositor sends it.
+    private wp_presentation* presentation_;
+    private uint presentationClock_ = uint.max;
+    /// The feedback requests in flight, each answered once by a
+    /// `PresentedEvent`; a listener's data is its entry, so they never move.
+    private PendingFeedback[maxPresentationFeedbacks] feedbacks_;
     private zxdg_decoration_manager_v1* decorationManager_;
     /// `WsiConfig.app`'s id: every toplevel's `app_id`.
     private InlineBuffer!(char, 128) appId_;
@@ -533,6 +553,15 @@ struct WaylandWsi
         windows_.remove(id);
         events_.forgetWindow(id);
         const hadSticky = hasStickyError_;
+        // Every feedback request is answered: the window's are discarded
+        // with it, their objects freed with its surface.
+        foreach (ref feedback; feedbacks_)
+            if (feedback.proxy !is null && feedback.window == id)
+            {
+                wp_presentation_feedback_destroy(feedback.proxy);
+                emit(id, PresentedEvent(tag: feedback.tag, discarded: true));
+                feedback = PendingFeedback.init;
+            }
         emit(id, DestroyedEvent());
         auto rearmed = prepareAndArm();
         if (!hadSticky && hasStickyError_)
@@ -895,6 +924,17 @@ struct WaylandWsi
         {
             wp_viewporter_destroy(viewporter_);
             viewporter_ = null;
+        }
+        foreach (ref feedback; feedbacks_)
+            if (feedback.proxy !is null)
+            {
+                wp_presentation_feedback_destroy(feedback.proxy);
+                feedback = PendingFeedback.init;
+            }
+        if (presentation_ !is null)
+        {
+            wp_presentation_destroy(presentation_);
+            presentation_ = null;
         }
         if (keyboard_ !is null)
         {
@@ -1916,6 +1956,21 @@ struct WaylandWsi
             owner.viewporter_ = cast(wp_viewporter*) wl_registry_bind(registry,
                 name, &wp_viewporter_interface, 1);
         }
+        else if (strcmp(interfaceName, wp_presentation_interface.name) == 0
+            && owner.presentation_ is null)
+        {
+            // v2 only lets a variable-rate output report a refresh; the
+            // events are v1's.
+            const version_ = advertisedVersion < 2 ? advertisedVersion : 2;
+            owner.presentation_ = cast(wp_presentation*) wl_registry_bind(
+                registry, name, &wp_presentation_interface, version_);
+            if (owner.presentation_ !is null
+                && wp_presentation_add_listener(owner.presentation_,
+                    listenerPtr(presentationListener), owner) != 0)
+                owner.remember(wsiError(WsiErrorKind.nativeFailure,
+                    WsiOperation.open, BackendKind.wayland, 0,
+                    "failed to install wp_presentation listener"));
+        }
         else if (strcmp(interfaceName,
             wp_cursor_shape_manager_v1_interface.name) == 0
             && owner.cursorShapeManager_ is null)
@@ -2318,6 +2373,126 @@ struct WaylandWsi
         slot.crop = whole ? PhysicalSize.init : shown;
         slot.cropScale = scale;
         return prepareAndArm();
+    }
+
+    // ── presentation feedback (`PRF13`) ─────────────────────────────────────
+
+    /// Whether $(LREF requestPresentationFeedback) can answer: the
+    /// compositor has `wp_presentation`.
+    bool canReportPresentation() const @safe pure nothrow @nogc
+        => presentation_ !is null;
+
+    /**
+    The compositor's presentation clock, a POSIX `clockid_t`, once it has
+    said (it does as the global is bound, so by `bootstrapComplete`); `-1`
+    before, and without `wp_presentation`. `CLOCK_MONOTONIC` (1) is
+    `MonoTime`'s own; `CLOCK_MONOTONIC_RAW` (4, headless Weston's) and
+    `CLOCK_BOOTTIME` (7) are converted to it; under any other a
+    `PresentedEvent` has no `shown` time.
+    */
+    int presentationClock() const @safe pure nothrow @nogc
+        => presentationClock_ == uint.max ? -1 : cast(int) presentationClock_;
+
+    /**
+    Asks when the surface's next commit reaches the display: a
+    `PresentedEvent` carrying `tag` answers, once, with the time it was
+    shown, the refresh interval and how (`zeroCopy`, `vsync`), or that it
+    was discarded. The commit is whichever comes next on the window's
+    surface — Vulkan's `vkQueuePresentKHR` makes it for a swapchain — so
+    request it before the present, inside the native-I/O borrow if one is
+    held. A compositor without `wp_presentation` reports `unsupported`;
+    `maxPresentationFeedbacks` requests in flight report `capacity`.
+    */
+    WsiResult!void requestPresentationFeedback(WindowId id, ulong tag)
+    {
+        auto checked = checkedSlot(id, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!void(checked.error);
+        ref slot = windows_.at(checked.value);
+        if (presentation_ is null)
+            return waylandFailure!void(WsiOperation.command, 0,
+                "the compositor has no wp_presentation", WsiErrorKind.unsupported);
+        if (slot.surface is null)
+            return waylandFailure!void(WsiOperation.command, 0,
+                "the window has no wl_surface", WsiErrorKind.unavailable);
+        size_t free = size_t.max;
+        foreach (i, ref feedback; feedbacks_)
+            if (feedback.proxy is null)
+            {
+                free = i;
+                break;
+            }
+        if (free == size_t.max)
+            return waylandFailure!void(WsiOperation.command, 0,
+                "too many presentation feedback requests in flight",
+                WsiErrorKind.capacity);
+        auto paused = pausePoll();
+        if (paused.hasError)
+            return paused;
+        ref entry = feedbacks_[free];
+        entry.proxy = wp_presentation_feedback(presentation_, slot.surface);
+        if (entry.proxy is null
+            || wp_presentation_feedback_add_listener(entry.proxy,
+                listenerPtr(presentationFeedbackListener), &entry) != 0)
+        {
+            if (entry.proxy !is null)
+                wp_presentation_feedback_destroy(entry.proxy);
+            entry = PendingFeedback.init;
+            cast(void) prepareAndArm();
+            return waylandFailure!void(WsiOperation.command, 0,
+                "wp_presentation.feedback failed");
+        }
+        entry.owner = &this;
+        entry.window = id;
+        entry.tag = tag;
+        return prepareAndArm();
+    }
+
+    private extern (C) static void onPresentationClock(void* data,
+        wp_presentation*, uint clock) nothrow @nogc
+    {
+        (cast(WaylandWsi*) data).presentationClock_ = clock;
+    }
+
+    private extern (C) static void onFeedbackSyncOutput(void*,
+        PresentationFeedback*, wl_output*) nothrow @nogc
+    {
+    }
+
+    private extern (C) static void onFeedbackPresented(void* data,
+        PresentationFeedback* proxy, uint secondsHigh, uint secondsLow,
+        uint nanoseconds, uint refresh, uint sequenceHigh, uint sequenceLow,
+        uint flags) nothrow @nogc
+    {
+        auto entry = cast(PendingFeedback*) data;
+        PresentedEvent event = {
+            tag: entry.tag,
+            shown: shownOnMonoTime(entry.owner.presentationClock_,
+                clockTime(secondsHigh, secondsLow, nanoseconds)),
+            refreshNanoseconds: refresh,
+            outputSequence: (ulong(sequenceHigh) << 32) | sequenceLow,
+            flags: cast(PresentationFlags)(flags & 0xF),
+        };
+        answerFeedback(entry, proxy, event);
+    }
+
+    private extern (C) static void onFeedbackDiscarded(void* data,
+        PresentationFeedback* proxy) nothrow @nogc
+    {
+        auto entry = cast(PendingFeedback*) data;
+        answerFeedback(entry, proxy, PresentedEvent(tag: entry.tag, discarded: true));
+    }
+
+    // Both answers are the object's destructor events: it is freed here.
+    private static void answerFeedback(PendingFeedback* entry,
+        PresentationFeedback* proxy, in PresentedEvent event) nothrow @nogc
+    {
+        auto owner = entry.owner;
+        const window = entry.window;
+        wp_presentation_feedback_destroy(proxy);
+        *entry = PendingFeedback.init;
+        if (owner !is null && !owner.windows_.resolve(window).hasError)
+            owner.emit(window, event);
     }
 
     private extern (C) static void onSeatCapabilities(void* data,
@@ -3300,6 +3475,13 @@ private immutable xdg_toplevel_listener toplevelListener = {
 private immutable zxdg_toplevel_decoration_v1_listener decorationListener = {
     &WaylandWsi.onDecorationConfigure
 };
+private immutable wp_presentation_listener presentationListener = {
+    &WaylandWsi.onPresentationClock
+};
+private immutable wp_presentation_feedback_listener presentationFeedbackListener = {
+    &WaylandWsi.onFeedbackSyncOutput, &WaylandWsi.onFeedbackPresented,
+    &WaylandWsi.onFeedbackDiscarded
+};
 private immutable wl_callback_listener frameListener = {
     &WaylandWsi.onFrameDone
 };
@@ -3910,6 +4092,100 @@ private zxdg_toplevel_decoration_v1* zxdg_decoration_manager_v1_get_toplevel_dec
         ZXDG_DECORATION_MANAGER_V1_GET_TOPLEVEL_DECORATION,
         &zxdg_toplevel_decoration_v1_interface,
         wl_proxy_get_version(cast(wl_proxy*) self), 0, cast(void*) null, toplevel);
+
+// `wp_presentation_feedback` names both the C struct and the request that
+// makes one; the request's D transcription below shadows the name, so the
+// struct is reached through the C request's return type.
+private alias PresentationFeedback = typeof(*wayland_native.wp_presentation_feedback(null, null));
+
+private int wp_presentation_add_listener()(wp_presentation* self,
+        const(wp_presentation_listener)* listener, void* data)
+    => wl_proxy_add_listener(cast(wl_proxy*) self,
+        cast(ListenerImpl) listener, data);
+
+private void wp_presentation_destroy()(wp_presentation* self)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, WP_PRESENTATION_DESTROY, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), WL_MARSHAL_FLAG_DESTROY);
+}
+
+private PresentationFeedback* wp_presentation_feedback()(wp_presentation* self,
+        wl_surface* surface)
+    => cast(PresentationFeedback*) wl_proxy_marshal_flags(cast(wl_proxy*) self,
+        WP_PRESENTATION_FEEDBACK, &wp_presentation_feedback_interface,
+        wl_proxy_get_version(cast(wl_proxy*) self), 0, surface, cast(void*) null);
+
+private int wp_presentation_feedback_add_listener()(PresentationFeedback* self,
+        const(wp_presentation_feedback_listener)* listener, void* data)
+    => wl_proxy_add_listener(cast(wl_proxy*) self,
+        cast(ListenerImpl) listener, data);
+
+private void wp_presentation_feedback_destroy()(PresentationFeedback* self)
+    => wl_proxy_destroy(cast(wl_proxy*) self);
+
+/// A presentation timestamp, as the protocol splits it, from its clock's zero.
+private Duration clockTime(uint secondsHigh, uint secondsLow, uint nanoseconds)
+    @safe pure nothrow @nogc
+{
+    const whole = (ulong(secondsHigh) << 32) | secondsLow;
+    return (cast(long) whole).seconds + (cast(long) nanoseconds).nsecs;
+}
+
+/*
+A presentation time on clock `clock` as a `MonoTime`, or `MonoTime.init`.
+
+`CLOCK_MONOTONIC` is the clock `MonoTime` reads on Linux, so its times convert
+exactly (as Android's frame times are converted). `CLOCK_MONOTONIC_RAW` runs
+unslewed and `CLOCK_BOOTTIME` also counts suspend, so each differs from it by
+an offset that moves only slowly (NTP's slew, at most 500 ppm) or across a
+suspend: the offset is sampled as the time arrives, between two `MonoTime`
+reads, and a time a frame or two old converts within microseconds. Any other
+clock — `CLOCK_REALTIME` steps — is reported unknown.
+*/
+private MonoTime shownOnMonoTime(uint clock, Duration shown) @safe nothrow @nogc
+{
+    if (clock == CLOCK_MONOTONIC)
+        return MonoTime.zero + shown;
+    if (clock != CLOCK_MONOTONIC_RAW && clock != CLOCK_BOOTTIME)
+        return MonoTime.init;
+    timespec ts;
+    const before = MonoTime.currTime;
+    if ((() @trusted => clock_gettime(cast(int) clock, &ts))() != 0)
+        return MonoTime.init;
+    const after = MonoTime.currTime;
+    return onMonoTime(shown, ts.tv_sec.seconds + ts.tv_nsec.nsecs,
+        before + (after - before) / 2);
+}
+
+/// `shown`, on a clock that read `clockNow` when `MonoTime` read `now`.
+private MonoTime onMonoTime(Duration shown, Duration clockNow, MonoTime now)
+    @safe pure nothrow @nogc
+    => now - (clockNow - shown);
+
+@("wsi.wayland.presentationTimesAreOnMonoTime")
+@safe nothrow @nogc
+unittest
+{
+    import core.sys.posix.time : CLOCK_REALTIME;
+
+    assert(clockTime(0, 12, 345) == 12.seconds + 300.nsecs, "Duration keeps hnsecs");
+    assert(clockTime(1, 0, 0) == (1L << 32).seconds);
+    // A clock 10 s ahead of `MonoTime`'s: its time 3 ms ago is `now` - 3 ms.
+    const now = MonoTime.zero + 100.seconds;
+    assert(onMonoTime(110.seconds - 3.msecs, 110.seconds, now) == now - 3.msecs);
+
+    // `CLOCK_MONOTONIC` is `MonoTime`'s; the raw clock converts within a
+    // millisecond (here, a reading just taken); `CLOCK_REALTIME` does not.
+    const at = MonoTime.currTime;
+    assert(shownOnMonoTime(CLOCK_MONOTONIC, at - MonoTime.zero) - at < 1.usecs);
+    assert(shownOnMonoTime(CLOCK_REALTIME, 1.seconds) == MonoTime.init);
+    timespec raw;
+    () @trusted { clock_gettime(CLOCK_MONOTONIC_RAW, &raw); }();
+    const converted = shownOnMonoTime(CLOCK_MONOTONIC_RAW,
+        raw.tv_sec.seconds + raw.tv_nsec.nsecs);
+    const later = MonoTime.currTime;
+    assert(converted >= at - 1.msecs && converted <= later + 1.msecs);
+}
 
 private void wp_viewporter_destroy()(wp_viewporter* self)
 {
