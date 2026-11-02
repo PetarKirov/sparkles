@@ -3983,12 +3983,12 @@ if (is(T == struct))
             string[] names;
             static foreach (j; 0 .. T.tupleof.length)
                 static if (roles.roles[j].role == SdlRoleKind.attribute)
-                {
+                {{
                     alias VJ = typeof(T.tupleof[j]);
                     static if (!isDynamicArray!(Unqual!VJ) || is(VJ == string))
                         names ~= qualifiedKey(roles.roles[j].namespace_,
                             roles.roles[j].localName);
-                }
+                }}
             return names;
         }();
 
@@ -5304,6 +5304,26 @@ version (unittest)
     assert(absorbed.hasValue, absorbed.error.toString);
     assert(absorbed.value[] == `a aliases="base" aliases="extra"` ~ "\n",
         absorbed.value[].idup);
+}
+
+// An aggregate with extras and several singular attributes encodes: each
+// attribute's collision check is its own scope.
+@("wired.sdl.codec.unknown.extrasBesideSeveralAttributes")
+@system unittest
+{
+    static struct Pair
+    {
+        @SdlAttribute() string left;
+        @SdlAttribute() string right;
+        @SdlExtra() OwnedSdlExtras extras;
+    }
+    static struct PairDoc
+    {
+        @SdlChild() Pair p;
+    }
+    const encoded = toSDL(PairDoc(Pair("a", "b")));
+    assert(encoded.hasValue, encoded.error.toString);
+    assert(encoded.value[] == `p left="a" right="b"` ~ "\n", encoded.value[].idup);
 }
 
 // The owned flavor captures identically and stays usable after both the input
