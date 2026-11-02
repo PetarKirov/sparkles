@@ -356,7 +356,7 @@ repository's uses of `__FILE_FULL_PATH__` still work?
   in the outputs, so the graph writes generated sources where a map covers
   them.
 - **Running elsewhere:** a test binary built in one worktree ran in the other's
-  root. Only `sparkles.base.source_uri` failed (below). One
+  root. Only `sparkles.base.source_uri` failed (fixed, below). One
   `sparkles:event-horizon` sampling test failed under load and passed alone.
 
 **`__FILE_FULL_PATH__`.** Each of the 52 uses in `libs` and `apps` (53 lines,
@@ -379,10 +379,18 @@ one only for the children they spawn.
 **Choice.** Keep D14's map, spelled `--ffile-prefix-map=<root>=.`. The three
 breaking uses are fixed instead of keying their variants on the root:
 
-- `source_uri` resolves a relative path against the working directory at run
-  time;
-- the two tests make the checkout's path absolute before they hand it to a
-  process or a recipe elsewhere.
+- **`source_uri`:** `resolveSourcePath` keeps a relocated build's relative
+  path relative, and `absoluteSourcePath` completes it with the working
+  directory at run time. The OSC 8 hooks complete a relative compile-time
+  location around the scheme's compile-time prefix and suffix, so they stay
+  `@nogc`.
+- **The two tests:** they make the checkout's path absolute before they hand
+  it to a process or a recipe elsewhere.
+
+Each fix comes with a test that fails in a relocated build of the code before
+it. With the fixes, the test binaries of `sparkles:base`, `sparkles:wired` and
+`sparkles:shader-compile` were built in one worktree under the map and run from
+the other's root, and all their tests passed: 984, 275 and 35.
 
 **Revisit when** LDC's map gains a form that drops the root without a `./`
 prefix and still maps the compilation directory.
