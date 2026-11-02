@@ -38,6 +38,7 @@
 #include "wayland_relative_pointer_client_protocol.h"
 #include "wayland_xdg_decoration_client_protocol.h"
 #include "wayland_viewporter_client_protocol.h"
+#include "wayland_presentation_time_client_protocol.h"
 #pragma attribute(pop)
 
 #undef wl_display_get_registry
@@ -107,3 +108,4 @@ void wl_buffer_destroy(struct wl_buffer *buffer)
 #include "wayland_relative_pointer_protocol.c"
 #include "wayland_xdg_decoration_protocol.c"
 #include "wayland_viewporter_protocol.c"
+#include "wayland_presentation_time_protocol.c"

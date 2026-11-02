@@ -1,0 +1,117 @@
+name "profiling"
+description "Frame records, history, statistics and traces for interactive programs"
+authors "Petar Kirov"
+copyright "Copyright © 2026, Petar Kirov"
+license "BSL-1.0"
+
+targetPath "build"
+
+importPaths "src"
+
+dflags "-preview=in" "-preview=dip1000"
+
+// Tracy's ImportC bridge: imported under `version (SparklesTracy)` only, and
+// never compiled (its symbols are libTracyClient's).
+excludedSourceFiles "src/sparkles/profiling/tracy_c.c"
+
+configuration "library" {
+    targetType "library"
+    dependency "sparkles:base" path="../.."
+}
+
+// `PRF20`: frame marks and zones sent to Tracy (`sparkles.profiling.tracy`).
+// Opt in with `subConfiguration "sparkles:profiling" "tracy"`. Tracy ships
+// no pkg-config file, so its prefix comes from the dev shell's
+// `$SPARKLES_TRACY_PREFIX`. TracyC.h declares its API only with
+// `TRACY_ENABLE`, the definition its CMake package exports too.
+configuration "tracy" {
+    targetType "library"
+    dependency "sparkles:base" path="../.."
+    versions "SparklesTracy"
+    cImportPaths "$SPARKLES_TRACY_PREFIX/include/tracy"
+    dflags "-P-DTRACY_ENABLE"
+    lflags "-L$SPARKLES_TRACY_PREFIX/lib"
+    libs "TracyClient"
+}
+
+configuration "unittest" {
+    // Fast path: depend on the runner shim (pulls the prebuilt impl library),
+    // so `dub test` recompiles only this package, not the runner sources.
+    dependency "sparkles:test-runner" path="../.."
+    dependency "sparkles:base" path="../.."
+    // `FrameSummary` round-trips through JSON without custom code (PRF17).
+    dependency "sparkles:wired" path="../.."
+
+    dflags "-checkaction=context" "-allinst"
+}
+
+// The tests again, with Tracy: `dub test :profiling -c unittest-tracy`.
+configuration "unittest-tracy" {
+    dependency "sparkles:test-runner" path="../.."
+    dependency "sparkles:base" path="../.."
+    dependency "sparkles:wired" path="../.."
+    versions "SparklesTracy"
+    cImportPaths "$SPARKLES_TRACY_PREFIX/include/tracy"
+    dflags "-P-DTRACY_ENABLE"
+    lflags "-L$SPARKLES_TRACY_PREFIX/lib"
+    libs "TracyClient"
+
+    dflags "-checkaction=context" "-allinst"
+}
+
+// BEGIN managed build types — apps/ci/tools/standardize-build-settings.d
+dflags "--linker=lld" platform="linux-ldc"
+dflags "-L-fuse-ld=lld" platform="linux-dmd"
+
+buildType "unittest" {
+    buildOptions "unittests" "debugMode" "debugInfo"
+    dflags "--gline-tables-only" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "unittest-debug" {
+    buildOptions "unittests" "debugMode" "debugInfo"
+    dflags "-defaultlib=libphobos2.so" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "unittest-cov" {
+    buildOptions "unittests" "coverage" "debugMode" "debugInfo"
+    dflags "--gline-tables-only" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "unittest-cov-ctfe" {
+    buildOptions "unittests" "coverageCTFE" "debugMode" "debugInfo"
+    dflags "--gline-tables-only" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "checked" {
+    buildOptions "optimize" "inline" "debugInfo"
+}
+buildType "bench" {
+    buildOptions "unittests" "optimize" "inline"
+    dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "bench-unchecked" {
+    buildOptions "unittests" "releaseMode" "optimize" "inline"
+    dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "bench-static" {
+    buildOptions "unittests" "releaseMode" "optimize" "inline"
+    dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
+    dflags "--link-defaultlib-shared=false" platform="linux-ldc"
+    dflags "-defaultlib=libphobos2.a" platform="linux-dmd"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+// END managed build types

@@ -34,6 +34,19 @@ configuration "application" {
     subConfiguration "sparkles:ui-app" "gui-vulkan"
 }
 
+// The application, its frames and phases sent to Tracy (`PRF20`):
+// `dub build :text-lab -c tracy`.
+configuration "tracy" {
+    targetType "executable"
+    mainSourceFile "src/app.d"
+    subConfiguration "sparkles:ui-app" "gui-vulkan"
+    // A sub-configuration names a direct dependency only (dub warns and
+    // ignores it otherwise). Its `SparklesTracy` reaches ui-app, which
+    // depends on profiling, and everything that depends on it.
+    dependency "sparkles:profiling" path="../.."
+    subConfiguration "sparkles:profiling" "tracy"
+}
+
 configuration "unittest" {
     targetType "library"
     excludedSourceFiles "src/app.d"

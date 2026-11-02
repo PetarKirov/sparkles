@@ -229,6 +229,12 @@ struct NativeDebug
 
     @Description("Treat frame N as a lost device, which no software driver produces on demand, so the rebuild can be seen to redraw.")
     uint loseDeviceAt; ///
+
+    @Description("Measure each frame's device time with timestamp queries, and summarize it when the window closes.")
+    bool gpuTiming; ///
+
+    @Description("Write the run's last 4096 frames as a Chrome trace (Perfetto, chrome://tracing) to PATH when the window closes.")
+    string frameTrace; ///
 }
 
 /**

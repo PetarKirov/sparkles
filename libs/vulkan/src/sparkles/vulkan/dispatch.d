@@ -188,6 +188,16 @@ private enum CommandSet[] instanceSets = [
     // Core in 1.1: which optional features a device has, before creating it.
     CommandSet(vkVersion11, [
         "GetPhysicalDeviceFeatures2",
+        "GetPhysicalDeviceMemoryProperties2",
+    ]),
+    // Which clocks a device's timestamps can be sampled against together
+    // (`VK_KHR_calibrated_timestamps`, or the EXT it was promoted from): a
+    // device extension's physical-device command, resolved on the instance.
+    CommandSet(khrCalibratedTimestamps, [
+        "GetPhysicalDeviceCalibrateableTimeDomainsKHR",
+    ]),
+    CommandSet(extCalibratedTimestamps, [
+        "GetPhysicalDeviceCalibrateableTimeDomainsEXT",
     ]),
 ] ~ platformInstanceSets;
 
@@ -309,6 +319,11 @@ private enum CommandSet[] deviceSets = [
         "CmdBeginRenderingKHR",
         "CmdEndRenderingKHR",
     ]),
+    // Optional: when a present tagged with an id (`VK_KHR_present_id`, which
+    // has no commands of its own) completed, polled with a zero timeout.
+    CommandSet(khrPresentWait, [
+        "WaitForPresentKHR",
+    ]),
     // Core in 1.1: whether a resource wants a dedicated allocation. Optional
     // so a 1.0 table stays complete.
     CommandSet(vkVersion11, [
@@ -319,6 +334,21 @@ private enum CommandSet[] deviceSets = [
     CommandSet(vkVersion13, [
         "CmdBeginRendering",
         "CmdEndRendering",
+    ]),
+    // A device timestamp and a host clock read together, which place GPU
+    // timestamps on the CPU's timeline.
+    CommandSet(khrCalibratedTimestamps, [
+        "GetCalibratedTimestampsKHR",
+    ]),
+    CommandSet(extCalibratedTimestamps, [
+        "GetCalibratedTimestampsEXT",
+    ]),
+    // Named regions of a command buffer, which RenderDoc, Nsight and RGP
+    // show: an instance extension's commands, dispatched on the command
+    // buffer, so resolved on the device.
+    CommandSet(extDebugUtils, [
+        "CmdBeginDebugUtilsLabelEXT",
+        "CmdEndDebugUtilsLabelEXT",
     ]),
 ];
 
@@ -356,7 +386,17 @@ enum string khrImagelessFramebuffer = "VK_KHR_imageless_framebuffer";
 /// ditto — what `VK_KHR_imageless_framebuffer` needs beside it below 1.2
 enum string khrImageFormatList = "VK_KHR_image_format_list";
 /// ditto
+enum string khrPresentId = "VK_KHR_present_id";
+/// ditto — needs `VK_KHR_present_id`
+enum string khrPresentWait = "VK_KHR_present_wait";
+/// ditto — each heap's budget and usage, through the 1.1 memory query
+enum string extMemoryBudget = "VK_EXT_memory_budget";
+/// ditto
 enum string extDebugUtils = "VK_EXT_debug_utils";
+/// ditto
+enum string khrCalibratedTimestamps = "VK_KHR_calibrated_timestamps";
+/// ditto — the extension `VK_KHR_calibrated_timestamps` was promoted from
+enum string extCalibratedTimestamps = "VK_EXT_calibrated_timestamps";
 /// ditto — not an extension name, a `has` key for the 1.3 core aliases.
 enum string vkVersion13 = "VK_VERSION_1_3";
 /// ditto — the `has` key for the 1.1 core commands.
@@ -488,6 +528,14 @@ struct DeviceCommands
         VK_KHR_DEPTH_STENCIL_RESOLVE_EXTENSION_NAME));
     static assert(matchesHeaderMacro(khrCreateRenderpass2,
         VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME));
+    static assert(matchesHeaderMacro(extDebugUtils, VK_EXT_DEBUG_UTILS_EXTENSION_NAME));
+    static assert(matchesHeaderMacro(khrCalibratedTimestamps,
+        VK_KHR_CALIBRATED_TIMESTAMPS_EXTENSION_NAME));
+    static assert(matchesHeaderMacro(extCalibratedTimestamps,
+        VK_EXT_CALIBRATED_TIMESTAMPS_EXTENSION_NAME));
+    static assert(matchesHeaderMacro(khrPresentId, VK_KHR_PRESENT_ID_EXTENSION_NAME));
+    static assert(matchesHeaderMacro(khrPresentWait, VK_KHR_PRESENT_WAIT_EXTENSION_NAME));
+    static assert(matchesHeaderMacro(extMemoryBudget, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME));
     version (Android)
         static assert(matchesHeaderMacro(khrAndroidSurface,
             VK_KHR_ANDROID_SURFACE_EXTENSION_NAME));
@@ -539,6 +587,7 @@ struct DeviceCommands
             == PFN_vkCreateMetalSurfaceEXT));
     static assert(is(typeof(DeviceCommands.acquireNextImageKHR) == PFN_vkAcquireNextImageKHR));
     static assert(is(typeof(DeviceCommands.queuePresentKHR) == PFN_vkQueuePresentKHR));
+    static assert(is(typeof(DeviceCommands.waitForPresentKHR) == PFN_vkWaitForPresentKHR));
 
     // The rendering commands are core, so a device that resolves the swapchain
     // extension and not these has a broken loader rather than a narrow one —

@@ -140,7 +140,7 @@ indent_size = unset
 
 # wayland-scanner output is vendored byte-for-byte apart from the ImportC
 # stddef substitution; keep the generator's tabs rather than reformatting it.
-[libs/wsi/src/wayland_{xdg_shell,cursor_shape,text_input,pointer_constraints,relative_pointer,xdg_decoration,viewporter}_*]
+[libs/wsi/src/wayland_{xdg_shell,cursor_shape,text_input,pointer_constraints,relative_pointer,xdg_decoration,viewporter,presentation_time}_*]
 indent_style = unset
 indent_size = unset
 

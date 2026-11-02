@@ -213,6 +213,9 @@ int main()
     writeln("ok: Wayland WSI conformance (", outcome.checked, " checked, ",
         outcome.skipped, " skipped)");
 
+    if (wsi.canReportPresentation)
+        checkPresentationFeedback(wsi, hooks);
+
     /*
     Kiosk addendum: confinement has no conformance evidence under a
     fullscreen surface (there is no outside to aim at), so prove what the
@@ -424,6 +427,92 @@ int main()
         writeln("ok: Wayland reads another client's clipboard");
     }
     return 0;
+}
+
+/*
+Presentation addendum (`PRF13`): a feedback request is answered by the commit
+that follows it. The first commit is shown, on the loop's clock when the
+compositor's is a monotonic one, with the output's refresh; two commits back
+to back answer both requests, the first perhaps discarded (superseded before
+the compositor repainted); a request no commit follows is answered discarded
+when its window is destroyed.
+*/
+private void checkPresentationFeedback(ref WaylandWsi wsi, ref WaylandHooks hooks)
+{
+    WindowConfig config;
+    assert(config.title.assign("sparkles:wsi Wayland presentation"));
+    const id = wsi.createWindow(config).value;
+    SurfaceMetrics metrics;
+    const readyDeadline = MonoTime.currTime + 5.seconds;
+    while (metrics == SurfaceMetrics.init)
+    {
+        assert(MonoTime.currTime < readyDeadline, "no ReadyEvent for the presentation window");
+        hooks.step(100.msecs);
+        assert(!wsi.drain((WindowEvent event) {
+            if (event.window == id)
+                event.payload.match!((in ReadyEvent e) { metrics = e.metrics; }, (_) {});
+        }).hasError);
+    }
+    const width = metrics.physicalSize.width, height = metrics.physicalSize.height;
+
+    PresentedEvent[8] answers;
+    size_t answered;
+    void awaitAnswers(size_t count, string failure)
+    {
+        const deadline = MonoTime.currTime + 5.seconds;
+        while (answered < count)
+        {
+            assert(MonoTime.currTime < deadline, failure);
+            hooks.step(50.msecs);
+            assert(!wsi.drain((WindowEvent event) {
+                if (event.window == id)
+                    event.payload.match!((in PresentedEvent e) { answers[answered++] = e; }, (_) {});
+            }).hasError);
+        }
+    }
+
+    ShmPainter painter;
+    const requested = MonoTime.currTime;
+    assert(!wsi.requestPresentationFeedback(id, 1).hasError);
+    assert(painter.paint!leaveBlack(wsi, id, width, height));
+    awaitAnswers(1, "the first commit was never reported presented");
+    const first = answers[0];
+    assert(first.tag == 1 && !first.discarded, "the first commit was discarded");
+    // CLOCK_MONOTONIC, CLOCK_MONOTONIC_RAW and CLOCK_BOOTTIME convert.
+    const clock = wsi.presentationClock;
+    const monotonic = clock == 1 || clock == 4 || clock == 7;
+    assert(first.shownKnown == monotonic, "a shown time only on a monotonic clock");
+    if (monotonic)
+        assert(first.shown >= requested && first.shown <= MonoTime.currTime,
+            "the shown time is not on the loop's clock");
+    writeln("ok: Wayland presentation feedback: clock ", wsi.presentationClock,
+        ", shown ", monotonic ? text((first.shown - requested).total!"usecs", " us after the request")
+            : "unknown", ", refresh ", first.refreshNanoseconds, " ns, sequence ",
+        first.outputSequence, ", flags ", first.flags);
+
+    // Two commits before the compositor's next repaint: both answered.
+    assert(!wsi.requestPresentationFeedback(id, 2).hasError);
+    assert(painter.paint!leaveBlack(wsi, id, width, height));
+    assert(!wsi.requestPresentationFeedback(id, 3).hasError);
+    assert(painter.paint!leaveBlack(wsi, id, width, height));
+    awaitAnswers(3, "a back-to-back commit was never answered");
+    assert(answers[1].tag == 2 && answers[2].tag == 3 && !answers[2].discarded);
+    writeln("ok: Wayland presentation feedback: back to back, the first ",
+        answers[1].discarded ? "discarded" : "presented", ", the second presented");
+
+    // No commit follows: the window's destruction answers it.
+    assert(!wsi.requestPresentationFeedback(id, 4).hasError);
+    painter.release(wsi);
+    assert(!wsi.destroyWindow(id).hasError);
+    bool discarded;
+    assert(!wsi.drain((WindowEvent event) {
+        event.payload.match!((in PresentedEvent e) {
+            discarded |= e.tag == 4 && e.discarded;
+        }, (_) {});
+    }).hasError);
+    assert(discarded, "a request no commit followed was not answered discarded");
+    assert(wsi.requestPresentationFeedback(id, 5).error.kind == WsiErrorKind.staleId);
+    writeln("ok: Wayland presentation feedback: answered discarded with its window");
 }
 
 /// Steps until `id` reports keyboard focus, after it became ready.

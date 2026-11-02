@@ -20,6 +20,7 @@ import sparkles.shaders.layout : layoutOf, Rule, writeLayout;
 import sparkles.shaders.resources : PushConstantsOf;
 import sparkles.vulkan;
 import sparkles.vulkan_wsi.commands;
+import sparkles.vulkan_wsi.gpu_profiler : GpuProfiler;
 import sparkles.vulkan_wsi.swapchain;
 import sparkles.vulkan_wsi.triangle_shader : triangleFragment, triangleVertex, TriangleView;
 
@@ -54,17 +55,26 @@ VkExtent2D drawableExtent(Size)(in Swapchain sc, in Size windowPx)
     assert(drawableExtent(sc, PhysicalSize(0, 600)) == sc.extent);
 }
 
-/// Record one frame: begin the pass, set the dynamic state, draw three vertices.
+/**
+Record one frame: begin the pass, set the dynamic state, draw three vertices.
+With `gpu`, the frame slot's commands are timed as scope `"frame"`, and the
+draw within them as `"triangle"`; collect the slot before recording it.
+*/
 Expected!(void, string) record(Context)(ref Context vk, ref CommandPool pool,
     ref Pipeline pipeline, ref RenderTarget target, ref Swapchain sc,
     uint frame, uint imageIndex, VkExtent2D drawExtent,
-    scope const(void)[] pushConstants = null) @system
+    scope const(void)[] pushConstants = null, GpuProfiler* gpu = null) @system
 {
     auto begun = pool.begin(vk, frame);
     if (begun.hasError)
         return err!void("vkBeginCommandBuffer: " ~ describeResult(begun.error));
 
     auto cmd = begun.value;
+    if (gpu !is null)
+    {
+        gpu.beginFrame(vk, cmd, frame);
+        gpu.begin(vk, cmd, frame, gpu.name("frame"));
+    }
 
     VkClearValue clear;
     clear.color.float32 = [0.05f, 0.05f, 0.08f, 1.0f];
@@ -136,7 +146,11 @@ Expected!(void, string) record(Context)(ref Context vk, ref CommandPool pool,
 
     // Three vertices, no buffers: the shader indexes constants by its
     // vertex index. See `triangle_shader.d`.
+    if (gpu !is null)
+        gpu.begin(vk, cmd, frame, gpu.name("triangle"));
     vk.device.cmdDraw(cmd, 3, 1, 0, 0);
+    if (gpu !is null)
+        gpu.end(vk, cmd, frame);
 
     if (target.dynamicRendering)
     {
@@ -151,6 +165,8 @@ Expected!(void, string) record(Context)(ref Context vk, ref CommandPool pool,
     }
     else
         vk.device.cmdEndRenderPass(cmd);
+    if (gpu !is null)
+        gpu.end(vk, cmd, frame);
 
     auto ended = pool.end(vk, frame);
     if (ended.hasError)

@@ -56,6 +56,7 @@ configuration "gui-vulkan" {
     targetType "sourceLibrary"
     dependency "sparkles:ui-vulkan" path="../.."
     dependency "sparkles:vulkan-wsi" path="../.."
+    dependency "sparkles:profiling" path="../.."
     dependency "sparkles:wsi" path="../.."
     dependency "sparkles:font" path="../.."
     dependency "sparkles:raylib-text" path="../.."

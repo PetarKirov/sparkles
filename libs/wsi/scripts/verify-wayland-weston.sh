@@ -64,4 +64,8 @@ echo ">> running against headless Weston ..."
 XDG_RUNTIME_DIR="$work" WAYLAND_DISPLAY=wsi-wayland \
   "$work/wsi-wayland-smoke" | tee "$work/output.log"
 grep -q '^ok: Wayland WSI conformance (11 checked, 12 skipped)' "$work/output.log"
+# Headless Weston has wp_presentation, on CLOCK_MONOTONIC_RAW (`PRF13`).
+grep -q '^ok: Wayland presentation feedback: clock [0-9]*, shown [0-9]* us after' "$work/output.log"
+grep -q '^ok: Wayland presentation feedback: back to back' "$work/output.log"
+grep -q '^ok: Wayland presentation feedback: answered discarded with its window' "$work/output.log"
 echo ">> sparkles:wsi Wayland prepare-read smoke verified under Weston."

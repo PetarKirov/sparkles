@@ -37,6 +37,8 @@ import sparkles.base.prettyprint : PrettyPrintOptions, prettyPrint;
 import sparkles.core_cli.args;
 import sparkles.event_horizon : DefaultLoop, LoopConfig;
 import sparkles.input.events : PointerButton;
+import sparkles.profiling.frame : FrameClock, FrameRecord;
+import sparkles.profiling.stats : FrameStats;
 import sparkles.event_horizon.errors : IoError;
 import sparkles.vulkan;
 import sparkles.vulkan_wsi;
@@ -97,9 +99,21 @@ struct RunReport
     uint outOfDate;
     uint reaps;
     FrameStats frames; /// active work per frame: the rebuild and the present
+    /// What the GPU profiler got: `timestamps`, `calibrated`, `labels`, or
+    /// `unsupported`.
+    string gpuTiming;
+    FrameStats gpuFrames; /// the device's time per frame, its "frame" scope
+    double gpuTriangleMeanUs = 0; /// the draw's scope, on the device
+    /// Calibrated only: how long before its collection a frame's GPU work
+    /// began, on the CPU's clock — positive and a few frames at most.
+    double gpuLagMinMs = 0, gpuLagMaxMs = 0;
     double maxDispatchMs = 0;
     string extent;
     string rendering;
+    /// Presents tagged with ids and polled for completion
+    /// (`VK_KHR_present_wait`), and the newest id seen complete.
+    bool presentWait;
+    ulong presentCompleted;
     string exitedBecause;
 }
 
@@ -235,7 +249,8 @@ private RunExpected!void drive(in NativeWaylandTriangle options) @system
     auto broughtUp = VulkanContext.create(vk, handles.value,
         ContextRequest(applicationName: "sparkles-native-wayland-triangle",
             apiVersion: apiVersion13,
-            validation: options.validation));
+            validation: options.validation,
+            debugLabels: true));
     auto returned = wsi.endNativeIo();
     if (broughtUp.hasError)
         return skipRun("cannot bring up Vulkan", describe(broughtUp.error));
@@ -246,10 +261,12 @@ private RunExpected!void drive(in NativeWaylandTriangle options) @system
     Presenter presenter;
     CommandPool commands;
     Pipeline pipeline;
+    GpuProfiler gpu;
     scope (exit)
     {
         if (vk.device.device !is null)
             vk.device.deviceWaitIdle(vk.device.device);
+        gpu.destroy(vk);
         pipeline.destroy(vk);
         commands.destroy(vk);
         presenter.destroy(vk);
@@ -286,11 +303,44 @@ private RunExpected!void drive(in NativeWaylandTriangle options) @system
     auto pooled = CommandPool.create(commands, vk, presenter.sync.framesInFlight);
     if (pooled.hasError)
         return failRun(pooled.error);
+    auto profiled = GpuProfiler.create(gpu, vk, presenter.sync.framesInFlight);
+    if (profiled.hasError)
+        return failRun(profiled.error);
     trace(i"pipeline and command pool ready");
 
     uint resizeEvents;
     uint outOfDate;
     FrameStats frames;
+    const clock = FrameClock.monotonic();
+    FrameStats gpuFrames;
+    Duration gpuTriangle;
+    uint gpuTriangles;
+    double gpuLagMinMs = double.infinity, gpuLagMaxMs = 0;
+
+    // What the slot measured the last time round, read once its fence was
+    // waited — before the slot records again.
+    void collectGpu(uint slot)
+    {
+        FrameRecord measured;
+        if (!gpu.collect(vk, slot, measured, clock))
+            return;
+        gpuFrames.note(measured.gpu);
+        const now = clock.now;
+        foreach (s; measured.scopes)
+        {
+            if (gpu.names[s.name] == "triangle")
+            {
+                gpuTriangle += s.took;
+                ++gpuTriangles;
+            }
+            if (s.calibrated && s.depth == 0)
+            {
+                const lagMs = (now - s.start).total!"usecs" / 1_000.0;
+                gpuLagMinMs = lagMs < gpuLagMinMs ? lagMs : gpuLagMinMs;
+                gpuLagMaxMs = lagMs > gpuLagMaxMs ? lagMs : gpuLagMaxMs;
+            }
+        }
+    }
     double maxDispatchMs = 0;
     string exitedBecause = "frame budget reached";
     bool maximized;
@@ -301,9 +351,11 @@ private RunExpected!void drive(in NativeWaylandTriangle options) @system
         const extent = drawableExtent(presenter.swapchain, metrics.physicalSize);
         const view = triangleView(extent);
         trace(i"drawing a frame");
-        auto shown = presenter.presentFrame!((uint image) => record(vk, commands, pipeline,
-            presenter.target, presenter.swapchain, presenter.sync.frame, image, extent, view[]))(
-            vk, commands, true, &wsi);
+        auto shown = presenter.presentFrame!((uint image) {
+            collectGpu(presenter.sync.frame);
+            return record(vk, commands, pipeline, presenter.target, presenter.swapchain,
+                presenter.sync.frame, image, extent, view[], &gpu);
+        })(vk, commands, true, &wsi, presenter.stats.framesPresented);
         if (shown.hasError)
             return failRun(shown.error);
         if (shown.value.stale)
@@ -404,9 +456,18 @@ private RunExpected!void drive(in NativeWaylandTriangle options) @system
         outOfDate: outOfDate,
         reaps: presenter.stats.reaps,
         frames: frames,
+        gpuTiming: !gpu.supported ? "unsupported"
+            : text("timestamps", gpu.calibrated ? ", calibrated" : "",
+                gpu.labels ? ", labels" : ""),
+        gpuFrames: gpuFrames,
+        gpuTriangleMeanUs: gpuTriangles ? gpuTriangle.total!"nsecs" / 1_000.0 / gpuTriangles : 0,
+        gpuLagMinMs: gpuLagMinMs == double.infinity ? 0 : gpuLagMinMs,
+        gpuLagMaxMs: gpuLagMaxMs,
         maxDispatchMs: maxDispatchMs,
         extent: text(presenter.swapchain.extent.width, "x", presenter.swapchain.extent.height),
         rendering: presenter.target.dynamicRendering ? "dynamic" : "render-pass",
+        presentWait: vk.presentWait,
+        presentCompleted: presenter.presentWait.completed,
         exitedBecause: exitedBecause,
     );
     auto opt = PrettyPrintOptions!void(colored: !options.noColor, softMaxWidth: 100);

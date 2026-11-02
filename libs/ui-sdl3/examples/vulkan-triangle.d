@@ -89,7 +89,7 @@ import sparkles.base.prettyprint : prettyPrint, PrettyPrintOptions;
 import sparkles.core_cli.args;
 import sparkles.ui_sdl3;
 import sparkles.vulkan;
-import sparkles.vulkan_wsi.frame_stats : FrameStats;
+import sparkles.profiling.stats : FrameStats;
 import sparkles.vulkan_wsi.presenter : Presenter, presentFrame;
 import sparkles.vulkan_wsi.swapchain : PresentMode, toVk;
 import sparkles.vulkan_wsi.triangle;

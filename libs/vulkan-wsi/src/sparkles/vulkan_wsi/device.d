@@ -45,13 +45,36 @@ struct ContextRequest
     /// device being chosen and created as well (offscreen devices with
     /// `VK_EXT_debug_utils` only); destroyed with the instance.
     const(VkDebugUtilsMessengerCreateInfoEXT)* messenger;
+    /// Enable `VK_EXT_debug_utils` where the instance offers it, so a GPU
+    /// profiler's scopes are also labels RenderDoc, Nsight and RGP show
+    /// (`PRF12`). Validation asks for it too.
+    bool debugLabels;
 }
+
+/**
+The host clock `MonoTime` reads, as a Vulkan time domain: what a calibrated
+timestamp is sampled against so a GPU time lands on the CPU's timeline
+(`PRF11`). druntime's `MonoTime` is `CLOCK_MONOTONIC` on Linux and Android
+and `QueryPerformanceCounter` on Windows; elsewhere there is no domain to
+calibrate against, and `hasMonoTimeDomain` is false.
+*/
+version (linux)
+    enum VkTimeDomainKHR monoTimeDomain = VkTimeDomainKHR.VK_TIME_DOMAIN_CLOCK_MONOTONIC_KHR;
+else version (Windows)
+    enum VkTimeDomainKHR monoTimeDomain =
+        VkTimeDomainKHR.VK_TIME_DOMAIN_QUERY_PERFORMANCE_COUNTER_KHR;
+else
+    enum VkTimeDomainKHR monoTimeDomain = VkTimeDomainKHR.VK_TIME_DOMAIN_DEVICE_KHR;
+
+/// ditto
+enum bool hasMonoTimeDomain = monoTimeDomain != VkTimeDomainKHR.VK_TIME_DOMAIN_DEVICE_KHR;
 
 package struct Candidate
 {
     VkPhysicalDevice handle;
     uint queueFamily;
     VkPhysicalDeviceProperties properties;
+    uint timestampValidBits;
 
     int score() const pure nothrow @nogc
     {
@@ -85,6 +108,14 @@ struct VulkanDevice
     /// Whether framebuffers may be created imageless (`VK_KHR_imageless_framebuffer`,
     /// core in 1.2): enabled wherever the device has the feature.
     bool imagelessFramebuffer;
+    /// Whether a present can carry an id and its completion be polled
+    /// (`VK_KHR_present_id` and `VK_KHR_present_wait`, `PRF13` of the
+    /// profiling specification): enabled wherever the device has both
+    /// features and presents.
+    bool presentWait;
+    /// Whether each heap's budget and usage can be read
+    /// (`VK_EXT_memory_budget`, `PRF15`): enabled wherever the device has it.
+    bool memoryBudget;
     /// Built pipelines' compiled form, shared by every pipeline made on this
     /// device; `null` until $(LREF loadPipelineCache).
     VkPipelineCache pipelineCache;
@@ -94,6 +125,12 @@ struct VulkanDevice
     /// Whether the instance enabled `VK_EXT_debug_utils`, so the layer's
     /// messages can be received by a messenger rather than the console.
     bool debugUtils;
+    /// The bits the queue's timestamps count in; 0 when it has none (`PRF10`).
+    uint timestampValidBits;
+    /// Whether the device enabled `VK_KHR_calibrated_timestamps` or the EXT
+    /// and samples both its own clock and $(LREF monoTimeDomain) with it, so
+    /// GPU timestamps can be placed on the CPU's timeline (`PRF11`).
+    bool calibratedTimestamps;
     private VkDebugUtilsMessengerEXT messenger_;
 
     @disable this(this);
@@ -148,7 +185,9 @@ struct VulkanDevice
             d.global.enumerateInstanceExtensionProperties, null);
         const(char)*[2] names;
         uint nameCount;
-        if (request.validation && advertised.hasExtension(extDebugUtils))
+        const wantDebugUtils = (request.validation || request.debugLabels)
+            && advertised.hasExtension(extDebugUtils);
+        if (wantDebugUtils)
             names[nameCount++] = extDebugUtils.ptr;
         const portability = instancePortability(d.global, names[0 .. nameCount]);
         if (portability.addExtension)
@@ -157,8 +196,7 @@ struct VulkanDevice
             presents: false);
         if (made.hasError)
             return made;
-        d.debugUtils = nameCount > 0 && names[0] is extDebugUtils.ptr
-            && d.instance.has!extDebugUtils;
+        d.debugUtils = wantDebugUtils && d.instance.has!extDebugUtils;
         if (request.messenger !is null && d.debugUtils)
         {
             const r = d.instance.createDebugUtilsMessengerEXT(d.instance.instance,
@@ -279,6 +317,10 @@ struct VulkanDevice
         queueFamily = uint.max;
         queue = null;
         properties = VkPhysicalDeviceProperties.init;
+        timestampValidBits = 0;
+        calibratedTimestamps = false;
+        presentWait = false;
+        memoryBudget = false;
         dynamicRendering = false;
         imagelessFramebuffer = false;
         apiVersion = 0;
@@ -293,6 +335,7 @@ struct VulkanDevice
             instance.destroyInstance(instance.instance, null);
         instance = InstanceCommands.init;
         global = GlobalCommands.init;
+        debugUtils = false;
     }
 
     // Whether `physical`'s queue `family` can present on the display, asked
@@ -373,14 +416,21 @@ package:
                 VulkanWsiOperation.createInstance, VkResult.VK_ERROR_EXTENSION_NOT_PRESENT,
                 "required native surface extension is unavailable");
 
-        const(char)*[3] names;
+        const(char)*[4] names;
         uint nameCount;
         names[nameCount++] = khrSurface.ptr;
         names[nameCount++] = platform.ptr;
+        const wantDebugUtils = (request.validation || request.debugLabels)
+            && advertised.hasExtension(extDebugUtils);
+        if (wantDebugUtils)
+            names[nameCount++] = extDebugUtils.ptr;
         const portability = instancePortability(global, names[0 .. nameCount]);
         if (portability.addExtension)
             names[nameCount++] = khrPortabilityEnumeration.ptr;
-        return createInstanceWith(request, names[0 .. nameCount], portability);
+        auto made = createInstanceWith(request, names[0 .. nameCount], portability);
+        if (!made.hasError)
+            debugUtils = wantDebugUtils && instance.has!extDebugUtils;
+        return made;
     }
 
     VulkanWsiResult!void selectAndCreateDevice(in ContextRequest request,
@@ -397,6 +447,7 @@ package:
         physicalDevice = best.handle;
         queueFamily = best.queueFamily;
         properties = best.properties;
+        timestampValidBits = best.timestampValidBits;
         apiVersion = request.apiVersion < properties.apiVersion ? request.apiVersion
             : properties.apiVersion;
 
@@ -441,7 +492,36 @@ package:
         }
         const wantImageless = imagelessFeature.imagelessFramebuffer == VK_TRUE;
 
-        const(char)*[7] deviceExtensions;
+        // Calibrated timestamps, where the device has them and samples the
+        // clock `MonoTime` reads (`PRF11`): the KHR, else the EXT. Both need
+        // Vulkan 1.1 (or `VK_KHR_get_physical_device_properties2`).
+        const calibration = apiVersion < apiVersion11 ? CalibrationPlan.none
+            : planCalibration(advertised.hasExtension(khrCalibratedTimestamps),
+                advertised.hasExtension(extCalibratedTimestamps),
+                calibrateableDomains(physicalDevice,
+                    advertised.hasExtension(khrCalibratedTimestamps),
+                    advertised.hasExtension(extCalibratedTimestamps)));
+
+        // Present ids and waits, for when a frame reached the display.
+        auto presentIdFeature = vkInfo(VkPhysicalDevicePresentIdFeaturesKHR());
+        auto presentWaitFeature = vkInfo(VkPhysicalDevicePresentWaitFeaturesKHR(
+            pNext: &presentIdFeature));
+        if (presents && advertised.hasExtension(khrPresentId)
+            && advertised.hasExtension(khrPresentWait) && apiVersion >= apiVersion11
+            && instance.has!vkVersion11)
+        {
+            auto features = vkInfo(VkPhysicalDeviceFeatures2(pNext: &presentWaitFeature));
+            instance.getPhysicalDeviceFeatures2(physicalDevice, &features);
+        }
+        const wantPresentWait = presentIdFeature.presentId == VK_TRUE
+            && presentWaitFeature.presentWait == VK_TRUE;
+
+        // Each heap's budget, where the device reports it through the 1.1
+        // memory query (`PRF15`).
+        const wantBudget = advertised.hasExtension(extMemoryBudget) && apiVersion >= apiVersion11
+            && instance.has!vkVersion11;
+
+        const(char)*[11] deviceExtensions;
         uint extensionCount;
         if (presents)
             deviceExtensions[extensionCount++] = khrSwapchain.ptr;
@@ -461,6 +541,17 @@ package:
             deviceExtensions[extensionCount++] = khrImageFormatList.ptr;
             deviceExtensions[extensionCount++] = khrImagelessFramebuffer.ptr;
         }
+        if (calibration == CalibrationPlan.khr)
+            deviceExtensions[extensionCount++] = khrCalibratedTimestamps.ptr;
+        else if (calibration == CalibrationPlan.ext)
+            deviceExtensions[extensionCount++] = extCalibratedTimestamps.ptr;
+        if (wantPresentWait)
+        {
+            deviceExtensions[extensionCount++] = khrPresentId.ptr;
+            deviceExtensions[extensionCount++] = khrPresentWait.ptr;
+        }
+        if (wantBudget)
+            deviceExtensions[extensionCount++] = extMemoryBudget.ptr;
 
         auto dynamicFeature = vkInfo(VkPhysicalDeviceDynamicRenderingFeatures(
             dynamicRendering: VK_TRUE,
@@ -479,6 +570,11 @@ package:
         {
             imagelessFeature.pNext = cast(void*) chain;
             chain = &imagelessFeature;
+        }
+        if (wantPresentWait)
+        {
+            presentIdFeature.pNext = cast(void*) chain;
+            chain = &presentWaitFeature;
         }
         auto info = vkInfo(VkDeviceCreateInfo(
             pNext: chain,
@@ -503,6 +599,11 @@ package:
         dynamicRendering = wantDynamicFeature
             && (device.has!vkVersion13 || device.has!khrDynamicRendering);
         imagelessFramebuffer = wantImageless;
+        calibratedTimestamps = calibration == CalibrationPlan.khr
+                ? device.has!khrCalibratedTimestamps
+            : calibration == CalibrationPlan.ext && device.has!extCalibratedTimestamps;
+        presentWait = wantPresentWait && device.has!khrPresentWait;
+        memoryBudget = wantBudget;
         device.getDeviceQueue(handle, queueFamily, 0, &queue);
         return vulkanWsiOk();
     }
@@ -564,6 +665,36 @@ private:
         return vulkanWsiOk();
     }
 
+    // Which of the two domains a calibration needs `physical` can sample:
+    // bit 0 its own clock, bit 1 $(LREF monoTimeDomain).
+    uint calibrateableDomains(VkPhysicalDevice physical, bool khr, bool ext) @trusted nothrow
+    {
+        static if (!hasMonoTimeDomain)
+            return 0;
+        else
+        {
+            // Only the command of an extension the device has: the loader's
+            // trampoline for one it lacks is not callable.
+            auto query = khr ? instance.getPhysicalDeviceCalibrateableTimeDomainsKHR
+                : ext ? instance.getPhysicalDeviceCalibrateableTimeDomainsEXT : null;
+            if (query is null)
+                return 0;
+            VkTimeDomainKHR[8] domains;
+            uint count = domains.length;
+            const r = query(physical, &count, domains.ptr);
+            if (r < 0)
+                return 0;
+            // `VK_INCOMPLETE` leaves the count at what the driver has.
+            if (count > domains.length)
+                count = domains.length;
+            uint found;
+            foreach (domain; domains[0 .. count])
+                found |= domain == VkTimeDomainKHR.VK_TIME_DOMAIN_DEVICE_KHR ? 1
+                    : domain == monoTimeDomain ? 2 : 0;
+            return found;
+        }
+    }
+
     Candidate[] pickCandidates(scope bool delegate(VkPhysicalDevice, uint) nothrow presentable)
         @trusted nothrow
     {
@@ -581,7 +712,8 @@ private:
                     continue;
                 VkPhysicalDeviceProperties candidateProperties;
                 instance.getPhysicalDeviceProperties(physical, &candidateProperties);
-                found ~= Candidate(physical, cast(uint) index, candidateProperties);
+                found ~= Candidate(physical, cast(uint) index, candidateProperties,
+                    family.timestampValidBits);
                 break;
             }
         }
@@ -717,4 +849,38 @@ package ImagelessPlan planImageless(uint requested, uint supported, bool imagele
     assert(planImageless(v11, v13, false, true) == ImagelessPlan(false, false),
         "a 1.1 request on a 1.3 device that lists neither");
     assert(planImageless(v13, v10, true, true) == ImagelessPlan(false, false));
+}
+
+/// Which calibrated-timestamps extension a device gets, if either.
+package enum CalibrationPlan : ubyte
+{
+    none, ///
+    khr,  /// `VK_KHR_calibrated_timestamps`
+    ext,  /// `VK_EXT_calibrated_timestamps`, on a driver without the KHR
+}
+
+/**
+Calibrated timestamps for a device advertising the KHR (`khr`) or the EXT
+(`ext`) and sampling `domains` (bit 0 its own clock, bit 1
+$(LREF monoTimeDomain)): the KHR where it is listed, else the EXT, and neither
+unless both clocks can be sampled — a calibration against another clock would
+put GPU times on a timeline the CPU's frames are not on.
+*/
+package CalibrationPlan planCalibration(bool khr, bool ext, uint domains)
+    @safe pure nothrow @nogc
+    => domains != 3 ? CalibrationPlan.none
+        : khr ? CalibrationPlan.khr
+        : ext ? CalibrationPlan.ext : CalibrationPlan.none;
+
+@("vulkan_wsi.device.calibrationNeedsBothClocks")
+@safe pure nothrow @nogc unittest
+{
+    with (CalibrationPlan)
+    {
+        assert(planCalibration(true, true, 3) == khr);
+        assert(planCalibration(false, true, 3) == ext);
+        assert(planCalibration(true, true, 1) == none, "the device clock alone");
+        assert(planCalibration(true, false, 2) == none);
+        assert(planCalibration(false, false, 3) == none);
+    }
 }

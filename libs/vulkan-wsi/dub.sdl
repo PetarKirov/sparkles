@@ -18,6 +18,7 @@ libs "vulkan"
 stringImportPaths "src/shaders"
 
 dependency "sparkles:base" path="../.."
+dependency "sparkles:profiling" path="../.."
 dependency "sparkles:shaders" path="../.."
 dependency "sparkles:vulkan" path="../.."
 dependency "sparkles:wsi" path="../.."

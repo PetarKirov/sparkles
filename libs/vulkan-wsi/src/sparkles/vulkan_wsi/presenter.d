@@ -43,6 +43,8 @@ struct FrameResult
     bool stale;
     VkResult acquired = VkResult.VK_SUCCESS;  /// what the acquire returned
     VkResult presentResult = VkResult.VK_SUCCESS; /// what the present returned
+    /// The id the present carried (`VK_KHR_present_id`); 0 when untagged.
+    ulong presentId;
 }
 
 /// What a presenter has done, for a run's report.
@@ -68,6 +70,111 @@ struct PresentTiming
     Duration create;    /// the last rebuild's `Swapchain.recreate`
 }
 
+/**
+Which tagged presents completed (`PRF13` of the profiling specification),
+learned without waiting: each present a device with `VK_KHR_present_id` and
+`VK_KHR_present_wait` makes carries an id ($(LREF PresentWait.idFor)), and
+$(LREF pollCompleted) asks `vkWaitForPresentKHR`, with a zero timeout,
+about the oldest ids not yet known complete. A present completes when its
+image is shown; ids complete in order, and a present the engine skipped
+(mailbox) completes with the next one shown.
+
+The time a present completed is the time a poll first saw it: as fine as the
+caller polls, once a frame for $(LREF presentFrame). A rebuilt swapchain's
+outstanding ids are dropped — the old one is retired, and ids are per
+swapchain.
+*/
+struct PresentWait
+{
+    /// The most ids outstanding; past it the oldest is dropped, and it
+    /// completes unseen with a newer one.
+    enum size_t capacity = 8;
+
+    private ulong[capacity] pending_; // oldest first
+    private size_t count_;
+    private VkSwapchainKHR swapchain_;
+    ulong lastSubmitted; /// the newest id presented
+    ulong completed;     /// the newest id known complete; 0 for none
+    MonoTime completedAt; /// when a poll first saw `completed`
+
+@safe pure nothrow @nogc:
+
+    /**
+    The id the present of frame `frame` carries: `frame + 1` (an id of 0 is
+    no id, and a `FrameTimer` numbers frames from 0), or the next after the
+    last when that would not increase — ids must, over a swapchain's life.
+    */
+    ulong idFor(ulong frame) const
+        => frame + 1 > lastSubmitted ? frame + 1 : lastSubmitted + 1;
+
+    /// Notes that `id` was presented to `swapchain`; a new swapchain drops
+    /// the old one's outstanding ids.
+    void submitted(VkSwapchainKHR swapchain, ulong id)
+    {
+        if (swapchain !is swapchain_)
+        {
+            swapchain_ = swapchain;
+            count_ = 0;
+        }
+        if (count_ == capacity)
+            dropOldest();
+        pending_[count_++] = id;
+        lastSubmitted = id;
+    }
+
+    /// How many ids are outstanding.
+    size_t outstanding() const => count_;
+
+    /// Forgets the outstanding ids and their swapchain (it is retired or
+    /// gone: waiting on it is no longer valid).
+    void forget()
+    {
+        count_ = 0;
+        swapchain_ = null;
+    }
+
+    private void dropOldest()
+    {
+        foreach (i; 1 .. count_)
+            pending_[i - 1] = pending_[i];
+        --count_;
+    }
+}
+
+/**
+Polls `wait` without blocking: every outstanding id the device reports
+complete, oldest first, is passed to `sink(id, at)` (when given) and becomes
+`wait.completed`, at `at`, the time this poll saw it. Returns how many
+completed. An error — the surface lost, out of date — drops the outstanding
+ids; a device without the commands reports none.
+*/
+size_t pollCompleted(Context, Sink = typeof(null))(ref PresentWait wait, ref Context vk,
+    scope Sink sink = null) @system
+{
+    size_t done;
+    while (wait.count_ > 0 && wait.swapchain_ !is null)
+    {
+        const id = wait.pending_[0];
+        const r = vk.device.waitForPresentKHR is null ? VkResult.VK_TIMEOUT
+            : vk.device.waitForPresentKHR(vk.device.device, wait.swapchain_, id, 0);
+        if (r == VkResult.VK_TIMEOUT || r == VkResult.VK_NOT_READY)
+            break;
+        if (r < 0)
+        {
+            wait.forget();
+            break;
+        }
+        const at = MonoTime.currTime;
+        wait.dropOldest();
+        wait.completed = id;
+        wait.completedAt = at;
+        ++done;
+        static if (!is(Sink == typeof(null)))
+            sink(id, at);
+    }
+    return done;
+}
+
 /// ditto
 struct Presenter
 {
@@ -76,6 +183,9 @@ struct Presenter
     FrameSync sync;      ///
     PresentStats stats;  ///
     PresentTiming timing; ///
+    /// The tagged presents and which completed, where the device has
+    /// `VK_KHR_present_wait` (`VulkanDevice.presentWait`).
+    PresentWait presentWait;
 
     @disable this(this);
 
@@ -128,6 +238,8 @@ struct Presenter
         if (synced.hasError)
             return err!SwapchainResize(synced.error);
         ++stats.swapchainsBuilt;
+        // The old swapchain is retired: its presents are not waited on.
+        presentWait.forget();
         return updated;
     }
 
@@ -151,6 +263,7 @@ struct Presenter
     /// Destroys the three, the device idle.
     void destroy(Context)(ref Context vk) @system nothrow
     {
+        presentWait.forget();
         sync.destroy(vk);
         target.destroy(vk);
         swapchain.destroy(vk);
@@ -195,10 +308,15 @@ is a frame not drawn (`presented` false, no error) — what a frame drawn
 from inside a window system's dispatch needs. An out-of-date acquire
 draws nothing and reports `stale`; a suboptimal one is drawn, presented
 and reported `stale`.
+
+Where the device has `VK_KHR_present_wait` (`vk.presentWait`), the present
+carries `presenter.presentWait.idFor(frame)` — `frame + 1` for a program's
+frame numbers from 0 — reported as `presentId`, and every frame then polls,
+without waiting, which presents completed (`presenter.presentWait`).
 */
 PresentationResult!FrameResult presentFrame(alias record, Context, Io = typeof(null))(
     ref Presenter presenter, ref Context vk, ref CommandPool pool, bool block = true,
-    Io io = null) @system
+    Io io = null, ulong frame = 0) @system
 {
     with (presenter)
     {
@@ -265,10 +383,24 @@ PresentationResult!FrameResult presentFrame(alias record, Context, Io = typeof(n
         started = MonoTime.currTime;
         if (auto failed = borrow(io))
             return err!FrameResult(failed);
-        auto shown = swapchain.present(vk, image, sync.renderFinished(image));
+        const tagged = canWaitForPresent(vk);
+        const presentId = tagged ? presentWait.idFor(frame) : 0;
+        auto shown = swapchain.present(vk, image, sync.renderFinished(image), presentId);
         if (auto failed = giveBack(io))
             return err!FrameResult(failed);
         timing.present = MonoTime.currTime - started;
+        static if (is(typeof(vk.presentWait) : bool))
+        {
+            if (tagged)
+            {
+                if (!shown.hasError)
+                {
+                    presentWait.submitted(swapchain.handle, presentId);
+                    result.presentId = presentId;
+                }
+                presentWait.pollCompleted(vk);
+            }
+        }
         // The slot's submit went in either way, so the slot moves on; the
         // frame is presented only if the engine queued it.
         sync.advance();
@@ -302,6 +434,15 @@ PresentationResult!FrameResult presentFrame(alias record, Context, Io = typeof(n
     assert(!none.presented && !none.stale && none.acquired == VkResult.VK_SUCCESS);
 }
 
+// Whether `vk`'s device tags presents and waits on them (`VulkanDevice.presentWait`).
+private bool canWaitForPresent(Context)(ref Context vk)
+{
+    static if (is(typeof(vk.presentWait) : bool))
+        return vk.presentWait && vk.device.waitForPresentKHR !is null;
+    else
+        return false;
+}
+
 // The frame slot's fence, polled: `VK_TIMEOUT` while its submit still runs.
 private VkResult waitWithoutBlocking(Context)(ref Context vk, ref FrameSync sync) @system
 {
@@ -312,9 +453,10 @@ private VkResult waitWithoutBlocking(Context)(ref Context vk, ref FrameSync sync
 version (unittest)
 {
     // A device that answers only what a frame asks: the fence wait and the
-    // acquire return what the test sets, and every call is counted.
-    private __gshared VkResult fenceAnswer, acquireAnswer, presentAnswer;
-    private __gshared size_t acquires, resets, submits;
+    // acquire return what the test sets, and every call is counted. The
+    // state is thread-local: tests on different runner threads keep their own.
+    private VkResult fenceAnswer, acquireAnswer, presentAnswer;
+    private size_t acquires, resets, submits;
 
     private extern (C) nothrow
     {
@@ -341,8 +483,26 @@ version (unittest)
         void fakeDestroySemaphore(VkDevice, VkSemaphore, const(VkAllocationCallbacks)*) {}
         VkResult fakeSubmit(VkQueue, uint, const(VkSubmitInfo)*, VkFence) { ++submits; return VkResult.VK_SUCCESS; }
         VkResult fakeIdle(VkQueue) => VkResult.VK_SUCCESS;
-        VkResult fakePresent(VkQueue, const(VkPresentInfoKHR)*) => presentAnswer;
+        VkResult fakePresent(VkQueue, const(VkPresentInfoKHR)* info)
+        {
+            // The id a tagged present carries, chained as `VkPresentIdKHR`.
+            auto tag = cast(const(VkPresentIdKHR)*) info.pNext;
+            presentedId = tag is null ? 0 : tag.pPresentIds[0];
+            return presentAnswer;
+        }
+        // Complete up to `shownUpTo`; `waitAnswer` overrides when set.
+        VkResult fakeWaitForPresent(VkDevice, VkSwapchainKHR, ulong id, ulong timeout)
+        {
+            ++presentWaits;
+            assert(timeout == 0, "a poll never waits");
+            if (waitAnswer != VkResult.VK_SUCCESS)
+                return waitAnswer;
+            return id <= shownUpTo ? VkResult.VK_SUCCESS : VkResult.VK_TIMEOUT;
+        }
     }
+    private ulong presentedId, shownUpTo;
+    private size_t presentWaits;
+    private VkResult waitAnswer;
 
     private struct FrameDevice
     {
@@ -357,12 +517,23 @@ version (unittest)
         typeof(&fakeSubmit) queueSubmit = &fakeSubmit;
         typeof(&fakeIdle) queueWaitIdle = &fakeIdle;
         typeof(&fakePresent) queuePresentKHR = &fakePresent;
+        typeof(&fakeWaitForPresent) waitForPresentKHR = &fakeWaitForPresent;
     }
 
     private struct FrameVk
     {
         FrameDevice device;
         VkQueue queue = cast(VkQueue) cast(void*) 2;
+        bool presentWait; // as `VulkanDevice.presentWait`
+    }
+
+    // A presenter with a swapchain of one image and two frame slots.
+    private void readyPresenter(ref Presenter p, ref FrameVk vk, ref CommandPool pool)
+    {
+        assert(!FrameSync.create(p.sync, vk, 2).hasError);
+        p.swapchain.handle = cast(VkSwapchainKHR) cast(void*) 0x30;
+        p.swapchain.extent = VkExtent2D(64, 64);
+        pool.buffers = [cast(VkCommandBuffer) cast(void*) 0x40, cast(VkCommandBuffer) cast(void*) 0x41];
     }
 }
 
@@ -409,4 +580,66 @@ version (unittest)
     assert(!rejected.hasError && !rejected.value.presented && rejected.value.stale);
     assert(submits == 2 && p.stats.framesPresented == 1 && p.stats.presentOutOfDate == 1);
     presentAnswer = VkResult.VK_SUCCESS;
+}
+
+@("vulkan_wsi.presenter.presentsCarryIdsAndCompleteWithoutWaiting")
+@system unittest
+{
+    // `PRF13`: with `VK_KHR_present_wait`, each present carries its frame's
+    // number + 1, and every frame polls — with a zero timeout — which
+    // presents completed, oldest first, stamping when it first saw each.
+    FrameVk vk;
+    vk.presentWait = true;
+    Presenter p;
+    CommandPool pool;
+    readyPresenter(p, vk, pool);
+    auto record(uint) => ok!string();
+    fenceAnswer = acquireAnswer = presentAnswer = waitAnswer = VkResult.VK_SUCCESS;
+    shownUpTo = presentWaits = 0;
+
+    auto first = p.presentFrame!record(vk, pool, true, null, 0);
+    assert(!first.hasError && first.value.presented && first.value.presentId == 1);
+    assert(presentedId == 1 && p.presentWait.completed == 0 && p.presentWait.outstanding == 1);
+
+    // Frame 5 is shown before the poll that follows its present: both ids
+    // complete at once, and only the newest is the one to read.
+    shownUpTo = 6;
+    const before = MonoTime.currTime;
+    auto sixth = p.presentFrame!record(vk, pool, true, null, 5);
+    assert(sixth.value.presentId == 6 && presentedId == 6);
+    assert(p.presentWait.completed == 6 && p.presentWait.outstanding == 0);
+    assert(p.presentWait.completedAt >= before);
+
+    // A frame number that would not increase still gets an increasing id.
+    auto again = p.presentFrame!record(vk, pool, true, null, 2);
+    assert(again.value.presentId == 7 && p.presentWait.outstanding == 1);
+
+    // Polled directly, with a sink: nothing new until it is shown.
+    ulong[4] seen;
+    size_t count;
+    void sink(ulong id, MonoTime) { seen[count++] = id; }
+    assert(p.presentWait.pollCompleted(vk, &sink) == 0);
+    shownUpTo = 7;
+    assert(p.presentWait.pollCompleted(vk, &sink) == 1 && seen[0] == 7 && count == 1);
+
+    // A lost surface drops what is outstanding; a rebuilt swapchain too.
+    p.presentFrame!record(vk, pool, true, null, 10);
+    waitAnswer = VkResult.VK_ERROR_SURFACE_LOST_KHR;
+    assert(p.presentWait.pollCompleted(vk) == 0 && p.presentWait.outstanding == 0);
+    waitAnswer = VkResult.VK_SUCCESS;
+    p.presentWait.submitted(cast(VkSwapchainKHR) cast(void*) 0x30, 12);
+    p.presentWait.submitted(cast(VkSwapchainKHR) cast(void*) 0x31, 13);
+    assert(p.presentWait.outstanding == 1 && p.presentWait.lastSubmitted == 13);
+
+    // Past capacity the oldest is dropped, to complete with a newer one.
+    foreach (id; 14 .. 14 + PresentWait.capacity + 2)
+        p.presentWait.submitted(cast(VkSwapchainKHR) cast(void*) 0x31, id);
+    assert(p.presentWait.outstanding == PresentWait.capacity);
+
+    // Without the feature a present carries no id and nothing is polled.
+    vk.presentWait = false;
+    const polls = presentWaits;
+    auto plain = p.presentFrame!record(vk, pool);
+    assert(plain.value.presented && plain.value.presentId == 0 && presentedId == 0);
+    assert(presentWaits == polls);
 }

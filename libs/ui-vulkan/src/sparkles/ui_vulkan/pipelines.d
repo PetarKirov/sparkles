@@ -67,6 +67,23 @@ bool isSrgb(VkFormat format) @safe pure nothrow @nogc
     }
 }
 
+/**
+The pipelines a canvas compiled, as the driver reports them (pipeline
+creation feedback, core in Vulkan 1.3): compiled, or served by the pipeline
+cache. A device below 1.3 reports nothing, and its pipelines count as
+`unreported`. A frame that compiled one is attributed to it (`PRF16`).
+*/
+struct PipelineCompiles
+{
+    uint compiled;   /// built by the driver
+    uint fromCache;  /// served by the pipeline cache
+    uint unreported; /// made without feedback
+    ulong nanos;     /// the driver's time making them, where reported
+
+    /// Every pipeline made.
+    uint total() const @safe pure nothrow @nogc => compiled + fromCache + unreported;
+}
+
 /// The canvas's pipeline for one target format, and the render pass it was
 /// made for (`null` with dynamic rendering).
 struct FormatPipeline
@@ -89,6 +106,7 @@ struct Pipelines
     private VkShaderModule vertex_, fragment_;
     private UniqueBuffer!FormatPipeline formats_;
     private DeviceFacts facts_;
+    PipelineCompiles compiles; /// what making the pipelines cost (`PRF16`)
 
     @disable this(this);
 
@@ -359,8 +377,21 @@ struct Pipelines
             renderPass: renderPass,
             subpass: 0,
         ));
-        return device.createGraphicsPipelines(device.device, facts_.pipelineCache, 1, &info,
+        // Whether the cache served it, from the driver itself (core in 1.3).
+        VkPipelineCreationFeedback whole;
+        auto feedback = vkInfo(VkPipelineCreationFeedbackCreateInfo(
+            pPipelineCreationFeedback: &whole));
+        const askFeedback = facts_.spirv16; // Vulkan 1.3
+        if (askFeedback)
+        {
+            feedback.pNext = info.pNext;
+            info.pNext = &feedback;
+        }
+        const r = device.createGraphicsPipelines(device.device, facts_.pipelineCache, 1, &info,
             null, &pipeline);
+        if (r >= 0)
+            noteFeedback(compiles, askFeedback, whole);
+        return r;
     }
 }
 
@@ -379,4 +410,39 @@ unittest
     assert(DeviceFacts(apiVersion: apiVersion13).spirv16);
     assert(!DeviceFacts(apiVersion: apiVersion11).spirv16);
     assert(!DeviceFacts(apiVersion: apiVersion12).spirv16);
+}
+
+// Counts one pipeline made, by what its creation feedback says.
+private void noteFeedback(ref PipelineCompiles compiles, bool asked,
+    in VkPipelineCreationFeedback whole) @safe pure nothrow @nogc
+{
+    with (VkPipelineCreationFeedbackFlagBits)
+    {
+        if (!asked || !(whole.flags & VK_PIPELINE_CREATION_FEEDBACK_VALID_BIT))
+            ++compiles.unreported;
+        else if (whole.flags & VK_PIPELINE_CREATION_FEEDBACK_APPLICATION_PIPELINE_CACHE_HIT_BIT)
+            ++compiles.fromCache;
+        else
+            ++compiles.compiled;
+        if (asked && (whole.flags & VK_PIPELINE_CREATION_FEEDBACK_VALID_BIT))
+            compiles.nanos += whole.duration;
+    }
+}
+
+@("ui_vulkan.pipelines.compilesFollowTheFeedback")
+@safe pure nothrow @nogc
+unittest
+{
+    PipelineCompiles c;
+    with (VkPipelineCreationFeedbackFlagBits)
+    {
+        noteFeedback(c, true, VkPipelineCreationFeedback(
+            flags: VK_PIPELINE_CREATION_FEEDBACK_VALID_BIT, duration: 5));
+        noteFeedback(c, true, VkPipelineCreationFeedback(
+            flags: VK_PIPELINE_CREATION_FEEDBACK_VALID_BIT
+                | VK_PIPELINE_CREATION_FEEDBACK_APPLICATION_PIPELINE_CACHE_HIT_BIT, duration: 1));
+        noteFeedback(c, true, VkPipelineCreationFeedback());
+        noteFeedback(c, false, VkPipelineCreationFeedback());
+    }
+    assert(c.compiled == 1 && c.fromCache == 1 && c.unreported == 2 && c.nanos == 6 && c.total == 4);
 }
