@@ -680,14 +680,25 @@ Resolves an edge whose prerequisite reached `prerequisite`:
 $(TABLE
     $(TR $(TH condition) $(TH satisfied by))
     $(TR $(TD `onSuccess`) $(TD succeeded, degraded, skipped))
-    $(TR $(TD `onFailure`) $(TD failed))
+    $(TR $(TD `onFailure`) $(TD failed, a provisional block))
     $(TR $(TD `onCompletion`) $(TD every outcome but cancelled))
     $(TR $(TD `always`) $(TD every outcome))
 )
 
 A skipped prerequisite satisfies `onSuccess`: a skip is an eligibility rule,
-not a broken contract, and dub still compiles an unselected dependency.
+not a broken contract, and dub still compiles an unselected dependency. A
+provisional block — a block rooted in a provisional failure — satisfies
+`onFailure`, so the fallback at the end of a provisional chain still fires
+([SPEC TDM5]).
 */
+EdgeState resolveEdge(EdgeCondition condition, const TaskOutcome prerequisite) @safe pure nothrow @nogc
+{
+    if (condition == EdgeCondition.onFailure && isProvisionalBlock(prerequisite))
+        return EdgeState.satisfied;
+    return resolveEdge(condition, kindOf(prerequisite));
+}
+
+/// ditto, by outcome kind alone: a block is never a provisional one here.
 EdgeState resolveEdge(EdgeCondition condition, OutcomeKind prerequisite) @safe pure nothrow @nogc
 {
     final switch (condition)
@@ -733,9 +744,10 @@ alias OutcomeSlot = Nullable!TaskOutcome;
 @WireCase(CaseStyle.kebabCase)
 enum ReadinessKind
 {
-    waiting, /// some prerequisite is not terminal
-    ready,   /// every edge is satisfied
-    blocked, /// every prerequisite is terminal and some edge is impossible
+    waiting,   /// some prerequisite is not terminal
+    ready,     /// every edge is satisfied
+    blocked,   /// every prerequisite is terminal and some edge is impossible
+    cancelled, /// ditto, and an impossible prerequisite was cancelled
 }
 
 /// $(LREF readiness)'s answer; `blocked` is meaningful only for
@@ -744,76 +756,119 @@ struct Readiness
 {
     ReadinessKind kind; ///
     Blocked blocked;    ///
+
+    /// The terminal outcome a decided, not-ready task takes: its block, or
+    /// `Cancelled(notAdmitted)`.
+    TaskOutcome outcome() const @safe pure nothrow @nogc
+        => kind == ReadinessKind.cancelled ? TaskOutcome(Cancelled(CancelReason.notAdmitted))
+            : TaskOutcome(blocked);
 }
 
 /**
-Where `task` stands given `outcomes` (one slot per node, by index).
+Where `task` stands given `outcomes` (one slot per node, by index), deciding
+an impossible edge as [SPEC TDM6] does:
+
+$(LIST
+    * $(B unneeded) — every impossible edge is an `onFailure` edge from a
+        success, degradation, or skip: `Blocked(conditionUnmet)`;
+    * $(B cancelled) — otherwise, if an impossible prerequisite was cancelled
+        and none descends from a failure: `Cancelled(notAdmitted)`
+        (`ReadinessKind.cancelled`);
+    * $(B blocked) — otherwise `Blocked`, naming the lowest-index impossible
+        prerequisite that descends from a failure, else the lowest-index
+        blocked one;
+        `root`, `fromFailure`, and `provisional` follow the cause's chain, and a
+        failure is provisional when its node's policy is.
+)
 
 A task is decided only once $(I every) prerequisite is terminal, so its
-outcome never depends on which prerequisite finished first. A blocked task's
-`cause` is its lowest-index impossible prerequisite that descends from a
-failure, else its lowest-index impossible prerequisite; `root` and
-`fromFailure` follow the cause's own chain.
+outcome never depends on which prerequisite finished first.
 */
 Readiness readiness(const ref TaskGraph graph, TaskIndex task, scope const(OutcomeSlot)[] outcomes)
     @safe pure nothrow @nogc
 {
-    TaskIndex firstImpossible, firstFromFailure;
+    TaskIndex firstImpossible, firstFromFailure, firstBlocked;
+    bool allUnneeded = true, anyCancelled;
     foreach (edge; graph.incoming(task))
     {
         const slot = outcomes[edge.prerequisite.value];
         if (slot.isNull)
             return Readiness(ReadinessKind.waiting);
-        if (resolveEdge(edge.condition, kindOf(slot.get)) == EdgeState.satisfied)
+        const outcome = slot.get;
+        if (resolveEdge(edge.condition, outcome) == EdgeState.satisfied)
             continue;
+        const kind = kindOf(outcome);
+        allUnneeded &= edge.condition == EdgeCondition.onFailure && (kind == OutcomeKind.succeeded
+            || kind == OutcomeKind.degraded || kind == OutcomeKind.skipped);
+        anyCancelled |= kind == OutcomeKind.cancelled;
         if (!firstImpossible.valid)
             firstImpossible = edge.prerequisite;
-        if (!firstFromFailure.valid && descendsFromFailure(slot.get))
+        if (!firstFromFailure.valid && descendsFromFailure(outcome))
             firstFromFailure = edge.prerequisite;
+        if (!firstBlocked.valid && kind == OutcomeKind.blocked)
+            firstBlocked = edge.prerequisite;
     }
     if (!firstImpossible.valid)
         return Readiness(ReadinessKind.ready);
-    const cause = firstFromFailure.valid ? firstFromFailure : firstImpossible;
-    return Readiness(ReadinessKind.blocked, blockedBy(cause, outcomes[cause.value].get));
+    if (allUnneeded)
+        return Readiness(ReadinessKind.blocked,
+            Blocked(BlockReason.conditionUnmet, firstImpossible, firstImpossible, false));
+    // A failure's descendant stays blocked even beside a cancelled
+    // prerequisite (TDC2 item 4: a failed dependency decides `Blocked`).
+    if (anyCancelled && !firstFromFailure.valid)
+        return Readiness(ReadinessKind.cancelled);
+    // Not unneeded and nothing cancelled, so some impossible prerequisite
+    // failed or is blocked: name a failure's descendant first.
+    const cause = firstFromFailure.valid ? firstFromFailure : firstBlocked;
+    return Readiness(ReadinessKind.blocked,
+        blockedBy(cause, outcomes[cause.value].get, graph[cause].failurePolicy));
 }
 
 /**
-Marks every task that can no longer run as $(REF Blocked, sparkles,build_primitives,task,model), in
-topological order so a block cascades through a chain in one pass. Tasks that
-are ready or waiting keep a null slot. Returns how many tasks it blocked.
+Decides every task that can no longer run — as a block or a cancellation,
+per $(LREF readiness) — in topological order, so a decision cascades through a
+chain in one pass. Tasks that are ready or waiting keep a null slot. Returns
+how many tasks it decided.
 */
 size_t propagateBlocked(const ref TaskGraph graph, scope OutcomeSlot[] outcomes) @safe pure nothrow @nogc
 in (outcomes.length == graph.nodes.length)
 {
-    size_t blocked;
+    size_t decided;
     foreach (task; graph.topologicalOrder)
     {
         if (!outcomes[task.value].isNull)
             continue;
         const r = readiness(graph, task, outcomes);
-        if (r.kind == ReadinessKind.blocked)
+        if (r.kind == ReadinessKind.blocked || r.kind == ReadinessKind.cancelled)
         {
-            outcomes[task.value] = TaskOutcome(r.blocked);
-            blocked++;
+            outcomes[task.value] = r.outcome;
+            decided++;
         }
     }
-    return blocked;
+    return decided;
 }
 
-// Whether a prerequisite's outcome makes its dependents' block a failure.
+// Whether a prerequisite's outcome is a failure or a block rooted in one
+// (provisional or not): the cause a block prefers to name.
 private bool descendsFromFailure(const TaskOutcome outcome) @safe pure nothrow @nogc
-    => failsCommand(outcome);
+{
+    import std.sumtype : match;
 
-// The block a dependent takes from an impossible prerequisite `cause`.
-private Blocked blockedBy(TaskIndex cause, const TaskOutcome outcome) @safe pure nothrow @nogc
+    return outcome.match!((const Failed _) => true, (const Blocked b) => b.fromFailure, _ => false);
+}
+
+// The block a dependent takes from an impossible prerequisite `cause`, whose
+// node fails under `policy`.
+private Blocked blockedBy(TaskIndex cause, const TaskOutcome outcome, FailurePolicy policy)
+    @safe pure nothrow @nogc
 {
     import std.sumtype : match;
 
     return outcome.match!(
-        (const Failed _) => Blocked(BlockReason.prerequisiteFailed, cause, cause, true),
-        (const Cancelled _) => Blocked(BlockReason.prerequisiteCancelled, cause, cause, false),
-        (const Blocked b) => Blocked(BlockReason.prerequisiteBlocked, cause, b.root, b.fromFailure),
-        _ => Blocked(BlockReason.conditionUnmet, cause, cause, false),
+        (const Failed _) => Blocked(BlockReason.prerequisiteFailed, cause, cause, true,
+            policy == FailurePolicy.provisional),
+        (const Blocked b) => Blocked(BlockReason.prerequisiteBlocked, cause, b.root, b.fromFailure, b.provisional),
+        _ => assert(0, "readiness names only a failed or blocked cause"),
     );
 }
 
@@ -873,6 +928,95 @@ unittest
     const plain = outcomes[g.indexOf(id("plain")).value].get;
     assert(kindOf(plain) == OutcomeKind.blocked);
     assert(!failsCommand(plain), "an unneeded fallback is no failure");
+}
+
+@("build_primitives.task.graph.propagateBlocked.cancelledPrerequisitesCancel")
+@safe pure nothrow
+unittest
+{
+    // TDM6: a dependent of a cancelled node is not admitted, and that
+    // cascades; it is not a block.
+    TaskGraphBuilder builder;
+    foreach (name; ["a", "b", "c"])
+        builder.add(node(name));
+    builder.add(edge("a", "b"));
+    builder.add(edge("b", "c"));
+    const g = builder.build().value;
+
+    auto outcomes = new OutcomeSlot[3];
+    outcomes[g.indexOf(id("a")).value] = TaskOutcome(Cancelled(CancelReason.interrupted));
+    assert(propagateBlocked(g, outcomes) == 2);
+    assert(outcomes[g.indexOf(id("b")).value].get == TaskOutcome(Cancelled(CancelReason.notAdmitted)));
+    assert(outcomes[g.indexOf(id("c")).value].get == TaskOutcome(Cancelled(CancelReason.notAdmitted)));
+}
+
+@("build_primitives.task.graph.propagateBlocked.provisionalChainsFallBack")
+@safe pure nothrow
+unittest
+{
+    // A provisional chain: `cov` (provisional) fails, so `covLink` is a
+    // provisional block. The fallback hangs off the chain's last node and
+    // must still fire; and nothing provisional fails the command (TDM5,
+    // TDM6, TDC4).
+    TaskGraphBuilder builder;
+    auto cov = node("cov");
+    cov.failurePolicy = FailurePolicy.provisional;
+    builder.add(cov);
+    builder.add(node("covLink"));
+    builder.add(node("plain"));
+    builder.add(node("after"));
+    builder.add(edge("cov", "covLink"));
+    builder.add(edge("covLink", "plain", EdgeCondition.onFailure));
+    builder.add(edge("covLink", "after"));
+    const g = builder.build().value;
+    TaskIndex at(string name) => g.indexOf(id(name));
+
+    auto outcomes = new OutcomeSlot[4];
+    outcomes[at("cov").value] = TaskOutcome(Failed(FailureReason.exitStatus, 1));
+    propagateBlocked(g, outcomes);
+    const link = outcomes[at("covLink").value].get;
+    assert(link == TaskOutcome(Blocked(BlockReason.prerequisiteFailed, at("cov"), at("cov"), true, true)));
+    assert(!failsCommand(link), "a provisional block does not fail the command");
+    assert(readiness(g, at("plain"), outcomes).kind == ReadinessKind.ready,
+        "a provisional block satisfies onFailure");
+    const after = outcomes[at("after").value].get;
+    assert(isProvisionalBlock(after) && !failsCommand(after), "provisional all the way down");
+
+    // An authoritative failure in the same place blocks for real.
+    auto authoritative = new OutcomeSlot[4];
+    TaskGraphBuilder plainBuilder;
+    foreach (name; ["cov", "covLink", "plain", "after"])
+        plainBuilder.add(node(name));
+    plainBuilder.add(edge("cov", "covLink"));
+    plainBuilder.add(edge("covLink", "plain", EdgeCondition.onFailure));
+    plainBuilder.add(edge("covLink", "after"));
+    const h = plainBuilder.build().value;
+    authoritative[h.indexOf(id("cov")).value] = TaskOutcome(Failed(FailureReason.exitStatus, 1));
+    propagateBlocked(h, authoritative);
+    assert(failsCommand(authoritative[h.indexOf(id("covLink")).value].get));
+    assert(kindOf(authoritative[h.indexOf(id("plain")).value].get) == OutcomeKind.blocked,
+        "only a provisional block satisfies onFailure");
+}
+
+@("build_primitives.task.graph.readiness.unneededOnlyWhenEveryImpossibleEdgeIs")
+@safe pure nothrow
+unittest
+{
+    // `x` waits on a succeeded `ok` (onFailure: unneeded on its own) and on
+    // a blocked `b` (onSuccess). Together it is a block, not unneeded.
+    TaskGraphBuilder builder;
+    foreach (name; ["ok", "b", "x"])
+        builder.add(node(name));
+    builder.add(edge("ok", "x", EdgeCondition.onFailure));
+    builder.add(edge("b", "x"));
+    const g = builder.build().value;
+    auto outcomes = new OutcomeSlot[3];
+    outcomes[g.indexOf(id("ok")).value] = TaskOutcome(Succeeded());
+    outcomes[g.indexOf(id("b")).value] = TaskOutcome(Blocked(BlockReason.conditionUnmet,
+        g.indexOf(id("ok")), g.indexOf(id("ok")), false));
+    const r = readiness(g, g.indexOf(id("x")), outcomes);
+    assert(r.kind == ReadinessKind.blocked);
+    assert(r.blocked.reason == BlockReason.prerequisiteBlocked && r.blocked.cause == g.indexOf(id("b")));
 }
 
 @("build_primitives.task.graph.readiness.preferAFailureCauseRegardlessOfCompletionOrder")

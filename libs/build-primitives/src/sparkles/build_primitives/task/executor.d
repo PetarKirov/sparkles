@@ -319,6 +319,9 @@ private:
                     else
                         finish(t, TaskOutcome(r.blocked));
                     break;
+                case ReadinessKind.cancelled:
+                    finish(t, r.outcome);
+                    break;
                 case ReadinessKind.ready:
                     if (cancelling && !isCleanup(t))
                     {

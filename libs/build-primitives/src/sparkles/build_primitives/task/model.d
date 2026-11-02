@@ -405,8 +405,6 @@ enum BlockReason
 {
     /// A required prerequisite failed.
     prerequisiteFailed,
-    /// A required prerequisite was cancelled.
-    prerequisiteCancelled,
     /// A required prerequisite was itself blocked.
     prerequisiteBlocked,
     /// The prerequisite's outcome made the edge's condition impossible
@@ -417,8 +415,13 @@ enum BlockReason
 /**
 A required prerequisite did not succeed or its edge condition became
 impossible. `cause` is the immediate prerequisite; `root` is the task whose
-outcome started the chain. `fromFailure` says whether that root failed —
-the block then fails the command ([SPEC TDM6]).
+outcome started the chain. `fromFailure` says whether that root failed;
+`provisional`, whether it failed under a provisional policy. A block from an
+authoritative failure fails the command; a $(I provisional block) does not,
+and satisfies an `onFailure` edge like a failure ([SPEC TDM5, TDM6, TDC4]).
+
+A prerequisite that was cancelled leaves its dependents
+`Cancelled(notAdmitted)`, not blocked.
 */
 struct Blocked
 {
@@ -426,6 +429,7 @@ struct Blocked
     TaskIndex cause;    ///
     TaskIndex root;     ///
     bool fromFailure;   ///
+    bool provisional;   ///
 }
 
 /// Why a result is degraded.
@@ -473,13 +477,18 @@ OutcomeKind kindOf(const TaskOutcome outcome) @safe pure nothrow @nogc
     );
 
 /// Whether `outcome` fails the command on its own ([SPEC TDM6]): a failure,
-/// or a block that descends from one.
+/// or a block that descends from an authoritative one. (A failure under a
+/// provisional policy is the node's policy to excuse, not the outcome's.)
 bool failsCommand(const TaskOutcome outcome) @safe pure nothrow @nogc
     => outcome.match!(
         (const Failed _) => true,
-        (const Blocked b) => b.fromFailure,
+        (const Blocked b) => b.fromFailure && !b.provisional,
         _ => false,
     );
+
+/// Whether `outcome` is a provisional block ([SPEC TDM5]).
+bool isProvisionalBlock(const TaskOutcome outcome) @safe pure nothrow @nogc
+    => outcome.match!((const Blocked b) => b.provisional, _ => false);
 
 @("build_primitives.task.model.TaskOutcome.kindAndFailure")
 @safe pure nothrow @nogc
@@ -489,8 +498,10 @@ unittest
     assert(failsCommand(TaskOutcome(Failed(FailureReason.exitStatus, 1))));
     assert(failsCommand(TaskOutcome(Blocked(BlockReason.prerequisiteFailed,
         TaskIndex(0), TaskIndex(0), fromFailure: true))));
-    assert(!failsCommand(TaskOutcome(Blocked(BlockReason.prerequisiteCancelled,
+    assert(!failsCommand(TaskOutcome(Blocked(BlockReason.prerequisiteBlocked,
         TaskIndex(0), TaskIndex(0), fromFailure: false))));
+    assert(!failsCommand(TaskOutcome(Blocked(BlockReason.prerequisiteFailed,
+        TaskIndex(0), TaskIndex(0), fromFailure: true, provisional: true))), "a provisional block");
     assert(!failsCommand(TaskOutcome(Cancelled(CancelReason.notAdmitted))));
     assert(!failsCommand(TaskOutcome(Skipped(SkipReason.platform))));
 
