@@ -46,10 +46,18 @@ The reporter fiber's body: hands every event from `source` to `reporter`
 until the source is closed and drained (or the fiber is cancelled), then
 calls `reporter.finish()` under `protect`, so terminal restoration runs on
 success, failure, and cancellation alike.
+
+A source with `close` is closed when the loop ends, so a reporter that was
+cancelled early turns the executor's next event into `EPIPE` rather than
+leaving it parked on a full channel — the executor may be draining under
+`protect`, where nothing else would wake it.
 */
 void consumeEvents(X, Src, R)(ref X exec, ref Src source, ref R reporter)
 if (isFiberExecutor!X && isEventSource!(Src, X) && isReporter!R)
 {
+    static if (__traits(compiles, source.close()))
+        scope (exit)
+            source.close();
     scope (exit)
         protect!(() { reporter.finish(); })(exec);
     for (;;)

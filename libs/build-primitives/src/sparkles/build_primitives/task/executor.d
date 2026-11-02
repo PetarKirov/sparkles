@@ -198,7 +198,9 @@ struct TaskExecutor(X, C, D, S)
                     // protection so every child is accounted for.
                     if (!cancelling)
                         requestCancellation(CancelCause.terminate, TaskIndex.init);
-                    protect!(() { drainProtected(); })(*exec);
+                    protect!(() {
+                        drainProtected((TaskIndex t) { cast(void) sc.spawn(() { runTask(t); }); });
+                    })(*exec);
                     break;
                 }
                 Completion[] batch = [move(first.value)];
@@ -447,17 +449,22 @@ private:
     }
 
     // After the scheduler itself was interrupted: collect every running
-    // task's completion, and decide the rest.
-    void drainProtected()
+    // task's completion and decide the rest, still starting each cleanup
+    // node once it is ready (TDC2 item 8) — admission is closed to all other
+    // work. Runs under `protect`.
+    void drainProtected(scope void delegate(TaskIndex) spawn)
     {
-        while (running > 0)
+        for (;;)
         {
+            resolve();
+            admit(spawn);
+            if (running == 0)
+                break;
             auto c = completions.take(*exec);
             if (c.hasError)
                 break;
             finishBatch([move(c.value)]);
         }
-        resolve();
         foreach (i, s; state)
             if (s == TaskState.ready || s == TaskState.pending)
                 finish(TaskIndex(cast(uint) i), TaskOutcome(Cancelled(CancelReason.notAdmitted)));
@@ -672,6 +679,51 @@ unittest
     auto terminated = runFake(g, ["a": Script(10.msecs)], ExecutorOptions(capacity: 4),
         5.msecs, CancelCause.terminate);
     assert(terminated.result.exitCode == 143);
+}
+
+@("build_primitives.task.executor.cancel.scopeShutdownStillRunsCleanup")
+@system
+unittest
+{
+    import sparkles.event_horizon.cause : Interrupt, InterruptKind;
+    import sparkles.event_horizon.channel : Channel;
+    import sparkles.event_horizon.clock : TestClock;
+    import sparkles.event_horizon.scope_ : withScope;
+    import sparkles.event_horizon.testing : advanceAndSettle, TestSched;
+
+    // The scope around the executor is shut down while `a` runs: `b` never
+    // starts, but the cleanup `z` (always after `a`) must still run.
+    const g = graphOf([tnode("a"), tnode("b"), tnode("z", 1, TaskKind.cleanup)],
+        [tedge("a", "b"), tedge("a", "z", EdgeCondition.always)]);
+    TestSched sched;
+    auto clock = TestClock!(TestSched.Waker)(sched.waker());
+    auto driver = FakeDriver(&clock, ["a": Script(20.msecs), "z": Script(1.msecs)]);
+    Channel!(TaskEvent, 4) sink;
+    RunResult result;
+    sched.run(() {
+        cast(void) withScope!((ref outer) {
+            outer.spawn(() {
+                for (auto e = sink.take(sched); !e.hasError; e = sink.take(sched)) {}
+            });
+            cast(void) withScope!((ref inner) {
+                inner.spawn(() {
+                    cast(void) clock.sleep(5.msecs);
+                    inner.cancel(Interrupt(InterruptKind.shutdown));
+                });
+                result = runGraph(sched, clock, g, driver, sink, ExecutorOptions(capacity: 4));
+            })(sched);
+            sink.close();
+        })(sched);
+    });
+    advanceAndSettle(sched, clock);
+    assert(sched.liveFibers == 0);
+
+    assert(result.cancelled && result.exitCode == 143);
+    assert(kindOf(result.outcomes[g.indexOf(tid("a")).value]) == OutcomeKind.cancelled);
+    assert(kindOf(result.outcomes[g.indexOf(tid("b")).value]) == OutcomeKind.cancelled);
+    assert(kindOf(result.outcomes[g.indexOf(tid("z")).value]) == OutcomeKind.succeeded,
+        "a ready cleanup node runs after the scheduler is interrupted");
+    assert(driver.startOrder == ["a", "z"]);
 }
 
 @("build_primitives.task.executor.run.outcomesIndependentOfCompletionOrder")
