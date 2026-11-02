@@ -1463,6 +1463,7 @@ private void requireWaitPackets() @safe
 /// The timer fast path is chosen wherever the timer class and packets
 /// exist, `coarseTimers` forces the fallback, and both fire a 2 ms timer
 /// never early. Only the fast path is held to sub-tick latency.
+version (unittest)
 @("iocp.timer.highResolutionAndCoarseFallback")
 @serial
 @system unittest
