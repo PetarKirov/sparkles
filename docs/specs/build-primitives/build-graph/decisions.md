@@ -7,8 +7,9 @@ reviewed: 2026-11-01
 # Build graph — Decisions
 
 Each record states its question, the alternatives, the choice and when to
-revisit it. Records marked **accepted** were accepted by the owner on
-2026-11-01, in a design interview to rework the `apps/ci` task DAG. Records
+revisit it. Records marked **accepted** were accepted by the owner: D1–D17 on
+2026-11-01, in a design interview to rework the `apps/ci` task DAG, and
+D18–D21, the E0 spike results, on 2026-11-02. Records
 marked **proposed** await the owner's decision.
 
 ## D1: Own the build instead of isolating dub (accepted)
@@ -327,7 +328,7 @@ flags from its comparison.
 
 **Revisit when** dub resolves `pkg-config` for library targets.
 
-## D18: LDC relocates with the root mapped to `.` (proposed)
+## D18: LDC relocates with the root mapped to `.` (accepted)
 
 **Question.** E0 spike 1 (O2): with root-relative sources and a prefix map, do
 LDC's objects, archives and test binaries name no worktree, and do the
@@ -395,7 +396,7 @@ the other's root, and all their tests passed: 984, 275 and 35.
 **Revisit when** LDC's map gains a form that drops the root without a `./`
 prefix and still maps the compilation directory.
 
-## D19: DMD variants key on the root (proposed)
+## D19: DMD variants key on the root (accepted)
 
 **Question.** E0 spike 1 (O3): do relative paths alone make DMD's outputs
 independent of the worktree?
@@ -418,7 +419,7 @@ across worktrees.
 **Revisit when** DMD gains a prefix map for debug information and
 `__FILE_FULL_PATH__`.
 
-## D20: dub's final step is the oracle's second source (proposed)
+## D20: dub's final step is the oracle's second source (accepted)
 
 **Question.** E0 spike 3 (O1): which resolved fields does `dub describe` not
 show, and can the pinned dub be linked to obtain them?
@@ -458,7 +459,7 @@ flake's `dub-sdl-src` input and the dev shell's `dub` are bumped together.
 
 **Revisit when** `dub describe` reports compiler-ready settings.
 
-## D21: BGR2's supported set is the scanned vocabulary (proposed)
+## D21: BGR2's supported set is the scanned vocabulary (accepted)
 
 **Question.** E0 spike 4: which directives, attributes, forms and variable
 references do the recipes in scope use?
