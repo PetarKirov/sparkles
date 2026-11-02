@@ -143,7 +143,10 @@ struct CiLog
         CiLog log;
         log.provider = detectCiProvider(lookup);
         if (log.provider == CiProvider.githubActions)
+        {
             log.stepSummaryPath = lookup("GITHUB_STEP_SUMMARY");
+            randomToken(log.stopToken);
+        }
         return log;
     }
 
@@ -284,6 +287,69 @@ struct CiLog
             default:
                 break;
         }
+    }
+
+    /**
+    The token that fences untrusted output on GitHub: between
+    $(LREF beginUntrusted) and $(LREF endUntrusted) the runner interprets no
+    workflow command, so a task cannot `::add-mask::`, `::error::`, or
+    `::set-output::` on the reporter's behalf. It must be unguessable by the
+    children (one could print `::<token>::` to resume commands):
+    $(LREF detect) draws it from the system's random source; set it
+    explicitly in tests.
+    */
+    char[32] stopToken = '0';
+
+    /**
+    Fences the untrusted lines that follow — a task's output — from the
+    provider's command parser. GitHub: `::stop-commands::<token>`. Other
+    providers have no fence; $(LREF writeUntrusted) neutralizes their markers
+    line by line instead.
+    */
+    void beginUntrusted(Writer)(ref Writer w)
+    {
+        if (provider != CiProvider.githubActions)
+            return;
+        put(w, "::stop-commands::");
+        put(w, stopToken[]);
+        put(w, '\n');
+    }
+
+    /// Ends $(LREF beginUntrusted)'s fence. GitHub: `::<token>::`.
+    void endUntrusted(Writer)(ref Writer w)
+    {
+        if (provider != CiProvider.githubActions)
+            return;
+        put(w, "::");
+        put(w, stopToken[]);
+        put(w, "::\n");
+    }
+
+    /**
+    Writes `text`, part of an untrusted line, so the provider cannot read a
+    command in it. Azure Pipelines has no fence and reads `##vso[` anywhere in
+    a line and `##[` formatting at its start, so each `##` that opens one is
+    written with a zero-width space between its two `#`s; every other
+    provider gets `text` verbatim (GitHub's fence is
+    $(LREF beginUntrusted)).
+    */
+    void writeUntrusted(Writer)(ref Writer w, scope const(char)[] text)
+    {
+        if (provider != CiProvider.azurePipelines)
+            return put(w, text);
+        size_t from;
+        foreach (i; 0 .. text.length)
+        {
+            const rest = text[i .. $];
+            const opens = rest.length >= 3 && rest[0] == '#' && rest[1] == '#'
+                && (rest[2] == '[' || (rest.length >= 6 && rest[2 .. 6] == "vso["));
+            if (!opens)
+                continue;
+            put(w, text[from .. i + 1]);
+            put(w, "​");
+            from = i + 1;
+        }
+        put(w, text[from .. $]);
     }
 
     /// Where a step summary goes.
@@ -448,6 +514,44 @@ private void writeAzureProperty(Writer)(ref Writer w, scope const(char)[] text)
         }
 }
 
+// Fills `token` with hex digits of system randomness (`/dev/urandom`). Where
+// that cannot be read (WASI, Windows), it falls back to a mix of the time
+// and an address (WASI has no `clock`): unguessable enough for a log fence,
+// not a secret.
+private void randomToken(ref char[32] token) @trusted nothrow @nogc
+{
+    import core.stdc.stdio : fclose, fopen, fread;
+    import core.stdc.time : time;
+
+    ubyte[16] bytes;
+    bool filled;
+    if (auto f = fopen("/dev/urandom", "rb"))
+    {
+        filled = fread(bytes.ptr, 1, bytes.length, f) == bytes.length;
+        fclose(f);
+    }
+    if (!filled)
+    {
+        static ulong draws; // distinct fallback tokens within one process
+        ulong state = cast(ulong) time(null) ^ (++draws << 40) ^ cast(ulong) cast(size_t) &bytes;
+        foreach (i; 0 .. bytes.length)
+        {
+            // splitmix64
+            state += 0x9E3779B97F4A7C15;
+            ulong z = state;
+            z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9;
+            z = (z ^ (z >> 27)) * 0x94D049BB133111EB;
+            bytes[i] = cast(ubyte)(z ^ (z >> 31));
+        }
+    }
+    static immutable hex = "0123456789abcdef";
+    foreach (i, b; bytes)
+    {
+        token[2 * i] = hex[b >> 4];
+        token[2 * i + 1] = hex[b & 15];
+    }
+}
+
 private long systemUnixTime() @trusted nothrow @nogc
 {
     import core.stdc.time : time;
@@ -476,7 +580,7 @@ private bool equalsIgnoringCase(scope const(char)[] a, scope const(char)[] b) @s
 
 ///
 @("ci_provider.detectCiProvider.byEnvironment") @betterC @wasm
-@safe pure nothrow @nogc
+@safe nothrow @nogc
 unittest
 {
     // An environment of `name=value` pairs. Built through `of`, never as
@@ -634,6 +738,81 @@ unittest
         if (provider != CiProvider.githubActions && provider != CiProvider.azurePipelines)
             assert(!contains(text, "hunter2"), "no mask command, so the value is never written");
     }
+}
+
+/// A task's output never reaches a provider as a command: GitHub fences it
+/// with `::stop-commands::`, Azure's markers are broken, others pass through.
+@("ci_provider.untrusted.fencedOrNeutralized") @betterC @wasm
+@safe nothrow @nogc
+unittest
+{
+    static struct Writer
+    {
+        char[512] buf;
+        size_t length;
+
+        void put(scope const(char)[] s) @safe pure nothrow @nogc
+        {
+            foreach (c; s)
+                buf[length++] = c;
+        }
+
+        void put(char c) @safe pure nothrow @nogc { buf[length++] = c; }
+    }
+
+    // What a hostile or careless child prints.
+    static immutable string[3] child = ["::add-mask::x", "::error::boom", "say ##vso[task.complete result=Failed]"];
+    static Writer w;
+    const(char)[] fenced(CiProvider provider) @safe nothrow @nogc
+    {
+        CiLog log;
+        log.provider = provider;
+        log.stopToken = "0123456789abcdef0123456789abcdef";
+        w.length = 0;
+        log.beginUntrusted(w);
+        foreach (line; child)
+        {
+            log.writeUntrusted(w, line);
+            w.put('\n');
+        }
+        log.endUntrusted(w);
+        return w.buf[0 .. w.length];
+    }
+
+    assert(fenced(CiProvider.githubActions) ==
+        "::stop-commands::0123456789abcdef0123456789abcdef\n"
+        ~ "::add-mask::x\n"
+        ~ "::error::boom\n"
+        ~ "say ##vso[task.complete result=Failed]\n"
+        ~ "::0123456789abcdef0123456789abcdef::\n");
+    assert(fenced(CiProvider.azurePipelines) ==
+        "::add-mask::x\n"
+        ~ "::error::boom\n"
+        ~ "say #​#vso[task.complete result=Failed]\n");
+    assert(fenced(CiProvider.gitlabCi) ==
+        "::add-mask::x\n::error::boom\nsay ##vso[task.complete result=Failed]\n");
+
+    // `##[` formatting is broken too.
+    CiLog azure;
+    azure.provider = CiProvider.azurePipelines;
+    w.length = 0;
+    azure.writeUntrusted(w, "##[group]fake");
+    assert(w.buf[0 .. w.length] == "#​#[group]fake");
+}
+
+@("ci_provider.CiLog.detect.drawsAFreshStopToken")
+@safe
+unittest
+{
+    static struct Env
+    {
+        const(char)[] opCall(scope const(char)[] name) const @safe pure nothrow @nogc
+            => name == "GITHUB_ACTIONS" ? "true" : null;
+    }
+
+    const a = CiLog.detect(Env.init), b = CiLog.detect(Env.init);
+    assert(a.stopToken != CiLog.init.stopToken, "the token is drawn, not the default");
+    assert(a.stopToken != b.stopToken, "each detection draws its own");
 }
 
 @("ci_provider.systemEnvironment.readsTheProcess")
