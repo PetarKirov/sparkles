@@ -768,18 +768,20 @@ struct Readiness
 Where `task` stands given `outcomes` (one slot per node, by index), deciding
 an impossible edge as [SPEC TDM6] does:
 
-$(LIST
-    * $(B unneeded) — every impossible edge is an `onFailure` edge from a
-        success, degradation, or skip: `Blocked(conditionUnmet)`;
-    * $(B cancelled) — otherwise, if an impossible prerequisite was cancelled
-        and none descends from a failure: `Cancelled(notAdmitted)`
-        (`ReadinessKind.cancelled`);
-    * $(B blocked) — otherwise `Blocked`, naming the lowest-index impossible
-        prerequisite that descends from a failure, else the lowest-index
-        blocked one;
-        `root`, `fromFailure`, and `provisional` follow the cause's chain, and a
-        failure is provisional when its node's policy is.
+$(OL
+    $(LI $(B unneeded) — every impossible edge is an `onFailure` edge from a
+        success, degradation, or skip: `Blocked(conditionUnmet)`;)
+    $(LI $(B blocked by a failure) — an impossible prerequisite failed or
+        descends from a failure: `Blocked`, naming the lowest-index such
+        prerequisite, even beside a cancelled one (TDC2 item 4);)
+    $(LI $(B cancelled) — every other impossible prerequisite was
+        cancelled: `Cancelled(notAdmitted)` (`ReadinessKind.cancelled`);)
+    $(LI $(B blocked) — otherwise `Blocked`, naming the lowest-index blocked
+        prerequisite.)
 )
+
+`root`, `fromFailure`, and `provisional` follow the cause's chain, and a
+failure is provisional when its node's policy is.
 
 A task is decided only once $(I every) prerequisite is terminal, so its
 outcome never depends on which prerequisite finished first.
@@ -814,11 +816,12 @@ Readiness readiness(const ref TaskGraph graph, TaskIndex task, scope const(Outco
         return Readiness(ReadinessKind.blocked,
             Blocked(BlockReason.conditionUnmet, firstImpossible, firstImpossible, false));
     // A failure's descendant stays blocked even beside a cancelled
-    // prerequisite (TDC2 item 4: a failed dependency decides `Blocked`).
-    if (anyCancelled && !firstFromFailure.valid)
+    // prerequisite (TDC2 item 4: a failed dependency decides `Blocked`). A
+    // cancellation decides only when nothing else impossible is blocked.
+    if (anyCancelled && !firstFromFailure.valid && !firstBlocked.valid)
         return Readiness(ReadinessKind.cancelled);
-    // Not unneeded and nothing cancelled, so some impossible prerequisite
-    // failed or is blocked: name a failure's descendant first.
+    // Not unneeded and not cancelled, so some impossible prerequisite failed
+    // or is blocked: name a failure's descendant first.
     const cause = firstFromFailure.valid ? firstFromFailure : firstBlocked;
     return Readiness(ReadinessKind.blocked,
         blockedBy(cause, outcomes[cause.value].get, graph[cause].failurePolicy));
@@ -1017,6 +1020,44 @@ unittest
     const r = readiness(g, g.indexOf(id("x")), outcomes);
     assert(r.kind == ReadinessKind.blocked);
     assert(r.blocked.reason == BlockReason.prerequisiteBlocked && r.blocked.cause == g.indexOf(id("b")));
+}
+
+@("build_primitives.task.graph.readiness.tdm6RuleOrder")
+@safe pure nothrow
+unittest
+{
+    // `x` waits on a cancelled `c` (onSuccess) and on one more
+    // prerequisite; TDM6's rules decide in order.
+    TaskGraphBuilder builder;
+    foreach (name; ["c", "other", "x"])
+        builder.add(node(name));
+    builder.add(edge("c", "x"));
+    const g = builder.build().value;
+    TaskIndex at(string name) => g.indexOf(id(name));
+
+    Readiness decide(EdgeCondition otherEdge, TaskOutcome other)
+    {
+        TaskGraphBuilder b;
+        foreach (name; ["c", "other", "x"])
+            b.add(node(name));
+        b.add(edge("c", "x"));
+        b.add(edge("other", "x", otherEdge));
+        const h = b.build().value;
+        auto outcomes = new OutcomeSlot[3];
+        outcomes[h.indexOf(id("c")).value] = TaskOutcome(Cancelled(CancelReason.interrupted));
+        outcomes[h.indexOf(id("other")).value] = other;
+        return readiness(h, h.indexOf(id("x")), outcomes);
+    }
+
+    // Rule 2: a failure beside the cancellation blocks.
+    const failed = decide(EdgeCondition.onSuccess, TaskOutcome(Failed(FailureReason.exitStatus, 1)));
+    assert(failed.kind == ReadinessKind.blocked && failed.blocked.reason == BlockReason.prerequisiteFailed);
+    // Rule 3: beside only an unneeded fallback edge, the cancellation decides.
+    assert(decide(EdgeCondition.onFailure, TaskOutcome(Succeeded())).kind == ReadinessKind.cancelled);
+    // Rule 4: beside a block that is not a failure's, it is still a block.
+    const blocked = decide(EdgeCondition.onSuccess,
+        TaskOutcome(Blocked(BlockReason.conditionUnmet, at("c"), at("c"), false)));
+    assert(blocked.kind == ReadinessKind.blocked && blocked.blocked.reason == BlockReason.prerequisiteBlocked);
 }
 
 @("build_primitives.task.graph.readiness.preferAFailureCauseRegardlessOfCompletionOrder")
