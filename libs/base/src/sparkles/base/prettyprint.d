@@ -881,14 +881,15 @@ unittest
 @safe pure nothrow
 unittest
 {
-    import sparkles.base.source_uri : resolveSourcePath, FileUriHook;
+    import sparkles.base.source_uri : absoluteSourcePath, resolveSourcePath, FileUriHook;
 
     struct Coord { int x; int y; }
     enum _loc = __traits(getLocation, Coord);
-    enum uri = {
+    const uri = {
         import std.conv : text;
         enum absPath = resolveSourcePath(_loc[0]);
-        return i"file://$(absPath)#L$(_loc[1])".text;
+        enum line = i"#L$(_loc[1])".text;
+        return "file://" ~ absoluteSourcePath(absPath) ~ line;
     }();
     check(Coord(1, 2), "\x1b]8;;" ~ uri ~ "\x07" ~ "Coord" ~ "\x1b]8;;\x07" ~ "(x: 1, y: 2)",
         PrettyPrintOptions!void(colored: false, useOscLinks: true));
@@ -898,14 +899,15 @@ unittest
 @safe pure nothrow
 unittest
 {
-    import sparkles.base.source_uri : resolveSourcePath;
+    import sparkles.base.source_uri : absoluteSourcePath, resolveSourcePath;
 
     enum Dir { north, south }
     enum _loc = __traits(getLocation, Dir);
-    enum uri = {
+    const uri = {
         import std.conv : text;
         enum absPath = resolveSourcePath(_loc[0]);
-        return i"file://$(absPath)#L$(_loc[1])".text;
+        enum line = i"#L$(_loc[1])".text;
+        return "file://" ~ absoluteSourcePath(absPath) ~ line;
     }();
     check(Dir.south, "\x1b]8;;" ~ uri ~ "\x07" ~ "Dir" ~ "\x1b]8;;\x07" ~ ".south",
         PrettyPrintOptions!void(colored: false, useOscLinks: true));
@@ -924,14 +926,15 @@ unittest
 @safe pure nothrow
 unittest
 {
-    import sparkles.base.source_uri : resolveSourcePath;
+    import sparkles.base.source_uri : absoluteSourcePath, resolveSourcePath;
 
     struct Cell { int v; }
     enum _loc = __traits(getLocation, Cell);
-    enum uri = {
+    const uri = {
         import std.conv : text;
         enum absPath = resolveSourcePath(_loc[0]);
-        return i"file://$(absPath)#L$(_loc[1])".text;
+        enum line = i"#L$(_loc[1])".text;
+        return "file://" ~ absoluteSourcePath(absPath) ~ line;
     }();
     // Nesting order: OSC_OPEN → SGR_OPEN → text → SGR_CLOSE → OSC_CLOSE
     // Field names (brightCyan=96) and values (blue=34) also get color codes
@@ -945,14 +948,15 @@ unittest
 @safe pure nothrow
 unittest
 {
-    import sparkles.base.source_uri : resolveSourcePath, SchemeHook;
+    import sparkles.base.source_uri : absoluteSourcePath, resolveSourcePath, SchemeHook;
 
     struct Dot { int r; }
     enum _loc = __traits(getLocation, Dot);
-    enum uri = {
+    const uri = {
         import std.conv : text;
         enum absPath = resolveSourcePath(_loc[0]);
-        return i"vscode://file$(absPath):$(_loc[1]):$(_loc[2])".text;
+        enum location = i":$(_loc[1]):$(_loc[2])".text;
+        return "vscode://file" ~ absoluteSourcePath(absPath) ~ location;
     }();
     check(Dot(5), "\x1b]8;;" ~ uri ~ "\x07" ~ "Dot" ~ "\x1b]8;;\x07" ~ "(r: 5)",
         PrettyPrintOptions!(SchemeHook!"code")(colored: false, useOscLinks: true));

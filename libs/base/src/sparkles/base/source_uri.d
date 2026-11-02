@@ -9,11 +9,16 @@ module sparkles.base.source_uri;
 // Path Resolution
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Resolves a compiler-relative source path to an absolute path.
+/// Resolves a compiler-relative source path against the compiler's working
+/// directory.
 ///
 /// Uses `__FILE_FULL_PATH__` and `__FILE__` from the call site to derive
 /// the compiler's working directory, then resolves `path` against it.
 /// Works at compile time (CTFE) and at runtime.
+///
+/// The result is absolute when the build recorded absolute paths. A relocated
+/// build (`--ffile-prefix-map=<root>=.`) records them relative to the
+/// repository root, and so is the result; `absoluteSourcePath` completes it.
 string resolveSourcePath(
     string path,
     string fullPath = __FILE_FULL_PATH__,
@@ -28,10 +33,68 @@ string resolveSourcePath(
     if (fullPath.length >= relPath.length)
     {
         string base = fullPath[0 .. $ - relPath.length];
-        if (base.length > 0 && (base[$ - 1] == '/' || base[$ - 1] == '\\'))
+        // `__FILE__` is as full as `__FILE_FULL_PATH__`: nothing to add
+        if (!base.length)
+            return path;
+        if (base[$ - 1] == '/' || base[$ - 1] == '\\')
             return base ~ path;
         return base ~ '/' ~ path;
     }
+    return path;
+}
+
+/// The absolute form of a path `resolveSourcePath` returned.
+///
+/// A relative path, as a relocated build records it, is completed with the
+/// process's working directory, which that build's test actions set to the
+/// repository root. An absolute path is returned unchanged.
+string absoluteSourcePath(string path) @safe pure nothrow
+{
+    import std.path : isAbsolute;
+
+    if (path.isAbsolute)
+        return path;
+    return (workingDirectory ~ "/" ~ withoutDotPrefix(path)).idup;
+}
+
+/// The process's working directory, read once per thread.
+///
+/// Pure in the way `pureMalloc` is: it reads process state that a relocated
+/// build's test actions keep fixed. Empty if it cannot be read.
+package const(char)[] workingDirectory() @trusted pure nothrow @nogc
+    => (cast(const(char)[] function() @safe pure nothrow @nogc) &readWorkingDirectory)();
+
+private const(char)[] readWorkingDirectory() @trusted nothrow @nogc
+{
+    static char[4096] buffer;
+    static size_t length;
+    if (!length)
+    {
+        version (Posix)
+        {
+            import core.stdc.string : strlen;
+            import core.sys.posix.unistd : getcwd;
+
+            if (getcwd(buffer.ptr, buffer.length))
+                length = strlen(buffer.ptr);
+        }
+        else version (Windows)
+        {
+            import core.sys.windows.winbase : GetCurrentDirectoryA;
+
+            length = GetCurrentDirectoryA(cast(uint) buffer.length, buffer.ptr);
+            if (length >= buffer.length)
+                length = 0;
+        }
+    }
+    return buffer[0 .. length];
+}
+
+/// `path` without its leading `./` components.
+private inout(char)[] withoutDotPrefix(inout(char)[] path) @safe pure nothrow @nogc
+{
+    while (path.length > 2 && path[0] == '.' && (path[1] == '/' || path[1] == '\\'))
+        path = path[2 .. $];
     return path;
 }
 
@@ -154,15 +217,50 @@ template hasWriteSourceUri(Hook, Writer)
 // Hook Types
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Writes the URI `editorAlias`'s scheme gives a compile-time location.
+///
+/// An absolute `path` gives a URI computed at compile time. A relative one,
+/// as a relocated build records it, is completed at run time with the
+/// working directory (see `absoluteSourcePath`), around the scheme's
+/// compile-time prefix and suffix.
+private void writeLocationUri(string editorAlias, string path, size_t line, size_t col, Writer)(
+    ref Writer w)
+{
+    import std.path : isAbsolute;
+    import std.range.primitives : put;
+
+    static if (path.isAbsolute)
+    {
+        enum uri = findScheme(editorAlias).uriFun(path, line, col);  // CTFE
+        put(w, uri);
+    }
+    else
+    {
+        import std.string : indexOf;
+
+        enum marker = "\x00";
+        enum shape = findScheme(editorAlias).uriFun(marker, line, col);  // CTFE
+        enum at = shape.indexOf(marker);
+        static assert(at >= 0, "a URI scheme must contain the path");
+        enum prefix = shape[0 .. at];
+        enum suffix = shape[at + marker.length .. $];
+        enum relative = withoutDotPrefix(path);
+        put(w, prefix);
+        if (!__ctfe)
+        {
+            put(w, workingDirectory);
+            put(w, "/");
+        }
+        put(w, relative);
+        put(w, suffix);
+    }
+}
+
 /// Default fallback hook — produces `file://` URIs.
 struct FileUriHook
 {
     static void writeSourceUri(string path, size_t line, size_t col, Writer)(ref Writer w)
-    {
-        import std.range.primitives : put;
-        enum uri = fileUri(path, line, col);  // CTFE
-        put(w, uri);
-    }
+        => writeLocationUri!("", path, line, col)(w);
 }
 
 /// Compile-time hook for a specific editor, looked up by alias from the
@@ -174,11 +272,7 @@ template SchemeHook(string editorAlias)
     struct SchemeHook
     {
         static void writeSourceUri(string path, size_t line, size_t col, Writer)(ref Writer w)
-        {
-            import std.range.primitives : put;
-            enum uri = findScheme(editorAlias).uriFun(path, line, col);  // CTFE
-            put(w, uri);
-        }
+            => writeLocationUri!(editorAlias, path, line, col)(w);
     }
 }
 
@@ -190,8 +284,6 @@ struct EditorDetectHook
 {
     static void writeSourceUri(string path, size_t line, size_t col, Writer)(ref Writer w)
     {
-        import std.range.primitives : put;
-
         immutable editor = editorName();  // runtime: lazy-cached
 
         // Generated from declarative table — each URI is CTFE-computed
@@ -202,15 +294,13 @@ struct EditorDetectHook
                 static foreach (a; scheme.aliases)
                     case a:
                 {
-                    enum uri = scheme.uriFun(path, line, col);  // CTFE!
-                    put(w, uri);                                 // @nogc
+                    writeLocationUri!(a, path, line, col)(w);  // @nogc
                     return;
                 }
             }
             default:
             {
-                enum uri = fileUri(path, line, col);  // CTFE fallback
-                put(w, uri);
+                writeLocationUri!("", path, line, col)(w);  // file:// fallback
                 return;
             }
         }
@@ -231,13 +321,13 @@ Builds a source URI for a runtime location using `$VISUAL`, then `$EDITOR`.
 
 Unlike `writeSourceUri`, whose location arguments are compile-time values, this
 helper accepts the runtime paths carried by exceptions and stack frames. The
-path is resolved to an absolute compiler-root-relative path before the editor
-scheme is selected. Unknown and terminal editors use the portable `file://`
-fallback.
+path is resolved against the compiler's working directory, and completed to an
+absolute path (`absoluteSourcePath`), before the editor scheme is selected.
+Unknown and terminal editors use the portable `file://` fallback.
 */
 string editorSourceUri(string path, size_t line = 0, size_t col = 0) @safe
 {
-    const absolute = resolveSourcePath(path);
+    const absolute = absoluteSourcePath(resolveSourcePath(path));
     return editorSourceUriFor(absolute, line, col, detectedEditorName());
 }
 
@@ -318,22 +408,24 @@ unittest
     assert(resolveSourcePath("/usr/local/src/main.d") == "/usr/local/src/main.d");
 }
 
-/// resolveSourcePath resolves relative paths against compiler CWD.
+/// resolveSourcePath resolves relative paths against compiler CWD, and
+/// absoluteSourcePath completes what a relocated build left relative.
 @("sourceUri.resolveSourcePath.relative")
-@safe pure
+@safe pure nothrow
 unittest
 {
+    import std.path : isAbsolute;
+
     enum resolved = resolveSourcePath(
         "libs/base/src/sparkles/base/source_uri.d");
-    // Must be absolute — a drive-letter root on Windows, where dub hands the
-    // compiler `D:\a\...` full paths, a leading slash everywhere else.
-    version (Windows)
-        assert(resolved.length > 2 && resolved[1] == ':');
-    else
-        assert(resolved.length > 0 && resolved[0] == '/');
     // Must end with the relative path
     assert(resolved.length > 40
         && resolved[$ - 40 .. $] == "libs/base/src/sparkles/base/source_uri.d");
+    // Absolute once completed — a drive-letter root on Windows, where dub
+    // hands the compiler `D:\a\...` full paths, a leading slash elsewhere.
+    const absolute = absoluteSourcePath(resolved);
+    assert(absolute.isAbsolute, absolute);
+    assert(absolute[$ - 40 .. $] == "libs/base/src/sparkles/base/source_uri.d");
 }
 
 /// resolveSourcePath works at compile time.
@@ -345,10 +437,42 @@ unittest
     static assert(absPath == "/already/absolute");
 
     enum relPath = resolveSourcePath("libs/base/src/sparkles/base/source_uri.d");
-    version (Windows)
-        static assert(relPath.length > 2 && relPath[1] == ':');
-    else
-        static assert(relPath.length > 0 && relPath[0] == '/');
+    static assert(relPath.length > 40
+        && relPath[$ - 40 .. $] == "libs/base/src/sparkles/base/source_uri.d");
+}
+
+/// A relocated build (`--ffile-prefix-map=<root>=.`) records the paths
+/// relative to the root, and resolveSourcePath keeps them so.
+@("sourceUri.resolveSourcePath.relocated")
+@safe pure
+unittest
+{
+    // Sources passed relative to the root: `__FILE__` names them so.
+    assert(resolveSourcePath("libs/a/b.d", "./libs/a/b.d", "libs/a/b.d")
+        == "./libs/a/b.d");
+    // Sources passed absolute: the map rewrote `__FILE__` too.
+    assert(resolveSourcePath("libs/a/b.d", "./libs/a/b.d", "./libs/a/b.d")
+        == "libs/a/b.d");
+}
+
+/// A compile-time location becomes an absolute `file://` URI, in a relocated
+/// build too.
+@("sourceUri.FileUriHook.typeLocationIsAbsolute")
+@safe pure
+unittest
+{
+    import std.algorithm.searching : startsWith;
+    import std.path : isAbsolute;
+    import sparkles.base.buffer : SharedBuffer;
+
+    static struct Probe {}
+    enum loc = __traits(getLocation, Probe);
+    SharedBuffer!(char, 512) w;
+    FileUriHook.writeSourceUri!(resolveSourcePath(loc[0]), loc[1], loc[2])(w);
+    const uri = w[].idup;
+    assert(uri.startsWith("file://"), uri);
+    const path = uri["file://".length .. $];
+    assert(path.isAbsolute, uri);
 }
 
 /// FileUriHook produces file:// URIs.
