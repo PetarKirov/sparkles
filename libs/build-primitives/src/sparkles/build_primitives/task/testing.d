@@ -39,6 +39,9 @@ struct Script
     /// Times to yield to the back of the ready queue after sleeping:
     /// reorders completions that land in one turn.
     uint yields;
+    /// Report the scripted outcome even when the run asked the task to
+    /// stop, as a child that finishes on its own does.
+    bool ignoresCancel;
 }
 
 /// Sleeps each task's scripted duration on the virtual clock, then
@@ -69,7 +72,7 @@ struct FakeDriver
             ctx.exec.wake(ctx.exec.currentContext());
             ctx.exec.park();
         }
-        if (ctx.cancelRequested)
+        if (ctx.cancelRequested && !script.ignoresCancel)
             return TaskOutcome(Cancelled(CancelReason.interrupted));
         return script.outcome;
     }

@@ -310,7 +310,11 @@ private:
                 case ReadinessKind.waiting:
                     break;
                 case ReadinessKind.blocked:
-                    if (cancelling && !r.blocked.fromFailure && !isCleanup(t))
+                    // Under cancellation a block becomes a cancellation,
+                    // except where TDM6 keeps it: a failure's descendant,
+                    // or an unneeded fallback (TDC2 item 4).
+                    if (cancelling && !r.blocked.fromFailure
+                        && r.blocked.reason != BlockReason.conditionUnmet && !isCleanup(t))
                         finish(t, TaskOutcome(Cancelled(CancelReason.notAdmitted)));
                     else
                         finish(t, TaskOutcome(r.blocked));
@@ -724,6 +728,26 @@ unittest
     assert(kindOf(result.outcomes[g.indexOf(tid("z")).value]) == OutcomeKind.succeeded,
         "a ready cleanup node runs after the scheduler is interrupted");
     assert(driver.startOrder == ["a", "z"]);
+}
+
+@("build_primitives.task.executor.failFast.unneededFallbackStaysUnneeded")
+@system
+unittest
+{
+    // `plain` falls back on `cov`'s failure; `cov` succeeds. `a` fails and
+    // triggers fail-fast. Whether `cov` finishes before or after the
+    // cancellation, `plain` is the same unneeded fallback (TDM6, TDC2 item 4).
+    const g = graphOf([tnode("a"), tnode("cov", 1, TaskKind.test, null, FailurePolicy.provisional),
+        tnode("plain")], [tedge("cov", "plain", EdgeCondition.onFailure)]);
+    foreach (covTakes; [1.msecs, 10.msecs])
+    {
+        auto run = runFake(g, ["a": Script(5.msecs, TaskOutcome(Failed(FailureReason.exitStatus, 1))),
+            "cov": Script(covTakes, ignoresCancel: true)], ExecutorOptions(capacity: 4, failFast: true));
+        assert(run.result.outcomes[g.indexOf(tid("plain")).value]
+            == TaskOutcome(Blocked(BlockReason.conditionUnmet, g.indexOf(tid("cov")), g.indexOf(tid("cov")), false)),
+            "an unneeded fallback is not a cancellation");
+        assert(run.result.exitCode == 1);
+    }
 }
 
 @("build_primitives.task.executor.run.outcomesIndependentOfCompletionOrder")
