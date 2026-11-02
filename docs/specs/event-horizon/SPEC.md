@@ -1910,7 +1910,11 @@ requested size, resized by `ResizePseudoConsole`), fed through two uniquely
 named pipes whose parent ends are overlapped and ride the port. A
 pseudoconsole takes its input and output on separate pipes, so `ptyMaster`
 reads the console's output (VT sequences) and input is written to `stdinW`.
-The child inherits no handle; its console is the ConPTY. The reap closes the
+The child inherits no handle; its console is the ConPTY. It is started with
+`STARTF_USESTDHANDLES` and null standard handles, so a parent whose own stdio
+is redirected never hands those handles to a console child: the child's
+stdio is the pseudoconsole (tested from a parent with all three streams on
+pipes). The reap closes the
 pseudoconsole, which ends conhost and so the output pipe: the master is
 drained concurrently, as a terminal does, and reaches EOF after the reap.
 ConPTY is resolved at run time (`ENOSYS` where it is missing).

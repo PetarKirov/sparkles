@@ -1330,6 +1330,58 @@ version (unittest)
             p[at] = 1;
     }
 
+    /**
+    The `pty-host` script: this child's own stdin, stdout and stderr are the
+    pipes its test parent made, and it calls `spawnPty` for a `pty-report`
+    grandchild given the value of that redirected stdout. It reads the
+    master synchronously (no port in a scripted child) until the report
+    line, reaps, and forwards `via-master: <report>` and the exit code to
+    its own stdout. A grandchild writing to the redirected stdout instead
+    would show up there unprefixed.
+    */
+    private int runPtyHost() @trusted
+    {
+        import std.algorithm.searching : countUntil;
+        import std.conv : to;
+
+        enum uint OUT = cast(uint) -11;
+        const redirected = cast(size_t) GetStdHandle(OUT);
+        auto spawned = spawnPty(childArgv("pty-report", redirected.to!string), 80, 24);
+        if (spawned.hasError)
+        {
+            childWrite(OUT, "spawnPty failed\n");
+            return 5;
+        }
+        auto child = move(spawned.value);
+        auto master = child.ptyMaster.borrowFd.fd;
+        char[] seen;
+        ptrdiff_t at = -1, end = -1;
+        while (end < 0)
+        {
+            ubyte[512] buf;
+            OVERLAPPED_ ov;
+            uint got;
+            if (!ReadFile(master, buf.ptr, buf.length, &got, &ov)
+                && (GetLastError() != 997 || !GetOverlappedResult(master, &ov, &got, TRUE)))
+                break;
+            if (got == 0)
+                break;
+            seen ~= cast(char[]) buf[0 .. got];
+            at = seen.countUntil("report ");
+            if (at >= 0)
+            {
+                const rest = seen[at .. $].countUntil!(c => c == '\r' || c == '\n');
+                end = rest < 0 ? -1 : at + rest;
+            }
+        }
+        WaitForSingleObject(child.process.borrowFd.fd, uint.max);
+        uint code;
+        GetExitCodeProcess(child.process.borrowFd.fd, &code);
+        childWrite(OUT, "via-master: " ~ (end >= 0 ? seen[at .. end] : "nothing") ~ "\n");
+        childWrite(OUT, "exit=" ~ code.to!string ~ "\n");
+        return 0;
+    }
+
     private int runChild(scope const(wchar[])[] args) @trusted nothrow
     {
         import core.stdc.stdlib : atoi;
@@ -1424,6 +1476,28 @@ version (unittest)
             auto h = cast(HANDLE) cast(ptrdiff_t) number(1);
             childWrite(OUT, GetHandleInformation(h, &flags) ? "yes\n" : "no\n");
             return 0;
+        case "pty-report":
+            // Where this ConPTY child's stdio really goes: the console size,
+            // whether stdout is a character (console) device, and whether
+            // handle value H — the redirected stdout of the process that
+            // called `spawnPty` — leaked into it.
+            import std.conv : to;
+
+            ConsoleBufferInfo info;
+            const sized = GetConsoleScreenBufferInfo(GetStdHandle(OUT), &info) != 0;
+            uint flags;
+            auto leaked = cast(HANDLE) cast(ptrdiff_t) number(1);
+            childWrite(OUT, "report "
+                ~ (sized ? (info.right - info.left + 1).to!string ~ " "
+                    ~ (info.bottom - info.top + 1).to!string : "nosize")
+                ~ (GetFileType(GetStdHandle(OUT)) == 2 ? " char" : " notchar")
+                ~ (GetHandleInformation(leaked, &flags) ? " inherited" : " clean") ~ "\n");
+            return 0;
+        case "pty-host":
+            try
+                return runPtyHost();
+            catch (Exception)
+                return 6;
         default:
             return 99;
         }
@@ -1458,6 +1532,8 @@ version (unittest)
         wchar* GetCommandLineW();
         BOOL WriteFile(HANDLE, const(void)*, uint, uint*, void*);
         BOOL ReadFile(HANDLE, void*, uint, uint*, void*);
+        uint GetFileType(HANDLE);
+        BOOL GetOverlappedResult(HANDLE, OVERLAPPED_*, uint*, BOOL);
         uint GetEnvironmentVariableW(const(wchar)* name, wchar* buffer, uint size);
         uint GetCurrentDirectoryW(uint size, wchar* buffer);
         void Sleep(uint ms);
@@ -2077,3 +2153,32 @@ version (unittest)
 
 version (unittest)
 private extern (Windows) int getsockname(size_t s, void* addr, int* length) nothrow @nogc;
+
+/// `spawnPty` from a parent whose own stdin, stdout and stderr are all
+/// redirected pipes (a scripted `pty-host` child): the ConPTY child reports
+/// a console of the preset size, its stdout is a console device, the
+/// parent's redirected stdout did not leak into it, and its output arrives
+/// on the master (forwarded with a prefix) — never directly on the
+/// parent's stdout. This is the `STARTF_USESTDHANDLES`-with-null-handles
+/// path: without it, a console child of a redirected parent would get the
+/// parent's handles.
+@("live.windows.spawnPtyFromARedirectedParent")
+@system unittest
+{
+    requireConPty();
+    Sched s;
+    schedOrSkip(s);
+    auto r = s.run(() {
+        ProcessConfig redirected;
+        redirected.stdinSpec = StdioSpec(StdioMode.pipe);
+        redirected.stderrSpec = StdioSpec(StdioMode.pipe);
+        auto got = capture(s, childArgv("pty-host"), redirected, cast(const(ubyte)[]) "");
+        assert(got.hasValue, got.hasError ? got.error.context : "");
+        assert(got.value.status.ok);
+        assert(got.value.stdout_[]
+            == cast(const(ubyte)[]) "via-master: report 80 24 char clean\nexit=0\n",
+            cast(string) got.value.stdout_[].idup);
+        assert(got.value.stderr_.length == 0);
+    });
+    assert(!r.hasError);
+}
