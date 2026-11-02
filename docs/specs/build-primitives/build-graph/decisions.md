@@ -501,3 +501,58 @@ The vocabulary is in [testing.md](./testing.md#the-recipe-vocabulary).
 
 **Revisit when** a recipe in scope adopts a directive the table lacks: rerun
 the scan, and BGR2's resolution error names it first.
+
+## D22: Resolved paths are normalized (proposed)
+
+**Question.** dub joins a recipe's relative path to its package directory and
+keeps the result as written, so `libs/x/../y/src` and `libs/y/src` are two
+entries of an import path list. Does the resolver reproduce the spelling?
+
+**Alternatives.** Keep dub's spellings; normalize every path the resolver
+joins.
+
+**Choice.** Normalize. A spelling is no input of a compile, and relocation
+(D14) needs one spelling per directory. A list then holds the directory once,
+where dub may hold it twice: oracle 1 accepts exactly that difference, a
+resolver list equal to dub's with its repeats removed.
+
+**Revisit when** a compiler is found to treat two spellings of one directory
+differently.
+
+## D23: Behaviour copied from dub (proposed)
+
+**Question.** Oracle 1's independence holds only where the resolver is not a
+copy of dub. Which parts are copies?
+
+**Result.** These follow dub's source at the pinned revision, so a defect
+there is shared:
+
+- the build-setting merge rules (`BuildSettings.add…`), the option tables and
+  `extractBuildOptions` of DMD and LDC, and `enforceBuildRequirements`;
+- `getPlatformSettings` and `collectFiles`, `fillWithDefaults`, and
+  `getBuildSettings`;
+- configuration selection (`getPackageConfigs`) and the topological order;
+- `configurePackages`, `mergeFromDependent`, `mergeFromDependency` and
+  `filterABICriticalFlags`, the build types (`addBuildTypeSettings`), and
+  `addTestRunnerConfiguration`;
+- `processVars`, `getVariable` and `expandVars`;
+- `resolveLibs` and `applyPkgConfigCFlags`;
+- `matchesSpecification`, `VersionRange.fromString` and its version bumps,
+  and `checkPlatform`.
+
+They include dub's quirks, kept so that the two agree:
+
+- a platform-qualified setting's groups apply in D associative-array order,
+  which the resolver reproduces by grouping into the same kind of array;
+- a configuration's `targetType` replaces the top level's even when the
+  configuration states none;
+- `dependency`'s `platform` attribute and the top-level `platforms` are
+  ignored by resolution (`ci` still reads the latter to skip an example);
+- a comma-separated platform specifier (`linux,freebsd`) matches no platform;
+- a source path naming a variable lists no files.
+
+**Choice.** Keep the copies, and test each through oracle 1's fixtures and
+the resolver's own unit tests, which state the expected result independently
+of dub's code.
+
+**Revisit when** a disagreement traces to one of these copies.

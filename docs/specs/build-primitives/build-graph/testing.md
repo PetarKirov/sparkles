@@ -50,7 +50,9 @@ the code under test.
    `pkg-config` results, with dub's own `prepareBuildSettings`, called as a
    library.
 4. Remove from dub's side the downward-inherited versions that BGV1 prunes, and
-   check separately that no source of the variant mentions any of them.
+   check separately that no source of the variant mentions any of them. Until
+   pruning lands (E2), E1 compares unpruned, faithful settings, so this step
+   removes nothing.
 
 **Falsifying scenarios:**
 
@@ -232,8 +234,9 @@ change, and no unaffected one may.
 ### Oracle 13: hidden edges
 
 **Method:** a fixture recipe with `importPaths "../other/src"` and no
-`dependency` must be reported. The cycle-safe test-runner integration must
-not be.
+`dependency` must be reported, with its recipe line. So must the cycle-safe
+packages' source includes of the test runner, since BGR8 and D15 allow no
+exception, until E1a removes them.
 
 ### Oracle 15: pinned test runner
 
@@ -411,7 +414,9 @@ dub run --single apps/ci/tools/scan-recipe-vocabulary.d
 
 | Requirement | Status                                                                                           | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | ----------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| BGR1–BGR8   | unverified                                                                                       | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| BGR1–BGR3   | unverified                                                                                       | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| BGR4        | partial: with Nix only; the fetch without Nix is E3's                                            | `readDubLocks` and `nixRegistrySources` in `libs/build-primitives/src/sparkles/build_primitives/resolve/registry.d`, and the lock-against-recipe check in `libs/build-primitives/src/sparkles/build_primitives/resolve/project.d`                                                                                                                                                                                                                                                                             |
+| BGR5–BGR8   | unverified                                                                                       | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | BGV1–BGV5   | unverified                                                                                       | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | BGA1–BGA4   | unverified                                                                                       | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | BGA5        | partial: oracle 5 steps 1 and 3 by hand, with no build-graph keys (step 2's keys, steps 4 and 5) | E0 spike 1 (D18): LDC `8d5c3c8887` with `--ffile-prefix-map=<root>=.`, the `unittest` build type plus `-g`, `-cov` and `-checkaction=context`; `sparkles:base`, `sparkles:event-horizon` and `sparkles:ui` byte-identical across two worktrees and naming neither; test binaries built in one run from the other after the fixes in `libs/base/src/sparkles/base/source_uri.d`, `libs/wired/src/sparkles/wired/sdl/conformance.d` and `apps/shader-compile/src/toolchain_tests.d`; DMD's outputs differ (D19) |
