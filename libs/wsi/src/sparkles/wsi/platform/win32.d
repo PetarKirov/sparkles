@@ -3,7 +3,7 @@ Native Win32 window lifecycle and Event Horizon host adapter.
 
 User32 callbacks only append owned events. Application code runs later at
 `drain`; `dispatchPending` is the non-blocking half of Event Horizon's hosted
-wait concept, and `wait` combines the IOCP mirror event with the thread message
+wait concept, and `wait` combines Event Horizon's completion port with the thread message
 queue through `MsgWaitForMultipleObjectsEx`.
 
 The clipboard is owned by a hidden message-only helper window, so an offer
@@ -434,7 +434,7 @@ struct Win32Wsi
     /**
     Event Horizon native-host concept: the single combined blocking wait.
 
-    `completionHandle` is Event Horizon's IOCP mirror event. User32 owns the
+    `completionHandle` is Event Horizon's completion port (a waitable object). User32 owns the
     other implicit source, the current thread's message queue.
     */
     IoResult!bool wait(void* completionHandle, uint timeoutMilliseconds)

@@ -403,17 +403,6 @@ struct IocpBackend
             return ioErr!void(1, OpKind.none, IoErrorStage.setup,
                 "CreateIoCompletionPort failed");
         }
-        // Manual-reset: one signal represents any number of queued IOCP
-        // completions. This is the handle a native Win32 message host folds
-        // into MsgWaitForMultipleObjectsEx.
-        _hostEvent = (() @trusted => CreateEventW(null, TRUE, FALSE, null))();
-        if (_hostEvent is null)
-        {
-            close();
-            return ioErr!void(1, OpKind.none, IoErrorStage.setup,
-                "CreateEventW(host bridge) failed");
-        }
-
         // A backend-owned op-context slab, freelist-linked.
         const cap = cfg.cqEntries != 0 ? cfg.cqEntries : 2 * cfg.sqEntries;
         _cap = cap != 0 ? cap : 256;
@@ -538,11 +527,6 @@ struct IocpBackend
             CloseHandle(_port);
             _port = null;
         }
-        if (_hostEvent !is null)
-        {
-            CloseHandle(_hostEvent);
-            _hostEvent = null;
-        }
         _associated.clear();
         _timerCount = 0;
         _readyHead = _readyCount = 0;
@@ -631,7 +615,6 @@ struct IocpBackend
         op.token = token.raw;
         if (!(() @trusted => PostQueuedCompletionStatus(_port, 0, 0, &op.ov))())
             return reject(op, -winErrno(GetLastError()));
-        SetEvent(_hostEvent);
         return true;
     }
 
@@ -649,8 +632,7 @@ struct IocpBackend
             return WakeTarget.init;
         op.token = token.raw;
         op.kind = IoKind.wake;
-        WakeTarget w = {port: _port, ov: (() @trusted => cast(void*) &op.ov)(),
-            event: _hostEvent};
+        WakeTarget w = {port: _port, ov: (() @trusted => cast(void*) &op.ov)()};
         return w;
     }
 
@@ -676,7 +658,6 @@ struct IocpBackend
         })();
         if (rc == SOCKET_ERROR && WSAGetLastError() != WSA_IO_PENDING)
             return reject(op, -winErrno(WSAGetLastError()));
-        repairHostSignalAfterIssue();
         return true;
     }
 
@@ -700,7 +681,6 @@ struct IocpBackend
         })();
         if (rc == SOCKET_ERROR && WSAGetLastError() != WSA_IO_PENDING)
             return reject(op, -winErrno(WSAGetLastError()));
-        repairHostSignalAfterIssue();
         return true;
     }
 
@@ -800,7 +780,6 @@ struct IocpBackend
                 return reject(op, -winErrno(code));
             }
         }
-        repairHostSignalAfterIssue();
         return true;
     }
 
@@ -811,9 +790,8 @@ struct IocpBackend
     dequeues like any I/O completion; the handle itself is not consumed.
     Without the `ntdll` exports (Wine) the op is rejected with `EOPNOTSUPP`
     and the `waitid` capability bit is clear.
-
-    A native Win32 message host waits on the host event, which a packet
-    does not set: there, an exit is noticed at the host's next wake.
+    A native Win32 message host waits on the port itself, so the packet
+    wakes it as well.
     */
     bool trySubmit(in OpWaitHandle o, OpToken token, ref OpSlot) @safe nothrow @nogc
     {
@@ -903,7 +881,6 @@ struct IocpBackend
             closesocket(acceptSock);
             return reject(op, -winErrno(error));
         }
-        repairHostSignalAfterIssue();
         return true;
     }
 
@@ -935,7 +912,6 @@ struct IocpBackend
             null, 0, &sent, &op.ov))();
         if (rc == 0 && WSAGetLastError() != WSA_IO_PENDING)
             return reject(op, -winErrno(WSAGetLastError()));
-        repairHostSignalAfterIssue();
         return true;
     }
 
@@ -945,9 +921,17 @@ struct IocpBackend
             : ioErr!uint(EIO, OpKind.none, IoErrorStage.submit,
                 "GetQueuedCompletionStatusEx failed");
 
-    /** Event that mirrors IOCP completions for a foreign native host wait. */
+    /**
+    The handle a native host folds into its own wait: the completion port
+    itself. A port is a waitable dispatcher object, signalled while any packet
+    is queued and not consumed by the wait (Windows Internals 7e, ch. 4; probed
+    on native Windows and Wine) — so I/O, posts, wake-ups and the wait packets
+    of process exits and the high-resolution timer all wake the host, which a
+    mirror event could not offer: the kernel queues a wait packet without
+    touching any event, and a packet cannot target a port.
+    */
     void* nativeHostWaitHandle() @safe pure nothrow @nogc
-        => cast(void*) _hostEvent;
+        => cast(void*) _port;
 
     /**
     Narrows a host-requested timeout to the next Event Horizon timer.
@@ -966,18 +950,20 @@ struct IocpBackend
             if (rem < waitMs)
                 waitMs = rem;
         }
+        // The host sleeps on the port: arm the fast timer so its packet,
+        // not the rounded-up timeout, ends the wait.
+        MonoTime earliest = MonoTime.max;
+        foreach (i; 0 .. _timerCount)
+            if (_timers[i].deadline < earliest)
+                earliest = _timers[i].deadline;
+        if (waitMs != 0)
+            armHighResolutionTimer(earliest);
         return waitMs > uint.max ? uint.max : cast(uint) waitMs;
     }
 
-    /**
-    Resets the level signal before the loop performs its closing non-blocking
-    drain. A completion racing after the reset sets it again; one queued
-    before the reset is found by that drain. This is the lost-wake repair.
-    */
-    void prepareNativeHostDrain() @safe nothrow @nogc
-    {
-        ResetEvent(_hostEvent);
-    }
+    /// Nothing to reset: the port is level-triggered on its queue, so a
+    /// packet queued before or during the closing drain keeps it signalled.
+    void prepareNativeHostDrain() @safe pure nothrow @nogc {}
 
     /**
     Waits for at least one completion (or until `deadline`), stashing a batch
@@ -990,7 +976,7 @@ struct IocpBackend
             return ioOk(0u);
 
         // Something is ready already: a completion the issue-time probe took
-        // off the port (`repairHostSignalAfterIssue`), or a synthesized one.
+        // off the port earlier, or a synthesized one.
         // Waiting would delay it, and the dequeue below would overwrite the
         // held completion and lose it — the operation it belongs to would
         // never complete. An overlapped call that succeeds at once queues its
@@ -1070,7 +1056,6 @@ struct IocpBackend
             _timers[i] = _timers[--_timerCount];
             enqueue(RawCompletion(target.raw, -ECANCELED, 0));
             enqueue(RawCompletion(cancelSlot.raw, 0, 0));
-            SetEvent(_hostEvent); // a native host waits on the event, not the queue
             return true;
         }
         int res = -ENOENT;
@@ -1105,30 +1090,10 @@ struct IocpBackend
         // A packet may already have been dequeued into _ready, or may be
         // queued on the port: completion won, and must still be delivered.
         enqueue(RawCompletion(cancelSlot.raw, res, 0));
-        SetEvent(_hostEvent);
         return true;
     }
 
 private:
-    /**
-    Starting an overlapped operation resets its `hEvent`. If an older
-    completion had already signalled the shared event, that reset would hide
-    it from the host. Repair by remembering already-queued completions and
-    restoring the level signal. A completion racing after this zero-time
-    probe signals the event itself.
-    */
-    void repairHostSignalAfterIssue() @safe nothrow @nogc
-    {
-        if (_readyCount != 0)
-        {
-            SetEvent(_hostEvent);
-            return;
-        }
-
-        if (dequeue(0) != 0)
-            SetEvent(_hostEvent);
-    }
-
     /// A bounded ring also used for software timers and cancel acknowledgments.
     private void enqueue(RawCompletion completion) @safe nothrow @nogc
     {
@@ -1142,7 +1107,6 @@ private:
     {
         enqueue(RawCompletion(op.token, res, 0));
         release(op);
-        SetEvent(_hostEvent);
         return true;
     }
 
@@ -1288,7 +1252,6 @@ private:
         auto op = (() @trusted => &_ops[_freeHead])();
         _freeHead = op.nextFree;
         *op = IocpOp.init;
-        op.ov.hEvent = _hostEvent;
         op.inUse = true;
         return op;
     }
@@ -1331,7 +1294,6 @@ private:
     }
 
     HANDLE _port;
-    HANDLE _hostEvent;
     LPFN_ACCEPTEX _acceptEx;
     LPFN_CONNECTEX _connectEx;
     Timer[64] _timers;
@@ -1832,9 +1794,9 @@ private void connectedSockets(out SOCKET client, out SOCKET server) @system noth
     first.close();
 }
 
-/// A cancel's completions reach a native host: the event is signalled and
-/// the host's wait timeout drops to zero while completions are queued.
-@("iocp.cancel.signalsTheNativeHost")
+/// A cancel's completions are synthesized, never queued on the port: the
+/// host's wait timeout drops to zero while they wait to be reaped.
+@("iocp.cancel.zeroesTheNativeHostTimeout")
 @system unittest
 {
     import sparkles.event_horizon.op : OpClass;
@@ -1848,7 +1810,6 @@ private void connectedSockets(out SOCKET client, out SOCKET server) @system noth
     assert(b.trySubmit(OpTimeout(KernelTimespec(60, 0)), target, slot));
     b.prepareNativeHostDrain();
     assert(b.trySubmitCancel(cancel, target));
-    assert(WaitForSingleObject(cast(HANDLE) b.nativeHostWaitHandle(), 0) == 0);
     assert(b.nativeHostWaitTimeout(uint.max) == 0);
     assert(b.reap((ref const RawCompletion c) {}) == 2);
 }
@@ -2051,7 +2012,7 @@ version (unittest)
 /// IOCP port on a loopback pair and confirm the peer receives the bytes, and
 /// a WSARecv through the port receives the peer's reply — proving the
 /// OVERLAPPED→token completion mapping end to end. It intentionally reaps
-/// through the native-host mirror event rather than blocking on GQCS, proving
+/// through the native-host wait handle (the port) rather than blocking on GQCS, proving
 /// that real socket completions wake a User32-compatible hosted wait.
 @("iocp.dataPath.sendRecvThroughPort")
 @system
@@ -2118,7 +2079,7 @@ unittest
     uint recvBytes;
     ulong recvToken;
     assert(WaitForSingleObject(cast(HANDLE) b.nativeHostWaitHandle(), 2_000) == 0,
-        "WSARecv signalled the native-host completion mirror");
+        "WSARecv signalled the native-host wait handle");
     b.prepareNativeHostDrain();
     b.reap((ref const RawCompletion c) {
         recvBytes = cast(uint) c.res;
@@ -2136,7 +2097,7 @@ unittest
     assert(b.trySubmit(OpSend(cast(int) server), OpToken.pack(2, 1, OpClass.user), txSlot));
     uint sentBytes;
     assert(WaitForSingleObject(cast(HANDLE) b.nativeHostWaitHandle(), 2_000) == 0,
-        "WSASend signalled the native-host completion mirror");
+        "WSASend signalled the native-host wait handle");
     b.prepareNativeHostDrain();
     b.reap((ref const RawCompletion c) { sentBytes = cast(uint) c.res; });
     assert(sentBytes == 5, "server echoed 5 bytes via IOCP");

@@ -1446,3 +1446,134 @@ version (unittest)
     });
     assert(!r.hasError);
 }
+
+version (unittest)
+{
+    /// A real Win32 message-loop host (the `wsi` shape): it drains the
+    /// thread's message queue and blocks in `MsgWaitForMultipleObjectsEx`
+    /// on Event Horizon's one native handle. It counts its waits, so a test
+    /// can see that nothing but the expected completion woke it.
+    private struct MessageHost
+    {
+        uint waits;
+
+        bool dispatchPending() @trusted nothrow
+        {
+            MSG_ message;
+            bool any;
+            while (PeekMessageW(&message, null, 0, 0, 1 /* PM_REMOVE */))
+            {
+                any = true;
+                DispatchMessageW(&message);
+            }
+            return any;
+        }
+
+        IoResult!bool wait(void* handle, uint timeoutMs) @trusted nothrow
+        {
+            ++waits;
+            enum uint QS_ALLINPUT = 0x4FF, MWMO_INPUTAVAILABLE = 4, WAIT_TIMEOUT = 258;
+            const r = MsgWaitForMultipleObjectsEx(1, &handle, timeoutMs, QS_ALLINPUT,
+                MWMO_INPUTAVAILABLE);
+            if (r == uint.max)
+                return ioErr!bool(winErrno(GetLastError()), OpKind.none,
+                    IoErrorStage.completion, "MsgWaitForMultipleObjectsEx failed");
+            return ioOk(r != WAIT_TIMEOUT);
+        }
+    }
+
+    private struct MSG_
+    {
+        HANDLE hwnd;
+        uint message;
+        size_t wParam;
+        ptrdiff_t lParam;
+        uint time;
+        int x, y;
+        uint lPrivate;
+    }
+
+    private extern (Windows) nothrow @nogc
+    {
+        BOOL PeekMessageW(MSG_* message, HANDLE hwnd, uint first, uint last, uint remove);
+        ptrdiff_t DispatchMessageW(const(MSG_)* message);
+        uint MsgWaitForMultipleObjectsEx(uint count, const(void*)* handles, uint ms,
+            uint wakeMask, uint flags);
+    }
+    pragma(lib, "user32");
+
+    /// Ticks `s` through `host` until `done`, with a host timeout far past
+    /// any bound the caller asserts: a missed wake would sleep through it.
+    private void driveHosted(ref Sched s, ref MessageHost host, scope bool delegate() done)
+        @system
+    {
+        import core.time : seconds;
+
+        while (!done())
+        {
+            auto r = s.tickHosted(host, 30.seconds);
+            assert(!r.hasError, r.hasError ? r.error.context : "");
+        }
+    }
+}
+
+/// A message-loop host blocked in `MsgWaitForMultipleObjectsEx` observes a
+/// child's exit promptly with no other input: the exit's wait packet is
+/// queued on the port the host waits on.
+@("live.windows.messageHostObservesProcessExit")
+@system unittest
+{
+    import core.time : MonoTime, msecs, seconds;
+
+    requireProcessWait();
+    Sched s;
+    schedOrSkip(s);
+    MessageHost host;
+    bool done;
+    ExitStatus status;
+    MonoTime spawned, observed;
+    assert(!s.spawn(() {
+        ProcessConfig quiet; // no pipes: the exit is the only completion
+        quiet.stdinSpec = quiet.stdoutSpec = quiet.stderrSpec = StdioSpec(StdioMode.nullDev);
+        auto child = move(spawnProcess(childArgv("sleep", "300"), quiet).value);
+        spawned = MonoTime.currTime;
+        status = wait(s, child).value;
+        observed = MonoTime.currTime;
+        done = true;
+    }).hasError);
+    driveHosted(s, host, () => done);
+    assert(status.ok);
+    const took = observed - spawned;
+    assert(took >= 300.msecs && took < 3.seconds, "the exit woke the host");
+}
+
+/// A message-loop host observes a short in-ring sleep at the
+/// high-resolution timer's precision, not the clock interval's: the
+/// timer's packet ends the host's wait.
+@("live.windows.messageHostObservesHighResolutionTimer")
+@system unittest
+{
+    import std.algorithm.sorting : sort;
+    import core.time : Duration, MonoTime, msecs;
+    import sparkles.event_horizon.io : sleep;
+
+    requireProcessWait(); // the timer packet needs the same exports
+    Sched s;
+    schedOrSkip(s);
+    MessageHost host;
+    Duration[7] runs;
+    size_t finished;
+    assert(!s.spawn(() {
+        foreach (ref run; runs)
+        {
+            const before = MonoTime.currTime;
+            assert(!sleep(s, 3.msecs).hasError);
+            run = MonoTime.currTime - before;
+            ++finished;
+        }
+    }).hasError);
+    driveHosted(s, host, () => finished == runs.length);
+    sort(runs[]);
+    assert(runs[0] >= 3.msecs, "never early");
+    assert(runs[3] < 10.msecs, "the timer's packet, not a ~15.6 ms tick, woke the host");
+}
