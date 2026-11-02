@@ -19,6 +19,9 @@ dependency "sparkles:wired" path="../.."
 dependency "sparkles:event-horizon" path="../.."
 // The plain reporter writes CI-provider groups and masks. A leaf package.
 dependency "sparkles:ci-provider" path="../.."
+// Recipe resolution checks dub version ranges against SemVer. versions
+// depends only on `sparkles:base`, so this closes no cycle.
+dependency "sparkles:versions" path="../.."
 
 configuration "library" {
     targetType "library"
