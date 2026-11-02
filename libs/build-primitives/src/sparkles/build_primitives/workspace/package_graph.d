@@ -231,15 +231,16 @@ string normalizeRepoPath(string path) @safe pure nothrow
 
 /**
 The configuration `role` activates in `manifest`, or null when it declares
-none: `unittest` for `RecipeRole.test` if present, else — like dub — the first
-configuration whose `platforms` allow the host.
+none: `unittest` for `RecipeRole.test` if present and its `platforms` allow the
+host, else — like dub — the first configuration whose `platforms` allow it.
 */
 const(DubConfiguration)* activeConfiguration(return const ref DubManifest manifest, RecipeRole role,
     scope const(string)[] hostTokens) @safe pure nothrow
 {
     if (role == RecipeRole.test)
         if (auto unittest_ = manifest.configuration("unittest"))
-            return unittest_;
+            if (platformsAllowHost(unittest_.platforms, hostTokens))
+                return unittest_;
     foreach (ref c; manifest.configurations)
         if (platformsAllowHost(c.platforms, hostTokens))
             return &c;
@@ -249,9 +250,9 @@ const(DubConfiguration)* activeConfiguration(return const ref DubManifest manife
 /**
 Builds the graph from parsed recipes: ids `<rootName>:<name>`, each
 package's in-tree dependencies from its top level plus its active
-configuration (an optional dependency that is not on by default is left
-out), then validation — duplicate ids and paths, unknown dependencies,
-self-dependencies, and cycles, in that order.
+configuration (an optional dependency that is not on by default, and one whose
+`platform` the host is not, are left out), then validation — duplicate ids and
+paths, unknown dependencies, self-dependencies, and cycles, in that order.
 */
 PlanExpected!(PackageGraph, DiscoveryError) buildPackageGraph(string rootName,
     scope const(SubPackageRecipe)[] recipes, RecipeRole role, scope const(string)[] hostTokens) @safe pure nothrow
@@ -280,7 +281,8 @@ PlanExpected!(PackageGraph, DiscoveryError) buildPackageGraph(string rootName,
         void collect(scope const(typeof(recipe.manifest.dependencies)) deps)
         {
             foreach (ref d; deps)
-                if (d.name.startsWith(prefix) && !(d.optional && !d.default_))
+                if (d.name.startsWith(prefix) && !(d.optional && !d.default_)
+                    && (d.platform.length == 0 || platformsAllowHost([d.platform], hostTokens)))
                     p.dependencies ~= PackageId(d.name);
         }
         collect(recipe.manifest.dependencies);
@@ -455,6 +457,43 @@ configuration "library" {
     assert(tested.packages[tested.owner("libs/base")].shortName == "base");
     assert(tested.owner("libs/based/x.d") < 0);
     assert(tested.owner("README.md") < 0);
+}
+
+@("build_primitives.workspace.package_graph.buildPackageGraph.honoursPlatforms")
+@safe
+unittest
+{
+    const recipes = [
+        recipe("libs/base", `name "base"`),
+        recipe("libs/win", `name "win"`),
+        // The `unittest` configuration is Windows-only: on Linux a test
+        // falls back to the first configuration the host allows.
+        recipe("libs/a", `name "a"
+configuration "library" {
+    dependency "sparkles:base" path="../.."
+}
+configuration "unittest" {
+    platforms "windows"
+    dependency "sparkles:win" path="../.."
+}
+`),
+        // A platform-qualified dependency counts only where it applies.
+        recipe("libs/b", `name "b"
+dependency "sparkles:win" path="../.." platform="windows"
+dependency "sparkles:base" path="../.." platform="posix"
+`),
+    ];
+    const g = buildPackageGraph("sparkles", recipes, RecipeRole.test, linux).value;
+    const a = g.packages[g.indexOf(PackageId("sparkles:a"))];
+    assert(a.configuration == "library");
+    assert(a.dependencies.map!(d => d.name).array == ["sparkles:base"]);
+    const b = g.packages[g.indexOf(PackageId("sparkles:b"))];
+    assert(b.dependencies.map!(d => d.name).array == ["sparkles:base"]);
+
+    const onWindows = buildPackageGraph("sparkles", recipes, RecipeRole.test, ["windows"]).value;
+    assert(onWindows.packages[onWindows.indexOf(PackageId("sparkles:a"))].configuration == "unittest");
+    assert(onWindows.packages[onWindows.indexOf(PackageId("sparkles:b"))].dependencies
+        .map!(d => d.name).array == ["sparkles:win"]);
 }
 
 @("build_primitives.workspace.package_graph.buildPackageGraph.rejectsInvalidGraphs")
