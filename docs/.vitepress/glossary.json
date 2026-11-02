@@ -1674,5 +1674,65 @@
     ],
     "owner": "sparkles:build-primitives",
     "seeAlso": ["reported-absence", "metric-class"]
+  },
+  {
+    "id": "test-runner-executable",
+    "term": "test runner executable",
+    "aliases": ["pinned runner", "sparkles-test-runner"],
+    "summary": "The separate program, built from a pinned revision of the repository, that parses a test run's command line, schedules its tests across worker processes and renders the reports.",
+    "definition": "`sparkles-test-runner` holds everything a test run needs except the tests themselves: the command line, scheduling, reports, `--bench-json`, and the compile-time and extracted modes. It drives test binaries over the runner protocol and is never linked into one, so it is built from a pinned revision like a bootstrap compiler.",
+    "authority": [
+      {
+        "text": "sparkles:test-runner process model §2",
+        "link": "/specs/test-runner/process-model#_2-packages"
+      }
+    ],
+    "owner": "sparkles:test-runner",
+    "seeAlso": ["test-launcher", "test-worker", "test-fallback"]
+  },
+  {
+    "id": "test-launcher",
+    "term": "launcher",
+    "aliases": ["test launcher"],
+    "summary": "A test binary started by a person or by dub that hands its run to the test runner executable and exits with its status.",
+    "definition": "A test binary that finds a runner, through `--runner` or `SPARKLES_TEST_RUNNER`, starts it on itself, forwards its arguments, and exits with the runner's status without running a test.",
+    "authority": [
+      {
+        "text": "sparkles:test-runner process model §3",
+        "link": "/specs/test-runner/process-model#_3-finding-the-runner"
+      }
+    ],
+    "owner": "sparkles:test-runner",
+    "seeAlso": ["test-runner-executable", "test-worker"]
+  },
+  {
+    "id": "test-worker",
+    "term": "worker",
+    "aliases": ["test worker", "worker process"],
+    "summary": "A test binary started by the test runner executable that runs the tests it is told to, one at a time, and reports each over the runner protocol.",
+    "definition": "A test binary started with `--sparkles-test-protocol`. It lists its tests, then runs the commands it reads on its standard input, one at a time, writing frames to its standard output and the tests' own output to its standard error. A run uses several workers in parallel.",
+    "authority": [
+      {
+        "text": "sparkles:test-runner process model §4",
+        "link": "/specs/test-runner/process-model#_4-the-protocol"
+      }
+    ],
+    "owner": "sparkles:test-runner",
+    "seeAlso": ["test-runner-executable", "test-launcher"]
+  },
+  {
+    "id": "test-fallback",
+    "term": "fallback",
+    "aliases": ["test fallback"],
+    "summary": "How a test binary runs when no test runner executable is found: its own tests, one at a time, with a minimal report.",
+    "definition": "With no runner, or with `--no-runner`, a test binary runs its selected runtime tests in its own process, in discovery order, and prints one line per test and a summary. Options that need the runner, such as `--bench`, stop the run with an error.",
+    "authority": [
+      {
+        "text": "sparkles:test-runner process model §7",
+        "link": "/specs/test-runner/process-model#_7-fallback"
+      }
+    ],
+    "owner": "sparkles:test-runner",
+    "seeAlso": ["test-runner-executable", "test-launcher"]
   }
 ]

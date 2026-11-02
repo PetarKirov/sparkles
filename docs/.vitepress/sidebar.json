@@ -1933,6 +1933,14 @@
             "link": "/specs/test-runner/SPEC"
           },
           {
+            "text": "Process model and protocol",
+            "link": "/specs/test-runner/process-model"
+          },
+          {
+            "text": "Decisions",
+            "link": "/specs/test-runner/decisions"
+          },
+          {
             "text": "Delivery Plan",
             "link": "/specs/test-runner/PLAN"
           },
