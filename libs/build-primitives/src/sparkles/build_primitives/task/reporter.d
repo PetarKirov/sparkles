@@ -205,19 +205,54 @@ void writeOutcome(Writer)(ref Writer w, const ref TaskGraph graph, const TaskOut
 /// Outcome counts for the summary.
 struct RunTally
 {
-    size_t[OutcomeKind.max + 1] counts; ///
+    size_t[OutcomeKind.max + 1] counts; /// by kind; `blocked` excludes `unneeded`
+    /// Fallbacks that were not needed, `Blocked(conditionUnmet)`: counted
+    /// apart from the other blocks (TDM6).
+    size_t unneeded;
 
     /// Counts `outcome`.
-    void add(const TaskOutcome outcome) @safe pure nothrow @nogc { counts[kindOf(outcome)]++; }
+    void add(const TaskOutcome outcome) @safe pure nothrow @nogc
+    {
+        import std.sumtype : match;
+
+        const isUnneeded = outcome.match!((const Blocked b) => b.reason == BlockReason.conditionUnmet, _ => false);
+        if (isUnneeded)
+            ++unneeded;
+        else
+            counts[kindOf(outcome)]++;
+    }
 
     /// Tasks counted.
     size_t total() const @safe pure nothrow @nogc
     {
-        size_t n;
+        size_t n = unneeded;
         foreach (c; counts)
             n += c;
         return n;
     }
+}
+
+@("build_primitives.task.reporter.writeSummary.countsUnneededFallbacksApart")
+@safe
+unittest
+{
+    import std.array : appender;
+    import sparkles.build_primitives.task.testing : graphOf, tnode;
+
+    // TDM6: an unneeded fallback is not one of the blocks.
+    const g = graphOf([tnode("a"), tnode("b"), tnode("c")], null);
+    const outcomes = [TaskOutcome(Succeeded()),
+        TaskOutcome(Blocked(BlockReason.conditionUnmet, TaskIndex(0), TaskIndex(0), false)),
+        TaskOutcome(Blocked(BlockReason.prerequisiteBlocked, TaskIndex(1), TaskIndex(0), false))];
+    RunTally tally;
+    foreach (o; outcomes)
+        tally.add(o);
+    assert(tally.counts[OutcomeKind.blocked] == 1 && tally.unneeded == 1 && tally.total == 3);
+
+    auto w = appender!string;
+    writeSummary(w, g, tally, outcomes, SummaryFacts());
+    assert(w[] == "summary: 3 tasks: 1 succeeded, 0 failed, 0 degraded, 0 skipped, 1 blocked,"
+        ~ " 1 unneeded, 0 cancelled\nexit: 0\n", w[]);
 }
 
 /// What the summary reports besides the counts.
@@ -233,12 +268,13 @@ struct SummaryFacts
 
 /**
 Writes the final summary ([SPEC TDO2]): every outcome count — succeeded,
-failed, degraded, skipped, blocked, cancelled — then the cancellation, the
-failed and blocked-by-failure tasks in presentation order, the wall time when
-wanted, and the exit status.
+failed, degraded, skipped, blocked, unneeded (fallbacks that were not needed,
+apart from the other blocks), cancelled — then the cancellation, the failed
+and blocked-by-failure tasks in presentation order, the wall time when wanted,
+and the exit status.
 
 ---
-summary: 4 tasks: 2 succeeded, 1 failed, 0 degraded, 0 skipped, 1 blocked, 0 cancelled
+summary: 4 tasks: 2 succeeded, 1 failed, 0 degraded, 0 skipped, 1 blocked, 0 unneeded, 0 cancelled
 cancelled: fail-fast after test:a
 failed: test:a, test:b
 exit: 1
@@ -259,6 +295,12 @@ void writeSummary(Writer)(ref Writer w, const ref TaskGraph graph, const ref Run
         writeValue(w, tally.counts[kind]);
         put(w, ' ');
         writeEnumMemberName!AnyFormat(w, kind);
+        if (kind == OutcomeKind.blocked)
+        {
+            put(w, ", ");
+            writeValue(w, tally.unneeded);
+            put(w, " unneeded");
+        }
     }
     put(w, '\n');
     if (facts.cancelled)

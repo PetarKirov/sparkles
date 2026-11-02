@@ -299,7 +299,7 @@ unittest
         ~ "e: skipped: platform\n"
         ~ "[f stdout] f1\n"
         ~ "f: degraded: no-coverage\n"
-        ~ "summary: 6 tasks: 2 succeeded, 1 failed, 1 degraded, 1 skipped, 1 blocked, 0 cancelled\n"
+        ~ "summary: 6 tasks: 2 succeeded, 1 failed, 1 degraded, 1 skipped, 1 blocked, 0 unneeded, 0 cancelled\n"
         ~ "failed: c, d\n"
         ~ "exit: 1\n";
 
@@ -453,7 +453,7 @@ unittest
         ~ "[f stdout] f1\n"
         ~ "::endgroup::\n"
         ~ "f: degraded: no-coverage\n"
-        ~ "summary: 6 tasks: 2 succeeded, 1 failed, 1 degraded, 1 skipped, 1 blocked, 0 cancelled\n"
+        ~ "summary: 6 tasks: 2 succeeded, 1 failed, 1 degraded, 1 skipped, 1 blocked, 0 unneeded, 0 cancelled\n"
         ~ "failed: c, d\n"
         ~ "exit: 1\n", text);
 
@@ -492,7 +492,7 @@ unittest
         "failure c: failed: exit-status 3",
         "[c stdout] oops",
         "\x1b[0Ksection_end:42:task_2\r\x1b[0K",
-        "summary: 6 tasks: 2 succeeded, 1 failed, 1 degraded, 1 skipped, 1 blocked, 0 cancelled",
+        "summary: 6 tasks: 2 succeeded, 1 failed, 1 degraded, 1 skipped, 1 blocked, 0 unneeded, 0 cancelled",
         "failed: c, d",
         "exit: 1",
     ], text);

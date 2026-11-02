@@ -236,7 +236,7 @@ unittest
     assert(bytes.canFind("✖ c blocked: prerequisite-failed b"));
     // The failure replay and summary come after, in presentation order.
     assert(bytes.canFind("── b: failed: exit-status 2\n[b stdout] bad 1\n[b stdout] bad 2\n"));
-    assert(bytes.canFind("summary: 3 tasks: 1 succeeded, 1 failed, 0 degraded, 0 skipped, 1 blocked, 0 cancelled\n"));
+    assert(bytes.canFind("summary: 3 tasks: 1 succeeded, 1 failed, 0 degraded, 0 skipped, 1 blocked, 0 unneeded, 0 cancelled\n"));
     assert(bytes.canFind("exit: 1\n"));
 }
 
