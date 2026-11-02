@@ -245,21 +245,22 @@ an earlier node of that chain failed.
 
 **TDM6: Blocked and unneeded nodes.** A node is decided only once every
 prerequisite is terminal, so its outcome never depends on completion order.
-When one of its edge conditions is impossible:
+When one of its edge conditions is impossible, the first of these rules that
+applies decides it:
 
-- **Unneeded:** if every impossible edge is an `onFailure` edge whose
-  prerequisite ended `Succeeded`, `Degraded` or `Skipped`, the node is
-  `Blocked(conditionUnmet)`. That outcome
-  never fails the command, and summaries count it apart from other blocks: a
-  fallback that was not needed.
-- **Cancelled:** if an impossible prerequisite was cancelled and none
-  descends from a failure, the node is `Cancelled(notAdmitted)`. A failed
-  prerequisite outranks a cancelled one: when both are present, the failure
-  explains the node, and it is `Blocked` (TDC2 item 4).
-- **Blocked:** otherwise the node is `Blocked` and names its lowest-index
-  impossible prerequisite that descends from a failure. A block whose root cause
-  is a provisional failure is a provisional block, which does not fail the
-  command.
+1. **Unneeded:** if every impossible edge is an `onFailure` edge whose
+   prerequisite ended `Succeeded`, `Degraded` or `Skipped`, the node is
+   `Blocked(conditionUnmet)`. That outcome never fails the command, and
+   summaries count it apart from other blocks: a fallback that was not needed.
+2. **Blocked by a failure:** if any impossible prerequisite failed or is a
+   block that descends from a failure, the node is `Blocked` and names the
+   lowest-index such prerequisite. A failure outranks a cancellation beside it
+   (TDC2 item 4). A block whose root cause is a provisional failure is a
+   provisional block, which does not fail the command.
+3. **Cancelled:** if every impossible prerequisite was cancelled, apart from
+   unneeded `onFailure` edges as in rule 1, the node is `Cancelled(notAdmitted)`.
+4. **Blocked:** otherwise the node is `Blocked` and names its lowest-index
+   impossible prerequisite that is itself blocked.
 
 Cleanup nodes are idempotent and run under a cancellation protection region.
 
