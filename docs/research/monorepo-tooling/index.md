@@ -1,7 +1,7 @@
 # Monorepo & Workspace Tooling
 
 A breadth-first survey of **monorepo workspace features, task orchestration, and
-polyglot build architectures** across 44 package managers, build systems, task
+polyglot build architectures** across 45 package managers, build systems, task
 runners, and remote-execution backends — mapped against five recurring dimensions
 (workspace declaration, dependency isolation, task DAG, caching/remote execution, and
 filter ergonomics) to inform a phased, native workspace/monorepo proposal for `dub`,
@@ -20,7 +20,7 @@ This survey answers six questions:
 2. **What `dub` does today** — how does the D package manager handle multi-package
    projects, sub-packages, `path=` overrides, and `dub.selections.json`, and where
    are the gaps? See the [`dub` baseline][dub-baseline].
-3. **How 44 tools answer the five dimensions** — workspace declaration, dependency
+3. **How 45 tools answer the five dimensions** — workspace declaration, dependency
    isolation, task orchestration, caching/remote execution, and CLI filter
    ergonomics. See the [master catalog](#master-catalog) and each linked deep-dive.
 4. **What the field agrees on, and where it splits** — the consensus standard, the
@@ -33,7 +33,7 @@ This survey answers six questions:
    proposal, from layout primitives to git-ref change detection. See the
    [`dub` proposal][dub-proposal].
 
-> **Scope note.** The 44 tools span ten categories — JS/TS and Python package
+> **Scope note.** The 45 tools span ten categories — JS/TS and Python package
 > managers, language build systems, JS/TS and polyglot orchestrators,
 > container/CI engines, generic task runners, native build systems, REAPI backends,
 > minimalist/research tools, and Nix as polyglot glue. `dub` itself is the system
@@ -65,6 +65,7 @@ deep-dive.
 | **Hatch**          | Python         | Python package manager | Env-scoped `workspace.members` (1.16.0)                       | No        | Env + download                   | Editable `workspace.members` + `path`   |    —    | [Hatch][hatch]             |
 | **Cargo**          | Rust           | Language build system  | Root `[workspace]`; root-package or virtual; one `Cargo.lock` | Yes       | Local (`target/` + fingerprints) | `path` + `[workspace.dependencies]`     |   ✅    | [Cargo][cargo]             |
 | **Go (`go.work`)** | Go             | Language build system  | Virtual root `go.work` `use`-list of local modules (MVS)      | No        | Local CAS (`$GOCACHE`)           | Implicit: every `use`d module is local  |   ✅    | [Go `go.work`][go-work]    |
+| **Zig build**      | Zig            | Language build system  | Root `build.zig` + `build.zig.zon`; `.path` members           | Yes       | Local manifest (`.zig-cache`)    | `.path` dependency (not hashed)         |    —    | [Zig build][zig-build]     |
 | **Gradle**         | JVM            | Language build system  | Multi-project `include()` + composite `includeBuild()`        | Yes       | Local + remote build cache       | `project(":path")` + substitution       |    —    | [Gradle][gradle]           |
 | **Maven**          | JVM            | Language build system  | Aggregator `pom.xml` `<modules>` (the reactor)                | Yes       | Download (cache = extension)     | GAV coordinate via `ReactorReader`      |    —    | [Maven][maven]             |
 | **sbt**            | Scala/JVM      | Language build system  | Multi-project `build.sbt`; `aggregate`/`dependsOn`            | Yes       | 2.x: REAPI ActionCache           | `dependsOn(project)` value reference    |    —    | [sbt][sbt]                 |
@@ -111,22 +112,22 @@ deep-dive.
 
 ### By category
 
-The same 44 rows, grouped by the scope matrix's **Category** column (the grouping
+The same 45 rows, grouped by the scope matrix's **Category** column (the grouping
 carried into the VitePress sidebar).
 
-| Category                    | Tools                                                                                                                     |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| **JS/TS package managers**  | [npm][npm], [Yarn Berry][yarn-berry], [pnpm][pnpm], [Bun][bun]                                                            |
-| **Python package managers** | [uv][uv], [Poetry][poetry], [Hatch][hatch]                                                                                |
-| **Language build systems**  | [Cargo][cargo], [Go `go.work`][go-work], [Gradle][gradle], [Maven][maven], [sbt][sbt], [Mill][mill], [Composer][composer] |
-| **JS/TS orchestrators**     | [Nx][nx], [Turborepo][turborepo], [Lerna][lerna], [Rush][rush], [Lage][lage], [Wireit][wireit]                            |
-| **Polyglot orchestrators**  | [Bazel][bazel], [Buck2][buck2], [Pants][pants], [Please][please], [moon][moon], [GN + Ninja][gn]                          |
-| **Container / CI**          | [Dagger][dagger], [Earthly][earthly], [Garden][garden]                                                                    |
-| **Generic task runners**    | [Task][task], [Just][just], [mise][mise], [Make][make]                                                                    |
-| **Native build systems**    | [Meson][meson], [CMake][cmake], [SCons][scons], [Waf][waf], [Ninja][ninja]                                                |
-| **Remote execution**        | [BuildBuddy][buildbuddy], [Buildbarn][buildbarn], [NativeLink][nativelink]                                                |
-| **Minimalist / research**   | [redo][redo], [tup][tup]                                                                                                  |
-| **Polyglot glue**           | [Nix (flakes)][nix-flakes]                                                                                                |
+| Category                    | Tools                                                                                                                                             |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **JS/TS package managers**  | [npm][npm], [Yarn Berry][yarn-berry], [pnpm][pnpm], [Bun][bun]                                                                                    |
+| **Python package managers** | [uv][uv], [Poetry][poetry], [Hatch][hatch]                                                                                                        |
+| **Language build systems**  | [Cargo][cargo], [Go `go.work`][go-work], [Zig build][zig-build], [Gradle][gradle], [Maven][maven], [sbt][sbt], [Mill][mill], [Composer][composer] |
+| **JS/TS orchestrators**     | [Nx][nx], [Turborepo][turborepo], [Lerna][lerna], [Rush][rush], [Lage][lage], [Wireit][wireit]                                                    |
+| **Polyglot orchestrators**  | [Bazel][bazel], [Buck2][buck2], [Pants][pants], [Please][please], [moon][moon], [GN + Ninja][gn]                                                  |
+| **Container / CI**          | [Dagger][dagger], [Earthly][earthly], [Garden][garden]                                                                                            |
+| **Generic task runners**    | [Task][task], [Just][just], [mise][mise], [Make][make]                                                                                            |
+| **Native build systems**    | [Meson][meson], [CMake][cmake], [SCons][scons], [Waf][waf], [Ninja][ninja]                                                                        |
+| **Remote execution**        | [BuildBuddy][buildbuddy], [Buildbarn][buildbarn], [NativeLink][nativelink]                                                                        |
+| **Minimalist / research**   | [redo][redo], [tup][tup]                                                                                                                          |
+| **Polyglot glue**           | [Nix (flakes)][nix-flakes]                                                                                                                        |
 
 ---
 
@@ -174,13 +175,13 @@ filesystem link. See [concepts § dependency isolation][concepts].
 _Does the tool build and schedule a task graph itself, or delegate it?_ See
 [concepts § task DAG][concepts].
 
-| Orchestration model                | Behavior                                                      | Tools                                                                                                                                                                                                                                            |
-| ---------------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Full task DAG**                  | `(package × task)` graph, topologically scheduled, concurrent | [Cargo][cargo], [Gradle][gradle], [Maven][maven], [sbt][sbt], [Mill][mill], [Nx][nx], [Turborepo][turborepo], [Rush][rush], [Lage][lage], [Wireit][wireit], [Bazel][bazel], [Buck2][buck2], [Pants][pants], [Please][please], [moon][moon]       |
-| **Package-level ordering only**    | Members ordered topologically; no intra-package task graph    | [pnpm][pnpm], [Bun][bun], [Yarn Berry][yarn-berry] (`foreach -t`)                                                                                                                                                                                |
-| **File/recipe DAG (no package)**   | Real DAG over files or recipes, not packages                  | [Make][make], [Ninja][ninja], [GN + Ninja][gn], [Task][task], [Just][just], [mise][mise], [Meson][meson], [SCons][scons], [Waf][waf], [redo][redo], [tup][tup], [Dagger][dagger], [Earthly][earthly], [Garden][garden], [Nix flakes][nix-flakes] |
-| **Delegated / none**               | No task DAG; defer to an external runner                      | [npm][npm], [uv][uv], [Poetry][poetry], [Hatch][hatch], [Composer][composer], [Go `go.work`][go-work], [CMake][cmake] (backend), [Lerna][lerna] (via Nx)                                                                                         |
-| **Distributed scheduler (server)** | Schedules leaf actions a client's DAG emits                   | [BuildBuddy][buildbuddy], [Buildbarn][buildbarn], [NativeLink][nativelink]                                                                                                                                                                       |
+| Orchestration model                | Behavior                                                      | Tools                                                                                                                                                                                                                                                              |
+| ---------------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Full task DAG**                  | `(package × task)` graph, topologically scheduled, concurrent | [Cargo][cargo], [Zig build][zig-build], [Gradle][gradle], [Maven][maven], [sbt][sbt], [Mill][mill], [Nx][nx], [Turborepo][turborepo], [Rush][rush], [Lage][lage], [Wireit][wireit], [Bazel][bazel], [Buck2][buck2], [Pants][pants], [Please][please], [moon][moon] |
+| **Package-level ordering only**    | Members ordered topologically; no intra-package task graph    | [pnpm][pnpm], [Bun][bun], [Yarn Berry][yarn-berry] (`foreach -t`)                                                                                                                                                                                                  |
+| **File/recipe DAG (no package)**   | Real DAG over files or recipes, not packages                  | [Make][make], [Ninja][ninja], [GN + Ninja][gn], [Task][task], [Just][just], [mise][mise], [Meson][meson], [SCons][scons], [Waf][waf], [redo][redo], [tup][tup], [Dagger][dagger], [Earthly][earthly], [Garden][garden], [Nix flakes][nix-flakes]                   |
+| **Delegated / none**               | No task DAG; defer to an external runner                      | [npm][npm], [uv][uv], [Poetry][poetry], [Hatch][hatch], [Composer][composer], [Go `go.work`][go-work], [CMake][cmake] (backend), [Lerna][lerna] (via Nx)                                                                                                           |
+| **Distributed scheduler (server)** | Schedules leaf actions a client's DAG emits                   | [BuildBuddy][buildbuddy], [Buildbarn][buildbarn], [NativeLink][nativelink]                                                                                                                                                                                         |
 
 ### By caching & remote execution
 
@@ -193,7 +194,7 @@ language tools reach it natively. See [concepts § caching and REAPI][concepts].
 | ------------------------------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **None / `mtime` only**         | Nothing portable; incrementality dies on fresh CI checkout       | [Just][just], [Make][make], [CMake][cmake], [Ninja][ninja] (incremental only), [GN + Ninja][gn], [Meson][meson], [tup][tup]                                                                     |
 | **Install / download only**     | Package archives + lockfile reproducibility                      | [npm][npm], [Yarn Berry][yarn-berry], [pnpm][pnpm], [Bun][bun], [Poetry][poetry], [Hatch][hatch], [Composer][composer], [Maven][maven] (core)                                                   |
-| **Local content-addressed**     | Build/test outputs keyed by input hash, single machine           | [uv][uv], [Cargo][cargo], [Go `go.work`][go-work], [Mill][mill], [Task][task], [mise][mise], [redo][redo]                                                                                       |
+| **Local content-addressed**     | Build/test outputs keyed by input hash, single machine           | [uv][uv], [Cargo][cargo], [Zig build][zig-build], [Go `go.work`][go-work], [Mill][mill], [Task][task], [mise][mise], [redo][redo]                                                               |
 | **Local + shared/remote cache** | Output reuse across machines/CI (HTTP/cloud)                     | [Gradle][gradle], [Nx][nx], [Turborepo][turborepo], [Rush][rush], [Lage][lage], [Wireit][wireit], [SCons][scons], [Waf][waf], [Nix flakes][nix-flakes], [Garden][garden], [Earthly][earthly]    |
 | **REAPI (cache + remote exec)** | Content-addressed actions cached _and executed_ on a remote farm | [Bazel][bazel], [Buck2][buck2], [Pants][pants], [Please][please], [moon][moon] (cache only), [sbt][sbt] (2.x cache), [BuildBuddy][buildbuddy], [Buildbarn][buildbarn], [NativeLink][nativelink] |
 
@@ -285,52 +286,53 @@ are approximate.
 
 One line per tool. Each links to its `<slug>/` deep-dive.
 
-| Tool                       | One-line                                                                                                                                |
-| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| [npm][npm]                 | Node.js's default package manager: a `workspaces` glob array symlinks members; no `workspace:` protocol, no task DAG, no caching.       |
-| [Yarn Berry][yarn-berry]   | TypeScript rewrite of Yarn: `workspace:` protocol, Plug'n'Play, and `yarn workspaces foreach` topological runner — most complete.       |
-| [pnpm][pnpm]               | Content-addressed store + strict symlinked `node_modules`; `pnpm-workspace.yaml`, `workspace:` protocol, catalogs, recursive runner.    |
-| [Bun][bun]                 | Speed-first all-in-one toolkit: reads npm `workspaces`, hoisted-or-isolated `node_modules`, parallel dependency-ordered runner.         |
-| [uv][uv]                   | Rust-built Python manager: Cargo-inspired workspaces, one shared `uv.lock`, one venv, local CAS — but no task orchestration.            |
-| [Poetry][poetry]           | PubGrub-resolved `pyproject.toml` manager with no native workspace; monorepos improvised from `path` deps and plugins.                  |
-| [Hatch][hatch]             | PyPA project manager of isolated matrix environments; new per-env `workspace.members` editable-installs locals, no shared lock.         |
-| [Cargo][cargo]             | Rust's `[workspace]`: one root manifest, one `Cargo.lock`, one `target/`, a fingerprint-cached build DAG — the canonical precedent.     |
-| [Go `go.work`][go-work]    | Go's first-party multi-module workspace: `use`-listed local modules cross-import via MVS; no member task DAG, no unified lockfile.      |
-| [Gradle][gradle]           | JVM build engine: two-tier `include` + composite `includeBuild`, a cross-project task DAG, local + remote build cache.                  |
-| [Maven][maven]             | The JVM reactor: aggregator `pom.xml` topologically sorts modules by GAV and builds them in one pass; no native lockfile or cache.      |
-| [sbt][sbt]                 | Scala's build tool: `build.sbt` with `aggregate`/`dependsOn`, a memoizing task graph, Zinc, and (2.x) a REAPI-compatible cache.         |
-| [Mill][mill]               | JVM build tool: a tree of Scala-object modules lowered into one graph of content-hash-cached tasks — Bazel's model in the host.         |
-| [Composer][composer]       | PHP's lockfile-driven single-package manager; its only monorepo primitive is the symlinking `path` repository.                          |
-| [Nx][nx]                   | JS/TS orchestrator atop the package manager: a project graph → hashed, cached, topologically-scheduled task DAG with `affected`.        |
-| [Turborepo][turborepo]     | Lean Rust JS/TS orchestrator: one `turbo.json`, content-hashed tasks, local + remote replayed outputs — "never do work twice."          |
-| [Lerna][lerna]             | The original JS monorepo tool, now Nx-stewarded: delegates tasks/cache to Nx, keeps its `version`/`publish` release toolchain.          |
-| [Rush][rush]               | Microsoft's enterprise orchestrator: explicit project registry, deterministic install, native incremental engine, cobuild cache.        |
-| [Lage][lage]               | Microsoft's task runner overlaying a pipeline onto any npm/yarn/pnpm workspace; `(package × task)` DAG, local + remote cache.           |
-| [Wireit][wireit]           | Google's no-new-binary upgrade to npm scripts: per-script cross-package DAG, SHA-256 fingerprinting, local + GitHub-Actions cache.      |
-| [Bazel][bazel]             | Google's language-agnostic content-addressed engine: a monorepo becomes one action graph, Skyframe-incremental, REAPI-cacheable.        |
-| [Buck2][buck2]             | Meta's Rust rewrite of Buck: remote-execution-first, one phaseless DICE dependency graph, Starlark rules, REAPI caching.                |
-| [Pants][pants]             | Polyglot orchestrator betting on dependency inference: reads imports for a file-level DAG, memoizing Rust + Tokio engine over REAPI.    |
-| [Please][please]           | Lightweight Go Bazel/Buck-family engine: restricted-Python `BUILD` files form one hash-keyed, sandboxed, REAPI-cacheable graph.         |
-| [moon][moon]               | Rust convention-first polyglot orchestrator: explicit project/action graph, content-hashed tasks, local + Bazel-REAPI cache.            |
-| [GN + Ninja][gn]           | A strict generator/executor split: GN writes `build.ninja` from `BUILD.gn`; Ninja executes it at maximum speed, `mtime`-incremental.    |
-| [Dagger][dagger]           | Container-native CI engine: pipelines are real code calling a GraphQL API, run by BuildKit as an auto-caching content-addressed DAG.    |
-| [Earthly][earthly]         | Container-native build tool ("Dockerfile + Makefile"): `+target` artifact references across files/repos; now frozen/unmaintained.       |
-| [Garden][garden]           | Kubernetes-native automation: repo-wide Build/Deploy/Test/Run actions compiled into a version-hashed, graph-aware Stack Graph.          |
-| [Task][task]               | Single-binary YAML task runner (declarative Make): parallel `deps` DAG, file-fingerprinted up-to-date checks, `includes` namespaces.    |
-| [Just][just]               | Single-binary make-inspired command runner (not a build system): names/orders commands via a `justfile`, no caching or resolution.      |
-| [mise][mise]               | Single-binary dev-tool manager + env loader + task runner: 2026 monorepo mode, `//path:task` namespacing, `petgraph` DAG.               |
-| [Make][make]               | The 1976 `mtime` dependency engine and universal front door: a real parallel DAG, but no workspace, resolver, or content cache.         |
-| [Meson][meson]             | Fast generate-then-execute native build system; monorepo model is the in-tree `subproject` wired in by a `.wrap` manifest.              |
-| [CMake][cmake]             | Cross-platform meta-build generator with no native workspace; multi-package trees aggregated via `add_subdirectory`.                    |
-| [SCons][scons]             | Pure-Python construction tool: the build description IS a Python program; content-hash signatures, shared `CacheDir`.                   |
-| [Waf][waf]                 | Zero-dependency single-file Python build framework: `recurse()` assembles the tree, Waf schedules a hash-signature task DAG.            |
-| [Ninja][ninja]             | Deliberately minimal, maximally-fast executor ("an assembler"): runs a generated `build.ninja` with near-instant incremental builds.    |
-| [BuildBuddy][buildbuddy]   | Open-core Go REAPI implementation: CAS + ActionCache + a Redis scheduler + autoscaling executors behind one `--remote_executor` URL.    |
-| [Buildbarn][buildbarn]     | Modular Go REAPI: content-addressable cache + size-class-aware remote execution from small composable daemons wired by Jsonnet.         |
-| [NativeLink][nativelink]   | Nix-powered single-binary Rust REAPI: a composable JSON5 store stack and Nix-based Local Remote Execution for bit-identical toolchains. |
-| [redo][redo]               | djb's minimalist design realized: per-target `.do` scripts declare prerequisites at runtime via `redo-ifchange` into `.redo`.           |
-| [tup][tup]                 | File-based build system updating only the affected slice (the beta algorithm); the DAG is discovered by intercepting real I/O.          |
-| [Nix (flakes)][nix-flakes] | Flakes turn any directory into a content-hash-locked node — the polyglot glue that wires multi-language monorepos no one tool sees.     |
+| Tool                       | One-line                                                                                                                                                  |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [npm][npm]                 | Node.js's default package manager: a `workspaces` glob array symlinks members; no `workspace:` protocol, no task DAG, no caching.                         |
+| [Yarn Berry][yarn-berry]   | TypeScript rewrite of Yarn: `workspace:` protocol, Plug'n'Play, and `yarn workspaces foreach` topological runner — most complete.                         |
+| [pnpm][pnpm]               | Content-addressed store + strict symlinked `node_modules`; `pnpm-workspace.yaml`, `workspace:` protocol, catalogs, recursive runner.                      |
+| [Bun][bun]                 | Speed-first all-in-one toolkit: reads npm `workspaces`, hoisted-or-isolated `node_modules`, parallel dependency-ordered runner.                           |
+| [uv][uv]                   | Rust-built Python manager: Cargo-inspired workspaces, one shared `uv.lock`, one venv, local CAS — but no task orchestration.                              |
+| [Poetry][poetry]           | PubGrub-resolved `pyproject.toml` manager with no native workspace; monorepos improvised from `path` deps and plugins.                                    |
+| [Hatch][hatch]             | PyPA project manager of isolated matrix environments; new per-env `workspace.members` editable-installs locals, no shared lock.                           |
+| [Cargo][cargo]             | Rust's `[workspace]`: one root manifest, one `Cargo.lock`, one `target/`, a fingerprint-cached build DAG — the canonical precedent.                       |
+| [Go `go.work`][go-work]    | Go's first-party multi-module workspace: `use`-listed local modules cross-import via MVS; no member task DAG, no unified lockfile.                        |
+| [Zig build][zig-build]     | `build.zig` as a program: a cached configurer serializes a step graph that the Maker runs under a `max_rss` memory budget; manifest cache, test protocol. |
+| [Gradle][gradle]           | JVM build engine: two-tier `include` + composite `includeBuild`, a cross-project task DAG, local + remote build cache.                                    |
+| [Maven][maven]             | The JVM reactor: aggregator `pom.xml` topologically sorts modules by GAV and builds them in one pass; no native lockfile or cache.                        |
+| [sbt][sbt]                 | Scala's build tool: `build.sbt` with `aggregate`/`dependsOn`, a memoizing task graph, Zinc, and (2.x) a REAPI-compatible cache.                           |
+| [Mill][mill]               | JVM build tool: a tree of Scala-object modules lowered into one graph of content-hash-cached tasks — Bazel's model in the host.                           |
+| [Composer][composer]       | PHP's lockfile-driven single-package manager; its only monorepo primitive is the symlinking `path` repository.                                            |
+| [Nx][nx]                   | JS/TS orchestrator atop the package manager: a project graph → hashed, cached, topologically-scheduled task DAG with `affected`.                          |
+| [Turborepo][turborepo]     | Lean Rust JS/TS orchestrator: one `turbo.json`, content-hashed tasks, local + remote replayed outputs — "never do work twice."                            |
+| [Lerna][lerna]             | The original JS monorepo tool, now Nx-stewarded: delegates tasks/cache to Nx, keeps its `version`/`publish` release toolchain.                            |
+| [Rush][rush]               | Microsoft's enterprise orchestrator: explicit project registry, deterministic install, native incremental engine, cobuild cache.                          |
+| [Lage][lage]               | Microsoft's task runner overlaying a pipeline onto any npm/yarn/pnpm workspace; `(package × task)` DAG, local + remote cache.                             |
+| [Wireit][wireit]           | Google's no-new-binary upgrade to npm scripts: per-script cross-package DAG, SHA-256 fingerprinting, local + GitHub-Actions cache.                        |
+| [Bazel][bazel]             | Google's language-agnostic content-addressed engine: a monorepo becomes one action graph, Skyframe-incremental, REAPI-cacheable.                          |
+| [Buck2][buck2]             | Meta's Rust rewrite of Buck: remote-execution-first, one phaseless DICE dependency graph, Starlark rules, REAPI caching.                                  |
+| [Pants][pants]             | Polyglot orchestrator betting on dependency inference: reads imports for a file-level DAG, memoizing Rust + Tokio engine over REAPI.                      |
+| [Please][please]           | Lightweight Go Bazel/Buck-family engine: restricted-Python `BUILD` files form one hash-keyed, sandboxed, REAPI-cacheable graph.                           |
+| [moon][moon]               | Rust convention-first polyglot orchestrator: explicit project/action graph, content-hashed tasks, local + Bazel-REAPI cache.                              |
+| [GN + Ninja][gn]           | A strict generator/executor split: GN writes `build.ninja` from `BUILD.gn`; Ninja executes it at maximum speed, `mtime`-incremental.                      |
+| [Dagger][dagger]           | Container-native CI engine: pipelines are real code calling a GraphQL API, run by BuildKit as an auto-caching content-addressed DAG.                      |
+| [Earthly][earthly]         | Container-native build tool ("Dockerfile + Makefile"): `+target` artifact references across files/repos; now frozen/unmaintained.                         |
+| [Garden][garden]           | Kubernetes-native automation: repo-wide Build/Deploy/Test/Run actions compiled into a version-hashed, graph-aware Stack Graph.                            |
+| [Task][task]               | Single-binary YAML task runner (declarative Make): parallel `deps` DAG, file-fingerprinted up-to-date checks, `includes` namespaces.                      |
+| [Just][just]               | Single-binary make-inspired command runner (not a build system): names/orders commands via a `justfile`, no caching or resolution.                        |
+| [mise][mise]               | Single-binary dev-tool manager + env loader + task runner: 2026 monorepo mode, `//path:task` namespacing, `petgraph` DAG.                                 |
+| [Make][make]               | The 1976 `mtime` dependency engine and universal front door: a real parallel DAG, but no workspace, resolver, or content cache.                           |
+| [Meson][meson]             | Fast generate-then-execute native build system; monorepo model is the in-tree `subproject` wired in by a `.wrap` manifest.                                |
+| [CMake][cmake]             | Cross-platform meta-build generator with no native workspace; multi-package trees aggregated via `add_subdirectory`.                                      |
+| [SCons][scons]             | Pure-Python construction tool: the build description IS a Python program; content-hash signatures, shared `CacheDir`.                                     |
+| [Waf][waf]                 | Zero-dependency single-file Python build framework: `recurse()` assembles the tree, Waf schedules a hash-signature task DAG.                              |
+| [Ninja][ninja]             | Deliberately minimal, maximally-fast executor ("an assembler"): runs a generated `build.ninja` with near-instant incremental builds.                      |
+| [BuildBuddy][buildbuddy]   | Open-core Go REAPI implementation: CAS + ActionCache + a Redis scheduler + autoscaling executors behind one `--remote_executor` URL.                      |
+| [Buildbarn][buildbarn]     | Modular Go REAPI: content-addressable cache + size-class-aware remote execution from small composable daemons wired by Jsonnet.                           |
+| [NativeLink][nativelink]   | Nix-powered single-binary Rust REAPI: a composable JSON5 store stack and Nix-based Local Remote Execution for bit-identical toolchains.                   |
+| [redo][redo]               | djb's minimalist design realized: per-target `.do` scripts declare prerequisites at runtime via `redo-ifchange` into `.redo`.                             |
+| [tup][tup]                 | File-based build system updating only the affected slice (the beta algorithm); the DAG is discovered by intercepting real I/O.                            |
+| [Nix (flakes)][nix-flakes] | Flakes turn any directory into a content-hash-locked node — the polyglot glue that wires multi-language monorepos no one tool sees.                       |
 
 ---
 
@@ -342,7 +344,7 @@ this index's classifications are:
 
 - **The five dimensions** — workspace declaration, dependency isolation, task DAG,
   caching/remote execution, and CLI ergonomics — are defined in [concepts] and
-  applied uniformly across all 44 deep-dives.
+  applied uniformly across all 45 deep-dives.
 - **`dub` grounding** — the `dub` and `dub-docs` source trees under
   `~/code/repos/dlang/`, written up in the [`dub` baseline][dub-baseline] and the
   "`dub` delta" of the [comparison][comparison].
@@ -376,6 +378,7 @@ Sparkles research program.
 [hatch]: ./hatch/
 [cargo]: ./cargo/
 [go-work]: ./go-work/
+[zig-build]: ./zig-build/
 [gradle]: ./gradle/
 [maven]: ./maven/
 [sbt]: ./sbt/

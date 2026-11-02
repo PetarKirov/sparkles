@@ -3,7 +3,7 @@
 A milestoned plan to give D's `dub` first-class monorepo primitives — a `[workspace]`
 manifest, metadata and dependency inheritance, a `workspace:` local cross-reference
 protocol, topological multi-member task routing, and git-ref change slicing — closing
-the gap between `dub` and the [consensus standard][comparison] the 44-tool survey
+the gap between `dub` and the [consensus standard][comparison] the 45-tool survey
 distils.
 
 **Last reviewed:** June 5, 2026

@@ -5659,6 +5659,10 @@
                 "link": "/research/monorepo-tooling/go-work/"
               },
               {
+                "text": "Zig build (Zig)",
+                "link": "/research/monorepo-tooling/zig-build/"
+              },
+              {
                 "text": "Gradle (JVM)",
                 "link": "/research/monorepo-tooling/gradle/"
               },
