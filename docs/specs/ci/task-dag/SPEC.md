@@ -263,6 +263,11 @@ commands keep their file selectors.
 
 Other `apps/ci/` changes select only `ci`, which owns them.
 
+> [!NOTE]
+> TODO: the build graph's modules do not exist yet, so
+> `apps/ci/src/repository_invalidators.d` cannot list them. Add their
+> directory to that list, and name it here, when the build graph lands.
+
 ## 5. Command graphs
 
 The diagrams show graph shape. Real node ids include package and file
