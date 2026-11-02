@@ -7,7 +7,8 @@ reviewed: 2026-11-02
 # `sparkles:test-runner` — Decisions
 
 Each record states its question, the alternatives, the choice and when to
-revisit it. **Accepted** records were accepted by the owner; **proposed**
+revisit it. **Accepted** records were accepted by the owner, TRD1 and TRD7–TRD9
+on 2026-11-02; **proposed**
 ones await the owner's decision. The contract they shape is
 [process-model.md](./process-model.md).
 
@@ -139,7 +140,7 @@ attributes in the shim. Which of them can a `sourceLibrary` own?
 
 **Revisit when** every leg that builds tests runs Nix.
 
-## TRD7: One runner core, two clients (proposed)
+## TRD7: One runner core, two clients (accepted)
 
 **Question.** The runner must serve third-party `dub test` users with no
 `sparkles:ci`, and `ci` must run the same test binaries under its own
@@ -169,7 +170,7 @@ process at all.
 
 **Revisit when** a client needs something the event stream cannot carry.
 
-## TRD8: The client schedules, and ci's unit is a leg (proposed)
+## TRD8: The client schedules, and ci's unit is a leg (accepted)
 
 **Question.** Who decides how many workers run and which test each runs, and
 what is the unit ci schedules?
@@ -203,7 +204,7 @@ leg's claim to the end, as a slow linker does. A crash still costs one test
 **Revisit when** the executor gains sub-tasks that make per-test units cheap,
 or a suite's tests interfere often enough to pay for a process per test.
 
-## TRD9: The pin is the standalone runner's (proposed)
+## TRD9: The pin is the standalone runner's (accepted)
 
 **Question.** D16 pinned the runner because test binaries linked it. With the
 runner out of process, what does the pin cover, and does ci use it?
