@@ -25,6 +25,7 @@ compare plain transcripts, exit codes and the files left behind.
 | CIC8        | A run with tests and examples plans no library variant for the examples beyond those the tests plan.                                                                                                                                                                                                         |
 | CIC9        | The completion criteria, each checked by the milestone that delivers it.                                                                                                                                                                                                                                     |
 | CIC10       | The listing's JSON and the provider output, for a fixture with named, unnamed and no `@slow` tests.                                                                                                                                                                                                          |
+| CIC11       | A binary run under `ci test` and standalone, with the same options: the same per-test statuses and verdict; and two packages' worker nodes admitted at once.                                                                                                                                                 |
 | CIC12       | Under `--require-cached compile`, a run with one edited module fails exactly the compiles that read it: the owning package's with a `declared` miss explanation, each dependent's with a `manifest` one, both naming the module, and a run with no edit passes.                                              |
 | CIC13       | A pipeline run plans one determinism-check task; a planted nondeterministic compile in the sample fails it as authoritative and removes the result (build graph oracle 19).                                                                                                                                  |
 | CIC14       | `--list-placements` on a fixture placement file prints every task in exactly one placement and shard, packed longest first by recorded `task.wall` with the default weight for unseen tasks; `--placement NAME` runs only its tasks and their build actions, and every other task ends `Skipped(placement)`. |
@@ -34,5 +35,5 @@ compare plain transcripts, exit codes and the files left behind.
 
 | Requirement | Status      | Evidence |
 | ----------- | ----------- | -------- |
-| CIC1–CIC10  | not started | —        |
+| CIC1–CIC11  | not started | —        |
 | CIC12–CIC15 | planned     | —        |

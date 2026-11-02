@@ -26,7 +26,7 @@ does a package below the toolkit test through it without a dependency cycle?
   recompiles the runner for every such package.
 - **A prebuilt, pinned library.** Build the runner, with its whole closure,
   from a pinned revision and link it into every test binary. A prototype on
-  Linux, kept outside the tree, passed `base`'s 982 tests, but only after a partial link and a
+  Linux passed `base`'s 982 tests (an observation not recorded in the tree), but only after a partial link and a
   rewrite that made every symbol but the runner's own local, and dropped COMDAT
   groups. Windows' object format has no equivalent. The test process holds two
   copies of `base`'s state. Consumers call the runner's D API, so the
@@ -138,3 +138,90 @@ attributes in the shim. Which of them can a `sourceLibrary` own?
 **Choice.** The file, `nix/test-runner-pin.json` (TRN1).
 
 **Revisit when** every leg that builds tests runs Nix.
+
+## TRD7: One runner core, two clients (proposed)
+
+**Question.** The runner must serve third-party `dub test` users with no
+`sparkles:ci`, and `ci` must run the same test binaries under its own
+executor, reporters and result reuse. Where does the code that talks to a
+worker live?
+
+**Alternatives.**
+
+- ci starts the standalone runner per test binary and parses its report. ci's
+  executor then sees one opaque process, its reporters a second report, and
+  result reuse an output it cannot interpret.
+- ci implements the protocol client itself. The two clients drift.
+- One library that both link: the option model, the protocol client, the run
+  plan and the verdict. Each client supplies process spawning, I/O,
+  scheduling and rendering.
+
+**Choice.** The library, `sparkles:test-runner-core`, as a protocol state
+machine that performs no I/O (TRM1–TRM4). The owner required the two modes on
+2026-11-02. The standalone runner drives it with threads and pipes; ci drives
+it with supervised process groups on Event Horizon, which its task-DAG rules
+require.
+
+**Trade-offs.** The state machine is harder to write than a client with
+blocking reads, and each client owns the I/O loop around it. In return the
+core runs under either runtime, and a transcript test exercises it with no
+process at all.
+
+**Revisit when** a client needs something the event stream cannot carry.
+
+## TRD8: The client schedules, and ci's unit is a leg (proposed)
+
+**Question.** Who decides how many workers run and which test each runs, and
+what is the unit ci schedules?
+
+**Alternatives.**
+
+- **An executor seam in the core.** The core asks its client for capacity and
+  places tests itself: the core becomes a scheduler, and depends on ci's
+  executor to be one inside ci.
+- **A task node per test,** or a process per test as cargo-nextest runs. The
+  executor sees every test, but a graph holds thousands of nodes, the build
+  graph's reuse unit becomes a test, and every test pays the binary's
+  start-up: the spawn and druntime's and the modules' initialization, dearer
+  on Windows and macOS than on Linux.
+- **A worker node per session, pulling from a shared queue.** The nodes share
+  mutable state the task model does not have, which test a node runs is a
+  race, and a node's result cannot be reused.
+- **A node per leg of a binary,** claiming `N` tokens and running up to `N`
+  sessions, as a linker runs its threads within its claim.
+
+**Choice.** The client schedules (TRM3), and ci's unit is a leg (TRM5). The
+leg is the build graph's test action and its unit of reuse; placement inside
+it is the same pool logic the standalone runner uses, bounded by the claim the
+executor granted. Admission still decides which legs run across packages.
+
+**Trade-offs.** The executor does not see individual tests; their results
+reach it as the leg's output and observations (TRM6). A slow test holds its
+leg's claim to the end, as a slow linker does. A crash still costs one test
+(TRP26).
+
+**Revisit when** the executor gains sub-tasks that make per-test units cheap,
+or a suite's tests interfere often enough to pay for a process per test.
+
+## TRD9: The pin is the standalone runner's (proposed)
+
+**Question.** D16 pinned the runner because test binaries linked it. With the
+runner out of process, what does the pin cover, and does ci use it?
+
+**Alternatives.**
+
+- ci runs tests through the pinned standalone runner, as a toolchain
+  component.
+- ci links the core compiled into it, and the pin covers only the standalone
+  runner.
+
+**Choice.** The second (TRM8). Test actions key on the core inside the ci
+build that runs them. The pin keeps a developer's `dub test` from rebuilding
+the runner when the tree changes; the handshake rejects a protocol mismatch
+between either client and a binary.
+
+**Trade-offs.** A change to the core reruns every test action; a change to the
+standalone runner reruns none of them.
+
+**Revisit when** the dev shell can build the runner from the tree without
+rebuilding on unrelated changes.
