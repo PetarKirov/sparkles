@@ -78,9 +78,15 @@ before any dequeue: exactly one terminal completion for the target, whichever wa
 - The target outlives the association. For a child, the process handle is closed only after
   its wait completed and `GetExitCodeProcess` read the status, so a recycled pid can never be
   waited on through a stale handle.
-- A packet completion does not set an `OVERLAPPED.hEvent`. The backend's native-host event
-  (folded into `MsgWaitForMultipleObjectsEx` by a Win32 message host) therefore misses a process
-  exit until its next wake. Recorded as a limitation; the ordinary loop wait is the port.
+- A packet completion does not set an `OVERLAPPED.hEvent`, and a packet cannot target a port:
+  `NtAssociateWaitCompletionPacket` with a port as the target returns `0xC00000F1` (probed on
+  native Windows, November 2, 2026). A Win32 message host therefore cannot be woken through a
+  mirror event. It can wait on the port itself: Windows Internals lists "an I/O completion port"
+  among the objects a thread waits on with `WaitForSingleObject` ([WI7][wi7], ch. 4, "Voluntary
+  switch"), and the same probe shows that the wait is level-triggered on the queue and does not
+  consume a packet: `WAIT_OBJECT_0` twice after one post, `WAIT_TIMEOUT` after the dequeue,
+  `MsgWaitForMultipleObjectsEx` included. Wine 11 behaves the same. `event-horizon`'s host wait
+  handle is the port.
 
 ### Availability
 

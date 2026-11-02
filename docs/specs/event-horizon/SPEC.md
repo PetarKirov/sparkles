@@ -2426,9 +2426,21 @@ inside the dequeue. A port-wait timeout is quantised to the clock interval
 (~15.6 ms by default); the timer wakes within about 0.5 ms. The rounded-up
 port timeout remains the backstop, and is the whole mechanism where the timer
 class or the packet exports are missing, or when `BackendConfig.coarseTimers`
-forces it for A/B measurement. A native Win32 message host waits on the
-backend's host event, which a packet does not set, so there a process exit or
-timer is noticed at the host's next wake.
+forces it for A/B measurement.
+
+A native Win32 message host (`runHostedOnce`; `wsi`'s Win32 backend) blocks in
+`MsgWaitForMultipleObjectsEx` on one handle, and that handle is the completion
+port itself. A mirror event cannot carry wait packets: the kernel queues a
+packet without setting any event, and a packet cannot target a port (the
+association is refused), so the alternatives left were a helper thread or a host
+wait that misses exits and timers. A port is a waitable dispatcher object —
+signalled while any packet is queued, and not consumed by the wait — so I/O,
+posts, wake-ups and every wait packet wake the host, and no reset/drain
+ordering is needed (`prepareNativeHostDrain` is empty). Completions the backend
+synthesizes (fallback-path timers, cancel acknowledgments, rejections) never
+sit on the port: `nativeHostWaitTimeout` returns zero while they await the
+reap, and arms the high-resolution timer for the earliest software deadline so
+that its packet, not the rounded timeout, ends the host's wait.
 
 There are no anonymous blocking pipes, polling `PeekNamedPipe`, helper wait
 loops, or per-process threads in the Windows path. IOCP remains the single I/O
