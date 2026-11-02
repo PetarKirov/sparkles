@@ -205,6 +205,7 @@
               --prefix PATH : ${path} \
               --set-default SPARKLES_DUB_SOURCES ${config.packages.dub-sources} \
               --set-default SPARKLES_WASI_LDC ${lib.getExe' wasiLdc "ldc2"} \
+              --set-default SPARKLES_TEST_RUNNER ${lib.getExe config.packages.test-runner} \
               ${setEnv} \
               ${exampleLibArgs} \
               --run ${lib.escapeShellArg d-toolchain.nofileCommand}

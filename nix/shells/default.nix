@@ -270,6 +270,9 @@
         # The LDC with the WASI runtimes: the test runner's `--wasm` and the
         # WebAssembly modules' builds (`ci --build`).
         export SPARKLES_WASI_LDC=${lib.getExe' inputs'.dlang-nix.packages.ldc-sparkles "ldc2"}
+        # The pinned test runner executable (test-runner process-model TRN2):
+        # every test binary started here delegates its run to it.
+        export SPARKLES_TEST_RUNNER=${lib.getExe config.packages.test-runner}
         ${lib.getExe config.packages.ci} --seed-dub-cache >/dev/null 2>&1 || {
           echo 'Failed to seed DUB sources; run ci --seed-dub-cache for details.' >&2
           return 1

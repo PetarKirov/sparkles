@@ -56,6 +56,8 @@ default_packages=(
   event-horizon
   math
   input
+  test-attributes
+  test-harness
   test-runner
   test-runner-impl
   build-primitives
@@ -76,6 +78,22 @@ packages=("$@")
 compiler=${DC:-ldc2}
 
 cd "$(ci_repo_root)"
+
+# The test runner executable, from the revision nix/test-runner-pin.json names
+# (test-runner process-model TRN1) — or, while it names none, from this tree.
+# No Nix here, so the leg builds it itself and points every test binary at it.
+runner_rev=$(sed -n 's/^ *"rev": *"\([0-9a-f]*\)".*/\1/p' nix/test-runner-pin.json)
+runner_root=$PWD
+if [ -n "$runner_rev" ]; then
+  runner_root=$(mktemp -d)
+  git fetch --depth=1 origin "$runner_rev"
+  git worktree add --detach "$runner_root" "$runner_rev"
+fi
+ci_group "dub build :test-runner-impl (${runner_rev:-this tree})"
+dub build --root="$runner_root" :test-runner-impl --compiler="$compiler" -b checked
+ci_endgroup
+export SPARKLES_TEST_RUNNER="$runner_root/libs/test-runner-impl/build/sparkles-test-runner.exe"
+
 for pkg in "${packages[@]}"; do
   for threads in 1 0; do
     ci_group "dub test :$pkg -- -t $threads"
