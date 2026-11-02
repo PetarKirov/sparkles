@@ -479,10 +479,19 @@ private bool equalsIgnoringCase(scope const(char)[] a, scope const(char)[] b) @s
 @safe pure nothrow @nogc
 unittest
 {
-    // An environment of `name=value` pairs.
+    // An environment of `name=value` pairs. Built through `of`, never as
+    // `Env(…)`: with an `opCall` member, DMD resolves that spelling to the
+    // (non-static) `opCall` instead of a struct literal.
     static struct Env
     {
         const(string[2])[] vars;
+
+        static Env of(const(string[2])[] vars) @safe pure nothrow @nogc
+        {
+            Env env;
+            env.vars = vars;
+            return env;
+        }
 
         const(char)[] opCall(scope const(char)[] name) const @safe pure nothrow @nogc
         {
@@ -501,23 +510,23 @@ unittest
     static immutable string[2][1] wrongValue = [["GITHUB_ACTIONS", "1"]];
     static immutable string[2][2] summary = [["GITHUB_ACTIONS", "true"], ["GITHUB_STEP_SUMMARY", "/tmp/s.md"]];
 
-    assert(detectCiProvider(Env()) == CiProvider.none);
-    assert(detectCiProvider(Env(github[])) == CiProvider.githubActions);
-    assert(detectCiProvider(Env(gitlab[])) == CiProvider.gitlabCi);
-    assert(detectCiProvider(Env(buildkite[])) == CiProvider.buildkite);
-    assert(detectCiProvider(Env(azure[])) == CiProvider.azurePipelines);
-    assert(detectCiProvider(Env(circle[])) == CiProvider.circleCi);
+    assert(detectCiProvider(Env.init) == CiProvider.none);
+    assert(detectCiProvider(Env.of(github[])) == CiProvider.githubActions);
+    assert(detectCiProvider(Env.of(gitlab[])) == CiProvider.gitlabCi);
+    assert(detectCiProvider(Env.of(buildkite[])) == CiProvider.buildkite);
+    assert(detectCiProvider(Env.of(azure[])) == CiProvider.azurePipelines);
+    assert(detectCiProvider(Env.of(circle[])) == CiProvider.circleCi);
     // Only the documented values count.
-    assert(detectCiProvider(Env(wrongValue[])) == CiProvider.none);
+    assert(detectCiProvider(Env.of(wrongValue[])) == CiProvider.none);
     assert(!supportsGroups(CiProvider.circleCi) && supportsGroups(CiProvider.buildkite));
 
     // The step-summary target follows the provider.
-    assert(CiLog.detect(Env(summary[])).stepSummary == StepSummary(StepSummaryKind.file, "/tmp/s.md"));
-    assert(CiLog.detect(Env(github[])).stepSummary.kind == StepSummaryKind.none, "no file named");
-    assert(CiLog.detect(Env(buildkite[])).stepSummary.kind == StepSummaryKind.buildkiteAnnotate);
-    assert(CiLog.detect(Env(gitlab[])).stepSummary.kind == StepSummaryKind.none);
-    assert(CiLog.detect(Env(azure[])).stepSummary.kind == StepSummaryKind.none);
-    assert(CiLog.detect(Env()).stepSummary.kind == StepSummaryKind.none);
+    assert(CiLog.detect(Env.of(summary[])).stepSummary == StepSummary(StepSummaryKind.file, "/tmp/s.md"));
+    assert(CiLog.detect(Env.of(github[])).stepSummary.kind == StepSummaryKind.none, "no file named");
+    assert(CiLog.detect(Env.of(buildkite[])).stepSummary.kind == StepSummaryKind.buildkiteAnnotate);
+    assert(CiLog.detect(Env.of(gitlab[])).stepSummary.kind == StepSummaryKind.none);
+    assert(CiLog.detect(Env.of(azure[])).stepSummary.kind == StepSummaryKind.none);
+    assert(CiLog.detect(Env.init).stepSummary.kind == StepSummaryKind.none);
 }
 
 /// Every provider's groups, annotation (with its escaping), and mask, and
