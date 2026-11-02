@@ -79,6 +79,7 @@ Interleaved by value; B-track numbers alias
 
 | #   | ID  | Milestone                                                                      | Gate / permissions                           |
 | --- | --- | ------------------------------------------------------------------------------ | -------------------------------------------- |
+| 0   | P1  | Out-of-process runner: harness, protocol, fallback, runner executable, pin     | none                                         |
 | 1   | B1  | Capability seam (`Capability`/`CapabilityReport`, backend trait)               | none                                         |
 | 2   | B2  | Linux counting depth (raw events, naming, labeled scaling, rdpmc)              | none (soft libpfm4)                          |
 | 3   | M4  | `@workload` window mode + wall decomposition                                   | none                                         |
@@ -108,6 +109,46 @@ needed. Each milestone gets a detailed re-plan when reached.
 Milestones that cite SPEC sections make those `(target)` passages true;
 milestones without a citation (M7, M8, M10, M11) fold their surface into
 SPEC as new sections when they land.
+
+## P1 — The out-of-process runner
+
+Makes [process-model.md](./process-model.md) true: the binary hosts the tests
+and the measurement layer, a pinned runner executable drives it, and no
+package source-includes the runner. It is the test-runner half of the build
+graph's [E1a](../build-primitives/build-graph/PLAN.md#e1a-the-pinned-test-runner).
+
+Slices, each a green commit series:
+
+1. **The harness.** `sparkles:test-attributes` takes the attributes, and
+   `sparkles:test-harness` the model, discovery, execution with the stack
+   budget, `skipTest`, the macOS trace handler and the measurement layer,
+   with their `sparkles:base` uses replaced by druntime and Phobos (TRP1).
+   The harness's tests self-host (TRP4).
+2. **The protocol and the fallback.** The binary side of §3–§4 and §7 in the
+   harness; the shim registers it (TRL1–TRL5, TRP5–TRP28, TRF1–TRF4).
+3. **The runner.** `sparkles:test-runner-impl` becomes the
+   `sparkles-test-runner` executable, driving workers (§4–§6). The command
+   line of the [CLI reference](../../libs/test-runner/reference/cli.md) keeps
+   its options, except `--self-test`, which goes with the source includes it
+   existed for, and gains the process-boundary ones.
+4. **The packages.** Every recipe reaches the runner through the shim alone
+   (TRP2, TRP3), the cycle-safe source includes are deleted, Android's tests
+   build against the harness, and the library docs follow: the CLI reference,
+   the attributes reference (`mainThread`), and the design explanation.
+5. **The pin.** `nix/test-runner-pin.json`, the runner's derivation, its
+   entry in the cache's pin set
+   ([TC24](../toolchain/SPEC.md#_8-platforms-tests-and-caches)), and
+   `SPARKLES_TEST_RUNNER` in the dev shell and the `ci` wrapper (TRN1–TRN3).
+
+Until a revision of `main` carries the runner, the pin file names no
+revision and the derivation builds the runner from the flake's own source.
+The pin moves to `main` once P1 lands there.
+
+Gate: `dub test` passes for `base`, `event-horizon`, `test-harness` and
+`test-runner-impl`, and `nix run .#ci -- --test --fail-fast` passes, with the
+runner pinned; `-i`, `-e`, `-v`, `-t` and `-l` behave as in the CLI
+reference; the §10 scenarios of process-model.md pass; and no recipe names
+`test-runner-impl` or a path inside the attributes, shim, harness or runner.
 
 ## W1 — `@wasm` on WASI
 
@@ -544,7 +585,7 @@ Ship these caveats; never paper over them:
 ## Verification
 
 Every milestone lands as independently green commits: full suites
-(`dub test :test-runner-impl -- --self-test`, `dub test :base`,
+(`dub test :test-harness`, `dub test :test-runner-impl`, `dub test :base`,
 `nix run .#ci -- --test --fail-fast`), plus per-milestone gates:
 
 - **B1** — `--list-metrics` shows the capability block; on the dev box the
