@@ -156,17 +156,20 @@ unittest
 /// Derives the source root of a module from its file path and dotted name:
 /// `("libs/base/src/sparkles/base/buffer.d", "sparkles.base.buffer")`
 /// yields `"libs/base/src"`. Returns `null` when the path does not end with
-/// the module path.
+/// the module path. Either separator matches: on Windows the compiler reports
+/// `libs\base\src\sparkles\base\buffer.d`, and the root keeps its own
+/// separators.
 string sourceRootOf(string file, string moduleName) @safe pure nothrow
 {
     import std.array : replace;
-    import std.string : endsWith, chomp;
+    import std.string : endsWith;
 
+    const normalized = file.replace("\\", "/");
     foreach (suffix; [
         "/" ~ moduleName.replace(".", "/") ~ ".d",
         "/" ~ moduleName.replace(".", "/") ~ "/package.d",
     ])
-        if (file.endsWith(suffix))
+        if (normalized.endsWith(suffix))
             return file[0 .. $ - suffix.length];
     return null;
 }
@@ -180,6 +183,11 @@ unittest
     assert(sourceRootOf("src/sparkles/base/text/package.d",
         "sparkles.base.text") == "src");
     assert(sourceRootOf("unrelated.d", "sparkles.base") is null);
+    // Windows paths: the separator the compiler reports there.
+    assert(sourceRootOf(`libs\base\src\sparkles\base\text\utf.d`,
+        "sparkles.base.text.utf") == `libs\base\src`);
+    assert(sourceRootOf(`D:\a\src\sparkles\base\text\package.d`,
+        "sparkles.base.text") == `D:\a\src`);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

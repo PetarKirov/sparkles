@@ -164,7 +164,7 @@ string[] deriveImportPaths(in Test[] allTests, in string[] extra) @safe pure
     string[] roots = extra.dup;
     foreach (ref test; allTests)
     {
-        const root = sourceRootOf(test.location.file, test.moduleName);
+        const root = sourceRootOf(test.location.file, probeModuleName(test));
         if (root !is null && !roots.canFind(root))
             roots ~= root;
     }
@@ -517,6 +517,12 @@ unittest
     const odd = Test(fullName: "pkg.mod.__unittest_L1_C1", name: "t",
         location: TestLocation(file: "elsewhere.d", line: 1, column: 1));
     assert(probeModuleName(odd) == "pkg.mod");
+
+    // A Windows path names the same module.
+    const windows = Test(fullName: "pkg.mod.Host.__unittest_L9_C1", name: "t",
+        location: TestLocation(file: `src\pkg\mod.d`, line: 9, column: 1));
+    assert(probeModuleName(windows) == "pkg.mod");
+    assert(deriveImportPaths([windows], null) == [`src`]);
 }
 
 /// Failing test names attributed from probe-compile output: the display-name
