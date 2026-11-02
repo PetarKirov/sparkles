@@ -401,8 +401,10 @@ The paths changed from `merge-base(sinceRef, HEAD)` through the working tree
 packages the merge base declared.
 
 A null `sinceRef` resolves the current branch's upstream, else `origin/main`;
-neither existing is `SelectionErrorKind.baseUnresolved`. Renames count as a
-deletion plus an addition. Every git call goes through `runGit`.
+neither existing is `SelectionErrorKind.baseUnresolved`. Each path appears
+once; `ChangedPath.deleted` says it is absent from the working tree, however
+the index and the base differ. Renames count as a deletion plus an addition.
+Every git call goes through `runGit`.
 */
 PlanExpected!(SinceChanges, SelectionError) gitChangesSince(string repoRoot, string sinceRef) @safe
 {
@@ -451,18 +453,32 @@ PlanExpected!(SinceChanges, SelectionError) gitChangesSince(string repoRoot, str
                 "no merge base of " ~ sinceRef ~ " and HEAD: " ~ mergeBase.output.strip);
         since.mergeBase = mergeBase.output.strip;
 
-        const diff = git(["diff", "--name-status", "-z", "--no-renames", since.mergeBase, "--"]);
-        if (diff.status != 0)
-            return fail(SelectionErrorKind.gitFailed, "git diff: " ~ diff.output.strip);
-        const diffFields = fields(diff.output);
-        for (size_t i = 0; i + 1 < diffFields.length; i += 2)
-            since.changes ~= ChangedPath(diffFields[i + 1], diffFields[i].startsWith("D"));
+        // Three views of "changed": the worktree against the base, the index
+        // against the base (a path staged and then deleted from the
+        // worktree is in neither the base nor the worktree), and untracked
+        // files. A path may appear in several; it is reported once, and
+        // `deleted` is what the worktree says, not what one view said.
+        bool[string] changed; // membership only; the result is sorted below
+        const worktree = git(["diff", "--name-only", "-z", "--no-renames", since.mergeBase, "--"]);
+        if (worktree.status != 0)
+            return fail(SelectionErrorKind.gitFailed, "git diff: " ~ worktree.output.strip);
+        foreach (path; fields(worktree.output))
+            changed[path] = true;
+
+        const index = git(["diff", "--cached", "--name-only", "-z", "--no-renames", since.mergeBase, "--"]);
+        if (index.status != 0)
+            return fail(SelectionErrorKind.gitFailed, "git diff --cached: " ~ index.output.strip);
+        foreach (path; fields(index.output))
+            changed[path] = true;
 
         const untracked = git(["ls-files", "--others", "--exclude-standard", "-z"]);
         if (untracked.status != 0)
             return fail(SelectionErrorKind.gitFailed, "git ls-files: " ~ untracked.output.strip);
         foreach (path; fields(untracked.output))
-            since.changes ~= ChangedPath(path);
+            changed[path] = true;
+
+        foreach (path, _; changed)
+            since.changes ~= ChangedPath(path, !existsInWorktree(repoRoot, path));
 
         // The base revision's package map, for deleted paths. A recipe the
         // base cannot show or parse simply contributes no package.
@@ -495,6 +511,21 @@ PlanExpected!(SinceChanges, SelectionError) gitChangesSince(string repoRoot, str
 
     return planOk!SelectionError(move(since));
 }
+
+// Whether repository-relative `path` names something in the working tree
+// (a dangling symlink counts: the link itself is there).
+private bool existsInWorktree(string repoRoot, string path) @safe
+{
+    import std.file : exists, isSymlink;
+    import std.path : buildPath;
+
+    const full = repoRoot.buildPath(path);
+    try
+        return full.exists || full.isSymlink;
+    catch (Exception)
+        return false;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // The focused-selection planner
 // ─────────────────────────────────────────────────────────────────────────────
@@ -917,6 +948,36 @@ unittest
     const unmatched = FocusOptions(from: ["zz"]);
     assert(planPackages(repo.dir, RecipeRole.test, unmatched, linux).error
         == SelectionError(SelectionErrorKind.unmatchedSelector, "zz"));
+}
+
+@("build_primitives.workspace.select.gitChangesSince.indexOnlyAndUntrackedStates")
+@system
+unittest
+{
+    import std.file : remove;
+    import std.path : buildPath;
+    import sparkles.build_primitives.testing : gitAvailable, TmpGitRepo;
+    import sparkles.test_runner.skip : skipTest;
+
+    if (!gitAvailable)
+        return skipTest("git is not on PATH");
+
+    auto repo = TmpGitRepo.create();
+    repo.writeFile("dub.sdl", "name \"sparkles\"\n");
+    repo.writeFile("kept.d", "module kept;\n");
+    repo.commitAll("base");
+
+    // Staged, then deleted from the worktree: only the index has it.
+    repo.writeFile("staged.d", "module staged;\n");
+    assert(repo.git(["add", "staged.d"]).status == 0);
+    remove(repo.dir.buildPath("staged.d"));
+    // Untracked again by `git rm --cached`, but still on disk.
+    assert(repo.git(["rm", "-q", "--cached", "kept.d"]).status == 0);
+
+    const since = gitChangesSince(repo.dir, "HEAD");
+    assert(since.hasValue, since.hasError ? since.error.detail : null);
+    assert(since.value.changes == [ChangedPath("kept.d"), ChangedPath("staged.d", deleted: true)],
+        "one entry per path, `deleted` meaning absent from the worktree");
 }
 
 @("build_primitives.workspace.select.gitChangesSince.defaultBaseAndErrors")
