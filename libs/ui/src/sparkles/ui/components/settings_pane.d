@@ -373,6 +373,10 @@ struct SettingsPane(T, alias resolveKey = defaultSettingsCommand)
 
     /// The text being edited.
     string textBuf() const => textField.text;
+    /// Programmatic replacement uses the editor's owned buffer.
+    void textBuf(scope const(char)[] value) { textField.setText(value); }
+    private EditValue.Kind textKind;
+    private bool textFloat;
 
     string status;               /// footer line: saves, refusals, apply notes
 
@@ -724,9 +728,33 @@ struct SettingsPane(T, alias resolveKey = defaultSettingsCommand)
         return consumedRefresh();
     }
 
+    /// Applies a live slider value, validating it without adding undo entries.
+    SettingsResult previewAt(string path, EditValue v)
+    {
+        const a = editProperty(*subject, Edit(path, v, EditPhase.preview), edits, tree.policy);
+        refresh();
+        return SettingsResult(SettingsResult.Kind.consumed, a.ok ? applyFor(path) : 0);
+    }
+
+    /// Cancels an unfinished preview, preserving unrelated history.
+    SettingsResult cancelInteraction()
+    {
+        if (!edits.pendingActive)
+            return consumed();
+        const path = edits.pendingPath;
+        const a = applyEdit(*subject, Edit(path, edits.pendingBefore), tree.policy);
+        edits.pendingActive = false;
+        previewing = false;
+        refresh();
+        return SettingsResult(SettingsResult.Kind.consumed, a.ok ? applyFor(path) : 0);
+    }
+
     /// `path` back to its compiled default — the per-row reset (`PRT39`).
     SettingsResult resetAt(string path)
     {
+        const n = nodeAt(path);
+        if (n !is null && n.hasDefault)
+            return setAt(path, n.defaultValue);
         T defaults;
         EditValue dv;
         if (!readValueAt(defaults, path, dv))
@@ -740,7 +768,12 @@ struct SettingsPane(T, alias resolveKey = defaultSettingsCommand)
     {
         T defaults;
         EditValue dv, now;
-        if (!readValueAt(defaults, path, dv) || !readValueAt(*subject, path, now))
+        const n = nodeAt(path);
+        if (n !is null && n.hasDefault)
+            dv = n.defaultValue;
+        else if (!readValueAt(defaults, path, dv))
+            return true;
+        if (!readValueAt(*subject, path, now))
             return true;
         return dv == now;
     }
@@ -790,7 +823,13 @@ struct SettingsPane(T, alias resolveKey = defaultSettingsCommand)
                 if (!readValueAt(*subject, n.path, cur))
                     return consumed();
                 const stepF = n.hasRange && n.step > 0 ? n.step : 0.1;
-                e.value = EditValue.of(cur.f + dir * stepF);
+                import std.math : round;
+
+                const next = n.hasRange && n.step > 0
+                    ? n.lo + (round((cur.f - n.lo) / stepF) + dir) * stepF
+                    : cur.f + dir * stepF;
+                e.value = EditValue.of(next);
+                if (n.typeName == "float") e.value = EditValue.of(cast(double) cast(float) e.value.f);
                 break;
             case LeafKind.text:
                 // Strings edit through the line editor, not a step.
@@ -857,16 +896,7 @@ struct SettingsPane(T, alias resolveKey = defaultSettingsCommand)
         const n = selectedNode();
         if (n is null || n.composite || n.synthetic)
             return consumed();
-        T defaults;
-        EditValue dv;
-        if (!readValueAt(defaults, n.path, dv))
-            return consumed();
-        const a = editProperty(*subject,
-            Edit(n.path, dv, EditPhase.commit), edits, tree.policy);
-        if (a.ok)
-            return committed(n.path);
-        refresh();
-        return consumed();
+        return resetAt(n.path);
     }
 
     /**
@@ -933,7 +963,10 @@ struct SettingsPane(T, alias resolveKey = defaultSettingsCommand)
         if (!readValueAt(*subject, path, cur))
             return consumed();
         textPath = path;
-        textField = textSetup.singleLine(cur.s);
+        textKind = cur.kind;
+        const node = nodeAt(path);
+        textFloat = node !is null && node.typeName == "float";
+        textField = textSetup.singleLine(cur.kind == EditValue.Kind.text ? cur.s : cur.toText);
         textEditing = true;
         return consumed();
     }
@@ -947,10 +980,26 @@ struct SettingsPane(T, alias resolveKey = defaultSettingsCommand)
         {
             case SettingsCommand.textAccept:
             {
-                textEditing = false;
+                import std.conv : to;
+                import sparkles.ui.property_tree : Refusal, RefusalKind;
+
+                EditValue value;
+                try
+                {
+                    value = textKind == EditValue.Kind.integral ? EditValue.of(textBuf.to!long)
+                        : textKind == EditValue.Kind.floating ? EditValue.of(textFloat
+                            ? cast(double) textBuf.to!float : textBuf.to!double)
+                        : EditValue.ofText(textBuf);
+                }
+                catch (Exception)
+                {
+                    cast(void) editProperty(*subject, Edit(textPath, EditValue.init), edits, tree.policy);
+                    return consumedRefresh();
+                }
                 const a = editProperty(*subject,
-                    Edit(textPath, EditValue.ofText(textField.text),
+                    Edit(textPath, value,
                         EditPhase.commit), edits, tree.policy);
+                textEditing = !a.ok;
                 return a.ok ? committed(textPath) : consumedRefresh();
             }
             case SettingsCommand.textCancel:

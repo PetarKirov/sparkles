@@ -219,6 +219,8 @@ struct ClusterRequest
 {
     const(uint)[] cps;  ///
     GlyphRequest first; /// style, presentation, colours and cells, as for one glyph
+    double* advance; /// optional synchronous result: natural run advance in pixels
+    bool measureOnly; /// shape and measure without rasterizing or emitting quads
 }
 
 /**
@@ -332,6 +334,12 @@ if (isImageSource!Images)
 
     /// The frame's metrics.
     ref const(FrameMetrics) metrics() const return => m_;
+
+    /// Changes the font grid without discarding this frame's recorded draws.
+    void fontMetrics(in FrameMetrics metrics) @safe pure nothrow @nogc
+    {
+        m_ = metrics;
+    }
 
     // -------------------------------------------------------------------
     // The canvas concept
@@ -449,6 +457,55 @@ if (isImageSource!Images)
         }
         else
             report.count(Degradation.glyphMiss);
+    }
+
+    /**
+    Shapes a short specimen line with its natural glyph advances, in pixels.
+    Lines beyond the shaper's bounded run size, or without a covering face,
+    retain the grid rendering and report the shaping degradation.
+    */
+    int naturalTextPx(scope const(char)[] text, int x, int y, vec4 colour,
+        vec4 background = v4(0, 0, 0, 0), bool bold = false, bool italic = false)
+    {
+        static if (drawsText && shapesClusters!GlyphSource)
+        {
+            dchar[maxClusterQuads] cps;
+            const decoded = convertPrefix(text, cps[], UtfMode.replacement);
+            if (decoded.consumed == text.length && decoded.written)
+            {
+                const request = GlyphRequest(cast(dchar) cps[0], faceStyle(bold, italic), false,
+                    colour, background);
+                double advance;
+                if (shapedAt(m_.originX + shiftX_ + x, m_.originY + shiftY_ + y,
+                        m_.cellH, ClusterRequest(cast(const(uint)[]) cps[0 .. decoded.written], request,
+                            &advance)))
+                    return cast(int)(advance + 0.5);
+            }
+            report.count(Degradation.unshapedCluster);
+        }
+        labelPx(text, x, y, colour, background);
+        return labelSizePx(text)[0];
+    }
+
+    /// Natural short-line advance without rasterization or painting.
+    int naturalTextWidthPx(scope const(char)[] text, bool bold = false, bool italic = false)
+    {
+        static if (drawsText && shapesClusters!GlyphSource)
+        {
+            dchar[maxClusterQuads] cps;
+            const decoded = convertPrefix(text, cps[], UtfMode.replacement);
+            if (decoded.consumed == text.length && decoded.written)
+            {
+                double advance;
+                GlyphQuad[1] unused;
+                size_t count;
+                const request = GlyphRequest(cast(dchar) cps[0], faceStyle(bold, italic));
+                if (images.resolveCluster(ClusterRequest(cast(const(uint)[]) cps[0 .. decoded.written],
+                        request, &advance, true), unused[], count) == GlyphOutcome.drawn)
+                    return cast(int)(advance + 0.5);
+            }
+        }
+        return labelSizePx(text)[0];
     }
 
     /// A label in device pixels from (`x`, `y`), one cell per cluster.

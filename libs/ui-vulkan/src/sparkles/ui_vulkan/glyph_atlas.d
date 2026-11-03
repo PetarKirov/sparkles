@@ -62,6 +62,17 @@ struct GlyphKey
     bool colour; /// the colour form, or the outline
     bool hinted; /// the outline light-hinted, or as designed
     uint foreground; /// for the colour form: the foreground as RGBA bytes
+    // Effective normalized coordinates, in face axis order. Explicit defaults,
+    // reordered inputs and clamped user values therefore share entries.
+    short[64] coordinates;
+    ushort coordinateCount;
+}
+
+private GlyphKey withCoordinates(GlyphKey key, in Instance inst) @safe pure nothrow @nogc
+{
+    key.coordinateCount = cast(ushort) inst.coords.length;
+    key.coordinates[0 .. inst.coords.length] = inst.coords[];
+    return key;
 }
 
 /// Whether `face` has a colour form for any glyph: `COLR` layers or a bitmap strike.
@@ -106,8 +117,8 @@ struct GlyphAtlas
     AtlasOutcome get(in Instance inst, uint face, uint glyph, Ppem ppem, out AtlasGlyph g,
         const(LightHints)* hints = null) @safe
     {
-        const key = GlyphKey(face: face, ppemNumerator: ppem.numerator, ppemDenominator: ppem.denominator,
-            glyph: glyph, hinted: hints !is null);
+        const key = withCoordinates(GlyphKey(face: face, ppemNumerator: ppem.numerator, ppemDenominator: ppem.denominator,
+            glyph: glyph, hinted: hints !is null), inst);
         if (auto e = key in entries_)
         {
             g = e.glyph;
@@ -152,10 +163,10 @@ struct GlyphAtlas
     AtlasOutcome getColour(in Instance inst, uint face, uint glyph, Ppem ppem, Colour foreground,
         out AtlasGlyph g) @safe
     {
-        const key = GlyphKey(face: face, ppemNumerator: ppem.numerator, ppemDenominator: ppem.denominator,
+        const key = withCoordinates(GlyphKey(face: face, ppemNumerator: ppem.numerator, ppemDenominator: ppem.denominator,
             glyph: glyph, colour: true, foreground: !inst.face.has(Tag("COLR")) ? 0
                 : (uint(foreground.red) << 24) | (uint(foreground.green) << 16)
-                | (uint(foreground.blue) << 8) | foreground.alpha);
+                | (uint(foreground.blue) << 8) | foreground.alpha), inst);
         if (auto e = key in entries_)
         {
             g = e.glyph;
@@ -547,6 +558,31 @@ version (unittest)
     assert(atlas.get(small.inst, 2, gid, small.ppem, c) == AtlasOutcome.placed);
     assert(b.height > a.height, "24 ppem is its own, larger entry");
     assert(atlas.length == 3 && (a.x != c.x || a.y != c.y), "another face is another entry");
+}
+
+/// Effective variation coordinates separate glyphs, while defaults reuse them.
+@("ui_vulkan.glyph_atlas.variationCoordinatesSeparateBothKinds")
+@system unittest
+{
+    import sparkles.font : UserCoordinate;
+    auto font = Fixture.at(24, "NotoSans.ttf");
+    const light = instance(font.face, InstanceSize.pixels(font.ppem),
+        [UserCoordinate(Tag("wght"), 100 << 16)]).value;
+    const heavy = instance(font.face, InstanceSize.pixels(font.ppem),
+        [UserCoordinate(Tag("wght"), 900 << 16)]).value;
+    assert(light.coords != heavy.coords, "fixture must be variable");
+    GlyphAtlas atlas;
+    AtlasGlyph a, b;
+    const glyph = font.glyph('M');
+    assert(atlas.get(light, 1, glyph, font.ppem, a) == AtlasOutcome.placed);
+    assert(atlas.get(heavy, 1, glyph, font.ppem, b) == AtlasOutcome.placed);
+    assert(atlas.length == 2 && (a.x != b.x || a.y != b.y));
+    assert(atlas.get(light, 1, glyph, font.ppem, a) == AtlasOutcome.placed);
+    assert(atlas.length == 2);
+    const white = Colour(255, 255, 255, 255);
+    assert(atlas.getColour(light, 1, glyph, font.ppem, white, a) == AtlasOutcome.noColour);
+    assert(atlas.getColour(heavy, 1, glyph, font.ppem, white, b) == AtlasOutcome.noColour);
+    assert(atlas.length == 4, "colour lookups also retain each variation result separately");
 }
 
 @("ui_vulkan.glyph_atlas.dirtyRegionsCoverWhatWasWrittenOnce")

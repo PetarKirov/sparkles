@@ -5,6 +5,8 @@ options, plus `--shot`, which captures a frame and exits (for a headless check).
 */
 module cli;
 
+import std.path : buildPath;
+
 import sparkles.base.logger : LogLevel;
 import sparkles.core_cli.args : CliError, CliExpected, Command, Flatten, Option, RunExpected;
 import sparkles.ui_app.gui_options : GuiOptions, NativeOptions;
@@ -44,6 +46,18 @@ struct TextLab
 
     @(Option("shot", description: "Capture a frame into this PNG, then exit.", placeholder: "PATH"))
     string shot;
+    @(Option("settings", description: "Open the generated settings sheet at startup."))
+    bool settings;
+    @(Option("picker", description: "Open the font picker at startup."))
+    bool picker;
+    @(Option("font-face-index", description: "Collection member of the startup font."))
+    uint fontFaceIndex;
+    @(Option("font-variation", description: "Declared axes as TAG=VALUE pairs, for example wght=700,opsz=24."))
+    string fontVariation;
+    @(Option("ui-follows-specimen", description: "Apply specimen typography to the UI too; F12 restores stable UI typography."))
+    bool uiFollowsSpecimen;
+    @(Option("sweep-frames", description: "Sweep em size and declared axes each frame, then exit (pair with --debug trace-frames)."))
+    uint sweepFrames;
     @(Option("compositing", description: "gamma, linear or linear-corrected."))
     Compositing compositing = Compositing.linearCorrected;
     @(Option("contrast", description: "Coverage contrast for linear-corrected, 0–1."))
@@ -52,6 +66,8 @@ struct TextLab
     Hinting hinting = Hinting.light;
     @(Option("no-shaping", description: "Draw each cluster's first glyph, unshaped."))
     bool noShaping;
+    @(Option("no-loupe", description: "Keep both specimen panels unobscured."))
+    bool noLoupe;
     @(Option("loupe-at", description: "Point the loupe at this pixel (x,y) instead of the pointer.", placeholder: "X,Y"))
     string loupeAt;
 
@@ -74,6 +90,14 @@ struct TextLab
             motion: true, // the loupe follows the pointer
             pointerUnit: PointerUnit.pixels,
         };
+        // The shared --font/--font-size options select the specimen. Its
+        // controls start in the host's normal face at a stable size.
+        cfg.gui.font = GuiOptions.init.font;
+        cfg.gui.fontSize = 12;
+        cfg.gui.fontBold = GuiOptions.init.fontBold;
+        cfg.gui.fontItalic = GuiOptions.init.fontItalic;
+        cfg.gui.fontBoldItalic = GuiOptions.init.fontBoldItalic;
+        version (Android) {} else cfg.gui.fontDir = null;
         // The lab has no terminal form: its window is the point, so it opens
         // one without being asked.
         if (!cfg.gui.noGui && !cfg.gui.tui)
@@ -87,8 +111,12 @@ struct TextLab
             import sparkles.android.activity : internalDataPath;
 
             lab.screenshotDir = internalDataPath;
+            lab.fontCache = buildPath(internalDataPath, "font-catalog");
         }
-        return asRunResult(runApp(lab, cfg), "text-lab");
+        const result = runApp(lab, cfg);
+        if (lab.fontError.length)
+            return failRun(lab.fontError);
+        return asRunResult(result, "text-lab");
     }
 }
 
@@ -113,11 +141,28 @@ CliExpected!Lab configure(in TextLab o)
     if (o.shot.length && (o.gui.tui || o.gui.noGui))
         return reject("--shot captures the window: it needs the GUI, not --tui or --no-gui");
     Lab lab;
+    import std.path : buildPath;
+    import std.process : environment;
+
+    lab.discoverFonts = true;
+    lab.model.font.size = o.gui.fontSize;
+    lab.model.font.index = o.fontFaceIndex;
+    lab.model.font.uiFollows = o.uiFollowsSpecimen;
+    lab.sweepFrames = o.sweepFrames;
+    lab.fontDirectories = o.gui.fontDir.dup;
+    const state = environment.get("XDG_STATE_HOME", buildPath(environment.get("HOME", "."), ".local", "state"));
+    lab.fontCache = buildPath(state, "sparkles", "text-lab", "fonts");
+    lab.fontVariations = o.fontVariation;
+    if (o.gui.font != GuiOptions.init.font)
+        lab.fontSpecification = o.gui.font;
+    lab.pickerAtStart = o.picker;
+    lab.sheetOpen = o.settings;
     lab.shotPath = o.shot;
     lab.settings.compositing = o.compositing;
     lab.settings.contrast = o.contrast;
     lab.settings.hinting = o.hinting;
     lab.settings.shaping = !o.noShaping;
+    lab.loupe.shown = !o.noLoupe;
     if (o.loupeAt.length)
     {
         enum shape = "--loupe-at takes a pixel as X,Y, both 0 or more";

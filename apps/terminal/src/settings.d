@@ -18,7 +18,7 @@ to infer.
 */
 module settings;
 
-import sparkles.metadata : colorValue, Description, Label, Range, Section;
+import sparkles.metadata : colorValue, Description, Label, NumericInput, PreferredInput, Range, Section;
 import sparkles.wired.overlay : WireSection;
 import sparkles.wired.policy : WireName;
 
@@ -170,6 +170,7 @@ struct FontConfig
 
     @Description("Font size in points.")
     @Range(6, 72, 1)
+    @PreferredInput(NumericInput.slider)
     int size = 13;
 
     @Description("Family for the bold face; empty derives it from the primary.")

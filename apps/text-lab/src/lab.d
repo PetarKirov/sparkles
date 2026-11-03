@@ -21,13 +21,17 @@ draws, and the header says the settings are not available.
 */
 module lab;
 
+
 import std.format : format;
+import font_settings : LabSettings;
+import lab_controls : LabControls;
+
 
 import sparkles.base.term_color : RgbColor;
 import sparkles.base.term_control : PointerShape;
 import sparkles.base.term_style : TextAttr, UnderlineStyle;
 import sparkles.base.text.grapheme : fitCells, visibleWidth;
-import sparkles.input : Event, isEndOfInput, Key, KeyEvent, match, PointerAction, PointerEvent;
+import sparkles.input : Event, isEndOfInput, Key, KeyAction, KeyEvent, match, PointerAction, PointerEvent;
 import sparkles.ui.geometry : Insets, Point, Rect, Size;
 import sparkles.ui.style : BorderStyle, BoxBorder, Palette, Slot, Visual;
 import sparkles.ui.widget : Builder, WidgetKind, WidgetTree;
@@ -68,8 +72,25 @@ enum int minFitPx = 8;
 /// The lab's state.
 struct Lab
 {
-    TextRendering settings;       /// what the canvas is asked to do
-    Loupe loupe = Loupe(shown: true, sourceWidth: 40, sourceHeight: 24, scale: 8);
+
+    LabSettings model; /// the sole subject of the generated settings sheet
+    /// Compatibility access to the specimen's rendering settings.
+    ref inout(TextRendering) settings() inout return @safe pure nothrow @nogc => model.rendering;
+    /// The loupe's settings, shared with its generated controls.
+    ref inout(Loupe) loupe() inout return @safe pure nothrow @nogc => model.loupe;
+    /// CLI configuration for asynchronous font discovery.
+    bool discoverFonts;
+    string[] fontDirectories;
+    string fontCache;
+    string fontVariations;
+    string fontSpecification;
+    bool pickerAtStart;
+    uint sweepFrames; /// deterministic size/axis sweep; zero disables it
+    private uint swept;
+    private LabControls controls;
+    /// A rejected runtime/CLI font request, reported by the entry point.
+    string fontError() const @safe => controls is null ? null : controls.error;
+
     string shotPath;              /// capture the first full frame here, then quit
     /// Where `p` saves a screenshot: the working directory when empty.
     string screenshotDir;
@@ -77,29 +98,76 @@ struct Lab
     bool sheetOpen;
     /// Whether lines cross at the pointer while it hovers or a finger is
     /// down: what the loupe magnifies, aimed to the pixel.
-    bool crosshair;
+    ref inout(bool) crosshair() inout return @safe pure nothrow @nogc => model.crosshair;
     private int framesToShot = 3; // the font atlas and the window settle first
     private Point pointer = Point(-1, -1);
     private bool pointing; // a mouse hovers, or a finger is down
     private bool sentSettings;
+    /// Waits for font workers before the host releases drawing resources.
+    void shutdown(H)(ref H h)
+    {
+        if (controls !is null) controls.stop();
+        static if (__traits(hasMember, H, "frameStatistics"))
+            if (sweepFrames)
+            {
+                import std.stdio : stderr;
+                const stats = h.frameStatistics;
+                const latency = h.specimenLatencyStatistics;
+                stderr.writefln("text-lab sweep: %s updates; CPU p50 %.3f p95 %.3f p99 %.3f worst %.3f ms; "
+                    ~ "request-to-submit %s/%s over 16.67ms; observed display %s, deadline misses %s",
+                    swept, stats.p50.total!"nsecs" / 1e6, stats.p95.total!"nsecs" / 1e6,
+                    stats.p99.total!"nsecs" / 1e6, stats.slowest.total!"nsecs" / 1e6,
+                    latency.submissionDeadlineMisses, latency.submitted, latency.shown, latency.shownDeadlineMisses);
+            }
+    }
+
     private bool userSized; // `+` or `-` was pressed: the size is theirs
     private bool settled; // the panels held the specimen once: the size stays
     private PointerShape shape_ = PointerShape.default_;
     // What the last frame laid out, for a tap or click: the Settings
     // button, the sheet, and the sheet's buttons.
     private Rect settingsButton_;
+    private Rect fontButton_;
     private Rect sheet_;
-    private Button[] buttons_;
 
-    /// No widgets: the header, panels and sheet are painted in `paint`,
-    /// which also lays out what a tap can hit.
+
+    /// Prepares the font request. The generated sheet is drawn as an overlay
+    /// after custom specimen painting, through the ordinary widget pipeline.
     WidgetTree view(H)(ref H h)
     {
+
+        if (controls is null)
+        {
+            controls = new LabControls(&model);
+            controls.discovery = discoverFonts;
+            controls.directories = fontDirectories;
+            controls.cache = fontCache;
+            controls.variation = fontVariations;
+            controls.startupSpec = fontSpecification;
+            if (pickerAtStart) controls.openPicker();
+        }
+        if (sweepFrames && model.font.path.length && !controls.loading)
+        {
+            if (swept >= sweepFrames) h.quit();
+            else
+            {
+                const phase = swept % 120;
+                const fraction = (phase < 60 ? phase : 120 - phase) / 60.0;
+                model.font.size = 8 + 24 * fraction;
+                foreach (ref axis; model.axes)
+                    axis.value = axis.minimum + (axis.maximum - axis.minimum) * fraction;
+                ++swept;
+                h.requestFrame();
+            }
+        }
+        controls.frame(h);
+        if (fontVariations.length && fontError.length) { h.quit(); return WidgetTree.init; }
         // `--shot`: a few frames for the atlas and the window to settle, then
         // the capture, then out — on a host that cannot capture too, which
         // otherwise asks for frames forever.
-        if (shotPath.length)
+        if (shotPath.length && !controls.loading)
         {
+            if (fontError.length) { h.quit(); return WidgetTree.init; }
             --framesToShot;
             static if (__traits(hasMember, H, "screenshot"))
                 if (framesToShot == 0)
@@ -119,7 +187,9 @@ struct Lab
         {
             if (!sentSettings)
             {
-                h.textRendering(settings);
+                static if (__traits(hasMember, H, "specimenTextRendering"))
+                    h.specimenTextRendering(settings);
+                else h.textRendering(settings);
                 sentSettings = true;
             }
             placeLoupe(h);
@@ -136,7 +206,7 @@ struct Lab
         // row short. That is the opening size; once it fits, a window the
         // user then drags smaller keeps its font, which would otherwise only
         // ever shrink.
-        if (!userSized && !settled)
+        if (!discoverFonts && !userSized && !settled)
         {
             if (fits(size))
                 settled = true;
@@ -148,16 +218,29 @@ struct Lab
         }
         header(h, canvas, size.width);
         const half = (size.height - headerRows) / 2;
-        panel(canvas, Rect(0, headerRows, size.width, half), dark);
-        panel(canvas, Rect(0, headerRows + half, size.width, size.height - headerRows - half), light);
+        panel(h, canvas, Rect(0, headerRows, size.width, half), dark);
+        panel(h, canvas, Rect(0, headerRows + half, size.width, size.height - headerRows - half), light);
+        static if (__traits(hasMember, H, "specimenFallbackGlyphs"))
+            if (discoverFonts && (h.specimenFallbackGlyphs || h.specimenGridFallbacks))
+            {
+                canvas.fillRect(Rect(0, 2, size.width - 24, 1), Visual(bg: headerBg, hasBg: true));
+                canvas.textRun(Point(1, 2), clip(format("† fallback %s · grid substitutions %s",
+                    h.specimenFallbackGlyphs, h.specimenGridFallbacks), size.width - 26),
+                    Visual(fg: muted, bg: headerBg, hasBg: true));
+            }
         static if (__traits(compiles, canvas.fillPx(0, 0, 1, 1, rgba(accent, 255))))
             if (crosshair && pointing)
                 drawCrosshair(h, canvas);
-        buttons_ = null;
+
         sheet_ = Rect.init;
         static if (offersSettings!H)
-            if (sheetOpen)
-                sheet(h, canvas, size);
+
+            if (controls !is null)
+            {
+                controls.draw(canvas, size, sheetOpen, framePalette());
+                sheet_ = controls.bounds;
+            }
+
     }
 
     private void header(H, C)(ref H h, C canvas, int width)
@@ -165,12 +248,15 @@ struct Lab
         canvas.fillRect(Rect(0, 0, width, headerRows), Visual(bg: headerBg, hasBg: true));
         static if (offersSettings!H)
         {
-            enum buttonWidth = 12;
-            settingsButton_ = Rect(width - buttonWidth, 0, buttonWidth, headerRows);
-            const first = format("text lab · %spx · %s", h.fontSizePx,
+            enum buttonWidth = 24;
+            settingsButton_ = Rect(width - 12, 0, 12, headerRows);
+            fontButton_ = Rect(width - 24, 0, 12, headerRows);
+            const first = format("text lab · %s · %s", discoverFonts ? format("%.2g pt", model.font.size)
+                : format("%spx", h.fontSizePx),
                 loupe.shown ? format("loupe ×%s", loupe.scale) : "loupe off");
             const second = format("compositing %s %.2f", settings.compositing, settings.contrast);
-            const hint = format("hinting %s · shaping %s", settings.hinting, settings.shaping ? "on" : "off");
+            const hint = controls !is null && controls.error.length ? controls.error
+                : format("hinting %s · shaping %s · f Fonts · F12 stable UI", settings.hinting, settings.shaping ? "on" : "off");
         }
         else
         {
@@ -184,7 +270,10 @@ struct Lab
         canvas.textRun(Point(1, 1), clip(second, room), Visual(fg: muted, bg: headerBg, hasBg: true));
         canvas.textRun(Point(1, 2), clip(hint, room), Visual(fg: muted, bg: headerBg, hasBg: true));
         static if (offersSettings!H)
+        {
+            button(canvas, fontButton_, "f  Fonts", controls !is null && controls.picker.active);
             button(canvas, settingsButton_, "≡ Settings", sheetOpen);
+        }
     }
 
     // Whether both panels hold the whole specimen at `size`.
@@ -204,9 +293,18 @@ struct Lab
 
     // A panel: each specimen line's label in a narrow column, its text wrapped
     // beside it.
-    private void panel(C)(C canvas, in Rect r, in Theme t)
+    private void panel(H, C)(ref H h, C canvas, in Rect r, in Theme t)
     {
         canvas.fillRect(r, Visual(bg: t.bg, hasBg: true));
+        static if (__traits(compiles, h.beginSpecimen(), h.specimenCellHeight,
+                canvas.naturalTextPx("", 0, 0, rgba(t.fg, 255))))
+        {
+            if (discoverFonts && h.specimenFontReady)
+            {
+                specimenPanel(h, canvas, r, t);
+                return;
+            }
+        }
         const textX = r.x + 1 + labelWidth, textWidth = r.width - labelWidth - 2;
         const label = Visual(fg: t.label, bg: t.bg, hasBg: true);
         int y = r.y;
@@ -229,101 +327,65 @@ struct Lab
         }
     }
 
-    // The settings, as rows of three-row segmented buttons: a bottom sheet
-    // over a scrim on a narrow window, a side sheet beside the panels on a
-    // wide one.
-    private void sheet(H, C)(ref H h, C canvas, in Size size)
+    // Labels retain the UI font; specimen text uses independent em metrics.
+    private void specimenPanel(H, C)(ref H h, C canvas, in Rect r, in Theme t)
     {
-        const side = size.width >= sideSheetMinWidth;
-        enum contentRows = 42;
-        const avail = size.height - headerRows;
-        sheet_ = side ? Rect(size.width - sideSheetWidth, headerRows, sideSheetWidth, avail)
-            : Rect(0, size.height - (contentRows < avail ? contentRows : avail), size.width,
-                contentRows < avail ? contentRows : avail);
-        if (!side)
-            canvas.fillRect(Rect(0, headerRows, size.width, avail),
-                Visual(bg: RgbColor(0, 0, 0), bgAlpha: 140, hasBg: true));
-        canvas.fillRect(sheet_, Visual(bg: sheetBg, hasBg: true, border: BoxBorder(
-            width: side ? Insets(0, 0, 0, 1) : Insets(1, 0, 0, 0), style: BorderStyle.solid, color: edge)));
+        import std.algorithm.comparison : max;
 
-        const x = sheet_.x + 2, w = sheet_.width - 4;
-        int y = sheet_.y + 1;
-        canvas.textRun(Point(x, y), "Text rendering", Visual(fg: ink, bg: sheetBg, hasBg: true));
-        const closes = "Esc closes";
-        canvas.textRun(Point(x + w - cast(int) closes.length, y), closes, Visual(fg: muted, bg: sheetBg, hasBg: true));
-        y += 2;
-
-        void group(string title, Segment[] segments)
+        const cw = h.cellWidth, ch = h.cellHeight;
+        const left = (r.x + labelWidth + 1) * cw;
+        const width = max(1, (r.width - labelWidth - 2) * cw);
+        const rowHeight = max(ch, h.specimenCellHeight);
+        int y = r.y * ch;
+        const bottom = r.bottom * ch;
+        canvas.pushClip(r);
+        scope (exit) canvas.popClip();
+        foreach (line; lines)
         {
-            if (y + 4 > sheet_.y + sheet_.height)
-                return;
-            canvas.textRun(Point(x, y), title, Visual(fg: muted, bg: sheetBg, hasBg: true));
-            int fixed, flexible;
-            foreach (s; segments)
-                s.width ? (fixed += s.width) : ++flexible;
-            const gaps = cast(int) segments.length - 1;
-            const share = flexible ? (w - fixed - gaps) / flexible : 0;
-            int at = x;
-            foreach (i, s; segments)
+            if (y >= bottom) break;
+            const lineY = y;
+            const fallbacksBefore = h.specimenFallbackGlyphs + h.specimenGridFallbacks;
+            canvas.labelPx(line.label, (r.x + 1) * cw, y, rgba(t.label, 255), rgba(t.bg, 255));
+            if (!h.beginSpecimen()) break;
+            int pen;
+            foreach (run; line.runs)
             {
-                const last = i + 1 == segments.length;
-                const sw = last ? x + w - at : s.width ? s.width : share;
-                const r = Rect(at, y + 1, sw, 3);
-                if (s.act.kind == ActKind.none)
-                    value(canvas, r, s.label);
-                else
+                string rest = run.text;
+                while (rest.length)
                 {
-                    button(canvas, r, s.label, s.selected);
-                    buttons_ ~= Button(r, s.act);
+                    size_t n = 1;
+                    const space = rest[0] == ' ';
+                    while (n < rest.length && (rest[n] == ' ') == space) ++n;
+                    auto token = rest[0 .. n];
+                    rest = rest[n .. $];
+                    const bold = (run.style & TextAttr.bold.bits) != 0;
+                    const italic = (run.style & TextAttr.italic.bits) != 0;
+                    int advance = model.font.cellGrid ? cast(int) visibleWidth(token) * h.specimenCellWidth
+                        : canvas.naturalTextWidthPx(token, bold, italic);
+                    if (pen && pen + advance > width)
+                    {
+                        pen = 0;
+                        y += rowHeight;
+                    }
+                    if (y >= bottom) break;
+                    if (model.font.cellGrid)
+                        canvas.labelPx(token, left + pen, y, rgba(t.ink(run.colour), 255), rgba(t.bg, 255));
+                    else
+                        advance = canvas.naturalTextPx(token, left + pen, y, rgba(t.ink(run.colour), 255),
+                            rgba(t.bg, 255), bold, italic);
+                    if (run.underline != UnderlineStyle.none)
+                        canvas.fillPx(left + pen, y + rowHeight - 2, advance, 1, rgba(t.ink(run.colour), 255));
+                    if (run.style & TextAttr.strikethrough.bits)
+                        canvas.fillPx(left + pen, y + rowHeight / 2, advance, 1, rgba(t.ink(run.colour), 255));
+                    pen += advance;
                 }
-                at += sw + 1;
+                if (y >= bottom) break;
             }
-            y += 5;
-        }
-
-        group("c  Compositing", [
-            Segment("gamma", Act(ActKind.compositing, Compositing.gamma), settings.compositing == Compositing.gamma),
-            Segment("linear", Act(ActKind.compositing, Compositing.linear), settings.compositing == Compositing.linear),
-            Segment("corrected", Act(ActKind.compositing, Compositing.linearCorrected),
-                settings.compositing == Compositing.linearCorrected),
-        ]);
-        group("[ ]  Contrast", [
-            Segment("−", Act(ActKind.key, '['), false, 8),
-            Segment(format("%.2f", settings.contrast)),
-            Segment("+", Act(ActKind.key, ']'), false, 8),
-        ]);
-        group("h  Hinting", [
-            Segment("none", Act(ActKind.hinting, Hinting.none), settings.hinting == Hinting.none),
-            Segment("light", Act(ActKind.hinting, Hinting.light), settings.hinting == Hinting.light),
-        ]);
-        group("s  Shaping", [
-            Segment("off", Act(ActKind.shaping, 0), !settings.shaping),
-            Segment("on", Act(ActKind.shaping, 1), settings.shaping),
-        ]);
-        group("m 1-4  Loupe", [
-            Segment("off", Act(ActKind.key, 'm'), !loupe.shown),
-            Segment("×4", Act(ActKind.key, '1'), loupe.shown && loupe.scale == 4),
-            Segment("×6", Act(ActKind.key, '2'), loupe.shown && loupe.scale == 6),
-            Segment("×8", Act(ActKind.key, '3'), loupe.shown && loupe.scale == 8),
-            Segment("×12", Act(ActKind.key, '4'), loupe.shown && loupe.scale == 12),
-        ]);
-        group("x  Crosshair", [
-            Segment("off", Act(ActKind.key, 'x'), !crosshair),
-            Segment("on", Act(ActKind.key, 'x'), crosshair),
-        ]);
-        group("+ -  Size", [
-            Segment("A−", Act(ActKind.key, '-'), false, 8),
-            Segment(format("%s px", h.fontSizePx)),
-            Segment("A+", Act(ActKind.key, '+'), false, 8),
-        ]);
-        if (y + 3 <= sheet_.y + sheet_.height)
-        {
-            const half = (w - 1) / 2;
-            const shot = Rect(x, y, half, 3), quit = Rect(x + half + 1, y, w - half - 1, 3);
-            button(canvas, shot, "p  Screenshot", false);
-            button(canvas, quit, "q  Quit", false);
-            buttons_ ~= Button(shot, Act(ActKind.key, 'p'));
-            buttons_ ~= Button(quit, Act(ActKind.key, 'q'));
+            h.endSpecimen();
+            if (h.specimenFallbackGlyphs + h.specimenGridFallbacks > fallbacksBefore)
+                canvas.labelPx(clip(line.label ~ " †", labelWidth), (r.x + 1) * cw, lineY,
+                    rgba(t.label, 255), rgba(t.bg, 255));
+            y += rowHeight;
         }
     }
 
@@ -334,14 +396,6 @@ struct Lab
         canvas.fillRect(r, Visual(bg: bg, hasBg: true, border: BoxBorder(width: Insets(1, 1, 1, 1),
             style: BorderStyle.solid, color: selected ? accent : edge)));
         centred(canvas, r, label, Visual(fg: ink, bg: bg, hasBg: true));
-    }
-
-    // A value between two buttons: a quiet box, its text centred.
-    private static void value(C)(C canvas, in Rect r, string text)
-    {
-        canvas.fillRect(r, Visual(bg: sheetBg, hasBg: true, border: BoxBorder(width: Insets(1, 1, 1, 1),
-            style: BorderStyle.solid, color: buttonBg)));
-        centred(canvas, r, text, Visual(fg: ink, bg: sheetBg, hasBg: true));
     }
 
     private static void centred(C)(C canvas, in Rect r, string text, in Visual v)
@@ -364,7 +418,7 @@ struct Lab
             pointer = Point(px.width / 4, px.height / 3);
         Loupe l = loupe;
         const side = size.width >= sideSheetMinWidth;
-        if (sheetOpen && !side)
+        if (sheetOpen && !side || controls !is null && controls.picker.active)
             l.shown = false;
         const room = sheetOpen && side ? (size.width - sideSheetWidth) * cw : px.width;
         const half = (size.height - headerRows) / 2;
@@ -427,10 +481,21 @@ struct Lab
     */
     void handle(H)(ref H h, in Event e)
     {
-        if (isEndOfInput(e))
-            return h.quit();
+
+        if (isEndOfInput(e)) return h.quit();
+        if (controls !is null)
+        {
+            enum pixels = __traits(hasMember, H, "cellWidth");
+            if (controls.handle(h, e, sheetOpen, pixels))
+            {
+                changed(h);
+                return;
+            }
+        }
+
         e.match!(
             (in KeyEvent k) {
+                if (k.action == KeyAction.release) return;
                 if (k.key == Key.escape || k.key == Key.back)
                 {
                     if (sheetOpen)
@@ -453,15 +518,15 @@ struct Lab
                 }
                 if (p.action == PointerAction.press)
                 {
-                    if (settingsButton_.contains(cell))
-                        return toggleSheet(h);
-                    if (sheetOpen && sheet_.contains(cell))
+                    if (fontButton_.contains(cell) && controls !is null)
                     {
-                        foreach (b; buttons_)
-                            if (b.rect.contains(cell))
-                                return apply(h, b.act);
+                        controls.openPicker();
+                        h.requestFrame();
                         return;
                     }
+                    if (settingsButton_.contains(cell))
+                        return toggleSheet(h);
+                    if (sheetOpen && sheet_.contains(cell)) return;
                     // A tap on the scrim closes a bottom sheet.
                     if (sheetOpen && sheet_.width == h.size.width)
                         return toggleSheet(h);
@@ -487,17 +552,15 @@ struct Lab
     // Whether `cell` is on a control: Settings, or a button of the open sheet.
     private bool overButton(Point cell) const
     {
-        if (settingsButton_.contains(cell))
+        if (settingsButton_.contains(cell) || fontButton_.contains(cell))
             return true;
-        if (sheetOpen)
-            foreach (b; buttons_)
-                if (b.rect.contains(cell))
-                    return true;
+        if (sheetOpen && sheet_.contains(cell)) return true;
         return false;
     }
 
     private void toggleSheet(H)(ref H h)
     {
+        if (sheetOpen && controls !is null) cast(void) controls.sections.cancel(controls.pane);
         sheetOpen = !sheetOpen;
         h.requestFrame();
     }
@@ -521,29 +584,10 @@ struct Lab
             return at;
     }
 
-    private void apply(H)(ref H h, in Act act)
-    {
-        final switch (act.kind)
-        {
-            case ActKind.none:
-                return;
-            case ActKind.key:
-                return command(h, cast(dchar) act.value);
-            case ActKind.compositing:
-                settings.compositing = cast(Compositing) act.value;
-                break;
-            case ActKind.hinting:
-                settings.hinting = cast(Hinting) act.value;
-                break;
-            case ActKind.shaping:
-                settings.shaping = act.value != 0;
-                break;
-        }
-        changed(h);
-    }
-
     private void command(H)(ref H h, dchar ch)
     {
+        auto before = model;
+        before.axes = before.axes.dup;
         switch (ch)
         {
             case 'q':
@@ -574,13 +618,19 @@ struct Lab
                 loupe.scale = scales[ch - '1'];
                 loupe.shown = true;
                 break;
+
+            case 'f':
+                if (controls !is null) controls.openPicker();
+                break;
             case '+', '=':
                 userSized = true;
-                h.fontSize(h.fontSizePx + 1);
+                if (discoverFonts) model.font.size = model.font.size < 143.25 ? model.font.size + 0.75 : 144;
+                else h.fontSize(h.fontSizePx + 1);
                 break;
             case '-':
                 userSized = true;
-                h.fontSize(h.fontSizePx > 6 ? h.fontSizePx - 1 : 6);
+                if (discoverFonts) model.font.size = model.font.size > 4.75 ? model.font.size - 0.75 : 4;
+                else h.fontSize(h.fontSizePx > 6 ? h.fontSizePx - 1 : 6);
                 break;
             case 'p':
                 static if (__traits(hasMember, H, "screenshot"))
@@ -593,6 +643,7 @@ struct Lab
             default:
                 return;
         }
+        if (controls !is null) controls.externalEdit(before);
         changed(h);
     }
 
@@ -601,7 +652,11 @@ struct Lab
     private void changed(H)(ref H h)
     {
         static if (offersSettings!H)
-            h.textRendering(settings);
+        {
+            static if (__traits(hasMember, H, "specimenTextRendering"))
+                h.specimenTextRendering(settings);
+            else h.textRendering(settings);
+        }
         h.requestFrame();
     }
 }
@@ -629,8 +684,16 @@ private enum RgbColor muted = RgbColor(0x93, 0x99, 0xb2);
 Palette framePalette() @safe pure nothrow @nogc
 {
     import sparkles.base.term_color : Color;
+    import sparkles.ui.style : defaultTwoslashPalette;
 
-    Palette p;
+    auto p = defaultTwoslashPalette();
+    p.bg[Slot.surface] = Color.fromRgb(sheetBg);
+    p.bg[Slot.inherit] = Color.fromRgb(sheetBg);
+    p.fg[Slot.inherit] = Color.fromRgb(ink);
+    p.bg[Slot.surfaceRaised] = Color.fromRgb(buttonBg);
+    p.bg[Slot.surfaceSunken] = Color.fromRgb(headerBg);
+    p.fg[Slot.textPrimary] = Color.fromRgb(ink);
+    p.fg[Slot.textSecondary] = Color.fromRgb(muted);
     p.bg[Slot.chrome] = Color.fromRgb(headerBg);
     p.fg[Slot.chrome] = Color.fromRgb(ink);
     return p;
@@ -765,42 +828,6 @@ private Piece[] wrap(in Run[] runs, int width)
 private string clip(string text, int cells)
     => cells <= 0 ? null : text[0 .. fitCells(text, cells).bytes];
 
-// ── the sheet's controls ────────────────────────────────────────────────────
-
-private enum ActKind : ubyte
-{
-    none,        // a value shown between buttons
-    key,         // what the key `value` does
-    compositing, // the compositing `value`
-    hinting,     // the hinting `value`
-    shaping,     // shaping off (0) or on
-}
-
-/// What a button does.
-private struct Act
-{
-    ActKind kind;
-    int value;
-}
-
-/// A segment of a settings row: its label, what it does (`none`: a value
-/// shown, not a button), whether it is the current choice, and a fixed width
-/// in cells (0: an equal share of the rest).
-private struct Segment
-{
-    string label;
-    Act act;
-    bool selected;
-    int width;
-}
-
-/// A button the last frame drew, for hit testing.
-private struct Button
-{
-    Rect rect;
-    Act act;
-}
-
 version (unittest)
 {
     import sparkles.input : charEvent;
@@ -893,46 +920,22 @@ version (unittest) private struct SettingsHost
     int cellHeight() const => 1;
 }
 
-@("text_lab.theSheetOpensAndItsButtonsSet")
+
+/// The generated sheet remains a bottom sheet on phones and a side sheet on desktops.
+@("text_lab.theGeneratedSheetUsesResponsivePlacement")
 @system unittest
 {
-    import sparkles.ui.widget : WidgetTree;
-
-    // Narrow (a phone, 49 cells): Settings opens a bottom sheet; its
-    // hinting `none` button sets the hinting; Back closes it.
     Lab lab;
     SettingsHost h;
     h.rec.size = Size(49, 51);
-    void frame()
-    {
-        auto tree = lab.view(h);
-        lab.paint(h, tree, null);
-    }
-
-    frame();
-    const settings = lab.settingsButton_;
-    assert(settings.height == headerRows && settings.x + settings.width == 49);
-    lab.handle(h, Event(PointerEvent(action: PointerAction.press, pos: Point(settings.x + 1, 1))));
-    assert(lab.sheetOpen);
-    frame();
-    assert(lab.sheet_.width == 49 && lab.sheet_.y > headerRows, "a bottom sheet");
-    Rect none;
-    foreach (b; lab.buttons_)
-        if (b.act == Act(ActKind.hinting, Hinting.none))
-            none = b.rect;
-    assert(none.height == 3, "every button is a 48 dp target");
-    lab.handle(h, Event(PointerEvent(action: PointerAction.press, pos: Point(none.x + 1, none.y + 1))));
-    assert(lab.settings.hinting == Hinting.none && h.rendering.hinting == Hinting.none);
-    lab.handle(h, Event(KeyEvent(key: Key.back)));
-    assert(!lab.sheetOpen, "Back closes the sheet");
-
-    // Wide (a tablet, 100 cells): the sheet opens beside the panels.
-    h.rec.size = Size(100, 78);
     lab.sheetOpen = true;
-    frame();
-    assert(lab.sheet_.x == 100 - sideSheetWidth && lab.sheet_.y == headerRows, "a side sheet");
-    assert(h.shownLoupe.x + h.shownLoupe.sourceWidth * h.shownLoupe.scale <= lab.sheet_.x,
-        "the loupe stays clear of it");
+    auto tree = lab.view(h);
+    lab.paint(h, tree, null);
+    assert(lab.sheet_.width == 49 && lab.sheet_.y > headerRows);
+    assert(lab.controls.tree.nodes.length);
+    h.rec.size = Size(100, 78);
+    lab.paint(h, tree, null);
+    assert(lab.sheet_.x == 100 - sideSheetWidth && lab.sheet_.y == headerRows);
 }
 
 @("text_lab.theLoupeFillsTheOtherPanel")
@@ -983,6 +986,10 @@ version (unittest) private struct SettingsHost
     frame();
     l = h.shownLoupe;
     assert(l.x == 58 && l.x + l.sourceWidth * l.scale <= 100 - 8, "the right half");
+
+    lab.controls.openPicker();
+    frame();
+    assert(!h.shownLoupe.shown, "the loupe must not cover picker results");
 }
 
 @("text_lab.theFontStepsDownUntilThePanelsHoldTheSpecimen")

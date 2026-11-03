@@ -39,6 +39,8 @@
       packages.run-all-examples = pkgs.writeShellApplication {
         name = "run-all-examples";
         text = ''
+          # Match the development shell's font fixture on every platform.
+          export SPARKLES_FONTS_PATH=${config.packages.sparkles-fonts}/fonts
           failures=0
           ${lib.concatMapStrings (
             ex:

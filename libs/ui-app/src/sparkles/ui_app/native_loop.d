@@ -26,6 +26,9 @@ module sparkles.ui_app.native_loop;
 
 version (UiAppGuiVulkan):
 
+import sparkles.ui_app.prepared_specimen : PreparedSpecimenFont;
+import sparkles.ui_app.specimen_font : sameSpecimenRequest, SpecimenFontRequest, SpecimenLatencyStats;
+
 import core.time : dur, Duration, MonoTime, msecs, seconds;
 import std.algorithm.comparison : max, min;
 
@@ -139,6 +142,36 @@ face cannot be measured.
 */
 bool measureCellFont(in FontRequest request, in string[] extraSources, int px,
     out CellFont cell) @system
+    => measureCellFontImpl(request, extraSources, px, cell, null);
+
+/// Remeasures already loaded primary, styled and fallback faces without I/O.
+bool remeasureCellFont(in CellFont loaded, int px, out CellFont cell) @system
+    => measureCellFontImpl(FontRequest.init, null, px, cell, &loaded);
+
+/// Resizing a loaded source performs no filesystem or font-database lookup.
+@("ui_app.native_loop.remeasureLoadedFacesWithoutIO")
+@system unittest
+{
+    import std.file : read;
+    import std.path : buildPath;
+    import std.process : environment;
+    const root = environment.get("SPARKLES_FONTS_PATH");
+    assert(root.length, "SPARKLES_FONTS_PATH is required");
+    CellFont loaded;
+    loaded.path = "/this/path/does/not/exist.ttf";
+    loaded.bytes = cast(const(ubyte)[]) read(buildPath(root, "DejaVuSansMono.ttf"));
+    loaded.bold = loaded.bytes;
+    loaded.fallbacks = [FallbackFont(loaded.bytes)];
+    CellFont small, big;
+    assert(remeasureCellFont(loaded, 18, small));
+    assert(remeasureCellFont(small, 36, big));
+    assert(big.bytes.ptr == loaded.bytes.ptr && big.bold.ptr == loaded.bold.ptr);
+    assert(big.fallbacks[0].bytes.ptr == loaded.bytes.ptr);
+    assert(big.cellW > small.cellW && big.cellH > small.cellH);
+}
+
+private bool measureCellFontImpl(in FontRequest request, in string[] extraSources, int px,
+    out CellFont cell, scope const(CellFont)* loaded) @system
 {
     import std.file : read;
     import sparkles.base.unique : makeUnique;
@@ -150,10 +183,10 @@ bool measureCellFont(in FontRequest request, in string[] extraSources, int px,
     FontSources sources;
     sources.dirs = request.searchDirs.dup ~ extraSources.dup;
     sources.useSystemFontDb = request.useSystemFontDb;
-    const path = resolveFontPath(request.family, sources);
+    const path = loaded !is null ? loaded.path : resolveFontPath(request.family, sources);
     if (path.length == 0)
         return false;
-    const bytes = cast(const(ubyte)[]) read(path);
+    const bytes = loaded !is null ? loaded.bytes : cast(const(ubyte)[]) read(path);
     auto face = openFace(bytes);
     if (face.hasError)
         return false;
@@ -196,14 +229,17 @@ bool measureCellFont(in FontRequest request, in string[] extraSources, int px,
     import sparkles.raylib_text.font_discovery : fontVariantPaths;
 
     string boldPath, italicPath, boldItalicPath;
-    fontVariantPaths(path, boldPath, italicPath, boldItalicPath);
+    if (loaded is null)
+        fontVariantPaths(path, boldPath, italicPath, boldItalicPath);
     static const(ubyte)[] load(string p)
         => p.length ? cast(const(ubyte)[]) read(p) : null;
     const hh = hhea(face.value);
     const span = hh.hasValue ? long(hh.value.ascender) - hh.value.descender : 0;
     const upem = face.value.unitsPerEm;
     cell = CellFont(path, px, cast(int)(m.width < 1 ? 1 : m.width), cellH, bytes,
-        load(boldPath), load(italicPath), load(boldItalicPath),
+        loaded !is null ? loaded.bold : load(boldPath),
+        loaded !is null ? loaded.italic : load(italicPath),
+        loaded !is null ? loaded.boldItalic : load(boldItalicPath),
         cast(uint)(em < 1 ? 1 : em),
         span > 0 ? ulong(px) * upem : cast(ulong)(em < 1 ? 1 : em), span > 0 ? cast(ulong) span : 1,
         ascent, underlineY, thickness,
@@ -213,12 +249,15 @@ bool measureCellFont(in FontRequest request, in string[] extraSources, int px,
     import sparkles.raylib_text.font_resolve : systemFallbackFacePaths;
 
     string nerdPath, regularPath, emojiPath;
-    systemFallbackFacePaths(path, sources, nerdPath, regularPath, emojiPath);
-    foreach (p; [regularPath, nerdPath, emojiPath])
+    if (loaded is null)
+        systemFallbackFacePaths(path, sources, nerdPath, regularPath, emojiPath);
+    const count = loaded !is null ? loaded.fallbacks.length : 3;
+    const paths = [regularPath, nerdPath, emojiPath];
+    foreach (i; 0 .. count)
     {
-        if (!p.length)
+        if (loaded is null && !paths[i].length)
             continue;
-        const fb = load(p);
+        const fb = loaded !is null ? loaded.fallbacks[i].bytes : load(paths[i]);
         auto fbFace = openFace(fb);
         if (fbFace.hasError)
             continue;
@@ -272,6 +311,16 @@ struct NativeSession
     /// start inside them (an Android window is edge to edge).
     PhysicalInsets insets;
     CellFont font;           ///
+    PreparedSpecimenFont specimen; /// independent preview, em pixels
+    CellFont interfaceFont; /// stable UI font while the preview drives the UI
+    bool delegate(in SpecimenFontRequest) @system setSpecimen; ///
+    ulong specimenGeneration; /// latest accepted request
+    MonoTime specimenRequestedAt; /// event arrival, when supplied by the caller
+    ulong specimenDrawnGeneration; /// the scope actually painted
+    SpecimenLatencyStats specimenLatency; /// end-to-end submission/display counters
+    FrameStats* frameStats; /// the live run's measured frame distribution
+    TextRendering specimenRendering, interfaceRendering; /// independent rendering choices
+    bool specimenRenderingSet; /// whether the application configured its preview
     NativeCanvas* canvas;    ///
     float frameSeconds = 0;  /// how long the last frame took to build and submit
     string shotPath;         /// a screenshot to take on the next frame drawn
@@ -372,6 +421,71 @@ struct NativeHost
 
     /// ditto
     void fontSize(int px) @system => session_.setFontSize(px);
+
+    /// Selects an exact face for preview; a failed request keeps the old face.
+    bool specimenFont(in SpecimenFontRequest request) @system
+        => session_.setSpecimen !is null && session_.setSpecimen(request);
+
+    /// Last successful selection, including the resolved collection index.
+    SpecimenFontRequest specimenFont() const @system => session_.specimen.request;
+
+    /// Conventional-em specimen metrics, independent of the interface grid.
+    int specimenCellWidth() const @safe pure nothrow @nogc => session_.specimen.cellW;
+    /// ditto
+    int specimenCellHeight() const @safe pure nothrow @nogc => session_.specimen.cellH;
+    /// Device pixels per logical pixel for point-to-em specimen sizing.
+    double fontDensity() const @safe pure nothrow @nogc => session_.scale;
+    /// The startup/resolved interface path, useful to seed a preview selection.
+    string fontPath() const @safe pure nothrow @nogc => session_.font.path;
+    /// Borrowed bytes of the successfully prepared exact face.
+    const(ubyte)[] specimenFontBytes() const @safe pure nothrow @nogc => session_.specimen.bytes;
+    /// Its collection member; metadata must be read at this index.
+    uint specimenFontIndex() const @safe pure nothrow @nogc => session_.specimen.request.faceIndex;
+    /// A usable preview is bound; preparation failures preserve this value.
+    bool specimenFontReady() const @safe pure nothrow @nogc => session_.specimen.bytes.length != 0;
+    /// Glyphs using fallback faces in the current specimen frame.
+    uint specimenFallbackGlyphs() const @system
+        => session_.canvas is null ? 0 : session_.canvas.specimenFallbackGlyphs;
+    /// Natural runs rendered on the grid because shaping could not cover them.
+    uint specimenGridFallbacks() const @system
+        => session_.canvas is null ? 0 : session_.canvas.specimenGridFallbacks;
+
+    /// Opens the drawing scope after a successful preview preparation.
+    bool beginSpecimen() @system
+    {
+        if (session_.canvas is null || !session_.canvas.beginSpecimen(
+                specimenCellWidth, specimenCellHeight))
+            return false;
+        session_.specimenDrawnGeneration = session_.specimenGeneration;
+        return true;
+    }
+    /// Restores the interface even when begin failed.
+    void endSpecimen() @system
+    {
+        if (session_.canvas !is null)
+            session_.canvas.endSpecimen();
+    }
+
+    /// Timing of accepted requests through queue submission and observed display.
+    SpecimenLatencyStats specimenLatencyStatistics() const @safe pure nothrow @nogc
+        => session_.specimenLatency;
+
+    /// Completed frame durations; presentation latency remains a separate metric.
+    FrameStats frameStatistics() const @system
+        => session_.frameStats is null ? FrameStats.init : *session_.frameStats;
+
+    /// Changes preview rendering independently of interface text by default.
+    void specimenTextRendering(in TextRendering settings) @system
+    {
+        session_.specimenRendering = settings;
+        session_.specimenRenderingSet = true;
+        if (session_.canvas !is null)
+        {
+            session_.canvas.specimenTextRendering(settings);
+            if (session_.specimen.request.uiFollows)
+                session_.canvas.textRendering(settings);
+        }
+    }
 
     /// The pointer's shape over the window (`IXB4`).
     void pointerShape(PointerShape shape) @system => session_.setCursor(shape);
@@ -579,6 +693,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
     // What each presented frame took, from the draw decision to the present,
     // summarized when the window closes under any frame switch.
     FrameStats frameTimes;
+    session.frameStats = &frameTimes;
     // `--debug gpu-timing`: the device's time per frame, summarized the same
     // way. `--debug frame-trace=PATH`: the last frames, each a `FrameRecord`,
     // written as a Chrome trace at the end (`PRF19`).
@@ -780,10 +895,45 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
             insetInput.originY = session.insets.top;
         }
     }
+    void adoptSpecimen()
+    {
+        const ref p = session.specimen;
+        auto f = session.font;
+        f.path = p.request.path;
+        f.px = p.request.px;
+        f.cellW = p.cellW;
+        f.cellH = p.cellH;
+        f.bytes = p.bytes;
+        f.bold = f.italic = f.boldItalic = null;
+        if (p.request.familyStyles)
+        {
+            f.bold = p.request.styleBytes[0];
+            f.italic = p.request.styleBytes[1];
+            f.boldItalic = p.request.styleBytes[2];
+        }
+        f.ppem = p.request.px;
+        f.emNumerator = p.request.px;
+        f.emDenominator = 1;
+        f.ascent = p.metrics.ascent;
+        f.underlineY = p.metrics.underlineY;
+        f.underlineHeight = p.metrics.underlineHeight;
+        f.strikeY = p.metrics.strikeY;
+        session.font = f;
+    }
     void measure(int px)
     {
+        if (session.specimen.bytes.length && session.specimen.request.uiFollows)
+        {
+            auto selected = session.specimen.request;
+            selected.px = px;
+            if (session.specimen.prepare(selected))
+                adoptSpecimen();
+            inset();
+            return;
+        }
         CellFont font;
-        if (measureCellFont(request.font, request.extraFontSources, px, font))
+        if (session.font.bytes.length ? remeasureCellFont(session.font, px, font)
+                : measureCellFont(request.font, request.extraFontSources, px, font))
             session.font = font;
         inset();
     }
@@ -882,8 +1032,24 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
             if (fbEm.hasValue)
                 fallbacks ~= FallbackFace(fb.bytes, fbEm.value);
         }
+        const follows = session.specimen.bytes.length && session.specimen.request.uiFollows;
         cast(void) gpu.canvas.cellFont(faces, em.value, TextMetrics(ascent: f.ascent,
-            underlineY: f.underlineY, underlineHeight: f.underlineHeight, strikeY: f.strikeY), fallbacks);
+            underlineY: f.underlineY, underlineHeight: f.underlineHeight, strikeY: f.strikeY), fallbacks,
+            follows ? session.specimen.request.faceIndex : 0,
+            follows ? session.specimen.request.coordinates : null,
+            follows ? session.specimen.request.styleIndices[] : null);
+        if (session.specimen.bytes.length)
+            cast(void) gpu.canvas.specimenFont(session.specimen.bytes, session.specimen.request.faceIndex,
+                session.specimen.ppem, session.specimen.request.coordinates, session.specimen.metrics,
+                session.specimen.request.contentHash, session.specimen.cellH,
+                session.specimen.request.familyStyles ? session.specimen.request.styleBytes[] : null,
+                session.specimen.request.styleIndices[], session.specimen.request.styleContentHashes[]);
+        if (session.specimenRenderingSet)
+        {
+            gpu.canvas.specimenTextRendering(session.specimenRendering);
+            if (follows)
+                gpu.canvas.textRendering(session.specimenRendering);
+        }
     }
 
     bool nativeIo(bool delegate() @system work)
@@ -1174,13 +1340,15 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
     // ── the host ──
     NativeHost host;
     host.session_ = &session;
-    // A touch surface where the platform is one and the application asked
-    // for gestures (`RunConfig.touchGestures`).
+    // The platform determines capabilities; gesture recognition is optional.
+    // Applications with raw touch capture (such as sliders) still need to
+    // distinguish a touchscreen from a hovering mouse.
     bool touch;
     version (Android)
+    {
         touch = cfg.touchGestures;
-    if (touch)
         host.capabilities = touchPointer;
+    }
     host.capabilities.keyRelease = cfg.keyRelease;
     WsiInput input;
     host.input_ = &input;
@@ -1220,6 +1388,57 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         measure(lc.fontSize(px));
         bindFont();
     };
+    session.setSpecimen = (in SpecimenFontRequest wanted) {
+        if (session.specimen.bytes.length && sameSpecimenRequest(wanted, session.specimen.request))
+        {
+            if (wanted.generation && wanted.generation != session.specimenGeneration)
+            {
+                session.specimenGeneration = wanted.generation;
+                session.specimenRequestedAt = wanted.requestedAt != MonoTime.init
+                    ? wanted.requestedAt : MonoTime.currTime;
+            }
+            return true;
+        }
+        const followed = session.specimen.bytes.length && session.specimen.request.uiFollows;
+        if (!session.specimen.prepare(wanted))
+            return false;
+        session.specimenGeneration = wanted.generation ? wanted.generation : session.specimenGeneration + 1;
+        session.specimenRequestedAt = wanted.requestedAt != MonoTime.init
+            ? wanted.requestedAt : MonoTime.currTime;
+        if (wanted.uiFollows)
+        {
+            if (!followed)
+            {
+                session.interfaceFont = session.font;
+                if (gpu.up)
+                    session.interfaceRendering = gpu.canvas.textRendering;
+            }
+            cast(void) lc.fontSize(wanted.px);
+            adoptSpecimen();
+            inset();
+            bindFont();
+            if (gpu.up && session.specimenRenderingSet)
+                gpu.canvas.textRendering(session.specimenRendering);
+        }
+        else
+        {
+            if (followed)
+            {
+                session.font = session.interfaceFont;
+                cast(void) lc.fontSize(session.font.px);
+                inset();
+                bindFont();
+                if (gpu.up)
+                    gpu.canvas.textRendering(session.interfaceRendering);
+            }
+            else if (gpu.up)
+                cast(void) gpu.canvas.specimenFont(session.specimen.bytes, wanted.faceIndex,
+                    session.specimen.ppem, wanted.coordinates, session.specimen.metrics, wanted.contentHash,
+                    session.specimen.cellH, wanted.familyStyles ? wanted.styleBytes[] : null,
+                    wanted.styleIndices[], wanted.styleContentHashes[]);
+        }
+        return true;
+    };
     session.setTextInput = (bool on) {
         static if (__traits(hasMember, Wsi, "setTextInput"))
             cast(void) wsi.setTextInput(window, on);
@@ -1249,6 +1468,14 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         || cfg.native.debugging.frameTrace.length;
     gpu.clock = FrameClock.since(opened);
     ulong recorded; // frames recorded, presented or not
+    struct PendingSpecimen
+    {
+        ulong frame = ulong.max;
+        ulong generation;
+        MonoTime requestedAt;
+    }
+    PendingSpecimen[128] pendingSpecimens;
+    ulong submittedSpecimenGeneration;
     // Pipelines the driver built (not served from its cache) so far: a frame
     // that built one carries `pipelineCompiled` (`PRF16`). A new canvas, after
     // a lost device, counts from zero again.
@@ -1315,6 +1542,19 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
     {
         if (p.discarded || !p.shownKnown)
             return;
+        ref pending = pendingSpecimens[p.tag % pendingSpecimens.length];
+        if (pending.frame == p.tag && pending.generation && p.shown >= pending.requestedAt)
+        {
+            const took = p.shown - pending.requestedAt;
+            ++session.specimenLatency.shown;
+            session.specimenLatency.latestShownGeneration = pending.generation;
+            session.specimenLatency.latestShown = took;
+            if (took > dur!"hnsecs"(166_667))
+                ++session.specimenLatency.shownDeadlineMisses;
+            if (traceFrames)
+                note(i"specimen generation $(pending.generation): request-to-visible $(took.total!"usecs") us");
+            pending = PendingSpecimen.init;
+        }
         frameTimes.noteRefresh(p.refresh);
         if (history is null)
             return;
@@ -1744,8 +1984,24 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                 // record, numbered `recorded`.
                 void beforePresent() @system
                 {
+                    const generation = session.specimenDrawnGeneration;
+                    const changed = generation && generation != submittedSpecimenGeneration;
+                    if (changed)
+                    {
+                        pendingSpecimens[recorded % pendingSpecimens.length] =
+                            PendingSpecimen(recorded, generation, session.specimenRequestedAt);
+                        submittedSpecimenGeneration = generation;
+                        const took = MonoTime.currTime - session.specimenRequestedAt;
+                        ++session.specimenLatency.submitted;
+                        session.specimenLatency.latestSubmittedGeneration = generation;
+                        session.specimenLatency.latestSubmitted = took;
+                        if (took > dur!"hnsecs"(166_667))
+                            ++session.specimenLatency.submissionDeadlineMisses;
+                        if (traceFrames)
+                            note(i"specimen generation $(generation): request-to-submit $(took.total!"usecs") us");
+                    }
                     static if (__traits(hasMember, Wsi, "requestPresentationFeedback"))
-                        if (history !is null && wsi.canReportPresentation)
+                        if ((history !is null || changed) && wsi.canReportPresentation)
                             cast(void) wsi.requestPresentationFeedback(window, recorded);
                 }
                 outcome = cropped

@@ -254,7 +254,11 @@ mattering.
 **TSP5: Touch editing.** The page **must** be operable by touch alone.
 Sections are header rows. Leaves carry inline controls chosen by type: a
 toggle for `bool`, a segmented control for a small enum, a dropdown for a
-larger one, a stepper for a `@Range` number and a swatch for a colour. An
+larger one, a stepper for a number or a slider when its `@PreferredInput`
+requests one, and a swatch for a colour. Font size uses a slider: dragging
+previews the value live, release commits one undo entry and saves, and
+cancelling the drag restores its starting value. A horizontal touch drag
+adjusts the slider; a vertical drag scrolls the page. An
 aggregate or array is a drill-in row that previews its values. A leaf with a
 description shows it on one line beneath, and a changed leaf shows a marker
 and a reset. Text is edited through the soft keyboard, and Back, `Esc` or `q`
