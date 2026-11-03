@@ -7,26 +7,26 @@
    Themes            | component serves a terminal and a window with no second copy.           #
    Slots             |                                                                         #
    Decoration        | +---------------------------------------------------------------------+ #
-   Effects           | | headerBar - leading * centre * trailing                             | #
-   Grid              | |  hue                         file.d                         q quit  | #
- > Components        | |                                                                     | #
-   Tree              | |  focused pane                                                       | |
-   Property tree     | +---------------------------------------------------------------------+ |
-   Table             |                                                                         |
-   Scrolling         | The groups are separated by grow spacers - the spelling the layout      |
-   State             | engine prescribes for distribution, since there is no margin and no     |
-   Split             | space-between.                                                          |
-   Dock              |                                                                         |
-   Terminal          | +---------------------------------------------------------------------+ |
-                     | | tabStrip - one active, the rest idle                                | |
-                     | |  config.js  config.ts  ?.md                                         | |
+   Effects           | | slider - runtime numeric domains                                    | #
+   Grid              | | Weight 400 * 100-900                                                | |
+ > Components        | | ------*---------                                                    | |
+   Tree              | | Slant -6.5 * -12.5-0 * touch target                                 | |
+   Property tree     | |                                                                     | |
+   Table             | | -------*--------                                                    | |
+   Scrolling         | |                                                                     | |
+   State             | +---------------------------------------------------------------------+ |
+   Split             |                                                                         |
+   Dock              | +---------------------------------------------------------------------+ |
+   Terminal          | | headerBar - leading * centre * trailing                             | |
+                     | |  hue                         file.d                         q quit  | |
                      | |                                                                     | |
-                     | | fitLabels: false - each tab takes an equal share instead            | |
-                     | |       config.js           config.ts           ?.md                  | |
+                     | |  focused pane                                                       | |
                      | +---------------------------------------------------------------------+ |
                      |                                                                         |
-                     | Active and armed are different states, because they mean different      |
-                     | things: this one is showing, this one is being pressed. Conflating them |
-                     | is why a hand-rolled strip flickers the wrong tab mid-drag.             |
+                     | The groups are separated by grow spacers - the spelling the layout      |
+                     | engine prescribes for distribution, since there is no margin and no     |
+                     | space-between.                                                          |
+                     |                                                                         |
+                     | +---------------------------------------------------------------------+ |
                      |
  pages < prev tab > next tab 1-4 action row n scroll down p scroll up           ? keys   q quit

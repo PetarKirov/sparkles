@@ -17,7 +17,8 @@ module surfaces;
 
 import core.time : Duration, MonoTime, seconds;
 
-import sparkles.input.events : KeyEvent, WheelEvent;
+import sparkles.input.events : KeyEvent, PointerAction, PointerEvent, Point, WheelEvent;
+import sparkles.ui.layout : Frame;
 import sparkles.ui.geometry : Rect;
 import sparkles.ui.widget : WidgetTree;
 
@@ -85,6 +86,16 @@ interface Surface
     /// A key nothing bound — typing into a search field, moving a
     /// selection; true when the surface used it.
     bool key(in KeyEvent k) @system;
+}
+
+/// Optional continuous pointer input. Events and layout frames share surface
+/// cell coordinates; a captured control continues outside the surface.
+interface PointerSurface
+{
+    bool pointer(in PointerEvent p, in WidgetTree tree,
+        scope const(Frame)[] frames) @system;
+    /// Focus loss abandons the current preview and releases capture.
+    void cancelPointer() @system;
 }
 
 /**
@@ -160,6 +171,7 @@ struct Surfaces
     Toast[] toasts;
     private Layer[] layers; // `stack`, placed this frame, bottom to top
     private Layer toastLayer;
+    private bool pointerClaimed;
     /// Set when something was shown, closed or expired: the frame must
     /// repaint. The host clears it.
     bool changed;
@@ -266,6 +278,11 @@ struct Surfaces
     */
     bool tap(int x, int y) @system
     {
+        if (pointerClaimed)
+        {
+            pointerClaimed = false;
+            return true;
+        }
         if (!stack.length || !layers.length)
             return false;
         auto top = &layers[$ - 1];
@@ -280,6 +297,38 @@ struct Surfaces
         stack[$ - 1].cancel();
         pop();
         return true;
+    }
+
+    /// Delivers raw pointer phases before discrete tap or scroll handling.
+    bool pointer(in PointerEvent p) @system
+    {
+        if (!stack.length || !layers.length)
+            return false;
+        auto target = cast(PointerSurface) stack[$ - 1];
+        if (target is null)
+            return false;
+        if (p.action == PointerAction.press)
+            pointerClaimed = false;
+        ref layer = layers[$ - 1];
+        if (layer.cellW <= 0 || layer.cellH <= 0)
+            return false;
+        PointerEvent local = p;
+        local.pos = Point((p.pos.x - layer.x) / layer.cellW,
+            (p.pos.y - layer.y) / layer.cellH);
+        const used = target.pointer(local, layer.tree, layer.frames);
+        pointerClaimed |= used;
+        changed |= used;
+        return used;
+    }
+
+    /// Cancels previews when the window loses focus.
+    void cancelPointer() @system
+    {
+        if (stack.length)
+            if (auto target = cast(PointerSurface) stack[$ - 1])
+                target.cancelPointer();
+        pointerClaimed = false;
+        changed = true;
     }
 
     /// Enter on the top surface.
@@ -508,7 +557,7 @@ private bool anchor(Surface s, in SurfaceContext ctx, out Layer card) @safe
 
 version (unittest)
 {
-    private final class Probe : Surface
+    private final class Probe : Surface, PointerSurface
     {
         Placement where;
         int lines;
@@ -518,6 +567,8 @@ version (unittest)
         Rect builtArea; // the area `build` was given
         Surfaces* host;     // where `activate` pushes `next`
         Surface next;
+        bool capturePointer, pointerCancelled;
+        PointerEvent lastPointer;
 
         this(Placement where, int lines) @safe pure nothrow
         {
@@ -551,7 +602,38 @@ version (unittest)
         bool confirm() @system { confirmed = true; return true; }
         void cancel() @system { cancelled = true; }
         bool key(in KeyEvent k) @system { return false; }
+        bool pointer(in PointerEvent p, in WidgetTree tree,
+            scope const(Frame)[] frames) @system
+        {
+            lastPointer = p;
+            return capturePointer;
+        }
+        void cancelPointer() @system { pointerCancelled = true; }
     }
+}
+
+/// Raw phases use the layer's cells, retain outside positions and suppress taps.
+@("surfaces.Surfaces.pointerCaptureAndFocusLoss")
+@system unittest
+{
+    import sparkles.input.events : PointerButton;
+
+    SurfaceContext ctx = {area: Rect(20, 40, 800, 480), cellW: 10, cellH: 20};
+    Surfaces s;
+    auto probe = new Probe(Placement.sheet, 2);
+    probe.capturePointer = true;
+    s.push(probe);
+    s.place(ctx);
+    const layer = s.layers[$ - 1];
+    assert(s.pointer(PointerEvent(action: PointerAction.press,
+        button: PointerButton.left, pos: Point(layer.x + 20, layer.y + 20))));
+    assert(probe.lastPointer.pos == Point(2, 1));
+    assert(s.pointer(PointerEvent(action: PointerAction.drag,
+        button: PointerButton.left, pos: Point(layer.x - 20, layer.y - 20))));
+    assert(probe.lastPointer.pos == Point(-2, -1), "capture receives outside positions");
+    assert(s.tap(layer.x + 20, layer.y + 20) && probe.activated == 0);
+    s.cancelPointer();
+    assert(probe.pointerCancelled && s.modal);
 }
 
 @("surfaces.anchor.neverCoversTheSubject")

@@ -189,6 +189,8 @@ struct DesktopTerminal
                 }
             },
             (in FocusEvent f) {
+                if (!f.focused)
+                    host.surfaces.cancelPointer();
                 version (TerminalVulkan)
                 {
                     if (windowFocused && !f.focused)

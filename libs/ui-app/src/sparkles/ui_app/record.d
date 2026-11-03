@@ -18,6 +18,8 @@ three targets" is checkable at $(I session) scope rather than only per widget.
 */
 module sparkles.ui_app.record;
 
+import sparkles.ui_app.specimen_font : SpecimenFontRequest;
+
 import sparkles.base.term_color : RgbColor;
 import sparkles.ui.effect : EffectRegistry;
 import sparkles.ui.image : ImageRegistry;
@@ -169,6 +171,44 @@ struct RecordingHost
     /// ditto
     int[] fontSizeRequests;
 
+    /// Independent specimen requests, retained by value including coordinates.
+    SpecimenFontRequest[] specimenFontRequests;
+    private SpecimenFontRequest specimenSelection;
+    private bool specimenDrawing;
+
+    /// Records a successful exact preview selection independently of UI size.
+    bool specimenFont(const SpecimenFontRequest request) @safe pure nothrow
+    {
+        specimenSelection = request;
+        specimenSelection.coordinates = request.coordinates.dup;
+        specimenFontRequests ~= specimenSelection;
+        return true;
+    }
+    /// ditto
+    SpecimenFontRequest specimenFont() const @safe pure nothrow => specimenSelection;
+    /// A recorder cannot measure faces; these are deterministic grid estimates.
+    int specimenCellWidth() const @safe pure nothrow @nogc => specimenSelection.px / 2;
+    /// ditto
+    int specimenCellHeight() const @safe pure nothrow @nogc => specimenSelection.px;
+    /// Recording uses one device pixel per logical pixel.
+    double fontDensity() const @safe pure nothrow @nogc => 1;
+    /// No runtime face is resolved by the backend-free recorder.
+    string fontPath() const @safe pure nothrow @nogc => null;
+    /// Opens the same scope the native canvas offers.
+    bool beginSpecimen() @safe pure nothrow @nogc
+    {
+        if (specimenDrawing || !specimenFontRequests.length)
+            return false;
+        specimenDrawing = true;
+        return true;
+    }
+    /// Restores recording of the interface.
+    void endSpecimen() @safe pure nothrow @nogc { specimenDrawing = false; }
+    /// Counts preview rendering requests without requiring a concrete backend.
+    void specimenTextRendering(T)(in T settings) { ++specimenRenderingRequests; }
+    /// ditto
+    size_t specimenRenderingRequests;
+
     /**
     The `HST15` errands, recorded. The recorder runs no fibers: each
     `spawnDaemon` ask is counted and `false` returned, so a component keeps
@@ -207,6 +247,25 @@ struct RecordingHost
 static assert(isHost!RecordingHost, "the recorder must satisfy the same"
     ~ " contract as a live host — that is the whole point of it");
 static assert(canReadClipboard!RecordingHost);
+
+/// Recording owns coordinates and a preview request preserves the interface size.
+@("ui_app.record.specimenIndependentAndOwnsCoordinates")
+@safe pure nothrow unittest
+{
+    import sparkles.font : Tag, UserCoordinate;
+    RecordingHost host;
+    UserCoordinate[] coordinates = [UserCoordinate(Tag("wght"), 700 << 16)];
+    auto request = SpecimenFontRequest("fixture.ttc", 2, 30, coordinates);
+    assert(host.specimenFont(request));
+    coordinates[0].value = 100 << 16;
+    assert(host.specimenFontRequests[0].coordinates[0].value == 700 << 16);
+    assert(host.fontSizePx == 18);
+    assert(host.beginSpecimen());
+    assert(!host.beginSpecimen());
+    host.endSpecimen();
+    assert(host.beginSpecimen());
+    host.endSpecimen();
+}
 
 
 /**

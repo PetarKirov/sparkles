@@ -7,6 +7,12 @@ at each of the [documented profiles](../index.md#profiles):
 ui-gallery --render --page components --profile full|enhanced|baseline
 ```
 
+The numeric slider specimens use the same control as generated settings:
+an integral weight domain and a fractional negative slant domain. The touch
+specimen keeps a three-cell hit target around its compact track. Settings
+surfaces share drag capture, preview transactions and release-to-commit
+behavior through `SettingsSections`; keyboard stepping remains available.
+
 ::: code-group
 
 <<< @/../apps/ui-gallery/test/data/profiles/components/full.ansi{ansi} [full]

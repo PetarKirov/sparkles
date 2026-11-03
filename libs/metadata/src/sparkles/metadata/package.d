@@ -47,6 +47,21 @@ struct Range
     double step = 0;
 }
 
+/// Preferred numeric input; targets may project it onto their capabilities.
+enum NumericInput : ubyte
+{
+    automatic,
+    slider,
+    stepper,
+    number,
+}
+
+/// Suggests the input for a numeric property without changing its domain.
+struct PreferredInput
+{
+    NumericInput kind;
+}
+
 /// A heading that groups a field's contents with a human-facing title; a
 /// presenting domain shows the field as a section under it.
 struct Section

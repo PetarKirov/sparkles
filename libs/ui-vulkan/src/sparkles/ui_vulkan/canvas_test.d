@@ -1182,6 +1182,54 @@ private ubyte[] twoColourImage()
     }
 }
 
+/// Variation updates change the preview's pixels while the UI font stays fixed.
+@("ui_vulkan.canvas.specimenVariationsKeepInterfacePixelsStable")
+@system unittest
+{
+    if (!readbackEnabled)
+        return skipTest(readbackSkipReason);
+    import std.file : read;
+    import std.path : buildPath;
+    import std.process : environment;
+    import sparkles.font : Ppem, Tag, UserCoordinate;
+    import sparkles.shaders : v4;
+    import sparkles.ui_vulkan.painter : TextMetrics;
+
+    const directory = environment.get("SPARKLES_FONTS_PATH");
+    assert(directory.length, "SPARKLES_FONTS_PATH is required");
+    const uiBytes = cast(const(ubyte)[]) read(buildPath(directory, "DejaVuSansMono.ttf"));
+    const specimenBytes = cast(const(ubyte)[]) read(buildPath(directory, "NotoSans.ttf"));
+    auto rig = new Rig;
+    rig.open("ui-vulkan-specimen", 220, 80);
+    scope (success)
+        rig.close();
+    assert(rig.canvas.cellFont(uiBytes, 18, TextMetrics(ascent: 16)));
+    ubyte[] first;
+    foreach (weight; [100, 900, 100])
+    {
+        assert(rig.canvas.specimenFont(specimenBytes, 0, Ppem.fromInteger(32).value,
+            [UserCoordinate(Tag("wght"), weight << 16)], TextMetrics(ascent: 32)));
+        const frame = rig.draw((ref Canvas canvas) {
+            canvas.glyph(Point(0, 0), 'A', Visual(fg: white, fgAlpha: 255));
+            assert(canvas.beginSpecimen(20, 40));
+            scope (exit)
+                canvas.endSpecimen();
+            const width = canvas.naturalTextWidthPx("office");
+            assert(canvas.naturalTextPx("office", 32, 8, v4(1, 1, 1, 1)) == width);
+        }, FrameMetrics(cellW: 12, cellH: 24), black);
+        if (first is null)
+            first = frame.dup;
+        else
+        {
+            foreach (y; 0 .. 80)
+                foreach (x; 0 .. 24)
+                    assert(pixel(frame, 220, x, y) == pixel(first, 220, x, y));
+            assert((frame == first) == (weight == 100),
+                "coordinate cache entries must differ and be reusable when revisited");
+        }
+    }
+}
+
 @("ui_vulkan.canvas.aGlyphReadsBackAsTheFontRasterizesIt")
 @system unittest
 {

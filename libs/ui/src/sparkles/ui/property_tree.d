@@ -50,7 +50,8 @@ import sparkles.fuzzy.match : match, MatchConfig, MatcherWorkspace, MatchKind,
     Scoring;
 import sparkles.fuzzy.query : parseQuery, QueryStorage;
 import sparkles.fuzzy.rank : RankedResult, TopK;
-public import sparkles.metadata : colorValue, Description, Label, Range, Section;
+public import sparkles.metadata : colorValue, Description, Label, NumericInput,
+    PreferredInput, Range, Section;
 
 import sparkles.ui.components.tree_view : TreeViewState;
 import sparkles.ui.components.tree_widget : flatten, TreeData;
@@ -475,6 +476,9 @@ struct PropertyNode
     string doc;         /// `@Doc`
     string typeName;    ///
     string editor;      /// `@Editor` symbol identifier; "" = the kind's default
+    NumericInput input; /// preferred numeric editor, projected by the target
+    EditValue defaultValue; /// runtime default when supplied by the parent
+    bool hasDefault;    /// the parent supplied a runtime default
     LeafKind kind;      /// `LeafKind.none` for composites
     bool composite;     /// descends (aggregate / collection / erased / pointer)
     bool expandable;    /// the shared `nodeExpandable` capability
@@ -516,6 +520,38 @@ struct PropertyTreePolicy
     bool readOnly;          /// refuse every edit before the walk
 }
 
+/// Runtime metadata is shared by presentation, edit validation, and history.
+@("ui.property_tree.runtimeBoundsAndDefaults")
+@safe unittest
+{
+    struct Axis
+    {
+        @hidden double minimum = 100, maximum = 700, initial = 350;
+        @PreferredInput(NumericInput.slider) double value = 350;
+        Range propRange(string name) const @safe pure nothrow @nogc
+            => name == "value" ? Range(minimum, maximum, 1) : Range(double.nan, double.nan);
+        EditValue propDefault(string name) const @safe pure nothrow @nogc
+            => name == "value" ? EditValue.of(initial) : EditValue.init;
+        string propLabel(string name) const @safe pure nothrow @nogc
+            => name == "value" ? "Weight (wght)" : null;
+    }
+    Axis axis;
+    PropertyTree!Axis tree;
+    TreeViewState!string state;
+    tree.rebuild(axis, state);
+    assert(tree.data.nodes.length == 1);
+    const n = tree.data.nodes[0].value;
+    assert(n.lo == 100 && n.hi == 700 && n.step == 1);
+    assert(n.input == NumericInput.slider && n.label == "Weight (wght)");
+    assert(n.hasDefault && n.defaultValue == EditValue.of(350.0));
+    PropertyEditState edits;
+    assert(!editProperty(axis, Edit("value", EditValue.of(950.0)), edits).ok);
+    assert(axis.value == 350);
+    assert(editProperty(axis, Edit("value", EditValue.of(600.0)), edits).ok);
+    assert(undoProperty(axis, edits).ok && axis.value == 350);
+    assert(redoProperty(axis, edits).ok && axis.value == 600);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // The adapter (PRT1–PRT5): one type-only walk, driven by disclosure.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -526,6 +562,9 @@ private struct MemberMeta
     string label;
     string doc;
     string editor;
+    NumericInput input;
+    EditValue defaultValue;
+    bool hasDefault;
     bool readOnly;
     bool hasRange;
     double lo = 0, hi = 0, step = 0;
@@ -1440,6 +1479,8 @@ private void walkChildren(U, V)(ref U v, string path, int depth,
                     MemberMeta meta;
                     meta.label = name;
                     meta.readOnly = inheritedRO || hasUDA!(M, readOnly);
+                    static if (__traits(compiles, v.propReadOnly(name)))
+                        meta.readOnly |= v.propReadOnly(name);
                     static if (hasUDA!(M, Label))
                         meta.label = getUDAs!(M, Label)[0].text;
                     static if (hasUDA!(M, Doc))
@@ -1450,12 +1491,36 @@ private void walkChildren(U, V)(ref U v, string path, int depth,
                         meta.heading = getUDAs!(M, Section)[0].label;
                     }
                     meta.color = hasUDA!(M, colorValue);
+                    static if (hasUDA!(M, PreferredInput))
+                        meta.input = getUDAs!(M, PreferredInput)[0].kind;
                     static if (hasUDA!(M, Range))
                     {
                         meta.hasRange = true;
                         meta.lo = getUDAs!(M, Range)[0].lo;
                         meta.hi = getUDAs!(M, Range)[0].hi;
                         meta.step = getUDAs!(M, Range)[0].step;
+                    }
+                    static if (__traits(compiles, v.propRange(name)))
+                    {
+                        const r = v.propRange(name);
+                        if (r.lo <= r.hi)
+                        {
+                            meta.hasRange = true;
+                            meta.lo = r.lo;
+                            meta.hi = r.hi;
+                            meta.step = r.step;
+                        }
+                    }
+                    static if (__traits(compiles, v.propDefault(name)))
+                    {
+                        meta.defaultValue = v.propDefault(name);
+                        meta.hasDefault = meta.defaultValue.kind != EditValue.Kind.none;
+                    }
+                    static if (__traits(compiles, v.propLabel(name)))
+                    {
+                        const s = v.propLabel(name);
+                        if (s.length)
+                            meta.label = s;
                     }
                     static foreach (uda; __traits(getAttributes, M))
                     {{
@@ -1496,6 +1561,9 @@ private PropertyNode makeNode(U)(ref U v, string path, string label,
         label: label,
         doc: meta.doc,
         editor: meta.editor,
+        input: meta.input,
+        defaultValue: meta.defaultValue,
+        hasDefault: meta.hasDefault,
         typeName: U.stringof,
         depth: depth,
         hasRange: meta.hasRange,
@@ -2216,6 +2284,9 @@ private RefusalKind applyAt(T)(ref T subject, in PathSeg[] segs, size_t at_,
                 // `@readOnly` refuses the whole subtree, HERE, inside the
                 // generated dispatch — no view can route around it (PRT16).
                 enum mro = hasUDA!(M, readOnly);
+                bool runtimeRO;
+                static if (__traits(compiles, subject.propReadOnly(name)))
+                    runtimeRO = subject.propReadOnly(name);
                 enum mHasRange = hasUDA!(M, Range);
                 static if (mHasRange)
                 {
@@ -2227,20 +2298,32 @@ private RefusalKind applyAt(T)(ref T subject, in PathSeg[] segs, size_t at_,
                     enum mLo = double.nan;
                     enum mHi = double.nan;
                 }
+                bool effectiveRange = mHasRange || hasRange;
+                double effectiveLo = mHasRange ? mLo : lo;
+                double effectiveHi = mHasRange ? mHi : hi;
+                static if (__traits(compiles, subject.propRange(name)))
+                {
+                    const r = subject.propRange(name);
+                    if (r.lo <= r.hi)
+                    {
+                        effectiveRange = true;
+                        effectiveLo = r.lo;
+                        effectiveHi = r.hi;
+                    }
+                }
                 if (at_ + 1 == segs.length)
                 {
-                    if (ro || mro)
+                    if (ro || mro || runtimeRO)
                         return RefusalKind.readOnlyField;
                     static if (descends!(typeof(__traits(getMember, T, name))))
                         return RefusalKind.typeMismatch; // structural (PRT22)
                     else
                         return assignLeaf(__traits(getMember, subject, name),
-                            val, mHasRange || hasRange,
-                            mHasRange ? mLo : lo, mHasRange ? mHi : hi, old);
+                            val, effectiveRange, effectiveLo, effectiveHi, old);
                 }
                 return applyAt(__traits(getMember, subject, name), segs,
-                    at_ + 1, val, ro || mro, mHasRange || hasRange,
-                    mHasRange ? mLo : lo, mHasRange ? mHi : hi, old);
+                    at_ + 1, val, ro || mro || runtimeRO, effectiveRange,
+                    effectiveLo, effectiveHi, old);
             }}
             default:
                 return RefusalKind.noSuchPath;

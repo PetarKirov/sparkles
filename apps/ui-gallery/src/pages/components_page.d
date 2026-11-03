@@ -19,6 +19,7 @@ import sparkles.ui.components.chrome : actionBar, gutter, headerBar,
 import sparkles.ui.geometry : SizeSpec;
 import sparkles.ui.layout : Frame;
 import sparkles.ui.components.scroll_view : ScrollExtents, ScrollView;
+import sparkles.ui.components.controls : ControlSize, slider;
 import sparkles.ui.state : ScrollState, scrollbarThumb;
 import sparkles.ui.style : Slot, TextStyle;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
@@ -67,6 +68,14 @@ uint view(ref Builder b, in GalleryState s)
         "Every one of these is a pure view: it appends a subtree and returns "
         ~ "its root. Behaviour lives in the state machines beside them, so the "
         ~ "same component serves a terminal and a window with no second copy.", w);
+    body_ ~= spacer(b);
+
+    body_ ~= section(b, "slider — runtime numeric domains", [
+        label(b, "Weight 400 · 100–900", Slot.code),
+        slider(b, 400, 100, 900, 0),
+        label(b, "Slant -6.5 · -12.5–0 · touch target", Slot.code),
+        slider(b, -6.5, -12.5, 0, 0, ControlSize(rows: 3)),
+    ]);
     body_ ~= spacer(b);
 
     body_ ~= section(b, "headerBar — leading · centre · trailing", [

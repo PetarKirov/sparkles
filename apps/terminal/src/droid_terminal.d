@@ -129,6 +129,8 @@ struct DroidTerminal
     private bool dividerGestureHeld; // a finger was down last frame
     private bool barGesture; // this contact grabbed an overlay bar (`SCV13`)
     private bool barGestureHeld; // ditto, a finger was down last frame
+    private bool surfaceGesture; // a settings control owns this contact and fling
+    private bool surfaceGestureHeld;
 
     @disable this(this);
 
@@ -264,17 +266,23 @@ struct DroidTerminal
 
             const n = touch.count;
             const p = touch.at;
+            if (n > 1)
+                host.surfaces.cancelPointer();
+            if (n > 0 && !surfaceGestureHeld)
+                surfaceGesture = false;
+            surfaceGesture |= host.touchSurface(p.x, p.y, n == 1);
+            surfaceGestureHeld = n > 0;
             pollKeyRow(h, g, touch);
             // A page's or the guide's overlay bar, grabbed (`SCV13`): the
             // contact is the bar's until it lifts.
             // Its fling tail too: the gesture stays the bar's until the next
             // contact begins.
-            if (host.touchBar(p.x, p.y, n == 1, dpToPx(44)))
+            if (!surfaceGesture && host.touchBar(p.x, p.y, n == 1, dpToPx(44)))
                 barGesture = true;
             else if (n > 0 && !barGestureHeld)
                 barGesture = false;
             barGestureHeld = n > 0;
-            if (barGesture)
+            if (barGesture || surfaceGesture)
                 dividerGesture = false;
             else if (host.touchDivider(p.x, p.y, n == 1, dpToPx(16)))
                 dividerGesture = true;
@@ -333,7 +341,10 @@ struct DroidTerminal
             // to (`refreshCwds`) mark nothing dirty.
             (in FocusEvent f) {
                 if (!f.focused)
+                {
+                    host.surfaces.cancelPointer();
                     save();
+                }
             },
             (in _) {},
         );
@@ -868,6 +879,8 @@ struct DroidTerminal
 
     private void onPointer(H)(ref H h, in PointerEvent p)
     {
+        if (surfaceGesture)
+            return;
         if (p.action == PointerAction.press)
         {
             pinchBase = 0; // a new contact re-bases the next pinch
@@ -928,7 +941,7 @@ struct DroidTerminal
             pressedRow = pressedCol = -1;
             host.invalidate();
         }
-        if (dividerGesture || barGesture) // the divider's or the bar's drag
+        if (dividerGesture || barGesture || surfaceGesture) // a captured control owns its fling
             return;
         const g = geometry(h);
         if (swipeKeyRow(g, w))

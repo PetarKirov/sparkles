@@ -40,7 +40,7 @@ import sparkles.ui.pixel_geometry : ScissorBox;
 import sparkles.ui_vulkan.shading : Binding, CanvasView, Instance, srgbToLinear;
 import sparkles.ui_vulkan.text_rendering : Hinting, Loupe, TextRendering;
 import sparkles.ui_vulkan.upload : transition, Uploads;
-import sparkles.font : Colour, Ppem;
+import sparkles.font : Colour, Ppem, UserCoordinate;
 import sparkles.vulkan;
 
 /// The space a canvas composites in (`UVK6`, `UVX6`).
@@ -249,6 +249,7 @@ struct VulkanCanvas(B)
 
     // How text is rendered, and the loupe drawn over the frame.
     private TextRendering textRendering_;
+    private TextRendering specimenRendering_;
     private Loupe loupe_;
 
     // The cell font text draws in, and its glyphs (`UVK18`; interim, `UVX12`).
@@ -257,6 +258,13 @@ struct VulkanCanvas(B)
     private CellFace[] fallbacks_; // tried in order where the styled face has no glyph
     private TextMetrics textMetrics_;
     private uint faceSerial_;
+    private CellFace[FaceStyle.max + 1] specimenFaces_;
+    private CellFace[] specimenFallbacks_;
+    private TextMetrics specimenMetrics_;
+    private FrameMetrics savedGrid_;
+    private bool specimenActive_;
+    private uint specimenFallbackGlyphs_;
+    private uint specimenGridFallbacks_;
     private UniqueBuffer!GpuImage[2] atlasImages_; // the coverage sheet's pages, the colour sheet's
     // Shapers by face serial, made on demand (`ShaperSlot`).
     static if (canShape)
@@ -363,6 +371,7 @@ struct VulkanCanvas(B)
         ground_ = ground;
         originX_ = metrics.originX;
         originY_ = metrics.originY;
+        specimenFallbackGlyphs_ = specimenGridFallbacks_ = 0;
 
         // The host reuses a slot only after its fence has signalled.
         inFlight_[][slot] = 0;
@@ -570,7 +579,8 @@ struct VulkanCanvas(B)
     with text drawing nothing, when the regular face cannot be opened.
     */
     bool cellFont(const(ubyte)[][FaceStyle.max + 1] faces, Ppem ppem, in TextMetrics metrics,
-        in FallbackFace[] fallbacks = null) @system
+        in FallbackFace[] fallbacks = null, uint faceIndex = 0,
+        scope const(UserCoordinate)[] coordinates = null, scope const(uint)[] styleIndices = null) @system
     {
         textMetrics_ = TextMetrics.init;
         // The shapers borrow the bound faces' bytes, which the caller may let
@@ -589,11 +599,19 @@ struct VulkanCanvas(B)
         // pointer would call the same face.
         uint serialOf(in CellFace face, in CellFace was)
             => face.contentHash == was.contentHash && face.bytes.length == was.bytes.length
+                && face.face.index == was.face.index
                 ? was.serial : ++faceSerial_;
         CellFace[] opened;
         foreach (fb; fallbacks)
         {
-            auto face = CellFace.open(fb.bytes, fb.ppem);
+            CellFace* previous;
+            foreach (ref old; fallbacks_)
+                if (old.bytes.ptr == fb.bytes.ptr && old.bytes.length == fb.bytes.length)
+                {
+                    previous = &old;
+                    break;
+                }
+            auto face = CellFace.open(fb.bytes, fb.ppem, 0, null, previous);
             if (!face.bytes.length)
                 continue;
             CellFace was;
@@ -606,7 +624,10 @@ struct VulkanCanvas(B)
         fallbacks_ = opened;
         foreach (style, bytes; faces)
         {
-            auto bound = CellFace.open(bytes, ppem);
+            const index = style == FaceStyle.regular ? faceIndex
+                : style - 1 < styleIndices.length ? styleIndices[style - 1] : 0;
+            auto bound = CellFace.open(bytes, ppem, index,
+                coordinates, &faces_[style]);
             if (!bound.bytes.length && style == FaceStyle.regular)
             {
                 faces_[] = CellFace.init;
@@ -627,6 +648,125 @@ struct VulkanCanvas(B)
         faces[FaceStyle.regular] = regular;
         const em = Ppem.fromInteger(ppem);
         return em.hasValue && cellFont(faces, em.value, metrics);
+    }
+
+    /**
+    Prepares an exact specimen face independently of the interface font.
+    Borrowed bytes must live until the next specimen binding. Updating only
+    size or coordinates reuses the parsed face, content hash and hint scratch.
+    */
+    bool specimenFont(const(ubyte)[] bytes, uint index, Ppem size,
+        scope const(UserCoordinate)[] coordinates, in TextMetrics metrics, ulong contentHash = 0,
+        int lineHeight = 0, scope const(ubyte[][]) styles = null,
+        scope const(uint)[] styleIndices = null, scope const(ulong)[] styleHashes = null) @system
+    {
+        assert(!specimenActive_);
+        auto bound = CellFace.open(bytes, size, index, coordinates, &specimenFaces_[0], contentHash);
+        if (!bound.bytes.length)
+            return false;
+        const old = specimenFaces_[0];
+        bound.serial = old.bytes.length && old.contentHash == bound.contentHash
+            && old.face.index == bound.face.index ? old.serial : ++faceSerial_;
+        static if (canShape)
+            foreach (ref slot; shapers_)
+                if (slot.tried && slot.serial == old.serial)
+                    slot.release();
+        specimenFaces_[0] = bound;
+        foreach (i; 1 .. specimenFaces_.length)
+        {
+            auto previous = specimenFaces_[i];
+            static if (canShape)
+                foreach (ref slot; shapers_)
+                    if (slot.tried && slot.serial == previous.serial)
+                        slot.release();
+            auto sibling = i - 1 < styles.length
+                ? CellFace.open(styles[i - 1], size,
+                    i - 1 < styleIndices.length ? styleIndices[i - 1] : 0,
+                    coordinates, &previous, i - 1 < styleHashes.length ? styleHashes[i - 1] : 0)
+                : CellFace.init;
+            if (sibling.bytes.length)
+                sibling.serial = previous.bytes.length && sibling.contentHash == previous.contentHash
+                    && sibling.face.index == previous.face.index ? previous.serial : ++faceSerial_;
+            specimenFaces_[i] = sibling;
+        }
+        // Fallbacks stay at their own defaults, sized to this specimen's line,
+        // rather than the UI's independently sized line.
+        import sparkles.font : hhea;
+        if (specimenFallbacks_.length != fallbacks_.length)
+            specimenFallbacks_.length = fallbacks_.length;
+        foreach (i, ref fallback; fallbacks_)
+        {
+            const hh = hhea(fallback.face);
+            const span = hh.hasValue ? long(hh.value.ascender) - hh.value.descender : 0;
+            auto em = size;
+            if (lineHeight > 0 && span > 0)
+            {
+                const scaled = scaledPpem(Ppem.fromInteger(lineHeight).value,
+                    fallback.face.unitsPerEm, cast(ulong) span);
+                if (scaled.hasValue)
+                    em = scaled.value;
+            }
+            auto fb = CellFace.open(fallback.bytes, em, fallback.face.index, null,
+                &specimenFallbacks_[i], fallback.contentHash);
+            fb.serial = fallback.serial;
+            specimenFallbacks_[i] = fb;
+        }
+        specimenMetrics_ = metrics;
+        specimenMetrics_.present = true;
+        return true;
+    }
+
+    /// Selects the specimen for draws in this scope, preserving previous draws.
+    bool beginSpecimen(int cellW, int cellH) @system
+    {
+        if (specimenActive_ || !specimenMetrics_.present)
+            return false;
+        import std.algorithm.mutation : swap;
+        swap(faces_, specimenFaces_);
+        swap(fallbacks_, specimenFallbacks_);
+        swap(textMetrics_, specimenMetrics_);
+        swap(textRendering_, specimenRendering_);
+        painter_.textRendering = textRendering_;
+        savedGrid_ = painter_.metrics;
+        auto grid = savedGrid_;
+        grid.cellW = cellW > 0 ? cellW : 1;
+        grid.cellH = cellH > 0 ? cellH : 1;
+        painter_.fontMetrics(grid);
+        specimenActive_ = true;
+        return true;
+    }
+
+    /// Restores the interface font and grid; harmless after a failed begin.
+    void endSpecimen() @system
+    {
+        if (!specimenActive_)
+            return;
+        import std.algorithm.mutation : swap;
+        swap(faces_, specimenFaces_);
+        swap(fallbacks_, specimenFallbacks_);
+        swap(textMetrics_, specimenMetrics_);
+        swap(textRendering_, specimenRendering_);
+        painter_.textRendering = textRendering_;
+        painter_.fontMetrics(savedGrid_);
+        specimenActive_ = false;
+    }
+
+    /// Glyphs drawn from fallback faces in specimen scopes this frame.
+    uint specimenFallbackGlyphs() const @safe pure nothrow @nogc => specimenFallbackGlyphs_;
+    /// Natural runs that needed the grid fallback in specimen scopes this frame.
+    uint specimenGridFallbacks() const @safe pure nothrow @nogc => specimenGridFallbacks_;
+
+    /// Settings used only inside specimen scopes. Atlas keys already separate
+    /// hinted pixels; changing this does not invalidate interface glyphs.
+    void specimenTextRendering(in TextRendering settings) @safe pure nothrow @nogc
+    {
+        if (specimenActive_)
+        {
+            textRendering_ = settings;
+            painter_.textRendering = settings;
+        }
+        else
+            specimenRendering_ = settings;
     }
 
     // The faces a cluster is looked up in, in order: the cell font's face of
@@ -687,6 +827,10 @@ struct VulkanCanvas(B)
         final switch (outcome)
         {
             case AtlasOutcome.placed:
+                if (specimenActive_)
+                    foreach (ref fallback; fallbacks_)
+                        if (face is &fallback)
+                            ++specimenFallbackGlyphs_;
                 enum float side = GlyphAtlas.pageSize;
                 quad = GlyphQuad(g.page + 1, g.colour, v4(g.x / side, g.y / side,
                     (g.x + g.width) / side, (g.y + g.height) / side),
@@ -715,7 +859,12 @@ struct VulkanCanvas(B)
             if (gid != 0)
                 return glyphFrom(face, gid, r, quad);
         }
-        return r.cp == ' ' ? GlyphOutcome.blank : GlyphOutcome.noGlyph;
+        if (r.cp == ' ') return GlyphOutcome.blank;
+        // A preview must show the selected face's missing-glyph form rather
+        // than silently hiding characters no selected or fallback face maps.
+        if (specimenActive_)
+            return glyphFrom(&faces_[FaceStyle.regular], 0, r, quad);
+        return GlyphOutcome.noGlyph;
     }
 
     /*
@@ -762,7 +911,7 @@ struct VulkanCanvas(B)
             if (shaper is null)
                 return GlyphOutcome.noGlyph;
 
-            char[128] text;
+            char[maxClusterQuads * 4] text;
             const encoded = convertPrefix(cast(const(dchar)[]) r.cps, text[], UtfMode.replacement);
             const source = text[0 .. encoded.written];
             ClusterGlyph[maxClusterGlyphs] glyphs;
@@ -775,6 +924,11 @@ struct VulkanCanvas(B)
             {
                 if (g.glyph == 0)
                     return GlyphOutcome.noGlyph;
+                if (r.measureOnly)
+                {
+                    pen += g.advance;
+                    continue;
+                }
                 GlyphQuad q;
                 const outcome = glyphFrom(face, g.glyph, r.first, q);
                 if (outcome == GlyphOutcome.drawn)
@@ -787,6 +941,12 @@ struct VulkanCanvas(B)
                 else if (outcome != GlyphOutcome.blank)
                     return outcome;
                 pen += g.advance;
+            }
+            if (r.advance !is null)
+            {
+                // The request borrows a mutable output slot for this call;
+                // `in` freezes the request, not the caller-owned result.
+                () @trusted { *cast(double*) r.advance = pen; }();
             }
             return GlyphOutcome.drawn;
         }
@@ -1059,6 +1219,20 @@ struct VulkanCanvas(B)
             ~ "void " ~ name ~ "(Args...)(auto ref Args args) @system\n"
             ~ "in (inFrame_, \"drawing outside a frame\")\n"
             ~ "{ painter_." ~ name ~ "(args); }");
+
+    /// Shaped specimen text in pixels, returning its actual advance.
+    int naturalTextPx(Args...)(auto ref Args args) @system
+    {
+        const before = painter_.report[Degradation.unshapedCluster];
+        const advance = painter_.naturalTextPx(args);
+        if (specimenActive_)
+            specimenGridFallbacks_ += painter_.report[Degradation.unshapedCluster] - before;
+        return advance;
+    }
+
+    /// Its advance without rasterization or drawing.
+    int naturalTextWidthPx(Args...)(auto ref Args args) @system
+        => painter_.naturalTextWidthPx(args);
 
     /// A run's extent in cells.
     Size measure(scope const(char)[] text) const => painter_.measure(text);
@@ -1453,34 +1627,123 @@ private struct CellFace
     bool colour; // it has colour forms (`COLR`, `CBDT`, `sbix`): asked for them first
     LightHints hints; // its light-hinting metrics at `ppem`
     ulong contentHash; // of `bytes`, taken while they are known to live
+    private HintScratch scratch;
 
     // `bytes` at `ppem`, or `CellFace.init` when they hold no usable face.
-    static CellFace open(const(ubyte)[] bytes, Ppem size) @system
+    static CellFace open(const(ubyte)[] bytes, Ppem size, uint index = 0,
+        scope const(UserCoordinate)[] coordinates = null, CellFace* previous = null,
+        ulong knownHash = 0) @system
     {
-        import sparkles.font : charMap, instance, InstanceSize, openFace;
+        import sparkles.font : charMap, fontOk, instance, InstanceSize, openFace;
 
         if (!bytes.length)
             return CellFace.init;
-        auto face = openFace(bytes);
+        const reusable = previous !is null && previous.bytes.ptr == bytes.ptr
+            && previous.bytes.length == bytes.length && previous.face.index == index;
+        auto face = reusable ? fontOk(previous.face) : openFace(bytes, index);
         if (face.hasError)
             return CellFace.init;
         auto map = charMap(face.value);
         if (map.hasError)
             return CellFace.init;
-        auto inst = instance(face.value, InstanceSize.pixels(size), null);
+        auto inst = instance(face.value, InstanceSize.pixels(size), coordinates);
         if (inst.hasError)
             return CellFace.init;
         import sparkles.font : lightHints, OutlinePoint, OutlineSegment, OutlineWorkspace;
 
-        auto segments = new OutlineSegment[4096];
-        auto ws = OutlineWorkspace(new OutlinePoint[4096], new bool[4096], new ushort[1024], new uint[4096],
-            new int[4096], new int[4096], new int[2][4096]);
-        const hints = lightHints(inst.value, map.value, size, segments, ws);
+        auto scratch = reusable ? previous.scratch : HintScratch.init;
+        scratch.reserve();
+        auto ws = scratch.workspace();
+        const hints = lightHints(inst.value, map.value, size, scratch.segments, ws);
         auto opened = CellFace(bytes, face.value, map.value, inst.value, size, 0,
             hasColourGlyphs(face.value), hints);
-        opened.contentHash = contentHashOf(bytes);
+        opened.contentHash = reusable ? previous.contentHash : knownHash ? knownHash : contentHashOf(bytes);
+        opened.scratch = scratch;
         return opened;
     }
+}
+
+private struct HintScratch
+{
+    import sparkles.font : OutlinePoint, OutlineSegment, OutlineWorkspace;
+    OutlineSegment[] segments;
+    OutlinePoint[] points;
+    bool[] onCurve;
+    ushort[] ends;
+    uint[] numbers;
+    int[] dx, dy;
+    int[2][] referenced;
+
+    void reserve() @safe nothrow
+    {
+        if (segments.length)
+            return;
+        segments = new OutlineSegment[4096];
+        points = new OutlinePoint[4096];
+        onCurve = new bool[4096];
+        ends = new ushort[1024];
+        numbers = new uint[4096];
+        dx = new int[4096];
+        dy = new int[4096];
+        referenced = new int[2][4096];
+    }
+
+    OutlineWorkspace workspace() @safe pure nothrow @nogc
+        => OutlineWorkspace(points, onCurve, ends, numbers, dx, dy, referenced);
+}
+
+/// Rebinding only coordinates reuses byte identity and decoding scratch.
+@("ui_vulkan.canvas.specimenPreparedFaceReusesScratch")
+@system unittest
+{
+    import std.file : read;
+    import std.path : buildPath;
+    import std.process : environment;
+    import sparkles.font : Tag;
+    const root = environment.get("SPARKLES_FONTS_PATH");
+    assert(root.length, "SPARKLES_FONTS_PATH is required");
+    const bytes = cast(const(ubyte)[]) read(buildPath(root, "NotoSans.ttf"));
+    const size = Ppem.fromInteger(24).value;
+    auto initial = CellFace.open(bytes, size);
+    assert(initial.bytes.length);
+    auto changed = CellFace.open(bytes, size, 0,
+        [UserCoordinate(Tag("wght"), 900 << 16)], &initial);
+    assert(changed.bytes.ptr == initial.bytes.ptr);
+    assert(changed.contentHash == initial.contentHash);
+    assert(changed.scratch.segments.ptr == initial.scratch.segments.ptr);
+    assert(changed.inst.coords != initial.inst.coords);
+    assert(!CellFace.open(bytes, size, uint.max).bytes.length);
+}
+
+/// Independent preview scopes restore the interface binding, even after failure.
+@("ui_vulkan.canvas.specimenScopeRestoresInterface")
+@system unittest
+{
+    import std.file : read;
+    import std.path : buildPath;
+    import std.process : environment;
+    const root = environment.get("SPARKLES_FONTS_PATH");
+    assert(root.length, "SPARKLES_FONTS_PATH is required");
+    const bytes = cast(const(ubyte)[]) read(buildPath(root, "NotoSans.ttf"));
+    VulkanCanvas!DeviceMemoryBackend canvas;
+    assert(canvas.cellFont(bytes, 18, TextMetrics(ascent: 14)));
+    assert(!canvas.beginSpecimen(10, 24));
+    canvas.endSpecimen();
+    assert(canvas.specimenFont(bytes, 0, Ppem.fromInteger(30).value, null,
+        TextMetrics(ascent: 23)));
+    auto previewRendering = TextRendering.init;
+    previewRendering.contrast = 0.8f;
+    previewRendering.hinting = Hinting.none;
+    canvas.specimenTextRendering(previewRendering);
+    assert(canvas.beginSpecimen(17, 40));
+    assert(!canvas.beginSpecimen(17, 40));
+    assert(canvas.faces_[0].ppem == Ppem.fromInteger(30).value);
+    assert(canvas.painter_.metrics.cellW == 17 && canvas.textMetrics_.ascent == 23);
+    assert(canvas.textRendering == previewRendering);
+    canvas.endSpecimen();
+    assert(canvas.faces_[0].ppem == Ppem.fromInteger(18).value);
+    assert(canvas.textMetrics_.ascent == 14 && canvas.painter_.metrics.cellW == 1);
+    assert(canvas.textRendering == TextRendering.init);
 }
 
 // The straight RGBA of a run's colour as the bytes colour layers take for

@@ -889,6 +889,7 @@ struct WorkspaceHost
         // and drop any capture so it cannot leak past the modal.
         if (surfaces.modal)
         {
+            repaint |= surfaces.pointer(p);
             if (leftRelease)
                 pointerCapture = 0;
             return;
@@ -1081,6 +1082,31 @@ struct WorkspaceHost
         barWasDown = down;
         return barPointer(x, y, down, pressed, zone, touch: true);
     }
+
+    /// Raw contacts reach continuous controls before gesture scrolling.
+    bool touchSurface(int x, int y, bool down) @system
+    {
+        import sparkles.input.events : PointerAction, PointerButton, Point;
+
+        const pressed = down && !surfaceWasDown;
+        if (down)
+        {
+            surfaceX = x;
+            surfaceY = y;
+        }
+        const released = !down && surfaceWasDown;
+        surfaceWasDown = down;
+        if (!surfaces.modal || (!down && !released))
+            return false;
+        const used = surfaces.pointer(PointerEvent(
+            action: pressed ? PointerAction.press : released ? PointerAction.release : PointerAction.drag,
+            button: PointerButton.left, pos: Point(surfaceX, surfaceY)));
+        repaint |= used;
+        return used;
+    }
+
+    private bool surfaceWasDown;
+    private int surfaceX, surfaceY;
 
     private bool barWasDown;
     private bool barHeld;

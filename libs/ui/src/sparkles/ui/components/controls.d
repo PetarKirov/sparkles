@@ -15,6 +15,7 @@ at the start or the end of its track, a group of segments.
 module sparkles.ui.components.controls;
 
 import sparkles.base.text.grapheme : visibleWidth;
+import std.math : isFinite;
 import sparkles.ui.geometry : Insets, SizeSpec;
 import sparkles.ui.style : BorderStyle, Decoration, FontRole, Slot, TextStyle, TypeStep;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind;
@@ -32,6 +33,25 @@ struct ControlSize
 /// The slots the controls reference (design-system `TOK6`).
 enum Slot[] controlSlots = [Slot.surfaceRaised, Slot.surfaceSunken, Slot.chromeAccent, Slot.controlOn,
     Slot.textPrimary, Slot.textSecondary, Slot.border, Slot.code];
+
+/// A numeric track with a full-height hit target and a monochrome-visible thumb.
+uint slider(ref Builder b, double value, double lo, double hi, size_t hitId,
+    ControlSize sz = ControlSize.init, int columns = 16)
+{
+    columns = columns < 3 ? 3 : columns;
+    double fraction = hi > lo && value.isFinite ? (value - lo) / (hi - lo) : 0;
+    fraction = fraction < 0 ? 0 : fraction > 1 ? 1 : fraction;
+    const thumb = cast(int)(fraction * (columns - 1) + 0.5);
+    string track;
+    foreach (i; 0 .. columns)
+        track ~= i == thumb ? "◆" : "─";
+    auto box = controlBox([b.add(Widget(kind: WidgetKind.text, text: track,
+        slot: Slot.textPrimary, textStyle: valueStyle(), alignY: Alignment.center))],
+        sz, hitId, Slot.surfaceSunken, 0);
+    box.padding = Insets.init;
+    box.width = SizeSpec.fixed(columns);
+    return b.add(box);
+}
 
 /// A value: the cell font at the body step (`uiMono`), bold when selected.
 private TextStyle valueStyle(bool bold = false) pure nothrow @nogc

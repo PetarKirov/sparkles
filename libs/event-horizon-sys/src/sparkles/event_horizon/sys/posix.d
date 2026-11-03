@@ -46,12 +46,35 @@ version (linux)
     /// `openat2` has the same number on every architecture (asm-generic).
     enum long SYS_openat2 = 437;
 
-    /// Calls `openat2(2)`; returns the descriptor, or -1 with `errno` set.
+    /// Calls `openat2(2)`; Android reports `ENOSYS` without entering seccomp.
     int openat2(int dirfd, scope const(char)* path, ref const OpenHow how) @system nothrow @nogc
     {
-        import core.sys.linux.unistd : syscall;
+        version (Android)
+        {
+            // Android's app sandbox can kill the process for this syscall,
+            // rather than returning an errno. Even probing it is unsafe; use
+            // the VFS component walk, as on a kernel without openat2.
+            import core.stdc.errno : errno, ENOSYS;
+            errno = ENOSYS;
+            return -1;
+        }
+        else
+        {
+            import core.sys.linux.unistd : syscall;
+            return cast(int) syscall(SYS_openat2, dirfd, path, &how, OpenHow.sizeof);
+        }
+    }
 
-        return cast(int) syscall(SYS_openat2, dirfd, path, &how, OpenHow.sizeof);
+    /// Android never issues an openat2 probe, even outside an app sandbox.
+    version (Android)
+    @("posix.openat2.androidUsesComponentWalk")
+    @system nothrow @nogc unittest
+    {
+        import core.stdc.errno : errno, ENOSYS;
+        OpenHow how;
+        errno = 0;
+        assert(openat2(AT_FDCWD, ".".ptr, how) == -1);
+        assert(errno == ENOSYS);
     }
 
     /// The flag that opens a directory for search only (VFN14).

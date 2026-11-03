@@ -11,6 +11,8 @@ module sparkles.ui_vulkan.text_rendering;
 
 import sparkles.metadata.case_style : CaseStyle;
 import sparkles.metadata.wire : WireCase;
+import sparkles.metadata : NumericInput, PreferredInput, Range;
+import sparkles.ui.property_tree : hidden;
 
 @safe pure nothrow @nogc:
 
@@ -40,7 +42,7 @@ struct TextRendering
     Hinting hinting = Hinting.light;                       ///
     bool shaping = true; /// clusters shaped where a shaper is available
     /// For `linearCorrected`: how far coverage is pushed from mid-grey, 0–1.
-    float contrast = 0.25f;
+    @Range(0, 1, 0.01) @PreferredInput(NumericInput.slider) float contrast = 0.25f;
 }
 
 /**
@@ -52,7 +54,8 @@ from the frame's origin, as a pixel fill's are.
 struct Loupe
 {
     bool shown; ///
-    int sourceX, sourceY, sourceWidth, sourceHeight; ///
-    int x, y;      ///
-    int scale = 8; ///
+    @hidden int sourceX, sourceY; ///
+    @Range(1, 256, 1) int sourceWidth, sourceHeight; ///
+    @hidden int x, y; /// calculated placement
+    @Range(1, 32, 1) int scale = 8; ///
 }

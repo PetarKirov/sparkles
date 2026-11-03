@@ -30,7 +30,7 @@ import std.conv : text;
 
 import sparkles.base.term_color : RgbColor;
 import sparkles.ui.components.controls : chip, ControlSize, dropdownChip, segmented,
-    stepper, toggleSwitch;
+    slider, stepper, toggleSwitch;
 import sparkles.ui.components.tree_widget : TreeData;
 import sparkles.base.text.grapheme : visibleWidth;
 import sparkles.ui.geometry : Insets, SizeSpec;
@@ -49,6 +49,8 @@ import sparkles.ui.wrap : TextWrap;
 enum InlineEditor : ubyte
 {
     none,      /// a status row
+    slider,    /// runtime-bounded numeric track
+    number,    /// numeric text entry
     toggle,    /// `bool`
     segmented, /// an enum of at most 4 members that fits
     dropdown,  /// a larger enum
@@ -84,6 +86,10 @@ InlineEditor inlineEditorFor(in PropertyNode n, int segmentCells = 32) pure
                 ? InlineEditor.segmented : InlineEditor.dropdown;
         case LeafKind.integral:
         case LeafKind.floating:
+            if (n.input == typeof(n.input).slider && n.hasRange)
+                return InlineEditor.slider;
+            if (n.input == typeof(n.input).number)
+                return InlineEditor.number;
             return InlineEditor.stepper;
         case LeafKind.text:
             return n.color ? InlineEditor.swatch : InlineEditor.text;
@@ -193,7 +199,7 @@ flattens: every matching leaf shows under its section, its label prefixed by
 the levels between. `collapsed(path)` folds a header to itself.
 */
 SectionItem[] sectionItems(ref const TreeData!PropertyNode data, string root, bool searching,
-    scope bool delegate(string path) @safe collapsed = null)
+    scope bool delegate(string path) @safe collapsed = null, bool flatten = false)
 {
     SectionItem[] items;
 
@@ -212,7 +218,8 @@ SectionItem[] sectionItems(ref const TreeData!PropertyNode data, string root, bo
             return;
         }
         // Under a search, a composite that is only context opens in place.
-        if (searching && n.role != SearchRole.direct && data.nodes[c].firstChild != uint.max)
+        if ((flatten || searching && n.role != SearchRole.direct)
+            && data.nodes[c].firstChild != uint.max)
         {
             for (uint k = data.nodes[c].firstChild; k != uint.max; k = data.nodes[k].nextSibling)
                 addChild(k, label ~ " › ");
@@ -267,6 +274,7 @@ enum SectionPart : uint
     open = 5,       /// a dropdown, a swatch, a text field: open its editor
     accept = 6,     /// the line editor's ✓
     cancelEdit = 7, /// the line editor's ✕
+    slider = 63,   /// captured numeric track
     choice0 = 8,    /// a segment or a dropdown option: `choice0 + i`
 }
 
@@ -484,6 +492,20 @@ uint sectionRow(ref Builder b, ref const TreeData!PropertyNode data, ref const S
             parts ~= stepper(b, n.badge, hit(SectionPart.dec), hit(SectionPart.inc), size);
             break;
         }
+        case InlineEditor.slider:
+        {
+            import std.conv : to;
+
+            double value;
+            try value = n.badge.to!double;
+            catch (Exception) value = n.lo;
+            parts ~= slider(b, value, n.lo, n.hi, hit(SectionPart.slider), size);
+            parts ~= dropdownChip(b, n.badge, false, hit(SectionPart.open), size);
+            break;
+        }
+        case InlineEditor.number:
+            parts ~= dropdownChip(b, n.badge, false, hit(SectionPart.open), size);
+            break;
         case InlineEditor.swatch:
         {
             const v = unquoted(n.badge);

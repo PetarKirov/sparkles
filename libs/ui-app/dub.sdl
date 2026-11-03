@@ -22,6 +22,7 @@ dependency "sparkles:core-cli" path="../.."
 // is not.
 dependency "sparkles:event-horizon" path="../.."
 dependency "sparkles:image" path="../.."
+dependency "sparkles:font" path="../.."
 
 // ── Configurations (APP3) ───────────────────────────────────────────────────
 //
@@ -58,7 +59,6 @@ configuration "gui-vulkan" {
     dependency "sparkles:vulkan-wsi" path="../.."
     dependency "sparkles:profiling" path="../.."
     dependency "sparkles:wsi" path="../.."
-    dependency "sparkles:font" path="../.."
     dependency "sparkles:raylib-text" path="../.."
     subConfiguration "sparkles:raylib-text" "discovery"
     versions "UiAppGuiVulkan"

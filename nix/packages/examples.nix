@@ -33,6 +33,11 @@
         libsClosure
         refsIn
         placeVulkanWsiShaders
+        needsUiShaders
+        needsUiVulkanShaders
+        uiShaderDirs
+        placeUiShaders
+        placeUiVulkanShaders
         ;
 
       # The triangle examples select sparkles:vulkan-wsi's `gpu-shaders`
@@ -48,6 +53,24 @@
           placeVulkanWsiShaders "$dubTreeRoot"
           + ''
             find "$dubTreeRoot/libs/vulkan-wsi/generated" -exec touch -h -d "@1" '{}' +
+          ''
+        );
+
+      uiShadersFor =
+        libName:
+        let
+          dirs = libSourceDirsFor libName;
+        in
+        lib.optionalString (needsUiShaders dirs) (
+          placeUiShaders "$dubTreeRoot"
+          + ''
+            find "$dubTreeRoot/libs/ui/generated" -exec touch -h -d "@1" '{}' +
+          ''
+        )
+        + lib.optionalString (needsUiVulkanShaders dirs) (
+          placeUiVulkanShaders "$dubTreeRoot"
+          + ''
+            find "$dubTreeRoot/libs/ui-vulkan/generated" -exec touch -h -d "@1" '{}' +
           ''
         );
 
@@ -71,6 +94,8 @@
       # `libs/twoslash-d` edit rebuilt all ~35 example derivations and their
       # bundles — and, through the `gen-text-svg` hook's use of
       # `examples.base."text-cell-svg"`, the dev shell.
+      libSourceDirsFor =
+        libName: libsClosure ([ libName ] ++ lib.concatMap (p: refsIn (textOf p)) (exampleFilesIn libName));
       libSourcesFor =
         libName:
         fs.unions (
@@ -90,7 +115,7 @@
               # sparkles:ui's generated effect GLSL, string-imported by effect.d
               || file.hasExt "frag"
             ) (fromRoot dir)
-          ) (libsClosure ([ libName ] ++ lib.concatMap (p: refsIn (textOf p)) (exampleFilesIn libName)))
+          ) (libSourceDirsFor libName)
         );
 
       # The source tree an example compiles from. It is a function of the
@@ -118,6 +143,7 @@
               (fromRoot "libs/${libName}/examples")
             ]
             ++ lib.optional (selectsVulkanWsiShaders libName) (fromRoot "apps/shader-compile/src")
+            ++ map fromRoot (uiShaderDirs (libSourceDirsFor libName))
           );
         };
 
@@ -170,7 +196,7 @@
           // {
             pname = "${libName}-example-deps";
             src = srcForLib libName;
-            preBuild = vulkanWsiShadersFor libName;
+            preBuild = vulkanWsiShadersFor libName + uiShadersFor libName;
             dubPrimers = map (path: {
               subdir = (exampleInfo path).parentDirRel;
               single = "${(exampleInfo path).fileBase}.d";
@@ -203,7 +229,7 @@
             pname = "${info.libName}-example-${info.fileBase}";
 
             src = srcForLib info.libName;
-            preBuild = vulkanWsiShadersFor info.libName;
+            preBuild = vulkanWsiShadersFor info.libName + uiShadersFor info.libName;
             # Where to build inside the normalised source tree (the vendored
             # builder's replacement for `sourceRoot`, which cannot vary: the
             # tree root is pinned so artifacts hash identically).

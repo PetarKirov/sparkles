@@ -34,20 +34,19 @@ import core.time : MonoTime, seconds;
 
 import std.conv : text;
 
-import sparkles.input.events : Key, KeyAction, KeyEvent, WheelEvent;
+import sparkles.input.events : Key, KeyAction, KeyEvent, PointerEvent, WheelEvent;
 import sparkles.ui.components.chord_capture : CaptureConflict, CaptureHit, CapturePhase,
     CaptureResolution, ChordCapture, chordCaptureView, pathLabel;
 import sparkles.ui.components.property_sections : choiceLabel, decodeSectionHit,
-    inlineEditorFor, InlineEditor, RowState, sectionHeader, sectionHit, SectionItem,
-    sectionItems, SectionPart, sectionRow, SectionsOptions, sectionSummary, sentenceCase,
+    sectionHeader, sectionHit, SectionItem, SectionPart, SectionsOptions, sentenceCase,
     naturalCells, unquoted;
-import sparkles.ui.components.settings_pane : LeafProvenance, SettingsResult, SettingsToast;
-import sparkles.ui.components.editor : EditorViewOptions, editorLineSpans;
+import sparkles.ui.components.settings_pane : SettingsResult, SettingsToast;
 import sparkles.ui.editor.keys : EditorTarget, editorBinds;
+import sparkles.ui.components.settings_sections : SettingsSections;
 import sparkles.ui.geometry : Constraints, Insets, Point, SizeSpec;
 import sparkles.ui.keymap : acceptsTyped, Chord, ShiftReq;
-import sparkles.ui.layout : layout;
-import sparkles.ui.property_tree : EditValue, LeafKind, PropertyNode;
+import sparkles.ui.layout : Frame, layout;
+import sparkles.ui.property_tree : LeafKind, PropertyNode;
 import sparkles.ui.style : BorderStyle, Decoration, FontRole, Slot, TextStyle, TypeStep;
 import sparkles.ui.widget : Alignment, Builder, TextSpan, Widget, WidgetKind, WidgetTree;
 
@@ -59,7 +58,7 @@ import sparkles.ui.components.chrome : fracByte, scrollbar, ScrollbarSpec;
 import sparkles.ui.state : ScrollAxis;
 import settings : TerminalConfig;
 import settings_store : TerminalApply, TerminalSettingsPane, TerminalSettingsStore;
-import surfaces : Placement, Scrollable, Surface, SurfaceContext;
+import surfaces : Placement, PointerSurface, Scrollable, Surface, SurfaceContext;
 
 // Hit ids: the page's own, the capture's, the bindings', the property rows'.
 private enum size_t hitScrim = 0x5E70_0001, hitPanel = 0x5E70_0002, hitBack = 0x5E70_0003,
@@ -189,7 +188,7 @@ KeysConfig rebind(KeysConfig keys, in BindingRow row, in Chord[] path,
 }
 
 /// The page.
-final class SettingsPage : Surface, Scrollable
+final class SettingsPage : Surface, PointerSurface, Scrollable
 {
     /// The store the page edits; the embedder applies what it says.
     TerminalSettingsStore* store;
@@ -202,11 +201,12 @@ final class SettingsPage : Surface, Scrollable
     bool closed;
 
     private void delegate(uint apply) @system applyFn;
-    private string[] levels;           // the drill-in path, outermost first
-    private bool[string] folded;       // collapsed sections
-    private string openDropdown;
+    private SettingsSections sections;
+    private ref string[] levels() @safe return => sections.levels;
+    private ref bool[string] folded() @safe return => sections.folded;
+    private ref string openDropdown() @safe return => sections.openDropdown;
     private Item[] items;
-    private size_t focus;
+    private ref size_t focus() @safe return => sections.focus;
     private bool focusMoved;
     private ScrollBody scrollBody; // the body's scroll and bar (`SCV12`)
     private BindingRow[] bindings;
@@ -439,6 +439,29 @@ final class SettingsPage : Surface, Scrollable
         return false;
     }
 
+    bool pointer(in PointerEvent p, in WidgetTree tree,
+        scope const(Frame)[] frames) @system
+    {
+        SettingsResult result;
+        const used = sections.pointer(*pane, p, tree, frames, sectionBase, result, touch);
+        if (used)
+        {
+            stale = true;
+            foreach (i, ref const item; items)
+                if (item.kind == Item.Kind.section
+                    && pane.tree.data.nodes[item.si.node].value.path == sections.dragPath)
+                    focus = i;
+            note(result);
+        }
+        return used;
+    }
+
+    void cancelPointer() @system
+    {
+        note(sections.cancel(*pane));
+        stale = true;
+    }
+
     bool confirm() @system
     {
         stale = true;
@@ -455,6 +478,11 @@ final class SettingsPage : Surface, Scrollable
     bool key(in KeyEvent k) @system
     {
         stale = true;
+        if (sections.drag.active && (k.key == Key.escape || k.key == Key.back))
+        {
+            cancelPointer();
+            return true;
+        }
         if (k.action == KeyAction.release)
             return capture.open || pane.textEditing || pane.tv.searching;
 
@@ -610,9 +638,7 @@ final class SettingsPage : Surface, Scrollable
     {
         Item[] r;
         const searching = pane.tree.searching;
-        auto self = this;
-        const sec = sectionItems(pane.tree.data, levels.length ? levels[$ - 1] : null,
-            searching, (string p) => (p in self.folded) !is null);
+        const sec = sections.items(*pane);
         bool keysPlaced;
         foreach (ref s; sec)
         {
@@ -673,45 +699,7 @@ final class SettingsPage : Surface, Scrollable
             case Item.Kind.section:
                 break;
         }
-        const n = &pane.tree.data.nodes[it.si.node].value;
-        if (it.si.kind == SectionItem.Kind.header)
-        {
-            // Collapsed, the header summarises what it holds (`PRT36`).
-            const detail = it.si.collapsed
-                ? sectionSummary(pane.tree.data, it.si.node) : n.path;
-            return sectionHeader(b, n.heading, detail, it.si.collapsed,
-                sectionHit(sectionBase, it.si.node, SectionPart.row), opt);
-        }
-        RowState st;
-        st.focused = focused;
-        if (it.si.kind == SectionItem.Kind.leaf && !n.synthetic)
-        {
-            st.changed = !pane.atDefault(n.path);
-            const pv = pane.provenance(n.path);
-            if (pv.note.length)
-            {
-                st.chip = pv.shadowed ? pv.layer : pv.note;
-                st.chipWarn = true;
-            }
-            else if (pv.layer.length && pv.layer != "default" && pv.layer != pane.fileLayer)
-                st.chip = pv.layer;
-            st.open = openDropdown == n.path;
-            st.editing = pane.textEditing && pane.textPath == n.path;
-            if (st.editing)
-            {
-                EditorViewOptions fieldView;
-                fieldView.textSlot = Slot.code;
-                st.editSpans = editorLineSpans(pane.textField.state, 0, fieldView);
-            }
-            const rf = pane.edits.refusalFor(n.path);
-            if (rf.refused)
-            {
-                import sparkles.ui.components.property_view : refusalText;
-
-                st.refusal = refusalText(rf);
-            }
-        }
-        return sectionRow(b, pane.tree.data, it.si, st, opt, sectionBase);
+        return sections.row(b, *pane, it.si, focused, opt, sectionBase);
     }
 
     private uint bindingWidget(ref Builder b, size_t i, bool focused, in SectionsOptions opt)
@@ -823,6 +811,7 @@ final class SettingsPage : Surface, Scrollable
 
     private bool close() @system
     {
+        note(sections.cancel(*pane));
         pane.close();
         closed = true;
         return true;
@@ -830,18 +819,13 @@ final class SettingsPage : Surface, Scrollable
 
     private void popLevel() @safe
     {
-        levels = levels[0 .. $ - 1];
-        focus = 0;
+        cast(void) sections.back();
         scrollBody.motion.jumpTo(0, scrollBody.limit);
-        openDropdown = null;
     }
 
     private void toggleFold(string path) @safe
     {
-        if (path in folded)
-            folded.remove(path);
-        else
-            folded[path] = true;
+        sections.toggleFold(path);
     }
 
     private void moveFocus(int by) @safe
@@ -902,53 +886,16 @@ final class SettingsPage : Surface, Scrollable
         foreach (i, ref it; items)
             if (it.kind == Item.Kind.section && it.si.node == node)
                 focus = i;
-        if (n.section && !n.composite)
-            return;
-        if (n.synthetic)
-            return;
         bool header;
         foreach (ref it; items)
             header |= it.kind == Item.Kind.section && it.si.node == node
                 && it.si.kind == SectionItem.Kind.header;
-        if (header)
-        {
-            toggleFold(n.path);
-            return;
-        }
-        if (n.composite)
-        {
-            levels ~= n.path;
-            focus = 0;
+        const depth = levels.length;
+        note(sections.activate(*pane, node, SectionPart.row, opts, header, tap));
+        if (levels.length != depth)
             scrollBody.motion.jumpTo(0, scrollBody.limit);
-            openDropdown = null;
-            return;
-        }
-        final switch (inlineEditorFor(*n, opts.segmentCells))
-        {
-            case InlineEditor.toggle:
-                note(pane.stepAt(n.path, 1));
-                break;
-            case InlineEditor.segmented:
-                if (!tap)
-                    note(pane.stepAt(n.path, 1));
-                break;
-            case InlineEditor.dropdown:
-                if (tap)
-                    openDropdown = openDropdown == n.path ? null : n.path;
-                else
-                    note(pane.stepAt(n.path, 1));
-                break;
-            case InlineEditor.swatch:
-            case InlineEditor.text:
-                note(pane.editTextAt(n.path));
-                wantsKeyboard = touch;
-                break;
-            case InlineEditor.stepper:
-            case InlineEditor.drillIn:
-            case InlineEditor.readOnly:
-            case InlineEditor.none:
-                break;
-        }
+        wantsKeyboard |= touch && sections.wantsKeyboard;
+        sections.wantsKeyboard = false;
     }
 
     /// `←`/`→`: a stepper's ±, the previous or next choice, a toggle.
@@ -964,38 +911,10 @@ final class SettingsPage : Surface, Scrollable
     {
         if (node >= pane.tree.data.nodes.length)
             return;
-        const n = &pane.tree.data.nodes[node].value;
-        switch (part)
-        {
-            case SectionPart.row:
-                rowPrimary(node, true);
-                return;
-            case SectionPart.reset:
-                note(pane.resetAt(n.path));
-                return;
-            case SectionPart.dec:
-                note(pane.stepAt(n.path, -1));
-                return;
-            case SectionPart.inc:
-            case SectionPart.toggle:
-                note(pane.stepAt(n.path, 1));
-                return;
-            case SectionPart.open:
-                rowPrimary(node, true);
-                return;
-            case SectionPart.accept:
-                note(pane.handleKey(KeyEvent(Key.enter)));
-                return;
-            case SectionPart.cancelEdit:
-                note(pane.handleKey(KeyEvent(Key.escape)));
-                return;
-            default:
-                const i = part - SectionPart.choice0;
-                if (i < n.choices.length)
-                    note(pane.setAt(n.path, EditValue.ofEnum(n.choices[i])));
-                openDropdown = null;
-                return;
-        }
+        if (part == SectionPart.row || part == SectionPart.open)
+            rowPrimary(node, true);
+        else
+            note(sections.activate(*pane, node, part, opts));
     }
 
     /// A pane result: apply what it obliges, and say so in the toast.
@@ -1443,4 +1362,48 @@ version (unittest)
     b = f.page.build(phone(), 44);
     cast(void) f.page.key(KeyEvent(key: Key.down, action: KeyAction.press));
     assert(f.page.build(phone(), 44).nodes !is b.nodes, "input rebuilds");
+}
+
+/// The shared slider previews live, saves once on release and cancels on focus loss.
+@("settings_page.pointer.sharedSliderPreviewCommitAndCancel")
+@system unittest
+{
+    import std.file : exists;
+    import sparkles.input.events : PointerAction, PointerButton;
+
+    auto fs = TmpFS.create();
+    auto f = new PageFixture(fs.dir);
+    f.open();
+    auto ctx = phone();
+    ctx.touch = false;
+    cast(void) f.page.build(ctx, 80);
+    f.page.activate(hitFor(f.page, "appearance.font", SectionPart.row));
+    const tree = f.page.build(ctx, 80);
+    const frames = layout(tree, Constraints(maxW: 80, maxH: 80));
+    const hit = hitFor(f.page, "appearance.font.size", SectionPart.slider);
+    uint track = uint.max;
+    foreach (i, ref const n; tree.nodes)
+        if (n.hitId == hit)
+            track = cast(uint) i;
+    assert(track != uint.max, "the font size uses the shared slider");
+    const r = frames[track].rect;
+    const start = Point(r.x + r.width / 2, r.y);
+    const before = f.store.resolved.appearance.font.size;
+    assert(f.page.pointer(PointerEvent(action: PointerAction.press,
+        button: PointerButton.left, pos: start), tree, frames));
+    assert(f.store.resolved.appearance.font.size != before);
+    assert(f.applied & TerminalApply.font);
+    assert(!f.file.exists, "previews do not save");
+    assert(f.page.pointer(PointerEvent(action: PointerAction.release,
+        button: PointerButton.left, pos: Point(r.x + r.width + 20, r.y)), tree, frames));
+    assert(f.store.resolved.appearance.font.size == 72 && f.file.exists);
+    assert(f.page.pane.edits.undo.length == 1, "one history entry for the whole drag");
+    f.page.activate(hitUndo);
+    assert(f.store.resolved.appearance.font.size == before);
+
+    assert(f.page.pointer(PointerEvent(action: PointerAction.press,
+        button: PointerButton.left, pos: start), tree, frames));
+    f.page.cancelPointer();
+    assert(f.store.resolved.appearance.font.size == before);
+    assert(!f.page.sections.drag.active);
 }

@@ -2133,6 +2133,22 @@
             "link": "/specs/ui-app/terminal-view"
           },
           {
+            "text": "Font preview",
+            "link": "/specs/ui-app/font-preview"
+          },
+          {
+            "text": "Numeric property editors",
+            "link": "/libs/ui/reference/numeric-editors"
+          },
+          {
+            "text": "Specimen font hosting",
+            "link": "/libs/ui-app/reference/specimen-fonts"
+          },
+          {
+            "text": "Font preview performance",
+            "link": "/libs/ui-app/explanation/font-preview-performance"
+          },
+          {
             "text": "Resilience",
             "link": "/specs/ui-app/resilience"
           },
