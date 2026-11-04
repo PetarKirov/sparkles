@@ -10,7 +10,7 @@
 #
 # Each entry is the exact derivation the flake's builds use, so the pinned
 # path is the one CI asks the cache for.
-{ ... }:
+{ inputs, ... }:
 {
   perSystem =
     {
@@ -29,6 +29,14 @@
     in
     {
       legacyPackages.pinTargets = {
+        # The toolchain source inputs: cached in Cachix to ensure that fresh CI
+        # runners substitute them directly via HTTP instead of git-cloning
+        # hundreds of megabytes during flake evaluation (TC23).
+        toolchain-input-llvm-sparkles = inputs.dlang-nix.inputs.llvm-sparkles;
+        toolchain-input-ldc-sparkles = inputs.dlang-nix.inputs.ldc-sparkles;
+        toolchain-input-dmd-src = inputs.dmd-src;
+        toolchain-input-phobos-src = inputs.phobos-src;
+
         # The toolchain: the fork's LLVM (hours to build) and the LDC built on
         # it. The binary LDC that bootstraps it is a download, not a build.
         toolchain-llvm-spirv-vulkan = toolchain.llvm-spirv-vulkan;
@@ -45,6 +53,12 @@
           ts-grammars
           harfbuzz
           ;
+
+        # Heavy library inputs: pinned in Cachix to protect against LRU eviction.
+        ghostty-src = inputs.ghostty;
+        harfbuzz-source = inputs.harfbuzz-src;
+        maple-font-cn-base-src = inputs.maple-font-cn-base;
+        json-test-suite-src = inputs.json-test-suite;
       }
       // lib.optionalAttrs onX86Linux {
         # DMD, whose test suite runs on every build.
