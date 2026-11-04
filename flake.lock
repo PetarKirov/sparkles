@@ -705,13 +705,13 @@
       "locked": {
         "lastModified": 1689223254,
         "narHash": "sha256-t7Pp3rg8h1IXnX1QtZuJF122Pj9EZdTb6LqMQ5dTLlc=",
-        "owner": "cmuratori",
+        "owner": "PetarKirov",
         "repo": "termbench",
         "rev": "074fa615069ae4b53382d5f69143ef15fe1a8dc3",
         "type": "github"
       },
       "original": {
-        "owner": "cmuratori",
+        "owner": "PetarKirov",
         "repo": "termbench",
         "type": "github"
       }
