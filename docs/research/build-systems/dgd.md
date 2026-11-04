@@ -229,7 +229,7 @@ Do not copy the parser or uncached generation: dgd runs `go build -n` before any
 action can be keyed, and re-runs it per generation. A general DAG should take edge
 data from a compiler depfile or declared interface and cache generation.
 
-## Strengths and weaknesses
+## Strengths
 
 - **Fine-grained Go caching without reimplementing Go.** The dry run keeps dgd
   aligned with new Go versions, unlike a rules_go-scale port; an offline
@@ -239,6 +239,9 @@ data from a compiler depfile or declared interface and cache generation.
   copied.
 - **Real dependency granularity.** The module cache is split per module and sources
   per path, so unrelated edits do not re-key the world.
+
+## Weaknesses
+
 - **Honest scope, but the parser is the boundary.** The README limitations, `notes`
   TODO list and "why is this needed???" comments make the edges visible; yet
   `go build -n` is unstable, so heredocs, quoting and `-buildid` are special cases

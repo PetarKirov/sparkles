@@ -213,11 +213,14 @@ Three mechanics transfer:
   Sparkles already emits per-task events, so the second graph need not be unobservable;
   seven years in, Nix's own authors still have not stabilised the mechanism.
 
-## Strengths and weaknesses
+## Strengths
 
 - **The bind lands where the parallelism is** — remote execution, substitution and build slots reach a dependency that used to block evaluation.
 - **Granularity without committed codegen** — per-object derivations generated inside a sandbox, so `nixpkgs` carries no generated Nix and IFD stays banned.
 - **Resolution doubles as cache-key normalisation** — why byte-identical intermediates can stop a cascade and why the build trace stays coherent.
+
+## Weaknesses
+
 - **Still experimental after seven years, with daemon-version gates** — RFC 92 is dated 2019-02-01, `builtins.outputOf` shipped in 2.18 (2023-09-20), and at the 2026-09-12 tip the flag is still `Xp::DynamicDerivations` ([`experimental-features.cc`][nix-xp]); its tests need `2.35.0pre20260303`/`2.36pre` daemons ([`common.sh`][nix-dyn-common], [`submit-reference.sh`][nix-dyn-submit-ref]).
 - **The graph is unobservable** — `--dry-run`, `nix-store -q --tree` and `nix-diff` cannot see edges that do not exist yet.
 - **Termination is the builder's problem, and trust widens at the generator** — no depth bound, no cross-boundary cycle detection, and no provenance layer to record what the generator emitted.

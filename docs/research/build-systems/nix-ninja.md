@@ -225,13 +225,16 @@ nix-ninja contributes three mechanics:
 - **Dynamic dependencies as a node, not a graph edit.** Let a node's _key_ be produced by another
   node instead of mutating the DAG mid-run — the constructive analogue of Ninja's `dyndep`.
 
-## Strengths and weaknesses
+## Strengths
 
 - **Ninja's unit inside Nix's store** — per-edge derivations, CA outputs, Nix's sandbox and GC,
   plus a `NINJA=`-compatible CLI (`--version` pinned at `1.8.2`) as the adoption strategy.
 - **Dynamic dependencies without IFD and without graph mutation** — a clean encoding of
   "discover, then build" in a constructive world, dogfooded on Nix itself and six offline-VM
   NixOS tests ([`nix-build.nix`][nixos-test]).
+
+## Weaknesses
+
 - **Unreleased Nix is a hard floor**: `dynamic-derivations`, `ca-derivations`, `recursive-nix`
   and (at this head) `builder-rpc-v0`; the README warns it "depends on experimental features
   from an unreleased version of Nix".

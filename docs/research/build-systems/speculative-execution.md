@@ -9,7 +9,7 @@ demand. This page separates the three mechanisms, records what their authors do
 and do not claim, and says where "critical-path speculation" has no shipped
 implementation to cite.
 
-**Last reviewed:** November 2, 2026
+**Last reviewed:** November 3, 2026
 
 > [!NOTE]
 > **Catalog inference** marks a claim this page derives from the cited sources
@@ -47,13 +47,41 @@ two executors whose relative speed varies per action (Bazel, Buck2). **Catalog
 inference:** with a static DAG and homogeneous workers, ordinary ready-queue
 parallelism already reaches the bound.
 
+### The key distinction: unknown demand versus unknown inputs
+
+"Critical-path speculation" is ambiguous in a stronger sense than the three
+mechanisms below suggest. In a fully materialised static DAG, every future
+task and every edge is already known. A descendant on the critical path
+cannot start early merely because it is important: its inputs do not exist.
+The scheduler can prioritise its ancestors, reserve resources, prefetch cache
+entries, or choose a faster executor, but those are scheduling and placement
+decisions, not speculative execution of the descendant. True demand
+speculation needs a point where the future work is _not yet known_:
+
+- a sequential build script whose future commands have not been issued
+  (Rattle);
+- a conditional or dynamically discovered graph whose branch is unresolved;
+- a generated dependency or output whose contents are predicted before the
+  producer finishes; or
+- a cache/materialisation decision where bytes may be fetched before demand
+  is certain.
+
+That is why the apparent literature gap is partly conceptual, not merely an
+unimplemented optimisation. Once a build system has a static DAG plus
+duration estimates, "speculate on the critical path" collapses into
+critical-path _priority_. The interesting research problem is speculation at
+discovery boundaries, where the system predicts work or input values it has
+not yet proved necessary.
+
 Three mechanisms share the word:
 
-| Mechanism              | Need established? | What is duplicated            | Prediction required        | Recovery                          |
-| ---------------------- | ----------------- | ----------------------------- | -------------------------- | --------------------------------- |
-| Speculation            | **no**            | future work, maybe never used | next commands / hazard set | discard, or restart a phase       |
-| Duplicate execution    | yes               | the same action, twice        | none                       | cancel the loser                  |
-| Prediction as priority | yes               | none                          | durations, for ordering    | none — it was going to run anyway |
+| Mechanism                         | Need established? | What is duplicated                      | Prediction required        | Recovery                                                                    |
+| --------------------------------- | ----------------- | --------------------------------------- | -------------------------- | --------------------------------------------------------------------------- |
+| Speculation                       | **no**            | future work, maybe never used           | next commands / hazard set | discard, or restart a phase                                                 |
+| Duplicate execution               | yes               | the same action, twice                  | none                       | cancel the loser                                                            |
+| Prediction as priority            | yes               | none                                    | durations, for ordering    | none — it was going to run anyway                                           |
+| Input/value speculation           | inputs unproven   | downstream work under a predicted input | output/content prediction  | discard if the predicted bytes differ; **no surveyed build implementation** |
+| Speculative fetch/materialisation | maybe             | transferred or materialised bytes       | likely future demand       | evict/ignore unused bytes                                                   |
 
 **Catalog inference:** a duplicate race is transparent only if both branches
 compute the same bytes; true speculation must be able to un-run work. Rattle
@@ -182,7 +210,44 @@ guessing ([redo] §1). Pants' "speculative cleaning" runs dependency _checks_ in
 parallel ([pants] §2), and BuildXL's priority predicts _ordering_, not permission
 to start.
 
+### What a critical-path-aware static scheduler actually does
+
+Bazel illustrates the non-speculative end state. Its critical-path machinery
+in the open-source tree is profiler output: `CriticalPathText` prints total
+and optimal paths from a completed build, and the JSON trace writer creates a
+synthetic "Critical Path" thread for display ([bazel-critpath]). That diagnoses where time went;
+it does not feed a historical-duration dispatch loop in the surveyed sources.
+BuildXL goes one step further by using estimated and historical durations as
+priority, but still starts only ready pips. Neither crosses into executing a
+task before its dependencies complete.
+
+This is not a missing trick. If durations are known and resources are finite,
+the correct use of a critical path is precedence-aware list scheduling:
+among ready tasks, run those with the longest estimated path to a sink first,
+subject to resource claims. Starting a non-ready descendant would require
+inventing its inputs. The research gap is therefore better named
+**speculation across unresolved graph/input discovery**, not critical-path
+speculation in a static DAG.
+
 ## When speculation pays
+
+For demand speculation, the expected value has to survive an accounting the
+surveyed papers rarely make explicit:
+
+```text
+P(command is eventually required) x latency hidden by starting early
+- P(not required) x full resource cost
+- delay imposed on required ready work while resources are occupied
+- invalidation/restart cost when the guess conflicts
+- extra cache, transfer, and tracing work
+```
+
+Idle capacity makes the second term look free, but only until the speculative
+task occupies memory bandwidth, disk, a remote slot, or a lock that required
+work needs. Duplicate execution has a different equation: demand is certain,
+so the cost is the duplicate attempt and the benefit is bounded by executor
+latency variance and queueing. A predictor that only reorders ready tasks has
+near-zero downside except a worse order.
 
 The mechanisms spend different resources: a hazard can discard Rattle's whole
 run, a race spends one duplicate action and its transfer, and priority spends
@@ -288,12 +353,18 @@ The `usage` sink is an event, not an admission input.
 
 Three inputs are missing: a predictor (no previous-run record), a safety check
 over undeclared accesses (a driver can write anything), and a recovery rule for a
-guess that is never required. **Catalog inference:** the least invasive shape is a
-_speculative admission lane_ that starts a ready node early only when its
-`exclusiveKeys` and declared reads do not conflict with anything running or
-planned, tags the result, and discards it if the plan never asks — Rattle's hazard
-predicate without Rattle's tracer, validating declarations rather than replacing
-them.
+guess that is never required. More fundamentally, a validated static DAG has
+little for demand speculation to do: every required node is already in the
+plan, and a node whose dependencies have not completed cannot be started
+without inventing inputs. What Sparkles should borrow first is therefore
+**critical-path priority**: an estimated longest-path-to-sink ordering for
+ready tasks, informed by recorded durations. A speculative lane only becomes
+coherent if graph construction later gains conditional/discovered edges; then
+it should run a predicted not-yet-demanded node only under declared
+non-conflicting resource keys, tag the execution as speculative, and discard
+or restart it if the resolved graph never asks for it — Rattle's hazard
+predicate without pretending that ordinary ready-task reordering is
+speculation.
 
 Borrow the disposition taxonomy first: a conflict between two required tasks is a
 specification bug and should fail, while a conflict involving a guessed task is a
@@ -301,7 +372,7 @@ scheduling artifact and should be dropped — `FailurePolicy` classifies outcome
 not conflicts ([perfect-dependencies] §7). Do not borrow the name for parallel
 _checking_: Pants' speculative cleaning is a cancellation pattern ([pants] §2).
 
-## Strengths and weaknesses
+## Strengths
 
 - **Speculation recovers parallelism a forward system gave up.** Rattle's tracing
   gives content-level early cutoff — a whitespace edit costs one compile — and
@@ -312,6 +383,9 @@ _checking_: Pants' speculative cleaning is a cancellation pattern ([pants] §2).
   deterministic actions, both of which Bazel and Buck2 already assume
   ([bazel-dynamic], [buck2-hybrid]) — while BuildXL gets the cheap prediction
   half without ever starting unneeded work ([bxl-sched-prio]).
+
+## Weaknesses
+
 - **True speculation has one implementation and no scale story.** Rattle has one
   speculation key, no eviction, linear rebuild, a measured cold-build loss, and a
   correctness result that is only partial ([rattle] §Maturity,
@@ -381,6 +455,7 @@ _checking_: Pants' speculative cleaning is a cancellation pattern ([pants] §2).
 [bazel-strategy]: https://github.com/bazelbuild/bazel/blob/2105aec32b598dcc8e09905e7cf18ccfa4b0358e/src/main/java/com/google/devtools/build/lib/dynamic/DynamicSpawnStrategy.java
 [bazel-options]: https://github.com/bazelbuild/bazel/blob/2105aec32b598dcc8e09905e7cf18ccfa4b0358e/src/main/java/com/google/devtools/build/lib/dynamic/DynamicExecutionOptions.java
 [bazel-branch]: https://github.com/bazelbuild/bazel/blob/2105aec32b598dcc8e09905e7cf18ccfa4b0358e/src/main/java/com/google/devtools/build/lib/dynamic/Branch.java
+[bazel-critpath]: https://github.com/bazelbuild/bazel/blob/2105aec32b598dcc8e09905e7cf18ccfa4b0358e/src/main/java/com/google/devtools/build/lib/profiler/output/CriticalPathText.java
 [buck2-arch]: https://github.com/meta/buck2/blob/08b403b138373f506de90d15370162677526e388/docs/concepts/architecture.md
 [buck2-hybrid]: https://github.com/meta/buck2/blob/08b403b138373f506de90d15370162677526e388/app/buck2_execute_impl/src/executors/hybrid.rs
 [buck2-config]: https://github.com/meta/buck2/blob/08b403b138373f506de90d15370162677526e388/app/buck2_core/src/execution_types/executor_config.rs

@@ -5,7 +5,7 @@ one static task description (`build.ninja`) plus a JSON projection of that descr
 delegates every scheduling, dirty-check and parallelism decision to Ninja. Its engine
 contribution is the _shape_ of the description it emits, and the loop that re-emits it.
 
-**Last reviewed:** November 2, 2026
+**Last reviewed:** November 3, 2026
 
 | Field                 | Value                                                                                                                                                                               |
 | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -133,7 +133,7 @@ may be out of date; its wrap file has changed since it was first configured"
 ([`wrap.py`][wrap-py]). The subproject's sources are then ordinary sources to Ninja, so bumping
 a wrap in place can leave stale objects whose rebuild decision belongs to timestamps.
 
-### Task model & scheduling
+### 1. Task model & scheduling
 
 The model is **applicative** in [concepts.md][concepts] terms: every edge is enumerated while
 `meson.build` is interpreted, so the emitted graph is a static DAG. Meson never schedules — no
@@ -141,7 +141,7 @@ queue, no ready set. It contributes granularity and throttles: one edge per obje
 _unity_ block, `unity_size` default 4), one link edge per target, and pools to cap concurrency —
 links in `link_pool` at depth `backend_max_links`, terminal edges in `console` at depth 1.
 
-### Rebuilding & correctness
+### 2. Rebuilding & correctness
 
 `Meson + Ninja` lands in **topological × verifying traces**, the cell [concepts.md][concepts]
 assigns to `Ninja`, with one footnote: the "trace" holds no hashes.
@@ -156,7 +156,7 @@ leaves the previous `build.ninja` intact, and the 1.12 notes add `CACHEDIR.TAG` 
 regenerate — an admission that the build directory is a cache with no eviction policy of its
 own ([notes][notes112]).
 
-### Dependency discovery
+### 3. Dependency discovery
 
 Three mechanisms, in increasing lateness:
 
@@ -180,7 +180,7 @@ Ninja mailing-list thread and a GCC bug ([`ninjabackend.py`][ninja-backend]) —
 heuristic text scan, exactly what dyndep replaces. There is no strictness layer: nothing checks
 that a declared dependency is used.
 
-### Store & caching
+### 4. Store & caching
 
 There is **no build-level store**: no action cache, no content-addressed outputs, no remote
 cache. The build directory is the store; Ninja's log and deps files are the only persistent build
@@ -189,7 +189,7 @@ detected at configure time and prepended to the compiler command
 ([`Feature-autodetection.md`][autodetect]). That is a cache _below_ task granularity — it can
 skip a compiler invocation, never a link, a `custom_target`, a configure step or a subproject.
 
-### Hermeticity & provenance
+### 5. Hermeticity & provenance
 
 Meson has a **logical** sandbox and no process sandbox. The logical one is subproject path
 ownership: `include_directories` reaching into another subproject is rejected with
@@ -199,14 +199,14 @@ filesystem during an action — so no provenance story follows: no action keys, 
 The nearest claims are `meson dist`/`distcheck` and the timestamp-shaping helpers
 (`scripts/vcstagger.py`, `scripts/reprotest.py`).
 
-### Distribution
+### 6. Distribution
 
 Absent: no remote execution client, no scheduler daemon, no way to send an edge to another
 machine — parallelism is a local `-j`, capped per pool. The only distribution-adjacent machinery
 is _dependency fetching_: `Resolver` downloads wraps over `https`/`sftp` and applies patches from
 `packagefiles/` ([`wrap.py`][wrap-py]).
 
-### Sparkles relevance
+### 7. Sparkles relevance
 
 For `sparkles:build-primitives.task`, the borrowable idea is the **regeneration edge**, not the
 generator: make the description a node in its own graph (manifest as output, definition files as

@@ -6,7 +6,7 @@ all just keys, and whose execution layer is a REAPI client that treats the local
 machine as one more (unsandboxed) executor. This is the engine companion to the
 workspace survey; it stays inside `dice/` and `app/buck2_execute*`.
 
-**Last reviewed:** November 2, 2026
+**Last reviewed:** November 3, 2026
 
 | Field          | Value                                                                             |
 | -------------- | --------------------------------------------------------------------------------- |
@@ -93,6 +93,22 @@ is therefore always a sound answer" (§2.2), so eviction and restart are trivial
 sound — and the core is a standalone crate with a brute-force oracle and a shrinking
 fuzzer ([`fuzz.rs`][dice-fuzz]).
 
+The evidence stack is worth separating because it is stronger than a paper
+proof sketch but weaker than mechanized correctness. `dice_core`'s tests are
+organised by sections of `incrementality.md`, and every mutating test call
+re-checks core invariants ([`dice_core/src/tests.rs`][dice-tests]). A second,
+system-level harness, `fuzzy_dice`, generates `SetValue`, `ForceDirty`,
+`ReinjectEquivalent`, transient-step, and query sequences and checks the
+engine against a reference model on two properties: values must be correct,
+and the set of evaluated variables must be within a permitted-recompute
+bound ([`fuzzy_dice/README.md`][fuzzy-dice]). The bound is deliberately an
+upper bound tuned so today's implementation produces no violations; it can
+therefore catch unsound reuse, but does not prove maximal early cutoff. A
+bounded fixed-size fuzz runs in CI and deep runs are manual. That is a
+differential oracle over the shipped incremental engine — unusually good
+engineering evidence, still bounded by the generator's operation vocabulary
+and explicitly gated known-buggy scenarios.
+
 ### Files enter the graph as nodes, not contents
 
 `IoReadFileKey` returns a _path check_, not file text, and is declared
@@ -123,6 +139,21 @@ price is coupling to backend policy — it "expects that the TTL returned from a
 cache entries by your Remote Execution backend always exceeds the TTL of all output
 artifacts it references", and an expired blob's documented recovery is restarting the
 daemon (`CasNotFoundError` says run `buck2 killall`, [`materializer.rs`][materializer]).
+
+The implementation is a lease-and-index subsystem, not merely "download
+later". `MaterializeRequest` asks for artifacts plus output paths, returns a
+response whose lease must be held while reading, and distinguishes final
+(required/not-required) from intermediate purposes. `[buck2] materializations`
+accepts `all`, `deferred`, and `deferred_skip_final_artifacts`; the last can
+report a non-required final artifact successful without putting it on disk.
+Daemon configuration also carries TTL refresh (by default every 1,800 s for
+entries under a 3,600 s remaining TTL, rollout-gated), access-time updates,
+stale-artifact cleaning, optional read-only outputs, strict leases, and an
+`fsck` stream for paths that no longer match the materializer index
+([`materializer.rs`][materializer], [`daemon/state.rs`][daemon-state]). Deferred
+materialization thus shifts work from bytes to metadata consistency: Buck2
+must keep leases, TTLs, clean-stale decisions, and on-disk reality in agreement
+for the life of the daemon.
 
 ### Dep files: a per-action read set
 
@@ -283,6 +314,9 @@ error recovery all assume a process that outlives the command.
 [dice-doc]: https://github.com/meta/buck2/blob/08b403b138373f506de90d15370162677526e388/dice/docs/incrementality.md
 [dice-cert]: https://github.com/meta/buck2/blob/08b403b138373f506de90d15370162677526e388/dice/dice_core/src/cert.rs
 [dice-fuzz]: https://github.com/meta/buck2/blob/08b403b138373f506de90d15370162677526e388/dice/dice_core/src/fuzz.rs
+[dice-tests]: https://github.com/meta/buck2/blob/08b403b138373f506de90d15370162677526e388/dice/dice_core/src/tests.rs
+[fuzzy-dice]: https://github.com/meta/buck2/blob/08b403b138373f506de90d15370162677526e388/dice/fuzzy_dice/README.md
+[daemon-state]: https://github.com/meta/buck2/blob/08b403b138373f506de90d15370162677526e388/app/buck2_server/src/daemon/state.rs
 [dice-key]: https://github.com/meta/buck2/blob/08b403b138373f506de90d15370162677526e388/dice/dice/src/api/key.rs
 [build-key]: https://github.com/meta/buck2/blob/08b403b138373f506de90d15370162677526e388/app/buck2_build_api/src/actions/calculation.rs
 [file-io]: https://github.com/meta/buck2/blob/08b403b138373f506de90d15370162677526e388/app/buck2_common/src/file_ops/io.rs

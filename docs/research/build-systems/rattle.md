@@ -278,7 +278,7 @@ The paper page draws the design lessons; the repository adds four mechanics:
 - **Profile from recorded durations.** Work, span and their ratio come from data already
   written; avoid linear rebuild, no eviction, and a tracer as a runtime dependency.
 
-## Strengths and weaknesses
+## Strengths
 
 - **A minimal, honest implementation of the paper.** The public surface is `cmd` plus a few
   options, and every mechanism has a small, readable module behind it.
@@ -286,6 +286,9 @@ The paper page draws the design lessons; the repository adds four mechanics:
   append-only journal and a `dump` that prints all three stores.
 - **Hazards are first-class, with dispositions.** The taxonomy turns "retry or fail" into a
   property of the conflict, and traces can be re-checked after the fact.
+
+## Weaknesses
+
 - **The tracing dependency is unresolved.** `fsatrace` must be installed and misses Go,
   static and macOS system binaries; the fallback is manual `Read`/`Write`, and
   `Test.Simple` cannot assert that its hazard reproduces.

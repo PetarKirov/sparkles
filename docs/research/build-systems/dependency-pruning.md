@@ -6,7 +6,7 @@ narrows an edge to the files an action actually read. It mirrors tracing — tra
 finds edges nobody wrote down, pruning deletes edges somebody did — and the two
 meet in compiler depfiles, which are traces consumed specifically to prune.
 
-**Last reviewed:** November 2, 2026
+**Last reviewed:** November 3, 2026
 
 | Field      | Value                                                                                                      |
 | ---------- | ---------------------------------------------------------------------------------------------------------- |
@@ -105,7 +105,8 @@ granularity, so over-declaration costs a cache miss, not correctness.
 
 ### 2. Audit: make the extra edge visible
 
-**Bazel's two generations.** The original `unused_deps` (Go, in `buildtools`)
+**Bazel's two generations.** The original `unused_deps` (Go, in `buildtools`;
+announced 2017-06-28, [bazel-blog])
 builds each Java target, reads `Foo.jdeps` and `Foo.jar-2.params`, finds direct
 dependencies that never contributed a symbol, and prints Buildozer commands
 ([`unused_deps.go`][buildtools-unused-deps-go]); an entry commented "runtime"
@@ -252,7 +253,7 @@ and Bazel's in-compiler check is `experimental`.
 | Maven  | none (compiler-level)                           | `dependency:analyze`                      | none                                         | none                 |
 | Nix    | yes, at derivation granularity                  | none                                      | none                                         | store closure        |
 
-## Strengths and weaknesses
+## Strengths
 
 - **Strict deps turns a global question into a local one.** "Can this dependency
   be removed?" no longer requires every transitive user of the target; the direct
@@ -261,6 +262,9 @@ and Bazel's in-compiler check is `experimental`.
   `remove` command, so error and repair are one artifact ([bazel-dep-module]).
 - **Header/action refinement captures rebuild wins without touching build files**
   ([buck2-dep-files], [bazel-codebase]).
+
+## Weaknesses
+
 - **Enforcement is language-specific and audits are runtime-blind.** Java needs a
   compiler plugin, C++ Clang module maps, GN a source scanner, Nix a sandbox; the
   escape hatches are blind spots, and adoption is expensive ([bazel-deps-doc]).

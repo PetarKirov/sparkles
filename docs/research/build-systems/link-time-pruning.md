@@ -6,14 +6,14 @@ that action _keeps_ (unreferenced sections, duplicate functions, archive members
 referenced, libraries nothing used) and what it must _redo_ when a single object
 changes — bytes and load time on one side, the edit–compile–debug loop on the other.
 
-**Last reviewed:** November 2, 2026
+**Last reviewed:** November 3, 2026
 
 | Field      | Value                                                                                                           |
 | ---------- | --------------------------------------------------------------------------------------------------------------- |
 | Category   | Theme — cross-cutting; no single system                                                                         |
 | Question   | What can a linker discard, what does discarding cost, and what can a build DAG observe of the decision?         |
 | Mechanisms | parallel full link, lazy archive extraction, section GC, ICF, ThinLTO index/backends, partial link, link groups |
-| Systems    | mold, LLVM `lld`, GNU `ld`/`ar`, MSVC `link`, ThinLTO, Bazel, Buck2, Meson/Ninja                                |
+| Systems    | mold, Wild, LLVM `lld`, GNU `ld`/`ar`, MSVC `link`, ThinLTO, Bazel, Buck2, Meson/Ninja                          |
 | Vocabulary | [concepts] — _early cutoff_, _trace_, _minimality_; edge pruning is [dependency-pruning]                        |
 
 > [!NOTE]
@@ -89,6 +89,19 @@ weighing 2 may spawn a 32-thread linker inside those two slots, and `memoryHintB
 is documented as "a planning and reporting hint, not a second scheduler"
 (`libs/build-primitives/src/sparkles/build_primitives/task/model.d`). Two such nodes can run together and each open 32
 threads — the oversubscription `MOLD_JOBS` exists to prevent.
+
+Wild sharpens the current frontier. It is a fast non-incremental linker whose
+stated end goal is incremental linking, but at the pinned revision its README
+says "The plan is to eventually make it incremental, however that isn't yet
+implemented" ([`README.md`][wild-readme]), and its FAQ states "Wild doesn't do
+incremental linking yet, but that is the end-goal" ([`FAQ.md`][wild-faq]). That
+absence is informative. An incremental ELF linker must preserve or recompute
+section layout, symbol resolution, archive extraction, relocations, PLT/GOT
+allocation, GC/ICF decisions, debug ranges, build IDs, and output metadata
+after arbitrary object changes; padding sections to make local patches possible
+trades output size and layout stability for edit latency. The production answer
+in 2026 is still "make the full link parallel and deterministic enough", with
+ThinLTO — not incremental final linking — as the decomposition that shipped.
 
 ### 2. Lazy member extraction, and the report the graph never reads
 
@@ -286,17 +299,20 @@ definition is removed or preallocated patch space runs out" ([mold-paper] §10).
 ELF driver exposes no incremental-link option ([lld-options]); Mach-O's "incremental
 LTO cache" is a backend cache, not an incremental link ([lld-macho-options]).
 
-## Strengths and weaknesses
+## Strengths
 
-- **Strengths — a full link is a pure function of its inputs**, so a fast full link
+- **A full link is a pure function of its inputs**, so a fast full link
   composes with hashing, early cutoff and remote execution ([mold-paper] §4.11).
-- **Strengths — the linker's symbol-level report is free evidence.** `--why-extract`,
+- **The linker's symbol-level report is free evidence.** `--why-extract`,
   `--print-archive-stats` and `--why-live` answer "which declared input mattered"
   without tracing syscalls ([lld-options], [lld-driver]).
-- **Weaknesses — pruning is invisible to the graph, tool-dependent and silent when
+
+## Weaknesses
+
+- **Pruning is invisible to the graph, tool-dependent and silent when
   wrong.** Roots differ between GNU `ld` and `lld`, `used` does not protect a symbol,
   and an unsafe ICF fold fails at runtime ([lld-start-stop-gc], [mold-man]).
-- **Weaknesses — every granularity gain moves work elsewhere.** ThinLTO adds index and
+- **Every granularity gain moves work elsewhere.** ThinLTO adds index and
   per-module actions plus a cache; shared libraries add runtime edges and load cost
   ([thinlto-doc], [mold-paper] §10).
 
@@ -361,6 +377,8 @@ Primary sources, opened at these pinned revisions:
   [`docs/mold.md`][mold-man], [`elf/driver.rs`][mold-driver]. At this SHA the clone is
   the Rust implementation ("mold is written in Rust and built with Cargo"), so the
   driver is `.rs`; the manual and benchmark table are the project's own.
+- Wild `d190da633fb289c11a673d93760a67a6b28f31ae`: [`README.md`][wild-readme],
+  [`FAQ.md`][wild-faq].
 - mold paper, _mold: A Massively Parallel Linker_ (ASPLOS 2027),
   [arXiv 2608.23228][mold-paper] — abstract, §2.3, §2.4, §4.5–4.6, §4.11, §7.4–7.5,
   §10; read as HTML, not PDF.
@@ -399,6 +417,8 @@ has no commit, so it is cited by section.
 [dynamic-deps-distributed]: ./dynamic-deps-distributed.md
 [sparkles-toolchain]: ../../../nix/d-toolchain.nix
 [mold-readme]: https://github.com/rui314/mold/blob/331ac663668dc0b1f4949403854613b9b1913025/README.md
+[wild-readme]: https://github.com/wild-linker/wild/blob/d190da633fb289c11a673d93760a67a6b28f31ae/README.md
+[wild-faq]: https://github.com/wild-linker/wild/blob/d190da633fb289c11a673d93760a67a6b28f31ae/FAQ.md
 [mold-man]: https://github.com/rui314/mold/blob/331ac663668dc0b1f4949403854613b9b1913025/docs/mold.md
 [mold-driver]: https://github.com/rui314/mold/blob/331ac663668dc0b1f4949403854613b9b1913025/elf/driver.rs
 [mold-paper]: https://arxiv.org/abs/2608.23228

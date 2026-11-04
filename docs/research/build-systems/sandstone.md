@@ -224,7 +224,7 @@ and has no notion of a key, a store, or an artifact-level edge. Sandstone contri
   a whole-tree preprocess pass into a cache hit — [nix-ninja][]'s "generation is O(graph) per
   invocation and uncached" again.
 
-## Strengths and weaknesses
+## Strengths
 
 - **The right unit, made real** — module-grained CA derivations, and `hs-boot` cycles split into
   nodes rather than worked around in the scheduler.
@@ -232,6 +232,9 @@ and has no notion of a key, a store, or an artifact-level edge. Sandstone contri
   a derived path, not built first.
 - **A complete dynamic-derivation demonstration** — `recursive-nix` build, text-hashed `.drv` output
   and `builtins.outputOf` chaining in one `default.nix`.
+
+## Weaknesses
+
 - **Prototype, and says so**: one commit in the clone, no tags, no test suite, a `YYYY-mm-dd`
   changelog, and a README calling it "not for production builds".
 - **Unreleased-Nix floor** — `ca-derivations`, `dynamic-derivations`, `recursive-nix`, a WIP

@@ -9,15 +9,15 @@ systems actually use, and collects the overhead numbers their own authors
 published. Where a number does not exist, the page says so: a sandbox that costs
 1% on one platform and 21% on another is not described by one figure.
 
-**Last reviewed:** November 2, 2026
+**Last reviewed:** November 3, 2026
 
-| Field      | Value                                                                                       |
-| ---------- | ------------------------------------------------------------------------------------------- |
-| Category   | Theme — cross-cutting; no single system                                                     |
-| Question   | What does observing an action's file I/O cost, and what does it buy over a declaration?     |
-| Mechanisms | interposition, `ptrace`+`seccomp`, FUSE, namespaces, Landlock/`seccomp` policy, eBPF        |
-| Systems    | BuildXL, tup, Bazel (`linux-sandbox`, `sandboxfs`), Please, Pants, Buck2, Rattle/`fsatrace` |
-| Vocabulary | [concepts] — this page does not redefine _scheduler_, _rebuilder_, _trace_ or _minimality_  |
+| Field      | Value                                                                                                     |
+| ---------- | --------------------------------------------------------------------------------------------------------- |
+| Category   | Theme — cross-cutting; no single system                                                                   |
+| Question   | What does observing an action's file I/O cost, and what does it buy over a declaration?                   |
+| Mechanisms | interposition, `ptrace`+`seccomp`, FUSE, namespaces, Landlock/`seccomp` policy, eBPF                      |
+| Systems    | BuildXL, tup, Bazel (`linux-sandbox`, `sandboxfs`), Nix, BitBake, Please, Pants, Buck2, Rattle/`fsatrace` |
+| Vocabulary | [concepts] — this page does not redefine _scheduler_, _rebuilder_, _trace_ or _minimality_                |
 
 ## Overview
 
@@ -54,17 +54,41 @@ The observing camp states the stake, the tracing camp states the risk:
 Neither quote is about cost, and that asymmetry is why cost matters: a missed
 access is silent, a spurious one merely slow.
 
+### Four products are being conflated
+
+"Sandbox" is used for four separable products:
+
+1. **Authority reduction** — the action cannot use capabilities outside a
+   policy (network, process creation, filesystem writes, syscalls).
+2. **Filesystem-view construction** — the action sees a curated tree, often a
+   chroot or bind-mount assembly containing declared inputs and no host home.
+3. **Access observation** — the system obtains read/write/execute/search
+   events, including failed probes if the boundary exposes return values.
+4. **Declaration enforcement** — observed accesses are compared with a
+   declaration and a mismatch becomes a violation, a warning, a learned edge,
+   or a cache-key change.
+
+A mechanism can provide any subset. Nix normally provides 1 and 2 but not 3
+or 4; its build manual asks that derivations be unable to tell which concrete
+sandbox strategy placed them in the deterministic build directory
+([`building.md`][nix-building]). BitBake provides a narrow part of 1 (network
+isolation by default), almost none of 2, and neither 3 nor 4 ([bitbake] §5).
+BuildXL is unusual because it aims at all four. This vocabulary prevents the
+common invalid inference from "sandboxed" to "therefore its dependency graph
+is observed and correct."
+
 ## How it works — the mechanism families
 
-| Family                | Intercepts                        | Sees                                                | Edges? |
-| --------------------- | --------------------------------- | --------------------------------------------------- | ------ |
-| libc interposition    | function calls in `libc`          | paths, flags, return values, `readdir`              | yes    |
-| kernel-API hooking    | Win32 file APIs                   | the same, one layer up                              | yes    |
-| `ptrace` + `seccomp`  | syscalls on a `seccomp` allowlist | syscall arguments and return values                 | yes    |
-| FUSE                  | path lookups under a mount view   | every operation in the view                         | yes    |
-| namespaces + remounts | nothing — visibility only         | nothing                                             | **no** |
-| Landlock / `seccomp`  | nothing — permission only         | nothing                                             | **no** |
-| eBPF                  | kernel-internal functions         | VFS/LSM calls, including paths with no libc wrapper | yes    |
+| Family                | Intercepts                              | Sees                                                                 | Edges?                                     |
+| --------------------- | --------------------------------------- | -------------------------------------------------------------------- | ------------------------------------------ |
+| libc interposition    | function calls in `libc`                | paths, flags, return values, `readdir`                               | yes                                        |
+| kernel-API hooking    | Win32 file APIs                         | the same, one layer up                                               | yes                                        |
+| `ptrace` + `seccomp`  | syscalls on a `seccomp` allowlist       | syscall arguments and return values                                  | yes                                        |
+| FUSE                  | path lookups under a mount view         | every operation in the view                                          | yes                                        |
+| namespaces + remounts | nothing — visibility only               | nothing                                                              | **no**                                     |
+| Landlock              | filesystem/network rights at LSM checks | a decision, normally no access stream                                | **no**, unless paired with logging/tracing |
+| `seccomp` filter      | syscall number/arguments at entry       | allow/kill/errno by itself; an event only in trace/user-notify modes | **only with a supervisor**                 |
+| eBPF                  | kernel-internal functions               | VFS/LSM calls, including paths with no libc wrapper                  | yes                                        |
 
 The two rows marked **no** are the page's central distinction: **a policy
 mechanism is not an observation mechanism**.
@@ -169,6 +193,55 @@ reading user memory which cannot be done in fentry programs"
 ([`sandbox.bpf.c`][bxl-bpf]). Programs load once per build from a daemon and each
 pip gets its own ring buffer, so per-access cost is a map lookup and a record, not
 a process switch.
+
+## A cost model before the numbers
+
+A single percentage is not a mechanism property. For one action, overhead is
+approximately
+
+```text
+fixed setup
++ processes spawned x per-exec instrumentation checks
++ observed operations x event cost
++ path strings copied/canonicalized x bytes
++ data crossings (FUSE requests, tracer IPC, eBPF records)
++ scheduler effects (serialization, cache/TLB pressure, lost parallelism)
+```
+
+That decomposition explains why the same sandbox can be negligible for a
+30-second compiler action and dominant for a 3 ms code generator:
+
+- **Namespace/chroot systems** mostly move cost to setup: create namespaces,
+  bind mounts, remount read-only, materialise declared inputs. Steady-state
+  reads then use the ordinary kernel path.
+- **`ptrace` systems** have per-trapped-syscall context switches. A seccomp
+  allowlist reduces the operation count but also defines what can be missed.
+  In user-notification mode, each intercepted syscall additionally becomes an
+  IPC round trip to a supervisor that must inspect or emulate it.
+- **FUSE systems** can make setup cheap — no per-action symlink forest — but
+  charge every lookup/stat/open that reaches the daemon. Sandboxfs exposes the
+  knobs directly: `--ttl` controls kernel metadata caching, `--node_cache`
+  trades unbounded in-memory node retention for reuse across
+  reconfigurations, and disabling xattrs avoids whole operation classes
+  ([`sandboxfs.1`][sandboxfs-man]).
+- **Interposition** avoids kernel transitions beyond the underlying call, but
+  pays in path copying/canonicalisation and in maintaining wrappers for each
+  libc/API surface.
+- **eBPF** removes most process switches, but not event production: program
+  execution, map/ring-buffer writes, path reconstruction, verifier limits,
+  and user-space consumption still scale with access count.
+- **Policy-only mechanisms** (a Landlock ruleset, a seccomp allow/deny filter,
+  a network namespace) are near one-time setup because the kernel decision is
+  on paths it already traverses. That cheapness is inseparable from the fact
+  that they do not return a dependency set.
+
+**Catalog inference.** Published percentages should therefore be read as
+`(mechanism, workload's process/file-operation mix, baseline)` triples. A
+benchmark dominated by long compiles can hide a mechanism that would be
+unusable for thousands of tiny actions, while a microbenchmark of `open`
+calls can make FUSE look worse than it is for a link step. The useful design
+question is not "what does sandboxing cost?" but "which term above dominates
+for our action-size distribution?"
 
 ## Overhead, as published
 
@@ -281,16 +354,41 @@ moves cost into the build file, where a mistake is a review comment, and into th
 toolchain, which must emit `.d` files or scan includes; it keeps the graph static,
 hence schedulable before work starts (the `Applicative` bargain of [concepts] §2).
 Observation moves cost onto every access and every host and buys the edges nobody
-wrote down; it makes the graph dynamic, hence restarting (Bazel) or suspending
-(Nix, Shake). **Catalog inference:** mature systems converge on a hybrid, but
+wrote down. It does not by itself make scheduling dynamic: BuildXL can keep a
+static pip graph and use observation for validation/cache identity, Rattle uses
+it to reconstruct hazards after speculative execution, and tup uses it as the
+next run's read set. **Catalog inference:** mature systems converge on a hybrid, but
 asymmetrically — observation validates declarations and feeds the key, while
 declarations still gate scheduling.
 
-## Strengths and weaknesses
+### Two non-observing postures worth distinguishing
+
+Nix and BitBake both lack access observation, but for opposite architectural
+reasons. Nix makes the declared store closure the filesystem view: in a Linux
+sandbox the builder gets a chroot-like root, the closure of input store paths,
+configured `sandbox-paths`, a deterministic build directory (`/build` by
+default), restricted environment variables, and (for fixed-output versus
+ordinary derivations) different network treatment ([`building.md`][nix-building],
+[`local-settings.hh`][nix-settings]). An undeclared host header normally does
+not exist in the view, so declaration errors become missing-file failures.
+That is view construction doing correctness work without an event stream.
+
+BitBake leaves the host filesystem visible and removes only network authority
+by default ([bitbake] §5). An undeclared host header can be read successfully
+and silently. The difference is not "sandboxed versus unsandboxed" as a
+binary; it is whether filesystem visibility is derived from the declaration.
+Remote execution systems occupy a third posture: the worker image and
+materialised input tree constrain visibility server-side, while the client
+graph still comes from declarations.
+
+## Strengths
 
 - **Observation is the only mechanism that finds an under-declared input**, and it
   needs no cooperation from the toolchain — which the document-driven frontends
   (MSBuild, CMake, npm scripts) cannot give ([buildxl] §1).
+
+## Weaknesses
+
 - **The cost is real, uneven, and mostly unpublished.** One project publishes
   1–5%; one publishes a 5-point Linux and 21-point Windows tracing tax; both FUSE
   deployments publish no percentage, and one withdrew the mechanism.
@@ -362,6 +460,9 @@ under `$REPOS/build-systems-research/src/` at these SHAs:
 [please]: ./please.md
 [pants]: ./pants.md
 [buck2]: ./buck2.md
+[bitbake]: ./bitbake.md
+[nix-building]: https://github.com/NixOS/nix/blob/1ed54a0fd62da96d4f5e9c806555861e46f65341/doc/manual/source/store/building.md
+[nix-settings]: https://github.com/NixOS/nix/blob/1ed54a0fd62da96d4f5e9c806555861e46f65341/src/libstore/include/nix/store/local-settings.hh
 [perfect-dependencies]: ./perfect-dependencies.md
 [bxl-core]: https://github.com/microsoft/BuildXL/blob/ea34998661867b5959d7f496f8b5650611a3e446/Documentation/Wiki/CoreConcepts.md
 [bxl-sandboxing]: https://github.com/microsoft/BuildXL/blob/ea34998661867b5959d7f496f8b5650611a3e446/Documentation/Specs/Sandboxing.md

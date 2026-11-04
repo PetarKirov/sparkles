@@ -9,7 +9,7 @@ packages to an entire Linux system. Vocabulary in this page is [concepts]'s;
 _scheduler_, _rebuilder_, _trace_, _minimality_ and _early cutoff_ are not
 redefined here.
 
-**Last reviewed:** November 2, 2026
+**Last reviewed:** November 3, 2026
 
 > [!NOTE]
 > The two sources are paired because they answer different halves of one
@@ -250,6 +250,61 @@ state, installing setuid wrappers). It does not add a new scheduler or
 rebuilder. The build engine described in 2006 is the one the distribution
 uses.
 
+### What the deployment chapters add to the build-system story
+
+The chapters around the formal core explain why the store is shaped as it is,
+and they qualify two claims build-system readers often over-read.
+
+**Deployment as memory management (Ch. 3).** Dolstra's central analogy is
+exact: paths are addresses, path strings are pointers, I/O is dereference,
+string operations are pointer arithmetic, and a missing component is a
+dangling pointer (§3.2, Figure 3.1). A deployable unit is a _closure_: the
+least set containing a component and every path reachable from its contents
+(§3.3). To compute closures in a filesystem that permits arbitrary path
+arithmetic, Nix imposes a minimal "pointer discipline": components are stored
+separately and store paths contain long recognisable hash strings so contents
+can be conservatively scanned for references (§3.4). The thesis is explicit
+about the failure mode — pointer hiding through encoding or splitting the
+hash — and treats scanning as a practical discipline, not a proof that all
+references are discoverable.
+
+**The expression language is a graph generator (Ch. 4).** The formal chapter
+separates lazy, recursive attribute-set evaluation from derivation
+realisation. Paths are canonicalised, list/attribute values are lazy, and
+subpaths exist precisely so `perl ~ /bin/perl` records a dependency where
+string concatenation through `outPath` would produce only an opaque string
+(§4.3). In à-la-carte terms, the language is the dynamic/monadic layer that
+generates the static derivation graph; confusing evaluation dependencies
+with realised build dependencies loses that distinction.
+
+**Purity is an ecosystem discipline, not a kernel guarantee (Ch. 7).**
+Chapter 7's Nixpkgs experience makes the threat model concrete. On a hosted,
+non-Nix system a builder can simply call `/usr/bin/gcc`; Nixpkgs reduced the
+risk with cleared environments, a glibc without default library search paths,
+patched GCC/`ld` that ignore or reject non-store paths, `patchelf` RPATH
+shrinking, and rewriting ELF interpreters for third-party binaries
+(§7.1.2–§7.1.4). The hash makes impurity detectable in favourable cases; it
+does not by itself prevent the read. Modern sandboxed builders are the later
+mechanical answer to a limitation the thesis already names.
+
+**CI/release management is absolutised job graphs (Ch. 8).** The build farm
+supervisor is deliberately Nix-agnostic; jobs instantiate Nix expressions
+whose top-level derivation yields a release page and release artifacts.
+Reproducibility is obtained by storing an _absolutised_ `job.xml`: moving
+inputs such as SVN `HEAD` are replaced by a fixed revision and hash, making
+the record itself a re-runnable job (§8.2). Scheduling policies (continuous,
+nightly, weekly full-matrix) sit outside derivations; the purely functional
+part is the released closure and its provenance record.
+
+**Services expose the state boundary (Ch. 9).** A service is modelled as
+software components plus generated configuration and a control script,
+installed through a profile and activated by stop/start scripts. Coupled
+code/configuration can roll back together, but persistent service data and
+initialisation remain outside the derivation output. Chapter 9 is therefore
+an early statement of the NixOS split still visible today: declarative
+composition for immutable software/configuration, imperative activation and
+state migration at the boundary.
+
 ## The fixed analysis spine
 
 ### 1. Task model and scheduling
@@ -385,7 +440,7 @@ is the missing _identity and store_ layer, not another scheduler:
   paths needs traced or declared discovery first ([perfect-dependencies],
   [pie]) and scanning only as a runtime-reference check.
 
-## Strengths and weaknesses
+## Strengths
 
 - **Correct by construction, at the right level.** Complete dependencies,
   immutable outputs, atomic profile switches, O(1) rollback and safe garbage
@@ -399,6 +454,9 @@ is the missing _identity and store_ layer, not another scheduler:
   487-path / 1,991 MiB runtime closure, and 560 Nix expression files evaluated
   in 1.5 s of CPU time (JFP §6.1, p. 27). The purity measurement is a real
   experiment, not an assertion.
+
+## Weaknesses
+
 - **No early cutoff.** Deep constructive traces rebuild dependents when an
   input derivation's identity changes, even if the new output is byte-identical.
   The cost is worst at the bottom of the graph: a Glibc change rebuilds the
@@ -446,10 +504,13 @@ is the missing _identity and store_ layer, not another scheduler:
   parallel algorithm); Ch. 6 "The Intensional Model" §6.1–6.3.2 (sharing,
   content-addressable store, hash rewriting); Ch. 10 "Build Management"
   (§10.1–10.2 and the start of §10.3); Ch. 11 "Conclusion" and §11.1 future
-  work through the blacklisting entry. **Not read in full:** Ch. 3 (deployment
-  as memory management), Ch. 4 (expression language semantics), Ch. 7
-  (Nixpkgs), Ch. 8 (build farm), Ch. 9 (service deployment). Claims about those
-  chapters are not made here.
+  work through the blacklisting entry. Revision read (2026-11-03) additionally
+  targeted Ch. 3 §§3.2–3.4 (filesystem-as-memory, closures, pointer discipline),
+  Ch. 4 §4.3 (values/paths/subpaths semantics), Ch. 7 §§7.1.2–7.1.5
+  (stdenv/purity/third-party binaries/experience), Ch. 8 §8.2 (build farm,
+  absolutised release jobs), and Ch. 9 §§9.1–9.2 (service composition and
+  activation). Those chapters were read for the arguments summarised above,
+  not line-by-line in full.
 - Dolstra, Löh & Pierron, _NixOS: A Purely Functional Linux Distribution_,
   JFP 20(5–6):577–615 (2010) — [DOI][jfp-doi], [PDF][jfp]. Read from
   `$REPOS/papers/build-systems/dolstra-2010-nixos-purely-functional-linux-distribution-jfp.pdf`

@@ -5,7 +5,7 @@ derivation, builds it through `recursive-nix`, and lets the Nix store deduplicat
 the result — a cache bridge between fine-grained action graphs and Nix's
 package-level store.
 
-**Last reviewed:** November 2, 2026
+**Last reviewed:** November 3, 2026
 
 | Field          | Value                                                                                                                                                   |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -145,17 +145,61 @@ depending on where it ran. The fix trades precision for stable identity: a path
 is a path, never "this build of gcc". `NIXCEPTION_EXTRA_SANDBOX_PATHS` is the
 escape hatch, and because those paths join `input_sources` they change the key.
 
+### What the REAPI translation loses
+
+The bridge is intentionally action-shaped, not a lossless remote-execution
+implementation. Reading `unfold`, the runner, and output collection together
+shows four concrete losses:
+
+- **Symlinks disappear.** `unfold` walks `Directory.files` and
+  `Directory.directories`, but not `Directory.symlinks`; output collection
+  likewise uploads only regular files and explicitly skips symlinks and
+  special files. Capabilities disallow absolute symlink paths, but that does
+  not make relative symlinks unrepresentable in REAPI. An action whose input
+  or output meaning depends on a link gets a different tree/result rather
+  than a clear unsupported-feature error.
+- **Materialisation is copying, not linking.** Every input blob is copied
+  from its CA store path into the build directory, made writable, and given
+  executable bits if requested. Hardlink identity, sparse structure, most
+  mode bits, timestamps, xattrs, ownership, and device/fifo nodes are not
+  preserved. This buys writable compiler inputs at O(total input bytes)
+  local I/O before the command starts.
+- **Digest agility is narrower than the inherited capabilities surface.**
+  `main` selects `DigestHasherFunc::Sha256`, and `NixStore` treats the
+  32-byte packed digest as a Nix flat SHA-256 CA hash in both
+  `key_to_store_path` and `key_to_ca`. That is the sound path for SHA-256
+  clients; another 32-byte REAPI digest function would need an explicit
+  translation/rejection boundary rather than reinterpretation as SHA-256.
+- **Platform properties do not select an executor.** `NixScheduler` creates
+  an empty/default platform-property manager and does not match action
+  properties against workers; every action is attempted with the one baked-in
+  runner system. This is a local Nix executor exposed through REAPI, not a
+  heterogeneous REAPI fleet.
+
+Timeout is one field that is translated: `NixWorker::run` wraps execution in
+`tokio::time::timeout` and reports exit code 124 on expiry. That bounds the
+client-visible operation; it should not be read as proof that an in-flight
+daemon build is synchronously cancelled and reclaimed.
+
 ### Scheduling, retries and the daemon pool
 
 `NixScheduler` is a state manager, not a planner. `add_action` registers the
-operation and spawns a `tokio` task per action; each worker drives itself through
-`Queued → Executing → Completed`. `add_worker` returns `Unimplemented`, so the
-execution service is single-node and the real parallelism is the Nix daemon's.
+operation and immediately spawns one unbounded `tokio` task per action; each
+worker drives itself through `Queued → Executing → Completed`. There is no
+admission queue in nixception itself: CAS unfolding, byte scanning, manifest
+construction, and output upload can all proceed concurrently for every
+submitted action. `add_worker` returns `Unimplemented`, so the execution
+service is single-node and the real execution parallelism is the Nix daemon's.
 All daemon I/O goes through `NixDaemonConnectionPool`: up to ten lazily opened
 async `UnixStream`s, semaphore-bounded, cached for 30 s and reaped every 5 s.
+That bounds daemon RPC concurrency, not memory used by preparation or output
+collection (each output file is read wholly into memory before CAS upload).
 Builds retry up to three times with exponential backoff (2 s, 4 s, 8 s), and
 `classify_build_status` treats Nix's `PermanentFailure` as retryable when the
-message looks like an OOM or signal kill.
+message looks like an OOM or signal kill. The state manager itself is
+configured with `max_job_retries = 0`, plus 60 s no-event and 120 s client
+timeouts; retries are inside the worker's daemon-build loop, not rescheduling
+of an action onto another executor.
 
 ### Maturity signals
 
@@ -211,9 +255,14 @@ The Nix store is both CAS and action cache: input blobs are CA paths
 (`reapi-adapted`), derivations and outputs are input-addressed, and GC/eviction
 are Nix's. `NixStore::update` verifies the daemon's returned content address
 against the key, with a fallback that tolerates an upload error when the path
-already exists. Because the AC service is `Noop`, a client cannot read an
-`ActionResult` back; reuse re-realises an already-valid derivation — cheap, but
-not the REAPI action-cache contract.
+already exists. Reads are split by direction: upload goes through the daemon,
+while `has_with_results` and `get_part` inspect/read the physical store path
+directly (with an optional chroot-store root mapping), so server placement
+relative to the store is part of the design. Because the AC service is
+`Noop`, a client cannot read an `ActionResult` back; reuse re-realises an
+already-valid derivation — cheap, but not the REAPI action-cache contract,
+and cache-hit reporting is inferred from the runner's `timing.json` rather
+than from a first-class action-cache record.
 
 ### 5. Hermeticity & provenance
 
@@ -248,7 +297,7 @@ and one warning:
 - **Do not copy the byte scan.** Textual `/nix/store` discovery is Nix-specific;
   a general task DAG should declare inputs or trace them, not grep.
 
-## Strengths and weaknesses
+## Strengths
 
 - **Action-level granularity on a package-level store.** Each compile gets its
   own derivation and store path, so a shared store deduplicates work across
@@ -256,6 +305,9 @@ and one warning:
 - **Identity is a first-class problem.** The demo diffs the action manifest
   across `nix build` and `nix develop`, and a changelog entry reverts a precision
   feature to keep identity stable.
+
+## Weaknesses
+
 - **No action-cache service, and single node.** `Ac { ac_store: void }` gives
   clients no `ActionResult` reuse; `add_worker` is unimplemented, so the façade
   does not distribute execution and the default build strips the remote stores.
@@ -263,6 +315,9 @@ and one warning:
   workaround is a server-wide environment variable, and the project is
   experimental, shallow-cloned, with regression fixes at the head of its
   changelog.
+- **Lossy filesystem translation.** Input/output symlinks are skipped, files
+  are copied with reduced metadata, and whole output files are buffered in
+  memory during CAS upload.
 
 ## Key design decisions and trade-offs
 

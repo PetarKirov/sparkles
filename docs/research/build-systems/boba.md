@@ -3,7 +3,7 @@
 "Boba" is the name used for Fuchsia's next-generation platform build: Bazel becomes the dependency and action engine while GN/Ninja stays
 the outer build during migration. No fetched public page uses the name, and it is not a standalone project. Vocabulary is [concepts]'s.
 
-**Last reviewed:** November 2, 2026
+**Last reviewed:** November 3, 2026
 
 > [!WARNING]
 > **No source clone was available.** No standalone Boba repository exists, and `boba` has zero hits in the `fuchsia.dev` sitemap and opened in-tree files.
@@ -42,36 +42,36 @@ repository `@legacy_ninja_build_outputs`; the README calls it `@gn_targets`.
 Skyframe reevaluates, restarts on a missing dependency, and the action cache can supply a result. The GN/Ninja half is **topological × verifying
 traces**. Boba is the _seam_: early cutoff exists inside Bazel, but one invocation is one coarse Ninja edge.
 
-### Task model & scheduling
+### 1. Task model & scheduling
 
 Ninja orders GN topologically; Bazel runs each `bazel_action()` as one inner Skyframe build. The seam costs seconds even on a no-op ([migration]),
 so RFC-0186 allowed at most a 50% null-build regression ([rfc-0186]).
 
-### Rebuilding & correctness
+### 2. Rebuilding & correctness
 
 Bazel keys actions on command plus input digests and can supply outputs; not minimal (restarts redo work) but early cutoff applies.
 Ninja sees only mtime/`restat`/`depfile`; the caches stay independent.
 
-### Dependency discovery
+### 3. Dependency discovery
 
 Declared, not traced: `BUILD` edges plus `@gn_targets`, fed by `bazel_input_file()`/`bazel_input_directory()` ([readme], [bazel-action]).
 The sandbox catches undeclared inputs; GN cannot see Bazel.
 
-### Store & caching
+### 4. Store & caching
 
 `output_base` sits under the `fx` build directory with writable outputs ([outputs]); `FUCHSIA_BAZEL_DISK_CACHE` outlives `out/`,
 is shareable, can be size-capped, and complements RBE ([disk-cache]).
 
-### Hermeticity & provenance
+### 5. Hermeticity & provenance
 
 Bazel's Linux sandbox exposes only declared inputs; RFC-0186 priced it at up to 10% of a clean build, with `--spawn_strategy=local` as fallback.
 No SLSA/in-toto attestation is documented in the pages opened.
 
-### Distribution
+### 6. Distribution
 
 Stock Bazel RBE (`--config=remote`), disk cache as a lower-latency complement ([readme], [disk-cache]); no Fuchsia-specific worker protocol appears.
 
-### Sparkles relevance
+### 7. Sparkles relevance
 
 Borrow **a foreign engine as one declared node**: an input manifest, a declared output set, and a cache key over them, exactly what `bazel_input_*()` provides.
 Two caches without a shared key can disagree about dirtiness.

@@ -6,7 +6,7 @@ action graph for a worker fleet. This page separates the two decisions both call
 "dynamic" (graph _shape_ versus action _placement_), follows each through Bazel,
 Buck2, Ninja, Nix and PIE, and records what their authors do and do not prove.
 
-**Last reviewed:** November 2, 2026
+**Last reviewed:** November 3, 2026
 
 > [!NOTE]
 > **Catalog inference** marks a claim this page derives from the cited sources
@@ -195,6 +195,40 @@ closed at dispatch time; discovery that has not finished is not an input.
    materialised ([buck2] §2, [`dynamic_dependencies.md`][buck2-dyndeps]).
    **Catalog inference:** a dynamic edge is a forced download point.
 
+### Reducing stalls without breaking action closure
+
+The seam does not have to cost a naive client/worker ping-pong for every edge,
+but every optimisation works around — not through — REAPI's closed action:
+
+- **Batch discovery into an index action.** ThinLTO's indexer reads all
+  summaries once and emits per-backend import lists, turning many potential
+  discoveries into one synchronisation point ([link-time-pruning] §5). The
+  cost is a barrier; the benefit is that backends become ordinary parallel
+  closed actions.
+- **Inline the small discovery record.** REAPI `Execute` requests can ask for
+  `inline_stdout`/`inline_stderr` and named `inline_output_files` in the
+  `ExecuteResponse` ([`remote_execution.proto`][reapi-proto]). A tiny depfile
+  or imports list can therefore return with the operation instead of requiring
+  a second CAS fetch, though the client still cannot dispatch dependents until
+  it reads and interprets the record.
+- **Prefetch likely inputs while the producer runs.** Candidate blobs can be
+  staged from history, but the dependent action's input root/digest cannot be
+  finalised until discovery says which subset is real. Prefetch hides transfer
+  latency; it does not remove the dependency on the producer's result.
+- **Collocate the planner with the CAS.** If analysis runs beside the store,
+  reading a discovery artifact is local metadata work rather than a client
+  download. This moves the seam, it does not eliminate it: the planner still
+  has to serialise graph growth through completed actions.
+- **Keep discovery depth shallow.** A chain of k dynamic boundaries costs at
+  least k producer completions in series. Designs that let one discovery
+  artifact describe a whole subgraph (Nix generated derivations, a ThinLTO
+  combined index) pay fewer round trips than one-edge-at-a-time rewriting.
+
+**Catalog inference:** the metric that matters is not dynamic-edge count but
+_dynamic depth on the critical path_ — how many discovery records must be
+produced, transferred, and interpreted serially before the longest chain of
+real work can be dispatched.
+
 ### Dynamic execution is a different axis
 
 > "Dynamic execution is a feature in Bazel where local and remote execution of the
@@ -265,6 +299,34 @@ dynamic ones; `tryResolve` returns `std::nullopt` rather than a wrong answer, an
 filled-in derivations "may have more transitive dependencies than the original
 derivation" ([`store/resolution.md`][nix-resolution]).
 
+### A minimal proof/obligation checklist for a new dynamic scheme
+
+The published systems suggest six separate obligations; collapsing them into
+"the scheduler is correct" hides where dynamic rewrites usually fail:
+
+1. **Local task termination** — each producer/task terminates and returns a
+   finite discovery record.
+2. **Finite graph growth** — generated nodes/edges are drawn from a finite or
+   well-founded universe; a task cannot mint fresh identities forever.
+3. **Acyclicity or a defined cycle semantics** — newly added edges cannot make
+   a task wait on itself unless the scheduler gives cycles a least-fixed-point
+   meaning (DICE) rather than a deadlock.
+4. **Monotonic, idempotent discovery** — re-reading the same record adds the
+   same edges once; retries and duplicate remote executions cannot create
+   distinct graph identities for one logical task.
+5. **No work executed on an obsolete graph version** — if an input changes
+   while discovery/execution is in flight, results are tied to the graph/input
+   revision that produced them and are discarded or revalidated.
+6. **Discovery-record completeness** — the record contains every input the
+   consumer will read, including absent-path probes and environment/toolchain
+   facts; otherwise graph termination is proved for the wrong graph.
+
+Most production systems discharge 2–4 by construction (finite static task
+identities, forward-only patches, content-addressed records) and leave 1 and
+6 to the tool author. A scheme that generates task identities from arbitrary
+build outputs — dynamic derivations taken to their limit — has to state 2
+explicitly or termination becomes a property of user code.
+
 ## Analysis spine
 
 Discovery is `Monad`-shaped throughout, but the rebuilder stays orthogonal:
@@ -276,18 +338,24 @@ Bazel and Buck2, the Nix store for a `.drv`. **Catalog inference:** the store
 decides how well discovery distributes, because a `.drv` has a content address a
 worker can fetch while a `dyndep` file is only readable where the build runs.
 
-## Strengths and weaknesses
+## Strengths
 
-- **Restarting is cheapest to implement and most expensive to run**; suspending
-  matches a modern engine's shape but needs a daemon and a completeness claim
-  explicitly not made. Neither graph mutation nor suspension comes free.
-- **Patching is the smallest change to an existing scheduler** and the least
-  general: one file, one-to-one edges, forward-only. It buys first-build
-  correctness for Fortran and C++20 modules without touching topological order.
 - **Publishing is the only encoding that survives distribution cleanly**,
-  because the fragment becomes a store object with a content address; recording
-  is the most expressive — loops and conditionals, not just a depfile — and the
-  least distributable, because it needs the previous graph and a changed-file set.
+  because the fragment becomes a store object with a content address.
+- **Patching is the smallest change to an existing scheduler**: it buys
+  first-build correctness for Fortran and C++20 modules without touching
+  topological order.
+
+## Weaknesses
+
+- **Neither restarting nor suspending comes free**: restarting is cheapest to
+  implement and most expensive to run, while suspending matches a modern
+  engine's shape but needs a daemon and a completeness claim explicitly not
+  made.
+- **Patching and recording trade generality or distribution**: patching is
+  limited to one file and forward-only one-to-one edges, while recording
+  (loops and conditionals) is the least distributable because it needs the
+  previous graph and a changed-file set.
 
 ## Key design decisions and trade-offs
 
@@ -351,6 +419,7 @@ In-corpus pages consulted: [concepts] (§2, §5, §6's deferred topics),
 <!-- References -->
 
 [concepts]: ./concepts.md
+[link-time-pruning]: ./link-time-pruning.md
 [a-la-carte]: ./a-la-carte.md
 [bazel]: ./bazel.md
 [buck2]: ./buck2.md

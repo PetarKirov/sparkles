@@ -7,7 +7,7 @@ can only test the second, one axis at a time. What it can build is narrower: an
 environment small enough that variance has nowhere to enter, knobs that make the
 rest expressible, and a check that turns a silent difference into an error.
 
-**Last reviewed:** November 2, 2026
+**Last reviewed:** November 3, 2026
 
 | Field      | Value                                                                                          |
 | ---------- | ---------------------------------------------------------------------------------------------- |
@@ -163,6 +163,18 @@ docs admit the question is unanswerable — no way to audit a build trace entry
 the protocol says so in a field: a false `isNonDeterministic` "does not mean the
 build is deterministic, just that we don't have evidence" ([nix-result-schema]).
 
+Current upstream also states the builder filesystem more strictly than the
+thesis-era implementation: only the input closure should be exposed, outputs
+must not pre-exist, the working directory is a fresh deterministic `/build`
+inside the sandbox, basic devices/loopback/minimal identities are supplied,
+and the environment is cleared before derivation variables plus fixed
+`PATH=/path-not-set` and `HOME=/homeless-shelter` are installed
+([nix-building]). Output processing then normalises permissions/timestamps
+and scans outputs by input store-path digests to register references. That
+narrows, but does not eliminate, tool-internal nondeterminism: randomness,
+concurrency order, CPU dispatch, and reading permitted device/proc state can
+still vary inside a perfectly constructed view.
+
 **Bazel** treats hermeticity as isolation plus source identity and names the gap:
 "there's no way to stop an action developer from doing something like introducing a
 nondeterministic process as part of their action" ([bazel-artifact]). It names among
@@ -244,18 +256,21 @@ survey what shipping it has taken since.
   ([gcc-frandom]); a prefix map rewrites recorded references only ([gcc-ffpm]); an
   epoch derived from a generated file is unstable ([nixpkgs-sde]).
 
-## Strengths and weaknesses
+## Strengths
 
 - **The cheap wins are cheap**: `-Wdate-time` and a per-file `-frandom-seed` remove
   two entropy classes in one line each ([gcc-wdate], [gcc-frandom]); `LC_ALL=C` plus
   a sort removes the commonest ordering bug ([rb-stable-inputs]).
+- **The strongest systems say what they do not know** ([nix-result-schema],
+  [bazel-user-manual]) — a claim without a check is marketing.
+
+## Weaknesses
+
 - **The expensive part is the perimeter**: paths, hosts, locales and users are the
   bulk of the variations ([rb-env-variations]), and clearing the environment costs
   more than every seed flag combined.
 - **Almost nothing is verified by default**: only Nix ships a check and it is opt-in
   ([nix-check]); elsewhere the evidence is a procedure a human must remember.
-- **The strongest systems say what they do not know** ([nix-result-schema],
-  [bazel-user-manual]) — a claim without a check is marketing.
 
 ## Key design decisions and trade-offs
 
@@ -313,7 +328,7 @@ In-corpus pages synthesized: [concepts] (§3 trace shapes, §4 correctness),
 [compile-time-execution], [sandstone], [nix-dynamic-derivations]. Primary sources,
 from clones under `$REPOS/build-systems-research/src/`:
 
-- Nix `656eed23a30dd8cfd81ce37d1b46d49283e81b9c`: [`building.md`][nix-building],
+- Nix `1ed54a0fd62da96d4f5e9c806555861e46f65341`: [`building.md`][nix-building],
   [`build-trace.md`][nix-build-trace], [`content-address.md`][nix-ca-determinism],
   [`build-result-v1.yaml`][nix-result-schema], [`realise.md`][nix-check],
   [`src/nix/build.cc`][nix-rebuild-flag].
@@ -354,12 +369,12 @@ from clones under `$REPOS/build-systems-research/src/`:
 [gcc-frandom]: https://gcc.gnu.org/onlinedocs/gcc/Developer-Options.html#index-_002dfrandom_002dseed
 [gcc-ffpm]: https://gcc.gnu.org/onlinedocs/gcc/Overall-Options.html#index-_002dffile_002dprefix_002dmap
 [ar-man]: https://sourceware.org/binutils/docs/binutils/ar-cmdline.html
-[nix-building]: https://github.com/NixOS/nix/blob/656eed23a30dd8cfd81ce37d1b46d49283e81b9c/doc/manual/source/store/building.md
-[nix-build-trace]: https://github.com/NixOS/nix/blob/656eed23a30dd8cfd81ce37d1b46d49283e81b9c/doc/manual/source/store/build-trace.md
-[nix-ca-determinism]: https://github.com/NixOS/nix/blob/656eed23a30dd8cfd81ce37d1b46d49283e81b9c/doc/manual/source/store/derivation/outputs/content-address.md
-[nix-result-schema]: https://github.com/NixOS/nix/blob/656eed23a30dd8cfd81ce37d1b46d49283e81b9c/doc/manual/source/protocols/json/schema/build-result-v1.yaml
-[nix-check]: https://github.com/NixOS/nix/blob/656eed23a30dd8cfd81ce37d1b46d49283e81b9c/doc/manual/source/command-ref/nix-store/realise.md
-[nix-rebuild-flag]: https://github.com/NixOS/nix/blob/656eed23a30dd8cfd81ce37d1b46d49283e81b9c/src/nix/build.cc
+[nix-building]: https://github.com/NixOS/nix/blob/1ed54a0fd62da96d4f5e9c806555861e46f65341/doc/manual/source/store/building.md
+[nix-build-trace]: https://github.com/NixOS/nix/blob/1ed54a0fd62da96d4f5e9c806555861e46f65341/doc/manual/source/store/build-trace.md
+[nix-ca-determinism]: https://github.com/NixOS/nix/blob/1ed54a0fd62da96d4f5e9c806555861e46f65341/doc/manual/source/store/derivation/outputs/content-address.md
+[nix-result-schema]: https://github.com/NixOS/nix/blob/1ed54a0fd62da96d4f5e9c806555861e46f65341/doc/manual/source/protocols/json/schema/build-result-v1.yaml
+[nix-check]: https://github.com/NixOS/nix/blob/1ed54a0fd62da96d4f5e9c806555861e46f65341/doc/manual/source/command-ref/nix-store/realise.md
+[nix-rebuild-flag]: https://github.com/NixOS/nix/blob/1ed54a0fd62da96d4f5e9c806555861e46f65341/src/nix/build.cc
 [bazel-hermeticity]: https://github.com/bazelbuild/bazel/blob/2105aec32b598dcc8e09905e7cf18ccfa4b0358e/docs/basics/hermeticity.mdx
 [bazel-distributed]: https://github.com/bazelbuild/bazel/blob/2105aec32b598dcc8e09905e7cf18ccfa4b0358e/docs/basics/distributed-builds.mdx
 [bazel-artifact]: https://github.com/bazelbuild/bazel/blob/2105aec32b598dcc8e09905e7cf18ccfa4b0358e/docs/basics/artifact-based-builds.mdx

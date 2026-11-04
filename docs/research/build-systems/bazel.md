@@ -5,7 +5,7 @@ immutable node graph, where actions are ordinary nodes whose execution is backed
 three caches and, optionally, a REAPI client. This page is the engine companion to
 the workspace-shaped survey and stays inside `src/main`.
 
-**Last reviewed:** November 2, 2026
+**Last reviewed:** November 3, 2026
 
 | Field          | Value                                                                       |
 | -------------- | --------------------------------------------------------------------------- |
@@ -104,6 +104,48 @@ reachability. The action key is the correctness-critical half, and
 [`Action.java`][action] warns that "you may be tempted to intentionally exclude data
 from the cache key, but be aware that every time we've done that, it later resulted
 in expensive debugging sessions and bug fixes".
+
+### What a node's version means
+
+The page above names states; the version arithmetic is where early cutoff
+becomes precise. A node's `Version` is not a content hash and not simply
+"how many times it ran": `NodeEntry.getVersion()` documents it as the
+maximum transitive source version at the last point its value changed, while
+dirty checking proceeds over **direct dependency groups**. A parent records
+the child version it last verified group by group; if a child was dirtied
+and recomputed to the same value, its version need not force the parent to
+rebuild, and partially verified dep groups are not rechecked
+([`NodeEntry.java`][node-entry], [`GroupedDeps.java`][grouped-deps]).
+`AbstractParallelEvaluator` therefore spends much of its complexity on
+`checkIfDoneForDirtyReverseDep`, error-transience nodes, and distinguishing
+"dirty because a source changed" from "dirty because a previous error might
+now be stale". This is the implementation cost of making restarting
+evaluation behave like a memoizing graph rather than a fresh top-down walk:
+correctness lives in version bookkeeping, reverse-dep registration timing,
+and grouped dependency updates as much as in the SkyFunctions themselves.
+
+### Persistent workers: the daemon action executor
+
+Bazel also has a second long-lived execution model below the server.
+Persistent workers keep a compiler/tool process alive across actions;
+multiplex workers allow one process to serve concurrent requests.
+`WorkerPoolImpl` bounds instances per `WorkerKey` (eight multiplex workers by
+default), `WorkerFactory` creates sandboxed or unsandboxed worker proxies,
+and a multiplexer is shared by proxies with the same key
+([`WorkerPoolImpl.java`][worker-pool], [`WorkerFactory.java`][worker-factory],
+[`WorkerMultiplexerManager.java`][worker-mux]). The worker protocol turns a
+process invocation into a long-lived request/response service, so startup,
+JIT warmup, parsed headers, and compiler-internal caches can survive across
+actions.
+
+That performance comes with a correctness contract the action graph cannot
+fully express: the worker must not leak state between requests except in ways
+that are deterministic functions of declared inputs, and Bazel must restart
+or discard workers when their key (executable, flags, environment, execution
+platform) changes. Persistent workers are thus neither remote execution nor
+ordinary spawns; they are memoized process state living beside Skyframe's
+memoized value graph, with sandboxing and cacheability constraints of their
+own. They are the clearest Bazel example for [daemon-compilers].
 
 ### Sandbox mechanics
 
@@ -263,6 +305,9 @@ to verify declarations — the [Rattle][rattle] and [BuildXL][buildxl] direction
 - Evaluator and actions: [`skyframe.mdx`][skyframe], [`codebase.mdx`][codebase],
   [`NodeEntry.java`][node-entry], [`FunctionHermeticity.java`][hermeticity],
   [`Action.java`][action], [`ActionCache.java`][action-cache].
+- Persistent workers: [`WorkerPoolImpl.java`][worker-pool],
+  [`WorkerFactory.java`][worker-factory],
+  [`WorkerMultiplexerManager.java`][worker-mux].
 - Sandboxing and remote execution: [`SandboxModule.java`][sandbox-module],
   [`SandboxOptions.java`][sandbox-options], [`linux-sandbox.cc`][linux-sandbox],
   [`linux-sandbox-pid1.cc`][pid1], [`GrpcRemoteExecutor.java`][grpc-exec],
@@ -296,3 +341,8 @@ to verify declarations — the [Rattle][rattle] and [BuildXL][buildxl] direction
 [rattle]: ./rattle.md
 [buildkit]: ./buildkit.md
 [perfect-dependencies]: ./perfect-dependencies.md
+[grouped-deps]: https://github.com/bazelbuild/bazel/blob/2105aec32b598dcc8e09905e7cf18ccfa4b0358e/src/main/java/com/google/devtools/build/skyframe/GroupedDeps.java
+[worker-pool]: https://github.com/bazelbuild/bazel/blob/2105aec32b598dcc8e09905e7cf18ccfa4b0358e/src/main/java/com/google/devtools/build/lib/worker/WorkerPoolImpl.java
+[worker-factory]: https://github.com/bazelbuild/bazel/blob/2105aec32b598dcc8e09905e7cf18ccfa4b0358e/src/main/java/com/google/devtools/build/lib/worker/WorkerFactory.java
+[worker-mux]: https://github.com/bazelbuild/bazel/blob/2105aec32b598dcc8e09905e7cf18ccfa4b0358e/src/main/java/com/google/devtools/build/lib/worker/WorkerMultiplexerManager.java
+[daemon-compilers]: ./daemon-compilers.md
