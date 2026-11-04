@@ -126,7 +126,7 @@
       flake = false;
     };
     termbench-src = {
-      url = "github:cmuratori/termbench";
+      url = "github:PetarKirov/termbench";
       flake = false;
     };
     json-test-suite = {
