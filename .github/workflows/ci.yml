@@ -1169,7 +1169,7 @@ jobs:
           use-nix-cache: false
 
       - name: Every pinned toolchain output is in the cache
-        run: nix run .#ci-minimal -- --check-pin-cache
+        run: nix run .#toolchain-pin-check
 
   ci:
     name: CI

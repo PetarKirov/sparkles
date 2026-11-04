@@ -162,6 +162,53 @@
         };
       });
 
+      packages.toolchain-pin-check = pkgs.stdenv.mkDerivation {
+        pname = "toolchain-pin-check";
+        version = "0.1.0";
+
+        src = config.legacyPackages.sparklesSources.sourceFor (
+          [
+            "apps/ci/tools/check-pin-cache.d"
+            "apps/ci/src/derivation_pin_set.d"
+            "apps/ci/src/derivation_pin_cachix.d"
+            "libs/core-cli/src"
+          ]
+          ++ config.legacyPackages.sparklesSources.libsClosure [ "base" ]
+        );
+
+        nativeBuildInputs = [
+          pkgs.ldc
+          pkgs.lld-sparkles
+        ];
+
+        buildInputs = [
+          pkgs.curl.out
+        ];
+
+        buildPhase = ''
+          ldc2 -O2 -preview=dip1000 -preview=in -i \
+            -Iapps/ci/src \
+            -Ilibs/base/src \
+            -Ilibs/metadata/src \
+            -Ilibs/reflection/src \
+            -Ilibs/core-cli/src \
+            -Ilibs/test-runner/src \
+            -L-lcurl \
+            -of=toolchain-pin-check \
+            apps/ci/tools/check-pin-cache.d
+        '';
+
+        installPhase = ''
+          mkdir -p $out/bin
+          cp toolchain-pin-check $out/bin/
+        '';
+
+        meta = {
+          description = "Check that all pinned toolchain outputs are in Cachix";
+          mainProgram = "toolchain-pin-check";
+        };
+      };
+
       # Reuse the existing harness, with no foreign-oracle libraries or curl.
       # Foreign dependencies live in a separate opt-in recipe so DUB never
       # resolves them here; the shared builder provisions root manifests.
