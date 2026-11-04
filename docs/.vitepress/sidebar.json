@@ -5470,6 +5470,18 @@
               {
                 "text": "Comparison",
                 "link": "/research/build-systems/comparison"
+              },
+              {
+                "text": "Research Method and Limits",
+                "link": "/research/build-systems/method"
+              },
+              {
+                "text": "Behavioral Evidence",
+                "link": "/research/build-systems/behavioral-evidence"
+              },
+              {
+                "text": "Sparkles Application",
+                "link": "/research/build-systems/sparkles"
               }
             ]
           }

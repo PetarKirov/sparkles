@@ -1,20 +1,21 @@
 # Build Systems: Concepts & Vocabulary
 
-A build system, in the precise sense this catalog uses, is a function: given a
-_task description_, a _target key_ and a _store_, it returns a new store in which
-the target and its dependencies are up to date (`Build c i k v`, JFP §3.3). Almost
-every disagreement between real systems then reduces to two orthogonal choices
-inside that function — the order in which keys are brought up to date (the
-_scheduler_, JFP §4) and the test that decides whether a key needs work at all
-(the _rebuilder_, JFP §5) — and it is the composition of those two choices that
-names Make, Ninja, Shake, Bazel, Nix and the rest (JFP §6, Table 2). This page
-fixes that vocabulary once, with a section citation for every term, so the
-deep-dives here can say "suspending scheduler × constructive traces" instead of
-re-deriving Shake, Bazel and Nix from first principles. It is a reference page,
-not a survey: where a later theme page needs a term the paper does not define,
-this page says so rather than inventing a definition.
+An incremental build must produce an up-to-date result while avoiding work that
+cannot affect it. Two questions recur: which dependencies must finish before a
+task can proceed, and what evidence allows the task to be skipped? The
+_scheduler_ answers the first; the _rebuilder_ answers the second. Their
+composition is the central model of [Build Systems à la Carte][jfp].
 
-**Last reviewed:** November 2, 2026
+This page explains that model and its limits as a vocabulary for comparing
+engines. Sections 1–3 introduce tasks, scheduling and rebuilding; §4 separates
+correctness from avoiding unnecessary work; §§5–6 explain the design space and
+sharing cached results. Section 7 connects the model to implementation layers and to the
+theme pages that cover observation, isolation and provenance. The examples are
+deductions from the model, not measurements of named tools. Engine-specific
+behavior belongs in the deep-dives and [comparison].
+
+**Last reviewed:** November 4, 2026 — conceptual examples and synthesis boundaries;
+upstream source revisions remain those listed under Sources.
 
 > [!NOTE]
 > Terminology follows the JFP 2020 journal version of
@@ -41,8 +42,11 @@ Excel it is the workbook, cell names and cell contents. Values are **inputs**
 > — JFP §3.1
 
 A **task description** says how to recompute one key from the up-to-date values
-of its dependencies; input keys have no task (`Nothing`). The task itself is a
-second-order function, polymorphic in the effect `f` it runs in (JFP §3.2):
+of its dependencies; input keys have no task (`Nothing`). For example, the task
+for `program.o` asks for `generated.h`, then compiles it. The engine supplies the
+operation that obtains each dependency, so the task need not choose whether to
+build, verify or restore that dependency. This separation is expressed by the
+paper's function types (JFP §3.2–§3.3):
 
 ```haskell
 newtype Task c k v = Task (forall f. c f => (k -> f v) -> f v)
@@ -50,8 +54,8 @@ type    Tasks c k v = k -> Maybe (Task c k v)
 type    Build c i k v = Tasks c k v -> k -> Store i k v -> Store i k v
 ```
 
-Polymorphism in `f` is what makes this a design space rather than a survey: one
-task description runs under every scheduler and rebuilder in §6 (JFP §3.4), and
+Polymorphism in `f` lets one task description run under different schedulers
+and rebuilders compatible with its constraint in §6 (JFP §3.4). The
 the constraint `c` classifies the descriptions — and the systems that can run
 them:
 
@@ -98,9 +102,9 @@ need = withFrozenCallStack $ void . apply_ fileNameFromString
 
 ## 2. Schedulers
 
-A scheduler decides _which_ keys to bring up to date and _in what order_; the
-paper separates it from the rebuilder so cleanly that the two compose freely
-(JFP §6.1). The three schedulers of JFP §4 are:
+A scheduler decides _which_ keys to bring up to date and _in what order_. The
+paper separates ordering from rebuilding so they compose when their task
+constraints are compatible (JFP §6.1). The three schedulers of JFP §4 are:
 
 | Scheduler   | Needs every dependency up front?    | How it recovers from a late discovery                 | Systems the paper places here         |
 | ----------- | ----------------------------------- | ----------------------------------------------------- | ------------------------------------- |
@@ -153,9 +157,17 @@ answers, each with variants (JFP §5).
 the last build, cleared once the key is rebuilt. Excel holds the bits explicitly
 and demands a _transitively closed_ dirty set: over-approximation is safe,
 under-approximation is not. Make's bit is the file system's mtime, repurposed —
-a file is dirty when older than its dependencies — which is why Make cannot mark
-a key clean without marking its dependents dirty, and so cannot do early cutoff.
+a file is dirty when older than its dependencies. The paper's Make model assumes
+rebuilding advances that timestamp, so it cannot distinguish rebuilding from a
+changed result. A recipe that preserves the timestamp of an unchanged output
+can let GNU Make skip consumers; the [behavioral suite][behavioral-evidence]
+demonstrates this implementation qualification.
 Tup refines the bit by watching the file system (JFP §9.1).
+
+These are properties of the paper's dirty-bit model. An implementation may add
+another mechanism: [tup's opt-in `^o` comparison][tup-output-comparison] suppresses
+downstream work when output bytes are unchanged. The label alone does not rule
+out such an extension.
 
 **Verifying traces** (JFP §5.2). Per key, the build records the result hash and
 the hashes of the values it consumed (`recordVT`), then checks they still match
@@ -187,6 +199,57 @@ incorrect build rather than a slow one (JFP §8.4, Figure 12), and:
 > results of intermediate computations are not considered."
 >
 > — JFP §5.4
+
+### Worked example: an edit that changes no generated bytes
+
+Consider two deterministic tasks. `generate` reads `schema.txt` and produces
+`generated.h`; `compile` reads that header and produces `program.o`. Both tasks
+declare all relevant inputs, including their tool and rule versions. A completed
+build has recorded the dependencies and left both outputs in the store.
+
+```text
+schema.txt --generate--> generated.h --compile--> program.o
+```
+
+Edit a comment in `schema.txt`. Its bytes change, but `generate` produces the
+same header bytes. The following predictions apply to the paper's models
+(JFP §2.3, §5), with no cache entry for the edited source configuration:
+
+| Rebuilder                | What is remembered                                  | What executes, and why                                                                                               |
+| ------------------------ | --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Dirty bit                | The change dirties the target's dependency cone     | Both tasks; the bit does not distinguish execution from output change.                                               |
+| Verifying traces         | Each result hash and dependency-value hashes        | `generate`; `compile` sees the same header hash and is skipped.                                                      |
+| Verifying step traces    | Dependency lists, plus `built` and `changed` steps  | `generate` advances `built` but keeps `changed`; `compile` is skipped.                                               |
+| Constructive traces      | Reusable results indexed by dependency-value hashes | `generate`; the existing compile result remains reusable for the unchanged header value.                             |
+| Deep constructive traces | Reusable results indexed by terminal-input hashes   | The edited source invalidates the target's previous trace; unchanged intermediate bytes cannot provide early cutoff. |
+
+The distinction between content traces and step traces appears in a longer edit
+history. Build header value `A` and its object; then build only the header with
+value `B`; then build only the header with value `A` again. On the next object
+request, a verifying trace still matches its recorded `A` hash. A step trace
+sees a `changed` step newer than the object's last build and rebuilds it. The
+history matters even though the header bytes have returned to their original
+value (JFP §5.2.2, Figure 7).
+
+Two changes to the scenario test different properties:
+
+- **Generated dependency names.** If `generate` emits a manifest choosing
+  `left.h` or `right.h`, `compile` must obtain the manifest before it knows which
+  header to request. Dependency discovery supplies the edge; scheduling makes
+  its producer finish before the consumer uses its value. The paper's restarting
+  and suspending schedulers handle this demand during evaluation (§2); an
+  engine may instead divide planning and execution into separate phases.
+- **Deleted output.** Delete `program.o` while retaining build metadata.
+  A verifying trace can detect the missing result but cannot supply its bytes.
+  A constructive trace can restore them if the matching value remains
+  available. An action-cache entry whose blobs have been evicted is insufficient;
+  [cache completeness][cache-completeness] is an additional implementation
+  obligation (JFP §5.2–§5.3, §8.4).
+
+These predictions concern task execution and result availability separately.
+A restored output avoids executing its producer; it still incurs lookup and
+materialization work. The model does not establish which mechanism has lower
+wall-clock cost on a particular workload.
 
 ### Applicative versus monadic traces
 
@@ -232,18 +295,20 @@ _any_ task description, target and store. Three caveats apply:
 
 **Early cutoff** stops a build as soon as a rebuilt key's value is unchanged,
 since its dependents cannot then be affected (JFP §2.3, Figure 3). It belongs to
-the rebuilder row: Shake and Bazel have it, Make and Excel do not, deep
-constructive traces cannot (JFP §2.3, §5.1, §5.4, Table 1). A dirty bit _could_
-support it — clear the bit only when the value really changed — but bits outside
-the current target's cone then go stale, and fixing that with successive
-execution numbers is how one arrives at verifying step traces (JFP §5.1).
+the rebuilder row: Shake and Bazel have it, the paper's Make and Excel models do not, deep
+constructive traces cannot (JFP §2.3, §5.1, §5.4, Table 1). Clearing a rebuilt
+key's own dirty bit does not tell a later consumer whether its value changed.
+The paper discusses the need to preserve that information across target requests;
+verifying step traces distinguish the last execution from the last value change
+(JFP §5.1, §5.2.2).
 
 ---
 
 ## 5. The design space
 
-Any scheduler composed with any rebuilder yields a correct build system
-(JFP §6.1), and the paper's Table 2 fills that 3 × 4 grid. This is the catalog's
+The paper composes each scheduler with each rebuilder under compatible task
+constraints and the correctness assumptions in §4 (JFP §6.1). Its Table 2 fills
+that 3 × 4 grid. This is the catalog's
 master reference table: a deep-dive's classification matches a cell, or says why
 it does not.
 
@@ -342,6 +407,41 @@ whose values were evicted, so a hash passes through until materialised), and
 
 ## 7. How this catalog uses these terms
 
+### From the model to an implementation
+
+The grid describes an evaluation mechanism, not every layer of a product.
+A graph evaluator can verify dependency revisions while a separate action
+cache restores process outputs. [Buck2][buck2-layers] is an example of that
+composition. Classification therefore names the layer under discussion; a
+verifying graph and a constructive action cache can coexist.
+
+The same distinction applies to identity. In the worked example, `program.o`
+is a logical key whose value may change between builds. A cache lookup must
+also distinguish the compiler, arguments and relevant input values; the output
+digest identifies the resulting bytes. Two different action configurations may
+produce identical bytes without becoming the same logical task. The
+[action-cache and content-store distinction][cache-layers] supplies the
+implementation detail; the paper's key parameter does not require all three
+roles to use one identifier.
+
+Equality also needs a stated domain. The model compares values; an implementation
+may compare content hashes, modification times or interned revisions as evidence
+about values. Equal timestamps do not establish equal bytes, and a revision
+comparison is meaningful under the evaluator's revision contract. The
+[reproducibility risks][equality-risks] and [DICE revision model][buck2-revisions]
+give the corresponding qualifications. An early-cutoff claim states which
+comparison it uses.
+
+Dependency discovery and scheduling answer different questions. A depfile, source
+parser or tracer provides an edge set; the scheduler decides how the consumer
+waits for the producers on those edges. Learning an edge after execution is not
+the same operation as requesting a producer during graph evaluation. Likewise,
+restarting a graph-evaluation function need not mean launching its compiler
+process repeatedly. The [graph-autogeneration mechanisms][discovery-mechanisms]
+and each engine's task model specify where discovery and execution occur.
+
+### Vocabulary outside the paper
+
 The catalog's spine has six dimensions: the paper defines two fully, three only
 in part, and one not at all. The table is the contract with the deep-dives.
 
@@ -354,9 +454,9 @@ in part, and one not at all. The table is the contract with the deep-dives.
 | Hermeticity & provenance | cache-hit hygiene (paths, versions, declared outputs, undeclared inputs)                                             | Not covered as a topic                      |
 | Distribution             | cloud cache lookup, shallow builds, offloading, communication                                                        | Partial: cache yes, execution no            |
 
-**What this page does not define.** Three things the deep-dives need are _not_ in
-the paper; this page will not manufacture definitions, and each is defined once
-on its theme page:
+The paper does not supply the whole operational vocabulary. The following
+links lead to the treatments used by the catalog; they are not additional
+properties inferred from a scheduler × rebuilder cell:
 
 - **Discovery by tracing** (syscall interception, FUSE, depfiles, strict-deps
   pruning). The paper starts from a task description that already says what it
@@ -368,9 +468,14 @@ on its theme page:
 - **Provenance and attestation** (SLSA, in-toto, signed action graphs). Absent
   entirely; §3.6's correctness says nothing about _who_ ran the action.
   Treatment: [provenance].
+- **Hermeticity, determinism and reproducibility.** Controlling an action's
+  environment and reproducing its output are separate questions. Treatment:
+  [reproducibility], especially its per-system qualifications.
+- **Action-cache completeness.** A matching result record is useful only when
+  the required output content can be supplied. Treatment: [CAS eviction][cache-completeness].
 
-Two conventions follow. Classify a system by its §5 cell before describing its
-internals, and mark a mismatch rather than stretching the table. And when a page
+Two conventions follow. Classify the relevant layer by its §5 cell and mark a
+mismatch rather than stretching the table. And when a page
 describes a scheduler or rebuilder the paper lacks — one that cancels obsolete
 tasks on file-watch events, which topological schedulers cannot easily support
 (JFP §8.9) — say so: this vocabulary stops at three schedulers and four
@@ -394,6 +499,16 @@ rebuilders.
 <!-- References -->
 
 [jfp]: https://doi.org/10.1017/S0956796820000088
+[comparison]: ./comparison.md
+[behavioral-evidence]: ./behavioral-evidence.md
+[tup-output-comparison]: ./tup.md#interception-strictness-variables
+[cache-completeness]: ./cas-eviction.md#correctness-risks
+[cache-layers]: ./cas-eviction.md#_1-one-budget-or-two
+[buck2-layers]: ./buck2.md#analysis-spine
+[buck2-revisions]: ./buck2.md#how-it-works
+[equality-risks]: ./reproducibility.md#correctness-risks
+[discovery-mechanisms]: ./graph-autogeneration.md#what-a-generator-actually-generates
+[reproducibility]: ./reproducibility.md
 [research-docs]: ../../guidelines/research-docs.md
 [monorepo-concepts]: ../monorepo-tooling/concepts.md
 [graph-autogeneration]: ./graph-autogeneration.md
