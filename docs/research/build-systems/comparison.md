@@ -63,7 +63,8 @@ The arithmetic is a finding: **sixteen** rows occupy a cell, **one** is
 deliberately off-grid — Rattle is a _forward_ system whose trace replaces the
 declaration, and [perfect-dependencies] argues no cell describes it — and
 **three** are not engines, since GN and Meson generate a Ninja graph ([gn],
-[meson]) and Boba has no standalone tree ([boba]). Two labels carry qualifiers
+[meson]) and Boba is Fuchsia's in-tree GN + Bazel dual-graph integration layer
+rather than an independent engine ([boba]). Two labels carry qualifiers
 that matter more than the label. Ninja's `restat` is a dirty-bit refinement
 bolted onto a trace, and the manual states both mechanism and limit:
 
@@ -139,7 +140,8 @@ Four absences, each a gap in the vocabulary rather than a misclassification:
 
 Early cutoff is the rebuilder's, and its cheap forms are cheap: Shake needs two
 integers per node, `built` and `changed` ([shake]); BitBake reaches it through a
-second, output-derived identity ([bitbake]); Please through an `Unchanged` outcome
+second, output-derived identity when paired with OpenEmbedded's hash-equivalence
+handler and `bb.hashserv` ([bitbake]); Please through an `Unchanged` outcome
 ([please]). Nix's deep constructive cell buys cloud capability and
 single-round-trip lookups by giving that cutoff up ([nix-thesis]).
 
@@ -147,9 +149,10 @@ Correctness claims differ in kind. Bazel's is conditional — "Correct and perfe
 incrementality. If all the input data of all functions [is recorded]"
 ([`docs/reference/skyframe.mdx`][bazel-skyframe]) — and the condition is the hard
 part. Buck2's is unconditional: "The theorem is unconditional: it assumes nothing
-about the caller" ([`dice/docs/incrementality.md`][dice-doc]). Nix answers
-"unknown" rather than wrongly ([nix-dynamic-derivations]); PIE is "partially
-optimal" ([pie]). **Catalog inference:** claims are strongest where the engine owns
+about the caller" ([`dice/docs/incrementality.md`][dice-doc]). Nix's dynamic-derivation
+resolution returns `std::nullopt` from `tryResolve` when an input realisation is
+missing rather than synthesizing a wrong answer ([nix-dynamic-derivations]); PIE is
+"partially optimal" ([pie]). **Catalog inference:** claims are strongest where the engine owns
 the compute and weakest where an external tool does — the seam
 [formal-verification] finds unproved.
 
@@ -277,9 +280,9 @@ Ten claims the corpus supports across independent systems, strongest first.
 | Generate BUILD files from observation        | no authoring; the graph is what ran                                  | the trace is a bet on the next run ([graph-autogeneration])                       |
 | Hash the interface artifact, not the AST     | the compiler already knows what changed; no extractor to keep honest | one more artifact; width and tool identity become API ([semantic-caching])        |
 
-Two rows are not trade-offs but mistakes with a long half-life: hashing a
-_declared_ graph rather than the resolved one ([nix-dynamic-derivations]), and
-letting a name stand in for content when the two can drift ([drowse]).
+Two patterns in the corpus are not trade-offs but mistakes with a long half-life:
+hashing a _declared_ graph rather than the resolved one ([nix-dynamic-derivations]),
+and letting a name stand in for content when the two can drift ([drowse]).
 
 ---
 
@@ -329,8 +332,9 @@ rebuilder**, by declaration rather than by accident.
    critical-path priority or predictor is unmeasurable without exactly that baseline.
 
 **Catalog inference:** the cheapest first increment is not a store but a
-_definition_ — JFP §3.6's "recompute from the final store and compare" — which
-makes the rebuild decision testable before any cache exists ([a-la-carte] agrees).
+_definition_ (claim 10) — JFP §3.6's "recompute from the final store and compare" —
+which makes the rebuild decision testable as an executable oracle before any cache
+exists ([a-la-carte] agrees).
 
 ### Where the delta table's rows collide
 
@@ -378,56 +382,56 @@ makes the rebuild decision testable before any cache exists ([a-la-carte] agrees
 
 Every page the capstone reads, with the status its catalog row reports.
 
-| Page                                                  | Group       | Status     | Taken from it                                      |
-| ----------------------------------------------------- | ----------- | ---------- | -------------------------------------------------- |
-| [Build Systems à la Carte][a-la-carte]                | Foundations | `reviewed` | the grid, minimality, early cutoff, Cloud Shake    |
-| [PIE][pie]                                            | Foundations | `reviewed` | the off-grid change-driven scheduler, `reqTasks`   |
-| [Build maintenance][build-maintenance]                | Foundations | `reviewed` | authoring cost as a design output                  |
-| [Perfect Dependencies][perfect-dependencies]          | Foundations | `reviewed` | traced deps, overhead numbers, the hazard set      |
-| [Nix thesis][nix-thesis]                              | Foundations | `reviewed` | deep constructive traces, the closure invariant    |
-| [BuildXL][buildxl]                                    | Engine      | `reviewed` | fingerprint arithmetic, absent probes, 1–5%        |
-| [Bazel][bazel]                                        | Engine      | `reviewed` | restarting, "correct and perfect incrementality"   |
-| [Buck2][buck2]                                        | Engine      | `reviewed` | DICE's unconditional soundness, the certificate    |
-| [build2][build2]                                      | Engine      | `reviewed` | `depdb`, tool checksums, the result lattice        |
-| [Please][please]                                      | Engine      | `reviewed` | four-part hash split, `Unchanged`, sandbox limits  |
-| [Ninja][ninja]                                        | Engine      | `reviewed` | build log, `restat`, `dyndep`, `missingdeps`       |
-| [GNU Make][gnumake]                                   | Engine      | `reviewed` | dirty bit, jobserver, re-exec                      |
-| [redo][redo]                                          | Engine      | `reviewed` | two-phase dependency replacement, negative deps    |
-| [tup][tup]                                            | Engine      | `reviewed` | observed edges, change frontier, output gate       |
-| [Shake][shake]                                        | Engine      | `reviewed` | two timestamps, journal, oracles, lint             |
-| [Rattle][rattle]                                      | Engine      | `reviewed` | the forward model, `pending`, `createEdge`         |
-| [Earthly][earthly]                                    | Engine      | `reviewed` | recipe→LLB lowering, auto-skip tiers               |
-| [GN][gn]                                              | Engine      | `reviewed` | generator phase, visibility as an allowlist        |
-| [Meson][meson]                                        | Engine      | `reviewed` | regeneration edge, introspection split             |
-| [Boba][boba]                                          | Engine      | `reviewed` | no standalone repo; two caches can disagree        |
-| [Pants][pants]                                        | Engine      | `reviewed` | generation counters, per-edge dependency records   |
-| [Moon][moon]                                          | Engine      | `reviewed` | edge contribution policy, hash-collapse warning    |
-| [BitBake][bitbake]                                    | Engine      | `reviewed` | sstate, two-level identity, `[file-checksums]`     |
-| [sbt][sbt]                                            | Engine      | `reviewed` | suspension in a topological engine, wrapper cache  |
-| [BuildKit][buildkit]                                  | Engine      | `reviewed` | `CacheMap`, two key levels, provenance at the seam |
-| [Nix dynamic derivations][nix-dynamic-derivations]    | Nix         | `reviewed` | the open key set; resolved-graph hashing           |
-| [nixception][nixception]                              | Nix         | `reviewed` | canonical action as key; stable over precise       |
-| [nix-ninja][nix-ninja]                                | Nix         | `reviewed` | lowering vs execution; order from key resolution   |
-| [sandstone][sandstone]                                | Nix         | `reviewed` | narrowest-artifact edges; depfile as a node        |
-| [drowse][drowse]                                      | Nix         | `reviewed` | plan as a node; the barrier cost                   |
-| [dgd][dgd]                                            | Nix         | `reviewed` | plan as a task output; narrow inputs               |
-| [nixgg][nixgg]                                        | Nix         | `reviewed` | one canonical action; scanner is part of the key   |
-| [nix-cargo-unit][nix-cargo-unit]                      | Nix         | `reviewed` | granularity vs keying; reasons Nix cannot hold     |
-| [MakeNix][makenix]                                    | Nix         | `reviewed` | plan as a cacheable task; declared-input bounds    |
-| [Sandboxing overheads][sandboxing-overheads]          | Theme       | `reviewed` | published numbers, isolation vs observation        |
-| [Dynamic deps, distributed][dynamic-deps-distributed] | Theme       | `reviewed` | the closure requirement, termination table         |
-| [Dependency pruning][dependency-pruning]              | Theme       | `reviewed` | strictness vs audit, the per-system table          |
-| [Graph auto-generation][graph-autogeneration]         | Theme       | `reviewed` | trace as checker, the fixpoint hazard              |
-| [Semantic caching][semantic-caching]                  | Theme       | `reviewed` | interface artifacts, under-approximation           |
-| [Daemon compilers][daemon-compilers]                  | Theme       | `reviewed` | resident state must be named in the key            |
-| [Link-time pruning][link-time-pruning]                | Theme       | `reviewed` | the link as the coarsest task                      |
-| [Compile-time execution][compile-time-execution]      | Theme       | `reviewed` | hermeticity holes per ecosystem                    |
-| [CAS eviction][cas-eviction]                          | Theme       | `reviewed` | two budgets, touch ordering, watermarks            |
-| [Cross-language DAGs][cross-language-dags]            | Theme       | `reviewed` | manual glue at generator boundaries                |
-| [Speculative execution][speculative-execution]        | Theme       | `reviewed` | shipped vs research; the baseline need             |
-| [Formal verification][formal-verification]            | Theme       | `reviewed` | the assumption ledger, what is proved              |
-| [Reproducibility][reproducibility]                    | Theme       | `reviewed` | determinism as premise vs obligation               |
-| [Provenance][provenance]                              | Theme       | `reviewed` | the DSSE/ITE-6 stack, who actually emits           |
+| Page                                                  | Group       | Status     | Taken from it                                             |
+| ----------------------------------------------------- | ----------- | ---------- | --------------------------------------------------------- |
+| [Build Systems à la Carte][a-la-carte]                | Foundations | `reviewed` | the grid, minimality, early cutoff, Cloud Shake           |
+| [PIE][pie]                                            | Foundations | `reviewed` | the off-grid change-driven scheduler, `reqTasks`          |
+| [Build maintenance][build-maintenance]                | Foundations | `reviewed` | authoring cost as a design output                         |
+| [Perfect Dependencies][perfect-dependencies]          | Foundations | `reviewed` | traced deps, overhead numbers, the hazard set             |
+| [Nix thesis][nix-thesis]                              | Foundations | `reviewed` | deep constructive traces, the closure invariant           |
+| [BuildXL][buildxl]                                    | Engine      | `reviewed` | fingerprint arithmetic, absent probes, 1–5%               |
+| [Bazel][bazel]                                        | Engine      | `reviewed` | restarting, "correct and perfect incrementality"          |
+| [Buck2][buck2]                                        | Engine      | `reviewed` | DICE's unconditional soundness, the certificate           |
+| [build2][build2]                                      | Engine      | `reviewed` | `depdb`, tool checksums, the result lattice               |
+| [Please][please]                                      | Engine      | `reviewed` | four-part hash split, `Unchanged`, sandbox limits         |
+| [Ninja][ninja]                                        | Engine      | `reviewed` | build log, `restat`, `dyndep`, `missingdeps`              |
+| [GNU Make][gnumake]                                   | Engine      | `reviewed` | dirty bit, jobserver, re-exec                             |
+| [redo][redo]                                          | Engine      | `reviewed` | two-phase dependency replacement, negative deps           |
+| [tup][tup]                                            | Engine      | `reviewed` | observed edges, change frontier, output gate              |
+| [Shake][shake]                                        | Engine      | `reviewed` | two timestamps, journal, oracles, lint                    |
+| [Rattle][rattle]                                      | Engine      | `reviewed` | the forward model, `pending`, `createEdge`                |
+| [Earthly][earthly]                                    | Engine      | `reviewed` | recipe→LLB lowering, auto-skip tiers                      |
+| [GN][gn]                                              | Engine      | `reviewed` | generator phase, visibility as an allowlist               |
+| [Meson][meson]                                        | Engine      | `reviewed` | regeneration edge, introspection split                    |
+| [Boba][boba]                                          | Engine      | `reviewed` | no standalone repo; two caches can disagree               |
+| [Pants][pants]                                        | Engine      | `reviewed` | generation counters, per-edge dependency records          |
+| [Moon][moon]                                          | Engine      | `reviewed` | edge contribution policy, hash-collapse warning           |
+| [BitBake][bitbake]                                    | Engine      | `reviewed` | `siggen` handlers, `setscene`, `hashserv`, worker sandbox |
+| [sbt][sbt]                                            | Engine      | `reviewed` | suspension in a topological engine, wrapper cache         |
+| [BuildKit][buildkit]                                  | Engine      | `reviewed` | `CacheMap`, two key levels, provenance at the seam        |
+| [Nix dynamic derivations][nix-dynamic-derivations]    | Nix         | `reviewed` | the open key set; resolved-graph hashing                  |
+| [nixception][nixception]                              | Nix         | `reviewed` | canonical action as key; stable over precise              |
+| [nix-ninja][nix-ninja]                                | Nix         | `reviewed` | lowering vs execution; order from key resolution          |
+| [sandstone][sandstone]                                | Nix         | `reviewed` | narrowest-artifact edges; depfile as a node               |
+| [drowse][drowse]                                      | Nix         | `reviewed` | plan as a node; the barrier cost                          |
+| [dgd][dgd]                                            | Nix         | `reviewed` | plan as a task output; narrow inputs                      |
+| [nixgg][nixgg]                                        | Nix         | `reviewed` | one canonical action; scanner is part of the key          |
+| [nix-cargo-unit][nix-cargo-unit]                      | Nix         | `reviewed` | granularity vs keying; reasons Nix cannot hold            |
+| [MakeNix][makenix]                                    | Nix         | `reviewed` | plan as a cacheable task; declared-input bounds           |
+| [Sandboxing overheads][sandboxing-overheads]          | Theme       | `reviewed` | published numbers, isolation vs observation               |
+| [Dynamic deps, distributed][dynamic-deps-distributed] | Theme       | `reviewed` | the closure requirement, termination table                |
+| [Dependency pruning][dependency-pruning]              | Theme       | `reviewed` | strictness vs audit, the per-system table                 |
+| [Graph auto-generation][graph-autogeneration]         | Theme       | `reviewed` | trace as checker, the fixpoint hazard                     |
+| [Semantic caching][semantic-caching]                  | Theme       | `reviewed` | interface artifacts, under-approximation                  |
+| [Daemon compilers][daemon-compilers]                  | Theme       | `reviewed` | resident state must be named in the key                   |
+| [Link-time pruning][link-time-pruning]                | Theme       | `reviewed` | the link as the coarsest task                             |
+| [Compile-time execution][compile-time-execution]      | Theme       | `reviewed` | hermeticity holes per ecosystem                           |
+| [CAS eviction][cas-eviction]                          | Theme       | `reviewed` | two budgets, touch ordering, watermarks                   |
+| [Cross-language DAGs][cross-language-dags]            | Theme       | `reviewed` | manual glue at generator boundaries                       |
+| [Speculative execution][speculative-execution]        | Theme       | `reviewed` | shipped vs research; the baseline need                    |
+| [Formal verification][formal-verification]            | Theme       | `reviewed` | the assumption ledger, what is proved                     |
+| [Reproducibility][reproducibility]                    | Theme       | `reviewed` | determinism as premise vs obligation                      |
+| [Provenance][provenance]                              | Theme       | `reviewed` | the DSSE/ITE-6 stack, who actually emits                  |
 
 ---
 
