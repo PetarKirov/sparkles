@@ -5239,6 +5239,243 @@
         ]
       },
       {
+        "text": "Build Systems",
+        "link": "/research/build-systems/",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Concepts & Vocabulary",
+            "link": "/research/build-systems/concepts"
+          },
+          {
+            "text": "Foundations",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Build Systems à la Carte",
+                "link": "/research/build-systems/a-la-carte"
+              },
+              {
+                "text": "PIE: Dynamic Task Dependencies",
+                "link": "/research/build-systems/pie"
+              },
+              {
+                "text": "Build Maintenance (McIntosh et al.)",
+                "link": "/research/build-systems/build-maintenance"
+              },
+              {
+                "text": "Build Scripts with Perfect Dependencies",
+                "link": "/research/build-systems/perfect-dependencies"
+              },
+              {
+                "text": "Nix Thesis & NixOS",
+                "link": "/research/build-systems/nix-thesis"
+              }
+            ]
+          },
+          {
+            "text": "Engines & Executors",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "BuildXL",
+                "link": "/research/build-systems/buildxl"
+              },
+              {
+                "text": "build2",
+                "link": "/research/build-systems/build2"
+              },
+              {
+                "text": "Shake",
+                "link": "/research/build-systems/shake"
+              },
+              {
+                "text": "Rattle",
+                "link": "/research/build-systems/rattle"
+              },
+              {
+                "text": "BitBake",
+                "link": "/research/build-systems/bitbake"
+              },
+              {
+                "text": "BuildKit",
+                "link": "/research/build-systems/buildkit"
+              },
+              {
+                "text": "Boba (Fuchsia)",
+                "link": "/research/build-systems/boba"
+              },
+              {
+                "text": "Bazel",
+                "link": "/research/build-systems/bazel"
+              },
+              {
+                "text": "Buck2",
+                "link": "/research/build-systems/buck2"
+              },
+              {
+                "text": "Please",
+                "link": "/research/build-systems/please"
+              },
+              {
+                "text": "Pants v2",
+                "link": "/research/build-systems/pants"
+              },
+              {
+                "text": "moon",
+                "link": "/research/build-systems/moon"
+              },
+              {
+                "text": "GN",
+                "link": "/research/build-systems/gn"
+              },
+              {
+                "text": "Ninja",
+                "link": "/research/build-systems/ninja"
+              },
+              {
+                "text": "GNU Make",
+                "link": "/research/build-systems/gnumake"
+              },
+              {
+                "text": "Meson",
+                "link": "/research/build-systems/meson"
+              },
+              {
+                "text": "Earthly",
+                "link": "/research/build-systems/earthly"
+              },
+              {
+                "text": "sbt",
+                "link": "/research/build-systems/sbt"
+              },
+              {
+                "text": "redo",
+                "link": "/research/build-systems/redo"
+              },
+              {
+                "text": "tup",
+                "link": "/research/build-systems/tup"
+              }
+            ]
+          },
+          {
+            "text": "Nix & Dynamic Derivations",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Nix Dynamic Derivations",
+                "link": "/research/build-systems/nix-dynamic-derivations"
+              },
+              {
+                "text": "nixception",
+                "link": "/research/build-systems/nixception"
+              },
+              {
+                "text": "nix-ninja",
+                "link": "/research/build-systems/nix-ninja"
+              },
+              {
+                "text": "sandstone",
+                "link": "/research/build-systems/sandstone"
+              },
+              {
+                "text": "drowse",
+                "link": "/research/build-systems/drowse"
+              },
+              {
+                "text": "dgd",
+                "link": "/research/build-systems/dgd"
+              },
+              {
+                "text": "nixgg",
+                "link": "/research/build-systems/nixgg"
+              },
+              {
+                "text": "nix-cargo-unit",
+                "link": "/research/build-systems/nix-cargo-unit"
+              },
+              {
+                "text": "MakeNix",
+                "link": "/research/build-systems/makenix"
+              }
+            ]
+          },
+          {
+            "text": "Themes",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Sandboxing Overheads",
+                "link": "/research/build-systems/sandboxing-overheads"
+              },
+              {
+                "text": "Dynamic Deps, Distributed",
+                "link": "/research/build-systems/dynamic-deps-distributed"
+              },
+              {
+                "text": "Dependency Pruning",
+                "link": "/research/build-systems/dependency-pruning"
+              },
+              {
+                "text": "Graph Auto-Generation",
+                "link": "/research/build-systems/graph-autogeneration"
+              },
+              {
+                "text": "Semantic Caching",
+                "link": "/research/build-systems/semantic-caching"
+              },
+              {
+                "text": "Daemon Compilers",
+                "link": "/research/build-systems/daemon-compilers"
+              },
+              {
+                "text": "Link-Time Pruning",
+                "link": "/research/build-systems/link-time-pruning"
+              },
+              {
+                "text": "Compile-Time Execution",
+                "link": "/research/build-systems/compile-time-execution"
+              },
+              {
+                "text": "CAS Eviction",
+                "link": "/research/build-systems/cas-eviction"
+              },
+              {
+                "text": "Cross-Language DAGs",
+                "link": "/research/build-systems/cross-language-dags"
+              },
+              {
+                "text": "Speculative Execution",
+                "link": "/research/build-systems/speculative-execution"
+              },
+              {
+                "text": "Formal Verification",
+                "link": "/research/build-systems/formal-verification"
+              },
+              {
+                "text": "Reproducibility",
+                "link": "/research/build-systems/reproducibility"
+              },
+              {
+                "text": "Provenance (SLSA / in-toto)",
+                "link": "/research/build-systems/provenance"
+              }
+            ]
+          },
+          {
+            "text": "Synthesis",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Comparison",
+                "link": "/research/build-systems/comparison"
+              }
+            ]
+          }
+        ]
+      },
+      {
         "text": "Monorepo & Workspace Tooling",
         "link": "/research/monorepo-tooling/",
         "collapsed": true,
