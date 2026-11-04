@@ -6,7 +6,7 @@ is to stop trusting declarations and _observe_ every file access at the OS bound
 make the observation the cache key. Vocabulary is [concepts]'s; this page does not redefine
 _scheduler_, _rebuilder_, _trace_, _minimality_ or _early cutoff_.
 
-**Last reviewed:** November 2, 2026
+**Last reviewed:** November 3, 2026
 
 | Field          | Value                                                                                       |
 | -------------- | ------------------------------------------------------------------------------------------- |
@@ -172,6 +172,50 @@ the honest part — where a dirty bit is unsound: distributed builds (a peer cac
 assumed to hold an intermediate another machine needs), the uncacheable allowlist,
 anti-dependencies, lazy outputs, shared opaque directories, unflushed page cache, drops.
 
+### Service pips: long-lived processes at the graph's edge
+
+BuildXL's ordinary process contract is short-lived, atomic, and well-defined
+(SLAWD). Service pips are the explicit escape hatch for background uploaders
+and compiler servers: a long-lived service starts once, and small IPC pips
+delegate operations to it during the build. The service documentation is
+blunt about what had to be given up ([`Service-Pips.md`][service-pips]):
+
+- a client pip may depend on the service having started;
+- incremental widening of a service's input/output permissions after each
+  operation was **not implemented**;
+- depending on outputs produced in the middle of a service's lifetime was
+  **also never implemented**;
+- service pips are monitored but all file accesses are allowed — "service
+  pips are trusted with respect to their input specification" — and they are
+  never cached;
+- in a distributed build, a service pip is started on **every** worker,
+  unlike an ordinary pip assigned to one dynamically chosen worker.
+
+That makes service pips closer to Bazel persistent workers than to cached
+actions. The correctness burden moves from the engine's fingerprint proof to
+the service client contract: IPC operations must be deterministic functions
+of the client pip's declared inputs even though the service process may batch,
+authenticate, retry, and retain state across many pips.
+
+### Cache convergence and delayed lookup: correctness under concurrent builders
+
+A shared cache is not only read; concurrent builds race to populate it.
+BuildXL's cache-convergence behaviour lets a losing build adopt the result
+already stored under the same strong fingerprint instead of keeping its own
+possibly non-deterministic output, allowing downstream pips to rejoin the
+winning build's cache lineage ([`Cache-Convergence.md`][convergence]).
+The build logs both converged-entry count and wasted execution time
+(`ProcessPipTwoPhaseCacheEntriesConverged`,
+`ExecuteConvergedProcessDurationMs`).
+
+Delayed cache lookup attacks the same race earlier. The scheduler throttles
+how far lookups run ahead of execution slots (multipliers default to 1–2
+times aggregate slots) so a pip is less likely to be declared a miss, wait in
+a queue for tens of minutes, and then duplicate work another build cached in
+the interval. Together these features treat the cache as a concurrent
+distributed system with races and convergence rules, not as a passive
+key/value store — a materially richer model than a local action-cache lookup.
+
 ### Distribution is BuildXL's own protocol, not REAPI
 
 An orchestrator constructs the graph and schedules; workers execute. A worker starts knowing
@@ -257,7 +301,7 @@ _clean and materialized_ so an interrupted run is not mistaken for a complete on
 transitive dirty closure, graph-as-cache-entry, the violation taxonomy — deserves measurement
 before adoption.
 
-## Strengths and weaknesses
+## Strengths
 
 - **The strongest answer to under-declared inputs.** Checking declarations against
   observations, and grading the disagreements, beats trusting declarations or never
@@ -267,6 +311,9 @@ before adoption.
   effect; the operational details around it — critical-path priority from recorded
   runtimes, weights, delayed lookup, convergence, incompatibility tables — are written
   only by people who have been paged at 3 a.m.
+
+## Weaknesses
+
 - **Windows-first assumptions leak.** USN-based incremental scheduling, the 1–5%
   figure and the datacenter tiers originate on Windows; the Linux sandboxes are
   described as catching up (eBPF).
@@ -332,6 +379,7 @@ before adoption.
 [dynamic-graph]: https://github.com/microsoft/BuildXL/blob/ea34998661867b5959d7f496f8b5650611a3e446/DynamicGraphWorkingNotes.md
 [cache-readme]: https://github.com/microsoft/BuildXL/blob/ea34998661867b5959d7f496f8b5650611a3e446/Public/Src/Cache/README.md
 [paged-hash]: https://github.com/microsoft/BuildXL/blob/ea34998661867b5959d7f496f8b5650611a3e446/Documentation/Specs/PagedHash.md
+[service-pips]: https://github.com/microsoft/BuildXL/blob/ea34998661867b5959d7f496f8b5650611a3e446/Documentation/Wiki/Service-Pips.md
 [pip-step]: https://github.com/microsoft/BuildXL/blob/ea34998661867b5959d7f496f8b5650611a3e446/Public/Src/Engine/Scheduler/PipExecutionStep.cs
 [pip-queue]: https://github.com/microsoft/BuildXL/blob/ea34998661867b5959d7f496f8b5650611a3e446/Public/Src/Engine/Scheduler/PipQueue.cs
 [scheduler]: https://github.com/microsoft/BuildXL/blob/ea34998661867b5959d7f496f8b5650611a3e446/Public/Src/Engine/Scheduler/Scheduler.cs

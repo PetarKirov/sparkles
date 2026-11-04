@@ -271,7 +271,7 @@ The tracing numbers are the only ones measured against a baseline. Gazelle publi
 latency for its own invocation, not a before/after build-time comparison, and no
 reviewed source measures adoption of a `BUILD` generator.
 
-## Strengths and weaknesses
+## Strengths
 
 - **Tracing cannot be wrong about the run it observed.** No parser competes with an
   actual read; Rattle's whitespace-edit result — one compile where Make rebuilt a
@@ -282,6 +282,9 @@ reviewed source measures adoption of a `BUILD` generator.
 - **Generation is reviewable and portable.** A committed `BUILD` is an artifact a
   second engine can read, a human can diff, and CI can check with `-mode=diff`; a
   `.deps` file is meaningful only to the tool that wrote it.
+
+## Weaknesses
+
 - **Each is only as good as its observation.** A tracer's blind spots are silent
   (Go and static binaries, directory listings, coarse atimes); a parser's are the
   generated `.go` file whose imports Gazelle cannot resolve, repaired by a human

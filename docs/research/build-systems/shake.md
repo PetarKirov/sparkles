@@ -273,7 +273,7 @@ discovery-by-execution is not what to borrow. The cheap parts are:
 Avoid: a 32-bit digest as a shared-cache identity; untracked rule/command changes, which
 `docs/Manual.md` mitigates only socially; and a cloud cache before outputs are declared.
 
-## Strengths and weaknesses
+## Strengths
 
 - **The cleanest suspension implementation here.** Continuations plus a priority pool mean
   a blocked rule costs no thread and duplicate work is structurally impossible — the property
@@ -285,6 +285,9 @@ Avoid: a 32-bit digest as a shared-cache identity; untracked rule/command change
   regenerated-but-identical file stops the cascade. Oracles, multiple outputs, resources,
   phony/forward rules, lint, profiling and Ninja ingestion are likewise library features, so
   a build system can be refactored like code rather than configured.
+
+## Weaknesses
+
 - **No sandbox, no observed-input validation, no provenance.** Completeness is the author's
   job; lint finds some lies and `fsatrace` finds more at 5–21% cost, but an undeclared input
   is caught only when it happens to hurt. There is also no eviction, no size accounting and

@@ -71,28 +71,28 @@ one axis at a time.
 
 ### Engines and executors (industry)
 
-| System         | Scheduler                 | Rebuilder                               | Status                                                                 | Link                 |
-| -------------- | ------------------------- | --------------------------------------- | ---------------------------------------------------------------------- | -------------------- |
-| BuildXL        | topological               | verifying traces                        | `reviewed`                                                             | [BuildXL][buildxl]   |
-| Bazel          | restarting                | constructive traces                     | `reviewed` (+ [monorepo Bazel][mono-bazel])                            | [Bazel][bazel]       |
-| Buck2          | suspending                | verifying traces                        | `reviewed` (+ [monorepo Buck2][mono-buck2])                            | [Buck2][buck2]       |
-| build2         | topological (recursive)   | mtime dirty bit + depdb                 | `reviewed`                                                             | [build2][build2]     |
-| Please         | suspending                | verifying traces                        | `reviewed` (+ [monorepo Please][mono-please])                          | [Please][please]     |
-| Ninja          | topological               | verifying traces (qualified)            | `reviewed` (+ [monorepo Ninja][mono-ninja])                            | [Ninja][ninja]       |
-| GNU Make       | topological               | dirty bit                               | `reviewed` (+ [monorepo Make][mono-make])                              | [GNU Make][gnumake]  |
-| redo           | suspending                | verifying step traces                   | `reviewed` (+ [monorepo redo][mono-redo])                              | [redo][redo]         |
-| tup            | topological               | dirty bit (observed)                    | `reviewed` (+ [monorepo tup][mono-tup])                                | [tup][tup]           |
-| Shake          | suspending                | verifying step traces                   | `reviewed`                                                             | [Shake][shake]       |
-| Rattle         | speculative (off-grid)    | constructive in spirit                  | `reviewed`                                                             | [Rattle][rattle]     |
-| Earthly        | static DAG (via BuildKit) | constructive traces + auto-skip         | `reviewed` (+ [monorepo Earthly][mono-earthly])                        | [Earthly][earthly]   |
-| GN             | not a cell (generator)    | —                                       | `reviewed` (+ [monorepo GN][mono-gn])                                  | [GN][gn]             |
-| Meson          | not a cell (generator)    | —                                       | `reviewed` (+ [monorepo Meson][mono-meson])                            | [Meson][meson]       |
-| Boba (Fuchsia) | —                         | —                                       | `reviewed` (short page: no standalone repo; in-tree at `build/bazel/`) | [Boba][boba]         |
-| Pants v2       | suspending                | verifying step traces                   | `reviewed` (+ [monorepo Pants][mono-pants])                            | [Pants][pants]       |
-| Moon           | topological               | constructive (action cache)             | `reviewed` (+ [monorepo moon][mono-moon])                              | [moon][moon]         |
-| BitBake        | topological               | verifying traces (sstate)               | `reviewed`                                                             | [BitBake][bitbake]   |
-| sbt            | topological + suspension  | per-invocation dirty bit + action cache | `reviewed` (+ [monorepo sbt][mono-sbt])                                | [sbt][sbt]           |
-| BuildKit       | topological               | constructive traces                     | `reviewed`                                                             | [BuildKit][buildkit] |
+| System         | Scheduler                 | Rebuilder                                 | Status                                                                 | Link                 |
+| -------------- | ------------------------- | ----------------------------------------- | ---------------------------------------------------------------------- | -------------------- |
+| BuildXL        | topological               | verifying traces                          | `reviewed`                                                             | [BuildXL][buildxl]   |
+| Bazel          | restarting                | constructive traces                       | `reviewed` (+ [monorepo Bazel][mono-bazel])                            | [Bazel][bazel]       |
+| Buck2          | suspending                | verifying traces                          | `reviewed` (+ [monorepo Buck2][mono-buck2])                            | [Buck2][buck2]       |
+| build2         | topological (recursive)   | mtime dirty bit + depdb                   | `reviewed`                                                             | [build2][build2]     |
+| Please         | suspending                | verifying traces                          | `reviewed` (+ [monorepo Please][mono-please])                          | [Please][please]     |
+| Ninja          | topological               | verifying traces (qualified)              | `reviewed` (+ [monorepo Ninja][mono-ninja])                            | [Ninja][ninja]       |
+| GNU Make       | topological               | dirty bit                                 | `reviewed` (+ [monorepo Make][mono-make])                              | [GNU Make][gnumake]  |
+| redo           | suspending                | verifying step traces                     | `reviewed` (+ [monorepo redo][mono-redo])                              | [redo][redo]         |
+| tup            | topological               | dirty bit (observed)                      | `reviewed` (+ [monorepo tup][mono-tup])                                | [tup][tup]           |
+| Shake          | suspending                | verifying step traces                     | `reviewed`                                                             | [Shake][shake]       |
+| Rattle         | speculative (off-grid)    | constructive in spirit                    | `reviewed`                                                             | [Rattle][rattle]     |
+| Earthly        | static DAG (via BuildKit) | constructive traces + auto-skip           | `reviewed` (+ [monorepo Earthly][mono-earthly])                        | [Earthly][earthly]   |
+| GN             | not a cell (generator)    | —                                         | `reviewed` (+ [monorepo GN][mono-gn])                                  | [GN][gn]             |
+| Meson          | not a cell (generator)    | —                                         | `reviewed` (+ [monorepo Meson][mono-meson])                            | [Meson][meson]       |
+| Boba (Fuchsia) | —                         | —                                         | `reviewed` (short page: no standalone repo; in-tree at `build/bazel/`) | [Boba][boba]         |
+| Pants v2       | suspending                | verifying step traces                     | `reviewed` (+ [monorepo Pants][mono-pants])                            | [Pants][pants]       |
+| Moon           | topological               | constructive (action cache)               | `reviewed` (+ [monorepo moon][mono-moon])                              | [moon][moon]         |
+| BitBake        | topological               | signature-stamp dirty bit + sigdata trace | `reviewed`                                                             | [BitBake][bitbake]   |
+| sbt            | topological + suspension  | per-invocation dirty bit + action cache   | `reviewed` (+ [monorepo sbt][mono-sbt])                                | [sbt][sbt]           |
+| BuildKit       | topological               | constructive traces                       | `reviewed`                                                             | [BuildKit][buildkit] |
 
 ### Nix ecosystem
 
@@ -168,18 +168,18 @@ on the linked pages.
 _What does the engine consult to decide a key is current, and what does it keep
 for next time?_
 
-| Rebuilder               | What the pages say                                                | Systems                                                                                                                                                                                                                                                                                 |
-| ----------------------- | ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Dirty bit**           | One bit or one `mtime` per key; no early cutoff of its own        | [GNU Make][gnumake], [tup][tup] (the read set is the trace), [sbt][sbt] ("no memo yet", once per invocation)                                                                                                                                                                            |
-| **Verifying traces**    | Recorded dependencies are re-checked; outputs stay where they are | [BuildXL][buildxl], [Buck2][buck2], [build2][build2] (an `mtime` dirty bit refined by `depdb` — its nearest cell), [Please][please], [Ninja][ninja] (command hash; inputs by `mtime`), [redo][redo], [Shake][shake], [Pants][pants], [BitBake][bitbake], [Meson][meson] (Ninja's cell)  |
-| **Constructive traces** | The key maps to a reusable result or snapshot                     | [Bazel][bazel] (constructive in memory, verifying locally), [Boba][boba], [Earthly][earthly] (`--auto-skip`, "a dirty bit in all but name"), [Rattle][rattle] (constructive in spirit), [Moon][moon] (one key; no content early cutoff), [BuildKit][buildkit] (the value is a snapshot) |
-| **None (generator)**    | No rebuild decision for build outputs                             | [GN][gn] (only its own regeneration is a dirty bit)                                                                                                                                                                                                                                     |
+| Rebuilder               | What the pages say                                                | Systems                                                                                                                                                                                                                                                                                                                   |
+| ----------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Dirty bit**           | One bit or one `mtime` per key; no early cutoff of its own        | [GNU Make][gnumake], [tup][tup] (the read set is the trace), [sbt][sbt] ("no memo yet", once per invocation)                                                                                                                                                                                                              |
+| **Verifying traces**    | Recorded dependencies are re-checked; outputs stay where they are | [BuildXL][buildxl], [Buck2][buck2], [build2][build2] (an `mtime` dirty bit refined by `depdb` — its nearest cell), [Please][please], [Ninja][ninja] (command hash; inputs by `mtime`), [redo][redo], [Shake][shake], [Pants][pants], [BitBake][bitbake] (nearest cell; currency is stamp existence, sigdata is the trace) |
+| **Constructive traces** | The key maps to a reusable result or snapshot                     | [Bazel][bazel] (constructive in memory, verifying locally), [Boba][boba], [Earthly][earthly] (`--auto-skip`, "a dirty bit in all but name"), [Rattle][rattle] (constructive in spirit), [Moon][moon] (one key; no content early cutoff), [BuildKit][buildkit] (the value is a snapshot)                                   |
+| **None (generator)**    | No rebuild decision for build outputs                             | [GN][gn] (only its own regeneration is a dirty bit), [Meson][meson] (delegates to Ninja; the delegated trace "holds no hashes")                                                                                                                                                                                           |
 
-Three dirty-bit systems, ten verifying-trace systems, six constructive-trace
-systems, one generator: twenty rows. Composites are placed by the mechanism each
+Three dirty-bit systems, nine verifying-trace systems, six constructive-trace
+systems, two generators: twenty rows. Composites are placed by the mechanism each
 page says decides correctness; sbt's action cache and Earthly's `--auto-skip`
-are noted, not promoted to a bucket. Meson is Ninja's cell, and its page adds the
-footnote that this trace "holds no hashes".
+are noted, not promoted to a bucket. Both generators delegate rebuilding to
+Ninja, whose cell they inherit in practice without occupying it.
 
 ### By dependency discovery
 

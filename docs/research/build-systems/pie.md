@@ -298,7 +298,7 @@ executed path a subset of the planned one. PIE's queue `Tq`, which stops a share
 dependency running twice, is the ordering discipline any memoizing executor
 needs.
 
-## Strengths and weaknesses
+## Strengths
 
 - **Honest about its trade-off.** The losing case is measured, explained
   mechanically, and quantified (13 s, one change in sixty) rather than dropped
@@ -306,6 +306,9 @@ needs.
 - **Fair baseline, real program.** Same script, same runtime, so the comparison
   isolates traversal order — and Spoofax's script genuinely needs conditional and
   iterative building (§6.1).
+
+## Weaknesses
+
 - **One script, one machine, no cost model.** Nothing else is compared, no history
   is mined, and correctness rests on an argument plus the absence of divergence.
 

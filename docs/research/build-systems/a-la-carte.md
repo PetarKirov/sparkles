@@ -303,7 +303,7 @@ whether a node is current. Three consequences:
    analogue of JFP §3.6; "recompute from the final store and compare" is an oracle
    that makes the rebuild question checkable before any cache exists.
 
-## Strengths and weaknesses
+## Strengths
 
 - **Generative.** The factorisation explains eight systems in a sentence each and
   predicted a ninth that now ships; correctness and minimality are stated over all
@@ -312,6 +312,9 @@ whether a node is current. Three consequences:
   [`build-1.0`][build-pkg], so errors surface as type errors; the journal then
   closes the loop with cache-key version pins, uncacheable rules, and misses
   caused by a compiler's path.
+
+## Weaknesses
+
 - **Narrow and anecdotal.** No traced discovery, sandbox cost, provenance or
   remote execution; granularity is the key, so Nix's package-level dependencies
   satisfy the table while its real difficulty lives elsewhere (JFP §9.1);

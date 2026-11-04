@@ -7,7 +7,7 @@ _less_ — a parsed interface, a stripped artifact, a manifest of the files a
 tool actually opened — and when the smaller key is still true. It is not about
 early cutoff, though the two are complements.
 
-**Last reviewed:** November 2, 2026
+**Last reviewed:** November 3, 2026
 
 | Field      | Value                                                                                                                         |
 | ---------- | ----------------------------------------------------------------------------------------------------------------------------- |
@@ -164,6 +164,22 @@ The documented promise is explicitly semantic:
 Dependency discovery is applied to the key rather than the graph: the first run
 records, later runs verify.
 
+Ccache's **depend mode** is the third point in this design space, between
+direct and preprocessor modes. It never runs the preprocessor, even on a miss;
+instead it reads include information from compiler-generated dependencies
+(`-MD`/`-MMD`, or MSVC `/showIncludes`). That lowers miss overhead and suits
+remote compilation, but makes the key more source/option-sensitive and
+inherits depfile policy: `-MMD` omits system headers, so changes there are
+ignored, while `-MD` or `/showIncludes` includes them and slows manifest
+checking ([`doc/manual.adoc`][ccache-manual]). It is also the mode required
+for ccache's limited Clang-module support: `module.modulemap` files are
+hashed, Clang's binary module cache is ignored, standard C++20 modules are
+explicitly unsupported, and explicit `-fmodule-file=` inputs are hashed. A
+module system therefore moves the dependency boundary again — from text the
+preprocessor expanded to binary artifacts the compiler selected — and a cache
+that cannot enumerate those artifacts must either over-hash a directory or
+refuse the compilation.
+
 ### 4. Normalize the input
 
 The weakest family changes only how the input is spelled. ccache's
@@ -201,8 +217,12 @@ key: it saves the recompute, equivalence repairs what it could not safely cover.
 "Semantic" is not one property: Zinc never sees the text, Bazel's `javac` erased
 it before `ijar` sees the class file, ccache is insensitive only on its fallback
 path, and Go only across a package boundary (**catalog inference** for the Go
-row: the dependent's key uses the export-data content ID, and comments are not
-represented in the compiler's IR).
+row: the dependent's key uses the export-data content ID, and ordinary comments
+are not represented in the compiler's IR). Even "comments do not matter" is
+language-specific: build constraints, compiler directives, doc comments feeding
+generated interfaces, annotations/macros, and `#line`-style mappings can all be
+load-bearing. A semantic key is therefore a claim about a congruence relation
+for one toolchain and one consumer, not a universal normal form.
 
 ## Correctness risks
 
@@ -300,12 +320,15 @@ size and mtime unless `compiler_check` overrides it, and Zinc versions its
 analysis format. ccache's default is itself weak — a same-size compiler with a
 restored mtime is invisible (**catalog inference**).
 
-## Strengths and weaknesses
+## Strengths
 
 - **Avoids work rather than discovering it was wasted**, and composes with a
   strong fallback: preprocessor mode, unconditional invalidation, raw hashes.
 - **Makes the contract explicit** — `ijar`'s strip list, Zinc's `APIChange`
   cases and Go's export-data boundary are inspectable definitions.
+
+## Weaknesses
+
 - **Silent when wrong and extractor-specific**: a stale interface produces a
   green build, and keys rarely transfer across languages.
 

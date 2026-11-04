@@ -7,7 +7,7 @@ catalog's systems split cleanly: one engine emits attestations as a product feat
 (BuildKit), one signs the objects it stores without describing the builds that made
 them (Nix), and the rest emit nothing at all.
 
-**Last reviewed:** November 2, 2026
+**Last reviewed:** November 3, 2026
 
 | Field      | Value                                                                                                                    |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------ |
@@ -217,6 +217,19 @@ resolved derivations to outputs — is documented and experimental ([nix-build-t
 **Catalog inference:** Nix can prove _what_ a store object is, but the shipped record
 of _how it was made_ is an unsigned `.drv` link plus a `deriver` column.
 
+Upstream's build-trace design draws a distinction provenance systems often
+blur: **coherence is not truth**. A base build trace whose keys are resolved
+derivations is trivially coherent because entries are independent claims;
+whether an entry faithfully records a build is a separate policy question,
+and in general it can only be audited by rebuilding. Derived traces
+(unresolved-derivation keys) are different: they are caches over a fixed base
+trace and become incoherent if entries derived under two different base
+mappings are combined without their underlying entries
+([nix-build-trace]). Signing trace entries therefore provides accountability
+for _who claims a mapping_, not evidence that the mapping is reproducible.
+A verifier that wants truth rather than mere non-contradiction still needs a
+rebuild or a trusted builder boundary.
+
 ## Correctness risks
 
 - **A signature authenticates the claim, not its truth.** BuildKit records VCS
@@ -248,15 +261,18 @@ of _how it was made_ is an unsigned `.drv` link plus a `deriver` column.
   shallowness. **Catalog inference:** record terminal inputs in
   `resolvedDependencies`, not the cache keys standing in for them.
 
-## Strengths and weaknesses
+## Strengths
 
 - **The layer split is the achievement.** DSSE, `Statement` and predicate are
   independently replaceable, so one SLSA predicate can be emitted by BuildKit,
   stored by a registry, and re-checked by a consumer's verifier.
 - **The cheapest useful thing is a link predicate.** `command` + `materials` +
-  `subject` is what a build engine already holds; emitting it is bookkeeping. The
-  expensive thing is trust: keys, hosted platforms, tenant isolation and expectation
-  maps all live outside the build graph.
+  `subject` is what a build engine already holds; emitting it is bookkeeping.
+
+## Weaknesses
+
+- **The expensive thing is trust.** Keys, hosted platforms, tenant isolation and
+  expectation maps all live outside the build graph ([ite-6], [slsa-threats]).
 - **The most complete record is still not checked.** Nix calls its derivation graph
   traceability ([nix-thesis] §5); BuildKit records "what was requested, not that the
   result is reproducible" ([buildkit]).
@@ -329,7 +345,7 @@ Meson and sbt. Primary sources, opened at pinned revisions:
 - BuildKit `c1cfdbd30b79b4a4908cdccc3c0f9849c30e34e5`:
   [`slsa-provenance.md`][buildkit-slsa], [`slsa-definitions.md`][buildkit-slsa-defs],
   [`attestation-storage.md`][buildkit-att-storage], [`buildkitd.toml.md`][buildkit-toml].
-- Nix `656eed23a30dd8cfd81ce37d1b46d49283e81b9c`: [`build-trace.md`][nix-build-trace],
+- Nix `1ed54a0fd62da96d4f5e9c806555861e46f65341`: [`build-trace.md`][nix-build-trace],
   [`path-info.cc`][nix-fingerprint], [`local-store.cc`][nix-local-store],
   [`verify.cc`][nix-verify].
 - Bazel `2105aec32b598dcc8e09905e7cf18ccfa4b0358e`: [`roadmap.mdx`][bazel-roadmap];
@@ -366,9 +382,9 @@ specification's model, not an observed deployment.
 [buildkit-slsa-defs]: https://github.com/moby/buildkit/blob/c1cfdbd30b79b4a4908cdccc3c0f9849c30e34e5/docs/attestations/slsa-definitions.md
 [buildkit-att-storage]: https://github.com/moby/buildkit/blob/c1cfdbd30b79b4a4908cdccc3c0f9849c30e34e5/docs/attestations/attestation-storage.md
 [buildkit-toml]: https://github.com/moby/buildkit/blob/c1cfdbd30b79b4a4908cdccc3c0f9849c30e34e5/docs/buildkitd.toml.md
-[nix-build-trace]: https://github.com/NixOS/nix/blob/656eed23a30dd8cfd81ce37d1b46d49283e81b9c/doc/manual/source/store/build-trace.md
-[nix-fingerprint]: https://github.com/NixOS/nix/blob/656eed23a30dd8cfd81ce37d1b46d49283e81b9c/src/libstore/path-info.cc
-[nix-local-store]: https://github.com/NixOS/nix/blob/656eed23a30dd8cfd81ce37d1b46d49283e81b9c/src/libstore/local-store.cc
-[nix-verify]: https://github.com/NixOS/nix/blob/656eed23a30dd8cfd81ce37d1b46d49283e81b9c/src/nix/verify.cc
+[nix-build-trace]: https://github.com/NixOS/nix/blob/1ed54a0fd62da96d4f5e9c806555861e46f65341/doc/manual/source/store/build-trace.md
+[nix-fingerprint]: https://github.com/NixOS/nix/blob/1ed54a0fd62da96d4f5e9c806555861e46f65341/src/libstore/path-info.cc
+[nix-local-store]: https://github.com/NixOS/nix/blob/1ed54a0fd62da96d4f5e9c806555861e46f65341/src/libstore/local-store.cc
+[nix-verify]: https://github.com/NixOS/nix/blob/1ed54a0fd62da96d4f5e9c806555861e46f65341/src/nix/verify.cc
 [bazel-roadmap]: https://github.com/bazelbuild/bazel/blob/2105aec32b598dcc8e09905e7cf18ccfa4b0358e/docs/versions/9.3.0/about/roadmap.mdx
 [reapi]: https://github.com/bazelbuild/remote-apis/blob/c2c07e3d718d3d490a4958344d9c3e47de0bfaf3/build/bazel/remote/execution/v2/remote_execution.proto

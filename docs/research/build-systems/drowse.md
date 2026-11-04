@@ -204,13 +204,16 @@ without it refuses the job rather than degrading, the same constraint [nix-ninja
 [Sandstone][sandstone] carry. The flake declares four systems while CI covers three;
 `x86_64-darwin` is declared but not built ([`flake.nix`][flake], [`check.yml`][ci]).
 
-## Strengths and weaknesses
+## Strengths
 
 - **Boilerplate removed at the smallest possible cost** — no binary, no file format, no daemon
   client; 267 lines of Nix behind a `callPackage`-shaped API.
 - **Wrapper transparency** — `pname`, `version`, `meta`, `meta.position`, `passthru.drv` and
   `finalAttrs` survive the extra derivation; and the claim is tested, with IFD disabled in CI and
   `testEqualContents` proving the dynamic and static crate2nix paths agree.
+
+## Weaknesses
+
 - **Not an observer** — no daemon protocol, no tracing, no store accounting: answered by an absence.
 - **Duplicated identity** — `pname`/`version` restated from `src`, unchecked, and the inner nixpkgs
   fixed by the wrapper's `NIX_PATH`.

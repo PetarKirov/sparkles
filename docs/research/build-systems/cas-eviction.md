@@ -8,7 +8,7 @@ content, results by action digest), inventories the policies the catalog's
 systems ship, and collects what their sources state about the cost. Claims with no
 named source are marked **catalog inference**.
 
-**Last reviewed:** November 2, 2026
+**Last reviewed:** November 3, 2026
 
 | Field      | Value                                                                                         |
 | ---------- | --------------------------------------------------------------------------------------------- |
@@ -226,6 +226,41 @@ written for — it accepts a hit without materialising anything and relies on th
 retention window until it does. Violating the window yields a lazy fetch, not a
 wrong artifact, provided the fetch is checked against the digest the trace named.
 
+### Sampling, sharding, and multi-tenancy are separate policies
+
+At large scale, exact LRU order is often less important than making eviction
+cheap, attributable, and stable while capacity changes. Three mechanisms that
+were easy to conflate in the first pass deserve separation:
+
+- **Sampled approximate LRU.** BuildBuddy's Pebble backend does not maintain
+  one exact global recency list on every access. Per partition, it records
+  access times (throttled by `atime_update_threshold`), generates random
+  samples (`samples_per_batch = 10,000` by default), filters by a per-partition
+  `min_eviction_age` (six hours by default), and rate-limits deletions
+  ([`pebble_cache.go`][bb-pebble]). It is still an atime policy, but the
+  victim is selected from sampled old candidates rather than the globally
+  oldest entry. The minimum age is a correctness/retention promise as much as
+  an optimisation: recently produced entries cannot be chosen merely because
+  the cache is under pressure.
+- **Partitions as fairness domains.** BuildBuddy and its Pebble backend treat
+  partitions as independent capacity domains, with per-partition budgets and
+  minimum eviction ages. That prevents one tenant/instance's scan-heavy
+  workload from directly evicting another partition's working set, at the cost
+  of stranded free space and more configuration. A single global LRU optimises
+  total hit rate; partitioned budgets optimise predictability and isolation.
+- **Sharding changes placement, not recency.** Buildbarn's rendezvous shard
+  selector distributes digests by weighted highest-random-weight scoring;
+  removing a shard is guaranteed to move only blobs that would have resolved
+  to it, and reordering shards does not change placement
+  ([`rendezvous_shard_selector.go`][bb-rendezvous]). Each shard still needs its
+  own eviction policy. A stable placement function bounds how much content is
+  effectively cold after capacity changes; it does not decide what should die.
+
+**Catalog inference:** the production retention policy is therefore a tuple
+— placement stability, tenant partition, minimum age, sampled/exact recency,
+size/delete cost, and whether deletion is synchronous or backgrounded. Calling
+all of that "LRU" hides the decisions operators actually tune.
+
 ## Cost, as published
 
 No surveyed project publishes an eviction benchmark; what they publish is
@@ -268,17 +303,20 @@ clocks — bytes and age — and the age clock bounds staleness of a _correct_ r
 A store is only proven correct under eviction if its miss path runs, which is why
 all four servers ship an integrity check or an ordering invariant.
 
-## Strengths and weaknesses
+## Strengths
+
+- **Block rotation is the only design without a per-entry recency index**, and it
+  buys corruption resistance: live data is never overwritten ([mono-buildbarn]).
+- **Scan-and-sort is the only design that can order AC before CAS globally**, and
+  the only one that needs a full walk ([bazel-gc]).
+
+## Weaknesses
 
 - **Exact LRU is affordable only at small scale**: it needs a full index and a
   lock on the hit path, and both implementations add a watermark so the index does
   not thrash ([nl-stores], [bb-disk]).
-- **Block rotation is the only design without a per-entry recency index**, and it
-  buys corruption resistance: live data is never overwritten ([mono-buildbarn]).
-  It pays in precision — a block of cold blobs dies with the warm ones — and its
-  retention bound is block count, not demand.
-- **Scan-and-sort is the only design that can order AC before CAS globally**, and
-  the only one that needs a full walk ([bazel-gc]).
+- **Block rotation pays in precision**: a block of cold blobs dies with the warm
+  ones, and its retention bound is block count, not demand ([mono-buildbarn]).
 - **Reachability is precise about liveness and blind about popularity**: Nix keeps
   an ancient result forever if a profile points at it ([nix-thesis]).
 - **Deduplication makes "size" ambiguous** — logical, physical and referenced
@@ -342,9 +380,11 @@ no-GC rationale), [mono-buildbuddy] (`ttl_days`), [mono-nativelink]
   `skip_cache_lookup`, chunk lifetimes.
 - Buildbarn `bb-storage@ca3d8b49`: [`blobstore.proto`][bb-proto] (block ring,
   completeness checking, existence caching, `action_result_expiring`),
+  [`rendezvous_shard_selector.go`][bb-rendezvous] (weighted rendezvous sharding),
   [README][bb-readme], tip commit [ca3d8b4][bb-storage] (CDC).
-- BuildBuddy `buildbuddy@67b39185`: [`disk_cache.go`][bb-disk] (per-partition
-  LRU, 90% janitor, atime rebuild).
+- BuildBuddy `buildbuddy@67b39185` and `798749e6`: [`disk_cache.go`][bb-disk]
+  (per-partition LRU, 90% janitor, atime rebuild), [`pebble_cache.go`][bb-pebble]
+  (sampled eviction, `min_eviction_age`, `atime_update_threshold`).
 - Bazel `bazel@2105aec3`: [`RemoteOptions.java`][bazel-opt] (GC flags),
   [`DiskCacheClient.java`][bazel-disk] (mtime semantics, touch ordering,
   integrity check), [`DiskCacheGarbageCollector.java`][bazel-gc] (sort order).
@@ -379,5 +419,7 @@ no-GC rationale), [mono-buildbuddy] (`ttl_days`), [mono-nativelink]
 [bazel-gc]: https://github.com/bazelbuild/bazel/blob/2105aec32b598dcc8e09905e7cf18ccfa4b0358e/src/main/java/com/google/devtools/build/lib/remote/disk/DiskCacheGarbageCollector.java
 [nl-stores]: https://github.com/layus/nixception/blob/0d3fa7bb7140bd97c1a0e08ea5697e34a555747b/nativelink-config/src/stores.rs
 [nl-evict]: https://github.com/layus/nixception/blob/0d3fa7bb7140bd97c1a0e08ea5697e34a555747b/nativelink-util/src/evicting_map.rs
+[bb-pebble]: https://github.com/buildbuddy-io/buildbuddy/blob/798749e61eb83e2523ba06a48ff195b62b375198/enterprise/server/backends/pebble_cache/pebble_cache.go
+[bb-rendezvous]: https://github.com/buildbarn/bb-storage/blob/ca3d8b49a5af52eb02ed473dd689d19b949c9e41/pkg/blobstore/sharding/rendezvous_shard_selector.go
 [nl-fs]: https://github.com/layus/nixception/blob/0d3fa7bb7140bd97c1a0e08ea5697e34a555747b/nativelink-store/src/filesystem_store.rs
 [nl-changelog]: https://github.com/layus/nixception/blob/0d3fa7bb7140bd97c1a0e08ea5697e34a555747b/CHANGELOG-nativelink.md

@@ -7,7 +7,7 @@ separates the two things that inversion buys — a warm process and a persistent
 cache — and traces what each system remembers, who may invalidate it, and what
 survives when the daemon dies.
 
-**Last reviewed:** November 2, 2026
+**Last reviewed:** November 3, 2026
 
 | Field      | Value                                                                                                              |
 | ---------- | ------------------------------------------------------------------------------------------------------------------ |
@@ -212,16 +212,38 @@ a daemon is an optimisation a build tool opts into, and the fallback is a normal
 compiler run — [moon]'s "archive in-process instead of failing a task" is the same
 instinct.
 
+### 5. Persistent workers inside a batch engine
+
+Bazel and BuildXL show a middle generation between one-shot actions and a
+whole build daemon. Bazel persistent workers execute many actions in one
+tool process; multiplex workers serve concurrent requests, with per-key
+instance bounds in `WorkerPoolImpl` and worker creation keyed by executable,
+arguments, environment, and execution properties ([bazel] “Persistent
+workers”). BuildXL service pips keep an uploader or compiler service alive
+while small IPC pips delegate operations to it, but explicitly trust the
+service's file accesses and never cache the service itself
+([buildxl] “Service pips”).
+
+The important difference from Bloop/Gradle is lifetime scope. The resident
+process is normally a child of one build/server generation and serves actions
+in that build; it is not the build engine and does not decide what is dirty.
+Its cache is therefore compiler-internal (loaded jars, JIT code, parsed
+headers, authenticated sessions), while the outer action cache still has to
+decide whether running the worker is necessary at all. A worker can make a
+cache miss cheap; it cannot by itself produce a sound cache hit.
+
 ### What lives where
 
-| System              | Resident (dies with the process)            | Persisted (survives a generation)                    | Invalidated by                                   |
-| ------------------- | ------------------------------------------- | ---------------------------------------------------- | ------------------------------------------------ |
-| Bloop               | JIT, classloaders, Zinc in-memory analysis  | `<out>/<name>-analysis.bin`, class files             | source/classpath change; analysis paths; restart |
-| `tsserver` (5.9)    | `ProjectService`, `Program`, `BuilderState` | `.tsbuildinfo` only under `--incremental`/`--build`  | file version or `.d.ts` signature change         |
-| `tsserver` (native) | snapshot host, per-snapshot registries      | `.tsbuildinfo`                                       | snapshot diff; build-info comparison             |
-| `rustc`             | nothing — the process exits                 | dep-graph, query cache, work products in `s-…-{svh}` | query fingerprint (128-bit)                      |
-| Gradle              | classloader cache, configuration model, VFS | build cache, configuration cache, file-watch state   | JVM-arg identity; task inputs; 3 h idle          |
-| Kotlin              | compiler caches in the daemon heap          | Gradle build cache plus incremental caches on disk   | session end; 2 h idle; JVM-arg inheritance       |
+| System              | Resident (dies with the process)            | Persisted (survives a generation)                    | Invalidated by                                    |
+| ------------------- | ------------------------------------------- | ---------------------------------------------------- | ------------------------------------------------- |
+| Bloop               | JIT, classloaders, Zinc in-memory analysis  | `<out>/<name>-analysis.bin`, class files             | source/classpath change; analysis paths; restart  |
+| `tsserver` (5.9)    | `ProjectService`, `Program`, `BuilderState` | `.tsbuildinfo` only under `--incremental`/`--build`  | file version or `.d.ts` signature change          |
+| `tsserver` (native) | snapshot host, per-snapshot registries      | `.tsbuildinfo`                                       | snapshot diff; build-info comparison              |
+| `rustc`             | nothing — the process exits                 | dep-graph, query cache, work products in `s-…-{svh}` | query fingerprint (128-bit)                       |
+| Gradle              | classloader cache, configuration model, VFS | build cache, configuration cache, file-watch state   | JVM-arg identity; task inputs; 3 h idle           |
+| Kotlin              | compiler caches in the daemon heap          | Gradle build cache plus incremental caches on disk   | session end; 2 h idle; JVM-arg inheritance        |
+| Bazel workers       | tool heap/JIT, parsed inputs per worker key | action outputs + Bazel caches outside the worker     | worker-key change, pool bound, server shutdown    |
+| BuildXL services    | service session/auth/batching state         | IPC pip outputs in the ordinary graph/cache          | build end, service death, every worker starts one |
 
 One level up, Bazel's constructive trace lives in memory per server process and
 Buck2's dep-file cache is explicitly daemon-scoped, dropped on restart
@@ -264,6 +286,26 @@ carry explicit stable-identity machinery (`DefPathHash`, fingerprints).
 > or folded into the key. Gradle's JVM-argument identity and rustc's fingerprint
 > check are two ways to make that true; "we restarted the server" is not.
 
+#### A daemon lifecycle checklist
+
+The surveyed systems converge on five controls, whether or not they name them:
+
+1. **Identity before reuse** — executable/version, JVM or runtime flags,
+   environment, working directory, and configuration must select a new
+   process or generation when they differ (Gradle and Bazel worker keys).
+2. **Request isolation** — state retained between requests must be a pure
+   cache keyed by declared inputs; mutable "current project" state needs a
+   generation/snapshot boundary.
+3. **Bounded retention** — idle timeout alone is not a memory policy; there
+   needs to be a heap/artifact budget, eviction, and a stop path.
+4. **Failure containment** — a crashed or wedged daemon must degrade to a
+   cold process or a clear build failure, never silently serve the previous
+   request's answer. Kotlin's daemon fallback strategy is the explicit
+   version of this choice.
+5. **Cold-path equivalence** — deleting daemon state may be slower but must
+   produce the same outputs. If it does not, the resident state is an
+   undeclared input and belongs in the cache key.
+
 ## Analysis spine
 
 These systems are **rebuilders inside a task**, not schedulers. [concepts] §5
@@ -287,18 +329,23 @@ Zinc ([semantic-caching]). The outer DAG still sees one opaque action:
   cache is local-disk by construction. Daemon compilers optimise the _fixed_ cost
   of a local action; [dynamic-deps-distributed] optimises where it runs.
 
-## Strengths and weaknesses
+## Strengths
 
-- **Fixed costs collapse**, but the cache is the hard part: every system here
-  spends its design budget on identity — JVM args, fingerprints, session
-  directories — not on compiling.
+- **Fixed costs collapse.** Keeping the runtime, JIT, and parsed headers warm
+  amortises process startup across actions.
 - **Sub-file reuse becomes possible.** A query cache or a `.d.ts` signature skips
   work no file-granularity DAG could name.
-- **Failure modes are qualitative.** A stale daemon produces a green build with
-  yesterday's class files; a crashed daemon produces a slow one.
 - **Removing the daemon is a legitimate design point.** Please deleted persistent
   workers outright — `build()` returns "Persistent workers are no longer
   supported" for a `$(worker)` command ([please]).
+
+## Weaknesses
+
+- **Cache identity is the hard part.** Every system here spends its design
+  budget on identity — JVM args, fingerprints, session directories — not on
+  compiling.
+- **Failure modes are qualitative.** A stale daemon produces a green build with
+  yesterday's class files; a crashed daemon produces a slow one.
 
 ## Key design decisions and trade-offs
 

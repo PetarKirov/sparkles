@@ -3,12 +3,14 @@
 A build system sits between a compiler and the program it produces, so a wrong
 build makes every downstream verification moot. This page asks what has actually
 been _machine-checked_ about build engines — not argued, tested, or asserted —
-and where the proofs stop. The short answer: five mechanized efforts exist — three
-completed, one incomplete, one stalled — all research models of an algorithm; no
-production engine here ships a correctness proof, and every proof rests on what a
-sandbox and a tracer are meant to guarantee.
+and where the proofs stop. The short answer: four completed mechanizations are
+relevant (CloudMake, forward build systems, and two Nix-language interpreter
+efforts), plus an unfinished à-la-carte Coq translation and a stalled Pluto
+pilot. All verify research models; no production engine here ships a
+correctness proof, and every build proof rests on what a sandbox and a tracer
+are meant to guarantee.
 
-**Last reviewed:** November 2, 2026
+**Last reviewed:** November 3, 2026
 
 | Field            | Value                                                                                         |
 | ---------------- | --------------------------------------------------------------------------------------------- |
@@ -190,6 +192,60 @@ Two lessons, both about modelling: an object-oriented engine does not decompose
 into à la carte components without loss (no distinct "scheduler" can be
 identified), and a nine-month pilot cannot mechanize an engine.
 
+### 8. What inspecting the artifacts adds
+
+The two Nix developments are unusually auditable as artifacts, not merely as
+papers.
+
+- **Mininix thesis (`c1c6979…`).** `correct.v` contains the literal top-level
+  correspondence
+  `Theorem correct e v' : (∃ n, eval n false e = Some v') ↔ e -->* v'`.
+  Its development also proves strong confluence of the step relation and
+  determinism of base steps. A scan of the `.v` files at the pinned commit
+  finds no `Admitted` proof or project-declared `Axiom`; that is a source
+  audit, not a substitute for running `coqchk`, and standard-library imports
+  can still carry their own assumptions.
+- **Verified dynamic-language interpreters (`6a59973…`).** The Nix instance's
+  final theorems are named `interp_sound_complete_ret`,
+  `interp_sound_complete_ret_lit`, `interp_sound_complete_fail`, and
+  `interp_sound_complete_no_fuel` in `theories/nix/interp_proofs.v`: return,
+  failure, and divergence/fuel exhaustion are separately related to the
+  operational semantics. The literal-return theorem is explicitly stronger
+  than the paper statement. The artifact maps paper theorem numbers to file
+  lines and documents four axioms reported by validation, all inherited
+  indirectly through Flocq/`Reals` for IEEE-754 floats rather than introduced
+  as Nix-specific assumptions.
+- **Extraction is part of the evidence and part of the gap.** Extracting to
+  OCaml and running upstream tests narrows the model/implementation distance,
+  but parser, extraction, OCaml runtime, test harness, and excluded tests
+  remain outside the kernel-checked theorem. Coverage of extracted code is
+  useful correspondence evidence, not a proof that the official evaluator is
+  the same function.
+
+This artifact-level view also clarifies the Rattle result: Agda proves a
+model with an oracle that already knows each command's exact read/write
+effect. The implementation bug was found by trying to express that model;
+the theorem does not mechanically transfer to `fsatrace`, process scheduling,
+or the Haskell server.
+
+### The trusted stack underneath every theorem
+
+A mechanized build theorem normally trusts, from bottom to top:
+
+1. proof-assistant kernel and any axioms in scope;
+2. definitions of filesystem, environment, process, and command effects;
+3. parser/translation from user build descriptions into the model;
+4. extraction or manual refinement from model to implementation;
+5. compiler/runtime and operating-system semantics;
+6. sandbox/tracer observations; and
+7. determinism and disjointness properties of external tools.
+
+Most papers make layers 1–2 precise and axiomatize or omit 3–7. That does not
+make the proof weak, but it determines what a reader may conclude: these are
+proofs about scheduling/rebuild algorithms under idealized command effects,
+not proofs that Bazel, Shake, Rattle, or Nix as shipped cannot produce a
+wrong artifact.
+
 ## The assumption ledger
 
 Every proof above is conditional, and the conditions are where production systems
@@ -260,16 +316,14 @@ had ([fbsf] §6.4), and production caches inherit CloudMake's determinism assump
 without its proof ([semantic-caching]); an abstract can claim more than the body
 proves.
 
-## Strengths and weaknesses
-
-**Strengths**
+## Strengths
 
 - Finds bugs testing misses — the Rattle hazard defect is the existence proof
   ([fbsf] §6.4) — and forces reference semantics and assumptions into the open.
 - Survives refactoring, and composes with extraction: the Nix interpreter is
   proved, extracted, and run against the official suite ([nix-verified]).
 
-**Weaknesses**
+## Weaknesses
 
 - Cost is real: 2,815 lines of Dafny for one language's core and cache
   ([cloudmake] §4); a 13-page paper's Agda model covers three forward systems.
@@ -327,11 +381,15 @@ already an invariant.
 - Broekhoff, _Formally defining the semantics for the Nix expression language_
   (BSc thesis, 2024) — [PDF][mininix-thesis], artifact
   [`mininix-formalization`][mininix] at `c1c6979744351e139b2de9dc94d34a7b828e05a4`.
-  Abstract and `README.md` read; the Coq sources were not re-checked.
+  Revision audit (2026-11-03) cloned the artifact and inspected the final
+  theorems and admitted/axiom grep; the development was not recompiled.
 - Broekhoff & Krebbers, _Verified Interpreters for Dynamic Languages with
   Applications to the Nix Expression Language_, PACMPL 9(ICFP), 2025 —
-  [DOI][nix-verified], [artifact][nix-artifact]. Artifact `README.md` read; the
-  paper itself was not opened.
+  [DOI][nix-verified], [artifact][nix-artifact] at
+  `6a59973f275a95f10de0ddb62aa3f995c838e3a5`. Revision audit cloned the
+  artifact, inspected its theorem index, final Nix theorems, extraction layout,
+  and documented axiom list; the development was not recompiled and the paper
+  itself was not opened.
 - McKinna & Stevens, _Mechanising the Theory of Build Systems_, VeTSS report —
   [project page][vetss]. Read in full; a self-reported incomplete pilot.
 - Mokhov, Mitchell & Peyton Jones, _Build systems à la carte_, JFP 30, e11 (2020) —
@@ -358,7 +416,7 @@ already an invariant.
 [mininix]: https://github.com/rutgerbrf/mininix-formalization/blob/c1c6979744351e139b2de9dc94d34a7b828e05a4/README.md
 [mininix-thesis]: https://www.cs.ru.nl/bachelors-theses/2024/Rutger_Broekhoff___1083777___Formally_defining_the_semantics_for_the_Nix_expression_language.pdf
 [nix-verified]: https://doi.org/10.1145/3747537
-[nix-artifact]: https://gitlab.science.ru.nl/pl/verified-dyn-lang-interp
+[nix-artifact]: https://gitlab.science.ru.nl/pl/verified-dyn-lang-interp/-/blob/6a59973f275a95f10de0ddb62aa3f995c838e3a5/README.md
 [vetss]: https://wp.doc.ic.ac.uk/vetssannualreport/mechanising-the-theory-of-build-systems/
 [jfp]: https://doi.org/10.1017/S0956796820000088
 [rattle-oopsla]: https://doi.org/10.1145/3428237

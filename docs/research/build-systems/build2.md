@@ -270,7 +270,7 @@ during graph construction** (it buys a serial load escape hatch), and **no resul
 what to measure if Sparkles ever preprocesses at match: discovery is not free when nothing
 rebuilds.
 
-## Strengths and weaknesses
+## Strengths
 
 - **A target model that scales past C/C++.** Types, modules, groups, operations and ad hoc
   recipes cover compilation, code generation, testing, installation and distribution in one
@@ -279,6 +279,9 @@ rebuilds.
   detects interrupted updates; it is the most directly reusable idea in the tree.
 - **Honest, end-to-end toolchain.** Out-of-source trees, scopes, `config.build` and
   `bpkg`/`bdep` give a coherent story from "new project" to "installed package".
+
+## Weaknesses
+
 - **No cache and no distribution.** Every rebuild is local and mtime-driven: no action cache,
   no CAS, no remote execution and no general early cutoff. Completeness is also the user's
   job: discovery exists only for languages with a dep-extraction rule, so an ad hoc rule

@@ -256,7 +256,7 @@ check. **Granularity is set by the generator's output naming**: the coarse
 protobuf action is a throughput bug that scales with schema count, not a
 correctness one ([semantic-caching] is the general treatment).
 
-## Strengths and weaknesses
+## Strengths
 
 - **A neutral IDL is the only boundary that scales to N languages**, and it gives
   a second consumer (descriptor sets) for free.
@@ -264,6 +264,9 @@ correctness one ([semantic-caching] is the general treatment).
   toolchain rather than a new engine feature.
 - **The platform triad covers every cross-language edge**, because a generator is
   always a host tool.
+
+## Weaknesses
+
 - **The checks are uneven**: schema boundaries twice, `cxx` once, `bindgen` not
   at all, the link never.
 - **Granularity is inherited from the generator**, and version locking is a

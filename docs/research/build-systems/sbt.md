@@ -6,7 +6,7 @@ time, holding **no persistent rebuild information of its own** — incrementalit
 delegated to Zinc and, from 2.x, to a content-addressed action cache in the task macro.
 Engine companion to the workspace survey.
 
-**Last reviewed:** November 2, 2026
+**Last reviewed:** November 3, 2026
 
 | Field                 | Value                                                                                                          |
 | --------------------- | -------------------------------------------------------------------------------------------------------------- |
@@ -104,10 +104,37 @@ the task body's problem, and `util-tracking` ships the toolkit: `Tracked.inputCh
 a verifying trace in miniature, content-based and opt-in per task.
 
 For compilation the rebuilder is **Zinc**, pinned at `2.1.0-M10`
-(`project/Dependencies.scala`, overridable via `sbtzinc.path`) and therefore out of this
-clone. The tree owns the wiring: `compileIncremental` produces an `Analysis`,
-`compileAnalysisFile` names the `target/.../zinc` file, and `AnalysisUtil.staticCachedStore`
-wraps it with `reproducible = true`; `clean` clears the store before deleting outputs.
+(`project/Dependencies.scala`, overridable via `sbtzinc.path`) in a separate
+repository. The sbt tree owns the wiring: `compileIncremental` produces an
+`Analysis`, `compileAnalysisFile` names the `target/.../zinc` file, and
+`AnalysisUtil.staticCachedStore` wraps it with `reproducible = true`; `clean`
+clears the store before deleting outputs.
+
+Inside the pinned Zinc `v2.1.0-M10` (`0401049…`), an `Analysis` is five coordinated structures:
+source/product/library **stamps**, extracted **APIs**, **relations**,
+per-source info, and compilation records ([`Analysis.scala`][zinc-analysis]).
+Relations separately track produced products, class definitions, internal
+class dependencies split into inheritance / local-inheritance / member-ref,
+external dependencies, library use, and the names each class used
+([`Relations.scala`][zinc-relations]). A compile is a sequence of cycles:
+compute stamp changes, map invalidated classes (including package objects) to
+sources, prune old classfiles/relations, compile, extract new APIs and
+dependencies through the compiler bridge, then decide whether API changes
+invalidate another cycle ([`IncrementalCommon.scala`][zinc-incremental]).
+
+Name hashing is the early-cutoff policy. `MemberRefInvalidator` does not
+invalidate every dependent for every API change: a private trait-member
+change invalidates none through member-ref; ordinary `NamesChange` entries
+invalidate only dependents whose recorded used-names intersect the modified
+names; macro/annotation definitions and changes to implicit names invalidate
+unconditionally; non-Scala dependencies bypass the filter
+([`MemberRefInvalidator.scala`][zinc-invalidator]). The compiler bridge is
+therefore an in-process dependency oracle, not a depfile afterthought: it
+observes compiler phases, extracts APIs/names/dependencies directly, and
+feeds them into the next cycle. Zinc's correctness boundary is the bridge's
+ability to model Scala/Java compilation semantics (including macros,
+annotations, package objects, local classes, and binary stamps), not the sbt
+task graph's declared file inputs.
 
 sbt 2.x adds a second, independent rebuilder as an **action cache**. `Def.cachedTask` and
 `@cacheLevel` make the macro wrap the body in `ActionCache.cache`; `Def.uncached` and
@@ -123,8 +150,13 @@ unchanged — value-level early cutoff from the cache, not the scheduler.
 
 ### 3. Dependency discovery
 
-Declared, only declared: `.value` in a task macro, plus `Def.taskDyn` when the _shape_
-depends on a value. No tracing, no FUSE, no depfile ingestion, no strict-deps mode.
+At task-graph level, declared only: `.value` in a task macro, plus
+`Def.taskDyn` when the _shape_ depends on a value. No tracing, no FUSE, no
+depfile ingestion, no strict-deps mode. Compilation is the exception by
+delegation: Zinc's compiler bridge discovers class/API/name dependencies from
+inside `scalac`/Java compilation and stores them in `Analysis` relations, so
+source-level discovery is compiler-observed even though task-level discovery
+is macro-declared.
 `validateTaskReferences` is the sole enforcement point — rejecting captured locals is what
 keeps the extracted edge set sound — and the rest is convention: an undeclared read of a
 file, environment or global is neither detected nor diagnosable. `Def.cachedTask` also
@@ -296,3 +328,7 @@ borrowings are mechanisms:
 [buildkit]: ./buildkit.md
 [buildxl]: ./buildxl.md
 [mono-sbt]: ../monorepo-tooling/sbt/
+[zinc-analysis]: https://github.com/sbt/zinc/blob/040104911bd6a9585545af030b42da45bd19e276/internal/zinc-core/src/main/scala/sbt/internal/inc/Analysis.scala
+[zinc-relations]: https://github.com/sbt/zinc/blob/040104911bd6a9585545af030b42da45bd19e276/internal/zinc-core/src/main/scala/sbt/internal/inc/Relations.scala
+[zinc-incremental]: https://github.com/sbt/zinc/blob/040104911bd6a9585545af030b42da45bd19e276/internal/zinc-core/src/main/scala/sbt/internal/inc/IncrementalCommon.scala
+[zinc-invalidator]: https://github.com/sbt/zinc/blob/040104911bd6a9585545af030b42da45bd19e276/internal/zinc-core/src/main/scala/sbt/internal/inc/MemberRefInvalidator.scala

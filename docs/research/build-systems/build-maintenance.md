@@ -349,7 +349,7 @@ carry as much churn; for a future `dub` engine, fold resolution inputs and lockf
 into the build graph's key. And build _speed_ and build _churn_ are different
 variables: a claim that a new engine lowers maintenance cost needs this measurement.
 
-## Strengths and weaknesses
+## Strengths
 
 - **Scale plus stratification.** 177,039 repositories, each headline finding required
   to repeat across forges, ecosystems and projects; Table 1 is a reusable adoption
@@ -360,6 +360,9 @@ variables: a claim that a new engine lowers maintenance cost needs this measurem
 - **Falsifiable, cheap measures.** Logical coupling and author ratio are computable
   from any VCS history, so the study repeats on another corpus — why its method
   outlived its technology list.
+
+## Weaknesses
+
 - **A proxy, not a cost.** Lines and commits are not effort, difficulty or risk; the
   authors say so, and Maven's extra churn may be cheap edits whose features pay for
   themselves (§6.3, §8.2).

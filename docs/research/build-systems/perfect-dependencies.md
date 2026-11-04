@@ -430,7 +430,7 @@ involving a speculative action is a scheduling artefact and should retry.
 `FailurePolicy` classifies outcomes, not conflicts, so neither it nor
 `EdgeCondition` can express "retry: the clash was speculative".
 
-## Strengths and weaknesses
+## Strengths
 
 - **The strongest dependency statement available.** When tracing works no
   declaration can be wrong, and the measurements show the ceiling: a whitespace
@@ -441,6 +441,9 @@ involving a speculative action is a scheduling artefact and should retry.
 - **Honest about cost.** Tracing overhead is measured on two platforms, the cold
   build loss is shown, and the one project in the hours range is flagged as the
   limit of the evidence.
+
+## Weaknesses
+
 - **A forward system does not compose.** No target means no subtree build and no
   reuse of the graph by another tool; the baseline is a shell script and the
   comparison is Make, not a graph-based engine.

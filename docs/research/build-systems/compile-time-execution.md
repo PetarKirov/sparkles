@@ -343,12 +343,18 @@ the graph learns nothing, so the next build repeats the failure. And an
 `rustc` records a proc macro's `open` calls as the compiler's — technically
 complete, practically unusable as an edge set.
 
-## Strengths and weaknesses
+## Strengths
 
 - **In-language evaluation is the cheapest hermetic codegen there is** — no
-  subprocess, sandbox, declaration or separate key — and that is also its
-  limitation: it cannot read a file, probe a library or fetch a schema, so every
-  real generator eventually leaves the interpreter and crosses the boundary.
+  subprocess, sandbox, declaration or separate key.
+- **IFD keeps generated build expressions inside the store**, inheriting
+  content addressing, sandboxing and cache substitution for the generator step.
+
+## Weaknesses
+
+- **Pure evaluation cannot cross the I/O boundary**: it cannot read an unmapped
+  file, probe a library or fetch a schema, while IFD serializes evaluation —
+  which is why Nix offers a switch to forbid it.
 - **A build script rewrites its consumer's command line.** More expressive than a
   code generator and much harder to key: its output is a set of flags, and
   Cargo's mtime model is all that stands between it and a stale compile.
@@ -359,8 +365,6 @@ complete, practically unusable as an edge set.
   the graph they produce; the only sound policy is to hash them into every key.
   Zig does, Bazel approximates with re-fetch triggers, GN and Meson leave it to
   the user.
-- **Only IFD keeps execution inside the store**, and it serializes evaluation,
-  which is why Nix offers a switch to forbid it.
 
 ## Key design decisions and trade-offs
 

@@ -16,16 +16,16 @@ the Sparkles task DAG in
 > named in [Part 5](#part-5--the-sparkles-delta). The catalog's own inferences are
 > marked **Catalog inference**, as on the themes.
 
-| Field            | Value                                                                                 |
-| ---------------- | ------------------------------------------------------------------------------------- |
-| Page type        | Synthesis (capstone)                                                                  |
-| Covers           | 5 foundations, 20 industry rows, 9 Nix projects, 14 themes                            |
-| Grid vocabulary  | [concepts] §2–§5, from JFP 2020                                                       |
-| Sparkles subject | `sparkles:build-primitives` task DAG (`model.d`, `graph.d`, `executor.d`, `action.d`) |
-| New clones read  | none; four pinned files re-opened to quote                                            |
-| Status of inputs | every page below reports `reviewed`                                                   |
+| Field            | Value                                                                                     |
+| ---------------- | ----------------------------------------------------------------------------------------- |
+| Page type        | Synthesis (capstone)                                                                      |
+| Covers           | 5 foundations, 20 industry rows, 9 Nix projects, 14 themes                                |
+| Grid vocabulary  | [concepts] §2–§5, from JFP 2020                                                           |
+| Sparkles subject | `sparkles:build-primitives` task DAG (`model.d`, `graph.d`, `executor.d`, `action.d`)     |
+| New clones read  | none for this page; revised inputs re-read Zinc, Wild, Coq artifacts, CAS implementations |
+| Status of inputs | every page below reports `reviewed` (priority pages revised in depth on 2026-11-03)       |
 
-**Last reviewed:** November 2, 2026
+**Last reviewed:** November 3, 2026
 
 ---
 
@@ -36,28 +36,28 @@ the Sparkles task DAG in
 Reproduced from the [master catalog][index] and checked against each deep-dive's
 own placement section. `—` means the deep-dive declines to classify.
 
-| System   | Scheduler                 | Rebuilder                               | Link                 |
-| -------- | ------------------------- | --------------------------------------- | -------------------- |
-| BuildXL  | topological               | verifying traces                        | [BuildXL][buildxl]   |
-| Bazel    | restarting                | constructive traces                     | [Bazel][bazel]       |
-| Buck2    | suspending                | verifying traces                        | [Buck2][buck2]       |
-| build2   | topological (recursive)   | mtime dirty bit + `depdb`               | [build2][build2]     |
-| Please   | suspending                | verifying traces                        | [Please][please]     |
-| Ninja    | topological               | verifying traces (qualified)            | [Ninja][ninja]       |
-| GNU Make | topological               | dirty bit                               | [GNU Make][gnumake]  |
-| redo     | suspending                | verifying step traces                   | [redo][redo]         |
-| tup      | topological               | dirty bit (observed)                    | [tup][tup]           |
-| Shake    | suspending                | verifying step traces                   | [Shake][shake]       |
-| Rattle   | speculative (off-grid)    | constructive in spirit                  | [Rattle][rattle]     |
-| Earthly  | static DAG (via BuildKit) | constructive traces + auto-skip         | [Earthly][earthly]   |
-| GN       | not a cell (generator)    | —                                       | [GN][gn]             |
-| Meson    | not a cell (generator)    | —                                       | [Meson][meson]       |
-| Boba     | —                         | —                                       | [Boba][boba]         |
-| Pants v2 | suspending                | verifying step traces                   | [Pants][pants]       |
-| Moon     | topological               | constructive (action cache)             | [Moon][moon]         |
-| BitBake  | topological               | verifying traces (sstate)               | [BitBake][bitbake]   |
-| sbt      | topological + suspension  | per-invocation dirty bit + action cache | [sbt][sbt]           |
-| BuildKit | topological               | constructive traces                     | [BuildKit][buildkit] |
+| System   | Scheduler                 | Rebuilder                                 | Link                 |
+| -------- | ------------------------- | ----------------------------------------- | -------------------- |
+| BuildXL  | topological               | verifying traces                          | [BuildXL][buildxl]   |
+| Bazel    | restarting                | constructive traces                       | [Bazel][bazel]       |
+| Buck2    | suspending                | verifying traces                          | [Buck2][buck2]       |
+| build2   | topological (recursive)   | mtime dirty bit + `depdb`                 | [build2][build2]     |
+| Please   | suspending                | verifying traces                          | [Please][please]     |
+| Ninja    | topological               | verifying traces (qualified)              | [Ninja][ninja]       |
+| GNU Make | topological               | dirty bit                                 | [GNU Make][gnumake]  |
+| redo     | suspending                | verifying step traces                     | [redo][redo]         |
+| tup      | topological               | dirty bit (observed)                      | [tup][tup]           |
+| Shake    | suspending                | verifying step traces                     | [Shake][shake]       |
+| Rattle   | speculative (off-grid)    | constructive in spirit                    | [Rattle][rattle]     |
+| Earthly  | static DAG (via BuildKit) | constructive traces + auto-skip           | [Earthly][earthly]   |
+| GN       | not a cell (generator)    | —                                         | [GN][gn]             |
+| Meson    | not a cell (generator)    | —                                         | [Meson][meson]       |
+| Boba     | —                         | —                                         | [Boba][boba]         |
+| Pants v2 | suspending                | verifying step traces                     | [Pants][pants]       |
+| Moon     | topological               | constructive (action cache)               | [Moon][moon]         |
+| BitBake  | topological               | signature-stamp dirty bit + sigdata trace | [BitBake][bitbake]   |
+| sbt      | topological + suspension  | per-invocation dirty bit + action cache   | [sbt][sbt]           |
+| BuildKit | topological               | constructive traces                       | [BuildKit][buildkit] |
 
 The arithmetic is a finding: **sixteen** rows occupy a cell, **one** is
 deliberately off-grid — Rattle is a _forward_ system whose trace replaces the
@@ -196,7 +196,7 @@ corpus reconciles them.
 | Bazel    | an author obligation         | symlink forest / `sandboxfs` / process wrapper | REAPI telemetry only        |
 | Buck2    | the environment's obligation | sandbox                                        | none                        |
 | BuildKit | a mode of the exporter       | container per step                             | **provenance as a product** |
-| BitBake  | a property of the recipe     | none in the engine                             | none                        |
+| BitBake  | a property of the recipe     | network namespace + Landlock; no fs sandbox    | none                        |
 | BuildXL  | an assumption                | Detours (Windows), `ptrace` (Linux)            | none                        |
 
 Published overhead numbers exist for three mechanisms and are not comparable:
@@ -238,8 +238,10 @@ Ten claims the corpus supports across independent systems, strongest first.
 
 1. **Identity is a hash of inputs, not a timestamp** — the mtime-only systems
    ([gnumake], [build2], [tup]) list false rebuilds as a known cost.
-2. **Declare inputs; let the compiler emit depfiles; trace to audit.** No system
-   relies on interception as its production answer ([sandboxing-overheads]).
+2. **Declare inputs; let the compiler emit depfiles; trace to audit.** With one
+   production-scale exception — [BuildXL][buildxl], whose observed file accesses
+   validate declarations and feed its cache keys — no system relies on
+   interception as its production answer ([sandboxing-overheads]).
 3. **Early cutoff is a per-edge output identity**, lost the moment dependency
    hashes collapse into one key ([moon], [nix-thesis]).
 4. **Two cache tiers, with ordered touches or a completeness check**, or eviction
@@ -253,8 +255,10 @@ Ten claims the corpus supports across independent systems, strongest first.
 8. **Isolation and observation are different features** — a write-only sandbox
    does not validate a read set ([please], [sandboxing-overheads]).
 9. **Provenance is an export at the graph seam** ([provenance], [buildkit]).
-10. **Verification stops at executable models** — à la carte's models are tested,
-    not proved; the Coq translation is incomplete ([formal-verification]).
+10. **Mechanized correctness exists for research models, not shipped engines** —
+    CloudMake, forward build systems, and Nix's evaluator have completed proofs;
+    no production rebuilder or rebuild-minimality proof was found
+    ([formal-verification]).
 
 ---
 
@@ -294,22 +298,22 @@ states the boundary:
 That sentence is the delta in one line: the engine is **topological × no
 rebuilder**, by declaration rather than by accident.
 
-| Capability                | Consensus (Part 3)         | Sparkles today                                                                                                       | Delta                                                           |
-| ------------------------- | -------------------------- | -------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| Scheduler                 | topological or suspending  | `stableTopologicalOrder` returns an order or the shortest cycle; the graph is validated first (`graph.d`)            | **none** — the field's cheapest correct choice                  |
-| Rebuilder                 | claims 1, 3                | nothing: no dirty bit, no trace, no key over inputs; every admitted task runs                                        | **the missing half**                                            |
-| Identity                  | a hash of inputs           | `TaskId` is stable semantic text (`test:sparkles.base:unittest`) and `toHash` hashes that text (`model.d`)           | no content key; the id is a name, not a function of inputs      |
-| Persistent state          | claims 4, 5                | out of scope; `graph.d` has no serialization                                                                         | no rebuild memory across runs                                   |
-| Dynamic dependencies      | claim 5                    | `EdgeReason.planning` is the static analogue; the node set is fixed at validation                                    | no graph-extending node; a plan cannot be a node's output       |
-| Executed vs planned graph | claims 3, PIE's `reqTasks` | `EdgeCondition` (`onSuccess`, `onFailure`, `onCompletion`, `always`) makes the executed path a subset of the planned | a trace must record edges _taken_, not edges declared           |
-| Store                     | claim 4                    | none; the executor writes into the workspace                                                                         | no CAS, no action cache, no eviction                            |
-| Sandbox                   | claim 8                    | `SandboxPolicy.taskDirectory` — a private directory for `DUB_HOME`, build root, spilled output                       | isolation by directory, **not** observation; no declared inputs |
-| Absent probes             | claims 2, 3                | not representable                                                                                                    | a glob that matched nothing is invisible                        |
-| Determinism               | claim 7                    | not modelled                                                                                                         | load-bearing the moment a cache exists                          |
-| Provenance                | claim 9                    | `ProcessAction` carries `argv`, `envDelta` (with `redacted`), `cwd`, `timeout`, `sandbox` (`action.d`)               | `redacted` is already `mode=min`; no statement is emitted       |
-| Distribution              | §2.6                       | out of scope                                                                                                         | none; the REAPI seam is the only closure-preserving option      |
-| Speculation               | [speculative-execution]    | admission is deterministic and in presentation order; `usage` is an event, not an admission input                    | no predictor, no hazard check, no discard rule                  |
-| Dependency pruning        | claim 2                    | `workspace/package_graph.d` builds edges from declarations only; nothing compares them with imports                  | over-declared is a real edge; under-declared is invisible       |
+| Capability                | Consensus (Part 3)         | Sparkles today                                                                                                       | Delta                                                                                         |
+| ------------------------- | -------------------------- | -------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Scheduler                 | topological or suspending  | `stableTopologicalOrder` returns an order or the shortest cycle; the graph is validated first (`graph.d`)            | **none** — the field's cheapest correct choice                                                |
+| Rebuilder                 | claims 1, 3                | nothing: no dirty bit, no trace, no key over inputs; every admitted task runs                                        | **the missing half**                                                                          |
+| Identity                  | a hash of inputs           | `TaskId` is stable semantic text (`test:sparkles.base:unittest`) and `toHash` hashes that text (`model.d`)           | no content key; the id is a name, not a function of inputs                                    |
+| Persistent state          | claims 4, 5                | out of scope; `graph.d` has no serialization                                                                         | no rebuild memory across runs                                                                 |
+| Dynamic dependencies      | claim 5                    | `EdgeReason.planning` is the static analogue; the node set is fixed at validation                                    | no graph-extending node; a plan cannot be a node's output                                     |
+| Executed vs planned graph | claims 3, PIE's `reqTasks` | `EdgeCondition` (`onSuccess`, `onFailure`, `onCompletion`, `always`) makes the executed path a subset of the planned | a trace must record edges _taken_, not edges declared                                         |
+| Store                     | claim 4                    | none; the executor writes into the workspace                                                                         | no CAS, no action cache, no eviction                                                          |
+| Sandbox                   | claim 8                    | `SandboxPolicy.taskDirectory` — a private directory for `DUB_HOME`, build root, spilled output                       | isolation by directory, **not** observation; no declared inputs                               |
+| Absent probes             | claims 2, 3                | not representable                                                                                                    | a glob that matched nothing is invisible                                                      |
+| Determinism               | claim 7                    | not modelled                                                                                                         | load-bearing the moment a cache exists                                                        |
+| Provenance                | claim 9                    | `ProcessAction` carries `argv`, `envDelta` (with `redacted`), `cwd`, `timeout`, `sandbox` (`action.d`)               | `redacted` is already `mode=min`; no statement is emitted                                     |
+| Distribution              | §2.6                       | out of scope                                                                                                         | none; the REAPI seam is the only closure-preserving option                                    |
+| Speculation               | [speculative-execution]    | admission is deterministic and in presentation order; `usage` is an event, not an admission input                    | no duration record or critical-path priority; demand speculation is premature in a static DAG |
+| Dependency pruning        | claim 2                    | `workspace/package_graph.d` builds edges from declarations only; nothing compares them with imports                  | over-declared is a real edge; under-declared is invisible                                     |
 
 ### What Sparkles already has that the field mostly does not
 
@@ -322,7 +326,7 @@ rebuilder**, by declaration rather than by accident.
    `Degraded` are more expressive than any surveyed engine's pass/fail/skip.
 3. **Deterministic transcripts by construction.** One owner fiber, presentation
    order, no backfilling past a heavy task — and [speculative-execution] notes a
-   predictor is meaningless without exactly that baseline.
+   critical-path priority or predictor is unmeasurable without exactly that baseline.
 
 **Catalog inference:** the cheapest first increment is not a store but a
 _definition_ — JFP §3.6's "recompute from the final store and compare" — which

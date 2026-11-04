@@ -261,7 +261,7 @@ no persistent memory, so four borrowings are cheap:
 What does not transfer: a container per action (far too heavy for a compiler
 step) and the ref/snapshot/lease machinery a mutable store drags in.
 
-## Strengths and weaknesses
+## Strengths
 
 - **The right IR at the right time.** LLB's op set is small enough to implement
   and expressive enough to host Dockerfile, buildpacks, HLB and Nix frontends;
@@ -272,6 +272,9 @@ step) and the ref/snapshot/lease machinery a mutable store drags in.
 - **Cache portability is unusually good.** An OCI index in a registry moves a
   cache between CI providers; six exporters cover the practical backends without
   a bespoke daemon protocol.
+
+## Weaknesses
+
 - **No observation means an unsound cache is possible.** A `RUN` that fetches over
   the network or reads an undeclared path caches a stale result and the engine
   cannot tell; `--no-cache` and `RUN --network=none` are remedies, not a
