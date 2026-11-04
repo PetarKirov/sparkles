@@ -8014,6 +8014,10 @@
             "link": "/research/font-libraries/comparison"
           },
           {
+            "text": "GPU font previews",
+            "link": "/research/font-libraries/gpu-font-previews"
+          },
+          {
             "text": "C / C++ cores",
             "collapsed": true,
             "items": [

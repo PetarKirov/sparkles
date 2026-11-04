@@ -37,6 +37,7 @@ import sparkles.ui.geometry : Insets, Point, Rect, Size;
 import sparkles.ui.style : BorderStyle, BoxBorder, Palette, Slot, Visual;
 import sparkles.ui.widget : Builder, WidgetKind, WidgetTree;
 import sparkles.ui_vulkan.painter : rgba;
+import sparkles.ui_vulkan.coverage_geometry : CoverageMode, CoverageWork;
 import sparkles.ui_vulkan.text_rendering : Compositing, Hinting, Loupe, TextRendering;
 
 /// The specimen, line by line: what each line shows, and the text.
@@ -122,6 +123,9 @@ struct Lab
     uint sweepFrames; /// deterministic size/axis sweep; zero disables it
     SweepMode sweepMode; /// which font settings change during a sweep
     uint rasterWorkers = 2; /// coverage workers, including a serial comparison
+    CoverageMode coverageMode; /// opt-in coverage comparison
+    string coverageReport; /// optional CSV experiment output
+    private ulong paintedFrames;
     private SpecimenLayout specimenLayout;
     private uint swept;
     private LabControls controls;
@@ -144,6 +148,20 @@ struct Lab
     void shutdown(H)(ref H h)
     {
         if (controls !is null) controls.stop();
+        if (coverageReport.length && specimenLayout !is null)
+        {
+            import std.stdio : File;
+            auto file = File(coverageReport, "w");
+            file.writeln("frame,mode,prepare_worker_ns,flatten_worker_ns,pack_worker_ns,raster_worker_ns,caller_ns,attempted_glyphs,edges,texels,band_stride_sum,geometry_glyphs,fallback_glyphs,published_glyphs");
+            foreach (sample; specimenLayout.coverageWork[])
+            {
+                const work = sample.work;
+                file.writefln("%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s", sample.frame, coverageMode,
+                    work.prepareNs, work.flattenNs, work.packNs, work.rasterNs, work.batchNs,
+                    work.glyphs, work.edges, work.texels, work.bandStrideSum,
+                    work.geometryGlyphs, work.fallbackGlyphs, work.publishedGlyphs);
+            }
+        }
         static if (__traits(hasMember, H, "frameStatistics"))
             if (sweepFrames)
             {
@@ -218,6 +236,7 @@ struct Lab
     /// The header, both panels below it, and the sheet when it is open.
     void paint(H)(ref H h, in WidgetTree, in Frame[])
     {
+        ++paintedFrames;
         static if (offersSettings!H)
         {
             if (!sentSettings)
@@ -254,18 +273,12 @@ struct Lab
         sheet_ = Rect.init;
         static if (offersSettings!H)
             if (controls !is null) sheet_ = controls.overlayBounds(size, sheetOpen);
-        header(h, canvas, size.width);
         const half = (size.height - headerRows) / 2;
         panel(h, canvas, Rect(0, headerRows, size.width, half), dark);
         panel(h, canvas, Rect(0, headerRows + half, size.width, size.height - headerRows - half), light);
-        static if (__traits(hasMember, H, "specimenFallbackGlyphs"))
-            if (discoverFonts && (h.specimenFallbackGlyphs || h.specimenGridFallbacks))
-            {
-                canvas.fillRect(Rect(0, 2, size.width - 24, 1), Visual(bg: headerBg, hasBg: true));
-                canvas.textRun(Point(1, 2), clip(format("† fallback %s · grid substitutions %s",
-                    h.specimenFallbackGlyphs, h.specimenGridFallbacks), size.width - 26),
-                    Visual(fg: muted, bg: headerBg, hasBg: true));
-            }
+        // Read frame-local diagnostics after drawing, then paint each header
+        // line once. Fallback telemetry must not replace the settings hints.
+        header(h, canvas, size.width);
         static if (__traits(compiles, canvas.fillPx(0, 0, 1, 1, rgba(accent, 255))))
             if (crosshair && pointing)
                 drawCrosshair(h, canvas);
@@ -291,7 +304,11 @@ struct Lab
             const first = format("text lab · %s · %s", discoverFonts ? format("%.2g pt", model.font.size)
                 : format("%spx", h.fontSizePx),
                 loupe.shown ? format("loupe ×%s", loupe.scale) : "loupe off");
-            const second = format("compositing %s %.2f", settings.compositing, settings.contrast);
+            static if (__traits(hasMember, H, "specimenFallbackGlyphs"))
+                const second = format("compositing %s %.2f · † fallback %s / grid %s",
+                    settings.compositing, settings.contrast, h.specimenFallbackGlyphs, h.specimenGridFallbacks);
+            else
+                const second = format("compositing %s %.2f", settings.compositing, settings.contrast);
             const hint = controls !is null && controls.error.length ? controls.error
                 : format("hinting %s · shaping %s · f Fonts · F12 stable UI", settings.hinting, settings.shaping ? "on" : "off");
         }
@@ -384,7 +401,9 @@ struct Lab
         specimenLayout.tokens.clear(false);
         specimenLayout.lines.clear(false);
         if (!h.beginSpecimen()) return;
-        static if (__traits(compiles, canvas.beginGlyphPreparation(rasterWorkers), canvas.finishGlyphPreparation()))
+        static if (__traits(compiles, canvas.beginGlyphPreparation(rasterWorkers, coverageMode, coverageReport.length != 0), canvas.finishGlyphPreparation()))
+            canvas.beginGlyphPreparation(rasterWorkers, coverageMode, coverageReport.length != 0);
+        else static if (__traits(compiles, canvas.beginGlyphPreparation(rasterWorkers), canvas.finishGlyphPreparation()))
             canvas.beginGlyphPreparation(rasterWorkers);
         foreach (index, line; lines)
         {
@@ -424,7 +443,19 @@ struct Lab
             y += rowHeight;
         }
         h.endSpecimen();
-        static if (__traits(compiles, canvas.finishGlyphPreparation()))
+        static if (is(typeof(canvas.finishGlyphPreparation()) : CoverageWork))
+        {
+            const work = canvas.finishGlyphPreparation();
+            if (coverageReport.length)
+            {
+                auto rows = specimenLayout.coverageWork[];
+                if (rows.length && rows[$ - 1].frame == paintedFrames - 1)
+                    rows[$ - 1].work.add(work);
+                else if (rows.length < 65_536)
+                    specimenLayout.coverageWork ~= CoverageSample(paintedFrames - 1, work);
+            }
+        }
+        else static if (__traits(compiles, canvas.finishGlyphPreparation()))
             canvas.finishGlyphPreparation();
         foreach (line; specimenLayout.lines[])
         {
@@ -796,6 +827,13 @@ private final class SpecimenLayout
 {
     UniqueBuffer!PlacedToken tokens;
     UniqueBuffer!PlacedLine lines;
+    UniqueBuffer!CoverageSample coverageWork;
+}
+
+private struct CoverageSample
+{
+    ulong frame;
+    CoverageWork work;
 }
 
 private struct PlacedToken
@@ -1034,6 +1072,36 @@ version (unittest) private struct SettingsHost
     int cellHeight() const => 1;
 }
 
+
+/// Frame-local fallback counts do not overwrite the settings hint line.
+@("text_lab.headerHintsAreNotOverpaintedByFallbackCounts")
+@system unittest
+{
+    import sparkles.ui.canvas : OpKind;
+    import std.algorithm.searching : startsWith;
+
+    struct Host
+    {
+        SettingsHost settingsHost;
+        alias settingsHost this;
+        uint specimenFallbackGlyphs = 2, specimenGridFallbacks = 1;
+    }
+    Lab lab;
+    lab.discoverFonts = true;
+    Host host;
+    host.rec.size = Size(100, 60);
+    scope (exit) lab.shutdown(host);
+    const tree = lab.view(host);
+    lab.paint(host, tree, null);
+    size_t hints;
+    foreach (op; host.rec.canvas.ops)
+        if (op.kind == OpKind.textRun && op.rect.x == 1 && op.rect.y == 2)
+        {
+            assert(op.text.startsWith("hinting"), "fallback telemetry must not replace the hint line");
+            ++hints;
+        }
+    assert(hints == 1);
+}
 
 /// The generated sheet remains a bottom sheet on phones and a side sheet on desktops.
 @("text_lab.theGeneratedSheetUsesResponsivePlacement")

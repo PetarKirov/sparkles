@@ -6,6 +6,11 @@ closes each research question with a verdict; the shared vocabulary is
 [`concepts.md`](./concepts.md).
 **Last reviewed:** October 3, 2026
 
+For the November 2026 animated-preview workload, see
+[GPU rendering for animated font previews](./gpu-font-previews.md). It revisits
+the GPU verdict below using device profiles and distinguishes Vello's compute
+renderer from its Sparse Strips renderer.
+
 `sparkles` is about to replace its font stack. Today a terminal, a code viewer
 and their Android builds draw text through `sparkles:raylib-text`: a raylib
 (stb_truetype) atlas for single codepoints beside a FreeType and HarfBuzz C shim
@@ -79,7 +84,7 @@ are read as closely as the general-purpose libraries.
 | [Parley + Fontique](./parley.md)                | Rust        | layout engine, font database | Two contexts, long-lived and scratch; `Synthesis` as data; fallback probed by script sample.                   |
 | [fontdue](./fontdue.md)                         | Rust        | rasterizer                   | The fill core is ~200 lines; cached geometry is where the speed is.                                            |
 | [ab_glyph](./ab-glyph.md)                       | Rust        | rasterizer                   | A by-value scaled-font wrapper; outlines as data; px-per-em as the only honest size unit.                      |
-| [Vello](./vello.md)                             | Rust / WGSL | rasterizer (GPU compute)     | The renderer contract is `(blob, index, size, coords, hint) + [glyph, x, y]`; 5.4 KLOC of shaders.             |
+| [Vello](./vello.md)                             | Rust / WGSL | rasterizer (hybrid/compute)  | Sparse Strips uses CPU preparation; the research renderer moves flattening, binning and coverage into compute. |
 | [glyphon](./glyphon.md)                         | Rust / wgpu | rasterizer (GPU atlas)       | Mask and colour atlases, generation-stamped eviction, one instanced draw.                                      |
 | [font-kit](./font-kit.md)                       | Rust        | platform adapter, database   | A serializable `{path or bytes, index}` handle between discovery and loading; CSS §5.2 in ~130 lines.          |
 | [SixLabors.Fonts](./sixlabors-fonts.md)         | C#          | layout engine                | Two-level loading for listing versus rendering; an outline sink that can refuse.                               |

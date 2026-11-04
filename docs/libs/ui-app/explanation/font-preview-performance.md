@@ -184,6 +184,133 @@ startup and cold-face latency as separate async-loading results. Preserve the
 pixel/readback and interaction tests; scaled bitmap previews, disabled
 shaping, and stale generations do not satisfy this gate.
 
-All temporary instrumentation was removed after this investigation, and the
-validated normal APK was restored on the device. No performance optimization
-from this plan has been implemented by the profiling pass.
+The original profiling pass removed its temporary instrumentation. Subsequent
+implementation retains metric/shaping sources, prepared runs, plain-text wraps
+and unchanged settings rows, culls obscured specimen work, and batches glyph
+misses on Event Horizon workers. The following experiments are opt-in; their
+presence does not establish the delivery gate above.
+
+## Repeating the coverage experiments
+
+`text-lab --coverage-mode cpu|edges|bands` compares the ordinary hinted CPU
+atlas with two fragment-shader paths over the same prepared instance geometry.
+`edges` traverses every flattened edge. `bands` selects a four-pixel horizontal
+band; all band lists have the same padded stride so texture sampling occurs in
+uniform control flow. Both preserve directed-edge order and far-left winding
+contributions. Their union mode retains the CPU rasterizer's 4×4 sampling and
+per-subpixel rounding. Neither is Slug's original-curve algorithm.
+
+Stable interface text continues using the atlas. Geometry preparation runs on
+the configured Event Horizon workers; bounded results are packed into a
+frame-slot geometry texture and drawn with the existing compositing shader.
+Unsupported glyphs, geometry overflow and unavailable resources fall back to
+the complete CPU path. The geometry limit is 512 edges and 128×128 pixels per
+glyph, at most 8192 pixels, with a 512×256 RGBA32F geometry image per frame slot.
+Band duplication counts against that image and the configured upload budget.
+
+`--coverage-report PATH` enables optional per-frame CSV diagnostics. Both panels
+contribute to one row. Preparation,
+flattening, packing and raster columns are **summed worker elapsed times**,
+including preemption; they are not CPU-clock samples or frame latency.
+`caller_ns` includes dispatch, joining and publication.
+Uninstrumented synchronous fallbacks and shaping are visible in frame timings,
+rather than these worker counters. Edge and padded-stride totals show traversal
+reduction separately from duplicated upload texels. CSV output is written on
+shutdown, outside the measured frame loop, and retains at most the first 65,536
+frames of an interactive session. Attempted jobs, completed geometry, worker CPU
+fallbacks and published GPU glyphs have separate counters.
+
+Install the debug APK, then run the driver against one connected device:
+
+```bash
+dub run --single apps/text-lab/tools/profile-coverage.d -- adb /tmp/coverage 3 420
+```
+
+It rotates CPU/unbanded/banded order across three repetitions of weight and size
+sweeps, with stable UI, controls open and four raster workers. Every run retains
+arguments, raw frame/GPU traces, worker CSV, battery and thermal reports. Frame
+summaries discard the first 60 traced frames. Additional app arguments may follow
+the frame count, for example `--ui-follows-specimen`. Compare actual frame-start
+intervals as well as CPU and GPU percentiles; overlapping timings cannot be added
+to infer presentation cadence. The driver expects the debug app's bundled
+`files/fonts/NotoSans.ttf` and exits on a failed or incomplete run.
+Set `ANDROID_SERIAL` when more than one device is connected. A fresh installation
+is supported: the driver creates the argument directory and the app extracts its
+bundled fonts before processing those arguments.
+
+### Initial device results
+
+Three repetitions of each weight/size workload at native resolution produced
+the following **ranges of per-run GPU p95**, in milliseconds. Controls were open,
+the UI font stayed stable, and four raster workers were requested. These are
+within-device rendering comparisons; differing resolutions, visible text and
+thermal conditions prevent treating them as a normalized SoC benchmark.
+
+| Device / workload                   |   CPU atlas | Unbanded edges | Banded edges |
+| ----------------------------------- | ----------: | -------------: | -----------: |
+| Adreno 660, weight                  |   4.09–4.22 |    12.99–13.06 |    8.03–8.09 |
+| Adreno 660, size                    |   4.38–4.44 |    14.57–14.71 |    8.05–8.09 |
+| Adreno 830 tablet, weight           |   5.93–5.95 |    19.39–19.43 |  10.91–10.92 |
+| Adreno 830 tablet, size             |   6.31–6.40 |    39.14–42.41 |  14.70–14.76 |
+| Mali-G57, weight (feedback omitted) | 10.08–10.15 |    26.40–26.46 |  17.31–17.38 |
+| Mali-G57, size (feedback omitted)   | 10.19–10.28 |    37.51–37.59 |  18.07–18.17 |
+
+The phone is 1080×2400 and reports Vulkan 1.1.128; the tablet is 2136×3200 and
+reports Vulkan 1.3.284 with dynamic rendering. Both used the same APK, SHA-256
+`75e982ec2cba83a1c6fcd2d6184fd0c87b8d7d091b3b29172b3e32b3fb73dcc8`.
+The phone reported 15% battery and 50°C during these runs. Frame-start medians
+were about 16.5 ms on the phone, so these measurements do not demonstrate 120 Hz.
+
+The [phone CSV](/profiles/text-lab-coverage-experiments-summary.csv),
+[tablet CSV](/profiles/text-lab-coverage-tablet-summary.csv) and
+[Mali CSV](/profiles/text-lab-coverage-mali-summary.csv) retain CPU/GPU and
+frame-start percentiles. Raw traces and worker reports are archived locally as
+`build/profiles/text-lab-coverage-experiments.tar.gz`. The phone/tablet worker CSVs
+are per-batch, before the per-frame aggregation/counter improvements; consumers
+must combine rows belonging to the same frame rather than average empty second
+panel batches into a per-frame estimate.
+
+Banding reduces traversal substantially, while increasing packed geometry: the
+first phone weight run averaged about 7,678 original edges and 17,906 uploaded
+texels per non-warmup batch, with summed band strides about 2,228. Flattening
+averaged about 0.99 ms of summed worker elapsed time; packing added about 1.34 ms,
+and caller batch time averaged 2.95 ms. These overlapping stage timings do not
+sum into frame latency. Offloading flattening alone cannot close the observed
+CPU and GPU deadline gaps. Original-curve and compute renderers remain gated
+experiments; the evidence currently favors evaluating reusable transient GPU
+masks and reducing packing/publication work before adding a full compute stack.
+
+### Driver compatibility probes
+
+The native host offers independent `--debug vulkan-spirv11`,
+`--debug vulkan-render-pass` and `--debug vulkan-no-feedback` probes. The first
+changes shader profile while retaining newer device features; the second selects
+the existing render-pass path; the third omits optional pipeline feedback.
+Default capability selection remains enabled on newer devices.
+
+On the Moto e13 (T606 / Mali-G57, 720×1600, Vulkan 1.3.225), both the earlier
+CPU-only APK and the initial experiment APK crashed inside the vendor driver at
+graphics-pipeline creation. Explicit disabled depth state and the older shader
+profile did not fix it; omitting pipeline feedback allowed all six short
+CPU/edges/bands weight/size probes to complete with modern shaders and dynamic
+rendering still enabled. This isolates the failing optional request path without
+attributing it to the coverage experiments. All 18 full comparison runs then
+completed with feedback omitted. The later request variant supplies per-stage
+feedback records as well; the Moto was disconnected before that variant could
+be checked there, so it is not claimed as a confirmed driver fix.
+
+### Preview layout regressions
+
+Numeric previews now reserve the value, reset and changed-marker columns. The
+track may be narrower on a narrow sheet, but changing the numeric badge or
+crossing a default no longer changes the label/description width and recenters
+the controls vertically. A shared-row regression reproduces a three-row Y jump
+in the earlier code and verifies invariant geometry across value/default changes;
+the text-lab regression also covers both responsive sheet widths.
+
+The header is painted once after specimen diagnostics have been collected.
+Fallback totals share the compositing line, and per-line daggers remain on
+affected specimens; they no longer overpaint the hinting/shaping line.
+
+For the architectural alternatives and promotion criteria, see
+[GPU rendering for animated font previews](../../../research/font-libraries/gpu-font-previews.md).

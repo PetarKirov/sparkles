@@ -77,6 +77,11 @@ private RasterGlyph render(Buffers* b, const(ubyte)[] bytes, uint gid,
     auto plan = prepareRaster(at(bytes), 0, ppem, b.workspace()).value;
     assert(plan.metrics.width == 5 && plan.metrics.height == 5);
     bytes[] = 0; // drawing must consume the decoded plan, without font access
+    RasterEdge[2] edges;
+    assert(plan.edges(edges[]).value == 2 && !plan.unionCoverage);
+    const shortEdges = plan.edges(edges[0 .. 1]);
+    assert(shortEdges.hasError && shortEdges.error.limit == FontLimit.callerStorage
+        && shortEdges.error.needed == 2);
     auto region = RasterRegion(b.pixels[], 5, 5, 5);
     assert(plan.rasterize(region, b.workspace()).hasValue);
     foreach (pixel; b.pixels[0 .. 25]) assert(pixel == 255);
@@ -87,6 +92,22 @@ private RasterGlyph render(Buffers* b, const(ubyte)[] bytes, uint gid,
     region.width = 4;
     assert(plan.rasterize(region, b.workspace()).hasError);
     assert(PreparedRaster.init.rasterize(region, b.workspace()).hasError);
+}
+
+/// Horizontal contours can have rounded nonzero bounds but no coverage edges.
+@("raster.prepared.collapsedContourHasNoEdges")
+@system unittest
+{
+    const bytes = glyphFont([simpleGlyph([[0, 128, 1], [1024, 128, 1]])]);
+    auto buffers = new Buffers;
+    const prepared = prepareRaster(at(bytes), 0, Ppem.fromInteger(10).value, buffers.workspace()).value;
+    const m = prepared.metrics;
+    assert(!m.empty && m.width > 0 && m.height > 0);
+    RasterEdge[1] edges;
+    assert(prepared.edges(edges[]).value == 0);
+    assert(prepared.rasterize(RasterRegion(buffers.pixels[], m.width, m.width, m.height),
+        buffers.workspace()).hasValue);
+    foreach (value; buffers.pixels[0 .. m.width * m.height]) assert(value == 0);
 }
 
 @("raster.square.exactCoverage")

@@ -406,6 +406,7 @@ placements; each child's own variation is evaluated before scaling and placement
 | `inst.rasterMeasure(gid, ppem, ws, overlap)`                  | the glyph's pixel size and bearings, and the accumulation and supersample storage the workspace needs                  |
 | `inst.prepareRaster(gid, ppem, ws, overlap, hints)`           | a transient `PreparedRaster`: decoded, optionally hinted outline with measured pixel bounds and scratch requirements   |
 | `prepared.rasterize(region, ws, policy)`                      | coverage from the prepared outline, without decoding or hinting again; the same output and scratch checks apply        |
+| `prepared.edges(output, policy)`                              | directed flattened `RasterEdge`s in glyph-local output pixels; short storage reports the complete edge count           |
 | `inst.rasterizeGlyph(gid, ppem, region, ws, policy, overlap)` | linear 8-bit coverage written into the caller's `RasterRegion` (its own stride); the same size and bearings            |
 | `applyTransfer(coverage, gammaTimes256)`                      | linear coverage encoded for a display of gamma `gammaTimes256 / 256`: the power `256 / gammaTimes256`, identity at 256 |
 
@@ -422,6 +423,10 @@ and supersample storage. The plan borrows only the preparation workspace's
 segments: keep them alive and unchanged until drawing finishes. Accumulation
 and supersample arrays may be grown independently after preparation. The plan
 does not retain a font, allocate storage, or cache glyphs inside the font library.
+`PreparedRaster.unionCoverage` exposes the overlap policy. `edges` uses the same
+subdivision as coverage rendering, including the supersampling scale for union
+mode, then returns coordinates in output pixels. Its output is caller-owned and
+does not borrow the font or preparation workspace; horizontal edges are omitted.
 
 The region stride must cover the glyph's row width, and the byte slice must hold
 every row. Invalid or overflowing row layouts return a caller-storage error before

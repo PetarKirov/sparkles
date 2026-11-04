@@ -418,6 +418,9 @@ uint sectionRow(ref Builder b, ref const TreeData!PropertyNode data, ref const S
             textStyle: TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.caption),
             padding: Insets(0, 2, 0, 2)));
 
+    const editor = item.kind == SectionItem.Kind.drill ? InlineEditor.drillIn
+        : inlineEditorFor(*n, opt.segmentCells);
+
     // The left: label, the changed marker, the description.
     uint[] left;
     {
@@ -425,9 +428,21 @@ uint sectionRow(ref Builder b, ref const TreeData!PropertyNode data, ref const S
         // controls on the right) stay in the cell font.
         const name = TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.body);
         TextSpan[] spans = [TextSpan(text: item.label, slot: Slot.textPrimary, textStyle: name)];
-        if (st.changed)
-            spans ~= TextSpan(text: " ●", slot: Slot.accentPrimary, textStyle: name);
-        left ~= b.add(Widget(kind: WidgetKind.rich, spans: spans));
+        if (editor == InlineEditor.slider)
+        {
+            // A changed marker must not steal space from the label and
+            // rewrap it while a numeric preview is in flight.
+            const label = b.add(Widget(kind: WidgetKind.rich, spans: spans, width: SizeSpec.grow()));
+            const marker = b.add(Widget(kind: WidgetKind.text, text: st.changed ? " ●" : "",
+                slot: Slot.accentPrimary, textStyle: name, width: SizeSpec.fixed(2)));
+            left ~= b.add(Widget(kind: WidgetKind.row, children: [label, marker], width: SizeSpec.grow()));
+        }
+        else
+        {
+            if (st.changed)
+                spans ~= TextSpan(text: " ●", slot: Slot.accentPrimary, textStyle: name);
+            left ~= b.add(Widget(kind: WidgetKind.rich, spans: spans));
+        }
         if (n.doc.length)
             left ~= b.add(Widget(kind: WidgetKind.text, text: n.doc, slot: Slot.muted,
                 textStyle: TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.caption),
@@ -448,11 +463,12 @@ uint sectionRow(ref Builder b, ref const TreeData!PropertyNode data, ref const S
                 borderSlot: st.chipWarn ? Slot.warn : Slot.border, borderRadius: 4)));
     if (st.changed && item.kind == SectionItem.Kind.leaf && n.editable)
         parts ~= pill(b, "↺", Slot.muted, hit(SectionPart.reset), false, false, 1);
+    else if (editor == InlineEditor.slider)
+        parts ~= b.add(Widget(kind: WidgetKind.panel,
+            width: SizeSpec.fixed(3), height: SizeSpec.fixed(1)));
 
     const rows = opt.targetRows;
     const size = ControlSize(rows: rows);
-    const editor = item.kind == SectionItem.Kind.drill ? InlineEditor.drillIn
-        : inlineEditorFor(*n, opt.segmentCells);
     final switch (editor)
     {
         case InlineEditor.none:
@@ -499,8 +515,30 @@ uint sectionRow(ref Builder b, ref const TreeData!PropertyNode data, ref const S
             double value;
             try value = n.badge.to!double;
             catch (Exception) value = n.lo;
-            parts ~= slider(b, value, n.lo, n.hi, hit(SectionPart.slider), size);
-            parts ~= dropdownChip(b, n.badge, false, hit(SectionPart.open), size);
+            // Reserve the value slot across digit/sign/precision changes.
+            // On narrow rows the track gives way before the numeric badge
+            // squeezes and rewraps the label/description on every drag tick.
+            enum valueCells = 12;
+            string shown = n.badge;
+            if (visibleWidth(shown) > valueCells - 4)
+            {
+                import std.format : format;
+
+                // The chip is a preview; opening it still edits the full
+                // unrounded badge. Leave room for padding and the caret.
+                foreach_reverse (precision; 1 .. 7)
+                {
+                    shown = format("%.*g", cast(int)precision, value);
+                    if (visibleWidth(shown) <= valueCells - 4) break;
+                }
+            }
+            const room = opt.width - 3 - nameCells(item.label) - 3 - valueCells - 3;
+            const trackCells = room < 3 ? 3 : room > 16 ? 16 : room;
+            parts ~= slider(b, value, n.lo, n.hi, hit(SectionPart.slider), size, trackCells);
+            const badge = dropdownChip(b, shown, false, hit(SectionPart.open), size);
+            b.nodes[badge].width = SizeSpec.fixed(valueCells);
+            b.nodes[badge].clipX = true;
+            parts ~= badge;
             break;
         }
         case InlineEditor.number:
@@ -883,6 +921,51 @@ version (UiPropertyFixtures)
         }
     assert(painted == 4, "fg and the three palette entries");
     assert(count == "4", "four values in the level");
+}
+
+/// Slider previews retain their track geometry when reset visibility and
+/// digit count change beside a wrapping description.
+version (UiPropertyFixtures)
+@("ui.property_sections.sliderRowGeometryStaysStable")
+@safe unittest
+{
+    import sparkles.metadata : NumericInput;
+    import sparkles.ui.geometry : Constraints, Rect;
+    import sparkles.ui.layout : layout;
+
+    PsFixture fixture;
+    foreach (width; [36, 43, 47, 60])
+    {
+        Rect original;
+        foreach (value; [13, 6, 72, 13])
+        {
+            fixture.subject.look.size = value;
+            fixture.rebuild();
+            const node = nodeOf(fixture.tree.data, "look.size");
+            auto n = &fixture.tree.data.nodes[node].value;
+            n.input = NumericInput.slider;
+            n.doc = "Adjust the specimen size while retaining the interface font. The description wraps within the space beside the controls.";
+            Builder builder;
+            const item = SectionItem(SectionItem.Kind.leaf, node, "Size");
+            const state = RowState(changed: value != 13);
+            const root = sectionRow(builder, fixture.tree.data, item, state,
+                SectionsOptions(targetRows: 3, width: width), 1000);
+            auto tree = builder.finish(root);
+            const frames = layout(tree, Constraints(maxW: width));
+            foreach (i, widget; tree.nodes)
+            {
+                if (widget.hitId == sectionHit(1000, node, SectionPart.open))
+                    assert(frames[i].rect.right <= frames[root].rect.right - 1,
+                        "numeric chip must fit inside the row's padding");
+                if (widget.hitId == sectionHit(1000, node, SectionPart.slider))
+                {
+                    if (value == 13 && !original.width) original = frames[i].rect;
+                    else assert(frames[i].rect == original, text("track moved: ", original, " -> ", frames[i].rect));
+                }
+            }
+        }
+        assert(original.width);
+    }
 }
 
 version (UiPropertyFixtures)

@@ -218,6 +218,15 @@ struct NativeDebug
     @Description("Run the device under the Vulkan validation layer, where it is installed.")
     bool vulkanValidation; ///
 
+    @Description("Diagnose driver compatibility using Vulkan 1.1 shaders while retaining newer device features.")
+    bool vulkanSpirv11; ///
+
+    @Description("Diagnose driver compatibility using render passes instead of dynamic rendering.")
+    bool vulkanRenderPass; ///
+
+    @Description("Diagnose driver compatibility without optional pipeline-creation feedback.")
+    bool vulkanNoFeedback; ///
+
     @Description("Log only the frames that took N ms or more, with trace-frames' detail.")
     uint traceFramesOver; ///
 

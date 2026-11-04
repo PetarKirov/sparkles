@@ -186,12 +186,69 @@ struct PreparedRaster
     /// Dimensions, bearings and scratch requirements, without another decode.
     RasterGlyph metrics() const scope @safe pure nothrow @nogc => metrics_;
 
+    /// Whether coverage uses the 4×4 overlap-union approximation.
+    bool unionCoverage() const scope @safe pure nothrow @nogc => union_;
+
+    /**
+    The same flattened edges used by the CPU rasterizer, in output pixels
+    relative to the glyph's top-left. Curves in union mode flatten at the
+    supersampling scale before coordinates return to output pixels. Short
+    output is `callerStorage` with the complete edge count; no font is read.
+    */
+    FontResult!size_t edges(scope RasterEdge[] output,
+        FlattenPolicy policy = FlattenPolicy.standard) const scope @safe pure nothrow @nogc
+    {
+        if (!valid_) return fontErr!size_t(FontError(FontErrorKind.badValue));
+        const ss = union_ ? 4 : 1;
+        EdgeWriter writer = EdgeWriter(output, 0, ss);
+        OutlinePoint current, start;
+        foreach (segment; segments_)
+        {
+            if (segment.kind == SegmentKind.moveTo) current = start = segment.end;
+            else if (segment.kind == SegmentKind.close)
+            {
+                if (current.x != start.x || current.y != start.y)
+                    writer.line(current.xUnits * scale_ * ss - metrics_.bearingX * ss,
+                        metrics_.bearingY * ss - current.yUnits * scale_ * ss,
+                        start.xUnits * scale_ * ss - metrics_.bearingX * ss,
+                        metrics_.bearingY * ss - start.yUnits * scale_ * ss);
+                current = start;
+            }
+            else current = flatten(writer, current, segment, scale_ * ss,
+                cast(double)metrics_.bearingX * ss, cast(double)metrics_.bearingY * ss, policy);
+        }
+        return writer.count > output.length ? fontErr!size_t(callerStorageError(writer.count))
+            : fontOk(writer.count);
+    }
+
     /// Draws the prepared outline with the same coverage and storage checks
     /// as `rasterizeGlyph`; a default-initialized plan is `badValue`.
     FontResult!RasterGlyph rasterize(scope RasterRegion region, scope RasterWorkspace ws,
         FlattenPolicy policy = FlattenPolicy.standard) const scope @safe pure nothrow @nogc
     {
         return rasterizePrepared(this, region, ws, policy);
+    }
+}
+
+/// A flattened boundary in glyph-local output pixels, with directed winding.
+struct RasterEdge
+{
+    double x0, y0, x1, y1;
+}
+
+private struct EdgeWriter
+{
+    RasterEdge[] output;
+    size_t count;
+    double supersample;
+
+    void line(double x0, double y0, double x1, double y1) scope @safe pure nothrow @nogc
+    {
+        if (y0 == y1) return;
+        if (count < output.length)
+            output[count] = RasterEdge(x0 / supersample, y0 / supersample,
+                x1 / supersample, y1 / supersample);
+        ++count;
     }
 }
 
@@ -368,7 +425,7 @@ private struct Accumulator
 }
 
 /// Flattens one segment from (`x0`, `y0`) into `acc`, returning its end.
-private OutlinePoint flatten(scope ref Accumulator acc, OutlinePoint from, OutlineSegment segment,
+private OutlinePoint flatten(A)(scope ref A acc, OutlinePoint from, OutlineSegment segment,
     double scale, double left, double top, FlattenPolicy policy)
 {
     double px(OutlinePoint p) => p.xUnits * scale - left;
@@ -463,7 +520,7 @@ private OutlinePoint flatten(scope ref Accumulator acc, OutlinePoint from, Outli
 private double absd(double v) => v < 0 ? -v : v;
 
 /// FreeType's cubic bisection (ftgrays.c), depth-bounded at 16.
-private void splitCubic(scope ref Accumulator acc, OutlinePoint p0, OutlinePoint p1,
+private void splitCubic(A)(scope ref A acc, OutlinePoint p0, OutlinePoint p1,
     OutlinePoint p2, OutlinePoint p3, double scale, double left, double top, int depth)
 {
     double px(OutlinePoint p) => p.xUnits * scale - left;
