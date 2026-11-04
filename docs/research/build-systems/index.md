@@ -36,18 +36,19 @@ This survey answers six questions:
    derivations, and the projects rebuilding Ninja-shaped graphs inside the
    store. See the Nix rows below.
 5. **Where the field's open problems sit** — the fourteen theme pages.
-6. **What Sparkles should borrow** — the `Sparkles relevance` subsection of
-   each deep-dive, gathered in the [comparison][comparison] (the capstone).
+6. **What Sparkles should investigate** — the [application analysis][sparkles]
+   separates its branch-specific baseline and workload questions from the
+   research-only [comparison].
 
 > [!NOTE]
-> **All waves are complete and reviewed.** The wave plan lives in `PLAN.md`,
-> which is excluded from the site build; every row below links a page that
-> exists, as its **Status** column records. The [comparison][comparison] is the
-> capstone: it re-cuts this evidence into the scheduler × rebuilder grid, the
-> consensus standard, the trade-offs, and the delta against the Sparkles task
-> DAG. Dates marked `~` are approximate.
+> The catalog's `reviewed` labels record source/citation review and the
+> documentation-build gate, not executable reproduction of every claim. The
+> [method and limits][method] explain the evidence categories and selection
+> bias. The [comparison] records research findings, assumptions and
+> counterexamples; [behavioral evidence][behavioral-evidence] records a small
+> executable check of selected mechanisms. Dates marked `~` are approximate.
 
-**Last reviewed:** November 3, 2026
+**Last reviewed:** November 4, 2026 (navigation and synthesis scope; catalog source pins unchanged)
 
 ---
 
@@ -181,6 +182,11 @@ page says decides correctness; sbt's action cache and Earthly's `--auto-skip`
 are noted, not promoted to a bucket. Both generators delegate rebuilding to
 Ninja, whose cell they inherit in practice without occupying it.
 
+These buckets identify base mechanisms rather than forbid extensions. Tup adds
+opt-in output comparison, and a GNU Make recipe that preserves an unchanged
+output's timestamp can avoid downstream execution. The [behavioral evidence][behavioral-evidence]
+checks the latter case; the [comparison] retains these qualifications.
+
 ### By dependency discovery
 
 _Where does the edge set come from: the description, the tool's own report, or
@@ -259,12 +265,13 @@ Five reading paths; each ends at the page where the decision is made.
   Part 1 (the grid, and the rows that refuse a cell) → one engine at each end of
   the spectrum: [Shake][shake] (suspending, `built`/`changed`) and [Ninja][ninja]
   (topological, `restat`).
-- **"I'm designing the Sparkles task DAG."** [comparison] Part 5 — the delta
-  table, row by row — → [Shake][shake] and [BitBake][bitbake] for the cheapest
+- **"I'm designing the Sparkles task DAG."** [Sparkles application][sparkles] —
+  the separate baseline, candidate requirements and investigation protocols — →
+  [Shake][shake] and [BitBake][bitbake] for contrasting
   rebuilder forms → [Ninja][ninja] (`restat`, `dyndep`, depfiles) for a plan
   that stays static → [BuildXL][buildxl] for declaration versus observation →
-  [CAS eviction][cas-eviction] and [provenance] for the two capabilities the
-  delta marks absent.
+  [CAS eviction][cas-eviction] and [provenance] for capabilities whose value
+  depends on storage and distribution requirements.
 - **"I want the theory, not the tools."** [À la carte][a-la-carte] →
   [concepts] → [PIE][pie] (dynamic dependencies) →
   [Perfect dependencies][perfect-dependencies] (traced dependencies and the
@@ -276,12 +283,13 @@ Five reading paths; each ends at the page where the decision is made.
   [nix-ninja][nix-ninja] and [dgd][dgd] for the plan-as-artifact pattern →
   [BuildKit][buildkit] (REAPI at the seam).
 - **"I want the small, one-shot end."** [GNU Make][gnumake] → [redo][redo] →
-  [tup][tup] → [Ninja][ninja] → [comparison] Part 3 (the consensus) and Part 6
-  (what it does not settle).
+  [tup][tup] → [Ninja][ninja] → [comparison] Part 3 (findings and counterexamples)
+  and Part 5 (research gaps and experiments).
 
-The synthesis pair: **[Concepts][concepts]** defines the vocabulary once;
-**[comparison]** is the capstone — the master grid, the six spine dimensions,
-the consensus standard, the trade-offs, and the Sparkles delta.
+**[Concepts][concepts]** explains the model and implementation boundaries;
+**[comparison]** synthesizes the research. Read [method] for evidence limits,
+[behavioral-evidence] for executable observations, and [sparkles] for the
+separate application analysis.
 
 ---
 
@@ -297,6 +305,9 @@ exact files it opened.
 
 [concepts]: ./concepts.md
 [comparison]: ./comparison.md
+[method]: ./method.md
+[behavioral-evidence]: ./behavioral-evidence.md
+[sparkles]: ./sparkles.md
 [a-la-carte]: ./a-la-carte.md
 [pie]: ./pie.md
 [build-maintenance]: ./build-maintenance.md

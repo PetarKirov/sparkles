@@ -1,31 +1,33 @@
-# Build Systems: Comparison & the Sparkles Delta
+# Build Systems: Comparison
 
-The capstone of the build-systems survey. **Part 1** places every system the
-catalog reviews on the [concepts] scheduler × rebuilder grid and says which rows
-refuse a cell. **Part 2** re-cuts the same evidence along the six spine
-dimensions, so the grid's abstractions meet the mechanisms that implement them.
-**Part 3** states the consensus the field has converged on, **Part 4** the
-trade-offs that keep it from being one design, and **Part 5** the delta against
-the Sparkles task DAG in
-`libs/build-primitives/src/sparkles/build_primitives/task/`.
-**Part 6** lists what the survey could not settle.
+Build engines avoid repeated work by tracking dependencies and retaining enough
+evidence to reuse previous results. They differ in when dependencies become
+known, what counts as an unchanged result, and which parts of execution they
+control. A cache, a dependency evaluator, and a process sandbox answer different
+questions even when they belong to one product.
+
+This comparison relates the surveyed mechanisms to the scheduler × rebuilder
+model in [concepts]. Its findings are bounded by the pinned sources in the
+deep-dives; they do not establish a universal architecture or rank whole products.
+Part 1 maps the model to implementation layers. Part 2 compares scheduling,
+rebuilding, dependency discovery, storage, hermeticity and distribution.
+Part 3 records findings and counterexamples, and Part 4 explains
+trade-offs. Part 5 identifies experiments that could strengthen the evidence.
 
 > [!NOTE]
-> This is the synthesis leaf: it re-derives nothing. Claims about a system are
-> the deep-dive's, cited by page; claims about Sparkles are read from the files
-> named in [Part 5](#part-5--the-sparkles-delta). The catalog's own inferences are
-> marked **Catalog inference**, as on the themes.
+> System claims cite deep-dives and their primary sources. Cross-system
+> deductions are marked **Catalog inference**. The [research method][method]
+> distinguishes source evidence from observed behavior and explains the limits
+> of the inherited `reviewed` label.
 
-| Field            | Value                                                                                     |
-| ---------------- | ----------------------------------------------------------------------------------------- |
-| Page type        | Synthesis (capstone)                                                                      |
-| Covers           | 5 foundations, 20 industry rows, 9 Nix projects, 14 themes                                |
-| Grid vocabulary  | [concepts] §2–§5, from JFP 2020                                                           |
-| Sparkles subject | `sparkles:build-primitives` task DAG (`model.d`, `graph.d`, `executor.d`, `action.d`)     |
-| New clones read  | none for this page; revised inputs re-read Zinc, Wild, Coq artifacts, CAS implementations |
-| Status of inputs | every page below reports `reviewed` (priority pages revised in depth on 2026-11-03)       |
+| Field           | Value                                                                                                    |
+| --------------- | -------------------------------------------------------------------------------------------------------- |
+| Page type       | Synthesis (capstone)                                                                                     |
+| Covers          | 5 foundations, 20 industry rows, 9 Nix projects, 14 themes                                               |
+| Grid vocabulary | [concepts] §2–§5, from JFP 2020                                                                          |
+| Evidence scope  | Pinned deep-dives and their source statements; model deductions and catalog inferences are distinguished |
 
-**Last reviewed:** November 3, 2026
+**Last reviewed:** November 4, 2026 (synthesis and internal consistency; upstream revisions unchanged)
 
 ---
 
@@ -59,7 +61,7 @@ own placement section. `—` means the deep-dive declines to classify.
 | sbt      | topological + suspension  | per-invocation dirty bit + action cache   | [sbt][sbt]           |
 | BuildKit | topological               | constructive traces                       | [BuildKit][buildkit] |
 
-The arithmetic is a finding: **sixteen** rows occupy a cell, **one** is
+**Sixteen** rows have a nearest grid placement, **one** is
 deliberately off-grid — Rattle is a _forward_ system whose trace replaces the
 declaration, and [perfect-dependencies] argues no cell describes it — and
 **three** are not engines, since GN and Meson generate a Ninja graph ([gn],
@@ -83,8 +85,10 @@ Composites are where the grid's orthogonality leaks.
 
 ### 1.2 The nine Nix projects: satellites, not cells
 
-None adds a scheduler or a rebuilder; each is a _generator_ or _front end_ that
-emits work into Nix's cell. The variable is where the graph is decided.
+These projects primarily generate or lower work into Nix. Their planning logic
+can differ even when execution uses the same store and scheduler. The table
+identifies that contribution rather than counting each front end as an
+independent engine.
 
 | Project                                            | What it contributes                                                 | Cell                                         |
 | -------------------------------------------------- | ------------------------------------------------------------------- | -------------------------------------------- |
@@ -98,10 +102,10 @@ emits work into Nix's cell. The variable is where the graph is decided.
 | [MakeNix][makenix]                                 | A `Makefile` expanded into one derivation per object, mid-build     | Nix's cell over a Make-discovered graph      |
 | [nix-dynamic-derivations][nix-dynamic-derivations] | Derivations whose output is a derivation                            | Nix's cell with the **key set open**         |
 
-The last row is the only one that changes the grid rather than populating it:
-dynamic derivations move the decision of _which derivations exist_ from
-evaluation into the scheduler ([nix-dynamic-derivations]). That changes what a
-key can be, not how keys are ordered.
+Dynamic derivations allow derivations produced during realization to extend the
+work to be realized ([nix-dynamic-derivations]). This changes when the key set
+becomes known; it does not introduce another scheduler coordinate in the paper's
+grid. The front ends explore how to express work through that boundary.
 
 ### 1.3 What the grid cannot express
 
@@ -113,8 +117,23 @@ Four absences, each a gap in the vocabulary rather than a misclassification:
    ([perfect-dependencies]); `Build` has nowhere to put that graph.
 3. **Generator phases** — GN and Meson build a description, then build from it
    ([gn], [meson]); the grid starts after that phase.
-4. **Eviction and provenance** — neither is a scheduler or rebuilder property,
-   and neither appears in the paper ([concepts] §6).
+4. **Eviction policy and provenance** — neither is a grid coordinate. The paper
+   discusses eviction and hash passthrough, but does not specify an eviction
+   policy or an attestation scheme ([concepts] §6).
+
+### 1.4 Classify the layer before the product
+
+The summary grid identifies a nearest theoretical analogue. It does not assert
+that every layer in a product uses that mechanism.
+
+| Product / layer          | Mechanism                                             | Model correspondence and boundary                                                                                           |
+| ------------------------ | ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| Bazel / Skyframe         | restarting dependency evaluation                      | Ordering and reuse of graph values; external actions still need complete inputs ([Bazel rebuilding][bazel-rebuilding])      |
+| Buck2 / DICE             | suspending computes, revision certificates            | Verifying analogue with concurrent branches; the core state does not execute actions ([Buck2 mechanics][buck2-mechanics])   |
+| Buck2 / action cache     | action digest and retained artifacts                  | Constructive layer alongside DICE, rather than evidence that DICE itself stores action results ([Buck2 store][buck2-store]) |
+| Ninja / executor         | ready graph, timestamp checks, command hash, `restat` | Qualified verifying analogue; content equality is not implied ([Ninja mechanics][ninja-mechanics])                          |
+| Earthly / BuildKit       | recipe lowering into LLB and snapshot reuse           | Inherited execution machinery; the two rows are not independent corroboration ([Earthly][earthly], [BuildKit][buildkit])    |
+| GN or Meson / generation | emits a build description                             | A preceding phase; Ninja's execution guarantees do not establish generator correctness ([GN][gn], [Meson][meson])           |
 
 ---
 
@@ -122,39 +141,49 @@ Four absences, each a gap in the vocabulary rather than a misclassification:
 
 ### 2.1 Task model & scheduling
 
-| Question                 | Where the field lands                                                                 | Exemplars                                                         |
-| ------------------------ | ------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| Static or dynamic graph? | Static for declarations; dynamic only where a tool's output is found mid-build        | [Make][gnumake], [Ninja][ninja] vs [Shake][shake], [Buck2][buck2] |
-| Which scheduler?         | Topological unless dependencies are unknowable; restarting only with a memoizing host | [Bazel][bazel] is the exception                                   |
-| Parallelism budget       | One global budget, published to children where a child is itself a build system       | Ninja pools, Make jobserver ([gnumake])                           |
-| Conditional edges        | Rare; where present they make the executed graph a subset of the planned one          | [Pants][pants], Sparkles                                          |
+| Question                 | Mechanisms represented                                                         | Exemplars                                                         |
+| ------------------------ | ------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
+| Static or dynamic graph? | Fixed execution graphs and dependencies requested during evaluation both occur | [Make][gnumake], [Ninja][ninja] vs [Shake][shake], [Buck2][buck2] |
+| Which scheduler?         | Topological, restarting and suspending mechanisms serve different task models  | [Concepts §2][schedulers], [Bazel][bazel], [Shake][shake]         |
+| Parallelism budget       | Pools constrain selected work; a jobserver shares tokens with child builds     | [Ninja][ninja], [Make][gnumake]                                   |
+| Conditional edges        | Dependencies consumed can depend on values obtained during evaluation          | [Pants][pants], [Shake][shake]                                    |
 
 ### 2.2 Rebuilding & correctness
 
-| Rebuilder           | Early cutoff | Dynamic deps | Cheapest implementation seen                 |
-| ------------------- | ------------ | ------------ | -------------------------------------------- |
-| Dirty bit           | no           | over-approx  | one field or one mtime ([gnumake], [tup])    |
-| Verifying traces    | yes          | yes          | two timestamps per node ([shake], [redo])    |
-| Constructive traces | yes          | yes          | result value + dependency hashes ([bazel])   |
-| Deep constructive   | **no**       | yes          | one hash over terminal inputs ([nix-thesis]) |
+| Rebuilder           | Early cutoff                                     | Dynamic deps | Representative state (not total cost)                                                                   |
+| ------------------- | ------------------------------------------------ | ------------ | ------------------------------------------------------------------------------------------------------- |
+| Dirty bit           | no in base model; implementations can add cutoff | over-approx  | one field or one mtime ([gnumake], [tup])                                                               |
+| Verifying traces    | yes                                              | yes          | result and dependency identities; step variants use timestamps and dependency records ([shake], [redo]) |
+| Constructive traces | yes                                              | yes          | result value + dependency hashes ([bazel])                                                              |
+| Deep constructive   | **no**                                           | yes          | one hash over terminal inputs ([nix-thesis])                                                            |
 
-Early cutoff is the rebuilder's, and its cheap forms are cheap: Shake needs two
-integers per node, `built` and `changed` ([shake]); BitBake reaches it through a
+Early cutoff depends on the unchanged-result signal. Shake's step traces use
+`built` and `changed` alongside dependency records and result comparison; the two
+integers are not the total verification or persistence cost ([shake]); BitBake reaches it through a
 second, output-derived identity when paired with OpenEmbedded's hash-equivalence
 handler and `bb.hashserv` ([bitbake]); Please through an `Unchanged` outcome
 ([please]). Nix's deep constructive cell buys cloud capability and
 single-round-trip lookups by giving that cutoff up ([nix-thesis]).
 
-Correctness claims differ in kind. Bazel's is conditional — "Correct and perfect
-incrementality. If all the input data of all functions [is recorded]"
-([`docs/reference/skyframe.mdx`][bazel-skyframe]) — and the condition is the hard
-part. Buck2's is unconditional: "The theorem is unconditional: it assumes nothing
-about the caller" ([`dice/docs/incrementality.md`][dice-doc]). Nix's dynamic-derivation
-resolution returns `std::nullopt` from `tryResolve` when an input realisation is
-missing rather than synthesizing a wrong answer ([nix-dynamic-derivations]); PIE is
-"partially optimal" ([pie]). **Catalog inference:** claims are strongest where the engine owns
-the compute and weakest where an external tool does — the seam
-[formal-verification] finds unproved.
+The [behavioral suite][behavioral-evidence] also observes GNU Make skipping a
+consumer when its generator preserves the output timestamp. Tup's `^o` explicitly
+compares outputs. Neither observation is captured by an unqualified statement
+that every implementation in the dirty-bit row lacks early cutoff.
+
+Correctness claims concern different objects. An unconditional statement about a
+core data structure does not imply unconditional correctness of external builds.
+
+| Claim / object                    | Property                                                      | Assumptions and exclusions                                                                            | Evidence                                                                            |
+| --------------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Skyframe graph evaluation         | Correct incremental results when function inputs are recorded | Dependency completeness; does not validate arbitrary process reads                                    | Upstream design claim, [Skyframe][bazel-skyframe]; [analysis][bazel-rebuilding]     |
+| DICE core state                   | Returned revisions are justified by the operation history     | Unconditional at this interface; the core does not execute computes or validate reported dependencies | Stated theorem and algorithm, [DICE §§1, 3][dice-doc]; [mechanics][buck2-mechanics] |
+| DICE execution environment        | From-scratch consistency                                      | Functional certificates, honest traces and complete change reporting                                  | Conditional argument, [DICE §3.4][dice-doc]; [analysis][buck2-rebuilding]           |
+| Nix dynamic-derivation resolution | Missing realisations leave `tryResolve` unresolved            | Local fail-closed behavior, not a whole-engine correctness proof                                      | Inspected implementation, [dynamic derivations][nix-dynamic-derivations]            |
+| PIE incremental execution         | Consistency and partial optimality                            | Task/resource contracts; partial optimality differs from JFP minimality                               | Paper argument, [PIE correctness][pie-correctness]                                  |
+
+[Formal verification][formal-verification] separately identifies machine-checked
+models and their external-execution assumptions. A source inspection or a design
+argument is not a mechanized proof of the implementation.
 
 ### 2.3 Dependency discovery
 
@@ -165,24 +194,24 @@ the compute and weakest where an external tool does — the seam
 | Traced           | syscalls via `ptrace`, FUSE, eBPF, interposition | [tup][tup], [Rattle][rattle], [BuildXL][buildxl]                                    |
 | Hybrid           | declared edges plus observed validation          | [BitBake][bitbake] `[file-checksums]`, [BuildXL][buildxl] fingerprints              |
 
-**Depfiles are the practical sweet spot**: a compiler that already parses its
-includes emits the edge list for free, while interception costs a syscall tax for
-generality the compiler does not need ([sandboxing-overheads]). **Tracing is an
-audit, not a runtime dependency** — Rattle's 7% Linux overhead, 5 points of it
-tracing ([perfect-dependencies] §5.2), is why every recommending page treats it as
-a _checker_ ([graph-autogeneration]). **A miss is a dependency**: a glob matching
-nothing or a missing header is an input, and only a recorded miss notices it
-filling in ([buildxl], [bitbake]).
+Compiler-emitted dependencies reuse the compiler's knowledge, but this corpus
+does not measure their marginal emission cost. Observation serves runtime
+discovery in Rattle and tup and declaration validation in BuildXL. Using it only
+as an audit is an application choice ([graph-autogeneration]). Rattle's overhead
+belongs to its measured workloads, not to all tracers ([sandboxing-overheads]).
+A failed file probe or empty glob can affect output; detecting a later appearance
+requires representing that observation or conservative invalidation ([buildxl],
+[bitbake]).
 
 ### 2.4 Store & caching
 
-| Concern               | What the corpus agrees on                                                      | Page               |
-| --------------------- | ------------------------------------------------------------------------------ | ------------------ |
-| Two tiers             | action key → result, blob → bytes; collapse them and eviction breaks integrity | [cas-eviction]     |
-| Ordering              | touch the action entry before its blobs, or check presence on read             | [cas-eviction]     |
-| Key composition       | config, rule, sources, secrets — named separately so a miss is diagnosable     | [please]           |
-| Content over identity | key on what the consumer's tool reads, not the producer's whole output         | [semantic-caching] |
-| Eviction              | watermarks and a background sweep, not exact budgets on the write path         | [cas-eviction]     |
+| Concern               | Observed mechanism or constraint                                                          | Page               |
+| --------------------- | ----------------------------------------------------------------------------------------- | ------------------ |
+| Two tiers             | action key → result and blob → bytes; shared or separate storage must preserve references | [cas-eviction]     |
+| Ordering              | touch the action entry before its blobs, or check presence on read                        | [cas-eviction]     |
+| Key composition       | config, rule, sources, secrets — named separately so a miss is diagnosable                | [please]           |
+| Content over identity | key on what the consumer's tool reads, not the producer's whole output                    | [semantic-caching] |
+| Eviction              | watermarks, sweeps and bounded caches trade enforcement precision against write-path cost | [cas-eviction]     |
 
 The deepest divergence is about _what a key is for_. Nix keys on terminal inputs
 so a target is current without materialising anything between it and the sources —
@@ -193,92 +222,89 @@ corpus reconciles them.
 
 ### 2.5 Hermeticity & provenance
 
-| System   | Determinism is               | Sandbox mechanism                              | Attestation shipped         |
-| -------- | ---------------------------- | ---------------------------------------------- | --------------------------- |
-| Nix      | the premise of identity      | namespaces + store-only view                   | signatures on the object    |
-| Bazel    | an author obligation         | symlink forest / `sandboxfs` / process wrapper | REAPI telemetry only        |
-| Buck2    | the environment's obligation | sandbox                                        | none                        |
-| BuildKit | a mode of the exporter       | container per step                             | **provenance as a product** |
-| BitBake  | a property of the recipe     | network namespace + Landlock; no fs sandbox    | none                        |
-| BuildXL  | an assumption                | Detours (Windows), `ptrace` (Linux)            | none                        |
+| System   | Determinism is                      | Sandbox mechanism                                                      | Attestation shipped                                          |
+| -------- | ----------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------ |
+| Nix      | an assumption behind input identity | namespaces and restricted store view when sandboxing is enabled        | signatures on the object                                     |
+| Bazel    | an author obligation                | strategy dependent; `sandboxfs` removed in 7.0.0                       | execution metadata; no attestation identified in cited paths |
+| Buck2    | the environment's obligation        | local-only actions lack filesystem isolation; RE has an input boundary | no attestation identified in cited paths                     |
+| BuildKit | a mode of the exporter              | container per step                                                     | **provenance as a product**                                  |
+| BitBake  | a property of the recipe            | network namespace + Landlock; no fs sandbox                            | no attestation identified in cited paths                     |
+| BuildXL  | an assumption                       | Detours (Windows); Linux interposition and tracing paths               | no attestation identified in cited paths                     |
 
-Published overhead numbers exist for three mechanisms and are not comparable:
+The cited accounts use different baselines and are not comparable:
 BuildXL's "1-5% of time overhead to running a process" on Windows
 ([`Documentation/Specs/Sandboxing.md`][bxl-sandboxing]), Rattle's 7% Linux / 46%
 Windows over a fixed command list ([perfect-dependencies] §5.2), and Bazel's
 qualitative `sandboxfs` account — "setup costs are lower, but you have to pay a
 penalty for the use of each input" — before its 7.0.0 removal
-([sandboxing-overheads]). The rest is `none`, which that page treats as a finding.
+([sandboxing-overheads]). An absent measurement is an evidence gap, not evidence of zero cost.
 
-**Almost no engine checks that its actions are deterministic**: Nix has
-`--check`, Bazel documents the procedure and ships no check, Buck2 puts the
-obligation outside DICE's theorem, BuildKit's determinism is an exporter mode
-([reproducibility]). Provenance is thinner — only BuildKit ships an attestation,
-Bazel and REAPI emit telemetry resembling one, and Nix signs the object rather
-than the build ([provenance]).
+The surveyed detection mechanisms differ: Nix exposes `--check`, Bazel documents
+a comparison procedure, and DICE leaves external-compute determinism to its
+environment. BuildKit's exporter options control selected sources of variation.
+Nix's environment control narrows nondeterminism without eliminating it
+([reproducibility]). In the provenance paths examined, BuildKit emits attestations,
+REAPI carries execution metadata, and Nix signs store objects. These observations
+do not exclude integrations outside the inspected paths ([provenance]).
 
 ### 2.6 Distribution
 
-| Question                        | Answer the corpus supports                                                                            |
-| ------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| Wire protocol                   | REAPI: Bazel, Buck2, Please, Pants, moon's cache client, nixception                                   |
-| What crosses the seam           | an input root and a command — **not a graph** ([dynamic-deps-distributed])                            |
-| Dynamic deps + remote execution | the discovered graph must be published as an artifact before dispatch (`.drv`)                        |
-| Daemon state                    | amortizes graph work; must be named in the key or it becomes an undeclared input ([daemon-compilers]) |
+| Question                        | Answer the corpus supports                                                                    |
+| ------------------------------- | --------------------------------------------------------------------------------------------- |
+| Wire protocol                   | REAPI: Bazel, Buck2, Please, Pants, moon's cache client, nixception                           |
+| What crosses the seam           | an input root and a command — **not a graph** ([dynamic-deps-distributed])                    |
+| Dynamic deps + remote execution | each action needs its input closure at dispatch; a published plan is one approach             |
+| Daemon state                    | amortizes work; state affecting results needs an explicit reuse contract ([daemon-compilers]) |
 
-An REAPI action is closed: the server receives a `Command` and a `Directory` tree,
-so anything discovered at execution time must already exist as content. That is
-why Nix publishes a `.drv` and Ninja's `dyndep` patches a local manifest instead
-of telling a worker to discover edges ([dynamic-deps-distributed]). **Catalog
-inference:** dynamic dependencies plus remote execution makes the discovered graph
-a cached artifact — a store requirement before it is a scheduler requirement.
+An REAPI action is closed: the server receives a `Command` and a `Directory` tree.
+Inputs needed by that dispatched action must already be available as content.
+Nix publishes derivations and Ninja patches a local manifest with `dyndep`; these
+are different coordination mechanisms ([dynamic-deps-distributed]).
+**Catalog inference:** a cacheable plan can make discovery reusable. The action
+boundary does not require every coordinator to persist its entire graph.
 
 ---
 
-## Part 3 — The consensus standard
+## Part 3 — Findings, assumptions and counterexamples
 
-Ten claims the corpus supports across independent systems, strongest first.
+These findings describe the inspected corpus. A theoretical guarantee, a common
+mechanism and an application recommendation have different evidential weight.
+The [research method][method] defines the evidence labels; related front ends
+do not count as independent confirmations of their inherited engine.
 
-1. **Identity is a hash of inputs, not a timestamp** — the mtime-only systems
-   ([gnumake], [build2], [tup]) list false rebuilds as a known cost.
-2. **Declare inputs; let the compiler emit depfiles; trace to audit.** With one
-   production-scale exception — [BuildXL][buildxl], whose observed file accesses
-   validate declarations and feed its cache keys — no system relies on
-   interception as its production answer ([sandboxing-overheads]).
-3. **Early cutoff is a per-edge output identity**, lost the moment dependency
-   hashes collapse into one key ([moon], [nix-thesis]).
-4. **Two cache tiers, with ordered touches or a completeness check**, or eviction
-   creates dangling references ([cas-eviction]).
-5. **A dynamic dependency needs a suspension point or a published plan** —
-   `dyndep`, `.drv`, `reqTasks` and DICE's `lookup` are four spellings of one
-   requirement ([dynamic-deps-distributed]).
-6. **A generator is a phase, not a cell** ([gn], [meson]).
-7. **Hermeticity is a precondition for reuse; determinism is rarely checked** —
-   only Nix makes it structural ([reproducibility]).
-8. **Isolation and observation are different features** — a write-only sandbox
-   does not validate a read set ([please], [sandboxing-overheads]).
-9. **Provenance is an export at the graph seam** ([provenance], [buildkit]).
-10. **Mechanized correctness exists for research models, not shipped engines** —
-    CloudMake, forward build systems, and Nix's evaluator have completed proofs;
-    no production rebuilder or rebuild-minimality proof was found
-    ([formal-verification]).
+| Finding                                                               | Supporting evidence                                                                                    | Counterexamples or limits                                                                         | Assumptions and scope                                                                | Assessment                                                      |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ | --------------------------------------------------------------- |
+| Content checks distinguish edits that timestamps cannot               | [Ninja rebuilding][ninja-rebuilding], [reproducibility][reproducibility]                               | Make and tup deliberately retain timestamp-based checks                                           | Correctly captured inputs; hashing and metadata costs are workload dependent         | Mechanism distinction; no universal speed claim                 |
+| Dependency reporting and observation are alternative sources of edges | [Ninja depfiles][ninja-discovery], [Rattle tracing][rattle], [tup][tup]                                | Rattle and tup use observation in the build path; tracing is not only an audit                    | Compiler reports and tracers each have coverage limits                               | Source-supported diversity; no universal winner                 |
+| Early cutoff needs an unchanged-result signal                         | [Shake][shake], [Please][please], [Ninja restat][ninja-restat-section]                                 | tup adds opt-in `^o` to dirty-bit propagation; deep constructive traces omit intermediate results | Equality may mean bytes, an mtime proxy or a revision; these are not interchangeable | Model property with implementation qualifications               |
+| Cache results and their bytes have distinct lifetimes                 | [CAS eviction][cas-integrity]                                                                          | Shared storage and separate AC/CAS budgets both occur                                             | A returned result needs retrievable outputs, or a safe miss/recompute path           | Integrity constraint; storage layout remains a choice           |
+| Dynamic evaluation requires a way to obtain late dependencies         | [Schedulers][schedulers], [Ninja dyndep][ninja-dyndep], [dynamic derivations][nix-dynamic-derivations] | Restarting can re-evaluate; suspension is not the only solution                                   | A closed remote action needs inputs at dispatch; a persistent plan is one design     | Model and protocol constraints, with multiple implementations   |
+| Generation and execution are separate analysis layers                 | [GN][gn], [Meson][meson], [Earthly][earthly]                                                           | A product can host both phases; one cell cannot describe every layer                              | State which phase a classification describes                                         | Classification convention                                       |
+| Environment control reduces variance but does not prove determinism   | [Reproducibility][repro-detection]                                                                     | Nix offers `--check`; tools can still use entropy or vary with execution order                    | Repeated comparisons cover only the variations exercised                             | Source-supported limitation; detection coverage remains partial |
+| Isolation does not by itself discover reads                           | [Sandbox mechanisms][sandbox-mechanisms], [Buck2 discovery][buck2-discovery]                           | BuildXL combines enforcement and observation                                                      | Platform, executor and configuration must be named                                   | Mechanism distinction                                           |
+| Attestation is a separate product capability                          | [Provenance][provenance], [BuildKit][buildkit]                                                         | Nix object signatures and REAPI metadata establish different facts                                | Search limited to cited implementations and integrations                             | Bounded observation, not an exhaustive absence claim            |
+| Proofs establish properties of their named models                     | [Formal verification][formal-verification]                                                             | CloudMake models execution axiomatically; Nix-language proofs concern evaluators                  | External tools, reporting and termination have their own assumptions                 | Evidence of model properties; no implementation proof inferred  |
+
+**Catalog inference:** the corpus supports choosing mechanisms by workload and
+failure model. It does not establish that a small local executor needs the same
+cache, sandbox, daemon or distribution architecture as a remote build service.
 
 ---
 
 ## Part 4 — Architectural trade-offs
 
-| Decision                                     | Rationale                                                            | Trade-off                                                                         |
-| -------------------------------------------- | -------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| Deep constructive traces for cheap cloud     | one lookup on terminal inputs; shallow builds; single round trip     | no early cutoff; determinism becomes a correctness requirement ([nix-thesis])     |
-| Restarting over suspending                   | no continuation machinery; the engine re-derives what it needs       | repeated work; affordable only with a memoizing daemon ([bazel])                  |
-| Trace dependencies instead of declaring them | complete by construction; no authoring burden                        | 7–46% overhead and silent misses ([perfect-dependencies], [sandboxing-overheads]) |
-| Sandbox for isolation, not observation       | the container cost is already paid for reproducibility               | a sandbox is not an input oracle ([please])                                       |
-| One cache for AC and CAS                     | one budget, one eviction order, simplest configuration               | eviction order becomes an integrity invariant ([cas-eviction])                    |
-| Keep the plan static                         | validation, cycle diagnosis, deterministic presentation come free    | a plan-producing node cannot extend the graph ([drowse], [makenix])               |
-| Daemon-resident graph                        | amortizes loading, dep-file reuse, deferred materialization          | lifecycle, expiry, permission boundary, stale state ([daemon-compilers])          |
-| mtime as the dirty bit                       | no hashing on the hot path; the filesystem already maintains it      | no early cutoff; copy and restore produce wrong answers ([ninja])                 |
-| Generate BUILD files from observation        | no authoring; the graph is what ran                                  | the trace is a bet on the next run ([graph-autogeneration])                       |
-| Hash the interface artifact, not the AST     | the compiler already knows what changed; no extractor to keep honest | one more artifact; width and tool identity become API ([semantic-caching])        |
+| Decision                                     | Rationale                                                            | Trade-off                                                                                                           |
+| -------------------------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Deep constructive traces for cheap cloud     | one lookup on terminal inputs; shallow builds; single round trip     | no early cutoff; determinism becomes a correctness requirement ([nix-thesis])                                       |
+| Restarting over suspending                   | no continuation machinery; the engine re-derives what it needs       | repeated work; cost depends on repeated work and memoization ([bazel])                                              |
+| Trace dependencies instead of declaring them | observes accesses on the executed path; reduces declaration work     | workload-dependent overhead; coverage gaps can cause silent misses ([perfect-dependencies], [sandboxing-overheads]) |
+| Sandbox for isolation, not observation       | the container cost is already paid for reproducibility               | a sandbox is not an input oracle ([please])                                                                         |
+| One cache for AC and CAS                     | one budget, one eviction order, simplest configuration               | eviction order becomes an integrity invariant ([cas-eviction])                                                      |
+| Keep the plan static                         | validation, cycle diagnosis, deterministic presentation come free    | a plan-producing node cannot extend the graph ([drowse], [makenix])                                                 |
+| Daemon-resident graph                        | amortizes loading, dep-file reuse, deferred materialization          | lifecycle, expiry, permission boundary, stale state ([daemon-compilers])                                            |
+| mtime as the dirty bit                       | no hashing on the hot path; the filesystem already maintains it      | requires a separate cutoff signal; preserved mtimes can hide content changes ([ninja])                              |
+| Generate BUILD files from observation        | no authoring; the graph is what ran                                  | the trace is a bet on the next run ([graph-autogeneration])                                                         |
+| Hash the interface artifact, not the AST     | the compiler already knows what changed; no extractor to keep honest | one more artifact; width and tool identity become API ([semantic-caching])                                          |
 
 Two patterns in the corpus are not trade-offs but mistakes with a long half-life:
 hashing a _declared_ graph rather than the resolved one ([nix-dynamic-derivations]),
@@ -286,154 +312,39 @@ and letting a name stand in for content when the two can drift ([drowse]).
 
 ---
 
-## Part 5 — The Sparkles delta
+## Part 5 — Research gaps and experiments
 
-The subject is the implemented task DAG, not the planned build graph:
-`model.d`, `graph.d`,
-`executor.d` and `action.d`. Its spec
-states the boundary:
+The [behavioral evidence][behavioral-evidence] separates model predictions from
+observed engine behavior. It is a small scenario suite, not a performance ranking.
+The following protocols address remaining cross-system questions. Application
+priorities belong to a separate design analysis.
 
-> "Distributed admission across several executor fibers, persistent scheduler
-> state and a workflow file format are out of scope."
->
-> — `docs/specs/build-primitives/task-dag/SPEC.md`
+| Question                                              | Hypothesis and minimal experiment                                                                            | Measurements and confounders                                                                           | Result that changes the finding                                                                |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
+| When does hashing repay its cost?                     | Compare timestamp, content and step-trace checks on one edit sequence with identical tasks                   | Scan, hash, metadata I/O, avoided execution and no-op latency; separate warm OS cache from cold state  | Cheap tasks or large inputs make verification slower than rerunning; narrow the workload scope |
+| Does observation find dependencies declarations miss? | Run a command with generated inputs, a failed probe and directory enumeration under each available mechanism | Detected reads and stale outputs against a clean execution; record platform and static/dynamic linking | A missed access falsifies completeness for that configuration                                  |
+| Must discovery produce a persistent plan?             | Compare an in-memory coordinator with a serialized plan before dispatching the same closed actions           | Planning work, restart recovery and action keys; keep input closure identical                          | Equal correctness without plan persistence rules out a protocol-level necessity                |
+| How should a cache survive eviction?                  | Delete selected output blobs while retaining result metadata, then request the target                        | Missing-blob detection, restoration, execution, bytes transferred; separate AC and CAS lifetimes       | A successful result naming unavailable bytes falsifies the completeness check                  |
+| What does a correctness claim cover?                  | Reproduce a documented invariant with a deliberately incomplete dependency report                            | Graph-value correctness and external-artifact correctness separately                                   | A justified graph revision with stale process output demonstrates the layer boundary           |
 
-That sentence is the delta in one line: the engine is **topological × no
-rebuilder**, by declaration rather than by accident.
-
-| Capability                | Consensus (Part 3)         | Sparkles today                                                                                                       | Delta                                                                                         |
-| ------------------------- | -------------------------- | -------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| Scheduler                 | topological or suspending  | `stableTopologicalOrder` returns an order or the shortest cycle; the graph is validated first (`graph.d`)            | **none** — the field's cheapest correct choice                                                |
-| Rebuilder                 | claims 1, 3                | nothing: no dirty bit, no trace, no key over inputs; every admitted task runs                                        | **the missing half**                                                                          |
-| Identity                  | a hash of inputs           | `TaskId` is stable semantic text (`test:sparkles.base:unittest`) and `toHash` hashes that text (`model.d`)           | no content key; the id is a name, not a function of inputs                                    |
-| Persistent state          | claims 4, 5                | out of scope; `graph.d` has no serialization                                                                         | no rebuild memory across runs                                                                 |
-| Dynamic dependencies      | claim 5                    | `EdgeReason.planning` is the static analogue; the node set is fixed at validation                                    | no graph-extending node; a plan cannot be a node's output                                     |
-| Executed vs planned graph | claims 3, PIE's `reqTasks` | `EdgeCondition` (`onSuccess`, `onFailure`, `onCompletion`, `always`) makes the executed path a subset of the planned | a trace must record edges _taken_, not edges declared                                         |
-| Store                     | claim 4                    | none; the executor writes into the workspace                                                                         | no CAS, no action cache, no eviction                                                          |
-| Sandbox                   | claim 8                    | `SandboxPolicy.taskDirectory` — a private directory for `DUB_HOME`, build root, spilled output                       | isolation by directory, **not** observation; no declared inputs                               |
-| Absent probes             | claims 2, 3                | not representable                                                                                                    | a glob that matched nothing is invisible                                                      |
-| Determinism               | claim 7                    | not modelled                                                                                                         | load-bearing the moment a cache exists                                                        |
-| Provenance                | claim 9                    | `ProcessAction` carries `argv`, `envDelta` (with `redacted`), `cwd`, `timeout`, `sandbox` (`action.d`)               | `redacted` is already `mode=min`; no statement is emitted                                     |
-| Distribution              | §2.6                       | out of scope                                                                                                         | none; the REAPI seam is the only closure-preserving option                                    |
-| Speculation               | [speculative-execution]    | admission is deterministic and in presentation order; `usage` is an event, not an admission input                    | no duration record or critical-path priority; demand speculation is premature in a static DAG |
-| Dependency pruning        | claim 2                    | `workspace/package_graph.d` builds edges from declarations only; nothing compares them with imports                  | over-declared is a real edge; under-declared is invisible                                     |
-
-### What Sparkles already has that the field mostly does not
-
-1. **A reason on every edge.** `EdgeReason` distinguishes `packageDependency`,
-   `planning`, `coverageFallback`, `classification`, `reduction`, `publication`,
-   `summary` and `cleanup`; a derivation graph records _that_ a dependency exists,
-   never why ([nix-cargo-unit]).
-2. **An outcome vocabulary with a cause.** `Succeeded`, `Failed`, `Skipped`,
-   `Cancelled`, `Blocked` (with `cause`, `root`, `fromFailure`, `provisional`) and
-   `Degraded` are more expressive than any surveyed engine's pass/fail/skip.
-3. **Deterministic transcripts by construction.** One owner fiber, presentation
-   order, no backfilling past a heavy task — and [speculative-execution] notes a
-   critical-path priority or predictor is unmeasurable without exactly that baseline.
-
-**Catalog inference:** the cheapest first increment is not a store but a
-_definition_ (claim 10) — JFP §3.6's "recompute from the final store and compare" —
-which makes the rebuild decision testable as an executable oracle before any cache
-exists ([a-la-carte] agrees).
-
-### Where the delta table's rows collide
-
-- **Identity and persistence.** A content key and a stable presentation order are
-  two orderings of one node set: `TaskIndex` _is_ a position in presentation order
-  and `PresentationKey` sorts by `owner` and `work`, so
-  `graph.d` relies on there being one.
-- **Rebuilder and distribution.** A rebuild test consulting local state cannot
-  dispatch the same action remotely unless that state is the key; §2.6's closure
-  requirement binds the rebuilder before the wire.
+No experiment here establishes a universal cost threshold. Report tool revision,
+configuration, input sizes, edit history, expected executions and observed
+executions alongside a clean-build artifact comparison.
 
 ---
 
-## Part 6 — Open questions
+## Evidence coverage
 
-1. **What is the cheapest rebuilder that pays for itself in a one-shot process?**
-   Shake's two integers ([shake]) and BitBake's two-level identity ([bitbake]);
-   neither is measured on a `dub test` workload.
-2. **Can a static DAG accept a plan-producing node without becoming a different
-   scheduler?** [drowse], [makenix] and [dgd] make the plan a store barrier;
-   node kind or scheduler change is unresolved.
-3. **Do the task DAG and the planned build graph become two caches?** The
-   build graph spec (`docs/specs/build-primitives/build-graph/SPEC.md`)
-   keys actions by content; the task DAG would key tasks by something else, and
-   Boba warns two caches without a shared key disagree about dirtiness ([boba]).
-4. **Can the D toolchain emit a depfile cheaply enough to replace declaration?**
-   `dmd`/`ldc` dependency dumps exist; nothing here measures their cost.
-5. **What is the sandbox overhead for a D compile step?** Nothing published:
-   BuildXL's 1–5% is Windows process creation, Rattle's 7% a fixed command list.
-6. **Should `TaskId` become a function of inputs, and what breaks?** The answer
-   decides whether a cache is reachable at all (see the collision above).
-7. **Eviction by reachability or by recency?** [cas-eviction] argues an explicit
-   DAG is an eviction oracle the surveyed servers lack — unmeasured against LRU.
-8. **Is a link-shaped attestation enough?** Whether ordering edges can stand in
-   for `resolvedDependencies` is open ([provenance]).
-9. **Which theme gap is load-bearing for `dub`?** The corpus ranks nothing;
-   [semantic-caching] and [link-time-pruning] change what a task _is_.
-10. **Does the consensus survive a single-language, single-machine toolchain?**
-    The pages addressing a small toolchain ([buildxl], [sandboxing-overheads])
-    recommend the declare-only column.
+The [index] inventories five foundations, twenty industry rows, nine Nix
+subjects and fourteen themes. Each deep-dive carries its source pins and
+qualifications. This comparison audits their synthesis without advancing those
+pins or claiming executable validation of every row.
 
----
-
-## Page status relied on
-
-Every page the capstone reads, with the status its catalog row reports.
-
-| Page                                                  | Group       | Status     | Taken from it                                             |
-| ----------------------------------------------------- | ----------- | ---------- | --------------------------------------------------------- |
-| [Build Systems à la Carte][a-la-carte]                | Foundations | `reviewed` | the grid, minimality, early cutoff, Cloud Shake           |
-| [PIE][pie]                                            | Foundations | `reviewed` | the off-grid change-driven scheduler, `reqTasks`          |
-| [Build maintenance][build-maintenance]                | Foundations | `reviewed` | authoring cost as a design output                         |
-| [Perfect Dependencies][perfect-dependencies]          | Foundations | `reviewed` | traced deps, overhead numbers, the hazard set             |
-| [Nix thesis][nix-thesis]                              | Foundations | `reviewed` | deep constructive traces, the closure invariant           |
-| [BuildXL][buildxl]                                    | Engine      | `reviewed` | fingerprint arithmetic, absent probes, 1–5%               |
-| [Bazel][bazel]                                        | Engine      | `reviewed` | restarting, "correct and perfect incrementality"          |
-| [Buck2][buck2]                                        | Engine      | `reviewed` | DICE's unconditional soundness, the certificate           |
-| [build2][build2]                                      | Engine      | `reviewed` | `depdb`, tool checksums, the result lattice               |
-| [Please][please]                                      | Engine      | `reviewed` | four-part hash split, `Unchanged`, sandbox limits         |
-| [Ninja][ninja]                                        | Engine      | `reviewed` | build log, `restat`, `dyndep`, `missingdeps`              |
-| [GNU Make][gnumake]                                   | Engine      | `reviewed` | dirty bit, jobserver, re-exec                             |
-| [redo][redo]                                          | Engine      | `reviewed` | two-phase dependency replacement, negative deps           |
-| [tup][tup]                                            | Engine      | `reviewed` | observed edges, change frontier, output gate              |
-| [Shake][shake]                                        | Engine      | `reviewed` | two timestamps, journal, oracles, lint                    |
-| [Rattle][rattle]                                      | Engine      | `reviewed` | the forward model, `pending`, `createEdge`                |
-| [Earthly][earthly]                                    | Engine      | `reviewed` | recipe→LLB lowering, auto-skip tiers                      |
-| [GN][gn]                                              | Engine      | `reviewed` | generator phase, visibility as an allowlist               |
-| [Meson][meson]                                        | Engine      | `reviewed` | regeneration edge, introspection split                    |
-| [Boba][boba]                                          | Engine      | `reviewed` | no standalone repo; two caches can disagree               |
-| [Pants][pants]                                        | Engine      | `reviewed` | generation counters, per-edge dependency records          |
-| [Moon][moon]                                          | Engine      | `reviewed` | edge contribution policy, hash-collapse warning           |
-| [BitBake][bitbake]                                    | Engine      | `reviewed` | `siggen` handlers, `setscene`, `hashserv`, worker sandbox |
-| [sbt][sbt]                                            | Engine      | `reviewed` | suspension in a topological engine, wrapper cache         |
-| [BuildKit][buildkit]                                  | Engine      | `reviewed` | `CacheMap`, two key levels, provenance at the seam        |
-| [Nix dynamic derivations][nix-dynamic-derivations]    | Nix         | `reviewed` | the open key set; resolved-graph hashing                  |
-| [nixception][nixception]                              | Nix         | `reviewed` | canonical action as key; stable over precise              |
-| [nix-ninja][nix-ninja]                                | Nix         | `reviewed` | lowering vs execution; order from key resolution          |
-| [sandstone][sandstone]                                | Nix         | `reviewed` | narrowest-artifact edges; depfile as a node               |
-| [drowse][drowse]                                      | Nix         | `reviewed` | plan as a node; the barrier cost                          |
-| [dgd][dgd]                                            | Nix         | `reviewed` | plan as a task output; narrow inputs                      |
-| [nixgg][nixgg]                                        | Nix         | `reviewed` | one canonical action; scanner is part of the key          |
-| [nix-cargo-unit][nix-cargo-unit]                      | Nix         | `reviewed` | granularity vs keying; reasons Nix cannot hold            |
-| [MakeNix][makenix]                                    | Nix         | `reviewed` | plan as a cacheable task; declared-input bounds           |
-| [Sandboxing overheads][sandboxing-overheads]          | Theme       | `reviewed` | published numbers, isolation vs observation               |
-| [Dynamic deps, distributed][dynamic-deps-distributed] | Theme       | `reviewed` | the closure requirement, termination table                |
-| [Dependency pruning][dependency-pruning]              | Theme       | `reviewed` | strictness vs audit, the per-system table                 |
-| [Graph auto-generation][graph-autogeneration]         | Theme       | `reviewed` | trace as checker, the fixpoint hazard                     |
-| [Semantic caching][semantic-caching]                  | Theme       | `reviewed` | interface artifacts, under-approximation                  |
-| [Daemon compilers][daemon-compilers]                  | Theme       | `reviewed` | resident state must be named in the key                   |
-| [Link-time pruning][link-time-pruning]                | Theme       | `reviewed` | the link as the coarsest task                             |
-| [Compile-time execution][compile-time-execution]      | Theme       | `reviewed` | hermeticity holes per ecosystem                           |
-| [CAS eviction][cas-eviction]                          | Theme       | `reviewed` | two budgets, touch ordering, watermarks                   |
-| [Cross-language DAGs][cross-language-dags]            | Theme       | `reviewed` | manual glue at generator boundaries                       |
-| [Speculative execution][speculative-execution]        | Theme       | `reviewed` | shipped vs research; the baseline need                    |
-| [Formal verification][formal-verification]            | Theme       | `reviewed` | the assumption ledger, what is proved                     |
-| [Reproducibility][reproducibility]                    | Theme       | `reviewed` | determinism as premise vs obligation                      |
-| [Provenance][provenance]                              | Theme       | `reviewed` | the DSSE/ITE-6 stack, who actually emits                  |
-
----
+The [method] distinguishes source statements, inspected mechanisms, model
+deductions, executable observations and catalog inferences. The historical
+`reviewed` labels establish coverage of the source-review process, not a
+uniform level of assurance. [Behavioral evidence][behavioral-evidence] supplies
+a separate, explicitly scoped record of observed executions.
 
 ## Sources
 
@@ -445,8 +356,6 @@ Every page the capstone reads, with the status its catalog row reports.
   DICE document at `08b403b`, BuildXL's sandboxing spec at `ea34998`
   ([`restat`][ninja-restat], [skyframe][bazel-skyframe],
   [incrementality][dice-doc], [sandboxing][bxl-sandboxing]).
-- Sparkles source at the paths above; the quoted boundary sentence is from
-  `docs/specs/build-primitives/task-dag/SPEC.md`.
 
 <!-- References -->
 
@@ -505,3 +414,20 @@ Every page the capstone reads, with the status its catalog row reports.
 [bazel-skyframe]: https://github.com/bazelbuild/bazel/blob/2105aec32b598dcc8e09905e7cf18ccfa4b0358e/docs/reference/skyframe.mdx
 [dice-doc]: https://github.com/meta/buck2/blob/08b403b138373f506de90d15370162677526e388/dice/docs/incrementality.md
 [bxl-sandboxing]: https://github.com/microsoft/BuildXL/blob/ea34998661867b5959d7f496f8b5650611a3e446/Documentation/Specs/Sandboxing.md
+[method]: ./method.md
+[behavioral-evidence]: ./behavioral-evidence.md
+[schedulers]: ./concepts.md#_2-schedulers
+[bazel-rebuilding]: ./bazel.md#_2-rebuilding-correctness
+[buck2-mechanics]: ./buck2.md#how-it-works
+[buck2-rebuilding]: ./buck2.md#_2-rebuilding-correctness
+[buck2-discovery]: ./buck2.md#_3-dependency-discovery
+[buck2-store]: ./buck2.md#_4-store-caching
+[ninja-mechanics]: ./ninja.md#how-it-works
+[ninja-rebuilding]: ./ninja.md#_2-rebuilding-correctness
+[ninja-discovery]: ./ninja.md#_3-dependency-discovery
+[ninja-restat-section]: ./ninja.md#restat-an-mtime-proxy-for-early-cutoff
+[ninja-dyndep]: ./ninja.md#dyndep-the-graph-patched-mid-build
+[pie-correctness]: ./pie.md#correctness-and-optimality-as-argued
+[cas-integrity]: ./cas-eviction.md#correctness-risks
+[repro-detection]: ./reproducibility.md#detection-as-documented
+[sandbox-mechanisms]: ./sandboxing-overheads.md#how-it-works-—-the-mechanism-families

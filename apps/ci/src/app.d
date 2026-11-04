@@ -1292,6 +1292,7 @@ private string[] standaloneExampleGlobs()
         "libs/http/examples/*.d",
         "docs/research/async-io/io-uring/examples/*.d",
         "docs/research/async-io/gcd/examples/*.d",
+        "docs/research/build-systems/examples/*.d",
         "docs/research/units-of-measure/examples/*.d",
         "docs/research/cpu-pmu/examples/*.d",
         "docs/research/sanitizers/examples/*.d",
