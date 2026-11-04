@@ -23,6 +23,7 @@ module lab;
 
 
 import std.format : format;
+import sparkles.base.buffer : UniqueBuffer;
 import font_settings : LabSettings;
 import lab_controls : LabControls;
 
@@ -69,6 +70,39 @@ enum int labelWidth = 10;
 /// The smallest pixel size the font steps down to so the panels fit.
 enum int minFitPx = 8;
 
+/// Reproducible render and font-changing workloads, without interaction noise.
+enum SweepMode { all, render, size, weight, axes }
+
+private void sweepSettings(ref LabSettings settings, SweepMode mode, double fraction)
+    @safe pure nothrow @nogc
+{
+    if (mode == SweepMode.all || mode == SweepMode.size)
+        settings.font.size = 8 + 24 * fraction;
+    if (mode == SweepMode.all || mode == SweepMode.axes || mode == SweepMode.weight)
+        foreach (ref axis; settings.axes)
+            if (mode != SweepMode.weight || axis.tag == 0x77676874)
+                axis.value = axis.minimum + (axis.maximum - axis.minimum) * fraction;
+}
+
+/// A frozen redraw and a weight-only sweep preserve unrelated settings.
+@("text_lab.sweepSettings.isolatesWorkloads")
+@safe unittest
+{
+    import font_settings : AxisSetting;
+    LabSettings settings;
+    settings.axes = [AxisSetting(tag: 0x77676874, minimum: 100, maximum: 900, value: 400),
+        AxisSetting(tag: 0x77647468, minimum: 50, maximum: 200, value: 100)];
+    const size = settings.font.size;
+    sweepSettings(settings, SweepMode.render, 1);
+    assert(settings.font.size == size && settings.axes[0].value == 400);
+    sweepSettings(settings, SweepMode.weight, 1);
+    assert(settings.font.size == size && settings.axes[0].value == 900 && settings.axes[1].value == 100);
+    sweepSettings(settings, SweepMode.size, 0.5);
+    assert(settings.font.size == 20 && settings.axes[1].value == 100);
+    sweepSettings(settings, SweepMode.axes, 1);
+    assert(settings.font.size == 20 && settings.axes[1].value == 200);
+}
+
 /// The lab's state.
 struct Lab
 {
@@ -86,6 +120,9 @@ struct Lab
     string fontSpecification;
     bool pickerAtStart;
     uint sweepFrames; /// deterministic size/axis sweep; zero disables it
+    SweepMode sweepMode; /// which font settings change during a sweep
+    uint rasterWorkers = 2; /// coverage workers, including a serial comparison
+    private SpecimenLayout specimenLayout;
     private uint swept;
     private LabControls controls;
     /// A rejected runtime/CLI font request, reported by the entry point.
@@ -153,9 +190,7 @@ struct Lab
             {
                 const phase = swept % 120;
                 const fraction = (phase < 60 ? phase : 120 - phase) / 60.0;
-                model.font.size = 8 + 24 * fraction;
-                foreach (ref axis; model.axes)
-                    axis.value = axis.minimum + (axis.maximum - axis.minimum) * fraction;
+                sweepSettings(model, sweepMode, fraction);
                 ++swept;
                 h.requestFrame();
             }
@@ -216,6 +251,9 @@ struct Lab
                 h.requestFrame();
             }
         }
+        sheet_ = Rect.init;
+        static if (offersSettings!H)
+            if (controls !is null) sheet_ = controls.overlayBounds(size, sheetOpen);
         header(h, canvas, size.width);
         const half = (size.height - headerRows) / 2;
         panel(h, canvas, Rect(0, headerRows, size.width, half), dark);
@@ -232,7 +270,6 @@ struct Lab
             if (crosshair && pointing)
                 drawCrosshair(h, canvas);
 
-        sheet_ = Rect.init;
         static if (offersSettings!H)
 
             if (controls !is null)
@@ -295,13 +332,15 @@ struct Lab
     // beside it.
     private void panel(H, C)(ref H h, C canvas, in Rect r, in Theme t)
     {
+        const visible = visiblePanel(r, sheet_);
+        if (visible.width <= 0 || visible.height <= 0) return;
         canvas.fillRect(r, Visual(bg: t.bg, hasBg: true));
         static if (__traits(compiles, h.beginSpecimen(), h.specimenCellHeight,
                 canvas.naturalTextPx("", 0, 0, rgba(t.fg, 255))))
         {
             if (discoverFonts && h.specimenFontReady)
             {
-                specimenPanel(h, canvas, r, t);
+                specimenPanel(h, canvas, r, visible, t);
                 return;
             }
         }
@@ -328,7 +367,7 @@ struct Lab
     }
 
     // Labels retain the UI font; specimen text uses independent em metrics.
-    private void specimenPanel(H, C)(ref H h, C canvas, in Rect r, in Theme t)
+    private void specimenPanel(H, C)(ref H h, C canvas, in Rect r, in Rect visible, in Theme t)
     {
         import std.algorithm.comparison : max;
 
@@ -337,16 +376,21 @@ struct Lab
         const width = max(1, (r.width - labelWidth - 2) * cw);
         const rowHeight = max(ch, h.specimenCellHeight);
         int y = r.y * ch;
-        const bottom = r.bottom * ch;
-        canvas.pushClip(r);
+        const bottom = visible.bottom * ch;
+        const right = visible.right * cw;
+        canvas.pushClip(visible);
         scope (exit) canvas.popClip();
-        foreach (line; lines)
+        if (specimenLayout is null) specimenLayout = new SpecimenLayout;
+        specimenLayout.tokens.clear(false);
+        specimenLayout.lines.clear(false);
+        if (!h.beginSpecimen()) return;
+        static if (__traits(compiles, canvas.beginGlyphPreparation(rasterWorkers), canvas.finishGlyphPreparation()))
+            canvas.beginGlyphPreparation(rasterWorkers);
+        foreach (index, line; lines)
         {
             if (y >= bottom) break;
             const lineY = y;
-            const fallbacksBefore = h.specimenFallbackGlyphs + h.specimenGridFallbacks;
-            canvas.labelPx(line.label, (r.x + 1) * cw, y, rgba(t.label, 255), rgba(t.bg, 255));
-            if (!h.beginSpecimen()) break;
+            const first = specimenLayout.tokens.length;
             int pen;
             foreach (run; line.runs)
             {
@@ -368,24 +412,44 @@ struct Lab
                         y += rowHeight;
                     }
                     if (y >= bottom) break;
-                    if (model.font.cellGrid)
-                        canvas.labelPx(token, left + pen, y, rgba(t.ink(run.colour), 255), rgba(t.bg, 255));
-                    else
-                        advance = canvas.naturalTextPx(token, left + pen, y, rgba(t.ink(run.colour), 255),
-                            rgba(t.bg, 255), bold, italic);
-                    if (run.underline != UnderlineStyle.none)
-                        canvas.fillPx(left + pen, y + rowHeight - 2, advance, 1, rgba(t.ink(run.colour), 255));
-                    if (run.style & TextAttr.strikethrough.bits)
-                        canvas.fillPx(left + pen, y + rowHeight / 2, advance, 1, rgba(t.ink(run.colour), 255));
+                    // Preserve logical wrapping while avoiding rasterization of
+                    // words entirely covered by the side sheet.
+                    if (left + pen >= right) { pen += advance; continue; }
+                    specimenLayout.tokens ~= PlacedToken(token, pen, y, advance, run.style, run.underline, run.colour);
                     pen += advance;
                 }
                 if (y >= bottom) break;
             }
+            specimenLayout.lines ~= PlacedLine(index, lineY, first, specimenLayout.tokens.length);
+            y += rowHeight;
+        }
+        h.endSpecimen();
+        static if (__traits(compiles, canvas.finishGlyphPreparation()))
+            canvas.finishGlyphPreparation();
+        foreach (line; specimenLayout.lines[])
+        {
+            const label = lines[line.index].label;
+            canvas.labelPx(label, (r.x + 1) * cw, line.y, rgba(t.label, 255), rgba(t.bg, 255));
+            const fallbacksBefore = h.specimenFallbackGlyphs + h.specimenGridFallbacks;
+            if (!h.beginSpecimen()) break;
+            foreach (token; specimenLayout.tokens[][line.first .. line.end])
+            {
+                const x = left + token.pen;
+                const ink = rgba(t.ink(token.colour), 255), ground = rgba(t.bg, 255);
+                if (model.font.cellGrid)
+                    canvas.labelPx(token.text, x, token.y, ink, ground);
+                else
+                    cast(void) canvas.naturalTextPx(token.text, x, token.y, ink, ground,
+                        (token.style & TextAttr.bold.bits) != 0, (token.style & TextAttr.italic.bits) != 0);
+                if (token.underline != UnderlineStyle.none)
+                    canvas.fillPx(x, token.y + rowHeight - 2, token.advance, 1, ink);
+                if (token.style & TextAttr.strikethrough.bits)
+                    canvas.fillPx(x, token.y + rowHeight / 2, token.advance, 1, ink);
+            }
             h.endSpecimen();
             if (h.specimenFallbackGlyphs + h.specimenGridFallbacks > fallbacksBefore)
-                canvas.labelPx(clip(line.label ~ " †", labelWidth), (r.x + 1) * cw, lineY,
+                canvas.labelPx(clip(label ~ " †", labelWidth), (r.x + 1) * cw, line.y,
                     rgba(t.label, 255), rgba(t.bg, 255));
-            y += rowHeight;
         }
     }
 
@@ -700,6 +764,56 @@ Palette framePalette() @safe pure nothrow @nogc
 }
 
 /// A panel's colours.
+// Trim only when the opaque sheet covers a complete edge. Keeping the panel's
+// original rectangle for layout prevents opening a sheet from reflowing text.
+private Rect visiblePanel(Rect panel, Rect overlay) @safe pure nothrow @nogc
+{
+    import std.algorithm.comparison : max, min;
+
+    if (overlay.width <= 0 || overlay.height <= 0) return panel;
+    if (overlay.x <= panel.x && overlay.right >= panel.right
+        && overlay.y < panel.bottom && overlay.bottom >= panel.bottom)
+        panel.size.height = max(0, min(panel.bottom, overlay.y) - panel.y);
+    else if (overlay.y <= panel.y && overlay.bottom >= panel.bottom
+        && overlay.x < panel.right && overlay.right >= panel.right)
+        panel.size.width = max(0, min(panel.right, overlay.x) - panel.x);
+    return panel;
+}
+
+/// Edge sheets cull work without altering the logical panel's wrapping width.
+@("text_lab.visiblePanel.opaqueEdges")
+@safe pure nothrow @nogc unittest
+{
+    const panel = Rect(0, 3, 49, 24);
+    assert(visiblePanel(panel, Rect(0, 18, 49, 32)) == Rect(0, 3, 49, 15));
+    assert(visiblePanel(panel, Rect(0, 3, 49, 47)).height == 0);
+    assert(visiblePanel(panel, Rect(30, 3, 19, 47)) == Rect(0, 3, 30, 24));
+    assert(visiblePanel(panel, Rect(12, 10, 20, 10)) == panel);
+    assert(visiblePanel(panel, Rect.init) == panel);
+}
+
+private final class SpecimenLayout
+{
+    UniqueBuffer!PlacedToken tokens;
+    UniqueBuffer!PlacedLine lines;
+}
+
+private struct PlacedToken
+{
+    string text;
+    int pen, y, advance;
+    ushort style;
+    UnderlineStyle underline;
+    ubyte colour;
+}
+
+private struct PlacedLine
+{
+    size_t index;
+    int y;
+    size_t first, end;
+}
+
 private struct Theme
 {
     RgbColor bg, fg, label, red, green, blue;

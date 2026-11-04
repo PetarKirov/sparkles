@@ -39,7 +39,7 @@ import sparkles.font.errors : callerStorageError, FontError, FontErrorKind, Font
     fontErr, fontLimitValue, fontOk, limitError, Tag;
 import sparkles.font.harfbuzz;
 import sparkles.font.instance : Instance, InstanceSize;
-import sparkles.font.metrics : advance, Measurement;
+import sparkles.font.metrics : advance, AdvanceSource, Measurement;
 import sparkles.font.outlines : PointWorkspace;
 import sparkles.font.vertical : verticalAdvance, verticalOrigin;
 
@@ -211,6 +211,11 @@ struct Shaper
         () @trusted {
             advances_.get.instance = inst;
             advances_.get.parent = parent_;
+            const horizontal = AdvanceSource.of(inst.face, inst);
+            if (horizontal.hasError)
+                advances_.get.horizontalError = horizontal.error;
+            else
+                advances_.get.horizontal = horizontal.value;
         }();
         fontFuncs_ = () @trusted { return hb_font_funcs_create(); }();
         () @trusted {
@@ -253,6 +258,35 @@ struct Shaper
 
     /// `FontError.init` when the shaper is ready; otherwise why it is not.
     FontError status() const scope => status_;
+
+    /**
+    Selects another instance of the same borrowed file and collection member,
+    retaining HarfBuzz objects and the point workspace. False leaves the
+    shaper unchanged when storage identity differs or setup was unsuccessful.
+    The original bytes must remain alive and immutable. Coordinate changes
+    invalidate both HarfBuzz fonts' derived data and the parsed advance source.
+    */
+    bool reinstance(Instance inst)
+    {
+        const old = instance_.face;
+        const next = inst.face;
+        if (status_ != FontError.init || old.bytes.ptr != next.bytes.ptr
+            || old.bytes.length != next.bytes.length || old.index != next.index)
+            return false;
+        int[64] coords;
+        foreach (i, c; inst.coords) coords[i] = c;
+        const horizontal = AdvanceSource.of(next, inst);
+        () @trusted {
+            hb_font_set_var_coords_normalized(parent_, coords.ptr, cast(uint)inst.coords.length);
+            hb_font_set_var_coords_normalized(font_, coords.ptr, cast(uint)inst.coords.length);
+            advances_.get.instance = inst;
+            advances_.get.horizontal = horizontal.hasValue ? horizontal.value : AdvanceSource.init;
+            advances_.get.horizontalError = horizontal.hasError ? horizontal.error : FontError.init;
+            advances_.get.error = FontError.init;
+        }();
+        instance_ = inst;
+        return true;
+    }
 
     /**
     Shapes `request` (FTS7), writing glyphs to `glyphs`, source spans to
@@ -491,6 +525,8 @@ gave, which `shape` returns in place of the run.
 private struct AdvanceState
 {
     Instance instance;
+    AdvanceSource horizontal;
+    FontError horizontalError;
     hb_font_t* parent;
     FontError error;
     PointWorkspace points;
@@ -521,14 +557,19 @@ private extern (C) hb_position_t advanceThunk(hb_font_t*, void* fontData, hb_cod
     @system nothrow @nogc
 {
     auto state = cast(AdvanceState*) fontData;
-    const a = advance(state.instance, glyph, state.points);
+    if (state.horizontalError != FontError.init)
+    {
+        keepFirst(state, state.horizontalError);
+        return 0;
+    }
+    const a = state.horizontal.advance(glyph, state.instance, state.points);
     if (a.hasError)
     {
         keepFirst(state, a.error);
         return 0;
     }
     hb_position_t p;
-    if (!toPosition(a.value.design.raw, p))
+    if (!toPosition(a.value.raw, p))
         keepFirst(state, FontError(FontErrorKind.arithmeticExhausted));
     return p;
 }

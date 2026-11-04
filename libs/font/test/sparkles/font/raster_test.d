@@ -65,6 +65,30 @@ private RasterGlyph render(Buffers* b, const(ubyte)[] bytes, uint gid,
     return r.value;
 }
 
+/// Prepared coverage retains decoded geometry, not the source font or scratch
+/// for accumulation; output and scratch validation still apply at draw time.
+@("raster.prepared.retainsGeometryAndChecksOutput")
+@system unittest
+{
+    auto bytes = glyphFont([simpleGlyph([[0, 0, 1], [1024, 0, 1],
+        [1024, 1024, 1], [0, 1024, 1]])]).dup;
+    auto b = new Buffers;
+    const ppem = Ppem.fromInteger(10).value;
+    auto plan = prepareRaster(at(bytes), 0, ppem, b.workspace()).value;
+    assert(plan.metrics.width == 5 && plan.metrics.height == 5);
+    bytes[] = 0; // drawing must consume the decoded plan, without font access
+    auto region = RasterRegion(b.pixels[], 5, 5, 5);
+    assert(plan.rasterize(region, b.workspace()).hasValue);
+    foreach (pixel; b.pixels[0 .. 25]) assert(pixel == 255);
+    auto shortScratch = b.workspace();
+    shortScratch.accumulation = null;
+    const refused = plan.rasterize(region, shortScratch);
+    assert(refused.hasError && refused.error.limit == FontLimit.callerStorage);
+    region.width = 4;
+    assert(plan.rasterize(region, b.workspace()).hasError);
+    assert(PreparedRaster.init.rasterize(region, b.workspace()).hasError);
+}
+
 @("raster.square.exactCoverage")
 @system
 unittest

@@ -17,6 +17,19 @@ an explicit call. Building it checks the data; using it does not check
 again. That keeps every operation's cost visible at the call site and the
 face itself immutable, so several threads can share it.
 
+The engine's `Shaper` retains its instance's parsed horizontal metric sources
+for its lifetime. Advance callbacks still evaluate that instance's variation
+deltas and return the same errors, but do not reopen `hmtx` and `HVAR` for
+each glyph. This retains borrowed table views, not font bytes or a glyph cache.
+
+`Shaper.reinstance` selects new coordinates or size for the same borrowed file
+allocation and collection member. It updates both HarfBuzz fonts and the
+advance source while retaining the objects and the 2.6 MiB point workspace.
+Different storage is refused even when its content is identical. The Vulkan
+canvas retains a shaper only while its exact borrowed file remains bound in
+an interface, specimen, or fallback context; replacing the last binding drops
+it before the caller can release those bytes.
+
 ## Lenient where real fonts are wrong, never silent
 
 Fonts in the wild are often slightly wrong, and HarfBuzz and FreeType

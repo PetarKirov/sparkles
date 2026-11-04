@@ -163,18 +163,63 @@ FontResult!RasterGlyph rasterMeasure(in Instance inst, uint gid, Ppem ppem,
     return scope RasterWorkspace ws, OverlapMode overlap = OverlapMode.perGlyphFlag,
     const(LightHints)* hints = null)
 {
+    const prepared = prepareRaster(inst, gid, ppem, ws, overlap, hints);
+    if (prepared.hasError)
+        return fontErr!RasterGlyph(prepared.error);
+    return fontOk(prepared.value.metrics);
+}
+
+/**
+A decoded, optionally hinted outline ready for rasterization. Borrows only
+the preparation workspace's segments: keep them alive and unchanged until
+the last `rasterize` call. Accumulation and supersample storage may be grown
+independently after preparation. This is caller-owned transient work, not a
+font-library cache.
+*/
+struct PreparedRaster
+{
+    private RasterGlyph metrics_;
+    private const(OutlineSegment)[] segments_;
+    private double scale_;
+    private bool union_, valid_;
+
+    /// Dimensions, bearings and scratch requirements, without another decode.
+    RasterGlyph metrics() const scope @safe pure nothrow @nogc => metrics_;
+
+    /// Draws the prepared outline with the same coverage and storage checks
+    /// as `rasterizeGlyph`; a default-initialized plan is `badValue`.
+    FontResult!RasterGlyph rasterize(scope RasterRegion region, scope RasterWorkspace ws,
+        FlattenPolicy policy = FlattenPolicy.standard) const scope @safe pure nothrow @nogc
+    {
+        return rasterizePrepared(this, region, ws, policy);
+    }
+}
+
+/**
+Decodes, hints and measures once. The returned plan borrows `ws.segments`;
+its metrics let a caller size output and scratch before drawing. The errors
+and outline-storage requirements are those of `rasterMeasure`.
+*/
+FontResult!PreparedRaster prepareRaster(in Instance inst, uint gid, Ppem ppem,
+    return scope RasterWorkspace ws, OverlapMode overlap = OverlapMode.perGlyphFlag,
+    const(LightHints)* hints = null)
+{
     if (!ppem.valid)
-        return fontErr!RasterGlyph(FontError(FontErrorKind.badValue));
+        return fontErr!PreparedRaster(FontError(FontErrorKind.badValue));
     if (inst.face.requiresBytecode)
-        return fontErr!RasterGlyph(bytecodeRefusal());
+        return fontErr!PreparedRaster(bytecodeRefusal());
     auto outlineWs = ws.outline;
     const result = glyphOutline(inst, gid, ws.segments, outlineWs);
     if (result.hasError)
-        return fontErr!RasterGlyph(result.error);
+        return fontErr!PreparedRaster(result.error);
     if (hints !is null)
         hintSegments(ws.segments[0 .. result.value.segmentCount], *hints);
-    return measureSegments(inst, ws.segments[0 .. result.value.segmentCount], result.value.overlap,
-        ppem, overlap);
+    const segments = ws.segments[0 .. result.value.segmentCount];
+    const measured = measureSegments(inst, segments, result.value.overlap, ppem, overlap);
+    if (measured.hasError)
+        return fontErr!PreparedRaster(measured.error);
+    return fontOk(PreparedRaster(measured.value, segments, pixelScale(inst, ppem),
+        rendersUnion(overlap, result.value.overlap), true));
 }
 
 /// Whether `overlap` renders a glyph whose flag is `flagged` as the 4×4 union.
@@ -468,21 +513,19 @@ FontResult!RasterGlyph rasterizeGlyph(in Instance inst, uint gid, Ppem ppem,
     FlattenPolicy policy = FlattenPolicy.standard,
     OverlapMode overlap = OverlapMode.perGlyphFlag, const(LightHints)* hints = null)
 {
-    if (!ppem.valid)
+    const prepared = prepareRaster(inst, gid, ppem, ws, overlap, hints);
+    if (prepared.hasError)
+        return fontErr!RasterGlyph(prepared.error);
+    return prepared.value.rasterize(region, ws, policy);
+}
+
+private FontResult!RasterGlyph rasterizePrepared(in PreparedRaster prepared,
+    scope RasterRegion region, scope RasterWorkspace ws, FlattenPolicy policy)
+{
+    if (!prepared.valid_)
         return fontErr!RasterGlyph(FontError(FontErrorKind.badValue));
-    if (inst.face.requiresBytecode)
-        return fontErr!RasterGlyph(bytecodeRefusal());
-    auto outlineWs = ws.outline;
-    const drawn = glyphOutline(inst, gid, ws.segments, outlineWs);
-    if (drawn.hasError)
-        return fontErr!RasterGlyph(drawn.error);
-    if (hints !is null)
-        hintSegments(ws.segments[0 .. drawn.value.segmentCount], *hints);
-    const segments = ws.segments[0 .. drawn.value.segmentCount];
-    const measured = measureSegments(inst, segments, drawn.value.overlap, ppem, overlap);
-    if (measured.hasError)
-        return measured;
-    RasterGlyph size = measured.value;
+    RasterGlyph size = prepared.metrics_;
+    const segments = prepared.segments_;
     if (size.empty)
         return fontOk(size);
     if (region.width < size.width || region.height < size.height
@@ -501,9 +544,9 @@ FontResult!RasterGlyph rasterizeGlyph(in Instance inst, uint gid, Ppem ppem,
     if (ws.supersample.length < size.supersampleNeeded)
         return fontErr!RasterGlyph(callerStorageError(size.supersampleNeeded));
 
-    const union_ = rendersUnion(overlap, size.overlap);
+    const union_ = prepared.union_;
     const ss = union_ ? 4 : 1;
-    const scale = pixelScale(inst, ppem) * ss;
+    const scale = prepared.scale_ * ss;
     const left = cast(double) size.bearingX * ss;
     const top = cast(double) size.bearingY * ss;
     const w = ss * size.width, h = ss * size.height;

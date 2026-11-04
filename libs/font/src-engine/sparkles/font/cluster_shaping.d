@@ -57,6 +57,17 @@ ClusterShaper* openClusterShaper(const(void)* instance) @system nothrow @nogc
     return cast(ClusterShaper*) memory;
 }
 
+/// Reuses a shaper's objects and scratch for another instance of the same
+/// borrowed file/member. False leaves it unchanged; storage identity is exact.
+bool reinstanceClusterShaper(ClusterShaper* shaper, const(void)* instance) @system nothrow @nogc
+{
+    import sparkles.font.instance : Instance;
+    import sparkles.font.shaping : Shaper;
+
+    return shaper !is null && instance !is null
+        && (cast(Shaper*)shaper).reinstance(*cast(const(Instance)*)instance);
+}
+
 /**
 Shapes the UTF-8 cluster `text` with `shaper` at `ppemNumerator /
 ppemDenominator` pixels per em into `glyphs`: how many it wrote, or 0 when

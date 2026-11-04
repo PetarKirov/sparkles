@@ -32,3 +32,26 @@ dub run --single libs/ui-app/examples/specimen-font-benchmark.d -b checked
 The first command runs real application frames; the second isolates CPU
 preparation, binding, and rasterization. See the
 [preview contract and validation limits](../../docs/specs/ui-app/font-preview.md).
+
+Use `--sweep-mode render` for fixed-font redraws, `size`, `weight`, or `axes`
+to isolate changing settings. The default `all` varies size and every axis.
+Pair each workload with `--settings` and `--ui-follows-specimen` to measure
+those costs separately. Frame traces include CPU phases and GPU timestamps
+when the device supports them; discard warmup before comparing distributions.
+Use `--raster-workers 1`, `2`, `3`, or `4` to compare coverage batches;
+`1` runs on the frame thread and the default is `2`.
+
+On Android, put newline-separated CLI arguments in the app-private
+`files/next-launch.args` before starting the activity. For example, use
+`adb push` to copy an argument file to `/data/local/tmp/next-launch.args`, then:
+
+```bash
+adb shell am force-stop dev.petar_kirov.sparkles.text_lab
+adb shell run-as dev.petar_kirov.sparkles.text_lab cp /data/local/tmp/next-launch.args files/next-launch.args
+adb shell am start -W -n dev.petar_kirov.sparkles.text_lab/android.app.NativeActivity
+```
+
+Use absolute app-private paths for trace output and font files. The APK supplies
+its bundled font directory automatically. The argument file is consumed before
+launch, so the next interactive launch returns to the defaults, even after an
+interrupted sweep. Retrieve a trace with `adb exec-out run-as` and `cat`.

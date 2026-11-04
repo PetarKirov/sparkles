@@ -14,6 +14,7 @@ dflags "-preview=in" "-preview=dip1000"
 libs "vulkan"
 
 dependency "sparkles:base" path="../.."
+dependency "sparkles:event-horizon" path="../.."
 // The interim glyph atlas rasterizes with it (`UVX12`), and its HarfBuzz
 // engine shapes clusters (T3): the `engine` configuration links HarfBuzz.
 dependency "sparkles:font" path="../.."

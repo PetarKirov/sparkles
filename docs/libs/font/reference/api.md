@@ -404,6 +404,8 @@ placements; each child's own variation is evaluated before scaling and placement
 | Operation                                                     | Result                                                                                                                 |
 | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | `inst.rasterMeasure(gid, ppem, ws, overlap)`                  | the glyph's pixel size and bearings, and the accumulation and supersample storage the workspace needs                  |
+| `inst.prepareRaster(gid, ppem, ws, overlap, hints)`           | a transient `PreparedRaster`: decoded, optionally hinted outline with measured pixel bounds and scratch requirements   |
+| `prepared.rasterize(region, ws, policy)`                      | coverage from the prepared outline, without decoding or hinting again; the same output and scratch checks apply        |
 | `inst.rasterizeGlyph(gid, ppem, region, ws, policy, overlap)` | linear 8-bit coverage written into the caller's `RasterRegion` (its own stride); the same size and bearings            |
 | `applyTransfer(coverage, gammaTimes256)`                      | linear coverage encoded for a display of gamma `gammaTimes256 / 256`: the power `256 / gammaTimes256`, identity at 256 |
 
@@ -414,6 +416,12 @@ contours both partly cover still doubles. `FlattenPolicy.standard` subdivides
 curves to 0.02 px, `freeType` reproduces FreeType's `ftgrays.c`
 subdivision, and `fine` is the 0.001 px reference of FTR8. Equal glyph
 keys produce byte-identical output.
+
+`PreparedRaster.metrics` reports the output dimensions and required accumulation
+and supersample storage. The plan borrows only the preparation workspace's
+segments: keep them alive and unchanged until drawing finishes. Accumulation
+and supersample arrays may be grown independently after preparation. The plan
+does not retain a font, allocate storage, or cache glyphs inside the font library.
 
 The region stride must cover the glyph's row width, and the byte slice must hold
 every row. Invalid or overflowing row layouts return a caller-storage error before

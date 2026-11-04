@@ -37,6 +37,34 @@ private struct Outputs
 private SegmentProperties latin() @safe => SegmentProperties(ShapingDirection.leftToRight, Tag("Latn"), "en");
 private SegmentProperties arabic() @safe => SegmentProperties(ShapingDirection.rightToLeft, Tag("Arab"), "ar");
 
+/// Reusing a file's shaper must match fresh objects at each variation point,
+/// including transitions back to defaults and explicit vertical shaping.
+@("shaping.reinstance.matchesFreshObjects")
+@system unittest
+{
+    const bytes = bundled("NotoSans.ttf");
+    auto reused = Shaper(instanceOf(bytes));
+    foreach (weight; [100, 900, 400, 100])
+    {
+        auto inst = instanceOf(bytes, [UserCoordinate(Tag("wght"), weight << 16)]);
+        assert(reused.reinstance(inst));
+        auto fresh = Shaper(inst);
+        foreach (direction; [ShapingDirection.leftToRight, ShapingDirection.topToBottom])
+        {
+            Outputs a, b;
+            const request = ShapeRequest("office é", 0, "office é".length,
+                SegmentProperties(direction, Tag("Latn"), "en"));
+            const expected = b.shape(fresh, request).value;
+            const actual = a.shape(reused, request).value;
+            assert(actual.glyphCount == expected.glyphCount);
+            assert(a.glyphs[0 .. actual.glyphCount] == b.glyphs[0 .. expected.glyphCount]);
+            assert(a.spans[0 .. actual.spanCount] == b.spans[0 .. expected.spanCount]);
+        }
+    }
+    assert(!reused.reinstance(instanceOf(bytes.dup)), "identical bytes in other storage must be refused");
+    assert(!reused.reinstance(instanceOf(bundled("DejaVuSansMono.ttf"))));
+}
+
 /// Spans ascend in source order, partition `[start, end)`, and give every glyph to exactly one span.
 private void assertPartition(in Outputs o, in ShapeInfo info, size_t start, size_t end) @safe
 {

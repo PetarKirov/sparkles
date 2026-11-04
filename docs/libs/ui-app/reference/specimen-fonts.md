@@ -19,6 +19,25 @@ an independent specimen layout. `naturalTextPx` draws with shaped advances and
 returns the advance; `naturalTextWidthPx` measures without rasterizing. Cell
 text remains available for terminal-style comparisons.
 
+The Vulkan canvas retains up to 256 shaped runs in a four-way cache shared by
+measurement, drawing, and subsequent frames. Keys include exact face identity,
+physical em size, normalized variation coordinates, and cluster text. Runs own
+their keys and glyph positions; colors and raster images remain independent.
+Memory-pressure cache release drops these runs along with the glyph atlases.
+
+For natural text laid out before drawing, call `canvas.beginGlyphPreparation`
+before measuring runs and `canvas.finishGlyphPreparation` before drawing them.
+Measurements collect up to 128 unique coverage misses. An Event Horizon pool
+with 1–4 workers produces tiles using independent outline and raster scratch;
+one worker runs directly on the frame thread. Completion joins the batch before
+atlas placement, and GPU uploads remain on the frame thread. No batch survives
+the frame or borrows font bytes after completion. Keep bindings and their
+borrowed bytes valid until finishing; each job captures its instance and hints.
+Color glyphs and unsupported or oversized tiles use the ordinary drawing path.
+Each retained tile is capped at 65,536 bytes and each worker's accumulation
+at 1,048,576 floats, with outline scratch capped at 32,768 points. The renderer
+joins its workers before teardown.
+
 Exact-face mode uses the selected face for every style. Family mode accepts
 explicit preloaded bold, italic, and bold-italic members; missing siblings use
 the selected face. Hosts do no implicit sibling discovery during a frame.

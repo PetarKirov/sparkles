@@ -34,6 +34,7 @@ import sparkles.ui.image : ImageHandle, ImageRegistry;
 import sparkles.ui_vulkan.frame_buffers : BufferSlice, FrameBuffers;
 import sparkles.ui_vulkan.glyph_atlas : AtlasGlyph, AtlasOutcome, DirtyRegion, GlyphAtlas, hasColourGlyphs;
 import sparkles.ui_vulkan.painter;
+import sparkles.ui_vulkan.prepared_runs : PreparedRuns;
 import sparkles.ui_vulkan.pipelines;
 import sparkles.ui_vulkan.resources : GpuImage;
 import sparkles.ui.pixel_geometry : ScissorBox;
@@ -268,7 +269,12 @@ struct VulkanCanvas(B)
     private UniqueBuffer!GpuImage[2] atlasImages_; // the coverage sheet's pages, the colour sheet's
     // Shapers by face serial, made on demand (`ShaperSlot`).
     static if (canShape)
+    {
         private ShaperSlot[16] shapers_;
+        private PreparedRuns!256 preparedRuns_;
+        private bool preparingGlyphs_;
+        private uint rasterWorkers_ = 2;
+    }
 
     private bool inFrame_, lost_;
     // A hinting change asked for mid-frame: the atlas starts over at the
@@ -546,6 +552,7 @@ struct VulkanCanvas(B)
     */
     void releaseCaches() @system
     {
+        static if (canShape) preparedRuns_.clear();
         foreach (i, ref e; images_[])
         {
             if (!e.handle.valid)
@@ -583,15 +590,9 @@ struct VulkanCanvas(B)
         scope const(UserCoordinate)[] coordinates = null, scope const(uint)[] styleIndices = null) @system
     {
         textMetrics_ = TextMetrics.init;
-        // The shapers borrow the bound faces' bytes, which the caller may let
-        // go after this call. They go now, while those bytes still live, and
-        // are made again from the bytes bound next: a face's identity, which
-        // its atlas entries keep, says nothing about which copy of it a
-        // shaper reads.
-        static if (canShape)
-            foreach (ref slot; shapers_)
-                if (slot.tried)
-                    slot.release();
+        // Prune before returning, while replaced bytes still live. Shapers
+        // whose exact borrowed storage remains bound retain their workspace.
+        scope (exit) pruneShapers();
         // A face's glyphs keep their atlas entries across a size change;
         // other bytes are another face. Identity is the bytes' content,
         // not their address: the caller's bytes may die at the next call
@@ -661,24 +662,17 @@ struct VulkanCanvas(B)
         scope const(uint)[] styleIndices = null, scope const(ulong)[] styleHashes = null) @system
     {
         assert(!specimenActive_);
+        scope (exit) pruneShapers();
         auto bound = CellFace.open(bytes, size, index, coordinates, &specimenFaces_[0], contentHash);
         if (!bound.bytes.length)
             return false;
         const old = specimenFaces_[0];
         bound.serial = old.bytes.length && old.contentHash == bound.contentHash
             && old.face.index == bound.face.index ? old.serial : ++faceSerial_;
-        static if (canShape)
-            foreach (ref slot; shapers_)
-                if (slot.tried && slot.serial == old.serial)
-                    slot.release();
         specimenFaces_[0] = bound;
         foreach (i; 1 .. specimenFaces_.length)
         {
             auto previous = specimenFaces_[i];
-            static if (canShape)
-                foreach (ref slot; shapers_)
-                    if (slot.tried && slot.serial == previous.serial)
-                        slot.release();
             auto sibling = i - 1 < styles.length
                 ? CellFace.open(styles[i - 1], size,
                     i - 1 < styleIndices.length ? styleIndices[i - 1] : 0,
@@ -867,15 +861,30 @@ struct VulkanCanvas(B)
         return GlyphOutcome.noGlyph;
     }
 
-    /*
-    A cluster shaped by HarfBuzz (`shapesClusters`, T3), where the font
-    library's shaping engine is linked and the text rendering asks for it:
-    in the first face of `faceOrder` that maps every codepoint the cluster
-    shows (joiners and variation selectors aside), each shaped glyph from the
-    atlas, placed by its advance and offsets. Anything else — no such face,
-    an engine that is not available, a glyph the face does not have — is
-    left to the painter to draw unshaped.
-    */
+    /// Collect coverage misses while measuring natural runs, then join them
+    /// before drawing. Font bindings must remain valid until finish returns.
+    void beginGlyphPreparation(uint workers = 2) @safe nothrow
+    {
+        static if (canShape)
+        {
+            atlas_.beginPreparation();
+            preparingGlyphs_ = true;
+            rasterWorkers_ = workers;
+        }
+    }
+
+    /// Completes CPU tiles; atlas placement and subsequent uploads stay here.
+    void finishGlyphPreparation() @system nothrow
+    {
+        static if (canShape)
+        {
+            preparingGlyphs_ = false;
+            atlas_.finishPreparation(rasterWorkers_);
+        }
+    }
+
+    // Shape using the first face covering the entire run, then resolve its
+    // glyphs. Unsupported runs remain available to the painter's grid fallback.
     private GlyphOutcome resolveCluster(in ClusterRequest r, scope GlyphQuad[] quads, out size_t count) @system
     {
         static if (!canShape)
@@ -907,25 +916,28 @@ struct VulkanCanvas(B)
             }
             if (face is null)
                 return GlyphOutcome.noGlyph;
-            auto shaper = shaperFor(face);
-            if (shaper is null)
-                return GlyphOutcome.noGlyph;
-
-            char[maxClusterQuads * 4] text;
-            const encoded = convertPrefix(cast(const(dchar)[]) r.cps, text[], UtfMode.replacement);
-            const source = text[0 .. encoded.written];
-            ClusterGlyph[maxClusterGlyphs] glyphs;
-            const shaped = shapeCluster(shaper, source, face.ppem.numerator, face.ppem.denominator, glyphs[]);
-            if (shaped == 0)
+            const glyphs = preparedRuns_.prepare(face.serial, face.ppem, face.inst.coords, r.cps,
+                (scope ClusterGlyph[] output) {
+                    auto shaper = shaperFor(face);
+                    if (shaper is null) return size_t(0);
+                    char[maxClusterQuads * 4] text;
+                    const encoded = convertPrefix(cast(const(dchar)[]) r.cps, text[], UtfMode.replacement);
+                    return shapeCluster(shaper, text[0 .. encoded.written],
+                        face.ppem.numerator, face.ppem.denominator, output);
+                });
+            if (!glyphs.length)
                 return GlyphOutcome.noGlyph;
             double pen = 0;
             static int nearest(double v) => cast(int)(v >= 0 ? v + 0.5 : v - 0.5);
-            foreach (g; glyphs[0 .. shaped])
+            foreach (g; glyphs)
             {
                 if (g.glyph == 0)
                     return GlyphOutcome.noGlyph;
                 if (r.measureOnly)
                 {
+                    if (preparingGlyphs_ && !face.colour)
+                        atlas_.prepare(face.inst, face.serial, g.glyph, face.ppem,
+                            textRendering_.hinting == Hinting.light ? &face.hints : null);
                     pen += g.advance;
                     continue;
                 }
@@ -954,14 +966,37 @@ struct VulkanCanvas(B)
 
     static if (canShape)
     {
-        // The shaper of `face`, made the first time a cluster needs it and
-        // kept until the next `cellFont`, which drops it: it borrows the
-        // face's bytes, which live only until the caller binds others.
+        // Keep only exact file storage still borrowed by a bound context.
+        // Content identity alone cannot keep an old allocation alive.
+        private void pruneShapers() @system
+        {
+            foreach (ref slot; shapers_)
+            {
+                if (!slot.tried) continue;
+                bool bound;
+                void check(in CellFace face) {
+                    const old = slot.instance.face;
+                    bound |= face.bytes.length && face.bytes.ptr == old.bytes.ptr
+                        && face.bytes.length == old.bytes.length && face.face.index == old.index;
+                }
+                foreach (ref face; faces_) check(face);
+                foreach (ref face; specimenFaces_) check(face);
+                foreach (ref face; fallbacks_) check(face);
+                foreach (ref face; specimenFallbacks_) check(face);
+                if (!bound) slot.release();
+            }
+        }
+
+        // A retained face's coordinates/size change without reallocating its
+        // HarfBuzz objects and multi-megabyte phantom-point workspace.
         private imported!"sparkles.font.cluster_shaping".ClusterShaper* shaperFor(CellFace* face) @system
         {
             foreach (ref slot; shapers_)
                 if (slot.tried && slot.serial == face.serial)
+                {
+                    slot.update(face.inst);
                     return slot.handle;
+                }
             // The first free slot, else the oldest face's (the table is small,
             // and a face no longer bound is not shaped with again).
             size_t pick;
@@ -977,6 +1012,7 @@ struct VulkanCanvas(B)
             return shapers_[pick].handle;
         }
     }
+    else private void pruneShapers() @safe pure nothrow @nogc {}
 
     // The atlas's pages made on the device — one byte a texel for coverage,
     // premultiplied RGBA for colour — and the regions drawn since the last
@@ -1134,6 +1170,7 @@ struct VulkanCanvas(B)
     */
     void destroy() @system
     {
+        atlas_.stopPreparation();
         if (device_ is null)
             return;
         foreach (ref r; retired_[])
@@ -1715,6 +1752,41 @@ private struct HintScratch
     assert(!CellFace.open(bytes, size, uint.max).bytes.length);
 }
 
+/// Measurement and painting share runs, while coordinate changes select fresh data.
+@("ui_vulkan.canvas.preparedRunsFollowFontInstance")
+@system unittest
+{
+    import std.file : read;
+    import std.path : buildPath;
+    import std.process : environment;
+    import sparkles.font : Tag;
+    const bytes = cast(const(ubyte)[]) read(buildPath(environment.get("SPARKLES_FONTS_PATH"), "NotoSans.ttf"));
+    VulkanCanvas!DeviceMemoryBackend canvas;
+    scope (exit) foreach (ref slot; canvas.shapers_) slot.release();
+    const size = Ppem.fromInteger(24).value;
+    assert(canvas.cellFont(bytes, 24, TextMetrics(ascent: 18)));
+    uint[3] text = ['a', 'b', 'c'];
+    double advance;
+    GlyphQuad[64] quads;
+    size_t count;
+    auto request = ClusterRequest(text[], GlyphRequest('a'), &advance, true);
+    assert(canvas.resolveCluster(request, quads[], count) == GlyphOutcome.drawn);
+    const measured = advance;
+    assert(measured > 0 && canvas.preparedRuns_.misses == 1);
+    request.measureOnly = false;
+    assert(canvas.resolveCluster(request, quads[], count) == GlyphOutcome.drawn);
+    assert(advance == measured && count == 3 && canvas.preparedRuns_.hits == 1);
+    assert(canvas.specimenFont(bytes, 0, size, [UserCoordinate(Tag("wght"), 900 << 16)],
+        TextMetrics(ascent: 18)));
+    assert(canvas.beginSpecimen(14, 30));
+    request.measureOnly = true;
+    assert(canvas.resolveCluster(request, quads[], count) == GlyphOutcome.drawn);
+    assert(canvas.preparedRuns_.misses == 2 && advance != measured);
+    canvas.endSpecimen();
+    assert(canvas.resolveCluster(request, quads[], count) == GlyphOutcome.drawn);
+    assert(advance == measured && canvas.preparedRuns_.hits == 2);
+}
+
 /// Independent preview scopes restore the interface binding, even after failure.
 @("ui_vulkan.canvas.specimenScopeRestoresInterface")
 @system unittest
@@ -1791,17 +1863,32 @@ static if (canShape)
     private struct ShaperSlot
     {
         import sparkles.font : Instance;
-        import sparkles.font.cluster_shaping : closeClusterShaper, ClusterShaper, openClusterShaper;
+        import sparkles.font.cluster_shaping : closeClusterShaper, ClusterShaper, openClusterShaper,
+            reinstanceClusterShaper;
 
         uint serial;
         ClusterShaper* handle;
         bool tried; // made, or found the engine unable to shape this face
+        Instance instance;
 
         void make(uint s, in Instance inst) @system
         {
             handle = openClusterShaper(&inst);
             serial = s;
             tried = true;
+            instance = inst;
+        }
+
+        void update(in Instance inst) @system
+        {
+            if (instance.size == inst.size && instance.coords == inst.coords) return;
+            if (!reinstanceClusterShaper(handle, &inst))
+            {
+                const previous = serial;
+                release();
+                make(previous, inst);
+            }
+            else instance = inst;
         }
 
         void release() @system
