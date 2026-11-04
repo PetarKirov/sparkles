@@ -1279,6 +1279,9 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         }
         CanvasConfig canvasConfig;
         canvasConfig.frameSlots = gpu.sync.framesInFlight;
+        canvasConfig.baselineShaders = cfg.native.debugging.vulkanSpirv11;
+        canvasConfig.forceRenderPass = cfg.native.debugging.vulkanRenderPass;
+        canvasConfig.suppressPipelineFeedback = cfg.native.debugging.vulkanNoFeedback;
         const canvasMade = NativeCanvas.create(gpu.canvas, gpu.vk.device, gpu.memory,
             DeviceFacts.of(gpu.vk.base), canvasConfig);
         if (canvasMade.hasError)

@@ -3,6 +3,7 @@
 # they live under docs/public/, so the root-dir-resolved file:// path doesn't exist.
 # Exclude the generated cell-grid SVG by filename.
 /text-cells\.svg$
+/profiles/.*\.csv$
 ^https://doi\.org/
 ^https://dl\.acm\.org/
 ^https://link\.springer\.com/

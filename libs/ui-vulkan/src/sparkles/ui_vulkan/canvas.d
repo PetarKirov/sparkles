@@ -32,7 +32,10 @@ import sparkles.ui.canvas : isCanvas;
 import sparkles.ui.geometry : Size;
 import sparkles.ui.image : ImageHandle, ImageRegistry;
 import sparkles.ui_vulkan.frame_buffers : BufferSlice, FrameBuffers;
-import sparkles.ui_vulkan.glyph_atlas : AtlasGlyph, AtlasOutcome, DirtyRegion, GlyphAtlas, hasColourGlyphs;
+import sparkles.ui_vulkan.glyph_atlas : AtlasGlyph, AtlasOutcome, coverageKey, DirtyRegion, GlyphAtlas,
+    GlyphKey, hasColourGlyphs;
+import sparkles.ui_vulkan.raster_batch : RasterTile;
+import sparkles.ui_vulkan.coverage_geometry : CoverageMode, CoverageWork;
 import sparkles.ui_vulkan.painter;
 import sparkles.ui_vulkan.prepared_runs : PreparedRuns;
 import sparkles.ui_vulkan.pipelines;
@@ -58,6 +61,9 @@ struct CanvasConfig
     uint frameSlots = 2;             /// the host's frames in flight
     ulong frameArenaBytes = 1 << 20; /// each slot's first arena range
     ulong uploadBudget = 16 << 20;   /// bytes of image uploads per frame (`UVK29`)
+    bool baselineShaders;           /// diagnostic: Vulkan 1.1 shaders on newer devices
+    bool forceRenderPass;           /// diagnostic: use the render-pass path
+    bool suppressPipelineFeedback;  /// diagnostic: omit creation-feedback structures
 }
 
 /// The image a frame is drawn into, as its host hands it over (`UVK3`).
@@ -140,8 +146,12 @@ private static immutable uint[] vertex13 = spirvWords(import(vertexEntry ~ ".ver
 private static immutable uint[] fragment13 = spirvWords(import(fragmentEntry ~ ".frag.spv"));
 private static immutable uint[] vertex11 = spirvWords(import(vertexEntry ~ ".vk11.vert.spv"));
 private static immutable uint[] fragment11 = spirvWords(import(fragmentEntry ~ ".vk11.frag.spv"));
+private static immutable uint[] coverage13 = spirvWords(import("coverageFragment.frag.spv"));
+private static immutable uint[] coverage11 = spirvWords(import("coverageFragment.vk11.frag.spv"));
+private enum uint directCoverageFlag = 0x8000_0000;
 static assert(vertex13[0] == spirvMagic && fragment13[0] == spirvMagic
-    && vertex11[0] == spirvMagic && fragment11[0] == spirvMagic,
+    && vertex11[0] == spirvMagic && fragment11[0] == spirvMagic
+    && coverage13[0] == spirvMagic && coverage11[0] == spirvMagic,
     "the canvas's SPIR-V is not little-endian SPIR-V — regenerate it");
 
 /// How a canvas resolves the images its painter draws: through the canvas,
@@ -267,6 +277,17 @@ struct VulkanCanvas(B)
     private uint specimenFallbackGlyphs_;
     private uint specimenGridFallbacks_;
     private UniqueBuffer!GpuImage[2] atlasImages_; // the coverage sheet's pages, the colour sheet's
+    private Pipelines coveragePipelines_;
+    private bool coveragePipelinesReady_;
+    private struct DirectGlyph
+    {
+        AtlasGlyph glyph;
+        vec4 metadata;
+    }
+    private uint[GlyphKey] directGlyphs_;
+    private UniqueBuffer!DirectGlyph directGlyphRecords_;
+    private UniqueBuffer!vec4 geometryEdges_;
+    private UniqueBuffer!GpuImage geometryImages_;
     // Shapers by face serial, made on demand (`ShaperSlot`).
     static if (canShape)
     {
@@ -274,6 +295,8 @@ struct VulkanCanvas(B)
         private PreparedRuns!256 preparedRuns_;
         private bool preparingGlyphs_;
         private uint rasterWorkers_ = 2;
+        private CoverageMode coverageMode_;
+        private bool profileCoverage_;
     }
 
     private bool inFrame_, lost_;
@@ -310,6 +333,8 @@ struct VulkanCanvas(B)
         c.device_ = &device;
         c.memory_ = &memory;
         c.facts_ = facts;
+        if (config.forceRenderPass) c.facts_.dynamicRendering = false;
+        c.facts_.suppressFeedback = config.suppressPipelineFeedback;
         c.config_ = config;
         c.registry_ = registry;
         c.painter_.images = CanvasImages(&c.resolveImage, &c.resolveGlyph, &c.textMetrics_, &c.resolveCluster);
@@ -324,7 +349,7 @@ struct VulkanCanvas(B)
     private VkExpected!() createAll() @system
     {
         auto made = Pipelines.create(pipelines_, *device_, facts_,
-            facts_.spirv16 ? vertex13 : vertex11, facts_.spirv16 ? fragment13 : fragment11);
+            modernShaders ? vertex13 : vertex11, modernShaders ? fragment13 : fragment11);
         if (made.hasError)
             return made;
         enum usage = VkBufferUsageFlagBits.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT
@@ -378,6 +403,9 @@ struct VulkanCanvas(B)
         originX_ = metrics.originX;
         originY_ = metrics.originY;
         specimenFallbackGlyphs_ = specimenGridFallbacks_ = 0;
+        directGlyphs_ = null;
+        directGlyphRecords_.clear(false);
+        geometryEdges_.clear(false);
 
         // The host reuses a slot only after its fence has signalled.
         inFlight_[][slot] = 0;
@@ -465,6 +493,10 @@ struct VulkanCanvas(B)
                 return fail!FrameReport(r);
         }
         UniqueBuffer!VkDescriptorSet sets;
+        {
+            const r = stageGeometry();
+            if (r < 0) return fail!FrameReport(r);
+        }
         foreach (ref run; painter_.runs)
         {
             VkDescriptorSet set;
@@ -507,8 +539,20 @@ struct VulkanCanvas(B)
         // premultiplied source over destination (`UVK6`); zero erases
         // (`UVK41`). Set only where a run changes it.
         bool erasing = true;
+        bool directBound;
         foreach (i, ref run; painter_.runs)
         {
+            const direct = (run.images.coveragePage & directCoverageFlag) != 0;
+            if (direct != directBound)
+            {
+                auto pipeline = direct ? coveragePipelines_.forFormat(*device_, target_.format).value.pipeline
+                    : format.value.pipeline;
+                device_.cmdBindPipeline(commands_, VkPipelineBindPoint.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+                if (direct)
+                    device_.cmdPushConstants(commands_, coveragePipelines_.layout, canvasViewStages,
+                        0, push.length, push.ptr);
+                directBound = direct;
+            }
             if (i == 0 || run.erase != erasing)
             {
                 erasing = run.erase;
@@ -520,7 +564,8 @@ struct VulkanCanvas(B)
             device_.cmdSetScissor(commands_, 0, 1, &scissor);
             auto set = sets[][i];
             device_.cmdBindDescriptorSets(commands_,
-                VkPipelineBindPoint.VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines_.layout, 0, 1,
+                VkPipelineBindPoint.VK_PIPELINE_BIND_POINT_GRAPHICS,
+                direct ? coveragePipelines_.layout : pipelines_.layout, 0, 1,
                 &set, 0, null);
             device_.cmdDraw(commands_, 4, run.count, 0, run.first);
         }
@@ -566,6 +611,8 @@ struct VulkanCanvas(B)
         // they are drawn.
         if (!inFrame_)
         {
+            foreach (ref image; geometryImages_[]) retire(image);
+            geometryImages_.clear();
             foreach (ref sheet; atlasImages_)
             {
                 foreach (ref page; sheet[])
@@ -790,6 +837,17 @@ struct VulkanCanvas(B)
     {
         AtlasGlyph g;
         auto outcome = AtlasOutcome.noColour;
+        vec4 geometry;
+        bool directGlyph;
+        if (directGlyphs_.length)
+        if (auto direct = coverageKey(face.inst, face.serial, gid, face.ppem,
+                textRendering_.hinting == Hinting.light) in directGlyphs_)
+        {
+            g = directGlyphRecords_[][*direct].glyph;
+            geometry = directGlyphRecords_[][*direct].metadata;
+            directGlyph = true;
+            outcome = AtlasOutcome.placed;
+        }
         if (face.colour)
         {
             const fg = foregroundOf(r.colour);
@@ -829,6 +887,7 @@ struct VulkanCanvas(B)
                 quad = GlyphQuad(g.page + 1, g.colour, v4(g.x / side, g.y / side,
                     (g.x + g.width) / side, (g.y + g.height) / side),
                     g.width, g.height, g.bearingX, g.bearingY);
+                if (directGlyph) quad.texRect = geometry;
                 return GlyphOutcome.drawn;
             case AtlasOutcome.blank:
             case AtlasOutcome.noColour:
@@ -863,24 +922,53 @@ struct VulkanCanvas(B)
 
     /// Collect coverage misses while measuring natural runs, then join them
     /// before drawing. Font bindings must remain valid until finish returns.
-    void beginGlyphPreparation(uint workers = 2) @safe nothrow
+    void beginGlyphPreparation(uint workers = 2, CoverageMode coverageMode = CoverageMode.cpu,
+        bool profile = false) @safe nothrow
     {
         static if (canShape)
         {
             atlas_.beginPreparation();
             preparingGlyphs_ = true;
             rasterWorkers_ = workers;
+            coverageMode_ = coverageMode;
+            profileCoverage_ = profile;
         }
     }
 
     /// Completes CPU tiles; atlas placement and subsequent uploads stay here.
-    void finishGlyphPreparation() @system nothrow
+    CoverageWork finishGlyphPreparation() @system
     {
+        CoverageWork work;
         static if (canShape)
         {
+            import core.time : MonoTime;
+            const start = profileCoverage_ ? MonoTime.currTime : MonoTime.init;
+            const previousGlyphs = directGlyphRecords_.length;
             preparingGlyphs_ = false;
-            atlas_.finishPreparation(rasterWorkers_);
+            if (coverageMode_ != CoverageMode.cpu && prepareCoveragePipeline())
+                work = atlas_.finishGeometry(rasterWorkers_, coverageMode_, profileCoverage_, (in GlyphKey key, in RasterTile tile) {
+                    if (!tile.geometry.length) return;
+                    const first = geometryEdges_.length;
+                    const end = first + tile.geometry.length;
+                    const padded = (end + 511) & ~size_t(511);
+                    const previousBytes = ((first + 511) & ~size_t(511)) * vec4.sizeof;
+                    const addedBytes = padded * vec4.sizeof - previousBytes;
+                    if (end > 512 * 256 || uploaded_ + addedBytes > config_.uploadBudget) return;
+                    uploaded_ += addedBytes;
+                    geometryEdges_ ~= tile.geometry[];
+                    const m = tile.metrics;
+                    const id = cast(uint)directGlyphRecords_.length;
+                    directGlyphRecords_ ~= DirectGlyph(AtlasGlyph(directCoverageFlag,
+                        false, 0, 0, m.width, m.height, m.bearingX, m.bearingY),
+                        v4(cast(float)first, cast(float)tile.layout.stride,
+                            tile.unionCoverage ? 1 : 0, cast(float)tile.layout.bandHeight));
+                    directGlyphs_[key] = id;
+                });
+            else work = atlas_.finishPreparation(rasterWorkers_, profileCoverage_);
+            work.publishedGlyphs = directGlyphRecords_.length - previousGlyphs;
+            if (profileCoverage_) work.batchNs = (MonoTime.currTime - start).total!"nsecs";
         }
+        return work;
     }
 
     // Shape using the first face covering the entire run, then resolve its
@@ -935,7 +1023,9 @@ struct VulkanCanvas(B)
                     return GlyphOutcome.noGlyph;
                 if (r.measureOnly)
                 {
-                    if (preparingGlyphs_ && !face.colour)
+                    if (preparingGlyphs_ && !face.colour && (!directGlyphs_.length
+                        || (coverageKey(face.inst, face.serial, g.glyph,
+                            face.ppem, textRendering_.hinting == Hinting.light) in directGlyphs_) is null))
                         atlas_.prepare(face.inst, face.serial, g.glyph, face.ppem,
                             textRendering_.hinting == Hinting.light ? &face.hints : null);
                     pen += g.advance;
@@ -1149,6 +1239,9 @@ struct VulkanCanvas(B)
     /// How many glyph atlas pages are on the device: coverage pages, or colour ones.
     size_t atlasPages(bool colour = false) const => atlasImages_[colour].length;
 
+    /// Coverage blocks prepared for this frame's experimental GPU path.
+    size_t gpuCoverageGlyphs() const @safe pure nothrow @nogc => directGlyphRecords_.length;
+
     /**
     Forgets the framebuffers made for the target views handed in so far,
     each destroyed once the frames in flight that drew through it have
@@ -1173,6 +1266,10 @@ struct VulkanCanvas(B)
         atlas_.stopPreparation();
         if (device_ is null)
             return;
+        coveragePipelines_.destroy(*device_);
+        coveragePipelinesReady_ = false;
+        foreach (ref image; geometryImages_[]) image.destroy(*device_, *memory_);
+        geometryImages_.clear();
         foreach (ref r; retired_[])
             destroyRetired(r);
         retired_.clear();
@@ -1234,10 +1331,15 @@ struct VulkanCanvas(B)
     }
 
     /// How many target formats have a pipeline.
-    size_t pipelineCount() const => pipelines_.formatCount;
+    size_t pipelineCount() const => pipelines_.formatCount + coveragePipelines_.formatCount;
 
     /// What making its pipelines cost, as the driver reported it (`PRF16`).
-    PipelineCompiles pipelineCompiles() const => pipelines_.compiles;
+    PipelineCompiles pipelineCompiles() const
+    {
+        const a = pipelines_.compiles, b = coveragePipelines_.compiles;
+        return PipelineCompiles(a.compiled + b.compiled, a.fromCache + b.fromCache,
+            a.unreported + b.unreported, a.nanos + b.nanos);
+    }
 
     /// How many image uploads the canvas has staged since it was created
     /// (`UVK23`).
@@ -1516,6 +1618,7 @@ struct VulkanCanvas(B)
         VkDescriptorImageInfo[5] infos;
         // A run binds at most one page of each sheet; the placeholder stands in for none.
         infos[0] = sampled(images.coveragePage == 0 ? placeholder_.view
+            : images.coveragePage & directCoverageFlag ? geometryImages_[][slot_].view
             : atlasImages_[0][][images.coveragePage - 1].view);
         infos[1] = sampled(images.colourPage == 0 ? placeholder_.view
             : atlasImages_[1][][images.colourPage - 1].view);
@@ -1535,6 +1638,57 @@ struct VulkanCanvas(B)
         device_.updateDescriptorSets(device_.device, writes.length, writes.ptr, 0, null);
         frameSets_.put(FrameSet(images, set));
         return VkResult.VK_SUCCESS;
+    }
+
+    private bool prepareCoveragePipeline() @system
+    {
+        if (!geometryImages_.length) geometryImages_.length = config_.frameSlots;
+        if (geometryImages_[][slot_].handle is null)
+        {
+            const made = GpuImage.create(geometryImages_[][slot_], *device_, *memory_,
+                VkFormat.VK_FORMAT_R32G32B32A32_SFLOAT, VkExtent2D(512, 256),
+                VkImageUsageFlagBits.VK_IMAGE_USAGE_SAMPLED_BIT | VkImageUsageFlagBits.VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+            if (made.hasError)
+            {
+                if (made.error == VkResult.VK_ERROR_DEVICE_LOST) frameError_ = made.error;
+                return false;
+            }
+        }
+        if (!coveragePipelinesReady_)
+        {
+            const made = Pipelines.create(coveragePipelines_, *device_, facts_,
+                modernShaders ? vertex13 : vertex11, modernShaders ? coverage13 : coverage11,
+                PipelinePurpose.coverageGlyph);
+            if (made.hasError)
+            {
+                if (made.error == VkResult.VK_ERROR_DEVICE_LOST) frameError_ = made.error;
+                return false;
+            }
+            coveragePipelinesReady_ = true;
+        }
+        const pipeline = coveragePipelines_.forFormat(*device_, target_.format);
+        if (pipeline.hasError && pipeline.error == VkResult.VK_ERROR_DEVICE_LOST)
+            frameError_ = pipeline.error;
+        return pipeline.hasValue;
+    }
+
+    private bool modernShaders() const @safe pure nothrow @nogc
+        => facts_.spirv16 && !config_.baselineShaders;
+
+    private VkResult stageGeometry() @system
+    {
+        if (!geometryEdges_.length) return VkResult.VK_SUCCESS;
+        const rows = (geometryEdges_.length + 511) / 512;
+        geometryEdges_.length = rows * 512;
+        const bytes = geometryEdges_.length * vec4.sizeof;
+        const pixels = (cast(const(ubyte)*)geometryEdges_[].ptr)[0 .. bytes];
+        // Each slot is fenced before reuse. Geometry is frame-local, so the
+        // previous contents may be discarded without an upload shadow copy.
+        const staged = uploads_.stage(slot_, geometryImages_[][slot_].handle,
+            VkImageLayout.VK_IMAGE_LAYOUT_UNDEFINED, pixels, 16, VkOffset2D(0, 0),
+            VkExtent2D(512, cast(uint)rows));
+        if (!staged.hasError) ++imageUploads_;
+        return staged.hasError ? staged.error : VkResult.VK_SUCCESS;
     }
 
     private static VkDescriptorImageInfo sampled(VkImageView view)

@@ -30,6 +30,42 @@ import font_settings : applyVariations, axisSettings, LabSettings;
 
 private enum size_t sectionBase = 0x7100_0000, fontHit = 0x7000_0001, pickerBase = 0x7200_0000;
 
+/// A changing numeric badge and reset visibility must not move the captured
+/// track or the following slider rows on either responsive sheet.
+@("text_lab.controls.sliderGeometryStaysStable")
+@system unittest
+{
+    import std.conv : text;
+    import sparkles.ui.canvas : RecordingCanvas;
+
+    foreach (width; [49, 100])
+    {
+        LabSettings model;
+        auto controls = new LabControls(&model);
+        RecordingCanvas canvas;
+        Rect[string] original;
+        foreach (value; [12.0, 4.0, 4.00001, 99.75, 100.0, 143.99999, 12.0])
+        {
+            model.font.size = value;
+            model.rendering.contrast = value / 144;
+            controls.draw(&canvas, Size(width, 60), true, Palette.init);
+            foreach (i, widget; controls.tree.nodes)
+            {
+                uint node, part;
+                if (!decodeSectionHit(sectionBase, widget.hitId, node, part)
+                    || part != SectionPart.slider) continue;
+                const path = controls.pane.tree.data.nodes[node].value.path;
+                const rect = controls.frames[i].rect;
+                if (auto before = path in original)
+                    assert(rect == *before, text(path, " at ", value, " width ", width,
+                        ": ", rect, " vs ", *before));
+                else original[path] = rect;
+            }
+        }
+        assert(original.length >= 2);
+    }
+}
+
 /// The sheet's state; application-specific policy around the shared editors.
 final class LabControls
 {

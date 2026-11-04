@@ -21,7 +21,8 @@ module sparkles.ui_vulkan.glyph_atlas;
 import sparkles.font : Colour, ColourGlyph, ColourRegion, ColourSource, ColourWorkspace, colourMeasure,
     Face, FlattenPolicy, FontErrorKind, FontLimit, Instance, LightHints, OutlinePoint, OutlineSegment,
     OverlapMode, Ppem, RasterRegion, RasterWorkspace, rasterizeColourGlyph, prepareRaster, Tag;
-import sparkles.ui_vulkan.raster_batch : RasterBatch, RasterRequest;
+import sparkles.ui_vulkan.raster_batch : RasterBatch, RasterRequest, RasterTile;
+import sparkles.ui_vulkan.coverage_geometry : CoverageMode, CoverageWork;
 
 /// What became of a glyph the atlas was asked for.
 enum AtlasOutcome : ubyte
@@ -75,6 +76,12 @@ private GlyphKey withCoordinates(GlyphKey key, in Instance inst) @safe pure noth
     key.coordinates[0 .. inst.coords.length] = inst.coords[];
     return key;
 }
+
+/// Exact coverage identity shared with a frame's GPU geometry records.
+GlyphKey coverageKey(in Instance inst, uint face, uint glyph, Ppem ppem, bool hinted)
+    @safe pure nothrow @nogc
+    => withCoordinates(GlyphKey(face: face, ppemNumerator: ppem.numerator,
+        ppemDenominator: ppem.denominator, glyph: glyph, hinted: hinted), inst);
 
 /// Whether `face` has a colour form for any glyph: `COLR` layers or a bitmap strike.
 bool hasColourGlyphs(in Face face) @safe pure nothrow @nogc
@@ -139,40 +146,72 @@ struct GlyphAtlas
 
     /// Joins the bounded batch, then places tiles on the caller.
     /// Unsupported/oversized jobs retain the ordinary synchronous path.
-    void finishPreparation(uint workers = 2) @system nothrow
+    CoverageWork finishPreparation(uint workers = 2, bool profile = false) @system nothrow
     {
-        rasterBatch_.run(preparedRequests_[0 .. preparedCount_], workers);
+        rasterBatch_.run(preparedRequests_[0 .. preparedCount_], workers, CoverageMode.cpu, profile);
+        CoverageWork work;
+        foreach (i; 0 .. preparedCount_) work.add(rasterBatch_.tile(i).work);
         foreach (i; 0 .. preparedCount_)
         {
             const tile = &rasterBatch_.tile(i);
             if (!tile.ready) continue;
-            const key = preparedKeys_[i];
-            const m = tile.metrics;
-            AtlasGlyph g;
-            if (m.empty || m.width <= 0 || m.height <= 0)
-            {
-                cast(void) remember(key, AtlasOutcome.blank, g);
-                continue;
-            }
-            uint page;
-            int x, y;
-            if (overflowed_ || !sheets_[0].place(m.width, m.height, page, x, y))
-            {
-                overflowed_ = true;
-                break;
-            }
-            foreach (row; 0 .. m.height)
-                sheets_[0].pages[page][size_t(y + row) * pageSize + x .. size_t(y + row) * pageSize + x + m.width]
-                    = tile.pixels[][size_t(row) * m.width .. size_t(row + 1) * m.width];
-            sheets_[0].markDirty(page, x, y, m.width, m.height);
-            g = AtlasGlyph(page, false, x, y, m.width, m.height, m.bearingX, m.bearingY);
-            entries_[key] = Entry(AtlasOutcome.placed, g);
+            if (!placePrepared(preparedKeys_[i], *tile)) break;
         }
         beginPreparation();
+        return work;
     }
 
     /// Joins worker threads before font bytes or the renderer are released.
     void stopPreparation() @safe nothrow { rasterBatch_.stop(); }
+
+    /// Produces bounded flattened geometry for an experimental GPU consumer.
+    /// The callback consumes each result before this batch can be reused.
+    CoverageWork finishGeometry(uint workers, CoverageMode mode, bool profile,
+        scope void delegate(in GlyphKey, in RasterTile) @system publish) @system
+    {
+        rasterBatch_.run(preparedRequests_[0 .. preparedCount_], workers, mode, profile);
+        CoverageWork work;
+        foreach (i; 0 .. preparedCount_) work.add(rasterBatch_.tile(i).work);
+        foreach (i; 0 .. preparedCount_)
+        {
+            const tile = &rasterBatch_.tile(i);
+            if (!tile.ready) continue;
+            if (tile.metrics.empty || tile.metrics.width <= 0 || tile.metrics.height <= 0)
+            {
+                AtlasGlyph g;
+                cast(void) remember(preparedKeys_[i], AtlasOutcome.blank, g);
+            }
+            else if (tile.geometryReady) publish(preparedKeys_[i], *tile);
+            else cast(void) placePrepared(preparedKeys_[i], *tile);
+        }
+        beginPreparation();
+        return work;
+    }
+
+    private bool placePrepared(in GlyphKey key, in RasterTile tile) @system nothrow
+    {
+        const m = tile.metrics;
+        AtlasGlyph g;
+        if (m.empty || m.width <= 0 || m.height <= 0)
+        {
+            cast(void) remember(key, AtlasOutcome.blank, g);
+            return true;
+        }
+        uint page;
+        int x, y;
+        if (overflowed_ || !sheets_[0].place(m.width, m.height, page, x, y))
+        {
+            overflowed_ = true;
+            return false;
+        }
+        foreach (row; 0 .. m.height)
+            sheets_[0].pages[page][size_t(y + row) * pageSize + x .. size_t(y + row) * pageSize + x + m.width]
+                = tile.pixels[][size_t(row) * m.width .. size_t(row + 1) * m.width];
+        sheets_[0].markDirty(page, x, y, m.width, m.height);
+        g = AtlasGlyph(page, false, x, y, m.width, m.height, m.bearingX, m.bearingY);
+        entries_[key] = Entry(AtlasOutcome.placed, g);
+        return true;
+    }
 
     /**
     Glyph `glyph` of `inst` at `ppem`, from the cache or rasterized now into
@@ -618,6 +657,29 @@ version (unittest)
                     assert(serial.page(page) == parallel.page(page));
                 parallel.stopPreparation();
             }
+}
+
+/// A geometry-limit fallback reuses its worker's prepared outline and arrives
+/// in the CPU atlas before drawing; it does not publish an incomplete glyph.
+@("ui_vulkan.glyph_atlas.geometryLimitKeepsWorkerCpuTile")
+@system unittest
+{
+    auto font = Fixture.at(256);
+    foreach (mode; [CoverageMode.edges, CoverageMode.bands])
+    {
+        GlyphAtlas atlas;
+        atlas.beginPreparation();
+        const glyph = font.glyph('M');
+        atlas.prepare(font.inst, 1, glyph, font.ppem);
+        bool published;
+        const work = atlas.finishGeometry(4, mode, true,
+            (in GlyphKey key, in RasterTile tile) { published = true; });
+        assert(!published && work.fallbackGlyphs == 1 && work.geometryGlyphs == 0);
+        assert(atlas.length == 1, "the CPU result is cached before the draw");
+        AtlasGlyph result;
+        assert(atlas.get(font.inst, 1, glyph, font.ppem, result) == AtlasOutcome.placed);
+        assert(result.width > 128 || result.height > 128);
+    }
 }
 
 @("ui_vulkan.glyph_atlas.aGlyphIsRasterizedOnceAndCached")

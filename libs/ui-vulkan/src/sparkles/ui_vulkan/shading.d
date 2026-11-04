@@ -141,6 +141,7 @@ struct CanvasVaryings
     vec4 vEdge;      ///
     vec4 vShape;     ///
     vec2 vTexCoord;  ///
+    vec4 vMeta;      /// per-primitive payload for analytic glyph coverage
 }
 
 /**
@@ -165,6 +166,7 @@ target turned `canvasView.turn` quarter turns from it.
     v.vFill = quadFill;
     v.vEdge = quadEdge;
     v.vShape = quadShape;
+    v.vMeta = quadTexRect;
     v.vTexCoord = v2(quadTexRect.x + cx * (quadTexRect.z - quadTexRect.x),
         quadTexRect.y + cy * (quadTexRect.w - quadTexRect.y));
     return v;

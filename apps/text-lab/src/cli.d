@@ -14,6 +14,7 @@ import sparkles.ui_app.host : PointerUnit, RunConfig;
 import sparkles.ui_app.run : asRunResult;
 import sparkles.ui_app.run_app : runApp;
 import sparkles.ui_vulkan.text_rendering : Compositing, Hinting;
+import sparkles.ui_vulkan.coverage_geometry : CoverageMode;
 import sparkles.base.term_color : RgbColor;
 
 import lab : framePalette, Lab, SweepMode;
@@ -62,6 +63,10 @@ struct TextLab
     SweepMode sweepMode;
     @(Option("raster-workers", description: "Coverage raster workers, 1–4 (1 runs on the frame thread)."))
     uint rasterWorkers = 2;
+    @(Option("coverage-mode", description: "Experimental coverage comparison: cpu (default), edges, bands."))
+    CoverageMode coverageMode;
+    @(Option("coverage-report", description: "Write per-batch worker-time sums and caller wall time to CSV.", placeholder: "PATH"))
+    string coverageReport;
     @(Option("compositing", description: "gamma, linear or linear-corrected."))
     Compositing compositing = Compositing.linearCorrected;
     @(Option("contrast", description: "Coverage contrast for linear-corrected, 0–1."))
@@ -157,6 +162,8 @@ CliExpected!Lab configure(in TextLab o)
     lab.sweepFrames = o.sweepFrames;
     lab.sweepMode = o.sweepMode;
     lab.rasterWorkers = o.rasterWorkers;
+    lab.coverageMode = o.coverageMode;
+    lab.coverageReport = o.coverageReport;
     lab.fontDirectories = o.gui.fontDir.dup;
     const state = environment.get("XDG_STATE_HOME", buildPath(environment.get("HOME", "."), ".local", "state"));
     lab.fontCache = buildPath(state, "sparkles", "text-lab", "fonts");

@@ -13,6 +13,7 @@ module sparkles.ui_vulkan.pipelines;
 import sparkles.base.expected : err, ok;
 
 import sparkles.base.buffer : UniqueBuffer;
+import sparkles.base.text.cstring : cstr;
 import sparkles.shaders.layout : layoutOf, Rule;
 import sparkles.ui_vulkan.shading : Binding, canvasVertex, CanvasView, Instance;
 import sparkles.vulkan;
@@ -26,6 +27,7 @@ struct DeviceFacts
     bool imagelessFramebuffer; /// imageless framebuffers are enabled
     uint maxImageExtent;       /// `maxImageDimension2D`
     VkPipelineCache pipelineCache; /// where pipelines are compiled through, if any
+    bool suppressFeedback; /// diagnostic: omit optional pipeline feedback
 
     /// The facts of a `sparkles:vulkan-wsi` device (or anything shaped like one).
     static DeviceFacts of(D)(ref const D device)
@@ -93,6 +95,9 @@ struct FormatPipeline
     VkRenderPass renderPass; ///
 }
 
+/// Which fragment entry point a pipeline binds.
+enum PipelinePurpose { canvas, coverageGlyph }
+
 /**
 The canvas's device-scoped objects. Not copyable; `destroy` releases them,
 the device commands having to outlive it.
@@ -106,6 +111,7 @@ struct Pipelines
     private VkShaderModule vertex_, fragment_;
     private UniqueBuffer!FormatPipeline formats_;
     private DeviceFacts facts_;
+    private PipelinePurpose purpose_;
     PipelineCompiles compiles; /// what making the pipelines cost (`PRF16`)
 
     @disable this(this);
@@ -116,9 +122,11 @@ struct Pipelines
     profile. On failure nothing is left created.
     */
     static VkExpected!() create(out Pipelines p, ref DeviceCommands device, DeviceFacts facts,
-        immutable(uint)[] vertexCode, immutable(uint)[] fragmentCode) @system
+        immutable(uint)[] vertexCode, immutable(uint)[] fragmentCode,
+        PipelinePurpose purpose = PipelinePurpose.canvas) @system
     {
         p.facts_ = facts;
+        p.purpose_ = purpose;
         auto made = p.createAll(device, vertexCode, fragmentCode);
         if (made.hasError)
             p.destroy(device);
@@ -298,11 +306,11 @@ struct Pipelines
         VkPipelineShaderStageCreateInfo[2] stages;
         stages[0] = vkInfo(VkPipelineShaderStageCreateInfo(
             stage: VkShaderStageFlagBits.VK_SHADER_STAGE_VERTEX_BIT,
-            pName: vertexEntry.ptr,
+            pName: cstr!(vertexEntry).ptr,
         ));
         stages[1] = vkInfo(VkPipelineShaderStageCreateInfo(
             stage: VkShaderStageFlagBits.VK_SHADER_STAGE_FRAGMENT_BIT,
-            pName: fragmentEntry.ptr,
+            pName: purpose_ == PipelinePurpose.coverageGlyph ? cstr!"coverageFragment".ptr : cstr!(fragmentEntry).ptr,
         ));
         // `module` is a D keyword: reachable only by name.
         __traits(getMember, stages[0], "module") = vertex_;
@@ -379,9 +387,12 @@ struct Pipelines
         ));
         // Whether the cache served it, from the driver itself (core in 1.3).
         VkPipelineCreationFeedback whole;
+        VkPipelineCreationFeedback[2] perStage;
         auto feedback = vkInfo(VkPipelineCreationFeedbackCreateInfo(
-            pPipelineCreationFeedback: &whole));
-        const askFeedback = facts_.spirv16; // Vulkan 1.3
+            pPipelineCreationFeedback: &whole,
+            pipelineStageCreationFeedbackCount: perStage.length,
+            pPipelineStageCreationFeedbacks: perStage.ptr));
+        const askFeedback = facts_.spirv16 && !facts_.suppressFeedback;
         if (askFeedback)
         {
             feedback.pNext = info.pNext;

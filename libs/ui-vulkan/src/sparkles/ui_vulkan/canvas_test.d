@@ -1236,6 +1236,83 @@ private ubyte[] twoColourImage()
     }
 }
 
+/// Compatibility probes select independent shader/state variants without
+/// changing pixels or disabling the other device capabilities.
+@("ui_vulkan.canvas.compatibilityProbesPreservePixels")
+@system unittest
+{
+    if (!readbackEnabled) return skipTest(readbackSkipReason);
+    const(ubyte)[] expected;
+    foreach (config; [CanvasConfig(), CanvasConfig(baselineShaders: true),
+        CanvasConfig(forceRenderPass: true), CanvasConfig(suppressPipelineFeedback: true)])
+    {
+        auto rig = new Rig;
+        rig.open("ui-vulkan-compatibility", 160, 120,
+            RigOptions(apiVersion: apiVersion13, spy: true, config: config));
+        scope (exit) rig.close();
+        const image = rig.images.register(twoColourImage, Size(16, 8));
+        const frame = rig.draw((ref Canvas canvas) { everything(canvas, image); },
+            FrameMetrics(cellW: 10, cellH: 20), ground);
+        if (config.forceRenderPass) assert(spyLog.find("beginRenderPass") >= 0);
+        if (config.suppressPipelineFeedback) assert(rig.canvas.pipelineCompiles.unreported > 0);
+        if (expected is null) expected = frame.dup;
+        else assert(frame == expected);
+    }
+}
+
+/// The experimental fragment path preserves the CPU oracle's glyphs and
+/// leaves interface pixels intact, with only one coverage level of tolerance.
+@("ui_vulkan.canvas.gpuCoverageMatchesCpuPixels")
+@system unittest
+{
+    if (!readbackEnabled) return skipTest(readbackSkipReason);
+    import std.file : read;
+    import std.path : buildPath;
+    import std.process : environment;
+    import sparkles.font : Ppem, Tag, UserCoordinate;
+    import sparkles.shaders : v4;
+    import sparkles.ui_vulkan.coverage_geometry : CoverageMode;
+    import sparkles.ui_vulkan.painter : TextMetrics;
+    import sparkles.ui_vulkan.text_rendering : Compositing, Hinting, TextRendering;
+
+    const directory = environment.get("SPARKLES_FONTS_PATH");
+    assert(directory.length);
+    const ui = cast(const(ubyte)[])read(buildPath(directory, "DejaVuSansMono.ttf"));
+    const specimen = cast(const(ubyte)[])read(buildPath(directory, "NotoSans.ttf"));
+    auto rig = new Rig;
+    rig.open("ui-vulkan-gpu-coverage", 220, 80);
+    scope (exit) rig.close();
+    assert(rig.canvas.cellFont(ui, 18, TextMetrics(ascent: 16)));
+    foreach (weight; [100, 900])
+    foreach (size; [9, 28, 48])
+    foreach (hinting; [Hinting.none, Hinting.light])
+    foreach (compositing; [Compositing.gamma, Compositing.linearCorrected])
+    {
+        rig.canvas.textRendering(TextRendering(compositing: compositing, hinting: hinting));
+        ubyte[] expected;
+        foreach (mode; [CoverageMode.cpu, CoverageMode.edges, CoverageMode.bands])
+        {
+            rig.canvas.releaseCaches();
+            assert(rig.canvas.specimenFont(specimen, 0, Ppem.fromInteger(size).value,
+                [UserCoordinate(Tag("wght"), weight << 16)], TextMetrics(ascent: 28)));
+            const frame = rig.draw((ref Canvas canvas) {
+                canvas.glyph(Point(0, 0), 'A', Visual(fg: white, fgAlpha: 255));
+                assert(canvas.beginSpecimen(20, 36));
+                canvas.beginGlyphPreparation(4, mode);
+                const width = canvas.naturalTextWidthPx("office");
+                canvas.finishGlyphPreparation();
+                assert(mode == CoverageMode.cpu || canvas.gpuCoverageGlyphs > 0, "the GPU path must execute");
+                assert(canvas.naturalTextPx("office", 32, 8, v4(1, 1, 1, 1)) == width);
+                canvas.endSpecimen();
+            }, FrameMetrics(cellW: 12, cellH: 24), black);
+            if (mode == CoverageMode.cpu) expected = frame.dup;
+            else foreach (i, value; frame)
+                assert(cast(int)value >= cast(int)expected[i] - 1
+                    && cast(int)value <= cast(int)expected[i] + 1);
+        }
+    }
+}
+
 @("ui_vulkan.canvas.aGlyphReadsBackAsTheFontRasterizesIt")
 @system unittest
 {
