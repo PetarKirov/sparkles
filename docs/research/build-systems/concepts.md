@@ -84,8 +84,9 @@ while the rebuilders of §5.2–5.4 consume a previous run's list.
 
 Shake's `need` is the clearest concrete instance: a rule names a file, builds it,
 then names files whose _names came out of the first_ — the `release.tar`/`docs.txt`
-pattern of JFP §2.3. It is the `fetch` callback of `Task` above, at file-name
-granularity ([`need`][shake-file]):
+pattern of JFP §2.3; [`addOracle`][shake-oracle] generalizes the same mechanism
+to non-file keys such as tool versions or environment queries. `need` is the
+`fetch` callback of `Task` above, at file-name granularity ([`need`][shake-file]):
 
 ```haskell
 -- src/Development/Shake/Internal/Rules/File.hs
@@ -146,7 +147,7 @@ answers, each with variants (JFP §5).
 | Dirty bit (JFP §5.1)       | one boolean, transitively closed           | via over-approx | no            | no     |
 | Verifying traces (§5.2)    | result hash + hashes of dependency values  | yes             | yes           | no     |
 | Constructive traces (§5.3) | result value + hashes of dependency values | yes             | yes           | yes    |
-| Deep constructive (§5.4)   | result hash + hashes of _terminal inputs_  | yes             | **no**        | yes    |
+| Deep constructive (§5.4)   | result value + hashes of _terminal inputs_ | yes             | **no**        | yes    |
 
 **Dirty bit** (JFP §5.1). One bit per key, set for anything that changed since
 the last build, cleared once the key is rebuilt. Excel holds the bits explicitly
@@ -201,11 +202,13 @@ build that demands it, and never runs twice in one build ([`phony`][shake-file])
 
 ## 4. Correctness and minimality
 
-**Minimality** is stated in JFP §2, before any of the machinery:
+**Minimality** is stated in JFP §2.1, before any of the machinery:
 
 > "A build system is minimal if it executes tasks at most once per build, and
 > only if they transitively depend on inputs that changed since the previous
 > build."
+>
+> — JFP §2.1
 
 That sentence explains the verdicts of the paper's Table 1 (§2.5): Make is
 minimal (assuming you do not `touch` files to fake a change), Excel is not
@@ -358,13 +361,13 @@ on its theme page:
 - **Discovery by tracing** (syscall interception, FUSE, depfiles, strict-deps
   pruning). The paper starts from a task description that already says what it
   depends on, and its only tracing example is Fabricate, an encoding question
-  (JFP §9.1). Treatment: `graph-autogeneration.md`, `dependency-pruning.md`.
+  (JFP §9.1). Treatment: [graph-autogeneration], [dependency-pruning].
 - **Sandbox mechanism and overhead** (namespaces, `ptrace`, eBPF, Landlock,
   FUSE). The paper treats environment control as a cache-hit remedy, not a
-  mechanism with a cost (JFP §7.4). Treatment: `sandboxing-overheads.md`.
+  mechanism with a cost (JFP §7.4). Treatment: [sandboxing-overheads].
 - **Provenance and attestation** (SLSA, in-toto, signed action graphs). Absent
   entirely; §3.6's correctness says nothing about _who_ ran the action.
-  Treatment: `provenance.md`.
+  Treatment: [provenance].
 
 Two conventions follow. Classify a system by its §5 cell before describing its
 internals, and mark a mismatch rather than stretching the table. And when a page
@@ -393,6 +396,10 @@ rebuilders.
 [jfp]: https://doi.org/10.1017/S0956796820000088
 [research-docs]: ../../guidelines/research-docs.md
 [monorepo-concepts]: ../monorepo-tooling/concepts.md
+[graph-autogeneration]: ./graph-autogeneration.md
+[dependency-pruning]: ./dependency-pruning.md
+[sandboxing-overheads]: ./sandboxing-overheads.md
+[provenance]: ./provenance.md
 [shake-file]: https://github.com/ndmitchell/shake/blob/526051c894aa88addb845e3e6b52b02a69becf8a/src/Development/Shake/Internal/Rules/File.hs
 [shake-oracle]: https://github.com/ndmitchell/shake/blob/526051c894aa88addb845e3e6b52b02a69becf8a/src/Development/Shake/Internal/Rules/Oracle.hs
 [shake-cloud]: https://github.com/ndmitchell/shake/blob/526051c894aa88addb845e3e6b52b02a69becf8a/src/Development/Shake/Internal/History/Cloud.hs
