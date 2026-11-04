@@ -622,7 +622,8 @@ What advances at an instance read, prepared once: `hmtx`, and at nonzero
 coordinates `HVAR`, or — in a face without `HVAR` — the `gvar` phantom
 points (FTV14, FTO5).
 */
-private struct AdvanceSource
+// A retained parsed source for engine callbacks; owns no glyph cache or bytes.
+package(sparkles.font) struct AdvanceSource
 {
     @safe pure nothrow @nogc:
 

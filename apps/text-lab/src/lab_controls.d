@@ -15,6 +15,7 @@ import sparkles.ui.components.property_sections : decodeSectionHit, SectionItem,
 import sparkles.ui.components.settings_pane : SettingsPane, SettingsResult;
 import sparkles.ui.components.settings_sections : SettingsSections;
 import sparkles.ui.display_list : buildDisplayList;
+import sparkles.ui.canvas : DrawOp;
 import sparkles.ui.geometry : Constraints, Insets, Point, Rect, Size, SizeSpec;
 import sparkles.ui.interp.immediate : paint;
 import sparkles.ui.layout : Frame, layout;
@@ -76,6 +77,13 @@ final class LabControls
     private PointerEvent touchPress;
     private int touchScroll;
     private size_t touchFirstRow;
+    private DrawOp[] overlayOps;
+    private LabSettings overlaySubject;
+    private Palette overlayPalette;
+    private string overlayError;
+    private int overlayScroll;
+    private size_t overlayFocus;
+    private bool overlayDirty = true;
 
     private alias AxisSettingCache = typeof(LabSettings.init.axes)[string];
 
@@ -113,6 +121,7 @@ final class LabControls
             if (library.ready && !corpusReady)
             {
                 corpusReady = true;
+                overlayDirty = true;
                 finder.corpus(library.entries);
                 if (picker.active) finder.search(picker);
             }
@@ -373,6 +382,7 @@ final class LabControls
     /// Opens the fuzzy picker; a running catalog shows a loading row.
     void openPicker() @system
     {
+        overlayDirty = true;
         cast(void) sections.cancel(pane);
         picker.open();
         picker.viewRows = 12;
@@ -388,18 +398,40 @@ final class LabControls
         eventMutated = true;
     }
 
-    /// Renders an ordinary widget overlay after the specimen's custom paint.
-    void draw(C)(C canvas, Size size, bool shown, in Palette palette)
+    /// The opaque overlay's extent, available before painting the specimen.
+    Rect overlayBounds(Size size, bool shown) const @safe pure nothrow @nogc
     {
-        if (!shown && !picker.active) { tree = WidgetTree.init; frames = null; return; }
+        if (!shown && !picker.active) return Rect.init;
         const side = size.width >= 90;
         const width = picker.active ? (size.width > 80 ? 76 : size.width)
             : side ? 45 : size.width;
         const available = size.height - 3;
         const height = !picker.active ? (side ? available : available * 2 / 3)
             : available > 36 ? 36 : available;
-        bounds = Rect(picker.active ? (size.width - width) / 2 : size.width - width,
+        return Rect(picker.active ? (size.width - width) / 2 : size.width - width,
             side && !picker.active ? 3 : size.height - height, width, height);
+    }
+
+    /// Renders an ordinary widget overlay after the specimen's custom paint.
+    void draw(C)(C canvas, Size size, bool shown, in Palette palette)
+    {
+        const nextBounds = overlayBounds(size, shown);
+        if (bounds != nextBounds) overlayDirty = true;
+        bounds = nextBounds;
+        if (!bounds.width || !bounds.height)
+        {
+            tree = WidgetTree.init; frames = null; overlayOps = null;
+            overlayDirty = true;
+            return;
+        }
+        if (!overlayDirty && !pane.textEditing && !sections.drag.active
+            && scroll == overlayScroll && focus == overlayFocus
+            && *subject == overlaySubject && palette == overlayPalette && error == overlayError)
+        {
+            paint(*canvas, overlayOps);
+            return;
+        }
+        const width = bounds.width, height = bounds.height;
         Builder b;
         uint[] rows;
         const target = 3;
@@ -488,13 +520,20 @@ final class LabControls
         foreach (ref frame; frames)
             frame.rect = Rect(frame.rect.x + bounds.x, frame.rect.y + bounds.y,
                 frame.rect.width, frame.rect.height);
-        const ops = buildDisplayList(tree, frames, palette, RgbColor(205, 214, 244), RgbColor(24, 24, 37));
-        paint(*canvas, ops);
+        overlayOps = buildDisplayList(tree, frames, palette, RgbColor(205, 214, 244), RgbColor(24, 24, 37));
+        overlaySubject = snapshot();
+        overlayPalette = palette;
+        overlayError = error;
+        overlayScroll = scroll;
+        overlayFocus = focus;
+        overlayDirty = false;
+        paint(*canvas, overlayOps);
     }
 
     /// Routes modal input before specimen shortcuts; returns whether consumed.
     bool handle(H)(ref H h, in Event event, ref bool shown, bool pixelCoordinates = false)
     {
+        overlayDirty = true;
         auto before = snapshot();
         const wasDragging = sections.drag.active;
         bool consumed;
@@ -739,6 +778,40 @@ final class LabControls
 }
 
 /// Touch editors request the keyboard; vertical intent scrolls before activation.
+/// Retained overlay commands must follow external settings and viewport changes.
+@("text_lab.controls.retainedOverlayInvalidation")
+@system unittest
+{
+    import font_settings : AxisSetting;
+    import sparkles.ui.canvas : RecordingCanvas;
+    import sparkles.ui_app.record : RecordingHost;
+
+    LabSettings model;
+    model.axes = [AxisSetting(tag: 0x77676874, title: "Weight", minimum: 100,
+        maximum: 900, initial: 400, value: 400)];
+    auto controls = new LabControls(&model);
+    RecordingCanvas canvas;
+    controls.draw(&canvas, Size(49, 50), true, Palette.init);
+    auto retained = controls.tree.nodes;
+    controls.draw(&canvas, Size(49, 50), true, Palette.init);
+    assert(controls.tree.nodes.ptr == retained.ptr);
+    model.axes[0].value = 700;
+    controls.draw(&canvas, Size(49, 50), true, Palette.init);
+    assert(controls.tree.nodes.ptr != retained.ptr);
+    assert(controls.overlaySubject.axes[0].value == 700);
+    retained = controls.tree.nodes;
+    controls.draw(&canvas, Size(100, 50), true, Palette.init);
+    assert(controls.tree.nodes.ptr != retained.ptr && controls.bounds.width == 45);
+    controls.draw(&canvas, Size(100, 50), false, Palette.init);
+    assert(!controls.overlayOps.length && controls.bounds.empty);
+    controls.draw(&canvas, Size(100, 50), true, Palette.init);
+    assert(controls.overlayOps.length);
+    RecordingHost host;
+    bool shown = true;
+    cast(void) controls.handle(host, Event(KeyEvent(Key.tab)), shown);
+    assert(controls.overlayDirty);
+}
+
 @("text_lab.controls.touchKeyboardAndScroll")
 @system unittest
 {

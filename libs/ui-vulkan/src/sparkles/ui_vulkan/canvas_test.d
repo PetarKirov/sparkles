@@ -1205,27 +1205,33 @@ private ubyte[] twoColourImage()
         rig.close();
     assert(rig.canvas.cellFont(uiBytes, 18, TextMetrics(ascent: 16)));
     ubyte[] first;
-    foreach (weight; [100, 900, 100])
+    foreach (workers; 1 .. 5)
     {
-        assert(rig.canvas.specimenFont(specimenBytes, 0, Ppem.fromInteger(32).value,
-            [UserCoordinate(Tag("wght"), weight << 16)], TextMetrics(ascent: 32)));
-        const frame = rig.draw((ref Canvas canvas) {
-            canvas.glyph(Point(0, 0), 'A', Visual(fg: white, fgAlpha: 255));
-            assert(canvas.beginSpecimen(20, 40));
-            scope (exit)
-                canvas.endSpecimen();
-            const width = canvas.naturalTextWidthPx("office");
-            assert(canvas.naturalTextPx("office", 32, 8, v4(1, 1, 1, 1)) == width);
-        }, FrameMetrics(cellW: 12, cellH: 24), black);
-        if (first is null)
-            first = frame.dup;
-        else
+        rig.canvas.releaseCaches();
+        foreach (weight; [100, 900, 100])
         {
-            foreach (y; 0 .. 80)
-                foreach (x; 0 .. 24)
-                    assert(pixel(frame, 220, x, y) == pixel(first, 220, x, y));
-            assert((frame == first) == (weight == 100),
-                "coordinate cache entries must differ and be reusable when revisited");
+            assert(rig.canvas.specimenFont(specimenBytes, 0, Ppem.fromInteger(32).value,
+                [UserCoordinate(Tag("wght"), weight << 16)], TextMetrics(ascent: 32)));
+            const frame = rig.draw((ref Canvas canvas) {
+                canvas.glyph(Point(0, 0), 'A', Visual(fg: white, fgAlpha: 255));
+                assert(canvas.beginSpecimen(20, 40));
+                scope (exit)
+                    canvas.endSpecimen();
+                canvas.beginGlyphPreparation(workers);
+                const width = canvas.naturalTextWidthPx("office");
+                canvas.finishGlyphPreparation();
+                assert(canvas.naturalTextPx("office", 32, 8, v4(1, 1, 1, 1)) == width);
+            }, FrameMetrics(cellW: 12, cellH: 24), black);
+            if (first is null)
+                first = frame.dup;
+            else
+            {
+                foreach (y; 0 .. 80)
+                    foreach (x; 0 .. 24)
+                        assert(pixel(frame, 220, x, y) == pixel(first, 220, x, y));
+                assert((frame == first) == (weight == 100),
+                    "coordinate cache entries must differ and be reusable when revisited");
+            }
         }
     }
 }
@@ -1552,6 +1558,7 @@ private ubyte[] twoColourImage()
 
     assert(rig.canvas.cellFont(second, 18, metrics));
     first[] = 0; // the caller's old bytes, gone
+    rig.canvas.releaseCaches(); // force shaping too, rather than a retained-run hit
     const after = drawAccent();
     assert(report[Degradation.unshapedCluster] == 0, "still shaped, from the bytes now bound");
     assert(after == before, "the rebound face shapes the cluster as before");

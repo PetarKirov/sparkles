@@ -16,7 +16,7 @@ import sparkles.ui_app.run_app : runApp;
 import sparkles.ui_vulkan.text_rendering : Compositing, Hinting;
 import sparkles.base.term_color : RgbColor;
 
-import lab : framePalette, Lab;
+import lab : framePalette, Lab, SweepMode;
 
 /// The lab from `args`, as `main` receives them; the process's exit status.
 int run(string[] args)
@@ -58,6 +58,10 @@ struct TextLab
     bool uiFollowsSpecimen;
     @(Option("sweep-frames", description: "Sweep em size and declared axes each frame, then exit (pair with --debug trace-frames)."))
     uint sweepFrames;
+    @(Option("sweep-mode", description: "Sweep workload: all, render (fixed-font redraw), size, weight, axes."))
+    SweepMode sweepMode;
+    @(Option("raster-workers", description: "Coverage raster workers, 1–4 (1 runs on the frame thread)."))
+    uint rasterWorkers = 2;
     @(Option("compositing", description: "gamma, linear or linear-corrected."))
     Compositing compositing = Compositing.linearCorrected;
     @(Option("contrast", description: "Coverage contrast for linear-corrected, 0–1."))
@@ -138,6 +142,8 @@ CliExpected!Lab configure(in TextLab o)
 
     if (o.contrast.isNaN || o.contrast < 0 || o.contrast > 1)
         return reject("--contrast must be between 0 and 1");
+    if (o.rasterWorkers < 1 || o.rasterWorkers > 4)
+        return reject("--raster-workers must be between 1 and 4");
     if (o.shot.length && (o.gui.tui || o.gui.noGui))
         return reject("--shot captures the window: it needs the GUI, not --tui or --no-gui");
     Lab lab;
@@ -149,6 +155,8 @@ CliExpected!Lab configure(in TextLab o)
     lab.model.font.index = o.fontFaceIndex;
     lab.model.font.uiFollows = o.uiFollowsSpecimen;
     lab.sweepFrames = o.sweepFrames;
+    lab.sweepMode = o.sweepMode;
+    lab.rasterWorkers = o.rasterWorkers;
     lab.fontDirectories = o.gui.fontDir.dup;
     const state = environment.get("XDG_STATE_HOME", buildPath(environment.get("HOME", "."), ".local", "state"));
     lab.fontCache = buildPath(state, "sparkles", "text-lab", "fonts");
@@ -215,6 +223,8 @@ CliExpected!Lab configure(in TextLab o)
     assert(why((ref o) { o.contrast = 1.5f; }) == "--contrast must be between 0 and 1");
     assert(why((ref o) { o.contrast = -0.1f; }) !is null);
     assert(why((ref o) { o.contrast = float.nan; }) !is null);
+    assert(why((ref o) { o.rasterWorkers = 0; }) == "--raster-workers must be between 1 and 4");
+    assert(why((ref o) { o.rasterWorkers = 5; }) !is null);
     foreach (bad; ["5", "1,2,3", "x,2", "1,", "-1,2", ",7"])
         assert(why((ref o) { o.loupeAt = bad; }) !is null, bad);
     assert(why((ref o) { o.shot = "a.png"; o.gui.tui = true; }) !is null);

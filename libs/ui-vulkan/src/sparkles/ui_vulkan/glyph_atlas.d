@@ -20,7 +20,8 @@ module sparkles.ui_vulkan.glyph_atlas;
 
 import sparkles.font : Colour, ColourGlyph, ColourRegion, ColourSource, ColourWorkspace, colourMeasure,
     Face, FlattenPolicy, FontErrorKind, FontLimit, Instance, LightHints, OutlinePoint, OutlineSegment,
-    OverlapMode, Ppem, RasterRegion, RasterWorkspace, rasterizeColourGlyph, rasterizeGlyph, rasterMeasure, Tag;
+    OverlapMode, Ppem, RasterRegion, RasterWorkspace, rasterizeColourGlyph, prepareRaster, Tag;
+import sparkles.ui_vulkan.raster_batch : RasterBatch, RasterRequest;
 
 /// What became of a glyph the atlas was asked for.
 enum AtlasOutcome : ubyte
@@ -95,6 +96,12 @@ struct GlyphAtlas
         Entry[GlyphKey] entries_;
         bool overflowed_;
         Storage storage_;
+        enum maxPreparedGlyphs = 128;
+        RasterBatch!maxPreparedGlyphs rasterBatch_;
+        RasterRequest[maxPreparedGlyphs] preparedRequests_;
+        GlyphKey[maxPreparedGlyphs] preparedKeys_;
+        uint[GlyphKey] queued_;
+        size_t preparedCount_;
     }
 
     @disable this(this);
@@ -107,6 +114,65 @@ struct GlyphAtlas
     /// four (premultiplied RGBA) in the colour sheet.
     const(ubyte)[] page(size_t i, bool colour = false) const @safe pure nothrow @nogc
         => sheets_[colour].pages[i];
+
+    /// Starts collection of this frame's unique coverage misses.
+    void beginPreparation() @safe nothrow
+    {
+        preparedCount_ = 0;
+        queued_ = null;
+    }
+
+    /// Queues a miss without atlas writes. Inputs stay alive until finish.
+    void prepare(Instance inst, uint face, uint glyph, Ppem ppem,
+        const(LightHints)* hints = null) @safe
+    {
+        const key = withCoordinates(GlyphKey(face: face, ppemNumerator: ppem.numerator,
+            ppemDenominator: ppem.denominator, glyph: glyph, hinted: hints !is null), inst);
+        if ((key in entries_) !is null || (key in queued_) !is null || preparedCount_ == maxPreparedGlyphs)
+            return;
+        const i = preparedCount_++;
+        preparedKeys_[i] = key;
+        preparedRequests_[i] = RasterRequest(inst, glyph, ppem,
+            hints is null ? LightHints.init : *hints, hints !is null);
+        queued_[key] = cast(uint)i;
+    }
+
+    /// Joins the bounded batch, then places tiles on the caller.
+    /// Unsupported/oversized jobs retain the ordinary synchronous path.
+    void finishPreparation(uint workers = 2) @system nothrow
+    {
+        rasterBatch_.run(preparedRequests_[0 .. preparedCount_], workers);
+        foreach (i; 0 .. preparedCount_)
+        {
+            const tile = &rasterBatch_.tile(i);
+            if (!tile.ready) continue;
+            const key = preparedKeys_[i];
+            const m = tile.metrics;
+            AtlasGlyph g;
+            if (m.empty || m.width <= 0 || m.height <= 0)
+            {
+                cast(void) remember(key, AtlasOutcome.blank, g);
+                continue;
+            }
+            uint page;
+            int x, y;
+            if (overflowed_ || !sheets_[0].place(m.width, m.height, page, x, y))
+            {
+                overflowed_ = true;
+                break;
+            }
+            foreach (row; 0 .. m.height)
+                sheets_[0].pages[page][size_t(y + row) * pageSize + x .. size_t(y + row) * pageSize + x + m.width]
+                    = tile.pixels[][size_t(row) * m.width .. size_t(row + 1) * m.width];
+            sheets_[0].markDirty(page, x, y, m.width, m.height);
+            g = AtlasGlyph(page, false, x, y, m.width, m.height, m.bearingX, m.bearingY);
+            entries_[key] = Entry(AtlasOutcome.placed, g);
+        }
+        beginPreparation();
+    }
+
+    /// Joins worker threads before font bytes or the renderer are released.
+    void stopPreparation() @safe nothrow { rasterBatch_.stop(); }
 
     /**
     Glyph `glyph` of `inst` at `ppem`, from the cache or rasterized now into
@@ -129,7 +195,7 @@ struct GlyphAtlas
         auto measured = measure(inst, glyph, ppem, hints);
         if (measured.hasError)
             return remember(key, AtlasOutcome.refused, g);
-        const m = measured.value;
+        const m = measured.value.metrics;
         if (m.empty || m.width <= 0 || m.height <= 0)
             return remember(key, AtlasOutcome.blank, g);
         if (!fitsPage(m.width, m.height))
@@ -144,8 +210,7 @@ struct GlyphAtlas
         auto region = RasterRegion(sheets_[0].pages[page][size_t(y) * pageSize + x .. $], pageSize,
             m.width, m.height);
         auto ws = storage_.workspace;
-        auto drawn = rasterizeGlyph(inst, glyph, ppem, region, ws, FlattenPolicy.standard,
-            OverlapMode.perGlyphFlag, hints);
+        auto drawn = measured.value.rasterize(region, ws, FlattenPolicy.standard);
         if (drawn.hasError)
             return remember(key, AtlasOutcome.refused, g);
         sheets_[0].markDirty(page, x, y, m.width, m.height);
@@ -261,12 +326,12 @@ struct GlyphAtlas
         => w + padding <= pageSize && h + padding <= pageSize;
 
     // The glyph's size, growing the workspace when the outline needs more.
-    auto measure(in Instance inst, uint glyph, Ppem ppem, const(LightHints)* hints) @safe
+    auto measure(in Instance inst, uint glyph, Ppem ppem, const(LightHints)* hints) return @safe
     {
         foreach (attempt; 0 .. 6)
         {
             auto ws = storage_.workspace;
-            auto r = rasterMeasure(inst, glyph, ppem, ws, OverlapMode.perGlyphFlag, hints);
+            auto r = prepareRaster(inst, glyph, ppem, ws, OverlapMode.perGlyphFlag, hints);
             if (r.hasError && r.error.kind == FontErrorKind.limitExceeded
                 && r.error.limit == FontLimit.callerStorage)
             {
@@ -274,11 +339,11 @@ struct GlyphAtlas
                 continue;
             }
             if (r.hasValue)
-                storage_.reserve(r.value.accumulationNeeded, r.value.supersampleNeeded);
+                storage_.reserve(r.value.metrics.accumulationNeeded, r.value.metrics.supersampleNeeded);
             return r;
         }
         auto ws = storage_.workspace;
-        return rasterMeasure(inst, glyph, ppem, ws, OverlapMode.perGlyphFlag, hints);
+        return prepareRaster(inst, glyph, ppem, ws, OverlapMode.perGlyphFlag, hints);
     }
 
     // The colour form's size, the storage drawing it needs made ready.
@@ -517,6 +582,42 @@ version (unittest)
 
         uint glyph(dchar c) @system => charMap(face).value.glyph(c);
     }
+}
+
+/// Parallel tiles preserve exact pixels, metrics and blank results across
+/// variation coordinates and worker counts; duplicate misses queue only once.
+@("ui_vulkan.glyph_atlas.parallelTilesMatchSerial")
+@system unittest
+{
+    import sparkles.font : UserCoordinate;
+
+    foreach (workers; 1 .. 5)
+        foreach (weight; [100, 900])
+            foreach (size; [17, 40])
+            {
+                auto f = Fixture.at(size, "NotoSans.ttf");
+                f.inst = f.face.instance(InstanceSize.pixels(f.ppem),
+                    [UserCoordinate(Tag("wght"), weight << 16)]).value;
+                auto serial = new GlyphAtlas, parallel = new GlyphAtlas;
+                parallel.beginPreparation();
+                foreach (_; 0 .. 3)
+                    foreach (cp; ['A', 'g', 'W', ' ', 'é'])
+                        parallel.prepare(f.inst, 1, f.glyph(cp), f.ppem);
+                assert(parallel.preparedCount_ == 5);
+                parallel.finishPreparation(workers);
+                assert(parallel.length == 5);
+                foreach (cp; ['A', 'g', 'W', ' ', 'é'])
+                {
+                    AtlasGlyph expected, actual;
+                    assert(serial.get(f.inst, 1, f.glyph(cp), f.ppem, expected)
+                        == parallel.get(f.inst, 1, f.glyph(cp), f.ppem, actual));
+                    assert(expected == actual);
+                }
+                assert(serial.pageCount == parallel.pageCount);
+                foreach (page; 0 .. serial.pageCount)
+                    assert(serial.page(page) == parallel.page(page));
+                parallel.stopPreparation();
+            }
 }
 
 @("ui_vulkan.glyph_atlas.aGlyphIsRasterizedOnceAndCached")

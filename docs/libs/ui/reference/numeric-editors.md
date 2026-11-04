@@ -26,6 +26,20 @@ policy. Pass pointer positions and laid-out frames in the same coordinate
 space. A touch press waits for horizontal intent before capturing; vertical
 movement remains available to the containing scroll view.
 
+The controller retains up to 128 scalar row subtrees. Their keys include the
+projected value and metadata, runtime bounds/defaults, choices, focus, editor
+and refusal state, target geometry, and hit identifiers. Changed rows rebuild;
+unchanged rows reuse their presentation with child indices rebased into the
+current tree. Aggregate rows remain live because they can inspect children.
+This reuse is shared by the terminal and text lab.
+
+Layout also retains unmeasured plain-text wrap results, including Unicode
+slider tracks. The thread-local cache owns input keys and projected text,
+keeps at most 512 entries and 2 MiB of text/header payload, and returns fresh
+line headers. Width, first-line geometry, algorithm, and complete text are
+part of the key. Target-measured wraps remain live because their results can
+depend on font settings.
+
 Press captures the original track geometry. Moves apply preview edits through
 the generated dispatch, release commits one history entry, and cancellation
 restores the exact pre-drag value. Call `cancel` before closing a surface,

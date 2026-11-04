@@ -18,7 +18,7 @@ import sparkles.ui.components.range_slider : RangeSlider, SliderDomain;
 import sparkles.ui.components.settings_pane : SettingsResult;
 import sparkles.ui.geometry : Rect;
 import sparkles.ui.layout : Frame;
-import sparkles.ui.property_tree : EditValue, LeafKind, readValueAt;
+import sparkles.ui.property_tree : EditValue, LeafKind, PropertyNode, readValueAt;
 import sparkles.ui.style : Slot;
 import sparkles.ui.widget : Builder, Widget, WidgetKind, WidgetTree;
 
@@ -39,6 +39,32 @@ struct SettingsSections
     private Rect pendingTrack;
     private SliderDomain pendingDomain;
     private double pendingBefore;
+    private struct CachedLeaf
+    {
+        bool valid;
+        PropertyNode node;
+        SectionItem item;
+        RowState state;
+        SectionsOptions options;
+        size_t base;
+        WidgetTree tree;
+    }
+    private CachedLeaf[] cachedLeaves;
+
+    // Graft owned row nodes, rebasing children without mutating the retained
+    // subtree. Payload text stays borrowed from the retained row's snapshot.
+    private static uint appendRow(ref Builder b, WidgetTree row) @safe
+    {
+        const offset = cast(uint)b.nodes.length;
+        foreach (w; row.nodes)
+        {
+            w.children = w.children.dup;
+            foreach (ref child; w.children) child += offset;
+            w.spans = w.spans.dup;
+            b.add(w);
+        }
+        return row.root + offset;
+    }
 
     /// Visible section rows at the current level.
     auto items(P)(ref P pane, bool flatten = false)
@@ -100,12 +126,37 @@ struct SettingsSections
     uint row(P)(ref Builder b, ref P pane, in SectionItem item,
         bool focused, in SectionsOptions opt, size_t base)
     {
-        const n = &pane.tree.data.nodes[item.node].value;
+        auto n = &pane.tree.data.nodes[item.node].value;
         if (item.kind == SectionItem.Kind.header)
             return sectionHeader(b, n.heading,
                 item.collapsed ? sectionSummary(pane.tree.data, item.node) : n.path,
                 item.collapsed, sectionHit(base, item.node, SectionPart.row), opt);
-        const st = rowState(pane, n.path, focused);
+        auto st = rowState(pane, n.path, focused);
+        if (item.kind == SectionItem.Kind.leaf && !n.composite && !n.synthetic)
+        {
+            // Scalar rows depend on their projected node and interaction
+            // state. Aggregates remain uncached because they may inspect
+            // child rows (for example a palette's swatches or a summary).
+            if (!cachedLeaves.length) cachedLeaves = new CachedLeaf[128];
+            auto cached = &cachedLeaves[item.node % cachedLeaves.length];
+            if (!cached.valid || cached.node != *n || cached.item != item
+                || cached.state != st || cached.options != opt || cached.base != base)
+            {
+                Builder row;
+                cached.tree = row.finish(sectionRow(row, pane.tree.data, item, st, opt, base));
+                cached.node = *n;
+                cached.node.choices = n.choices.dup;
+                cached.node.choiceLabels = n.choiceLabels.dup;
+                cached.node.labelSpans = n.labelSpans.dup;
+                cached.node.badgeSpans = n.badgeSpans.dup;
+                cached.item = item;
+                cached.state = st;
+                cached.options = opt;
+                cached.base = base;
+                cached.valid = true;
+            }
+            return appendRow(b, cached.tree);
+        }
         return sectionRow(b, pane.tree.data, item, st, opt, base);
     }
 
@@ -263,6 +314,70 @@ struct SettingsSections
     private EditValue numeric(double value) const @safe pure nothrow @nogc
         => dragKind == LeafKind.integral ? EditValue.of(cast(long) value)
             : EditValue.of(dragFloat ? cast(double) cast(float) value : value);
+}
+
+/// Retained scalar rows match a fresh projection after dynamic metadata,
+/// values, focus and viewport changes, including rebased child indices.
+@("ui.settings_sections.retainedRowsMatchFreshProjection")
+@system unittest
+{
+    import sparkles.base.term_color : RgbColor;
+    import sparkles.ui.canvas : BoxChrome, FillRect;
+    import sparkles.ui.components.settings_pane : SettingsPane;
+    import sparkles.ui.display_list : buildDisplayList;
+    import sparkles.ui.geometry : Constraints;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.property_tree : hidden, NumericInput, PreferredInput, Range;
+    import sparkles.ui.style : Palette;
+    import std.typecons : tuple;
+    import std.sumtype : match;
+
+    static struct Subject
+    {
+        @hidden double minimum = 100, maximum = 900;
+        @hidden bool locked;
+        @PreferredInput(NumericInput.slider) double weight = 400;
+        Range propRange(string field) const @safe pure nothrow @nogc
+            => Range(minimum, maximum, 1);
+        bool propReadOnly(string field) const @safe pure nothrow @nogc => locked;
+    }
+    Subject subject;
+    SettingsPane!Subject pane;
+    pane.open(&subject, subject);
+    SettingsSections sections;
+    SectionsOptions options;
+    bool focused;
+    auto project(bool cached) {
+        Builder b;
+        b.add(Widget(kind: WidgetKind.text, text: "preceding node"));
+        const item = sections.items(pane)[0];
+        const state = sections.rowState(pane, "weight", focused);
+        const root = cached ? sections.row(b, pane, item, focused, options, 1000)
+            : sectionRow(b, pane.tree.data, item, state, options, 1000);
+        const tree = b.finish(root);
+        auto ops = buildDisplayList(tree, layout(tree, Constraints(maxW: options.width)),
+            Palette.init, RgbColor.init, RgbColor.init);
+        BoxChrome[] chrome;
+        foreach (ref op; ops)
+            op.payload.match!((ref FillRect fill) {
+                chrome ~= fill.chrome is null ? BoxChrome.init : *fill.chrome;
+                fill.chrome = null;
+            }, (ref other) {});
+        return tuple(ops, chrome);
+    }
+    assert(project(true) == project(false));
+    const retained = sections.cachedLeaves[0].tree.nodes;
+    assert(project(true) == project(false));
+    assert(retained.ptr == sections.cachedLeaves[0].tree.nodes.ptr);
+    foreach (step; 0 .. 4)
+    {
+        if (step == 0) subject.maximum = 700;
+        if (step == 1) subject.weight = 650;
+        if (step == 2) subject.locked = true;
+        if (step == 3) { options.width = 40; focused = true; }
+        pane.refresh();
+        assert(project(true) == project(false), "retained controls must match the fresh projection");
+    }
 }
 
 /// Preview dispatch, release grouping, numeric entry and cancellation share

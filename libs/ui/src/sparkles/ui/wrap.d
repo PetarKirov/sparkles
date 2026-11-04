@@ -95,6 +95,106 @@ const(char)[][] wrapLines(F = typeof(null))(const(char)[] text, int width,
 {
     import std.exception : enforce;
     enforce(width >= 0 && firstLineWidth >= -1, "negative UI wrap capacity");
+    static if (is(F == typeof(null)))
+    {
+        const key = LineCacheKey(width, firstLineWidth, algorithm);
+        const(char)[][] lines;
+        if (lineCache.find(key, text, lines)) return lines;
+        lines = wrapLinesUncached(text, width, algorithm, firstLineWidth, measure, measureMonotone);
+        lineCache.store(key, text, lines);
+        return lines;
+    }
+    else return wrapLinesUncached(text, width, algorithm, firstLineWidth, measure, measureMonotone);
+}
+
+private struct LineCacheKey
+{
+    int width, firstLineWidth;
+    TextWrap algorithm;
+}
+
+// Plain Unicode labels use the same planner as paragraphs. Retain its
+// immutable result, rather than creating a second, weaker Unicode fast path.
+// Headers returned to callers are copied; cached text never borrows input.
+private struct LineCache
+{
+    private struct Entry
+    {
+        bool valid;
+        LineCacheKey key;
+        string text;
+        const(char)[][] lines;
+        size_t bytes;
+    }
+    enum size_t byteLimit = 2 * 1024 * 1024, inputLimit = 64 * 1024;
+    private Entry[512] entries;
+    private size_t retained;
+
+    private static size_t slot(in LineCacheKey key, scope const(char)[] text) @safe nothrow
+        => hashOf(text, hashOf(key.width, hashOf(key.firstLineWidth, hashOf(key.algorithm)))) % 512;
+
+    bool find(in LineCacheKey key, scope const(char)[] text, out const(char)[][] lines) @safe nothrow
+    {
+        if (text.length > inputLimit) return false;
+        auto e = &entries[slot(key, text)];
+        if (!e.valid || e.key != key || e.text != text) return false;
+        lines = e.lines.dup;
+        return true;
+    }
+
+    void store(in LineCacheKey key, scope const(char)[] text, const(char)[][] lines) @safe nothrow
+    {
+        if (text.length > inputLimit) return;
+        size_t bytes = text.length + lines.length * (const(char)[]).sizeof;
+        if (bytes > byteLimit) return;
+        foreach (line; lines)
+        {
+            if (line.length > byteLimit - bytes) return;
+            bytes += line.length;
+        }
+        if (retained + bytes > byteLimit)
+        {
+            entries[] = Entry.init;
+            retained = 0;
+        }
+        auto e = &entries[slot(key, text)];
+        retained -= e.bytes;
+        *e = Entry(true, key, text.idup, lines.dup, bytes);
+        retained += bytes;
+    }
+}
+
+private LineCache lineCache; // thread-local; measured wraps never use it
+
+/// Cached headers are independent, and Unicode/control handling stays with
+/// the authoritative planner across widths, solvers and first-line geometry.
+@("ui.wrap.plainLineCachePreservesPlannerAndOwnership")
+@safe unittest
+{
+    lineCache = LineCache.init;
+    foreach (text; ["──────◆─────────", "α\tβ\n\n", "a\u00adb\u200bc", "x\u2028y", "a\xFFb", ""])
+        foreach (algorithm; [TextWrap.none, TextWrap.greedy, TextWrap.balanced])
+            foreach (width; [0, 1, 8])
+                foreach (first; [-1, 0, 3])
+                {
+                    const expected = wrapLinesUncached(text, width, algorithm, first, null, false);
+                    auto actual = wrapLines(text, width, algorithm, first);
+                    assert(actual == expected);
+                    if (actual.length) actual[0] = "changed caller header";
+                    assert(wrapLines(text, width, algorithm, first) == expected);
+                }
+    auto mutableText = "owned ─ label".dup;
+    const saved = wrapLines(mutableText, 80, TextWrap.none);
+    mutableText[] = 'x';
+    assert(saved == ["owned ─ label"]);
+    assert(lineCache.retained <= LineCache.byteLimit);
+}
+
+private const(char)[][] wrapLinesUncached(F)(const(char)[] text, int width,
+    TextWrap algorithm, int firstLineWidth, scope F measure, bool measureMonotone)
+{
+    import std.exception : enforce;
+    enforce(width >= 0 && firstLineWidth >= -1, "negative UI wrap capacity");
     WrapOptions options;
     options.width = algorithm == TextWrap.none ? CellWidth.unbounded : CellWidth.bounded(cast(ulong) width);
     options.solver = algorithm == TextWrap.balanced ? WrapSolver.balanced : WrapSolver.greedy;

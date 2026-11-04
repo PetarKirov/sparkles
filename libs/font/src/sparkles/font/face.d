@@ -150,14 +150,14 @@ struct Face
             while (lo < hi)
             {
                 const mid = lo + (hi - lo) / 2;
-                if (record(mid).tag.value < tag.value) lo = mid + 1;
+                if (be32(data_, recordOffset(mid)) < tag.value) lo = mid + 1;
                 else hi = mid;
             }
             // lo is already the first record not below `tag`.
-            return lo < numTables_ && record(lo).tag == tag ? lo : numTables_;
+            return lo < numTables_ && be32(data_, recordOffset(lo)) == tag.value ? lo : numTables_;
         }
         foreach (i; 0 .. numTables_)
-            if (record(i).tag == tag)
+            if (be32(data_, recordOffset(i)) == tag.value)
                 return i;
         return numTables_;
     }

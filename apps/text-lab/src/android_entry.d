@@ -28,5 +28,19 @@ void androidMain()
     if (!extractAssetBundle(data, ["fonts"], buildPath(data, "assets-ready")))
         logFailure("text-lab: the APK's fonts could not be extracted");
     const fonts = buildPath(data, "fonts");
-    cast(void) run(["text-lab", "--font-dir", fonts, "--font", buildPath(fonts, "DejaVuSansMono.ttf")]);
+    import std.file : exists, readText, remove;
+    import std.string : splitLines;
+
+    // App-private, one-shot arguments make device traces reproducible without
+    // rebuilding the APK. Consume before launch so an interrupted sweep cannot
+    // trap subsequent interactive launches in the profiling workload.
+    const next = buildPath(data, "next-launch.args");
+    string[] args;
+    if (next.exists)
+    {
+        args = next.readText.splitLines;
+        next.remove();
+    }
+    else args = ["--font", buildPath(fonts, "DejaVuSansMono.ttf")];
+    cast(void) run(["text-lab", "--font-dir", fonts] ~ args);
 }
