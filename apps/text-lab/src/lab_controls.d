@@ -31,7 +31,8 @@ import font_catalog : FontEntry, FontFinder, FontLibrary, FontLoad;
 import font_settings : applyVariations, axisSettings, LabSettings;
 import unicode_samples : Showcase, showcaseFonts, unicodeSamples;
 
-private enum size_t sectionBase = 0x7100_0000, fontHit = 0x7000_0001, pickerBase = 0x7200_0000;
+private enum size_t sectionBase = 0x7100_0000, fontHit = 0x7000_0001,
+    pickerApply = 0x7000_0002, pickerCancel = 0x7000_0003, pickerBase = 0x7200_0000;
 
 private double secondsNow() @safe nothrow @nogc
     => MonoTime.currTime.ticks / cast(double) MonoTime.ticksPerSecond;
@@ -139,6 +140,11 @@ final class LabControls
     bool discovery;
     private bool corpusReady;
     private FontLoad* pending, current;
+    private FontLoad* previewLoad, previewRendered;
+    private FontLoad*[3] pickerStyles;
+    private FontLoad*[3] previewRenderedStyles;
+    private size_t previewIndex = size_t.max;
+    private string pickerError;
     private FontLoad*[3] currentStyles;
     private FontLoad* stylesFor;
     private string pendingLabel;
@@ -196,7 +202,9 @@ final class LabControls
 
     /// A screenshot waits for the exact startup face, not the entire catalog.
     bool loading() const @safe pure nothrow @nogc
-        => pending !is null || fallbackBusy || (discovery && (!initial || picker.active && !corpusReady));
+        => pending !is null || fallbackBusy
+            || picker.active && previewLoad !is null && !previewLoad.done
+            || (discovery && (!initial || picker.active && !corpusReady));
 
     /// Polls the background jobs and applies at most the latest font request.
     void frame(H)(ref H h)
@@ -326,7 +334,7 @@ final class LabControls
                     {
                         *subject = candidate;
                         current = prepared;
-                        library.retain(current, currentStyles, fallbackOwners);
+                        retainFonts();
                         pane.edits = typeof(pane.edits).init;
                         pane.refresh();
                         if (reseed) rememberEdit(pendingBefore);
@@ -336,19 +344,23 @@ final class LabControls
                 }
             }
         }
-        if (current !is null && pending is null)
+        if (current !is null && pending is null && !picker.active)
         {
             auto candidate = snapshot();
             const changed = candidate != accepted;
             if (submit(h, candidate, current))
             {
                 *subject = candidate;
-                library.retain(current, currentStyles, fallbackOwners);
+                previewRendered = previewLoad = null;
+                pickerStyles[] = null;
+                previewRenderedStyles[] = null;
+                retainFonts();
                 if (changed) error = null;
                 acceptModel();
             }
             else restoreAccepted();
         }
+        if (picker.active && current !is null && pending is null) preview(h);
         eventMutated = false;
         static if (__traits(compiles, h.textInput(true)))
         {
@@ -398,7 +410,7 @@ final class LabControls
                 if (!retained)
                 {
                     fallbackOwners ~= job;
-                    library.retain(current, currentStyles, fallbackOwners);
+                    retainFonts();
                 }
             }
             fallbackGroup = group;
@@ -518,7 +530,7 @@ final class LabControls
         currentStyles = acceptedStyles;
         stylesFor = acceptedStylesFor;
         lastRequest = acceptedRequest;
-        if (library !is null) library.retain(current, currentStyles, fallbackOwners);
+        retainFonts();
         pane.edits = typeof(pane.edits).init;
         pane.refresh();
     }
@@ -533,7 +545,7 @@ final class LabControls
         if (subject.font.path.length)
             remembered[identity(subject.font.path, subject.font.index)] = subject.axes.dup;
         pendingBefore = snapshot();
-        library.retain(current, currentStyles, fallbackOwners);
+        retainFonts();
         auto job = library.request(path, index);
         if (job is null)
         {
@@ -556,12 +568,77 @@ final class LabControls
     /// Opens the fuzzy picker; a running catalog shows a loading row.
     void openPicker() @system
     {
+        if (picker.active) return;
         overlayDirty = true;
         cast(void) sections.cancel(pane);
         stopScroll();
+        if (previewRendered is null) pickerStyles = currentStyles;
+        pickerError = error;
+        previewIndex = size_t.max;
         picker.open();
         picker.viewRows = 12;
         if (corpusReady) finder.search(picker);
+    }
+
+    private void retainFonts() @system
+    {
+        if (library is null) return;
+        FontLoad*[] extra = fallbackOwners ~ [previewLoad, previewRendered];
+        extra ~= pickerStyles[];
+        extra ~= previewRenderedStyles[];
+        library.retain(current, currentStyles, extra);
+    }
+
+    private void preview(H)(ref H h)
+    {
+        const index = finder.entryIndex(picker.selectedCorpusIndex);
+        if (index >= library.entries.length)
+        {
+            if (previewRendered !is null)
+            {
+                auto original = snapshot();
+                if (submit(h, original, current)) previewRendered = null;
+            }
+            return;
+        }
+        const entry = library.entries[index];
+        if (previewIndex != index || previewLoad is null)
+        {
+            retainFonts();
+            previewLoad = library.request(entry.path, entry.index);
+            if (previewLoad is null) { h.requestFrame(); return; }
+            previewIndex = index;
+            retainFonts();
+        }
+        if (!previewLoad.done) { h.requestFrame(); return; }
+        if (!previewLoad.ok) { error = "Could not preview font: " ~ entry.label; return; }
+        auto face = openFace(previewLoad.bytes[], previewLoad.index);
+        if (face.hasError) return;
+        auto candidate = snapshot();
+        candidate.font.path = entry.path;
+        candidate.font.index = entry.index;
+        candidate.font.face = entry.label;
+        if (entry.path != subject.font.path || entry.index != subject.font.index)
+        {
+            const key = identity(entry.path, entry.index);
+            if (auto saved = key in remembered) candidate.axes = (*saved).dup;
+            else candidate.axes = axisSettings(face.value);
+        }
+        if (submit(h, candidate, previewLoad))
+        {
+            error = null;
+            previewRendered = previewLoad;
+            previewRenderedStyles = currentStyles;
+            retainFonts();
+        }
+    }
+
+    private void cancelPicker() @safe
+    {
+        picker.close();
+        previewLoad = null;
+        previewIndex = size_t.max;
+        error = pickerError;
     }
 
     /// Records a specimen shortcut at input time, before the next frame starts.
@@ -629,16 +706,16 @@ final class LabControls
                     text: library !is null && library.error.length ? library.error : "Listing fonts…"));
             else
             {
-                picker.viewRows = cast(size_t)(height > 6 ? (height - 6) / target : 1);
+                picker.viewRows = cast(size_t)(height > 9 ? (height - 9) / target : 1);
                 size_t number;
                 foreach (ranked; picker.visible)
                 {
-                    const index = ranked.corpusIndex;
+                    const index = finder.entryIndex(ranked.corpusIndex);
                     if (index >= library.entries.length) continue;
                     const label = library.entries[index].label;
                     TextSpan[] spans;
                     size_t at;
-                    foreach (range; finder.highlights(index))
+                    foreach (range; finder.highlights(ranked.corpusIndex))
                     {
                         if (range.start > at) spans ~= TextSpan(text: label[at .. range.start], slot: Slot.textPrimary);
                         spans ~= TextSpan(text: label[range.start .. range.end], slot: Slot.accentPrimary,
@@ -654,6 +731,9 @@ final class LabControls
                 }
                 if (picker.rowCount == 0) rows ~= b.add(Widget(kind: WidgetKind.text, text: "No matching fonts"));
             }
+            const apply = chip(b, "Use font", pickerApply, false, ControlSize(rows: 3));
+            const cancel = chip(b, "Cancel", pickerCancel, false, ControlSize(rows: 3));
+            rows ~= b.add(Widget(kind: WidgetKind.row, children: [apply, cancel]));
         }
         else
         {
@@ -759,7 +839,7 @@ final class LabControls
                 if (picker.active)
                 {
                     consumed = true;
-                    if (k.key == Key.escape || k.key == Key.back) picker.close();
+                    if (k.key == Key.escape || k.key == Key.back) cancelPicker();
                     else if (k.key == Key.enter) accept();
                     else if (k.key == Key.up) picker.moveSelection(-1);
                     else if (k.key == Key.down) picker.moveSelection(1);
@@ -834,6 +914,13 @@ final class LabControls
                 bool touch;
                 static if (__traits(hasMember, H, "capabilities")) touch = !h.capabilities.hover;
                 scrollBody.touch = touch;
+                if (picker.active && !touch && (p.action == PointerAction.move || p.action == PointerAction.drag))
+                {
+                    const hit = hoverTargets(tree, frames).hitAt(
+                        p.pos.x / cast(float) cw, p.pos.y / cast(float) ch);
+                    if (hit >= pickerBase) picker.selection = hit - pickerBase;
+                    return;
+                }
                 if (touch)
                 {
                     if (p.action == PointerAction.press)
@@ -904,10 +991,12 @@ final class LabControls
                 if (hit)
                 {
                     if (hit == fontHit) { openPicker(); return; }
+                    if (picker.active && hit == pickerApply) { accept(); return; }
+                    if (picker.active && hit == pickerCancel) { cancelPicker(); return; }
                     if (picker.active && hit >= pickerBase)
                     {
                         picker.selection = hit - pickerBase;
-                        accept();
+                        if (!touch) accept();
                         return;
                     }
                     uint node, part;
@@ -953,7 +1042,7 @@ final class LabControls
 
     private void accept() @system
     {
-        const index = picker.selectedCorpusIndex;
+        const index = finder.entryIndex(picker.selectedCorpusIndex);
         if (library !is null && index < library.entries.length)
         {
             const entry = library.entries[index];
@@ -1158,6 +1247,98 @@ final class LabControls
     cast(void) controls.handle(host, Event(KeyEvent(Key.char_, '8')), shown);
     cast(void) controls.handle(host, Event(KeyEvent(Key.enter)), shown);
     assert(model.font.size == 18 && !controls.pane.textEditing);
+}
+
+/// Browsing is a reversible preview: cancellation restores the original face,
+/// acceptance creates one undo entry, and unchanged frames reuse the request.
+@("text_lab.controls.pickerPreviewIsTransactional")
+@system unittest
+{
+    import core.thread : Thread;
+    import core.time : msecs, seconds;
+    import std.conv : text;
+    import std.file : mkdir, rmdirRecurse, tempDir;
+    import std.path : buildPath;
+    import std.process : environment;
+    import sparkles.ui_app.record : RecordingHost;
+
+    const root = environment.get("SPARKLES_FONTS_PATH");
+    assert(root.length, "SPARKLES_FONTS_PATH is required");
+    const firstPath = buildPath(root, "DejaVuSansMono.ttf");
+    const secondPath = buildPath(root, "NotoSans.ttf");
+    // This test supplies its own two-entry corpus below. Discovery must not
+    // scan every bundled font before the transaction checks can begin.
+    const directory = buildPath(tempDir(), text("sparkles-picker-preview-", MonoTime.currTime.ticks));
+    mkdir(directory);
+    scope (exit) rmdirRecurse(directory);
+    LabSettings model;
+    model.font.path = firstPath;
+    auto controls = new LabControls(&model);
+    controls.library = new FontLibrary;
+    controls.library.start([directory], "");
+    scope (exit) controls.stop();
+    auto first = controls.library.request(firstPath, 0);
+    auto second = controls.library.request(secondPath, 0);
+    assert(first !is null && second !is null);
+    const deadline = MonoTime.currTime + 10.seconds;
+    while ((!controls.library.ready || !first.done || !second.done) && MonoTime.currTime < deadline)
+    {
+        controls.library.poll();
+        Thread.sleep(1.msecs);
+    }
+    assert(controls.library.ready && first.ok && second.ok);
+    controls.library.entries = [FontEntry(firstPath, "Alpha", 0, "Alpha"),
+        FontEntry(secondPath, "Beta", 0, "Beta")];
+    controls.finder.corpus(controls.library.entries);
+    controls.corpusReady = true;
+    controls.current = first;
+    model.font.path = firstPath;
+    struct Host
+    {
+        RecordingHost recording;
+        alias recording this;
+        bool reject;
+        bool specimenFont(in SpecimenFontRequest request)
+            => !reject && recording.specimenFont(request);
+        SpecimenFontRequest specimenFont() const @safe pure nothrow => recording.specimenFont();
+    }
+    Host host;
+    controls.frame(host);
+    controls.openPicker();
+    controls.picker.selection = 1;
+    controls.frame(host);
+    assert(host.specimenFont().path == secondPath && model.font.path == firstPath);
+    const generation = host.specimenFont().generation;
+    controls.frame(host);
+    assert(host.specimenFont().generation == generation && !controls.undo.length);
+    controls.cancelPicker();
+    controls.frame(host);
+    assert(host.specimenFont().path == firstPath && !controls.undo.length);
+    controls.openPicker();
+    controls.picker.selection = 1;
+    host.reject = true;
+    controls.frame(host);
+    assert(controls.error.length && model.font.path == firstPath
+        && host.specimenFont().path == firstPath && !controls.undo.length);
+    host.reject = false;
+    controls.frame(host);
+    assert(!controls.error.length && host.specimenFont().path == secondPath);
+    foreach (c; "__no_such_font__") cast(void) controls.picker.prompt.type(c);
+    controls.finder.search(controls.picker);
+    controls.frame(host);
+    assert(!controls.picker.rowCount && host.specimenFont().path == firstPath
+        && !controls.undo.length);
+    controls.cancelPicker();
+    controls.frame(host);
+    controls.openPicker();
+    controls.picker.selection = 1;
+    controls.frame(host);
+    controls.accept();
+    controls.frame(host);
+    assert(model.font.path == secondPath && controls.undo.length == 1);
+    controls.restore(false);
+    controls.frame(host);
+    assert(model.font.path == firstPath && host.specimenFont().path == firstPath);
 }
 
 /// Recording seams exercise drawing, global history and model rollback on rejection.

@@ -40,7 +40,7 @@ import sparkles.input : Event, Gesture, GestureEvent, isEndOfInput, Key, KeyActi
 import sparkles.ui.geometry : Insets, Point, Rect, Size;
 import sparkles.ui.style : BorderStyle, BoxBorder, Palette, Slot, Visual;
 import sparkles.ui.widget : Builder, WidgetKind, WidgetTree;
-import sparkles.ui_vulkan.painter : rgba;
+import sparkles.ui_vulkan.painter : GlyphInspection, rgba;
 import sparkles.ui_vulkan.coverage_geometry : CoverageMode, CoverageWork;
 import sparkles.ui_vulkan.text_rendering : Compositing, Hinting, Loupe, TextRendering;
 
@@ -143,6 +143,9 @@ struct Lab
     private int framesToShot = 3; // the font atlas and the window settle first
     private Point pointer = Point(-1, -1);
     private bool pointing; // a mouse hovers, or a finger is down
+    private bool inspectionActive;
+    private GlyphInspection inspected;
+    private string inspectedSource, inspectedSample;
     private bool sentSettings;
     /// Waits for font workers before the host releases drawing resources.
     void shutdown(H)(ref H h)
@@ -236,6 +239,8 @@ struct Lab
     /// The header, both panels below it, and the sheet when it is open.
     void paint(H)(ref H h, in WidgetTree, in Frame[])
     {
+        inspected = GlyphInspection.init;
+        inspectedSource = inspectedSample = null;
         ++paintedFrames;
         static if (offersSettings!H)
         {
@@ -290,6 +295,7 @@ struct Lab
                 controls.draw(canvas, size, sheetOpen, framePalette());
                 sheet_ = controls.bounds;
             }
+        drawGlyphTooltip(h, canvas);
 
     }
 
@@ -515,12 +521,56 @@ struct Lab
                     canvas.fillPx(x, token.y + rowHeight - 2, token.advance, 1, ink);
                 if (token.style & TextAttr.strikethrough.bits)
                     canvas.fillPx(x, token.y + rowHeight / 2, token.advance, 1, ink);
+                static if (__traits(compiles, canvas.inspectTextPx(token.text, 0.0)))
+                    if (inspectionActive && pointer.x >= x && pointer.x < x + token.advance
+                        && pointer.y >= token.y && pointer.y < token.y + rowHeight
+                        && visible.contains(Point(pointer.x / cw, pointer.y / ch)))
+                    {
+                        inspected = canvas.inspectTextPx(token.text, cast(double)(pointer.x - x),
+                            (token.style & TextAttr.bold.bits) != 0,
+                            (token.style & TextAttr.italic.bits) != 0, token.direction,
+                            model.font.cellGrid && token.direction != ClusterDirection.rtl);
+                        if (inspected.found && inspected.start < inspected.end && inspected.end <= token.text.length)
+                        {
+                            inspectedSource = token.text[inspected.start .. inspected.end].idup;
+                            inspectedSample = label;
+                        }
+                    }
             }
             h.endSpecimen();
             if (h.specimenFallbackGlyphs + h.specimenGridFallbacks > fallbacksBefore)
                 canvas.labelPx(clip(label ~ " †", labelWidth), (r.x + 1) * cw, line.y,
                     rgba(t.label, 255), rgba(t.bg, 255));
         }
+    }
+
+    private void drawGlyphTooltip(H, C)(ref H h, C canvas)
+    {
+        if (!inspectionActive || !inspected.found || !inspectedSource.length
+            || controls !is null && controls.picker.active) return;
+        import glyph_tooltip : glyphTooltipLines;
+        const lines = glyphTooltipLines(inspectedSource, inspectedSample, inspected);
+        int width;
+        foreach (line; lines)
+        {
+            const length = cast(int) visibleWidth(line);
+            if (length > width) width = length;
+        }
+        const room = sheetOpen && h.size.width >= sideSheetMinWidth ? sheet_.x : h.size.width;
+        width = width + 2 < room ? width + 2 : room;
+        const height = cast(int) lines.length + 2;
+        if (width < 4 || h.size.height < height + headerRows) return;
+        const cell = cellOf(h, pointer);
+        int x = cell.x + 2, y = cell.y + 2;
+        if (x + width > room) x = room - width;
+        if (y + height > h.size.height) y = cell.y - height - 1;
+        if (y < headerRows) y = headerRows;
+        const box = Rect(x, y, width, height);
+        canvas.fillRect(box, Visual(fg: ink, bg: headerBg, hasBg: true,
+            border: BoxBorder(width: Insets.all(1), style: BorderStyle.solid, color: accent)));
+        foreach (i, line; lines)
+            canvas.textRun(Point(x + 1, y + 1 + cast(int)i), clip(line, width - 2),
+                Visual(fg: ink, bg: headerBg, hasBg: true));
     }
 
     // A three-row button: a bordered box, its label centred on the middle row.
@@ -622,6 +672,7 @@ struct Lab
             enum pixels = __traits(hasMember, H, "cellWidth");
             if (controls.handle(h, e, sheetOpen, pixels))
             {
+                inspectionActive = false;
                 changed(h);
                 return;
             }
@@ -650,6 +701,7 @@ struct Lab
                 command(h, k.ch);
             },
             (in PointerEvent p) {
+                if (p.action == PointerAction.leave) inspectionActive = false;
                 const cell = cellOf(h, p.pos);
                 // A hand over what a click does something to, the arrow elsewhere
                 // (a mouse or stylus pointer; on Android 7+ too).
@@ -683,9 +735,13 @@ struct Lab
                 }
                 // Only the panels aim the loupe: not the header, not the sheet.
                 if (cell.y < headerRows || (sheetOpen && sheet_.contains(cell)))
+                {
+                    inspectionActive = false;
                     return;
+                }
                 pointer = p.pos;
                 pointing = true;
+                inspectionActive = true;
                 h.requestFrame();
             },
             (in WheelEvent w) {
@@ -709,6 +765,7 @@ struct Lab
 
         if (g.gesture != Gesture.pinch)
             return;
+        inspectionActive = false;
         if (controls !is null && (controls.picker.active || controls.capturing))
             return;
         if (!g.scale.isFinite || g.scale <= 0.0f || (g.scale == 1.0f && g.deltaPx == 0.0f))
@@ -814,6 +871,7 @@ struct Lab
 
     private void toggleSheet(H)(ref H h)
     {
+        inspectionActive = false;
         if (sheetOpen && controls !is null) cast(void) controls.sections.cancel(controls.pane);
         sheetOpen = !sheetOpen;
         h.requestFrame();
