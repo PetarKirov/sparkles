@@ -429,8 +429,17 @@ The projection also resolves the aggregate's unknown-member policy:
 $(LREF SdlAggregateRoles.strictUnknown) reports whether `@WireStrict!Sdl`
 (or the format-less spelling) applies.
 */
-package template sdlAggregateRoles(T, bool isDocumentRoot = false,
-    alias schema = wireSchemaOf!(Sdl, T), size_t aggregateIndex = 0)
+package template sdlAggregateRoles(T, bool isDocumentRoot = false)
+if (is(T == struct))
+{
+    // Keep runtime storage keyed by type, not by the entire schema value:
+    // a large recipe schema otherwise produces a symbol too long for PDB.
+    static immutable SdlAggregateRoles sdlFieldRoles =
+        sdlAggregateRoles!(T, isDocumentRoot, wireSchemaOf!(Sdl, T), 0).sdlFieldRoles;
+}
+
+package template sdlAggregateRoles(T, bool isDocumentRoot,
+    alias schema, size_t aggregateIndex)
 if (is(T == struct))
 {
     import std.meta : AliasSeq;
@@ -710,7 +719,7 @@ if (is(T == struct))
     static assert(validationError.length == 0, validationError);
 
     /// The projected roles, parallel to the aggregate's declared fields.
-    static immutable SdlAggregateRoles sdlFieldRoles = () {
+    enum SdlAggregateRoles sdlFieldRoles = () {
         SdlAggregateRoles result;
         result.strictUnknown = strictUnknown;
         static foreach (i; 0 .. fieldCount)
@@ -995,6 +1004,16 @@ version (unittest)
     static foreach (i; 0 .. R.length)
         static assert(roles.fieldNodeIndices[i] == kitchenSchema.edges[
             kitchenSchema.nodes[0].firstEdge + i]);
+}
+
+// Runtime metadata has a bounded symbol name even for a rich schema.
+@("wired.sdl.schema.runtimeStorageUsesTypeIdentity")
+@safe pure nothrow @nogc unittest
+{
+    // A schema value in the storage template's arguments grows with every
+    // field and annotation. Keep that CTFE data out of linker symbol names.
+    static assert(sdlAggregateRoles!Kitchen.sdlFieldRoles.mangleof.length < 256);
+    assert(sdlAggregateRoles!Kitchen.sdlFieldRoles.roles.length == 14);
 }
 
 // JSON schemas and digests are byte-identical for SDL-annotated types.
