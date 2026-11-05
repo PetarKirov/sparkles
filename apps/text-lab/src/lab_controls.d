@@ -8,7 +8,7 @@ import std.math : round;
 import sparkles.base.term_color : RgbColor;
 import sparkles.base.term_style : UnderlineStyle;
 import sparkles.font : openFace, UserCoordinate;
-import sparkles.input : Event, FocusEvent, Key, KeyAction, KeyEvent, PointerAction, PointerEvent, WheelEvent, match;
+import sparkles.input : Event, FocusEvent, GestureEvent, Key, KeyAction, KeyEvent, PointerAction, PointerEvent, WheelEvent, match;
 import sparkles.ui.components.controls : chip, ControlSize;
 import sparkles.ui.components.picker : PickerState;
 import sparkles.ui.components.property_sections : decodeSectionHit, SectionItem, SectionPart, SectionsOptions;
@@ -567,6 +567,9 @@ final class LabControls
     }
 
     /// Routes modal input before specimen shortcuts; returns whether consumed.
+    bool capturing() const @safe pure nothrow @nogc => sections.capturing;
+
+    /// ditto
     bool handle(H)(ref H h, in Event event, ref bool shown, bool pixelCoordinates = false)
     {
         overlayDirty = true;
@@ -680,6 +683,7 @@ final class LabControls
                 {
                     if (p.action == PointerAction.press)
                     {
+                        if (touching) return;
                         touching = true;
                         panning = false;
                         touchPress = p;
@@ -755,6 +759,10 @@ final class LabControls
                     }
                 }
             },
+            (in GestureEvent g) {
+                if (capturing)
+                    consumed = true;
+            },
             (_) {},
         );
         if (!wasDragging && sections.drag.active) dragBefore = before;
@@ -763,6 +771,8 @@ final class LabControls
             if (wasDragging && !sections.drag.active) rememberEdit(dragBefore);
             else if (!sections.drag.active && consumed && pending is null) rememberEdit(before);
         }
+        static if (__traits(hasMember, H, "capturePointer"))
+            h.capturePointer(capturing);
         if (consumed) h.requestFrame();
         if (before != *subject || wasDragging)
         {
@@ -921,8 +931,18 @@ final class LabControls
     const moved = Point(start.x + 20, start.y);
     cast(void) controls.handle(host, pointer(PointerAction.drag, moved), shown, true);
     assert(controls.sections.drag.active && model.font.size != original);
+    assert(host.pointerCaptured);
+    assert(controls.capturing);
+    auto p2 = PointerEvent(action: PointerAction.press, button: PointerButton.left, pos: Point(start.x + 50, start.y + 50));
+    p2.pointerId = 2;
+    assert(controls.handle(host, Event(p2), shown, true));
+    assert(controls.sections.drag.active);
+    import sparkles.input.events : Gesture;
+    assert(controls.handle(host, Event(GestureEvent(gesture: Gesture.pinch, scale: 1.5f)), shown, true));
+    assert(controls.sections.drag.active);
     cast(void) controls.handle(host, pointer(PointerAction.release, moved), shown, true);
     assert(!controls.sections.drag.active);
+    assert(!host.pointerCaptured);
     cast(void) controls.handle(host, Event(KeyEvent(Key.char_, 'u')), shown);
     assert(model.font.size == original, "one undo reverses the whole drag");
     cast(void) controls.handle(host, pointer(PointerAction.press, start), shown, true);

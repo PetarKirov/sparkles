@@ -36,7 +36,7 @@ import sparkles.ui.geometry : Size;
 import sparkles.ui_app.backend : Backend;
 import sparkles.ui_app.gui_setup : GuiRequest, GuiSession, openGuiSession;
 import sparkles.ui_app.host : FrameOps, HostState, canReadClipboard, isHost, noDraw, noSetup,
-    noShutdown, PointerUnit, RunConfig, withRealSize;
+    noShutdown, PointerUnit, RunConfig, TouchGestures, withRealSize;
 import sparkles.base.term_color : RgbColor;
 import raylib : GetTime;
 import sparkles.ui.effect : EffectRegistry;
@@ -265,7 +265,7 @@ bool runGui(alias present, alias handle, alias draw = noDraw,
     host.declareTarget(declared);
     host.capabilities = mousePointer;
     version (Android)
-        if (cfg.touchGestures)
+        if (cfg.touchGestures != TouchGestures.none)
             host.capabilities = touchPointer;
     // The terminal-grade keyboard, where the application asked for it: the
     // capability declaration IS the switch — RaylibEvents reads it back.

@@ -17,7 +17,7 @@ import workspace : PaneSpec;
 import settings : defaultFontFamily;
 import settings_load : androidConfigPath;
 import sparkles.base.logger : info, LogLevel, warning;
-import sparkles.ui_app.host : PointerUnit, RunConfig;
+import sparkles.ui_app.host : PointerUnit, RunConfig, TouchGestures;
 import sparkles.ui_app.run_app : runApp;
 
 /// The logcat tag (`adb logcat -s terminal`).
@@ -212,7 +212,7 @@ int androidMain()
         gui: gui,
         keyRelease: true, // the terminal-grade keyboard
         uiFollowsCellFont: true, // chrome text at the terminal's size
-        touchGestures: true, // taps, drags and pinches — not an emulated mouse
+        touchGestures: TouchGestures.all, // taps, drags and pinches — not an emulated mouse
         fractionalScroll: true, // scrolled between cells (`LAY7`)
         pointerUnit: PointerUnit.pixels, // the key row is not on the cell grid
         traceSink: &routeTraceLog, // raylib's own log joins ours (TPG7)

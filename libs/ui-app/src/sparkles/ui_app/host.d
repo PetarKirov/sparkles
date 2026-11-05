@@ -125,14 +125,12 @@ struct RunConfig
     */
     bool keyRelease;
     /**
-    GPU target: declare the window a touch surface (`touchPointer`) where the
-    platform is one (Android): contacts then arrive only as the gesture
-    recogniser resolves them — a tap as press/release, a drag as wheel steps,
-    long-press and pinch as gestures — and never as raylib's emulated mouse,
-    which reports every drag's end as a click. Off by default, which keeps an
-    application written against the emulated mouse (hue) unchanged.
+    GPU target: declare how touch contacts are interpreted on a touchscreen target:
+    - `none`: emulated mouse (press, drag, release), no gestures.
+    - `all`: gesture recogniser resolves all touches — single-finger drag is wheel steps (terminal).
+    - `multiTouchOnly`: single touch emits pointer events for UI widgets; multi-touch emits pinch-zoom.
     */
-    bool touchGestures;
+    TouchGestures touchGestures = TouchGestures.none;
     /**
     GPU target: deliver scrolls with their exact, fractional distance
     (`WheelEvent.fdx`/`fdy`) every frame they move — a wheel's, and a touch
@@ -233,6 +231,14 @@ enum PointerUnit : ubyte
     pixels, /// device pixels, for an application painting its own surface
 }
 
+/// How touch contacts are interpreted on a touchscreen target.
+enum TouchGestures : ubyte
+{
+    none,           /// Emulated mouse: single contact emits PointerEvent (press, drag, release), no gestures.
+    all,            /// Terminal-style: gesture recogniser resolves all touches (drag is wheel scroll, pinch is zoom).
+    multiTouchOnly, /// GUI-style: single-touch emits PointerEvent for UI widgets (sliders, buttons); multi-touch emits gestures (pinch).
+}
+
 /**
 The bookkeeping every host shares: what the application asked of this frame.
 
@@ -311,6 +317,19 @@ mixin template HostState(size_t opCapacity = frameOpCapacity,
     bool keyboardGrabbed() const @safe pure nothrow @nogc => _keyboardGrabbed;
 
     private bool _keyboardGrabbed;
+
+    /**
+    Whether the application has captured the pointer for a continuous drag
+    (such as a slider or resize handle). While captured on a touch target,
+    other touch contacts (e.g. accidental multi-finger taps or gestures)
+    are ignored so the drag is not interrupted.
+    */
+    void capturePointer(bool held) @safe pure nothrow @nogc { _pointerCaptured = held; }
+
+    /// ditto
+    bool pointerCaptured() const @safe pure nothrow @nogc => _pointerCaptured;
+
+    private bool _pointerCaptured;
 
     /**
     Ask for one more frame after this one, even with no input.
@@ -463,6 +482,8 @@ enum bool isHost(T) = __traits(compiles, (ref T h) {
     // The modifier level (`HST17`) — `HostState` carries it, so every host
     // that mixes the state in satisfies this for free.
     Mods m = h.modifiers;
+    h.capturePointer(true);
+    bool cap = h.pointerCaptured;
 });
 
 /**

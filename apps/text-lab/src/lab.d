@@ -32,7 +32,7 @@ import sparkles.base.term_color : RgbColor;
 import sparkles.base.term_control : PointerShape;
 import sparkles.base.term_style : TextAttr, UnderlineStyle;
 import sparkles.base.text.grapheme : fitCells, visibleWidth;
-import sparkles.input : Event, isEndOfInput, Key, KeyAction, KeyEvent, match, PointerAction, PointerEvent;
+import sparkles.input : Event, Gesture, GestureEvent, isEndOfInput, Key, KeyAction, KeyEvent, match, PointerAction, PointerEvent, WheelEvent;
 import sparkles.ui.geometry : Insets, Point, Rect, Size;
 import sparkles.ui.style : BorderStyle, BoxBorder, Palette, Slot, Visual;
 import sparkles.ui.widget : Builder, WidgetKind, WidgetTree;
@@ -129,6 +129,8 @@ struct Lab
     private SpecimenLayout specimenLayout;
     private uint swept;
     private LabControls controls;
+    private double pinchPosition = -1;
+    private double pinchAppliedSize = -1;
     /// A rejected runtime/CLI font request, reported by the entry point.
     string fontError() const @safe => controls is null ? null : controls.error;
 
@@ -301,7 +303,7 @@ struct Lab
             enum buttonWidth = 24;
             settingsButton_ = Rect(width - 12, 0, 12, headerRows);
             fontButton_ = Rect(width - 24, 0, 12, headerRows);
-            const first = format("text lab · %s · %s", discoverFonts ? format("%.2g pt", model.font.size)
+            const first = format("text lab · %s · %s", discoverFonts ? format("%.3f pt", model.font.size)
                 : format("%spx", h.fontSizePx),
                 loupe.shown ? format("loupe ×%s", loupe.scale) : "loupe off");
             static if (__traits(hasMember, H, "specimenFallbackGlyphs"))
@@ -448,6 +450,8 @@ struct Lab
             const work = canvas.finishGlyphPreparation();
             if (coverageReport.length)
             {
+                // Both panels contribute to one frame row. Bound diagnostics
+                // during interactive sessions as well as finite sweeps.
                 auto rows = specimenLayout.coverageWork[];
                 if (rows.length && rows[$ - 1].frame == paintedFrames - 1)
                     rows[$ - 1].work.add(work);
@@ -572,7 +576,7 @@ struct Lab
     /**
     Keys switch the settings, Esc or Back closes the sheet; a tap or click
     on Settings opens it and on a button does what it says; pointer motion,
-    or a drag, over the panels moves the loupe.
+    or a drag, over the panels moves the loupe; pinch zooms font size.
     */
     void handle(H)(ref H h, in Event e)
     {
@@ -640,8 +644,119 @@ struct Lab
                 pointing = true;
                 h.requestFrame();
             },
+            (in WheelEvent w) {
+                const cell = cellOf(h, w.pos);
+                if (cell.y < headerRows || (sheetOpen && sheet_.contains(cell)))
+                    return;
+                pointer = w.pos;
+                pointing = true;
+                h.requestFrame();
+            },
+            (in GestureEvent g) {
+                onGesture(h, g);
+            },
             (in _) {},
         );
+    }
+
+    private void onGesture(H)(ref H h, in GestureEvent g)
+    {
+        import std.math : isFinite;
+
+        if (g.gesture != Gesture.pinch)
+            return;
+        if (controls !is null && (controls.picker.active || controls.capturing))
+            return;
+        if (!g.scale.isFinite || g.scale <= 0.0f || (g.scale == 1.0f && g.deltaPx == 0.0f))
+            return;
+
+        pointing = false;
+        userSized = true;
+
+        if (sheetOpen && controls !is null)
+            cast(void) controls.sections.cancel(controls.pane);
+
+        auto before = model;
+        before.axes = before.axes.dup;
+
+        // Map physical finger separation delta directly into the slider's domain fraction.
+        // A gesture span of 900px provides a comfortable two-thumb spread across the full range.
+        const double gestureSpanPx = 900.0;
+        double du;
+        if (g.deltaPx != 0.0f)
+            du = g.deltaPx / gestureSpanPx;
+        else
+        {
+            if (g.scale <= 0.05f)
+                du = -1.0;
+            else if (g.scale >= 2.0f)
+                du = 1.0;
+            else
+                du = (g.scale - 1.0) * 0.5;
+        }
+
+        if (discoverFonts)
+        {
+            import std.math : isFinite;
+            import sparkles.ui.components.range_slider : SliderDomain;
+
+            enum fontDomain = SliderDomain(4.0, 144.0, 0.125, 18.0, 0.50, 0.05);
+
+            if (pinchPosition < 0 || !pinchPosition.isFinite
+                || pinchAppliedSize != model.font.size)
+                pinchPosition = fontDomain.fractionOf(model.font.size);
+
+            pinchPosition += du;
+            if (pinchPosition < 0.0) pinchPosition = 0.0;
+            if (pinchPosition > 1.0) pinchPosition = 1.0;
+
+            double newSize = fontDomain.valueOf(pinchPosition);
+            if (newSize < 4.0)
+                newSize = 4.0;
+            if (newSize > 144.0)
+                newSize = 144.0;
+
+            pinchAppliedSize = newSize;
+
+            if (newSize != model.font.size)
+            {
+                model.font.size = newSize;
+                if (controls !is null)
+                    controls.externalEdit(before);
+                changed(h);
+            }
+        }
+        else
+        {
+            import std.math : isFinite, round;
+            import sparkles.ui.components.range_slider : SliderDomain;
+
+            // Match the legacy keyboard shortcut's lower bound. minFitPx is
+            // the automatic fitting floor, not the explicit size limit.
+            const fontDomain = SliderDomain(6.0, 144.0, 1.0, 18.0, 0.50, 0.05);
+
+            if (pinchPosition < 0 || !pinchPosition.isFinite
+                || pinchAppliedSize != h.fontSizePx)
+                pinchPosition = fontDomain.fractionOf(h.fontSizePx);
+
+            pinchPosition += du;
+            if (pinchPosition < 0.0) pinchPosition = 0.0;
+            if (pinchPosition > 1.0) pinchPosition = 1.0;
+
+            int px = cast(int) round(fontDomain.valueOf(pinchPosition));
+            if (px < 6)
+                px = 6;
+            if (px > 144)
+                px = 144;
+
+            pinchAppliedSize = px;
+
+            if (px != h.fontSizePx)
+            {
+                h.fontSize(px);
+                changed(h);
+            }
+        }
     }
 
     // Whether `cell` is on a control: Settings, or a button of the open sheet.
@@ -1033,6 +1148,183 @@ version (unittest)
     assert(lab.settings.shaping != before.shaping, "s toggles shaping");
     assert(lab.settings.contrast > before.contrast, "] raises the contrast");
     assert(lab.loupe.shown && lab.loupe.scale == 6, "m hides the loupe, 2 shows it at ×6");
+}
+
+@("text_lab.pinchZoomsTheFontSize")
+@system unittest
+{
+    // Pinch gesture increases and decreases specimen font size when discoverFonts is true
+    Lab lab;
+    lab.discoverFonts = true;
+    lab.model.font.size = 12.0;
+
+    // Zoom in (pinch out, scale > 1)
+    cast(void) runAppRecorded(lab, RunConfig.init, [
+        Event(GestureEvent(Gesture.pinch, Point(0, 0), 1.25f)),
+    ]);
+    assert(lab.model.font.size > 12.0, "pinch out increases font size");
+    const zoomedIn = lab.model.font.size;
+
+    // Zoom out (pinch in, scale < 1)
+    cast(void) runAppRecorded(lab, RunConfig.init, [
+        Event(GestureEvent(Gesture.pinch, Point(0, 0), 0.8f)),
+    ]);
+    assert(lab.model.font.size < zoomedIn, "pinch in decreases font size");
+}
+
+/// Small physical movements accumulate before the displayed size is snapped.
+@("text_lab.pinchSmallPhysicalStepsAccumulate")
+@system unittest
+{
+    foreach (discover; [false, true])
+    {
+        Lab lab;
+        lab.discoverFonts = discover;
+        lab.model.font.size = 12;
+        SettingsHost host;
+        host.fontSize(12);
+        foreach (_; 0 .. 100)
+            lab.handle(host, Event(GestureEvent(gesture: Gesture.pinch, deltaPx: 1.0f)));
+        assert(discover ? lab.model.font.size > 12 : host.fontSizePx > 12);
+        foreach (_; 0 .. 100)
+            lab.handle(host, Event(GestureEvent(gesture: Gesture.pinch, deltaPx: -1.0f)));
+        assert(discover ? lab.model.font.size == 12 : host.fontSizePx == 12);
+    }
+}
+
+/// Scale-only and mixed events never reverse an outward pinch.
+@("text_lab.pinchScaleFallbackStaysMonotonic")
+@system unittest
+{
+    foreach (discover; [false, true])
+    {
+        Lab lab;
+        lab.discoverFonts = discover;
+        lab.model.font.size = 8;
+        SettingsHost host;
+        host.fontSize(8);
+        double previous = 8;
+        foreach (i; 0 .. 100)
+        {
+            const gesture = i % 3 == 0
+                ? GestureEvent(gesture: Gesture.pinch, deltaPx: 1.0f)
+                : GestureEvent(gesture: Gesture.pinch, scale: 1.02f);
+            lab.handle(host, Event(gesture));
+            const size = discover ? lab.model.font.size : host.fontSizePx;
+            assert(size >= previous);
+            previous = size;
+        }
+        assert(previous > 8);
+    }
+}
+
+/// Pinching inward at the keyboard minimum must not increase the size.
+@("text_lab.pinchLegacyKeyboardMinimum")
+@system unittest
+{
+    Lab lab;
+    SettingsHost host;
+    host.fontSize(6);
+    lab.handle(host, Event(GestureEvent(gesture: Gesture.pinch, deltaPx: -1.0f)));
+    assert(host.fontSizePx == 6);
+}
+
+/// An external size adjustment replaces the pinch baseline, even below one pixel.
+@("text_lab.pinchShortcutResynchronizesBaseline")
+@system unittest
+{
+    Lab lab;
+    lab.discoverFonts = true;
+    lab.model.font.size = 12;
+    SettingsHost host;
+    lab.handle(host, Event(GestureEvent(gesture: Gesture.pinch, deltaPx: 50.0f)));
+    lab.handle(host, Event(KeyEvent(Key.char_, '+')));
+    const before = lab.model.font.size;
+    lab.handle(host, Event(GestureEvent(gesture: Gesture.pinch, deltaPx: 1.0f)));
+    assert(lab.model.font.size >= before);
+    foreach (_; 0 .. 10)
+        lab.handle(host, Event(GestureEvent(gesture: Gesture.pinch, deltaPx: 1.0f)));
+    assert(lab.model.font.size > before);
+}
+
+@("text_lab.pinchPhysicalDeltaTracksSliderDomain")
+@system unittest
+{
+    Lab lab;
+    lab.discoverFonts = true;
+    lab.model.font.size = 12.0;
+
+    // Moving fingers apart by 50px increases size within reading range
+    cast(void) runAppRecorded(lab, RunConfig.init, [
+        Event(GestureEvent(gesture: Gesture.pinch, deltaPx: 50.0f)),
+    ]);
+    assert(lab.model.font.size > 12.0 && lab.model.font.size < 18.0, "moderate delta stays in reading range");
+    const expanded = lab.model.font.size;
+
+    // Moving fingers back by 50px returns exactly to starting size (zero hysteresis)
+    cast(void) runAppRecorded(lab, RunConfig.init, [
+        Event(GestureEvent(gesture: Gesture.pinch, deltaPx: -50.0f)),
+    ]);
+    assert(lab.model.font.size == 12.0, "symmetric delta restores initial size exactly");
+
+    // Large delta sweeps into the headline range
+    cast(void) runAppRecorded(lab, RunConfig.init, [
+        Event(GestureEvent(gesture: Gesture.pinch, deltaPx: 500.0f)),
+    ]);
+    assert(lab.model.font.size > 50.0, "large delta sweeps into headline range");
+}
+
+@("text_lab.pinchZoomsTheHostFontSizeWhenNotDiscoveringFonts")
+@system unittest
+{
+    // On a host without font discovery, pinch adjusts host fontSizePx
+    Lab lab;
+    lab.discoverFonts = false;
+
+    auto rec = runAppRecorded(lab, RunConfig.init, [
+        Event(GestureEvent(Gesture.pinch, Point(0, 0), 1.25f)),
+    ]);
+    assert(rec.fontSizePx > 18, "pinch out increases host font size");
+    const zoomedIn = rec.fontSizePx;
+
+    rec = runAppRecorded(lab, RunConfig.init, [
+        Event(GestureEvent(Gesture.pinch, Point(0, 0), 0.8f)),
+    ]);
+    assert(rec.fontSizePx < zoomedIn, "pinch in decreases host font size");
+}
+
+@("text_lab.pinchClampsFontSizeWithinBounds")
+@system unittest
+{
+    Lab lab;
+    lab.discoverFonts = true;
+    lab.model.font.size = 140.0;
+
+    // Zoom in beyond max 144
+    cast(void) runAppRecorded(lab, RunConfig.init, [
+        Event(GestureEvent(Gesture.pinch, Point(0, 0), 2.0f)),
+    ]);
+    assert(lab.model.font.size == 144.0, "font size clamped at max 144");
+
+    // Zoom out beyond min 4
+    cast(void) runAppRecorded(lab, RunConfig.init, [
+        Event(GestureEvent(Gesture.pinch, Point(0, 0), 0.01f)),
+    ]);
+    assert(lab.model.font.size == 4.0, "font size clamped at min 4");
+}
+
+@("text_lab.pinchIgnoredWhenPickerActive")
+@system unittest
+{
+    Lab lab;
+    lab.discoverFonts = true;
+    lab.pickerAtStart = true;
+    lab.model.font.size = 12.0;
+
+    cast(void) runAppRecorded(lab, RunConfig.init, [
+        Event(GestureEvent(Gesture.pinch, Point(0, 0), 1.5f)),
+    ]);
+    assert(lab.model.font.size == 12.0, "pinch is ignored while font picker is active");
 }
 
 @("text_lab.aHostWithoutTheSettingsStillDrawsTheSpecimen")
