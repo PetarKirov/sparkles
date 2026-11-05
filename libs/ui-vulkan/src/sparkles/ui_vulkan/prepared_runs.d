@@ -7,7 +7,7 @@ content and collection index. Changing size or coordinates gives another key.
 module sparkles.ui_vulkan.prepared_runs;
 
 import sparkles.base.buffer : UniqueBuffer;
-import sparkles.font.cluster_shaping : ClusterGlyph, maxClusterGlyphs;
+import sparkles.font.cluster_shaping : ClusterDirection, ClusterGlyph, maxClusterGlyphs;
 import sparkles.font.instance : maxVariationAxes;
 import sparkles.font.units : Ppem;
 
@@ -19,6 +19,7 @@ struct PreparedRuns(size_t Capacity = 256)
     {
         ulong hash, used;
         uint face;
+        ClusterDirection direction;
         Ppem size;
         ushort characters, axes, count;
         uint[maxClusterGlyphs] text;
@@ -35,7 +36,8 @@ struct PreparedRuns(size_t Capacity = 256)
     retained too, without turning them into successful shapes.
     */
     const(ClusterGlyph)[] prepare(Shape)(uint face, Ppem size,
-        scope const(short)[] coordinates, scope const(uint)[] text, scope Shape shape)
+        scope const(short)[] coordinates, scope const(uint)[] text, scope Shape shape,
+        ClusterDirection direction = ClusterDirection.automatic)
     {
         if (!text.length || text.length > maxClusterGlyphs || coordinates.length > maxVariationAxes)
             return null;
@@ -48,6 +50,7 @@ struct PreparedRuns(size_t Capacity = 256)
         ulong hash = 0xcbf2_9ce4_8422_2325;
         void mix(ulong value) { hash = (hash ^ value) * 0x100_0000_01b3; }
         mix(face); mix(size.numerator); mix(size.denominator);
+        mix(direction);
         mix(coordinates.length);
         foreach (c; coordinates) mix(cast(ushort) c);
         mix(text.length);
@@ -57,7 +60,7 @@ struct PreparedRuns(size_t Capacity = 256)
         foreach (i; first .. first + 4)
         {
             auto e = &entries[][i];
-            if (e.used && e.hash == hash && e.face == face && e.size == size
+            if (e.used && e.hash == hash && e.face == face && e.size == size && e.direction == direction
                 && e.axes == coordinates.length && e.characters == text.length
                 && e.coordinates[0 .. e.axes] == coordinates && e.text[0 .. e.characters] == text)
             {
@@ -69,6 +72,7 @@ struct PreparedRuns(size_t Capacity = 256)
         }
         auto e = &entries[][pick];
         e.hash = hash; e.used = clock; e.face = face; e.size = size;
+        e.direction = direction;
         e.axes = cast(ushort) coordinates.length;
         e.characters = cast(ushort) text.length;
         e.coordinates[0 .. e.axes] = coordinates;
@@ -90,6 +94,25 @@ struct PreparedRuns(size_t Capacity = 256)
     ulong hits() const @safe pure nothrow @nogc => hits_;
     /// ditto
     ulong misses() const @safe pure nothrow @nogc => misses_;
+}
+
+/// The same run serves measurement, both panels and later unchanged frames.
+@("ui_vulkan.prepared_runs.directionIdentity")
+@system unittest
+{
+    PreparedRuns!16 cache;
+    uint[1] text = ['('];
+    uint calls;
+    auto shape = (scope ClusterGlyph[] output) {
+        output[0] = ClusterGlyph(++calls);
+        return size_t(1);
+    };
+    const size = Ppem.fromInteger(24).value;
+    const ltr = cache.prepare(1, size, null, text[], shape, ClusterDirection.ltr)[0].glyph;
+    const rtl = cache.prepare(1, size, null, text[], shape, ClusterDirection.rtl)[0].glyph;
+    assert(ltr != rtl && calls == 2);
+    assert(cache.prepare(1, size, null, text[], shape, ClusterDirection.ltr)[0].glyph == ltr);
+    assert(calls == 2);
 }
 
 /// The same run serves measurement, both panels and later unchanged frames.

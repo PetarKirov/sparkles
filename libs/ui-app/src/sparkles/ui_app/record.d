@@ -181,6 +181,7 @@ struct RecordingHost
     {
         specimenSelection = request;
         specimenSelection.coordinates = request.coordinates.dup;
+        specimenSelection.fallbacks = request.fallbacks.dup;
         specimenFontRequests ~= specimenSelection;
         return true;
     }
@@ -647,4 +648,18 @@ unittest
     assert(seen == "ん");
     withPreedit(h, CompositionEvent.init, (scope const(char)[] s) { seen = s.idup; });
     assert(seen == "", "an ending update has no preedit");
+}
+
+/// Caller mutations cannot change a recorded fallback-list snapshot.
+@("ui_app.record.specimenFallbackSnapshot")
+@safe pure nothrow unittest
+{
+    import sparkles.ui_app.specimen_font : SpecimenFallbackFace;
+    ubyte[] bytes = [1, 2, 3];
+    auto fallbacks = [SpecimenFallbackFace(bytes, 0, 42)];
+    RecordingHost host;
+    assert(host.specimenFont(SpecimenFontRequest(fallbacks: fallbacks)));
+    fallbacks[0].faceIndex = 1;
+    assert(host.specimenFont().fallbacks[0].faceIndex == 0);
+    assert(host.specimenFontRequests[0].fallbacks[0].faceIndex == 0);
 }

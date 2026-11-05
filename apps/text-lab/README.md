@@ -23,6 +23,11 @@ hinting, `s` shaping, `[`/`]` contrast, `m` loupe, `x` crosshair, `1`–`4` zoom
 `+`/`-` size, `p` screenshot, and `q` quit. On touchscreens (such as Android),
 pinch to increase or decrease the font size. Editors consume their own input.
 
+**Specimen → Sample group** selects Unicode pages, including CJK, RTL, Indic,
+historic scripts and emoji. `n`/`N` cycle groups; **Start at row** or Page Up/
+Page Down reveals later samples. `--showcase cjk --no-loupe --shot /tmp/cjk.png`
+captures a selected group. See the [sample inventory and coverage audit](../../docs/libs/ui-app/reference/unicode-showcase.md).
+
 For reproducible measurements:
 
 ```bash

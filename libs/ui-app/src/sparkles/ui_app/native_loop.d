@@ -312,6 +312,7 @@ struct NativeSession
     PhysicalInsets insets;
     CellFont font;           ///
     PreparedSpecimenFont specimen; /// independent preview, em pixels
+    FallbackFace[] specimenFallbackFaces; /// retained conversion of supplied script faces
     CellFont interfaceFont; /// stable UI font while the preview drives the UI
     bool delegate(in SpecimenFontRequest) @system setSpecimen; ///
     ulong specimenGeneration; /// latest accepted request
@@ -357,6 +358,17 @@ struct NativeSession
     /// The swapchain's alpha reaches the compositor: frames start
     /// transparent, and the window's ground is filled before the content.
     bool transparent;
+}
+
+private FallbackFace[] preparedFallbacks(ref NativeSession session) @safe
+{
+    const sources = session.specimen.request.fallbacks;
+    if (session.specimenFallbackFaces.length != sources.length)
+        session.specimenFallbackFaces.length = sources.length;
+    foreach (i, source; sources)
+        session.specimenFallbackFaces[i] = FallbackFace(source.bytes, session.specimen.ppem,
+            source.faceIndex, source.contentHash);
+    return session.specimenFallbackFaces;
 }
 
 /// The host an application sees in a native window.
@@ -1043,7 +1055,8 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                 session.specimen.ppem, session.specimen.request.coordinates, session.specimen.metrics,
                 session.specimen.request.contentHash, session.specimen.cellH,
                 session.specimen.request.familyStyles ? session.specimen.request.styleBytes[] : null,
-                session.specimen.request.styleIndices[], session.specimen.request.styleContentHashes[]);
+                session.specimen.request.styleIndices[], session.specimen.request.styleContentHashes[],
+                preparedFallbacks(session));
         if (session.specimenRenderingSet)
         {
             gpu.canvas.specimenTextRendering(session.specimenRendering);
@@ -1439,7 +1452,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                 cast(void) gpu.canvas.specimenFont(session.specimen.bytes, wanted.faceIndex,
                     session.specimen.ppem, wanted.coordinates, session.specimen.metrics, wanted.contentHash,
                     session.specimen.cellH, wanted.familyStyles ? wanted.styleBytes[] : null,
-                    wanted.styleIndices[], wanted.styleContentHashes[]);
+                    wanted.styleIndices[], wanted.styleContentHashes[], preparedFallbacks(session));
         }
         return true;
     };

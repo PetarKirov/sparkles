@@ -82,20 +82,32 @@
               \( -name 'NotoSans*.ttf' -o -name 'NotoSans*.otf' \) \
               \( -name '*-Regular.*' -o ! -name '*-*' \) \
               -exec cp '{}' $out/fonts/ \;
+            # These families are outside the NotoSans* naming convention.
+            find ${pkgs.noto-fonts}/share/fonts/noto -type f \
+              \( -name 'NotoMusic*' -o -name 'NotoSerifTibetan*' \) \
+              \( -name '*-Regular.*' -o ! -name '*-*' \) \
+              -exec cp '{}' $out/fonts/ \;
+            # CJK is a separate Noto package. Keep the collection: the catalog
+            # selects its regional member and the renderer retains that index.
+            cp ${pkgs.noto-fonts-cjk-sans}/share/fonts/opentype/noto-cjk/NotoSansCJK-VF.otf.ttc \
+              $out/fonts/
             cp ${pkgs.noto-fonts-color-emoji}/share/fonts/noto/NotoColorEmoji.ttf $out/fonts/
 
             # The binary font outputs omit upstream licenses. Retain the
             # original notices from their pinned sources, with source-relative
             # paths so per-family copyright notices cannot overwrite each other.
-            for source in ${pkgs.noto-fonts.src} ${pkgs.noto-fonts-color-emoji.src}; do
+            # Source directories are read-only store paths; their modes must
+            # not prevent later notices from entering shared parent directories.
+            for source in ${pkgs.noto-fonts.src} ${pkgs.noto-fonts-color-emoji.src} ${pkgs.noto-fonts-cjk-sans.src}; do
               case "$source" in
                 ${pkgs.noto-fonts.src}) family=noto-sans ;;
+                ${pkgs.noto-fonts-cjk-sans.src}) family=noto-cjk ;;
                 *) family=noto-color-emoji ;;
               esac
               mkdir -p "$out/licenses/$family"
               (cd "$source" && find . -type f \
                 \( -iname '*license*' -o -iname '*licence*' -o -iname 'OFL*' -o -iname 'NOTICE*' \) \
-                -exec cp --parents '{}' "$out/licenses/$family/" \;)
+                -exec cp --no-preserve=mode --parents '{}' "$out/licenses/$family/" \;)
             done
 
             cat > $out/NOTICE <<'EOF'
@@ -104,13 +116,14 @@
             Roboto: OFL-1.1, https://github.com/googlefonts/roboto-3-classic.
             Uiua386: MIT.
             Noto Sans Unicode fallback fonts: OFL-1.1, https://notofonts.github.io.
+            Noto Sans CJK: OFL-1.1, https://notofonts.github.io.
             Noto Color Emoji: OFL-1.1, https://github.com/googlefonts/noto-emoji.
             Original Noto license and copyright notices accompany this bundle in licenses/.
             EOF
 
-            find $out/fonts -type f \( -name '*.ttf' -o -name '*.otf' \) -print0 \
+            find $out/fonts -type f \( -name '*.ttf' -o -name '*.otf' -o -name '*.ttc' \) -print0 \
               | while IFS= read -r -d "" font; do
-                fc-query --format=%{charset} "$font" > "$font.charset"
+                fc-query --index 0 --format=%{charset} "$font" > "$font.charset"
               done
           '';
     in

@@ -22,6 +22,8 @@ without a driver.
 */
 module sparkles.ui_vulkan.painter;
 
+import sparkles.font.cluster_shaping : ClusterDirection;
+
 import std.traits : EnumMembers;
 
 import sparkles.base.buffer : UniqueBuffer;
@@ -221,6 +223,7 @@ struct ClusterRequest
     GlyphRequest first; /// style, presentation, colours and cells, as for one glyph
     double* advance; /// optional synchronous result: natural run advance in pixels
     bool measureOnly; /// shape and measure without rasterizing or emitting quads
+    ClusterDirection direction; /// resolved paragraph direction, or automatic
 }
 
 /**
@@ -465,7 +468,8 @@ if (isImageSource!Images)
     retain the grid rendering and report the shaping degradation.
     */
     int naturalTextPx(scope const(char)[] text, int x, int y, vec4 colour,
-        vec4 background = v4(0, 0, 0, 0), bool bold = false, bool italic = false)
+        vec4 background = v4(0, 0, 0, 0), bool bold = false, bool italic = false,
+        ClusterDirection direction = ClusterDirection.automatic)
     {
         static if (drawsText && shapesClusters!GlyphSource)
         {
@@ -473,12 +477,13 @@ if (isImageSource!Images)
             const decoded = convertPrefix(text, cps[], UtfMode.replacement);
             if (decoded.consumed == text.length && decoded.written)
             {
-                const request = GlyphRequest(cast(dchar) cps[0], faceStyle(bold, italic), false,
+                const request = GlyphRequest(cast(dchar) cps[0], faceStyle(bold, italic),
+                    emojiPresentation(cast(const(uint)[]) cps[0 .. decoded.written]),
                     colour, background);
                 double advance;
                 if (shapedAt(m_.originX + shiftX_ + x, m_.originY + shiftY_ + y,
                         m_.cellH, ClusterRequest(cast(const(uint)[]) cps[0 .. decoded.written], request,
-                            &advance)))
+                            &advance, false, direction)))
                     return cast(int)(advance + 0.5);
             }
             report.count(Degradation.unshapedCluster);
@@ -488,7 +493,8 @@ if (isImageSource!Images)
     }
 
     /// Natural short-line advance without rasterization or painting.
-    int naturalTextWidthPx(scope const(char)[] text, bool bold = false, bool italic = false)
+    int naturalTextWidthPx(scope const(char)[] text, bool bold = false, bool italic = false,
+        ClusterDirection direction = ClusterDirection.automatic)
     {
         static if (drawsText && shapesClusters!GlyphSource)
         {
@@ -499,9 +505,10 @@ if (isImageSource!Images)
                 double advance;
                 GlyphQuad[1] unused;
                 size_t count;
-                const request = GlyphRequest(cast(dchar) cps[0], faceStyle(bold, italic));
+                const request = GlyphRequest(cast(dchar) cps[0], faceStyle(bold, italic),
+                    emojiPresentation(cast(const(uint)[]) cps[0 .. decoded.written]));
                 if (images.resolveCluster(ClusterRequest(cast(const(uint)[]) cps[0 .. decoded.written],
-                        request, &advance, true), unused[], count) == GlyphOutcome.drawn)
+                        request, &advance, true, direction), unused[], count) == GlyphOutcome.drawn)
                     return cast(int)(advance + 0.5);
             }
         }
@@ -1417,6 +1424,33 @@ unittest
     p.textRun(Point(0, 0), "\U0001F469\u200D\U0001F4BB", v);
     assert(p.images.lastEmoji && p.report[Degradation.unshapedCluster] == 1,
         "a joiner sequence draws its first emoji and counts as unshaped");
+}
+
+/// Natural measurement and drawing preserve explicit emoji/text presentation.
+@("ui_vulkan.painter.naturalEmojiPresentation")
+@safe pure nothrow @nogc unittest
+{
+    struct Source
+    {
+        FakeGlyphs base;
+        alias base this;
+        GlyphOutcome resolveCluster(in ClusterRequest r, scope GlyphQuad[] quads, out size_t count)
+            @safe pure nothrow @nogc
+        {
+            base.lastEmoji = r.first.emoji;
+            count = 0;
+            // The request borrows the caller's mutable measurement slot.
+            if (r.advance !is null)
+                () @trusted { *cast(double*) r.advance = 10; }();
+            return GlyphOutcome.drawn;
+        }
+    }
+    Painter!Source p;
+    p.begin(Size(200, 100), metrics10x20);
+    assert(p.naturalTextWidthPx("\u2764\uFE0F") == 10);
+    assert(p.images.lastEmoji);
+    assert(p.naturalTextPx("\u2764\uFE0E", 0, 0, v4(1, 1, 1, 1)) == 10);
+    assert(!p.images.lastEmoji);
 }
 
 @("ui_vulkan.painter.textWithoutAGlyphSourceCountsAMiss")

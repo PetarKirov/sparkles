@@ -9,6 +9,24 @@ import sparkles.font : axes, Face, name, Tag, UserCoordinate;
 import sparkles.ui.property_tree : EditValue, hidden, Label, NumericInput,
     PreferredInput, Range, readOnly, Section, ShowIf;
 import sparkles.ui_vulkan.text_rendering : Loupe, TextRendering;
+import unicode_samples : Showcase, unicodeSamples;
+
+/// Curated sample pages; selection changes content without changing typography.
+struct SpecimenSettings
+{
+    @Label("Sample group") Showcase group;
+    @Label("Start at row") uint firstRow = 1;
+    @Label("Wrapped row offset") @Range(0, 256, 1) uint wrappedOffset;
+
+    /// Every sample remains reachable on narrow displays and at large font sizes.
+    Range propRange(string field) const @safe pure nothrow @nogc
+    {
+        uint count;
+        foreach (sample; unicodeSamples) if (sample.group == group) ++count;
+        if (group == Showcase.overview) count += 2;
+        return field == "firstRow" ? Range(1, count, 1) : Range(double.nan, double.nan);
+    }
+}
 
 /// One declared axis. Bounds/defaults are consumed by PropertyTree's dispatch.
 struct AxisSetting
@@ -57,6 +75,7 @@ struct FontSettings
 struct LabSettings
 {
     @Section("Font") FontSettings font;
+    @Section("Specimen") SpecimenSettings samples;
     @Section("Variable axes") AxisSetting[] axes;
     @Section("Rendering") TextRendering rendering;
     @Section("Loupe") Loupe loupe = Loupe(shown: true, sourceWidth: 40, sourceHeight: 24, scale: 8);

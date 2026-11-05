@@ -398,8 +398,16 @@
         version = "0.1.0";
         appDir = "apps/text-lab";
 
-        nativeBuildInputs = [ pkgs.pkg-config ];
+        nativeBuildInputs = [
+          pkgs.pkg-config
+          pkgs.makeWrapper
+        ];
         buildInputs = [ pkgs.raylib ];
+
+        postFixup = ''
+          wrapProgram $out/bin/${finalAttrs.pname} \
+            --set-default SPARKLES_FONTS_PATH ${config.legacyPackages.sparklesFonts.fontBundle}/fonts
+        '';
 
         meta = {
           description = "The Vulkan canvas's text rendering, switched live and seen through a loupe";
