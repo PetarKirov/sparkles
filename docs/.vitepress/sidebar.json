@@ -1507,6 +1507,10 @@
           {
             "text": "Decisions",
             "link": "/specs/ui-vulkan/decisions"
+          },
+          {
+            "text": "Glyph inspection",
+            "link": "/libs/ui-vulkan/reference/glyph-inspection"
           }
         ]
       },

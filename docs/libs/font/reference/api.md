@@ -597,7 +597,8 @@ shaper allocates its callback state, workspace included, once, in a `Unique`.
 `sparkles.font.cluster_shaping` shapes one grapheme cluster behind a narrow
 interface: `openClusterShaper(&inst)` (null when the engine cannot shape),
 `shapeCluster(shaper, text, ppemNumerator, ppemDenominator, glyphs)` writing
-glyph ids with their advance and offsets in pixels — at most
+glyph ids with their advance and offsets in pixels, source UTF-8 `cluster`
+offsets and shaping safety `flags` — at most
 `maxClusterGlyphs` of them, a cluster needing more refused whole — and
 `closeClusterShaper(shaper)`. The module imports the engine only inside its
 function bodies, so a renderer naming these functions does not analyse the

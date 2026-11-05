@@ -28,6 +28,8 @@ struct ClusterGlyph
     double advance; /// pixels to the next glyph's pen
     double xOffset; /// pixels right of this glyph's pen
     double yOffset; /// pixels up from the baseline
+    uint cluster; /// source UTF-8 byte offset, retained for glyph inspection
+    uint flags; /// shaping safety flags of the rendered glyph
 }
 
 /**
@@ -122,7 +124,7 @@ size_t shapeCluster(ClusterShaper* shaper, scope const(char)[] text, ulong ppemN
         return 0;
     foreach (i, g; shaped[0 .. result.value.glyphCount])
         glyphs[i] = ClusterGlyph(g.glyphId, toPixels(g.xAdvance, ppem.value), toPixels(g.xOffset, ppem.value),
-            toPixels(g.yOffset, ppem.value));
+            toPixels(g.yOffset, ppem.value), g.cluster, g.flags);
     return result.value.glyphCount;
 }
 
