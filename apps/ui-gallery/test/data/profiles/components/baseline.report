@@ -1,5 +1,5 @@
-color-dropped ×78 (colorDepth)
+color-dropped ×80 (colorDepth)
 ascii-border ×4 (unicode)
 ascii-scrollbar ×1 (unicode)
-ascii-glyph ×11 (unicode)
+ascii-glyph ×13 (unicode)
 alpha-flattened ×5 (alpha)

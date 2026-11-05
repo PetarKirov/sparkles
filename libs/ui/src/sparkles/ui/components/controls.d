@@ -42,12 +42,25 @@ uint slider(ref Builder b, double value, in SliderDomain domain, size_t hitId,
     columns = columns < 3 ? 3 : columns;
     double fraction = value.isFinite ? domain.fractionOf(value) : 0;
     fraction = fraction < 0 ? 0 : fraction > 1 ? 1 : fraction;
-    const thumb = cast(int)(fraction * (columns - 1) + 0.5);
+    const position = fraction * (columns - 1);
+    const thumb = cast(int)(position + 0.5);
     string track;
     foreach (i; 0 .. columns)
-        track ~= i == thumb ? "◆" : "─";
-    auto box = controlBox([b.add(Widget(kind: WidgetKind.text, text: track,
-        slot: Slot.textPrimary, textStyle: valueStyle(), alignY: Alignment.center))],
+        track ~= "─";
+    const rail = b.add(Widget(kind: WidgetKind.text, text: track,
+        slot: Slot.textPrimary, textStyle: valueStyle(), alignY: Alignment.center));
+    const knob = b.add(Widget(kind: WidgetKind.text, text: "◆", width: SizeSpec.fixed(1),
+        slot: Slot.textPrimary, textStyle: valueStyle(),
+        alignY: Alignment.center));
+    const spacer = b.add(Widget(kind: WidgetKind.box, width: SizeSpec.fixed(thumb)));
+    const row = b.add(Widget(kind: WidgetKind.row, children: [spacer, knob]));
+    const moving = b.add(Widget(kind: WidgetKind.stack, children: [row], clipX: true,
+        width: SizeSpec.fixed(columns), height: SizeSpec.fixed(sz.rows),
+        alignY: Alignment.center,
+        childOffsetFracX: cast(float)(thumb - position)));
+    const layers = b.add(Widget(kind: WidgetKind.stack, children: [rail, moving],
+        width: SizeSpec.fixed(columns), height: SizeSpec.fixed(sz.rows), alignY: Alignment.center));
+    auto box = controlBox([layers],
         sz, hitId, Slot.surfaceSunken, 0);
     box.padding = Insets.init;
     box.width = SizeSpec.fixed(columns);
@@ -58,6 +71,40 @@ uint slider(ref Builder b, double value, in SliderDomain domain, size_t hitId,
 uint slider(ref Builder b, double value, double lo, double hi, size_t hitId,
     ControlSize sz = ControlSize.init, int columns = 16)
     => slider(b, value, SliderDomain(lo, hi), hitId, sz, columns);
+
+/// One-pixel value increments move the painted thumb between text columns,
+/// including across whole-cell boundaries, without changing the hit target.
+@("ui.controls.sliderMovesBetweenCells")
+@safe unittest
+{
+    import std.math : isClose;
+    import std.conv : text;
+    import sparkles.base.term_color : RgbColor;
+    import sparkles.ui.canvas : PushShift, TextRun, match;
+    import sparkles.ui.display_list : buildDisplayList;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.style : Palette;
+
+    foreach (pixel; 0 .. 151)
+    {
+        Builder b;
+        const root = slider(b, pixel / 150.0, SliderDomain(0, 1), 7,
+            ControlSize(rows: 3), 16);
+        const tree = b.finish(root);
+        const frames = layout(tree);
+        assert(frames[root].rect.width == 16 && frames[root].rect.height == 3);
+        const ops = buildDisplayList(tree, frames, Palette.init, RgbColor.init, RgbColor.init);
+        float shift = 0;
+        double painted = -1;
+        foreach (ref op; ops)
+            op.payload.match!(
+                (in PushShift s) { shift += s.dx; },
+                (in TextRun t) { if (t.text == "◆") painted = (t.rect.x + shift) * 10; },
+                (_) {});
+        assert(isClose(painted, cast(double) pixel, 0.00001, 0.00001),
+            text("pixel ", pixel, " painted ", painted));
+    }
+}
 
 /// A value: the cell font at the body step (`uiMono`), bold when selected.
 private TextStyle valueStyle(bool bold = false) pure nothrow @nogc

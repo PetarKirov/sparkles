@@ -16,7 +16,8 @@ import sparkles.ui.components.property_sections : decodeSectionHit, inlineEditor
 import sparkles.ui.components.property_view : refusalText;
 import sparkles.ui.components.range_slider : RangeSlider, SliderDomain;
 import sparkles.ui.components.settings_pane : SettingsResult;
-import sparkles.ui.geometry : Rect;
+import sparkles.ui.geometry : Rect, Size;
+import sparkles.ui.state : hoverTargets, hitAt;
 import sparkles.ui.layout : Frame;
 import sparkles.ui.property_tree : EditValue, LeafKind, PropertyNode, readValueAt;
 import sparkles.ui.style : Slot;
@@ -237,12 +238,17 @@ struct SettingsSections
     /// Whether a slider interaction holds pointer capture.
     bool capturing() const @safe pure nothrow @nogc => drag.active || pendingTouch;
 
-    /// Pointer coordinates and frames must use the same space. Capture owns
-    /// subsequent moves/releases, including positions outside the track.
+    /// Frames use layout cells; cellPixels converts pixel pointers to those
+    /// cells (defaults to identity). Hits include fractional viewport shifts
+    /// and clipping. Capture owns subsequent moves/releases outside the track.
     bool pointer(P)(ref P pane, in PointerEvent p, in WidgetTree tree,
-        scope const(Frame)[] frames, size_t base, out SettingsResult result, bool touch = false)
+        scope const(Frame)[] frames, size_t base, out SettingsResult result, bool touch = false,
+        Size cellPixels = Size(1, 1))
     {
         result = SettingsResult.init;
+        const cw = cellPixels.width > 0 ? cellPixels.width : 1;
+        const ch = cellPixels.height > 0 ? cellPixels.height : 1;
+        const slop = (cw > ch ? cw : ch) / 4 + 1;
         if (pendingTouch)
         {
             if (p.pointerId != pressed.pointerId)
@@ -255,12 +261,12 @@ struct SettingsSections
                 pendingTouch = false;
                 return false;
             }
-            if (ay > ax && ay >= 1)
+            if (ay > ax && ay >= slop)
             {
                 pendingTouch = false;
                 return false;
             }
-            if (ax < 1 || ax <= ay)
+            if (ax < slop || ax <= ay)
                 return false;
             pendingTouch = false;
             drag.begin(pendingTrack, pendingDomain, pendingBefore, p.pos.x);
@@ -282,9 +288,11 @@ struct SettingsSections
         }
         if (p.action != PointerAction.press || p.button != PointerButton.left)
             return false;
+        const targets = hoverTargets(tree, frames);
+        const hit = targets.hitAt(p.pos.x / cast(float) cw, p.pos.y / cast(float) ch);
         foreach_reverse (i, ref const widget; tree.nodes)
         {
-            if (i >= frames.length || !frames[i].rect.contains(p.pos))
+            if (i >= frames.length || !hit || widget.hitId != hit)
                 continue;
             uint node, part;
             if (!decodeSectionHit(base, widget.hitId, node, part)
@@ -298,15 +306,21 @@ struct SettingsSections
             dragKind = n.kind;
             dragFloat = n.typeName == "float";
             pressed = p;
+            Rect track = frames[i].rect;
+            float dx = 0, dy = 0;
+            foreach (ref target; targets)
+                if (target.hitId == hit) { dx = target.dx; dy = target.dy; }
+            track = Rect(cast(int)((track.x + dx) * cw), cast(int)((track.y + dy) * ch),
+                track.width * cw, track.height * ch);
             if (touch)
             {
                 pendingTouch = true;
-                pendingTrack = frames[i].rect;
+                pendingTrack = track;
                 pendingDomain = SliderDomain(n.lo, n.hi, n.step, n.splitLo, n.splitFrac, n.splitW);
                 pendingBefore = before.kind == EditValue.Kind.integral ? before.i : before.f;
                 return false;
             }
-            drag.begin(frames[i].rect, SliderDomain(n.lo, n.hi, n.step, n.splitLo, n.splitFrac, n.splitW),
+            drag.begin(track, SliderDomain(n.lo, n.hi, n.step, n.splitLo, n.splitFrac, n.splitW),
                 before.kind == EditValue.Kind.integral ? before.i : before.f, p.pos.x);
             result = pane.previewAt(dragPath, numeric(drag.value));
             return true;
@@ -317,6 +331,50 @@ struct SettingsSections
     private EditValue numeric(double value) const @safe pure nothrow @nogc
         => dragKind == LeafKind.integral ? EditValue.of(cast(long) value)
             : EditValue.of(dragFloat ? cast(double) cast(float) value : value);
+}
+
+/// Pixel pointers use the painted position of a fractionally scrolled track,
+/// and cannot start capture in the clipped part of the same track.
+@("ui.settings_sections.pixelPointerUnderFractionalScroll")
+@system unittest
+{
+    import sparkles.ui.components.settings_pane : SettingsPane;
+    import sparkles.ui.property_tree : NumericInput, PreferredInput, Range;
+    import sparkles.ui.geometry : Constraints, Point, SizeSpec;
+    import sparkles.ui.layout : layout;
+
+    struct Subject
+    {
+        @Range(0, 1) @PreferredInput(NumericInput.slider) double value = 0.5;
+    }
+    Subject subject;
+    SettingsPane!Subject pane;
+    pane.open(&subject, subject);
+    SettingsSections sections;
+    Builder b;
+    const row = sections.row(b, pane, sections.items(pane)[0], false,
+        SectionsOptions(width: 40, targetRows: 3), 1000);
+    const root = b.add(Widget(kind: WidgetKind.column, children: [row], clipY: true,
+        height: SizeSpec.fixed(6), childOffsetFracY: 0.5));
+    const tree = b.finish(root);
+    const frames = layout(tree, Constraints(maxW: 40));
+    Rect track;
+    foreach (i, widget; tree.nodes)
+        if (widget.hitId == sectionHit(1000, 0, SectionPart.slider)) track = frames[i].rect;
+    assert(track.height == 3);
+    SettingsResult result;
+    const at = Point((track.x + 1) * 10, track.y * 20 - 5);
+    assert(sections.pointer(pane, PointerEvent(PointerAction.press, PointerButton.left, at),
+        tree, frames, 1000, result, false, Size(10, 20)),
+        "the top half row is painted above its integer frame");
+    const first = subject.value;
+    cast(void) sections.pointer(pane, PointerEvent(PointerAction.drag, PointerButton.left,
+        Point(at.x + 1, at.y)), tree, frames, 1000, result, false, Size(10, 20));
+    assert(subject.value > first, "single-pixel motion changes a continuous value");
+    cast(void) sections.cancel(pane);
+    assert(!sections.pointer(pane, PointerEvent(PointerAction.press, PointerButton.left,
+        Point(at.x, 6 * 20)), tree, frames, 1000, result, false, Size(10, 20)),
+        "the viewport's lower edge cannot capture");
 }
 
 /// Retained scalar rows match a fresh projection after dynamic metadata,

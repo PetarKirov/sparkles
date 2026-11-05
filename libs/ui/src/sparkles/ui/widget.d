@@ -173,7 +173,7 @@ struct Widget
     /// interaction state and lives in a state machine, never in the arena.
     Point childOffset;
     /// The sub-cell part of the scroll offset, in fractions of a cell on each
-    /// axis (`0 ≤ v < 1`; `LAY7`). Layout ignores it — children land on the
+    /// axis (`-1 < v < 1`; `LAY7`). Layout ignores it — children land on the
     /// whole cells `childOffset` gives them — and the display list paints the
     /// children that much further along, inside this node's clip, on a target
     /// that can place between cells (`subCellScroll`). A cell target shows
