@@ -985,7 +985,7 @@ Rect childClipOf(in Widget node, in Rect rect, in Rect clip) pure nothrow @nogc
 /**
 What a node's children are culled and hit-tested against, in their own
 (unshifted) cells: $(LREF childClipOf), grown by one cell on the trailing edge
-of each clipped axis the node scrolls by a fraction (`LAY7`). Content painted
+for a positive fraction, or the leading edge for a negative fraction (`LAY7`). Content painted
 `childOffsetFrac` further along shows part of the cell past the clip's end, so
 that row (the N+1th) must still be emitted. The scissor itself stays
 $(LREF childClipOf).
@@ -1001,6 +1001,16 @@ Rect cullClipOf(in Widget node, in Rect rect, in Rect clip) pure nothrow @nogc
         c.size.width = c.width + 1;
     if ((node.childOffsetFracY > 0 || node.shiftBracket) && clipsY(node))
         c.size.height = c.height + 1;
+    if (node.childOffsetFracX < 0 && clipsX(node))
+    {
+        c.origin.x -= 1;
+        c.size.width += 1;
+    }
+    if (node.childOffsetFracY < 0 && clipsY(node))
+    {
+        c.origin.y -= 1;
+        c.size.height += 1;
+    }
     return c;
 }
 

@@ -22,9 +22,31 @@ repository root. It prints `value: 100..700`.
 `SettingsSections` owns section navigation, inline editor routing, and numeric
 pointer capture beside a `SettingsPane!T`. Both the terminal and text lab use
 it. Applications retain placement, persistence, custom rows, and live-apply
-policy. Pass pointer positions and laid-out frames in the same coordinate
-space. A touch press waits for horizontal intent before capturing; vertical
-movement remains available to the containing scroll view.
+policy. Pass frames in layout cells and supply `cellPixels` when pointer
+positions are pixels; the default is the identity conversion. Hit-testing
+accounts for fractional scrolling and viewport clipping. A touch press waits
+for horizontal intent before capturing; vertical movement remains available
+to the containing scroll view.
+
+Slider thumbs paint between text columns on pixel backends. A zero range step
+allows continuous values; a positive step still snaps values to the declared
+domain. Cell backends retain whole-cell rendering.
+
+`sparkles.ui.components.scroll_body.ScrollBody` shares the terminal's page
+scrolling with other applications. Set `content` and `viewport` in content
+units, route wheel events to `scroll`, and call `animate(frameSeconds)` each
+frame, requesting another frame while it returns true. Lay out with
+`motion.whole` and paint with `motion.frac` as `childOffsetFracY` on the clipped
+viewport. Set `motion.instant` for cell targets or reduced motion.
+
+For direct touch input, call `beginDrag`, `dragTo`, and `endDrag` with positions
+in the same content units and monotonic timestamps in seconds. A release
+continues with decaying momentum; holding before release suppresses stale
+momentum. Call `cancelDrag` when another control captures the contact, and
+`motion.stop` when the surface closes. Hosts that already generate momentum
+wheel events should route those events through `scroll` without also starting
+a direct-touch fling. The shared `bar` retains scrollbar capture and touch
+fade state; placement remains the application's choice.
 
 The controller retains up to 128 scalar row subtrees. Their keys include the
 projected value and metadata, runtime bounds/defaults, choices, focus, editor

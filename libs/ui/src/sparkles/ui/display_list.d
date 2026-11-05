@@ -432,7 +432,7 @@ private void emit(Sink, TM)(in WidgetTree tree, uint idx, in Frame[] frames,
             const fx = clipsX(node) ? node.childOffsetFracX : 0;
             const fy = clipsY(node) ? node.childOffsetFracY : 0;
             enum canShift = __traits(compiles, ops.pushShift(0f, 0f));
-            const shifts = canShift && (fx > 0 || fy > 0 || (node.shiftBracket && clips));
+            const shifts = canShift && (fx != 0 || fy != 0 || (node.shiftBracket && clips));
             if (clips)
                 ops.pushClip(childClip);
             static if (canShift)
@@ -538,6 +538,13 @@ private void emit(Sink, TM)(in WidgetTree tree, uint idx, in Frame[] frames,
     // "three" is half in view now, so it is emitted too.
     assert(ops.count!(o => o.kind == OpKind.textRun) == 3);
     assert(ops[$ - 2].kind == OpKind.popShift && ops[$ - 1].kind == OpKind.popClip);
+    const negative = viewport(-0.5);
+    const negativeOps = buildDisplayList(negative, layout(negative), pal, fg, bg);
+    assert(negativeOps.count!(o => o.kind == OpKind.textRun) == 3,
+        "a negative fraction retains the leading row too");
+    const negativeShift = negativeOps.countUntil!(o => o.kind == OpKind.pushShift);
+    negativeOps[negativeShift].payload.match!(
+        (in PushShift s) { assert(s.dx == 0 && s.dy == 0.5f); }, (_) {});
 }
 
 @("ui.display_list.nodeStatesSelectTheThemeOverlay")

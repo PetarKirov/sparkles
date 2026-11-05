@@ -43,7 +43,7 @@ import sparkles.ui.components.property_sections : choiceLabel, decodeSectionHit,
 import sparkles.ui.components.settings_pane : SettingsResult, SettingsToast;
 import sparkles.ui.editor.keys : EditorTarget, editorBinds;
 import sparkles.ui.components.settings_sections : SettingsSections;
-import sparkles.ui.geometry : Constraints, Insets, Point, SizeSpec;
+import sparkles.ui.geometry : Constraints, Insets, Point, Size, SizeSpec;
 import sparkles.ui.keymap : acceptsTyped, Chord, ShiftReq;
 import sparkles.ui.layout : Frame, layout;
 import sparkles.ui.property_tree : LeafKind, PropertyNode;
@@ -440,10 +440,10 @@ final class SettingsPage : Surface, PointerSurface, Scrollable
     }
 
     bool pointer(in PointerEvent p, in WidgetTree tree,
-        scope const(Frame)[] frames) @system
+        scope const(Frame)[] frames, Size cellPixels = Size(1, 1)) @system
     {
         SettingsResult result;
-        const used = sections.pointer(*pane, p, tree, frames, sectionBase, result, touch);
+        const used = sections.pointer(*pane, p, tree, frames, sectionBase, result, touch, cellPixels);
         if (used)
         {
             stale = true;

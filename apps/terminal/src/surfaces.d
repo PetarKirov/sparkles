@@ -19,7 +19,7 @@ import core.time : Duration, MonoTime, seconds;
 
 import sparkles.input.events : KeyEvent, PointerAction, PointerEvent, Point, WheelEvent;
 import sparkles.ui.layout : Frame;
-import sparkles.ui.geometry : Rect;
+import sparkles.ui.geometry : Rect, Size;
 import sparkles.ui.widget : WidgetTree;
 
 import chrome : ChromeTheme, Layer, paintLayer, place, Place;
@@ -88,12 +88,12 @@ interface Surface
     bool key(in KeyEvent k) @system;
 }
 
-/// Optional continuous pointer input. Events and layout frames share surface
-/// cell coordinates; a captured control continues outside the surface.
+/// Optional continuous pointer input. Events use pixels relative to the surface;
+/// frames use cells, converted with cellPixels. Capture continues outside.
 interface PointerSurface
 {
     bool pointer(in PointerEvent p, in WidgetTree tree,
-        scope const(Frame)[] frames) @system;
+        scope const(Frame)[] frames, Size cellPixels = Size(1, 1)) @system;
     /// Focus loss abandons the current preview and releases capture.
     void cancelPointer() @system;
 }
@@ -313,9 +313,8 @@ struct Surfaces
         if (layer.cellW <= 0 || layer.cellH <= 0)
             return false;
         PointerEvent local = p;
-        local.pos = Point((p.pos.x - layer.x) / layer.cellW,
-            (p.pos.y - layer.y) / layer.cellH);
-        const used = target.pointer(local, layer.tree, layer.frames);
+        local.pos = Point(p.pos.x - layer.x, p.pos.y - layer.y);
+        const used = target.pointer(local, layer.tree, layer.frames, Size(layer.cellW, layer.cellH));
         pointerClaimed |= used;
         changed |= used;
         return used;
@@ -569,6 +568,7 @@ version (unittest)
         Surface next;
         bool capturePointer, pointerCancelled;
         PointerEvent lastPointer;
+        Size lastCellPixels;
 
         this(Placement where, int lines) @safe pure nothrow
         {
@@ -603,16 +603,17 @@ version (unittest)
         void cancel() @system { cancelled = true; }
         bool key(in KeyEvent k) @system { return false; }
         bool pointer(in PointerEvent p, in WidgetTree tree,
-            scope const(Frame)[] frames) @system
+            scope const(Frame)[] frames, Size cellPixels = Size(1, 1)) @system
         {
             lastPointer = p;
+            lastCellPixels = cellPixels;
             return capturePointer;
         }
         void cancelPointer() @system { pointerCancelled = true; }
     }
 }
 
-/// Raw phases use the layer's cells, retain outside positions and suppress taps.
+/// Raw phases retain every pixel, outside positions, and suppress discrete taps.
 @("surfaces.Surfaces.pointerCaptureAndFocusLoss")
 @system unittest
 {
@@ -627,10 +628,14 @@ version (unittest)
     const layer = s.layers[$ - 1];
     assert(s.pointer(PointerEvent(action: PointerAction.press,
         button: PointerButton.left, pos: Point(layer.x + 20, layer.y + 20))));
-    assert(probe.lastPointer.pos == Point(2, 1));
+    assert(probe.lastPointer.pos == Point(20, 20));
+    assert(probe.lastCellPixels == Size(10, 20));
+    assert(s.pointer(PointerEvent(action: PointerAction.drag,
+        button: PointerButton.left, pos: Point(layer.x + 21, layer.y + 21))));
+    assert(probe.lastPointer.pos == Point(21, 21), "sub-cell pixels survive routing");
     assert(s.pointer(PointerEvent(action: PointerAction.drag,
         button: PointerButton.left, pos: Point(layer.x - 20, layer.y - 20))));
-    assert(probe.lastPointer.pos == Point(-2, -1), "capture receives outside positions");
+    assert(probe.lastPointer.pos == Point(-20, -20), "capture receives outside positions");
     assert(s.tap(layer.x + 20, layer.y + 20) && probe.activated == 0);
     s.cancelPointer();
     assert(probe.pointerCancelled && s.modal);

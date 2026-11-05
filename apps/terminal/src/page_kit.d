@@ -29,6 +29,7 @@ import sparkles.ui.geometry : Constraints, Insets, Point, Rect, SizeSpec;
 import sparkles.ui.layout : Frame, layout;
 import sparkles.ui.style : Decoration, FontRole, Slot, TextStyle, TypeStep;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
+public import sparkles.ui.components.scroll_body : ScrollBody;
 import sparkles.ui.wrap : TextWrap;
 
 import chrome : button, cachedChromeLayout, chromeLayout, squareCols;
@@ -568,72 +569,6 @@ int bodyRowsFor(ref Builder b, uint[] top, uint[] bottom, int cols, int rows) @s
     const frames = cachedChromeLayout(tree, cols, rows);
     const h = frames[empty].rect.height;
     return h > 0 ? h : 1;
-}
-
-/**
-/**
-A page body's scroll (`SCV12`, `SCV13`): where it is and how it moves —
-a drag 1:1, a wheel notch or a key eased — and the overlay bar in its right
-padding, which a pointer can grab and which fades on a touch screen.
-$(LREF finishPage) lays it out; the host steps it every frame
-(`Scrollable.animate`) and routes a press on the bar to `bar`.
-*/
-struct ScrollBody
-{
-    import sparkles.ui.components.scroll_view : OverlayBar;
-    import sparkles.ui.scroll_motion : ScrollMotion;
-
-    /// The position, in rows.
-    ScrollMotion motion;
-    /// The bar's grab and fade.
-    OverlayBar bar;
-    /// The content's and the viewport's heights, in rows, as last laid out.
-    long content, viewport;
-    /// The bar's node in the last tree (`uint.max`: none).
-    uint barNode = uint.max;
-    /// A touch screen: the bar fades when idle.
-    bool touch;
-    /// Draw the bar at its full width (`scrollbar.touchWidth`).
-    bool wide;
-
-    /// The largest position.
-    double limit() const @safe pure nothrow @nogc
-        => content > viewport ? content - viewport : 0;
-
-    /// A wheel notch eases, a drag follows (`WheelEvent.precise`).
-    void scroll(in WheelEvent w) @safe pure nothrow @nogc
-    {
-        const rows = w.exactY;
-        if (w.precise)
-            motion.drag(rows, limit);
-        else
-            motion.nudge(rows, limit);
-        bar.anim.stepFade(true, 0);
-    }
-
-    /// A key moved the view `rows`: eased.
-    void by(double rows) @safe pure nothrow @nogc
-    {
-        motion.nudge(rows, limit);
-        bar.anim.stepFade(true, 0);
-    }
-
-    /// The bar dragged the view to `pos` rows: at once.
-    void barTo(double pos) @safe pure nothrow @nogc
-    {
-        motion.jumpTo(pos, limit);
-        bar.anim.stepFade(true, 0);
-    }
-
-    /// One frame: true while the motion or the fade needs the next.
-    bool animate(float dt) @safe pure nothrow @nogc
-    {
-        const moving = motion.step(dt, limit);
-        if (!touch)
-            return moving;
-        bar.anim.stepFade(moving || bar.grabbed, dt);
-        return moving || bar.anim.fading;
-    }
 }
 
 /**

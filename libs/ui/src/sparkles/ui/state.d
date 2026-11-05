@@ -143,7 +143,7 @@ HoverTarget[] hoverTargets(in WidgetTree tree, in Frame[] frames) pure nothrow
         }
         const fx = clipsX(node) ? node.childOffsetFracX : 0;
         const fy = clipsY(node) ? node.childOffsetFracY : 0;
-        const shifts = fx > 0 || fy > 0;
+        const shifts = fx != 0 || fy != 0;
         if (shifts || sx != 0 || sy != 0)
         {
             // The scissor this node pushes, where it lands on the window.
@@ -196,6 +196,12 @@ HoverTarget[] hoverTargets(in WidgetTree tree, in Frame[] frames) pure nothrow
     assert(targets.hitAt(0.5, 1.75) == 4, "the revealed row is hit");
     assert(targets.hitAt(0.5, 2.25) == 0, "nothing past the viewport");
     assert(targets.hitAt(0.5, -0.25) == 0, "nor before it");
+    tree.nodes[tree.root].childOffsetFracY = -0.5;
+    const leading = hoverTargets(tree, layout(tree));
+    assert(leading.hitAt(0.5, 0.25) == 1, "a negative fraction reveals the leading row");
+    assert(leading.hitAt(0.5, 0.75) == 2);
+    assert(leading.hitAt(0.5, 1.75) == 3);
+    assert(leading.hitAt(0.5, -0.25) == 0 && leading.hitAt(0.5, 2.25) == 0);
 }
 
 /// A keyed element and where it landed — `hoverTargets` for `Widget.key`

@@ -15,6 +15,7 @@ import sparkles.ui.components.picker : PickerState;
 import sparkles.ui.components.property_sections : decodeSectionHit, SectionItem, SectionPart, SectionsOptions;
 import sparkles.ui.components.settings_pane : SettingsPane, SettingsResult;
 import sparkles.ui.components.settings_sections : SettingsSections;
+import sparkles.ui.components.scroll_body : ScrollBody;
 import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.canvas : DrawOp;
 import sparkles.ui.geometry : Constraints, Insets, Point, Rect, Size, SizeSpec;
@@ -31,6 +32,56 @@ import font_settings : applyVariations, axisSettings, LabSettings;
 import unicode_samples : Showcase, showcaseFonts, unicodeSamples;
 
 private enum size_t sectionBase = 0x7100_0000, fontHit = 0x7000_0001, pickerBase = 0x7200_0000;
+
+private double secondsNow() @safe nothrow @nogc
+    => MonoTime.currTime.ticks / cast(double) MonoTime.ticksPerSecond;
+
+/// Dismissing a held slider candidate releases capture; the next opening
+/// accepts its first touch without waiting for the abandoned contact.
+@("text_lab.controls.dismissHeldContact")
+@system unittest
+{
+    import sparkles.input : PointerButton;
+    import sparkles.ui.canvas : RecordingCanvas;
+    import sparkles.ui_app.record : RecordingHost;
+
+    struct Host
+    {
+        RecordingHost recording;
+        alias recording this;
+        int cellWidth = 10, cellHeight = 20;
+    }
+    LabSettings model;
+    auto controls = new LabControls(&model);
+    Host host;
+    host.capabilities.hover = false;
+    RecordingCanvas canvas;
+    bool shown = true;
+    controls.draw(&canvas, Size(49, 50), shown, Palette.init);
+    Rect track;
+    foreach (i, widget; controls.tree.nodes)
+    {
+        uint node, part;
+        if (decodeSectionHit(sectionBase, widget.hitId, node, part)
+            && part == SectionPart.slider
+            && controls.pane.tree.data.nodes[node].value.path == "font.size")
+            track = controls.frames[i].rect;
+    }
+    const press = Event(PointerEvent(action: PointerAction.press, button: PointerButton.left,
+        pos: Point((track.x + 1) * 10, (track.y + 1) * 20)));
+    cast(void) controls.handle(host, press, shown, true);
+    assert(controls.capturing && controls.sections.capturing);
+    cast(void) controls.handle(host, Event(KeyEvent(Key.char_, 'q')), shown, true);
+    assert(!shown && !controls.capturing && !host.pointerCaptured);
+    shown = true;
+    controls.draw(&canvas, Size(49, 50), shown, Palette.init);
+    cast(void) controls.handle(host, press, shown, true);
+    assert(controls.capturing && controls.sections.capturing);
+    controls.openPicker();
+    assert(!controls.capturing && !controls.scrollBody.motion.active);
+    controls.frame(host);
+    assert(!host.pointerCaptured);
+}
 
 /// A changing numeric badge and reset visibility must not move the captured
 /// track or the following slider rows on either responsive sheet.
@@ -97,7 +148,10 @@ final class LabControls
     private LabSettings[] undo, redo;
     private SectionItem[] items;
     private size_t focus;
-    private int scroll;
+    private ScrollBody scrollBody;
+    private int scroll() const @safe pure nothrow @nogc => cast(int) scrollBody.motion.whole;
+    private void scroll(int value) @safe pure nothrow @nogc
+        => scrollBody.motion.jumpTo(value, scrollMax);
     private int scrollMax;
     private bool focusMoved;
     private bool initial;
@@ -119,13 +173,12 @@ final class LabControls
     private bool keyboardShown;
     private bool touching, panning;
     private PointerEvent touchPress;
-    private int touchScroll;
     private size_t touchFirstRow;
     private DrawOp[] overlayOps;
     private LabSettings overlaySubject;
     private Palette overlayPalette;
     private string overlayError;
-    private int overlayScroll;
+    private double overlayScroll;
     private size_t overlayFocus;
     private bool overlayDirty = true;
 
@@ -148,6 +201,11 @@ final class LabControls
     /// Polls the background jobs and applies at most the latest font request.
     void frame(H)(ref H h)
     {
+        static if (__traits(hasMember, H, "capturePointer"))
+            h.capturePointer(capturing);
+        static if (__traits(hasMember, H, "frameSeconds"))
+            if (scrollBody.animate(h.frameSeconds)) h.requestFrame();
+        if (scrollBody.motion.pos != overlayScroll) overlayDirty = true;
         uint rows;
         foreach (sample; unicodeSamples) if (sample.group == subject.samples.group) ++rows;
         if (subject.samples.group == Showcase.overview) rows += 2;
@@ -500,6 +558,7 @@ final class LabControls
     {
         overlayDirty = true;
         cast(void) sections.cancel(pane);
+        stopScroll();
         picker.open();
         picker.viewRows = 12;
         if (corpusReady) finder.search(picker);
@@ -528,6 +587,14 @@ final class LabControls
             side && !picker.active ? 3 : size.height - height, width, height);
     }
 
+    private void stopScroll(bool reset = false) @safe pure nothrow @nogc
+    {
+        touching = panning = false;
+        scrollBody.cancelDrag();
+        scrollBody.motion.stop();
+        if (reset) scrollBody.motion.jumpTo(0, scrollBody.limit);
+    }
+
     /// Renders an ordinary widget overlay after the specimen's custom paint.
     void draw(C)(C canvas, Size size, bool shown, in Palette palette)
     {
@@ -536,12 +603,14 @@ final class LabControls
         bounds = nextBounds;
         if (!bounds.width || !bounds.height)
         {
+            cast(void) sections.cancel(pane);
+            stopScroll();
             tree = WidgetTree.init; frames = null; overlayOps = null;
             overlayDirty = true;
             return;
         }
         if (!overlayDirty && !pane.textEditing && !sections.drag.active
-            && scroll == overlayScroll && focus == overlayFocus
+            && scrollBody.motion.pos == overlayScroll && focus == overlayFocus
             && *subject == overlaySubject && palette == overlayPalette && error == overlayError)
         {
             paint(*canvas, overlayOps);
@@ -604,7 +673,9 @@ final class LabControls
         }
         if (error.length) rows ~= b.add(Widget(kind: WidgetKind.text, text: error));
         const body = b.add(Widget(kind: WidgetKind.column, children: rows,
-            width: SizeSpec.fixed(width - 2), childOffset: Point(0, picker.active ? 0 : scroll)));
+            width: SizeSpec.fixed(width - 2), height: SizeSpec.fixed(height - 2), clipY: true,
+            childOffset: Point(0, picker.active ? 0 : scroll),
+            childOffsetFracY: picker.active ? 0 : scrollBody.motion.frac));
         const panel = b.add(Widget(kind: WidgetKind.panel, children: [body],
             width: SizeSpec.fixed(width), height: SizeSpec.fixed(height), padding: Insets.all(1),
             slot: Slot.surface, paintBackground: true, clipX: true, clipY: true));
@@ -615,21 +686,26 @@ final class LabControls
             int contentHeight;
             foreach (row; rows) contentHeight += frames[row].rect.height;
             scrollMax = contentHeight > height - 2 ? contentHeight - height + 2 : 0;
-            int next = scroll < scrollMax ? scroll : scrollMax;
+            scrollBody.content = contentHeight;
+            scrollBody.viewport = height - 2;
+            double next = scrollBody.motion.pos < scrollMax ? scrollBody.motion.pos : scrollMax;
             if (focusMoved && focus < items.length)
                 foreach (i, widget; tree.nodes)
                     if (widget.hitId == sectionBase + items[focus].node * 64)
                     {
                         const r = frames[i].rect;
-                        if (r.y < 1) next += r.y - 1;
-                        else if (r.bottom > height - 1) next += r.bottom - height + 1;
+                        const top = r.y - scrollBody.motion.frac;
+                        const bottom = r.bottom - scrollBody.motion.frac;
+                        if (top < 1) next += top - 1;
+                        else if (bottom > height - 1) next += bottom - height + 1;
                     }
             next = next < 0 ? 0 : next > scrollMax ? scrollMax : next;
             focusMoved = false;
-            if (scroll != next)
+            if (scrollBody.motion.pos != next)
             {
-                scroll = next;
+                scrollBody.motion.jumpTo(next, scrollMax);
                 tree.nodes[body].childOffset = Point(0, scroll);
+                tree.nodes[body].childOffsetFracY = scrollBody.motion.frac;
                 frames = layout(tree, Constraints(width, height));
             }
         }
@@ -640,19 +716,21 @@ final class LabControls
         overlaySubject = snapshot();
         overlayPalette = palette;
         overlayError = error;
-        overlayScroll = scroll;
+        overlayScroll = scrollBody.motion.pos;
         overlayFocus = focus;
         overlayDirty = false;
         paint(*canvas, overlayOps);
     }
 
     /// Routes modal input before specimen shortcuts; returns whether consumed.
-    bool capturing() const @safe pure nothrow @nogc => sections.capturing;
+    bool capturing() const @safe pure nothrow @nogc => sections.capturing || touching;
 
     /// ditto
     bool handle(H)(ref H h, in Event event, ref bool shown, bool pixelCoordinates = false)
     {
         overlayDirty = true;
+        scrollBody.motion.instant = !pixelCoordinates;
+        const previousLevel = sections.levels.length ? sections.levels[$ - 1] : null;
         auto before = snapshot();
         const wasDragging = sections.drag.active;
         bool consumed;
@@ -662,7 +740,7 @@ final class LabControls
                 if (!f.focused)
                 {
                     cast(void) sections.cancel(pane);
-                    touching = panning = false;
+                    stopScroll();
                     consumed = true;
                 }
             },
@@ -708,7 +786,12 @@ final class LabControls
                 if (k.key == Key.escape || k.key == Key.back || k.ch == 'q')
                 {
                     if (sections.drag.active) cast(void) sections.cancel(pane);
-                    else if (!sections.back()) shown = false;
+                    else
+                    {
+                        cast(void) sections.cancel(pane);
+                        stopScroll();
+                        if (!sections.back()) shown = false;
+                    }
                     return;
                 }
                 if (k.ch == 'u') { restore(false); return; }
@@ -734,8 +817,7 @@ final class LabControls
                 if (picker.active) picker.moveSelection(w.dy);
                 else if (!sections.drag.active)
                 {
-                    scroll += w.dy;
-                    scroll = scroll < 0 ? 0 : scroll > scrollMax ? scrollMax : scroll;
+                    scrollBody.scroll(w);
                 }
             },
             (in PointerEvent p) {
@@ -749,16 +831,9 @@ final class LabControls
                 consumed = bounds.contains(point) || sections.drag.active || touching;
                 if (!consumed) return;
                 SettingsResult result;
-                auto pointerFrames = frames;
-                if (pixelCoordinates)
-                {
-                    pointerFrames = frames.dup;
-                    foreach (ref frame; pointerFrames)
-                        frame.rect = Rect(frame.rect.x * cw, frame.rect.y * ch,
-                            frame.rect.width * cw, frame.rect.height * ch);
-                }
                 bool touch;
                 static if (__traits(hasMember, H, "capabilities")) touch = !h.capabilities.hover;
+                scrollBody.touch = touch;
                 if (touch)
                 {
                     if (p.action == PointerAction.press)
@@ -767,17 +842,19 @@ final class LabControls
                         touching = true;
                         panning = false;
                         touchPress = p;
-                        touchScroll = scroll;
+                        if (!picker.active)
+                            scrollBody.beginDrag(p.pos.y / cast(double) ch, secondsNow());
                         touchFirstRow = picker.firstRow;
                         if (!picker.active)
-                            cast(void) sections.pointer(pane, p, tree, pointerFrames,
-                                sectionBase, result, true);
+                            cast(void) sections.pointer(pane, p, tree, frames,
+                                sectionBase, result, true, Size(cw, ch));
                         return;
                     }
                     if (!touching || p.pointerId != touchPress.pointerId) return;
                     if (p.action == PointerAction.leave)
                     {
                         touching = panning = false;
+                        scrollBody.cancelDrag();
                         cast(void) sections.cancel(pane);
                         return;
                     }
@@ -796,28 +873,34 @@ final class LabControls
                             cast(void) picker.scrollRowsTo(cast(long) touchFirstRow - dy / (ch * 3));
                         else
                         {
-                            const next = touchScroll - dy / ch;
-                            scroll = next < 0 ? 0 : next > scrollMax ? scrollMax : next;
+                            scrollBody.dragTo(p.pos.y / cast(double) ch, secondsNow());
                         }
-                        if (p.action == PointerAction.release) touching = panning = false;
+                        if (p.action == PointerAction.release)
+                        {
+                            scrollBody.endDrag(secondsNow());
+                            touching = panning = false;
+                        }
                         return;
                     }
                     if (sections.drag.active || ax >= slop && ax > ay)
-                        if (!picker.active && sections.pointer(pane, p, tree, pointerFrames,
-                                sectionBase, result, true))
+                        if (!picker.active && sections.pointer(pane, p, tree, frames,
+                                sectionBase, result, true, Size(cw, ch)))
                         {
+                            scrollBody.cancelDrag();
                             if (p.action == PointerAction.release) touching = false;
                             return;
                         }
                     if (p.action != PointerAction.release) return;
                     touching = false;
+                    scrollBody.cancelDrag();
                     cast(void) sections.cancel(pane);
                     if (ax >= slop || ay >= slop) return;
                 }
-                if (!picker.active && sections.pointer(pane, p, tree, pointerFrames,
-                        sectionBase, result, touch)) return;
+                if (!picker.active && sections.pointer(pane, p, tree, frames,
+                        sectionBase, result, touch, Size(cw, ch))) return;
                 if (!touch && p.action != PointerAction.press) return;
-                const hit = hoverTargets(tree, frames).hitAt(point.x, point.y);
+                const hit = hoverTargets(tree, frames).hitAt(
+                    p.pos.x / cast(float) cw, p.pos.y / cast(float) ch);
                 if (hit)
                 {
                     if (hit == fontHit) { openPicker(); return; }
@@ -845,6 +928,12 @@ final class LabControls
             },
             (_) {},
         );
+        const nextLevel = sections.levels.length ? sections.levels[$ - 1] : null;
+        if (previousLevel != nextLevel || focusMoved)
+        {
+            cast(void) sections.cancel(pane);
+            stopScroll(previousLevel != nextLevel);
+        }
         if (!wasDragging && sections.drag.active) dragBefore = before;
         if (!replay)
         {
@@ -987,10 +1076,23 @@ final class LabControls
     auto pointer(PointerAction action, Point p)
         => Event(PointerEvent(action: action, button: PointerButton.left, pos: p));
     assert(controls.handle(host, pointer(PointerAction.press, at), shown, true));
+    assert(controls.capturing && host.pointerCaptured);
     assert(!controls.sections.levels.length, "touch press must not activate before scroll intent");
     assert(controls.handle(host, pointer(PointerAction.drag, Point(at.x, at.y - 100)), shown, true));
     assert(controls.scroll > 0 && !controls.sections.levels.length);
+    assert(controls.capturing && host.pointerCaptured, "a sheet pan retains capture");
+    const wholeDrag = controls.scrollBody.motion.pos;
+    cast(void) controls.handle(host, pointer(PointerAction.drag, Point(at.x, at.y - 101)), shown, true);
+    assert(controls.scrollBody.motion.pos > wholeDrag
+        && controls.scrollBody.motion.pos < wholeDrag + 0.1,
+        "one pixel of vertical movement must survive below a whole row");
     assert(controls.handle(host, pointer(PointerAction.release, Point(at.x, at.y - 100)), shown, true));
+    assert(!controls.capturing && !host.pointerCaptured);
+    controls.scrollBody.motion.fling(8);
+    const releasedAt = controls.scrollBody.motion.pos;
+    controls.frame(host);
+    assert(controls.scrollBody.motion.pos > releasedAt && !controls.scrollBody.motion.instant,
+        "the frame loop retains the pixel input policy and advances momentum");
 
     controls.scroll = 0;
     controls.draw(&canvas, Size(49, 50), shown, Palette.init);
@@ -1011,6 +1113,9 @@ final class LabControls
     const moved = Point(start.x + 20, start.y);
     cast(void) controls.handle(host, pointer(PointerAction.drag, moved), shown, true);
     assert(controls.sections.drag.active && model.font.size != original);
+    const pixelValue = model.font.size;
+    cast(void) controls.handle(host, pointer(PointerAction.drag, Point(moved.x + 1, moved.y)), shown, true);
+    assert(model.font.size != pixelValue, "the slider responds to a single pixel");
     assert(host.pointerCaptured);
     assert(controls.capturing);
     auto p2 = PointerEvent(action: PointerAction.press, button: PointerButton.left, pos: Point(start.x + 50, start.y + 50));

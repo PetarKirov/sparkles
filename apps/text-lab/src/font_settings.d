@@ -62,7 +62,7 @@ struct FontSettings
     @hidden string path;
     @hidden uint index;
     @Label("Font") @readOnly string face = "Startup font";
-    @Label("Size (pt)") @Range(4, 144, 0.125, 18.0, 0.50, 0.05)
+    @Label("Size (pt)") @Range(4, 144, 0, 18.0, 0.50, 0.05)
     @PreferredInput(NumericInput.slider) double size = 12;
     @Label("UI follows specimen") bool uiFollows;
     @Label("Cell-grid specimen") bool cellGrid;
