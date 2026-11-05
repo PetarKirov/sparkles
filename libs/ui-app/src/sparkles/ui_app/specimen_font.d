@@ -51,7 +51,8 @@ bool sameSpecimenRequest(in SpecimenFontRequest a, in SpecimenFontRequest b)
     => a.path == b.path && a.faceIndex == b.faceIndex && a.px == b.px
         && a.uiFollows == b.uiFollows && a.coordinates == b.coordinates
         && a.familyStyles == b.familyStyles && sameStyles(a, b) && sameFallbacks(a.fallbacks, b.fallbacks)
-        && a.bytes.ptr == b.bytes.ptr && a.bytes.length == b.bytes.length;
+        && a.bytes.ptr == b.bytes.ptr && a.bytes.length == b.bytes.length
+        && a.contentHash == b.contentHash;
 
 package bool sameFallbacks(in SpecimenFallbackFace[] a, in SpecimenFallbackFace[] b)
     @safe pure nothrow @nogc
@@ -76,6 +77,16 @@ package bool sameFallbacks(in SpecimenFallbackFace[] a, in SpecimenFallbackFace[
     other.bytes = bytes.dup;
     assert(!sameSpecimenRequest(first, other));
     other = first;
+    other.contentHash = 42;
+    assert(!sameSpecimenRequest(first, other), "content revisions invalidate preparation");
+    other = first;
+    other.styleContentHashes[1] = 42;
+    assert(!sameSpecimenRequest(first, other), "style revisions invalidate preparation too");
+    first.styleBytes[1] = bytes;
+    other = first;
+    other.styleBytes[1] = bytes[0 .. 1];
+    assert(!sameSpecimenRequest(first, other), "shorter sibling storage is a distinct request");
+    other = first;
     other.fallbacks = [SpecimenFallbackFace(bytes, 0, 42)];
     assert(!sameSpecimenRequest(first, other));
     first = other;
@@ -89,7 +100,9 @@ private bool sameStyles(in SpecimenFontRequest a, in SpecimenFontRequest b)
     foreach (i; 0 .. 3)
         if (a.styleBytes[i].ptr != b.styleBytes[i].ptr
             || a.styleBytes[i].length != b.styleBytes[i].length
-            || a.styleIndices[i] != b.styleIndices[i])
+            || a.styleBytes[i].length != b.styleBytes[i].length
+            || a.styleIndices[i] != b.styleIndices[i]
+            || a.styleContentHashes[i] != b.styleContentHashes[i])
             return false;
     return true;
 }

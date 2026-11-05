@@ -12,6 +12,10 @@ and hashing off the frame thread. Bytes must outlive all renderer instances
 that borrow them. Coordinate arrays are retained by the host. Repeated size or
 axis changes reuse parsed faces and metric/hint scratch; ordinary cell-font
 size changes also reuse resolved primary, styled, and fallback bytes.
+Request identity includes byte lengths and supplied content hashes for both
+the selected face and sibling styles. A new content revision must supply its
+new hash; changing a view's length also forces preparation to parse it again.
+Keep previously accepted storage alive until its replacement is accepted.
 
 `SpecimenFontRequest.fallbacks` supplies an ordered list of preloaded
 `SpecimenFallbackFace` values: bytes, collection member, and an optional content
