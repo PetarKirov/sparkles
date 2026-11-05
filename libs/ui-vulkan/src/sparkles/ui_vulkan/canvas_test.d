@@ -1182,6 +1182,92 @@ private ubyte[] twoColourImage()
     }
 }
 
+/// Page reclamation under size sweeps preserves both earlier quads and the
+/// complete specimen, exactly matching a cold atlas on the real driver.
+@("ui_vulkan.canvas.largeSizeSweepMatchesFreshAtlasPixels")
+@system unittest
+{
+    if (!readbackEnabled) return skipTest(readbackSkipReason);
+    import std.file : read;
+    import std.path : buildPath;
+    import std.process : environment;
+    import sparkles.font : Ppem;
+    import sparkles.shaders : v4;
+    import sparkles.ui_vulkan.painter : TextMetrics;
+    const directory = environment.get("SPARKLES_FONTS_PATH");
+    assert(directory.length, "SPARKLES_FONTS_PATH is required");
+    const bytes = cast(const(ubyte)[]) read(buildPath(directory, "NotoSansGlagolitic-Regular.otf"));
+    const metrics = FrameMetrics(cellW: 12, cellH: 24);
+    auto warm = new Rig, fresh = new Rig;
+    warm.open("ui-vulkan-warm-size-sweep", 2000, 1000);
+    fresh.open("ui-vulkan-fresh-size-sweep", 2000, 1000);
+    scope (success) { warm.close(); fresh.close(); }
+    assert(warm.canvas.cellFont(bytes, 24, TextMetrics(ascent: 20)));
+    assert(fresh.canvas.cellFont(bytes, 24, TextMetrics(ascent: 20)));
+    foreach (step; 0 .. 80)
+    {
+        const px = cast(uint)(step < 40 ? 350 + step : 429 - step);
+        foreach (rig; [warm, fresh])
+        {
+            if (rig is fresh) rig.canvas.releaseCaches();
+            assert(rig.canvas.specimenFont(bytes, 0, Ppem.fromInteger(px).value, null,
+                TextMetrics(ascent: px)));
+        }
+        auto paint = (ref Canvas canvas) {
+            // A stable glyph is drawn before the large changing run: page
+            // reclamation must preserve quads recorded earlier in this frame.
+            canvas.glyph(Point(0, 0), 'Ⰰ', Visual(fg: white, fgAlpha: 255));
+            assert(canvas.beginSpecimen(px, px + 50));
+            scope (exit) canvas.endSpecimen();
+            canvas.beginGlyphPreparation(2);
+            const width = canvas.naturalTextWidthPx("ⰀⰁⰂⰃⰄ");
+            const lowerWidth = canvas.naturalTextWidthPx("ⰰⰱⰲⰳⰴ");
+            canvas.finishGlyphPreparation();
+            assert(canvas.naturalTextPx("ⰀⰁⰂⰃⰄ", 30, 40, v4(1, 1, 1, 1)) == width);
+            assert(canvas.naturalTextPx("ⰰⰱⰲⰳⰴ", 30, 480, v4(1, 1, 1, 1)) == lowerWidth);
+        };
+        const expected = fresh.draw(paint, metrics, black);
+        const actual = warm.draw(paint, metrics, black);
+        assert(actual == expected, format("size %s at sweep step %s differs from a fresh atlas", px, step));
+        assert(warm.canvas.specimenGridFallbacks == 0);
+        assert(warm.canvas.atlasPages <= 4);
+    }
+}
+
+/// Replacing an atlas generation keeps its previous GPU image alive until
+/// the frame slot that referenced it is recycled.
+@("ui_vulkan.canvas.replacedAtlasImagesWaitForFrameSlots")
+@system unittest
+{
+    if (!readbackEnabled) return skipTest(readbackSkipReason);
+    import std.file : read;
+    import std.path : buildPath;
+    import std.process : environment;
+    import sparkles.ui_vulkan.painter : TextMetrics;
+    import sparkles.ui_vulkan.text_rendering : Hinting, TextRendering;
+    const directory = environment.get("SPARKLES_FONTS_PATH");
+    assert(directory.length, "SPARKLES_FONTS_PATH is required");
+    const bytes = cast(const(ubyte)[]) read(buildPath(directory, "DejaVuSansMono.ttf"));
+    auto rig = new Rig;
+    rig.open("ui-vulkan-atlas-generations", 80, 40, RigOptions(spy: true));
+    scope (success) rig.close();
+    assert(rig.canvas.cellFont(bytes, 24, TextMetrics(ascent: 20)));
+    void delegate(ref Canvas) paint = (ref Canvas canvas) {
+        canvas.glyph(Point(0, 0), 'A', Visual(fg: white, fgAlpha: 255));
+    };
+    const metrics = FrameMetrics(cellW: 16, cellH: 32);
+    rig.draw(paint, metrics, black);
+    const images = spyLog.images, destroyed = spyLog.imagesDestroyed;
+    auto settings = rig.canvas.textRendering;
+    settings.hinting = settings.hinting == Hinting.light ? Hinting.none : Hinting.light;
+    rig.canvas.textRendering(settings);
+    rig.draw(paint, metrics, black);
+    assert(spyLog.images == images + 1, "a reset page gets a distinct GPU image");
+    assert(spyLog.imagesDestroyed == destroyed, "the previous slot still owns its image");
+    rig.draw(paint, metrics, black);
+    assert(spyLog.imagesDestroyed == destroyed + 1, "recycling that slot releases its image");
+}
+
 /// Variation updates change the preview's pixels while the UI font stays fixed.
 @("ui_vulkan.canvas.specimenVariationsKeepInterfacePixelsStable")
 @system unittest
