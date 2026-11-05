@@ -5,6 +5,20 @@ dark and light backgrounds. **Fonts** (`f`) opens the fuzzy picker; **Settings**
 opens the generated settings sheet. The interface keeps a stable font unless
 **UI follows specimen** is enabled. **F12** restores the stable interface.
 
+Moving the picker selection previews the font immediately. Hover a row with
+a mouse, or tap a row on touchscreens; **Use font** (or Enter) accepts it and
+Escape/Cancel restores the original specimen without adding an undo entry.
+The picker shows one regular representative per main family. Installed Noto
+Sans/Serif script and UI satellites collapse under their main family; every
+face remains available to fallback resolution.
+
+Hover a specimen glyph, or touch it on mobile, to inspect its serving face,
+collection member, fallback status, glyph ID/name, shaping metrics, source
+cluster, and Unicode properties. Touch tooltips remain visible after release;
+touch elsewhere or open a panel to dismiss them. Ligatures and combining
+sequences report their source cluster rather than inventing a character-to-
+glyph correspondence.
+
 ```bash
 dub run :text-lab -- --settings
 dub run :text-lab -- --picker

@@ -10,7 +10,7 @@ import sparkles.event_horizon.raw_pool : RawCompletion, RawCpuPool, RawJob, RawP
 import sparkles.event_horizon.sys.vfs : BlockingVfs;
 import sparkles.font.catalog : BuildOptions, BuildReport, buildCatalog, Catalog, FontSource, SourceKind;
 import sparkles.font.corrections : CorrectionPolicy;
-import sparkles.font : openFace;
+import sparkles.font : openFace, Tag;
 import sparkles.base.unique : makeUnique, Unique;
 import sparkles.fuzzy : CandidateSnapshot, CandidateView, ConstraintWorkspace, DefaultFuzzyCaps,
     FuzzyLimits, MatchConfig, MatcherWorkspace, parseQuery, positions, QueryStorage,
@@ -25,6 +25,7 @@ struct FontEntry
     string family;
     int weight = 400;
     bool italic;
+    bool variable;
 }
 
 private struct CatalogJob
@@ -194,8 +195,17 @@ final class FontLibrary
                     seen[key] = true;
                     const label = c.text(r.family).idup ~ " · " ~ c.text(r.styleName).idup
                         ~ " · " ~ c.text(r.postScriptName).idup;
+                    int weight = r.weightMin / 65_536;
+                    bool italic = r.italicMin != 0 || r.obliqueMin != 0;
+                    if (r.hasItalAxis || r.hasSlntAxis) italic = false;
+                    foreach (axis; c.pools.axesOf(r))
+                    {
+                        if (axis.tag == Tag("wght")) weight = axis.defaultValue / 65_536;
+                        if (axis.tag == Tag("ital") || axis.tag == Tag("slnt"))
+                            italic |= axis.defaultValue != 0;
+                    }
                     entries ~= FontEntry(path, label, r.index, c.text(r.family).idup,
-                        r.weightMin / 65_536, r.italicMin != 0 || r.obliqueMin != 0);
+                        weight, italic, r.axes.count != 0);
                 }
             }
         }
@@ -274,6 +284,7 @@ final class FontLibrary
 struct FontFinder
 {
     private CandidateView[] candidates;
+    private size_t[] indices;
     private Unique!(MatcherWorkspace!DefaultFuzzyCaps) matcher;
     private QueryStorage!DefaultFuzzyCaps query;
     private ulong generation;
@@ -281,14 +292,21 @@ struct FontFinder
     /// Installs the completed immutable catalog snapshot.
     void corpus(in FontEntry[] entries) @safe
     {
-        candidates = new CandidateView[entries.length];
-        foreach (i, entry; entries)
+        candidates = null;
+        indices = mainFontEntries(entries);
+        foreach (i; indices)
         {
-            candidates[i].id.low = i + 1;
-            candidates[i].path = entry.label;
+            CandidateView candidate;
+            candidate.id.low = i + 1;
+            candidate.path = entries[i].label;
+            candidates ~= candidate;
         }
         if (matcher.empty) matcher = makeUnique!(MatcherWorkspace!DefaultFuzzyCaps)();
     }
+
+    /// Maps a ranked picker row back to the full fallback/style catalog.
+    size_t entryIndex(size_t index) const @safe pure nothrow @nogc
+        => index < indices.length ? indices[index] : size_t.max;
 
     /// Publishes the global best matches and preserves selection identity.
     void search(ref PickerState!128 state) @safe
@@ -336,6 +354,68 @@ struct FontFinder
             FuzzyLimits.init, matcher.get, ranges);
         return count.hasValue ? ranges[0 .. count.value].dup : null;
     }
+}
+
+/// One regular representative per family. Script/UI satellites collapse only
+/// when their main family is installed; fallback discovery retains every face.
+size_t[] mainFontEntries(in FontEntry[] entries) @safe
+{
+    import std.algorithm.searching : startsWith;
+    import std.math : abs;
+    import std.string : strip, toLower;
+
+    bool[string] families;
+    foreach (entry; entries) if (entry.family.length) families[entry.family.toLower] = true;
+    size_t[string] chosen;
+    string key(FontEntry entry)
+    {
+        auto family = (entry.family.length ? entry.family : entry.label).toLower.strip;
+        if (family.length > 3 && family[$ - 3 .. $] == " ui"
+            && family[0 .. $ - 3] in families) family = family[0 .. $ - 3];
+        foreach (root; ["noto sans", "noto serif"])
+            if (family.startsWith(root ~ " ") && root in families
+                && family != root ~ " mono" && family != root ~ " display") return root;
+        return family;
+    }
+    long score(in FontEntry entry, string group)
+        => (entry.family.toLower == group ? 0L : 1_000_000L)
+            + (entry.italic ? 100_000L : 0L) + 2 * abs(cast(long) entry.weight - 400)
+            + (entry.variable ? 0 : 1);
+    foreach (i, entry; entries)
+    {
+        const group = key(entry);
+        if (auto old = group in chosen)
+        {
+            const a = score(entry, group), b = score(entries[*old], group);
+            if (a < b || a == b && entry.path < entries[*old].path) *old = i;
+        }
+        else chosen[group] = i;
+    }
+    size_t[] result;
+    foreach (i, entry; entries) if (chosen[key(entry)] == i) result ~= i;
+    return result;
+}
+
+/// Main family selection never removes fallback records or invents a root.
+@("text_lab.fontFinder.mainCollections")
+@safe unittest
+{
+    auto entries = [
+        FontEntry("bold", "Noto Sans Bold", 0, "Noto Sans", 700),
+        FontEntry("arabic", "Noto Sans Arabic", 0, "Noto Sans Arabic"),
+        FontEntry("regular", "Noto Sans Regular", 0, "Noto Sans"),
+        FontEntry("ui", "Noto Sans Arabic UI", 0, "Noto Sans Arabic UI"),
+        FontEntry("mono", "Noto Sans Mono", 0, "Noto Sans Mono"),
+        FontEntry("other", "Other Arabic", 0, "Other Arabic")];
+    assert(mainFontEntries(entries) == [2, 4, 5]);
+    assert(mainFontEntries(entries[1 .. 2]) == [0]);
+    FontFinder finder;
+    finder.corpus(entries);
+    PickerState!128 state;
+    state.open();
+    finder.search(state);
+    assert(state.rowCount == 3);
+    assert(finder.entryIndex(0) == 2 && finder.entryIndex(size_t.max) == size_t.max);
 }
 
 /// Ranking uses family and style, preserving the catalog's exact face index.
