@@ -45,6 +45,7 @@ import sparkles.ui_vulkan.shading : Binding, CanvasView, Instance, srgbToLinear;
 import sparkles.ui_vulkan.text_rendering : Hinting, Loupe, TextRendering;
 import sparkles.ui_vulkan.upload : transition, Uploads;
 import sparkles.font : Colour, Ppem, UserCoordinate;
+import sparkles.font.cluster_shaping : ClusterDirection;
 import sparkles.vulkan;
 
 /// The space a canvas composites in (`UVK6`, `UVX6`).
@@ -1016,34 +1017,10 @@ struct VulkanCanvas(B)
 
             if (!textMetrics_.present || !textRendering_.shaping || !r.cps.length)
                 return GlyphOutcome.noGlyph;
-            static bool shown(uint cp)
-                => cp != 0x200C && cp != 0x200D && !(cp >= 0xFE00 && cp <= 0xFE0F)
-                    && !(cp >= 0xE0020 && cp <= 0xE007F)
-                    && !(cp >= 0xE0100 && cp <= 0xE01EF);
-            CellFace* face;
-            foreach (position; 0 .. fallbacks_.length + 1)
-            {
-                auto f = orderedFace(r.first, position);
-                bool all = true;
-                foreach (cp; r.cps)
-                    all &= !shown(cp) || f.map.glyph(cast(dchar) cp) != 0;
-                if (all)
-                {
-                    face = f;
-                    break;
-                }
-            }
+            auto face = clusterFace(r);
             if (face is null)
                 return GlyphOutcome.noGlyph;
-            const glyphs = preparedRuns_.prepare(face.serial, face.ppem, face.inst.coords, r.cps,
-                (scope ClusterGlyph[] output) {
-                    auto shaper = shaperFor(face);
-                    if (shaper is null) return size_t(0);
-                    char[maxClusterQuads * 4] text;
-                    const encoded = convertPrefix(cast(const(dchar)[]) r.cps, text[], UtfMode.replacement);
-                    return shapeCluster(shaper, text[0 .. encoded.written],
-                        face.ppem.numerator, face.ppem.denominator, output, r.direction);
-                }, r.direction);
+            const glyphs = clusterGlyphs(face, r);
             if (!glyphs.length)
                 return GlyphOutcome.noGlyph;
             const before = atlas_.framePins();
@@ -1108,6 +1085,38 @@ struct VulkanCanvas(B)
 
     static if (canShape)
     {
+        private CellFace* clusterFace(in ClusterRequest r) @system
+        {
+            static bool shown(uint cp)
+                => cp != 0x200C && cp != 0x200D && !(cp >= 0xFE00 && cp <= 0xFE0F)
+                    && !(cp >= 0xE0020 && cp <= 0xE007F)
+                    && !(cp >= 0xE0100 && cp <= 0xE01EF);
+            foreach (position; 0 .. fallbacks_.length + 1)
+            {
+                auto face = orderedFace(r.first, position);
+                bool all = true;
+                foreach (cp; r.cps) all &= !shown(cp) || face.map.glyph(cast(dchar) cp) != 0;
+                if (all) return face;
+            }
+            return null;
+        }
+
+        private const(imported!"sparkles.font.cluster_shaping".ClusterGlyph)[]
+            clusterGlyphs(CellFace* face, in ClusterRequest r) @system
+        {
+            import sparkles.base.text.utf : convertPrefix, UtfMode;
+            import sparkles.font.cluster_shaping : ClusterGlyph, shapeCluster;
+            return preparedRuns_.prepare(face.serial, face.ppem, face.inst.coords, r.cps,
+                (scope ClusterGlyph[] output) {
+                    auto shaper = shaperFor(face);
+                    if (shaper is null) return size_t(0);
+                    char[maxClusterQuads * 4] text;
+                    const encoded = convertPrefix(cast(const(dchar)[]) r.cps, text[], UtfMode.replacement);
+                    return shapeCluster(shaper, text[0 .. encoded.written],
+                        face.ppem.numerator, face.ppem.denominator, output, r.direction);
+                }, r.direction);
+        }
+
         // Keep only exact file storage still borrowed by a bound context.
         // Content identity alone cannot keep an old allocation alive.
         private void pruneShapers() @system
@@ -1440,6 +1449,171 @@ struct VulkanCanvas(B)
     /// Its advance without rasterization or drawing.
     int naturalTextWidthPx(Args...)(auto ref Args args) @system
         => painter_.naturalTextWidthPx(args);
+
+    /**
+    Inspect the glyph at a run-local pixel x using the same selected face and
+    cached shaping as drawing. Call while the desired font context is active.
+    The result owns its names; it borrows no font or atlas memory.
+    */
+    GlyphInspection inspectTextPx(scope const(char)[] text, double x,
+        bool bold = false, bool italic = false,
+        ClusterDirection direction = ClusterDirection.automatic, bool grid = false) @system
+    {
+        import sparkles.base.text.grapheme : byGraphemeCluster, emojiPresentation, visibleWidth;
+        import sparkles.base.text.utf : convertPrefix, UtfMode;
+        GlyphInspection result;
+        if (!textMetrics_.present || x < 0) return result;
+        dchar[maxClusterQuads] cps;
+        const decoded = convertPrefix(text, cps[], UtfMode.replacement);
+        if (!decoded.written || decoded.consumed != text.length) return result;
+        auto request = GlyphRequest(cps[0], faceStyle(bold, italic),
+            emojiPresentation(cast(const(uint)[]) cps[0 .. decoded.written]));
+        static if (canShape)
+        {
+            auto r = ClusterRequest(cast(const(uint)[]) cps[0 .. decoded.written], request,
+                null, true, direction);
+            auto shapedFace = textRendering_.shaping && !grid ? clusterFace(r) : null;
+            if (shapedFace !is null)
+            {
+                const glyphs = clusterGlyphs(shapedFace, r);
+                bool valid = glyphs.length != 0;
+                foreach (g; glyphs) valid &= g.glyph != 0;
+                double pen = 0;
+                foreach (g; valid ? glyphs : null)
+                {
+                    if (!g.glyph) break;
+                    if (g.advance > 0 && x >= pen && x < pen + g.advance)
+                    {
+                        result = inspectFace(shapedFace, g.glyph);
+                        result.shaped = true;
+                        result.cluster = g.cluster;
+                        result.start = g.cluster;
+                        result.end = text.length;
+                        foreach (other; glyphs)
+                            if (other.cluster > g.cluster && other.cluster < result.end)
+                                result.end = other.cluster;
+                        expandInspectionSource(result, text);
+                        foreach (other; glyphs)
+                            if (other.cluster >= result.start && other.cluster < result.end)
+                                result.glyphs ~= other.glyph;
+                        result.advance = g.advance;
+                        result.xOffset = g.xOffset;
+                        result.yOffset = g.yOffset;
+                        result.flags = g.flags;
+                        return result;
+                    }
+                    pen += g.advance;
+                }
+                if (valid) return result;
+            }
+        }
+        // Drawing fell back to cell clusters: use that exact face order too.
+        request.style = FaceStyle.regular;
+        double pen = 0;
+        size_t offset;
+        foreach (cluster; text.byGraphemeCluster)
+        {
+            const cells = cast(int) visibleWidth(cluster.slice);
+            const width = (cells > 0 ? cells : 1) * painter_.metrics.cellW;
+            if (x >= pen && x < pen + width)
+            {
+                dchar[maxClusterQuads] part;
+                const n = convertPrefix(cluster.slice, part[], UtfMode.replacement);
+                request.cp = part[0];
+                request.emoji = emojiPresentation(cast(const(uint)[]) part[0 .. n.written]);
+                bool needsShaping;
+                foreach (cp; part[1 .. n.written]) needsShaping |= cp != 0xFE0E && cp != 0xFE0F;
+                static if (canShape)
+                    if (textRendering_.shaping && needsShaping)
+                    {
+                        auto clusterRequest = ClusterRequest(cast(const(uint)[]) part[0 .. n.written],
+                            request, null, true, ClusterDirection.automatic);
+                        auto serving = clusterFace(clusterRequest);
+                        if (serving !is null)
+                        {
+                            const shaped = clusterGlyphs(serving, clusterRequest);
+                            bool valid = shaped.length != 0;
+                            foreach (g; shaped) valid &= g.glyph != 0;
+                            if (valid)
+                            {
+                                result = inspectFace(serving, shaped[0].glyph);
+                                result.shaped = true;
+                                result.start = offset;
+                                result.end = offset + cluster.slice.length;
+                                result.advance = width;
+                                foreach (g; shaped) result.glyphs ~= g.glyph;
+                                return result;
+                            }
+                        }
+                    }
+                CellFace* face;
+                uint glyph;
+                foreach (position; 0 .. fallbacks_.length + 1)
+                {
+                    auto next = orderedFace(request, position);
+                    if (auto gid = next.map.glyph(request.cp)) { face = next; glyph = gid; break; }
+                }
+                if (face is null) face = &faces_[FaceStyle.regular];
+                result = inspectFace(face, glyph);
+                result.start = offset;
+                result.end = offset + cluster.slice.length;
+                result.advance = width;
+                result.glyphs = [glyph];
+                return result;
+            }
+            pen += width;
+            offset += cluster.slice.length;
+        }
+        return result;
+    }
+
+    private static void expandInspectionSource(ref GlyphInspection result,
+        scope const(char)[] text) @safe pure nothrow @nogc
+    {
+        import sparkles.base.text.grapheme : byGraphemeCluster;
+        const start = result.start, end = result.end;
+        size_t at;
+        foreach (grapheme; text.byGraphemeCluster)
+        {
+            const next = at + grapheme.slice.length;
+            if (at < end && next > start)
+            {
+                if (at < result.start) result.start = at;
+                if (next > result.end) result.end = next;
+            }
+            at = next;
+        }
+    }
+
+    private GlyphInspection inspectFace(CellFace* face, uint glyph) @system
+    {
+        import sparkles.font.names : name;
+        import sparkles.font.glyph_names : glyphName;
+        GlyphInspection result;
+        result.found = true;
+        result.glyph = glyph;
+        result.faceIndex = face.face.index;
+        result.faceSerial = face.serial;
+        result.ppem = face.ppem.numerator / cast(double) face.ppem.denominator;
+        result.colour = face.colour;
+        foreach (ref fallback; fallbacks_) if (face is &fallback) result.fallback = true;
+        auto names = name(face.face);
+        if (names.hasValue)
+            foreach (id; [4, 6, 1])
+            {
+                foreach (record; names.value.records)
+                    if (record.hasValue && record.value.nameID == id)
+                    {
+                        char[1024] storage;
+                        auto decoded = record.value.decode(storage[]);
+                        if (decoded.hasValue) { result.faceName = decoded.value.idup; break; }
+                    }
+                if (result.faceName.length) break;
+            }
+        const named = glyphName(face.face, glyph);
+        if (named.hasValue && named.value.present) result.glyphName = named.value.text.idup;
+        return result;
+    }
 
     /// A run's extent in cells.
     Size measure(scope const(char)[] text) const => painter_.measure(text);
@@ -2122,6 +2296,52 @@ private struct HintScratch
     assert(canvas.resolveCluster(ClusterRequest(variation[], GlyphRequest('a'), &advance, true),
         quads[], count) == GlyphOutcome.drawn,
         "supplementary variation selectors do not require standalone glyphs");
+}
+
+/// Inspection reuses the rendering face order and cached clusters, including
+/// RTL fallbacks and missing glyphs, without touching raster or atlas state.
+@("ui_vulkan.canvas.inspectionReportsServingFaceAndSource")
+@system unittest
+{
+    import std.algorithm.searching : canFind;
+    import std.file : read;
+    import std.path : buildPath;
+    import std.process : environment;
+    const root = environment.get("SPARKLES_FONTS_PATH");
+    assert(root.length, "SPARKLES_FONTS_PATH is required");
+    const latin = cast(const(ubyte)[]) read(buildPath(root, "NotoSans.ttf"));
+    const glag = cast(const(ubyte)[]) read(buildPath(root, "NotoSansGlagolitic-Regular.otf"));
+    const arabic = cast(const(ubyte)[]) read(buildPath(root, "NotoSansArabic.ttf"));
+    const size = Ppem.fromInteger(24).value;
+    VulkanCanvas!DeviceMemoryBackend canvas;
+    scope (exit) foreach (ref slot; canvas.shapers_) slot.release();
+    assert(canvas.cellFont(latin, 24, TextMetrics(ascent: 18)));
+    FallbackFace[2] extras = [FallbackFace(glag, size), FallbackFace(arabic, size)];
+    assert(canvas.specimenFont(latin, 0, size, null, TextMetrics(ascent: 18),
+        0, 0, null, null, null, extras[]));
+    assert(canvas.beginSpecimen(14, 30));
+    scope (exit) canvas.endSpecimen();
+    const a = canvas.inspectTextPx("ab", 0);
+    assert(a.found && a.shaped && !a.fallback && a.glyph
+        && a.start == 0 && a.end == 1 && a.advance > 0);
+    const b = canvas.inspectTextPx("ab", a.advance + 0.01);
+    assert(b.found && b.start == 1 && b.end == 2 && b.glyph != a.glyph);
+    const combining = canvas.inspectTextPx("q\u0301", 0);
+    assert(combining.found && combining.start == 0 && combining.end == 3
+        && combining.glyphs.length == 2, "zero-advance marks remain inspectable with their base");
+    const historic = canvas.inspectTextPx("ⰀⰁ", 0);
+    assert(historic.found && historic.fallback && historic.faceName.canFind("Glagolitic")
+        && historic.start == 0 && historic.end == 3 && historic.faceSerial != a.faceSerial);
+    const rtl = canvas.inspectTextPx("سلام", 0, false, false, ClusterDirection.rtl);
+    assert(rtl.found && rtl.fallback && rtl.faceName.canFind("Arabic")
+        && rtl.start < rtl.end && rtl.end <= "سلام".length);
+    assert(!canvas.inspectTextPx("ab", -1).found && !canvas.inspectTextPx("ab", 1000).found);
+    canvas.specimenTextRendering(TextRendering(shaping: false));
+    const grid = canvas.inspectTextPx("Ⰰ", 0);
+    assert(grid.found && !grid.shaped && grid.fallback && grid.glyph == historic.glyph);
+    const missing = canvas.inspectTextPx("\U0010FFFF", 0);
+    assert(missing.found && !missing.glyph && !missing.fallback);
+    assert(canvas.atlas_.length == 0, "inspection never requests raster tiles");
 }
 
 /// Measurement and painting share runs, while coordinate changes select fresh data.

@@ -34,6 +34,10 @@ import sparkles.test_runner.skip : skipTest;
     // `q` + combining acute (no precomposed form): two glyphs, one cluster.
     const two = shapeCluster(shaper, "q\u0301", 16, 1, glyphs[]);
     assert(two == 2 && glyphs[0].glyph == map.glyph('q') && glyphs[1].glyph != 0);
+    assert(glyphs[0].cluster == 0 && glyphs[1].cluster == 1,
+        "the character-cluster shaper retains each source UTF-8 offset");
+    assert(shapeCluster(shaper, "ab", 16, 1, glyphs[]) == 2);
+    assert(glyphs[0].cluster == 0 && glyphs[1].cluster == 1);
 }
 
 @("cluster_shaping.failurePathsPublishNothing")

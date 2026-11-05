@@ -165,6 +165,18 @@ struct GlyphQuad
     int dx, dy;
 }
 
+/// Owned diagnostic metadata for the glyph serving a specimen position.
+struct GlyphInspection
+{
+    bool found, shaped, fallback, colour;
+    string faceName, glyphName;
+    uint glyph, faceIndex, faceSerial, flags;
+    uint[] glyphs; /// all glyph IDs in the source grapheme/ligature span
+    size_t cluster; /// the selected glyph's raw shaper UTF-8 cluster offset
+    size_t start, end; /// source UTF-8 span, expanded to whole graphemes
+    double advance = 0, xOffset = 0, yOffset = 0, ppem = 0;
+}
+
 /// The cell font's vertical metrics, in pixels from a cell's top.
 struct TextMetrics
 {
