@@ -2069,7 +2069,8 @@ private struct CellFace
         if (!bytes.length)
             return CellFace.init;
         const reusable = previous !is null && previous.bytes.ptr == bytes.ptr
-            && previous.bytes.length == bytes.length && previous.face.index == index;
+            && previous.bytes.length == bytes.length && previous.face.index == index
+            && (!knownHash || previous.contentHash == knownHash);
         auto face = reusable ? fontOk(previous.face) : openFace(bytes, index);
         if (face.hasError)
             return CellFace.init;

@@ -36,7 +36,8 @@ struct PreparedSpecimenFont
         auto nextFace = face;
         auto nextMap = map;
         if (wanted.path != request.path || wanted.faceIndex != request.faceIndex || !bytes.length
-            || wanted.bytes.ptr != request.bytes.ptr)
+            || wanted.bytes.ptr != request.bytes.ptr || wanted.bytes.length != request.bytes.length
+            || wanted.contentHash != request.contentHash)
         {
             if (wanted.bytes.length)
                 nextBytes = wanted.bytes;
@@ -137,4 +138,9 @@ struct PreparedSpecimenFont
     request.fallbacks = [SpecimenFallbackFace(bytes, uint.max, 42)];
     assert(!prepared.prepare(request));
     assert(prepared.request.fallbacks.ptr == retained && prepared.request.px == 28);
+    request.fallbacks = null;
+    request.bytes = bytes[0 .. 12];
+    assert(!prepared.prepare(request), "a shorter view of the same storage must be parsed anew");
+    assert(prepared.bytes.ptr == originalBytes && prepared.bytes.length == bytes.length
+        && prepared.request.px == 28, "a failed revision preserves the complete previous face");
 }
