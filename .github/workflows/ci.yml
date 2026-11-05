@@ -587,7 +587,10 @@ jobs:
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
-          use-nix-cache: true
+          # The Linux fallback restored an 8 GiB compressed Android store
+          # and filled the runner during setup (run 42023216277). Use Cachix
+          # for its closure instead of restoring a second full store copy.
+          use-nix-cache: ${{ matrix.runner != 'ubuntu-latest' }}
           nix-cache-key: nix-${{ runner.os }}-nixbuild-${{ hashFiles('**/flake.lock') }}
           nix-cache-restore-prefixes: |
             nix-${{ runner.os }}-nixbuild-
@@ -672,11 +675,10 @@ jobs:
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
-          use-nix-cache: true
-          nix-cache-key: nix-${{ runner.os }}-nixandroid-${{ hashFiles('**/flake.lock') }}
-          nix-cache-restore-prefixes: |
-            nix-${{ runner.os }}-nixandroid-
-            nix-${{ runner.os }}-
+          # This store's 8 GiB compressed archive exhausted the runner while
+          # restoring it (run 42023216277). with-cachix.sh already preserves
+          # each completed output, including progress from interrupted runs.
+          use-nix-cache: false
 
       # One derivation at a time: the compiler peaks at 9.4 GiB building
       # `libhue-android` and at 7.1 GiB building `libterminal-android`, and the
