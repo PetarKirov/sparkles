@@ -248,15 +248,16 @@ struct Presenter
         => sync.hasRetired || swapchain.hasRetired;
 
     /**
-    Destroys what rebuilds retired, a little at a time — eight semaphores and
-    one swapchain a call — so a run of rebuilds does not hitch when it ends.
-    Call it once the presents that used them are done: a few quiet frames
-    after the last rebuild.
+    Destroys retired resources whose epoch has a completed image-reacquisition
+    proof. A rendered-frame count is insufficient: if resize replaces every
+    swapchain before reacquisition, resources remain retained until a later
+    swapchain completes a present and returns one of its images.
     */
     void reap(Context)(ref Context vk) @system nothrow
     {
-        sync.reap(vk, 8);
-        swapchain.reap(vk, 1);
+        if (!sync.presentationCompletionKnown) return;
+        sync.reapThrough(vk, sync.completedPresentEpoch);
+        swapchain.reapThrough(vk, sync.completedPresentEpoch);
         ++stats.reaps;
     }
 
@@ -385,6 +386,7 @@ PresentationResult!FrameResult presentFrame(alias record, Context, Io = typeof(n
             return err!FrameResult(failed);
         const tagged = canWaitForPresent(vk);
         const presentId = tagged ? presentWait.idFor(frame) : 0;
+        swapchain.epoch = ++sync.epoch;
         auto shown = swapchain.present(vk, image, sync.renderFinished(image), presentId);
         if (auto failed = giveBack(io))
             return err!FrameResult(failed);
@@ -413,6 +415,7 @@ PresentationResult!FrameResult presentFrame(alias record, Context, Io = typeof(n
             return err!FrameResult("vkQueuePresentKHR: " ~ describeResult(shown.error));
         if (!shown.hasError)
         {
+            sync.notePresent(image);
             result.presented = true;
             ++stats.framesPresented;
         }
@@ -447,7 +450,9 @@ private bool canWaitForPresent(Context)(ref Context vk)
 private VkResult waitWithoutBlocking(Context)(ref Context vk, ref FrameSync sync) @system
 {
     auto fence = sync.inFlight;
-    return vk.device.waitForFences(vk.device.device, 1, &fence, VK_TRUE, 0);
+    const result = vk.device.waitForFences(vk.device.device, 1, &fence, VK_TRUE, 0);
+    if (result == VkResult.VK_SUCCESS) sync.frameCompleted(sync.frame);
+    return result;
 }
 
 version (unittest)
