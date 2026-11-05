@@ -1139,12 +1139,9 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         return ok;
     }
 
-    // Frames presented so far: the epoch what a rebuild retires is stamped
-    // with. Each frame waits for its slot's previous submit before reusing
-    // the slot, so once every slot has drawn again after a rebuild (and one
-    // frame more, for the presents that waited on the retired semaphores),
-    // the queue is done with what it retired. Each retiree is reaped by its
-    // own epoch: a resize that rebuilds every frame still reaps behind it.
+    // Presentation epochs stamp retired resources. A returned image and the
+    // completed submit that waited for its acquisition prove earlier presents
+    // are finished; a fixed number of rendering frames cannot prove that.
     ulong presents;
 
     // The frame's extents (`F13`), asked for once the swapchain shows
@@ -2001,6 +1998,10 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                 // record, numbered `recorded`.
                 void beforePresent() @system
                 {
+                    // Even an out-of-date present queues semaphore waits.
+                    // Count attempts so an earlier acquire proof cannot free
+                    // resources still used by that later rejected present.
+                    gpu.swapchain.epoch = gpu.sync.epoch = ++presents;
                     const generation = session.specimenDrawnGeneration;
                     const changed = generation && generation != submittedSpecimenGeneration;
                     if (changed)
@@ -2037,6 +2038,11 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
             // still shown, and counts as shown.
             const took = MonoTime.currTime - started + timing.rebuild;
             const shown = timing.shown && outcome != FrameOutcome.again;
+            if (shown && gpu.sync.presentationCompletionKnown)
+            {
+                gpu.sync.reapThrough(gpu.vk, gpu.sync.completedPresentEpoch);
+                gpu.swapchain.reapThrough(gpu.vk, gpu.sync.completedPresentEpoch);
+            }
             bool recordMade;
             if (timing.collected)
             {
@@ -2090,17 +2096,6 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                         resizedAt = MonoTime.init;
                     }
                     session.frameSeconds = lc.frameSeconds;
-                    // What a rebuild retired goes once nothing can still be
-                    // presenting it; destroyed at the next present, a quick
-                    // second rebuild's swapchain and semaphores were still in
-                    // use (`VUID-vkDestroySwapchainKHR-swapchain-01282`).
-                    gpu.swapchain.epoch = gpu.sync.epoch = ++presents;
-                    const settled = gpu.sync.framesInFlight + 1;
-                    if (presents > settled)
-                    {
-                        gpu.sync.reapThrough(gpu.vk, presents - settled);
-                        gpu.swapchain.reapThrough(gpu.vk, presents - settled);
-                    }
                     break;
                 case FrameOutcome.again:
                     lc.frameDone(FrameResult.again, now());
@@ -2524,6 +2519,7 @@ private FrameOutcome drawFrame(alias draw)(ref Gpu gpu, ref NativeHost host,
     zone.next!"present";
     beforePresent();
     const presented = gpu.swapchain.present(*vk, index, gpu.sync.renderFinished(index));
+    if (!presented.hasError) gpu.sync.notePresent(index);
     timing.shown = !presented.hasError;
     timing.present = lap();
     zone.end();

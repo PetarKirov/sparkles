@@ -149,8 +149,9 @@ struct FrameSync
     private VkSemaphore[] _retired;
     private ulong[] _retiredAt; // ditto
 
-    /// The owner's count of what it has presented, which retired semaphores
-    /// are stamped with: see $(LREF reapThrough) and `Swapchain.epoch`.
+    /// The owner's presentation-attempt count, which retired semaphores are
+    /// stamped with. Increment before every present, including rejected ones:
+    /// an out-of-date present still queues semaphore waits.
     ulong epoch;
 
     /**
@@ -160,6 +161,11 @@ struct FrameSync
     no frame has drawn into that image yet.
     */
     private VkFence[] _imageGuard;
+    private bool[] _imagePresented;
+    private ulong[] _acquireProofEpoch;
+    private bool[] _acquireProofPending;
+    private bool _presentationCompletionKnown;
+    private ulong _completedPresentEpoch;
 
     private uint _frame;
 
@@ -182,6 +188,9 @@ struct FrameSync
         sync._inFlight = new VkFence[framesInFlight];
         sync._renderFinished = new VkSemaphore[imageCount];
         sync._imageGuard = new VkFence[imageCount];
+        sync._imagePresented = new bool[imageCount];
+        sync._acquireProofEpoch = new ulong[framesInFlight];
+        sync._acquireProofPending = new bool[framesInFlight];
 
         auto semInfo = vkInfo(VkSemaphoreCreateInfo());
 
@@ -235,6 +244,41 @@ struct FrameSync
     uint imageCount() const @safe pure nothrow @nogc
         => cast(uint) _renderFinished.length;
 
+    /// A completed submit waited on an acquisition of a previously presented
+    /// image. Its prior present completed; older swapchains may be retired.
+    bool presentationCompletionKnown() const @safe pure nothrow @nogc
+        => _presentationCompletionKnown;
+
+    /// Retirement epochs at or before this one have a presentation proof.
+    ulong completedPresentEpoch() const @safe pure nothrow @nogc
+        => _completedPresentEpoch;
+
+    /// Notes a successful (including suboptimal) presentation of this image.
+    void notePresent(uint imageIndex) @safe pure nothrow @nogc
+    {
+        if (imageIndex < _imagePresented.length) _imagePresented[imageIndex] = true;
+    }
+
+    private void noteSubmit(uint imageIndex) @safe pure nothrow @nogc
+    {
+        if (_frame >= _acquireProofPending.length) return;
+        _acquireProofPending[_frame] = imageIndex < _imagePresented.length && _imagePresented[imageIndex];
+        _acquireProofEpoch[_frame] = epoch;
+    }
+
+    // Also used by the presenter's nonblocking fence wait. A plain rendering
+    // fence is insufficient: only a submit that waited for a returned image
+    // proves the preceding present of that image has completed.
+    package void frameCompleted(uint slot) @safe pure nothrow @nogc
+    {
+        if (slot >= _acquireProofPending.length || !_acquireProofPending[slot]) return;
+        const proof = _acquireProofEpoch[slot];
+        if (!_presentationCompletionKnown || proof > _completedPresentEpoch)
+            _completedPresentEpoch = proof;
+        _presentationCompletionKnown = true;
+        _acquireProofPending[slot] = false;
+    }
+
     /**
     The semaphore `vkAcquireNextImageKHR` signals for the current frame.
 
@@ -278,8 +322,9 @@ struct FrameSync
         @system nothrow
     {
         auto fence = _inFlight[_frame];
-        return check(vk.device.waitForFences(
-            vk.device.device, 1, &fence, VK_TRUE, timeout));
+        const result = vk.device.waitForFences(vk.device.device, 1, &fence, VK_TRUE, timeout);
+        if (result == VkResult.VK_SUCCESS) frameCompleted(_frame);
+        return check(result);
     }
 
     /**
@@ -298,8 +343,10 @@ struct FrameSync
         if (guard is null || guard is _inFlight[_frame])
             return check(VkResult.VK_SUCCESS);
 
-        return check(vk.device.waitForFences(
-            vk.device.device, 1, &guard, VK_TRUE, timeout));
+        const result = vk.device.waitForFences(vk.device.device, 1, &guard, VK_TRUE, timeout);
+        if (result == VkResult.VK_SUCCESS)
+            foreach (slot, fence; _inFlight) if (guard is fence) frameCompleted(cast(uint)slot);
+        return check(result);
     }
 
     /**
@@ -319,6 +366,7 @@ struct FrameSync
             return reset;
 
         _imageGuard[imageIndex] = fence;
+        if (_frame < _acquireProofPending.length) _acquireProofPending[_frame] = false;
         return check(VkResult.VK_SUCCESS);
     }
 
@@ -351,7 +399,9 @@ struct FrameSync
             pSignalSemaphores: &signal,
         ));
 
-        return check(vk.device.queueSubmit(vk.queue, 1, &info, _inFlight[_frame]));
+        const result = vk.device.queueSubmit(vk.queue, 1, &info, _inFlight[_frame]);
+        if (result == VkResult.VK_SUCCESS) noteSubmit(imageIndex);
+        return check(result);
     }
 
     /// Move to the next frame slot, wrapping.
@@ -379,9 +429,11 @@ struct FrameSync
         if (_inFlight.length == 0)
             return check(VkResult.VK_SUCCESS);
 
-        return check(vk.device.waitForFences(
-            vk.device.device, cast(uint) _inFlight.length, _inFlight.ptr,
-            VK_TRUE, timeout));
+        const result = vk.device.waitForFences(vk.device.device, cast(uint) _inFlight.length,
+            _inFlight.ptr, VK_TRUE, timeout);
+        if (result == VkResult.VK_SUCCESS)
+            foreach (slot; 0 .. _inFlight.length) frameCompleted(cast(uint)slot);
+        return check(result);
     }
 
     /**
@@ -413,6 +465,7 @@ struct FrameSync
     {
         foreach (ref guard; _imageGuard)
             guard = null;
+        _imagePresented[] = false;
     }
 
     /**
@@ -438,6 +491,7 @@ struct FrameSync
             _retiredAt ~= epoch;
         _renderFinished = new VkSemaphore[imageCount];
         _imageGuard = new VkFence[imageCount];
+        _imagePresented = new bool[imageCount];
 
         auto semInfo = vkInfo(VkSemaphoreCreateInfo());
         foreach (i; 0 .. imageCount)
@@ -463,8 +517,9 @@ struct FrameSync
     /**
     Destroy semaphores retired by $(LREF replaceImages).
 
-    The queue must already be done with those waits — a few quiet frames
-    after the last rebuild, or `queueWaitIdle` first. `limit` caps how
+    Presentation completion must already be established, for example by
+    waiting for reacquisition of an image presented by a newer swapchain.
+    Rendering-frame counts alone do not establish this. `limit` caps how
     many this call destroys. $(LREF Swapchain.reap) has the same contract.
     */
     void reap(Context)(ref Context vk, uint limit = uint.max) @system nothrow
@@ -543,8 +598,65 @@ struct FrameSync
         _retiredAt = null;
         _inFlight = null;
         _imageGuard = null;
+        _imagePresented = null;
+        _acquireProofEpoch = null;
+        _acquireProofPending = null;
+        _presentationCompletionKnown = false;
+        _completedPresentEpoch = 0;
         _frame = 0;
     }
+}
+
+/// Rendering age and an initial acquisition prove nothing about presentation.
+/// Only a completed submit waiting on a returned image advances retirement.
+@("vulkan_wsi.frame.retirementRequiresReacquisitionCompletion")
+@system nothrow unittest
+{
+    FrameSync sync;
+    sync._imagePresented = new bool[3];
+    sync._acquireProofEpoch = new ulong[2];
+    sync._acquireProofPending = new bool[2];
+    sync._inFlight = new VkFence[2];
+    sync.epoch = 100;
+    sync.noteSubmit(0);
+    sync.frameCompleted(0);
+    assert(!sync.presentationCompletionKnown, "a new image has no prior present to complete");
+    sync.notePresent(0);
+    sync.noteSubmit(1);
+    sync.frameCompleted(0);
+    assert(!sync.presentationCompletionKnown, "a different image is not a reacquisition");
+    sync.noteSubmit(0);
+    assert(!sync.presentationCompletionKnown, "acquisition must also finish on the GPU");
+    ++sync.epoch; // a subsequent present can be rejected, but still queues waits
+    static struct TimeoutDevice
+    {
+        VkDevice device;
+        VkResult waitForFences(VkDevice, uint, const(VkFence)*, VkBool32, ulong)
+            @safe pure nothrow @nogc => VkResult.VK_TIMEOUT;
+    }
+    static struct TimeoutContext { TimeoutDevice device; }
+    TimeoutContext vk;
+    cast(void) sync.waitForFrame(vk, 0);
+    assert(!sync.presentationCompletionKnown, "a timed-out fence provides no completion proof");
+    sync.frameCompleted(0);
+    assert(sync.presentationCompletionKnown && sync.completedPresentEpoch == 100
+        && sync.completedPresentEpoch < sync.epoch,
+        "a completed acquire cannot prove a later rejected present has finished");
+    // A recreated swapchain's initial images have not been presented yet.
+    sync.forgetImages();
+    sync.epoch = 101;
+    sync.noteSubmit(0);
+    sync.frameCompleted(0);
+    assert(sync.completedPresentEpoch == 100);
+    sync.notePresent(0);
+    sync._frame = 1;
+    sync.noteSubmit(0); // delayed older proof
+    sync._frame = 0;
+    sync.epoch = 102;
+    sync.noteSubmit(0);
+    sync.frameCompleted(0);
+    sync.frameCompleted(1);
+    assert(sync.completedPresentEpoch == 102, "late completions cannot move retirement backwards");
 }
 
 @("vulkan_wsi.frame.suboptimalFinishesTheFrameOutOfDateAbandonsIt")

@@ -524,8 +524,9 @@ struct Swapchain
     /**
     Destroy swapchains retired by $(LREF recreate).
 
-    The queue must already be done with those images — wait a few quiet
-    frames after the last rebuild, or `queueWaitIdle` first. `limit` caps
+    Presentation completion must already be established, for example by a
+    completed reacquisition from a newer swapchain. A fixed rendering-frame
+    grace period is insufficient. `limit` caps
     how many handles this call destroys so a pile of 5K swapchains is not
     torn down in one frame. $(LREF FrameSync.reap) has the same contract.
     */
