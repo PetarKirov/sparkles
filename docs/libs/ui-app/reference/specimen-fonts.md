@@ -36,6 +36,17 @@ physical em size, normalized variation coordinates, direction, and cluster text.
 their keys and glyph positions; colors and raster images remain independent.
 Memory-pressure cache release drops these runs along with the glyph atlases.
 
+The coverage and color atlases each retain at most four 1024×1024 pages.
+Drawing pins its pages for the current frame. Preparation warms available
+space and retains completed tiles until the next preparation batch; measuring
+alone does not pin old pages. A full sheet reclaims its least recently used
+unpinned page. If cached glyphs fragment the space needed by a shaped run,
+that run rolls back its provisional references, clears cold pages, and retries
+before returning any quads. Pages used by earlier draws stay pinned.
+Reclaimed pages receive a new GPU image generation; the previous image stays
+alive until its referencing frames complete. Pages already referenced by
+the current frame keep their texels and placement.
+
 Natural text methods accept an optional `ClusterDirection` after their style
 arguments. Resolve paragraph levels and wrapped-line ordering before supplying
 `ltr` or `rtl`; automatic direction remains the default for existing callers.

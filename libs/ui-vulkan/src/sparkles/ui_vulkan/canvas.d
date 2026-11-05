@@ -279,6 +279,7 @@ struct VulkanCanvas(B)
     private uint specimenFallbackGlyphs_;
     private uint specimenGridFallbacks_;
     private UniqueBuffer!GpuImage[2] atlasImages_; // the coverage sheet's pages, the colour sheet's
+    private UniqueBuffer!ulong[2] atlasGenerations_;
     private Pipelines coveragePipelines_;
     private bool coveragePipelinesReady_;
     private struct DirectGlyph
@@ -417,6 +418,7 @@ struct VulkanCanvas(B)
         // what this frame draws rasterizes again.
         if (atlas_.overflowed || atlasStale_)
             atlas_.reset();
+        atlas_.beginFrame();
         atlasStale_ = false;
         buffers_.reset(slot);
         foreach (ref p; pools_[])
@@ -621,6 +623,7 @@ struct VulkanCanvas(B)
                     retire(page);
                 sheet.clear();
             }
+            foreach (ref generations; atlasGenerations_) generations.clear();
             atlas_.reset();
         }
     }
@@ -1043,42 +1046,63 @@ struct VulkanCanvas(B)
                 }, r.direction);
             if (!glyphs.length)
                 return GlyphOutcome.noGlyph;
-            double pen = 0;
-            static int nearest(double v) => cast(int)(v >= 0 ? v + 0.5 : v - 0.5);
-            foreach (g; glyphs)
+            const before = atlas_.framePins();
+            foreach (attempt; 0 .. 2)
             {
-                if (g.glyph == 0)
-                    return GlyphOutcome.noGlyph;
-                if (r.measureOnly)
+                count = 0;
+                bool pressure;
+                double pen = 0;
+                static int nearest(double v) => cast(int)(v >= 0 ? v + 0.5 : v - 0.5);
+                foreach (g; glyphs)
                 {
-                    if (preparingGlyphs_ && !face.colour && (!directGlyphs_.length
-                        || (coverageKey(face.inst, face.serial, g.glyph,
-                            face.ppem, textRendering_.hinting == Hinting.light) in directGlyphs_) is null))
-                        atlas_.prepare(face.inst, face.serial, g.glyph, face.ppem,
-                            textRendering_.hinting == Hinting.light ? &face.hints : null);
+                    if (g.glyph == 0)
+                    {
+                        atlas_.restorePins(before);
+                        return GlyphOutcome.noGlyph;
+                    }
+                    if (r.measureOnly)
+                    {
+                        if (preparingGlyphs_ && !face.colour && (!directGlyphs_.length
+                            || (coverageKey(face.inst, face.serial, g.glyph,
+                                face.ppem, textRendering_.hinting == Hinting.light) in directGlyphs_) is null))
+                            atlas_.prepare(face.inst, face.serial, g.glyph, face.ppem,
+                                textRendering_.hinting == Hinting.light ? &face.hints : null);
+                        pen += g.advance;
+                        continue;
+                    }
+                    GlyphQuad q;
+                    const outcome = glyphFrom(face, g.glyph, r.first, q);
+                    if (outcome == GlyphOutcome.drawn)
+                    {
+                        q.dx = nearest(pen + g.xOffset);
+                        q.dy = nearest(g.yOffset);
+                        if (count < quads.length)
+                            quads[count++] = q;
+                    }
+                    else if (outcome == GlyphOutcome.full) { pressure = true; break; }
+                    else if (outcome != GlyphOutcome.blank)
+                    {
+                        atlas_.restorePins(before);
+                        return outcome;
+                    }
                     pen += g.advance;
-                    continue;
                 }
-                GlyphQuad q;
-                const outcome = glyphFrom(face, g.glyph, r.first, q);
-                if (outcome == GlyphOutcome.drawn)
+
+                if (pressure)
                 {
-                    q.dx = nearest(pen + g.xOffset);
-                    q.dy = nearest(g.yOffset);
-                    if (count < quads.length)
-                        quads[count++] = q;
+                    atlas_.restorePins(before);
+                    if (attempt == 0 && atlas_.reclaimColdPages()) continue;
+                    return GlyphOutcome.full;
                 }
-                else if (outcome != GlyphOutcome.blank)
-                    return outcome;
-                pen += g.advance;
+                if (r.advance !is null)
+                {
+                    // The request borrows a mutable output slot for this call;
+                    // `in` freezes the request, not the caller-owned result.
+                    () @trusted { *cast(double*) r.advance = pen; }();
+                }
+                return GlyphOutcome.drawn;
             }
-            if (r.advance !is null)
-            {
-                // The request borrows a mutable output slot for this call;
-                // `in` freezes the request, not the caller-owned result.
-                () @trusted { *cast(double*) r.advance = pen; }();
-            }
-            return GlyphOutcome.drawn;
+            assert(false, "a run returns or retries exactly once");
         }
     }
 
@@ -1142,19 +1166,28 @@ struct VulkanCanvas(B)
         foreach (colour; [false, true])
             while (atlasImages_[colour].length < atlas_.pageCount(colour))
             {
-                GpuImage page;
-                auto made = GpuImage.create(page, *device_, *memory_, formats[colour],
-                    VkExtent2D(side, side), VkImageUsageFlagBits.VK_IMAGE_USAGE_SAMPLED_BIT
-                    | VkImageUsageFlagBits.VK_IMAGE_USAGE_TRANSFER_DST_BIT);
-                if (made.hasError)
-                    return made.error;
-                atlasImages_[colour].put(page);
+                atlasImages_[colour].put(GpuImage.init);
+                atlasGenerations_[colour].put(0);
             }
         VkResult result = VkResult.VK_SUCCESS;
         ubyte[] rows;
         atlas_.takeDirty((in DirtyRegion d) {
             if (result < 0)
                 return false;
+            ref image = atlasImages_[d.colour][][d.page];
+            ref generation = atlasGenerations_[d.colour][][d.page];
+            const required = atlas_.pageGeneration(d.page, d.colour);
+            if (image.handle is null || generation != required)
+            {
+                GpuImage replacement;
+                const made = GpuImage.create(replacement, *device_, *memory_, formats[d.colour],
+                    VkExtent2D(side, side), VkImageUsageFlagBits.VK_IMAGE_USAGE_SAMPLED_BIT
+                    | VkImageUsageFlagBits.VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+                if (made.hasError) { result = made.error; return false; }
+                if (image.handle !is null) retire(image);
+                image = replacement;
+                generation = required;
+            }
             const texel = d.colour ? 4 : 1;
             const pixels = atlas_.page(d.page, d.colour);
             const(ubyte)[] data = pixels;
@@ -1265,7 +1298,13 @@ struct VulkanCanvas(B)
     int[2] labelSizePx(scope const(char)[] text) const @system => painter_.labelSizePx(text);
 
     /// How many glyph atlas pages are on the device: coverage pages, or colour ones.
-    size_t atlasPages(bool colour = false) const => atlasImages_[colour].length;
+    size_t atlasPages(bool colour = false) const @safe pure nothrow @nogc
+    {
+        size_t count;
+        foreach (ref image; atlasImages_[colour][])
+            if (image.handle !is null) ++count;
+        return count;
+    }
 
     /// Coverage blocks prepared for this frame's experimental GPU path.
     size_t gpuCoverageGlyphs() const @safe pure nothrow @nogc => directGlyphRecords_.length;
@@ -1314,6 +1353,7 @@ struct VulkanCanvas(B)
                 page.destroy(*device_, *memory_);
             sheet.clear();
         }
+        foreach (ref generations; atlasGenerations_) generations.clear();
         placeholder_.destroy(*device_, *memory_);
         foreach (ref p; pools_[])
             device_.destroyDescriptorPool(device_.device, p.pool, null);
@@ -1481,6 +1521,7 @@ struct VulkanCanvas(B)
 
     private void retire(ref GpuImage image)
     {
+        if (image.handle is null) return;
         retired_.put(Retired(image: image, needed: lastSerial));
         image = GpuImage.init;
     }
@@ -1786,13 +1827,9 @@ struct VulkanCanvas(B)
         else if (r == VkResult.VK_ERROR_OUT_OF_DEVICE_MEMORY
             || r == VkResult.VK_ERROR_OUT_OF_HOST_MEMORY)
         {
-            // Nothing of this frame will be submitted, so nothing is bound.
-            foreach (ref e; images_[])
-                if (e.handle.valid)
-                {
-                    retire(e.image);
-                    e = CachedImage.init;
-                }
+            // Nothing of this frame will be submitted. Retire every cache,
+            // including replacement atlas images from the failed upload.
+            releaseCaches();
         }
         return err!T(r);
     }
@@ -1932,6 +1969,68 @@ private struct HintScratch
     assert(changed.scratch.segments.ptr == initial.scratch.segments.ptr);
     assert(changed.inst.coords != initial.inst.coords);
     assert(!CellFace.open(bytes, size, uint.max).bytes.length);
+}
+
+/// Large forward/reverse size sweeps retain the complete mixed prepared and
+/// synchronous run, including the lowercase continuation from the specimen.
+@("ui_vulkan.canvas.largeSizeSweepPreservesEveryGlyph")
+@system unittest
+{
+    import std.file : read;
+    import std.path : buildPath;
+    import std.process : environment;
+    import sparkles.font.cluster_shaping : ClusterDirection;
+    const root = environment.get("SPARKLES_FONTS_PATH");
+    assert(root.length, "SPARKLES_FONTS_PATH is required");
+    const latin = cast(const(ubyte)[]) read(buildPath(root, "NotoSans.ttf"));
+    const glag = cast(const(ubyte)[]) read(buildPath(root, "NotoSansGlagolitic-Regular.otf"));
+    foreach (workers; [1u, 2u, 4u])
+    {
+        VulkanCanvas!DeviceMemoryBackend canvas;
+        scope (exit)
+        {
+            canvas.atlas_.stopPreparation();
+            foreach (ref slot; canvas.shapers_) slot.release();
+        }
+        assert(canvas.cellFont(latin, 24, TextMetrics(ascent: 18)));
+        uint[11] cps = [0x2C00, 0x2C01, 0x2C02, 0x2C03, 0x2C04, ' ',
+            0x2C30, 0x2C31, 0x2C32, 0x2C33, 0x2C34];
+        foreach (step; 0 .. 258)
+        {
+            const px = cast(uint)(step < 129 ? 256 + step : 513 - step);
+            // This is the atlas reset performed by beginFrame, without a GPU.
+            if (canvas.atlas_.overflowed) canvas.atlas_.reset();
+            canvas.atlas_.beginFrame();
+            const size = Ppem.fromInteger(px).value;
+            FallbackFace[1] extras = [FallbackFace(glag, size)];
+            assert(canvas.specimenFont(latin, 0, size, null, TextMetrics(ascent: px),
+                0, 0, null, null, null, extras[]));
+            assert(canvas.beginSpecimen(px, px * 2));
+            canvas.beginGlyphPreparation(workers);
+
+            GlyphQuad[64] quads;
+            size_t count;
+            double[2] measured;
+            foreach (run; 0 .. 2)
+                assert(canvas.resolveCluster(ClusterRequest(cps[run == 0 ? 0 : 6 .. run == 0 ? 5 : 11],
+                    GlyphRequest(cps[run == 0 ? 0 : 6]), &measured[run], true,
+                    ClusterDirection.ltr), quads[], count) == GlyphOutcome.drawn);
+            canvas.finishGlyphPreparation();
+            foreach (run; 0 .. 2)
+            {
+                double drawn;
+                const outcome = canvas.resolveCluster(ClusterRequest(cps[run == 0 ? 0 : 6 .. run == 0 ? 5 : 11],
+                    GlyphRequest(cps[run == 0 ? 0 : 6]), &drawn, false,
+                    ClusterDirection.ltr), quads[], count);
+                import std.conv : text;
+                assert(outcome == GlyphOutcome.drawn && count == 5 && measured[run] == drawn,
+                    text("size ", px, ", run ", run, ": ", outcome, ", glyphs ", count,
+                        ", advances ", measured[run], " / ", drawn));
+            }
+            canvas.endSpecimen();
+
+        }
+    }
 }
 
 /// Script fallbacks beyond the former eight-face limit shape normally.

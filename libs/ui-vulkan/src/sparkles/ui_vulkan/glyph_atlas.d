@@ -29,8 +29,8 @@ enum AtlasOutcome : ubyte
 {
     placed,   /// in a page: draw it from `AtlasGlyph`
     blank,    /// the glyph has no outline (a space): draw nothing, count nothing
-    refused,  /// the rasterizer refused it; remembered, so not retried every frame
-    full,     /// every page of its sheet is full; the atlas starts over on the next frame
+    refused,  /// the rasterizer refused it; retained in the bounded outcome cache
+    full,     /// this glyph cannot fit beside the current frame's pinned pages
     noColour, /// asked for its colour form, it has none: draw its outline instead
 }
 
@@ -109,6 +109,11 @@ struct GlyphAtlas
         GlyphKey[maxPreparedGlyphs] preparedKeys_;
         uint[GlyphKey] queued_;
         size_t preparedCount_;
+        ulong frame_;
+        bool preparedReady_;
+        enum maxRememberedOutcomes = 512;
+        uint rememberedOutcomes_;
+        ulong outcomeAge_;
     }
 
     @disable this(this);
@@ -122,11 +127,71 @@ struct GlyphAtlas
     const(ubyte)[] page(size_t i, bool colour = false) const @safe pure nothrow @nogc
         => sheets_[colour].pages[i];
 
+    /// A replacement page needs a new GPU image while prior frames may sample it.
+    ulong pageGeneration(size_t i, bool colour = false) const @safe pure nothrow @nogc
+        => sheets_[colour].generation[i];
+
+    /**
+    Starts a frame's page references. Pages returned for drawing remain pinned
+    until the next frame. Cold pages can be reclaimed
+    when a new glyph needs room, without changing any recorded quad's texels.
+    */
+    void beginFrame() @safe nothrow @nogc
+    {
+        if (++frame_ == 0)
+        {
+            frame_ = 1;
+            foreach (ref sheet; sheets_) sheet.lastUsed[] = 0;
+        }
+        foreach (ref sheet; sheets_)
+        {
+            sheet.pinned[] = false;
+            sheet.stagedThisFrame[] = false;
+        }
+    }
+
+    package struct FramePins { uint[2] mask; }
+
+    // A shaped run returns all its quads together. Before that return, pages
+    // pinned only by this attempt can be rolled back and the whole run retried.
+    package FramePins framePins() const @safe pure nothrow @nogc
+    {
+        FramePins result;
+        foreach (colour; 0 .. 2)
+            foreach (i, pinned; sheets_[colour].pinned)
+                if (pinned) result.mask[colour] |= 1u << i;
+        return result;
+    }
+
+    package void restorePins(in FramePins pins) @safe nothrow @nogc
+    {
+        foreach (colour; 0 .. 2)
+            foreach (i, ref pinned; sheets_[colour].pinned)
+                pinned = (pins.mask[colour] & (1u << i)) != 0;
+    }
+
+    package bool reclaimColdPages() @safe nothrow
+    {
+        GlyphKey[] retired;
+        foreach (key, entry; entries_)
+            if (entry.outcome == AtlasOutcome.placed
+                && !sheets_[entry.glyph.colour].pinned[entry.glyph.page])
+                retired ~= key;
+        foreach (key; retired) entries_.remove(key);
+        bool reclaimed;
+        foreach (ref sheet; sheets_)
+            foreach (i; 0 .. sheet.pages.length)
+                if (!sheet.pinned[i]) { sheet.resetPage(i); reclaimed = true; }
+        if (reclaimed) overflowed_ = false;
+        return reclaimed;
+    }
+
     /// Starts collection of this frame's unique coverage misses.
     void beginPreparation() @safe nothrow
     {
         preparedCount_ = 0;
         queued_ = null;
+        preparedReady_ = false;
     }
 
     /// Queues a miss without atlas writes. Inputs stay alive until finish.
@@ -135,7 +200,11 @@ struct GlyphAtlas
     {
         const key = withCoordinates(GlyphKey(face: face, ppemNumerator: ppem.numerator,
             ppemDenominator: ppem.denominator, glyph: glyph, hinted: hints !is null), inst);
-        if ((key in entries_) !is null || (key in queued_) !is null || preparedCount_ == maxPreparedGlyphs)
+        if (auto entry = key in entries_)
+        {
+            return;
+        }
+        if ((key in queued_) !is null || preparedCount_ == maxPreparedGlyphs)
             return;
         const i = preparedCount_++;
         preparedKeys_[i] = key;
@@ -144,11 +213,13 @@ struct GlyphAtlas
         queued_[key] = cast(uint)i;
     }
 
-    /// Joins the bounded batch, then places tiles on the caller.
-    /// Unsupported/oversized jobs retain the ordinary synchronous path.
+    /// Joins the bounded batch and warms available atlas space on the caller.
+    /// Completed tiles remain available for drawing until beginPreparation;
+    /// unsupported/oversized jobs retain the ordinary synchronous path.
     CoverageWork finishPreparation(uint workers = 2, bool profile = false) @system nothrow
     {
         rasterBatch_.run(preparedRequests_[0 .. preparedCount_], workers, CoverageMode.cpu, profile);
+        preparedReady_ = true;
         CoverageWork work;
         foreach (i; 0 .. preparedCount_) work.add(rasterBatch_.tile(i).work);
         foreach (i; 0 .. preparedCount_)
@@ -157,7 +228,6 @@ struct GlyphAtlas
             if (!tile.ready) continue;
             if (!placePrepared(preparedKeys_[i], *tile)) break;
         }
-        beginPreparation();
         return work;
     }
 
@@ -188,7 +258,8 @@ struct GlyphAtlas
         return work;
     }
 
-    private bool placePrepared(in GlyphKey key, in RasterTile tile) @system nothrow
+    private bool placePrepared(in GlyphKey key, in RasterTile tile,
+        bool pin = false, bool evict = false) @safe nothrow
     {
         const m = tile.metrics;
         AtlasGlyph g;
@@ -199,9 +270,9 @@ struct GlyphAtlas
         }
         uint page;
         int x, y;
-        if (overflowed_ || !sheets_[0].place(m.width, m.height, page, x, y))
+        if (!place(false, m.width, m.height, page, x, y, pin, evict))
         {
-            overflowed_ = true;
+            if (pin) overflowed_ = true;
             return false;
         }
         foreach (row; 0 .. m.height)
@@ -226,11 +297,22 @@ struct GlyphAtlas
             glyph: glyph, hinted: hints !is null), inst);
         if (auto e = key in entries_)
         {
+            touch(*e);
             g = e.glyph;
             return e.outcome;
         }
-        if (overflowed_)
-            return AtlasOutcome.full;
+        if (preparedReady_)
+            if (auto queued = key in queued_)
+            {
+                const tile = &rasterBatch_.tile(*queued);
+                if (tile.ready)
+                {
+                    if (!placePrepared(key, *tile, true, true)) return AtlasOutcome.full;
+                    const entry = entries_[key];
+                    g = entry.glyph;
+                    return entry.outcome;
+                }
+            }
         auto measured = measure(inst, glyph, ppem, hints);
         if (measured.hasError)
             return remember(key, AtlasOutcome.refused, g);
@@ -241,7 +323,7 @@ struct GlyphAtlas
             return remember(key, AtlasOutcome.refused, g);
         uint page;
         int x, y;
-        if (!sheets_[0].place(m.width, m.height, page, x, y))
+        if (!place(false, m.width, m.height, page, x, y, false))
         {
             overflowed_ = true;
             return AtlasOutcome.full;
@@ -255,6 +337,7 @@ struct GlyphAtlas
         sheets_[0].markDirty(page, x, y, m.width, m.height);
         g = AtlasGlyph(page, false, x, y, m.width, m.height, drawn.value.bearingX, drawn.value.bearingY);
         entries_[key] = Entry(AtlasOutcome.placed, g);
+        touch(entries_[key]);
         return AtlasOutcome.placed;
     }
 
@@ -273,11 +356,10 @@ struct GlyphAtlas
                 | (uint(foreground.blue) << 8) | foreground.alpha), inst);
         if (auto e = key in entries_)
         {
+            touch(*e);
             g = e.glyph;
             return e.outcome;
         }
-        if (overflowed_)
-            return AtlasOutcome.full;
         auto measured = measureColour(inst, glyph, ppem);
         if (measured.hasError)
             return remember(key, AtlasOutcome.refused, g);
@@ -290,7 +372,7 @@ struct GlyphAtlas
             return remember(key, AtlasOutcome.refused, g);
         uint page;
         int x, y;
-        if (!sheets_[1].place(m.width, m.height, page, x, y))
+        if (!place(true, m.width, m.height, page, x, y, false))
         {
             overflowed_ = true;
             return AtlasOutcome.full;
@@ -303,6 +385,7 @@ struct GlyphAtlas
         sheets_[1].markDirty(page, x, y, m.width, m.height);
         g = AtlasGlyph(page, true, x, y, m.width, m.height, drawn.value.bearingX, drawn.value.bearingY);
         entries_[key] = Entry(AtlasOutcome.placed, g);
+        touch(entries_[key]);
         return AtlasOutcome.placed;
     }
 
@@ -317,6 +400,8 @@ struct GlyphAtlas
     void reset() @safe pure nothrow
     {
         entries_ = null;
+        rememberedOutcomes_ = 0;
+        outcomeAge_ = 0;
         foreach (ref s; sheets_)
             s.reset();
         overflowed_ = false;
@@ -351,12 +436,63 @@ struct GlyphAtlas
     {
         AtlasOutcome outcome;
         AtlasGlyph glyph;
+        ulong age;
+    }
+
+    void touch(in Entry entry) @safe nothrow @nogc
+    {
+        if (entry.outcome != AtlasOutcome.placed) return;
+        ref sheet = sheets_[entry.glyph.colour];
+        sheet.pinned[entry.glyph.page] = true;
+        sheet.lastUsed[entry.glyph.page] = frame_;
+    }
+
+    bool place(bool colour, int w, int h, out uint page, out int x, out int y,
+        bool pin = true, bool evict = true) @safe nothrow
+    {
+        ref sheet = sheets_[colour];
+        if (!sheet.place(w, h, page, x, y))
+        {
+            if (!evict || !fitsPage(w, h)) return false;
+            size_t victim = size_t.max;
+            foreach (i; 0 .. sheet.pages.length)
+                if (!sheet.pinned[i] && (victim == size_t.max || sheet.lastUsed[i] < sheet.lastUsed[victim]))
+                    victim = i;
+            if (victim == size_t.max) return false;
+            GlyphKey[] retired;
+            foreach (key, entry; entries_)
+                if (entry.outcome == AtlasOutcome.placed
+                    && entry.glyph.colour == colour && entry.glyph.page == victim)
+                    retired ~= key;
+            foreach (key; retired) entries_.remove(key);
+            sheet.resetPage(victim);
+            const placed = sheet.place(w, h, page, x, y);
+            assert(placed, "a fitting glyph must fit a reclaimed page");
+        }
+        if (pin) sheet.pinned[page] = true;
+        sheet.lastUsed[page] = frame_;
+        return true;
     }
 
     AtlasOutcome remember(in GlyphKey key, AtlasOutcome outcome, out AtlasGlyph g)
         @safe pure nothrow
     {
-        entries_[key] = Entry(outcome);
+        const previous = key in entries_;
+        if (previous is null || previous.outcome == AtlasOutcome.placed)
+        {
+            if (rememberedOutcomes_ == maxRememberedOutcomes)
+            {
+                GlyphKey oldest;
+                ulong age = ulong.max;
+                foreach (candidate, entry; entries_)
+                    if (entry.outcome != AtlasOutcome.placed && entry.age < age)
+                    { oldest = candidate; age = entry.age; }
+                entries_.remove(oldest);
+                --rememberedOutcomes_;
+            }
+            ++rememberedOutcomes_;
+        }
+        entries_[key] = Entry(outcome, AtlasGlyph.init, ++outcomeAge_);
         return outcome;
     }
 
@@ -414,6 +550,10 @@ private struct Sheet
     Shelf[][] shelves;
     DirtyRegion[] dirty;
     bool[] uploaded;
+    bool[] stagedThisFrame;
+    bool[] pinned;
+    ulong[] lastUsed;
+    ulong[] generation;
 
     // A row of a page, filled left to right.
     static struct Shelf
@@ -457,6 +597,10 @@ private struct Sheet
         shelves ~= [Shelf(0, ph, pw)];
         dirty ~= DirtyRegion(colour, cast(uint)(pages.length - 1), true, 0, 0, 0, 0);
         uploaded ~= false;
+        stagedThisFrame ~= false;
+        pinned ~= false;
+        lastUsed ~= 0;
+        generation ~= 1;
         page = cast(uint)(pages.length - 1);
         x = y = 0;
         return true;
@@ -480,14 +624,20 @@ private struct Sheet
 
     void reset() @safe pure nothrow
     {
+        foreach (i; 0 .. pages.length) resetPage(i);
+    }
+
+    void resetPage(size_t i) @safe pure nothrow
+    {
         enum size = GlyphAtlas.pageSize;
-        foreach (i, ref p; pages)
-        {
-            p[] = 0;
-            shelves[i] = null;
-            uploaded[i] = false;
-            dirty[i] = DirtyRegion(colour, cast(uint) i, true, 0, 0, size, size);
-        }
+        pages[i][] = 0;
+        shelves[i] = null;
+        uploaded[i] = false;
+        stagedThisFrame[i] = false;
+        pinned[i] = false;
+        lastUsed[i] = 0;
+        ++generation[i];
+        dirty[i] = DirtyRegion(colour, cast(uint) i, true, 0, 0, 0, 0);
     }
 
     void takeDirty(scope bool delegate(in DirtyRegion) @system upload) @system
@@ -502,6 +652,7 @@ private struct Sheet
             if (!upload(d))
                 continue; // not taken: still dirty, still not uploaded
             uploaded[i] = true;
+            stagedThisFrame[i] = true;
             d = DirtyRegion(colour, cast(uint) i, false, 0, 0, 0, 0);
         }
     }
@@ -511,7 +662,10 @@ private struct Sheet
         enum size = GlyphAtlas.pageSize;
         foreach (i, ref d; dirty)
         {
+            if (!stagedThisFrame[i]) continue;
+            ++generation[i];
             uploaded[i] = false;
+            stagedThisFrame[i] = false;
             d = DirtyRegion(colour, cast(uint) i, true, 0, 0, size, size);
         }
     }
@@ -825,6 +979,107 @@ version (unittest)
     atlas.reset();
     assert(!atlas.overflowed && atlas.length == 0);
     assert(atlas.get(f.inst, 1, f.glyph('Z'), f.ppem, g) == AtlasOutcome.placed);
+}
+
+/// Reclaiming a cold page never changes one referenced by this frame's quads;
+/// replacement texels get a new upload generation.
+@("ui_vulkan.glyph_atlas.reclaimsColdPagesAndPinsCurrentFrame")
+@system unittest
+{
+    auto f = Fixture.at(1100);
+    GlyphAtlas atlas;
+    atlas.beginFrame();
+    AtlasGlyph[4] glyphs;
+    foreach (i; 0 .. glyphs.length)
+        assert(atlas.get(f.inst, 1, f.glyph(cast(dchar)('A' + i)), f.ppem, glyphs[i])
+            == AtlasOutcome.placed);
+    assert(atlas.pageCount == 4);
+    atlas.takeDirty((in DirtyRegion d) => true);
+    const firstPixels = atlas.page(glyphs[0].page).dup;
+    const lastPixels = atlas.page(glyphs[3].page).dup;
+    const victimGeneration = atlas.pageGeneration(glyphs[1].page);
+    atlas.beginFrame();
+    AtlasGlyph same;
+    assert(atlas.get(f.inst, 1, f.glyph('A'), f.ppem, same) == AtlasOutcome.placed && same == glyphs[0]);
+    atlas.beginPreparation();
+    atlas.prepare(f.inst, 1, f.glyph('D'), f.ppem);
+    assert(atlas.preparedCount_ == 0);
+    assert(atlas.get(f.inst, 1, f.glyph('D'), f.ppem, same) == AtlasOutcome.placed);
+    AtlasGlyph replacement;
+    assert(atlas.get(f.inst, 1, f.glyph('W'), f.ppem, replacement) == AtlasOutcome.placed);
+    assert(replacement.page == glyphs[1].page);
+    assert(atlas.pageGeneration(replacement.page) > victimGeneration);
+    assert(atlas.page(glyphs[0].page) == firstPixels);
+    assert(atlas.page(glyphs[3].page) == lastPixels);
+    const oldKey = withCoordinates(GlyphKey(face: 1, ppemNumerator: f.ppem.numerator,
+        ppemDenominator: f.ppem.denominator, glyph: f.glyph('B')), f.inst);
+    assert((oldKey in atlas.entries_) is null);
+    assert(atlas.length == 4 && !atlas.overflowed);
+    size_t whole;
+    atlas.takeDirty((in DirtyRegion d) {
+        assert(d.whole && d.page == replacement.page && d.width == GlyphAtlas.pageSize);
+        ++whole;
+        return true;
+    });
+    assert(whole == 1);
+}
+
+/// A cache-pressure miss cannot suppress a fitting glyph or the other sheet.
+@("ui_vulkan.glyph_atlas.aFullSheetDoesNotPoisonOtherRequests")
+@system unittest
+{
+    auto f = Fixture.at(1100);
+    GlyphAtlas atlas;
+    atlas.beginFrame();
+    AtlasGlyph g;
+    foreach (dchar cp; "ABCD")
+        assert(atlas.get(f.inst, 1, f.glyph(cp), f.ppem, g) == AtlasOutcome.placed);
+    assert(atlas.get(f.inst, 1, f.glyph('W'), f.ppem, g) == AtlasOutcome.full);
+    assert(atlas.get(f.inst, 1, f.glyph('.'), f.ppem, g) == AtlasOutcome.placed);
+    auto emoji = Fixture.at(32, "NotoColorEmoji.ttf");
+    assert(atlas.getColour(emoji.inst, 2, emoji.glyph('😀'), emoji.ppem,
+        Colour(255, 255, 255, 255), g) == AtlasOutcome.placed);
+    assert(g.colour);
+}
+
+/// Failed-frame recovery renews only pages whose uploads were taken this frame.
+@("ui_vulkan.glyph_atlas.failedFrameKeepsUntouchedPageGeneration")
+@system unittest
+{
+    auto f = Fixture.at(24);
+    GlyphAtlas atlas;
+    AtlasGlyph g;
+    atlas.beginFrame();
+    assert(atlas.get(f.inst, 1, f.glyph('A'), f.ppem, g) == AtlasOutcome.placed);
+    atlas.takeDirty((in DirtyRegion d) => true);
+    const generation = atlas.pageGeneration(g.page);
+    atlas.beginFrame();
+    atlas.markUnstaged();
+    assert(atlas.pageGeneration(g.page) == generation);
+    size_t regions;
+    atlas.takeDirty((in DirtyRegion d) { ++regions; return true; });
+    assert(regions == 0);
+    assert(atlas.get(f.inst, 1, f.glyph('B'), f.ppem, g) == AtlasOutcome.placed);
+    atlas.takeDirty((in DirtyRegion d) => true);
+    atlas.markUnstaged();
+    assert(atlas.pageGeneration(g.page) > generation);
+    atlas.takeDirty((in DirtyRegion d) { assert(d.whole); ++regions; return true; });
+    assert(regions == 1);
+}
+
+/// Refused outcomes remain bounded independently of page recycling.
+@("ui_vulkan.glyph_atlas.refusedOutcomesStayBounded")
+@system unittest
+{
+    auto f = Fixture.at(2000);
+    GlyphAtlas atlas;
+    AtlasGlyph g;
+    foreach (face; 1 .. GlyphAtlas.maxRememberedOutcomes + 20)
+        assert(atlas.get(f.inst, face, f.glyph('A'), f.ppem, g) == AtlasOutcome.refused);
+    assert(atlas.length == GlyphAtlas.maxRememberedOutcomes && atlas.pageCount == 0);
+    assert(atlas.get(f.inst, GlyphAtlas.maxRememberedOutcomes + 19,
+        f.glyph('A'), f.ppem, g) == AtlasOutcome.refused);
+    assert(atlas.length == GlyphAtlas.maxRememberedOutcomes);
 }
 
 @("ui_vulkan.glyph_atlas.aGlyphLargerThanAPageIsRefusedNotFull")

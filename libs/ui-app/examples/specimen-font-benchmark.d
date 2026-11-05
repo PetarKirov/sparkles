@@ -83,6 +83,7 @@ void main(string[] arguments)
         preparation[i] = (MonoTime.currTime - started).total!"nsecs" / 1_000_000.0;
         if (atlas.overflowed)
             atlas.reset();
+        atlas.beginFrame();
         foreach (c; "The quick brown fox jumps over the lazy dog. 0123456789")
         {
             AtlasGlyph glyph;
