@@ -13,6 +13,17 @@ that borrow them. Coordinate arrays are retained by the host. Repeated size or
 axis changes reuse parsed faces and metric/hint scratch; ordinary cell-font
 size changes also reuse resolved primary, styled, and fallback bytes.
 
+`SpecimenFontRequest.fallbacks` supplies an ordered list of preloaded
+`SpecimenFallbackFace` values: bytes, collection member, and an optional content
+hash. The host retains the list; the application keeps its font bytes alive.
+Load these through background workers alongside the selected face. These script
+faces precede the ordinary interface fallbacks and keep their own default axes;
+resizing the specimen reuses the supplied storage without file discovery.
+Fallback lookup visits the complete supplied list. Emoji presentation prefers
+color faces; text presentation preserves the ordinary face order. Variation
+selectors and joiners participate in shaping without requiring standalone cmap
+glyphs.
+
 `beginSpecimen` scopes canvas drawing to the prepared font and metrics.
 `endSpecimen` restores the interface context. Use the pixel drawing methods for
 an independent specimen layout. `naturalTextPx` draws with shaped advances and
@@ -21,9 +32,14 @@ text remains available for terminal-style comparisons.
 
 The Vulkan canvas retains up to 256 shaped runs in a four-way cache shared by
 measurement, drawing, and subsequent frames. Keys include exact face identity,
-physical em size, normalized variation coordinates, and cluster text. Runs own
+physical em size, normalized variation coordinates, direction, and cluster text. Runs own
 their keys and glyph positions; colors and raster images remain independent.
 Memory-pressure cache release drops these runs along with the glyph atlases.
+
+Natural text methods accept an optional `ClusterDirection` after their style
+arguments. Resolve paragraph levels and wrapped-line ordering before supplying
+`ltr` or `rtl`; automatic direction remains the default for existing callers.
+Logical source text is passed unchanged to shaping, which also handles mirroring.
 
 For natural text laid out before drawing, call `canvas.beginGlyphPreparation`
 before measuring runs and `canvas.finishGlyphPreparation` before drawing them.

@@ -5,7 +5,7 @@ version (UiAppGuiVulkan):
 
 import sparkles.font : cellMetrics, charMap, CharMap, Face, instance, Instance,
     InstanceSize, openFace, PointWorkspace, Ppem;
-import sparkles.ui_app.specimen_font : sameSpecimenRequest, SpecimenFontRequest;
+import sparkles.ui_app.specimen_font : sameFallbacks, sameSpecimenRequest, SpecimenFontRequest;
 import sparkles.ui_vulkan.painter : TextMetrics;
 
 /**
@@ -64,6 +64,17 @@ struct PreparedSpecimenFont
             return false;
         if (points is null)
             points = new PointWorkspace;
+        auto retainedFallbacks = request.fallbacks;
+        if (!sameFallbacks(wanted.fallbacks, retainedFallbacks))
+        {
+            foreach (fallback; wanted.fallbacks)
+            {
+                const opened = openFace(fallback.bytes, fallback.faceIndex);
+                if (opened.hasError || charMap(opened.value).hasError)
+                    return false;
+            }
+            retainedFallbacks = wanted.fallbacks.dup;
+        }
         const measured = cellMetrics(made.value, nextMap, wanted.px, *points);
         if (measured.hasError)
             return false;
@@ -73,6 +84,7 @@ struct PreparedSpecimenFont
             retainedCoordinates = wanted.coordinates.dup;
         request = wanted;
         request.coordinates = retainedCoordinates;
+        request.fallbacks = retainedFallbacks;
         bytes = nextBytes;
         face = nextFace;
         map = nextMap;
@@ -114,4 +126,15 @@ struct PreparedSpecimenFont
     assert(!prepared.prepare(request));
     assert(prepared.request.faceIndex == 0 && prepared.request.px == 32);
     assert(prepared.bytes.ptr == originalBytes);
+    request.faceIndex = 0;
+    import sparkles.ui_app.specimen_font : SpecimenFallbackFace;
+    request.fallbacks = [SpecimenFallbackFace(bytes, 0, 42)];
+    assert(prepared.prepare(request));
+    const retained = prepared.request.fallbacks.ptr;
+    request.px = 28;
+    assert(prepared.prepare(request));
+    assert(prepared.request.fallbacks.ptr == retained, "size updates retain the fallback set");
+    request.fallbacks = [SpecimenFallbackFace(bytes, uint.max, 42)];
+    assert(!prepared.prepare(request));
+    assert(prepared.request.fallbacks.ptr == retained && prepared.request.px == 28);
 }

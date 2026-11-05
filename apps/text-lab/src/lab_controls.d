@@ -4,6 +4,7 @@ module lab_controls;
 import core.time : MonoTime;
 import std.conv : text;
 import std.math : round;
+import std.path : baseName;
 
 import sparkles.base.term_color : RgbColor;
 import sparkles.base.term_style : UnderlineStyle;
@@ -23,10 +24,11 @@ import sparkles.ui.property_tree : EditValue, LeafKind;
 import sparkles.ui.style : Palette, Slot, TextStyle;
 import sparkles.ui.state : hitAt, hoverTargets;
 import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind, WidgetTree;
-import sparkles.ui_app.specimen_font : sameSpecimenRequest, SpecimenFontRequest;
+import sparkles.ui_app.specimen_font : sameSpecimenRequest, SpecimenFallbackFace, SpecimenFontRequest;
 
 import font_catalog : FontEntry, FontFinder, FontLibrary, FontLoad;
 import font_settings : applyVariations, axisSettings, LabSettings;
+import unicode_samples : Showcase, showcaseFonts, unicodeSamples;
 
 private enum size_t sectionBase = 0x7100_0000, fontHit = 0x7000_0001, pickerBase = 0x7200_0000;
 
@@ -105,6 +107,12 @@ final class LabControls
     private FontLoad* acceptedStylesFor;
     private SpecimenFontRequest acceptedRequest;
     private SpecimenFontRequest lastRequest;
+    private FontLoad*[] fallbackOwners;
+    private FontLoad*[] pageFallbacks;
+    private SpecimenFallbackFace[] fallbackSources;
+    private Showcase fallbackGroup;
+    private bool fallbackSelected, fallbackBusy;
+    string fallbackWarning; /// unavailable optional showcase families
     private ulong requestGeneration;
     private MonoTime changedAt;
     private bool eventMutated;
@@ -135,11 +143,16 @@ final class LabControls
 
     /// A screenshot waits for the exact startup face, not the entire catalog.
     bool loading() const @safe pure nothrow @nogc
-        => pending !is null || (discovery && (!initial || picker.active && !corpusReady));
+        => pending !is null || fallbackBusy || (discovery && (!initial || picker.active && !corpusReady));
 
     /// Polls the background jobs and applies at most the latest font request.
     void frame(H)(ref H h)
     {
+        uint rows;
+        foreach (sample; unicodeSamples) if (sample.group == subject.samples.group) ++rows;
+        if (subject.samples.group == Showcase.overview) rows += 2;
+        if (subject.samples.firstRow < 1 || subject.samples.firstRow > rows)
+            subject.samples.firstRow = 1;
         if (!eventMutated && *subject != accepted)
         {
             changedAt = MonoTime.currTime;
@@ -210,6 +223,14 @@ final class LabControls
             }
         }
         else initial = true;
+        if (discovery && library !is null)
+        {
+            if (!library.ready || !prepareFallbacks(subject.samples.group))
+            {
+                h.requestFrame();
+                return;
+            }
+        }
         if (pending !is null && pending.done)
         {
             auto prepared = pending;
@@ -247,7 +268,7 @@ final class LabControls
                     {
                         *subject = candidate;
                         current = prepared;
-                        library.retain(current, currentStyles);
+                        library.retain(current, currentStyles, fallbackOwners);
                         pane.edits = typeof(pane.edits).init;
                         pane.refresh();
                         if (reseed) rememberEdit(pendingBefore);
@@ -264,7 +285,7 @@ final class LabControls
             if (submit(h, candidate, current))
             {
                 *subject = candidate;
-                library.retain(current, currentStyles);
+                library.retain(current, currentStyles, fallbackOwners);
                 if (changed) error = null;
                 acceptModel();
             }
@@ -280,6 +301,64 @@ final class LabControls
                 keyboardShown = wanted;
             }
         }
+    }
+
+    private bool prepareFallbacks(Showcase group) @system
+    {
+        if (!fallbackSelected || fallbackGroup != group)
+        {
+            import std.uni : toLower;
+            pageFallbacks = null;
+            fallbackWarning = null;
+            foreach (font; showcaseFonts)
+            {
+                if (!(font.pages & (1u << cast(uint) group))) continue;
+                size_t chosen = size_t.max;
+                int best = int.min;
+                foreach (i, entry; library.entries)
+                {
+                    const family = entry.family.toLower == font.family.toLower;
+                    const file = entry.path.baseName == font.filename && entry.index == font.faceIndex;
+                    if (!family && !file) continue;
+                    const score = (family ? 100 : 0) + (file ? 50 : 0)
+                        - (entry.italic ? 20 : 0) - (entry.weight > 400 ? entry.weight - 400 : 400 - entry.weight) / 100;
+                    if (score > best) { best = score; chosen = i; }
+                }
+                if (chosen == size_t.max)
+                {
+                    if (fallbackWarning.length) fallbackWarning ~= ", ";
+                    else fallbackWarning = "Missing sample fonts: ";
+                    fallbackWarning ~= font.family;
+                    continue;
+                }
+                const entry = library.entries[chosen];
+                auto job = library.request(entry.path, entry.index);
+                if (job is null) { fallbackBusy = true; return false; }
+                pageFallbacks ~= job;
+                bool retained;
+                foreach (owner; fallbackOwners) retained |= owner is job;
+                if (!retained)
+                {
+                    fallbackOwners ~= job;
+                    library.retain(current, currentStyles, fallbackOwners);
+                }
+            }
+            fallbackGroup = group;
+            fallbackSelected = true;
+            fallbackSources = null;
+        }
+        fallbackBusy = false;
+        foreach (job; pageFallbacks) fallbackBusy |= !job.done;
+        if (fallbackBusy) return false;
+        if (fallbackSources.length != pageFallbacks.length)
+        {
+            fallbackSources = null;
+            foreach (job; pageFallbacks)
+                if (job.ok)
+                    fallbackSources ~= SpecimenFallbackFace(job.bytes[], job.index, job.contentHash);
+                else fallbackWarning = "Could not load a sample fallback font";
+        }
+        return true;
     }
 
     private bool submit(H)(ref H h, ref LabSettings candidate, FontLoad* prepared)
@@ -298,6 +377,7 @@ final class LabControls
             request.uiFollows = candidate.font.uiFollows;
             request.bytes = prepared.bytes[];
             request.contentHash = prepared.contentHash;
+            request.fallbacks = fallbackSources;
             request.familyStyles = candidate.font.familyStyles;
             prepareStyles(prepared, candidate.font.familyStyles);
             foreach (i, style; currentStyles)
@@ -380,7 +460,7 @@ final class LabControls
         currentStyles = acceptedStyles;
         stylesFor = acceptedStylesFor;
         lastRequest = acceptedRequest;
-        if (library !is null) library.retain(current, currentStyles);
+        if (library !is null) library.retain(current, currentStyles, fallbackOwners);
         pane.edits = typeof(pane.edits).init;
         pane.refresh();
     }
@@ -395,7 +475,7 @@ final class LabControls
         if (subject.font.path.length)
             remembered[identity(subject.font.path, subject.font.index)] = subject.axes.dup;
         pendingBefore = snapshot();
-        library.retain(current, currentStyles);
+        library.retain(current, currentStyles, fallbackOwners);
         auto job = library.request(path, index);
         if (job is null)
         {
@@ -899,7 +979,7 @@ final class LabControls
         uint node, part;
         if (decodeSectionHit(sectionBase, widget.hitId, node, part)
             && node < controls.pane.tree.data.nodes.length
-            && controls.pane.tree.data.nodes[node].value.path == "axes")
+            && controls.pane.tree.data.nodes[node].value.path == "font")
             axes = controls.frames[i].rect;
     }
     assert(axes.height && controls.bounds.contains(Point(axes.x, axes.y)));

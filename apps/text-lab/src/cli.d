@@ -18,6 +18,7 @@ import sparkles.ui_vulkan.coverage_geometry : CoverageMode;
 import sparkles.base.term_color : RgbColor;
 
 import lab : framePalette, Lab, SweepMode;
+import unicode_samples : Showcase;
 
 /// The lab from `args`, as `main` receives them; the process's exit status.
 int run(string[] args)
@@ -49,6 +50,12 @@ struct TextLab
     string shot;
     @(Option("settings", description: "Open the generated settings sheet at startup."))
     bool settings;
+    @(Option("showcase", description: "Sample group: overview, latin, rtl, indic, southeastAsian, cjk, world, historic, symbols, emoji, icons."))
+    Showcase showcase;
+    @(Option("sample-row", description: "Start at this sample row (one-based)."))
+    uint sampleRow = 1;
+    @(Option("wrapped-row-offset", description: "Skip wrapped rows below the selected sample row."))
+    uint wrappedRowOffset;
     @(Option("picker", description: "Open the font picker at startup."))
     bool picker;
     @(Option("font-face-index", description: "Collection member of the startup font."))
@@ -161,6 +168,9 @@ CliExpected!Lab configure(in TextLab o)
     lab.model.font.size = o.gui.fontSize;
     lab.model.font.index = o.fontFaceIndex;
     lab.model.font.uiFollows = o.uiFollowsSpecimen;
+    lab.model.samples.group = o.showcase;
+    lab.model.samples.firstRow = o.sampleRow;
+    lab.model.samples.wrappedOffset = o.wrappedRowOffset > 256 ? 256 : o.wrappedRowOffset;
     lab.sweepFrames = o.sweepFrames;
     lab.sweepMode = o.sweepMode;
     lab.rasterWorkers = o.rasterWorkers;

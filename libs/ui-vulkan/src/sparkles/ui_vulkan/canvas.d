@@ -192,6 +192,8 @@ struct FallbackFace
 {
     const(ubyte)[] bytes; ///
     Ppem ppem;            ///
+    uint faceIndex;       /// collection member, rather than always member zero
+    ulong contentHash;    /// optional precomputed identity
 }
 
 /**
@@ -659,7 +661,7 @@ struct VulkanCanvas(B)
                     previous = &old;
                     break;
                 }
-            auto face = CellFace.open(fb.bytes, fb.ppem, 0, null, previous);
+            auto face = CellFace.open(fb.bytes, fb.ppem, fb.faceIndex, null, previous, fb.contentHash);
             if (!face.bytes.length)
                 continue;
             CellFace was;
@@ -706,7 +708,8 @@ struct VulkanCanvas(B)
     bool specimenFont(const(ubyte)[] bytes, uint index, Ppem size,
         scope const(UserCoordinate)[] coordinates, in TextMetrics metrics, ulong contentHash = 0,
         int lineHeight = 0, scope const(ubyte[][]) styles = null,
-        scope const(uint)[] styleIndices = null, scope const(ulong)[] styleHashes = null) @system
+        scope const(uint)[] styleIndices = null, scope const(ulong)[] styleHashes = null,
+        scope const(FallbackFace)[] extras = null) @system
     {
         assert(!specimenActive_);
         scope (exit) pruneShapers();
@@ -733,10 +736,24 @@ struct VulkanCanvas(B)
         // Fallbacks stay at their own defaults, sized to this specimen's line,
         // rather than the UI's independently sized line.
         import sparkles.font : hhea;
-        if (specimenFallbacks_.length != fallbacks_.length)
-            specimenFallbacks_.length = fallbacks_.length;
-        foreach (i, ref fallback; fallbacks_)
+        const fallbackCount = extras.length + fallbacks_.length;
+        if (specimenFallbacks_.length != fallbackCount)
+            specimenFallbacks_.length = fallbackCount;
+        foreach (i; 0 .. fallbackCount)
         {
+            const explicitFace = i < extras.length;
+            if (explicitFace)
+            {
+                auto fb = CellFace.open(extras[i].bytes, extras[i].ppem, extras[i].faceIndex,
+                    null, &specimenFallbacks_[i], extras[i].contentHash);
+                if (!fb.bytes.length) return false;
+                const previousFallback = specimenFallbacks_[i];
+                fb.serial = previousFallback.bytes.length && previousFallback.contentHash == fb.contentHash
+                    && previousFallback.face.index == fb.face.index ? previousFallback.serial : ++faceSerial_;
+                specimenFallbacks_[i] = fb;
+                continue;
+            }
+            ref fallback = fallbacks_[i - extras.length];
             const hh = hhea(fallback.face);
             const span = hh.hasValue ? long(hh.value.ascender) - hh.value.descender : 0;
             auto em = size;
@@ -813,20 +830,29 @@ struct VulkanCanvas(B)
     // The faces a cluster is looked up in, in order: the cell font's face of
     // the run's style, then the fallbacks — a colour face first when the
     // cluster presents as an emoji.
-    private size_t faceOrder(in GlyphRequest r, ref CellFace*[8] order) @system
+    private CellFace* orderedFace(in GlyphRequest r, size_t position) @system
     {
         auto styled = &faces_[faces_[r.style].bytes.length ? r.style : FaceStyle.regular];
-        size_t n;
-        if (r.emoji)
+        if (!r.emoji)
+        {
+            if (position == 0) return styled;
+            --position;
+        }
+        foreach (colour; [r.emoji, !r.emoji])
+        {
             foreach (ref f; fallbacks_)
-                if (f.colour && n < order.length)
-                    order[n++] = &f;
-        if (n < order.length)
-            order[n++] = styled;
-        foreach (ref f; fallbacks_)
-            if ((!r.emoji || !f.colour) && n < order.length)
-                order[n++] = &f;
-        return n;
+                if (f.colour == colour)
+                {
+                    if (position == 0) return &f;
+                    --position;
+                }
+            if (colour && r.emoji)
+            {
+                if (position == 0) return styled;
+                --position;
+            }
+        }
+        assert(false, "face position must be within the bound fallback list");
     }
 
     // Glyph `gid` of `face` from the atlas: in colour where the face has a
@@ -905,9 +931,9 @@ struct VulkanCanvas(B)
     {
         if (!textMetrics_.present)
             return GlyphOutcome.noGlyph;
-        CellFace*[8] order;
-        foreach (face; order[0 .. faceOrder(r, order)])
+        foreach (position; 0 .. fallbacks_.length + 1)
         {
+            auto face = orderedFace(r, position);
             const gid = face.map.glyph(r.cp);
             if (gid != 0)
                 return glyphFrom(face, gid, r, quad);
@@ -988,11 +1014,13 @@ struct VulkanCanvas(B)
             if (!textMetrics_.present || !textRendering_.shaping || !r.cps.length)
                 return GlyphOutcome.noGlyph;
             static bool shown(uint cp)
-                => cp != 0x200D && cp != 0xFE0E && cp != 0xFE0F && !(cp >= 0xE0020 && cp <= 0xE007F);
-            CellFace*[8] order;
+                => cp != 0x200C && cp != 0x200D && !(cp >= 0xFE00 && cp <= 0xFE0F)
+                    && !(cp >= 0xE0020 && cp <= 0xE007F)
+                    && !(cp >= 0xE0100 && cp <= 0xE01EF);
             CellFace* face;
-            foreach (f; order[0 .. faceOrder(r.first, order)])
+            foreach (position; 0 .. fallbacks_.length + 1)
             {
+                auto f = orderedFace(r.first, position);
                 bool all = true;
                 foreach (cp; r.cps)
                     all &= !shown(cp) || f.map.glyph(cast(dchar) cp) != 0;
@@ -1011,8 +1039,8 @@ struct VulkanCanvas(B)
                     char[maxClusterQuads * 4] text;
                     const encoded = convertPrefix(cast(const(dchar)[]) r.cps, text[], UtfMode.replacement);
                     return shapeCluster(shaper, text[0 .. encoded.written],
-                        face.ppem.numerator, face.ppem.denominator, output);
-                });
+                        face.ppem.numerator, face.ppem.denominator, output, r.direction);
+                }, r.direction);
             if (!glyphs.length)
                 return GlyphOutcome.noGlyph;
             double pen = 0;
@@ -1904,6 +1932,97 @@ private struct HintScratch
     assert(changed.scratch.segments.ptr == initial.scratch.segments.ptr);
     assert(changed.inst.coords != initial.inst.coords);
     assert(!CellFace.open(bytes, size, uint.max).bytes.length);
+}
+
+/// Script fallbacks beyond the former eight-face limit shape normally.
+@("ui_vulkan.canvas.resolvedDirectionMirrorsBrackets")
+@system unittest
+{
+    import std.file : read;
+    import std.path : buildPath;
+    import std.process : environment;
+    import sparkles.font.cluster_shaping : ClusterDirection, ClusterGlyph, shapeCluster;
+    const root = environment.get("SPARKLES_FONTS_PATH");
+    assert(root.length, "SPARKLES_FONTS_PATH is required");
+    const latin = cast(const(ubyte)[]) read(buildPath(root, "NotoSans.ttf"));
+    VulkanCanvas!DeviceMemoryBackend canvas;
+    scope (exit) foreach (ref slot; canvas.shapers_) slot.release();
+    assert(canvas.cellFont(latin, 24, TextMetrics(ascent: 18)));
+    auto face = &canvas.faces_[FaceStyle.regular];
+    auto shaper = canvas.shaperFor(face);
+    assert(shaper !is null);
+    ClusterGlyph[64] glyphs;
+    assert(shapeCluster(shaper, "(", 24, 1, glyphs[], ClusterDirection.ltr) == 1);
+    assert(glyphs[0].glyph == face.map.glyph('('));
+    assert(shapeCluster(shaper, "(", 24, 1, glyphs[], ClusterDirection.rtl) == 1);
+    assert(glyphs[0].glyph == face.map.glyph(')'), "RTL mirroring belongs to shaping");
+}
+
+/// Script fallbacks beyond the former eight-face limit shape normally.
+@("ui_vulkan.canvas.textPresentationPrefersOutlineFallback")
+@system unittest
+{
+    import std.file : read;
+    import std.path : buildPath;
+    import std.process : environment;
+    const root = environment.get("SPARKLES_FONTS_PATH");
+    assert(root.length, "SPARKLES_FONTS_PATH is required");
+    const latin = cast(const(ubyte)[]) read(buildPath(root, "NotoSans.ttf"));
+    const emoji = cast(const(ubyte)[]) read(buildPath(root, "NotoColorEmoji.ttf"));
+    const symbols = cast(const(ubyte)[]) read(buildPath(root, "DejaVuSansMono.ttf"));
+    const size = Ppem.fromInteger(24).value;
+    VulkanCanvas!DeviceMemoryBackend canvas;
+    scope (exit) foreach (ref slot; canvas.shapers_) slot.release();
+    assert(canvas.cellFont(latin, 24, TextMetrics(ascent: 18)));
+    FallbackFace[2] extras = [FallbackFace(emoji, size), FallbackFace(symbols, size)];
+    assert(canvas.specimenFont(latin, 0, size, null, TextMetrics(ascent: 18),
+        0, 0, null, null, null, extras[]));
+    assert(canvas.beginSpecimen(14, 30));
+    scope (exit) canvas.endSpecimen();
+    assert(!canvas.orderedFace(GlyphRequest(0x2764), 1).colour);
+    assert(canvas.orderedFace(GlyphRequest(0x2764, FaceStyle.regular, true), 0).colour);
+    uint[2] text = [0x2764, 0xFE0E];
+    GlyphQuad[64] quads;
+    size_t count;
+    double advance;
+    assert(canvas.resolveCluster(ClusterRequest(text[], GlyphRequest(0x2764), &advance, true),
+        quads[], count) == GlyphOutcome.drawn);
+    assert(advance > 0);
+}
+
+/// Script fallbacks beyond the former eight-face limit shape normally.
+@("ui_vulkan.canvas.specimenScriptFallbackBeyondEightFaces")
+@system unittest
+{
+    import std.file : read;
+    import std.path : buildPath;
+    import std.process : environment;
+    const root = environment.get("SPARKLES_FONTS_PATH");
+    assert(root.length, "SPARKLES_FONTS_PATH is required");
+    const latin = cast(const(ubyte)[]) read(buildPath(root, "NotoSans.ttf"));
+    const arabic = cast(const(ubyte)[]) read(buildPath(root, "NotoSansArabic.ttf"));
+    const size = Ppem.fromInteger(24).value;
+    VulkanCanvas!DeviceMemoryBackend canvas;
+    scope (exit) foreach (ref slot; canvas.shapers_) slot.release();
+    assert(canvas.cellFont(latin, 24, TextMetrics(ascent: 18)));
+    FallbackFace[9] extras;
+    foreach (ref extra; extras[]) extra = FallbackFace(latin, size);
+    extras[$ - 1] = FallbackFace(arabic, size);
+    assert(canvas.specimenFont(latin, 0, size, null, TextMetrics(ascent: 18),
+        0, 0, null, null, null, extras[]));
+    assert(canvas.beginSpecimen(14, 30));
+    scope (exit) canvas.endSpecimen();
+    uint[4] text = [0x0633, 0x0644, 0x0627, 0x0645];
+    GlyphQuad[64] quads;
+    size_t count;
+    double advance;
+    assert(canvas.resolveCluster(ClusterRequest(text[], GlyphRequest(0x0633), &advance, true),
+        quads[], count) == GlyphOutcome.drawn);
+    assert(advance > 0);
+    uint[2] variation = ['a', 0xE0100];
+    assert(canvas.resolveCluster(ClusterRequest(variation[], GlyphRequest('a'), &advance, true),
+        quads[], count) == GlyphOutcome.drawn,
+        "supplementary variation selectors do not require standalone glyphs");
 }
 
 /// Measurement and painting share runs, while coordinate changes select fresh data.

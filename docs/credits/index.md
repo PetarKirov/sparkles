@@ -63,6 +63,8 @@ names something nothing ships.
 
 <!-- @include: ./parts/noto-sans.md -->
 
+<!-- @include: ./parts/noto-cjk.md -->
+
 <!-- @include: ./parts/noto-color-emoji.md -->
 
 <!-- @include: ./parts/uiua386.md -->

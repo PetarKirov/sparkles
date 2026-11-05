@@ -246,10 +246,13 @@ final class FontLibrary
     }
 
     /// Pins bytes borrowed by the currently accepted renderer instances.
-    void retain(FontLoad* current, StyleLoads styles = StyleLoads.init) @system
+    void retain(FontLoad* current, StyleLoads styles = StyleLoads.init,
+        scope FontLoad*[] fallbacks = null) @system
     {
         retained = [current];
         foreach (s; styles)
+            if (s !is null) retained ~= s;
+        foreach (s; fallbacks)
             if (s !is null) retained ~= s;
     }
 
@@ -389,4 +392,49 @@ struct FontFinder
         Thread.sleep(1.msecs);
     }
     assert(invalid.done && !invalid.ok && first.bytes.length);
+}
+
+/// A corpus larger than the bounded queue makes progress when submission retries.
+@("text_lab.fontCatalog.queuePressureRetriesWithoutDuplicateOwners")
+@system unittest
+{
+    import core.thread : Thread;
+    import core.time : MonoTime, msecs, seconds;
+    import std.conv : text;
+    import std.file : copy, mkdir, rmdirRecurse, tempDir;
+    import std.process : environment;
+
+    const root = environment.get("SPARKLES_FONTS_PATH");
+    assert(root.length, "SPARKLES_FONTS_PATH is required");
+    const directory = buildPath(tempDir(), text("sparkles-font-queue-", MonoTime.currTime.ticks));
+    mkdir(directory);
+    scope (exit) rmdirRecurse(directory);
+    string[20] paths;
+    foreach (i, ref path; paths)
+    {
+        path = buildPath(directory, text(i, ".ttf"));
+        copy(buildPath(root, "DejaVuSansMono.ttf"), path);
+    }
+    auto library = new FontLibrary;
+    library.start([directory], "");
+    scope (exit) library.stop();
+    FontLoad*[20] owners;
+    const deadline = MonoTime.currTime + 10.seconds;
+    bool complete;
+    while (!complete && MonoTime.currTime < deadline)
+    {
+        library.poll();
+        complete = library.ready;
+        foreach (i, path; paths)
+        {
+            auto job = library.request(path, 0);
+            if (job is null) { complete = false; break; }
+            if (owners[i] !is null) assert(owners[i] is job);
+            owners[i] = job;
+            complete &= job.done && job.ok;
+        }
+        Thread.sleep(1.msecs);
+    }
+    assert(complete && library.loads.length == owners.length);
+    foreach (i, job; owners) foreach (other; owners[i + 1 .. $]) assert(job !is other);
 }

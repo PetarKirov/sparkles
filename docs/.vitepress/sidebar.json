@@ -2145,6 +2145,10 @@
             "link": "/libs/ui-app/reference/specimen-fonts"
           },
           {
+            "text": "Unicode showcase",
+            "link": "/libs/ui-app/reference/unicode-showcase"
+          },
+          {
             "text": "Font preview performance",
             "link": "/libs/ui-app/explanation/font-preview-performance"
           },

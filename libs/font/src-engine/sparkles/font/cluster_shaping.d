@@ -15,6 +15,9 @@ module sparkles.font.cluster_shaping;
 /// most this many, and a cluster needing more is refused whole.
 enum size_t maxClusterGlyphs = 64;
 
+/// Automatic script guessing, with an optional direction resolved by UAX #9.
+enum ClusterDirection : ubyte { automatic, ltr, rtl }
+
 /// A shaper of one face, made by `openClusterShaper`.
 struct ClusterShaper;
 
@@ -74,10 +77,14 @@ ppemDenominator` pixels per em into `glyphs`: how many it wrote, or 0 when
 shaping failed or `glyphs` is too short.
 */
 size_t shapeCluster(ClusterShaper* shaper, scope const(char)[] text, ulong ppemNumerator,
-    ulong ppemDenominator, scope ClusterGlyph[] glyphs) @system nothrow @nogc
+    ulong ppemDenominator, scope ClusterGlyph[] glyphs,
+    ClusterDirection direction = ClusterDirection.automatic) @system nothrow @nogc
 {
     import sparkles.base.text.layout_units : I128, Rational, U128;
-    import sparkles.font.shaping : SegmentProperties, ShapedGlyph, ShapeRequest, Shaper, SourceSpan;
+    import sparkles.font.shaping : engineScript, SegmentProperties, ShapedGlyph, ShapeRequest, Shaper, ShapingDirection, SourceSpan;
+    import sparkles.font.errors : Tag;
+    import sparkles.base.text.utf : decodeToken;
+    import sparkles.base.text.unicode_tables : script, Script;
     import sparkles.font.units : Ppem, toPixels;
 
     if (shaper is null || text.length == 0)
@@ -89,8 +96,28 @@ size_t shapeCluster(ClusterShaper* shaper, scope const(char)[] text, ulong ppemN
     SourceSpan[maxClusterGlyphs] spans;
     if (glyphs.length > shaped.length)
         glyphs = glyphs[0 .. shaped.length];
-    const result = (cast(Shaper*) shaper).shape(ShapeRequest(text, 0, text.length, SegmentProperties.init,
-        false, null, true, true), shaped[0 .. glyphs.length], spans[], null, null);
+    SegmentProperties properties;
+    if (direction != ClusterDirection.automatic)
+    {
+        properties.direction = direction == ClusterDirection.rtl
+            ? ShapingDirection.rightToLeft : ShapingDirection.leftToRight;
+        properties.script = Tag("Zyyy");
+        auto remaining = text;
+        while (remaining.length)
+        {
+            const decoded = decodeToken(remaining);
+            if (!decoded.result.consumed) break;
+            const cp = decoded.token.scalar;
+            if (script(cp) != Script.Zyyy && script(cp) != Script.Zinh && script(cp) != Script.Zzzz)
+            {
+                properties.script = Tag(engineScript(cp));
+                break;
+            }
+            remaining = remaining[decoded.result.consumed .. $];
+        }
+    }
+    const result = (cast(Shaper*) shaper).shape(ShapeRequest(text, 0, text.length, properties,
+        direction != ClusterDirection.automatic, null, true, true), shaped[0 .. glyphs.length], spans[], null, null);
     if (result.hasError)
         return 0;
     foreach (i, g; shaped[0 .. result.value.glyphCount])

@@ -26,6 +26,10 @@ import std.format : format;
 import sparkles.base.buffer : UniqueBuffer;
 import font_settings : LabSettings;
 import lab_controls : LabControls;
+import unicode_samples : Showcase, unicodeSamples;
+import specimen_paragraph : fitSpecimenItem, SpecimenParagraph;
+import sparkles.font.cluster_shaping : ClusterDirection;
+import std.algorithm.sorting : sort;
 
 
 import sparkles.base.term_color : RgbColor;
@@ -41,23 +45,17 @@ import sparkles.ui_vulkan.coverage_geometry : CoverageMode, CoverageWork;
 import sparkles.ui_vulkan.text_rendering : Compositing, Hinting, Loupe, TextRendering;
 
 /// The specimen, line by line: what each line shows, and the text.
-immutable string[2][] specimen = [
-    ["Latin", "The quick brown fox jumps over the lazy dog."],
-    ["Shapes", "Hamburgefontsiv  il1I|  oO0  rn m  cl d  ,.;:'\""],
-    ["Digits", "0123456789  +-*/=<>  ()[]{}  @#$%^&  ~`_\\"],
-    ["Code", "-> => != === <= >= :: |> <| /* */ // www 0x1F"],
-    ["Accents", "café naïve façade Ångström Øresund ŁÓDŹ ẞ"],
-    ["Scripts", "Ωμέγα αβγδ  Привет мир  Tiếng Việt  Ğğ İı Şş"],
-    ["Combining", "é ä ñ ô ç  Z̵̀a͓ḻg͔o"],
-    ["CJK", "漢字 かな カナ 한국어 中文字体"],
-    ["Emoji", "😀 😎 ❤️ ❤ ✨ 👍 👍🏽 🎉 🚀"],
-    ["Sequences", "👩‍💻 👨‍👩‍👧 🇧🇬 1️⃣ #️⃣ ❤️‍🔥"],
-    // Nerd Font icons (Powerline branch and arrow, folders, gear, git,
-    // D, octicon), written as escapes so no editor strips them again.
-    ["Icons", "\uE0A0 \uE0B0 \uF115 \uF07B \uF013 \uF1D3 \uE7A8 \uF489"],
-    ["Symbols", "←→↑↓ ⇐⇒ ✓✗ ∑∫√∞≈≠ ±×÷ °§¶ ©®™ ½¾"],
-    ["Box", "┌─┬─┐ ╔═╦═╗ ╭─╮ │ ├┼┤ ░▒▓█ ▁▂▃▄▅▆▇ ⣿⠿⠛"],
-];
+immutable string[2][] specimen = () {
+    immutable(string[2])[] result;
+    foreach (sample; unicodeSamples)
+        if (sample.group == Showcase.overview)
+        {
+            immutable(string[2]) pair = [sample.label, sample.text];
+            result ~= pair;
+        }
+    return result.idup;
+}();
+
 
 /// The header's rows: one 48 dp touch target at 16 dp cells.
 enum int headerRows = 3;
@@ -264,7 +262,7 @@ struct Lab
         // ever shrink.
         if (!discoverFonts && !userSized && !settled)
         {
-            if (fits(size))
+            if (fits(size, model.samples.group))
                 settled = true;
             else if (h.fontSizePx > minFitPx)
             {
@@ -312,6 +310,7 @@ struct Lab
             else
                 const second = format("compositing %s %.2f", settings.compositing, settings.contrast);
             const hint = controls !is null && controls.error.length ? controls.error
+                : controls !is null && controls.fallbackWarning.length ? controls.fallbackWarning
                 : format("hinting %s · shaping %s · f Fonts · F12 stable UI", settings.hinting, settings.shaping ? "on" : "off");
         }
         else
@@ -333,11 +332,11 @@ struct Lab
     }
 
     // Whether both panels hold the whole specimen at `size`.
-    private static bool fits(in Size size)
+    private static bool fits(in Size size, Showcase group = Showcase.overview)
     {
         const half = (size.height - headerRows) / 2;
         int rows;
-        foreach (line; lines)
+        foreach (line; specimenPages[cast(size_t) group])
         {
             int r = 1;
             foreach (p; wrap(line.runs, size.width - labelWidth - 2))
@@ -351,6 +350,7 @@ struct Lab
     // beside it.
     private void panel(H, C)(ref H h, C canvas, in Rect r, in Theme t)
     {
+        const lines = specimenPages[cast(size_t) model.samples.group];
         const visible = visiblePanel(r, sheet_);
         if (visible.width <= 0 || visible.height <= 0) return;
         canvas.fillRect(r, Visual(bg: t.bg, hasBg: true));
@@ -366,7 +366,7 @@ struct Lab
         const textX = r.x + 1 + labelWidth, textWidth = r.width - labelWidth - 2;
         const label = Visual(fg: t.label, bg: t.bg, hasBg: true);
         int y = r.y;
-        foreach (line; lines)
+        foreach (line; lines[model.samples.firstRow - 1 < lines.length ? model.samples.firstRow - 1 : 0 .. $])
         {
             if (y >= r.y + r.height)
                 break;
@@ -388,13 +388,14 @@ struct Lab
     // Labels retain the UI font; specimen text uses independent em metrics.
     private void specimenPanel(H, C)(ref H h, C canvas, in Rect r, in Rect visible, in Theme t)
     {
+        const lines = specimenPages[cast(size_t) model.samples.group];
         import std.algorithm.comparison : max;
 
         const cw = h.cellWidth, ch = h.cellHeight;
         const left = (r.x + labelWidth + 1) * cw;
         const width = max(1, (r.width - labelWidth - 2) * cw);
         const rowHeight = max(ch, h.specimenCellHeight);
-        int y = r.y * ch;
+        int y = r.y * ch - cast(int) model.samples.wrappedOffset * rowHeight;
         const bottom = visible.bottom * ch;
         const right = visible.right * cw;
         canvas.pushClip(visible);
@@ -409,37 +410,71 @@ struct Lab
             canvas.beginGlyphPreparation(rasterWorkers);
         foreach (index, line; lines)
         {
+            if (index + 1 < model.samples.firstRow) continue;
             if (y >= bottom) break;
             const lineY = y;
             const first = specimenLayout.tokens.length;
             int pen;
             foreach (run; line.runs)
             {
-                string rest = run.text;
-                while (rest.length)
+
+                auto paragraph = specimenLayout.paragraph(run.text);
+                foreach (item; paragraph.items)
                 {
-                    size_t n = 1;
-                    const space = rest[0] == ' ';
-                    while (n < rest.length && (rest[n] == ' ') == space) ++n;
-                    auto token = rest[0 .. n];
-                    rest = rest[n .. $];
                     const bold = (run.style & TextAttr.bold.bits) != 0;
                     const italic = (run.style & TextAttr.italic.bits) != 0;
-                    int advance = model.font.cellGrid ? cast(int) visibleWidth(token) * h.specimenCellWidth
-                        : canvas.naturalTextWidthPx(token, bold, italic);
-                    if (pen && pen + advance > width)
+                    auto measure = (string token) => model.font.cellGrid && item.direction != ClusterDirection.rtl
+                        ? cast(int) visibleWidth(token) * h.specimenCellWidth
+                        : canvas.naturalTextWidthPx(token, bold, italic, item.direction);
+                    auto rest = item;
+                    while (rest.text.length)
                     {
-                        pen = 0;
-                        y += rowHeight;
+                        const fitted = fitSpecimenItem(rest, width, measure);
+                        const token = fitted.text;
+                        const advance = measure(token);
+                        if (pen && pen + advance > width)
+                        {
+                            pen = 0;
+                            y += rowHeight;
+                        }
+                        if (y >= bottom) break;
+                        if (!pen && item.space) break;
+                        specimenLayout.tokens ~= PlacedToken(token, pen, y, advance, run.style,
+                            run.underline, run.colour, item.direction, fitted.start, fitted.end);
+                        pen += advance;
+                        rest.text = rest.text[token.length .. $];
+                        rest.start = fitted.end;
                     }
                     if (y >= bottom) break;
-                    // Preserve logical wrapping while avoiding rasterization of
-                    // words entirely covered by the side sheet.
-                    if (left + pen >= right) { pen += advance; continue; }
-                    specimenLayout.tokens ~= PlacedToken(token, pen, y, advance, run.style, run.underline, run.colour);
-                    pen += advance;
                 }
                 if (y >= bottom) break;
+            }
+
+            if (line.runs.length == 1)
+            {
+                auto paragraph = specimenLayout.paragraph(line.runs[0].text);
+                auto tokens = specimenLayout.tokens[][first .. $];
+                size_t begin;
+                while (begin < tokens.length)
+                {
+                    size_t end = begin + 1;
+                    while (end < tokens.length && tokens[end].y == tokens[begin].y) ++end;
+                    auto row = tokens[begin .. end];
+                    const logicalStart = row[0].start, logicalEnd = row[$ - 1].end;
+                    const positions = paragraph.positions(logicalStart, logicalEnd);
+                    int total;
+                    foreach (ref token; row)
+                    {
+                        token.visual = size_t.max;
+                        foreach (position; positions[token.start - logicalStart .. token.end - logicalStart])
+                            if (position < token.visual) token.visual = position;
+                        total += token.advance;
+                    }
+                    row.sort!((a, b) => a.visual < b.visual);
+                    int x = paragraph.rightAligned && total < width ? width - total : 0;
+                    foreach (ref token; row) { token.pen = x; x += token.advance; }
+                    begin = end;
+                }
             }
             specimenLayout.lines ~= PlacedLine(index, lineY, first, specimenLayout.tokens.length);
             y += rowHeight;
@@ -471,11 +506,11 @@ struct Lab
             {
                 const x = left + token.pen;
                 const ink = rgba(t.ink(token.colour), 255), ground = rgba(t.bg, 255);
-                if (model.font.cellGrid)
+                if (model.font.cellGrid && token.direction != ClusterDirection.rtl)
                     canvas.labelPx(token.text, x, token.y, ink, ground);
                 else
                     cast(void) canvas.naturalTextPx(token.text, x, token.y, ink, ground,
-                        (token.style & TextAttr.bold.bits) != 0, (token.style & TextAttr.italic.bits) != 0);
+                        (token.style & TextAttr.bold.bits) != 0, (token.style & TextAttr.italic.bits) != 0, token.direction);
                 if (token.underline != UnderlineStyle.none)
                     canvas.fillPx(x, token.y + rowHeight - 2, token.advance, 1, ink);
                 if (token.style & TextAttr.strikethrough.bits)
@@ -601,6 +636,15 @@ struct Lab
                         return toggleSheet(h);
                     if (k.key == Key.back)
                         return h.quit();
+                    return;
+                }
+
+                if (k.key == Key.pageUp || k.key == Key.pageDown)
+                {
+                    const count = specimenPages[cast(size_t) model.samples.group].length;
+                    if (k.key == Key.pageUp && model.samples.firstRow > 1) --model.samples.firstRow;
+                    if (k.key == Key.pageDown && model.samples.firstRow < count) ++model.samples.firstRow;
+                    changed(h);
                     return;
                 }
                 command(h, k.ch);
@@ -829,6 +873,13 @@ struct Lab
                 loupe.shown = true;
                 break;
 
+
+            case 'n', 'N':
+                enum count = __traits(allMembers, Showcase).length;
+                model.samples.group = cast(Showcase)((cast(size_t) model.samples.group + (ch == 'N' ? count - 1 : 1)) % count);
+                model.samples.firstRow = 1;
+                model.samples.wrappedOffset = 0;
+                break;
             case 'f':
                 if (controls !is null) controls.openPicker();
                 break;
@@ -940,6 +991,14 @@ private Rect visiblePanel(Rect panel, Rect overlay) @safe pure nothrow @nogc
 
 private final class SpecimenLayout
 {
+    private SpecimenParagraph[string] paragraphs;
+    SpecimenParagraph paragraph(string text) @safe
+    {
+        if (auto p = text in paragraphs) return *p;
+        auto p = new SpecimenParagraph(text);
+        paragraphs[text] = p;
+        return p;
+    }
     UniqueBuffer!PlacedToken tokens;
     UniqueBuffer!PlacedLine lines;
     UniqueBuffer!CoverageSample coverageWork;
@@ -958,6 +1017,8 @@ private struct PlacedToken
     ushort style;
     UnderlineStyle underline;
     ubyte colour;
+    ClusterDirection direction;
+    size_t start, end, visual;
 }
 
 private struct PlacedLine
@@ -1001,19 +1062,30 @@ private struct Line
     immutable(Run)[] runs;
 }
 
-private immutable Line[] lines = () {
-    Line[] all;
-    foreach (row; specimen)
-        all ~= Line(row[0], [Run(row[1])]);
-    all ~= Line("Styles", [Run("regular "), Run("bold", TextAttr.bold.bits), Run(" "),
-        Run("italic", TextAttr.italic.bits), Run(" "),
-        Run("bold italic", cast(ushort)(TextAttr.bold.bits | TextAttr.italic.bits)), Run(" "),
-        Run("underline", 0, UnderlineStyle.single), Run(" "), Run("strike", TextAttr.strikethrough.bits)]);
-    all ~= Line("Colour", [Run("red", 0, UnderlineStyle.none, 1), Run(" "),
-        Run("green", 0, UnderlineStyle.none, 2), Run(" "),
-        Run("blue — thin strokes on colour: illegible, minimum, Mississippi", 0, UnderlineStyle.none, 3)]);
-    return all.idup;
+private immutable Line[][] specimenPages = () {
+    immutable(Line)[][] result;
+    foreach (group; 0 .. __traits(allMembers, Showcase).length)
+    {
+        Line[] all;
+        foreach (row; unicodeSamples)
+            if (cast(size_t) row.group == group)
+                all ~= Line(row.label, [Run(row.text)]);
+        if (group == cast(size_t) Showcase.overview)
+        {
+            all ~= Line("Styles", [Run("regular "), Run("bold", TextAttr.bold.bits), Run(" "),
+                Run("italic", TextAttr.italic.bits), Run(" "),
+                Run("bold italic", cast(ushort)(TextAttr.bold.bits | TextAttr.italic.bits)), Run(" "),
+                Run("underline", 0, UnderlineStyle.single), Run(" "), Run("strike", TextAttr.strikethrough.bits)]);
+            all ~= Line("Colour", [Run("red", 0, UnderlineStyle.none, 1), Run(" "),
+                Run("green", 0, UnderlineStyle.none, 2), Run(" "),
+                Run("blue — thin strokes on colour: illegible, minimum, Mississippi", 0, UnderlineStyle.none, 3)]);
+        }
+        result ~= all.idup;
+    }
+    return result.idup;
 }();
+
+private immutable Line[] lines = specimenPages[Showcase.overview];
 
 /// Where a piece of a run landed when wrapped: its row and column, its text,
 /// and which run it is from.

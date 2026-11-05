@@ -4,6 +4,14 @@ module sparkles.ui_app.specimen_font;
 import core.time : Duration, MonoTime;
 import sparkles.font : UserCoordinate;
 
+/// A preloaded exact fallback face. Its bytes remain owned by the requester.
+struct SpecimenFallbackFace
+{
+    const(ubyte)[] bytes;
+    uint faceIndex;
+    ulong contentHash;
+}
+
 /// Coordinates borrow only during the request; hosts retain their own copy.
 struct SpecimenFontRequest
 {
@@ -22,6 +30,8 @@ struct SpecimenFontRequest
     const(ubyte)[][3] styleBytes;
     uint[3] styleIndices;
     ulong[3] styleContentHashes;
+    /// Ordered script fallbacks, supplied without foreground file discovery.
+    const(SpecimenFallbackFace)[] fallbacks;
     /// Monotonic request identity/timestamp supplied by the event handler.
     ulong generation;
     MonoTime requestedAt;
@@ -40,8 +50,19 @@ bool sameSpecimenRequest(in SpecimenFontRequest a, in SpecimenFontRequest b)
     @safe pure nothrow @nogc
     => a.path == b.path && a.faceIndex == b.faceIndex && a.px == b.px
         && a.uiFollows == b.uiFollows && a.coordinates == b.coordinates
-        && a.familyStyles == b.familyStyles && sameStyles(a, b)
+        && a.familyStyles == b.familyStyles && sameStyles(a, b) && sameFallbacks(a.fallbacks, b.fallbacks)
         && a.bytes.ptr == b.bytes.ptr && a.bytes.length == b.bytes.length;
+
+package bool sameFallbacks(in SpecimenFallbackFace[] a, in SpecimenFallbackFace[] b)
+    @safe pure nothrow @nogc
+{
+    if (a.length != b.length) return false;
+    foreach (i; 0 .. a.length)
+        if (a[i].bytes.ptr != b[i].bytes.ptr || a[i].bytes.length != b[i].bytes.length
+                || a[i].faceIndex != b[i].faceIndex || a[i].contentHash != b[i].contentHash)
+            return false;
+    return true;
+}
 
 /// Request timestamps do not force reconstruction; changed backing storage does.
 @("ui_app.specimen_font.requestIdentity")
@@ -53,6 +74,12 @@ bool sameSpecimenRequest(in SpecimenFontRequest a, in SpecimenFontRequest b)
     other.generation = 2;
     assert(sameSpecimenRequest(first, other));
     other.bytes = bytes.dup;
+    assert(!sameSpecimenRequest(first, other));
+    other = first;
+    other.fallbacks = [SpecimenFallbackFace(bytes, 0, 42)];
+    assert(!sameSpecimenRequest(first, other));
+    first = other;
+    other.fallbacks = [SpecimenFallbackFace(bytes, 1, 42)];
     assert(!sameSpecimenRequest(first, other));
 }
 
