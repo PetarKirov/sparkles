@@ -177,3 +177,6 @@
 # and kernel.org sheds load from shared CI ranges, so this is throttling rather
 # than rot. Same class as the sourceware/gnu entries above.
 ^https?://git\.kernel\.org/
+# blog.bazel.build returns HTTP 401 under GitHub Actions; the cited
+# unused_deps article returns HTTP 200 locally (verified 2026-11-05).
+^https://blog\.bazel\.build/
