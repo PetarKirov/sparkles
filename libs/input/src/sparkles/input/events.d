@@ -1081,6 +1081,7 @@ struct GestureEvent
     Point pos;
     float scale = 1.0;
     Mods mods;
+    float deltaPx = 0;
 }
 
 /// An unrecognized or incomplete input sequence — ignorable, but its presence

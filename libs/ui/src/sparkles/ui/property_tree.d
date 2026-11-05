@@ -490,6 +490,9 @@ struct PropertyNode
     double lo = 0;      /// ditto
     double hi = 0;      /// ditto
     double step = 0;    /// ditto
+    double splitLo = 0; /// split point value (e.g. 18.0)
+    double splitFrac = 0; /// fraction where split occurs (e.g. 0.50)
+    double splitW = 0.05; /// transition half-width (e.g. 0.05 for 45%-55%)
     string[] choices;   /// enumeration member names
     int depth;          ///
     SearchRole role;    /// search decoration (`PRT33`)
@@ -568,6 +571,7 @@ private struct MemberMeta
     bool readOnly;
     bool hasRange;
     double lo = 0, hi = 0, step = 0;
+    double splitLo = 0, splitFrac = 0, splitW = 0.05;
     bool hasSection;
     string heading;
     bool color;
@@ -1499,6 +1503,9 @@ private void walkChildren(U, V)(ref U v, string path, int depth,
                         meta.lo = getUDAs!(M, Range)[0].lo;
                         meta.hi = getUDAs!(M, Range)[0].hi;
                         meta.step = getUDAs!(M, Range)[0].step;
+                        meta.splitLo = getUDAs!(M, Range)[0].splitLo;
+                        meta.splitFrac = getUDAs!(M, Range)[0].splitFrac;
+                        meta.splitW = getUDAs!(M, Range)[0].splitW;
                     }
                     static if (__traits(compiles, v.propRange(name)))
                     {
@@ -1509,6 +1516,9 @@ private void walkChildren(U, V)(ref U v, string path, int depth,
                             meta.lo = r.lo;
                             meta.hi = r.hi;
                             meta.step = r.step;
+                            meta.splitLo = r.splitLo;
+                            meta.splitFrac = r.splitFrac;
+                            meta.splitW = r.splitW;
                         }
                     }
                     static if (__traits(compiles, v.propDefault(name)))
@@ -1570,6 +1580,9 @@ private PropertyNode makeNode(U)(ref U v, string path, string label,
         lo: meta.lo,
         hi: meta.hi,
         step: meta.step,
+        splitLo: meta.splitLo,
+        splitFrac: meta.splitFrac,
+        splitW: meta.splitW,
     };
     n.heading = meta.heading.length ? meta.heading : label;
     n.color = meta.color;

@@ -31,6 +31,7 @@ import std.conv : text;
 import sparkles.base.term_color : RgbColor;
 import sparkles.ui.components.controls : chip, ControlSize, dropdownChip, segmented,
     slider, stepper, toggleSwitch;
+import sparkles.ui.components.range_slider : SliderDomain;
 import sparkles.ui.components.tree_widget : TreeData;
 import sparkles.base.text.grapheme : visibleWidth;
 import sparkles.ui.geometry : Insets, SizeSpec;
@@ -511,6 +512,7 @@ uint sectionRow(ref Builder b, ref const TreeData!PropertyNode data, ref const S
         case InlineEditor.slider:
         {
             import std.conv : to;
+            import std.format : format;
 
             double value;
             try value = n.badge.to!double;
@@ -519,11 +521,9 @@ uint sectionRow(ref Builder b, ref const TreeData!PropertyNode data, ref const S
             // On narrow rows the track gives way before the numeric badge
             // squeezes and rewraps the label/description on every drag tick.
             enum valueCells = 12;
-            string shown = n.badge;
+            string shown = format("%.3f", value);
             if (visibleWidth(shown) > valueCells - 4)
             {
-                import std.format : format;
-
                 // The chip is a preview; opening it still edits the full
                 // unrounded badge. Leave room for padding and the caret.
                 foreach_reverse (precision; 1 .. 7)
@@ -532,9 +532,6 @@ uint sectionRow(ref Builder b, ref const TreeData!PropertyNode data, ref const S
                     if (visibleWidth(shown) <= valueCells - 4) break;
                 }
             }
-            const room = opt.width - 3 - nameCells(item.label) - 3 - valueCells - 3;
-            const trackCells = room < 3 ? 3 : room > 16 ? 16 : room;
-            parts ~= slider(b, value, n.lo, n.hi, hit(SectionPart.slider), size, trackCells);
             const badge = dropdownChip(b, shown, false, hit(SectionPart.open), size);
             b.nodes[badge].width = SizeSpec.fixed(valueCells);
             b.nodes[badge].clipX = true;
@@ -590,6 +587,24 @@ uint sectionRow(ref Builder b, ref const TreeData!PropertyNode data, ref const S
         padding: n.doc.length ? Insets(0, 0, 1, 0) : Insets.init,
         hitId: hit(SectionPart.row)));
     uint[] stack_ = [main];
+
+    // The slider track on its own row so it gets the full available width.
+    if (editor == InlineEditor.slider)
+    {
+        import std.conv : to;
+
+        double value;
+        try value = n.badge.to!double;
+        catch (Exception) value = n.lo;
+
+        const available = opt.width - 3;
+        const trackCells = available < 3 ? 3 : available;
+        const domain = SliderDomain(n.lo, n.hi, n.step, n.splitLo, n.splitFrac, n.splitW);
+        const sliderWidget = slider(b, value, domain, hit(SectionPart.slider), size, trackCells);
+        stack_ ~= b.add(Widget(kind: WidgetKind.row, children: [sliderWidget],
+            width: SizeSpec.grow(), height: atLeast(rows), alignY: Alignment.center,
+            padding: Insets(0, 0, 1, 0), hitId: hit(SectionPart.row)));
+    }
 
     // An open dropdown's options, one touch target each.
     if (editor == InlineEditor.dropdown && st.open)

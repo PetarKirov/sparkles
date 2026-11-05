@@ -48,6 +48,7 @@ import sparkles.base.pool.text_pool : retain;
 import sparkles.base.text.utf : decodeToken, UtfMode;
 import sparkles.input;
 import sparkles.input.gesture : GestureRecognizer;
+import sparkles.ui_app.host : TouchGestures;
 import sparkles.wsi.events : CloseRequestedEvent, FocusChangedEvent, KeyboardEvent,
     LogicalKeyKind, PointerPhase, ReadyEvent, ScrollEvent, ScrollUnit,
     SurfaceMetricsChangedEvent, TextCommittedEvent, TextId, TouchEvent, TouchPhase, WindowEvent;
@@ -103,7 +104,7 @@ struct WsiInput
     finger as a mouse. The host keeps calling $(LREF tickGestures) while
     $(LREF gesturing).
     */
-    bool touchGestures;
+    TouchGestures touchGestures = TouchGestures.none;
 
     /// ditto; its thresholds are the host's to set, in device pixels.
     GestureRecognizer gestures;
@@ -131,6 +132,10 @@ struct WsiInput
     private sparkles.input.events.TextId[] issued_;
     private bool drained_;
 
+    /// Pointer capture: when true, the active touch contact owns the pointer
+    /// and other contacts (multi-touch gestures, accidental taps) are ignored.
+    bool pointerCaptured;
+
     /// The modifiers the last event reported held (`HST17`).
     Mods modifiers() const @safe pure nothrow @nogc => mods_;
 
@@ -139,7 +144,8 @@ struct WsiInput
 
     /// Whether time alone can still resolve a gesture: a finger is down or a
     /// fling coasts.
-    bool gesturing() const @safe pure nothrow @nogc => touchGestures && gestures.active;
+    bool gesturing() const @safe pure nothrow @nogc
+        => !pointerCaptured && touchGestures != TouchGestures.none && gestures.active;
 
     /**
     Advances the recogniser to `now` and delivers what it resolves, at the
@@ -147,7 +153,7 @@ struct WsiInput
     */
     void tickGestures(Sink)(MonoTime now, int cellW, int cellH, scope Sink sink)
     {
-        if (!touchGestures)
+        if (pointerCaptured || touchGestures == TouchGestures.none)
             return;
         const dtMs = gestureClock_ == MonoTime.init ? 0
             : cast(float)(now - gestureClock_).total!"usecs" / 1000;
@@ -247,6 +253,7 @@ struct WsiInput
     {
         import sparkles.input.gesture : PointF;
 
+        pointerCaptured = false;
         if (touching_)
             held_[PointerButton.left] = false;
         touching_ = false;
@@ -305,8 +312,28 @@ struct WsiInput
         const px = Point(cast(int) t.physicalPosition.x - originX,
             cast(int) t.physicalPosition.y - originY);
         noteContact(t.contact, t.phase, px);
-        if (touchGestures)
+        if (touchGestures == TouchGestures.all)
             return recognise(t.phase, cellW, cellH, sink);
+        if (touchGestures == TouchGestures.multiTouchOnly)
+        {
+            if (pointerCaptured)
+            {
+                if (gestures.active)
+                    gestures.cancel();
+            }
+            else if (contacts_.count >= 2 || gestures.contacts >= 2 || gestures.active)
+            {
+                if (touching_)
+                {
+                    touching_ = false;
+                    held_[PointerButton.left] = false;
+                    const pos = cellAt(px.x, px.y, cellW, cellH);
+                    sink(Event(PointerEvent(action: PointerAction.leave, button: PointerButton.left,
+                        pos: pos, mods: mods_)));
+                }
+                return recognise(t.phase, cellW, cellH, sink);
+            }
+        }
         const pos = cellAt(px.x, px.y, cellW, cellH);
         final switch (t.phase)
         {
@@ -329,6 +356,7 @@ struct WsiInput
                     return;
                 touching_ = false;
                 held_[PointerButton.left] = false;
+                pointerCaptured = false;
                 return sink(Event(PointerEvent(action: PointerAction.release, button: PointerButton.left,
                     pos: pos, mods: mods_)));
         }
@@ -420,7 +448,7 @@ struct WsiInput
             (WheelEvent w) => Event(WheelEvent(dx: w.dx, dy: w.dy, pos: at, mods: m,
                 precise: w.precise, fdx: w.fdx, fdy: w.fdy, begins: w.begins)),
             (GestureEvent g) => Event(GestureEvent(gesture: g.gesture, pos: at, scale: g.scale,
-                mods: m)),
+                mods: m, deltaPx: g.deltaPx)),
             (ref other) => Event(other),
         );
 
@@ -917,7 +945,7 @@ version (unittest)
     }
 
     WsiInput input;
-    input.touchGestures = true;
+    input.touchGestures = TouchGestures.all;
     input.gestures.cfg.cellH = 20;
     FakeTexts wsi;
     // A tap: a press and a release where it began, and no mouse drag.
@@ -995,7 +1023,7 @@ version (unittest)
     // Android destroys the surface under a held finger and never cancels
     // it: without the reset the host would park on `gesturing` forever.
     WsiInput input;
-    input.touchGestures = true;
+    input.touchGestures = TouchGestures.all;
     input.gestures.cfg.cellH = 20;
     FakeTexts wsi;
     cast(void) translated(input, wsi, [touch(TouchPhase.began, 1, 25, 45),
@@ -1013,6 +1041,110 @@ version (unittest)
         Event(PointerEvent(action: PointerAction.press, button: PointerButton.left, pos: Point(2, 2))),
         Event(PointerEvent(action: PointerAction.release, button: PointerButton.left, pos: Point(2, 2))),
     ], "the next touch taps");
+}
+
+@("ui_app.wsi_input.multiTouchOnlyPreservesSinglePointerDrag")
+@system unittest
+{
+    static WindowEvent touch(TouchPhase phase, uint contact, int x, int y)
+    {
+        TouchEvent t;
+        t.contact = PointerId(contact);
+        t.phase = phase;
+        t.physicalPosition = PhysicalPosition(x, y);
+        return ev(t);
+    }
+
+    WsiInput input;
+    input.touchGestures = TouchGestures.multiTouchOnly;
+    input.gestures.cfg.fractional = true;
+    FakeTexts wsi;
+
+    // Single finger drags are emitted as direct PointerEvent drag, not WheelEvent
+    const singleDrag = translated(input, wsi, [
+        touch(TouchPhase.began, 1, 20, 20),
+        touch(TouchPhase.moved, 1, 40, 20),
+    ]);
+    assert(singleDrag == [
+        Event(PointerEvent(action: PointerAction.press, button: PointerButton.left, pos: Point(2, 1))),
+        Event(PointerEvent(action: PointerAction.drag, button: PointerButton.left, pos: Point(4, 1))),
+    ], "single touch acts as direct pointer drag for sliders/controls");
+
+    // Second finger down cancels pointer drag with leave and latches multi-touch gesture
+    const multi = translated(input, wsi, [
+        touch(TouchPhase.began, 2, 140, 20),
+    ]);
+    assert(multi == [
+        Event(PointerEvent(action: PointerAction.leave, button: PointerButton.left, pos: Point(14, 1))),
+    ], "second contact cancels active single pointer interaction");
+    assert(input.gesturing, "multi-touch gesture is active");
+}
+
+@("ui_app.wsi_input.pointerCaptureIgnoresSecondaryContacts")
+@system unittest
+{
+    static WindowEvent touch(TouchPhase phase, uint contact, int x, int y)
+    {
+        TouchEvent t;
+        t.contact = PointerId(contact);
+        t.phase = phase;
+        t.physicalPosition = PhysicalPosition(x, y);
+        return ev(t);
+    }
+
+    WsiInput input;
+    input.touchGestures = TouchGestures.multiTouchOnly;
+    input.gestures.cfg.fractional = true;
+    FakeTexts wsi;
+
+    // Contact 1 begins and establishes pointer capture (like a slider drag)
+    const p1 = translated(input, wsi, [
+        touch(TouchPhase.began, 1, 20, 20),
+    ]);
+    assert(p1 == [
+        Event(PointerEvent(action: PointerAction.press, button: PointerButton.left, pos: Point(2, 1))),
+    ]);
+    input.pointerCaptured = true;
+
+    // Contact 1 moves (drag)
+    const d1 = translated(input, wsi, [
+        touch(TouchPhase.moved, 1, 40, 20),
+    ]);
+    assert(d1 == [
+        Event(PointerEvent(action: PointerAction.drag, button: PointerButton.left, pos: Point(4, 1))),
+    ]);
+
+    // Contact 2 begins and moves while capture is held: ignored, no leave event
+    const p2 = translated(input, wsi, [
+        touch(TouchPhase.began, 2, 140, 20),
+        touch(TouchPhase.moved, 2, 160, 20),
+    ]);
+    assert(p2.length == 0, "secondary contacts ignored during pointer capture");
+    assert(!input.gesturing, "gestures stay dormant during pointer capture");
+
+    // Contact 1 continues to drag
+    const d2 = translated(input, wsi, [
+        touch(TouchPhase.moved, 1, 60, 20),
+    ]);
+    assert(d2 == [
+        Event(PointerEvent(action: PointerAction.drag, button: PointerButton.left, pos: Point(6, 1))),
+    ]);
+
+    // Contact 2 releases: ignored
+    const r2 = translated(input, wsi, [
+        touch(TouchPhase.ended, 2, 160, 20),
+    ]);
+    assert(r2.length == 0, "secondary contact release ignored");
+
+    // Contact 1 releases: commits and clears capture
+    const r1 = translated(input, wsi, [
+        touch(TouchPhase.ended, 1, 60, 20),
+    ]);
+    assert(r1 == [
+        Event(PointerEvent(action: PointerAction.release, button: PointerButton.left, pos: Point(6, 1))),
+    ]);
+    assert(!input.pointerCaptured, "capture cleared on primary release");
+    assert(!input.gesturing, "no dangling gestures");
 }
 
 @("ui_app.wsi_input.pixelsWithAOneByOneCell")

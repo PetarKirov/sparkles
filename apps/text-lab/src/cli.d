@@ -10,7 +10,7 @@ import std.path : buildPath;
 import sparkles.base.logger : LogLevel;
 import sparkles.core_cli.args : CliError, CliExpected, Command, Flatten, Option, RunExpected;
 import sparkles.ui_app.gui_options : GuiOptions, NativeOptions;
-import sparkles.ui_app.host : PointerUnit, RunConfig;
+import sparkles.ui_app.host : PointerUnit, RunConfig, TouchGestures;
 import sparkles.ui_app.run : asRunResult;
 import sparkles.ui_app.run_app : runApp;
 import sparkles.ui_vulkan.text_rendering : Compositing, Hinting;
@@ -98,6 +98,8 @@ struct TextLab
             hasLaunchBackground: true,
             motion: true, // the loupe follows the pointer
             pointerUnit: PointerUnit.pixels,
+            fractionalScroll: true,
+            touchGestures: TouchGestures.multiTouchOnly, // single touch for sliders/buttons; pinch for zoom
         };
         // The shared --font/--font-size options select the specimen. Its
         // controls start in the host's normal face at a stable size.

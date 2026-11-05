@@ -234,6 +234,9 @@ struct SettingsSections
         return pane.cancelInteraction();
     }
 
+    /// Whether a slider interaction holds pointer capture.
+    bool capturing() const @safe pure nothrow @nogc => drag.active || pendingTouch;
+
     /// Pointer coordinates and frames must use the same space. Capture owns
     /// subsequent moves/releases, including positions outside the track.
     bool pointer(P)(ref P pane, in PointerEvent p, in WidgetTree tree,
@@ -299,11 +302,11 @@ struct SettingsSections
             {
                 pendingTouch = true;
                 pendingTrack = frames[i].rect;
-                pendingDomain = SliderDomain(n.lo, n.hi, n.step);
+                pendingDomain = SliderDomain(n.lo, n.hi, n.step, n.splitLo, n.splitFrac, n.splitW);
                 pendingBefore = before.kind == EditValue.Kind.integral ? before.i : before.f;
                 return false;
             }
-            drag.begin(frames[i].rect, SliderDomain(n.lo, n.hi, n.step),
+            drag.begin(frames[i].rect, SliderDomain(n.lo, n.hi, n.step, n.splitLo, n.splitFrac, n.splitW),
                 before.kind == EditValue.Kind.integral ? before.i : before.f, p.pos.x);
             result = pane.previewAt(dragPath, numeric(drag.value));
             return true;

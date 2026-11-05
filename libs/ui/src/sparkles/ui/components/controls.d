@@ -16,6 +16,7 @@ module sparkles.ui.components.controls;
 
 import sparkles.base.text.grapheme : visibleWidth;
 import std.math : isFinite;
+import sparkles.ui.components.range_slider : SliderDomain;
 import sparkles.ui.geometry : Insets, SizeSpec;
 import sparkles.ui.style : BorderStyle, Decoration, FontRole, Slot, TextStyle, TypeStep;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind;
@@ -35,11 +36,11 @@ enum Slot[] controlSlots = [Slot.surfaceRaised, Slot.surfaceSunken, Slot.chromeA
     Slot.textPrimary, Slot.textSecondary, Slot.border, Slot.code];
 
 /// A numeric track with a full-height hit target and a monochrome-visible thumb.
-uint slider(ref Builder b, double value, double lo, double hi, size_t hitId,
+uint slider(ref Builder b, double value, in SliderDomain domain, size_t hitId,
     ControlSize sz = ControlSize.init, int columns = 16)
 {
     columns = columns < 3 ? 3 : columns;
-    double fraction = hi > lo && value.isFinite ? (value - lo) / (hi - lo) : 0;
+    double fraction = value.isFinite ? domain.fractionOf(value) : 0;
     fraction = fraction < 0 ? 0 : fraction > 1 ? 1 : fraction;
     const thumb = cast(int)(fraction * (columns - 1) + 0.5);
     string track;
@@ -52,6 +53,11 @@ uint slider(ref Builder b, double value, double lo, double hi, size_t hitId,
     box.width = SizeSpec.fixed(columns);
     return b.add(box);
 }
+
+/// Compatibility overload for callers passing bounds directly.
+uint slider(ref Builder b, double value, double lo, double hi, size_t hitId,
+    ControlSize sz = ControlSize.init, int columns = 16)
+    => slider(b, value, SliderDomain(lo, hi), hitId, sz, columns);
 
 /// A value: the cell font at the body step (`uiMono`), bold when selected.
 private TextStyle valueStyle(bool bold = false) pure nothrow @nogc

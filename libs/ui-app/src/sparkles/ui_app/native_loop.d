@@ -48,7 +48,7 @@ import sparkles.ui.image : ImageRegistry;
 import sparkles.ui_app.backend : Backend;
 import sparkles.ui_app.gui_options : FontRequest, WindowCells, WindowSystem;
 import sparkles.ui_app.host : HostState, isHost, noDraw, noSetup, noShutdown, PointerUnit,
-    RunConfig, withRealSize;
+    RunConfig, TouchGestures, withRealSize;
 import sparkles.ui_app.lifecycle : Failure, FrameResult, Lifecycle, Rebuild, Surface;
 import sparkles.ui_app.frame_title : fitTitle, TitleFace, titleCssPx, titleCssPxOf,
     titleFacePattern, titlePatternOf, TitleStrip;
@@ -1346,7 +1346,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
     // The platform determines capabilities; gesture recognition is optional.
     // Applications with raw touch capture (such as sliders) still need to
     // distinguish a touchscreen from a hovering mouse.
-    bool touch;
+    TouchGestures touch = TouchGestures.none;
     version (Android)
     {
         touch = cfg.touchGestures;
@@ -1357,6 +1357,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
     host.input_ = &input;
     input.capabilities = host.capabilities;
     input.touchGestures = touch;
+    input.gestures.cfg.fractional = true;
     input.fractionalScroll = cfg.fractionalScroll;
     input.scale = metrics.scale.value;
     insetInput = &input;
@@ -2187,20 +2188,28 @@ private void configureGestures(ref WsiInput input, in CellFont font) @safe pure 
 private void deliverInput(alias handle, Wsi)(ref NativeHost host, ref WsiInput input,
     ref Wsi wsi, in WindowEvent e, int unitW, int unitH, ref bool dirty)
 {
+    input.pointerCaptured = host.pointerCaptured;
     input.translate(wsi, e, unitW, unitH, (Event x) {
         handle(host, withRealSize(x, host.size));
+        input.pointerCaptured = host.pointerCaptured;
         dirty = true;
     });
+    if (!input.pointerCaptured && host.pointerCaptured)
+        host.capturePointer(false);
 }
 
 // The end of a drain: whatever the translation held back, and the modifier
 // level the batch left (`HST17`).
 private void flushInput(alias handle)(ref NativeHost host, ref WsiInput input, ref bool dirty)
 {
+    input.pointerCaptured = host.pointerCaptured;
     input.endDrain((Event x) {
         handle(host, withRealSize(x, host.size));
+        input.pointerCaptured = host.pointerCaptured;
         dirty = true;
     });
+    if (!input.pointerCaptured && host.pointerCaptured)
+        host.capturePointer(false);
     host.noteModifiers(input.modifiers);
 }
 

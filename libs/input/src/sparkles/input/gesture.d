@@ -89,6 +89,7 @@ struct GestureRecognizer
         bool pinching_;
         float prevPinchDist_ = 0;
         float pinchScale_ = 1;
+        float pinchDeltaPx_ = 0;
         bool pinchPending_;
 
         // Pixels since the last `tick`. Scroll is coalesced into ONE wheel
@@ -222,26 +223,50 @@ struct GestureRecognizer
                 pinching_ = true;
                 cancel();
                 prevPinchDist_ = 0;
+                pinchDeltaPx_ = 0;
             }
             const dx = b.x - a.x, dy = b.y - a.y;
             const dist = sqrtApprox(dx * dx + dy * dy);
             if (prevPinchDist_ > 0)
             {
+                const dDist = dist - prevPinchDist_;
+                const dDistAbs = dDist < 0 ? -dDist : dDist;
                 const ratio = dist / prevPinchDist_;
-                if (ratio > cfg.pinchOut || ratio < cfg.pinchIn)
+                if (cfg.fractional || dDistAbs >= 0.5f)
+                {
+                    // In fractional mode or when finger separation moves by at least 0.5 physical px,
+                    // emit continuous pinch updates.
+                    if (ratio > 1.001f || ratio < 0.999f || dDistAbs >= 0.5f)
+                    {
+                        pinchScale_ = ratio;
+                        pinchDeltaPx_ += dDist;
+                        pinchPending_ = true;
+                        prevPinchDist_ = dist;
+                    }
+                }
+                else if (ratio > cfg.pinchOut || ratio < cfg.pinchIn)
                 {
                     pinchScale_ = ratio;
+                    pinchDeltaPx_ += dDist;
                     pinchPending_ = true;
                     prevPinchDist_ = dist;
                 }
             }
             else
+            {
                 prevPinchDist_ = dist;
+                pinchDeltaPx_ = 0;
+            }
         }
-        else if (n == 0)
+        else
         {
-            pinching_ = false;
+            // Fewer than 2 contacts cannot measure a separation distance:
+            // clear the baseline distance so returning to 2 contacts establishes
+            // a fresh baseline without an abrupt delta jump.
             prevPinchDist_ = 0;
+            pinchDeltaPx_ = 0;
+            if (n == 0)
+                pinching_ = false;
         }
     }
 
@@ -266,8 +291,9 @@ struct GestureRecognizer
         {
             if (pinchPending_)
             {
-                emit(Event(GestureEvent(Gesture.pinch, Point(0, 0), pinchScale_)));
+                emit(Event(GestureEvent(Gesture.pinch, Point(0, 0), pinchScale_, Mods.init, pinchDeltaPx_)));
                 pinchPending_ = false;
+                pinchDeltaPx_ = 0;
             }
             return;
         }
@@ -706,6 +732,59 @@ unittest
     g.tick(16);
     d.run(g);
     assert(d.presses == 0 && d.releases == 0, "lifting one finger is not a tap");
+}
+
+@("input.gesture.fractionalPinchEmitsIncrementalRatios")
+@safe pure nothrow @nogc
+unittest
+{
+    GestureRecognizer g;
+    g.cfg.fractional = true;
+    Drain d;
+    g.setContacts(2, PointF(100, 100), PointF(200, 100)); // 100px dist
+    g.tick(16);
+    // Expand by only 2% (102px): well below normal 15% threshold, but above 0.2% deadband
+    g.setContacts(2, PointF(100, 100), PointF(202, 100));
+    g.tick(16);
+    d.run(g);
+    assert(d.pinches == 1, "fractional pinch emits small increments");
+    assert(d.lastScale > 1.01f && d.lastScale < 1.03f, "incremental scale is ~1.02");
+}
+
+@("input.gesture.liftingOneFingerResetsBaselineWithoutDeltaJump")
+@safe pure nothrow @nogc
+unittest
+{
+    GestureRecognizer g;
+    g.cfg.fractional = true;
+    Drain d;
+    // Initial 2 contacts at 100px dist
+    g.setContacts(2, PointF(100, 100), PointF(200, 100));
+    g.tick(16);
+    // Move to 120px dist (+20px)
+    g.setContacts(2, PointF(100, 100), PointF(220, 100));
+    g.tick(16);
+    d.run(g);
+    assert(d.pinches == 1);
+
+    // Lift 1 contact: drops to 1
+    g.setContacts(1, PointF(100, 100), PointF());
+    g.tick(16);
+    d.run(g);
+
+    // Put down 2nd contact at a new position (new distance 300px)
+    g.setContacts(2, PointF(100, 100), PointF(400, 100));
+    g.tick(16);
+    const pinchesBefore = d.pinches;
+    d.run(g);
+    // Putting down finger establishes new baseline, must NOT emit a delta jump
+    assert(d.pinches == pinchesBefore, "re-touching 2nd finger establishes baseline without jump");
+
+    // Moving from 300px to 310px (+10px) emits incremental pinch smoothly
+    g.setContacts(2, PointF(100, 100), PointF(410, 100));
+    g.tick(16);
+    d.run(g);
+    assert(d.pinches == pinchesBefore + 1, "moving after re-touch continues smoothly");
 }
 
 @("input.gesture.pressStopsARunningFling")

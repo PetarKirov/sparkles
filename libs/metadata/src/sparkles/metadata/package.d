@@ -45,6 +45,9 @@ struct Range
     double lo;
     double hi;
     double step = 0;
+    double splitLo = 0;
+    double splitFrac = 0;
+    double splitW = 0.05;
 }
 
 /// Preferred numeric input; targets may project it onto their capabilities.

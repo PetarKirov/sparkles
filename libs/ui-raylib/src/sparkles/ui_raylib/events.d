@@ -447,7 +447,7 @@ struct RaylibEvents
                 dx: w.dx, dy: w.dy, pos: at, mods: m, precise: w.precise,
                 fdx: w.fdx, fdy: w.fdy, begins: w.begins)),
             (GestureEvent g) => Event(GestureEvent(
-                gesture: g.gesture, pos: at, scale: g.scale, mods: m)),
+                gesture: g.gesture, pos: at, scale: g.scale, mods: m, deltaPx: g.deltaPx)),
             (ref other) => Event(other),
         );
 
