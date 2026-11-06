@@ -534,18 +534,52 @@ version (unittest)
         assert(writeBack((ref editor) => updateSDL(editor, parsed.document.root, same)) == host,
             recipe[0] ~ ": writing back the unchanged value edited it");
 
+        // Where the comment-only lines directly above `start` begin: the
+        // editor removes them with the node they describe.
+        size_t attachedStart(size_t start)
+        {
+            import std.string : strip;
+
+            for (;;)
+            {
+                size_t line = start;
+                while (line > 0 && host[line - 1] != '\n')
+                    line--;
+                if (line == 0)
+                    return start;
+                size_t above = line - 1;
+                while (above > 0 && host[above - 1] != '\n')
+                    above--;
+                const text = host[above .. line - 1].strip;
+                bool commentOnly;
+                foreach (comment; parsed.document.comments)
+                    commentOnly |= text.length && comment.span.sliceOf(host).strip == text;
+                if (!commentOnly)
+                    return start;
+                start = above;
+            }
+        }
+
+        // The first configuration removed and a dependency inserted first:
+        // a positional pairing would rewrite every element after them.
         DubManifest other = cast() decoded.value;
         other.description = "changed by the round-trip test";
-        other.dependencies ~= DubDependency("sparkles:probe", version_: "*");
+        other.dependencies = DubDependency("sparkles:probe", version_: "*") ~ other.dependencies;
         size_t removedStart = size_t.max, removedEnd;
+        const(char)[][] keptConfigurations;
         if (other.configurations.length)
         {
-            other.configurations = other.configurations[0 .. $ - 1];
+            other.configurations = other.configurations[1 .. $];
             foreach (node; parsed.document.root.byChild)
                 if (node.qualifiedName.localName == "configuration")
                 {
-                    removedStart = node.extent.startOffset;
-                    removedEnd = node.extent.endOffset;
+                    if (removedStart == size_t.max)
+                    {
+                        removedStart = attachedStart(node.extent.startOffset);
+                        removedEnd = node.extent.endOffset;
+                    }
+                    else
+                        keptConfigurations ~= node.extent.sliceOf(host);
                 }
         }
         const output = writeBack((ref editor) => updateSDL(editor, parsed.document.root, other));
@@ -556,6 +590,9 @@ version (unittest)
         foreach (comment; parsed.document.comments)
             if (comment.span.startOffset < removedStart || comment.span.startOffset >= removedEnd)
                 assert(output.canFind(comment.span.sliceOf(host)), recipe[0] ~ ": lost a comment");
+        // Every other configuration keeps its bytes (S20).
+        foreach (kept; keptConfigurations)
+            assert(output.canFind(kept), recipe[0] ~ ": rewrote an unchanged configuration");
         changed++;
     }
     assert(changed > 100);
