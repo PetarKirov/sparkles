@@ -97,6 +97,7 @@ private extern (C) nothrow @nogc
         CFAllocatorRef allocator, CFFileDescriptorRef descriptor,
         CFIndex order);
     void CFRelease(void* value);
+    void CFRunLoopStop(CFRunLoopRef runLoop);
 
     extern __gshared CFStringRef kCFRunLoopDefaultMode;
     extern __gshared CFStringRef kCFRunLoopCommonModes;
@@ -301,6 +302,25 @@ private extern class NSView : NSResponder
     NSTextInputContext inputContext() @selector("inputContext");
     void setLayer(NSObject layer) @selector("setLayer:");
     void setWantsLayer(bool value) @selector("setWantsLayer:");
+    bool respondsToSelector(void* selector) @selector("respondsToSelector:");
+    /// macOS 14+: a link that fires with the display the view is on.
+    CADisplayLink displayLinkWithTarget(NSObject target, void* selector)
+        @selector("displayLinkWithTarget:selector:");
+}
+
+private extern class NSRunLoop : NSObject
+{
+    static NSRunLoop currentRunLoop() @selector("currentRunLoop");
+}
+
+/// The view's display link: one callback per refresh of its display while
+/// unpaused; `targetTimestamp` is when the frame it starts is shown.
+private extern class CADisplayLink : NSObject
+{
+    void addToRunLoop(NSRunLoop runLoop, NSString mode) @selector("addToRunLoop:forMode:");
+    void setPaused(bool paused) @selector("setPaused:");
+    double targetTimestamp() @selector("targetTimestamp");
+    void invalidate() @selector("invalidate");
 }
 
 /**
@@ -649,6 +669,19 @@ private class SparklesWsiWindow : NSWindow
     }
 }
 
+/// The display link's target: one per window, forwarding each refresh.
+private class SparklesWsiFrameTarget : NSObject
+{
+    static SparklesWsiFrameTarget alloc() @selector("alloc");
+    SparklesWsiFrameTarget initialize() @selector("init");
+
+    void onDisplayLink(NSObject link) @selector("onDisplayLink:")
+    {
+        if (activeOwner !is null)
+            activeOwner.onDisplayLink(this);
+    }
+}
+
 /**
 Private `NSPasteboardItemDataProvider`: one per streamed offer, retained by
 the pasteboard item it serves. It forwards the pasteboard's request for a
@@ -712,6 +745,11 @@ struct AppKitWsi
         bool occluded;
         bool liveResizing;
         WindowState state; // last reported
+        // `requestFrame`: the view's display link (made on the first
+        // request), its target, and whether a request is waiting for it.
+        CADisplayLink displayLink;
+        SparklesWsiFrameTarget frameTarget;
+        bool framePending;
         bool ready;
         SurfaceMetrics metrics;
         bool hasMarked; // a composition is in progress
@@ -723,6 +761,7 @@ struct AppKitWsi
     private Pool!(WindowId, Slot, maxWindows) windows_;
     private EventQueue!maxEvents events_;
     private ulong nextSequence_ = 1;
+    private ulong nextFrameToken_ = 1;
     private bool open_;
     private bool regular_;   // `ActivationPolicy.regular`
     private bool activated_; // brought frontmost with its first window
@@ -981,6 +1020,83 @@ struct AppKitWsi
             window.zoom(null);
         onToplevelState(window);
         return wsiOk();
+    }
+
+    /**
+    Asks for one frame opportunity: a `FrameReadyEvent` at the next refresh
+    of the display the window is on (the view's `CADisplayLink`, macOS 14
+    and later), with the time that frame will be shown. As on Wayland and
+    Android, a renderer that animates asks again after each frame, and one
+    that does not stops asking, so an idle window wakes nothing; requests
+    made before the refresh are one. Where AppKit has no view display link,
+    the opportunity is offered at once.
+    */
+    WsiResult!void requestFrame(WindowId id)
+    {
+        auto checked = checkedSlot(id, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!void(checked.error);
+        const index = checked.value;
+        ref slot = windows_.at(index);
+        if (slot.framePending)
+            return wsiOk();
+        if (slot.displayLink is null && !makeDisplayLink(slot))
+        {
+            emit(idAt(index), FrameReadyEvent(nextFrameToken_++, 0));
+            return wsiOk();
+        }
+        slot.framePending = true;
+        slot.displayLink.setPaused(false);
+        return wsiOk();
+    }
+
+    private bool makeDisplayLink(ref Slot slot)
+    {
+        auto selector = sel_registerName("onDisplayLink:");
+        if (!slot.view.respondsToSelector(sel_registerName("displayLinkWithTarget:selector:")))
+            return false;
+        auto target = SparklesWsiFrameTarget.alloc().initialize();
+        if (target is null)
+            return false;
+        auto link = slot.view.displayLinkWithTarget(target, selector);
+        if (link is null)
+        {
+            target.release();
+            return false;
+        }
+        link.retain();
+        link.setPaused(true);
+        // The common modes: a live resize's or a menu's nested loop still
+        // gets its refreshes.
+        link.addToRunLoop(NSRunLoop.currentRunLoop(), cast(NSString) kCFRunLoopCommonModes);
+        slot.frameTarget = target;
+        slot.displayLink = link;
+        return true;
+    }
+
+    private void onDisplayLink(SparklesWsiFrameTarget target)
+    {
+        size_t index = size_t.max;
+        foreach (h; windows_.byLive)
+            if (windows_[h].frameTarget is target)
+                index = h.index;
+        if (index == size_t.max)
+            return;
+        ref slot = windows_.at(index);
+        // One refresh per request: paused until the next one.
+        slot.displayLink.setPaused(true);
+        if (!slot.framePending || !slot.ready)
+            return;
+        slot.framePending = false;
+        // `targetTimestamp` is on `CACurrentMediaTime`'s clock, the host's
+        // monotonic one (`mach_absolute_time`), in seconds.
+        const shown = slot.displayLink.targetTimestamp();
+        emit(idAt(index), FrameReadyEvent(nextFrameToken_++,
+            shown > 0 ? cast(long)(shown * 1e9) : 0));
+        // A refresh is a timer to the run loop, which a source-handled wait
+        // does not return for: end this host's wait so the frame is drawn.
+        if (inOwnWait_)
+            CFRunLoopStop(runLoop_);
     }
 
     /// Miniaturizes the window into the Dock.
@@ -1793,6 +1909,13 @@ struct AppKitWsi
             emit(id, DestroyedEvent());
         if (slot.view !is null)
             slot.view.release();
+        if (slot.displayLink !is null)
+        {
+            slot.displayLink.invalidate();
+            slot.displayLink.release();
+        }
+        if (slot.frameTarget !is null)
+            slot.frameTarget.release();
         if (slot.layer !is null)
             slot.layer.release();
         if (slot.window !is null)
