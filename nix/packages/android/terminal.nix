@@ -46,7 +46,7 @@ in
           staticLibs
           dubDeps
           ;
-        # dub's version set for `:terminal`'s `application` configuration
+        # dub's version set for `:terminal`'s `raylib` configuration
         # (`dub describe :terminal --data=versions`), plus sparkles:android.
         versions = [
           "UiAppGui"
@@ -91,7 +91,7 @@ in
         libName = "terminal";
         app = "terminal";
         links = config.legacyPackages.terminalLinks;
-        check = config.legacyPackages.checkTerminalBuildInfo;
+        check = config.legacyPackages.checkTerminalRaylibBuildInfo;
       };
 
       # The native arm (ui-vulkan PLAN, V7): dub builds the `android`
@@ -108,6 +108,9 @@ in
         libName = "terminal";
         app = "terminal";
         links = config.legacyPackages.terminalLinks;
+        # The native arm links no raylib.
+        nativeComponents =
+          abi: removeAttrs (config.legacyPackages.androidNativeComponents abi) [ "raylib" ];
         check = config.legacyPackages.checkTerminalBuildInfo;
       };
 

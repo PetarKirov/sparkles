@@ -1,13 +1,13 @@
-// `hue --gui` — the raylib GPU rendering backend.
+// `hue --gui` — the window, on whichever arm draws it (`gui_surface`).
 //
 // A third consumer of hue's (source, events, theme) triple: instead of folding
 // the highlight-event stream into ANSI escapes or HTML markup, it folds it into
-// raylib draw calls — "styled runs as data", the GPU backend sparkles:syntax was
+// canvas operations — "styled runs as data", the GPU backend sparkles:syntax was
 // designed for (docs/specs/syntax §2). A read-only, windowed, syntax-highlighted
 // view with a live theme previewer, mirroring hue's terminal Previewer on the GPU.
 //
-// Compiled only by the `gui` build configuration (version(HueGui)); the default
-// terminal build never references raylib. Build: dub build :hue -c gui.
+// Compiled only by the windowed configurations (version(HueGui)): the default
+// (`application`, the native Vulkan arm) and `raylib`; `no-gui` leaves it out.
 //
 // The raylib scaffolding here (FontSet, glyph fallback, the draw primitive) is a
 // deliberate COPY of apps/terminal's text-rendering core, authored in the shape

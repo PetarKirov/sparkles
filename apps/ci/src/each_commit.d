@@ -6,7 +6,7 @@ every commit in it lands on `main` and becomes a `git bisect` stop, and the
 repository asks each one to build on its own ([Git hygiene](../../docs/guidelines/AGENTS.md#git-hygiene--atomic-commits)).
 Nothing checked that. The gap is widest for the apps whose default configuration
 is a GUI build: `dub test` compiles their `unittest` configuration and never the
-one a user runs (`hue`'s `gui`, the gallery's and the diagram board's `full`).
+one a user runs (the native window of `hue`, the gallery and the diagram board).
 Before this mode, that loop was run by hand before every push. The documentation
 site's WebAssembly modules are the same case: their default configuration is a
 `wasm32-unknown-wasip1` reactor, which no native build or test compiles.

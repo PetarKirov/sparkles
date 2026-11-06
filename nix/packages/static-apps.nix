@@ -6,8 +6,8 @@
 # graphics drivers, and the window system (Wayland, XCB, Xlib, xkbcommon).
 # Linux only.
 #
-# - `terminal-static`: the terminal's `vulkan` configuration.
-# - `hue-static`: hue's `application` configuration, TUI and GUI.
+# - `terminal-static`: the terminal's default (native, Vulkan) configuration.
+# - `hue-static`: hue's default configuration, TUI and the native window.
 #
 # The bundled libraries:
 #
@@ -19,9 +19,8 @@
 #   (`grammars`).
 # - raylib over GLFW (the fork ./../d-toolchain.nix builds raylib with), which
 #   loads GL, Wayland, xkbcommon and the X libraries at run time, by store
-#   path. The terminal draws its selection handles with it alone, until it
-#   leaves sparkles:raylib-text's `library` configuration (ui-vulkan PLAN, V7);
-#   hue's window is raylib's.
+#   path. Neither program links it any more: both draw on the native arm.
+#   It stays bundled for the raylib configurations until they are retired.
 # - libghostty-vt's own static archive (zig-built, with simdutf and highway
 #   inside), less the debug info that names zig's store paths. Its
 #   `compiler_rt.o` stays (aarch64 needs its `__extendxftf2`, which LLVM's
@@ -541,7 +540,7 @@ in
           // {
             pname = "terminal-static";
             version = "0.1.0";
-            dubBuildFlags = [ "--config=vulkan" ];
+            dubBuildFlags = [ "--config=application" ];
 
             installPhase = ''
               install -Dm755 build/terminal $out/bin/${finalAttrs.pname}
@@ -615,7 +614,7 @@ in
         legacyPackages.staticAppChecks.terminal-static-tests = staticTests {
           pname = "terminal-static-tests";
           appDir = "apps/terminal";
-          configuration = "unittest-vulkan";
+          configuration = "unittest";
           # `keymap.bindingsMarkdown.matchesTheReference` reads the reference page.
           fixtures = [
             {

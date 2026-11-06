@@ -9,7 +9,7 @@ does differently from a Linux driver.
 
 Enter the dev shell (`nix develop`, or `direnv`): it puts the Vulkan loader
 and MoltenVK on the path and points `VK_DRIVER_FILES` at MoltenVK's driver
-manifest. A plain build is the native arm on macOS:
+manifest. A plain build is the native arm, on macOS as everywhere:
 
 ```bash
 dub build :text-lab && apps/text-lab/build/text-lab
@@ -18,10 +18,11 @@ dub build :terminal && apps/terminal/build/sparkles_terminal
 dub build :ui-gallery && apps/ui-gallery/build/ui-gallery --gui
 ```
 
-`-c application` names the raylib window instead. The Nix packages (`nix
+`-c raylib` names the raylib window instead. The Nix packages (`nix
 build .#hue`, `.#terminal`, `.#ui-gallery`, `.#text-lab`) are the native arm
-on macOS too, and need no dev shell: the Vulkan loader nixpkgs builds
-already searches MoltenVK's driver directory.
+too (`.#hue-raylib` and its siblings the raylib window), and need no dev
+shell: the Vulkan loader nixpkgs builds already searches MoltenVK's driver
+directory.
 
 ::: tip Re-enter the shell after a MoltenVK change
 The overlay builds MoltenVK against the SPIRV-Cross revision MoltenVK pins.

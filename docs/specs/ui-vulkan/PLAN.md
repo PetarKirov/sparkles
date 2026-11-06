@@ -226,8 +226,9 @@ positions, and no raylib poll; it still links raylib, through the cell-font
 resolver ui-app borrows from `sparkles:raylib-text` until the font
 library's catalog replaces it. Both arms share the chrome's pointer
 routine and fills. CI builds the native gallery and terminal
-(`ui-gallery-vulkan`, `terminal-vulkan`) and runs the terminal's
-`unittest-vulkan` tests. Under Xvfb on lavapipe the V5 test scene draws
+(then `ui-gallery-vulkan` and `terminal-vulkan`; now the default
+`ui-gallery` and `terminal` packages) and runs the terminal's native
+tests (then `unittest-vulkan`; now its `unittest`). Under Xvfb on lavapipe the V5 test scene draws
 its text, decorations, block graphics, scrollbar and kitty images, and
 under headless Weston the same frame to within 1/255. Fills, decorations,
 block graphics, the scrollbar and the images agree with the raylib

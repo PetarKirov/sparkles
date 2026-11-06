@@ -17,7 +17,7 @@ the detailed descriptions and the module map live there.
 | `hue`                                                                                            | syntax-highlighting viewer (ANSI/HTML/`--gui`), diff/PR viewer, APK                          |
 | `release`                                                                                        | tag scanning, bump suggestion, notes, publishing                                             |
 | `shader-compile`                                                                                 | D shaders → SPIR-V → GLSL, built by `sparkles:ui`'s `gpu-effects` build                      |
-| `terminal`, `terminal-benchmark`                                                                 | raylib terminal emulator on libghostty-vt; its render-CPU benchmark                          |
+| `terminal`, `terminal-benchmark`                                                                 | terminal emulator on libghostty-vt; its render-CPU benchmark                                 |
 | `ui-gallery`, `diagram`, `text-lab`                                                              | `sparkles:ui-app` apps: the toolkit catalog; a diagram board; the Vulkan text lab            |
 | `nix-eval`, `twoslash-extract`                                                                   | `sparkles:nix` demo; batch D twoslash extractor                                              |
 | `base`, `text-buffer`                                                                            | `Buffer`, `@nogc` text, lifetime, logging, caps; persistent editable text and undo           |
@@ -128,6 +128,17 @@ outputs instead; their tests **skip** when unset.
 
 Ask `pkg-config` (`pkg-config --cflags raylib`, `pkg-config --libs vulkan`).
 Searching `/nix/store` directly is slow and finds stale or unrelated packages.
+
+### GUI apps: the native arm by default, raylib by name
+
+Every windowed application (`hue`, `terminal`, `ui-gallery`, `diagram`, `text-lab`) builds
+the native arm by default — `sparkles:wsi` windows drawn by `sparkles:ui-vulkan`,
+on Wayland, X11, AppKit (through MoltenVK) and Win32 — and links no raylib.
+The raylib window, until it is retired, is the `raylib` configuration
+(`dub build :hue -c raylib`; the terminal's tests: `-c unittest-raylib`), and the
+Nix packages follow: `.#hue` is the native arm, `.#hue-raylib` the raylib one.
+Screenshots of a native-arm app come from `--debug shot=PATH` (with
+`frames=N` to end a scripted run); hue's CRT is still raylib-only.
 
 ### Build types: `debug` to test, `checked` to ship, never `release`
 

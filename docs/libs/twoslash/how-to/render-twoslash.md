@@ -16,7 +16,7 @@ hue --twoslash payload.twoslash.json
 # HTML — a self-contained <style> + <pre class="syn-root twoslash">…</pre>
 hue --twoslash --html payload.twoslash.json > out.html
 
-# raylib GUI window (requires the gui build: dub build :hue -c gui)
+# the GUI window (the default build: dub build :hue)
 hue --gui --twoslash payload.twoslash.json
 ```
 
