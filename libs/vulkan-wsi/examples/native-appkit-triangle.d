@@ -94,6 +94,9 @@ struct NativeAppKitTriangle
 struct RunReport
 {
     string device;
+    /// The present modes the surface offers, and the one in use.
+    string presentModes;
+    string presentMode;
     uint framesPresented;
     uint resizeEvents;
     uint swapchainsBuilt;
@@ -405,8 +408,14 @@ private RunExpected!void drive(in NativeAppKitTriangle options) @system
         }
     }
 
+    string offered;
+    foreach (mode; queryVkList!VkPresentModeKHR(vk.instance.getPhysicalDeviceSurfacePresentModesKHR,
+            vk.physicalDevice, vk.surface))
+        offered ~= (offered.length ? ", " : "") ~ text(mode);
     const report = RunReport(
         device: vk.deviceName,
+        presentModes: offered,
+        presentMode: text(presenter.swapchain.presentMode),
         framesPresented: presenter.stats.framesPresented,
         resizeEvents: resizeEvents,
         swapchainsBuilt: presenter.stats.swapchainsBuilt,
