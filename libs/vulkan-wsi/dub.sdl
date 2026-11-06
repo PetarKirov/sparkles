@@ -55,6 +55,8 @@ configuration "unittest" {
     dependency "sparkles:test-runner" path="../.."
 
     dflags "-checkaction=context" "-allinst"
+    // `appkit_test` asks CoreGraphics whether there is a window server.
+    lflags "-framework" "CoreGraphics" platform="osx"
 }
 
 // The device build: what LDC's dcompute target compiles for the GPU. Never
