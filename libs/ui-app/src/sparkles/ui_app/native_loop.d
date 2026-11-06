@@ -431,6 +431,99 @@ bool adoptInterfaceFace(ref NativeSession session) @system
     return true;
 }
 
+/// A mixed-style rich run, laid out by the host's measurer over a real
+/// canvas, painted through the display list and read back: each piece is
+/// measured as the canvas draws it — kerned across its clusters, the next
+/// piece starting where the measure ends it.
+@("ui_app.native_loop.aMixedRunIsMeasuredAsItIsDrawn")
+@system unittest
+{
+    import sparkles.ui_vulkan.testing : Canvas, readbackEnabled, readbackSkipReason, Rig;
+    import sparkles.test_runner.skip : skipTest;
+
+    if (!readbackEnabled)
+        return skipTest(readbackSkipReason);
+    import std.conv : text;
+    import std.file : read;
+    import std.path : buildPath;
+    import std.process : environment;
+    import sparkles.base.text.grapheme : byGraphemeCluster;
+    import sparkles.ui.display_list : buildDisplayList;
+    import sparkles.ui.geometry : Constraints;
+    import sparkles.ui.interp.immediate : paint;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.pixel_geometry : cellsCeil;
+    import sparkles.ui.style : FontRole, TextStyle, TypeStep;
+    import sparkles.ui.widget : Builder, Widget, WidgetKind;
+    import sparkles.ui.wrap : spanPaintAdvance, TextSpan;
+
+    const dir = environment.get("SPARKLES_FONTS_PATH");
+    assert(dir !is null, "SPARKLES_FONTS_PATH is unset: run inside `nix develop`");
+    const mono = cast(const(ubyte)[]) read(dir.buildPath("DejaVuSansMono.ttf"));
+    const sans = cast(const(ubyte)[]) read(dir.buildPath("NotoSans.ttf"));
+    enum width = 480, cellW = 11, cellH = 22;
+    auto rig = new Rig;
+    rig.open("ui-app-mixed-run", width, cellH);
+    scope (success)
+        rig.close();
+    assert(rig.canvas.cellFont(mono, 18, TextMetrics(ascent: 16)));
+    const int[4] steps = [20, 17, 18, 24];
+    assert(rig.canvas.interfaceFont(sans, null, steps));
+
+    // Two pieces, regular then bold, each full of kerned pairs.
+    enum first = "AVAWAVATAVAWAVATAY", second = "TAVAWAY";
+    const regular = TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.body);
+    TextStyle bold = regular;
+    bold.bold = true;
+    auto faces = NativeFaces(&rig.canvas);
+    double whole(string s, bool b) => rig.canvas.interfaceWidthPx(s, TypeStep.body, b);
+    // The test discriminates: the clusters apart are over a cell wider.
+    double apart = 0;
+    foreach (c; byGraphemeCluster(first))
+        apart += whole(c.slice.idup, false);
+    assert(apart > whole(first, false) + cellW, text(apart, " vs ", whole(first, false)));
+
+    auto m = InterfaceMeasure!NativeFaces(faces, true, cellW, cellH);
+    auto b = Builder();
+    const r = b.add(Widget(kind: WidgetKind.rich, textStyle: regular, spans: [
+        TextSpan(first, textStyle: regular, fg: RgbColor(255, 0, 0), hasFg: true),
+        TextSpan(second, textStyle: bold, fg: RgbColor(0, 255, 0), hasFg: true)]));
+    auto tree = b.finish(r);
+    auto frames = layout(tree, Constraints(width / cellW, 1), m);
+    assert(frames[r].spanLines.length == 1, "one line");
+    long[2] cells;
+    foreach (ref span; frames[r].spanLines[0])
+        cells[span.textStyle.bold] += spanPaintAdvance(span);
+    assert(cells[0] == cellsCeil(cast(float) whole(first, false), cellW), text(cells));
+    assert(cells[1] == cellsCeil(cast(float) whole(second, true), cellW), text(cells));
+
+    auto ops = buildDisplayList(tree, frames, Palette.init, RgbColor(255, 255, 255),
+        RgbColor(0, 0, 0), m);
+    FrameReport report;
+    VkResult failure;
+    const frame = rig.draw((ref Canvas c) { paint(c, ops[]); },
+        FrameMetrics(cellW: cellW, cellH: cellH), RgbColor(0, 0, 0), report, failure);
+    // Where each piece's ink starts and ends, by its colour's channel.
+    int[2][2] ink = [[int.max, 0], [int.max, 0]];
+    foreach (y; 0 .. cellH)
+        foreach (x; 0 .. width)
+        {
+            const p = frame[(y * width + x) * 4 .. (y * width + x) * 4 + 4];
+            foreach (piece; 0 .. 2)
+                if (p[piece] > 32 && p[1 - piece] < 16)
+                {
+                    ink[piece][0] = x < ink[piece][0] ? x : ink[piece][0];
+                    ink[piece][1] = x + 1 > ink[piece][1] ? x + 1 : ink[piece][1];
+                }
+        }
+    const seam = cast(int) cells[0] * cellW, end = cast(int)(cells[0] + cells[1]) * cellW;
+    // Drawn as measured: each piece's ink fills its cells but the last
+    // one's slack, and the bold piece starts at the measured seam.
+    assert(ink[0][1] <= seam + 1 && seam - ink[0][1] < cellW + 2, text(ink, " seam ", seam));
+    assert(ink[1][0] >= seam - 1 && ink[1][0] - seam < 4, text(ink, " seam ", seam));
+    assert(ink[1][1] <= end + 1 && end - ink[1][1] < cellW + 2, text(ink, " end ", end));
+}
+
 @("ui_app.native_loop.followsTheDesktopsInterfaceFont")
 @system unittest
 {
