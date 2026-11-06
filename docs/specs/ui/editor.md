@@ -620,6 +620,11 @@ EDI7 is satisfied by the tested conversion alone.
 
 ## Relationship to other specifications
 
+The [editor application specification](../editor/SPEC.md) defines the
+standalone code editor and showcase that consumes this component. Its
+document/session policy, platform acceptance and command-discovery integration
+do not replace the editing semantics specified here.
+
 | Specification                                                                   | Role                                             |
 | ------------------------------------------------------------------------------- | ------------------------------------------------ |
 | [text-buffer](../text-buffer/SPEC.md)                                           | text storage, change sets, the history tree      |

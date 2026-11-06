@@ -2217,6 +2217,28 @@
         ]
       },
       {
+        "text": "Editor application",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Specification",
+            "link": "/specs/editor/SPEC"
+          },
+          {
+            "text": "Delivery plan",
+            "link": "/specs/editor/PLAN"
+          },
+          {
+            "text": "Verification",
+            "link": "/specs/editor/testing"
+          },
+          {
+            "text": "Decisions",
+            "link": "/specs/editor/decisions"
+          }
+        ]
+      },
+      {
         "text": "UI SDL3",
         "collapsed": true,
         "items": [

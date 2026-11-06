@@ -1,0 +1,193 @@
+---
+status: accepted
+owner: sparkles:editor
+reviewed: 2026-11-05
+---
+
+# Editor application — Verification
+
+This page defines acceptance evidence for the [application contract](./SPEC.md).
+It separates shared state-machine tests, app/adapter integration, live native
+input, screenshots and performance. One class cannot substitute for another.
+Milestone progress belongs only to [PLAN.md](./PLAN.md).
+
+## 1. Required configurations
+
+| Target           | Required observations                                                                                                                                               | Limits to record                                                                  |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| Desktop Vulkan   | File/tab flow, clipboard, shared palette and guide, rendered Unicode, live IME, safe save/recovery, workload measurements                                           | Window system, refresh rate, fonts, driver and IME                                |
+| Android Vulkan   | Equivalent editing operations without hardware keys; system document access, open-with intents, touch handles, keyboard/insets, live preedit, interruption recovery | OS/API, provider/grants, IME, rotation, safe insets and device capabilities       |
+| TUI              | Same editing effects, command discovery, configurable bindings, clipboard when offered, file/session flow and settings                                              | Terminal capabilities, reserved keys, color/glyph and composition limitations     |
+| Recording host   | Deterministic command and app flows, focus and effect assertions                                                                                                    | Does not establish actual pixels, live clipboard/IME or storage-provider behavior |
+| Raylib, optional | Additional consumer of shared contracts                                                                                                                             | Does not close any Vulkan production gate                                         |
+
+Android acceptance includes Xiaomi 2107113SG / SM8350, Xiaomi 25091RP04G /
+SM8750P tablet, and Moto e13 / T606. Record actual serial, OS, orientation and
+surface dimensions at execution time. Missing device access leaves that
+configuration unverified; it is not an automatic waiver.
+
+## 2. Command-palette TDD
+
+The owner approved three public test interfaces before implementation:
+
+1. **State transitions:** open/query/navigation/accept/cancel events produce
+   observable state and emitted command identities. Test the interface used
+   by adapters, not private fields or allocation strategy.
+2. **Command discovery:** context plus query yields reachable ranked command
+   descriptors, matched text and shortcut labels. Compare identities and
+   arguments against an independently enumerated small catalog.
+3. **View integration:** the same state produces selectable rows, focus and
+   activation through the shared widget view on recording, TUI and Vulkan.
+
+Use one failing behavior followed by its minimal passing implementation per
+cycle. Record red and green invocations and verify a nonzero matching-test
+count. Do not write an entire suite against an imagined API before exercising
+one behavior. Code storage, match scoring and row layout are implementation
+details unless the public contract makes them observable.
+
+| Contract  | Initial state and stimulus                                                                       | Expected observation / independent oracle                                                                                                                     |
+| --------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| EAP8–EAP9 | Small catalog with two arguments for one operation, a shadowed shortcut and an unbound command   | Manually listed command identities survive; context changes availability; discovery agrees with effective shared key resolution                               |
+| EAP10     | Open, edit query, navigate, cancel                                                               | No command effect, document unchanged, previous focus restored                                                                                                |
+| EAP10     | Empty catalog or no query matches; press accept                                                  | Empty state remains safe; zero command effects                                                                                                                |
+| EAP10     | Select a result, change context so it becomes unavailable, accept                                | Invalid command does not execute; list/selection reflects the changed context                                                                                 |
+| EAP10     | Open from document A, focus the query, switch to B, then close A and accept an A-editing command | Query is not an invocation target; switching does not retarget to B; closing A invalidates its command. On palette closure, focus returns to a valid surface. |
+| EAP10     | Accept an available result, then repeat the old acceptance event                                 | One command+arguments emitted, palette closed; no duplicate effect                                                                                            |
+| EAP10     | Older search completion follows a newer query result                                             | Newer result survives; selected identity is preserved only if still present                                                                                   |
+| EAP10     | Consumer retains a view while later query storage grows                                          | View text remains valid under the declared lifetime; no dangling slices                                                                                       |
+| EAP11     | Type a document space; separately open a modified leader and tap a guide group/command           | Space inserts; guide activation dispatches the same command as its keyboard path                                                                              |
+
+Ranking tests reuse `sparkles:fuzzy`'s contract rather than recomputing its
+scoring algorithm. Palette tests add their own known ordering for ties and
+stable command identity. Capacity exhaustion, cancellation and ownership
+tests follow the explicit limits chosen before P implementation.
+
+## 3. Unicode and input oracles
+
+The baseline corpus includes Latin NFC/NFD and stacked marks; Greek/Cyrillic;
+Arabic joining, Hebrew marks and mixed Latin/RTL digits/brackets; Devanagari,
+Bengali, Tamil, Telugu and Sinhala; Thai, Lao, Khmer, Myanmar and Tibetan;
+CJK kana/dakuten, Hangul composed/decomposed, BMP and supplementary Han;
+historic supplementary scripts; text/emoji selectors, modifiers, ZWJ, flags,
+keycaps and tag sequences. Private-use icons are font-specific fixtures.
+The [text-lab inventory](../../libs/ui-app/reference/unicode-showcase.md)
+provides representative source strings, not proof of editor conformance.
+
+For EAP17–EAP18, independently worked short paragraphs specify logical byte
+offsets, grapheme boundaries, visual caret order, affinities and selection
+rectangles. Replay insertion/deletion, Left/Right, word motion, wrapped
+Up/Down and Home/End, hit-testing and selection through resize/font changes.
+Assert that edits affect the intended source ranges and rendered geometry
+agrees. Supplement these with the published Unicode vectors used by the
+owning base text tests; do not derive expectations from the layout under test.
+
+For EAP19, reuse terminal touch scenarios as stimuli: long-press, handle
+capture, finger-anchor offset, crossed endpoints, edge scroll, keyboard
+insets, menu placement, release and cancellation on focus/surface loss.
+Compare expected selected text and capture/effects through each consumer's
+adapter. Terminal cell coordinates are not an oracle for editor byte offsets.
+
+For EAP20, replay composition updates and clipboard responses through model
+and recording adapters, then use real input methods on desktop and Android.
+Observe visible preedit, marked ranges, cancellation, replacement and one
+committed undo revision; verify candidate placement, focus changes and keyboard
+dismissal. Report unsupported terminal composition explicitly. Conversion
+tests and screenshots of committed text cannot establish live preedit.
+
+Vertical writing, Egyptian quadrant composition and exhaustive Unicode/font
+coverage are excluded. A font's missing glyph is distinguished from a text
+decoding, fallback, shaping or navigation defect; unsupported variants are
+reported without silently weakening the editing corpus.
+
+## 4. Application and storage scenarios
+
+| Obligations | Falsifying scenario and expected result                                                                                                                                                                                                                                                                                                                                           |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| EAP1–EAP3   | Build the app through required hosts; inspect package dependencies; run help/version, malformed CLI and log-level cases. No app imports from shared mechanisms or backend key-switch copies; errors are CLI errors.                                                                                                                                                               |
+| EAP4–EAP7   | Edit two tabs with several selections, branch undo and switch back. Assert text, selections/history and scroll remain independent; test protected text, indentation, comments and valid/invalid replace patterns.                                                                                                                                                                 |
+| EAP12–EAP13 | Select/compose/edit on a highlighted line, then deliver stale highlight results after another edit or tab closure. Text and syntax/decorations stay correct; cancelled workers retain borrows until completion.                                                                                                                                                                   |
+| EAP14–EAP16 | Preview several themes and cancel, then accept one and restart; change fonts and available axes through generated settings. Preview changes neither document nor undo; only declared controls appear and UI font stays stable.                                                                                                                                                    |
+| EAP21       | Byte fixtures with BOM/no BOM and LF/CRLF/mixed endings; no-op save, localized edits, Enter, deletion/join, paste, replacement and undo. Compare exact bytes against manually specified fixtures after Q7's insertion policy is accepted. Refuse invalid UTF-8, FIFO and unsupported input without replacing active text.                                                         |
+| EAP22–EAP23 | Edit while an earlier revision saves; inject permission/full-storage/write/replace failures and an external modification, including a write between validation and commit. Conditional writes reject the conflict; nonconditional replacement requires informed authorization or another destination. Dirty state follows the saved revision and failures preserve text/recovery. |
+| EAP24       | Real Android document open/create, open-with, cancelled picker, revoked grant and unavailable provider. URI identities retain provider semantics; examples require no broad filesystem permission.                                                                                                                                                                                |
+| EAP25–EAP26 | Save/Discard/Cancel through dirty close and multi-tab exit; interrupt immediately before/after durable-revision acknowledgment and between edit/checkpoint; fill recovery storage during an edit; corrupt/truncate one record and restart. Assert Q8's accepted loss/failure policy, no unrelated discard and no implicit writes to originals.                                    |
+| EAP27–EAP28 | Inspect and export diagnostics with sentinel private text/path/preedit. Default export omits sentinels; capture either meets readiness for the named sample/settings or reports failure.                                                                                                                                                                                          |
+
+Storage tests require an independent reference record of revisions and commit
+outcomes. A round trip through the same encoder/decoder is insufficient for
+file fidelity. Fault injection must assert forbidden writes did not happen,
+not merely that some error was returned. Real Android-provider evidence is
+required in addition to injected adapters.
+
+## 5. Responsiveness and integrity
+
+For EAP29–EAP30, run ASCII code, mixed Unicode and long-line workloads at
+1 MiB and 10 MiB, plus a single 1 MiB line. Include cold open, sustained
+typing, selection, scrolling, undo/redo, regex search and highlighting
+backpressure. Measure an idle viewport to detect whole-document rebuilding.
+Preserve deterministic workload seeds and operation counts.
+
+Report cold-open time, memory/peak retained storage, input-to-submit and
+observed input-to-display separately, CPU/GPU frame p50/p95/p99, deadline
+miss counts, sample duration and refresh mode. Use assertion-preserving
+shipping builds under the [build policy](../../guidelines/build-settings.md)
+and [profiling guide](../../guidelines/benchmarking-and-profiling.md).
+Log setup and font/catalog costs separately from warmed interaction.
+
+A 120 Hz report must use an 8.33 ms budget and distinguish supported refresh
+from achieved presentation. No fixed percentile or latency threshold is
+inferred from the target: the workload experiment selects explicit thresholds
+before an optimization can claim acceptance. Responsiveness failures remain
+open evidence, not justification to remove the long-line workload.
+
+Independent review covers high-risk state/lifetime, layout, IME and storage
+changes and their final repairs. Review test discovery, fixture changes,
+assertion/tolerance changes, `version(unittest)` paths and native build flags.
+Missing tests, unavailable devices and skipped runs are not passes.
+
+## 6. Evidence ledger
+
+| Scope / requirements                | Checked source                                                                            | Check and result                                                                                                                                       | Remaining gap                                                                                          |
+| ----------------------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
+| Requirements agreement, EAP1–EAP30  | Owner discussion Q1–Q22, 2026-11-05                                                       | Scope and command-palette test interfaces explicitly accepted                                                                                          | This is design authority, not implementation evidence                                                  |
+| Existing integration baseline       | `02c2176e2e`                                                                              | Source inspection of UI editor/context/components, source-view code presentation, UI keymap/Lantern, terminal selection/menu and Android input adapter | No end-to-end app conformance claimed; see [decision blockers](./decisions.md#4-open-design-questions) |
+| Opening comprehension               | Dirty six-file docs snapshot on `feat/editor-showcase`, based on `02c2176e2e`, 2026-11-05 | Fresh agent received only front matter, abstract and introduction; reread confirmed scope/ownership/tab/recovery clarifications                        | Comprehension review only; detailed contract checked separately                                        |
+| Contract semantic review            | Same dirty docs snapshot, final requirement repairs reread on 2026-11-05                  | Independent read-only review found five policy gaps; final pass found no new material contradiction after dispositions below                           | Layout, storage and recovery policy blockers remain open; implementation unverified                    |
+| Publication                         | Final docs worktree, 2026-11-06                                                           | Formatter and all applicable pre-commit checks pass; full site renderer passes, 2,791 HTML pages                                                       | Initial heap/Plug’n’Play failures and local remedy recorded below; implementation remains unverified   |
+| Application conformance, EAP1–EAP30 | No app implementation                                                                     | Not run                                                                                                                                                | All implementation evidence unverified                                                                 |
+
+Add results here with source revision or explicit dirty snapshot, command,
+configuration, counts, artifacts and limits. Baseline inspection and owner
+agreement do not upgrade application requirements to verified.
+
+### Specification review dispositions
+
+| Finding                                                                                 | Disposition                    | Contract / validation                                                                                                                                  |
+| --------------------------------------------------------------------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Modal query focus could hide commands or redirect document edits                        | Fixed                          | EAP10 distinguishes invocation target from query focus; switching/closing targets has an explicit trace in §2                                          |
+| Check/write race contradicted no-silent-overwrite on nonconditional providers           | Fixed                          | EAP23 requires operation-specific informed authorization or another destination; §4 injects a write between check and commit                           |
+| Recovery had no durable-revision acknowledgment or loss boundary                        | Fixed in part; deferred policy | EAP26 distinguishes durable and edited revisions; Q8 blocks R implementation on owner-accepted loss/failure policy; §4 tests acknowledgment boundaries |
+| Bidi collapse/extension/RTL Home/End policy could silently override shared UI semantics | Deferred with gate             | Q2 blocks U implementation until the owning UI contract and independent traces settle these cases                                                      |
+| Mixed-ending fidelity omitted Enter/paste/replacement/join policy                       | Deferred with gate             | Q7 blocks file-fidelity implementation until owner policy and byte fixtures cover insertion/deletion and undo                                          |
+
+The cold read clarified one pane versus split views, the shared editor's
+package identity, the scope of recovery and TUI capability differences.
+Recovering unsaved text/positions does not imply serializing branching undo
+history across restarts; persistent undo history is not a requirement.
+
+### Publication validation
+
+On 2026-11-06, the final worktree passed formatting, EditorConfig, sidebar,
+glossary, spec evidence, local/network links, pinned URLs and applicable
+example checks. The in-tree CI tool checked 1,872 Markdown pages and
+resolved 4,382 spec citations; these checks establish publication integrity,
+not application conformance.
+
+The initial `yarn docs:build` exhausted Node's default 4 GiB heap. A larger
+heap retry completed source generation but encountered VitePress's
+Plug’n’Play Vue symlink failure. With the generated assets retained, a local
+`YARN_NODE_LINKER=node-modules yarn install --immutable` followed by
+`YARN_NODE_LINKER=node-modules NODE_OPTIONS=--max-old-space-size=8192 yarn exec vitepress build docs`
+passed in 208.85 seconds and generated all four editor pages. The local
+install did not change committed Yarn configuration or lockfiles. Generated
+source-listing dependency-selection edits were removed from the worktree.
