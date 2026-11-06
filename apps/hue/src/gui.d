@@ -24,8 +24,6 @@ import core.time : dur, Duration, MonoTime, usecs;
 
 // The shared raylib text core (extracted in M5). Pulls raylib-d + libs
 // "raylib" transitively, so it is present only in the `gui` build.
-import sparkles.raylib_text : displayMetrics, DisplayMetrics, FontSet,
-    drawText, pixelsForPoints, TextStyle;
 
 // The shared scroll-step convention: this file is a wheel PRODUCER, so it
 // applies the notch multiplier itself (INP12).
@@ -125,7 +123,6 @@ import sparkles.ui.canvas : DrawOp, fillRectOp, LineStyle, match, OpKind,
     popClipOp, popEffectOp, pushClipOp, pushEffectOp, RuleEdge, ruleOp,
     Scrollbar;
 import sparkles.ui.effect : EffectRegistry;
-import sparkles.ui_raylib.effect_gpu : EffectGpu;
 import sparkles.ui.frame_list : FrameList;
 import sparkles.ui.cmd_buffer : CmdBufferT;
 import sparkles.ui.arena : FrameArena;
@@ -144,8 +141,16 @@ import sparkles.ui_app.backend : BackendPolicy;
 import sparkles.ui_app.gui_options : GuiOptions;
 import sparkles.ui_app.host : PointerUnit, RunConfig;
 import sparkles.ui_app.run : run, RunOutcome;
-import sparkles.ui_raylib : CrtEffect, CrtUiContext, crtUiContextOf, UiRect, namedKey, RaylibCanvas, traceLevelTag, traceLogTo,
-    Window, WindowRequest, toRaylibCursor;
+// The arm hue draws through (`gui_surface`): the raylib window, or the
+// native Vulkan host, which has no CRT yet.
+import gui_surface : GuiCanvas, GuiSurface;
+version (HueGuiVulkan)
+{
+    import gui_surface : CrtEffect, CrtUiContext, crtUiContextOf;
+    import sparkles.ui_app.native_loop : NativeCanvas;
+}
+else
+    import sparkles.ui_raylib : CrtEffect, CrtUiContext, crtUiContextOf, traceLevelTag;
 
 
 // Live D types (`PRJ12`-`PRJ16`): the `twoslash-extract --serve` oracle beside
@@ -171,6 +176,8 @@ import sparkles.syntax.ts.highlighter : highlightInjected;
 private enum defaultFontSize = 18;
 
 
+version (HueGuiVulkan) {} else
+{
 /// Bridges raylib's `TraceLog` output into `sparkles.base.logger` (hue spec
 /// `NFR7`). raylib hands us a printf-style format + `va_list`; we render it
 /// into a stack buffer and emit through the logger at $(B trace) level, so its
@@ -190,6 +197,7 @@ extern (C) private void raylibTraceLog(int logLevel, const(char)* text, va_list 
     const len = written < cast(int) buf.length ? cast(size_t) written : buf.length - 1;
     const msg = () @trusted { return cast(const(char)[]) buf[0 .. len]; }();
     trace(i"raylib[$(traceLevelTag(logLevel))]: $(msg)");
+}
 }
 
 /// Sane concrete fallbacks when a theme leaves the page fore-/background unset
@@ -320,7 +328,7 @@ path wants NUL termination.
 */
 private struct ClipboardSeam
 {
-    Window** window; // set once the window opens
+    GuiSurface* surface; // its window once open
 
     void write(scope const(char)[] text) @system
     {
@@ -333,10 +341,10 @@ private struct ClipboardSeam
                 warning(i"copy: JNI clipboard bridge failed");
         }
         else
-            (**window).clipboard(text);
+            surface.clipboard(text);
     }
 
-    string read() @system => (**window).clipboardText();
+    string read() @system => surface.clipboardText();
 }
 
 /**
@@ -476,7 +484,6 @@ int runGui(GuiArgs guiArgs) @system
     // The host's effect backend — every canvas this window paints through
     // takes it, so a scissor inside the bracket is placed in the bracket's
     // texture, not on the screen.
-    EffectGpu* effectGpuP;
     PointF rawPointerPos;
     with (gs)
 
@@ -522,8 +529,9 @@ int runGui(GuiArgs guiArgs) @system
         targetFps: 60,
         pointerUnit: PointerUnit.pixels,
         fontSizePxOverride: capture.fontSizePx,
-        traceSink: &raylibTraceLog,
     };
+    version (HueGuiVulkan) {} else
+        cfg.traceSink = &raylibTraceLog;
     version (Android)
     {
         import android_glue : androidDataDir;
@@ -535,10 +543,9 @@ int runGui(GuiArgs guiArgs) @system
     // The window and the face set, published by the setup phase (`HST19`) the
     // moment the arm has opened them. Every downstream `window`/`fonts` use is
     // written exactly as it was; what changed is who owns the session.
-    Window* windowP;
-    FontSet* fontsP;
-    ref Window window() => *windowP;
-    ref FontSet fonts() => *fontsP;
+    GuiSurface surface;
+    ref GuiSurface window() return => surface;
+    ref GuiSurface fonts() return => surface;
 
     // The document pipeline's Whole (PRN1 / the C1 diagnosis): one value owns
     // the document, its theme-resolved colors, widget pipeline, folding,
@@ -1326,12 +1333,7 @@ int runGui(GuiArgs guiArgs) @system
 
     // The canvas every emitted operation paints through: origin 0, because
     // the operations already carry their absolute cells.
-    RaylibCanvas uiCanvas()
-    {
-        auto c = RaylibCanvas(fontsP, &buf, fonts.cellW(), fonts.cellH());
-        c.fx = effectGpuP;
-        return c;
-    }
+    GuiCanvas uiCanvas() => surface.canvasAt(0, 0, effects: true);
 
     // A paint site's origin in cells. Every widget origin in this window is
     // a whole number of cells (the tree's width, the one-cell pad, the
@@ -1359,8 +1361,7 @@ int runGui(GuiArgs guiArgs) @system
             => a >= 0 ? a / b : -((b - 1 - a) / b);
         const col = floorDiv(px, cw);
         const row = floorDiv(py, ch);
-        auto c = RaylibCanvas(fontsP, &buf, cw, ch,
-            cast(float)(px - col * cw), cast(float)(py - row * ch));
+        auto c = surface.canvasAt(cast(float)(px - col * cw), cast(float)(py - row * ch));
         frameList.emit(c, ops, col, row);
     }
 
@@ -1368,7 +1369,7 @@ int runGui(GuiArgs guiArgs) @system
     // list rather than a pixel fill beside it: what the list says is
     // visible — the CRT's hover — must agree with the eye, and nothing
     // under the shade is what the pointer is over.
-    void emitModalDimmer(ref RaylibCanvas c)
+    void emitModalDimmer(ref GuiCanvas c)
     {
         const cw = fonts.cellW();
         const ch = fonts.cellH();
@@ -1382,7 +1383,7 @@ int runGui(GuiArgs guiArgs) @system
     // in the frame list — background runs coalesced, each glyph with its real
     // bold/italic face — so the pane needs no second GUI painter, and the
     // preview's text is text the CRT's hover can find.
-    void emitPaneGrid(ref RaylibCanvas c, ref Grid src, int col, int row)
+    void emitPaneGrid(ref GuiCanvas c, ref Grid src, int col, int row)
     {
         import sparkles.base.term_style : TextAttr, UnderlineStyle;
         import sparkles.base.buffer : UniqueBuffer;
@@ -1525,7 +1526,7 @@ int runGui(GuiArgs guiArgs) @system
 
     // The one clipboard seam (`ClipboardSeam`), on the heap so the fields'
     // clipboard can hold its methods without closing over this frame.
-    auto clipSeam = new ClipboardSeam(&windowP);
+    auto clipSeam = new ClipboardSeam(&surface);
     void copyToClipboard(scope const(char)[] text) => clipSeam.write(text);
 
     // The fields' clipboard (`EDY5`): copies go through the seam; reads come
@@ -1782,7 +1783,7 @@ int runGui(GuiArgs guiArgs) @system
         // 1 px divider, a `cellH - 1` band — and quantising to cells would
         // move it. Chrome that can become a widget should (UIA2); this is the
         // seam for what has not yet.
-        auto chrome = RaylibCanvas(fontsP, &buf, cellW, cellH);
+        auto chrome = surface.canvasAt();
         // Every emitted operation paints through this one (see `frameList`).
         auto ui = uiCanvas();
 
@@ -2095,7 +2096,7 @@ int runGui(GuiArgs guiArgs) @system
                         pop.expandedRegions = null;
                         pop.popupNode = pop.hotNode;
                     }
-                    pop.hotPopup = drawPopup(fonts, buf, vm.tw, pop.hotNode - 1,
+                    pop.hotPopup = drawPopup(surface, vm.tw, pop.hotNode - 1,
                         cast(float) hx, cast(float)(hy + cellH),
                         cellW, cellH, vm.current, *tsCache,
                         defaultTwoslashPalette(schemeForBackground(vm.pageBg)),
@@ -4549,11 +4550,17 @@ int runGui(GuiArgs guiArgs) @system
         // so the terminal instantiation must compile even though hue's `main`
         // never reaches it (`--tui`, `--html` and `--ansi` are dispatched
         // before a loop is asked for at all).
-        static if (__traits(compiles, { Window* w = &(h.window()); }))
+        version (HueGuiVulkan)
+            enum windowed = is(typeof(h.canvas()) : NativeCanvas*);
+        else
+            enum windowed = __traits(compiles, { auto w = &(h.window()); });
+        static if (windowed)
         {
-            windowP = &(h.window());
-            fontsP = h.canvas.fonts;
-            effectGpuP = h.canvas.fx;
+            version (HueGuiVulkan)
+                surface = GuiSurface((() @trusted => &h)());
+            else
+                surface = GuiSurface(&(h.window()), h.canvas.fonts, h.canvas.fx,
+                    (() @trusted => &buf)());
 
             // The registry the CRT's id resolves in, bound once: the host
             // borrows it for the run.
@@ -4776,7 +4783,7 @@ private size_t srcLineOf(scope const size_t[] lineStarts, size_t off)
 /// painted through `RaylibCanvas`. The type signature renders as resolved
 /// syntax-colored spans (`signatureSpans`) inside the widget model itself, so
 /// nothing overpaints the toolkit's output.
-private PixelRect drawPopup(ref FontSet fonts, ref SharedBuffer!(char, 4096) buf,
+private PixelRect drawPopup(ref GuiSurface surface,
     in TwoslashReturn tw, size_t nodeIndex, float x, float y, int cellW, int cellH,
     in ResolvedTheme theme, ref TsConfigCache cache, in Palette pal,
     RgbColor pageFg, RgbColor pageBg, int availCells,
@@ -4819,7 +4826,7 @@ private PixelRect drawPopup(ref FontSet fonts, ref SharedBuffer!(char, 4096) buf
             cast(int) x + availCells * cellW)
         : x;
 
-    auto canvas = RaylibCanvas(&fonts, &buf, cellW, cellH, px, y);
+    auto canvas = surface.canvasAt(px, y);
     paint(canvas, ops);
 
     // Where each collapsible run landed, in cells relative to the popup — the
