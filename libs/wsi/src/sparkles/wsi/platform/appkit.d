@@ -297,6 +297,20 @@ private extern class NSView : NSResponder
     void setFrameSize(NSSize size) @selector("setFrameSize:");
     void setNeedsDisplay(bool value) @selector("setNeedsDisplay:");
     NSTextInputContext inputContext() @selector("inputContext");
+    void setLayer(NSObject layer) @selector("setLayer:");
+    void setWantsLayer(bool value) @selector("setWantsLayer:");
+}
+
+/**
+The layer a window's view hosts, for a GPU to draw into: Metal's, and through
+`VK_EXT_metal_surface` MoltenVK's. MoltenVK sizes its drawables from the
+swapchain's extent; the layer's `contentsScale` follows the window's backing
+scale so the pixels map onto points one to one.
+*/
+private extern class CAMetalLayer : NSObject
+{
+    static CAMetalLayer layer() @selector("layer");
+    void setContentsScale(double scale) @selector("setContentsScale:");
 }
 
 private extern class NSTextInputContext : NSObject
@@ -327,6 +341,7 @@ private extern class NSWindow : NSResponder
     void orderOut(NSObject sender) @selector("orderOut:");
     void close() @selector("close");
     double backingScaleFactor() @selector("backingScaleFactor");
+    ulong occlusionState() @selector("occlusionState");
 }
 
 /** Private NSView subclass forwarding only lossless native observations. */
@@ -574,6 +589,13 @@ private class SparklesWsiWindow : NSWindow
             activeOwner.onWindowMetrics(this);
     }
 
+    void windowDidChangeOcclusionState(NSObject notification)
+        @selector("windowDidChangeOcclusionState:")
+    {
+        if (activeOwner !is null)
+            activeOwner.onOcclusion(this);
+    }
+
     void windowDidBecomeKey(NSObject notification)
         @selector("windowDidBecomeKey:")
     {
@@ -624,6 +646,7 @@ private enum ulong NSWindowStyleMaskClosable = 2;
 private enum ulong NSWindowStyleMaskMiniaturizable = 4;
 private enum ulong NSWindowStyleMaskResizable = 8;
 private enum ulong NSBackingStoreBuffered = 2;
+private enum ulong NSWindowOcclusionStateVisible = 1 << 1;
 
 // AppKit is main-thread-only: every native callback and owner call runs on
 // the main thread, so plain TLS is the correct storage for the pin.
@@ -647,6 +670,8 @@ struct AppKitWsi
     {
         SparklesWsiWindow window;
         SparklesWsiView view;
+        CAMetalLayer layer; // retained; hosted by `view`
+        bool occluded;
         bool ready;
         SurfaceMetrics metrics;
         bool hasMarked; // a composition is in progress
@@ -776,6 +801,23 @@ struct AppKitWsi
                 "NSView initialization failed");
         }
 
+        // A layer-hosting view (the layer set before `wantsLayer`): AppKit
+        // leaves its contents to whoever draws into the layer, and stops
+        // calling `drawRect:`, so readiness and exposure come from the
+        // window's notifications instead.
+        auto layer = CAMetalLayer.layer();
+        if (layer is null)
+        {
+            view.release();
+            window.release();
+            return appKitFailure!WindowId(WsiOperation.createWindow, 0,
+                "CAMetalLayer.layer returned nil");
+        }
+        layer.retain();
+        layer.setContentsScale(window.backingScaleFactor() > 0 ? window.backingScaleFactor() : 1);
+        view.setLayer(layer);
+        view.setWantsLayer(true);
+
         auto reserved = windows_.reserve();
         assert(reserved.hasValue, "capacity was checked above");
         WindowId id = reserved.value;
@@ -783,6 +825,7 @@ struct AppKitWsi
         ref slot = windows_[id];
         slot.window = window;
         slot.view = view;
+        slot.layer = layer;
         slot.ready = false;
 
         // Terminated at the seam. The array this used to copy into was one byte
@@ -815,7 +858,12 @@ struct AppKitWsi
         }
 
         if (config.visible)
+        {
             window.makeKeyAndOrderFront(null);
+            // The layer-hosting view gets no `drawRect:`: its first frame
+            // opportunity is the window going on screen.
+            offerFrame(index);
+        }
         // NSView refuses first-responder status by default; without it the
         // responder chain never delivers keyDown/keyUp to the view.
         window.makeFirstResponder(view);
@@ -873,7 +921,7 @@ struct AppKitWsi
         handles.display = DisplayHandle(AppKitDisplayHandle(
             cast(void*) application_));
         handles.window = WindowHandle(AppKitWindowHandle(
-            cast(void*) slot.window, cast(void*) slot.view));
+            cast(void*) slot.window, cast(void*) slot.view, cast(void*) slot.layer));
         return wsiOk(handles);
     }
 
@@ -1148,10 +1196,16 @@ struct AppKitWsi
     {
         ref slot = windows_.at(index);
         const metrics = metricsOf(slot);
-        if (slot.ready && metrics != slot.metrics)
-            emit(idAt(index),
-                SurfaceMetricsChangedEvent(metrics));
+        if (slot.layer !is null && metrics.scale != slot.metrics.scale)
+            slot.layer.setContentsScale(metrics.scale.value);
+        const changed = slot.ready && metrics != slot.metrics;
         slot.metrics = metrics;
+        if (changed)
+        {
+            emit(idAt(index), SurfaceMetricsChangedEvent(metrics));
+            // What `drawRect:` after a resize offered a drawn view.
+            offerFrame(index);
+        }
     }
 
     private void onInsertText(SparklesWsiView view, scope const(char)[] bytes)
@@ -1533,6 +1587,31 @@ struct AppKitWsi
         emit(idAt(index), FrameReadyEvent());
     }
 
+    // A layer-hosting view draws nothing of its own, so an uncovered window
+    // is exposed here: its renderer draws it again.
+    private void onOcclusion(SparklesWsiWindow window)
+    {
+        const index = indexOfWindow(window);
+        if (index == size_t.max || !windows_.at(index).ready)
+            return;
+        ref slot = windows_.at(index);
+        const occluded = (window.occlusionState() & NSWindowOcclusionStateVisible) == 0;
+        if (occluded == slot.occluded)
+            return;
+        slot.occluded = occluded;
+        emit(idAt(index), OccludedEvent(occluded));
+        if (!occluded)
+            offerFrame(index);
+    }
+
+    // A frame opportunity for a layer-hosting view: its contents are stale
+    // (exposed) and the window takes a frame now (no compositor pacing yet).
+    private void offerFrame(size_t index)
+    {
+        emit(idAt(index), ExposedEvent());
+        emit(idAt(index), FrameReadyEvent());
+    }
+
     private void onCloseRequest(SparklesWsiWindow window)
     {
         const index = indexOfWindow(window);
@@ -1566,6 +1645,8 @@ struct AppKitWsi
             emit(id, DestroyedEvent());
         if (slot.view !is null)
             slot.view.release();
+        if (slot.layer !is null)
+            slot.layer.release();
         if (slot.window !is null)
             slot.window.release();
         // Resets the record: the window and view are released above.

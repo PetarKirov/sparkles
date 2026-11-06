@@ -6,8 +6,6 @@
 set -euo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-expected="$(find "$HOME/.dub/packages/expected" -name expected.d -path '*source*' | sort -V | tail -1)"
-expected_src="$(dirname "$expected")"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
@@ -22,9 +20,8 @@ ldc2 -preview=in -preview=dip1000 -g -i \
   -I"$repo/libs/math/src" \
   -I"$repo/libs/base/src" \
   -I"$repo/libs/test-runner/src" \
-  -I"$expected_src" \
   "$repo/libs/wsi/examples/appkit-hosted-smoke.d" \
-  -L-framework -LCocoa -L-framework -LUniformTypeIdentifiers \
+  -L-framework -LCocoa -L-framework -LUniformTypeIdentifiers -L-framework -LQuartzCore \
   -of="$work/wsi-appkit-smoke"
 
 echo ">> running against AppKit ..."
