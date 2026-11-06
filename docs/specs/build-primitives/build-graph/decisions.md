@@ -767,3 +767,91 @@ variant's inherited identifiers too. Planning reports each one, so such a
 variant can be fixed or accepted knowingly.
 
 **Revisit when** the reported literals cost measurable sharing.
+
+## D36: The determinism check runs on every CI run (accepted)
+
+**Question.** Invariant 1 assumes each action is deterministic, and the shared
+store trusts the first result published for a key. Nothing checks the
+assumption. Is the check an opt-in tool, a nightly sampled job, or part of
+every CI run?
+
+**Alternatives.**
+
+- An opt-in tool: `ci cache verify --rerun`, run when someone suspects a
+  result.
+- A nightly job over a sample, once a binary cache shares results.
+- A sampled check in every CI run.
+
+**Evidence.** "a determinism check must run cold and unshared, or it tests the
+cache", and "Caches hide the defect they are meant to expose"
+([reproducibility](../../../research/build-systems/reproducibility.md)). "a
+disconnected non-deterministic build can poison a cache until a clean rebuild"
+([perfect-dependencies](../../../research/build-systems/perfect-dependencies.md)).
+
+**Choice.** Every CI run (CIC13), through BGS9's check:
+
+- **Cold:** each sampled action runs with its own lookup bypassed, on the
+  bytes its published result was keyed on.
+- **Unshared:** its outputs go to a private, empty store that is discarded
+  afterwards, and never to the shared store or a binary cache.
+- **The sample:** four compiles and four other cacheable actions, ordered by
+  the digest of the commit id and the result key. The sample rotates with each
+  commit and is the same for a rerun of one commit.
+- **A difference** fails the run and removes the suspect result.
+
+**Trade-offs.** Up to eight extra actions per run, compiles of
+`sparkles:ui` among them. They run beside the run's tests, after the builds
+that produced their inputs. The check sees nondeterminism within one machine
+only; a difference between machines needs a shared cache to compare against.
+
+**Revisit when** the check costs more than a few percent of a CI run's wall
+time, or a binary cache shares results between machines, which adds the
+cross-machine comparison.
+
+## D37: Planning records its read set (accepted)
+
+**Question.** Every run plans from scratch: it resolves every recipe, lexes
+every scanned source, runs the layout lint and queries `pkg-config`. Record
+what planning reads, memoize it, or neither?
+
+**Alternatives.**
+
+- Neither.
+- Record the read set, and use it to check what decides re-planning.
+- Record it and memoize content-keyed planning results.
+
+**Evidence.** PIE's no-change build costs 3.3 s against 0.00001 s for
+change-driven traversal, "while the Pluto algorithm still needs to check the
+entire dependency graph" ([pie](../../../research/build-systems/pie.md)). GN's
+regeneration records every file it opened
+([gn](../../../research/build-systems/gn.md)), and BuildXL caches its graph
+([buildxl](../../../research/build-systems/buildxl.md)).
+
+**Choice.** Record the read set in E2 (BGP1), and check `ci`'s hand-written
+invalidator list (CIC5) against it. A content-keyed memo is added only if
+no-op planning of the repository's test selection takes more than about one
+second. A memo is not persistent scheduler state, which the task DAG excludes.
+
+**Revisit when** a measurement of no-op planning exceeds one second.
+
+## D38: Plain LRU, touched at lease creation (accepted)
+
+**Question.** BGS5 evicts least recently used results, but does not say what
+refreshes recency, nor whether several worktrees need a retention policy
+beyond it.
+
+**Alternatives.**
+
+- File access times.
+- An explicit touch when a lease is created.
+- A retention policy that reads every active worktree's graph, so no worktree
+  evicts another's working set.
+
+**Evidence.** An access time "is more likely to be externally modified and may
+be unavailable on some filesystems", and "a small AC can starve while the CAS
+is idle" ([cas-eviction](../../../research/build-systems/cas-eviction.md)).
+
+**Choice.** Plain LRU, with recency refreshed when a lease is created (BGS4).
+Manifest lists, digest records and preimages have a bound of their own.
+
+**Revisit when** two active worktrees are seen evicting each other's results.

@@ -97,10 +97,11 @@ leaving the migration comparison snippets out of scope.
   violations are fixed first, so the lint gates from its first commit.
 - The action graph and its task-node exposure (BGA1–BGA3, BGA8), without
   execution.
+- Planning's read set (BGP1), checked against `ci`'s invalidators (CIC5).
 
 Gate: a test-only planner prints a deterministic action graph for the
 repository's test selection, with one compile per variant. Oracle 8's planning
-scenarios and oracle 14 pass.
+scenarios, oracle 14 and oracle 20 pass.
 
 ## E3: Local execution and the shared store
 
@@ -110,7 +111,9 @@ scenarios and oracle 14 pass.
   deterministic archives (BGA10).
 - Declared keys, manifests and result keys (§5), with the execution-time
   hidden-edge check (BGK8) and the library search inputs (BGK9).
-- The shared store with staging, leases, eviction and inspection (§6).
+- The shared store (§6): staging, leases, eviction with digest records and
+  separate bounds, format versions, inspection and repair, miss explanations
+  and the determinism check (BGS1–BGS10).
 - Registry sources without Nix: fetched by the lockfile's URL into the store
   and verified by its hash (BGR4).
 - Typed generators, the test-root module and content-addressed generated
@@ -125,7 +128,7 @@ scenarios and oracle 14 pass.
 
 Gate:
 
-- Oracles 2–5, 7, 9, 10 and 16, steps 1–2 of oracle 11, oracle 13's
+- Oracles 2–5, 7, 9, 10 and 16–19, steps 1–2 of oracle 11, oracle 13's
   execution-time scenario, and oracle 8's revert check pass through the
   test-only driver.
 - Oracle 4's step 5 passes too: D31 is decided, and BGK7 accepted, before the

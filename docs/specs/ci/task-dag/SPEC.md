@@ -49,13 +49,15 @@ criteria. Delivery order is in [PLAN.md](./PLAN.md).
 
 ```text
 ci pipeline [--from SELECTOR...] [--since REF] [--dependencies] [--dependents]
-            [--backend local|nix]
+            [--backend local|nix] [--require-cached KIND...]
+            [--determinism-sample N]
 
 ci test [--build-only | --special-modes betterc|wasm|all]
         [--from SELECTOR...] [--since REF]
         [--dependencies] [--dependents]
         [--coverage | --no-coverage] [--sanitize address]
         [--slow [--tests NAME...]] [--backend local|nix]
+        [--require-cached KIND...]
 
 ci docs examples [--include-files SELECTOR...] [--exclude-files SELECTOR...]
 ci docs run|verify|update [--include-files SELECTOR...] [--exclude-files SELECTOR...]
@@ -72,6 +74,10 @@ ci docs wasm check|stage [module options]
 ci commits build-each [--base REF] [--packages NAME...]
 ci commit-scope [COMMIT_MESSAGE_FILE|-]
 ci cache seed-dub | check-pins | stats | list | gc
+ci cache verify [--rerun [--sample N]] [--key KEY...] [--task TASK...]
+ci cache remove --key KEY... | --task TASK... | --package NAME... | --toolchain ID
+ci cache replace TASK...
+ci cache explain TASK
 ci host probe
 ci checks mirror [--repo R] [--sha SHA] [--skip-check NAME...] [--no-write]
 ci stats [statistics options]
@@ -145,6 +151,13 @@ the `@slow` tests instead of the ordinary ones, optionally only those named by
 
 `--build-only` and `--special-modes` are mutually exclusive.
 
+**CIC12: Required hits.** `--require-cached KIND...` **must** fail every
+build-graph action of a listed kind (`compile`, `archive`, `link`, `generate`)
+that would execute instead of reusing a result. The action fails before it
+starts, with the miss's explanation
+([BGS8](../../build-primitives/build-graph/SPEC.md#_6-the-shared-store)) as its
+diagnostic. A dry run reports which actions would fail.
+
 ### 1.3 `ci pipeline`
 
 `ci pipeline` plans, as one graph:
@@ -165,6 +178,28 @@ the package-derived tasks only. Tasks that require another host operating
 system or another architecture are `Skipped(platform)` under the local
 backend. Under the [Nix backend](../../build-primitives/build-graph/SPEC.md#10-the-nix-backend)
 they run on remote builders of that system.
+
+**CIC13: The determinism check runs on every run.** Every CI run **must** run
+the build graph's cold, unshared check
+([BGS9](../../build-primitives/build-graph/SPEC.md#_6-the-shared-store)) over a
+sample of the actions its builds ran or reused, once they have finished.
+`ci pipeline` plans it as a task of its graph. A workflow that splits its builds
+across jobs runs `ci cache verify --rerun --sample N` in a job that shares
+their store, or in each job over that job's actions.
+
+- **The sample:** order the run's cacheable actions (`compile`, `archive`,
+  `link`, `generate`) by the SHA-256 digest of the `HEAD` commit id followed by
+  the result key. Take the first four compiles, and the first four actions of
+  the other kinds together. `--determinism-sample N` changes four to `N`; zero
+  is an error.
+- **Rotation:** the order changes with every commit, so successive runs check
+  different actions, while a rerun of one commit checks the same ones.
+- **Whatever the run did:** the sample is drawn whether the run reused or
+  executed an action. Each sampled action's result is compared with a fresh
+  execution that consults no store and publishes to none.
+
+A difference fails the task as an authoritative failure, naming the action
+and what differed, and removes the suspect result from the store.
 
 ## 2. Removed flags
 
@@ -260,6 +295,11 @@ commands keep their file selectors.
   `apps/ci/src/app.d` and `apps/ci/tools/standardize-build-settings.d`;
 - `nix/packages/`, which builds the native libraries and import paths that
   every package's actions read.
+
+The list **must** cover the build graph's planning read set
+([BGP1](../../build-primitives/build-graph/SPEC.md#_11-public-surface)): a test
+fails when a path in the read set of the repository's own plan lies in no
+package's directory and under no invalidator.
 
 Other `apps/ci/` changes select only `ci`, which owns them.
 
@@ -495,7 +535,8 @@ zero percent.
 
 Task directories are removed after reporting. A failed task's directory is kept
 when the diagnostic policy asks for it, and its path is printed. A dry run
-creates none.
+creates none. The `runs/` directory holds a `CACHEDIR.TAG` file (BGS7), and
+`ci cache gc` removes the directories of runs that have ended.
 
 ## 7. Module layout
 
@@ -529,7 +570,8 @@ concrete reporters.
 - A failed or cancelled command leaves no live child or unreaped process.
 - No compile runs through dub, and no library variant is compiled twice in one
   run.
-- A second run in another worktree with no source change compiles nothing.
+- A second run in another worktree with no source change compiles nothing:
+  it passes under `--require-cached compile archive link` (CIC12).
 - `--jobs` enforces weighted capacity and exclusive keys.
 - Focused package selection is visible under `--dry-run`.
 - Default non-TTY transcripts and final summaries are stable under randomized

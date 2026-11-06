@@ -78,12 +78,18 @@ Status: Linux and macOS are met.
   workflows to `--interlaced`. Workflows that set `SPARKLES_CI_JOBS` convert it to
   weighted units (CIC1).
 - Remove `--test`, `--build` and their loops in the same change.
+- Add `--require-cached` (CIC12), `ci cache explain` and
+  `ci cache verify --rerun`, and run the determinism check on every CI run
+  from the first workflow that builds on the shared store (CIC13).
 
 Gate:
 
 - `ci test --jobs 1` and `ci test` are green in their build-only and ordinary
   forms.
-- A second run in another worktree compiles nothing.
+- A second run in another worktree passes under
+  `--require-cached compile archive link`.
+- A CI run includes the determinism check, and a planted nondeterministic
+  fixture fails it.
 - Fail-fast kills a deliberately nested child tree.
 - The removed flags are rejected.
 
@@ -129,8 +135,8 @@ invocations remain green after their migration.
 - `ci stats` with its degradations (SPEC §5.7). Blocking HTTP runs through the
   blocking pool until a native client exists.
 - `ci commit-scope` and `ci commits build-each` on the shared store.
-- `ci cache`, `ci host probe`, `ci checks mirror`, `ci link-rot report` and
-  `ci slow-tests list`.
+- `ci cache`, with removal and replacement (BGS7), `ci host probe`,
+  `ci checks mirror`, `ci link-rot report` and `ci slow-tests list`.
 
 Gate: complete, partial, empty-comparison, authentication-failure and optional
 metadata fixtures have the specified outcomes and exits; tokens are absent from
@@ -138,7 +144,8 @@ events and dry runs; commit hook output stays concise.
 
 ## M12: `ci pipeline` and removal of the legacy path
 
-- `ci pipeline` as the union graph of every CI job (SPEC §1.3).
+- `ci pipeline` as the union graph of every CI job (SPEC §1.3), with the
+  determinism check as one of its tasks (CIC13).
 - Verify that every production command constructs a graph and uses the common
   executor. Remove superseded worker pools, serial loops, polling, duplicate
   fail-fast code and command-owned live regions.
