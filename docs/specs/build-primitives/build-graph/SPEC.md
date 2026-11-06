@@ -421,8 +421,11 @@ key and every declared output
 
 **BGA8: Graph exposure.** The build graph **must** expose its actions as task
 nodes with stable ids, typed actions and resource claims, so that the task-DAG
-executor can run them (see [task DAG](../task-dag/SPEC.md)). Edges between
-actions are ordinary `onSuccess` task edges. The default weights are:
+executor can run them (see [task DAG](../task-dag/SPEC.md)). Their form is
+the one [observability OBD2](../observability/SPEC.md#_11-run-records) states,
+so that measurements line up across toolchain bumps; BGA8 adopts it at E2
+(see [PLAN.md](./PLAN.md)). Edges between actions are ordinary `onSuccess`
+task edges. The default weights are:
 
 - `compile` 2;
 - `archive` 1;
