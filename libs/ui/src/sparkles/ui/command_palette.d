@@ -64,6 +64,26 @@ if (is(Cmd == enum))
     PaletteStatus status;
 }
 
+/// Value-only view state. Text remains available through the palette's query/row accessors.
+struct PaletteSnapshot
+{
+    bool active;
+    PaletteTicket ticket;
+    PaletteInvocation invocation;
+    ulong revision;
+    size_t selection;
+    size_t rowCount;
+}
+
+/// A row activation bound to the exact session and published results that produced it.
+struct PaletteChoice(Cmd)
+if (is(Cmd == enum))
+{
+    PaletteTicket ticket;
+    ulong revision;
+    PaletteCommand!Cmd command;
+}
+
 /// A host-independent palette. The host performs effects and validates focus.
 struct CommandPalette(Cmd, size_t Capacity = 512, size_t QueryBytes = 256)
 if (is(Cmd == enum) && Capacity > 0 && QueryBytes > 0)
@@ -83,6 +103,30 @@ if (is(Cmd == enum) && Capacity > 0 && QueryBytes > 0)
     private bool hasRestoreSelection_;
 
     bool active() const @safe pure nothrow @nogc => active_;
+
+    /// Capture identities for rendering and generation-safe row activation.
+    PaletteSnapshot snapshot() const @safe pure nothrow @nogc
+        => PaletteSnapshot(active_, ticket_, invocation_, queryGeneration_, picker_.selection, rowCount);
+
+    /// Capture a row's identity instead of retaining its mutable list index.
+    PaletteChoice!Cmd choice(size_t index) const @safe pure nothrow @nogc
+        => active_ && index < rowCount
+            ? PaletteChoice!Cmd(ticket_, queryGeneration_, row(index).command)
+            : PaletteChoice!Cmd.init;
+
+    /// Activate only a choice from the current published results.
+    PaletteEffect!Cmd activate(Context)(in PaletteChoice!Cmd choice, in Context context)
+    {
+        if (!active_ || choice.ticket != ticket_ || choice.revision != queryGeneration_)
+            return PaletteEffect!Cmd(status: PaletteStatus.stale);
+        foreach (i; 0 .. rowCount)
+            if (row(i).command == choice.command)
+            {
+                picker_.moveSelection(cast(long) i - cast(long) picker_.selection);
+                return accept(ticket_, context);
+            }
+        return PaletteEffect!Cmd.init;
+    }
 
     /// Replace the catalog atomically; identities must be nonzero and unique.
     PaletteStatus catalog(scope const(PaletteEntry!Cmd)[] entries) @safe pure nothrow @nogc
@@ -263,6 +307,30 @@ if (is(Cmd == enum) && Capacity > 0 && QueryBytes > 0)
         picker_.close();
         return PaletteEffect!Cmd(PaletteEffectKind.cancelled, ticket_, invocation_);
     }
+}
+
+/// A click from old results cannot activate a replacement row in the same opening.
+@("ui.command_palette.generationSafeActivation")
+@safe pure nothrow @nogc unittest
+{
+    enum Command { none, save, open }
+    alias Id = PaletteCommand!Command;
+    alias Entry = PaletteEntry!Command;
+    struct Context
+    {
+        bool available(Id command, ulong target) const @safe pure nothrow @nogc => target == 42;
+    }
+    CommandPalette!(Command, 4) palette;
+    Entry[2] entries = [Entry(Id(Command.save), "Save"), Entry(Id(Command.open), "Open")];
+    assert(palette.catalog(entries[]) == PaletteStatus.ok);
+    const opening = palette.open(PaletteInvocation(42, 17));
+    assert(palette.search(opening.ticket, "save", Context.init) == PaletteStatus.ok);
+    const oldChoice = palette.choice(0);
+    assert(palette.search(opening.ticket, "open", Context.init) == PaletteStatus.ok);
+    assert(palette.activate(oldChoice, Context.init).kind == PaletteEffectKind.none && palette.active);
+    const current = palette.choice(0);
+    assert(palette.activate(current, Context.init).command == Id(Command.open));
+    assert(!palette.active);
 }
 
 /// Witness ranges explain the same fuzzy query whose results survive rejected edits.

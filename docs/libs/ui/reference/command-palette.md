@@ -49,6 +49,26 @@ and emits an `execute` effect containing the operation, argument and invocation.
 The host dispatches the effect; the palette never calls an application action.
 A successful acceptance closes the opening, so repeating it emits no command.
 
+`snapshot` exposes value-only selection/session state. `choice(row)` captures
+the command identity, session ticket and result revision; `activate(choice,
+context)` refuses actions from an older opening or ranking. Retain choices
+with the displayed tree so a delayed pointer release cannot activate a
+replacement result at the same row index.
+
+`sparkles.ui.command_palette_input.PaletteInput` combines the palette with a
+shared single-line `EditorField`. It routes typing, Up/Down, Enter and Escape,
+preserves the invocation target while the query owns focus, and rolls back
+query edits when matching rejects them. Its query field exposes ordinary
+clipboard/composition state for the host to serve.
+
+`sparkles.ui.components.command_palette.viewCommandPalette` builds the shared
+widget tree, including the query editor, witness highlights and touch-sized
+rows. It returns stamped choices parallel to visible result hit IDs. Pass a
+context with `shortcut(command, target)` to display effective shortcuts.
+`sparkles.ui.command_bindings.effectiveCommandShortcut` discovers those paths
+by checking the real key resolver, including shadowing and ranged arguments.
+Format the returned path for the target; depth zero means no effective binding.
+
 Run the [display-independent example](../../../../libs/ui/examples/command-palette.d):
 
 ```bash
@@ -56,8 +76,8 @@ dub run --single libs/ui/examples/command-palette.d
 ```
 
 It selects Save from a small catalog and prints `save on target 42`. A host
-integration must additionally supply query editing, effective shortcut labels,
-view/focus handling and command routing. Required behavior is specified in the
+integration must additionally serve clipboard/composition, route hit actions,
+validate restored focus and dispatch command effects. Required behavior is specified in the
 [shared palette contract](../../../specs/ui/command-palette.md); delivery and
 unverified integration gates are tracked in the
 [editor plan](../../../specs/editor/PLAN.md).

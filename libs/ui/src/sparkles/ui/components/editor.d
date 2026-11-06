@@ -169,7 +169,7 @@ private void preeditSpans(in EditorState state, in EditorViewOptions options, bo
 uint editorView(ref Builder b, in EditorState state, EditorViewOptions options = EditorViewOptions.init)
     @safe
 {
-    if (state.text.length == 0 && options.placeholder.length)
+    if (state.text.length == 0 && !state.composition.active && options.placeholder.length)
     {
         TextSpan[] spans;
         if (options.caretVisible)

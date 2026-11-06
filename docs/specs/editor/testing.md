@@ -223,3 +223,20 @@ These results cover core state/discovery only. Shared view/focus adapters,
 effective shortcut agreement, native/TUI rendering and application integration
 remain unverified and keep P open. No device, IME or performance result is
 claimed by these tests.
+
+### Shared palette frontend checkpoint — 2026-11-06
+
+On the worktree based on `c3b3b8199`, the full `sparkles:ui` test suite passes
+816 tests. New public-interface checks cover stamped activation, concrete
+effective shortcuts, query keyboard lifecycle, composition before acceptance,
+capacity refusal, rejected-edit effects, witness/query rendering and initial
+preedit visibility. The shortcut-prefix, composition interception, hidden
+preedit and rejected-edit-effect regressions were observed failing before
+their repairs.
+
+An independent read-only review reproduced four frontend defects with small
+external harnesses. A repair review confirmed all four fixes and identified
+one new rollback-effects inconsistency; the final regression clears effects
+for a query edit that was refused. The review's bounded scope does not prove
+backend hit routing or geometry parity. Native/TUI application replay, focus
+restoration and live IME remain acceptance gates for P/U.
