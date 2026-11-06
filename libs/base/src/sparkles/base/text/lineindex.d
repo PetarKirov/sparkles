@@ -123,6 +123,11 @@ struct LineIndex
         }
     }
 
+    /// Every line's start offset, line 0's first, strictly increasing: what
+    /// a caller splicing two indexes together copies.
+    const(size_t)[] lineStarts() const return scope @safe pure nothrow @nogc
+        => _lineStarts[];
+
     /// Number of lines (≥ 1 for the empty text: one empty line).
     size_t lineCount() const scope @safe pure nothrow @nogc => _lineStarts.length;
 
@@ -226,6 +231,18 @@ unittest
     assert(idx.lineCount == 1);
     assert(idx.lineColAt(0) == LineCol(0, 0));
     assert(idx.offsetAt(0, 0) == 0);
+}
+
+@("lineindex.LineIndex.lineStarts")
+@safe pure nothrow @nogc
+unittest
+{
+    const scanned = LineIndex("ab\ncd\n\nef");
+    static immutable size_t[4] expected = [0, 3, 6, 7];
+    assert(scanned.lineStarts == expected[]);
+    // Rebuilding from the later starts gives the same index.
+    const rebuilt = LineIndex(scanned.lineStarts[1 .. $], 9);
+    assert(rebuilt.lineStarts == scanned.lineStarts);
 }
 
 @("lineindex.LineIndex.basic")
