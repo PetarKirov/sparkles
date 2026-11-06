@@ -29,7 +29,7 @@ version (UiAppGuiVulkan):
 import sparkles.ui_app.prepared_specimen : PreparedSpecimenFont;
 import sparkles.ui_app.specimen_font : sameSpecimenRequest, SpecimenFontRequest, SpecimenLatencyStats;
 
-import core.time : dur, Duration, MonoTime, msecs, seconds;
+import core.time : dur, Duration, MonoTime, msecs, nsecs, seconds;
 import std.algorithm.comparison : max, min;
 
 import sparkles.base.prettyprint : prettyPrint, PrettyPrintOptions;
@@ -59,6 +59,7 @@ import sparkles.ui.style : Palette;
 import sparkles.ui_vulkan;
 import sparkles.vulkan;
 import sparkles.vulkan_wsi;
+import sparkles.vulkan_wsi.presenter : pollCompleted, PresentWait;
 import sparkles.profiling : FrameClock, FrameFlags, FrameHistory, FramePhase, FrameRecord,
     FrameStats, writeChromeTrace;
 // `PRF20`: empty inline functions unless built with `version (SparklesTracy)`.
@@ -665,6 +666,14 @@ private struct Gpu
     GpuProfiler profiler; /// the device's time, in named scopes (`PRF10`)
     bool profilerTried;   /// made once per device, where a switch asks
     FrameClock clock;     /// the run's, for calibrated scopes
+    /// When presents reached the display, where no window-system feedback
+    /// says (`PRF13`): `VK_GOOGLE_display_timing` (Android) exactly, else
+    /// `VK_KHR_present_wait` as the time a poll saw the present complete.
+    DisplayTimes displayTimes;
+    PresentWait presentWait; /// ditto
+    ulong presentTag;     /// the record number the next present belongs to
+    bool tagPresents;     /// a switch or a specimen wants display times
+    bool waitPresents;    /// and present wait is the source
     bool up;
 
     @disable this(this);
@@ -677,6 +686,8 @@ private struct Gpu
             vk.device.deviceWaitIdle(vk.device.device);
         profiler.destroy(vk);
         profilerTried = false;
+        presentWait.forget();
+        displayTimes = DisplayTimes.init;
         canvas.destroy();
         commands.destroy(vk);
         sync.destroy(vk);
@@ -1552,14 +1563,15 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
     // When a frame reached the display, where the window system says
     // (`PRF13`, Wayland's presentation feedback): its record is marked, its
     // latency counted, and the display's refresh measures the hitches.
-    void onPresented(in PresentedEvent p)
+    // Frame `tag` reached the display at `shown`, `refresh` its period where
+    // known: from Wayland's feedback, Android's display timing, or a present
+    // wait's poll.
+    void onShown(ulong tag, MonoTime shown, Duration refresh)
     {
-        if (p.discarded || !p.shownKnown)
-            return;
-        ref pending = pendingSpecimens[p.tag % pendingSpecimens.length];
-        if (pending.frame == p.tag && pending.generation && p.shown >= pending.requestedAt)
+        ref pending = pendingSpecimens[tag % pendingSpecimens.length];
+        if (pending.frame == tag && pending.generation && shown >= pending.requestedAt)
         {
-            const took = p.shown - pending.requestedAt;
+            const took = shown - pending.requestedAt;
             ++session.specimenLatency.shown;
             session.specimenLatency.latestShownGeneration = pending.generation;
             session.specimenLatency.latestShown = took;
@@ -1569,15 +1581,21 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                 note(i"specimen generation $(pending.generation): request-to-visible $(took.total!"usecs") us");
             pending = PendingSpecimen.init;
         }
-        frameTimes.noteRefresh(p.refresh);
+        frameTimes.noteRefresh(refresh);
         if (history is null)
             return;
-        if (auto r = history.markShown(p.tag, p.shown - opened))
+        if (auto r = history.markShown(tag, shown - opened))
         {
             Duration latency;
             if (!r.has(FrameFlags.skipped) && r.latency(latency))
                 frameTimes.noteLatency(latency);
         }
+    }
+    // Wayland's presentation feedback.
+    void onPresented(in PresentedEvent p)
+    {
+        if (!p.discarded && p.shownKnown)
+            onShown(p.tag, p.shown, p.refresh);
     }
     // Which recorded frame each slot drew last.
     ulong[8] slotFrame = ulong.max;
@@ -2018,9 +2036,15 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                         if (traceFrames)
                             note(i"specimen generation $(generation): request-to-submit $(took.total!"usecs") us");
                     }
+                    bool feedback;
                     static if (__traits(hasMember, Wsi, "requestPresentationFeedback"))
                         if ((history !is null || changed) && wsi.canReportPresentation)
-                            cast(void) wsi.requestPresentationFeedback(window, recorded);
+                            feedback = !wsi.requestPresentationFeedback(window, recorded).hasError;
+                    // Without the window system's feedback, the device's.
+                    gpu.presentTag = recorded;
+                    gpu.tagPresents = !feedback && (history !is null || changed);
+                    gpu.waitPresents = gpu.tagPresents && !gpu.vk.displayTiming
+                        && gpu.vk.presentWait;
                 }
                 outcome = cropped
                     ? drawFrame!draw(*gpu, host, session, request.ground, timing, &beforePresent)
@@ -2071,6 +2095,19 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                 if (history !is null)
                     history.add(r);
                 recordMade = true;
+            }
+            // What the device says reached the display, its record now in
+            // the history: never waits.
+            if (timing.submitted && gpu.up)
+            {
+                if (gpu.vk.displayTiming)
+                    gpu.displayTimes.poll(gpu.vk, gpu.swapchain.handle, (uint id, long ns) {
+                        onShown(id - 1, MonoTime.zero + nsecs(ns), gpu.displayTimes.refresh);
+                    });
+                else if (gpu.vk.presentWait)
+                    pollCompleted(gpu.presentWait, gpu.vk, (ulong id, MonoTime at) {
+                        onShown(id - 1, at, Duration.zero);
+                    });
             }
             if (timing.collected && traceNames.length != gpu.profiler.names.length)
                 traceNames = gpu.profiler.names.dup; // a copy: the table goes with the device
@@ -2518,7 +2555,12 @@ private FrameOutcome drawFrame(alias draw)(ref Gpu gpu, ref NativeHost host,
     timing.record = lap();
     zone.next!"present";
     beforePresent();
-    const presented = gpu.swapchain.present(*vk, index, gpu.sync.renderFinished(index));
+    const presentId = gpu.waitPresents ? gpu.presentWait.idFor(gpu.presentTag) : 0;
+    const timingId = gpu.tagPresents && vk.displayTiming ? DisplayTimes.idFor(gpu.presentTag) : 0;
+    const presented = gpu.swapchain.present(*vk, index, gpu.sync.renderFinished(index), presentId,
+        timingId);
+    if (!presented.hasError && presentId)
+        gpu.presentWait.submitted(gpu.swapchain.handle, presentId);
     if (!presented.hasError) gpu.sync.notePresent(index);
     timing.shown = !presented.hasError;
     timing.present = lap();
