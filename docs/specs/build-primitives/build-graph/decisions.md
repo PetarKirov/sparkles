@@ -10,7 +10,10 @@ Each record states its question, the alternatives, the choice and when to
 revisit it. Records marked **accepted** were accepted by the owner: D1–D17 on
 2026-11-01, in a design interview to rework the `apps/ci` task DAG;
 D18–D21, the E0 spike results, on 2026-11-02; and D22–D23, from E1, on
-2026-11-06. Records marked **proposed** await the owner's decision.
+2026-11-06. The records from D30 on answer a review of the
+[build-systems catalog](../../../research/build-systems/index.md), and those
+marked accepted were accepted on 2026-11-06. Records marked **proposed** await
+the owner's decision.
 
 ## D1: Own the build instead of isolating dub (accepted)
 
@@ -241,7 +244,11 @@ from each `configuration "unittest"` into the managed `unittest` build type, so
 the flag is uniform and forks nothing.
 
 **Revisit when** a version is found that affects code without being named in a
-`version` or `debug` condition, for example through a string mixin.
+`version` or `debug` condition, for example through a string mixin. That
+pattern exists: `sparkles.base.meta.isVersion`
+(`libs/base/src/sparkles/base/meta.d:9`) builds its condition in a `mixin`.
+[D34](#d34-pruning-sees-string-imports-and-mixed-in-conditions-accepted)
+closes the hole without reversing this choice.
 
 ## D14: Relocation maps the root to `.` (accepted)
 
@@ -617,3 +624,146 @@ libraries' behaviour; none is a dependency of this repository's packages.
 
 **Revisit when** `ci --example-files` moves onto the build graph, or a
 comparison snippet's dependency becomes a dependency of a package in scope.
+
+## D30: Deterministic build failures are cached (accepted)
+
+**Question.** BGA7 replays an action's diagnostics on a hit. Is a failing
+action's result published at all, and which failures count?
+
+**Alternatives.**
+
+- Publish only successes. Simple, and an edit changes the key anyway.
+- Publish every action that exited on its own, tests included.
+- Publish compile, archive and link actions that exited on their own, with any
+  status; never a test; never an action ended from outside.
+
+**Evidence.** sbt stores a `CachedCompileFailure`
+([sbt](../../../research/build-systems/sbt.md)). moon reuses only results that
+exited zero and refuses one with missing outputs
+([moon](../../../research/build-systems/moon.md)). Rattle discards the failures
+of speculative commands ([rattle](../../../research/build-systems/rattle.md)).
+
+**Choice.** The third (BGA9). A compile, archive or link that exits with a
+non-zero status is published, and a hit replays its diagnostics and exit
+status: a broken worktree switched back and forth, or a second worktree at the
+same broken revision, does not recompile the failure. A test failure is never
+published. Nothing is published after a signal, a timeout or a cancellation,
+because the cause is outside the key.
+
+**Trade-offs.** A failure's manifest is what the compiler read before it
+stopped, which is all its diagnostics can depend on. A compiler that writes no
+dependency output on failure keys it conservatively (BGK6).
+
+**Revisit when** a replayed failure is found that a cold build of the same key
+does not reproduce.
+
+## D31: A source edited during a compile (proposed)
+
+**Question.** A manifest digests each file after the compiler has read it. If
+an editor saves a module while a 30–60 s compile runs, the manifest pairs the
+new digest with object code built from the old content, and every worktree
+reuses that result until it is evicted. BGK7 detects the edit. What happens to
+the result then?
+
+**Alternatives.**
+
+- **(a) Don't publish, use for this run.** The outputs serve the current run,
+  which reports `unstable input`; the next run compiles again.
+- **(b) Rerun until stable.** The action runs again until a run sees no
+  change, up to a bound. The run's result then matches the tree it reports.
+- **(c) Snapshot first.** Copy or reflink the inputs before compiling, so no
+  edit can reach the compiler. The manifest is not known before the compile,
+  so this would snapshot whole roots; its cost is unmeasured.
+
+**Evidence.** Rattle hashes a file, re-stats it, and caches the digest only if
+the file "did not change mid-read", and it commits a node's record only after
+the concurrent nodes finish
+([rattle](../../../research/build-systems/rattle.md)). Ninja checks against the
+command's start time on the file system's clock
+([ninja](../../../research/build-systems/ninja.md)); build2's `depdb` applies an
+mtime rule ([build2](../../../research/build-systems/build2.md)). The
+perfect-dependencies paper lists "simultaneous outside modification" among the
+ways a command stops being a function of its reads
+([perfect-dependencies](../../../research/build-systems/perfect-dependencies.md)).
+
+**Choice.** Not made. The detection rule (BGK7) is common to (a) and (b) and
+stays proposed with them. Evidence on how other tools handle the case is being
+gathered.
+
+**Revisit when** that evidence is recorded; then accept one remedy and BGK7.
+
+## D32: Nix input narrowing is kept, constrained (accepted)
+
+**Question.** BGN2 lets the Nix backend narrow a compile's inputs to a manifest
+the local store holds. D searches import roots in order, so a file created
+earlier on the search path shadows the module the manifest resolved instead of
+failing. A narrowed build that omits it succeeds with the wrong module, and
+nothing triggers BGN2's retry. Keep narrowing, constrain it, or drop it?
+
+**Alternatives.**
+
+- Drop narrowing: every compile derivation takes its whole roots.
+- Keep it as written.
+- Keep it, constrained.
+
+**Evidence.** nix-ninja's argument for narrowing is that "the failure mode is a
+sandbox compile error, not a wrong cache hit"
+([nix-ninja](../../../research/build-systems/nix-ninja.md)), which ordered
+search paths break. A discovery record must hold "every input the consumer
+will read, including absent-path probes and environment/toolchain facts"
+([dynamic-deps-distributed](../../../research/build-systems/dynamic-deps-distributed.md)).
+nixception chose "a stable, less precise key over a context-dependent, more
+precise one" for a shared cache
+([nixception](../../../research/build-systems/nixception.md)).
+
+**Choice.** Keep it, constrained (BGN2): narrow only while every absent
+candidate of the manifest is still absent; require the narrowed build's
+dependency output to list only files among its inputs, or rerun with the full
+roots; never push a narrowed derivation to a shared store.
+
+**Trade-offs.** A narrowed derivation's identity depends on the local store's
+history, so it is a local accelerator only. Remote builders and binary caches
+see full-root derivations.
+
+**Revisit when** E4 measures how often narrowing applies and what it saves.
+
+## D34: Pruning sees string imports and mixed-in conditions (accepted)
+
+**Question.** D13 prunes an inherited version that no scanned D file mentions.
+A `mixin` makes a condition no file spells out, and a string-imported file can
+hold one too. `sparkles.base.meta.isVersion` builds `version (…)` in a `mixin`
+from its argument, so the first `isVersion!"<a configuration version>"` would
+give a silent wrong hit. Extend the scan, forbid the pattern, or both?
+
+**Alternatives.**
+
+- Scan more: string import roots, and literals that could become conditions.
+- Forbid the pattern with a lint.
+- Both.
+
+**Evidence.** "a `mixin` produces source text that never becomes a file"
+([compile-time-execution](../../../research/build-systems/compile-time-execution.md)).
+Bazel, on leaving data out of keys: "every time we've done that, it later
+resulted in expensive debugging sessions and bug fixes"
+([bazel](../../../research/build-systems/bazel.md)).
+
+**Choice.** Both (BGV1):
+
+- Files under string import roots are scanned as text, whatever their
+  extension.
+- A string literal containing `version (` or `debug (` makes the variant keep
+  every inherited identifier, and is reported. The rule covers every literal,
+  not only a `mixin`'s operand, because a constant can carry the literal to a
+  `mixin` elsewhere.
+- `isVersion`'s own literal is exempt, so the rule does not disable pruning
+  for every package that imports `sparkles.base`. Instead a lint fails
+  planning on an `isVersion` argument, outside a `unittest` block, that is not
+  a predefined version identifier. Every such use in the repository names
+  `Apple`. `meta.d`'s own test probes a made-up identifier inside a `unittest`
+  block, which compiles only in `sparkles:base`'s test root.
+
+**Trade-offs.** A literal such as a formatter's test fixture keeps its
+variant's inherited identifiers too. Planning reports each one, so such a
+variant can be fixed or accepted knowingly.
+
+**Revisit when** the reported literals cost measurable sharing.

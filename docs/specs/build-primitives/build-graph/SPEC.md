@@ -229,10 +229,15 @@ Two requests that resolve to equal variant keys **must** share one set of
 actions.
 
 **Pruning.** A downward-inherited version or debug identifier **must** be kept
-only if it is **mentioned** by a D source file under one of the variant's
-source, import or string import roots. Mentioned means it appears in a
-`version (…)` or `debug (…)` condition, or in a `version = …` or `debug = …`
-assignment.
+only if it is **mentioned** under one of the variant's source, import or string
+import roots. Mentioned means it appears in a `version (…)` or `debug (…)`
+condition, or in a `version = …` or `debug = …` assignment:
+
+- in a D source file under any of those roots, read as D tokens;
+- in any file under a string import root, whatever its extension, read as
+  text.
+
+The scan has these further rules:
 
 - **Scanned at plan time:** the scan runs during planning, over the files
   present then, and the digest of the scanned file listing is part of the
@@ -240,6 +245,22 @@ assignment.
   re-plans the variant.
 - **Generated roots:** a root filled by a generator (§7) is not scanned. A
   variant with such a root keeps every inherited identifier.
+- **Conditions built as strings:** a variant **must** keep every inherited
+  identifier if a string literal in a scanned D file contains `version` or
+  `debug` followed by `(`, with optional whitespace between them. Planning
+  reports each such literal. The one exemption is the literal in
+  `sparkles.base.meta.isVersion`, whose arguments the next rule checks.
+- **The `isVersion` lint:** planning **must** fail on a use of
+  `sparkles.base.meta.isVersion`, outside a `unittest` block, whose argument is
+  not a string literal naming one of D's predefined version identifiers. It
+  names the file and line. The lint applies to modules that import
+  `sparkles.base.meta` or the `sparkles.base` package module. A `unittest`
+  block compiles only in its own package's test root, which inherits nothing.
+
+_Rationale:_ a `mixin` turns a string into a condition that no file spells out,
+and the literal can reach the `mixin` through a constant, so the scan does not
+try to tell which literals do. See
+[D34](./decisions.md#d34-pruning-sees-string-imports-and-mixed-in-conditions-accepted).
 
 _Rationale:_ dub passes a test root's versions down to every dependency, so
 without pruning, any root with a configuration-local version forks its whole
@@ -332,14 +353,25 @@ file names depend on its inputs declares its output directory. The action
 produce a declared one.
 
 **BGA4: Explicit environment.** Every action **must** run with the environment
-its key declares (invariant 2). An ambient `DFLAGS`, `CC`, `NIX_CFLAGS_COMPILE`
-or any other variable is not inherited. A caller that wants extra compiler
-flags requests them as variant options. The declared environment **must** set
-`SOURCE_DATE_EPOCH` to a fixed value, so `__DATE__` and `__TIME__` do not
-follow the clock, and **must** fix the variables that change diagnostics
-(`TERM`, `NO_COLOR`) and the target (`MACOSX_DEPLOYMENT_TARGET`). An action
-passes no `@file` response file, because LDC reads an environment variable of
-the same name instead when one is set.
+its key declares (invariant 2). That environment is complete, not a change to
+the executor's own: an ambient `DFLAGS`, `CC`, `NIX_CFLAGS_COMPILE` or any
+other variable is not inherited. A caller that wants extra compiler flags
+requests them as variant options. The declared environment **must**:
+
+- set `SOURCE_DATE_EPOCH` to a fixed value, so that `__DATE__`, `__TIME__` and
+  `__TIMESTAMP__` do not follow the clock, in D and in ImportC sources;
+- fix the variables that change diagnostics (`TERM`, `NO_COLOR`) and the
+  target (`MACOSX_DEPLOYMENT_TARGET`);
+- set `PATH` explicitly, empty for `compile`, `archive` and `link` actions.
+
+A compile or link **must** name its C compiler driver and its linker by
+absolute path (`-gcc=` and `--linker=` on LDC). They are the files toolchain
+identity covers (BGT1), so the compiler cannot pick another from a search
+path. An action passes no `@file` response file, because LDC reads an
+environment variable of the same name instead when one is set.
+
+_Rationale:_ with a `PATH`, LDC finds `cc` by searching it, so toolchain
+identity could hash one driver while the compiler runs another.
 
 **BGA5: Relocatable invocation.**
 
@@ -364,7 +396,7 @@ equally in every worktree.
 
 **BGA7: Diagnostics are outputs.** An action's standard output, standard error
 and exit status **must** be recorded with its outputs and replayed on a cache
-hit (invariant 5).
+hit (invariant 5). That includes a hit on a failed action that BGA9 publishes.
 
 **BGA8: Graph exposure.** The build graph **must** expose its actions as task
 nodes with stable ids, typed actions and resource claims, so that the task-DAG
@@ -380,6 +412,24 @@ actions are ordinary `onSuccess` task edges. The default weights are:
 A `test` action **must** pass its claimed weight as the test runner's
 maximum thread count, and a `link` action as the linker's thread count
 (`--threads` on `ld.lld`).
+
+**BGA9: Which results are published.** A result **must** be published only for
+an action that ran to completion and exited on its own:
+
+- **`compile`, `archive` and `link`:** with any exit status. A failed compile
+  is keyed by the manifest its dependency output lists, as a successful one
+  is, or conservatively (BGK6) when the compiler writes none. A hit on it
+  replays the failure (BGA7), so a deterministic error is not compiled again.
+- **`generate` and `test`:** with a zero exit status only. A test's result is
+  published only when BGX3 allows it to be reused.
+
+An action ended by a signal, a timeout or a cancellation, or one that exited
+zero without producing its declared outputs (BGA3), **must not** be published.
+See [D30](./decisions.md#d30-deterministic-build-failures-are-cached-accepted).
+
+_Rationale:_ a compile killed by the kernel's out-of-memory killer, or by
+fail-fast, failed for a reason its key does not cover. Replaying that failure
+would report a verdict that no cold build of the key gives (invariant 5).
 
 ## 5. Keys and the input manifest
 
@@ -444,6 +494,35 @@ older than the time the digest was recorded, minus two seconds; such a file is
 rehashed. This is git's rule for racily clean index entries, with a margin
 that covers coarse kernel timestamps.
 
+- **The clock:** the recording time **must** be read from the clock of the
+  file system that holds the file: the modification time of a probe file the
+  build graph has just written there, in the store or in the worktree's
+  private git directory. Where it can write no probe on that file system, it
+  **must not** cache digests of files there.
+- **Future times:** a file whose modification time is later than the
+  recording time **must** be rehashed whenever it is read, and reported.
+
+_Rationale:_ the process clock and a file system's timestamps can disagree, on
+a network file system most of all, and a racy check that compares the two
+misses the edits it exists to catch.
+
+**BGK7: Inputs edited during a compile (proposed).** A compile **must** detect
+that a file in its manifest changed while it ran: the file's modification or
+change time is not older than the action's start time minus BGK5's margin,
+with both times read from the clock BGK5 uses. What then happens to the result
+is open. [D31](./decisions.md#d31-a-source-edited-during-a-compile-proposed)
+records the candidates, of which these two keep the detection rule:
+
+- **(a) Not published:** the outputs serve the current run, and the result is
+  not published and is reported as `unstable input`.
+- **(b) Rerun:** the action runs again until a run sees no such change, up to
+  a bound.
+
+_Rationale:_ a manifest digests each file after the compiler read it. An editor
+that saves a module mid-compile pairs the new digest with object code built
+from the old content, and every worktree on the machine then reuses that
+wrong result.
+
 **BGK6: Incomplete dependency output.** If a compile's dependency output is
 missing, unparseable, or comes from a compiler that cannot list C headers or
 absent candidates, the action **must** key on its declared inputs plus the
@@ -474,6 +553,12 @@ unset), shared by every worktree and process.
 - **Results:** a result is published by one rename to `results/<key>`.
 - **Manifest lists:** a manifest list is replaced by writing a new list file and
   renaming it over the old one.
+- **Durability:** before the publishing rename, the staged entry's files and
+  its directory are flushed to stable storage (`fsync`). After a crash, a
+  published entry is therefore complete or absent.
+- **Failure:** a failure to stage or to publish **must not** change the
+  action's outcome. The outputs serve the current run from where they were
+  written, and the failure is reported.
 
 A reader never observes a partial entry.
 
@@ -507,11 +592,18 @@ Garbage collection removes `trash/` and stale `staging/` entries.
 **BGS6: Corruption.** An entry whose recorded digests do not match its files
 **must** be treated as a miss. It is renamed into `trash/` before it is
 deleted, so a concurrent publisher never meets a half-deleted directory, and
-a diagnostic is reported.
+a diagnostic is reported. Corruption is detected at three points:
+
+- **Every lookup** checks that each of the entry's declared outputs exists,
+  with its recorded type and size.
+- **A sample of hits,** one in 64 by default and chosen at random, also has
+  every recorded digest rehashed. The fraction is configurable, and a value of
+  one rehashes every hit.
+- **Verification** (BGS7) rehashes every entry it is asked to check.
 
 **BGS7: Inspection.** The store **must** provide operations to report its size,
-list entries by key and age, and collect garbage. `apps/ci` exposes them as
-`ci cache` subcommands.
+list entries by key and age, verify entries by rehashing every recorded digest
+(BGS6), and collect garbage. `apps/ci` exposes them as `ci cache` subcommands.
 
 ## 7. Generators
 
@@ -642,9 +734,25 @@ roots it searches. Each enters the store as a content-addressed path that the
 build graph computes itself. Whole-repository source copies are not used.
 
 An edit to any file under a searched root therefore re-runs the compiles that
-search it, unlike the local backend's manifest check (BGK4). A backend **may**
-narrow the inputs to a manifest that the local store already holds for the same
-declared key, and retry with the full roots if that build fails.
+search it, unlike the local backend's manifest check (BGK4).
+
+A backend **may** narrow the inputs to a manifest that the local store holds
+for the same declared key, under these constraints
+([D32](./decisions.md#d32-nix-input-narrowing-is-kept-constrained-accepted)):
+
+- **Still absent:** it narrows only while every absent candidate of that
+  manifest is still absent.
+- **Checked afterwards:** the narrowed build's own dependency output **must**
+  list only files among its inputs. Otherwise, or if the build fails, it is
+  rerun with the full roots.
+- **Never shared:** a narrowed derivation's outputs **must not** be pushed to
+  a shared store or binary cache.
+
+_Rationale:_ D searches import roots in order, so a file created earlier on the
+search path shadows the one the manifest resolved instead of failing. A
+narrowed build that omits it compiles the old module and succeeds. A narrowed
+derivation's identity also depends on the local store's history, which no
+other machine shares.
 
 **BGN3: Derivations without evaluation.** Derivations **must** be created
 directly from their description (`nix derivation add`). Nix expression
