@@ -90,6 +90,12 @@
         # CI helper — the `ci --test` / `ci --example-files` the jobs invoke.
         pkgs.curl # libcurl, linked by its --ci-stats subcommand
         config.packages.ci
+        # `ci` and the tests that build git fixtures exec git. CI found the
+        # runner image's; the shell supplies its own, minimal so it brings no
+        # second Python.
+        pkgs.gitMinimal
+        # `unzip -l`, the cross-check of the cosmopolitan-ape ZIP example.
+        pkgs.unzip
 
         # ghostty — the slim repack (shared lib + headers + .pc), NOT the
         # upstream `.dev` output: its static archive embeds zig store
@@ -189,6 +195,10 @@
         pkgs.xcb-imdkit
         pkgs.libxcb-util
         pkgs.libxcb-util.dev
+
+        # `setsid`, exec'd by event-horizon's supervision tests (a
+        # descendant in its own session). CI found the runner image's copy.
+        pkgs.util-linux
 
         # `dbus-daemon`, exec'd by apps/terminal's D-Bus tests (`dbus_conn`,
         # `desktop_bus`) as a private bus with a fake notification server
