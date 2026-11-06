@@ -10,6 +10,7 @@ import sparkles.base.buffer : UniqueBuffer;
 import sparkles.font.cluster_shaping : ClusterDirection, ClusterGlyph, maxClusterGlyphs;
 import sparkles.font.instance : maxVariationAxes;
 import sparkles.font.units : Ppem;
+import sparkles.profiling.zones : cpuZone;
 
 /// A bounded four-way cache; returned glyphs live until the next prepare/clear.
 struct PreparedRuns(size_t Capacity = 256)
@@ -77,6 +78,7 @@ struct PreparedRuns(size_t Capacity = 256)
         e.characters = cast(ushort) text.length;
         e.coordinates[0 .. e.axes] = coordinates;
         e.text[0 .. e.characters] = text;
+        auto zone = cpuZone!"shape"; // a miss (`PRF22`)
         const n = shape(e.glyphs[]);
         e.count = n <= maxClusterGlyphs ? cast(ushort) n : 0;
         ++misses_;

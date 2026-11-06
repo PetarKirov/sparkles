@@ -23,6 +23,9 @@ dependency "sparkles:core-cli" path="../.."
 dependency "sparkles:event-horizon" path="../.."
 dependency "sparkles:image" path="../.."
 dependency "sparkles:font" path="../.."
+// Frame records and the named CPU zones every arm's frame opens (`PRF22`);
+// it depends on `sparkles:base` alone.
+dependency "sparkles:profiling" path="../.."
 
 // ── Configurations (APP3) ───────────────────────────────────────────────────
 //
@@ -57,7 +60,6 @@ configuration "gui-vulkan" {
     targetType "sourceLibrary"
     dependency "sparkles:ui-vulkan" path="../.."
     dependency "sparkles:vulkan-wsi" path="../.."
-    dependency "sparkles:profiling" path="../.."
     dependency "sparkles:wsi" path="../.."
     dependency "sparkles:raylib-text" path="../.."
     subConfiguration "sparkles:raylib-text" "discovery"

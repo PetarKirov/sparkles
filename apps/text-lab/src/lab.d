@@ -37,6 +37,7 @@ import sparkles.base.term_control : PointerShape;
 import sparkles.base.term_style : TextAttr, UnderlineStyle;
 import sparkles.base.text.grapheme : fitCells, visibleWidth;
 import sparkles.input : Event, Gesture, GestureEvent, isEndOfInput, Key, KeyAction, KeyEvent, match, PointerAction, PointerEvent, WheelEvent;
+import sparkles.profiling.zones : cpuZone;
 import sparkles.ui.geometry : Insets, Point, Rect, Size;
 import sparkles.ui.style : BorderStyle, BoxBorder, Palette, Slot, Visual;
 import sparkles.ui.widget : Builder, WidgetKind, WidgetTree;
@@ -279,11 +280,17 @@ struct Lab
         static if (offersSettings!H)
             if (controls !is null) sheet_ = controls.overlayBounds(size, sheetOpen);
         const half = (size.height - headerRows) / 2;
+        // Where the draw phase goes, by part (`PRF22`): `--debug frames=N`
+        // prints each zone's time a frame.
+        auto panelsZone = cpuZone!"lab-panels";
         panel(h, canvas, Rect(0, headerRows, size.width, half), dark);
         panel(h, canvas, Rect(0, headerRows + half, size.width, size.height - headerRows - half), light);
+        panelsZone.destroy();
         // Read frame-local diagnostics after drawing, then paint each header
         // line once. Fallback telemetry must not replace the settings hints.
+        auto headerZone = cpuZone!"lab-header";
         header(h, canvas, size.width);
+        headerZone.destroy();
         static if (__traits(compiles, canvas.fillPx(0, 0, 1, 1, rgba(accent, 255))))
             if (crosshair && pointing)
                 drawCrosshair(h, canvas);
@@ -292,6 +299,7 @@ struct Lab
 
             if (controls !is null)
             {
+                auto controlsZone = cpuZone!"lab-controls";
                 controls.draw(canvas, size, sheetOpen, framePalette());
                 sheet_ = controls.bounds;
             }
