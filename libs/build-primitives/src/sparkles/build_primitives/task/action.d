@@ -41,8 +41,8 @@ enum SandboxPolicy
 {
     /// No private directory: pure readers and git queries.
     none,
-    /// A private task directory holding its `DUB_HOME`, build root, spilled
-    /// output, and coverage listings ([SPEC TDM3]).
+    /// A private task directory holding its spilled output and coverage
+    /// listings ([SPEC TDM3]).
     taskDirectory,
 }
 

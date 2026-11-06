@@ -80,8 +80,8 @@ struct ProcessDriverOptions
     string sandboxRoot;
     /// The sandbox seam: when set, it names each task's spill file instead
     /// (null keeps that task's output in memory). The driver creates nothing
-    /// else under a sandbox; where a task's `DUB_HOME` or build root lives is
-    /// the planner's, through the action's environment.
+    /// else under a sandbox; anything more a task writes there is the
+    /// planner's, through the action's arguments and environment.
     string delegate(const ref TaskNode node) spillPath;
     /// Bytes of output text a task keeps in memory.
     size_t outputMemoryBudget = 1024 * 1024;
