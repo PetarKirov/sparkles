@@ -218,11 +218,12 @@ struct InterfaceMeasure(Faces)
 
     /**
     A complete-brush cursor (`isIncrementalTextMeasure`): a rich run's
-    cumulative extent after each whole-grapheme chunk, in one pass over it —
-    without it the layout measures every prefix of the run again. Chunks are
-    measured apart, so kerning across their seams is not counted: a kerned
-    pair split by a seam measures by its letters' own advances, which for
-    the usual (tightening) kerning is a little wider than the canvas draws.
+    cumulative extent after each whole-grapheme chunk, which keeps the wrap
+    solver on its direct path. The extent so far is the run so far measured whole,
+    as the display list paints it — one `textRunIn` per brush — so kerning
+    across the chunks' seams counts, and the run ends exactly as wide as
+    `width` measures it and the canvas draws it. The canvas caches shaped
+    batches, so a longer prefix reshapes only its last batch.
     */
     BrushMetrics brushMetrics(in TextStyle style)
         => BrushMetrics(faces, faceStep(style), style.bold, cellW);
@@ -230,23 +231,27 @@ struct InterfaceMeasure(Faces)
     /// ditto
     static struct BrushMetrics
     {
+        import sparkles.base.buffer : UniqueBuffer;
+
         private Faces faces;
         private int step; // -1: the cell font
         private bool bold;
         private int cellW;
-        private double pixels = 0;
-        private int cells;
+        private int cells; // the cell font's run, where the face has no step
+        private UniqueBuffer!(char, 256) run; // the run so far, in the face
 
         /// Appends one or more complete graphemes; the run's extent so far,
         /// in whole cells.
         int append(scope const(char)[] text)
         {
-            const px = step < 0 ? -1 : faces.interfaceWidthPx(text, step, bold);
-            if (px < 0)
+            if (step < 0)
+            {
                 cells += cast(int) visibleWidth(text);
-            else
-                pixels += px;
-            return cells + cellsCeil(cast(float) pixels, cellW);
+                return cells;
+            }
+            run.put(text);
+            const px = faces.interfaceWidthPx(run[], step, bold);
+            return px < 0 ? cast(int) visibleWidth(run[]) : cellsCeil(cast(float) px, cellW);
         }
     }
 
@@ -284,7 +289,8 @@ struct InterfaceMeasure(Faces)
 version (unittest)
 {
     // An interface face of a 14 px box (16 px at the title step), `i` 3 px
-    // and every other character 7 px; none at the caption step.
+    // and every other character 7 px (8 bold), the A–V pair 2 px tighter;
+    // none at the caption step.
     private struct FakeFaces
     {
         static struct Step
@@ -298,8 +304,12 @@ version (unittest)
             if (step == TypeStep.caption)
                 return -1;
             double px = 0;
-            foreach (c; text)
+            foreach (i, c; text)
+            {
                 px += c == 'i' ? 3 : bold ? 8 : 7;
+                if (c == 'V' && i > 0 && text[i - 1] == 'A')
+                    px -= 2; // the A–V pair is kerned
+            }
             return px;
         }
 
@@ -362,4 +372,12 @@ unittest
     assert(mono.append("W") == 1 && mono.append("ii") == 3);
     auto off = InterfaceMeasure!FakeFaces(faces, false, 10, 20).brushMetrics(ui);
     assert(off.append("Wii") == 3);
+
+    // Kerning across the chunks' seams counts, as the canvas draws the run
+    // whole: A, AV, AVA, AVAV are 7, 12, 19 and 24 px, not 7, 14, 21, 28.
+    auto px = InterfaceMeasure!FakeFaces(faces, true, cellW: 1, cellH: 20);
+    auto kerned = px.brushMetrics(ui);
+    assert(kerned.append("A") == 7 && kerned.append("V") == 12);
+    assert(kerned.append("A") == 19 && kerned.append("V") == 24);
+    assert(px.width("AVAV", ui) == 24, "the cursor ends where the run measures whole");
 }
