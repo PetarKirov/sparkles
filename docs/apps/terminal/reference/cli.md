@@ -22,9 +22,12 @@ When invoking through dub, remember dub consumes the first `--`:
 | `--window-height`                  | `30`              | Initial window height in rows                                          |
 | `--scrollback-limit`               | `infinite`        | Maximum number of lines to keep in scrollback (0 to disable)           |
 | `--font-codepoint-map`             | —                 | Render codepoint ranges from a specific font (repeatable); see below   |
+| `--ui-font`                        | the desktop's¹    | The chrome's proportional face (tabs, buttons, menus); `none` keeps the cell font; see below |
 | `--exit-behavior`                  | `hold-on-failure` | What to do when the child exits; see below                             |
 | `--debug-take-screenshot-and-exit` | off               | Take a screenshot after ~2 seconds and exit (used by tests/benchmarks) |
 | `--help`, `-h`                     | —                 | Show usage                                                             |
+
+¹ On the native window; see [`--ui-font`](#ui-font).
 
 ## `--exit-behavior` {#exit-behavior}
 
@@ -39,6 +42,25 @@ Controls what happens when the child process (the shell or command) exits:
 
 While held open, the final output remains scrollable and a banner shows
 `[process exited with status N]`.
+
+## `--ui-font` {#ui-font}
+
+The face the chrome draws its words in — tab titles, buttons, menus, labels —
+while the panes keep the cell font: a path, a family name, or a comma-separated
+preference list (the first installed family wins); `none` draws the chrome in
+the cell font too. Unset, the native (Vulkan) window takes the desktop's
+interface font (GNOME's `org.gnome.desktop.interface font-name`, through the
+settings portal) and follows it when the desktop changes it; where the desktop
+names none, and in the raylib window, which reads no desktop settings, it is
+the first installed of Inter, Adwaita Sans, Cantarell, Noto Sans, Roboto,
+DejaVu Sans and the like. Chrome
+text follows the terminal's font size, its x-height matched to the cell font's.
+The option is shared with every `sparkles:ui-app` application; it is a flag
+only, not a configuration key.
+
+```sh
+terminal --ui-font "Inter"
+```
 
 ## `--font-codepoint-map` {#font-codepoint-map}
 
