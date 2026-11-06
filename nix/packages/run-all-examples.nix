@@ -38,6 +38,12 @@
       # non-zero exit is collected into the final status.
       packages.run-all-examples = pkgs.writeShellApplication {
         name = "run-all-examples";
+        # What the examples exec (`sh -c` in agent-tooling and live-tasklist),
+        # so the run does not depend on the caller's PATH.
+        runtimeInputs = [
+          pkgs.bash
+          pkgs.coreutils
+        ];
         text = ''
           # Match the development shell's font fixture on every platform.
           export SPARKLES_FONTS_PATH=${config.packages.sparkles-fonts}/fonts
