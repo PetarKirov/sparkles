@@ -297,7 +297,11 @@ struct VulkanCanvas(B)
     static if (canShape)
     {
         private ShaperSlot[16] shapers_;
-        private PreparedRuns!256 preparedRuns_;
+        // Sized to hold a screenful of distinct clusters: text-lab's two
+        // specimen panels overflow 256, and then shape every cluster again
+        // each frame (`shape` zone on 117 of 120 frames; 31 M instructions a
+        // frame against 27 M at 512). An entry is ~3 KB, its glyphs inline.
+        private PreparedRuns!512 preparedRuns_;
         private bool preparingGlyphs_;
         private uint rasterWorkers_ = 2;
         private CoverageMode coverageMode_;
