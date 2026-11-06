@@ -105,15 +105,18 @@ scenarios and oracle 14 pass.
 ## E3: Local execution and the shared store
 
 - Compile, archive, link and test actions on the task-DAG executor, with the
-  explicit environment, relocation and argument normalization (BGA4–BGA7), and
-  the publication rules for failed and interrupted actions (BGA9).
-- Declared keys, manifests and result keys (§5).
+  explicit environment, relocation and argument normalization (BGA4–BGA7),
+  the publication rules for failed and interrupted actions (BGA9), and
+  deterministic archives (BGA10).
+- Declared keys, manifests and result keys (§5), with the execution-time
+  hidden-edge check (BGK8) and the library search inputs (BGK9).
 - The shared store with staging, leases, eviction and inspection (§6).
 - Registry sources without Nix: fetched by the lockfile's URL into the store
   and verified by its hash (BGR4).
 - Typed generators, the test-root module and content-addressed generated
   sources (§7), with the shader compiler's direct invocation mode and its
-  specification amended.
+  specification amended. The shader compiler is keyed by its manifest (BGG5)
+  and built as a host variant (BGG6).
 - Toolchain identity (§8).
 - Test actions with declared runtime inputs, no reuse, and the test runner
   taking its import paths, string import paths, dflags, versions and probe
@@ -122,10 +125,11 @@ scenarios and oracle 14 pass.
 
 Gate:
 
-- Oracles 2–5, 7, 9, 10 and 16, steps 1–2 of oracle 11, and oracle 8's
-  revert check pass through the test-only driver. Oracle 4's step 5 gates
-  too: D31 is decided, and BGK7 accepted, before the store is shared by more
-  than the test-only driver.
+- Oracles 2–5, 7, 9, 10 and 16, steps 1–2 of oracle 11, oracle 13's
+  execution-time scenario, and oracle 8's revert check pass through the
+  test-only driver.
+- Oracle 4's step 5 passes too: D31 is decided, and BGK7 accepted, before the
+  store is shared by more than the test-only driver.
 - A second run of the driver in another worktree, with no source change,
   compiles nothing.
 - An edit to one `sparkles:base` module recompiles only the variants whose
