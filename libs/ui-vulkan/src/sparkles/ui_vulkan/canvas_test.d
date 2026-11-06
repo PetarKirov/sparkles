@@ -1876,3 +1876,43 @@ private ubyte[] twoColourImage()
     assert(abs(wi[0] - (220 - wi[1])) < 4, format("centred ink %s", wi));
     assert(i8[0] < 10 && w8[0] < 10, "started at the rect's left");
 }
+
+/// Measuring an interface run (`interfaceWidthPx`, a host's layout) shapes
+/// into the canvas's malloc-backed caches and allocates no GC memory — the
+/// fact a host relies on to hand the measurement to a `@nogc` wrap solver.
+@("ui_vulkan.canvas.measuringAnInterfaceRunAllocatesNoGcMemory")
+@system unittest
+{
+    if (!readbackEnabled)
+        return skipTest(readbackSkipReason);
+    import core.memory : GC;
+    import std.file : read;
+    import std.path : buildPath;
+    import std.process : environment;
+    import sparkles.ui.style : TypeStep;
+    import sparkles.ui_vulkan.painter : TextMetrics;
+
+    const dir = environment.get("SPARKLES_FONTS_PATH");
+    assert(dir !is null, "SPARKLES_FONTS_PATH is unset: run inside `nix develop`");
+    const mono = cast(const(ubyte)[]) read(dir.buildPath("DejaVuSansMono.ttf"));
+    const sans = cast(const(ubyte)[]) read(dir.buildPath("NotoSans.ttf"));
+    auto rig = new Rig;
+    rig.open("ui-vulkan-interface-measure", 64, 32);
+    scope (success)
+        rig.close();
+    assert(rig.canvas.cellFont(mono, 18, TextMetrics(ascent: 16)));
+    const int[4] steps = [20, 17, 18, 24];
+    assert(rig.canvas.interfaceFont(sans, null, steps));
+    // Warm what is set up once per canvas (shapers, the caches' storage).
+    assert(rig.canvas.interfaceWidthPx("warm", TypeStep.body, false) > 0);
+    static immutable runs = ["Settings", "Open file…", "AVATAR", "Ångström", "ffi fl", "→ ★ 漢字"];
+    const before = GC.allocatedInCurrentThread;
+    double total = 0;
+    foreach (step; 0 .. 4)
+        foreach (bold; [false, true])
+            foreach (run; runs)
+                total += rig.canvas.interfaceWidthPx(run, step, bold);
+    assert(GC.allocatedInCurrentThread == before,
+        format("measuring allocated %s GC bytes", GC.allocatedInCurrentThread - before));
+    assert(total > 0);
+}
