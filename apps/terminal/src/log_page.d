@@ -37,7 +37,7 @@ import sparkles.ui.widget : Alignment, Builder, TextSpan, Widget, WidgetKind, Wi
 import chrome : button, column, label, row, uiLabel;
 import settings : ButtonLabels;
 import page_kit : bodyRowsFor, chip, finishPage, firstOwnHit, header, Page, PageServices,
-    ScrollBody,
+    ScrollBody, scrollSeconds,
     fitCells, searchRow;
 import surfaces : SurfaceContext;
 
@@ -497,7 +497,7 @@ final class LogPage : Page
     {
         refilter();
         syncMotion();
-        scrollBody.scroll(w);
+        scrollBody.scroll(w, scrollSeconds());
         applyMotion();
     }
 

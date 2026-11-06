@@ -35,7 +35,7 @@ import sparkles.ui.geometry : SizeSpec;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 
 import chrome : band, uiLabel;
-import page_kit : fitCells, PageClipboard, QueryField, ScrollBody, scrollViewport, searchRow, settleViewport;
+import page_kit : fitCells, PageClipboard, QueryField, ScrollBody, scrollSeconds, scrollViewport, searchRow, settleViewport;
 import sparkles.ui.editor.keys : editorBinds, windowTarget;
 import surfaces : Pasteable, Placement, Scrollable, Surface, SurfaceContext;
 
@@ -294,7 +294,7 @@ final class TabTree : Surface, Scrollable, Pasteable
     Placement placement() const @safe => Placement.panel;
 
     /// `Scrollable`: a wheel notch eases, a drag follows (`SCV12`).
-    void scroll(in WheelEvent w) @system => body.scroll(w);
+    void scroll(in WheelEvent w) @system => body.scroll(w, scrollSeconds());
 
     /// ditto
     bool animate(float dt) @system => body.animate(dt);
