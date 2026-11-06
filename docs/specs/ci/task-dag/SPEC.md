@@ -51,6 +51,7 @@ criteria. Delivery order is in [PLAN.md](./PLAN.md).
 ci pipeline [--from SELECTOR...] [--since REF] [--dependencies] [--dependents]
             [--backend local|nix] [--require-cached KIND...]
             [--determinism-sample N]
+            [--placement NAME | --list-placements]
 
 ci test [--build-only | --special-modes betterc|wasm|all]
         [--from SELECTOR...] [--since REF]
@@ -202,7 +203,33 @@ that shares their store, or in each job over that job's actions.
   private store.
 
 A difference fails the task as an authoritative failure, naming the action
-and what differed, and removes the suspect result from the store.
+and what differed, and removes the suspect result from the store. The
+determinism-check task itself is never skipped by a stored result, a shared
+verdict ([BGX4](../../build-primitives/build-graph/SPEC.md#_9-test-actions-and-result-reuse))
+or any other memo of an earlier run.
+
+**CIC14: Placements.** `ci pipeline` **must** partition its graph into named
+**placements**, each a host system, a runner class and a capacity, declared in
+one data file:
+
+- **Running one:** `ci pipeline --placement NAME` runs that placement's tasks
+  and the build actions they need. Every other task ends `Skipped(placement)`,
+  a skip reason beside `platform`; none is dropped from the graph.
+- **Listing them:** `ci pipeline --list-placements` prints the placements and
+  their shards as JSON, and sets it as an output through the CI-provider
+  module (TDO6). The repository's workflows are generated from that output.
+- **Shards:** a placement's tasks are packed into its shards longest first, by
+  the `task.wall` that the run records of the build-primitives observability
+  specification (`docs/specs/build-primitives/observability/`) hold. A task
+  with no recorded wall time takes a declared default weight.
+
+**CIC15: No diffs on CI.** The repository's workflows **must not** pass
+`--since`. On CI, reuse comes from keys, not from diffs. `--since` stays a
+local convenience.
+
+_Rationale:_ a diff depends on the base a run is compared with, which changes
+across rebases, reruns and the merge queue. A key depends only on the inputs.
+See [build graph D43](../../build-primitives/build-graph/decisions.md#d43-amendments-from-the-nix-generated-ci-pr-accepted).
 
 ## 2. Removed flags
 

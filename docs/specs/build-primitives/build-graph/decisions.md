@@ -1090,4 +1090,50 @@ reused through it until an oracle proves the recording complete: every file a
 test opens under `strace` appears in its recording, as oracle 3 does for
 compiles.
 
+**The oracle.** It compares the read set the runner core records with a static
+scan of the package's sources: string literals and `buildPath` segments that
+name tracked paths. A statically named path that is in neither the declared
+inputs nor the recorded set is a finding. A declared input that nothing names
+or reads is stale. The scan is a second source independent of the recording;
+its tokenizer and matcher come from `apps/ci/src/test_reads.d` on PR #633's
+branch, ported once BGX2 gives runtime inputs a home
+([D43](#d43-amendments-from-the-nix-generated-ci-pr-accepted)).
+
 **Revisit when** that oracle passes for the repository's tests.
+
+## D43: Amendments from the Nix-generated CI PR (accepted)
+
+**Question.** PR #633 generates the repository's workflows from Nix, keys
+every CI task by its unit's source closure, skips a task whose key already
+passed, and shards tests longest first. Its build reuse is coarser than the
+build graph's keys, and its test reuse lets one runner skip a test another
+runner passed, which D7 rejects. Land it, or take its ideas into these
+specifications?
+
+**Alternatives.**
+
+- Land the PR whole, then migrate its pipeline at M7, M12 and M13.
+- Take its best ideas as requirements, and close it.
+
+**Choice.** The owner accepted five amendments on 2026-11-06, and the PR is
+closed as a reference:
+
+- **Placements** (CIC14): `ci pipeline` maps one graph onto provider jobs,
+  with shards packed longest first by recorded wall times. The PR's static
+  shards and hand-measured weights become data from run records.
+- **Shared verdicts** (BGX4): its stamp mechanism, kept within D7: only for
+  results BGX3 lets be reused, keyed on the observed machine and runner
+  image, and published by a credentialed run whose gating checks passed. It
+  is how test results come to be shared before E4 (D41).
+- **The recorded-inputs oracle** (D42): its static test-reads scan becomes
+  the oracle's second source.
+- **No `--since` on CI** (CIC15): keys, not diffs, decide reuse there.
+- **Observability:** a task skipped by a shared verdict carries the
+  publishing run's record id (OD16, in the observability specification), and
+  the determinism check is exempt from every result memo (CIC13).
+
+**Trade-offs.** The PR's generated workflows and store-path steps are not
+taken now; they return at M13, built from `--list-placements`, when the
+workflow shape stops changing.
+
+**Revisit when** M13 generates the workflows.

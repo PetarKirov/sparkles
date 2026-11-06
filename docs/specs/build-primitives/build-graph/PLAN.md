@@ -154,10 +154,11 @@ Gate:
 - Remote builders from `/etc/nix/machines`.
 - Sandboxed test actions whose results may be reused, recording the machine
   they ran on (BGX3).
+- Shared verdicts for reusable test results (BGX4).
 
 Gate:
 
-- Oracles 6 and 12, and step 3 of oracle 11, pass for the repository's test
+- Oracles 6, 12 and 22, and step 3 of oracle 11, pass for the repository's test
   roots on x86_64-linux, with one remote builder of another system type.
 - **Measurements:** the per-derivation overhead with the sandbox on, the
   number of derivations, the bytes staged, and the edit loop's time against
