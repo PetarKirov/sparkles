@@ -473,7 +473,8 @@ struct SdlOpenDocument(SdlParserConfig config = sdlFull, Allocator = Mallocator)
     SdlExpected!void commit(ref SdlEditor!(config, Allocator) editor);
 }
 
-// sparkles.wired.sdl.select — §3.2; the editor's remove, removeAttribute,
+// sparkles.wired.sdl.select (sub-package sparkles:wired-sdl-select) — §3.2;
+// the editor's remove, removeAttribute,
 // replaceAttribute and setAttribute also take a range of their targets.
 struct SdlPath
 {

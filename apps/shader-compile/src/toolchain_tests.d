@@ -32,7 +32,8 @@ import std.experimental.allocator.mallocator : Mallocator;
 import sparkles.base.buffer : UniqueBuffer;
 import sparkles.test_runner.skip : skipTest;
 import sparkles.wired.sdl : parseSdlDocument, sdlDubRecipe, SdlEditor, sdlEditor, SdlNode,
-    SdlQualifiedName, SdlScalar, SdlSelector;
+    SdlQualifiedName, SdlScalar;
+import sparkles.wired.sdl.select : SdlSelector;
 
 import app : isFresh, parseDescribe, stampName, unitOf, withoutHostFlags;
 

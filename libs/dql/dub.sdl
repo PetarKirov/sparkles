@@ -19,24 +19,16 @@ configuration "library" {
 }
 
 configuration "unittest" {
-    // Cycle-safe path: `sparkles:wired` depends on this package (its SDL
-    // selector filters with DQL), and wired is in the impl library's
-    // dependency closure (impl -> ui -> wired), so a `dependency` on the
-    // runner shim would close `dql -> test-runner -> impl -> ui -> wired ->
-    // dql`. Source-include the shim and the impl instead, as wired and fuzzy
-    // do for the same reason.
-    sourcePaths "../test-runner/src" "../test-runner-impl/src"
-    importPaths "src" "../test-runner/src" "../test-runner-impl/src"
-    // An integration schema over a real event vocabulary: the queried
+    dependency "sparkles:test-runner" path="../.."
+    // Integration schemas over the real event vocabularies: the queried
     // types are ordinary library values; the DQL side reads them through the
-    // reflection kernel. A test-only edge — input does not know DQL, and its
-    // own tests source-include the runner, so the edge closes no cycle. The
-    // WindowEvent schema test lives in wsi instead: wsi depends on the
-    // runner, so an edge to it from here would.
+    // reflection kernel. Test-only edges — neither input nor wsi knows DQL.
     dependency "sparkles:input" path="../.."
-    // The integration schemas live outside `src/`, so no consumer of this
-    // library sees modules that would drag `sparkles:input` into its import
-    // closure.
+    dependency "sparkles:wsi" path="../.."
+    // The integration schemas live outside `src/` so a consumer that
+    // source-includes `../dql/src` for its own unittests (the property tree
+    // does) never sees modules that would drag `sparkles:wsi` into its
+    // import closure.
     sourcePaths "test"
 
     dflags "-checkaction=context" "-allinst"

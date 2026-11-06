@@ -11,11 +11,6 @@ dflags "-preview=in" "-preview=dip1000"
 
 dependency "sparkles:base" path="../.."
 dependency "optional" version="~>1.3.0"
-// The SDL selector (`sparkles.wired.sdl.select`) reads paths with DQL's path
-// reader and filters with its parser and evaluator. DQL depends on base,
-// fuzzy and metadata, none of which reaches wired; its own tests
-// source-include the runner, so the edge closes no cycle there either.
-dependency "sparkles:dql" path="../.."
 
 configuration "library" {
     targetType "library"

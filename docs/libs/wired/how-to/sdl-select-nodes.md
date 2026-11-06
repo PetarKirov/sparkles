@@ -7,6 +7,9 @@ the nodes, and an optional [DQL](../../../specs/dql/SPEC.md) filter keeps
 the ones that match. The editor takes the result directly, so a lossless
 edit of every match is one call.
 
+Add `dependency "sparkles:wired-sdl-select"` and import
+`sparkles.wired.sdl.select`; plain `sparkles:wired` does not build DQL.
+
 ## Select by path
 
 `SdlPath.parse` checks a path and borrows it; `nodes(start)` walks the
@@ -71,6 +74,7 @@ single calls would.
 /+ dub.sdl:
     name "sdl_select"
     dependency "sparkles:wired" version="*"
+    dependency "sparkles:wired-sdl-select" version="*"
     buildType "checked" {
         buildOptions "optimize" "inline" "debugInfo"
     }
@@ -79,8 +83,9 @@ import std.experimental.allocator.mallocator : Mallocator;
 import std.stdio : write, writeln;
 
 import sparkles.base.buffer : UniqueBuffer;
-import sparkles.wired.sdl : parseSdlDocument, SdlPath, SdlQualifiedName,
-    SdlScalar, SdlSelector, sdlEditor;
+import sparkles.wired.sdl : parseSdlDocument, SdlQualifiedName, SdlScalar,
+    sdlEditor;
+import sparkles.wired.sdl.select : SdlPath, SdlSelector;
 
 enum text = `name "app"
 dependency "sparkles:base" version="*"

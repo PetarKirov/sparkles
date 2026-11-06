@@ -5,21 +5,16 @@ The lossless WSI event is plain data; the schema inside DQL reads it via
 `sparkles.reflection` — transparent `payload`, the envelope's `ulong`
 sequence, text named by its pool id (`ED8`: the bytes live in a pool), and
 the composition's static segment array with enumerated indices.
-
-It lives in wsi, not in `sparkles:dql`, because DQL is in the test runner's
-dependency closure (impl -> ui -> wired -> dql) and wsi depends on the
-runner: a test edge from DQL to wsi would close a cycle.
 */
-module sparkles.wsi.dql_schema_test;
+module sparkles.dql.wsi_schema_test;
 
 version (unittest):
 
 import sparkles.dql.engine : DqlEngine;
-import sparkles.dql.eval : evalDql;
-import sparkles.dql.parser : parseDql;
 import sparkles.dql.schema : DqlSchema, DqlResolution, isDqlCategory,
     isDqlPath;
 import sparkles.dql.resolve : resolveDqlPath;
+import sparkles.dql.testing : parseAndEvalDql;
 import sparkles.base.pool.text_pool : TextPool;
 import sparkles.wsi : CompositionEvent, CompositionSegmentStyle, EventTextTag,
     FrameReadyEvent, KeyboardEvent, ScrollEvent, TextCommittedEvent, textOf,
@@ -28,16 +23,7 @@ import sparkles.wsi : CompositionEvent, CompositionSegmentStyle, EventTextTag,
 import std.sumtype : SumType;
 
 alias WindowSchema = DqlSchema!WindowEvent;
-
-/// Parses `query` against the schema, asserting that it parses, and
-/// evaluates it against `subject`.
-private bool parseAndEval(ref DqlEngine engine, scope const(char)[] query,
-    ref const WindowEvent subject) @safe
-{
-    auto parsed = parseDql!WindowSchema(engine, query);
-    assert(!parsed.hasError, parsed.hasError ? parsed.error.message : "");
-    return evalDql!WindowSchema(engine, parsed.value, subject);
-}
+alias parseAndEval = parseAndEvalDql!WindowSchema;
 
 @("dql.wsi-schema: envelope fields and mechanical variant names")
 @safe unittest
