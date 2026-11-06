@@ -1726,6 +1726,18 @@ struct X11Wsi
                         | XCB_XFIXES_SELECTION_EVENT_MASK_SELECTION_CLIENT_CLOSE);
             }
         }
+        // XFixes reports changes only: an owner from before this connection
+        // is asked for now, or what was copied before the application started
+        // could not be pasted until something was copied again.
+        auto owner = xcb_get_selection_owner_reply(connection_,
+            xcb_get_selection_owner(connection_, clip_.clipboard), null);
+        if (owner !is null)
+        {
+            const current = owner.owner;
+            free(owner);
+            if (current != XCB_NONE && current != clip_.helper)
+                noticeForeignOwner(current);
+        }
         xcb_flush(connection_);
     }
 
