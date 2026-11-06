@@ -5,6 +5,7 @@ public import sparkles.vulkan_wsi.commands;
 public import sparkles.vulkan_wsi.conformance;
 public import sparkles.vulkan_wsi.context;
 public import sparkles.vulkan_wsi.device;
+public import sparkles.vulkan_wsi.display_timing;
 public import sparkles.vulkan_wsi.error;
 public import sparkles.vulkan_wsi.frame;
 public import sparkles.vulkan_wsi.gpu_profiler;

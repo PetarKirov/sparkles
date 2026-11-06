@@ -113,6 +113,11 @@ struct VulkanDevice
     /// profiling specification): enabled wherever the device has both
     /// features and presents.
     bool presentWait;
+    /// Whether a present can carry an id and the time it reached the display
+    /// be read back, with the display's refresh period
+    /// (`VK_GOOGLE_display_timing`, `PRF13`): enabled wherever the device has
+    /// it and presents.
+    bool displayTiming;
     /// Whether each heap's budget and usage can be read
     /// (`VK_EXT_memory_budget`, `PRF15`): enabled wherever the device has it.
     bool memoryBudget;
@@ -320,6 +325,7 @@ struct VulkanDevice
         timestampValidBits = 0;
         calibratedTimestamps = false;
         presentWait = false;
+        displayTiming = false;
         memoryBudget = false;
         dynamicRendering = false;
         imagelessFramebuffer = false;
@@ -521,7 +527,9 @@ package:
         const wantBudget = advertised.hasExtension(extMemoryBudget) && apiVersion >= apiVersion11
             && instance.has!vkVersion11;
 
-        const(char)*[11] deviceExtensions;
+        const wantDisplayTiming = presents && advertised.hasExtension(googleDisplayTiming);
+
+        const(char)*[12] deviceExtensions;
         uint extensionCount;
         if (presents)
             deviceExtensions[extensionCount++] = khrSwapchain.ptr;
@@ -552,6 +560,8 @@ package:
         }
         if (wantBudget)
             deviceExtensions[extensionCount++] = extMemoryBudget.ptr;
+        if (wantDisplayTiming)
+            deviceExtensions[extensionCount++] = googleDisplayTiming.ptr;
 
         auto dynamicFeature = vkInfo(VkPhysicalDeviceDynamicRenderingFeatures(
             dynamicRendering: VK_TRUE,
@@ -604,6 +614,7 @@ package:
             : calibration == CalibrationPlan.ext && device.has!extCalibratedTimestamps;
         presentWait = wantPresentWait && device.has!khrPresentWait;
         memoryBudget = wantBudget;
+        displayTiming = wantDisplayTiming && device.has!googleDisplayTiming;
         device.getDeviceQueue(handle, queueFamily, 0, &queue);
         return vulkanWsiOk();
     }

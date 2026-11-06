@@ -583,16 +583,29 @@ struct Swapchain
     Queue `imageIndex` for presentation once `finished` signals. A non-zero
     `presentId` tags the present (`VK_KHR_present_id`, which the device must
     have enabled: `VulkanDevice.presentWait`) for a `PresentWait` to learn
-    when it completed; ids must increase over the swapchain's presents.
+    when it completed; ids must increase over the swapchain's presents. A
+    non-zero `displayTimingId` tags it for `VK_GOOGLE_display_timing`
+    (`VulkanDevice.displayTiming`), whose `DisplayTimes` reads back when it
+    reached the display.
     */
     VkExpected!VkResult present(Context)(ref Context vk, uint imageIndex,
-        VkSemaphore finished, ulong presentId = 0) @system nothrow
+        VkSemaphore finished, ulong presentId = 0, uint displayTimingId = 0) @system nothrow
     {
         auto sc = handle;
         auto sem = finished;
         auto tag = vkInfo(VkPresentIdKHR(swapchainCount: 1, pPresentIds: &presentId));
+        auto when = VkPresentTimeGOOGLE(presentID: displayTimingId, desiredPresentTime: 0);
+        auto timed = vkInfo(VkPresentTimesInfoGOOGLE(swapchainCount: 1, pTimes: &when));
+        const(void)* chain = null;
+        if (presentId)
+            chain = &tag;
+        if (displayTimingId)
+        {
+            timed.pNext = chain;
+            chain = &timed;
+        }
         auto info = vkInfo(VkPresentInfoKHR(
-            pNext: presentId ? &tag : null,
+            pNext: chain,
             waitSemaphoreCount: finished is null ? 0 : 1,
             pWaitSemaphores: finished is null ? null : &sem,
             swapchainCount: 1,
