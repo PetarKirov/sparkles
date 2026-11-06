@@ -37,6 +37,7 @@ import sparkles.dql.convention : descriptionOf, enumValueMatches,
     getterName, includeField, queryGetters, queryValueLikeGetter,
     variantAliasesOf, variantNameOf;
 import sparkles.dql.help : DqlPathDoc;
+import sparkles.dql.path : sameDqlPath, writeDqlSegment;
 import sparkles.metadata : Aliases, Description;
 import std.meta : staticIndexOf;
 import std.traits : TemplateArgsOf;
@@ -136,8 +137,20 @@ package(sparkles.dql) struct CollectedSchema
     }
 }
 
+// `segment` after `prefix`, quoted when it is not an identifier (a
+// `@WireName("my.tool")`), so every schema path parses back (SPEC §2.1).
 private string joinSegment(string prefix, string segment) @safe pure
-    => prefix.length ? prefix ~ "." ~ segment : segment;
+{
+    static struct Text
+    {
+        string text;
+        void put(scope const(char)[] part) @safe pure { text ~= part; }
+    }
+
+    Text joined = Text(prefix);
+    writeDqlSegment(joined, segment, prefix.length == 0);
+    return joined.text;
+}
 
 private void emitLeaf(T)(ref CollectedSchema o, string path,
     string description) @safe pure
@@ -297,15 +310,16 @@ package(sparkles.dql) CollectedSchema collectSchema(T,
 // ── membership checks (used by the schema-aware parser) ──────────────────────
 
 /// Whether `path` is a canonical path — or a declared alias of one — in
-/// `Schema`.
+/// `Schema`, compared step by step so a quoted spelling of a segment finds
+/// it too.
 bool isDqlPath(Schema)(scope const(char)[] path) @safe pure nothrow @nogc
 {
     foreach (ref const item; Schema.paths)
     {
-        if (item.path == path)
+        if (sameDqlPath(item.path, path))
             return true;
         foreach (aliasPath; item.aliases)
-            if (aliasPath == path)
+            if (sameDqlPath(aliasPath, path))
                 return true;
     }
     return false;

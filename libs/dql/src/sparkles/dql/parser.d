@@ -142,6 +142,19 @@ struct DqlLexer
         while (idEnd < source.length)
         {
             const ch = source[idEnd];
+            // A quoted path segment (`["my.tool"]`, SPEC §2.1) stays inside
+            // the path's token, whatever bytes its string holds.
+            if (ch == '[' && idEnd + 1 < source.length && source[idEnd + 1] == '"')
+            {
+                size_t close = idEnd + 2;
+                while (close < source.length && source[close] != '"')
+                    close += source[close] == '\\' ? 2 : 1;
+                if (close >= source.length)
+                    return err!DqlToken(DqlParseError("unterminated quoted path segment",
+                        idEnd, source.length - idEnd));
+                idEnd = close + 1;
+                continue;
+            }
             if (ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n' ||
                 ch == '(' || ch == ')' || ch == ',' || ch == '=' || ch == '!' ||
                 ch == '<' || ch == '>' || ch == '&' || ch == '|' || ch == '"' ||
@@ -712,6 +725,25 @@ unittest
     // Test commas inside quoted regex / glob
     auto res8 = parseDql(engine, `regexMatch(text.text, "^[a,b]+$")`);
     assert(!res8.hasError);
+}
+
+@("dql.parser: a quoted path segment stays inside its path token")
+@safe
+unittest
+{
+    DqlEngine engine;
+    auto quoted = parseDql(engine, `["dflags.ldc"] == null && a["x (y) == z"].b != 1`);
+    assert(!quoted.hasError);
+    const left = quoted.value.nodes[0].payload.get!NullCheckPayload;
+    assert(engine.textOf(left.path) == `["dflags.ldc"]`);
+    const right = quoted.value.nodes[1].payload.get!ComparePayload;
+    assert(engine.textOf(right.path) == `a["x (y) == z"].b`);
+
+    auto escaped = parseDql(engine, `globMatch(a["q\"]"], "*")`);
+    assert(!escaped.hasError);
+    assert(engine.textOf(escaped.value.nodes[0].payload.get!GlobPayload.path) == `a["q\"]"]`);
+
+    assert(parseDql(engine, `a["open == 1`).hasError);
 }
 
 @("dql.parser: a group's closing parenthesis ends its expression")

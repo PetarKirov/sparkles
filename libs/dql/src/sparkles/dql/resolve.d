@@ -389,6 +389,53 @@ bool resolveDqlCategory(Schema)(ref const Schema.Subject subject,
     }
 }
 
+@("dql.resolve: a name that is not an identifier prints quoted and resolves")
+@safe unittest
+{
+    import std.sumtype : SumType;
+    import sparkles.metadata : WireName;
+    import sparkles.dql.engine : DqlEngine;
+    import sparkles.dql.eval : evalDql;
+    import sparkles.dql.parser : parseDql;
+    import sparkles.dql.path : validateDqlPath;
+    import sparkles.dql.schema : isDqlPath;
+
+    struct Limits { int[2] range; }
+    struct ToolEvent
+    {
+        @WireName("my.tool") int tool;
+        @WireName("lim its") Limits limits;
+    }
+
+    struct PadEvent { int p; }
+
+    alias Subject = SumType!(ToolEvent, PadEvent);
+    alias Schema = DqlSchema!Subject;
+
+    // Every printed schema path parses back, and names the quoted segment.
+    foreach (ref const item; Schema.paths)
+        assert(validateDqlPath(item.path).hasValue, item.path);
+    assert(isDqlPath!Schema(`tool["my.tool"]`));
+    assert(isDqlPath!Schema(`tool.["my.tool"]`));
+    assert(isDqlPath!Schema(`["tool"]["my.tool"]`));
+    assert(isDqlPath!Schema(`tool["lim its"].range[1]`));
+    assert(!isDqlPath!Schema("tool.my.tool"));
+
+    ToolEvent inner;
+    inner.tool = 4;
+    inner.limits.range = [1, 9];
+    Subject event = inner;
+
+    DqlEngine engine;
+    foreach (query; [`tool["my.tool"] == 4`, `tool["lim its"].range[1] > 8`,
+        `["tool"]["my\u002etool"] != 5`])
+    {
+        auto parsed = parseDql!Schema(engine, query);
+        assert(parsed.hasValue, parsed.error.message);
+        assert(evalDql!Schema(engine, parsed.value, event), query);
+    }
+}
+
 @("dql.resolve: categories match in nested active alternatives")
 @safe unittest
 {

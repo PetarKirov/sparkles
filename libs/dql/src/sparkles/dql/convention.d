@@ -15,6 +15,8 @@ import std.traits : getUDAs, hasUDA;
 
 import sparkles.base.text.case_style : CaseStyle, convertCase;
 import sparkles.metadata : Aliases, AnyFormat, Description, WireNameAttr;
+import sparkles.dql.engine : DqlParseError;
+import sparkles.dql.path : readStep;
 
 // A member's canonical query spelling is its format-neutral `@WireName`: the
 // one tagged `AnyFormat`, the same name every wire format uses.
@@ -185,14 +187,25 @@ package(sparkles.dql) string descriptionOf(alias symbol)() @safe pure
 package(sparkles.dql) size_t consume(scope const(char)[] path,
     scope const(char)[] segment) @safe pure nothrow @nogc
 {
-    if (path.length < segment.length || path[0 .. segment.length] != segment)
+    size_t end;
+    if (path.length >= 2 && path[0] == '[' && path[1] == '"')
+    {
+        // A quoted segment (SPEC §2.1) addresses the name it decodes to.
+        DqlParseError fault;
+        const step = readStep(path, end, true, fault);
+        if (fault.message !is null || !step.nameEquals(segment))
+            return 0;
+    }
+    else if (path.length >= segment.length && path[0 .. segment.length] == segment)
+        end = segment.length;
+    else
         return 0;
-    if (path.length == segment.length)
-        return segment.length;
-    if (path[segment.length] != '.' && path[segment.length] != '[')
+    if (path.length == end)
+        return end;
+    if (path[end] != '.' && path[end] != '[')
         return 0;
-    // A '.' is consumed here; a '[' stays for the index reader.
-    return segment.length + (path[segment.length] == '.' ? 1u : 0u);
+    // A '.' is consumed here; a '[' stays for the index or quoted reader.
+    return end + (path[end] == '.' ? 1u : 0u);
 }
 
 /// Matches a `[digits]` index at the front of `path`; returns the length
@@ -217,8 +230,8 @@ package(sparkles.dql) size_t consumeIndex(scope const(char)[] path,
     if (!any || i >= path.length || path[i] != ']')
         return 0;
     i++;
-    if (i == path.length)
-        return i;
+    if (i == path.length || path[i] == '[')
+        return i; // a following index or quoted segment stays for its reader
     if (path[i] != '.')
         return 0;
     return i + 1;
@@ -250,4 +263,12 @@ unittest
     assert(consumeIndex("[12].x", index) == 5 && index == 12);
     assert(consumeIndex("[2]", index) == 3);
     assert(consumeIndex("[]", index) == 0);
+
+    // A quoted segment addresses the name it decodes to.
+    assert(consume(`["my.key"].x`, "my.key") == 11);
+    assert(consume(`["k\u0065y"]`, "key") == 12);
+    assert(consume(`["key"][0]`, "key") == 7);
+    assert(consume(`["keys"]`, "key") == 0);
+    assert(consume(`["key`, "key") == 0);
+    assert(consumeIndex(`[1]["a"]`, index) == 3 && index == 1);
 }
