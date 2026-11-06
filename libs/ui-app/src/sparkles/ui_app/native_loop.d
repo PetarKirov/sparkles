@@ -239,7 +239,38 @@ private bool measureCellFontImpl(in FontRequest request, in string[] extraSource
     const hh = hhea(face.value);
     const span = hh.hasValue ? long(hh.value.ascender) - hh.value.descender : 0;
     const upem = face.value.unitsPerEm;
-    cell = CellFont(path, px, cast(int)(m.width < 1 ? 1 : m.width), cellH, bytes,
+    // The cell is as wide as the glyphs drawn in it: FTM19's width (the
+    // advance of `0`, rounded to nearest, ties to even) at the exact em the
+    // glyphs draw at — px · upem / span, the raylib arm's
+    // `ScaleForPixelHeight` — not at the whole em the line was measured at.
+    // That em rounds the line's ascent and descent up and the em down (about
+    // 5% at 18 px for a typical monospace face), which left every cell
+    // narrower than its glyph and the text tighter than on the raylib arm.
+    int cellW = cast(int)(m.width < 1 ? 1 : m.width);
+    if (span > 0)
+    {
+        import sparkles.base.text.layout_units : Rational, signedWide, U128;
+        import sparkles.font : advance;
+        import std.math : rint;
+
+        const exact = Ppem.fromRational(Rational(signedWide(long(px) * upem),
+            U128(cast(ulong) span, 0)));
+        const zero = cmap.value.glyph('0');
+        if (exact.hasValue && zero != 0)
+        {
+            auto inst = instance(face.value, InstanceSize.pixels(exact.value), null);
+            if (inst.hasValue)
+            {
+                const a = advance(inst.value, zero, *points);
+                if (a.hasValue && a.value.pixels.hasValue)
+                {
+                    const w = rint(a.value.pixels.value); // ties to even
+                    cellW = w < 1 ? 1 : cast(int) w;
+                }
+            }
+        }
+    }
+    cell = CellFont(path, px, cellW, cellH, bytes,
         loaded !is null ? loaded.bold : load(boldPath),
         loaded !is null ? loaded.italic : load(italicPath),
         loaded !is null ? loaded.boldItalic : load(boldItalicPath),
