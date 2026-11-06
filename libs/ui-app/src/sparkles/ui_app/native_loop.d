@@ -1012,9 +1012,8 @@ bool runNative(alias present, alias handle, alias draw = noDraw, alias setup = n
     }
     // Android is `linux` too, and has neither Wayland nor X11: its window is
     // the activity's, its frames paced by `AChoreographer`. Wayland's are
-    // paced by the compositor's frame callbacks; X11 and AppKit present at
-    // once, and their FIFO swapchains pace them (on AppKit, MoltenVK's
-    // `CAMetalLayer` with display sync).
+    // paced by the compositor's frame callbacks, AppKit's by the view's
+    // display link; X11 presents at once, and its FIFO swapchain paces it.
     version (Android)
         enum supported = true;
     else version (linux)
@@ -1032,8 +1031,7 @@ bool runNative(alias present, alias handle, alias draw = noDraw, alias setup = n
     {
         bool drove;
         const opened = openNative!((ref wsi) {
-            enum kind = backendKindOf!(typeof(wsi));
-            enum paced = kind != BackendKind.x11 && kind != BackendKind.appkit;
+            enum paced = backendKindOf!(typeof(wsi)) != BackendKind.x11;
             drove = drive!(present, handle, draw, setup, shutdown)(wsi, loop, cfg, request,
                 paced: paced);
         })(loop, preferenceOf(cfg.native.windowSystem), wsiConfig);
@@ -2717,7 +2715,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         }
 
         // A frame waits for its opportunity: ask for one where the window
-        // system gives them only on request (Android).
+        // system gives them only on request (Android, AppKit).
         static if (__traits(hasMember, Wsi, "requestFrame"))
             if (plan.askFrame)
                 cast(void) wsi.requestFrame(window);
