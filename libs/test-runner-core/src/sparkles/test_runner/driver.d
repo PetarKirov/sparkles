@@ -94,25 +94,56 @@ struct DriverOutcome
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Whether an executable is reachable through `$PATH`.
+/// Whether an executable is reachable through `searchPath` (`$PATH` by
+/// default). On Windows the file is `name.exe`, as `CreateProcess` finds it:
+/// `$DC=ldc2` names `ldc2.exe` there.
 ///
 /// A local re-implementation rather than `sparkles.core_cli.process_utils.isInPath`:
 /// this module is source-compiled into `base`'s test build, which has no
 /// `core-cli` dependency (the impl-library cycle is `impl → base`).
-private bool inPath(string name) @safe
+private bool inPath(string name, string searchPath = null) @safe
 {
     import std.algorithm.iteration : splitter;
     import std.file : exists, isFile;
-    import std.path : buildPath, pathSeparator;
+    import std.path : buildPath, extension, pathSeparator;
     import std.process : environment;
 
-    foreach (dir; environment.get("PATH", "").splitter(pathSeparator))
+    if (searchPath is null)
+        searchPath = environment.get("PATH", "");
+    version (Windows)
+        const file = name.extension.length ? name : name ~ ".exe";
+    else
+        const file = name;
+    foreach (dir; searchPath.splitter(pathSeparator))
     {
-        const candidate = buildPath(dir, name);
+        const candidate = buildPath(dir, file);
         if (dir.length && candidate.exists && candidate.isFile)
             return true;
     }
     return false;
+}
+
+@("inPath.platformExecutableName")
+@safe
+unittest
+{
+    import std.conv : text;
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.path : buildPath, pathSeparator;
+    import std.process : thisProcessID;
+
+    const dir = buildPath(tempDir, text("sparkles-inpath-", thisProcessID));
+    mkdirRecurse(dir);
+    scope (exit)
+        rmdirRecurse(dir);
+    version (Windows)
+        write(buildPath(dir, "probe-tool.exe"), "");
+    else
+        write(buildPath(dir, "probe-tool"), "");
+
+    const search = "" ~ pathSeparator ~ dir;
+    assert(inPath("probe-tool", search), "found by the name a caller spawns");
+    assert(!inPath("absent-tool", search));
 }
 
 /// The D compiler to use: explicit choice, `$DC`, or the first of
