@@ -11,7 +11,7 @@ host and its canvas. Either way `GuiCanvas` satisfies the canvas concept
 
 What the Vulkan arm cannot do yet is said here rather than at each use: no
 CRT (`NoCrt` stands in, and a configuration that turns it on is reported
-once), no fullscreen, and the system pointer always shows.
+once), and the system pointer always shows.
 */
 module gui_surface;
 
