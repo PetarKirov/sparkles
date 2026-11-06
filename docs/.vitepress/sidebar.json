@@ -2187,6 +2187,14 @@
             "link": "/specs/ui/keymap"
           },
           {
+            "text": "Command palette",
+            "link": "/specs/ui/command-palette"
+          },
+          {
+            "text": "Command-palette state API",
+            "link": "/libs/ui/reference/command-palette"
+          },
+          {
             "text": "Interaction architecture review",
             "link": "/specs/ui/interaction-review"
           },

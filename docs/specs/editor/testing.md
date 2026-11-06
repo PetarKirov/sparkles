@@ -191,3 +191,35 @@ Plug’n’Play Vue symlink failure. With the generated assets retained, a local
 passed in 208.85 seconds and generated all four editor pages. The local
 install did not change committed Yarn configuration or lockfiles. Generated
 source-listing dependency-selection edits were removed from the worktree.
+
+### Palette core checkpoint — 2026-11-06
+
+Checked dirty implementation snapshot on `feat/editor-showcase`, based on
+`b5ea7fddd` over `755e1b9101`, core source blob
+`b038f36ded098cec5900cc8a5dc1f9c6670c1a6c`. Eleven public-behavior tests in
+`ui.command_palette.*` were developed as separate red→green slices: lifecycle,
+catalog ownership/capacity, availability-filtered fuzzy ranking, acceptance,
+navigation, invalidation, catalog replacement and witness/rejected-query behavior.
+Review regressions additionally cover byte/normalization admission and all
+512 default command slots under the worker stack budget.
+
+`dub test :ui --compiler=ldc2 --skip-registry=all` passed 807 tests.
+`dub run --single libs/ui/examples/command-palette.d --compiler=ldc2 -b checked --skip-registry=all`
+printed `save on target 42`. The initial search crashed in a large stack
+initializer through buffer growth; a debugger located the call and in-place
+`base.Unique` initialization fixed the same public search test. The signed
+navigation and stale catalog-index regressions were each observed failing
+before correction.
+
+A fresh cold read and bounded independent core review were followed by a
+repair rereview. The admission finding was fixed with failing byte-length and
+normalization-segment cases before preflight validation was added. The default
+512-entry search first exceeded the 384 KiB worker budget; moving ranking and
+output scratch into the heap owner made the same test pass. The final review
+reported no remaining concrete core findings. The reviewer inspected code;
+test execution counts are the implementer's recorded results.
+
+These results cover core state/discovery only. Shared view/focus adapters,
+effective shortcut agreement, native/TUI rendering and application integration
+remain unverified and keep P open. No device, IME or performance result is
+claimed by these tests.

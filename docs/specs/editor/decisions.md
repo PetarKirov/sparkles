@@ -44,8 +44,15 @@ commands, so enumerating raw bindings is insufficient as its only catalog.
 
 An independent app-specific palette would duplicate context gates, shortcut
 labels and discovery semantics. Existing `Binding`, `bindingsAt`, `LanternState`
-and shared picker state supply reusable mechanisms. The exact descriptor/API
-design is open; [Q1](#4-open-design-questions) governs its implementation gate.
+and shared picker state supply reusable mechanisms. The
+[shared palette contract](../ui/command-palette.md) settles Q1's initial
+identity/storage rules: operation plus a 64-bit argument, opaque invocation
+target and return-focus IDs, session tickets, immutable labels retained by
+value, and explicit rejection above compile-time catalog/query bounds. The
+initial editor integration uses 512 commands and 256 query bytes. Acceptance
+rechecks live availability against the captured target. Shortcut integration
+must still demonstrate agreement with effective keymap resolution before P
+closes.
 
 The owner approved TDD through three public interfaces: state transitions,
 command discovery and shared view integration. The first implementation cycle
@@ -87,7 +94,7 @@ and records the decision before closing the affected delivery gate.
 
 | Question                                                                                                                                                                                                       | Owner / affected obligations                                                 | Resolution point                                                                                                                        |
 | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| Q1: What descriptor exposes unbound commands, invocation targets, context and operation+argument identity while sharing effective keymap policy? What are query/result storage limits and exhaustion outcomes? | `sparkles:ui`; EAP8–EAP11                                                    | Before P implementation; preserve the three approved public test interfaces and EAP10's target/focus distinction                        |
+| Q1: What descriptor exposes unbound commands, invocation targets, context and operation+argument identity while sharing effective keymap policy? What are query/result storage limits and exhaustion outcomes? | `sparkles:ui`; EAP8–EAP11                                                    | Core identity/storage resolved in EAD4; effective-keymap and shared-view proof remain P acceptance gates                                |
 | Q2: What shared layout/context API represents visual affinity, soft wraps and revision identity? What are nonempty-selection collapse, Shift-extension and RTL Home/End semantics?                             | `sparkles:ui`, text/font layout and rendering owners; EAP17–EAP19            | Before U implementation; shared editor owner resolves these observable semantics and updates its contract alongside hand-derived traces |
 | Q3: What host/platform changes deliver live composition and candidate geometry on the actual desktop and Android input methods?                                                                                | `sparkles:ui-app`, `sparkles:wsi`, Android adapter; EAP20                    | Real-IME experiment before claiming native composition                                                                                  |
 | Q4: Which storage operations provide conditional replacement, atomicity and grant retention? What is the race behavior where no conditional write exists?                                                      | Editor storage policy and platform adapter; EAP21–EAP26                      | Adapter experiment before F; recovery format/commit ordering before R                                                                   |
