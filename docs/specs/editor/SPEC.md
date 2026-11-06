@@ -260,11 +260,11 @@ Home/End and drag selection **must** agree with visible rows. Bidi-boundary
 caret affinity **must** be explicit in the shared layout interface and
 observable in diagnostics.
 
-Collapse of a nonempty selection, Shift-extension at bidi boundaries and
-Home/End on an RTL visual row require explicit shared-editor policy before U
-implementation. EAP18 does not silently override the logical collapse policy
-in the owning editor contract. [Q2](./decisions.md#4-open-design-questions)
-blocks that slice until the shared contract and independent traces agree.
+Without Shift, Left/Right **must** collapse a nonempty selection to its visual
+left/right edge. Shift **must** extend from a fixed logical anchor along visual
+caret stops. Home/End **must** mean the visual left/right edge of the wrapped
+row, including RTL rows. The shared editor's layout-aware motion contract owns
+these semantics; logical-only contexts retain their documented fallback.
 
 Unicode segmentation and ordering follow the owning
 [base text contract](../base/text/SPEC.md); editing effects follow
@@ -299,12 +299,12 @@ open document. Non-regular desktop inputs **must not** be opened through a
 blocking file-read path. No implicit normalization or encoding conversion is
 permitted.
 
-Newline insertion, paste and replacement need an explicit document convention
-and mapping to the shared editor's LF insertion semantics. That policy for
-untitled, uniform-ending and mixed-ending files is unresolved under
-[Q7](./decisions.md#4-open-design-questions); file-fidelity implementation and
-acceptance are blocked until it is settled. Preserving existing endings alone
-does not satisfy the insertion cases.
+Enter **must** follow the current logical line's ending, falling back to the
+document's predominant ending and then LF when no ending is established.
+Pasted and replacement text **must** preserve its supplied line endings.
+Untouched mixed endings **must** remain unchanged. The app expresses
+convention-aware Enter as inserted text; the shared editor's generic
+`insertNewline` operation retains its LF semantics.
 
 **EAP22: Save commit point.** Save and Save As **must** retain dirty state
 and recoverable contents until the storage adapter confirms success for the
@@ -357,11 +357,12 @@ revision as recoverable before its checkpoint commits. Orderly exit **must**
 flush authorized retained recovery state or surface failure before claiming
 it was preserved. Unexpected interruption guarantees the last committed
 checkpoint under the storage adapter's stated durability assumptions.
-The permitted uncheckpointed loss window and behavior when recovery storage
-fails during editing require owner acceptance under
-[Q8](./decisions.md#4-open-design-questions) before R implementation. This
-unresolved bound is not permission to silently drop edits or to claim
-zero-loss recovery.
+Dirty buffers **must** be checkpointed within one second after edits; continuous
+typing **must not** postpone every checkpoint indefinitely. Checkpoint failure
+**must** surface a persistent recovery warning while allowing continued editing.
+The durable revision remains the last acknowledged checkpoint, so a failed
+checkpoint explicitly suspends the one-second recovery guarantee until storage
+recovers. Orderly exit **must** flush or ask how to proceed on failure.
 
 ## 7. Diagnostics, workloads and evidence
 

@@ -219,6 +219,15 @@ text and as many ranges as lines **must** insert one line per range
 range collapses it to its start or end instead. Deleting with a non-empty
 range deletes the range.
 
+For a context with visual bidi caret stops, character movement **must** follow
+those stops; a non-extending move collapses to the visual left/right edge of
+the selection. Extending movement keeps the logical anchor fixed. A context
+without visual layout retains logical grapheme motion and logical start/end
+collapse. In a visual context, Home/End **must** select the visual left/right
+edge of the wrapped row, including RTL rows; word/document motion retains its
+logical semantics. Layout-aware context hooks supply these queries without
+duplicating movement policy in a backend.
+
 **EDC3: Word motion and deletion.** `moveWord(±1)` **must** skip every
 segment that is not of kind `word`, then one `word` segment
 ([`TXT-SEG9`](../base/text/SPEC.md#43-boundaries-from-an-arbitrary-position)),

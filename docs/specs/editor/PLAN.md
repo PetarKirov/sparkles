@@ -99,6 +99,6 @@ evidence for a promised capability.
   test; use the existing editor component for query input and the effective
   keymap for shortcut labels. Add generation-stamped row activation before
   pointer integration so old views cannot activate newly ranked commands.
-- Later policy blockers: shared bidi selection semantics (Q2), document
-  newline insertion (Q7) and recovery loss/failure policy (Q8) require explicit
-  owning decisions before their implementation slices begin.
+- Owner policies: visual bidi movement/collapse, convention-aware Enter and
+  one-second recovery checkpoints are accepted in EAD9–EAD11. Layout,
+  storage and scheduling implementations still require their acceptance tests.

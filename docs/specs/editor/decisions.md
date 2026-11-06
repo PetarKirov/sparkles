@@ -86,22 +86,40 @@ presented as equivalent to desktop atomic replacement. Recovery is local
 session behavior; synchronization and collaborative conflict merging are
 excluded.
 
+**Decision EAD9 — accepted, 2026-11-06.** The owner selected visual Left/Right
+collapse, fixed-anchor Shift extension and visual left/right Home/End on all
+wrapped rows. Logical word/document operations keep their semantics. This
+settles Q2's selection policy; the shared layout/context interface still needs
+feasibility evidence.
+
+**Decision EAD10 — accepted, 2026-11-06.** Enter follows the current line's
+ending, then the document's predominant ending, then LF. Paste/replacement
+preserve supplied endings; untouched mixed endings remain intact. This settles
+Q7. Convention-aware Enter uses generic inserted text rather than redefining
+the shared editor's LF command.
+
+**Decision EAD11 — accepted, 2026-11-06.** Dirty-buffer recovery checkpoints
+complete within one second after edits, with a separately visible durable
+revision. Storage failure permits continued editing with a persistent warning;
+orderly exit flushes or asks how to proceed. This settles Q8's loss/failure
+policy without claiming that unacknowledged edits are already durable.
+
 ## 4. Open design questions
 
 These questions concern engineering choices, not permission to omit accepted
 features. The owning implementer resolves each with the bounded experiment
 and records the decision before closing the affected delivery gate.
 
-| Question                                                                                                                                                                                                       | Owner / affected obligations                                                 | Resolution point                                                                                                                        |
-| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| Q1: What descriptor exposes unbound commands, invocation targets, context and operation+argument identity while sharing effective keymap policy? What are query/result storage limits and exhaustion outcomes? | `sparkles:ui`; EAP8–EAP11                                                    | Core identity/storage resolved in EAD4; effective-keymap and shared-view proof remain P acceptance gates                                |
-| Q2: What shared layout/context API represents visual affinity, soft wraps and revision identity? What are nonempty-selection collapse, Shift-extension and RTL Home/End semantics?                             | `sparkles:ui`, text/font layout and rendering owners; EAP17–EAP19            | Before U implementation; shared editor owner resolves these observable semantics and updates its contract alongside hand-derived traces |
-| Q3: What host/platform changes deliver live composition and candidate geometry on the actual desktop and Android input methods?                                                                                | `sparkles:ui-app`, `sparkles:wsi`, Android adapter; EAP20                    | Real-IME experiment before claiming native composition                                                                                  |
-| Q4: Which storage operations provide conditional replacement, atomicity and grant retention? What is the race behavior where no conditional write exists?                                                      | Editor storage policy and platform adapter; EAP21–EAP26                      | Adapter experiment before F; recovery format/commit ordering before R                                                                   |
-| Q5: Which work, queue, history/recovery and regex limits bound resource use and cancellation latency for the agreed workloads?                                                                                 | Shared editor, syntax/search and app owners; EAP7, EAP13, EAP26, EAP29–EAP30 | Resource/workload experiment before respective limits are shipped; measured thresholds before performance acceptance                    |
-| Q6: Which shared highlighted-line and decoration interface preserves syntax under selections/preedit while virtualizing long documents?                                                                        | `sparkles:source-view`, `sparkles:ui`; EAP12–EAP13, EAP17, EAP29             | Highlighting/layout experiment before H; validate Hue's affected consumers                                                              |
-| Q7: What newline convention applies to untitled, uniform-ending and mixed-ending documents, including Enter, paste, replacement and joins, while preserving the shared editor's LF command semantics?          | Editor document policy and shared editor owner; EAP7, EAP21                  | Owner decision before file-fidelity implementation in F; byte fixtures must cover insertion and undo, not just no-op saves              |
-| Q8: What maximum uncheckpointed recovery loss window is acceptable, and how does editing proceed when recovery storage fails?                                                                                  | Application owner and storage adapter; EAP26                                 | Explicit owner decision before R implementation; report durable revision and test interruption before/after acknowledgment              |
+| Question                                                                                                                                                                                                       | Owner / affected obligations                                                 | Resolution point                                                                                                     |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Q1: What descriptor exposes unbound commands, invocation targets, context and operation+argument identity while sharing effective keymap policy? What are query/result storage limits and exhaustion outcomes? | `sparkles:ui`; EAP8–EAP11                                                    | Core identity/storage resolved in EAD4; effective-keymap and shared-view proof remain P acceptance gates             |
+| Q2: What shared layout/context API represents visual affinity, soft wraps and revision identity?                                                                                                               | `sparkles:ui`, text/font layout and rendering owners; EAP17–EAP19            | Movement/collapse policy accepted in EAD9; layout API and hand-derived traces remain U gates                         |
+| Q3: What host/platform changes deliver live composition and candidate geometry on the actual desktop and Android input methods?                                                                                | `sparkles:ui-app`, `sparkles:wsi`, Android adapter; EAP20                    | Real-IME experiment before claiming native composition                                                               |
+| Q4: Which storage operations provide conditional replacement, atomicity and grant retention? What is the race behavior where no conditional write exists?                                                      | Editor storage policy and platform adapter; EAP21–EAP26                      | Adapter experiment before F; recovery format/commit ordering before R                                                |
+| Q5: Which work, queue, history/recovery and regex limits bound resource use and cancellation latency for the agreed workloads?                                                                                 | Shared editor, syntax/search and app owners; EAP7, EAP13, EAP26, EAP29–EAP30 | Resource/workload experiment before respective limits are shipped; measured thresholds before performance acceptance |
+| Q6: Which shared highlighted-line and decoration interface preserves syntax under selections/preedit while virtualizing long documents?                                                                        | `sparkles:source-view`, `sparkles:ui`; EAP12–EAP13, EAP17, EAP29             | Highlighting/layout experiment before H; validate Hue's affected consumers                                           |
+| Q7: How is the accepted newline convention implemented without changing generic LF insertion?                                                                                                                  | Editor document policy and shared editor owner; EAP7, EAP21                  | Policy accepted in EAD10; byte fixtures must cover insertion and undo, not just no-op saves                          |
+| Q8: How are one-second checkpoints scheduled and acknowledged during continuous editing?                                                                                                                       | Application owner and storage adapter; EAP26                                 | Policy accepted in EAD11; report durable revision and test interruption before/after acknowledgment                  |
 
 The source inspection at baseline `02c2176e2e` found logical-line field
 contexts, separately generated code/editor spans, terminal-specific touch
