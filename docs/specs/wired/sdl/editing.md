@@ -46,9 +46,10 @@ SDL-specific and is owned by `sparkles:base`
 An **open document** keeps a host, its parsed document and its node
 handles across a sequence of commits ([§9](#9-open-documents-and-node-handles)),
 and re-parses only the part of the host an edit touched
-([§10](#10-incremental-re-parse)). Out of scope: a concrete syntax tree with
-editable trivia objects, and path selectors ([§8](#8-deferred-capabilities)). The canonical
-writer stays the way to produce a document from a typed value.
+([§10](#10-incremental-re-parse)). A **selector** names the nodes an
+operation targets by a DQL path and filter ([§3.2](#3-2-path-selection)).
+Out of scope: a concrete syntax tree with editable trivia objects. The
+canonical writer stays the way to produce a document from a typed value.
 
 ## Contract at a glance
 
@@ -69,6 +70,11 @@ writer stays the way to produce a document from a typed value.
 | SDE13 | A failed commit leaves the host, the document and every handle as they were                  |
 | SDE14 | An incremental re-parse produces exactly the document a full re-parse would                  |
 | SDE15 | An edit the incremental reader cannot localize falls back to a full re-parse                 |
+| SDS1  | A selector's path is a DQL path, and a malformed one is rejected at its offset               |
+| SDS2  | A path selects nodes or attributes by name-and-index child steps, in document order          |
+| SDS3  | A filter is a DQL expression evaluated with each selected node as its subject                |
+| SDS4  | Path-only selection is `@safe pure nothrow @nogc` and allocates nothing                      |
+| SDS5  | Editor operations accept a selection and apply once per target                               |
 
 ## 1. Model
 
@@ -204,6 +210,71 @@ Surplus new children of a node without a block are appended in one block.
 Members the schema does not claim are never touched, a name spelled through
 an alias is kept, and scalars compare by canonical spelling, so `` `a` ``
 stays `` `a` `` when the value is `"a"`.
+
+### 3.2 Path selection
+
+A caller can select the targets of an operation with a path instead of
+nested child loops. The path uses the
+[DQL path grammar](../../dql/SPEC.md#_2-1-path-addressing-grammar), and an
+optional [DQL](../../dql/SPEC.md) filter expression narrows what it selects,
+so the repository has one query language rather than one per format.
+
+**SDS1 — The path is a DQL path.** A path is
+`Segment ( "." Segment | "[" Digits "]" )*`, read by `sparkles.dql.path`. A
+segment is a run of bytes that the DQL lexer keeps inside one identifier,
+excluding `.`, `[` and `]`; it names an SDL qualified name, split at its first
+`:` into namespace and local name, and matches that name exactly (an
+unprefixed segment matches only unnamespaced names, as `byChild` does). An
+index follows a segment and counts, from zero, the nodes of that name under
+one parent. A malformed path — an empty segment, an index before any segment,
+non-digits or an overflowing number inside `[]`, an unclosed `[` — is
+rejected with the byte offset of the fault, and nothing is selected.
+_Oracle:_ a table of accepted and rejected paths with their offsets.
+_Violation:_ a malformed path that selects, or a well-formed one rejected.
+
+**SDS2 — A path selects by child steps.** From a start node (the root, for
+a document), a node selection of n segments yields, in document order, every
+node reached by n child steps, where each step keeps the children whose name
+the segment names and, when it carries an index k, only the k-th of them. An
+index past the last match selects nothing. An attribute selection treats its
+last segment as an attribute name instead, with its index counting that
+node's attributes of the name, and yields attributes in document order.
+SDL names may contain `.`, which the grammar reserves as the separator, so
+neither a selection nor a filter can address such a name. _Oracle:_ over every repository recipe,
+every name path present to depth three, with and without an index, against
+nested `byChild` and `byAttribute` loops. _Violation:_ a missing, extra or
+reordered target.
+
+**SDS3 — A filter is DQL over the selected node.** The filter is parsed
+by `parseDql` and evaluated by `evalDql` with each selected node — for an
+attribute selection, the node that holds the attribute — as the subject. A
+path in the filter is zero or more child steps, each taking the first child
+of its name or, with an index, the k-th, followed by a leaf: `values[i]`,
+the node's i-th value, or an attribute name, its first attribute of that
+name. A bare identifier (a DQL category) holds when the node has a child at
+that path. Strings compare as text, booleans as `bool`, integers as `long`,
+and floats and decimals as `double`; an absent target, or an SDL `null`, is
+`== null`. A target of another kind (a character, binary, date or
+duration) is not null and fails every comparison and match, and so does a
+malformed leaf (`values` without an index, an index on an attribute name).
+_Oracle:_ over every repository recipe, a fixed set of filters against the
+hand-written predicates they spell. _Violation:_ a node kept or dropped
+against its predicate.
+
+**SDS4 — Path-only selection allocates nothing.** Reading a path and
+walking a selection without a filter is `@safe pure nothrow @nogc`, holds a
+borrowed path and a cursor per segment, and visits only the children of the
+nodes each step keeps. A filter allocates while it is parsed (the DQL
+engine's pools and compiled matchers); evaluating it allocates only where
+DQL's own evaluation does (`regexMatch`). _Oracle:_ a `@nogc` unittest.
+_Violation:_ an allocation or attribute failure in that test.
+
+**SDS5 — Operations take selections.** `remove`, `removeAttribute`,
+`replaceAttribute` and `setAttribute` also accept a range of the targets they
+take, and apply the one operation to each in order. The edits are those of
+the single-target operations, so SDE1 to SDE3 apply to each, and two targets
+whose ranges overlap are `editConflict`. _Oracle:_ a range call and the loop
+of single calls write the same output. _Violation:_ different output.
 
 ## 4. Requirements
 
@@ -409,9 +480,9 @@ to re-parse fragments and its result. The constructor checks that the host's
 bytes are the document's source or, for an embedded recipe, that the
 rendering of the host is; otherwise every operation fails with
 `editTargetMissing`. Each operation records its first failure in the
-editor; `write` reports it. Selection uses the existing document API —
-filtered child and attribute ranges, `SdlNameQuery`, extents and comment
-spans — so the editor adds no query language.
+editor; `write` reports it. Selection uses the document API — filtered
+child and attribute ranges, `SdlNameQuery`, extents and comment spans — or a
+path selector (§3.2), whose query language is DQL's.
 
 Writing checks SDE2 by re-parsing the output under `config` and comparing its
 node count with the count the operations imply (a region replacement makes
@@ -495,9 +566,10 @@ syntax highlighter's injection of the SDL grammar.
 
 ## 8. Deferred capabilities
 
-- **Path selectors** (the DQL path grammar as a node query). Entry
-  condition: a second consumer whose selection is not a name-and-value
-  filter.
+None remain. Path selectors, persistent node handles and incremental
+re-parse were delivered ahead of their entry conditions: see
+[§3.2](#3-2-path-selection), [§9](#9-open-documents-and-node-handles) and
+[§10](#10-incremental-re-parse).
 
 ## 9. Open documents and node handles
 

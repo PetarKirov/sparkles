@@ -367,6 +367,33 @@ editor, codec and conformance test unchanged (SDP7); `sdl.commit` and
 `sdl.edit` improve in retired instructions per byte, and `sdl.parse` does
 not regress (SDP2).
 
+### S23 — Path selectors
+
+[Path selection](./editing.md#3-2-path-selection) (SDS1–SDS5): a DQL path
+selects nodes or attributes, and an optional DQL filter narrows them. The
+path grammar is read by a shared reader in `sparkles:dql`, and the filter is
+parsed and evaluated by DQL's own parser and host-resolver evaluator, so
+`sparkles:wired` gains a dependency on `sparkles:dql` and no second query
+language. The owner asked for it on 2026-11-06, ahead of the entry condition
+editing §8 had set (a second consumer whose selection is not a
+name-and-value filter).
+
+Gate:
+
+- the path reader accepts exactly DQL §2.1 — a table of accepted and
+  rejected paths, each rejection at its byte offset — and is
+  `@safe pure nothrow @nogc`;
+- SDS2's oracle: over every repository recipe, every name path present in it
+  to depth three, with and without an index, selects exactly what nested
+  `byChild` loops select, in the same order; attribute selections likewise
+  against nested `byAttribute` loops;
+- SDS3's oracle: over every repository recipe, a fixed set of filters —
+  comparisons on values and attributes, null checks, categories, `&&`, `||`,
+  `!`, and `globMatch` — keeps exactly what the hand-written predicate keeps;
+- a path-only selection runs in a `@safe pure nothrow @nogc` test;
+- the editor's range overloads apply one operation per selected target, and
+  one consumer's hand-written name-and-value filter moves onto a selector.
+
 ## S21–S22 closure: 2026-11-06
 
 | Milestone | Gate                                                          | Evidence                                                                                                                                                                                                                                                    |
