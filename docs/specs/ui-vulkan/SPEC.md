@@ -71,9 +71,10 @@ owned by `sparkles:vulkan` and specified in [memory.md](../vulkan/memory.md).
 Moving the terminal's own raylib painting behind an interface this canvas can
 implement belongs to `sparkles:terminal-view`; the [delivery plan](./PLAN.md)
 sequences that work with this library, and only together do they run the
-terminal without raylib. Out of scope here are macOS, where Vulkan runs only
-through a translation layer and applications keep the raylib canvas until
-Skia Graphite draws with Metal; multi-pass visual effects such as bloom and
+terminal without raylib. macOS is in scope: Vulkan runs there through MoltenVK
+on the AppKit window's `CAMetalLayer`, so this canvas is to be the native
+renderer on every desktop and the raylib canvas a compatibility configuration.
+Out of scope here are multi-pass visual effects such as bloom and
 the CRT tube; and Skia Graphite itself, the general-purpose renderer the
 window-system plan schedules after this library.
 Open questions [UVQ1 and UVQ2](./decisions.md#open-questions) track the last

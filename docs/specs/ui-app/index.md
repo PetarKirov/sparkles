@@ -152,7 +152,9 @@ sparkles:ui-app  → ui, input, core-cli        config "tui":  + ui-tui
 
 The graph above is the shipped phase-1 raylib host. The accepted next graph is
 specified by [`sparkles:wsi`](../window-system-integration/SPEC.md): native Wayland,
-X11, Win32, and AppKit windowing joins this host's existing Event Horizon loop, then
+X11, Win32, and AppKit windowing joins this host's existing Event Horizon loop, drawn
+by `sparkles:ui-vulkan` — on macOS through MoltenVK, the native arm running on AppKit
+with the window system chosen by `--window-system auto|wayland|x11|appkit` — then
 Skia Graphite supplies Vulkan rendering on Linux/Windows and Metal on macOS. SDL 3
 and raylib remain explicit compatibility configurations; they are never silent
 fallbacks behind the native selection. Applications still call the same `runApp`
