@@ -47,6 +47,7 @@ import sparkles.ui.geometry : Size;
 import sparkles.ui.image : ImageRegistry;
 import sparkles.ui_app.backend : Backend;
 import sparkles.ui_app.gui_options : FontRequest, WindowCells, WindowSystem;
+import sparkles.ui_app.interface_font : InterfaceMeasure, uiFontFamilyOf, uiStepSizes, xHeightRatio;
 import sparkles.ui_app.host : HostState, isHost, noDraw, noSetup, noShutdown, PointerUnit,
     RunConfig, TouchGestures, withRealSize;
 import sparkles.ui_app.lifecycle : Failure, FrameResult, Lifecycle, Rebuild, Surface;
@@ -272,6 +273,84 @@ private bool measureCellFontImpl(in FontRequest request, in string[] extraSource
     return true;
 }
 
+/**
+Finds and reads the interface face (`UVK20`, design-system `GLY10`) into
+`session`: `request.font.ui` (`--ui-font`) where given, else the desktop's
+interface font where `desktop` names one, else a conventional sans list
+(`uiFontFamilyOf`) — resolved like the cell font, through the system font
+database or the request's directories, and on Android from `/system/fonts`
+(Roboto). Leaves `session.uiRegular` empty where nothing resolves or `none`
+was asked for: interface runs then draw in the cell font.
+*/
+void resolveInterfaceFace(ref NativeSession session, in NativeRequest request,
+    in SystemAppearance desktop) @system
+{
+    import std.file : read;
+    import sparkles.raylib_text.font_discovery : FontSources;
+    import sparkles.raylib_text.font_resolve : resolveUiFace;
+
+    session.uiRegular = session.uiBold = null;
+    const family = uiFontFamilyOf(request.font.ui, desktop);
+    if (!family.length)
+        return;
+    FontSources sources;
+    sources.dirs = request.font.searchDirs.dup ~ request.extraFontSources.dup;
+    sources.useSystemFontDb = request.font.useSystemFontDb;
+    version (Android)
+    {
+        sources.dirs ~= "/system/fonts";
+        sources.useSystemFontDb = false;
+    }
+    string regular, bold;
+    if (!resolveUiFace(family, sources, regular, bold))
+    {
+        whyNot(i"no interface face resolved for `$(family)`: interface text draws in the cell font");
+        return;
+    }
+    try
+    {
+        session.uiRegular = cast(const(ubyte)[]) read(regular);
+        if (bold.length)
+            session.uiBold = cast(const(ubyte)[]) read(bold);
+    }
+    catch (Exception e)
+    {
+        whyNot(i"the interface face `$(regular)` could not be read: $(e.msg)");
+        session.uiRegular = session.uiBold = null;
+    }
+}
+
+@("ui_app.native_loop.resolveInterfaceFace")
+@system unittest
+{
+    import std.path : buildPath;
+    import std.process : environment;
+    import sparkles.appearance.types : parseFontDescription;
+    import std.file : getSize;
+
+    const dir = environment.get("SPARKLES_FONTS_PATH");
+    assert(dir !is null, "SPARKLES_FONTS_PATH is unset: run inside `nix develop`");
+    NativeSession session;
+    NativeRequest request;
+    request.font.searchDirs = [dir];
+    // The desktop's family wins over the list, from the request's directories.
+    SystemAppearance desktop;
+    desktop.font = parseFontDescription("Noto Sans 11");
+    desktop.hasFont = true;
+    resolveInterfaceFace(session, request, desktop);
+    assert(session.uiRegular.length == getSize(dir.buildPath("NotoSans.ttf")),
+        "Noto Sans, as the desktop names it");
+    // `--ui-font` wins over the desktop; a path names its file.
+    request.font.ui = dir.buildPath("Roboto-Regular.ttf");
+    resolveInterfaceFace(session, request, desktop);
+    assert(session.uiRegular.length == getSize(request.font.ui));
+    assert(session.uiBold.length == getSize(dir.buildPath("Roboto-Bold.ttf")), "its bold sibling");
+    // `none` keeps the interface in the cell font.
+    request.font.ui = "none";
+    resolveInterfaceFace(session, request, desktop);
+    assert(!session.uiRegular.length && !session.uiBold.length);
+}
+
 /// Why the native arm did not open, on standard error — logcat on Android,
 /// where standard error goes nowhere: the run reports only that it failed,
 /// and an application need not have set up a logger.
@@ -317,6 +396,11 @@ struct NativeSession
     PreparedSpecimenFont specimen; /// independent preview, em pixels
     FallbackFace[] specimenFallbackFaces; /// retained conversion of supplied script faces
     CellFont interfaceFont; /// stable UI font while the preview drives the UI
+    /// The interface face (`UVK20`, design-system `GLY10`): its regular and
+    /// bold files' bytes, empty where none resolved, and whether the canvas
+    /// draws it — what the target declares `proportionalText` by.
+    const(ubyte)[] uiRegular, uiBold;
+    bool uiFaceBound; /// ditto
     bool delegate(in SpecimenFontRequest) @system setSpecimen; ///
     ulong specimenGeneration; /// latest accepted request
     MonoTime specimenRequestedAt; /// event arrival, when supplied by the caller
@@ -372,6 +456,69 @@ private FallbackFace[] preparedFallbacks(ref NativeSession session) @safe
         session.specimenFallbackFaces[i] = FallbackFace(source.bytes, session.specimen.ppem,
             source.faceIndex, source.contentHash);
     return session.specimenFallbackFaces;
+}
+
+/**
+The canvas's interface faces, as `InterfaceMeasure` reads them (`GLY10`).
+The host hands one out only while the canvas lives.
+
+$(B Why `@trusted nothrow @nogc`.) Measuring reads the canvas's faces and
+shapes into its own caches — fixed-capacity, malloc-backed — through the
+glyph source's delegates and HarfBuzz, typed `@system` and unannotated
+because they share code with drawing, which uploads to the atlas. The
+measure-only path changes no layout-visible state and allocates no GC
+memory (`ui_vulkan.canvas.measuringAnInterfaceRunAllocatesNoGcMemory`), so it
+is safe and `@nogc` in fact; an exception is caught here, not thrown through.
+The layout's wrap solver needs the attributes: with a measurer that is not
+`nothrow @nogc` it measures every candidate through a value-compared cache,
+which took the gallery's layout from under a millisecond to a second a frame.
+*/
+struct NativeFaces
+{
+    private NativeCanvas* canvas_;
+
+    /// See `VulkanCanvas.interfaceWidthPx`.
+    double interfaceWidthPx(scope const(char)[] text, int step, bool bold) @trusted nothrow @nogc
+    {
+        static double measured(NativeCanvas* canvas, scope const(char)[] text, int step, bool bold)
+            @system nothrow
+        {
+            try
+                return canvas.interfaceWidthPx(text, step, bold);
+            catch (Exception)
+                return -1;
+        }
+
+        alias Measured = double function(NativeCanvas*, scope const(char)[], int, bool)
+            @system nothrow @nogc;
+        return canvas_ is null ? -1 : (cast(Measured) &measured)(canvas_, text, step, bold);
+    }
+
+    /// See `VulkanCanvas.interfaceStep`.
+    InterfaceStep interfaceStep(int step) const @safe pure nothrow @nogc
+        => canvas_ is null ? InterfaceStep.init : canvas_.interfaceStep(step);
+}
+
+@("ui_app.native_loop.theMeasurerKeepsTheWrapSolversDirectPath")
+@safe nothrow @nogc
+unittest
+{
+    import sparkles.ui.layout : isIncrementalTextMeasure, isStyledTextMeasure,
+        monotoneMeasurePrefixes;
+    import sparkles.ui.style : TextStyle;
+
+    alias M = InterfaceMeasure!NativeFaces;
+    static assert(isStyledTextMeasure!M && isIncrementalTextMeasure!M && monotoneMeasurePrefixes!M);
+    // `nothrow @nogc`, as the wrap solver's direct path needs (`NativeFaces`).
+    static assert(is(typeof(() @safe nothrow @nogc {
+        M m;
+        int w = m.width("x", TextStyle.init) + m.rows(TextStyle.init);
+        auto run = m.brushMetrics(TextStyle.init);
+        w += run.append("x");
+    })));
+    // With no canvas, the cells.
+    auto m = M(NativeFaces.init, true, 10, 20);
+    assert(m.width("abc", TextStyle.init) == 3);
 }
 
 /// The host an application sees in a native window.
@@ -548,6 +695,23 @@ struct NativeHost
     /// valid in the draw phase, inside the frame bracket. A pointer, so it
     /// copies like the raylib arm's canvas value.
     NativeCanvas* canvas() @safe pure nothrow @nogc => session_.canvas;
+
+    /**
+    The text measurer layout and the display list use on this target
+    (`GLY10`): interface runs as the canvas draws them in the interface face
+    while the target draws it, cell metrics otherwise — so a narrowed preview
+    lays out as the terminal would. Asked after `view`, so it also tells the
+    canvas whether to draw interface runs in their face this frame: a
+    narrowing made while building the frame lays out and draws alike.
+    */
+    InterfaceMeasure!NativeFaces textMeasure() @system
+    {
+        const faces = target.proportionalText && session_.canvas !is null;
+        if (session_.canvas !is null)
+            session_.canvas.interfaceFaces(faces);
+        return InterfaceMeasure!NativeFaces(NativeFaces(session_.canvas), faces,
+            session_.font.cellW, session_.font.cellH);
+    }
 
     /// No ring paces this arm's daemons yet: a component keeps its polled
     /// path (`HST15`).
@@ -877,6 +1041,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         }
     }
     appearance = appearance.overriddenBy(pinnedAppearance);
+    resolveInterfaceFace(session, request, appearance);
     // The frame's share: the layout and the title's face, set again only
     // when they change.
     void frameAppearance(in SystemAppearance a, bool started)
@@ -1082,6 +1247,28 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
             gpu.destroy();
         });
 
+    /*
+    The interface face, at every type step (`UVK20`, design-system `GLY10`),
+    sized as the raylib arm's `UiFonts` is: the steps' density-independent
+    px at the surface's scale (1 for a pinned capture), or — `RunConfig.
+    uiFollowsCellFont` — the body step at the cell font's size, the rest in
+    proportion, shrunk so its x-height is the cell font's. Bound again with
+    the cell font: a font size, a scale, a new device.
+    */
+    void bindInterfaceFace()
+    {
+        import sparkles.raylib_text.ui_sizing : xHeightMatched;
+
+        session.uiFaceBound = false;
+        if (!gpu.up || !session.uiRegular.length)
+            return;
+        const scale = request.fontSizePxOverride > 0 ? 1.0f : cast(float) session.scale;
+        auto sizes = uiStepSizes(scale, cfg.uiFollowsCellFont ? session.font.px : 0);
+        if (cfg.uiFollowsCellFont)
+            sizes = xHeightMatched(sizes, xHeightRatio(session.uiRegular, session.font.bytes));
+        session.uiFaceBound = gpu.canvas.interfaceFont(session.uiRegular, session.uiBold, sizes);
+    }
+
     // The cell font the canvas draws text with, at the size just measured
     // (`UVK18`).
     void bindFont()
@@ -1124,6 +1311,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
             if (follows)
                 gpu.canvas.textRendering(session.specimenRendering);
         }
+        bindInterfaceFace();
     }
 
     bool nativeIo(bool delegate() @system work)
@@ -2353,7 +2541,33 @@ private void flushInput(alias handle)(ref NativeHost host, ref WsiInput input, r
 private void buildFrame(alias present)(ref NativeHost host, bool mustDraw)
 {
     host.beginFrameState(mustDraw: mustDraw);
+    declareFaces(host);
     present(host);
+}
+
+// The target declares `proportionalText` while the canvas draws the
+// interface face (`GLY10`, `CAP1`): it follows a rebinding — a font size,
+// a scale, a rebuilt device — from the next frame on.
+private void declareFaces(ref NativeHost host) @safe pure nothrow @nogc
+{
+    auto declared = host.declaredTarget;
+    declared.proportionalText = host.session_.uiFaceBound;
+    host.declareTarget(declared);
+}
+
+@("ui_app.native_loop.declaresProportionalTextWhileTheFaceIsBound")
+@system pure nothrow @nogc
+unittest
+{
+    NativeSession session;
+    NativeHost host;
+    host.session_ = &session;
+    declareFaces(host);
+    assert(!host.target.proportionalText, "no interface face: interface runs in the cells");
+    session.uiFaceBound = true;
+    declareFaces(host);
+    assert(host.target.proportionalText);
+    assert(host.target.colorDepth == host.declaredTarget.colorDepth, "the rest kept");
 }
 
 /**
@@ -2613,6 +2827,8 @@ private FrameOutcome drawFrame(alias draw)(ref Gpu gpu, ref NativeHost host,
         fillWindowGround(gpu.canvas, session, ground);
     {
         auto paintZone = cpuZone!"paint";
+        // Interface runs in their face while the target draws it (`UVK20`).
+        gpu.canvas.interfaceFaces(host.target.proportionalText);
         paint(gpu.canvas, host.ops()[]);
     }
     {
