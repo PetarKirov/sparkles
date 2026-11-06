@@ -164,16 +164,38 @@ already has produces no edit.
 ### 3.1 Typed write-back
 
 `updateSDL(editor, node, value)` encodes `value` canonically and walks `node`
-beside the encoding, field by field of the schema: positional values that
-differ become one value replacement; a field's attributes pair by position
-and change in place, or are removed and inserted when their count changes; a
-field's children pair by position (a map's by key) — a plain aggregate is
-updated recursively, a scalar child changes its values, anything else is
-replaced whole — and surplus children are removed while missing ones are
-inserted after the field's last child, or appended to the node in one block.
-A scalar sequence compares its values flattened across occurrences, since the
-typed value keeps no boundary between them. Members the schema does not claim
-are never touched, and scalars compare by canonical spelling, so `` `a` ``
+beside the encoding, field by field of the schema. `node` is the root or any
+node that decodes as the value's type; its own name is the caller's choice
+and is not compared.
+
+- **Values and attributes.** Positional values that differ become one value
+  replacement. A field's attributes pair by position and change in place, or
+  are removed and inserted when their count changes.
+- **Aggregate sequences** pair by identity: an element's name and positional
+  values (`configuration "lib"`, `dependency "a"`). Each new element takes
+  the first unpaired old element of the same identity. Of those pairs, the
+  longest run that is in the same relative order in both keeps its nodes and
+  is updated recursively. Between two kept pairs, the remaining old and new
+  elements pair by position and change in place, so a changed identity keeps
+  its comments. Surplus old elements are removed with their attached
+  comments. Surplus new ones are inserted after the last node left in place
+  before them; when there is none, after the sibling just above the next
+  kept element and its comments; when the field has no element left, they
+  are appended.
+- **Reordering** is not a move. The longest run keeps its bytes; an element
+  outside it is written canonically at its new place and its old node is
+  removed with its attached comments.
+- **Other children.** A map pairs by key. A scalar child — a union among
+  them, since SDL unions are scalar (SPEC §6) — changes its values in
+  place; another non-aggregate child that differs is replaced whole. An
+  aggregate whose name is data (`@SdlTagName`, `@SdlTagNamespace`) is a
+  different node when that name changes, and is replaced whole.
+- **Scalar sequences** compare their values flattened across occurrences,
+  since the typed value keeps no boundary between them.
+
+Surplus new children of a node without a block are appended in one block.
+Members the schema does not claim are never touched, a name spelled through
+an alias is kept, and scalars compare by canonical spelling, so `` `a` ``
 stays `` `a` `` when the value is `"a"`.
 
 ## 4. Requirements
