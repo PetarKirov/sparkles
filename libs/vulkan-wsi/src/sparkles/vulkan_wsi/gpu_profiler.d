@@ -94,6 +94,32 @@ long hostNanos(ulong value) @safe pure nothrow @nogc
         return cast(long) value; // CLOCK_MONOTONIC, in nanoseconds
 }
 
+version (OSX)
+    private extern (C) ulong mach_continuous_time() nothrow @nogc;
+version (OSX)
+    private extern (C) ulong mach_absolute_time() nothrow @nogc;
+
+/**
+What to subtract from a host sample of $(LREF monoTimeDomain) to put it on
+`MonoTime`'s clock, in nanoseconds: zero where the domain is that clock. On
+macOS MoltenVK samples `mach_continuous_time`, which counts the time the
+machine slept, and `MonoTime` is `mach_absolute_time`, which does not; the
+two differ by that sleep, read here, as the calibration is, at one instant.
+*/
+long hostClockOffsetNanos() @trusted nothrow @nogc
+{
+    version (OSX)
+    {
+        import core.time : ticksToNSecs;
+
+        const continuous = mach_continuous_time();
+        const absolute = mach_absolute_time();
+        return continuous > absolute ? ticksToNSecs(cast(long)(continuous - absolute)) : 0;
+    }
+    else
+        return 0;
+}
+
 /// ditto
 struct GpuProfiler
 {
@@ -366,7 +392,7 @@ struct GpuProfiler
         if (sample(vk.device.device, 2, infos.ptr, values.ptr, &deviation) != VkResult.VK_SUCCESS)
             return false;
         calibration = GpuCalibration(gpuTicks: values[0] & mask,
-            hostNanos: hostNanos(values[1]), valid: true);
+            hostNanos: hostNanos(values[1]) - hostClockOffsetNanos(), valid: true);
         calibratedAt = now;
         return true;
     }
@@ -731,11 +757,17 @@ version (unittest)
 
     const t0 = clock.originTime + 5.msecs;
     FrameRecord r;
+    // The host samples move onto `MonoTime`'s clock by the host's sleep
+    // (macOS; zero elsewhere), constant while the machine is awake — read
+    // here and in the calibration a moment apart, so within a clock tick.
+    const slept = hostClockOffsetNanos();
+    static bool near(Duration a, Duration b) => (a > b ? a - b : b - a) <= nsecs(1_000);
+    static bool nearNs(long a, long b) => (a > b ? a - b : b - a) <= 1_000;
     assert(p.collect(vk, 0, r, clock, t0));
     assert(gpu.calibrations == 1);
     with (r.scopes[0])
         assert(calibrated && took == nsecs(2000)
-            && start == nsecs(7_000_000_000 + 1000 - originNanos));
+            && near(start, nsecs(7_000_000_000 - slept + 1000 - originNanos)));
 
     // Within the second the same calibration serves; after it, a new one.
     gpu.calibrationAnswer = [100_000, 8_000_000_000];
@@ -747,8 +779,9 @@ version (unittest)
     FrameRecord later;
     assert(p.collect(vk, 0, later, clock, t0 + 1000.msecs));
     assert(gpu.calibrations == 2);
-    assert(later.scopes[0].start == nsecs(8_000_000_000 + 500 - originNanos));
-    assert(p.currentCalibration == GpuCalibration(100_000, 8_000_000_000, true));
+    assert(near(later.scopes[0].start, nsecs(8_000_000_000 - slept + 500 - originNanos)));
+    const c = p.currentCalibration;
+    assert(c.gpuTicks == 100_000 && c.valid && nearNs(c.hostNanos, 8_000_000_000 - slept));
 }
 
 @("vulkan_wsi.gpu_profiler.abandonedFramesAndForeignLabels")
