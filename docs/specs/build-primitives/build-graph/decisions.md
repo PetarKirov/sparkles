@@ -9,7 +9,7 @@ reviewed: 2026-11-01
 Each record states its question, the alternatives, the choice and when to
 revisit it. Records marked **accepted** were accepted by the owner: D1–D17 on
 2026-11-01, in a design interview to rework the `apps/ci` task DAG;
-D18–D21, the E0 spike results, on 2026-11-02; and D22–D23, from E1, on
+D18–D21, the E0 spike results, on 2026-11-02; and D22–D25, from E1, on
 2026-11-06. The records from D30 on answer a review of the
 [build-systems catalog](../../../research/build-systems/index.md), and those
 marked accepted were accepted on 2026-11-06. Records marked **proposed** await
@@ -579,40 +579,52 @@ of dub's code.
 
 **Revisit when** a disagreement traces to one of these copies.
 
-## D24: A test that reads a specification (proposed)
+## D24: A test reads a specification through a link (accepted)
 
-**Question.** `sparkles:ui-app`'s unittest configuration string-imports
+**Question.** `sparkles:ui-app`'s unittest configuration string-imported
 `docs/specs/ui-app/resilience.md` through `stringImportPaths
 "../../docs/specs/ui-app"`, so that its tests check the scenarios the
-specification lists. The directory belongs to no sub-package, only to the root
-recipe, which builds nothing. BGR8 reports the reach. Package selection
-assigns the file to no package, so editing it selects no test. How does a
-test read a specification?
+specification lists. That directory belongs to no sub-package. BGR8 reports
+the reach. How does a test read a specification?
 
 **Alternatives.**
 
+- **A link in the package:** `libs/ui-app/spec/resilience.md` is a committed
+  relative symlink to the catalog, and the configuration imports `spec`.
 - **A specification package:** `docs/specs/ui-app/dub.sdl` declares a
-  `sourceLibrary` with `stringImportPaths "."` and no sources. The root
-  recipe lists it, and the unittest configuration depends on it. dub folds
-  a source library's settings into each consumer (BGR3 step 1), so the test
-  build keeps the same string import path. The directory gains an owner, so
-  selection maps an edit to the catalog to `ui-app`'s tests.
+  `sourceLibrary` that owns the directory, and the unittest configuration
+  depends on it.
 - **Move the catalog** into `libs/ui-app/` and include it from the
-  specification page. Specifications then no longer live under
-  `docs/specs/`.
-- **Exempt the root recipe:** a recipe that builds nothing owns no
-  directory, so a reach into a path no sub-package owns is no hidden edge.
-  The files read are still inputs of the compile (§5), but selection keeps
-  missing them.
+  specification page.
 
-**Choice.** Proposed: a specification package. It is the only alternative
-that keeps both BGR8's rule and the specification's place.
+**Choice.** A link in the package, which the owner preferred, because the
+catalog stays where the specifications live. Each of its consequences was
+checked:
 
-**Revisit when** a second package's tests read a specification: each gets
-its own specification package, or a shared one if two read the same
-catalog.
+- **The resolver and BGR8:** paths are normalized lexically (D22), so
+  `spec` is inside the package, and oracle 13 reports nothing for
+  `ui-app`. oracle 1 agrees with dub on the request.
+- **dub:** it follows the link. `resilience.catalogMatchesTheSuite` reads
+  the catalog through it and passes.
+- **Nix:** the flake's source keeps the link as a symlink, and it resolves
+  inside the copied tree.
+- **Windows:** without `core.symlinks`, Git checks the link out as a text
+  file that holds the target path. ui-app's suite is not in the Windows leg
+  (`ci/test-windows.sh`), and the tree already holds two such links.
+- **The docs build:** the catalog has not moved, so the page is unchanged.
 
-## D25: The migration comparison snippets (proposed)
+The specification package was rejected: `ci --test` names a sub-package
+after its directory, so a package in `docs/specs/ui-app` would run as
+`ui-app` a second time, and a source library with no sources cannot be the
+root of `dub test`.
+
+The link has one known limit: package selection maps an edit by its path,
+so an edit to the catalog itself selects no package, as before.
+
+**Revisit when** ui-app's suite joins the Windows leg, or selection learns
+to map a link's target to the package that holds the link.
+
+## D25: The migration comparison snippets (accepted)
 
 **Question.** `ci --example-files` runs
 `docs/libs/event-horizon/tutorial/snippets/`, 70 of whose programs depend on
@@ -633,7 +645,7 @@ as refused by both. Are they in scope?
   dependencies the locks pin; the comparison suite keeps running through dub,
   online, until it is pinned.
 
-**Choice.** Proposed: leave them out of scope for E1, and pin them when
+**Choice.** Leave them out of scope for E1, and pin them when
 `ci --example-files` moves onto the build graph. They compare other
 libraries' behaviour; none is a dependency of this repository's packages.
 
