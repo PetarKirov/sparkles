@@ -341,6 +341,32 @@ Gate:
   that node.
 - Laws 4 and 5 of SPEC §10, unchanged.
 
+### S21 — Persistent node handles
+
+The owner asked on 2026-11-06 for the deferred editing capabilities without
+waiting for their entry conditions. This milestone delivers a growable slot
+table in `sparkles.base.pool` (POOL19–POOL21), and `SdlOpenDocument` with
+node handles carried across commits ([editing §9](./editing.md#9-open-documents-and-node-handles),
+SDE11–SDE13).
+
+Gate: the pool tests for POOL19–POOL21 (`@safe pure nothrow @nogc`, the
+fixed table's POOL1–POOL7 cases repeated on the growable one, growth with
+live handles, both reuse orders); the SDE11 property test over every tracked
+recipe; the SDE12 and SDE13 cases; every existing editor test unchanged.
+
+### S22 — Incremental re-parse
+
+Writing and committing re-parse only the edited region
+([editing §10](./editing.md#10-incremental-re-parse), SDE14–SDE15).
+
+Gate: first, an `sdl.commit` row in the runtime harness (one small edit at a
+time committed to an open document, held to a committed fingerprint), with
+its full-re-parse numbers recorded; then the SDE14 property test, with its
+mutation check, and the SDE15 fallback counts and error equality; every
+editor, codec and conformance test unchanged (SDP7); `sdl.commit` and
+`sdl.edit` improve in retired instructions per byte, and `sdl.parse` does
+not regress (SDP2).
+
 ## S11–S18 closure: 2026-10-27
 
 Every gate from S11 to S18 holds on this branch, delivered as one pull request.
