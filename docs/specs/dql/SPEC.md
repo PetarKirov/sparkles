@@ -140,6 +140,13 @@ Digits     := [0-9]+
   have no element paths. The property tree extends this grammar with quoted
   and keyed segments (`["…"]`, `[#7]`) that DQL's parser does not accept.
 
+A segment is a run of the bytes the lexer keeps inside one identifier,
+excluding `.`, `[` and `]`. `sparkles.dql.path` reads the grammar step by
+step: `validateDqlPath` reports the first fault at its byte offset, and
+`dqlPathSteps` walks an accepted path without allocating, so a host that
+addresses its own data by DQL paths (the SDL selector of `sparkles:wired`)
+does not re-implement it.
+
 ### 2.2 Operators and Functions
 
 | Operator / Function | Syntax                     | Description                                             | Example                                                                     |

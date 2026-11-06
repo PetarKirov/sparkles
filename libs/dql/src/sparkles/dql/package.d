@@ -11,6 +11,7 @@ public import sparkles.dql.engine;
 public import sparkles.dql.eval;
 public import sparkles.dql.help;
 public import sparkles.dql.parser;
+public import sparkles.dql.path;
 public import sparkles.dql.resolve;
 public import sparkles.dql.schema;
 
