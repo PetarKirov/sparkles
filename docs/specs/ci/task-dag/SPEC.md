@@ -84,6 +84,7 @@ ci checks mirror [--repo R] [--sha SHA] [--skip-check NAME...] [--no-write]
 ci stats [statistics options]
 ci link-rot report [report options]
 ci slow-tests list
+ci perf show|compare|history|push|fetch [options]
 ```
 
 Every command that executes a graph accepts:
@@ -500,8 +501,10 @@ Statistics use these degraded semantics:
   partial side is degraded and visibly marked.
 - Missing step timing, runner labels, or optional rate-limit metadata degrades
   only the affected view. It does not invent zero-duration observations.
-- Unavailable process RSS/CPU sampling is `Degraded(usageUnavailable)` metadata
-  on the task/run. It never changes an otherwise authoritative command outcome.
+- Unavailable process RSS/CPU sampling is a reported absence in the run
+  record and a run degradation
+  ([observability OBD11](../../build-primitives/observability/SPEC.md#_11-run-records)),
+  never a task outcome.
 
 A degraded report must contain a warning in human output and a structured
 `degradations[]` field in JSON. It must never look identical to a complete
@@ -566,6 +569,12 @@ Task directories are removed after reporting. A failed task's directory is kept
 when the diagnostic policy asks for it, and its path is printed. A dry run
 creates none. The `runs/` directory holds a `CACHEDIR.TAG` file (BGS7), and
 `ci cache gc` removes the directories of runs that have ended.
+
+Every run that executes a graph also writes a
+[run record](../../../glossary.md#run-record) of its measurements, outside the
+worktree and outside this directory. The `ci perf` commands read and share
+them; both are specified by
+[observability](../../build-primitives/observability/SPEC.md#_11-run-records).
 
 ## 7. Module layout
 
