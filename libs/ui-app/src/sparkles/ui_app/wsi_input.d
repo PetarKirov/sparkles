@@ -524,9 +524,13 @@ struct WsiInput
         scrollX_ -= dx;
         scrollY_ -= dy;
         const moved = fx != 0 || fy != 0;
-        if (fractionalScroll ? moved : dx != 0 || dy != 0)
+        // The fingers lifting is news with no distance (`INP26`): a consumer
+        // with momentum of its own flings from it.
+        const ends = s.phase == ScrollPhase.ended;
+        if (ends || (fractionalScroll ? moved : dx != 0 || dy != 0))
             sink(Event(WheelEvent(dx: dx, dy: dy, pos: pos, mods: s.modifiers, precise: true,
-                fdx: fractionalScroll ? fx : 0, fdy: fractionalScroll ? fy : 0, begins: begins)));
+                fdx: fractionalScroll ? fx : 0, fdy: fractionalScroll ? fy : 0, begins: begins,
+                ends: ends, momentum: s.phase == ScrollPhase.momentum)));
     }
 
     private void key(Sink)(in KeyboardEvent k, scope Sink sink)
@@ -1202,6 +1206,19 @@ version (unittest)
     got = translated(fractional, wsi, [ev(pad)]);
     assert(got == [Event(WheelEvent(dy: 0, pos: Point(0, 0), precise: true, fdy: 0.4f,
         begins: true))]);
+
+    // The fingers lifting arrives with no distance; the platform's inertia
+    // after it is marked, not dropped (`INP26`).
+    ScrollEvent lift = pad;
+    lift.dy = 0;
+    lift.phase = ScrollPhase.ended;
+    got = translated(fractional, wsi, [ev(lift)]);
+    assert(got == [Event(WheelEvent(dy: 0, pos: Point(0, 0), precise: true, ends: true))]);
+    ScrollEvent coast = pad;
+    coast.phase = ScrollPhase.momentum;
+    got = translated(fractional, wsi, [ev(coast)]);
+    assert(got == [Event(WheelEvent(dy: 0, pos: Point(0, 0), precise: true, fdy: 0.4f,
+        momentum: true))]);
 }
 
 @("ui_app.wsi_input.classicKeysAndTypedText")
