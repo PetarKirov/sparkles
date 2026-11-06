@@ -1,0 +1,307 @@
+{
+  "columns": [
+    {
+      "class": "diagnostic",
+      "format": "count",
+      "header": "instr/iter",
+      "name": "instr",
+      "source": "perf"
+    },
+    {
+      "class": "quantitative",
+      "format": "count",
+      "header": "B/s",
+      "name": "B/s",
+      "source": "client"
+    },
+    {
+      "class": "diagnostic",
+      "format": "ratio",
+      "header": "IPC",
+      "name": "ipc",
+      "source": "perf"
+    },
+    {
+      "class": "diagnostic",
+      "format": "percent",
+      "header": "br-miss",
+      "name": "br-miss",
+      "source": "perf"
+    },
+    {
+      "class": "diagnostic",
+      "format": "percent",
+      "header": "cache-miss",
+      "name": "cache-miss",
+      "source": "perf"
+    },
+    {
+      "class": "diagnostic",
+      "format": "count",
+      "header": "cycles/iter",
+      "name": "cycles",
+      "source": "perf"
+    },
+    {
+      "class": "diagnostic",
+      "format": "count",
+      "header": "branch/iter",
+      "name": "branches",
+      "source": "perf"
+    },
+    {
+      "class": "diagnostic",
+      "format": "count",
+      "header": "pgflt/iter",
+      "name": "page-faults",
+      "source": "perf"
+    }
+  ],
+  "meta": {
+    "arch": "x86_64",
+    "compiler": "LDC (front-end 1.043)",
+    "cpu": "AMD Ryzen 9 7940HX with Radeon Graphics",
+    "date": "2026-11-06",
+    "hostname": "petar-kirov-minisforum-bd790i0-se-002",
+    "minSampleTimeMs": 2000,
+    "os": "linux",
+    "sampleCount": 32
+  },
+  "rows": [
+    {
+      "countIterations": 32,
+      "deviationNs": 2880541,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "deep_wide",
+        "operation": "commit",
+        "tier": "light"
+      },
+      "maxNs": 130792758,
+      "medianNs": 114835236,
+      "metrics": {
+        "B/s": 101811000.0,
+        "br-miss": 0.181449,
+        "branches": 416696000.0,
+        "cache-miss": null,
+        "cycles": 531146000.0,
+        "instr": 1756440000.0,
+        "ipc": 3.30689,
+        "page-faults": 0
+      },
+      "minNs": 109599961,
+      "name": "wired",
+      "samples": 32
+    },
+    {
+      "countIterations": 142,
+      "deviationNs": 132082,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "deep_wide",
+        "operation": "edit",
+        "tier": "light"
+      },
+      "maxNs": 15644549,
+      "medianNs": 14063031,
+      "metrics": {
+        "B/s": 103920000.0,
+        "br-miss": 0.184016,
+        "branches": 52067100.0,
+        "cache-miss": null,
+        "cycles": 67621400.0,
+        "instr": 219523000.0,
+        "ipc": 3.24635,
+        "page-faults": 0.056338
+      },
+      "minNs": 13672761,
+      "name": "wired",
+      "samples": 142
+    },
+    {
+      "countIterations": 144,
+      "deviationNs": 236756,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "deep_wide",
+        "operation": "parse",
+        "tier": "light"
+      },
+      "maxNs": 19840855,
+      "medianNs": 13652000.0,
+      "metrics": {
+        "B/s": 107049000.0,
+        "br-miss": 0.197109,
+        "branches": 52057200.0,
+        "cache-miss": null,
+        "cycles": 66349800.0,
+        "instr": 219291000.0,
+        "ipc": 3.30508,
+        "page-faults": 0
+      },
+      "minNs": 12846252,
+      "name": "wired",
+      "samples": 144
+    },
+    {
+      "countIterations": 41,
+      "deviationNs": 1100672,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "dub_recipes",
+        "operation": "commit",
+        "tier": "light"
+      },
+      "maxNs": 52782819,
+      "medianNs": 49510280,
+      "metrics": {
+        "B/s": 86778100.0,
+        "br-miss": 0.0969507,
+        "branches": 205322000.0,
+        "cache-miss": null,
+        "cycles": 233196000.0,
+        "instr": 872623918,
+        "ipc": 3.74203,
+        "page-faults": 0
+      },
+      "minNs": 46605667,
+      "name": "wired",
+      "samples": 41
+    },
+    {
+      "countIterations": 335,
+      "deviationNs": 111377,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "dub_recipes",
+        "operation": "edit",
+        "tier": "light"
+      },
+      "maxNs": 10067033,
+      "medianNs": 5890124,
+      "metrics": {
+        "B/s": 91178200.0,
+        "br-miss": 0.114912,
+        "branches": 24620100.0,
+        "cache-miss": null,
+        "cycles": 28215100.0,
+        "instr": 104448000.0,
+        "ipc": 3.70187,
+        "page-faults": 0
+      },
+      "minNs": 5700845,
+      "name": "wired",
+      "samples": 335
+    },
+    {
+      "countIterations": 360,
+      "deviationNs": 75812,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "dub_recipes",
+        "operation": "parse",
+        "tier": "light"
+      },
+      "maxNs": 6542002,
+      "medianNs": 5411552,
+      "metrics": {
+        "B/s": 99241600.0,
+        "br-miss": 0.132307,
+        "branches": 24353000.0,
+        "cache-miss": null,
+        "cycles": 27828200.0,
+        "instr": 103169000.0,
+        "ipc": 3.70737,
+        "page-faults": 0
+      },
+      "minNs": 5287772,
+      "name": "wired",
+      "samples": 360
+    },
+    {
+      "countIterations": 44,
+      "deviationNs": 1709560.0,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "dub_recipes_concat",
+        "operation": "commit",
+        "tier": "light"
+      },
+      "maxNs": 52318114,
+      "medianNs": 45897919,
+      "metrics": {
+        "B/s": 94044900.0,
+        "br-miss": 0.0870482,
+        "branches": 194063000.0,
+        "cache-miss": null,
+        "cycles": 217460000.0,
+        "instr": 823012000.0,
+        "ipc": 3.78466,
+        "page-faults": 0
+      },
+      "minNs": 42302331,
+      "name": "wired",
+      "samples": 44
+    },
+    {
+      "countIterations": 344,
+      "deviationNs": 227548,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "dub_recipes_concat",
+        "operation": "edit",
+        "tier": "light"
+      },
+      "maxNs": 7864487,
+      "medianNs": 5721425,
+      "metrics": {
+        "B/s": 94304800.0,
+        "br-miss": 0.112024,
+        "branches": 24257300.0,
+        "cache-miss": null,
+        "cycles": 27367100.0,
+        "instr": 102892000.0,
+        "ipc": 3.75972,
+        "page-faults": 0
+      },
+      "minNs": 5246631,
+      "name": "wired",
+      "samples": 344
+    },
+    {
+      "countIterations": 357,
+      "deviationNs": 184248,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "dataset": "dub_recipes_concat",
+        "operation": "parse",
+        "tier": "light"
+      },
+      "maxNs": 7737229,
+      "medianNs": 5551064,
+      "metrics": {
+        "B/s": 97199000.0,
+        "br-miss": 0.106121,
+        "branches": 24264200.0,
+        "cache-miss": null,
+        "cycles": 27758900.0,
+        "instr": 102848000.0,
+        "ipc": 3.70506,
+        "page-faults": 0
+      },
+      "minNs": 5169211,
+      "name": "wired",
+      "samples": 357
+    }
+  ],
+  "schema": 2
+}
