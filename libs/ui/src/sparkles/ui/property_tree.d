@@ -8,7 +8,8 @@ $(LIST
         type-level `@opaqueValue`), validated where the walk instantiates, so
         an invalid combination is a build error (`PRT9`).
     * $(B paths) — every row has one readable, persistable address
-        (`style.opacity`, `stops[2]`, keyed `items[#7]`, quoted `["любой"]`).
+        (`style.opacity`, `stops[2]`, keyed `items[#7]`, quoted `["my.tool"]`),
+        in DQL's path grammar (`sparkles.base.text.value_path`).
         $(LREF at) is the compile-time-checked direct access for the base
         grammar; $(LREF resolve) implements every segment form at run time and
         refuses rather than faults (`PRT6`, `PRT7`).
@@ -38,13 +39,16 @@ Spec: `docs/specs/ui/property-tree.md`.
 */
 module sparkles.ui.property_tree;
 
+import std.array : appender;
 import std.conv : text, to;
 import std.traits : EnumMembers, FieldNameTuple, getUDAs, hasUDA,
     moduleName,
     isAggregateType, isArray, isBoolean, isFloatingPoint, isIntegral,
     isSomeString;
 
-import sparkles.fuzzy.common : CandidateView, DefaultFuzzyCaps, FuzzyLimits,
+import sparkles.base.text.value_path : PathFault, PathStepKind, readPathStep,
+    writePathSegment;
+import sparkles.fuzzy.common :CandidateView, DefaultFuzzyCaps, FuzzyLimits,
     StableId, TextRange;
 import sparkles.fuzzy.match : match, MatchConfig, MatcherWorkspace, MatchKind,
     Scoring;
@@ -151,7 +155,7 @@ enum bool hasElementKey(T) = __traits(compiles,
 /// One parsed path segment.
 struct PathSeg
 {
-    string name;   /// member / erased-child name (bare or quoted form)
+    string name;   /// member / erased-child name, decoded
     size_t index;  /// positional element
     ulong key;     /// `[#key]` stable element identity
     bool isIndex;  ///
@@ -159,132 +163,87 @@ struct PathSeg
 }
 
 /**
-Parses `name ( "." name | "[" digits "]" | "[#" digits "]" | "[\"…\"]" )*`.
-Returns `false` (and an empty result) for malformed text — an unterminated
-bracket or quote, a non-numeric index, an empty segment — rather than
-guessing.
+Parses DQL's path grammar (`docs/specs/dql/SPEC.md` §2.1) — `name`, `.name`,
+`[digits]` and `["…"]` with JSON escapes, read by the shared lexer
+(`sparkles.base.text.value_path`) — plus the tree's two extensions: the keyed
+`[#digits]` step (`PRT7`), and a leading index or key for a collection root.
+The empty path is the root. Returns `false` (and an empty result) for
+malformed text — an unterminated bracket or quote, a bad escape, a
+non-numeric or overflowing index, an empty segment — rather than guessing.
 */
 bool parsePath(scope const(char)[] path, out PathSeg[] segs)
     @safe pure nothrow
 {
-    segs = null;
-    size_t i;
-    bool expectName = true;
-    while (i < path.length)
+    size_t at;
+    while (at < path.length)
     {
-        const c = path[i];
-        if (c == '.')
+        if (path[at] == '[' && at + 1 < path.length && path[at + 1] == '#')
         {
-            if (expectName)
-                return false; // ".." / leading "."
-            i++;
-            expectName = true;
+            PathSeg s = { isKey: true };
+            if (!readKeyedStep(path, at, s.key))
+            {
+                segs = null;
+                return false;
+            }
+            segs ~= s;
             continue;
         }
-        if (c == '[')
+        PathFault fault;
+        const step = readPathStep(path, at, at == 0 && path[0] != '[', fault);
+        if (fault.message !is null)
         {
-            if (expectName && segs.length)
-                return false; // ".["
-            if (i + 1 >= path.length)
-                return false;
-            if (path[i + 1] == '#')
-            {
-                size_t j = i + 2;
-                ulong key;
-                bool any;
-                while (j < path.length && path[j] >= '0' && path[j] <= '9')
-                {
-                    key = key * 10 + (path[j] - '0');
-                    j++;
-                    any = true;
-                }
-                if (!any || j >= path.length || path[j] != ']')
-                    return false;
-                PathSeg s = { isKey: true, key: key };
-                segs ~= s;
-                i = j + 1;
-            }
-            else if (path[i + 1] == '"')
-            {
-                size_t j = i + 2;
-                string name;
-                while (j < path.length && path[j] != '"')
-                {
-                    if (path[j] == '\\')
-                    {
-                        j++;
-                        if (j >= path.length)
-                            return false;
-                    }
-                    name ~= path[j];
-                    j++;
-                }
-                if (j + 1 >= path.length || path[j] != '"' || path[j + 1] != ']')
-                    return false;
-                segs ~= PathSeg(name);
-                i = j + 2;
-            }
-            else
-            {
-                size_t j = i + 1;
-                size_t index;
-                bool any;
-                while (j < path.length && path[j] >= '0' && path[j] <= '9')
-                {
-                    index = index * 10 + (path[j] - '0');
-                    j++;
-                    any = true;
-                }
-                if (!any || j >= path.length || path[j] != ']')
-                    return false;
-                PathSeg s = { isIndex: true, index: index };
-                segs ~= s;
-                i = j + 1;
-            }
-            expectName = false;
+            segs = null;
+            return false;
         }
+        if (step.kind == PathStepKind.index)
+        {
+            PathSeg s = { isIndex: true, index: step.index };
+            segs ~= s;
+        }
+        else if (!step.quoted)
+            segs ~= PathSeg(step.name.idup);
         else
         {
-            size_t j = i;
-            while (j < path.length && path[j] != '.' && path[j] != '[')
-                j++;
-            segs ~= PathSeg(path[i .. j].idup);
-            i = j;
-            expectName = false;
+            auto name = appender!string;
+            step.writeName(name);
+            segs ~= PathSeg(name[]);
         }
     }
-    return !expectName || segs.length == 0;
+    return true;
 }
 
-/// `true` iff `name` needs no quoting: an identifier-shaped ASCII name.
-private bool bareName(scope const(char)[] name) @safe pure nothrow @nogc
+/// Reads the keyed step `[#digits]` at `at` into `key`, advancing past it;
+/// `false` for no digits, an overflowing key, or no closing `]`.
+private bool readKeyedStep(scope const(char)[] path, ref size_t at, out ulong key)
+    @safe pure nothrow @nogc
 {
-    if (name.length == 0 || (name[0] >= '0' && name[0] <= '9'))
-        return false;
-    foreach (c; name)
-        if (!(c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
-            || (c >= '0' && c <= '9')))
+    const digits = at + 2;
+    size_t i = digits;
+    for (; i < path.length && path[i] >= '0' && path[i] <= '9'; i++)
+    {
+        const digit = path[i] - '0';
+        if (key > (ulong.max - digit) / 10)
             return false;
+        key = key * 10 + digit;
+    }
+    if (i == digits || i >= path.length || path[i] != ']')
+        return false;
+    at = i + 1;
     return true;
 }
 
 /**
-How the walk mints a member/erased-child path. A name outside the bare
-identifier subset is emitted as a quoted segment with `\"`/`\\` escapes, so
-every emitted path re-parses to the same segments (`PRT6`).
+How the walk mints a member/erased-child path: DQL's segment printer, so a
+name is bare exactly when it is an identifier segment and quoted with JSON
+escapes otherwise, and every emitted path re-parses to the same segments
+(`PRT6`).
 */
 string childPath(string parent, scope const(char)[] member) @safe pure nothrow
 {
-    if (bareName(member))
-        return parent.length ? parent ~ "." ~ member.idup : member.idup;
-    string q = `["`;
-    foreach (c; member)
-    {
-        if (c == '"' || c == '\\')
-            q ~= '\\';
-        q ~= c;
-    }
-    return parent ~ q ~ `"]`;
+    auto path = appender!string;
+    path.put(parent);
+    writePathSegment(path, member, parent.length == 0);
+    return path[];
 }
 
 /// ditto — a positional element.
@@ -1830,6 +1789,34 @@ version (UiPropertyFixtures)
     assert(!parsePath("a[x]", bad));
     assert(!parsePath(`a["unterminated`, bad));
     assert(!parsePath("a[#]", bad));
+    assert(!parsePath("a[#18446744073709551616]", bad) && bad is null);
+    assert(!parsePath(`a["bad\q"]`, bad), "escapes are JSON's");
+    assert(!parsePath("a b", bad));
+
+    // The empty path is the root; a collection root opens with an index or
+    // a key, which DQL's own paths never do.
+    assert(parsePath("", segs) && segs.length == 0);
+    assert(parsePath("[3].x", segs) && segs[0].isIndex && segs[0].index == 3);
+    assert(parsePath("[#7][0]", segs) && segs[0].isKey && segs[1].isIndex);
+    assert(elementPath("", 3) == "[3]" && parentPath("[3].x") == "[3]");
+
+    // Quoted names decode with JSON escapes, and the printer is DQL's:
+    // control characters print as escapes, a name that opens with a digit or
+    // is a DQL keyword is quoted at the root only.
+    assert(parsePath(`x["tab\thereé\/"]`, segs) && segs[1].name == "tab\thereé/");
+    assert(childPath("", "tab\there") == `["tab\there"]`);
+    assert(childPath("", "null") == `["null"]` && childPath("a", "null") == "a.null");
+    assert(childPath("", "3d") == `["3d"]` && childPath("a", "3d") == "a.3d");
+    assert(childPath("a", "font-size") == "a.font-size");
+    foreach (name; ["weird.key [0]", `say "hi"`, "back\\slash", "\x01", "любой", ""])
+    {
+        assert(parsePath(childPath("root", name), segs), name);
+        assert(segs.length == 2 && segs[1].name == name, name);
+    }
+
+    // A path spelt before the shared grammar still reads the same.
+    assert(parsePath(`extra["say \"hi\""].x`, segs) && segs[1].name == `say "hi"`);
+    assert(parsePath(`["любой"]`, segs) && segs[0].name == "любой");
 }
 
 version (UiPropertyFixtures)
