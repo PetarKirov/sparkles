@@ -142,6 +142,33 @@ struct PresentWait
 }
 
 /**
+Blocks until the newest present submitted to `wait`'s swapchain is shown, or
+`timeout` passes, then polls (`pollCompleted`), so what completed is stamped
+as it was shown. A frame loop the window system does not pace (X11) waits
+here before its next frame: it draws a frame a refresh, and each frame is
+shown, where mailbox would drop all but the last of a refresh's frames. False
+with nothing outstanding, without the commands, on a timeout or an error
+(which drops the outstanding ids).
+*/
+bool waitForNewest(Context, Sink = typeof(null))(ref PresentWait wait, ref Context vk,
+    Duration timeout, scope Sink sink = null) @system
+{
+    if (wait.count_ == 0 || wait.swapchain_ is null || vk.device.waitForPresentKHR is null)
+        return false;
+    const r = vk.device.waitForPresentKHR(vk.device.device, wait.swapchain_, wait.lastSubmitted,
+        timeout.total!"nsecs");
+    if (r < 0)
+    {
+        wait.forget();
+        return false;
+    }
+    if (r != VkResult.VK_SUCCESS)
+        return false;
+    pollCompleted(wait, vk, sink);
+    return true;
+}
+
+/**
 Polls `wait` without blocking: every outstanding id the device reports
 complete, oldest first, is passed to `sink(id, at)` (when given) and becomes
 `wait.completed`, at `at`, the time this poll saw it. Returns how many
@@ -499,7 +526,8 @@ version (unittest)
         VkResult fakeWaitForPresent(VkDevice, VkSwapchainKHR, ulong id, ulong timeout)
         {
             ++presentWaits;
-            assert(timeout == 0, "a poll never waits");
+            if (timeout != 0)
+                lastBlockingTimeout = timeout;
             if (waitAnswer != VkResult.VK_SUCCESS)
                 return waitAnswer;
             return id <= shownUpTo ? VkResult.VK_SUCCESS : VkResult.VK_TIMEOUT;
@@ -507,6 +535,7 @@ version (unittest)
     }
     private ulong presentedId, shownUpTo;
     private size_t presentWaits;
+    private ulong lastBlockingTimeout; // nanoseconds; 0 while only polls ran
     private VkResult waitAnswer;
 
     private struct FrameDevice
@@ -647,4 +676,43 @@ version (unittest)
     auto plain = p.presentFrame!record(vk, pool);
     assert(plain.value.presented && plain.value.presentId == 0 && presentedId == 0);
     assert(presentWaits == polls);
+    assert(lastBlockingTimeout == 0, "a poll never waits");
+}
+
+@("vulkan_wsi.presenter.waitsForTheNewestToBeShown")
+@system unittest
+{
+    import core.time : msecs;
+
+    // A loop the window system does not pace (X11) waits, before its next
+    // frame, until its last present is shown; what completed is stamped then.
+    FrameVk vk;
+    vk.presentWait = true;
+    Presenter p;
+    CommandPool pool;
+    readyPresenter(p, vk, pool);
+    waitAnswer = VkResult.VK_SUCCESS;
+    shownUpTo = lastBlockingTimeout = 0;
+    PresentWait none;
+    assert(!none.waitForNewest(vk, 20.msecs), "nothing outstanding: no wait");
+    assert(lastBlockingTimeout == 0);
+
+    const sc = cast(VkSwapchainKHR) cast(void*) 0x40;
+    p.presentWait.submitted(sc, 1);
+    p.presentWait.submitted(sc, 2);
+    assert(!p.presentWait.waitForNewest(vk, 20.msecs), "not shown in time");
+    assert(lastBlockingTimeout == 20_000_000 && p.presentWait.outstanding == 2);
+
+    shownUpTo = 2;
+    ulong[2] seen;
+    size_t count;
+    void sink(ulong id, MonoTime) { seen[count++] = id; }
+    assert(p.presentWait.waitForNewest(vk, 20.msecs, &sink));
+    assert(count == 2 && seen == [1, 2] && p.presentWait.completed == 2);
+
+    p.presentWait.submitted(sc, 3);
+    waitAnswer = VkResult.VK_ERROR_SURFACE_LOST_KHR;
+    assert(!p.presentWait.waitForNewest(vk, 20.msecs) && p.presentWait.outstanding == 0);
+    waitAnswer = VkResult.VK_SUCCESS;
+    lastBlockingTimeout = 0;
 }
