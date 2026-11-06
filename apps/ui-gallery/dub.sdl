@@ -47,6 +47,18 @@ subConfiguration "sparkles:ui-app" "full"
 // Explicit, because a package with any `configuration` block loses the implicit
 // default one — and with only `unittest` declared, `dub build :ui-gallery`
 // would select *it*.
+
+// macOS builds the native arm by default: dub takes the first configuration
+// whose platforms match, and this one is the `vulkan` configuration below,
+// for `osx` only. AppKit through MoltenVK runs every application the raylib
+// arm does; `-c application` still names the raylib window.
+configuration "macos" {
+    platforms "osx"
+    targetType "executable"
+    subConfiguration "sparkles:ui-app" "full-vulkan"
+    subConfiguration "sparkles:terminal-view" "vulkan"
+}
+
 configuration "application" {
     targetType "executable"
 }

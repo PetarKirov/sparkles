@@ -73,6 +73,26 @@ dependency "sparkles:doc-view" path="../.."
 // this configuration links sparkles:ghostty) are in, so a stock `dub build :hue` and
 // the installed binary have `--gui` and the markdown preview out of the box.
 // Pulls raylib (a system dependency) + libghostty-vt.
+
+// macOS builds the native arm by default: dub takes the first configuration
+// whose platforms match, and this one is the `vulkan` configuration below,
+// for `osx` only. AppKit through MoltenVK runs every application the raylib
+// arm does; `-c application` still names the raylib window.
+configuration "macos" {
+    platforms "osx"
+    targetType "executable"
+
+    libs "curl"
+    versions "HueCurl"
+
+    dependency "sparkles:ghostty" path="../.."
+    subConfiguration "sparkles:ui-app" "full-vulkan"
+    versions "HueGui" "HueGuiVulkan"
+
+    dependency "sparkles:dmd-fmt" path="../.."
+    versions "HueDmdFmt"
+}
+
 configuration "application" {
     targetType "executable"
 
