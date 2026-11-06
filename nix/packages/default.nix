@@ -425,10 +425,14 @@
           pkgs.pkg-config
           pkgs.makeWrapper
         ];
-        buildInputs = [ pkgs.raylib ];
+        buildInputs = [
+          pkgs.raylib
+          pkgs.tree-sitter
+        ];
         postFixup = ''
           wrapProgram $out/bin/${finalAttrs.pname} \
-            --set-default SPARKLES_FONTS_PATH ${config.legacyPackages.sparklesFonts.fontBundle}/fonts
+            --set-default SPARKLES_FONTS_PATH ${config.legacyPackages.sparklesFonts.fontBundle}/fonts \
+            --set-default SPARKLES_TS_GRAMMAR_PATH ${config.packages.ts-grammars}
         '';
         meta = {
           description = "A text editor showcasing the shared Sparkles editing libraries";

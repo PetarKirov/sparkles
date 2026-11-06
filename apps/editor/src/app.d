@@ -9,6 +9,7 @@ import sparkles.ui_app.run : asRunResult;
 import sparkles.ui_app.run_app : appThemeOf, runApp;
 import editor_app : EditorApp;
 import commands : CommandId, AppCommand = Command;
+import examples : Example;
 
 int main(string[] args) => runCli!Editor(args);
 
@@ -25,22 +26,30 @@ struct Editor
     NativeOptions native;
     @(Option("commands", description: "Open the command palette at startup."))
     bool commands;
+    @(Option("themes", description: "Open the theme picker with live preview."))
+    bool themes;
     @(Option("inspector", description: "Show editor diagnostics."))
     bool inspector;
     @(Option("shot", description: "Capture a native frame to PNG, then exit.", placeholder: "PATH"))
     string shot;
+    @(Option("example", description: "Editable example: code, unicode, protectedText."))
+    Example example;
 
     RunExpected!void run()
     {
         if (shot.length && (gui.tui || gui.noGui))
             return failRun("--shot requires the native GUI host");
         EditorApp app;
-        app.theme = appThemeOf(gui);
+        if (!app.useTheme(gui.theme)) return failRun("Unknown theme: " ~ gui.theme);
         app.inspector = inspector;
         app.shotPath = shot;
+        if (example != Example.none) app.execute(CommandId(AppCommand.example, example));
         if (commands) app.execute(CommandId(AppCommand.palette));
+        if (themes) app.execute(CommandId(AppCommand.themes));
         RunConfig config = {title: "Sparkles Editor", gui: gui, native: native, motion: true};
         if (shot.length) config.gui.gui = true;
-        return asRunResult(runApp(app, config), "editor");
+        auto outcome = runApp(app, config);
+        if (app.captureError.length) return failRun(app.captureError);
+        return asRunResult(outcome, "editor");
     }
 }

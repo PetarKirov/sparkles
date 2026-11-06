@@ -6,9 +6,11 @@ import sparkles.ui.command_bindings : effectiveCommandShortcut;
 import sparkles.ui.command_palette : PaletteCommand, PaletteEntry;
 import sparkles.ui.editor.keys : EditorAction, EditorTarget, editorBindings;
 import sparkles.ui.keymap : Binding, bind;
+import examples : Example;
 
 /// App operations; shared editing operations carry an EditorAction argument.
-enum Command : ubyte { none, palette, guide, newTab, nextTab, previousTab, inspector, edit, quit }
+enum Command : ubyte { none, palette, guide, newTab, nextTab, previousTab, inspector,
+    example, themes, selectTheme, toggleTheme, edit, quit }
 enum Scope : ubyte { always, document }
 alias CommandId = PaletteCommand!Command;
 alias CommandBinding = Binding!(Command, Scope);
@@ -21,12 +23,15 @@ CommandBinding[] commandBindings(EditorTarget target) @safe pure nothrow
     auto previous = next; previous.shift = typeof(previous.shift).yes;
     auto create = chord('n'); create.ctrl = true;
     auto quit = chord('q'); quit.ctrl = true;
+    auto leader = chord('k'); leader.ctrl = true;
     CommandBinding[] result = [bind(Scope.always, palette, Command.palette, "Commands"),
         bind(Scope.always, chord(Key.f1), Command.guide, "Key guide", reveal: true),
         bind(Scope.always, create, Command.newTab, "New tab"),
         bind(Scope.always, previous, Command.previousTab, "Previous tab"),
         bind(Scope.always, next, Command.nextTab, "Next tab"),
         bind(Scope.always, chord(Key.f12), Command.inspector, "Toggle inspector"),
+        bind(Scope.always, leader, chord('t'), Command.themes, "Choose theme"),
+        bind(Scope.always, leader, chord('d'), Command.toggleTheme, "Toggle dark/light theme"),
         bind(Scope.always, quit, Command.quit, "Quit")];
     foreach (original; editorBindings(target))
     {
@@ -56,6 +61,9 @@ PaletteEntry!Command[] commandCatalog(scope const(CommandBinding)[] bindings) @s
         if (!seen) result ~= PaletteEntry!Command(id, binding.desc,
             binding.cmd == Command.edit ? "Editing" : "Application");
     }
+    result ~= PaletteEntry!Command(CommandId(Command.example, Example.code), "Open code example", "Examples");
+    result ~= PaletteEntry!Command(CommandId(Command.example, Example.unicode), "Open Unicode example", "Examples");
+    result ~= PaletteEntry!Command(CommandId(Command.example, Example.protectedText), "Open protected text example", "Examples");
     return result;
 }
 

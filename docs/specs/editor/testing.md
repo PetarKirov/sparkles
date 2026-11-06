@@ -261,3 +261,22 @@ expected unstamped `dev` version. Nix artifact/stamp validation remains open.
 The shell refuses dirty exit pending Save/Discard/Cancel integration. Real
 files, examples, highlighted presentation, generated settings, recovery,
 Unicode layout and native IME still have open delivery gates.
+
+### Background syntax and theme checkpoint — 2026-11-06
+
+`sparkles:source-view` passes 54 tests, including source-addressed syntax under
+selection/preedit, indexed window clipping, a 16,384-token dense line, latest
+document/revision publication and a real D grammar through the worker path.
+An independent read-only review found quadratic token intersection on the
+frame thread; a monotonic syntax cursor repaired it, and the repair review
+reported no further findings in its bounded ownership/publication scope.
+Copy/setup/flatten cancellation timing remains unmeasured.
+
+The editor's eight tests pass with background highlighting, editable examples
+and theme preview/cancel/accept. The UI suite passes 818 tests, including
+canonical theme discovery and clipboard request generations. A checked native
+capture of the code example shows syntax and editor caret together. Running
+outside a configured grammar environment correctly reports unavailable
+highlighting; the successful capture used the native development shell's
+grammar bundle. Generated settings, language discovery and complete Unicode
+layout/IME remain unverified.

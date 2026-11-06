@@ -13,6 +13,10 @@ color — the `Palette` resolves it to a `Visual` during display-list constructi
 
 ## Modules (`libs/ui/src/sparkles/ui/`)
 
+`theme_catalog.canonicalThemeNames()` lists built-in themes in alphabetical
+order with aliases removed. A picker can display these names and resolve the
+accepted name through the shared theme loader.
+
 | Module                     | Role                                                                                                                                                                                                                                                                                                                                |
 | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `geometry`                 | `Point`/`Size` (specializing `sparkles:math`'s `Vector`, like `TermSize`/`TermPosition`), `Rect`/`Insets` in abstract cells and `SizeSpec`; text width/fitting comes from owned base `visibleWidth`/`fitCells`, not geometry exports                                                                                                |

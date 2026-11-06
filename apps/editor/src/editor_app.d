@@ -2,6 +2,7 @@
 module editor_app;
 
 import std.conv : text;
+import core.time : msecs;
 import sparkles.input : CompositionEvent, EndOfInput, Event, KeyAction, KeyEvent,
     match, PasteEvent, PointerAction, PointerButton, PointerEvent, WheelEvent;
 import sparkles.text_buffer.text : Text;
@@ -18,12 +19,22 @@ import sparkles.ui.layout : Frame;
 import sparkles.ui.keymap : bindingsAt;
 import sparkles.ui.lantern : LanternState, step, StepKind;
 import sparkles.ui.style : Slot;
+import sparkles.ui.theme_catalog : canonicalThemeNames;
+import sparkles.ui.command_palette : PaletteEntry;
 import sparkles.ui.state : hitAt, hoverTargets, HoverTarget, sourceOffsetAt;
 import sparkles.ui.widget : Builder, Widget, WidgetKind, WidgetTree;
 import sparkles.ui_app.backend : Backend;
 import sparkles.ui_app.host : canReadClipboard, withPreedit;
 import sparkles.ui_app.run_app : AppTheme;
-import commands;
+import sparkles.ui_app.gui_options : GuiOptions, resolveTheme;
+import sparkles.ui_app.run_app : appThemeOf;
+import sparkles.source_view.editor : highlightedEditorLine, syntaxWindow;
+import sparkles.source_view.highlight_session : HighlightSession;
+import sparkles.syntax.label : LabelSet;
+import sparkles.syntax.theme : ResolvedTheme, resolveSyntaxTheme = resolveTheme;
+import sparkles.ui.editor.state : ReadOnlySpan;
+import commands : Command, CommandBinding, CommandContext, CommandId, commandBindings, commandCatalog;
+import examples : Example, exampleText;
 
 private class DisplayedFrame
 {
@@ -46,6 +57,7 @@ class Document
     Text saved;
     size_t firstLine;
     bool followCaret = true;
+    string language = "text";
 
     this(ulong id, string name, string content = "") @safe pure nothrow
     {
@@ -67,6 +79,7 @@ struct EditorApp
     bool quitRequested;
     string status;
     string shotPath;
+    string captureError;
     private int shotCountdown = 3;
     private Document[] tabs;
     private size_t activeTab;
@@ -79,6 +92,56 @@ struct EditorApp
     private bool collectingPaste;
     private uint pasteRequest;
     private ulong pasteDocument, pastePalette;
+    private HighlightSession highlighting;
+    private ResolvedTheme syntaxTheme;
+    string themeName;
+    private bool choosingTheme;
+    private string themeBeforePreview;
+    private AppTheme themeBefore;
+    private ResolvedTheme syntaxBefore;
+    private string[] themeNames;
+
+    /// The selected theme is a reversible preview until the palette emits acceptance.
+    void previewPicker() @safe
+    {
+        if (!choosingTheme || !commands.palette.active || !commands.palette.rowCount) return;
+        const choice = commands.palette.row(commands.palette.snapshot.selection).command;
+        if (choice.operation == Command.selectTheme && choice.argument < themeNames.length
+            && themeName != themeNames[cast(size_t) choice.argument])
+            useTheme(themeNames[cast(size_t) choice.argument]);
+    }
+
+    private void endPicker(bool accepted) @safe
+    {
+        if (!choosingTheme) return;
+        if (!accepted)
+        {
+            theme = themeBefore;
+            syntaxTheme = syntaxBefore;
+            themeName = themeBeforePreview;
+        }
+        choosingTheme = false;
+        const result = commands.palette.catalog(commandCatalog(bindings));
+        assert(result == PaletteStatus.ok);
+    }
+
+    /// Resolve syntax and chrome through the same library theme.
+    bool useTheme(string name) @safe
+    {
+        const options = GuiOptions(theme: name);
+        const resolved = resolveTheme(options);
+        if (resolved.hasError) return false;
+        theme = appThemeOf(options);
+        syntaxTheme = resolveSyntaxTheme(*resolved.value, LabelSet.standard());
+        themeName = name;
+        return true;
+    }
+
+    /// The host shuts workers down before releasing document snapshots.
+    void shutdown(H)(ref H host)
+    {
+        if (highlighting !is null) highlighting.shutdown();
+    }
     private DisplayedFrame displayed;
     private HoverTarget[] hits;
     private const(PaletteChoice!Command)[] paletteChoices;
@@ -177,8 +240,11 @@ struct EditorApp
     {
         target = selected;
         bindings = commandBindings(target);
-        const result = commands.palette.catalog(commandCatalog(bindings));
-        assert(result == PaletteStatus.ok);
+        if (!choosingTheme)
+        {
+            const result = commands.palette.catalog(commandCatalog(bindings));
+            assert(result == PaletteStatus.ok);
+        }
         if (commands.palette.active)
         {
             const refreshed = commands.palette.search(commands.palette.snapshot.ticket,
@@ -197,6 +263,7 @@ struct EditorApp
         {
         case Command.none: break;
         case Command.palette:
+            endPicker(false);
             commands.open(PaletteInvocation(document.id, document.id), context);
             commands.query.target = target;
             break;
@@ -209,6 +276,52 @@ struct EditorApp
         case Command.nextTab: activeTab = (activeTab + 1) % tabs.length; break;
         case Command.previousTab: activeTab = (activeTab + tabs.length - 1) % tabs.length; break;
         case Command.inspector: inspector = !inspector; break;
+        case Command.themes:
+            themeNames = canonicalThemeNames();
+            themeBeforePreview = themeName.length ? themeName : GuiOptions.init.theme;
+            themeBefore = theme;
+            syntaxBefore = syntaxTheme;
+            choosingTheme = true;
+            PaletteEntry!Command[] entries;
+            foreach (i, name; themeNames)
+                entries ~= PaletteEntry!Command(CommandId(Command.selectTheme, i), name, "Theme");
+            const result = commands.palette.catalog(entries);
+            assert(result == PaletteStatus.ok);
+            commands.open(PaletteInvocation(document.id, document.id), context);
+            commands.query.target = target;
+            foreach (row; 0 .. commands.palette.rowCount)
+            {
+                const candidate = commands.palette.row(row).command;
+                if (candidate.argument < themeNames.length
+                    && themeNames[cast(size_t) candidate.argument] == themeName)
+                {
+                    commands.palette.move(commands.palette.snapshot.ticket,
+                        cast(long) row - cast(long) commands.palette.snapshot.selection);
+                    break;
+                }
+            }
+            break;
+        case Command.selectTheme:
+            if (id.argument < themeNames.length) useTheme(themeNames[cast(size_t) id.argument]);
+            break;
+        case Command.toggleTheme:
+            useTheme(themeName == "github-light" ? "github-dark" : "github-light");
+            break;
+        case Command.example:
+            if (id.argument > Example.max || id.argument == Example.none) break;
+            const example = cast(Example) id.argument;
+            const number = nextId++;
+            tabs ~= new Document(number, example == Example.code ? "example.d" : "Unicode example",
+                exampleText(example));
+            activeTab = tabs.length - 1;
+            document.field.target = target;
+            if (example == Example.code) document.language = "d";
+            if (example == Example.protectedText)
+            {
+                document.name = "Protected text";
+                document.field.state.readOnly.put(ReadOnlySpan(0, document.field.state.text.lineEnd(0)));
+            }
+            break;
         case Command.edit:
             if (id.argument <= EditorAction.max)
                 document.field.run(commandOf(cast(EditorAction) id.argument));
@@ -231,8 +344,11 @@ struct EditorApp
                 status = "The command's document is no longer active.";
                 return;
             }
+            const wasChoosing = choosingTheme;
             execute(effect.command);
+            if (wasChoosing) endPicker(true);
         }
+        else if (effect.kind == PaletteEffectKind.cancelled) endPicker(false);
         else if (effect.status != PaletteStatus.ok)
             status = text("Command query: ", effect.status);
     }
@@ -245,6 +361,7 @@ struct EditorApp
         if (commands.palette.active)
         {
             apply(commands.key(key, context));
+            previewPicker();
             return;
         }
         document.followCaret = true;
@@ -289,8 +406,19 @@ struct EditorApp
     WidgetTree view(H)(ref H host)
     {
         ensureInitialized();
-        if (shotPath.length)
+        if (highlighting is null) highlighting = new HighlightSession;
+        highlighting.request(document.field.state.text, document.language, document.id);
+        highlighting.poll();
+        previewPicker();
+        if (highlighting.busy) host.wakeIn(8.msecs);
+        if (shotPath.length && !highlighting.busy)
         {
+            if (highlighting.error.length)
+            {
+                captureError = highlighting.error;
+                host.quit();
+                return WidgetTree.init;
+            }
             static if (__traits(hasMember, H, "screenshot"))
             {
                 if (--shotCountdown == 0) host.screenshot(shotPath);
@@ -324,7 +452,8 @@ struct EditorApp
             const rows = host.size.height > reserved + 3
                 ? cast(size_t)(host.size.height - reserved) / 3 : 1;
             const paletteView = viewCommandPalette(b, commands.palette, commands.query.state, context,
-                PaletteViewOptions(visibleRows: rows));
+                PaletteViewOptions(visibleRows: rows,
+                    title: choosingTheme ? "Themes • Enter accepts • Esc cancels" : "Commands"));
             paletteChoices = paletteView.choices;
             children ~= paletteView.root;
         }
@@ -335,8 +464,25 @@ struct EditorApp
             if (document.firstLine >= count) document.firstLine = count ? count - 1 : 0;
             if (document.followCaret)
                 document.firstLine = scrollToPrimary(document.field.state, document.firstLine, visible);
-            const field = editorView(b, document.field.state, EditorViewOptions(
-                firstLine: document.firstLine, visibleLines: visible, placeholder: "Start typing…"));
+            const options = EditorViewOptions(firstLine: document.firstLine,
+                visibleLines: visible, placeholder: "Start typing…");
+            const syntax = highlighting.snapshot(document.field.state.text, document.language, document.id);
+            uint field;
+            if (syntax !is null && syntax.spans.length)
+            {
+                uint[] rows;
+                const stop = document.firstLine + visible < count ? document.firstLine + visible : count;
+                foreach (line; document.firstLine .. stop)
+                {
+                    const start = document.field.state.text.lineStart(line);
+                    const end = document.field.state.text.lineEnd(line);
+                    const ink = syntaxWindow(syntax.source, syntax.spans, start, end, syntaxTheme, theme.pageFg);
+                    rows ~= b.add(Widget(kind: WidgetKind.rich, width: SizeSpec.grow(),
+                        spans: highlightedEditorLine(document.field.state, line, ink, options)));
+                }
+                field = b.add(Widget(kind: WidgetKind.column, children: rows, width: SizeSpec.grow()));
+            }
+            else field = editorView(b, document.field.state, options);
             b.nodes[field].height = SizeSpec.grow();
             children ~= field;
         }
@@ -353,7 +499,8 @@ struct EditorApp
             children ~= b.add(Widget(kind: WidgetKind.text, slot: Slot.info,
                 text: text("bytes ", document.field.state.text.length, "  selections ",
                     document.field.state.selection.ranges.length, "  composition ",
-                    document.field.state.composition.active)));
+                    document.field.state.composition.active, "  highlighting ",
+                    highlighting.busy ? "pending" : highlighting.error.length ? highlighting.error : "ready")));
         if (status.length) children ~= b.add(Widget(kind: WidgetKind.text, text: status, slot: Slot.warn));
         children ~= b.add(Widget(kind: WidgetKind.text, text: "UTF-8  •  " ~ (document.dirty ? "Modified" : "Saved"),
             slot: Slot.muted, height: SizeSpec.fixed(1)));
@@ -395,6 +542,7 @@ struct EditorApp
     assert(app.commands.palette.rowCount > 0);
     RecordingHost host;
     host.backend = Backend.gui;
+    scope (exit) app.shutdown(host);
     app.view(host);
     assert(app.commands.palette.active && app.commands.palette.rowCount > 0);
 }
@@ -431,6 +579,7 @@ struct EditorApp
     app.document.field.setText("abc");
     RecordingHost host;
     FrameSnapshot frame;
+    scope (exit) app.shutdown(host);
     presentApp(app, host, AppTheme(defaultTwoslashPalette()), frame);
     app.paint(host, frame.tree, frame.frames);
     bool placed;
@@ -457,6 +606,7 @@ struct EditorApp
     app.execute(CommandId(Command.palette));
     RecordingHost host;
     host.size = Size(80, 28);
+    scope (exit) app.shutdown(host);
     FrameSnapshot snapshot;
     presentApp(app, host, AppTheme.init, snapshot);
     int headerBottom, tabTop;
@@ -470,4 +620,26 @@ struct EditorApp
         if (node.text == "Untitled") tabTop = snapshot.frames[i].rect.y;
     }
     assert(tabTop >= headerBottom && headerBottom > 0);
+}
+
+/// Theme search previews without editing the document; Escape restores and Enter accepts.
+@("editor.app.themePreviewCancelAndAccept")
+@safe unittest
+{
+    import sparkles.input : Key;
+    EditorApp app;
+    assert(app.useTheme("github-dark"));
+    app.document.field.setText("untouched");
+    app.execute(CommandId(Command.themes));
+    app.commands.insert("github-light", app.context);
+    app.previewPicker();
+    assert(app.themeName == "github-light" && app.document.field.text == "untouched");
+    app.handleKey(KeyEvent(Key.escape));
+    assert(app.themeName == "github-dark" && !app.commands.palette.active);
+    app.execute(CommandId(Command.themes));
+    app.commands.insert("github-light", app.context);
+    app.previewPicker();
+    app.handleKey(KeyEvent(Key.enter));
+    assert(app.themeName == "github-light" && !app.commands.palette.active);
+    assert(app.document.field.text == "untouched");
 }
