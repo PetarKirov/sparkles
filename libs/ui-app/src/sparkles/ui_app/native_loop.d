@@ -2370,9 +2370,18 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
     uint stressStep;
     bool drawsContinuously() => resizeStress
         || (cfg.native.debugging.frames > 0 && presented < cfg.native.debugging.frames);
+    bool shotAsked;
     void stressAndBudget()
     {
         lastProgress = MonoTime.currTime;
+        // `shot=PATH`: the frame after this one is captured — the budget's
+        // last, or the second of an open-ended run.
+        if (cfg.native.debugging.shot.length && !shotAsked
+            && (cfg.native.debugging.frames == 0 || presented + 1 >= cfg.native.debugging.frames))
+        {
+            shotAsked = true;
+            session.shotPath = cfg.native.debugging.shot;
+        }
         if (cfg.native.debugging.frames > 0 && presented >= cfg.native.debugging.frames)
             host.quit();
         if (!resizeStress || presented % 30 != 0)
