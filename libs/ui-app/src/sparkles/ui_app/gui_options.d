@@ -223,6 +223,7 @@ enum WindowSystem : ubyte
     auto_,   ///
     wayland, ///
     x11,     ///
+    appkit,  /// macOS
 }
 
 /**
@@ -285,7 +286,7 @@ passes them on in `RunConfig.native`; the other arms ignore them.
 struct NativeOptions
 {
     @(Option("window-system", description:
-        "The native window's window system: auto (Wayland where a compositor answers, else X11), wayland or x11."))
+        "The native window's window system: auto (Wayland where a compositor answers, else X11; AppKit on macOS), wayland, x11 or appkit."))
     WindowSystem windowSystem; ///
 
     @(Option("appearance", placeholder: "PREFS", description:
