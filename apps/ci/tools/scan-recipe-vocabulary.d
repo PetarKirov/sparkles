@@ -52,8 +52,7 @@ import std.range : take;
 import std.stdio : stderr, writeln;
 import std.string : indexOf, lineSplitter, strip, stripLeft;
 
-import sparkles.build_primitives.dub_manifest : embeddedDubRecipe;
-import sparkles.wired.sdl : SdlNode, SdlScalarKind, parseSdlDocument, sdlDubRecipe;
+import sparkles.wired.sdl : SdlNode, SdlScalarKind, locateEmbeddedRecipe, parseSdlDocument, sdlDubRecipe;
 
 /// Where a recipe comes from; the table groups its users by class.
 enum RecipeClass
@@ -516,14 +515,14 @@ string[] exampleGlobs()
 
 void scanSingleFile(scope const(char)[] source, string id, RecipeClass cls, string dir)
 {
-    const embedded = embeddedDubRecipe(source);
+    const embedded = locateEmbeddedRecipe(source);
     if (!embedded.found)
         return;
     const label = id;
     if (embedded.isJson)
-        scanJsonText(embedded.recipe.idup, label, id, cls, dir, id);
+        scanJsonText(embedded.recipe(source).idup, label, id, cls, dir, id);
     else
-        scanSdlText(embedded.recipe, label, id, cls, dir, id);
+        scanSdlText(embedded.recipe(source), label, id, cls, dir, id);
 }
 
 /// The `d` fences of a Markdown file that hold a single-file program.
