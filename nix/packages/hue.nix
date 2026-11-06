@@ -19,9 +19,13 @@
         pname = "hue";
         version = "0.1.0";
 
-        # Named, not dub's default: on macOS the default is the native
-        # (Vulkan) arm.
-        dubBuildFlags = [ "--config=application" ];
+        # macOS ships the native (Vulkan) arm, which runs there through
+        # MoltenVK: the loader nixpkgs builds already searches its driver.
+        # Elsewhere the raylib window, named, until the native arm is the
+        # default everywhere.
+        dubBuildFlags = [
+          (if pkgs.stdenv.hostPlatform.isDarwin then "--config=vulkan" else "--config=application")
+        ];
 
         # `hue --version` reports the commit (`TPG2`), so this package is
         # rebuilt (step 2 only) on every commit.
