@@ -17,6 +17,15 @@ color — the `Palette` resolves it to a `Visual` during display-list constructi
 order with aliases removed. A picker can display these names and resolve the
 accepted name through the shared theme loader.
 
+`editor.field.EditorField.insertEach(policy)` computes UTF-8 separately for
+each selection from `policy(currentText, head)`. It reuses ordinary scalar
+admission, single-line normalization, length limits, protected spans and undo.
+All admitted replacements form one undo transaction. This is useful for
+document-specific line endings and indentation without redefining the shared
+LF newline command. A throwing policy preserves the prior state and kill ring.
+The [runnable example](../../../libs/ui/examples/insert-each.d) prints `aAbcB`,
+then `abc` after one undo.
+
 | Module                     | Role                                                                                                                                                                                                                                                                                                                                |
 | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `geometry`                 | `Point`/`Size` (specializing `sparkles:math`'s `Vector`, like `TermSize`/`TermPosition`), `Rect`/`Insets` in abstract cells and `SizeSpec`; text width/fitting comes from owned base `visibleWidth`/`fitCells`, not geometry exports                                                                                                |

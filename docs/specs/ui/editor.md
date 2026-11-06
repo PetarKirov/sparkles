@@ -130,6 +130,14 @@ requests in EDT9. A step given equal state, ring and command, texts that
 resolve the command's ids to equal bytes, and contexts whose queries answer
 equally **must** return equal results.
 
+A position-aware insertion source may additionally provide
+`withTextAt(id, currentText, head, accept)`. For `insertText`, this supplies
+the bytes for each selection independently; `EditorField.insertEach` exposes
+that adapter while retaining the common admission, protection and undo path.
+The ordinary text-pool source retains identical text at every selection.
+Throwing caller-supplied policies **must not** leave the caller's editor state
+or kill ring moved out when `stepInPlace` unwinds.
+
 **EDT3: Grapheme boundaries.** After every step, every range endpoint
 **must** be a grapheme boundary of the new text, as defined by
 [`TXT-SEG7`](../base/text/SPEC.md#43-boundaries-from-an-arbitrary-position).
@@ -213,6 +221,12 @@ text; `insertNewline` and `insertTab` **must** insert LF and a tab (or
 submit and move focus, per the options). `insertText` with a multi-line
 text and as many ranges as lines **must** insert one line per range
 (EDY4).
+
+Position-aware insertion **must** commit all admitted per-selection
+replacements as one undo transaction. Generic `insertNewline` remains LF;
+document conventions use supplied insertion bytes rather than changing that
+command. As with other non-composition commands, a pending preedit commits
+first, and the insertion provider observes the resulting text and positions.
 
 **EDC2: Character motion and deletion.** `moveGrapheme(±1)` and
 `deleteGrapheme(±1)` **must** step one grapheme cluster. Moving a non-empty

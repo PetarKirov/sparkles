@@ -126,6 +126,14 @@ struct EditorField
         return runWith(EditCommand.insert(TextId.init, paste), source, now);
     }
 
+    /// Compute inserted UTF-8 per selection from the current text and head position.
+    /// All replacements share the editor's protection, length and undo machinery.
+    FieldResult insertEach(Insertion)(Insertion insertion, MonoTime now = MonoTime.init)
+    {
+        auto source = PerSelection!Insertion(insertion);
+        return runWith(EditCommand.insert(TextId.init, true), source, now);
+    }
+
     /// A paste (`EDI4`), or, when `request` is not 0, the answer to the
     /// field's clipboard read (`EDY5`): what a host's paste event carries.
     FieldResult paste(scope const(char)[] text, uint request = 0, MonoTime now = MonoTime.init)
@@ -167,7 +175,6 @@ struct EditorField
     }
 
     private FieldResult runWith(Texts)(EditCommand command, ref scope Texts source, MonoTime now)
-        @safe pure nothrow @nogc
     {
         const before = state.text;
         context.now = now;
@@ -205,6 +212,95 @@ private struct Given
     const(char)[] text;
 
     void withText(Fn)(in TextId, scope Fn fn) const => fn(text);
+}
+
+private struct PerSelection(Insertion)
+{
+    Insertion insertion;
+
+    void withText(Fn)(in TextId, scope Fn accept) => accept("");
+
+    void withTextAt(Fn)(in TextId, in Text text, size_t position, scope Fn accept)
+        => accept(insertion(text, position));
+}
+
+/// Position-dependent insertions remain one shared edit and one undo transaction.
+@("editor.field.insertEach.oneUndoForSeveralInsertions")
+@safe pure nothrow unittest
+{
+    import sparkles.ui.editor.selection : EditRange, SelectionSet;
+    auto field = EditorField.make("abc");
+    EditRange[2] ranges = [EditRange.caret(1), EditRange.caret(3)];
+    field.state.selection = SelectionSet.of(ranges[], 0);
+    const result = field.insertEach((in Text source, size_t at) @safe pure nothrow @nogc
+        => at == 1 ? "A" : "B");
+    assert(result.changed && field.text == "aAbcB");
+    field.run(EditCommand.of(EditKind.undo));
+    assert(field.text == "abc" && field.state.selection.ranges.length == 2);
+    assert(field.state.selection.ranges[0].head == 1 && field.state.selection.ranges[1].head == 3);
+}
+
+/// Length admission and protected spans use the same rules as ordinary insertion.
+@("editor.field.insertEach.boundsAndProtection")
+@safe pure nothrow unittest
+{
+    import sparkles.ui.editor.selection : EditRange, SelectionSet;
+    import sparkles.ui.editor.state : ReadOnlySpan;
+    import sparkles.ui.editor.effect : EffectKind;
+    auto field = EditorField.make("abc");
+    EditRange[2] ranges = [EditRange.caret(1), EditRange.caret(3)];
+    field.state.selection = SelectionSet.of(ranges[], 0);
+    field.state.options.maxLength = 4;
+    const tooLong = field.insertEach((in Text source, size_t at) => "X");
+    assert(!tooLong.changed && field.text == "abc");
+    field.state.options.maxLength = 0;
+    field.state.readOnly.put(ReadOnlySpan(0, 2));
+    const protected_ = field.insertEach((in Text source, size_t at) => "X");
+    assert(protected_.changed && protected_.effects.has(EffectKind.rejectedReadOnly));
+    assert(field.text == "abcX");
+    field.run(EditCommand.of(EditKind.undo));
+    assert(field.text == "abc");
+}
+
+/// A failed input policy leaves document, selection and undo history usable.
+@("editor.field.insertEach.throwingPolicyPreservesState")
+@safe unittest
+{
+    auto field = EditorField.make("abc");
+    field.insert("X");
+    const selection = field.state.selection;
+    bool failed;
+    try
+    {
+        field.insertEach((in Text source, size_t position) @safe {
+            throw new Exception("insertion policy failed");
+            return "";
+        });
+    }
+    catch (Exception) { failed = true; }
+    assert(failed && field.text == "abcX" && field.state.selection == selection);
+    field.run(EditCommand.of(EditKind.undo));
+    assert(field.text == "abc");
+}
+
+/// Per-selection insertion observes text after the ordinary preedit commit.
+@("editor.field.insertEach.commitsCompositionFirst")
+@safe pure nothrow unittest
+{
+    import sparkles.ui.editor.selection : EditRange, SelectionSet;
+    auto field = EditorField.make("abc");
+    EditRange[2] ranges = [EditRange.caret(1), EditRange.caret(3)];
+    field.state.selection = SelectionSet.of(ranges[], 0);
+    field.compose(CompositionEvent.init, "xy");
+    field.insertEach((in Text source, size_t at) @safe pure nothrow @nogc {
+        assert(source.length == 7);
+        return at < 5 ? "A" : "B";
+    });
+    assert(!field.state.composition.active && field.text == "axyAbcxyB");
+    field.run(EditCommand.of(EditKind.undo));
+    assert(field.text == "axybcxy");
+    field.run(EditCommand.of(EditKind.undo));
+    assert(field.text == "abc");
 }
 
 /**

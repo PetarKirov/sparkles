@@ -62,10 +62,9 @@ if (isTextSource!Texts && isEditContext!Context)
 }
 
 /**
-`step` applied in place: `state` and `ring` are moved in and the results
-moved back, so nothing is copied. A host that keeps one state should use
-this, or pass `move(state)` to `step`: a copy shares the history, and the
-step's first commit then clones it.
+`step` applied in place. Nonthrowing providers move `state` and `ring` in
+and back without copying. Potentially throwing providers use a value copy
+and publish only after success, preserving the caller's state on unwinding.
 */
 EditEffects stepInPlace(Texts, Context)(ref EditorState state, ref KillRing ring,
     ref scope Texts texts, in EditCommand command, ref Context context)
@@ -73,7 +72,13 @@ if (isTextSource!Texts && isEditContext!Context)
 {
     import core.lifetime : move;
 
-    auto result = step(move(state), move(ring), texts, command, context);
+    StepResult result;
+    static if (__traits(compiles, () nothrow {
+        cast(void) step(state, ring, texts, command, context);
+    }))
+        result = step(move(state), move(ring), texts, command, context);
+    else
+        result = step(state, ring, texts, command, context);
     state = move(result.state);
     ring = move(result.ring);
     return move(result.effects);
@@ -187,12 +192,17 @@ struct Stepper(Texts, Context)
         case EditKind.none:
             break;
         case EditKind.insertText:
-            // Typed text during a composition is the input method's commit.
-            if (state.composition.active)
-                commitComposition(resolve(c.text), last);
+            static if (__traits(hasMember, Texts, "withTextAt"))
+                insertEach(c.text, last);
             else
-                insertText(resolve(c.text), c.paste,
-                    c.paste ? Coalesce.none : Coalesce.typing, last);
+            {
+                // Typed text during a composition is the input method's commit.
+                if (state.composition.active)
+                    commitComposition(resolve(c.text), last);
+                else
+                    insertText(resolve(c.text), c.paste,
+                        c.paste ? Coalesce.none : Coalesce.typing, last);
+            }
             break;
         case EditKind.insertNewline:
             if (state.options.singleLine)
@@ -986,6 +996,28 @@ struct Stepper(Texts, Context)
                 edits.put(RangeEdit(r.start, r.end, inserted));
         if (fits(edits[]))
             applyEdits(edits[], Placement.afterInserted, coalesce, last);
+    }
+
+    /// Position-aware input providers compute generic inserted text, not command semantics.
+    void insertEach(TextId id, EditKind last)
+    {
+        static if (__traits(hasMember, Texts, "withTextAt"))
+        {
+            UniqueBuffer!(RangeEdit, 4) edits;
+            foreach (range; state.selection.ranges)
+            {
+                Text inserted;
+                texts.withTextAt(id, text, range.head,
+                    (scope const(char)[] bytes) { inserted = Text(bytes); });
+                if (!admit(inserted))
+                {
+                    effects.put(noop(NoopReason.nothingToDo));
+                    return;
+                }
+                edits.put(RangeEdit(range.start, range.end, inserted));
+            }
+            if (fits(edits[])) applyEdits(edits[], Placement.afterInserted, Coalesce.none, last);
+        }
     }
 
     bool allEmpty() const
