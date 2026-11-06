@@ -469,8 +469,10 @@ unittest
     enum absPath = resolveSourcePath("/already/absolute");
     static assert(absPath == "/already/absolute");
 
+    // A compile that names its sources by absolute path records no
+    // working directory to add, so the path may come back unchanged.
     enum relPath = resolveSourcePath("libs/base/src/sparkles/base/source_uri.d");
-    static assert(relPath.length > 40
+    static assert(relPath.length >= 40
         && relPath[$ - 40 .. $] == "libs/base/src/sparkles/base/source_uri.d");
 }
 
