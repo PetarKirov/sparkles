@@ -94,13 +94,44 @@ SDL";
 private immutable string[] managedBuildTypes = ["unittest", "unittest-debug",
     "unittest-cov", "unittest-cov-ctfe", "checked", "bench", "bench-unchecked", "bench-static"];
 
+/// A setting by content: its name, its string values in order, and its one
+/// `platform` attribute.
+private struct Setting
+{
+    string name;
+    string[] values;
+    string platform;
+}
+
 /// Link settings an earlier policy put in configurations, now in build types.
-private immutable string[] legacySettings = [
-    `dflags "--link-defaultlib-shared" "-linkonce-templates" platform="ldc"`,
-    `dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"`,
-    `dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"`,
-    `lflags "--export-dynamic" platform="linux-ldc"`,
+private immutable Setting[] legacySettings = [
+    Setting("dflags", ["--link-defaultlib-shared", "-linkonce-templates"], "ldc"),
+    Setting("dflags", ["-defaultlib=libphobos2.so", "-L-fuse-ld=gold"], "linux-dmd"),
+    Setting("dflags", ["--link-defaultlib-shared", "--linker=gold"], "linux-ldc"),
+    Setting("lflags", ["--export-dynamic"], "linux-ldc"),
 ];
+
+/// Whether `node` is `setting`: the same name, string values and platform,
+/// and nothing else — no namespace, other attribute or children.
+private bool isSetting(scope SdlNode node, in Setting setting) @safe pure nothrow @nogc
+{
+    import std.algorithm.comparison : equal;
+    import std.algorithm.iteration : map;
+    import sparkles.wired.sdl : SdlScalarKind;
+
+    if (node.qualifiedName.namespace_.length || node.qualifiedName.localName != setting.name
+        || node.childCount || node.attributeCount != 1 || node.valueCount != setting.values.length)
+        return false;
+    foreach (value; node.byValue)
+        if (value.kind != SdlScalarKind.string_)
+            return false;
+    const platform = node.byAttribute.front;
+    return platform.qualifiedName.namespace_.length == 0
+        && platform.qualifiedName.localName == "platform"
+        && platform.value.kind == SdlScalarKind.string_
+        && platform.value.stringValue == setting.platform
+        && node.byValue.map!(v => v.stringValue).equal(setting.values);
+}
 
 /// The comment an earlier generator wrote above its `checked` build type;
 /// only this exact text is its, so a reworded copy is the author's.
@@ -158,14 +189,10 @@ string normalize(string source) @safe
         editor.replaceRegion(TextSpan(start, cast(uint)(legacy.startOffset + legacyComment.length)), "");
     }
 
-    // The node's own text, without its terminator or trailing comment.
-    const(char)[] statement(scope SdlNode node)
-        => source[node.span.startOffset .. node.extent.endOffset].strip;
-
     void removeLegacySettings(scope SdlNode parent)
     {
         foreach (node; parent.byChild)
-            if (!inRegion(node) && legacySettings.canFind(statement(node)))
+            if (!inRegion(node) && legacySettings.canFind!((s, n) => isSetting(n, s))(node))
                 editor.remove(node);
     }
 
@@ -248,6 +275,24 @@ string normalize(string source) @safe
     const stale = "name \"z\"\n\n// BEGIN managed build types — old\nbuildType \"checked\" {\n}\n"
         ~ "// END managed build types\nconfiguration \"c\" {\n}\n";
     assert(normalize(stale) == "name \"z\"\n\n" ~ managed ~ "configuration \"c\" {\n}\n");
+}
+
+/// A legacy setting is recognized by its content, however it is laid out;
+/// one that differs in any value or attribute is the package's own.
+@("buildSettings.normalize.legacySettingsByContent")
+@safe unittest
+{
+    const source = "name \"s\"\nconfiguration \"unittest\" {\n"
+        ~ "    lflags \\\n        \"--export-dynamic\"   platform=\"linux-ldc\" // old\n"
+        ~ "    lflags \"--export-dynamic\" platform=\"linux-dmd\"\n"
+        ~ "    lflags \"--export-dynamic\" platform=\"linux-ldc\" optional=true\n"
+        ~ "    lflags \"--export-dynamic\" \"-v\" platform=\"linux-ldc\"\n}\n";
+    const normalized = normalize(source);
+    assert(normalized == "name \"s\"\nconfiguration \"unittest\" {\n"
+        ~ "    lflags \"--export-dynamic\" platform=\"linux-dmd\"\n"
+        ~ "    lflags \"--export-dynamic\" platform=\"linux-ldc\" optional=true\n"
+        ~ "    lflags \"--export-dynamic\" \"-v\" platform=\"linux-ldc\"\n}\n\n" ~ managed,
+        normalized);
 }
 
 /// Package-specific calibration types are outside the managed policy.
