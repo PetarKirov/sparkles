@@ -33,3 +33,4 @@ compare plain transcripts, exit codes and the files left behind.
 | Requirement | Status      | Evidence |
 | ----------- | ----------- | -------- |
 | CIC1–CIC10  | not started | —        |
+| CIC12–CIC13 | planned     | —        |
