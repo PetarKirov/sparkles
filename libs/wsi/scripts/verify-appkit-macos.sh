@@ -10,19 +10,8 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
 echo ">> building sparkles:wsi AppKit hosted-loop smoke ..."
-ldc2 -preview=in -preview=dip1000 -g -i \
-  -I"$repo/libs/wsi/src" \
-  -I"$repo/libs/event-horizon/src" \
-  -I"$repo/libs/event-horizon-sys/src" \
-  -I"$repo/libs/input/src" \
-  -I"$repo/libs/metadata/src" \
-  -I"$repo/libs/reflection/src" \
-  -I"$repo/libs/math/src" \
-  -I"$repo/libs/base/src" \
-  -I"$repo/libs/test-runner/src" \
-  "$repo/libs/wsi/examples/appkit-hosted-smoke.d" \
-  -L-framework -LCocoa -L-framework -LUniformTypeIdentifiers -L-framework -LQuartzCore \
-  -of="$work/wsi-appkit-smoke"
+dub build --single "$repo/libs/wsi/examples/appkit-hosted-smoke.d" -q
+cp "$repo/libs/wsi/examples/build/appkit_hosted_smoke" "$work/wsi-appkit-smoke"
 
 echo ">> running against AppKit ..."
 "$work/wsi-appkit-smoke" | tee "$work/output.log"

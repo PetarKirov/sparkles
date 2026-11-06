@@ -1,3 +1,18 @@
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "appkit_hosted_smoke"
+    dependency "sparkles:wsi" path="../../.."
+    dependency "sparkles:event-horizon" path="../../.."
+    dependency "sparkles:input" path="../../.."
+    targetPath "build"
+    platforms "osx"
+    buildType "checked" {
+        buildOptions "optimize" "inline" "debugInfo"
+    }
++/
+// ci: build-only
+// (it writes 32 MiB through the user's pasteboard and posts synthetic keys:
+// `scripts/verify-appkit-macos.sh` runs it on purpose)
 /**
 AppKit driver for the shared WSI conformance suite.
 
