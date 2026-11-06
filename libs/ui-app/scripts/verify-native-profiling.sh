@@ -21,15 +21,17 @@ XDG_RUNTIME_DIR="$work" weston --backend=headless --socket=prf --idle-time=0 \
 weston=$!
 for _ in $(seq 1 100); do [ -S "$work/prf" ] && break; sleep 0.05; done
 
-echo ">> Wayland: frames, GPU scopes, CPU zones, display times, trace ..."
+echo ">> Wayland: frames, GPU scopes, CPU zones, counters, display times, trace ..."
 XDG_RUNTIME_DIR="$work" WAYLAND_DISPLAY=prf timeout 120 "$lab" --window-system wayland \
-  --debug "frames=120,gpu-timing,frame-trace=$work/wayland.json" \
+  --debug "frames=120,gpu-timing,frame-counters,frame-trace=$work/wayland.json" \
   2>"$work/wayland.log" >/dev/null
 grep 'native window' "$work/wayland.log"
 grep -q 'native window frames: 120 frames: .*p99 .*1% low .*latency .* mean' "$work/wayland.log"
 grep -q 'native window gpu: ' "$work/wayland.log"
 grep -q 'native window memory: heap 0' "$work/wayland.log"
 grep -q 'native window zones (ms a frame, mean/p95): .*view .*layout .*paint .*end-frame' "$work/wayland.log"
+# Counters where the kernel allows them; a refusal must say why.
+grep -Eq 'native window counters: (120 frames: .* instructions.*page faults|no counters \()' "$work/wayland.log"
 grep -q '"cat":"gpu","ph":"X"' "$work/wayland.json"
 grep -q '"name":"shown"' "$work/wayland.json"
 grep -q '"name":"frame 119"' "$work/wayland.json"
