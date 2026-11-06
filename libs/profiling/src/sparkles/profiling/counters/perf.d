@@ -464,6 +464,16 @@ else version (OSX)
 {
     import core.time : MonoTime, msecs;
 
+    // A measured total net of the bracket's own cost, clamped at zero; an
+    // unavailable (NaN) total stays unavailable. The runner's tier0 keeps its
+    // own copy, `package` to it: the counters may not import the runner.
+    private double netOfCost(double total, double cost) @safe pure nothrow @nogc
+    {
+        import std.math : isNaN;
+
+        return total.isNaN ? total : (total > cost ? total - cost : 0.0);
+    }
+
     // ── The libproc surface. druntime has no binding; `proc_pid_rusage`
     // lives in libSystem (no extra link flags). Layout verified against the
     // macOS SDK header (`$(xcrun --show-sdk-path)/usr/include/sys/resource.h`)
@@ -481,7 +491,8 @@ else version (OSX)
     /// XNU "monotonic" fixed counters (`MT_CORE_INSTRS`/`MT_CORE_CYCLES`):
     /// true retired instructions and core cycles, per process, user+kernel,
     /// with no root and no entitlement.
-    package struct rusage_info_v4
+    /// Public: the runner's tier0 reads it too (`sparkles.test_runner.tier0`).
+    struct rusage_info_v4
     {
         ubyte[16] ri_uuid;
         ulong ri_user_time;
@@ -537,7 +548,7 @@ else version (OSX)
 
     /// Reads the full accounting struct; `false` = the syscall failed.
     /// Shared with the darwin tier-0 body (disk-I/O byte counters).
-    package bool readRusageInfo(out rusage_info_v4 info) @trusted nothrow @nogc
+    bool readRusageInfo(out rusage_info_v4 info) @trusted nothrow @nogc
     {
         import core.sys.posix.unistd : getpid;
 
@@ -742,8 +753,6 @@ else version (OSX)
             uint iters, uint batch = 1)
         in (iters > 0)
         {
-            import sparkles.test_runner.tier0 : netOfCost;
-
             PerfStats s;
             s.iters = iters;
             fillNonFixed(s);
@@ -826,8 +835,6 @@ else version (OSX)
         PerfStats windowStats(in PerfSnapshot a, in PerfSnapshot b)
             const @safe pure nothrow @nogc
         {
-            import sparkles.test_runner.tier0 : netOfCost;
-
             PerfStats s;
             s.iters = 1;
             fillNonFixed(s);
