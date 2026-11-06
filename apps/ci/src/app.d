@@ -19,12 +19,12 @@ Usage:
 nix run .#ci -- [--verify|--update] [--fail-fast] [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]
 nix run .#ci -- --example-files [--fail-fast] [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]
 nix run .#ci -- --build [--fail-fast]
-nix run .#ci -- --test [--fail-fast]
+nix run .#ci -- --test [--packages NAME...] [--fail-fast]
 nix run .#ci -- --test --host-system aarch64-linux [--host-ci-rev REV] [--fail-fast]
 nix run .#ci -- --test --host-system x86_64-linux [--host-ci-rev REV] [--fail-fast]
 nix run .#ci -- --linux-host-probe
-nix run .#ci -- --test-extracted [--fail-fast]
-nix run .#ci -- --test-sanitize [--fail-fast]
+nix run .#ci -- --test-extracted [--packages NAME...] [--fail-fast]
+nix run .#ci -- --test-sanitize [--packages NAME...] [--fail-fast]
 nix run .#ci -- --list-slow-tests
 nix run .#ci -- --test-slow [--packages NAME...] [--tests NAME...] [--fail-fast]
 nix run .#ci -- [--dedup-reference-links|--fix-reference-links] [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]
@@ -259,7 +259,9 @@ struct CliParams
 
     @(Option(`packages`,
         description: "With --build-each-commit: the sub-packages to build, by name. "
-        ~ "With --test-slow: the sub-packages whose slow tests to run."))
+        ~ "With --test-slow: the sub-packages whose slow tests to run. "
+        ~ "With --test, --test-sanitize or --test-extracted: test only these "
+        ~ "sub-packages (default: every one the root dub.sdl declares)."))
     string[] packages;
 
     @(Option(`list-slow-tests`,
@@ -794,13 +796,13 @@ int ciMain(string[] args)
     if (mode == ProgramMode.runDubTests)
         return cli.watch
             ? runWatchMode(WatchAction.test, cli.failFast)
-            : runDubTestsMode(cli.failFast, coverage);
+            : runDubTestsMode(cli.failFast, coverage, cli.packages);
 
     if (mode == ProgramMode.runSanitizeTests)
-        return runDubTestsMode(cli.failFast, coverage, sanitize: true);
+        return runDubTestsMode(cli.failFast, coverage, cli.packages, sanitize: true);
 
     if (mode == ProgramMode.runExtractedTests)
-        return runExtractedTestsMode(cli.failFast);
+        return runExtractedTestsMode(cli.failFast, cli.packages);
 
     if (mode == ProgramMode.listSlowTests)
         return runListSlowTestsMode();
@@ -3853,7 +3855,39 @@ private int runBuildEachCommitMode(string base, string[] requested, bool failFas
     return 0;
 }
 
-private int runDubTestsMode(bool failFast, bool coverage, bool sanitize = false)
+/**
+The sub-packages a test mode covers: every one the root `dub.sdl` declares, or
+— when `--packages` names some — just those, in request order. A name no
+sub-package has is an error rather than a smaller run: a CI shard lists its
+packages by hand, and a typo there would otherwise pass having tested nothing.
+*/
+private bool requestedSubPackages(string repoRoot, in string[] requested, out string[] chosen)
+{
+    import each_commit : selectPackages;
+
+    const all = subPackageDirectories(repoRoot);
+    if (all.length == 0)
+    {
+        error(i"No sub-packages found in dub.sdl");
+        return false;
+    }
+    if (requested.length == 0)
+    {
+        chosen = all.dup;
+        return true;
+    }
+    string[] unknown;
+    chosen = selectPackages(requested, all, unknown);
+    if (unknown.length)
+    {
+        error(i"--packages: no sub-package named $(unknown.join(", "))");
+        return false;
+    }
+    return true;
+}
+
+private int runDubTestsMode(bool failFast, bool coverage, in string[] requested,
+    bool sanitize = false)
 {
     if (sanitize)
     {
@@ -3879,12 +3913,9 @@ private int runDubTestsMode(bool failFast, bool coverage, bool sanitize = false)
     info(i"repository root: $(repoRoot)");
 
     info(i"parsing dub.sdl sub-packages");
-    auto subPackages = subPackageDirectories(repoRoot);
-    if (subPackages.length == 0)
-    {
-        error(i"No sub-packages found in dub.sdl");
+    string[] subPackages;
+    if (!requestedSubPackages(repoRoot, requested, subPackages))
         return 1;
-    }
     info(i"$(subPackages.length) sub-package(s) to test");
     if (sanitize)
         info(i"sanitize: ASan; one -t $(parallelTestThreads(hwParallelism())) leg on 4 MiB workers");
@@ -4186,7 +4217,7 @@ private ExtractedModes extractedModesOf(string repoRoot, string packagePath)
 /// wasm-ld, no wasm runtime), which is right for a contributor's machine and
 /// exactly wrong here — without it a missing linker would leave this reporting
 /// success having run nothing.
-private int runExtractedTestsMode(bool failFast)
+private int runExtractedTestsMode(bool failFast, in string[] requested)
 {
     info(i"resolving repository root");
     const repoRoot = detectRepoRoot();
@@ -4198,12 +4229,9 @@ private int runExtractedTestsMode(bool failFast)
     info(i"repository root: $(repoRoot)");
 
     info(i"scanning sub-packages for @betterC / @wasm");
-    auto subPackages = subPackageDirectories(repoRoot);
-    if (subPackages.length == 0)
-    {
-        error(i"No sub-packages found in dub.sdl");
+    string[] subPackages;
+    if (!requestedSubPackages(repoRoot, requested, subPackages))
         return 1;
-    }
 
     struct Job
     {
