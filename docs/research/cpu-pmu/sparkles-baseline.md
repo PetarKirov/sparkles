@@ -286,10 +286,10 @@ instructions/cycles via `proc_pid_rusage` (a natural tier-0 analog,
 
 <!-- References -->
 
-[src-perf]: ../../../libs/test-runner-impl/src/sparkles/test_runner/perf.d
-[src-group]: ../../../libs/test-runner-impl/src/sparkles/test_runner/perf_group.d
+[src-perf]: ../../../libs/profiling/src/sparkles/profiling/counters/perf.d
+[src-group]: ../../../libs/profiling/src/sparkles/profiling/counters/perf_group.d
 [src-tier0]: ../../../libs/test-runner-impl/src/sparkles/test_runner/tier0.d
-[src-syscalls]: ../../../libs/test-runner-impl/src/sparkles/test_runner/syscalls.d
+[src-syscalls]: ../../../libs/profiling/src/sparkles/profiling/counters/syscalls.d
 [src-metrics]: ../../../libs/test-runner-impl/src/sparkles/test_runner/metrics.d
 [src-bench]: ../../../libs/test-runner-impl/src/sparkles/test_runner/bench.d
 [src-json]: ../../../libs/test-runner-impl/src/sparkles/test_runner/bench_json.d

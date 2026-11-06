@@ -31,8 +31,8 @@ configuration "library" {
 configuration "unittest" {
     // `base`/`core-cli` cannot depend on the impl library (cycle: impl → base),
     // so they source-include both the shim and the impl.
-    sourcePaths "../test-runner/src" "../test-runner-impl/src"
-    importPaths "src" "../test-runner/src" "../test-runner-impl/src"
+    sourcePaths "../test-runner/src" "../test-runner-impl/src" "../profiling/src/sparkles/profiling/counters"
+    importPaths "src" "../test-runner/src" "../test-runner-impl/src" "../profiling/src"
     buildRequirements "disallowDeprecations"
 
     dflags "-checkaction=context" "-allinst"
@@ -42,8 +42,8 @@ configuration "unittest" {
 // native seam (SPEC SYF2, DS24), so a leg with a native mechanism also runs
 // the fallback: `dub test :base -c unittest-portable -- -i "sync\."`.
 configuration "unittest-portable" {
-    sourcePaths "../test-runner/src" "../test-runner-impl/src"
-    importPaths "src" "../test-runner/src" "../test-runner-impl/src"
+    sourcePaths "../test-runner/src" "../test-runner-impl/src" "../profiling/src/sparkles/profiling/counters"
+    importPaths "src" "../test-runner/src" "../test-runner-impl/src" "../profiling/src"
     buildRequirements "disallowDeprecations"
     versions "SparklesSyncPortableParker"
 
@@ -56,8 +56,8 @@ configuration "unittest-portable" {
 // is never imposed on library consumers.
 configuration "allocation-audit" {
     targetType "library"
-    sourcePaths "../test-runner/src" "../test-runner-impl/src"
-    importPaths "src" "../test-runner/src" "../test-runner-impl/src"
+    sourcePaths "../test-runner/src" "../test-runner-impl/src" "../profiling/src/sparkles/profiling/counters"
+    importPaths "src" "../test-runner/src" "../test-runner-impl/src" "../profiling/src"
     versions "VfsAllocationAudit"
     dflags "-checkaction=context" "-allinst"
     lflags "--wrap=malloc" "--wrap=calloc" "--wrap=realloc" platform="linux"

@@ -22,10 +22,10 @@
  * everywhere off Linux — the group degrades to unavailable and the columns are
  * simply omitted. Pure D over druntime's `core.sys.linux.perf_event`; no ImportC.
  */
-module sparkles.test_runner.syscalls;
+module sparkles.profiling.counters.syscalls;
 
 import sparkles.base.text.writers : interpolated;
-import sparkles.test_runner.capability : Capability, CapabilityAbsence,
+import sparkles.profiling.counters.capability : Capability, CapabilityAbsence,
     CapabilityReport, has, hasNamedColumns, hasSnapshot, isCounterBackend,
     probeParanoid, reasonFor;
 
@@ -77,7 +77,7 @@ version (linux)
         PERF_EVENT_IOC_DISABLE, PERF_EVENT_IOC_ENABLE;
     import core.sys.posix.unistd : posixClose = close;
 
-    import sparkles.test_runner.perf_group : GroupSnapshot;
+    import sparkles.profiling.counters.perf_group : GroupSnapshot;
 
     private enum maxNamed = 62; /// group read buffer is `double[1 + maxNamed]`
 
@@ -244,7 +244,7 @@ version (linux)
             uint iters, uint batch = 1)
         in (iters > 0)
         {
-            import sparkles.test_runner.perf_group : bracketCountingPass, readScaledGroup;
+            import sparkles.profiling.counters.perf_group : bracketCountingPass, readScaledGroup;
 
             const base = bracketCountingPass(fds[0], timed, between, iters, batch);
 
@@ -281,7 +281,7 @@ version (linux)
         /// so edge snapshots stay cumulative (see `PerfGroup.enable`).
         void enable() @safe
         {
-            import sparkles.test_runner.perf_group : groupIoctl;
+            import sparkles.profiling.counters.perf_group : groupIoctl;
 
             if (opened)
                 groupIoctl(fds[0], PERF_EVENT_IOC_ENABLE);
@@ -290,7 +290,7 @@ version (linux)
         /// ditto
         void disable() @safe
         {
-            import sparkles.test_runner.perf_group : groupIoctl;
+            import sparkles.profiling.counters.perf_group : groupIoctl;
 
             if (opened)
                 groupIoctl(fds[0], PERF_EVENT_IOC_DISABLE);
@@ -299,7 +299,7 @@ version (linux)
         /// Captures one window-edge reading.
         SyscallSnapshot snapshot() const @safe
         {
-            import sparkles.test_runner.perf_group : snapshotGroup;
+            import sparkles.profiling.counters.perf_group : snapshotGroup;
 
             return opened
                 ? SyscallSnapshot(snapshotGroup(fds[0], nOpen)) : SyscallSnapshot();
@@ -310,7 +310,7 @@ version (linux)
         SyscallStats windowStats(in SyscallSnapshot a, in SyscallSnapshot b)
             const @safe pure nothrow
         {
-            import sparkles.test_runner.perf_group : windowDeltas;
+            import sparkles.profiling.counters.perf_group : windowDeltas;
 
             SyscallStats s;
             s.iters = 1;

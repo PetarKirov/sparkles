@@ -31,9 +31,9 @@
  */
 module sparkles.test_runner.event_naming;
 
-import sparkles.test_runner.capability : Capability, CapabilityAbsence,
+import sparkles.profiling.counters.capability : Capability, CapabilityAbsence,
     CapabilityReport;
-import sparkles.test_runner.raw : RawEvent;
+import sparkles.profiling.counters.raw : RawEvent;
 
 /// The libpfm core-PMU table name for an AMD `/proc/cpuinfo` (vendor, family,
 /// model) triple — the CPUID mapping a fixed libpfm auto-detect would apply

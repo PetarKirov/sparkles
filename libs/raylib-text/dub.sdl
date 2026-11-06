@@ -66,8 +66,8 @@ configuration "unittest" {
     // positioned BEFORE these objects, so ld.bfd (single-pass) never pulls
     // skip.o and the build fails on an undefined reference. There is no cycle
     // to fear here: nothing in the impl's closure depends on raylib-text.
-    sourcePaths "../test-runner/src" "../test-runner-impl/src"
-    importPaths "src" "../test-runner/src" "../test-runner-impl/src"
+    sourcePaths "../test-runner/src" "../test-runner-impl/src" "../profiling/src/sparkles/profiling/counters"
+    importPaths "src" "../test-runner/src" "../test-runner-impl/src" "../profiling/src"
 
     // Scratch directories of fake font files for the discovery tests.
     // Test-only: never a library dependency.

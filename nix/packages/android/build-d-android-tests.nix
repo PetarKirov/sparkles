@@ -30,6 +30,7 @@ in
       runnerDirs = sources.libsClosure [ "base" ] ++ [
         "libs/test-runner/src"
         "libs/test-runner-impl/src"
+        "libs/profiling/src"
       ];
     in
     lib.optionalAttrs (androidHost system).supported {

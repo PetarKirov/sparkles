@@ -36,6 +36,12 @@ dependency "sparkles:base" path="../.."
 // `ui -> test-runner -> impl -> ui`. It source-includes the runner instead.
 dependency "sparkles:ui" path="../.."
 
+// The counters a benchmark reads (perf groups, rdpmc, syscalls, pressure
+// stalls) are `sparkles.profiling.counters`, shared with frame profiling.
+// `profiling`'s library depends only on `base`, so this edge closes no cycle;
+// the packages that source-include this impl source-include those counters too.
+dependency "sparkles:profiling" path="../.."
+
 targetType "library"
 
 configuration "library" {

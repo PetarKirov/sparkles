@@ -64,8 +64,8 @@ configuration "unittest" {
     // those objects, so ld.bfd (single-pass) never pulls `skip.o` → undefined
     // reference. Source-include the shim + impl instead (the cycle-safe recipe
     // base/core-cli use) so `skipTest` compiles directly into this build.
-    sourcePaths "src" "../../libs/test-runner/src" "../../libs/test-runner-impl/src"
-    importPaths "src" "../../libs/test-runner/src" "../../libs/test-runner-impl/src"
+    sourcePaths "src" "../../libs/test-runner/src" "../../libs/test-runner-impl/src" "../../libs/profiling/src/sparkles/profiling/counters"
+    importPaths "src" "../../libs/test-runner/src" "../../libs/test-runner-impl/src" "../../libs/profiling/src"
 
     // The same -unittest flattening compiles wired's `sdl/files.d`, whose
     // `version (unittest)` block imports the temporary-filesystem helpers.

@@ -19,10 +19,10 @@
 module sparkles.test_runner.metrics;
 
 import sparkles.test_runner.bench : BenchStats, Metric, Unit;
-import sparkles.test_runner.raw : RawEvent, parseRawEvent, rawHeader, RawStats;
-import sparkles.test_runner.perf : branchMissPercent, cacheMissPercent, ipc,
+import sparkles.profiling.counters.raw : RawEvent, parseRawEvent, rawHeader, RawStats;
+import sparkles.profiling.counters.perf : branchMissPercent, cacheMissPercent, ipc,
     PerfStats;
-import sparkles.test_runner.syscalls : SyscallStats;
+import sparkles.profiling.counters.syscalls : SyscallStats;
 import sparkles.test_runner.tier0 : cacheHitPercent, Tier0Stats;
 
 /// Whether a metric perturbs the measurement. Only `quantitative` metrics may

@@ -21,7 +21,7 @@
  * deviate from its sketch where the real surface demanded it (see
  * `docs/specs/test-runner/SPEC.md` §6.2).
  */
-module sparkles.test_runner.capability;
+module sparkles.profiling.counters.capability;
 
 /// One flag per survey concern (plus real-world sub-splits). Advertised per
 /// backend instance after its open handshake.
@@ -306,8 +306,8 @@ version (linux)
     /// Reads a small pseudo-file into `buf` via raw `open`/`read`/`close`
     /// (`std.file` reports size 0 for /proc and some /sys entries). The path
     /// must be null-terminated; returns the filled slice (empty on failure).
-    /// Shared with the workload wall source (`/proc/thread-self/schedstat`).
-    package(sparkles.test_runner)
+    /// Shared with the runner's workload wall source (`/proc/thread-self/schedstat`).
+    public
     char[] readSmallFile(scope const(char)* path, return scope char[] buf) @safe nothrow @nogc
     {
         import core.sys.posix.fcntl : open, O_RDONLY;

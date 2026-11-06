@@ -25,8 +25,8 @@ configuration "unittest" {
     // Cycle-safe path: test-runner-impl depends on syntax which depends on
     // tree-sitter, so a dependency on sparkles:test-runner would close a cycle.
     // Source-include the shim and impl instead.
-    sourcePaths "src" "../test-runner/src" "../test-runner-impl/src" "../syntax/src"
-    importPaths "src" "../test-runner/src" "../test-runner-impl/src" "../syntax/src"
+    sourcePaths "src" "../test-runner/src" "../test-runner-impl/src" "../syntax/src" "../profiling/src/sparkles/profiling/counters"
+    importPaths "src" "../test-runner/src" "../test-runner-impl/src" "../syntax/src" "../profiling/src"
     dependency "sparkles:base" path="../.."
 
     dflags "-checkaction=context" "-allinst"

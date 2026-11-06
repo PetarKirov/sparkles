@@ -20,7 +20,7 @@
  * `@benchmark` this module registers under `--bench`), not the literature's
  * order-of-magnitude claim.
  */
-module sparkles.test_runner.rdpmc;
+module sparkles.profiling.counters.rdpmc;
 
 version (linux) version (X86_64)
 {

@@ -30,7 +30,7 @@
  */
 module sparkles.test_runner.tier0;
 
-import sparkles.test_runner.capability : Capability, CapabilityAbsence,
+import sparkles.profiling.counters.capability : Capability, CapabilityAbsence,
     CapabilityReport, has, hasNamedColumns, hasSnapshot, isCounterBackend,
     reasonFor;
 
@@ -503,7 +503,7 @@ else version (OSX)
     import core.sys.posix.sys.resource : rusage, RUSAGE_SELF;
     import core.sys.posix.sys.time : timeval;
 
-    import sparkles.test_runner.perf : readRusageInfo, rusage_info_v4;
+    import sparkles.profiling.counters.perf : readRusageInfo, rusage_info_v4;
 
     /// druntime's Darwin `rusage` hides the BSD tail as `ru_opaque[14]`,
     /// but the kernel always fills it — this is the full `__DARWIN_C_FULL`
