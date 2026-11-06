@@ -32,7 +32,7 @@ import std.experimental.allocator.mallocator : Mallocator;
 import sparkles.base.buffer : UniqueBuffer;
 import sparkles.test_runner.skip : skipTest;
 import sparkles.wired.sdl : parseSdlDocument, sdlDubRecipe, SdlEditor, sdlEditor, SdlNode,
-    SdlQualifiedName, SdlScalar;
+    SdlQualifiedName, SdlScalar, SdlSelector;
 
 import app : isFresh, parseDescribe, stampName, unitOf, withoutHostFlags;
 
@@ -155,16 +155,11 @@ private void copyFixture(string dest)
     // selections (JSON) the same spelling.
     const recipe = dest.buildPath("dub.sdl");
     recipe.write(editRecipe(recipe.readText, (ref editor, root) {
-        bool found;
-        foreach (dependency; root.byChild(SdlQualifiedName(null, "dependency")))
-            foreach (path; dependency.byAttribute(SdlQualifiedName(null, "path")))
-                if (path.value.stringValue == "../../../..")
-                {
-                    editor.replaceAttribute(path, SdlQualifiedName(null, "path"),
-                        SdlScalar(repoRoot));
-                    found = true;
-                }
-        assert(found, "dub.sdl no longer names the checkout as ../../../..");
+        auto checkout = SdlSelector.parse("dependency.path", "path == `../../../..`");
+        assert(!checkout.value.attributes(root).empty,
+            "dub.sdl no longer names the checkout as ../../../..");
+        editor.replaceAttribute(checkout.value.attributes(root),
+            SdlQualifiedName(null, "path"), SdlScalar(repoRoot));
     }));
     const selections = dest.buildPath("dub.selections.json");
     const before = selections.readText;
