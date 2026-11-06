@@ -33,8 +33,11 @@ struct AndroidWindowHandle { void* nativeWindow; }
 
 struct AppKitWindowHandle
 {
-    void* window;
-    void* view;
+    void* window; /// the `NSWindow*`
+    void* view;   /// its content `NSView*`
+    /// The `CAMetalLayer*` the view hosts: what a Vulkan surface
+    /// (`VK_EXT_metal_surface`, MoltenVK) or a Metal renderer draws into.
+    void* layer;
 }
 
 alias DisplayHandle = SumType!(WaylandDisplayHandle, X11DisplayHandle,
