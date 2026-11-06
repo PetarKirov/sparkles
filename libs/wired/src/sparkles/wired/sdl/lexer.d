@@ -446,6 +446,18 @@ struct SdlLexer(SdlParserConfig config = sdlFull)
         _sourceName = sourceName;
     }
 
+    /** Package seam for the incremental reader (editing §10): starts lexing at
+    `offset`, a line boundary, instead of the source start. The byte-order
+    mark and UTF-8 checks of the source start do not run, and positions
+    count lines from there; the caller validates the bytes and re-parses in
+    full on any error. Call before the first token is read. */
+    package void startAt(size_t offset) scope @safe pure nothrow @nogc
+    in (!_ready && !_finished && offset <= _source.length)
+    {
+        _at = offset;
+        _lineStart = offset;
+    }
+
     /// Whether EOF or a yielded error has been consumed.
     bool empty() scope
     {

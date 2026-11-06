@@ -316,6 +316,46 @@ struct SdlScalar
         _span = value;
     }
 
+    /** Package seam for the incremental reader (editing §10): the borrowed
+    bytes of the payload — a string, a binary value, or a zone's spelling —
+    or `null` for a kind that borrows none. */
+    package const(ubyte)[] borrowedBytes() const @safe pure nothrow @nogc return scope
+    {
+        switch (_kind)
+        {
+        case SdlScalarKind.string_:
+            return cast(const(ubyte)[]) stringValue;
+        case SdlScalarKind.binary:
+            return binary;
+        case SdlScalarKind.zonedDateTime:
+            return cast(const(ubyte)[]) (() @trusted => _payload.zonedDateTimeValue.zone)();
+        default:
+            return null;
+        }
+    }
+
+    /// ditto: points the borrowed payload at `bytes`, a copy of it.
+    package void rebind(const(ubyte)[] bytes) @safe pure nothrow @nogc
+    in (bytes.length == borrowedBytes.length)
+    {
+        // Narrow trust: each write replaces the active member's slice with
+        // one of the same length, so the union keeps its kind.
+        switch (_kind)
+        {
+        case SdlScalarKind.string_:
+            () @trusted { _payload.stringValue = cast(const(char)[]) bytes; }();
+            break;
+        case SdlScalarKind.binary:
+            () @trusted { _payload.binaryValue = bytes; }();
+            break;
+        case SdlScalarKind.zonedDateTime:
+            () @trusted { _payload.zonedDateTimeValue.zone = cast(const(char)[]) bytes; }();
+            break;
+        default:
+            break;
+        }
+    }
+
     /// Active boolean payload.
     bool boolean() const scope @safe pure nothrow @nogc
     in (_kind == SdlScalarKind.boolean)
