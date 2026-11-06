@@ -31,7 +31,7 @@ import sparkles.base.term_control : PointerShape;
 import sparkles.code_instrumentation : CoveragePlan;
 import sparkles.input.events : Event, FocusEvent, GestureEvent, Key, KeyEvent,
     linesPerNotch, match, Mods, Point, PointerAction, PointerButton,
-    PointerEvent, WheelEvent;
+    PasteEvent, PointerEvent, WheelEvent;
 import sparkles.input.frame : InputFrame, foldFrame;
 import sparkles.input.gesture : PointF;
 import keymap : Binding, bindingsAt, Chord, Command, commandFor, InputMode,
@@ -128,7 +128,7 @@ import sparkles.ui.cmd_buffer : CmdBufferT;
 import sparkles.ui.arena : FrameArena;
 import sparkles.ui.layout : Frame, layout;
 import sparkles.ui.components.scroll_view : ScrollExtents, ScrollPointer;
-import sparkles.ui.editor.field : FieldClipboard, FieldSetup, serveClipboard;
+import sparkles.ui.editor.field : FieldSetup, RequestClipboard, serveClipboard;
 import sparkles.ui.editor.keys : windowTarget;
 import sparkles.ui.state : CaptureState, hoverTargets, HoverState, HoverTarget,
     keyAt, keyTargets, KeyTarget, PressState, ScrollAxis, ScrollbarState,
@@ -345,7 +345,73 @@ private struct ClipboardSeam
             surface.clipboard(text);
     }
 
-    string read() @system => surface.clipboardText();
+    // Reads by request (`INP25`), where the arm answers one with an event:
+    // the field's read becomes one host read, whose `PasteEvent`s gather
+    // here until the last; the frame then serves the fields again and the
+    // one still waiting pastes it (`RequestClipboard`).
+    private uint forwarded;   // the field's read passed on
+    private uint hostRequest; // the host read it became (0: none in flight)
+    private uint issued;
+    private char[] gathered;
+    private bool ready;
+
+    /// `RequestClipboard.ask`: the answer when it is in hand, else false
+    /// (asking the host the first time `request` is seen). An arm that reads
+    /// at once answers at once.
+    bool ask(uint request, out const(char)[] text) @system
+    {
+        static if (__traits(hasMember, GuiSurface, "readClipboard"))
+        {
+            if (ready)
+            {
+                text = gathered;
+                ready = false;
+                forwarded = 0;
+                return true;
+            }
+            if (request != forwarded)
+            {
+                forwarded = request;
+                hostRequest = ++issued;
+                gathered = null;
+                surface.readClipboard(hostRequest);
+            }
+            return false;
+        }
+        else
+        {
+            text = surface.clipboardText();
+            return true;
+        }
+    }
+
+    /// Takes `p` when it is (part of) this seam's answer.
+    bool take(in PasteEvent p) @system
+    {
+        if (p.request == 0 || p.request != hostRequest)
+            return false;
+        gathered ~= p.text[];
+        if (p.last)
+        {
+            ready = true;
+            hostRequest = 0;
+        }
+        return true;
+    }
+
+    /// An answer waits for the field that asked.
+    bool answerReady() const @safe pure nothrow @nogc => ready;
+
+    /// The frame is over: an answer no field took (its field lost the
+    /// focus) is dropped rather than pasted somewhere else later.
+    void settle() @safe pure nothrow @nogc
+    {
+        if (ready)
+        {
+            ready = false;
+            forwarded = 0;
+        }
+    }
 }
 
 /**
@@ -1531,15 +1597,17 @@ int runGui(GuiArgs guiArgs) @system
     auto clipSeam = new ClipboardSeam(&surface);
     void copyToClipboard(scope const(char)[] text) => clipSeam.write(text);
 
-    // The fields' clipboard (`EDY5`): copies go through the seam; reads come
-    // from the window, except on Android, whose bridge only writes, so a
+    // The fields' clipboard (`EDY5`): copies go through the seam; reads are
+    // requests the seam passes to the window and answers when the window
+    // does (`INP25`), except on Android, whose bridge only writes, so a
     // field there offers no paste chord (`EDI5`). The fields take the window
     // key table (`EDK1`).
-    FieldClipboard!(void delegate(scope const(char)[]) @system, string delegate() @system) fieldClip;
+    RequestClipboard!(void delegate(scope const(char)[]) @system,
+        bool delegate(uint, out const(char)[]) @system) fieldClip;
     fieldClip.write = &clipSeam.write;
     version (Android) {}
     else
-        fieldClip.read = &clipSeam.read;
+        fieldClip.ask = &clipSeam.ask;
     const fieldSetup = FieldSetup.of(windowTarget, fieldClip);
     inp.setup = fieldSetup;
     pn.tree.tv.filterSetup = fieldSetup;
@@ -2595,7 +2663,10 @@ int runGui(GuiArgs guiArgs) @system
         // recogniser are the host's to scale now (`HST17` note).
         keyBuf.length = 0;
         foreach (e; evBuf)
-            e.match!((in KeyEvent k) { keyBuf ~= k; }, (in _) {});
+            e.match!((in KeyEvent k) { keyBuf ~= k; },
+                // A clipboard read's answer (`INP25`), for the field that asked.
+                (in PasteEvent p) { cast(void) clipSeam.take(p); },
+                (in _) {});
 
         // `DST5`: an edit catches its diff and highlighting up once typing
         // pauses (`EDR3`); once a saved edit closes, the session on screen is
@@ -3099,6 +3170,8 @@ int runGui(GuiArgs guiArgs) @system
                 applySettingsResult(settingsPane.handleKey(k));
                 applySettingsResult(settingsPane.serveClipboard(fieldClip));
             }
+            if (clipSeam.answerReady) // a paste the window answered
+                applySettingsResult(settingsPane.serveClipboard(fieldClip));
         }
         else if (!filePicker.empty && filePicker.get.state.active)
         {
@@ -3112,6 +3185,8 @@ int runGui(GuiArgs guiArgs) @system
                 if (filePicker.get.state.active)
                     filePicker.get.serveClipboard(fieldClip);
             }
+            if (clipSeam.answerReady && filePicker.get.state.active)
+                filePicker.get.serveClipboard(fieldClip);
         }
         else if (pn.inspVisible && pn.inspFocused)
         {
@@ -3137,6 +3212,8 @@ int runGui(GuiArgs guiArgs) @system
                     pn.tree.filterKey(k);
                     pn.tree.filterServe(fieldClip);
                 }
+            if (clipSeam.answerReady)
+                pn.tree.filterServe(fieldClip);
         }
         else if (vm.diffEditing || vm.composing || vm.conflictOpen && vm.conflict.editing)
         {
@@ -3152,6 +3229,15 @@ int runGui(GuiArgs guiArgs) @system
                 fieldSetup.applyTo(vm.composer);
             else
                 fieldSetup.applyTo(vm.diffEdit.field);
+            if (clipSeam.answerReady) // a paste the window answered
+            {
+                if (resolving)
+                    cast(void) serveClipboard(vm.conflict.result, fieldClip);
+                else if (vm.composing)
+                    cast(void) serveClipboard(vm.composer, fieldClip);
+                else
+                    vm.diffEditServe(fieldClip);
+            }
             foreach (k; keyBuf)
             {
                 const taken = resolving ? vm.conflictKey(k)
@@ -3224,6 +3310,10 @@ int runGui(GuiArgs guiArgs) @system
                 inp.close();
             }
 
+            // A paste the window answered (`INP25`) edits the query.
+            if (clipSeam.answerReady && inp.serve(fieldClip) == LineStep.edited
+                && inp.mode == Mode.search)
+                vm.search(inp.query);
             foreach (k; keyBuf)
             {
                 auto step = inp.key(k);
@@ -3980,6 +4070,7 @@ int runGui(GuiArgs guiArgs) @system
             }, (_){ });
         }
         evBuf.length = 0;
+        clipSeam.settle();
         applyDockOffsets();
         const scrollRoute = pn.dock.tickScroll(window.frameSeconds, caps);
         // Edge autoscroll changed the container after the ordinary event

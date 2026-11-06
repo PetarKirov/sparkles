@@ -102,8 +102,8 @@ version (HueGuiVulkan)
 
         void clipboard(in char[] text) @system { host.clipboard(text); }
         /// Reading the clipboard is a request answered by an event on this
-        /// arm (`INP25`), not a call: nothing to read synchronously yet.
-        string clipboardText() @system => null;
+        /// arm (`INP25`): the text arrives as `PasteEvent`s carrying `request`.
+        void readClipboard(uint request) @system { host.readClipboard(request); }
 
         GuiCanvas canvasAt(float x = 0, float y = 0, bool effects = false) @system
             => GuiCanvas(host.canvas, cast(int) x, cast(int) y);
