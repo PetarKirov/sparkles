@@ -220,6 +220,9 @@ struct GlyphRequest
     /// The cells the cluster takes, in pixels: a colour glyph larger than them
     /// is drawn smaller to fit, as the raylib arm fits it. 0 fits nothing.
     int fitWidth, fitHeight;
+    /// The interface face's type step the cluster draws in (`UVK20`), or -1
+    /// for the cell font and its fallbacks.
+    byte interfaceStep = -1;
 }
 
 /// The most glyphs one cluster is drawn as: the font seam's cap
@@ -262,6 +265,38 @@ enum bool isGlyphSource(S) = is(typeof((ref S s) {
     TextMetrics m = s.textMetrics;
 }));
 
+/**
+One step of the interface face as a glyph source draws it (`UVK20`,
+design-system `GLY10`): its glyph box and baseline in pixels, and whether a
+bold face backs bold runs. Not `present`: no interface face, and an interface
+run draws in the cell font.
+*/
+struct InterfaceStep
+{
+    bool present; ///
+    int size;     /// the glyph box, ascender to descender, in pixels
+    int ascent;   /// the baseline, in pixels below the box's top
+    bool bold;    /// a bold face: without one, bold is a doubled stroke
+}
+
+/**
+Whether `S` draws interface runs in a proportional face (`UVK20`):
+`interfaceStep(step)` describes the face at a type step, and
+`interfaceMaps(step, bold, cp)` says whether that face has a glyph for `cp`.
+Such a source shapes too (`shapesClusters`): a cluster request whose
+`interfaceStep` is set is shaped in the interface face, whole.
+*/
+enum bool hasInterfaceFace(S) = shapesClusters!S && is(typeof((ref S s) {
+    InterfaceStep st = s.interfaceStep(0);
+    bool mapped = s.interfaceMaps(0, false, dchar('a'));
+}));
+
+/// Whether `cp` shows ink of its own: not a joiner, a variation selector or a
+/// tag, which only join glyphs or pick their face.
+bool shownCodepoint(uint cp) @safe pure nothrow @nogc
+    => cp != 0x200C && cp != 0x200D && !(cp >= 0xFE00 && cp <= 0xFE0F)
+        && !(cp >= 0xE0020 && cp <= 0xE007F) && !(cp >= 0xE0100 && cp <= 0xE01EF);
+
 /// An image source with no images: every image is the placeholder.
 struct NoImages
 {
@@ -301,6 +336,11 @@ if (isImageSource!Images)
 
     /// The shortest a scrollbar's thumb is drawn, in device pixels (`SCV13`).
     int minThumbPx = scrollbarMinExtentPx;
+
+    /// Whether interface runs draw in the source's interface face where it has
+    /// one (`UVK20`); off, they draw in the cell font, as on a target narrowed
+    /// to no `proportionalText`.
+    bool interfaceFaces = true;
 
     /// The frame's degradation report so far.
     FrameReport report;
@@ -425,12 +465,24 @@ if (isImageSource!Images)
         cellText(px(at.x), py(at.y), text, v);
     }
 
-    /// ditto — an interface run has no face of its own here, so it also
-    /// counts as `missingFace` and falls back to the cell font (`UVK17`),
-    /// centred in the rows it was given, as an interface face is: a touch
-    /// target's label sits in the middle of its several rows.
+    /**
+    ditto, in its cell rect `r`. An interface run (`FontRole.ui`, and
+    `FontRole.docs`) draws in the source's interface face at its type step
+    where the source has one (`UVK20`, design-system `GLY10`): placed by the
+    face's advances, aligned across the rect as the run asks, its glyph box
+    centred in the rows the layout gave it. A cluster the face lacks draws
+    from the cell font's faces on the same baseline.
+
+    Without an interface face the run has no face of its own, so it counts as
+    `missingFace` and falls back to the cell font (`UVK17`), centred in its
+    rows as an interface face is: a touch target's label sits in the middle
+    of its several rows.
+    */
     void textRunIn(in Rect r, scope const(char)[] text, in Visual v)
     {
+        static if (drawsText && hasInterfaceFace!GlyphSource)
+            if (interfaceRunIn(r, text, v))
+                return;
         if (text.length && (v.fontRole == FontRole.ui || v.fontRole == FontRole.uiMono
                 || v.fontRole == FontRole.docs))
             report.count(Degradation.missingFace);
@@ -525,6 +577,36 @@ if (isImageSource!Images)
             }
         }
         return labelSizePx(text)[0];
+    }
+
+    /**
+    The width `text` takes in the interface face at type step `step`, in
+    pixels, unrounded — what `textRunIn` places it by, and so what a layout
+    measuring interface runs reads (`GLY10`). Negative when the source has no
+    interface face at that step: the run is then as wide as its cells.
+    */
+    double interfaceWidthPx(scope const(char)[] text, int step, bool bold)
+    {
+        static if (drawsText && hasInterfaceFace!GlyphSource)
+        {
+            if (interfaceFaces && textReady && step >= 0)
+            {
+                const s = images.interfaceStep(step);
+                if (s.present)
+                    return interfaceRun(text, step, s, bold, 0, 0, v4(0), v4(0), draw: false);
+            }
+        }
+        return -1;
+    }
+
+    /// The interface face at type step `step`, as the source describes it;
+    /// not `present` where there is none.
+    InterfaceStep interfaceStep(int step)
+    {
+        static if (drawsText && hasInterfaceFace!GlyphSource)
+            if (interfaceFaces && textReady && step >= 0)
+                return images.interfaceStep(step);
+        return InterfaceStep.init;
     }
 
     /// A label in device pixels from (`x`, `y`), one cell per cluster.
@@ -646,11 +728,14 @@ if (isImageSource!Images)
         // One drawn glyph: a coverage glyph on the baseline, tinted with the
         // text's colour and composited against its background, or a colour
         // glyph in its own colours centred in the cells' height; a shaped
-        // glyph moved by its offsets.
-        private void emitQuad(int penX, int top, int boxH, in GlyphQuad q, in GlyphRequest request)
+        // glyph moved by its offsets. The baseline is `ascent` below `top`:
+        // the cell font's unless an interface run names its own.
+        private void emitQuad(int penX, int top, int boxH, in GlyphQuad q, in GlyphRequest request,
+            int ascent = int.min)
         {
+            const base = ascent == int.min ? images.textMetrics.ascent : ascent;
             const y = q.colour ? top + (boxH - q.height) / 2 - q.dy
-                : top + images.textMetrics.ascent - q.bearingY - q.dy;
+                : top + base - q.bearingY - q.dy;
             const box = v4(penX + q.dx + q.bearingX, y, q.width, q.height);
             if (q.colour)
                 emit(record(box, request.colour, v4(0), v4(QuadKind.colourGlyph, 0, 0, 0), q.texRect),
@@ -679,13 +764,14 @@ if (isImageSource!Images)
                 return false;
         }
 
-        private void glyphAt(int penX, int top, int boxH, in GlyphRequest request)
+        private void glyphAt(int penX, int top, int boxH, in GlyphRequest request,
+            int ascent = int.min)
         {
             GlyphQuad q;
             final switch (images.resolveGlyph(request, q))
             {
                 case GlyphOutcome.drawn:
-                    emitQuad(penX, top, boxH, q, request);
+                    emitQuad(penX, top, boxH, q, request, ascent);
                     break;
                 case GlyphOutcome.blank:
                     break;
@@ -699,6 +785,139 @@ if (isImageSource!Images)
                     report.count(Degradation.glyphMiss);
                     report.anotherFrame = true;
                     break;
+            }
+        }
+
+        static if (hasInterfaceFace!GlyphSource)
+        {
+            // An interface run in its cell rect (`textRunIn`): false when it
+            // is not one, or the source has no face for it.
+            private bool interfaceRunIn(in Rect r, scope const(char)[] text, in Visual v)
+            {
+                import sparkles.ui.pixel_geometry : alignOffsetPx;
+                import sparkles.ui.style : uiStepOf;
+
+                // A value, a path, a chord: the cell font (`D64`).
+                if (!interfaceFaces || !text.length || v.fontRole == FontRole.uiMono || !textReady)
+                    return false;
+                const step = uiStepOf(v.fontRole, v.typeStep, v.fontScale);
+                if (step < 0)
+                    return false;
+                const s = images.interfaceStep(step);
+                if (!s.present)
+                    return false;
+                const bold = (v.styleBits & TextAttr.bold.bits) != 0;
+                const box = pixelsOf(r);
+                const runPx = v.textAlign == 0 ? 0
+                    : interfaceRun(text, step, s, bold, 0, 0, v4(0), v4(0), draw: false);
+                const x = box.x + cast(int) alignOffsetPx(v.textAlign, box.width, runPx);
+                // The glyph box in the middle of the rows the layout gave it.
+                const y = box.y + (box.height > s.size ? (box.height - s.size) / 2 : 0);
+                const colour = rgba(v.fg, v.fgAlpha);
+                const width = interfaceRun(text, step, s, bold, x, y, colour, backgroundOf(v),
+                    draw: true);
+                // The cell font's decorations, at their distance from its
+                // baseline, from the run's.
+                const metrics = images.textMetrics;
+                const w = cast(int)(width + 0.5);
+                if (v.underline != UnderlineStyle.none)
+                    solid(Rect(x, y + s.ascent + metrics.underlineY - metrics.ascent, w,
+                        metrics.underlineHeight), colour);
+                if (v.styleBits & TextAttr.strikethrough.bits)
+                    solid(Rect(x, y + s.ascent - s.size / 4, w, metrics.underlineHeight), colour);
+                return true;
+            }
+
+            /*
+            `text` in the interface face at `step`, its glyph box's top-left at
+            (`x`, `top`); drawn when `draw`, else only measured. Returns its
+            advance in pixels, unrounded. Clusters the face maps are shaped in
+            runs of up to `maxClusterQuads` code points, so kerning holds
+            within each; one it lacks — an icon, a script it does not cover —
+            is shaped alone in the cell font's faces and their fallbacks, on
+            the run's baseline, advancing by its own advance. Bold without a
+            bold face is the regular face drawn twice, a pixel apart.
+            */
+            private double interfaceRun(scope const(char)[] text, int step, in InterfaceStep s,
+                bool bold, int x, int top, vec4 colour, vec4 background, bool draw)
+            {
+                const style = bold ? FaceStyle.bold : FaceStyle.regular;
+                const doubled = draw && bold && !s.bold;
+                double pen = 0;
+                static int nearest(double v) => cast(int)(v >= 0 ? v + 0.5 : v - 0.5);
+
+                // `cps` shaped through `request`'s faces from the pen: false
+                // when the source could not.
+                bool place(scope const(uint)[] cps, in GlyphRequest request)
+                {
+                    double advance = 0;
+                    GlyphQuad[maxClusterQuads] quads;
+                    size_t count;
+                    const outcome = images.resolveCluster(ClusterRequest(cps, request, &advance,
+                        !draw), quads[], count);
+                    if (outcome == GlyphOutcome.full)
+                        report.anotherFrame = true;
+                    if (outcome != GlyphOutcome.drawn)
+                        return false;
+                    if (draw)
+                    {
+                        const at = x + nearest(pen);
+                        foreach (ref q; quads[0 .. count])
+                        {
+                            emitQuad(at, top, s.size, q, request, s.ascent);
+                            if (doubled && !q.colour)
+                                emitQuad(at + 1, top, s.size, q, request, s.ascent);
+                        }
+                    }
+                    pen += advance;
+                    return true;
+                }
+
+                uint[maxClusterQuads] run;
+                size_t n;
+                void flush()
+                {
+                    if (!n)
+                        return;
+                    auto request = GlyphRequest(cast(dchar) run[0], style, false, colour, background);
+                    request.interfaceStep = cast(byte) step;
+                    if (!place(run[0 .. n], request))
+                        report.count(Degradation.glyphMiss);
+                    n = 0;
+                }
+
+                foreach (c; byGraphemeCluster(text))
+                {
+                    if (c.isEscape)
+                        continue;
+                    dchar[16] decoded; // a longer cluster draws its first sixteen
+                    const got = convertPrefix(c.slice, decoded[], UtfMode.replacement);
+                    const cps = cast(const(uint)[]) decoded[0 .. got.written];
+                    if (!cps.length)
+                        continue;
+                    bool mapped = true;
+                    foreach (cp; cps)
+                        mapped &= !shownCodepoint(cp) || images.interfaceMaps(step, bold, cast(dchar) cp);
+                    if (mapped)
+                    {
+                        if (n + cps.length > run.length)
+                            flush();
+                        run[n .. n + cps.length] = cps[];
+                        n += cps.length;
+                        continue;
+                    }
+                    flush();
+                    const cellsPx = (c.width > 0 ? c.width : 1) * m_.cellW;
+                    const request = GlyphRequest(cast(dchar) cps[0], style, emojiPresentation(cps),
+                        colour, background, cellsPx, s.size);
+                    if (place(cps, request))
+                        continue;
+                    if (draw)
+                        glyphAt(x + nearest(pen), top, s.size, request, s.ascent);
+                    pen += cellsPx;
+                }
+                flush();
+                return pen;
             }
         }
     }
@@ -1417,6 +1636,121 @@ unittest
     assert(boxIs(p.instances[$ - 1], 5 + 10 + 1, 3 + 20 + 10 + 15 - 5, 4, 6),
         "two rows: half a row down");
     assert(p.report[Degradation.missingFace] == 3);
+}
+
+version (unittest)
+{
+    // `FakeGlyphs` with an interface face at every step: a 14 px box on an
+    // 11 px baseline, no bold face, mapping all but `★`. It shapes a run
+    // one glyph per code point, `i` 3 px wide and every other 7, and shapes
+    // nothing in the cell font, which then draws glyph by glyph.
+    private struct FakeInterface
+    {
+        FakeGlyphs base;
+        alias base this;
+        int lastStep = -2; // the step of the last interface request
+        bool lastMeasureOnly;
+
+        InterfaceStep interfaceStep(int) const @safe pure nothrow @nogc
+            => InterfaceStep(true, 14, 11, false);
+
+        bool interfaceMaps(int, bool, dchar cp) const @safe pure nothrow @nogc => cp != '★';
+
+        GlyphOutcome resolveCluster(in ClusterRequest r, scope GlyphQuad[] quads, out size_t count)
+            @safe pure nothrow @nogc
+        {
+            if (r.first.interfaceStep < 0)
+                return GlyphOutcome.noGlyph;
+            lastStep = r.first.interfaceStep;
+            lastMeasureOnly = r.measureOnly;
+            double pen = 0;
+            foreach (cp; r.cps)
+            {
+                if (!r.measureOnly && cp != ' ')
+                {
+                    quads[count] = GlyphQuad(2, false, v4(0, 0, 0.25f, 0.25f), 4, 6, 1, 5);
+                    quads[count++].dx = cast(int) pen;
+                }
+                pen += cp == 'i' ? 3 : 7;
+            }
+            if (r.advance !is null)
+                () @trusted { *cast(double*) r.advance = pen; }();
+            return GlyphOutcome.drawn;
+        }
+    }
+}
+
+@("ui_vulkan.painter.anInterfaceRunIsPlacedByItsFacesAdvances")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.ui.style : TypeStep;
+
+    // `UVK20`: glyphs at the face's advances, not one per cell, the glyph
+    // box centred in the rows (a 14 px box in a 20 px row: 3 px down) and
+    // the glyph on the face's baseline.
+    Painter!FakeInterface p;
+    p.begin(Size(200, 100), metrics10x20); // origin (5, 3), 10 × 20 cells
+    const v = Visual(fg: RgbColor(255, 255, 255), fgAlpha: 255, fontRole: FontRole.ui,
+        typeStep: TypeStep.title);
+    p.textRunIn(Rect(1, 0, 4, 1), "Wil", v);
+    assert(p.instances.length == 3 && p.report[Degradation.missingFace] == 0);
+    assert(p.images.lastStep == TypeStep.title && !p.images.lastMeasureOnly);
+    const top = 3 + 3 + 11 - 5; // the box's top, its baseline, the glyph's bearing
+    assert(boxIs(p.instances[0], 15 + 1, top, 4, 6));
+    assert(boxIs(p.instances[1], 15 + 7 + 1, top, 4, 6), "after a 7 px W, not a 10 px cell");
+    assert(boxIs(p.instances[2], 15 + 10 + 1, top, 4, 6), "after a 3 px i");
+    assert(p.interfaceWidthPx("Wil", TypeStep.title, false) == 17);
+    assert(p.images.lastMeasureOnly, "measuring rasterizes nothing");
+
+    // Aligned across its rect as the run asks: 17 px in 40.
+    Visual centred = v;
+    centred.textAlign = 1;
+    p.textRunIn(Rect(1, 1, 4, 1), "Wil", centred);
+    assert(boxIs(p.instances[3], 15 + 11 + 1, 20 + top, 4, 6), "centred, on a whole pixel");
+    Visual end = v;
+    end.textAlign = 2;
+    p.textRunIn(Rect(1, 2, 4, 1), "Wil", end);
+    assert(boxIs(p.instances[6], 15 + 23 + 1, 40 + top, 4, 6));
+}
+
+@("ui_vulkan.painter.anInterfaceRunFallsBackPerCluster")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.base.term_style : TextAttr;
+
+    Painter!FakeInterface p;
+    p.begin(Size(200, 100), metrics10x20);
+    const v = Visual(fg: RgbColor(255, 255, 255), fgAlpha: 255, fontRole: FontRole.ui);
+    // A code point the face lacks draws from the cell font on the run's
+    // baseline and takes its cells; the run goes on in the interface face.
+    p.textRunIn(Rect(0, 0, 8, 1), "W★W", v);
+    assert(p.instances.length == 3);
+    const top = 3 + 3 + 11 - 5;
+    assert(boxIs(p.instances[0], 5 + 1, top, 4, 6));
+    assert(boxIs(p.instances[1], 5 + 7 + 1, top, 4, 6), "the icon, from the cell font");
+    assert(boxIs(p.instances[2], 5 + 7 + 10 + 1, top, 4, 6), "after the icon's cell");
+    assert(p.interfaceWidthPx("W★W", 0, false) == 24);
+
+    // Bold with no bold face: each glyph twice, a pixel apart.
+    Visual bold = v;
+    bold.styleBits = TextAttr.bold.bits;
+    p.textRunIn(Rect(0, 1, 8, 1), "W", bold);
+    assert(p.instances.length == 5);
+    assert(p.instances[4].box.array[0] == p.instances[3].box.array[0] + 1);
+
+    // A docs run draws in it too; a value (`uiMono`) stays in the cell font.
+    p.textRunIn(Rect(0, 2, 8, 1), "W", Visual(fontRole: FontRole.docs));
+    assert(p.report[Degradation.missingFace] == 0);
+    p.textRunIn(Rect(0, 3, 8, 1), "W", Visual(fontRole: FontRole.uiMono));
+    assert(p.report[Degradation.missingFace] == 1);
+
+    // A target narrowed to no `proportionalText`: the cell font, counted.
+    p.interfaceFaces = false;
+    p.textRunIn(Rect(0, 4, 8, 1), "W", v);
+    assert(p.report[Degradation.missingFace] == 2);
+    assert(p.interfaceWidthPx("W", 0, false) < 0, "and nothing to measure by");
 }
 
 @("ui_vulkan.painter.anEmojiClusterDrawsInColour")

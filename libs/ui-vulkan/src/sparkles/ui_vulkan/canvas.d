@@ -32,6 +32,7 @@ import sparkles.shaders.layout : Rule, writeLayout;
 import sparkles.ui.canvas : isCanvas;
 import sparkles.ui.geometry : Size;
 import sparkles.ui.image : ImageHandle, ImageRegistry;
+import sparkles.ui.style : TypeStep;
 import sparkles.ui_vulkan.frame_buffers : BufferSlice, FrameBuffers;
 import sparkles.ui_vulkan.glyph_atlas : AtlasGlyph, AtlasOutcome, coverageKey, DirtyRegion, GlyphAtlas,
     GlyphKey, hasColourGlyphs;
@@ -164,6 +165,8 @@ struct CanvasImages
     private GlyphOutcome delegate(in GlyphRequest, out GlyphQuad) @system glyph_;
     private const(TextMetrics)* metrics_;
     private GlyphOutcome delegate(in ClusterRequest, scope GlyphQuad[], out size_t) @system cluster_;
+    private InterfaceStep delegate(int) @system step_;
+    private bool delegate(int, bool, dchar) @system maps_;
 
     /// See `isImageSource`.
     ImageOutcome resolve(ImageHandle handle, out uint slot, out Size size) @system
@@ -179,10 +182,17 @@ struct CanvasImages
     /// See `shapesClusters`.
     GlyphOutcome resolveCluster(in ClusterRequest r, scope GlyphQuad[] quads, out size_t count) @system
         => cluster_ is null ? GlyphOutcome.noGlyph : cluster_(r, quads, count);
+
+    /// See `hasInterfaceFace`.
+    InterfaceStep interfaceStep(int step) @system => step_ is null ? InterfaceStep.init : step_(step);
+
+    /// ditto
+    bool interfaceMaps(int step, bool bold, dchar cp) @system => maps_ !is null && maps_(step, bold, cp);
 }
 
 static assert(isGlyphSource!CanvasImages);
 static assert(shapesClusters!CanvasImages);
+static assert(hasInterfaceFace!CanvasImages);
 
 // Whether the font library's shaping engine (HarfBuzz, its `engine`
 // configuration) is linked: clusters are shaped where it is.
@@ -280,6 +290,10 @@ struct VulkanCanvas(B)
     private bool specimenActive_;
     private uint specimenFallbackGlyphs_;
     private uint specimenGridFallbacks_;
+    // The interface face (`UVK20`): its regular and bold faces at each type
+    // step, and each step's box and baseline.
+    private CellFace[2][TypeStep.max + 1] interfaceFaces_;
+    private InterfaceStep[TypeStep.max + 1] interfaceSteps_;
     private UniqueBuffer!GpuImage[2] atlasImages_; // the coverage sheet's pages, the colour sheet's
     private UniqueBuffer!ulong[2] atlasGenerations_;
     private Pipelines coveragePipelines_;
@@ -302,6 +316,9 @@ struct VulkanCanvas(B)
         // each frame (`shape` zone on 117 of 120 frames; 31 M instructions a
         // frame against 27 M at 512). An entry is ~3 KB, its glyphs inline.
         private PreparedRuns!512 preparedRuns_;
+        // Interface runs, apart: a screen of labels must not evict the cell
+        // font's shaped clusters, nor they its labels.
+        private PreparedRuns!256 interfaceRuns_;
         private bool preparingGlyphs_;
         private uint rasterWorkers_ = 2;
         private CoverageMode coverageMode_;
@@ -346,7 +363,8 @@ struct VulkanCanvas(B)
         c.facts_.suppressFeedback = config.suppressPipelineFeedback;
         c.config_ = config;
         c.registry_ = registry;
-        c.painter_.images = CanvasImages(&c.resolveImage, &c.resolveGlyph, &c.textMetrics_, &c.resolveCluster);
+        c.painter_.images = CanvasImages(&c.resolveImage, &c.resolveGlyph, &c.textMetrics_, &c.resolveCluster,
+            &c.interfaceStep, &c.interfaceMaps);
         foreach (_; 0 .. config.frameSlots)
             c.inFlight_.put(0);
         auto made = c.createAll();
@@ -608,7 +626,11 @@ struct VulkanCanvas(B)
     */
     void releaseCaches() @system
     {
-        static if (canShape) preparedRuns_.clear();
+        static if (canShape)
+        {
+            preparedRuns_.clear();
+            interfaceRuns_.clear();
+        }
         foreach (i, ref e; images_[])
         {
             if (!e.handle.valid)
@@ -708,6 +730,132 @@ struct VulkanCanvas(B)
         faces[FaceStyle.regular] = regular;
         const em = Ppem.fromInteger(ppem);
         return em.hasValue && cellFont(faces, em.value, metrics);
+    }
+
+    /**
+    Binds the interface face (`UVK20`, design-system `GLY10`): `regular` and,
+    where the family has one, `bold`, each's bytes outliving the canvas or the
+    next call, drawn at each type step `stepPx[step]` pixels from ascender to
+    descender — the rule the cell font's size names its line by. Interface
+    runs (`FontRole.ui`, `FontRole.docs`) then draw in it, by its advances,
+    shaped by the font library's engine. An empty `regular` unbinds it. False,
+    with interface runs back in the cell font, when the regular face cannot be
+    opened or no engine is linked to shape it.
+    */
+    bool interfaceFont(const(ubyte)[] regular, const(ubyte)[] bold,
+        in int[TypeStep.max + 1] stepPx) @system
+    {
+        import sparkles.font : hhea, openFace;
+
+        // Prune before returning, while replaced bytes still live.
+        scope (exit) pruneShapers();
+        CellFace[2][TypeStep.max + 1] opened;
+        InterfaceStep[TypeStep.max + 1] steps;
+        scope (exit)
+        {
+            interfaceFaces_ = opened;
+            interfaceSteps_ = steps;
+        }
+        static if (!canShape)
+            return false;
+        else
+        {
+            const(ubyte)[][2] files = [regular, bold];
+            foreach (style, bytes; files)
+            {
+                auto parsed = bytes.length ? openFace(bytes) : typeof(openFace(bytes)).init;
+                if (!bytes.length || parsed.hasError)
+                {
+                    if (style == 0)
+                        return false;
+                    continue;
+                }
+                const hh = hhea(parsed.value);
+                const span = hh.hasValue ? long(hh.value.ascender) - hh.value.descender : 0;
+                if (span <= 0)
+                {
+                    if (style == 0)
+                        return false;
+                    continue;
+                }
+                foreach (step, px; stepPx)
+                {
+                    const size = px < 1 ? 1 : px;
+                    // The em whose ascender-to-descender span is `size` pixels.
+                    const em = scaledPpem(Ppem.fromInteger(size).value, parsed.value.unitsPerEm,
+                        cast(ulong) span);
+                    // The first step parses the face; the others share it.
+                    auto previous = step == 0 ? &interfaceFaces_[0][style] : &opened[0][style];
+                    auto face = em.hasValue ? CellFace.open(bytes, em.value, 0, null, previous)
+                        : CellFace.init;
+                    if (!face.bytes.length)
+                    {
+                        if (style == 0)
+                        {
+                            opened = typeof(opened).init;
+                            steps = typeof(steps).init;
+                            return false;
+                        }
+                        // A bold face is all steps' or none's.
+                        foreach (ref o; opened)
+                            o[1] = CellFace.init;
+                        break;
+                    }
+                    // A face's glyphs keep their atlas entries across a
+                    // rebinding at another size; other content is another face.
+                    const was = interfaceFaces_[0][style];
+                    face.serial = step > 0 ? opened[0][style].serial
+                        : was.bytes.length && was.contentHash == face.contentHash
+                            && was.bytes.length == face.bytes.length ? was.serial : ++faceSerial_;
+                    opened[step][style] = face;
+                    if (style == 0)
+                        steps[step] = InterfaceStep(true, size,
+                            cast(int)((long(hh.value.ascender) * size + span / 2) / span));
+                }
+            }
+            foreach (step, ref s; steps)
+                s.bold = opened[step][1].bytes.length != 0;
+            return true;
+        }
+    }
+
+    /// The interface face at type step `step` (`UVK20`); not `present` where
+    /// none is bound.
+    InterfaceStep interfaceStep(int step) const @safe pure nothrow @nogc
+        => step >= 0 && step < interfaceSteps_.length ? interfaceSteps_[step] : InterfaceStep.init;
+
+    /// Whether the interface face at `step` — its bold face, for a bold run,
+    /// where there is one — has a glyph for `cp`.
+    bool interfaceMaps(int step, bool bold, dchar cp) @system
+    {
+        auto face = interfaceFace(step, bold);
+        return face !is null && face.map.glyph(cp) != 0;
+    }
+
+    /**
+    The width `text` takes in the interface face at `step`, in pixels, as
+    `textRunIn` places it: what a host's measurer lays interface runs out by
+    (`GLY10`). Negative where no interface face is drawn at that step.
+    Measures without drawing, so it may be called outside a frame.
+    */
+    double interfaceWidthPx(scope const(char)[] text, int step, bool bold) @system
+        => painter_.interfaceWidthPx(text, step, bold);
+
+    /// Whether interface runs draw in the interface face (on by default):
+    /// off, as for a target narrowed to no `proportionalText`, they draw in
+    /// the cell font.
+    void interfaceFaces(bool on) @safe pure nothrow @nogc
+    {
+        painter_.interfaceFaces = on;
+    }
+
+    // The face an interface run at `step` draws in, or null.
+    private CellFace* interfaceFace(int step, bool bold) @safe pure nothrow @nogc return
+    {
+        if (step < 0 || step >= interfaceSteps_.length || !interfaceSteps_[step].present)
+            return null;
+        return bold && interfaceFaces_[step][1].bytes.length ? &interfaceFaces_[step][1]
+            : &interfaceFaces_[step][0];
     }
 
     /**
@@ -1021,7 +1169,10 @@ struct VulkanCanvas(B)
             static assert(maxClusterGlyphs == maxClusterQuads,
                 "the painter's quads and the font seam's glyphs are one cap");
 
-            if (!textMetrics_.present || !textRendering_.shaping || !r.cps.length)
+            // Interface runs are always shaped: their advances are their
+            // placement (`UVK20`), not a refinement of a cell grid's.
+            if (!textMetrics_.present || !r.cps.length
+                    || (!textRendering_.shaping && r.first.interfaceStep < 0))
                 return GlyphOutcome.noGlyph;
             auto face = clusterFace(r);
             if (face is null)
@@ -1093,16 +1244,22 @@ struct VulkanCanvas(B)
     {
         private CellFace* clusterFace(in ClusterRequest r) @system
         {
-            static bool shown(uint cp)
-                => cp != 0x200C && cp != 0x200D && !(cp >= 0xFE00 && cp <= 0xFE0F)
-                    && !(cp >= 0xE0020 && cp <= 0xE007F)
-                    && !(cp >= 0xE0100 && cp <= 0xE01EF);
+            static bool covers(CellFace* face, in ClusterRequest r)
+            {
+                bool all = true;
+                foreach (cp; r.cps) all &= !shownCodepoint(cp) || face.map.glyph(cast(dchar) cp) != 0;
+                return all;
+            }
+            // An interface run is the interface face's whole, or not shaped.
+            if (r.first.interfaceStep >= 0)
+            {
+                auto face = interfaceFace(r.first.interfaceStep, r.first.style == FaceStyle.bold);
+                return face !is null && covers(face, r) ? face : null;
+            }
             foreach (position; 0 .. fallbacks_.length + 1)
             {
                 auto face = orderedFace(r.first, position);
-                bool all = true;
-                foreach (cp; r.cps) all &= !shown(cp) || face.map.glyph(cast(dchar) cp) != 0;
-                if (all) return face;
+                if (covers(face, r)) return face;
             }
             return null;
         }
@@ -1112,15 +1269,19 @@ struct VulkanCanvas(B)
         {
             import sparkles.base.text.utf : convertPrefix, UtfMode;
             import sparkles.font.cluster_shaping : ClusterGlyph, shapeCluster;
-            return preparedRuns_.prepare(face.serial, face.ppem, face.inst.coords, r.cps,
-                (scope ClusterGlyph[] output) {
-                    auto shaper = shaperFor(face);
-                    if (shaper is null) return size_t(0);
-                    char[maxClusterQuads * 4] text;
-                    const encoded = convertPrefix(cast(const(dchar)[]) r.cps, text[], UtfMode.replacement);
-                    return shapeCluster(shaper, text[0 .. encoded.written],
-                        face.ppem.numerator, face.ppem.denominator, output, r.direction);
-                }, r.direction);
+            size_t shape(scope ClusterGlyph[] output)
+            {
+                auto shaper = shaperFor(face);
+                if (shaper is null) return size_t(0);
+                char[maxClusterQuads * 4] text;
+                const encoded = convertPrefix(cast(const(dchar)[]) r.cps, text[], UtfMode.replacement);
+                return shapeCluster(shaper, text[0 .. encoded.written],
+                    face.ppem.numerator, face.ppem.denominator, output, r.direction);
+            }
+            // The two caches differ in size, so not in type.
+            return r.first.interfaceStep >= 0
+                ? interfaceRuns_.prepare(face.serial, face.ppem, face.inst.coords, r.cps, &shape, r.direction)
+                : preparedRuns_.prepare(face.serial, face.ppem, face.inst.coords, r.cps, &shape, r.direction);
         }
 
         // Keep only exact file storage still borrowed by a bound context.
@@ -1140,6 +1301,8 @@ struct VulkanCanvas(B)
                 foreach (ref face; specimenFaces_) check(face);
                 foreach (ref face; fallbacks_) check(face);
                 foreach (ref face; specimenFallbacks_) check(face);
+                foreach (ref step; interfaceFaces_)
+                    foreach (ref face; step) check(face);
                 if (!bound) slot.release();
             }
         }

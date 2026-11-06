@@ -1803,3 +1803,76 @@ private ubyte[] twoColourImage()
                 pixel(frame, 48, x, y)[0], want));
         }
 }
+
+/// `UVK20` through the device: an interface run in a proportional face is
+/// placed by its advances, kerned, aligned in its rect, and measured as it
+/// is drawn.
+@("ui_vulkan.canvas.anInterfaceRunDrawsInItsProportionalFace")
+@system unittest
+{
+    if (!readbackEnabled)
+        return skipTest(readbackSkipReason);
+    import std.file : read;
+    import std.path : buildPath;
+    import std.process : environment;
+    import sparkles.ui.style : TypeStep;
+    import sparkles.ui_vulkan.painter : TextMetrics;
+
+    const dir = environment.get("SPARKLES_FONTS_PATH");
+    assert(dir !is null, "SPARKLES_FONTS_PATH is unset: run inside `nix develop`");
+    const mono = cast(const(ubyte)[]) read(dir.buildPath("DejaVuSansMono.ttf"));
+    const sans = cast(const(ubyte)[]) read(dir.buildPath("NotoSans.ttf"));
+    auto rig = new Rig;
+    rig.open("ui-vulkan-interface-face", 240, 80);
+    scope (success)
+        rig.close();
+    assert(rig.canvas.cellFont(mono, 18, TextMetrics(ascent: 16)));
+    assert(!rig.canvas.interfaceStep(TypeStep.body).present, "none until one is bound");
+    const int[4] steps = [20, 17, 18, 24];
+    assert(rig.canvas.interfaceFont(sans, null, steps));
+    const body = rig.canvas.interfaceStep(TypeStep.body);
+    assert(body.present && body.size == 20 && !body.bold);
+    assert(body.ascent > 10 && body.ascent < 20, "the baseline inside the box");
+    assert(rig.canvas.interfaceStep(TypeStep.title).size == 24);
+
+    // By its advances: eight `i` are far narrower than eight `W`, which a
+    // cell font makes equal; and kerned, `AV` tighter than its letters apart.
+    const narrow = rig.canvas.interfaceWidthPx("iiiiiiii", TypeStep.body, false);
+    const wide = rig.canvas.interfaceWidthPx("WWWWWWWW", TypeStep.body, false);
+    assert(narrow > 0 && narrow * 3 < wide, format("%s vs %s", narrow, wide));
+    const av = rig.canvas.interfaceWidthPx("AV", TypeStep.body, false);
+    assert(av < rig.canvas.interfaceWidthPx("A", TypeStep.body, false)
+        + rig.canvas.interfaceWidthPx("V", TypeStep.body, false), "the A–V pair is kerned");
+
+    const metrics = FrameMetrics(cellW: 11, cellH: 22);
+    const ui = Visual(fg: white, fgAlpha: 255, fontRole: FontRole.ui);
+    Visual centred = ui;
+    centred.textAlign = 1;
+    FrameReport report;
+    const frame = rig.draw((ref Canvas c) {
+        c.textRunIn(Rect(0, 0, 20, 1), "iiiiiiii", ui);
+        c.textRunIn(Rect(0, 1, 20, 1), "WWWWWWWW", ui);
+        c.textRunIn(Rect(0, 2, 20, 1), "Wi", centred);
+    }, metrics, black, report);
+    assert(report[Degradation.missingFace] == 0, "the run had a face");
+
+    // The inked columns of a row of cells: the first and one past the last.
+    int[2] ink(int row)
+    {
+        int[2] span = [int.max, 0];
+        foreach (y; row * metrics.cellH .. (row + 1) * metrics.cellH)
+            foreach (x; 0 .. 240)
+                if (pixel(frame, 240, x, y)[0] > 0)
+                {
+                    span[0] = x < span[0] ? x : span[0];
+                    span[1] = x + 1 > span[1] ? x + 1 : span[1];
+                }
+        return span;
+    }
+    const i8 = ink(0), w8 = ink(1), wi = ink(2);
+    assert(abs(i8[1] - narrow) < 4 && abs(w8[1] - wide) < 4,
+        format("ink ends at %s and %s; measured %s and %s", i8[1], w8[1], narrow, wide));
+    // Centred across the 220 px rect, within the bearings' slack.
+    assert(abs(wi[0] - (220 - wi[1])) < 4, format("centred ink %s", wi));
+    assert(i8[0] < 10 && w8[0] < 10, "started at the rect's left");
+}
