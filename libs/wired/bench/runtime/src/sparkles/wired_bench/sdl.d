@@ -34,6 +34,11 @@ same calls before and after the backend's internal representation changes.
 `SdlEditor` — setting a `probe` attribute on its first tag, or appending a tag
 to an empty document — re-parse included, and is held to the SHA-256 of the
 edited texts.
+
+`commit` commits eight such changes, one at a time, to each document kept
+open in an `SdlOpenDocument` (editing §10), finding each target by its node
+handle, and is held to the SHA-256 of the committed hosts. Its bytes count
+once per commit, so its instructions per byte compare with one re-parse.
 */
 module sparkles.wired_bench.sdl;
 
@@ -54,6 +59,7 @@ import sparkles.test_runner.attributes : benchmark;
 import sparkles.test_runner.bench : benchCase, Metric, Unit;
 import sparkles.wired : WireName, WireOptional;
 import sparkles.wired.sdl : fromSDL, parseSdlDocument, Sdl, sdlEditor, SdlExpected, SdlNode,
+    SdlNodeHandle, SdlOpenDocument, SdlParserConfig,
     SdlParseResult, SdlQualifiedName, SdlScalar, SdlString, sdlDubRecipe, sdlFull,
     writeSdlDocument;
 import sparkles.wired_bench.data : resolveDataDir;
@@ -82,6 +88,9 @@ struct SdlFingerprint
     /// Hex SHA-256 of each document after the `edit` row's change, each
     /// preceded by its file name and an LF.
     string edited;
+    /// Hex SHA-256 of each host after the `commit` row's commits, each
+    /// preceded by its file name and an LF.
+    string committed;
 }
 
 /// One pinned SDL dataset: where it lives under `$WIRED_BENCH_DATA` and what
@@ -110,16 +119,19 @@ immutable SdlDatasetSource[] sdlDatasetSources = [
         SdlFingerprint(8966, 13_281, 4816,
             "12940eda2aa15e31d5561cea33b3e9fe7942e5db95d4d6e1185485dc357006a7",
             "71a3534e57d6ae2923ecd6ef9b802c7344a9013b6b9e3fb66f39218a2a10be6d",
-            "baa3aaa4e3ea34906a657285d3e67a4be79a7fb8dde97cd3b6bd93ae4a33f59b")),
+            "baa3aaa4e3ea34906a657285d3e67a4be79a7fb8dde97cd3b6bd93ae4a33f59b",
+            "e542a96f13c9ed723df62cbc9ebe39a5071800ad7dff1c95bac540fb20740baf")),
     SdlDatasetSource("dub_recipes_concat", "sdl/dub-recipes-concat.sdl",
         SdlDatasetKind.recipeSet, SdlFingerprint(9119, 13_283, 4816,
             "fc23353e302e768c5b3b0bd5bfddc608d1f282b9d24fbaacab6552251c1ce3ab",
             "4a97453a31d1bf7800fc7c744fbf3801979d64aedc49058cacdd174d299f93b7",
-            "21e47968032f540420decf09fedf4f8aea6f19d8a6f44380a039de53fb5a9aef")),
+            "21e47968032f540420decf09fedf4f8aea6f19d8a6f44380a039de53fb5a9aef",
+            "1f6420c3b751a77699bf438aba1cd57449cecf77f4234ef68f4b93786066f25b")),
     SdlDatasetSource("deep_wide", "sdl/deep-wide.sdl", SdlDatasetKind.document,
         SdlFingerprint(6329, 16_601, 23_463,
             "ae04b1de64b7eed6a1d5f49bdaf7ebfebe4eb5ebd98c3374376982e4643c86b8", null,
-            "3e42a0fc43425de73e9212935d82dbf6095cbcfa16a72fdd4a6ce320f4258911"),
+            "3e42a0fc43425de73e9212935d82dbf6095cbcfa16a72fdd4a6ce320f4258911",
+            "a6841853152cde702293ab432ebbfd517169b17b8b9ddbd06eaef0c4a78e2bfd"),
         dubReadable: false),
 ];
 
@@ -220,6 +232,8 @@ private string diffSdl(in SdlFingerprint expected, in SdlFingerprint actual,
         field("typed", expected.typed, actual.typed);
     if (actual.edited.length)
         field("edited", expected.edited, actual.edited);
+    if (actual.committed.length)
+        field("committed", expected.committed, actual.committed);
     return s;
 }
 
@@ -464,6 +478,24 @@ unittest
     skipIfEmpty(registered, "edit");
 }
 
+@("sdl.commit")
+@benchmark
+@system
+unittest
+{
+    size_t registered;
+    if (sdlEngineEnabled("wired"))
+        foreach (corpus; selectedCorpora)
+        {
+            if (corpus.kind == SdlDatasetKind.document)
+                registerCommit!sdlFull(corpus);
+            else
+                registerCommit!sdlDubRecipe(corpus);
+            registered++;
+        }
+    skipIfEmpty(registered, "commit");
+}
+
 @("sdl.encode")
 @benchmark
 @system
@@ -660,6 +692,119 @@ private void registerEdit(SdlCorpus corpus)
         teardown: () {
             foreach (ref doc; docs)
                 doc = Doc.init;
+        },
+    );
+}
+
+/// The `commit` row's commits per document; a document with fewer nodes
+/// gets one per node.
+private enum commitsPerDocument = 8;
+
+/// The node at preorder position `index` below `root`, counting from 0.
+private SdlNode nodeAt(SdlNode root, ref size_t index)
+{
+    foreach (child; root.byChild)
+    {
+        if (index == 0)
+            return child;
+        index--;
+        auto found = nodeAt(child, index);
+        if (found !is SdlNode.init)
+            return found;
+    }
+    return SdlNode.init;
+}
+
+/// The number of nodes below `root`.
+private size_t nodeCount(SdlNode root)
+{
+    size_t n;
+    foreach (child; root.byChild)
+        n += 1 + nodeCount(child);
+    return n;
+}
+
+/**
+commit — open documents (untimed `setup`) → `commitsPerDocument` commits each,
+one `probe` attribute set per commit on nodes spread over the document in
+preorder, every commit rendered, re-parsed and kept (editing §10). The
+throughput counts the input bytes once per commit, so retired instructions
+per byte compare with the `edit` row's single re-parse; the first iteration's
+hosts must hash to the committed fingerprint. Iterations alternate the
+attribute's value, so every commit changes its host: a commit that changes
+nothing has no edits and nothing to localize.
+*/
+private void registerCommit(SdlParserConfig config)(SdlCorpus corpus)
+{
+    alias Open = SdlOpenDocument!config;
+    auto docs = new Open[corpus.texts.length];
+    // The nodes each document's commits edit, as handles, so the timed part
+    // finds them without a walk.
+    auto targets = new SdlNodeHandle[][corpus.texts.length];
+    size_t committedBytes;
+    foreach (i, text; corpus.texts)
+    {
+        auto parsed = parseFor(corpus.kind, text);
+        const n = parsed.hasValue ? nodeCount(parsed.document.root) : 0;
+        const commits = n < commitsPerDocument ? n : commitsPerDocument;
+        targets[i] = new SdlNodeHandle[commits];
+        committedBytes += text.length * commits;
+    }
+    bool verified, failed;
+    size_t round;
+    benchCase(
+        name: "wired",
+        timed: () {
+            // Alternate the value, so no commit is a no-op the editor drops.
+            foreach (i, ref open; docs)
+                foreach (target; targets[i])
+                {
+                    auto editor = open.editor;
+                    editor.setAttribute(open.node(target).value,
+                        SdlQualifiedName(null, "probe"), SdlScalar(round % 2 ? "commat" : "commit"));
+                    if (open.commit(editor).hasError)
+                        failed = true;
+                }
+            round++;
+        },
+        after: () {
+            string error;
+            if (!verified)
+            {
+                verified = true;
+                SHA256 sha;
+                sha.start();
+                foreach (i, ref open; docs)
+                    putDocument(sha, corpus.files[i], open.host);
+                SdlFingerprint actual;
+                actual.committed = failed ? "a parse or commit failed" : hexOf(sha);
+                error = diffSdl(corpus.expected, actual, false, false, false);
+                if (error.length)
+                    error = "commit fingerprint mismatch:" ~ error;
+            }
+            return verdict(error);
+        },
+        metrics: [inputBytes(committedBytes)],
+        labels: labelsFor(corpus, "commit"),
+        setup: () {
+            foreach (i, text; corpus.texts)
+            {
+                if (docs[i].open(text).hasError)
+                {
+                    failed = true;
+                    continue;
+                }
+                const n = nodeCount(docs[i].document.root);
+                foreach (k, ref target; targets[i])
+                {
+                    size_t at = k * n / targets[i].length;
+                    target = docs[i].handleOf(nodeAt(docs[i].document.root, at)).value;
+                }
+            }
+        },
+        teardown: () {
+            foreach (ref open; docs)
+                open = Open.init;
         },
     );
 }
