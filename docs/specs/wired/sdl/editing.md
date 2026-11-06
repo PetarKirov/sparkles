@@ -389,7 +389,15 @@ hashing and existence checks are not SDL work. The oracle has two parts:
     `configuration "` or `dependency "`; a line starting, after its
     indentation, with `+/` or with a key marker followed by a space, `"`,
     `{`, `\`, `-` or nothing; the quoted `"sparkles:test-runner`; or
-    `test-runner/src`.
+    `test-runner/src`;
+  - a formatting call, which builds SDL text — `format`, `sformat`,
+    `formattedWrite`, `text`, `wtext`, `dtext`, `writeText`, `writeStyled`,
+    `write`, `writeln`, `writef`, `writefln` or `put`, in its arguments or
+    UFCS receiver — when the operand holds recipe syntax;
+  - an interpolated expression sequence (`i"…"`, `` i`…` ``, `iq{…}`) whose
+    literal parts hold recipe syntax. Each interpolation `$(…)` stands
+    between those parts, so no marker spans one and no line starts after
+    one; the strings inside an interpolation are not read.
 
   Markers are read in a literal's value, its escapes decoded, so
   `"dependency \""` holds `dependency "`.
@@ -403,10 +411,9 @@ hashing and existence checks are not SDL work. The oracle has two parts:
   an initialized local bound from such a read in an enclosing block. The
   markers name recipe forms only: a bare `test-runner` is also a commit
   scope, an executable name and a stack frame, so only its dependency name
-  and source-include path count.
-
-  The audit does not read text formatted by `format`, `text` or an
-  interpolated sequence; the completeness re-inventory covers those.
+  and source-include path count. Built text — concatenated, formatted or
+  interpolated — has no subject: a decoded value formatted into recipe
+  syntax is still SDL written by hand.
 
 Hits that are not SDL work go on an allowlist kept beside the audit, each
 with the reason it was reviewed and why the rule cannot tell it apart.

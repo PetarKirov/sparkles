@@ -2323,7 +2323,7 @@ private int runCheckAdHocSdl()
         {
             bool found;
             foreach (i, entry; allowed)
-                if (entry.path == hit.path && entry.literal == hit.literal)
+                if (entry.path == hit.path && entry.literal == hit.literal.strip)
                     found = used[i] = true;
             if (!found)
                 unlisted ~= hit;

@@ -11,8 +11,13 @@ of $(LREF sdlMarkers):
 $(LIST
     * a call of one of $(LREF auditedCalls) holding it in its arguments or UFCS receiver;
     * a comparison (`==`, `!=`, or a `case` label of a `switch`) with it as an operand;
-    * a concatenation (`~`, `~=`) with it as an operand, which builds SDL text.
+    * a concatenation (`~`, `~=`) with it as an operand, which builds SDL text;
+    * a call of one of $(LREF formattingCalls) holding it in its arguments or UFCS receiver, which builds SDL text;
+    * an interpolated expression sequence (`i"…"`, ``i`…` ``, `iq{…}`), which builds SDL text from its literal parts — each interpolation `$(…)` stands between them, so no marker spans one.
 )
+
+A concatenation, formatting call or interpolated sequence counts only when the
+literal holds recipe syntax, not a marker in prose.
 
 A match or comparison whose subject — another argument or the receiver, the
 other operand, the `switch` expression — is a decoded value is typed work
@@ -36,6 +41,10 @@ import std.string : lineSplitter, strip;
 immutable string[] auditedCalls = ["canFind", "indexOf", "startsWith", "endsWith",
     "replace", "split", "splitter", "lineSplitter", "matchFirst", "matchAll", "regex",
     "ctRegex", "tryConsume"];
+
+/// Calls that format text; an operand holding recipe syntax builds SDL.
+immutable string[] formattingCalls = ["format", "sformat", "formattedWrite", "text", "wtext",
+    "dtext", "writeText", "writeStyled", "write", "writeln", "writef", "writefln", "put"];
 
 /++
 Text whose presence in such an operand means SDL is matched or built by
@@ -63,7 +72,7 @@ struct AdHocSdlHit
 {
     string path; /// repository-relative
     size_t line; /// one-based
-    string call; /// the audited call, or the operator: `==`, `!=`, `case`, `~`, `~=`
+    string call; /// the audited or formatting call, the operator (`==`, `!=`, `case`, `~`, `~=`), or `i""`
     string literal; /// the offending text, as written between its delimiters
 }
 
@@ -75,6 +84,7 @@ private struct Token
     string text; // an identifier, a string's contents, or one punctuation byte
     size_t line;
     string escaped; // a string's value, when its escapes changed it
+    bool interpolated; // an interpolated expression sequence: `i"…"`, ``i`…` ``, `iq{…}`
 
     /// A string's value: its contents with `\"`, `\\`, `\n`, `\r` and `\t` decoded.
     string value() const @safe pure nothrow @nogc => escaped is null ? text : escaped;
@@ -129,6 +139,80 @@ private Token[] lexD(string source) @safe pure
             advance(1);
     }
 
+    // Skips an interpolation's expression through its closing `)`; the
+    // strings in it, interpolated ones included, are skipped whole.
+    void skipInterpolation()
+    {
+        size_t depth = 1;
+        while (at < source.length && depth)
+        {
+            const c = source[at];
+            if (c == '(' || c == ')')
+            {
+                depth = c == '(' ? depth + 1 : depth - 1;
+                advance(1);
+            }
+            else if (c == '"' || c == '`' || c == '\'')
+            {
+                const nested = at > 0 && source[at - 1] == 'i';
+                advance(1);
+                while (at < source.length && source[at] != c)
+                {
+                    if (c != '`' && source[at] == '\\')
+                        advance(2);
+                    else if (nested && lookingAt("$("))
+                    {
+                        advance(2);
+                        skipInterpolation();
+                    }
+                    else
+                        advance(1);
+                }
+                advance(1);
+            }
+            else
+                advance(1);
+        }
+    }
+
+    // An interpolated sequence's contents, through `close` (a `}` balanced
+    // against `{`). Its value holds the literal parts only: each `$(…)`
+    // stands as `\x01`, so no marker spans one and no line starts after one.
+    void interpolated(char close, bool escapes, size_t startLine)
+    {
+        const start = at;
+        auto value = appender!string;
+        size_t braces = 1;
+        while (at < source.length)
+        {
+            const c = source[at];
+            if (escapes && c == '\\' && at + 1 < source.length)
+            {
+                const e = source[at + 1];
+                value ~= e == 'n' ? '\n' : e == 'r' ? '\r' : e == 't' ? '\t' : e;
+                advance(2);
+            }
+            else if (lookingAt("$("))
+            {
+                advance(2);
+                skipInterpolation();
+                value ~= '\x01';
+            }
+            else if (c == close && (close != '}' || --braces == 0))
+                break;
+            else
+            {
+                if (close == '}' && c == '{')
+                    braces++;
+                value ~= c;
+                advance(1);
+            }
+        }
+        // Never null, so an empty value still reads as the value.
+        tokens ~= Token(Kind.string_, source[start .. at], startLine, value[] ~ "", true);
+        advance(1);
+    }
+
     while (at < source.length)
     {
         const c = source[at];
@@ -177,16 +261,28 @@ private Token[] lexD(string source) @safe pure
             advance(1);
             quoted('`', false, startLine);
         }
-        else if ((c == 'r' || c == 'x' || c == 'i') && at + 1 < source.length
+        else if (c == 'i' && at + 1 < source.length
+            && (source[at + 1] == '"' || source[at + 1] == '`'))
+        {
+            const close = source[at + 1];
+            advance(2);
+            interpolated(close, close == '"', startLine);
+        }
+        else if (lookingAt("iq{"))
+        {
+            advance(3);
+            interpolated('}', false, startLine);
+        }
+        else if ((c == 'r' || c == 'x') && at + 1 < source.length
             && (source[at + 1] == '"' || source[at + 1] == '`'))
         {
             const close = source[at + 1];
             advance(2);
             quoted(close, c != 'r' && close == '"', startLine);
         }
-        else if ((lookingAt("q\"") || lookingAt("iq\"")))
+        else if (lookingAt("q\""))
         {
-            advance(source[at] == 'i' ? 3 : 2);
+            advance(2);
             if (at >= source.length)
                 break;
             const open = source[at];
@@ -223,9 +319,9 @@ private Token[] lexD(string source) @safe pure
                 advance(id.length + 1);
             }
         }
-        else if (lookingAt("q{") || lookingAt("iq{"))
+        else if (lookingAt("q{"))
         {
-            advance(source[at] == 'i' ? 3 : 2);
+            advance(2);
             size_t depth = 1;
             const start = at;
             while (at < source.length)
@@ -643,52 +739,64 @@ AdHocSdlHit[] auditSource(string path, string source) @safe pure
         return size_t.max;
     }
 
+    // A call's operands, by the call's name at `i`: the UFCS receiver and
+    // each argument of its template and runtime argument lists.
+    size_t[2][] callOperands(size_t i)
+    {
+        size_t[2][] operands;
+        if (i >= 2 && isOp(i - 1, "."))
+            operands ~= [expressionStart(i - 2), i - 1];
+        void arguments(size_t from, size_t to)
+        {
+            size_t start = from, depth;
+            foreach (k; from .. to)
+            {
+                if (isOp(k, "(") || isOp(k, "[") || isOp(k, "{"))
+                    depth++;
+                else if (isOp(k, ")") || isOp(k, "]") || isOp(k, "}"))
+                    depth--;
+                else if (isOp(k, ",") && depth == 0)
+                {
+                    operands ~= [start, k];
+                    start = k + 1;
+                }
+            }
+            if (start < to)
+                operands ~= [start, to];
+        }
+        size_t j = i + 1;
+        if (isOp(j, "!"))
+        {
+            j++;
+            if (isOp(j, "("))
+            {
+                const close = matchForward(j);
+                arguments(j + 1, close);
+                j = close + 1;
+            }
+            else if (j < tokens.length)
+                arguments(j, ++j);
+        }
+        if (isOp(j, "("))
+            arguments(j + 1, matchForward(j));
+        return operands;
+    }
+
     foreach (i, ref t; tokens)
     {
         if (test[i])
             continue;
 
+        // An interpolated sequence formats text: literal parts holding
+        // recipe syntax build SDL.
+        if (t.interpolated && isSyntax(i))
+            report(i, `i""`);
+
         // A text-matching call: its operands are the UFCS receiver and each
         // argument of its template and runtime argument lists.
         if (t.kind == Kind.identifier && auditedCalls.canFind(t.text))
         {
-            size_t[2][] operands;
-            if (i >= 2 && isOp(i - 1, "."))
-                operands ~= [expressionStart(i - 2), i - 1];
-            void arguments(size_t from, size_t to)
-            {
-                size_t start = from, depth;
-                foreach (k; from .. to)
-                {
-                    if (isOp(k, "(") || isOp(k, "[") || isOp(k, "{"))
-                        depth++;
-                    else if (isOp(k, ")") || isOp(k, "]") || isOp(k, "}"))
-                        depth--;
-                    else if (isOp(k, ",") && depth == 0)
-                    {
-                        operands ~= [start, k];
-                        start = k + 1;
-                    }
-                }
-                if (start < to)
-                    operands ~= [start, to];
-            }
-            size_t j = i + 1;
-            if (isOp(j, "!"))
-            {
-                j++;
-                if (isOp(j, "("))
-                {
-                    const close = matchForward(j);
-                    arguments(j + 1, close);
-                    j = close + 1;
-                }
-                else if (j < tokens.length)
-                    arguments(j, ++j);
-            }
-            if (isOp(j, "("))
-                arguments(j + 1, matchForward(j));
-
+            const operands = callOperands(i);
             bool typed;
             foreach (o; operands)
                 if (markedIn(o[0], o[1]) == size_t.max && isDecoded(o[0], o[1], i))
@@ -698,6 +806,18 @@ AdHocSdlHit[] auditSource(string path, string source) @safe pure
                     foreach (k; o[0] .. o[1])
                         if (isMarked(k))
                             report(k, t.text);
+            continue;
+        }
+
+        // A formatting call, building SDL text: an operand holds recipe
+        // syntax. Whatever its other operands are, the text is built by hand.
+        if (t.kind == Kind.identifier && formattingCalls.canFind(t.text)
+            && (isOp(i - 1, ".") || isOp(i + 1, "(") || isOp(i + 1, "!")))
+        {
+            foreach (o; callOperands(i))
+                foreach (k; o[0] .. o[1])
+                    if (isSyntax(k))
+                        report(k, t.text);
             continue;
         }
 
@@ -768,7 +888,8 @@ struct AllowedHit
 
 /++
 Parses the allowlist: one entry per line, `path | literal | reason`, the
-literal written as the audit reports it; `#` starts a comment line. A
+literal written as the audit reports it, its outer blanks stripped (as each
+field is); `#` starts a comment line. A
 malformed line is reported by its number.
 +/
 AllowedHit[] parseAllowlist(string text, out size_t badLine) @safe pure
@@ -865,6 +986,39 @@ string prose(string x) => "Enter edit · +/- step " ~ x ~ "// Generated by spark
     assert(hits[4] == AdHocSdlHit("apps/x.d", 6, "!=", "lflags"));
     assert(hits[5].call == "==" && hits[5].literal == "subPackage");
     assert(hits[6] == AdHocSdlHit("apps/x.d", 12, "case", "buildType"));
+}
+
+@("sdlAudit.auditSource.flagsFormattingAndInterpolation")
+@safe pure unittest
+{
+    enum source = `module m;
+string nested(string n) => i"$(f("dflags \"x\"")) name";
+string dep(string name) => format("dependency \"%s\" version=\"*\"", name);
+void config(ref W w, string name) { w.formattedWrite!"configuration \"%s\" {\n"(name); }
+string key(SdlNode node) => text("dflags \"", node.name, "\"");
+void plain(ref W w) { w.writeText("buildType \"checked\" {\n"); }
+void ies(ref W w, string name) { w.writeText(i"dependency \"$(name)\" version=\"*\""); }
+enum header = "/+ dub.sdl:\n";
+void constant(ref W w) { put(w, header); }
+string tokens(string n) => iq{subPackage { name "$(n)" }}.text;
+string raw(string n) => i` ~ "`    lflags \"$(n)\"`" ~ `;
+string prose(size_t n) => format("%s dflags read", n) ~ text(n, " steps of +/-");
+void info(size_t n) { log(i"$(n) sub-package(s) to build; set the dflags of $(n)"); }
+string spans(string k) => i"$(k)dflags \"x\"";
+unittest { auto s = i"dependency \"$(x)\""; }
+`;
+    const hits = auditSource("apps/x.d", source);
+    assert(hits.length == 8);
+    // A string inside an interpolation is skipped whole, not misread as its end.
+    assert(hits[0] == AdHocSdlHit("apps/x.d", 3, "format", `dependency \"%s\" version=\"*\"`));
+    assert(hits[1] == AdHocSdlHit("apps/x.d", 4, "formattedWrite", `configuration \"%s\" {\n`));
+    // A decoded argument does not make the text typed.
+    assert(hits[2] == AdHocSdlHit("apps/x.d", 5, "text", `dflags \"`));
+    assert(hits[3].line == 6 && hits[3].call == "writeText");
+    assert(hits[4] == AdHocSdlHit("apps/x.d", 7, "writeText", `dependency \"$(name)\" version=\"*\"`));
+    assert(hits[5] == AdHocSdlHit("apps/x.d", 9, "put", "header"));
+    assert(hits[6] == AdHocSdlHit("apps/x.d", 10, `i""`, `subPackage { name "$(n)" }`));
+    assert(hits[7] == AdHocSdlHit("apps/x.d", 11, `i""`, `    lflags "$(n)"`));
 }
 
 @("sdlAudit.auditSource.decodedSubjectsAreTyped")
