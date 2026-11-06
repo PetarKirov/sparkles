@@ -54,6 +54,22 @@ See [SPEC §5](../../../specs/wired/sdl/SPEC.md#_5-typed-sdl-roles) and
 
 See [SPEC §4](../../../specs/wired/sdl/SPEC.md#_4-ordered-arena-document).
 
+## Selection
+
+| Name                                   | Is                                                                      |
+| -------------------------------------- | ----------------------------------------------------------------------- |
+| `SdlPath.parse(path)`                  | A borrowed, validated DQL path; `nodes(start)`, `attributes(start)`.    |
+| `SdlSelector.parse(path, filter)`      | An owned path plus a DQL filter over each selected node.                |
+| `SdlNodeSelection`, `SdlSelectedNodes` | The node ranges, in document order: unfiltered and filtered.            |
+| `SdlAttributeSelection!Nodes`          | The attributes the last segment names, of the nodes `Nodes` yields.     |
+| `SdlNodeResolver`                      | The DQL host resolver over one node: `values[i]`, attributes, children. |
+| `SdlSelectorError`, `SdlSelectorPart`  | A fault's input (path or filter) and DQL's error at an offset in it.    |
+
+The editor's `remove`, `removeAttribute`, `replaceAttribute` and
+`setAttribute` accept a selection. See
+[Select SDL nodes with a path](../how-to/sdl-select-nodes.md) and
+[editing §3.2](../../../specs/wired/sdl/editing.md#3-2-path-selection).
+
 ## Profiles
 
 `sdlFull`, `sdlDubCompat`, and `sdlDubRecipe` are the predefined
