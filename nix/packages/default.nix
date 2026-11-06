@@ -273,6 +273,10 @@
         pname = "terminal";
         version = "0.1.0";
 
+        # Named, not dub's default: on macOS the default is the native
+        # (Vulkan) arm, which the `-vulkan` package builds with its shaders.
+        dubBuildFlags = [ "--config=application" ];
+
         # The about page shows the commit (`TPG2`), so this package is
         # rebuilt (step 2 only) on every commit.
         stampBuildInfo = true;
@@ -348,6 +352,10 @@
       packages.ui-gallery = config.legacyPackages.buildSparklesApp (finalAttrs: {
         pname = "ui-gallery";
         version = "0.1.0";
+
+        # Named, not dub's default: on macOS the default is the native
+        # (Vulkan) arm, which the `-vulkan` package builds with its shaders.
+        dubBuildFlags = [ "--config=application" ];
 
         nativeBuildInputs = [ pkgs.pkg-config ];
         buildInputs = [
