@@ -64,6 +64,7 @@ import sparkles.profiling : FrameClock, FrameFlags, FrameHistory, FramePhase, Fr
     FrameStats, writeChromeTrace;
 // `PRF20`: empty inline functions unless built with `version (SparklesTracy)`.
 import sparkles.profiling.tracy : tracyFrameMark, tracyPlot, tracyZone;
+import sparkles.profiling.zones : cpuZone, FrameZones, ZoneStats;
 import sparkles.wsi;
 
 /// The pointer shape over a resize border's edge or corner.
@@ -724,6 +725,10 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
     // The device's memory under any frame switch, read at most once a second
     // and reported at its peak (`PRF15`).
     MemoryPeaks memory;
+    // The named CPU zones the application and the canvas open in a frame
+    // (`PRF22`): summed per frame, summarized per name.
+    FrameZones zones;
+    ZoneStats* zoneTimes = new ZoneStats;
     FrameHistory!4096* history;
     const(string)[] traceNames; // the device scopes' names, for the trace
     const summarizeFrames = cfg.native.debugging.traceFrames
@@ -771,6 +776,8 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
             note(i"native window frames: $(frameTimes)");
             if (gpuTimes.frames)
                 note(i"native window gpu: $(gpuTimes)");
+            if (zoneTimes.any)
+                note(i"native window $(*zoneTimes)");
             if (memory.samples)
                 note(i"native window memory: $(memory)");
         }
@@ -1541,6 +1548,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         phase(FramePhase.record, timing.record);
         phase(FramePhase.present, timing.present);
         r.cpu = MonoTime.currTime - opened - r.start;
+        r.zones = zones;
         return r;
     }
     // The device's time arrives `framesInFlight` frames late: it belongs to
@@ -1944,6 +1952,11 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
             }
             const started = MonoTime.currTime;
             lastPass = started;
+            // The pass's zones, on this thread, until it ends however it does.
+            zones = FrameZones.init;
+            () @trusted { FrameZones.current = &zones; }();
+            scope (exit)
+                FrameZones.current = null;
             // Tracy's zones for the pass: the frame, and within it the phases
             // `FrameTiming` laps (the rebuild before it stands alone).
             auto frameZone = tracyZone!"frame";
@@ -2092,7 +2105,10 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                 auto r = recordOf(started, timing, flags);
                 r.cpu = took;
                 if (shown)
+                {
                     frameTimes.note(r);
+                    zoneTimes.note(r.zones);
+                }
                 if (history !is null)
                     history.add(r);
                 recordMade = true;
@@ -2522,13 +2538,21 @@ private FrameOutcome drawFrame(alias draw)(ref Gpu gpu, ref NativeHost host,
     // the margin; the content draws over it, the frame's shadow beyond it.
     if (session.transparent)
         fillWindowGround(gpu.canvas, session, ground);
-    paint(gpu.canvas, host.ops()[]);
-    draw(host);
+    {
+        auto paintZone = cpuZone!"paint";
+        paint(gpu.canvas, host.ops()[]);
+    }
+    {
+        auto drawZone = cpuZone!"app-draw";
+        draw(host);
+    }
     // The client frame last, over everything, in the bar's rows above the
     // cells (`F13`).
     if (session.frame.active)
         drawClientFrame(gpu.canvas, session, ground);
+    auto endZone = cpuZone!"end-frame";
     auto ended = gpu.canvas.endFrame();
+    endZone.destroy();
     gpu.profiler.end(*vk, cmd, gpu.sync.frame);
     FrameOutcome outcome = FrameOutcome.presented;
     if (ended.hasError)

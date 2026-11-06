@@ -39,6 +39,7 @@ module sparkles.ui_app.run_app;
 
 import sparkles.base.term_color : Color, RgbColor;
 import sparkles.input : Event;
+import sparkles.profiling.zones : cpuZone;
 import sparkles.ui.canvas : DrawOp, OpKind;
 import sparkles.ui.display_list : buildDisplayListInto;
 import sparkles.ui.geometry : Constraints, Rect;
@@ -184,7 +185,10 @@ calls `skipFrame` pays for its own early-out and nothing else.
 void presentApp(A, Host)(ref A app, ref Host h, in AppTheme th, ref FrameSnapshot snap)
 {
     snap = FrameSnapshot.init;
-    snap.tree = app.view(h);
+    {
+        auto zone = cpuZone!"view"; // `PRF22`
+        snap.tree = app.view(h);
+    }
     if (h.frameSkipped)
         return;
 
@@ -209,7 +213,10 @@ void presentApp(A, Host)(ref A app, ref Host h, in AppTheme th, ref FrameSnapsho
         auto tm = h.textMeasure();
     else
         CellMeasure tm;
+    auto layoutZone = cpuZone!"layout";
     snap.frames = layout(snap.tree, Constraints(sz.width, sz.height), tm);
+    layoutZone.destroy();
+    auto listZone = cpuZone!"display-list";
     buildDisplayListInto(snap.tree, snap.frames, frame.palette, frame.pageFg,
         frame.pageBg, h.ops(), tm);
 }

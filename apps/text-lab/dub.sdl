@@ -19,6 +19,7 @@ dependency "sparkles:event-horizon" path="../.."
 dependency "sparkles:ui" path="../.."
 dependency "sparkles:ui-app" path="../.."
 dependency "sparkles:ui-vulkan" path="../.."
+dependency "sparkles:profiling" path="../.."
 
 // On Android the lab is the shared library a NativeActivity loads, its entry
 // `AndroidWsiMain`'s in src/android_entry.d (not app.d, which dub leaves out

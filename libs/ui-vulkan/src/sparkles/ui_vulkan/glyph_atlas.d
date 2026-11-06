@@ -21,6 +21,7 @@ module sparkles.ui_vulkan.glyph_atlas;
 import sparkles.font : Colour, ColourGlyph, ColourRegion, ColourSource, ColourWorkspace, colourMeasure,
     Face, FlattenPolicy, FontErrorKind, FontLimit, Instance, LightHints, OutlinePoint, OutlineSegment,
     OverlapMode, Ppem, RasterRegion, RasterWorkspace, rasterizeColourGlyph, prepareRaster, Tag;
+import sparkles.profiling.zones : cpuZone;
 import sparkles.ui_vulkan.raster_batch : RasterBatch, RasterRequest, RasterTile;
 import sparkles.ui_vulkan.coverage_geometry : CoverageMode, CoverageWork;
 
@@ -301,6 +302,7 @@ struct GlyphAtlas
             g = e.glyph;
             return e.outcome;
         }
+        auto zone = cpuZone!"glyph-raster"; // a miss (`PRF22`)
         if (preparedReady_)
             if (auto queued = key in queued_)
             {
@@ -360,6 +362,7 @@ struct GlyphAtlas
             g = e.glyph;
             return e.outcome;
         }
+        auto zone = cpuZone!"glyph-raster"; // a miss (`PRF22`)
         auto measured = measureColour(inst, glyph, ppem);
         if (measured.hasError)
             return remember(key, AtlasOutcome.refused, g);

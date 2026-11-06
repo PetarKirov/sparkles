@@ -26,6 +26,7 @@ import sparkles.base.expected : err, ok;
 
 import sparkles.base.buffer : UniqueBuffer;
 import sparkles.base.term_color : RgbColor;
+import sparkles.profiling.zones : cpuZone;
 import sparkles.shaders : v2, v4, vec4;
 import sparkles.shaders.layout : Rule, writeLayout;
 import sparkles.ui.canvas : isCanvas;
@@ -493,6 +494,7 @@ struct VulkanCanvas(B)
         // The atlas's pages on the device, and what was rasterized into them
         // this frame, staged before the draws that read it.
         {
+            auto zone = cpuZone!"atlas-upload"; // `PRF22`
             const r = stageAtlas();
             if (r < 0)
                 return fail!FrameReport(r);
