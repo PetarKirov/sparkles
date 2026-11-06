@@ -213,6 +213,13 @@ RunOutcome run(alias present, alias handle, alias draw = noDraw,
                 req.targetFps = cfg.targetFps;
                 req.fontSizePxOverride = cfg.fontSizePxOverride;
                 req.uiFollowsCellFont = cfg.uiFollowsCellFont;
+                // `--ui-font`, else the list: this arm reads no desktop settings.
+                {
+                    import sparkles.appearance.types : SystemAppearance;
+                    import sparkles.ui_app.interface_font : uiFontFamilyOf;
+
+                    req.uiFontFamily = uiFontFamilyOf(req.font.ui, SystemAppearance.init);
+                }
                 req.launchBackground = cfg.launchBackground;
                 req.hasLaunchBackground = cfg.hasLaunchBackground;
                 // `in` makes the config const; the request owns a mutable slice.

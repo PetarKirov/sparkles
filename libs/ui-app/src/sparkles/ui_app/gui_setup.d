@@ -26,16 +26,12 @@ module sparkles.ui_app.gui_setup;
 version (UiAppGui):
 
 import sparkles.raylib_text : displayMetrics, FontSet, pixelsForPoints, resolveUiFace,
-    UiFonts, uiTypeSteps;
+    UiFonts;
 import sparkles.base.term_color : RgbColor;
 import sparkles.ui_raylib.window : TraceLogSink, Window, WindowRequest;
 import sparkles.ui_app.gui_options : FontRequest, WindowCells;
 
-/// The interface family a request names unless it says otherwise.
-version (Android)
-    enum string defaultUiFontFamily = "Roboto";
-else
-    enum string defaultUiFontFamily = "sans-serif";
+public import sparkles.ui_app.interface_font : defaultUiFontFamily, uiStepPx, uiStepSizes;
 
 /// What the caller wants of a window and its fonts.
 struct GuiRequest
@@ -287,49 +283,4 @@ void loadUiFaces(ref GuiSession session, string family,
     session.uiRegular = regular;
     session.uiBold = bold;
     session.reloadUiFaces();
-}
-
-/**
-The interface steps' sizes in drawing units: `dp` each at `uiScale`, or —
-`cellFontPx` non-zero — the body step at the cell font's size and every other
-step in its proportion to the body's.
-*/
-int[uiTypeSteps] uiStepSizes(float uiScale, int cellFontPx = 0) @safe pure nothrow @nogc
-{
-    import sparkles.ui.style : TypeStep, typeStepDp;
-
-    const scale = cellFontPx > 0 ? cellFontPx / cast(float) typeStepDp(TypeStep.body) : uiScale;
-    int[uiTypeSteps] sizes;
-    foreach (i, ref s; sizes)
-        s = uiStepPx(typeStepDp(cast(TypeStep) i), scale);
-    return sizes;
-}
-
-@("ui_app.gui_setup.uiStepSizes.followTheCellFont")
-@safe pure nothrow @nogc
-unittest
-{
-    import sparkles.ui.style : TypeStep;
-
-    const dp = uiStepSizes(2.75f);
-    assert(dp[TypeStep.body] == 39 && dp[TypeStep.title] == 47, "14 and 17 dp at 440 dpi");
-    const cell = uiStepSizes(2.75f, cellFontPx: 28);
-    assert(cell[TypeStep.body] == 28, "the body step is the cell font's size");
-    assert(cell[TypeStep.title] == 34 && cell[TypeStep.caption] == 24, "the rest in proportion");
-}
-
-/// A type step of `dp` density-independent px at `scale`, in whole drawing units.
-int uiStepPx(int dp, float scale) @safe pure nothrow @nogc
-{
-    const px = cast(int)(dp * scale + 0.5f);
-    return px < 1 ? 1 : px;
-}
-
-@("ui_app.gui_setup.uiStepPx")
-@safe pure nothrow @nogc
-unittest
-{
-    assert(uiStepPx(14, 1) == 14);
-    assert(uiStepPx(17, 2.75f) == 47, "a 440 dpi phone");
-    assert(uiStepPx(12, 0) == 1);
 }
