@@ -1,0 +1,210 @@
+/**
+The one seam between hue's window code and the arm that draws it (`P2.B4`).
+
+`gui.d` reads its window — size, frame time, title, pointer, a screenshot —
+its cell font's metrics, and makes canvases, and nothing else of the
+backend: this module is that list. The raylib arm (`gui`, the default) wraps
+the window, the face set and the effect backend the arm publishes; the
+Vulkan arm (`HueGuiVulkan`, the `vulkan` configuration) wraps the native
+host and its canvas. Either way `GuiCanvas` satisfies the canvas concept
+(`isCanvas`) plus the pixel fill hue's chrome takes (`fillPixels`).
+
+What the Vulkan arm cannot do yet is said here rather than at each use: no
+CRT (`NoCrt` stands in, and a configuration that turns it on is reported
+once), no fullscreen, and the system pointer always shows.
+*/
+module gui_surface;
+
+version (HueGui):
+
+import sparkles.base.buffer : SharedBuffer;
+import sparkles.base.term_color : RgbColor;
+import sparkles.base.term_control : PointerShape;
+
+version (HueGuiVulkan)
+{
+    import sparkles.ui.effect : EffectRecord;
+    import sparkles.ui.geometry : Size;
+    import sparkles.ui_app.native_loop : NativeCanvas, NativeHost;
+    import sparkles.ui_vulkan.painter : rgba;
+
+    /**
+    The native canvas at a pixel origin: hue anchors some chrome to a pixel
+    that is not a whole cell (a panel hung off the window's bottom edge, a
+    popup beside the pointer). Every call is forwarded, the origin applied
+    around it as a pixel offset, so a primitive the canvas lacks is one this
+    value lacks too — the painter's introspection sees the same set.
+    */
+    struct GuiCanvas
+    {
+        NativeCanvas* canvas;
+        int originX, originY; /// pixels
+
+        /// A solid rectangle in window pixels (the origin does not apply:
+        /// chrome is window-positioned).
+        void fillPixels(int x, int y, int w, int h, RgbColor c, ubyte a = 0xFF) @system
+        {
+            if (w > 0 && h > 0)
+                canvas.fillPx(x, y, w, h, rgba(c, a));
+        }
+
+        /// The run's extent in cells.
+        Size measure(scope const(char)[] text) @system => canvas.measure(text);
+
+        auto opDispatch(string name, Args...)(auto ref Args args)
+            if (name != "measure" && name != "fillPixels")
+        {
+            const shifted = originX != 0 || originY != 0;
+            if (shifted)
+                canvas.pushOffsetPx(originX, originY);
+            scope (exit)
+                if (shifted)
+                    canvas.popOffsetPx();
+            return mixin("canvas." ~ name ~ "(args)");
+        }
+    }
+
+    /// The native host's window, cell font and canvas.
+    struct GuiSurface
+    {
+        NativeHost* host;
+        private bool crtReported;
+
+        int width() const @system => host.pixels.width;
+        int height() const @system => host.pixels.height;
+        float frameSeconds() const @system => host.frameSeconds;
+        void title(in char[] t) @system { host.title(t); }
+        /// The frame's ground: a fill over the whole window.
+        void clear(RgbColor c) @system
+        {
+            if (auto canvas = host.canvas)
+                canvas.fillPx(0, 0, width, height, rgba(c, 0xFF));
+        }
+        /// Drops every clip the frame has open: what the raylib arm's global
+        /// scissor reset is, for chrome painted over a pane that clipped.
+        void resetClip() @system
+        {
+            if (auto canvas = host.canvas)
+                canvas.resetClips();
+        }
+        void toggleFullscreen() @system { host.toggleFullscreen(); }
+        void screenshot(in char[] path) @system { host.screenshot(path); }
+        void pointerShape(PointerShape shape) @system { host.pointerShape(shape); }
+        void pointerVisible(bool) @system {}
+
+        int cellW() const @system => host.cellWidth;
+        int cellH() const @system => host.cellHeight;
+        int size() const @system => host.fontSizePx;
+        void reload(int px) @system { host.fontSize(px); }
+        /// The raylib arm grows its atlas after a frame; this arm's glyphs
+        /// are prepared as they are drawn, so nothing waits.
+        bool flushPending() @system => false;
+
+        void clipboard(in char[] text) @system { host.clipboard(text); }
+        /// Reading the clipboard is a request answered by an event on this
+        /// arm (`INP25`), not a call: nothing to read synchronously yet.
+        string clipboardText() @system => null;
+
+        GuiCanvas canvasAt(float x = 0, float y = 0, bool effects = false) @system
+            => GuiCanvas(host.canvas, cast(int) x, cast(int) y);
+
+        /// Once: a configuration asked for the CRT, which this arm lacks.
+        void noteCrtAsked() @system
+        {
+            import sparkles.base.logger : warning;
+
+            if (crtReported)
+                return;
+            crtReported = true;
+            warning(i"hue: the CRT effect is not drawn by the Vulkan renderer yet");
+        }
+    }
+
+    /**
+    The CRT's stand-in on the Vulkan arm: the fields `crt_config` sets and
+    the calls `gui.d` makes, with nothing drawn. `enabled` reads false
+    whatever is asked; the asking is remembered so it can be reported.
+    */
+    struct NoCrt
+    {
+        float bloomIntensity = 0, bloomRadius = 0, bloomThreshold = 0, brightness = 1,
+            chromaticAberration = 0, curvature = 0, dividerTension = 0, flicker = 0,
+            focusHalo = 0, hoverGlow = 0, lensPower = 0, lensRadius = 0, magnify = 1,
+            mask = 0, scanlines = 0, selectionBloom = 0, tilt = 0, vignette = 0;
+        bool systemPointer = true, uiReactive;
+        PointerShape pointerShape;
+        bool asked; /// a configuration turned it on
+
+        bool enabled() const @safe pure nothrow @nogc => false;
+        void enabled(bool on) @safe pure nothrow @nogc { asked |= on; }
+        bool drawsOwnPointer() const @safe pure nothrow @nogc => false;
+
+        // Never reached while `enabled` is false; here so the calls compile.
+        static CrtPoint mapPointerToUi(float x, float y, int, int) @safe pure nothrow @nogc
+            => CrtPoint(x, y);
+        void setUiContext(in CrtUiContext) @safe pure nothrow @nogc {}
+        void writeParams(Args...)(auto ref Args) {}
+
+        /// Registered like the real one, so the effect's id exists; with no
+        /// implementation, a renderer that met it would skip it.
+        static EffectRecord effectRecord() @safe pure nothrow
+            => EffectRecord(name: "crt");
+    }
+
+    /// ditto
+    struct CrtPoint { float x, y; }
+    /// ditto
+    struct CrtUiContext {}
+    /// ditto
+    CrtUiContext crtUiContextOf(Args...)(auto ref Args) => CrtUiContext.init;
+    alias CrtEffect = NoCrt;
+}
+else
+{
+    import sparkles.raylib_text : FontSet;
+    import sparkles.ui_raylib : RaylibCanvas, Window;
+    import sparkles.ui_raylib.effect_gpu : EffectGpu;
+
+    alias GuiCanvas = RaylibCanvas;
+
+    /// The raylib arm's window, face set and effect backend.
+    struct GuiSurface
+    {
+        Window* window;
+        FontSet* fonts;
+        EffectGpu* fx;
+        SharedBuffer!(char, 4096)* buf;
+
+        int width() const @system => window.width;
+        int height() const @system => window.height;
+        float frameSeconds() const @system => window.frameSeconds;
+        void title(in char[] t) @system { window.title(t); }
+        void clear(RgbColor c) @system { window.clear(c); }
+        void resetClip() @system { window.resetClip(); }
+        void toggleFullscreen() @system { window.toggleFullscreen(); }
+        void screenshot(in char[] path) @system { window.screenshot(path); }
+        void pointerShape(PointerShape shape) @system { window.pointerShape(shape); }
+        void pointerVisible(bool on) @system { window.pointerVisible(on); }
+
+        int cellW() const @system => fonts.cellW();
+        int cellH() const @system => fonts.cellH();
+        int size() const @system => fonts.size();
+        void reload(int px) @system { fonts.reload(px); }
+        bool flushPending() @system => fonts.flushPending();
+
+        void clipboard(in char[] text) @system { window.clipboard(text); }
+        string clipboardText() @system => window.clipboardText();
+
+        /// A canvas whose cell column 0 is at pixel `(x, y)`; with `effects`,
+        /// one that paints through the effect backend (the CRT's bracket).
+        GuiCanvas canvasAt(float x = 0, float y = 0, bool effects = false) @system
+        {
+            auto c = RaylibCanvas(fonts, buf, fonts.cellW(), fonts.cellH(), x, y);
+            if (effects)
+                c.fx = fx;
+            return c;
+        }
+
+        void noteCrtAsked() @system {}
+    }
+}
