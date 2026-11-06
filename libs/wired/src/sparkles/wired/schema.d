@@ -517,14 +517,24 @@ private WireSchema buildWireSchema(F, T)()
     return schema;
 }
 
+/** The schema of `T` under `F` before the format's validation hook runs.
+
+A format projects its per-type sidecar from this arena, so the hook may
+consult that projection for every type it reaches without re-entering
+$(LREF wireSchemaOf). Keyed by the two types alone: one build per pair.
+*/
+package(sparkles.wired) template rawWireSchemaOf(F, T)
+{
+    enum WireSchema rawWireSchemaOf = buildWireSchema!(F, WireValue!T)();
+}
+
 /// Complete CTFE schema of `T` under format `F`.
 template wireSchemaOf(F, T)
 {
     private alias Value = WireValue!T;
-    private enum WireSchema rawSchema = buildWireSchema!(F, Value)();
     static if (__traits(hasMember, F, "validateWireSchema"))
-        static assert(F.validateWireSchema!(Value, rawSchema));
-    enum WireSchema wireSchemaOf = rawSchema;
+        static assert(F.validateWireSchema!(Value, rawWireSchemaOf!(F, Value)));
+    enum WireSchema wireSchemaOf = rawWireSchemaOf!(F, Value);
 }
 
 /** Conservative value-round-trip predicate over the shared schema.
