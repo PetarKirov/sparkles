@@ -155,6 +155,30 @@ final class LabControls
     private SectionItem[] items;
     private size_t focus;
     private ScrollBody scrollBody;
+    /// The font picker's list, in picker rows: what a wheel, a trackpad and
+    /// a touch drag move, with the settings sheet's fling. The list shows
+    /// whole rows from it and the selection is kept in view
+    /// (`PickerState.scrollRowsTo`); keys still move the selection.
+    private ScrollBody pickerBody;
+    private enum pickerRowCells = 3; // a picker row's height, in cells
+
+    // Follow the list where a key or a new query left it, unless it is
+    // coasting.
+    private void pickerFollow() @safe pure nothrow @nogc
+    {
+        pickerBody.content = picker.rowCount;
+        pickerBody.viewport = picker.viewRows;
+        if (!pickerBody.motion.active
+            && picker.firstRow != cast(size_t) pickerBody.motion.whole)
+            pickerBody.motion.jumpTo(picker.firstRow, pickerBody.limit);
+    }
+
+    // Show the rows the body has reached.
+    private void pickerScrolled() @safe pure nothrow @nogc
+    {
+        if (picker.scrollRowsTo(cast(long) pickerBody.motion.whole))
+            overlayDirty = true;
+    }
     private int scroll() const @safe pure nothrow @nogc => cast(int) scrollBody.motion.whole;
     private void scroll(int value) @safe pure nothrow @nogc
         => scrollBody.motion.jumpTo(value, scrollMax);
@@ -179,7 +203,6 @@ final class LabControls
     private bool keyboardShown;
     private bool touching, panning;
     private PointerEvent touchPress;
-    private size_t touchFirstRow;
     private DrawOp[] overlayOps;
     private LabSettings overlaySubject;
     private Palette overlayPalette;
@@ -212,7 +235,14 @@ final class LabControls
         static if (__traits(hasMember, H, "capturePointer"))
             h.capturePointer(capturing);
         static if (__traits(hasMember, H, "frameSeconds"))
+        {
             if (scrollBody.animate(h.frameSeconds)) h.requestFrame();
+            if (picker.active && pickerBody.motion.active)
+            {
+                if (pickerBody.animate(h.frameSeconds)) h.requestFrame();
+                pickerScrolled();
+            }
+        }
         if (scrollBody.motion.pos != overlayScroll) overlayDirty = true;
         uint rows;
         foreach (sample; unicodeSamples) if (sample.group == subject.samples.group) ++rows;
@@ -577,6 +607,9 @@ final class LabControls
         previewIndex = size_t.max;
         picker.open();
         picker.viewRows = 12;
+        pickerBody.cancelDrag();
+        pickerBody.motion.stop();
+        pickerBody.motion.jumpTo(0, pickerBody.limit);
         if (corpusReady) finder.search(picker);
     }
 
@@ -696,7 +729,7 @@ final class LabControls
         const width = bounds.width, height = bounds.height;
         Builder b;
         uint[] rows;
-        const target = 3;
+        const target = pickerRowCells;
         if (picker.active)
         {
             rows ~= b.add(Widget(kind: WidgetKind.text, text: "Font › " ~ picker.prompt.text.idup,
@@ -838,6 +871,7 @@ final class LabControls
                 }
                 if (picker.active)
                 {
+                    pickerBody.motion.stop(); // a key takes the list from a coast
                     consumed = true;
                     if (k.key == Key.escape || k.key == Key.back) cancelPicker();
                     else if (k.key == Key.enter) accept();
@@ -894,10 +928,20 @@ final class LabControls
             (in WheelEvent w) {
                 if (!shown && !picker.active) return;
                 consumed = true;
-                if (picker.active) picker.moveSelection(w.dy);
+                if (picker.active)
+                {
+                    // The view moves by the scroll's distance — cells, in
+                    // rows — and the selection follows into it.
+                    pickerFollow();
+                    WheelEvent rows = w;
+                    rows.dy = 0;
+                    rows.fdy = w.exactY / cast(float) pickerRowCells;
+                    pickerBody.scroll(rows, secondsNow());
+                    pickerScrolled();
+                }
                 else if (!sections.drag.active)
                 {
-                    scrollBody.scroll(w);
+                    scrollBody.scroll(w, secondsNow());
                 }
             },
             (in PointerEvent p) {
@@ -931,7 +975,11 @@ final class LabControls
                         touchPress = p;
                         if (!picker.active)
                             scrollBody.beginDrag(p.pos.y / cast(double) ch, secondsNow());
-                        touchFirstRow = picker.firstRow;
+                        else
+                        {
+                            pickerFollow();
+                            pickerBody.beginDrag(p.pos.y / cast(double)(ch * pickerRowCells), secondsNow());
+                        }
                         if (!picker.active)
                             cast(void) sections.pointer(pane, p, tree, frames,
                                 sectionBase, result, true, Size(cw, ch));
@@ -942,6 +990,7 @@ final class LabControls
                     {
                         touching = panning = false;
                         scrollBody.cancelDrag();
+                        pickerBody.cancelDrag();
                         cast(void) sections.cancel(pane);
                         return;
                     }
@@ -957,14 +1006,20 @@ final class LabControls
                     if (panning)
                     {
                         if (picker.active)
-                            cast(void) picker.scrollRowsTo(cast(long) touchFirstRow - dy / (ch * 3));
+                        {
+                            pickerBody.dragTo(p.pos.y / cast(double)(ch * pickerRowCells), secondsNow());
+                            pickerScrolled();
+                        }
                         else
                         {
                             scrollBody.dragTo(p.pos.y / cast(double) ch, secondsNow());
                         }
                         if (p.action == PointerAction.release)
                         {
-                            scrollBody.endDrag(secondsNow());
+                            if (picker.active)
+                                pickerBody.endDrag(secondsNow());
+                            else
+                                scrollBody.endDrag(secondsNow());
                             touching = panning = false;
                         }
                         return;
@@ -980,6 +1035,7 @@ final class LabControls
                     if (p.action != PointerAction.release) return;
                     touching = false;
                     scrollBody.cancelDrag();
+                    pickerBody.cancelDrag();
                     cast(void) sections.cancel(pane);
                     if (ax >= slop || ay >= slop) return;
                 }
@@ -1404,4 +1460,55 @@ final class LabControls
     controls.draw(&canvas, Size(49, 24), true, Palette.init);
     assert(controls.handle(host, Event(KeyEvent(Key.escape)), shown));
     assert(!controls.picker.active);
+}
+
+/// A trackpad moves the font picker by the swipe's distance, not by how many
+/// events carried it; the platform's inertia after the lift adds nothing, and
+/// the list coasts on the sheet's own fling (`INP26`).
+@("text_lab.controls.pickerTrackpadScrollsByDistance")
+@system unittest
+{
+    import sparkles.ui_app.record : RecordingHost;
+
+    LabSettings model;
+    auto controls = new LabControls(&model);
+    FontEntry[] entries;
+    foreach (i; 0 .. 100)
+    {
+        const name = text("Family", i);
+        entries ~= FontEntry(text("/fonts/", name, ".ttf"), name, 0, name);
+    }
+    controls.finder.corpus(entries);
+    controls.corpusReady = true;
+    controls.openPicker();
+    controls.finder.search(controls.picker);
+    assert(controls.picker.rowCount > 40, "the corpus is ranked");
+    RecordingHost host;
+    bool shown = true;
+    auto pad(float cells, bool begins = false, bool ends = false, bool momentum = false)
+        => Event(WheelEvent(precise: true, fdy: cells, begins: begins, ends: ends,
+            momentum: momentum));
+
+    // 60 events of a fifth of a cell each: 12 cells, so 4 rows of 3.
+    assert(controls.handle(host, pad(0.2f, begins: true), shown));
+    foreach (_; 1 .. 60)
+        cast(void) controls.handle(host, pad(0.2f), shown);
+    assert(controls.picker.firstRow == 4, text(controls.picker.firstRow));
+    assert(controls.picker.selection >= controls.picker.firstRow, "the selection follows the view");
+
+    // macOS' momentum events change nothing; the lift starts the fling.
+    cast(void) controls.handle(host, pad(0, ends: true), shown);
+    foreach (_; 0 .. 30)
+        cast(void) controls.handle(host, pad(2, momentum: true), shown);
+    assert(controls.picker.firstRow == 4, "the platform's inertia is not applied");
+    const lifted = controls.picker.firstRow;
+    foreach (_; 0 .. 30)
+        controls.frame(host);
+    assert(controls.picker.firstRow > lifted, "the list coasts on its own fling");
+
+    // A key takes the list back.
+    cast(void) controls.handle(host, Event(KeyEvent(key: Key.down)), shown);
+    const held = controls.picker.firstRow;
+    controls.frame(host);
+    assert(controls.picker.firstRow == held, "the coast stopped at the key");
 }
