@@ -3,8 +3,9 @@ Persistent fixed-capacity CPU jobs for interactive hosts.
 
 Unlike the batch-scoped `WorkStealingPool`, this pool stays alive across
 generations and accepts closure-free function-pointer jobs over caller-owned
-contexts. All allocation and thread creation happens in `start`; submission,
-execution, completion polling, and shutdown use fixed rings.
+contexts. Queue allocation and thread creation happen in `start`; submission,
+completion polling, and shutdown use fixed rings. The default `RawJob` also
+requires allocation-free execution; `CpuJob` permits allocating library work.
 */
 module sparkles.event_horizon.raw_pool;
 
@@ -25,6 +26,17 @@ alias RawCompletionFn = void function(void*, bool cancelled)
 struct RawJob
 {
     RawJobFn run;
+    RawCompletionFn complete;
+    void* context;
+    ulong generation;
+}
+
+/// Closure-free CPU work that may allocate, for parsers and other allocating libraries.
+/// Queueing and completion delivery retain the same bounded, allocation-free protocol.
+/// The caller roots GC references in off-heap contexts; the pool does not register that storage.
+struct CpuJob
+{
+    void function(void*) @safe nothrow run;
     RawCompletionFn complete;
     void* context;
     ulong generation;
@@ -76,7 +88,7 @@ until `shutdown` returns. `QueueCapacity` and `CompletionCapacity` are hard
 bounds; neither queue grows.
 */
 struct RawCpuPool(size_t QueueCapacity = 256,
-    size_t CompletionCapacity = QueueCapacity)
+    size_t CompletionCapacity = QueueCapacity, Job = RawJob)
 if (QueueCapacity > 0 && CompletionCapacity > 0)
 {
     @disable this(this);
@@ -133,7 +145,7 @@ if (QueueCapacity > 0 && CompletionCapacity > 0)
     uint workerCount() const @safe pure nothrow @nogc => _workers;
 
     /// Submit one job without blocking. A rejected job is not consumed.
-    RawPoolResult submit(RawJob job) @trusted nothrow @nogc
+    RawPoolResult submit(Job job) @trusted nothrow @nogc
     {
         if (job.run is null)
             return RawPoolResult.invalidJob;
@@ -234,7 +246,7 @@ private:
     {
         for (;;)
         {
-            RawJob job;
+            Job job;
             {
                 auto g = pool._mutex.guard();
                 while (pool._jobCount == 0
@@ -256,7 +268,7 @@ private:
         }
     }
 
-    RawJob popJobLocked() @safe pure nothrow @nogc
+    Job popJobLocked() @safe pure nothrow @nogc
     {
         auto job = _jobs[_jobHead];
         _jobHead = (_jobHead + 1) % QueueCapacity;
@@ -264,7 +276,7 @@ private:
         return job;
     }
 
-    void publishCompletionLocked(RawJob job, bool cancelled)
+    void publishCompletionLocked(Job job, bool cancelled)
         @safe pure nothrow @nogc
     {
         if (job.complete is null)
@@ -284,7 +296,7 @@ private:
     uint _workers;
     RawPoolState _state;
 
-    RawJob[QueueCapacity] _jobs = void;
+    Job[QueueCapacity] _jobs = void;
     size_t _jobHead;
     size_t _jobTail;
     size_t _jobCount;
@@ -306,6 +318,39 @@ private void joinNoThrow(Thread thread) @trusted nothrow @nogc
 }
 
 private Throwable joinOne(Thread thread, bool rethrow_) => thread.join(rethrow_);
+
+/// Allocating parser-style jobs use the same bounded queue and completion ownership.
+@("rawPool.allocatingCpuJobs")
+@system unittest
+{
+    struct Context
+    {
+        ubyte[] bytes;
+        bool acknowledged;
+    }
+    static void work(void* raw) @safe nothrow
+    {
+        auto context = (() @trusted => cast(Context*) raw)();
+        context.bytes = new ubyte[4096];
+        context.bytes[] = 42;
+    }
+    static void complete(void* raw, bool cancelled) @safe nothrow @nogc
+    {
+        auto context = (() @trusted => cast(Context*) raw)();
+        context.acknowledged = !cancelled;
+    }
+    alias Pool = RawCpuPool!(2, 2, CpuJob);
+    Pool pool;
+    Context context;
+    assert(Pool.start(pool, 1) == RawPoolResult.accepted);
+    assert(pool.submit(CpuJob(&work, &complete, &context, 7)) == RawPoolResult.accepted);
+    assert(pool.shutdown(true) == RawPoolResult.accepted);
+    RawCompletion completion;
+    assert(pool.pollCompletion(completion) == RawPoolResult.accepted && completion.generation == 7);
+    completion.dispatch();
+    assert(context.acknowledged && context.bytes.length == 4096 && context.bytes[4095] == 42);
+    assert(pool.pollCompletion(completion) == RawPoolResult.noCompletion);
+}
 
 @("rawPool.executesAndCompletesExactlyOnce")
 @system

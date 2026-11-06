@@ -1,5 +1,12 @@
 # `sparkles:event-horizon`
 
+Interactive CPU work uses `raw_pool.RawCpuPool`: a persistent bounded queue
+of closure-free jobs with completion delivery on the polling thread.
+`RawJob` requires an allocation-free callback; select `CpuJob` as the third
+pool template argument for allocating parsers. The caller owns each context
+through completion dispatch or shutdown/drain. Queue saturation is an explicit
+result; callbacks never disappear to make room for newer work.
+
 `sparkles:event-horizon` is a completion-first event loop for D: `io_uring` on
 Linux, `kqueue` on macOS and the BSDs, IOCP on Windows (in progress), driven
 in three tiers — a callback loop, direct-style fibers with structured

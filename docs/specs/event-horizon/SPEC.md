@@ -1630,6 +1630,14 @@ struct RawJob
     ulong generation; // opaque value copied to RawCompletion
 }
 
+struct CpuJob
+{
+    void function(void*) @safe nothrow run; // may allocate
+    RawCompletionFn complete;
+    void* context;
+    ulong generation;
+}
+
 enum RawPoolResult : ubyte
 {
     accepted,
@@ -1644,11 +1652,11 @@ enum RawPoolResult : ubyte
 }
 
 struct RawCpuPool(size_t QueueCapacity = 256,
-    size_t CompletionCapacity = QueueCapacity)
+    size_t CompletionCapacity = QueueCapacity, Job = RawJob)
 {
     @disable this(this);
     static RawPoolResult start(ref RawCpuPool pool, uint workers = 0);
-    RawPoolResult submit(RawJob job) @safe nothrow @nogc;
+    RawPoolResult submit(Job job) @safe nothrow @nogc;
     RawPoolResult pollCompletion(out RawCompletion completion)
         @safe nothrow @nogc;
     RawPoolResult shutdown(bool drain = true) @safe nothrow @nogc;
@@ -1656,8 +1664,13 @@ struct RawCpuPool(size_t QueueCapacity = 256,
 ```
 
 `start` performs all allocation and thread creation before publication.
-Submission, execution, completion polling, and shutdown allocate nothing. The
-queues are bounded MPMC rings; a full submission queue returns `queueFull`
+Submission, completion polling, and shutdown allocate nothing. The default
+`RawJob` also requires allocation-free execution. `CpuJob` permits allocating
+parser/library work on a worker, without relaxing the queue/completion
+protocol; it uses `RawCpuPool!(QueueCapacity, CompletionCapacity, CpuJob)`.
+The caller roots any GC references stored in off-heap contexts; the pool does
+not register external storage with the collector. The queues are bounded MPMC
+rings; a full submission queue returns `queueFull`
 without consuming the job. A worker never drops a completion: before accepting
 a job the pool reserves one completion slot when `complete` is non-null, so
 `completionFull` is a submission outcome rather than a worker-side loss.
