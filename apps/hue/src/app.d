@@ -221,6 +221,7 @@ int executeView(in HueCli root, in View view)
     // The CLI is already merged into the effective config as its highest
     // layer, so this projection carries every flag AND the file layers.
     auto opt = viewRenderOptionsOf(eff);
+    opt.native = root.native; // not a config layer: a run's diagnostics
 
     SourceSet docSet;
     bool haveSet;
@@ -335,6 +336,7 @@ int executeDiff(in HueCli root, in Diff diff)
     const backend = diff.sink.resolveBackend(root.gui);
 
     auto opt = viewRenderOptionsOf(eff);
+    opt.native = root.native; // not a config layer: a run's diagnostics
 
     Document doc;
     try
@@ -398,6 +400,7 @@ int executePr(in HueCli root, in Pr pr)
     const backend = pr.sink.resolveBackend(root.gui);
 
     auto opt = viewRenderOptionsOf(eff);
+    opt.native = root.native; // not a config layer: a run's diagnostics
 
     Document doc;
     try
@@ -1814,7 +1817,6 @@ private int runGuiSink(in ViewRenderOptions opt, ref Document doc, in LabelSet l
     version (HueGui)
     {
         import gui : GuiArgs, LoadedDoc, runGui;
-        import sparkles.raylib_text : FontSet;
 
         const startInTree = treeRoot.length != 0;
 
@@ -1874,6 +1876,7 @@ private int runGuiSink(in ViewRenderOptions opt, ref Document doc, in LabelSet l
             startIdx: themeSet.idx,
             preview: doc.preview,
             gui: gui,
+            native: opt.native,
             lineNumbers: opt.lineNumbers,
             gutter: opt.gutter,
             codeLineNumbers: opt.codeLineNumbers,
