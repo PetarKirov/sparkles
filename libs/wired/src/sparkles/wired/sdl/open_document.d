@@ -342,6 +342,18 @@ version (unittest)
 
     assert(open.node(SdlNodeHandle.init).error == PoolError.invalid);
     assert(open.node(SdlNodeHandle(99, 1)).error == PoolError.invalid);
+
+    // A moved node and everything below it are replaced; the node it passed
+    // keeps its handle.
+    const b2 = open.handleOf(child(open.document.root, 1)).value;
+    const c2 = open.handleOf(child(child(open.document.root, 1), 0)).value;
+    const f2 = open.handleOf(child(open.document.root, 2)).value;
+    auto mover = open.editor;
+    mover.moveAfter(child(open.document.root, 1), child(open.document.root, 2));
+    assert(!open.commit(mover).hasError);
+    assert(open.host == "a 10\nf 6\nb {\n    c 30\n}\n");
+    assert(open.node(b2).error == PoolError.stale && open.node(c2).error == PoolError.stale);
+    assert(open.node(f2).hasValue && open.node(f2).value.qualifiedName.localName == "f");
 }
 
 @("sdl.open_document.anonymousAndEmbedded")
