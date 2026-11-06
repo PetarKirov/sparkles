@@ -146,6 +146,15 @@ struct GuiOptions
     @(Option("font-bold-italic", description: "Bold-italic face."))
     string fontBoldItalic = defaultGuiFontFamily;
 
+    @(Option("ui-font", placeholder: "FONT", description:
+        "Proportional face for the interface — tabs, buttons, menus, labels "
+        ~ "and documentation: a path, a family name, or a comma-separated "
+        ~ "preference list. Default: the desktop's interface font, else the "
+        ~ "first installed of Inter, Adwaita Sans, Cantarell, Noto Sans, Roboto, "
+        ~ "DejaVu Sans… (Roboto on Android). 'none' keeps the interface in the "
+        ~ "cell font."))
+    string uiFont;
+
     @(Option("font-codepoint-map", description:
         "Render a codepoint range from a specific family (repeatable): "
         ~ "'U+XXXX-U+YYYY,U+ZZZZ=Family'. Defaults to the Uiua386 glyph map; "
@@ -289,6 +298,9 @@ struct FontRequest
     string boldItalic = defaultGuiFontFamily; /// ditto
     string[] codepointMaps;         /// `--font-codepoint-map` entries
     string[] searchDirs;            /// scan these instead of asking the system
+    /// `--ui-font`: the interface face; empty for the desktop's, `none` for
+    /// the cell font (`sparkles.ui_app.interface_font.uiFontFamilyOf`).
+    string ui;
 
     /// Whether to consult the OS font database (fontconfig on Linux, CoreText
     /// on macOS). False as soon as a directory is given: `--font-dir` exists
@@ -311,6 +323,8 @@ FontRequest fontRequestOf(O)(const O o) @safe pure nothrow
     r.boldItalic = o.fontBoldItalic;
     r.codepointMaps = o.fontCodepointMap.dup;
     r.searchDirs = o.fontDir.dup;
+    static if (__traits(hasMember, O, "uiFont"))
+        r.ui = o.uiFont;
     return r;
 }
 
@@ -451,6 +465,22 @@ unittest
     // the flag.
     assert(!r.useSystemFontDb);
     assert(GuiOptions.init.fontRequestOf.useSystemFontDb);
+
+    // The interface face: the desktop's unless `--ui-font` names one.
+    assert(r.ui is null);
+    p.uiFont = "Inter";
+    assert(fontRequestOf(p).ui == "Inter");
+}
+
+@("ui_app.gui_options.uiFontIsAnOption")
+@system
+unittest
+{
+    import sparkles.core_cli.args : parseCli;
+
+    auto parsed = parseCli!GuiOptions(["app", "--ui-font", "Cantarell"]);
+    assert(parsed && parsed.value.uiFont == "Cantarell");
+    assert(parseCli!GuiOptions(["app"]).value.uiFont is null, "the desktop's by default");
 }
 
 @("ui_app.gui_options.theme")
