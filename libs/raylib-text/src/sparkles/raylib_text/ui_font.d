@@ -18,15 +18,13 @@ import raylib;
 import sparkles.raylib_text.font : fontHasGlyph, glyphIndexFor, loadFontInto, loadVariantFile,
     LoadedFont;
 import sparkles.raylib_text.font_discovery : FontSources;
+public import sparkles.raylib_text.font_resolve : resolveUiFace;
+public import sparkles.raylib_text.ui_sizing : uiBodyOfCell, uiCentreOffset, uiLineHeight,
+    uiTypeSteps, xHeightMatched;
+import sparkles.raylib_text.ui_sizing : TypeStepBody;
 import sparkles.raylib_text.font_set : FontSet;
 import sparkles.raylib_text.shaping_api : st_face_close, st_face_open, st_kern_advances,
     st_library_create, st_library_destroy, STFace, STLibrary;
-
-/// The number of steps on the type scale (`sparkles:ui`'s `TypeStep`).
-enum uiTypeSteps = 4;
-
-// `TypeStep.body`'s index: the step the cell font's x-height is matched at.
-private enum TypeStepBody = 0;
 
 /// One step's faces and metrics, in the backend's drawing units.
 struct UiFace
@@ -64,34 +62,6 @@ immutable int[] uiCodepoints = () {
     return cps;
 }();
 
-/// The largest body glyph box, as a share of the cell font's size, when the
-/// interface steps follow the cell font: the rest of the cell is the line's
-/// leading.
-enum float uiBodyOfCell = 0.85f;
-
-/// The line height for a face drawn at `size`: the size plus a third, the
-/// leading the mockups use (17 px titles on 22–24 px lines, 14 px body on 19).
-int uiLineHeight(int size) @safe pure nothrow @nogc
-    => size + (size + 2) / 3;
-
-/// How far down a line of height `lineHeight` sits so it is centred in `rows`
-/// cells of `cellH` — the cell rectangle the layout gave the run.
-float uiCentreOffset(int lineHeight, int rows, int cellH) @safe pure nothrow @nogc
-{
-    const room = rows * cellH;
-    return room > lineHeight ? (room - lineHeight) / 2.0f : 0.0f;
-}
-
-@("raylib_text.ui_font.metrics")
-@safe pure nothrow @nogc
-unittest
-{
-    assert(uiLineHeight(14) == 19 && uiLineHeight(17) == 23 && uiLineHeight(12) == 16);
-    assert(uiCentreOffset(19, 1, 17) == 0, "a line taller than its cell starts at the top");
-    assert(uiCentreOffset(23, 2, 17) == 5.5f);
-    assert(uiCentreOffset(16, 1, 20) == 2);
-}
-
 @("raylib_text.ui_font.codepointsAreSortedAndCoverLatin")
 @safe pure nothrow
 unittest
@@ -103,61 +73,6 @@ unittest
     foreach (cp; [cast(int) 'A', 'z', 0xE9 /* é */, 0x161 /* š */, 0x2014 /* — */,
             0x2022 /* • */, 0x2026 /* … */])
         assert(uiCodepoints.canFind(cp));
-}
-
-/**
-Resolves the interface family `family` to its regular and bold files, the way
-`FontSet` resolves the cell font: through the system font database when
-`sources` uses one (fontconfig, or CoreText on macOS, so `"sans-serif"` names
-the desktop's own interface face), otherwise from `sources.dirs` (the bundled
-fonts on Android). `bold` is `""` when the family has no bold file. Returns
-whether a regular face was found.
-*/
-bool resolveUiFace(string family, in FontSources sources, out string regular,
-    out string bold) @trusted
-{
-    import std.file : exists;
-    import std.string : strip;
-    import sparkles.raylib_text.font_discovery : fontVariantPaths, resolveFontInDirs;
-
-    if (sources.useSystemFontDb)
-    {
-        version (OSX)
-        {
-            import sparkles.raylib_text.font_coretext : resolveFamilyList;
-
-            regular = resolveFamilyList(family);
-            bold = resolveFamilyList(family ~ " Bold");
-        }
-        else
-        {
-            import sparkles.raylib_text.font_fontconfig : fcRun;
-
-            auto r = fcRun(["fc-match", "-f", "%{file}", family]);
-            if (r.status == 0)
-                regular = r.output.strip.idup;
-            auto b = fcRun(["fc-match", "-f", "%{file}", family ~ ":bold"]);
-            if (b.status == 0)
-                bold = b.output.strip.idup;
-        }
-        if (bold == regular)
-            bold = "";
-    }
-    else
-    {
-        regular = resolveFontInDirs(family, sources.dirs);
-        if (regular.length)
-        {
-            string italic, boldItalic;
-            fontVariantPaths(regular, bold, italic, boldItalic);
-        }
-    }
-    if (regular.length == 0 || !regular.exists)
-    {
-        regular = bold = "";
-        return false;
-    }
-    return true;
 }
 
 /**
@@ -198,17 +113,9 @@ struct UiFonts
         unload();
         this.fallback = fallback;
         this.atlasScale = atlasScale;
-        int[uiTypeSteps] at = sizes;
-        if (matchCellPx > 0)
-        {
-            const xh = probeXHeightRatio(regularPath, sizes[TypeStepBody]);
-            const shrink = xh * uiBodyOfCell < 1 ? 1 / uiBodyOfCell : xh;
-            foreach (i, ref s; at)
-            {
-                const v = cast(int)(sizes[i] / shrink + 0.5f);
-                s = v < 1 ? 1 : v;
-            }
-        }
+        const int[uiTypeSteps] at = matchCellPx > 0
+            ? xHeightMatched(sizes, probeXHeightRatio(regularPath, sizes[TypeStepBody]))
+            : sizes;
         present = true;
         foreach (i, ref face; steps)
         {
@@ -532,26 +439,6 @@ struct UiFonts
             }
         }
     }
-}
-
-version (RaylibTextTests)
-@("raylib_text.ui_font.resolveUiFace.bundledFamily")
-@system unittest
-{
-    import std.path : baseName;
-    import sparkles.test_utils.tmpfs : TmpFS;
-
-    auto tmp = TmpFS.create("sparkles-ui-face-test");
-    foreach (f; ["Roboto-Regular.ttf", "Roboto-Bold.ttf", "FiraCodeNerdFontMono-Regular.ttf"])
-        tmp.writeFileAt(f, "x");
-    const sources = FontSources([tmp.dir], useSystemFontDb: false);
-
-    string regular, bold;
-    assert(resolveUiFace("Roboto", sources, regular, bold));
-    assert(regular.baseName == "Roboto-Regular.ttf" && bold.baseName == "Roboto-Bold.ttf");
-
-    assert(!resolveUiFace("Inter", sources, regular, bold), "a family the dirs lack");
-    assert(regular == "" && bold == "");
 }
 
 version (RaylibTextTests)
