@@ -29,7 +29,7 @@ import sparkles.ui.geometry : Constraints, Insets, Point, Rect, SizeSpec;
 import sparkles.ui.layout : Frame, layout;
 import sparkles.ui.style : Decoration, FontRole, Slot, TextStyle, TypeStep;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
-public import sparkles.ui.components.scroll_body : ScrollBody;
+public import sparkles.ui.components.scroll_body : ScrollBody, scrollSeconds;
 import sparkles.ui.wrap : TextWrap;
 
 import chrome : button, cachedChromeLayout, chromeLayout, squareCols;
@@ -203,7 +203,7 @@ abstract class Page : Surface, Scrollable, Pasteable, TextInputSurface
     /// `Scrollable`: a wheel notch or a drag moves the view (`SCV12`).
     void scroll(in WheelEvent w) @system
     {
-        scrollBody.scroll(w);
+        scrollBody.scroll(w, scrollSeconds());
     }
 
     /// ditto
