@@ -138,7 +138,7 @@ import sparkles.ui.display_list : buildDisplayList, buildDisplayListInto;
 import sparkles.ui.widget : Builder, WidgetTree;
 import sparkles.ui.interp.immediate : paint;
 import sparkles.ui_app.backend : BackendPolicy;
-import sparkles.ui_app.gui_options : GuiOptions;
+import sparkles.ui_app.gui_options : GuiOptions, NativeOptions;
 import sparkles.ui_app.host : PointerUnit, RunConfig;
 import sparkles.ui_app.run : run, RunOutcome;
 // The arm hue draws through (`gui_surface`): the raylib window, or the
@@ -254,6 +254,7 @@ struct GuiArgs
     // and `--font-codepoint-map` reach the request without hue re-declaring
     // them — the desktop build was dropping both.
     GuiOptions gui;
+    NativeOptions native; /// the native arm's window system and diagnostics
     bool lineNumbers = true;
     string gutter = "all";
     bool codeLineNumbers = true;
@@ -528,6 +529,7 @@ int runGui(GuiArgs guiArgs) @system
         gui: gui,
         targetFps: 60,
         pointerUnit: PointerUnit.pixels,
+        native: native,
         fontSizePxOverride: capture.fontSizePx,
     };
     version (HueGuiVulkan) {} else
@@ -4557,7 +4559,11 @@ int runGui(GuiArgs guiArgs) @system
         static if (windowed)
         {
             version (HueGuiVulkan)
+            {
                 surface = GuiSurface((() @trusted => &h)());
+                if (crt.asked)
+                    surface.noteCrtAsked();
+            }
             else
                 surface = GuiSurface(&(h.window()), h.canvas.fonts, h.canvas.fx,
                     (() @trusted => &buf)());
@@ -4569,8 +4575,9 @@ int runGui(GuiArgs guiArgs) @system
             // `DBG1`: a capture of an animated effect is reproducible only if
             // its clock is. The host pins it for every effect, the CRT's
             // jitter, roll and flicker included.
-            if (capture.screenshotPath.length)
-                h.pinEffectClock(1.0f);
+            static if (__traits(hasMember, H, "pinEffectClock"))
+                if (capture.screenshotPath.length)
+                    h.pinEffectClock(1.0f);
         }
 
         pn.tree.chromeRows = 0; // the GUI pane is all tree rows
