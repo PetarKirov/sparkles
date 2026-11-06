@@ -1831,7 +1831,8 @@ private ubyte[] twoColourImage()
     const int[4] steps = [20, 17, 18, 24];
     assert(rig.canvas.interfaceFont(sans, null, steps));
     const body = rig.canvas.interfaceStep(TypeStep.body);
-    assert(body.present && body.size == 20 && !body.bold);
+    assert(body.present && body.size == 20);
+    assert(body.bold, "Noto Sans is variable: bold from its weight axis");
     assert(body.ascent > 10 && body.ascent < 20, "the baseline inside the box");
     assert(rig.canvas.interfaceStep(TypeStep.title).size == 24);
 
@@ -1915,4 +1916,64 @@ private ubyte[] twoColourImage()
     assert(GC.allocatedInCurrentThread == before,
         format("measuring allocated %s GC bytes", GC.allocatedInCurrentThread - before));
     assert(total > 0);
+}
+
+/// A variable interface face with no bold file draws bold at its `wght` 700
+/// instance (`UVK20`): shaped and advanced at that weight, so a bold run is
+/// wider than its regular one and inks more, where a doubled stroke would be
+/// one pixel wider at most.
+@("ui_vulkan.canvas.aVariableInterfaceFaceIsBoldOnItsWeightAxis")
+@system unittest
+{
+    if (!readbackEnabled)
+        return skipTest(readbackSkipReason);
+    import std.file : read;
+    import std.path : buildPath;
+    import std.process : environment;
+    import sparkles.base.term_style : TextAttr;
+    import sparkles.ui.style : TypeStep;
+    import sparkles.ui_vulkan.painter : TextMetrics;
+
+    const dir = environment.get("SPARKLES_FONTS_PATH");
+    assert(dir !is null, "SPARKLES_FONTS_PATH is unset: run inside `nix develop`");
+    const mono = cast(const(ubyte)[]) read(dir.buildPath("DejaVuSansMono.ttf"));
+    const variable = cast(const(ubyte)[]) read(dir.buildPath("NotoSans.ttf")); // wght 100–900
+    const fixed = cast(const(ubyte)[]) read(dir.buildPath("Roboto-Regular.ttf"));
+    auto rig = new Rig;
+    rig.open("ui-vulkan-interface-bold", 320, 44);
+    scope (success)
+        rig.close();
+    assert(rig.canvas.cellFont(mono, 18, TextMetrics(ascent: 16)));
+    const int[4] steps = [20, 17, 18, 24];
+
+    // A static face without a bold file: no bold face, a doubled stroke.
+    assert(rig.canvas.interfaceFont(fixed, null, steps));
+    assert(!rig.canvas.interfaceStep(TypeStep.body).bold);
+
+    assert(rig.canvas.interfaceFont(variable, null, steps));
+    assert(rig.canvas.interfaceStep(TypeStep.body).bold, "bold from the weight axis");
+    enum text = "Settings and more";
+    const regular = rig.canvas.interfaceWidthPx(text, TypeStep.body, false);
+    const bold = rig.canvas.interfaceWidthPx(text, TypeStep.body, true);
+    assert(bold > regular + 4, format("bold %s vs regular %s", bold, regular));
+
+    // Drawn, the bold run inks more than the regular one.
+    const metrics = FrameMetrics(cellW: 11, cellH: 22);
+    const ui = Visual(fg: white, fgAlpha: 255, fontRole: FontRole.ui);
+    Visual heavy = ui;
+    heavy.styleBits = TextAttr.bold.bits;
+    FrameReport report;
+    const frame = rig.draw((ref Canvas c) {
+        c.textRunIn(Rect(0, 0, 29, 1), text, ui);
+        c.textRunIn(Rect(0, 1, 29, 1), text, heavy);
+    }, metrics, black, report);
+    long ink(int row)
+    {
+        long sum;
+        foreach (y; row * metrics.cellH .. (row + 1) * metrics.cellH)
+            foreach (x; 0 .. 320)
+                sum += pixel(frame, 320, x, y)[0];
+        return sum;
+    }
+    assert(ink(1) > ink(0) * 5 / 4, format("ink %s bold vs %s regular", ink(1), ink(0)));
 }

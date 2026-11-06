@@ -46,7 +46,7 @@ import sparkles.ui.pixel_geometry : ScissorBox;
 import sparkles.ui_vulkan.shading : Binding, CanvasView, Instance, srgbToLinear;
 import sparkles.ui_vulkan.text_rendering : Hinting, Loupe, TextRendering;
 import sparkles.ui_vulkan.upload : transition, Uploads;
-import sparkles.font : Colour, Ppem, UserCoordinate;
+import sparkles.font : axes, Colour, Face, Ppem, Tag, UserCoordinate;
 import sparkles.font.cluster_shaping : ClusterDirection;
 import sparkles.vulkan;
 
@@ -741,6 +741,13 @@ struct VulkanCanvas(B)
     shaped by the font library's engine. An empty `regular` unbinds it. False,
     with interface runs back in the cell font, when the regular face cannot be
     opened or no engine is linked to shape it.
+
+    Without a `bold` file a variable `regular` with a weight axis draws bold
+    runs at its `wght` 700 instance (or the axis's heaviest, if lighter) —
+    shaped and advanced at that weight, its glyphs their own atlas entries —
+    as the desktop's variable faces (Adwaita Sans, Android's Roboto) ship
+    one file for every weight. A static face without a bold file draws bold
+    as a doubled stroke.
     */
     bool interfaceFont(const(ubyte)[] regular, const(ubyte)[] bold,
         in int[TypeStep.max + 1] stepPx) @system
@@ -761,6 +768,16 @@ struct VulkanCanvas(B)
         else
         {
             const(ubyte)[][2] files = [regular, bold];
+            // Bold on the regular face's weight axis, where it has no file.
+            UserCoordinate[1] weight;
+            const(UserCoordinate)[] styleCoordinates(size_t style)
+                => style == 1 && !bold.length && regular.length ? weight[] : null;
+            if (!bold.length && regular.length)
+            {
+                auto variable = openFace(regular);
+                if (variable.hasValue && boldOnWeightAxis(variable.value, weight[0]))
+                    files[1] = regular;
+            }
             foreach (style, bytes; files)
             {
                 auto parsed = bytes.length ? openFace(bytes) : typeof(openFace(bytes)).init;
@@ -786,8 +803,8 @@ struct VulkanCanvas(B)
                         cast(ulong) span);
                     // The first step parses the face; the others share it.
                     auto previous = step == 0 ? &interfaceFaces_[0][style] : &opened[0][style];
-                    auto face = em.hasValue ? CellFace.open(bytes, em.value, 0, null, previous)
-                        : CellFace.init;
+                    auto face = em.hasValue ? CellFace.open(bytes, em.value, 0,
+                        styleCoordinates(style), previous) : CellFace.init;
                     if (!face.bytes.length)
                     {
                         if (style == 0)
@@ -2261,6 +2278,52 @@ private struct CellFace
         opened.scratch = scratch;
         return opened;
     }
+}
+
+/**
+The coordinate that instances `face` bold on its weight axis: `wght` 700, or
+the axis's heaviest where that is lighter. False — `wght` left untouched —
+where the face has no weight axis, or none heavier than its default.
+*/
+bool boldOnWeightAxis(scope const Face face, out UserCoordinate weight)
+    @safe pure nothrow @nogc
+{
+    enum int bold = 700 << 16; // 16.16, as `fvar` records its axes
+    foreach (a; axes(face))
+    {
+        if (a.hasError)
+            return false;
+        const v = a.value;
+        if (v.axisTag != Tag("wght"))
+            continue;
+        const target = bold < v.maxValue ? bold : v.maxValue;
+        if (target <= v.defaultValue)
+            return false;
+        weight = UserCoordinate(Tag("wght"), target);
+        return true;
+    }
+    return false;
+}
+
+///
+@("ui_vulkan.canvas.boldOnWeightAxis")
+@system unittest
+{
+    import std.file : read;
+    import std.path : buildPath;
+    import std.process : environment;
+    import sparkles.font : openFace, Tag;
+
+    const dir = environment.get("SPARKLES_FONTS_PATH");
+    assert(dir !is null, "SPARKLES_FONTS_PATH is unset: run inside `nix develop`");
+    UserCoordinate w;
+    // Noto Sans ships variable (wght 100–900): bold is its 700 instance.
+    const variable = cast(const(ubyte)[]) read(dir.buildPath("NotoSans.ttf"));
+    assert(boldOnWeightAxis(openFace(variable).value, w));
+    assert(w.tag == Tag("wght") && w.value == 700 << 16);
+    // A static face has no axis to instance.
+    const fixed = cast(const(ubyte)[]) read(dir.buildPath("Roboto-Regular.ttf"));
+    assert(!boldOnWeightAxis(openFace(fixed).value, w));
 }
 
 private struct HintScratch
