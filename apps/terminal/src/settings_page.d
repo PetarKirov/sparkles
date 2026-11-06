@@ -53,7 +53,7 @@ import sparkles.ui.widget : Alignment, Builder, TextSpan, Widget, WidgetKind, Wi
 import chrome : cachedChromeLayout;
 import keymap : Binding, isReserved, KeysConfig, leaderChord, leaderMark, TermCommand,
     TermScope, terminalBindings;
-import page_kit : header, ScrollBody;
+import page_kit : header, ScrollBody, scrollSeconds;
 import sparkles.ui.components.chrome : fracByte, scrollbar, ScrollbarSpec;
 import sparkles.ui.state : ScrollAxis;
 import settings : TerminalConfig;
@@ -623,7 +623,7 @@ final class SettingsPage : Surface, PointerSurface, Scrollable
     void scroll(in WheelEvent w) @system
     {
         stale = true;
-        scrollBody.scroll(w);
+        scrollBody.scroll(w, scrollSeconds());
     }
 
     /// ditto

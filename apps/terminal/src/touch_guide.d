@@ -23,7 +23,7 @@ import sparkles.ui.style : Slot;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 
 import chrome : band, label, row, uiLabel;
-import page_kit : PageClipboard, QueryField, ScrollBody, searchRow;
+import page_kit : PageClipboard, QueryField, ScrollBody, scrollSeconds, searchRow;
 import sparkles.ui.editor.keys : editorBinds, windowTarget;
 import keymap : Binding, Chord, KeyCommand, TermCommand, TermContext;
 import surfaces : Pasteable, Placement, Scrollable, Surface, SurfaceContext;
@@ -135,7 +135,7 @@ final class TouchGuide : Surface, Scrollable, Pasteable
     /// `Scrollable`: a drag follows, the wheel eases (`SCV12`).
     void scroll(in WheelEvent w) @system
     {
-        list.scroll(w);
+        list.scroll(w, scrollSeconds());
     }
 
     /// ditto

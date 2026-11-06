@@ -6,6 +6,16 @@ import sparkles.input : WheelEvent;
 import sparkles.ui.components.scroll_view : OverlayBar;
 import sparkles.ui.scroll_motion : ScrollMotion;
 
+/// The monotonic clock, in seconds: what a caller of
+/// `ScrollBody.scroll(w, seconds)` and the drag methods passes. The body
+/// itself reads no clock, so its tests can drive time.
+double scrollSeconds() @safe nothrow @nogc
+{
+    import core.time : MonoTime;
+
+    return MonoTime.currTime.ticks / cast(double) MonoTime.ticksPerSecond;
+}
+
 /// One vertical scroll body, in caller-chosen content units.
 struct ScrollBody
 {
@@ -23,6 +33,9 @@ struct ScrollBody
     bool wide;
     private bool dragging;
     private double pointer = 0, sampledAt = 0, dragVelocity = 0;
+    // A trackpad's precise scroll: its filtered velocity, when it was last
+    // sampled, and when it last moved (`scroll(w, seconds)`).
+    private double wheelVelocity = 0, wheelSampledAt = 0, wheelMovedAt = -double.infinity;
 
     /// Begins a content drag; pointer coordinates use the same units as pos.
     /// Times are monotonic seconds supplied by the caller, with no clock owned here.
@@ -84,6 +97,57 @@ struct ScrollBody
         else
             motion.nudge(rows, limit);
         bar.anim.stepFade(true, 0);
+    }
+
+    /**
+    A wheel event at `seconds` (monotonic, the caller's clock), with this
+    body's own momentum (`INP26`): a precise scroll follows the fingers, and
+    when they lift (`WheelEvent.ends`) the view flings at the velocity they
+    had — the same fling a touch drag releases into (`endDrag`), so a
+    trackpad coasts as a phone does. The platform's own inertia
+    (`WheelEvent.momentum`) is ignored, so the view coasts once. A notch
+    eases, as `scroll(w)` does.
+
+    Nothing is held open between events: a source that never reports `ends`
+    (a touch recognizer's fling tail, a continuous wheel) just scrolls.
+    */
+    void scroll(in WheelEvent w, double seconds) @safe pure nothrow @nogc
+    {
+        if (w.momentum)
+            return;
+        if (!w.precise)
+        {
+            scroll(w);
+            return;
+        }
+        if (w.begins)
+        {
+            motion.stop();
+            wheelVelocity = 0;
+            wheelSampledAt = seconds;
+        }
+        const rows = w.exactY;
+        if (rows != 0 && seconds.isFinite)
+        {
+            const before = motion.pos;
+            motion.drag(rows, limit);
+            const dt = seconds - wheelSampledAt;
+            if (dt > 0)
+            {
+                const weight = 1 - exp(-dt / 0.04);
+                wheelVelocity += ((motion.pos - before) / dt - wheelVelocity) * weight;
+            }
+            wheelSampledAt = seconds;
+            wheelMovedAt = seconds;
+        }
+        else if (rows != 0)
+            motion.drag(rows, limit);
+        bar.anim.stepFade(true, 0);
+        // Fingers that rested before lifting release without momentum.
+        if (w.ends && seconds.isFinite && seconds - wheelMovedAt <= 0.1)
+            motion.fling(wheelVelocity);
+        if (w.ends)
+            wheelVelocity = 0;
     }
 
     /// A key moved the view `rows`: eased.
@@ -167,4 +231,42 @@ struct ScrollBody
     body.motion.instant = true;
     body.by(3);
     assert(body.motion.pos == 9 && !body.motion.active);
+}
+
+/// A trackpad flings when its fingers lift, from the velocity they had; the
+/// platform's own inertia after the lift scrolls nothing (`INP26`).
+@("ui.scroll_body.trackpadFlingsOnLift")
+@safe pure nothrow @nogc unittest
+{
+    ScrollBody body;
+    body.content = 1000;
+    body.viewport = 10;
+    body.scroll(WheelEvent(precise: true, fdy: 0.5, begins: true), 0);
+    foreach (i; 1 .. 6)
+        body.scroll(WheelEvent(precise: true, fdy: 0.5), i * 0.01);
+    const lifted = body.motion.pos;
+    assert(lifted == 3, "the fingers are followed exactly");
+    body.scroll(WheelEvent(precise: true, ends: true), 0.06);
+    assert(body.motion.active, "the lift flings");
+    foreach (_; 0 .. 4)
+        body.scroll(WheelEvent(precise: true, fdy: 5, momentum: true), 0.07);
+    assert(body.motion.pos == lifted, "the platform's inertia is not applied too");
+    cast(void) body.animate(0.016f);
+    assert(body.motion.pos > lifted, "the fling carries the view on");
+
+    // A new touch stops the coast.
+    body.scroll(WheelEvent(precise: true, begins: true), 0.2);
+    assert(!body.motion.active);
+
+    // Fingers that rest before lifting do not fling.
+    const rested = body.motion.pos;
+    body.scroll(WheelEvent(precise: true, fdy: 0.5), 0.21);
+    body.scroll(WheelEvent(precise: true, ends: true), 0.5);
+    assert(!body.motion.active && body.motion.pos == rested + 0.5);
+
+    // A source that never ends (a touch recognizer's tail) just scrolls,
+    // and leaves nothing that holds later notches back.
+    body.scroll(WheelEvent(precise: true, fdy: 1, begins: true), 1);
+    body.scroll(WheelEvent(dy: 3), 1.1);
+    assert(body.motion.target == body.motion.pos + 3 || body.motion.active);
 }
