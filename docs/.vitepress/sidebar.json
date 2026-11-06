@@ -1249,6 +1249,28 @@
                 "link": "/specs/build-primitives/build-graph/decisions"
               }
             ]
+          },
+          {
+            "text": "Observability",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "SPEC",
+                "link": "/specs/build-primitives/observability/SPEC"
+              },
+              {
+                "text": "PLAN",
+                "link": "/specs/build-primitives/observability/PLAN"
+              },
+              {
+                "text": "Testing",
+                "link": "/specs/build-primitives/observability/testing"
+              },
+              {
+                "text": "Decisions",
+                "link": "/specs/build-primitives/observability/decisions"
+              }
+            ]
           }
         ]
       },

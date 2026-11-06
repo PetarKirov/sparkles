@@ -1617,5 +1617,62 @@
     ],
     "owner": "sparkles:base",
     "seeAlso": ["parking-lot"]
+  },
+  {
+    "id": "run-record",
+    "term": "run record",
+    "aliases": ["perf record"],
+    "summary": "The measurements of one ci run, kept as a small schema-versioned directory of JSON files that names no person, so runs can be shown, compared and charted later.",
+    "definition": "A directory holding one run's facts, its run and CI job metrics, and every task's metrics keyed by series and comparability key. Records are written locally for every run and shared through the `perf-data` branch. See [the observability specification §11](/specs/build-primitives/observability/SPEC#_11-run-records).",
+    "authority": [
+      {
+        "text": "Observability specification §11",
+        "link": "/specs/build-primitives/observability/SPEC#_11-run-records"
+      }
+    ],
+    "owner": "sparkles:build-primitives",
+    "seeAlso": ["series-key", "comparability-key", "metric-quality"]
+  },
+  {
+    "id": "series-key",
+    "term": "series key",
+    "summary": "The identity of one task across runs and machines, from its stable task id and its variant with only the compiler vendor of its toolchain, so the same task's measurements line up over time.",
+    "definition": "The SHA-256 of a task's stable id and, for a build action, of its variant key with the toolchain identity replaced by the compiler's vendor. A toolchain bump therefore continues a series instead of starting a new one, while LDC and DMD builds stay apart; the [comparability key](/glossary#comparability-key) records the toolchain.",
+    "authority": [
+      {
+        "text": "Observability specification, OBD2",
+        "link": "/specs/build-primitives/observability/SPEC#_11-run-records"
+      }
+    ],
+    "owner": "sparkles:build-primitives",
+    "seeAlso": ["comparability-key", "run-record"]
+  },
+  {
+    "id": "comparability-key",
+    "term": "comparability key",
+    "summary": "What two measurements of one task must share to be compared: the toolchain, the CPU, the operating system and the enabled measurements.",
+    "definition": "The SHA-256 of a task's toolchain identity, CPU vendor, family and model, operating system and enabled observation families. Comparisons and the regression gate pair only samples with equal keys.",
+    "authority": [
+      {
+        "text": "Observability specification, OBD3",
+        "link": "/specs/build-primitives/observability/SPEC#_11-run-records"
+      }
+    ],
+    "owner": "sparkles:build-primitives",
+    "seeAlso": ["series-key"]
+  },
+  {
+    "id": "metric-quality",
+    "term": "metric quality",
+    "summary": "What a recorded value is the truth about: exact, a lower bound, or an estimate; a value that could not be measured is absent instead.",
+    "definition": "Every recorded metric value carries a quality. **Exact** values are the truth about the metric's definition; a **lower bound** missed part of the work, through sampling, a budget or a boundary the work can leave; an **estimate** scaled a partial count, such as a multiplexed hardware counter. An unmeasurable metric is a [reported absence](/glossary#reported-absence), never zero.",
+    "authority": [
+      {
+        "text": "Observability specification §3",
+        "link": "/specs/build-primitives/observability/SPEC#_3-the-metric-vocabulary"
+      }
+    ],
+    "owner": "sparkles:build-primitives",
+    "seeAlso": ["reported-absence", "metric-class"]
   }
 ]
