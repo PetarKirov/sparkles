@@ -11,24 +11,24 @@ falsifying scenarios that check it, and the evidence recorded so far. An oracle
 is the source of the expected result. Each one is chosen to be independent of
 the code under test.
 
-| Oracle                   | Covers                            |
-| ------------------------ | --------------------------------- |
-| 1. dub agreement         | BGR1–BGR7, BGV1–BGV2, invariant 4 |
-| 2. build equivalence     | BGA1–BGA4, BGA7, BGV1–BGV3        |
-| 3. manifest completeness | BGK2–BGK4, BGK6                   |
-| 4. digest audit          | BGK5, BGK7, BGS6                  |
-| 5. relocation            | BGA5–BGA6, BGG4, invariant 3      |
-| 6. backend agreement     | BGN1, BGN5                        |
-| 7. concurrency           | BGS1–BGS5, BGS7                   |
-| 8. layout lint           | BGV4–BGV5                         |
-| 9. key sensitivity       | BGK1, BGA4, BGT1–BGT3             |
-| 10. generators           | BGG1–BGG3                         |
-| 11. test actions         | BGX1–BGX3                         |
-| 12. Nix inputs           | BGN2–BGN4                         |
-| 13. hidden edges         | BGR8                              |
-| 14. task exposure        | BGA8                              |
-| 15. pinned test runner   | BGT4                              |
-| 16. publication faults   | BGA7, BGA9, BGS2, BGS6            |
+| Oracle                   | Covers                             |
+| ------------------------ | ---------------------------------- |
+| 1. dub agreement         | BGR1–BGR7, BGV1–BGV2, invariant 4  |
+| 2. build equivalence     | BGA1–BGA4, BGA7, BGV1–BGV3         |
+| 3. manifest completeness | BGK2–BGK4, BGK6                    |
+| 4. digest audit          | BGK5, BGK7, BGS6                   |
+| 5. relocation            | BGA5–BGA6, BGG4, invariant 3       |
+| 6. backend agreement     | BGN1, BGN5                         |
+| 7. concurrency           | BGS1–BGS5, BGS7                    |
+| 8. layout lint           | BGV4–BGV5                          |
+| 9. key sensitivity       | BGK1, BGK9, BGA4, BGA10, BGT1–BGT3 |
+| 10. generators           | BGG1–BGG3, BGG5–BGG6               |
+| 11. test actions         | BGX1–BGX3                          |
+| 12. Nix inputs           | BGN2–BGN4                          |
+| 13. hidden edges         | BGR8, BGK8                         |
+| 14. task exposure        | BGA8                               |
+| 15. pinned test runner   | BGT4                               |
+| 16. publication faults   | BGA7, BGA9, BGS2, BGS6             |
 
 ## Oracles
 
@@ -185,6 +185,15 @@ nondeterministic action listed with its cause.
 2. Kill a producer between its write and its rename.
 3. Run garbage collection concurrently with builds that hold leases, and kill
    a lease holder.
+4. **The losing producer (BGS3):** two processes compute one compile key with
+   a wrapped compiler that appends a counter to its object, so their outputs
+   differ, and each links a test binary from it. The loser must report the
+   action as nondeterministic, naming the key and the object. Both links must
+   consume the winner's object, so both link keys are equal and name bytes
+   the store holds.
+5. **Lookup at admission (BGS4):** plan a graph, publish one of its compiles
+   from another process before the executor admits it, then run. The compile
+   must hit.
 
 **Expected:**
 
@@ -222,6 +231,23 @@ recipe file; another compiler build, configuration file, C driver wrapper,
 linker or generator binary; another pinned test runner. Every affected key must
 change, and no unaffected one may.
 
+**Search inputs (BGK9):**
+
+- Create a `.pc` file for a library in a `PKG_CONFIG_PATH` directory searched
+  before the one that held it, and a library file in an `-L` directory
+  searched before the one that held it. Each must change the keys of the
+  actions using that query or link.
+- A `pragma(lib, "z")` in a linked module: creating `libz` earlier on the
+  search order must change the link key.
+
+**Format version (BGK1):** change the manifest extraction's version alone. Every
+compile's result key must change.
+
+**Early cutoff (BGA10):** edit a comment in a `sparkles:base` module without
+moving any line. The compiles that read it rerun; every archive, link and test
+key downstream must be unchanged. `ar tv` on each archive must show zero
+timestamps, owners and groups, and no archive may be thin.
+
 **Environment probes (BGA4):**
 
 - Put a recording `cc` and `ld` first on the executor's own `PATH`. No action
@@ -243,6 +269,12 @@ change, and no unaffected one may.
    read the generator's outputs instead.
 3. Check the generator's invocation contains no staleness flag and no `dub`
    call.
+4. **Imports (BGG5):** edit a D module that a shader module imports, without
+   touching the shader module. The generate action must rerun; editing a
+   module it does not import must not rerun it.
+5. **Host tools (BGG6):** plan a WebAssembly variant that reads generated
+   files. Its generator's tool must be planned as a host application
+   variant.
 
 ### Oracle 11: test actions
 
@@ -277,6 +309,12 @@ change, and no unaffected one may.
 `dependency` must be reported, with its recipe line. So must the cycle-safe
 packages' source includes of the test runner, since BGR8 and D15 allow no
 exception, until E1a removes them.
+
+**Execution-time reaches (BGK8):** a fixture package's ImportC source with
+`#include "../other/include/x.h"`, where `other` is a package it does not
+depend on, must fail the compile, naming the header and `other`, and leave no
+result in the store. The same include through a declared dependency's C import
+root must pass.
 
 ### Oracle 15: pinned test runner
 

@@ -180,7 +180,8 @@ preprocessor flags.
 
 The resolved flags, the digests of the `.pc` files consulted, and the libraries
 the link flags resolve to are inputs of the actions that use them. A library
-that resolves to a store path may be identified by that path.
+that resolves to a store path may be identified by that path. BGK9 adds what
+the searches did not find.
 
 **BGR6: Single-file packages.** A D source file with an embedded `dub.sdl`
 recipe (`/+ dub.sdl: … +/`) **must** resolve as a package whose recipe is the
@@ -431,6 +432,17 @@ _Rationale:_ a compile killed by the kernel's out-of-memory killer, or by
 fail-fast, failed for a reason its key does not cover. Replaying that failure
 would report a verdict that no cold build of the key gives (invariant 5).
 
+**BGA10: Deterministic archives.** An `archive` action **must** produce a
+non-thin archive whose member headers are deterministic: zero timestamps,
+owner and group, and a fixed mode (`D` on `llvm-ar`). An archive's and a
+link's outputs are then functions of the bytes they consume. So a compile
+whose outputs are byte-identical to an earlier one leaves every archive, link
+and test key downstream of it unchanged. That is the graph's early cutoff.
+
+_Rationale:_ a thin archive records its members' paths, not their bytes, so a
+changed member would leave the archive, and every link key that digests it,
+unchanged.
+
 ## 5. Keys and the input manifest
 
 Each action has a **key**, a SHA-256 digest that identifies its result. A
@@ -447,7 +459,13 @@ computed in two steps, as ccache's direct mode does.
   variant's own source files, the recipe files that resolved it, the generator
   outputs it reads, and the digest of the file listing that version pruning
   scanned (BGV1). For a link or archive, they are the outputs it consumes;
-- a format version of this specification's key layout.
+- a format version. It changes with any change to this specification's key
+  layout, to how a manifest is extracted from the compiler's dependency
+  output, or to argument normalization (BGA6).
+
+_Rationale:_ a fix to manifest extraction leaves every key's layout as it was,
+yet results published before it may rest on incomplete manifests. Only a new
+format version retires them.
 
 **BGK2: The input manifest.** A compile **must** record a **manifest** of
 everything the compiler resolved. It lists every file the compiler read, each
@@ -530,6 +548,38 @@ paths and content digests of every file under every import, C import and
 string import root it searches. Its result is published under that key and
 reported as conservatively keyed.
 
+**BGK8: Reads outside the declared roots.** A compile whose manifest lists a
+file outside all of the following **must** fail, and its result **must not**
+be published:
+
+- the source, import, C import and string import roots of its variant and of
+  its transitive dependencies, including the C import paths `pkg-config`
+  resolved (BGR5);
+- the outputs of the generators it depends on;
+- the toolchain (§8).
+
+The diagnostic names the file and the package whose directory holds it.
+
+_Rationale:_ an ImportC `#include "../other/x.h"` reaches another package with
+no recipe edge. BGR8 reads recipes, so it cannot see the reach, and selection
+would not rebuild the package's consumers when the header's owner changes.
+
+**BGK9: Library search inputs.** Library resolution and linking **must** key on
+what their searches did not find, as compiles do (BGK2):
+
+- **`pkg-config`:** the value of `PKG_CONFIG_PATH`, the directories searched,
+  and each `.pc` path found absent before the one used are inputs of every
+  action that uses the query's results.
+- **The link:** a link's declared key covers its `-L` search order. For every
+  library it links, including those that `pragma(lib)` names in its inputs,
+  the key covers the path the library resolved to and the candidates absent
+  before it in that order. Planning resolves each library over the search
+  order as the linker does. The toolchain's own library directories are
+  covered by toolchain identity (§8).
+
+_Rationale:_ a `.pc` file or a library created earlier on a search path changes
+what an action uses without changing anything it read.
+
 ## 6. The shared store
 
 The store's layout is:
@@ -563,10 +613,21 @@ unset), shared by every worktree and process.
 A reader never observes a partial entry.
 
 **BGS3: Concurrent producers.** Two processes **may** compute the same result key
-at once. Correctness **must not** depend on a lock: the first rename wins, and
-the other producer moves its entry to `trash/`. Concurrent manifest-list
-updates **may** lose an entry, which costs only a rebuild. A per-key advisory
-lock **may** suppress duplicate work.
+at once. Correctness **must not** depend on a lock: the first rename wins.
+
+- **The loser adopts the winner:** the other producer **must** move its own
+  entry to `trash/` and continue from the published entry's outputs and
+  diagnostics, and so **must** every action that consumes its result.
+- **Nondeterminism:** if the loser's output digests differ from the published
+  entry's, it **must** report the action as nondeterministic, naming the
+  result key and each differing output.
+
+Concurrent manifest-list updates **may** lose an entry, which costs only a
+rebuild. A per-key advisory lock **may** suppress duplicate work.
+
+_Rationale:_ archive and link keys digest the bytes they consume (BGK1). A loser
+that kept its own outputs would key its dependents on bytes that no store
+holds.
 
 **BGS4: Leases.** A process **must** lease every result it looks up or
 publishes, and **must** hold the lease until its run ends.
@@ -574,8 +635,10 @@ publishes, and **must** hold the lease until its run ends.
 - **Lease files:** a lease is a file under `leases/<key>/`, named by the
   holder's process id and start time. A lease whose holder is gone is
   reclaimed.
-- **Lookup:** lookup creates the lease, then checks that `results/<key>`
-  exists, then reads it. A missing entry is a miss.
+- **Lookup:** an action's lookup happens when the executor admits it (TDM7),
+  not when the graph is planned, so it sees what concurrent producers
+  published meanwhile. Lookup creates the lease, then checks that
+  `results/<key>` exists, then reads it. A missing entry is a miss.
 - **Read only:** outputs are read in place, and no process writes into
   `results/`.
 
@@ -640,6 +703,18 @@ invocation mode for this, and its own specification
 that a compile names as a source file, such as an extracted documentation
 example, **must** live at a path derived from its content digest, so that its
 path, and with it `__FILE__`, is the same in every run.
+
+**BGG5: Generators that resolve imports.** A generator whose tool resolves
+imports, such as the shader compiler running LDC over D shader modules,
+**must** be keyed as a compile is: by a manifest of what its tool read and
+probed (BGK2–BGK3), or conservatively (BGK6) when the tool reports none.
+
+_Rationale:_ its declared inputs name the shader modules, not the modules they
+import, so a declared key alone would miss an edit to an imported one.
+
+**BGG6: Generator tools are host variants.** A generator's tool **must** be
+built as an application variant for the host platform, whatever the target
+platform of the variant that reads its outputs.
 
 ## 8. Toolchain identity
 
