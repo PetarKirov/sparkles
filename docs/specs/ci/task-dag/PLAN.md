@@ -148,6 +148,8 @@ events and dry runs; commit hook output stays concise.
 
 - `ci pipeline` as the union graph of every CI job (SPEC §1.3), with the
   determinism check as one of its tasks (CIC13).
+- Placements (CIC14): the placement file, `--placement` and
+  `--list-placements`, with shards packed from recorded wall times.
 - Verify that every production command constructs a graph and uses the common
   executor. Remove superseded worker pools, serial loops, polling, duplicate
   fail-fast code and command-owned live regions.
@@ -171,6 +173,8 @@ Default non-TTY output is stable across a randomized completion stress run.
 
 - Change workflows, hooks and developer documentation to the canonical
   commands, in the same series as the cutovers.
+- Generate the workflows from `ci pipeline --list-placements`. No workflow
+  passes `--since` (CIC15).
 - Reconcile `docs/specs/ci/stats/` terminology with `ci stats` and the common
   reporter.
 

@@ -975,6 +975,28 @@ The machine facts are compared on reuse, not keyed, because Nix chooses the
 builder after the derivation's hash is fixed
 ([D33](./decisions.md#d33-sandboxed-tests-record-the-machine-they-ran-on-accepted)).
 
+**BGX4: Shared verdicts.** A test result that BGX3 allows to be reused, and
+that BGS11 allows to leave its machine, **may** be published to a binary cache
+as a **shared verdict**: a flat content-addressed path whose content is its
+key, looked up by asking whether the path exists.
+
+- **The key:** the test's result key, plus the kernel release, the CPU model
+  and features, and the identity of the runner image, all as observed on the
+  machine that ran it. A requester computes the key with its own machine's
+  facts, so a verdict matches only a machine like the one it was observed on.
+- **Publishing:** only a run holding the cache's push credential publishes,
+  and only once every gating check of that run passed.
+- **A missing verdict** costs a run of the test, never a failure.
+
+A task skipped by a shared verdict carries the run-record id of the run that
+published it, as the observability specification's OD16
+(`docs/specs/build-primitives/observability/`) requires.
+
+_Rationale:_ BGX3 compares machine facts on reuse, but an existence query
+cannot compare anything, so the facts enter the key. The gate keeps a run whose
+other checks failed from vouching for its tests
+([D43](./decisions.md#d43-amendments-from-the-nix-generated-ci-pr-accepted)).
+
 ## 10. The Nix backend
 
 The Nix backend lowers the same action graph to Nix derivations, so that

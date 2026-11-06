@@ -34,6 +34,8 @@ the code under test.
 | 19. determinism check               | BGS9                                |
 | 20. planning read set               | BGP1                                |
 | 21. incremental equals clean        | invariant 5, BGK4, BGA10            |
+| 22. shared verdicts                 | BGX4                                |
+| 23. recorded test inputs            | D42                                 |
 
 ## Oracles
 
@@ -542,6 +544,35 @@ shares no state with the incremental one.
 **Revert check:** with absent candidates dropped from manifests, step 3's
 create-at-absent-candidate edit must fail the oracle.
 
+### Oracle 22: shared verdicts
+
+**Method:** run against a scratch binary cache.
+
+1. A reusable test that passes in a run whose gating checks all pass, with the
+   push credential: its verdict path must exist afterwards. The same run
+   without the credential, or with another gating check failed, must publish
+   nothing.
+2. A requester whose kernel release, CPU model or runner image differs from
+   the publisher's must find no verdict and run the test; a matching one must
+   skip it, and the skipped task must carry the publisher's run-record id.
+3. A test BGX3 does not allow to be reused, and one run from the live tree
+   rather than a snapshot (BGS11), must never be published.
+4. Delete a verdict from the cache: the next request must run the test and
+   succeed.
+
+### Oracle 23: recorded test inputs
+
+**Source of truth:** two independent records of what a test reads: the runner
+core's recording, and a static scan of the package's sources for string
+literals and `buildPath` segments that name tracked paths (D42).
+
+**Method:** for each package, compare the two with its declared inputs. A
+statically named path in neither the declared inputs nor the recording is a
+finding; a declared input that nothing names or reads is stale. Every file the
+test opens under `strace` must be in the recording. Plant a fixture test that
+reads a file through a string literal while the recording hook is disabled:
+the oracle must report it.
+
 ## The recipe vocabulary
 
 BGR2's supported set is the vocabulary of the recipes in scope. E0's directive
@@ -731,7 +762,7 @@ dub run --single apps/ci/tools/scan-recipe-vocabulary.d
 | BGT2–BGT3   | unverified                                                                                                                                                      | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | BGT4        | superseded (TRM8)                                                                                                                                               | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | BGX1–BGX2   | unverified                                                                                                                                                      | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| BGX3        | planned                                                                                                                                                         | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| BGX3–BGX4   | planned                                                                                                                                                         | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | BGN1–BGN4   | planned                                                                                                                                                         | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | BGN5        | unverified                                                                                                                                                      | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | BGN6–BGN8   | planned                                                                                                                                                         | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
