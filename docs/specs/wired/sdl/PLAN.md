@@ -367,6 +367,33 @@ editor, codec and conformance test unchanged (SDP7); `sdl.commit` and
 `sdl.edit` improve in retired instructions per byte, and `sdl.parse` does
 not regress (SDP2).
 
+## S21–S22 closure: 2026-11-06
+
+| Milestone | Gate                                                          | Evidence                                                                                                                                                                                                                                                    |
+| --------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| S21       | POOL19–POOL21; SDE11 property test; SDE12, SDE13 cases        | `HeapSlotTable` and the `pool.heap_slot_table.*` tests; `SdlOpenDocument`; `sdl.open_document.properties.repositoryRecipes`, `.handlesFollowTheirNodes`, `.replacedNodesGoStale`, `.anonymousAndEmbedded`, `.failedCommitsChangeNothing`                    |
+| S22       | `sdl.commit` baseline first; SDE14 with mutation check; SDE15 | `results/2026-11-06-ryzen9-7940hx-x86-64-v4-sdl-s22-before.json`; `reparseEdited`; `sdl.reader.reparseEdited.properties` (5816 edits, 1665 localized), `.oracleCatchesASplice`, `.localizesAndFallsBack`, `.crlf`; every editor, codec and conformance test |
+
+Retired instructions per input byte (`--perf`, `-b bench`, Ryzen 9 7940HX,
+LDC 1.43). Before is the full re-parse; `commit` counts its bytes once per
+commit.
+
+| Dataset              | Row    | Before | After |
+| -------------------- | ------ | -----: | ----: |
+| `dub_recipes`        | parse  |  192.1 | 192.1 |
+| `dub_recipes`        | edit   |  194.5 |  35.5 |
+| `dub_recipes`        | commit |  203.1 |  41.4 |
+| `dub_recipes_concat` | parse  |  190.6 | 190.4 |
+| `dub_recipes_concat` | edit   |  190.7 |  31.3 |
+| `dub_recipes_concat` | commit |  190.7 |  30.9 |
+| `deep_wide`          | parse  |  150.1 | 149.9 |
+| `deep_wide`          | edit   |  150.2 |  26.2 |
+| `deep_wide`          | commit |  150.2 |  17.0 |
+
+What remains of an edit or commit is linear but cheap: copying the
+source, the kept cells and their payloads, and rebuilding the child
+index. The re-lexed region is usually a single line.
+
 ## S11–S18 closure: 2026-10-27
 
 Every gate from S11 to S18 holds on this branch, delivered as one pull request.
