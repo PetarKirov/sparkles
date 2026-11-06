@@ -180,3 +180,186 @@ float xHeightRatio(scope const(ubyte)[] interfaceFace, scope const(ubyte)[] cell
     assert(xHeightRatio(sans, sans) == 1);
     assert(xHeightRatio(null, mono) == 1, "unmeasured: no shrink by it");
 }
+
+/**
+The text measurer for a target that draws interface runs in a face of its
+own (`LAY5`, design-system `GLY10`) — the native arm's Vulkan canvas: a cell
+font run is as wide as its cells; an interface run (`FontRole.ui`,
+`FontRole.docs`) as wide as `faces` draws it at its type step, rounded up to
+whole cells, and as many rows as that step's glyph box needs. A `uiMono` run,
+which the canvas draws in the cell font, and any run where `faces` has no
+face at its step, keeps the cell font's extent. So layout, the display list
+and the canvas agree on every run.
+
+`Faces` answers `interfaceWidthPx(text, step, bold)` — pixels, negative
+where it has no face at `step` — and `interfaceStep(step)`, whose `present`
+and `size` (the glyph box, in pixels) describe the face. Not `active`, it is
+the cell measure.
+*/
+struct InterfaceMeasure(Faces)
+{
+    import sparkles.base.text.grapheme : visibleWidth;
+    import sparkles.ui.geometry : Size;
+    import sparkles.ui.pixel_geometry : cellsCeil;
+    import sparkles.ui.style : FontRole, TextStyle, uiStepOf;
+
+    Faces faces;  /// the interface faces
+    bool active;  /// whether runs are measured in `faces`; off: cell metrics only
+    int cellW = 1; /// one cell's width, in the faces' pixels
+    int cellH = 1; /// one cell's height, in the same pixels
+
+    /// Advances add, and kerning never takes back a whole glyph, so a prefix
+    /// never measures wider than its run: the wrap solver's linear search.
+    enum bool monotonePrefixes = true;
+
+    /// The cell font's width of `s`.
+    int width(scope const(char)[] s) const @safe pure nothrow @nogc
+        => cast(int) visibleWidth(s);
+
+    /**
+    A complete-brush cursor (`isIncrementalTextMeasure`): a rich run's
+    cumulative extent after each whole-grapheme chunk, in one pass over it —
+    without it the layout measures every prefix of the run again. Chunks are
+    measured apart, so kerning across their seams is not counted: a kerned
+    pair split by a seam measures by its letters' own advances, which for
+    the usual (tightening) kerning is a little wider than the canvas draws.
+    */
+    BrushMetrics brushMetrics(in TextStyle style)
+        => BrushMetrics(faces, faceStep(style), style.bold, cellW);
+
+    /// ditto
+    static struct BrushMetrics
+    {
+        private Faces faces;
+        private int step; // -1: the cell font
+        private bool bold;
+        private int cellW;
+        private double pixels = 0;
+        private int cells;
+
+        /// Appends one or more complete graphemes; the run's extent so far,
+        /// in whole cells.
+        int append(scope const(char)[] text)
+        {
+            const px = step < 0 ? -1 : faces.interfaceWidthPx(text, step, bold);
+            if (px < 0)
+                cells += cast(int) visibleWidth(text);
+            else
+                pixels += px;
+            return cells + cellsCeil(cast(float) pixels, cellW);
+        }
+    }
+
+    /// The width of `s` in `style`, in whole cells.
+    int width(scope const(char)[] s, in TextStyle style)
+    {
+        const step = faceStep(style);
+        if (step < 0)
+            return cast(int) visibleWidth(s);
+        const px = faces.interfaceWidthPx(s, step, style.bold);
+        return px < 0 ? cast(int) visibleWidth(s) : cellsCeil(cast(float) px, cellW);
+    }
+
+    /// The rows one line in `style` occupies: as many as its glyph box needs.
+    int rows(in TextStyle style)
+    {
+        const step = faceStep(style);
+        if (step < 0)
+            return 1;
+        const s = faces.interfaceStep(step);
+        const n = s.present ? cellsCeil(s.size, cellH) : 1;
+        return n < 1 ? 1 : n;
+    }
+
+    /// The image cell size, so `IMG2` images lay out as on the canvas.
+    Size cellPixels() const @safe pure nothrow @nogc => Size(cellW, cellH);
+
+    // The type step `style` draws in an interface face at, or -1 for the
+    // cell font.
+    private int faceStep(in TextStyle style) const @safe pure nothrow @nogc
+        => !active || style.fontRole == FontRole.uiMono ? -1
+            : uiStepOf(style.fontRole, style.typeStep, style.fontScale);
+}
+
+version (unittest)
+{
+    // An interface face of a 14 px box (16 px at the title step), `i` 3 px
+    // and every other character 7 px; none at the caption step.
+    private struct FakeFaces
+    {
+        static struct Step
+        {
+            bool present;
+            int size;
+        }
+
+        double interfaceWidthPx(scope const(char)[] text, int step, bool bold) @safe pure nothrow @nogc
+        {
+            if (step == TypeStep.caption)
+                return -1;
+            double px = 0;
+            foreach (c; text)
+                px += c == 'i' ? 3 : bold ? 8 : 7;
+            return px;
+        }
+
+        Step interfaceStep(int step) const @safe pure nothrow @nogc
+            => step == TypeStep.caption ? Step.init : Step(true, step == TypeStep.title ? 30 : 14);
+    }
+}
+
+///
+@("ui_app.interface_font.InterfaceMeasure")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.ui.layout : isStyledTextMeasure, monotoneMeasurePrefixes;
+    import sparkles.ui.style : FontRole, TextStyle;
+
+    static assert(isStyledTextMeasure!(InterfaceMeasure!FakeFaces));
+    static assert(monotoneMeasurePrefixes!(InterfaceMeasure!FakeFaces));
+
+    FakeFaces faces;
+    auto m = InterfaceMeasure!FakeFaces(faces, true, cellW: 10, cellH: 20);
+    const ui = TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.body);
+    // By the face's advances, rounded up to cells: 7 + 3 + 3 = 13 px, two cells.
+    assert(m.width("Wii", ui) == 2 && m.width("WWWW", ui) == 3);
+    TextStyle bold = ui;
+    bold.bold = true;
+    assert(m.width("WWWWW", bold) == 4, "the bold face's advances");
+    assert(m.rows(ui) == 1);
+    const title = TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.title);
+    assert(m.rows(title) == 2, "a 30 px box takes two 20 px rows");
+    // Docs runs draw in the interface face too; uiMono and code in the cells.
+    assert(m.width("Wii", TextStyle(fontRole: FontRole.docs)) == 2);
+    assert(m.width("Wii", TextStyle(fontRole: FontRole.uiMono)) == 3);
+    assert(m.width("Wii", TextStyle.init) == 3);
+    // A step without a face keeps the cell font's extent.
+    const caption = TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.caption);
+    assert(m.width("Wii", caption) == 3 && m.rows(caption) == 1);
+    // No faces: the cell measure.
+    auto cells = InterfaceMeasure!FakeFaces(faces, false, 10, 20);
+    assert(cells.width("Wii") == 3 && cells.width("Wii", ui) == 3);
+}
+
+@("ui_app.interface_font.InterfaceMeasure.brushMetrics")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.ui.layout : isIncrementalTextMeasure;
+    import sparkles.ui.style : FontRole, TextStyle;
+
+    static assert(isIncrementalTextMeasure!(InterfaceMeasure!FakeFaces));
+    FakeFaces faces;
+    auto m = InterfaceMeasure!FakeFaces(faces, true, cellW: 10, cellH: 20);
+    const ui = TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.body);
+    // The run's extent so far, rounded once: 7, 10, 13 px.
+    auto run = m.brushMetrics(ui);
+    assert(run.append("W") == 1 && run.append("i") == 1 && run.append("i") == 2);
+    assert(m.width("Wii", ui) == 2, "the whole run, as the cursor ended");
+    // In the cells where the run has no face.
+    auto mono = m.brushMetrics(TextStyle(fontRole: FontRole.uiMono));
+    assert(mono.append("W") == 1 && mono.append("ii") == 3);
+    auto off = InterfaceMeasure!FakeFaces(faces, false, 10, 20).brushMetrics(ui);
+    assert(off.append("Wii") == 3);
+}
