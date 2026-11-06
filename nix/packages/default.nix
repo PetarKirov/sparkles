@@ -417,6 +417,25 @@
         description = "The sparkles:ui catalog in its raylib window, kept until the raylib arm is retired";
       };
 
+      packages.editor = config.legacyPackages.buildSparklesApp (finalAttrs: {
+        pname = "editor";
+        version = "0.1.0";
+        stampBuildInfo = true;
+        nativeBuildInputs = [
+          pkgs.pkg-config
+          pkgs.makeWrapper
+        ];
+        buildInputs = [ pkgs.raylib ];
+        postFixup = ''
+          wrapProgram $out/bin/${finalAttrs.pname} \
+            --set-default SPARKLES_FONTS_PATH ${config.legacyPackages.sparklesFonts.fontBundle}/fonts
+        '';
+        meta = {
+          description = "A text editor showcasing the shared Sparkles editing libraries";
+          mainProgram = finalAttrs.pname;
+        };
+      });
+
       # The Vulkan canvas's text lab (`apps/text-lab`): the native arm only.
       packages.text-lab = config.legacyPackages.buildSparklesApp (finalAttrs: {
         pname = "text-lab";

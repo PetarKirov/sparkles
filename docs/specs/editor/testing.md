@@ -240,3 +240,24 @@ one new rollback-effects inconsistency; the final regression clears effects
 for a query edit that was refused. The review's bounded scope does not prove
 backend hit routing or geometry parity. Native/TUI application replay, focus
 restoration and live IME remain acceptance gates for P/U.
+
+### Initial application shell — 2026-11-06
+
+The new `apps/editor` package passes seven app/document tests, covering tabs,
+palette dispatch, host key-table initialization, a chunked paste as one undo
+revision, pointer placement from displayed frames, header/tab separation and
+initial UTF-8/BOM/ending policy. These tests do not establish storage fidelity
+or full editor conformance. The paste and native-startup/layout regressions
+were each observed failing before their fixes.
+
+The desktop application builds with `dub build :editor -b checked
+--compiler=ldc2 --skip-registry=all`. Help/version run, and desktop Vulkan
+captures show both the field/inspector and populated palette. An interactive
+pseudo-terminal launch renders the shell and exits on a Kitty-encoded Ctrl+Q.
+This is a TUI smoke check, not behavioral parity or performance evidence.
+The Nix package enables stamping; the directly built executable reports the
+expected unstamped `dev` version. Nix artifact/stamp validation remains open.
+
+The shell refuses dirty exit pending Save/Discard/Cancel integration. Real
+files, examples, highlighted presentation, generated settings, recovery,
+Unicode layout and native IME still have open delivery gates.
