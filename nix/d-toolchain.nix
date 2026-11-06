@@ -137,6 +137,10 @@
                 in
                 wrapLdc cleanLdcConfig;
 
+              # MoltenVK 1.4.2's `ExternalRevisions/SPIRV-Cross_repo_revision`;
+              # bump it with MoltenVK.
+              spirvCrossForMoltenVK = "6c09849fe88c48eaed08413aa022aaa136a3a057";
+
             in
             {
               # dlang.nix defaults to `-link-defaultlib-shared` in its ldc2.conf,
@@ -254,6 +258,25 @@
               # upstream's glfw3 recipe, whose builds cache.nixos.org has.
               glfw3 = final.callPackage "${inputs.nixpkgs-upstream-glfw}/pkgs/by-name/gl/glfw3/package.nix" { };
               glfw = final.glfw3;
+
+              # MoltenVK against the SPIRV-Cross it pins
+              # (`ExternalRevisions/SPIRV-Cross_repo_revision`), not nixpkgs'
+              # newer one: its pipeline-cache serialization spells out
+              # `CompilerMSL::Options` field by field, and against a grown
+              # struct it reports `[MVK-BUILD-ERROR] Cereal serialization
+              # Archive … is not completely defined` on every instance. Only
+              # MoltenVK's input changes; everything else keeps nixpkgs'.
+              moltenvk = prev.moltenvk.override {
+                spirv-cross = prev.spirv-cross.overrideAttrs (old: {
+                  version = "${old.version}-moltenvk-${lib.substring 0 8 spirvCrossForMoltenVK}";
+                  src = prev.fetchFromGitHub {
+                    owner = "KhronosGroup";
+                    repo = "SPIRV-Cross";
+                    rev = spirvCrossForMoltenVK;
+                    hash = "sha256-HjAVP+yMeybM8VQQO3aKmuxpvjA03EGjKUPWVQKoRuc=";
+                  };
+                });
+              };
             }
           )
         ];
