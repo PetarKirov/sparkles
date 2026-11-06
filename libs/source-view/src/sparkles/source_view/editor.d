@@ -5,6 +5,52 @@ import sparkles.ui.components.editor : editorLineSpans, EditorViewOptions;
 import sparkles.ui.editor.state : EditorState;
 import sparkles.ui.style : Slot;
 import sparkles.ui.widget : TextSpan;
+import sparkles.base.term_color : RgbColor;
+import sparkles.syntax.color : toRgb;
+import sparkles.syntax.event : StyledSpan;
+import sparkles.syntax.theme : ResolvedTheme;
+import sparkles.source_view.code : specStyle;
+
+/// Resolve only the requested byte window of sorted syntax runs, using logarithmic lookup.
+TextSpan[] syntaxWindow(string source, scope const(StyledSpan)[] runs, size_t start, size_t end,
+    in ResolvedTheme theme, RgbColor pageFg) @safe
+{
+    TextSpan[] result;
+    if (start > end || end > source.length) return result;
+    size_t low, high = runs.length;
+    while (low < high)
+    {
+        const middle = low + (high - low) / 2;
+        if (runs[middle].end <= start) low = middle + 1;
+        else high = middle;
+    }
+    foreach (run; runs[low .. $])
+    {
+        if (run.start >= end) break;
+        const from = run.start < start ? start : run.start;
+        const to = run.end > end ? end : run.end;
+        if (from >= to) continue;
+        const style = theme[run.label];
+        result ~= TextSpan(source[from .. to], Slot.code, specStyle(style),
+            fg: toRgb(style.fg, pageFg), hasFg: true,
+            bg: toRgb(style.bg, RgbColor.init), hasBg: style.bg.isSet,
+            srcStart: from, srcEnd: to);
+    }
+    return result;
+}
+
+/// Windowing keeps global source identity while clipping syntax at viewport edges.
+@("source_view.editor.syntaxWindowClipsGlobalOffsets")
+@safe unittest
+{
+    import sparkles.syntax.event : LabelId;
+    StyledSpan[3] runs = [StyledSpan(0, 3), StyledSpan(3, 7), StyledSpan(7, 9)];
+    const spans = syntaxWindow("int value", runs[], 2, 8, ResolvedTheme.init, RgbColor(1, 2, 3));
+    assert(spans.length == 3);
+    assert(spans[0].text == "t" && spans[0].srcStart == 2 && spans[0].srcEnd == 3);
+    assert(spans[1].text == " val" && spans[1].srcStart == 3 && spans[1].srcEnd == 7);
+    assert(spans[2].text == "u" && spans[2].srcStart == 7 && spans[2].srcEnd == 8);
+}
 
 /// Overlay source-addressed syntax on one editor line, preserving synthetic preedit/carets.
 TextSpan[] highlightedEditorLine(in EditorState state, size_t line,
@@ -12,6 +58,7 @@ TextSpan[] highlightedEditorLine(in EditorState state, size_t line,
 {
     auto decorated = editorLineSpans(state, line, options);
     TextSpan[] result;
+    size_t tokenIndex;
     foreach (ref editor; decorated)
     {
         if (editor.srcStart == size_t.max || editor.srcEnd - editor.srcStart != editor.text.length)
@@ -24,18 +71,20 @@ TextSpan[] highlightedEditorLine(in EditorState state, size_t line,
         {
             size_t stop = editor.srcEnd;
             size_t found = size_t.max;
-            foreach (i, ref token; syntax)
+            while (tokenIndex < syntax.length
+                && (syntax[tokenIndex].srcStart == size_t.max || syntax[tokenIndex].srcEnd <= at))
+                ++tokenIndex;
+            if (tokenIndex < syntax.length)
             {
-                if (token.srcStart == size_t.max || token.srcEnd <= at) continue;
+                ref const token = syntax[tokenIndex];
                 if (token.srcStart > at)
                 {
                     if (token.srcStart < stop) stop = token.srcStart;
                 }
                 else
                 {
-                    found = i;
+                    found = tokenIndex;
                     if (token.srcEnd < stop) stop = token.srcEnd;
-                    break;
                 }
             }
             TextSpan span;
@@ -123,4 +172,24 @@ TextSpan[] highlightedEditorLine(in EditorState state, size_t line,
         }
     }
     assert(source == "ac" && preedit == "日本");
+}
+
+/// Dense single-line syntax intersects every token with one selection without losing offsets.
+@("source_view.editor.denseLineTokenIntersections")
+@safe unittest
+{
+    import sparkles.ui.editor.selection : EditRange, SelectionSet;
+    enum count = 16_384;
+    auto bytes = new char[count];
+    bytes[] = 'x';
+    auto state = EditorState.create(bytes);
+    state.selection = SelectionSet.single(EditRange(0, count));
+    auto syntax = new TextSpan[count];
+    foreach (i; 0 .. count)
+        syntax[i] = TextSpan("x", Slot.code, srcStart: i, srcEnd: i + 1);
+    const spans = highlightedEditorLine(state, 0, syntax);
+    assert(spans.length == count + 1);
+    foreach (i; 0 .. count)
+        assert(spans[i].slot == Slot.selection && spans[i].srcStart == i && spans[i].srcEnd == i + 1);
+    assert(spans[count].slot == Slot.caret);
 }

@@ -25,7 +25,7 @@ import sparkles.ui.wrap : TextWrap;
 @safe:
 
 /// A resolved style's attribute bits as the toolkit's per-span text chrome.
-private TextStyle specStyle(in StyleSpec spec) pure nothrow @nogc
+package TextStyle specStyle(in StyleSpec spec) pure nothrow @nogc
     => TextStyle(
         bold: (spec.attrs & TextAttr.bold) != TextAttr.none,
         italic: (spec.attrs & TextAttr.italic) != TextAttr.none,
