@@ -95,11 +95,21 @@ keys test actions run through the core is
 **TRP1: The in-binary packages depend on no other repository package.** The
 recipes of `sparkles:test-attributes`, `sparkles:test-harness` and
 `sparkles:test-runner` **must not** declare a dependency on any `sparkles:`
-package outside these three, in any configuration, and their sources **must
-not** import a module of one.
+package outside these three and the two leaves `sparkles:metadata` and
+`sparkles:metrics`, in any configuration, and their sources **must not**
+import a module of one. A leaf is admitted only while it depends on no
+repository package but the other leaf (`sparkles:metrics` on
+`sparkles:metadata`, which depends on nothing) and tests itself without the
+shim.
 
 _Rationale:_ every package's tests depend on these three. Any edge from them
-to another repository package is a cycle for that package.
+to another repository package is a cycle for that package. The leaves close
+none: dub rejects a cycle through any configuration, and a leaf whose tests
+used the shim would close one through its unittest configuration. They are
+admitted for the observability spec (`docs/specs/build-primitives/observability/`,
+OBV1–OBV2), which declares the bench catalog's metric types in
+`sparkles:metrics`; until its milestone O4 moves them there, the harness keeps
+them and depends on neither leaf.
 
 **TRP2: Tests depend on the shim the ordinary way.** A package's unittest
 configuration **must** reach the runner through `dependency
@@ -275,6 +285,18 @@ whose members are:
 | `failures`    | Every caught `Throwable` in its chain: `{type, message, file, line, trace}` |
 | `skip`        | The `skipTest` reason, for a skipped test                                   |
 | `stackBudget` | Whether the body crossed the worker-stack watermark                         |
+| `usage`       | Optional: the test's measured usage, below                                  |
+
+`usage` holds what the worker measured across the test, each value with its
+quality tag: the worker's CPU time, its peak resident set (on Linux, reset
+through `/proc/self/clear_refs` before the test and read as `VmHWM` after
+it), and the bytes the test allocated from the GC with the collections and
+pause time the GC spent during it. The observability spec
+(`docs/specs/build-primitives/observability/`) owns the metrics and their
+qualities, OBT1–OBT3. The member is an addition within a protocol version: a
+runner that predates it ignores it (TRP9), and a client reading a worker that
+sends none records those metrics as absent. A change to its meaning, as
+opposed to a new member inside it, takes a new protocol version (TRP10).
 
 The runner never sends `run` for a `@ctfe` test.
 
@@ -637,19 +659,19 @@ delivered P1. A requirement is `partial` where its scenario of §10 has been
 run by hand but is not yet an automated test, or where a platform is
 unverified.
 
-| ID         | Status     | Evidence                                                                                                         |
-| ---------- | ---------- | ---------------------------------------------------------------------------------------------------------------- |
-| TRP1–TRP3  | partial    | A scan of every `dub.sdl` and of the harness's imports finds no edge; not yet a `ci` check                       |
-| TRP4       | verified   | `dub test :test-harness` runs its 154 tests through `sparkles.test_runner.self_host`                             |
-| TRP5       | partial    | `sparkles.test_runner.entry.installHarnessHandlers`; the macOS handler unverified                                |
-| TRP6–TRP28 | partial    | `sparkles.test_runner.session` transcript tests; `sparkles.test_runner.scenarios_test` (mismatch, output, crash) |
-| TRL1–TRL5  | partial    | `sparkles.test_runner.scenarios_test` (a bad `SPARKLES_TEST_RUNNER`, the launcher)                               |
-| TRS1–TRS4  | partial    | `sparkles.test_runner.pool.startTestWorkers`; `-t 1` and `-t N` legs of `ci --test`                              |
-| TRS5       | partial    | `sparkles.test_runner.pool.retire`; `ci --test` coverage listings; the covered-line comparison not run           |
-| TRX1–TRX4  | partial    | `sparkles.test_runner.driver.DriverOptions`; the `PATH`-without-dub scenario not run                             |
-| TRF1–TRF4  | partial    | `sparkles.test_runner.scenarios_test` (`--no-runner` filters, `--bench` refused)                                 |
-| TRW1–TRW4  | unverified | The Windows code paths type-check for `x86_64-windows-msvc`; the Windows leg has not run them                    |
-| TRM1–TRM3  | partial    | `sparkles.test_runner.session.WorkerSession`; its transcript tests; the import scan not automated                |
-| TRM4       | partial    | `sparkles.test_runner.plan.selectTests`, `sparkles.test_runner.options.parseRunnerOptions`; no ci client yet     |
-| TRM5–TRM8  | unverified | The ci client is the task DAG's M7                                                                               |
-| TRN1–TRN3  | partial    | `nix/packages/test-runner.nix` builds the bootstrap; no revision is pinned yet                                   |
+| ID         | Status     | Evidence                                                                                                                                          |
+| ---------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| TRP1–TRP3  | partial    | A scan of every `dub.sdl` and of the harness's imports finds no edge; not yet a `ci` check                                                        |
+| TRP4       | verified   | `dub test :test-harness` runs its 154 tests through `sparkles.test_runner.self_host`                                                              |
+| TRP5       | partial    | `sparkles.test_runner.entry.installHarnessHandlers`; the macOS handler unverified                                                                 |
+| TRP6–TRP28 | partial    | `sparkles.test_runner.session` transcript tests; `sparkles.test_runner.scenarios_test` (mismatch, output, crash); TRP16's `usage` is not sent yet |
+| TRL1–TRL5  | partial    | `sparkles.test_runner.scenarios_test` (a bad `SPARKLES_TEST_RUNNER`, the launcher)                                                                |
+| TRS1–TRS4  | partial    | `sparkles.test_runner.pool.startTestWorkers`; `-t 1` and `-t N` legs of `ci --test`                                                               |
+| TRS5       | partial    | `sparkles.test_runner.pool.retire`; `ci --test` coverage listings; the covered-line comparison not run                                            |
+| TRX1–TRX4  | partial    | `sparkles.test_runner.driver.DriverOptions`; the `PATH`-without-dub scenario not run                                                              |
+| TRF1–TRF4  | partial    | `sparkles.test_runner.scenarios_test` (`--no-runner` filters, `--bench` refused)                                                                  |
+| TRW1–TRW4  | unverified | The Windows code paths type-check for `x86_64-windows-msvc`; the Windows leg has not run them                                                     |
+| TRM1–TRM3  | partial    | `sparkles.test_runner.session.WorkerSession`; its transcript tests; the import scan not automated                                                 |
+| TRM4       | partial    | `sparkles.test_runner.plan.selectTests`, `sparkles.test_runner.options.parseRunnerOptions`; no ci client yet                                      |
+| TRM5–TRM8  | unverified | The ci client is the task DAG's M7                                                                                                                |
+| TRN1–TRN3  | partial    | `nix/packages/test-runner.nix` builds the bootstrap; no revision is pinned yet                                                                    |
