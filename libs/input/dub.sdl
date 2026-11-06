@@ -5,18 +5,18 @@ license "BSL-1.0"
 targetType "library"
 targetPath "../../build"
 
-// `sparkles:math` stays import-only (no `dependency`): this package sits inside
-// the test-runner-impl's dependency closure (impl → ui → input), and dub's
-// cycle detection unions dependencies across configurations — a real math
-// dependency would close input → math → (math unittest) → test-runner → impl.
-// Same recipe as libs/tui and libs/core-cli document.
-importPaths "src" "../test-runner/src" "../math/src"
+// The runner shim is on importPaths for the cycle-safe unittest integration
+// below: this package sits inside the test-runner-impl's dependency closure
+// (impl → ui → input).
+importPaths "src" "../test-runner/src"
 sourcePaths "src"
 
 dflags "-preview=in" "-preview=dip1000"
 
 dependency "sparkles:base" path="../.."
 dependency "sparkles:metadata" path="../.."
+// math depends on `sparkles:base` alone, so this edge closes no cycle.
+dependency "sparkles:math" path="../.."
 
 configuration "library" {
     targetType "library"
@@ -26,7 +26,7 @@ configuration "library" {
 // rather than `dependency "sparkles:test-runner"` (see the note above).
 configuration "unittest" {
     sourcePaths "../test-runner/src" "../test-runner-impl/src" "../profiling/src/sparkles/profiling/counters"
-    importPaths "src" "../test-runner/src" "../test-runner-impl/src" "../math/src" "../profiling/src"
+    importPaths "src" "../test-runner/src" "../test-runner-impl/src" "../profiling/src"
     dflags "-checkaction=context" "-allinst"
 }
 
