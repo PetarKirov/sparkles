@@ -384,7 +384,14 @@ struct VulkanDevice
                 else
                     return false;
             },
-            (in AppKitDisplayHandle _) => false,
+            // `VK_EXT_metal_surface` has no presentation query: every queue
+            // of a Metal-backed device presents to a `CAMetalLayer`.
+            (in AppKitDisplayHandle _) {
+                version (OSX)
+                    return true;
+                else
+                    return false;
+            },
             (in AndroidDisplayHandle _) {
                 version (Android)
                     return true;

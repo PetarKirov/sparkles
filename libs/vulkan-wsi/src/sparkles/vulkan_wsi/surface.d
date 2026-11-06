@@ -20,9 +20,10 @@ struct NativeSurfacePlan
 Validate that the display and window variants form one native pair and name
 the instance extension that can consume them.
 
-AppKit is deliberately rejected: the native macOS renderer is Metal, and an
-`NSView*` is not a `CAMetalLayer*`. A future explicit layer handle may add the
-Vulkan/MoltenVK compatibility path without weakening this contract.
+AppKit plans `VK_EXT_metal_surface` on macOS (MoltenVK, or any portability
+ICD that layers Vulkan over Metal): the surface is made from the
+`CAMetalLayer*` the window's view hosts, never from the view itself, so a
+handle without its layer is refused as invalid.
 */
 VulkanWsiResult!NativeSurfacePlan planNativeSurface(in NativeHandles handles)
     pure nothrow @nogc
@@ -75,9 +76,13 @@ VulkanWsiResult!NativeSurfacePlan planNativeSurface(in NativeHandles handles)
             return handles.window.match!(
                 (in AppKitWindowHandle window) {
                     if (display.application is null || window.window is null
-                        || window.view is null)
+                        || window.view is null || window.layer is null)
                         return invalidPlan(BackendKind.appkit, "null AppKit handle");
-                    return unsupportedPlan(BackendKind.appkit);
+                    version (OSX)
+                        return vulkanWsiOk(NativeSurfacePlan(
+                            BackendKind.appkit, cstr!extMetalSurface));
+                    else
+                        return unsupportedPlan(BackendKind.appkit);
                 },
                 _ => mismatchPlan(BackendKind.appkit));
         },
@@ -173,7 +178,19 @@ VulkanWsiResult!VkSurfaceKHR createNativeSurface(
             break;
 
         case BackendKind.appkit:
-            return unsupportedCreate!VkSurfaceKHR(BackendKind.appkit);
+            version (OSX)
+            {
+                if (!instance.has!extMetalSurface)
+                    return missingDispatch!VkSurfaceKHR(BackendKind.appkit);
+                auto layer = handles.window.match!(
+                    (in AppKitWindowHandle h) => h.layer, _ => null);
+                auto info = vkInfo(VkMetalSurfaceCreateInfoEXT(pLayer: layer));
+                result = instance.createMetalSurfaceEXT(
+                    instance.instance, &info, null, &surface);
+            }
+            else
+                return unsupportedCreate!VkSurfaceKHR(BackendKind.appkit);
+            break;
 
         case BackendKind.android:
             version (Android)
@@ -264,11 +281,26 @@ private VulkanWsiResult!T unsupportedCreate(T)(BackendKind backend)
         assert(android.hasValue && android.value.platformExtension[] == khrAndroidSurface);
     else
         assert(android.hasError && android.error.kind == VulkanWsiErrorKind.unsupported);
+
+    // An AppKit pair plans `VK_EXT_metal_surface` on macOS, from the layer.
+    handles.display = DisplayHandle(AppKitDisplayHandle(cast(void*) 1));
+    handles.window = WindowHandle(AppKitWindowHandle(cast(void*) 2, cast(void*) 3,
+        cast(void*) 4));
+    auto appkit = planNativeSurface(handles);
+    version (OSX)
+        assert(appkit.hasValue && appkit.value.platformExtension[] == extMetalSurface);
+    else
+        assert(appkit.hasError && appkit.error.kind == VulkanWsiErrorKind.unsupported);
+
+    // A view without its layer is no surface target.
+    handles.window = WindowHandle(AppKitWindowHandle(cast(void*) 2, cast(void*) 3));
+    auto layerless = planNativeSurface(handles);
+    assert(layerless.hasError && layerless.error.kind == VulkanWsiErrorKind.mismatchedHandles);
 }
 
 /**
 The instance extension a backend's surfaces need on this target, or an empty
-string where Vulkan has no surface for it (AppKit, whose renderer is Metal).
+string where Vulkan has no surface for it on this target.
 A `VulkanDevice` names it before any window has a surface.
 */
 CStr platformSurfaceExtension(BackendKind backend) pure nothrow @nogc
@@ -287,7 +319,8 @@ CStr platformSurfaceExtension(BackendKind backend) pure nothrow @nogc
             version (Windows) return cstr!khrWin32Surface;
             else return CStr.init;
         case BackendKind.appkit:
-            return CStr.init;
+            version (OSX) return cstr!extMetalSurface;
+            else return CStr.init;
         case BackendKind.android:
             version (Android) return cstr!khrAndroidSurface;
             else return CStr.init;
@@ -303,5 +336,8 @@ CStr platformSurfaceExtension(BackendKind backend) pure nothrow @nogc
         assert(platformSurfaceExtension(BackendKind.wayland)[] == khrWaylandSurface);
         assert(platformSurfaceExtension(BackendKind.android).length == 0);
     }
-    assert(platformSurfaceExtension(BackendKind.appkit).length == 0);
+    version (OSX)
+        assert(platformSurfaceExtension(BackendKind.appkit)[] == extMetalSurface);
+    else
+        assert(platformSurfaceExtension(BackendKind.appkit).length == 0);
 }
