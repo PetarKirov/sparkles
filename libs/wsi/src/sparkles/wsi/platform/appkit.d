@@ -342,6 +342,14 @@ private extern class NSWindow : NSResponder
     void close() @selector("close");
     double backingScaleFactor() @selector("backingScaleFactor");
     ulong occlusionState() @selector("occlusionState");
+    void setContentSize(NSSize size) @selector("setContentSize:");
+    void setContentMinSize(NSSize size) @selector("setContentMinSize:");
+    bool isZoomed() @selector("isZoomed");
+    void zoom(NSObject sender) @selector("zoom:");
+    bool isMiniaturized() @selector("isMiniaturized");
+    void miniaturize(NSObject sender) @selector("miniaturize:");
+    void deminiaturize(NSObject sender) @selector("deminiaturize:");
+    bool isKeyWindow() @selector("isKeyWindow");
 }
 
 /** Private NSView subclass forwarding only lossless native observations. */
@@ -596,6 +604,34 @@ private class SparklesWsiWindow : NSWindow
             activeOwner.onOcclusion(this);
     }
 
+    void windowWillStartLiveResize(NSObject notification)
+        @selector("windowWillStartLiveResize:")
+    {
+        if (activeOwner !is null)
+            activeOwner.onLiveResize(this, true);
+    }
+
+    void windowDidEndLiveResize(NSObject notification)
+        @selector("windowDidEndLiveResize:")
+    {
+        if (activeOwner !is null)
+            activeOwner.onLiveResize(this, false);
+    }
+
+    void windowDidMiniaturize(NSObject notification)
+        @selector("windowDidMiniaturize:")
+    {
+        if (activeOwner !is null)
+            activeOwner.onToplevelState(this);
+    }
+
+    void windowDidDeminiaturize(NSObject notification)
+        @selector("windowDidDeminiaturize:")
+    {
+        if (activeOwner !is null)
+            activeOwner.onToplevelState(this);
+    }
+
     void windowDidBecomeKey(NSObject notification)
         @selector("windowDidBecomeKey:")
     {
@@ -672,6 +708,8 @@ struct AppKitWsi
         SparklesWsiView view;
         CAMetalLayer layer; // retained; hosted by `view`
         bool occluded;
+        bool liveResizing;
+        WindowState state; // last reported
         bool ready;
         SurfaceMetrics metrics;
         bool hasMarked; // a composition is in progress
@@ -887,6 +925,53 @@ struct AppKitWsi
                 "NSString title conversion failed");
         windows_.at(checked.value).window.setTitle(nativeTitle);
         nativeTitle.release();
+        return wsiOk();
+    }
+
+    /// Resizes the window's content to `size` points.
+    WsiResult!void setLogicalSize(WindowId id, LogicalSize size)
+    {
+        auto checked = checkedSlot(id, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!void(checked.error);
+        if (!(size.width >= 1 && size.height >= 1))
+            return appKitFailure!void(WsiOperation.command, 0,
+                "a window is at least 1 point on each side", WsiErrorKind.invalidArgument);
+        windows_.at(checked.value).window.setContentSize(NSSize(size.width, size.height));
+        return wsiOk();
+    }
+
+    /// The smallest the user may resize the window's content to.
+    WsiResult!void setMinimumSize(WindowId id, LogicalSize size)
+    {
+        auto checked = checkedSlot(id, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!void(checked.error);
+        windows_.at(checked.value).window.setContentMinSize(NSSize(
+            size.width > 0 ? size.width : 0, size.height > 0 ? size.height : 0));
+        return wsiOk();
+    }
+
+    /// Zooms the window to fill the screen, or back (`zoom:` toggles).
+    WsiResult!void setMaximized(WindowId id, bool maximized)
+    {
+        auto checked = checkedSlot(id, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!void(checked.error);
+        auto window = windows_.at(checked.value).window;
+        if (window.isZoomed() != maximized)
+            window.zoom(null);
+        onToplevelState(window);
+        return wsiOk();
+    }
+
+    /// Miniaturizes the window into the Dock.
+    WsiResult!void setMinimized(WindowId id)
+    {
+        auto checked = checkedSlot(id, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!void(checked.error);
+        windows_.at(checked.value).window.miniaturize(null);
         return wsiOk();
     }
 
@@ -1200,6 +1285,7 @@ struct AppKitWsi
             slot.layer.setContentsScale(metrics.scale.value);
         const changed = slot.ready && metrics != slot.metrics;
         slot.metrics = metrics;
+        reportState(index);
         if (changed)
         {
             emit(idAt(index), SurfaceMetricsChangedEvent(metrics));
@@ -1604,6 +1690,47 @@ struct AppKitWsi
             offerFrame(index);
     }
 
+    // The toplevel's state as AppKit has it: decorated by the window server,
+    // zoomed, key, live-resizing, miniaturized. Reported when it changes.
+    private void reportState(size_t index)
+    {
+        ref slot = windows_.at(index);
+        if (!slot.ready)
+            return;
+        WindowState state;
+        state.decorations = DecorationMode.server;
+        ushort flags;
+        if (slot.window.isZoomed())
+            flags |= ToplevelState.maximized;
+        if (slot.window.isKeyWindow())
+            flags |= ToplevelState.activated;
+        if (slot.liveResizing)
+            flags |= ToplevelState.resizing;
+        if (slot.window.isMiniaturized())
+            flags |= ToplevelState.suspended;
+        state.flags = flags;
+        if (state == slot.state)
+            return;
+        slot.state = state;
+        emit(idAt(index), WindowStateChangedEvent(state));
+    }
+
+    private void onToplevelState(SparklesWsiWindow window)
+    {
+        const index = indexOfWindow(window);
+        if (index != size_t.max)
+            reportState(index);
+    }
+
+    private void onLiveResize(SparklesWsiWindow window, bool active)
+    {
+        const index = indexOfWindow(window);
+        if (index == size_t.max)
+            return;
+        windows_.at(index).liveResizing = active;
+        reportState(index);
+    }
+
     // A frame opportunity for a layer-hosting view: its contents are stale
     // (exposed) and the window takes a frame now (no compositor pacing yet).
     private void offerFrame(size_t index)
@@ -1623,7 +1750,10 @@ struct AppKitWsi
     {
         const index = indexOfWindow(window);
         if (index != size_t.max && windows_.at(index).ready)
+        {
             emit(idAt(index), FocusChangedEvent(focused));
+            reportState(index);
+        }
         // Another application may have copied while this one was in the
         // background: the next dispatch rereads the pasteboard (`DT1`).
         if (focused)
