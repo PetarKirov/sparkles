@@ -373,8 +373,9 @@ not regress (SDP2).
 selects nodes or attributes, and an optional DQL filter narrows them. The
 path grammar is read by a shared reader in `sparkles:dql`, and the filter is
 parsed and evaluated by DQL's own parser and host-resolver evaluator, so
-`sparkles:wired` gains a dependency on `sparkles:dql` and no second query
-language. The owner asked for it on 2026-11-06, ahead of the entry condition
+there is no second query language. The selector is its own sub-package,
+`sparkles:wired-sdl-select`, so `sparkles:wired` and its consumers that
+never select do not build DQL. The owner asked for it on 2026-11-06, ahead of the entry condition
 editing §8 had set (a second consumer whose selection is not a
 name-and-value filter).
 

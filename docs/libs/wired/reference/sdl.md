@@ -56,6 +56,8 @@ See [SPEC §4](../../../specs/wired/sdl/SPEC.md#_4-ordered-arena-document).
 
 ## Selection
 
+In the `sparkles:wired-sdl-select` sub-package, module `sparkles.wired.sdl.select`.
+
 | Name                                   | Is                                                                      |
 | -------------------------------------- | ----------------------------------------------------------------------- |
 | `SdlPath.parse(path)`                  | A borrowed, validated DQL path; `nodes(start)`, `attributes(start)`.    |

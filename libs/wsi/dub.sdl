@@ -45,10 +45,6 @@ configuration "unittest" {
     sourceFiles "src/xcb_native.c" platform="linux"
     sourceFiles "src/wayland_native.c" platform="linux"
     dependency "sparkles:test-runner" path="../.."
-    // `test/` holds the DQL schema test over `WindowEvent`, kept out of
-    // `src/` so no consumer of this library compiles DQL.
-    dependency "sparkles:dql" path="../.."
-    sourcePaths "test"
 
     dflags "-checkaction=context" "-allinst"
 }
