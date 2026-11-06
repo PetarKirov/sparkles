@@ -62,7 +62,24 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Each Nix leg's `ci --test` is split into shards, because it runs one
+  # package at a time and a single job was the pipeline's long pole (aarch64
+  # Linux took ~100m, macOS ~70m). A leg's first shard is its primary: it runs
+  # every step besides the tests, and tests every package the leg's other
+  # shards do not list (`--skip-packages`), so a package added to dub.sdl is
+  # tested there without editing this file. The other shards list theirs
+  # (`--packages`); a name that is no sub-package fails the run.
+  #
+  # The lists are a longest-first packing of each package's `ci --test`
+  # minutes (the sum of its runs' Δtᵢ) in run 43782517554, PR #734's last full
+  # run, with the primary's other steps counted against it: 28m on x86_64
+  # LDC, 19m on x86_64 DMD, 8m on macOS, 4m on aarch64 Linux. That run's
+  # unsharded legs took 92m, 62m, 74m and 102m besides setup; packed, each
+  # shard of a leg comes to 46m, 31m, 37m and 34m. Each shard builds the
+  # dependencies its own packages need, so it pays some compiles another
+  # shard also pays. Repack when a shard's job runs well past its siblings.
   test:
+    name: test (${{ matrix.system }}, ${{ matrix.DC }}, ${{ matrix.shard }})
     strategy:
       fail-fast: false
       matrix:
@@ -71,14 +88,84 @@ jobs:
             system: x86_64-linux
             DC: ldc2
             timeout: 120
+            shard: 1/2
+            primary: true
+            select: >-
+              --skip-packages android appearance base build-primitives ci
+              core-cli diff dmd-fmt doc-view docs dsv hue image math metadata
+              nix raylib-text reflection release shader-compile syntax
+              terminal terminal-benchmark terminal-view test-runner
+              test-runner-core test-runner-impl test-utils text-buffer
+              text-conformance tui twoslash twoslash-extract twoslash-protocol
+              ui-app ui-sdl3 versions vulkan vulkan-wsi wired
+          - runner: ubuntu-latest
+            system: x86_64-linux
+            DC: ldc2
+            timeout: 120
+            shard: 2/2
+            primary: false
+            select: >-
+              --packages android appearance base build-primitives ci core-cli
+              diff dmd-fmt doc-view docs dsv hue image math metadata nix
+              raylib-text reflection release shader-compile syntax terminal
+              terminal-benchmark terminal-view test-runner test-runner-core
+              test-runner-impl test-utils text-buffer text-conformance tui
+              twoslash twoslash-extract twoslash-protocol ui-app ui-sdl3
+              versions vulkan vulkan-wsi wired
           - runner: ubuntu-latest
             system: x86_64-linux
             DC: dmd
             timeout: 75
+            shard: 1/2
+            primary: true
+            select: >-
+              --skip-packages android base build-primitives dbus diff dmd-fmt
+              doc-view dql dsv event-horizon event-horizon-sys font fuzzy hue
+              image input math nix reflection release shader-compile terminal
+              terminal-view test-attributes test-harness test-runner
+              test-runner-impl test-utils text-buffer text-conformance
+              text-lab twoslash-d ui-app ui-raylib ui-sdl3 versions vulkan-wsi
+              wired wired-sdl-select wsi
+          - runner: ubuntu-latest
+            system: x86_64-linux
+            DC: dmd
+            timeout: 75
+            shard: 2/2
+            primary: false
+            select: >-
+              --packages android base build-primitives dbus diff dmd-fmt
+              doc-view dql dsv event-horizon event-horizon-sys font fuzzy hue
+              image input math nix reflection release shader-compile terminal
+              terminal-view test-attributes test-harness test-runner
+              test-runner-impl test-utils text-buffer text-conformance
+              text-lab twoslash-d ui-app ui-raylib ui-sdl3 versions vulkan-wsi
+              wired wired-sdl-select wsi
           - runner: macos-latest
             system: aarch64-darwin
             DC: ldc2
             timeout: 110
+            shard: 1/2
+            primary: true
+            select: >-
+              --skip-packages android base ci ci-provider diff dmd-lsp
+              doc-view docs dql event-horizon font font-oracle fuzzy image
+              math metadata nix profiling-counters raylib-text reflection
+              release shaders source-view syntax table-wasm terminal
+              test-harness test-runner-core test-runner-impl text-buffer
+              text-lab twoslash-d ui ui-sdl3 vulkan vulkan-wsi wired
+          - runner: macos-latest
+            system: aarch64-darwin
+            DC: ldc2
+            timeout: 110
+            shard: 2/2
+            primary: false
+            select: >-
+              --packages android base ci ci-provider diff dmd-lsp doc-view
+              docs dql event-horizon font font-oracle fuzzy image math
+              metadata nix profiling-counters raylib-text reflection release
+              shaders source-view syntax table-wasm terminal test-harness
+              test-runner-core test-runner-impl text-buffer text-lab
+              twoslash-d ui ui-sdl3 vulkan vulkan-wsi wired
           # The one host where `real` is binary128 (`real.mant_dig == 113`):
           # the leg that compiles and runs the wide-format conversion paths
           # natively. Scoped to `ci --test` for now; the example and OS-API
@@ -87,6 +174,42 @@ jobs:
             system: aarch64-linux
             DC: ldc2
             timeout: 120
+            shard: 1/3
+            primary: true
+            select: >-
+              --skip-packages android appearance base build-primitives
+              code-instrumentation core-cli dbus diagram dmd-lsp docs dql
+              event-horizon event-horizon-sys font font-oracle ghostty input
+              math nix profiling profiling-counters raylib-text reflection
+              release shader-compile shaders terminal terminal-benchmark
+              terminal-view test-attributes test-harness test-runner
+              test-runner-core test-runner-impl text-buffer text-conformance
+              text-lab tree-sitter twoslash twoslash-d twoslash-protocol ui
+              ui-raylib ui-tui ui-vulkan vulkan wired wsi
+          - runner: ubuntu-24.04-arm
+            system: aarch64-linux
+            DC: ldc2
+            timeout: 120
+            shard: 2/3
+            primary: false
+            select: >-
+              --packages android appearance build-primitives dbus dql
+              event-horizon event-horizon-sys font-oracle input nix profiling
+              profiling-counters raylib-text terminal terminal-view
+              test-attributes test-harness text-conformance twoslash-d ui
+              ui-tui ui-vulkan vulkan wired wsi
+          - runner: ubuntu-24.04-arm
+            system: aarch64-linux
+            DC: ldc2
+            timeout: 120
+            shard: 3/3
+            primary: false
+            select: >-
+              --packages base code-instrumentation core-cli diagram dmd-lsp
+              docs font ghostty math reflection release shader-compile shaders
+              terminal-benchmark test-runner test-runner-core test-runner-impl
+              text-buffer text-lab tree-sitter twoslash twoslash-protocol
+              ui-raylib
           # Native Windows — the host the `sparkles:wsi` Win32 backend had only
           # ever been certified on through Wine. There is no Nix on the hosted
           # runner, so this leg takes its toolchain from setup-dlang and runs
@@ -98,6 +221,9 @@ jobs:
             system: x86_64-windows
             DC: ldc2
             timeout: 40
+            shard: 1/1
+            primary: true
+            select: ''
     runs-on: ${{ matrix.runner }}
     # Budget the entire job, including cold toolchain builds and cleanup.
     # macOS passed its tests but twice hit 40m during the example sweep.
@@ -176,7 +302,7 @@ jobs:
             ${{ matrix.system }}-dub-
 
       - name: Run flake checks
-        if: matrix.system != 'aarch64-linux' && runner.os != 'Windows'
+        if: matrix.primary && matrix.system != 'aarch64-linux' && runner.os != 'Windows'
         run: nix flake check
 
       # sparkles:shaders SHT3 on its third platform: the Nix build job, which
@@ -184,7 +310,7 @@ jobs:
       # runner, so this leg hashes it there for `shader-reproducibility`. It
       # runs before the tests, so a failing test cannot drop the platform.
       - name: Hash the generated shaders
-        if: matrix.system == 'aarch64-linux'
+        if: matrix.primary && matrix.system == 'aarch64-linux'
         run: |
           for p in ui-shaders vulkan-wsi-shaders; do
             out="$(nix build --no-link --print-out-paths ".#$p")"
@@ -193,7 +319,7 @@ jobs:
           done | tee "shaders-${{ runner.os }}-${{ runner.arch }}.hash"
 
       - name: Upload the generated shaders' hash
-        if: matrix.system == 'aarch64-linux'
+        if: matrix.primary && matrix.system == 'aarch64-linux'
         uses: actions/upload-artifact@v7
         with:
           name: shaders-${{ runner.os }}-${{ runner.arch }}
@@ -201,7 +327,7 @@ jobs:
 
       - name: Build and test with dub
         if: runner.os != 'Windows'
-        run: ci --test --fail-fast
+        run: ci --test --fail-fast ${{ matrix.select }}
         env:
           # `ci` embeds dmd (small closure); honour the matrix compiler for the
           # test suite so the ldc2/dmd dimensions are actually exercised. Both
@@ -212,7 +338,7 @@ jobs:
       # test configuration, which `ci --test` (the default, native one) never
       # builds, kept until the raylib arm is retired.
       - name: The terminal on the raylib arm
-        if: runner.os == 'Linux'
+        if: matrix.primary && runner.os == 'Linux'
         run: dub test :terminal --compiler=${{ matrix.DC }} -c unittest-raylib
 
       # `ci --test` without the `ci` helper: `dub test` per allowlisted
@@ -229,7 +355,7 @@ jobs:
       # variable itself, so each OS builds it (DS24); the `sync` job covers
       # x86-64 Linux.
       - name: base.sync with the portable parker
-        if: runner.os == 'macOS' || runner.os == 'Windows'
+        if: matrix.primary && (runner.os == 'macOS' || runner.os == 'Windows')
         shell: bash
         run: dub test :base --compiler=${{ matrix.DC }} -c unittest-portable -- -i 'sync\.'
 
@@ -237,11 +363,11 @@ jobs:
       # deliberately weakened primitive must show a stale read. `dub test`'s
       # unoptimized build cannot, so this is the oracle.
       - name: base.sync litmus tests
-        if: runner.arch == 'ARM64'
+        if: matrix.primary && runner.arch == 'ARM64'
         run: dub run --single --temp-build libs/base/tools/check-sync-litmus.d
 
       - name: Build and run examples
-        if: matrix.system != 'aarch64-linux' && runner.os != 'Windows'
+        if: matrix.primary && matrix.system != 'aarch64-linux' && runner.os != 'Windows'
         run: |
           if [ "$RUNNER_OS" = Linux ]; then
             dub run --single apps/ci/tools/prepare-event-horizon-comparisons.d --temp-build -b checked
@@ -255,7 +381,7 @@ jobs:
       # the Nix-built raylib is pointed at the flake's Mesa explicitly. Opted
       # into, the test fails rather than skips when it cannot run.
       - name: Read back generated shaders on a GL driver
-        if: matrix.system == 'x86_64-linux' && matrix.DC == 'ldc2'
+        if: matrix.primary && matrix.system == 'x86_64-linux' && matrix.DC == 'ldc2'
         run: |
           mesa="$(nix build --no-link --print-out-paths --inputs-from . nixpkgs#mesa)"
           export LIBGL_DRIVERS_PATH="$mesa/lib/dri"
@@ -269,7 +395,7 @@ jobs:
       # layer loaded and no message allowed. Opted into, the test fails rather
       # than skips when it cannot run.
       - name: Read back the triangle on a Vulkan driver
-        if: matrix.system == 'x86_64-linux' && matrix.DC == 'ldc2'
+        if: matrix.primary && matrix.system == 'x86_64-linux' && matrix.DC == 'ldc2'
         run: |
           mesa="$(nix build --no-link --print-out-paths --inputs-from . nixpkgs#mesa)"
           layers="$(nix build --no-link --print-out-paths --inputs-from . nixpkgs#vulkan-validation-layers)"
@@ -283,7 +409,7 @@ jobs:
       # real window under xvfb; Wayland has no compositor in CI so it prints SKIP and
       # exits 0. (macOS/iOS/Android are verified out of band — see the surveys.)
       - name: Build & run OS-API windowing examples (X11 + Wayland)
-        if: matrix.system == 'x86_64-linux' && matrix.DC == 'ldc2'
+        if: matrix.primary && matrix.system == 'x86_64-linux' && matrix.DC == 'ldc2'
         run: |
           xvfb-run -a dub run --compiler=ldc2 --root=docs/research/window-system-integration/os-apis/x11/example
           dub run --compiler=ldc2 --root=docs/research/window-system-integration/os-apis/wayland/example
@@ -298,7 +424,7 @@ jobs:
       # red the build. X11 demos run under Xvfb; Wayland demos under a headless
       # weston instance.
       - name: Build & run OS-API windowing demos (X11 + Wayland)
-        if: matrix.system == 'x86_64-linux' && matrix.DC == 'ldc2'
+        if: matrix.primary && matrix.system == 'x86_64-linux' && matrix.DC == 'ldc2'
         env:
           WSI_AUTO_EXIT: 1
         run: |
@@ -512,8 +638,33 @@ jobs:
   # every package at 43.6m and was cancelled at 45m.
   # Main's runs take 48-59m; run 42395259454 (PR #719) was still testing,
   # nothing failed, when its 60m cap cancelled it: it now has 75m.
+  # Two shards, packed like the test job's from the same run (59.6m of
+  # tests unsharded, 29.8m a shard): the second lists its packages, and the
+  # first takes every other one.
   sanitize:
-    name: Sanitizers (ASan, stackovf)
+    name: Sanitizers (ASan, stackovf) (${{ matrix.shard }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: 1/2
+            select: >-
+              --skip-packages android build-primitives code-instrumentation
+              core-cli dbus dmd-fmt doc-view dsv event-horizon
+              event-horizon-sys font font-oracle ghostty http input math
+              metadata profiling-counters raylib-text source-view syntax
+              table-wasm terminal test-runner test-utils text-buffer
+              text-conformance text-wasm tui twoslash-d twoslash-extract ui
+              ui-gallery ui-raylib ui-vulkan vulkan vulkan-wsi
+          - shard: 2/2
+            select: >-
+              --packages android build-primitives code-instrumentation
+              core-cli dbus dmd-fmt doc-view dsv event-horizon
+              event-horizon-sys font font-oracle ghostty http input math
+              metadata profiling-counters raylib-text source-view syntax
+              table-wasm terminal test-runner test-utils text-buffer
+              text-conformance text-wasm tui twoslash-d twoslash-extract ui
+              ui-gallery ui-raylib ui-vulkan vulkan vulkan-wsi
     runs-on: ubuntu-latest
     timeout-minutes: 75
     steps:
@@ -557,7 +708,7 @@ jobs:
             x86_64-linux-asan-dub-
 
       - name: Run tests under ASan
-        run: ci --test-sanitize --fail-fast
+        run: ci --test-sanitize --fail-fast ${{ matrix.select }}
         env:
           DC: ldc2
 
