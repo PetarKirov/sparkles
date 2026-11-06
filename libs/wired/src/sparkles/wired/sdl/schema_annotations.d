@@ -20,7 +20,7 @@ module sparkles.wired.sdl.schema_annotations;
 
 import std.meta : AliasSeq, staticIndexOf;
 import std.traits : ForeachType, ValueType, getUDAs, isAssociativeArray,
-    isDynamicArray, isStaticArray, Unqual;
+    isDynamicArray, isSomeString, isStaticArray, Unqual;
 import std.typecons : Nullable;
 
 import optional : Optional;
@@ -29,10 +29,9 @@ import sparkles.wired.policy : AnyFormat, Repr, WireStrict, hasExplicitWireName,
     hasWireStrict, hasConvert, convertOf;
 import sparkles.wired.adapters : Same;
 import sparkles.wired.schema : NodeKind, ScalarKind, WireSchema,
-    isWirePassthrough, wireSchemaOf;
+    isWirePassthrough, rawWireSchemaOf, wireSchemaOf;
 import sparkles.wired.sdl.document : OwnedSdlExtras, SdlExtras, SdlQualifiedName;
 import sparkles.wired.sdl.lexer : isSdlIdentifier;
-import sparkles.wired.walk : WireWalk;
 
 // ── Format marker ────────────────────────────────────────────────────────────
 
@@ -66,13 +65,42 @@ struct Sdl
     /// Format hook invoked by the shared schema boundary, before publication.
     template validateWireSchema(T, alias schema)
     {
-        enum bool validateWireSchema = validateSdlNode!(T, schema, 0);
+        enum bool validateWireSchema = validateSdlType!T;
     }
 }
 
-// Traverse the shared arena, including aggregates behind containers. A
-// reference points to an ancestor already checked; no second reflection
-// graph or recursion-specific schema is built here.
+/* Validates every aggregate type reachable from `T`, including those behind
+containers and null-aware wrappers, through its type-keyed projection
+($(LREF sdlAggregateRoles)): a type is projected once per compilation however
+many arena nodes it occupies. Converted types and fields stop the descent, as
+their wire shape is the converter's; `Seen` ends recursion through a type
+that reaches itself.
+*/
+private template validateSdlType(T, Seen...)
+{
+    private alias U = Unqual!T;
+    static if (staticIndexOf!(U, Seen) >= 0 || hasConvert!(Sdl, U) || isWirePassthrough!U)
+        enum bool validateSdlType = true;
+    else static if (is(U == Nullable!N, N) || is(U == Optional!N, N))
+        enum bool validateSdlType = validateSdlType!(N, Seen);
+    else static if (isStaticArray!U || (isDynamicArray!U && !isSomeString!U))
+        enum bool validateSdlType = validateSdlType!(ForeachType!U, Seen);
+    else static if (isAssociativeArray!U)
+        enum bool validateSdlType = validateSdlType!(ValueType!U, Seen);
+    else static if (is(U == struct)
+        && rawWireSchemaOf!(Sdl, U).nodes[0].kind == NodeKind.aggregate)
+    {
+        static assert(sdlAggregateRoles!U.sdlFieldRoles.roles.length == U.tupleof.length);
+        static foreach (i; 0 .. U.tupleof.length)
+            static assert(validateSdlFieldMetadata!(U, i)
+                && (hasConvert!(Sdl, U.tupleof[i], typeof(U.tupleof[i]))
+                    || validateSdlType!(typeof(U.tupleof[i]), Seen, U)));
+        enum bool validateSdlType = true;
+    }
+    else
+        enum bool validateSdlType = true;
+}
+
 private template validateSdlFieldMetadata(T, size_t i)
 {
     static if (hasConvert!(Sdl, T.tupleof[i], typeof(T.tupleof[i])))
@@ -84,28 +112,6 @@ private template validateSdlFieldMetadata(T, size_t i)
                 ~ " map role requires the Same key adapter");
     }
     enum bool validateSdlFieldMetadata = true;
-}
-
-private template validateSdlNode(T, alias schema, size_t index)
-{
-    private enum node = schema.nodes[index];
-    static if (node.kind == NodeKind.aggregate)
-    {
-        private enum roles = sdlAggregateRoles!(Unqual!T, false, schema, index)
-            .sdlFieldRoles;
-        static assert(roles.roles.length == node.edgeCount);
-        static foreach (i; 0 .. node.edgeCount)
-            static assert(validateSdlFieldMetadata!(T, i)
-                && validateSdlNode!(typeof(T.tupleof[i]), schema,
-                schema.edges[node.firstEdge + i]));
-    }
-    else static if (node.kind == NodeKind.sequence || node.kind == NodeKind.staticArray)
-        static assert(validateSdlNode!(ForeachType!T, schema, schema.edges[node.firstEdge]));
-    else static if (node.kind == NodeKind.map)
-        static assert(validateSdlNode!(ValueType!T, schema, schema.edges[node.firstEdge + 1]));
-    else static if (is(T == Nullable!N, N) || is(T == Optional!N, N))
-        static assert(validateSdlNode!(N, schema, schema.edges[node.firstEdge]));
-    enum bool validateSdlNode = true;
 }
 
 // ── Role UDAs ────────────────────────────────────────────────────────────────
@@ -333,65 +339,360 @@ private SdlQualifiedName aliasName(string name) @safe pure nothrow @nogc
     return SdlQualifiedName(null, name);
 }
 
-/** Splits one explicit `@WireName!Sdl` spelling into namespace and local name.
-
-A colon splits exactly once; empty halves and additional colons are
-compile-time errors naming the aggregate and field (SPEC §5.1).
-*/
-package template splitSdlQualifiedName(string aggregate, string field, string raw)
+// A qualified SDL name split into its two halves.
+private struct SplitName
 {
-    static if (raw.length == 0)
+    string namespace_;
+    string localName;
+}
+
+/* Splits one qualified SDL spelling — a field's resolved key — into namespace
+and local name. A colon splits exactly once; an empty spelling, empty halves
+and additional colons append a diagnostic naming the aggregate and field to
+`err` (SPEC §5.1).
+*/
+private SplitName splitQualifiedName(string aggregate, string field, string raw,
+    ref string err) @safe pure nothrow
+{
+    if (raw.length == 0)
     {
-        static assert(false, "wired.sdl: " ~ aggregate ~ "." ~ field
-            ~ ": qualified SDL name must not be empty");
-        enum namespace_ = null;
-        enum localName = null;
+        err ~= "wired.sdl: " ~ aggregate ~ "." ~ field
+            ~ ": qualified SDL name must not be empty";
+        return SplitName.init;
     }
+    ptrdiff_t firstColon = -1, lastColon = -1;
+    foreach (i, c; raw)
+        if (c == ':')
+        {
+            if (firstColon < 0)
+                firstColon = i;
+            lastColon = i;
+        }
+    if (firstColon < 0)
+        return SplitName(null, raw);
+    if (firstColon != lastColon)
+        err ~= "wired.sdl: " ~ aggregate ~ "." ~ field
+            ~ ": qualified SDL name \"" ~ raw ~ "\" must contain exactly one ':'";
+    else if (firstColon == 0 || lastColon == raw.length - 1)
+        err ~= "wired.sdl: " ~ aggregate ~ "." ~ field
+            ~ ": qualified SDL name \"" ~ raw
+            ~ "\" must not have an empty namespace or local half";
     else
-    {
-        private enum firstColon = () {
-            foreach (i, c; raw)
-                if (c == ':')
-                    return cast(ptrdiff_t) i;
-            return cast(ptrdiff_t) -1;
-        }();
-        private enum lastColon = () {
-            ptrdiff_t found = -1;
-            foreach (i, c; raw)
-                if (c == ':')
-                    found = i;
-            return found;
-        }();
-        static if (firstColon < 0)
-        {
-            enum namespace_ = null;
-            enum localName = raw;
-        }
-        else static if (firstColon != lastColon)
-        {
-            static assert(false, "wired.sdl: " ~ aggregate ~ "." ~ field
-                ~ ": qualified SDL name \"" ~ raw
-                ~ "\" must contain exactly one ':'");
-            enum namespace_ = null;
-            enum localName = null;
-        }
-        else static if (firstColon == 0 || lastColon == raw.length - 1)
-        {
-            static assert(false, "wired.sdl: " ~ aggregate ~ "." ~ field
-                ~ ": qualified SDL name \"" ~ raw
-                ~ "\" must not have an empty namespace or local half");
-            enum namespace_ = null;
-            enum localName = null;
-        }
-        else
-        {
-            enum namespace_ = raw[0 .. firstColon];
-            enum localName = raw[firstColon + 1 .. $];
-        }
-    }
+        return SplitName(raw[0 .. firstColon], raw[firstColon + 1 .. $]);
+    return SplitName.init;
 }
 
 // ── The SDL projection ───────────────────────────────────────────────────────
+
+// What one field declares for SDL: its resolved role UDA and the type facts
+// the schema arena does not record.
+private struct SdlFieldFacts
+{
+    string ident;            // the D identifier
+    size_t roleCount;        // role UDAs present; more than one is an error
+    SdlRoleKind role;        // the resolved role, `child` when unannotated
+    size_t declaredIndex = size_t.max; // `@SdlTagValue(i)`: `i`
+    bool explicitName;       // carries an explicit `@WireName!Sdl`
+    bool extrasType;         // is `SdlExtras` or `OwnedSdlExtras`
+}
+
+// Whether attribute `uda` is role attribute `Attr`, as a value or as the type.
+private enum bool isRoleUda(alias uda, Attr) = is(typeof(uda) == Attr) || is(uda == Attr);
+
+// `T`'s field facts, read in one pass over each field's attributes.
+private enum SdlFieldFacts[] sdlFieldFacts(T) = () {
+    SdlFieldFacts[] facts;
+    static foreach (i; 0 .. T.tupleof.length)
+    {{
+        SdlFieldFacts f;
+        f.ident = __traits(identifier, T.tupleof[i]);
+        size_t tagValues, attributes, children, tagNames, tagNamespaces, extras;
+        static foreach (uda; __traits(getAttributes, T.tupleof[i]))
+        {
+            static if (isRoleUda!(uda, SdlTagValueAttr))
+            {
+                static if (!is(uda))
+                    if (tagValues == 0)
+                        f.declaredIndex = uda.index;
+                tagValues++;
+            }
+            else static if (isRoleUda!(uda, SdlAttributeAttr))
+                attributes++;
+            else static if (isRoleUda!(uda, SdlChildAttr))
+                children++;
+            else static if (isRoleUda!(uda, SdlTagNameAttr))
+                tagNames++;
+            else static if (isRoleUda!(uda, SdlTagNamespaceAttr))
+                tagNamespaces++;
+            else static if (isRoleUda!(uda, SdlExtraAttr))
+                extras++;
+        }
+        f.roleCount = tagValues + attributes + children + tagNames + tagNamespaces + extras;
+        f.role = tagValues ? SdlRoleKind.tagValue
+            : attributes ? SdlRoleKind.attribute
+            : tagNames ? SdlRoleKind.tagName
+            : tagNamespaces ? SdlRoleKind.tagNamespace
+            : extras ? SdlRoleKind.extra
+            : SdlRoleKind.child;
+        f.explicitName = hasExplicitWireName!(Sdl, T.tupleof[i]);
+        f.extrasType = is(typeof(T.tupleof[i]) == SdlExtras)
+            || is(typeof(T.tupleof[i]) == OwnedSdlExtras);
+        facts ~= f;
+    }}
+    return facts;
+}();
+
+// The projected roles, or the §5.2 diagnostics that reject the aggregate.
+private struct SdlProjection
+{
+    string error;
+    SdlAggregateRoles roles;
+}
+
+/* Validates and projects the roles of the aggregate at node 0 of `schema`,
+whose fields `facts` describes, in a single CTFE evaluation over one copy of
+the arena. `aggregate` names the type in diagnostics.
+*/
+private SdlProjection projectSdlRoles(const WireSchema schema,
+    const(SdlFieldFacts)[] facts, string aggregate, bool strictUnknown)
+{
+    import std.conv : to;
+
+    SdlProjection projection;
+    const rootNode = schema.nodes[0];
+    if (rootNode.kind != NodeKind.aggregate)
+    {
+        projection.error = "wired.sdl: " ~ aggregate
+            ~ ": SDL document root must be an unconverted aggregate";
+        return projection;
+    }
+    assert(rootNode.edgeCount == facts.length);
+
+    string err;
+    int tagNameSeen, tagNsSeen, extraSeen;
+    size_t[] occupied;
+    bool hasDynamicSuffix;
+    size_t dynamicIndex;
+    bool anyFixedIndex;
+    size_t maxFixedIndex;
+
+    void occupy(size_t from, size_t count, string where_)
+    {
+        foreach (p; from .. from + count)
+        {
+            foreach (existing; occupied)
+                if (existing == p)
+                {
+                    err ~= "wired.sdl: " ~ aggregate ~ "." ~ where_
+                        ~ ": positional value slot " ~ p.to!string
+                        ~ " is already claimed by another"
+                        ~ " @SdlTagValue field";
+                    return;
+                }
+            occupied ~= p;
+        }
+    }
+
+    void claimFixed(size_t end)
+    {
+        maxFixedIndex = anyFixedIndex && maxFixedIndex > end ? maxFixedIndex : end;
+        anyFixedIndex = true;
+    }
+
+    projection.roles.strictUnknown = strictUnknown;
+    foreach (i, f; facts)
+    {
+        const ni = schema.edges[rootNode.firstEdge + i];
+        const policy = schema.nodes[ni].policy.field;
+        const named = f.role == SdlRoleKind.child || f.role == SdlRoleKind.attribute;
+        const shape = named || f.role == SdlRoleKind.tagValue ? shapeAt(schema, ni) : Shape.other;
+        const payload = schema.nodes[payloadIndex(schema, ni)];
+        const staticLength = payload.staticLength;
+        // A runtime-length wrapper marks a dynamic value-suffix sequence.
+        const dynamicArrayWrapper = payload.kind == NodeKind.sequence;
+
+        if (f.roleCount > 1)
+            err ~= "wired.sdl: " ~ aggregate ~ "." ~ f.ident
+                ~ ": a field declares at most one SDL role UDA";
+
+        SplitName name = SplitName(null, policy.key);
+        if (named || f.explicitName)
+            name = splitQualifiedName(aggregate, f.ident, policy.key, err);
+        if (named)
+        {
+            if (!isSdlIdentifier(name.localName)
+                || (name.namespace_.length && !isSdlIdentifier(name.namespace_)))
+                err ~= "wired.sdl: " ~ aggregate ~ "." ~ f.ident
+                    ~ ": @" ~ roleName(f.role)
+                    ~ " requires a valid qualified SDL identifier";
+            foreach (rawAlias; policy.aliases)
+            {
+                const alias_ = aliasName(rawAlias);
+                if (!isSdlIdentifier(alias_.localName)
+                    || (alias_.namespace_.length && !isSdlIdentifier(alias_.namespace_)))
+                    err ~= "wired.sdl: " ~ aggregate ~ "." ~ f.ident
+                        ~ ": @" ~ roleName(f.role)
+                        ~ " alias requires a valid qualified SDL identifier";
+            }
+        }
+
+        SdlFieldRole role;
+        role.fieldIndex = i;
+        role.nodeIndex = ni;
+        role.role = f.role;
+        foreach (rawAlias; policy.aliases)
+            role.aliases ~= aliasName(rawAlias);
+        role.namespace_ = f.explicitName ? name.namespace_ : null;
+        role.localName = f.explicitName ? name.localName : policy.key;
+
+        final switch (f.role)
+        {
+        case SdlRoleKind.child:
+            final switch (shape)
+            {
+            case Shape.scalarSingle:
+                role.childShape = SdlChildShape.scalarSingle;
+                break;
+            case Shape.aggregateSingle:
+                role.childShape = SdlChildShape.aggregateSingle;
+                break;
+            case Shape.seqScalar:
+                role.childShape = SdlChildShape.scalarSequence;
+                role.staticCount = staticLength;
+                break;
+            case Shape.seqAggregate:
+                role.childShape = SdlChildShape.aggregateSequence;
+                break;
+            case Shape.map:
+                role.childShape = SdlChildShape.map;
+                const keyNode = schema.edges[schema.nodes[payloadIndex(schema, ni)].firstEdge];
+                if (!nameBearing(schema, keyNode))
+                    err ~= "wired.sdl: " ~ aggregate ~ "." ~ f.ident
+                        ~ ": an associative-array @SdlChild requires "
+                        ~ "string or name-represented enum keys";
+                break;
+            case Shape.other:
+                err ~= "wired.sdl: " ~ aggregate ~ "." ~ f.ident
+                    ~ ": @SdlChild requires a scalar, an aggregate, a "
+                    ~ "scalar or aggregate sequence/static array, or a "
+                    ~ "map with string/enum keys";
+                break;
+            }
+            break;
+        case SdlRoleKind.tagValue:
+            role.positionalIndex = f.declaredIndex;
+            role.dynamicValueSuffix = shape == Shape.seqScalar && dynamicArrayWrapper;
+            role.staticCount = staticLength;
+            final switch (shape)
+            {
+            case Shape.scalarSingle:
+                claimFixed(f.declaredIndex);
+                occupy(f.declaredIndex, 1, f.ident);
+                break;
+            case Shape.seqScalar:
+                if (!dynamicArrayWrapper)
+                {
+                    claimFixed(f.declaredIndex + staticLength - 1);
+                    occupy(f.declaredIndex, staticLength, f.ident);
+                }
+                else if (!hasDynamicSuffix)
+                {
+                    hasDynamicSuffix = true;
+                    dynamicIndex = f.declaredIndex;
+                }
+                else
+                    err ~= "wired.sdl: " ~ aggregate ~ "." ~ f.ident
+                        ~ ": at most one dynamic @SdlTagValue "
+                        ~ "sequence may consume a suffix per aggregate";
+                break;
+            case Shape.aggregateSingle:
+            case Shape.seqAggregate:
+            case Shape.map:
+            case Shape.other:
+                err ~= "wired.sdl: " ~ aggregate ~ "." ~ f.ident
+                    ~ ": @SdlTagValue requires a scalar-convertible "
+                    ~ "field or a sequence/static array of them";
+                break;
+            }
+            break;
+        case SdlRoleKind.attribute:
+            role.staticCount = staticLength;
+            if (shape != Shape.scalarSingle && shape != Shape.seqScalar)
+                err ~= "wired.sdl: " ~ aggregate ~ "." ~ f.ident
+                    ~ ": @SdlAttribute must be scalar-convertible "
+                    ~ "(a sequence means repeated attributes); nested "
+                    ~ "aggregates and maps are unsupported";
+            break;
+        case SdlRoleKind.tagName:
+            role.dynamicName = true;
+            tagNameSeen++;
+            if (!nameBearing(schema, ni))
+                err ~= "wired.sdl: " ~ aggregate ~ "." ~ f.ident
+                    ~ ": @SdlTagName requires a string or "
+                    ~ "name-represented enum field";
+            break;
+        case SdlRoleKind.tagNamespace:
+            role.dynamicNamespace = true;
+            tagNsSeen++;
+            if (!nameBearing(schema, ni))
+                err ~= "wired.sdl: " ~ aggregate ~ "." ~ f.ident
+                    ~ ": @SdlTagNamespace requires a string or "
+                    ~ "name-represented enum field";
+            break;
+        case SdlRoleKind.extra:
+            extraSeen++;
+            if (!f.extrasType)
+                err ~= "wired.sdl: " ~ aggregate ~ "." ~ f.ident
+                    ~ ": @SdlExtra requires an SdlExtras (borrowed) or "
+                    ~ "OwnedSdlExtras (owned) field";
+            break;
+        }
+        projection.roles.fieldNodeIndices ~= ni;
+        projection.roles.roles ~= role;
+    }
+
+    if (tagNameSeen > 1)
+        err ~= "wired.sdl: " ~ aggregate
+            ~ ": at most one @SdlTagName field per aggregate";
+    if (tagNsSeen > 1)
+        err ~= "wired.sdl: " ~ aggregate
+            ~ ": at most one @SdlTagNamespace field per aggregate";
+    if (extraSeen > 1)
+        err ~= "wired.sdl: " ~ aggregate
+            ~ ": at most one @SdlExtra field per aggregate";
+    if (extraSeen && strictUnknown)
+        err ~= "wired.sdl: " ~ aggregate
+            ~ ": @WireStrict and @SdlExtra are contradictory unknown-"
+            ~ "member policies (forbid versus preserve)";
+    // With no fixed slots at all, index 0 *is* the greatest declared
+    // index; comparing against a zero-initialized `maxFixedIndex` rejects
+    // the most natural positional shape there is (`tag "a" "b" "c"`).
+    if (hasDynamicSuffix && anyFixedIndex && dynamicIndex <= maxFixedIndex)
+        err ~= "wired.sdl: " ~ aggregate
+            ~ ": the dynamic @SdlTagValue sequence must have the "
+            ~ "greatest declared index";
+    projection.error = err;
+    return projection;
+}
+
+// The SPEC §5 diagnostics for dynamic identity fields on a document root.
+private string sdlDocumentRootError(string aggregate, const(SdlFieldFacts)[] facts)
+    @safe pure nothrow
+{
+    string err, dynamicNameAt, dynamicNsAt;
+    foreach (f; facts)
+        if (f.role == SdlRoleKind.tagName)
+            dynamicNameAt = f.ident;
+        else if (f.role == SdlRoleKind.tagNamespace)
+            dynamicNsAt = f.ident;
+    if (dynamicNameAt.length)
+        err ~= "wired.sdl: " ~ aggregate ~ "." ~ dynamicNameAt
+            ~ ": @SdlTagName is forbidden on synthetic document roots";
+    if (dynamicNsAt.length)
+        err ~= "wired.sdl: " ~ aggregate ~ "." ~ dynamicNsAt
+            ~ ": @SdlTagNamespace is forbidden on synthetic document roots";
+    return err;
+}
 
 /** Resolves every field's SDL role for aggregate `T` (SPEC §5/§5.2).
 
@@ -428,372 +729,29 @@ $(LIST
 The projection also resolves the aggregate's unknown-member policy:
 $(LREF SdlAggregateRoles.strictUnknown) reports whether `@WireStrict!Sdl`
 (or the format-less spelling) applies.
+
+The projection is keyed by `T` alone and computed once per compilation, in
+one CTFE evaluation over the type's own arena; the document-root form adds
+its check and shares that storage.
 */
 package template sdlAggregateRoles(T, bool isDocumentRoot = false)
 if (is(T == struct))
 {
-    // Keep runtime storage keyed by type, not by the entire schema value:
-    // a large recipe schema otherwise produces a symbol too long for PDB.
-    static immutable SdlAggregateRoles sdlFieldRoles =
-        sdlAggregateRoles!(T, isDocumentRoot, wireSchemaOf!(Sdl, T), 0).sdlFieldRoles;
-}
-
-package template sdlAggregateRoles(T, bool isDocumentRoot,
-    alias schema, size_t aggregateIndex)
-if (is(T == struct))
-{
-    import std.meta : AliasSeq;
-
-    private alias walk = WireWalk!(Sdl, T, schema);
-    private enum rootNode = schema.nodes[aggregateIndex];
-    static assert(rootNode.kind == NodeKind.aggregate,
-        "wired.sdl: " ~ T.stringof
-        ~ ": SDL document root must be an unconverted aggregate");
-
-    private alias policies = walk.childPolicies!aggregateIndex;
-    private enum fieldCount = policies.length;
-
-    // SPEC §8 forbid policy: an exact-`Sdl` @WireStrict wins over AnyFormat.
-    private enum bool strictUnknown = hasWireStrict!(Sdl, T)
-        || hasWireStrict!(AnyFormat, T);
-
-    // Per-field compile-time facts, gathered once for both validation and
-    // sidecar construction.
-    template FieldFacts(alias symbol, size_t i)
+    static if (isDocumentRoot)
     {
-        enum ident = __traits(identifier, symbol);
-        enum ni = schema.edges[rootNode.firstEdge + i];
-
-        enum tagValueCount = getUDAs!(symbol, SdlTagValueAttr).length;
-        enum attributeCount = getUDAs!(symbol, SdlAttributeAttr).length;
-        enum childCount = getUDAs!(symbol, SdlChildAttr).length;
-        enum tagNameCount = getUDAs!(symbol, SdlTagNameAttr).length;
-        enum tagNamespaceCount = getUDAs!(symbol, SdlTagNamespaceAttr).length;
-        enum extraCount = getUDAs!(symbol, SdlExtraAttr).length;
-        enum roleCount = tagValueCount + attributeCount + childCount
-            + tagNameCount + tagNamespaceCount + extraCount;
-
-        static if (tagValueCount)
-            enum SdlRoleKind role = SdlRoleKind.tagValue;
-        else static if (attributeCount)
-            enum SdlRoleKind role = SdlRoleKind.attribute;
-        else static if (tagNameCount)
-            enum SdlRoleKind role = SdlRoleKind.tagName;
-        else static if (tagNamespaceCount)
-            enum SdlRoleKind role = SdlRoleKind.tagNamespace;
-        else static if (extraCount)
-            enum SdlRoleKind role = SdlRoleKind.extra;
-        else
-            enum SdlRoleKind role = SdlRoleKind.child;
-
-        static if (tagValueCount)
-            enum size_t declaredIndex = getUDAs!(symbol, SdlTagValueAttr)[0]
-                .index;
-        else
-            enum size_t declaredIndex = size_t.max;
-
-        static if (role == SdlRoleKind.child
-            || role == SdlRoleKind.tagValue
-            || role == SdlRoleKind.attribute)
-        {
-            enum Shape shape = shapeAt(schema, ni);
-        }
-        else
-            enum Shape shape = Shape.other;
-
-        private enum size_t staticLength = schema.nodes[payloadIndex(schema, ni)].staticLength;
-
-        /// Whether the wrapper itself is a runtime-length array (the marker
-        /// distinguishing a dynamic value-suffix sequence from a static one).
-        enum bool dynamicArrayWrapper = schema.nodes[payloadIndex(schema, ni)].kind
-            == NodeKind.sequence;
+        private enum string rootError = sdlDocumentRootError(T.stringof, sdlFieldFacts!T);
+        static assert(rootError.length == 0, rootError);
+        alias sdlFieldRoles = sdlAggregateRoles!T.sdlFieldRoles;
     }
-
-    // ── §5.2 validation ──────────────────────────────────────────────────
-    private enum validationError = () {
-        string err;
-        int tagNameSeen, tagNsSeen, extraSeen;
-        string dynamicNameAt, dynamicNsAt;
-        size_t[] occupied;
-        bool hasDynamicSuffix;
-        size_t dynamicIndex;
-        bool anyFixedIndex;
-        size_t maxFixedIndex;
-
-        static void occupy(ref string err, ref size_t[] taken,
-            size_t from, size_t count, string where_)
-        {
-            foreach (p; from .. from + count)
-            {
-                foreach (existing; taken)
-                    if (existing == p)
-                    {
-                        import std.conv : to;
-
-                        err ~= "wired.sdl: " ~ T.stringof ~ "." ~ where_
-                            ~ ": positional value slot " ~ p.to!string
-                            ~ " is already claimed by another"
-                            ~ " @SdlTagValue field";
-                        return;
-                    }
-                taken ~= p;
-            }
-        }
-
-        static foreach (i; 0 .. fieldCount)
-        {{
-            alias F = FieldFacts!(T.tupleof[i], i);
-
-            static if (F.roleCount > 1)
-                err ~= "wired.sdl: " ~ T.stringof ~ "." ~ F.ident
-                    ~ ": a field declares at most one SDL role UDA";
-
-            static if (F.role == SdlRoleKind.child || F.role == SdlRoleKind.attribute)
-            {
-                alias Name = splitSdlQualifiedName!(T.stringof, F.ident, policies[i].key);
-                if (!isSdlIdentifier(Name.localName)
-                    || ((cast(string) Name.namespace_).length
-                        && !isSdlIdentifier(Name.namespace_)))
-                    err ~= "wired.sdl: " ~ T.stringof ~ "." ~ F.ident
-                        ~ ": @" ~ roleName(F.role)
-                        ~ " requires a valid qualified SDL identifier";
-                foreach (rawAlias; policies[i].aliases)
-                {
-                    const name = aliasName(rawAlias);
-                    if (!isSdlIdentifier(name.localName)
-                        || (name.namespace_.length && !isSdlIdentifier(name.namespace_)))
-                        err ~= "wired.sdl: " ~ T.stringof ~ "." ~ F.ident
-                            ~ ": @" ~ roleName(F.role)
-                            ~ " alias requires a valid qualified SDL identifier";
-                }
-            }
-
-            final switch (F.role)
-            {
-            case SdlRoleKind.child:
-                final switch (F.shape)
-                {
-                case Shape.scalarSingle:
-                case Shape.aggregateSingle:
-                case Shape.seqScalar:
-                case Shape.seqAggregate:
-                case Shape.map:
-                    break;
-                case Shape.other:
-                    err ~= "wired.sdl: " ~ T.stringof ~ "." ~ F.ident
-                        ~ ": @SdlChild requires a scalar, an aggregate, a "
-                        ~ "scalar or aggregate sequence/static array, or a "
-                        ~ "map with string/enum keys";
-                    break;
-                }
-                static if (F.shape == Shape.map)
-                {{
-                    const mapTarget = payloadIndex(schema, F.ni);
-                    const keyNode = schema.edges[
-                        schema.nodes[mapTarget].firstEdge];
-                    if (!nameBearing(schema, keyNode))
-                        err ~= "wired.sdl: " ~ T.stringof ~ "." ~ F.ident
-                            ~ ": an associative-array @SdlChild requires "
-                            ~ "string or name-represented enum keys";
-                }}
-                break;
-            case SdlRoleKind.tagValue:
-                final switch (F.shape)
-                {
-                case Shape.scalarSingle:
-                    maxFixedIndex = anyFixedIndex
-                        && maxFixedIndex > F.declaredIndex
-                        ? maxFixedIndex : F.declaredIndex;
-                    anyFixedIndex = true;
-                    occupy(err, occupied, F.declaredIndex, 1, F.ident);
-                    break;
-                case Shape.seqScalar:
-                    static if (F.dynamicArrayWrapper)
-                    {
-                        if (!hasDynamicSuffix)
-                        {
-                            hasDynamicSuffix = true;
-                            dynamicIndex = F.declaredIndex;
-                        }
-                        else
-                            err ~= "wired.sdl: " ~ T.stringof ~ "." ~ F.ident
-                                ~ ": at most one dynamic @SdlTagValue "
-                                ~ "sequence may consume a suffix per aggregate";
-                    }
-                    else
-                    {
-                        const staticEnd = F.declaredIndex + F.staticLength - 1;
-                        maxFixedIndex = anyFixedIndex
-                            && maxFixedIndex > staticEnd
-                            ? maxFixedIndex : staticEnd;
-                        anyFixedIndex = true;
-                        occupy(err, occupied, F.declaredIndex, F.staticLength,
-                            F.ident);
-                    }
-                    break;
-                case Shape.aggregateSingle:
-                case Shape.seqAggregate:
-                case Shape.map:
-                case Shape.other:
-                    err ~= "wired.sdl: " ~ T.stringof ~ "." ~ F.ident
-                        ~ ": @SdlTagValue requires a scalar-convertible "
-                        ~ "field or a sequence/static array of them";
-                    break;
-                }
-                break;
-            case SdlRoleKind.attribute:
-                final switch (F.shape)
-                {
-                case Shape.scalarSingle:
-                case Shape.seqScalar:
-                    break;
-                case Shape.aggregateSingle:
-                case Shape.seqAggregate:
-                case Shape.map:
-                case Shape.other:
-                    err ~= "wired.sdl: " ~ T.stringof ~ "." ~ F.ident
-                        ~ ": @SdlAttribute must be scalar-convertible "
-                        ~ "(a sequence means repeated attributes); nested "
-                        ~ "aggregates and maps are unsupported";
-                    break;
-                }
-                break;
-            case SdlRoleKind.tagName:
-                tagNameSeen++;
-                dynamicNameAt = F.ident;
-                if (!nameBearing(schema, F.ni))
-                    err ~= "wired.sdl: " ~ T.stringof ~ "." ~ F.ident
-                        ~ ": @SdlTagName requires a string or "
-                        ~ "name-represented enum field";
-                break;
-            case SdlRoleKind.tagNamespace:
-                tagNsSeen++;
-                dynamicNsAt = F.ident;
-                if (!nameBearing(schema, F.ni))
-                    err ~= "wired.sdl: " ~ T.stringof ~ "." ~ F.ident
-                        ~ ": @SdlTagNamespace requires a string or "
-                        ~ "name-represented enum field";
-                break;
-            case SdlRoleKind.extra:
-                extraSeen++;
-                static if (!is(typeof(T.tupleof[i]) == SdlExtras)
-                    && !is(typeof(T.tupleof[i]) == OwnedSdlExtras))
-                    err ~= "wired.sdl: " ~ T.stringof ~ "." ~ F.ident
-                        ~ ": @SdlExtra requires an SdlExtras (borrowed) or "
-                        ~ "OwnedSdlExtras (owned) field";
-                break;
-            }
-        }}
-
-        if (tagNameSeen > 1)
-            err ~= "wired.sdl: " ~ T.stringof
-                ~ ": at most one @SdlTagName field per aggregate";
-        if (tagNsSeen > 1)
-            err ~= "wired.sdl: " ~ T.stringof
-                ~ ": at most one @SdlTagNamespace field per aggregate";
-        if (extraSeen > 1)
-            err ~= "wired.sdl: " ~ T.stringof
-                ~ ": at most one @SdlExtra field per aggregate";
-        if (extraSeen && strictUnknown)
-            err ~= "wired.sdl: " ~ T.stringof
-                ~ ": @WireStrict and @SdlExtra are contradictory unknown-"
-                ~ "member policies (forbid versus preserve)";
-        // With no fixed slots at all, index 0 *is* the greatest declared
-        // index; comparing against a zero-initialized `maxFixedIndex` rejects
-        // the most natural positional shape there is (`tag "a" "b" "c"`).
-        if (hasDynamicSuffix && anyFixedIndex && dynamicIndex <= maxFixedIndex)
-            err ~= "wired.sdl: " ~ T.stringof
-                ~ ": the dynamic @SdlTagValue sequence must have the "
-                ~ "greatest declared index";
-        static if (isDocumentRoot)
-        {
-            if (dynamicNameAt.length)
-                err ~= "wired.sdl: " ~ T.stringof ~ "." ~ dynamicNameAt
-                    ~ ": @SdlTagName is forbidden on synthetic document roots";
-            if (dynamicNsAt.length)
-                err ~= "wired.sdl: " ~ T.stringof ~ "." ~ dynamicNsAt
-                    ~ ": @SdlTagNamespace is forbidden on synthetic document roots";
-        }
-        return err;
-    }();
-    static assert(validationError.length == 0, validationError);
-
-    /// The projected roles, parallel to the aggregate's declared fields.
-    enum SdlAggregateRoles sdlFieldRoles = () {
-        SdlAggregateRoles result;
-        result.strictUnknown = strictUnknown;
-        static foreach (i; 0 .. fieldCount)
-        {{
-            alias F = FieldFacts!(T.tupleof[i], i);
-            SdlFieldRole role;
-            role.fieldIndex = i;
-            role.nodeIndex = F.ni;
-            role.role = F.role;
-            foreach (name; policies[i].aliases)
-                role.aliases ~= aliasName(name);
-
-            static if (hasExplicitWireName!(Sdl, T.tupleof[i]))
-            {
-                role.namespace_ = splitSdlQualifiedName!(T.stringof,
-                    F.ident, policies[i].key).namespace_;
-                role.localName = splitSdlQualifiedName!(T.stringof,
-                    F.ident, policies[i].key).localName;
-            }
-            else
-            {
-                role.namespace_ = null;
-                role.localName = policies[i].key;
-            }
-
-            final switch (F.role)
-            {
-            case SdlRoleKind.tagValue:
-                role.positionalIndex = F.declaredIndex;
-                role.dynamicValueSuffix = F.shape == Shape.seqScalar
-                    && F.dynamicArrayWrapper;
-                role.staticCount = F.staticLength;
-                break;
-            case SdlRoleKind.tagName:
-                role.dynamicName = true;
-                break;
-            case SdlRoleKind.tagNamespace:
-                role.dynamicNamespace = true;
-                break;
-            case SdlRoleKind.child:
-                final switch (F.shape)
-                {
-                case Shape.scalarSingle:
-                    role.childShape = SdlChildShape.scalarSingle;
-                    break;
-                case Shape.aggregateSingle:
-                    role.childShape = SdlChildShape.aggregateSingle;
-                    break;
-                case Shape.seqScalar:
-                    role.childShape = SdlChildShape.scalarSequence;
-                    role.staticCount = F.staticLength;
-                    break;
-                case Shape.seqAggregate:
-                    role.childShape = SdlChildShape.aggregateSequence;
-                    break;
-                case Shape.map:
-                    role.childShape = SdlChildShape.map;
-                    break;
-                case Shape.other:
-                    assert(false);
-                }
-                break;
-            case SdlRoleKind.attribute:
-                role.staticCount = F.staticLength;
-                break;
-            case SdlRoleKind.extra:
-                break;
-            }
-            result.fieldNodeIndices ~= F.ni;
-            result.roles ~= role;
-        }}
-        return result;
-    }();
-
+    else
+    {
+        private enum SdlProjection projection = projectSdlRoles(rawWireSchemaOf!(Sdl, T),
+            sdlFieldFacts!T, T.stringof, hasWireStrict!(Sdl, T) || hasWireStrict!(AnyFormat, T));
+        static assert(projection.error.length == 0, projection.error);
+        // Keep runtime storage keyed by type, not by the schema value: a
+        // large recipe schema otherwise produces a symbol too long for PDB.
+        static immutable SdlAggregateRoles sdlFieldRoles = projection.roles;
+    }
 }
 
 // ── Unknown-member helpers ───────────────────────────────────────────────────
