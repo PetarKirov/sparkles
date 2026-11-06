@@ -364,7 +364,9 @@ produces, relative to an action-private output directory on the store's file
 system. A declared output is a file or a directory tree; a generator whose
 file names depend on its inputs declares its output directory. The action
 **must** fail if it produced an output outside its declarations, or did not
-produce a declared one.
+produce a declared one. Files it writes into its measurement directory
+([observability OBD8](../observability/SPEC.md#_11-run-records)) are not
+outputs.
 
 **BGA4: Explicit environment.** Every action **must** run with the environment
 its key declares (invariant 2). That environment is complete, not a change to
@@ -404,13 +406,18 @@ identity could hash one driver while the compiler runs another.
 
 **BGA6: Argument normalization.** Before an action's argument vector enters its
 key (§5), the absolute repository root **must** be replaced by a fixed
-placeholder, and the action's private output directory by another. No other
+placeholder, the action's private output directory by another, and its
+measurement directory by a third. No other
 argument is rewritten. So a prefix-map argument naming a worktree hashes
 equally in every worktree.
 
 **BGA7: Diagnostics are outputs.** An action's standard output, standard error
 and exit status **must** be recorded with its outputs and replayed on a cache
 hit (invariant 5). That includes a hit on a failed action that BGA9 publishes.
+
+An action's measurements are recorded beside its diagnostics, outside every
+key and every declared output
+([observability OBD8](../observability/SPEC.md#_11-run-records)).
 
 **BGA8: Graph exposure.** The build graph **must** expose its actions as task
 nodes with stable ids, typed actions and resource claims, so that the task-DAG
@@ -846,6 +853,10 @@ remote cache it gains **must** meet this requirement first.
 _Rationale:_ a snapshot is the only design without a timestamp window, and a
 wrong result in a shared cache reaches every machine that uses it.
 
+The store also reports each lookup's outcome and miss reason, and keeps a
+bounded journal of evicted keys to tell an eviction from a first build
+([observability §4.1](../observability/SPEC.md#_4-1-the-cache-family)).
+
 ## 7. Generators
 
 A **generator** is a tool the graph runs to produce files that a compile
@@ -1006,7 +1017,8 @@ import-from-derivation: every derivation is known before any builds.
 
 **BGN1: Same graph.** The Nix backend **must** lower the actions §4 defines, with
 the same declared keys, argument vectors and declared outputs as the local
-backend.
+backend, plus the separate measurement output
+([observability OBD8](../observability/SPEC.md#_11-run-records)).
 
 - **Staging helper:** each derivation's builder is a small, deterministic
   staging helper. It copies or hard-links each store input, never symlinks it,
@@ -1020,8 +1032,9 @@ backend.
   toolchain, whose identity enters its keys (§8).
 - **The argument vector:** the helper then runs the action's normalized
   argument vector there, with the private root in the root placeholder's place
-  (BGA6). So the recorded paths are root-relative, exactly as in the local
-  backend.
+  (BGA6), and that measurement output's directory in the measurement
+  placeholder's place. So the recorded paths are root-relative, exactly as in
+  the local backend.
 
 **BGN2: Sources.** A compile derivation's source inputs **must** be its declared
 inputs plus the complete file sets of the import, C import and string import
@@ -1073,8 +1086,10 @@ equal bytes. A test's output records an observation, not a function of its
 inputs, and a generator tool's determinism is not checked by the graph.
 
 **BGN5: Agreement.** For the same declared key and manifest, the local backend
-and the Nix backend **must** produce interchangeable outputs. The agreement
-oracle in [testing.md](./testing.md#oracle-6-backend-agreement) checks it.
+and the Nix backend **must** produce interchangeable outputs. The measurement
+output ([observability OBD8](../observability/SPEC.md#_11-run-records)) is not
+compared. The agreement oracle in
+[testing.md](./testing.md#oracle-6-backend-agreement) checks it.
 
 **BGN6: Diagnostics in the output.** A derivation's output **must** hold the
 action's standard output, standard error and exit status. A derivation whose

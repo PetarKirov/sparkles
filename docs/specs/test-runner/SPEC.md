@@ -317,6 +317,11 @@ host); attributing only provable zeros (flaps baselines between `0` and
 
 ### 5.1 Types
 
+These types belong to the metric vocabulary that the build, test and CI
+[observability](../build-primitives/observability/SPEC.md#_3-the-metric-vocabulary)
+specification shares with this runner, which places them in its vocabulary
+package (OBV1).
+
 Everything downstream renders through two types (`metrics.d`):
 
 ```d

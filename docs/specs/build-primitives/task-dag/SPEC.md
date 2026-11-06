@@ -342,6 +342,12 @@ tasks by their index in the validated graph's presentation order, not by
 bounded output references, elapsed time and sampled usage are observations
 attached to an outcome, not booleans that replace it.
 
+Which measurements an observation carries, with their units and qualities, is
+specified by [observability](../observability/SPEC.md#_4-action-metrics),
+which adds a measurement table that the executor fills and hands over at the
+run's end (OBA5), and keeps each run as a
+[run record](../../../glossary.md#run-record).
+
 ### 3.5 Events
 
 ```d
