@@ -161,6 +161,10 @@ struct WaylandWsi
     private int pendingDiscreteY_;
     private ScrollSource pendingScrollSource_ = ScrollSource.unknown;
     private bool pendingScroll_;
+    // `axis_stop` arrived in this frame: the fingers lifted (`INP26`).
+    private bool pendingScrollStop_;
+    // A finger scroll is in progress: its next frame is `changed`, not `began`.
+    private bool fingerScrolling_;
     private const(wl_surface)* keyboardFocus_;
     private Mods keyboardMods_;
     private zwp_text_input_manager_v3* textInputManager_;
@@ -2889,9 +2893,15 @@ struct WaylandWsi
         }
     }
 
-    private extern (C) static void onPointerAxisStop(void*, wl_pointer*,
+    // Sent only for finger and continuous sources: the gesture ended. A
+    // compositor synthesizes no kinetic scroll, so this is where a
+    // client's own momentum starts.
+    private extern (C) static void onPointerAxisStop(void* data, wl_pointer*,
         uint, uint) nothrow @nogc
     {
+        auto owner = cast(WaylandWsi*) data;
+        owner.pendingScrollStop_ = true;
+        owner.pendingScroll_ = true;
     }
 
     private extern (C) static void onPointerAxisDiscrete(void* data,
@@ -2940,7 +2950,15 @@ struct WaylandWsi
             scroll.discreteX = owner.pendingDiscreteX_;
             scroll.discreteY = owner.pendingDiscreteY_;
             scroll.source = owner.pendingScrollSource_ == ScrollSource.unknown
-                ? ScrollSource.wheel : owner.pendingScrollSource_;
+                ? (owner.pendingScrollStop_ || owner.fingerScrolling_
+                    ? ScrollSource.finger : ScrollSource.wheel)
+                : owner.pendingScrollSource_;
+            if (scroll.source == ScrollSource.finger)
+            {
+                scroll.phase = owner.pendingScrollStop_ ? ScrollPhase.ended
+                    : owner.fingerScrolling_ ? ScrollPhase.changed : ScrollPhase.began;
+                owner.fingerScrolling_ = !owner.pendingScrollStop_;
+            }
             scroll.unit = ScrollUnit.logical;
             scroll.modifiers = owner.keyboardMods_;
             owner.emit(owner.idAt(index), scroll);
@@ -2951,6 +2969,7 @@ struct WaylandWsi
         owner.pendingDiscreteY_ = 0;
         owner.pendingScrollSource_ = ScrollSource.unknown;
         owner.pendingScroll_ = false;
+        owner.pendingScrollStop_ = false;
     }
 
     /// evdev button codes: BTN_LEFT through BTN_EXTRA.
