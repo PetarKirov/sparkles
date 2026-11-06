@@ -702,10 +702,10 @@ ways a command stops being a function of its reads
 ([perfect-dependencies](../../../research/build-systems/perfect-dependencies.md)).
 
 **Choice.** Not made. The detection rule (BGK7) is common to (a) and (b) and
-stays proposed with them. Evidence on how other tools handle the case is being
-gathered.
+stays proposed with them.
 
-**Revisit when** that evidence is recorded; then accept one remedy and BGK7.
+**Revisit when** evidence on how other tools handle the case is recorded; then
+accept one remedy, and BGK7 with it.
 
 ## D32: Nix input narrowing is kept, constrained (accepted)
 
@@ -733,8 +733,11 @@ precise one" for a shared cache
 
 **Choice.** Keep it, constrained (BGN2): narrow only while every absent
 candidate of the manifest is still absent; require the narrowed build's
-dependency output to list only files among its inputs, or rerun with the full
-roots; never push a narrowed derivation to a shared store.
+dependency output to list only files among its inputs, and only absent
+candidates that the full roots lack too, or rerun with the full roots; never
+push a narrowed derivation to a shared store. The second half of the check is
+the one that can fail: inside the sandbox nothing outside the inputs exists to
+be read, but a probe can find absent a module the full roots hold.
 
 **Trade-offs.** A narrowed derivation's identity depends on the local store's
 history, so it is a local accelerator only. Remote builders and binary caches
@@ -744,8 +747,8 @@ see full-root derivations.
 
 ## D33: Sandboxed tests record the machine they ran on (accepted)
 
-**Question.** BGX3 lets a sandboxed test's result be reused if its key covers
-the kernel release, the CPU and the system type. Nix picks the builder after
+**Question.** As first written, BGX3 let a sandboxed test's result be reused if
+its key covered the kernel release, the CPU and the system type. Nix picks the builder after
 the derivation's hash is fixed, so a derivation cannot name the kernel of a
 machine not yet chosen. How is a reused result bound to a machine?
 
@@ -795,10 +798,11 @@ resulted in expensive debugging sessions and bug fixes"
 
 - Files under string import roots are scanned as text, whatever their
   extension.
-- A string literal containing `version (` or `debug (` makes the variant keep
-  every inherited identifier, and is reported. The rule covers every literal,
-  not only a `mixin`'s operand, because a constant can carry the literal to a
-  `mixin` elsewhere.
+- A `mixin` whose literal arguments, joined, contain `version (` or
+  `debug (` makes the variant keep every inherited identifier, and is
+  reported. So does a manifest constant initialized with such literals,
+  because a constant can carry them to a `mixin` elsewhere. Joining the
+  arguments catches a condition split across literals.
 - `isVersion`'s own literal is exempt, so the rule does not disable pruning
   for every package that imports `sparkles.base`. Instead a lint fails
   planning on an `isVersion` argument, outside a `unittest` block, that is not
@@ -806,9 +810,19 @@ resulted in expensive debugging sessions and bug fixes"
   `Apple`. `meta.d`'s own test probes a made-up identifier inside a `unittest`
   block, which compiles only in `sparkles:base`'s test root.
 
-**Trade-offs.** A literal such as a formatter's test fixture keeps its
-variant's inherited identifiers too. Planning reports each one, so such a
-variant can be fixed or accepted knowingly.
+**Trade-offs.**
+
+- **False positives:** a constant such as a formatter's test fixture
+  (`sparkles.dmd_fmt.loc_inventory`) keeps its variant's inherited
+  identifiers too. Planning reports each one, so such a variant can be fixed
+  or accepted knowingly.
+- **Ordinary literals are not scanned:** a literal passed to a function, such
+  as the DMD frontend's header generator writing `"version ("`, does not
+  trigger the rule. Scanning every literal would turn pruning off for every
+  variant that imports the frontend.
+- **The residual gap:** a CTFE function that assembles a condition from
+  literals in its body, for a `mixin` elsewhere, is not seen. The lint covers
+  `isVersion`; another such function needs a lint of its own.
 
 **Revisit when** the reported literals cost measurable sharing.
 
@@ -868,8 +882,8 @@ disconnected non-deterministic build can poison a cache until a clean rebuild"
   commit and is the same for a rerun of one commit.
 - **A difference** fails the run and removes the suspect result.
 
-**Trade-offs.** Up to eight extra actions per run, compiles of
-`sparkles:ui` among them. They run beside the run's tests, after the builds
+**Trade-offs.** Up to eight extra actions per run, possibly compiles of
+`sparkles:ui`. They run beside the run's tests, after the builds
 that produced their inputs. The check sees nondeterminism within one machine
 only; a difference between machines needs a shared cache to compare against.
 

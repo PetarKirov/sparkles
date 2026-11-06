@@ -74,7 +74,7 @@ ci docs wasm check|stage [module options]
 ci commits build-each [--base REF] [--packages NAME...]
 ci commit-scope [COMMIT_MESSAGE_FILE|-]
 ci cache seed-dub | check-pins | stats | list | gc
-ci cache verify [--rerun [--sample N]] [--key KEY...] [--task TASK...]
+ci cache verify [--rerun [--determinism-sample N]] [--key KEY...] [--task TASK...]
 ci cache remove --key KEY... | --task TASK... | --package NAME... | --toolchain ID
 ci cache replace TASK...
 ci cache explain TASK
@@ -111,7 +111,7 @@ rules as every other command.
 **CIC3: Backends.** `--backend local`, the default, runs build actions on the
 local executor and the shared store. `--backend nix` lowers them to Nix
 derivations, which run on the configured remote builders as well
-([build graph §10](../../build-primitives/build-graph/SPEC.md#10-the-nix-backend)).
+([build graph §10](../../build-primitives/build-graph/SPEC.md#_10-the-nix-backend)).
 Non-build tasks run locally under both.
 
 `ci test`, `ci pipeline` and the `ci docs` commands that build also accept
@@ -156,7 +156,9 @@ build-graph action of a listed kind (`compile`, `archive`, `link`, `generate`)
 that would execute instead of reusing a result. The action fails before it
 starts, with the miss's explanation
 ([BGS8](../../build-primitives/build-graph/SPEC.md#_6-the-shared-store)) as its
-diagnostic. A dry run reports which actions would fail.
+diagnostic. A dry run reports which actions would fail. The actions the
+determinism check (CIC13) re-executes are exempt, since executing them is its
+purpose.
 
 ### 1.3 `ci pipeline`
 
@@ -176,7 +178,7 @@ diagnostic. A dry run reports which actions would fail.
 It runs on the build graph's shared store. Its `--from` and `--since` narrow
 the package-derived tasks only. Tasks that require another host operating
 system or another architecture are `Skipped(platform)` under the local
-backend. Under the [Nix backend](../../build-primitives/build-graph/SPEC.md#10-the-nix-backend)
+backend. Under the [Nix backend](../../build-primitives/build-graph/SPEC.md#_10-the-nix-backend)
 they run on remote builders of that system.
 
 **CIC13: The determinism check runs on every run.** Every CI run **must** run
@@ -184,8 +186,8 @@ the build graph's cold, unshared check
 ([BGS9](../../build-primitives/build-graph/SPEC.md#_6-the-shared-store)) over a
 sample of the actions its builds ran or reused, once they have finished.
 `ci pipeline` plans it as a task of its graph. A workflow that splits its builds
-across jobs runs `ci cache verify --rerun --sample N` in a job that shares
-their store, or in each job over that job's actions.
+across jobs runs `ci cache verify --rerun --determinism-sample N` in a job
+that shares their store, or in each job over that job's actions.
 
 - **The sample:** order the run's cacheable actions (`compile`, `archive`,
   `link`, `generate`) by the SHA-256 digest of the `HEAD` commit id followed by
@@ -196,7 +198,8 @@ their store, or in each job over that job's actions.
   different actions, while a rerun of one commit checks the same ones.
 - **Whatever the run did:** the sample is drawn whether the run reused or
   executed an action. Each sampled action's result is compared with a fresh
-  execution that consults no store and publishes to none.
+  execution that bypasses its own lookup and publishes only to the check's
+  private store.
 
 A difference fails the task as an authoritative failure, naming the action
 and what differed, and removes the suspect result from the store.
@@ -278,7 +281,7 @@ Sparkles differs in load-bearing ways:
 ## 4. Selection policy
 
 Focused selection follows the [task DAG's selection
-algebra](../../build-primitives/task-dag/SPEC.md#2-package-discovery-and-focused-selection).
+algebra](../../build-primitives/task-dag/SPEC.md#_2-package-discovery-and-focused-selection).
 Only `ci test` and `ci pipeline` accept focused selectors; docs and example
 commands keep their file selectors.
 
@@ -304,9 +307,8 @@ package's directory and under no invalidator.
 Other `apps/ci/` changes select only `ci`, which owns them.
 
 > [!NOTE]
-> TODO: the build graph's modules do not exist yet, so
-> `apps/ci/src/repository_invalidators.d` cannot list them. Add their
-> directory to that list, and name it here, when the build graph lands.
+> TODO: `apps/ci/src/repository_invalidators.d` lists the build graph's
+> modules once they exist; the read-set check above fails until it does.
 
 ## 5. Command graphs
 
@@ -557,7 +559,7 @@ creates none. The `runs/` directory holds a `CACHEDIR.TAG` file (BGS7), and
 | Pure domain modules          | `coverage.d`, `dub_deps.d`, `example_manifest.d`, `blob_paths.d`, `docs_sidebar.d` and `fence_audit.d`, as reusable leaves. |
 
 The generic layers live in `sparkles:build-primitives` (see the [task DAG's
-module layout](../../build-primitives/task-dag/SPEC.md#9-module-layout)).
+module layout](../../build-primitives/task-dag/SPEC.md#_9-module-layout)).
 Command modules may import them and their domain leaves. They must not import
 concrete reporters.
 
