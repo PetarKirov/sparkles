@@ -106,16 +106,23 @@ Resolves the interface family `family` to its regular and bold files, the way
 `FontSet` resolves the cell font: through the system font database when
 `sources` uses one (fontconfig, or CoreText on macOS, so `"sans-serif"` names
 the desktop's own interface face), otherwise from `sources.dirs` (the bundled
-fonts on Android). `bold` is `""` when the family has no bold file. Returns
+fonts on Android). A path to a font file names that file, its bold the
+sibling beside it. `bold` is `""` when the family has no bold file. Returns
 whether a regular face was found.
 */
 bool resolveUiFace(string family, in FontSources sources, out string regular,
     out string bold) @trusted
 {
-    import std.file : exists;
+    import std.file : exists, isFile;
     import sparkles.raylib_text.font_discovery : fontVariantPaths;
 
-    if (sources.useSystemFontDb)
+    if (family.exists && family.isFile)
+    {
+        regular = family;
+        string italic, boldItalic;
+        fontVariantPaths(regular, bold, italic, boldItalic);
+    }
+    else if (sources.useSystemFontDb)
     {
         version (OSX)
         {
@@ -169,4 +176,9 @@ version (RaylibTextTests)
 
     assert(!resolveUiFace("Inter", sources, regular, bold), "a family the dirs lack");
     assert(regular == "" && bold == "");
+
+    // A file names itself, whatever the sources; its bold is its sibling.
+    const file = tmp.dir ~ "/Roboto-Regular.ttf";
+    assert(resolveUiFace(file, FontSources.init, regular, bold));
+    assert(regular == file && bold.baseName == "Roboto-Bold.ttf");
 }
