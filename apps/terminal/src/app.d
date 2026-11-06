@@ -106,6 +106,8 @@ int launchDesktop(ref CommandNode!TerminalCli node)
         fractionalScroll: true, // scrolled between cells (`LAY7`)
         traceSink: &routeTraceLog, // raylib's own log joins ours (TPG7)
     };
+    // The interface face: the desktop's unless `--ui-font` names one.
+    cfg.gui.interfaceFont = node.value.interfaceFont;
     // The panes and the chrome take the mouse as events, in pixels
     // (`WorkspaceHost.notePointer`), on every arm.
     cfg.pointerUnit = PointerUnit.pixels;

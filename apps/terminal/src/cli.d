@@ -17,7 +17,7 @@ import sparkles.terminal_view.component : TerminalViewOptions;
 import sparkles.terminal_view.input : ExitBehavior;
 import sparkles.terminal_view.notification_log : NotifyWhen;
 import sparkles.terminal_view.protocols : ProtocolPolicy;
-import sparkles.ui_app.gui_options : GuiOptions, NativeOptions;
+import sparkles.ui_app.gui_options : GuiOptions, InterfaceFontOptions, NativeOptions;
 import sparkles.wired.overlay : Sparse;
 
 import settings : OnExit, TerminalConfig;
@@ -177,6 +177,11 @@ struct TerminalCli
 
     @(Option("debug-take-screenshot-and-exit", description: "Takes a screenshot after 2 seconds and exits."))
     bool debugScreenshot;
+
+    /// `--ui-font`: the chrome's interface face, the shared group (not a
+    /// configuration key: the face is the desktop's unless a flag says).
+    @Flatten
+    InterfaceFontOptions interfaceFont;
 
     /// The native (Vulkan) window's window system and diagnostics; the
     /// raylib window ignores them.
@@ -499,4 +504,20 @@ unittest
     assert(bad, bad.error.message);
     assert(parsedLaunch(bad.value).badExit == "sometimes");
     assert(parsedLaunch(bad.value).flags.length == 0);
+}
+
+@("cli.TerminalCli.uiFontIsTheSharedOption")
+@system unittest
+{
+    import sparkles.ui_app.gui_options : fontRequestOf;
+
+    // `--ui-font` is the shared group's, beside the terminal's own font flags.
+    auto parsed = parseCli!TerminalCli(["terminal", "--font", "Fira", "--ui-font", "Inter"]);
+    assert(parsed, parsed.error.message);
+    assert(parsed.value.font == "Fira" && parsed.value.interfaceFont.uiFont == "Inter");
+    auto gui = guiOptionsFrom(TerminalConfig.init);
+    gui.interfaceFont = parsed.value.interfaceFont;
+    assert(fontRequestOf(gui).ui == "Inter");
+    // Unset, the desktop's.
+    assert(parseCli!TerminalCli(["terminal"]).value.interfaceFont.uiFont is null);
 }
