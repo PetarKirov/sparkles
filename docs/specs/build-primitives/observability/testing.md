@@ -35,9 +35,9 @@ Three rules hold for every oracle:
 | OBC6, OBL1–OBL3                                  | 8. object and link analysis  |
 | OBT1–OBT3                                        | 9. test usage                |
 | OBP1–OBP4                                        | 11. privacy                  |
-| OBH1–OBH7, OBH9–OBH10                            | 12. history branch           |
+| OBH1–OBH10                                       | 12. history ref              |
 | OBH4, OBH8                                       | 17. repository configuration |
-| OBG1–OBG9                                        | 13. the gate                 |
+| OBG1–OBG10                                       | 13. the gate                 |
 | OBO1–OBO2                                        | 14. overhead budget          |
 | invariant 1, OBD11, OBU5                         | 15. verdict independence     |
 
@@ -303,12 +303,14 @@ scanner. Then check that a clean record of the same run is written.
 **Broken implementation:** a scanner that checks only `run.json`; a scanner
 that matches the user name as a substring.
 
-### Oracle 12: history branch
+### Oracle 12: history ref
 
 **Source of truth:** a local bare repository standing in for the remote, with
 an upload-pack wrapper that counts requests and bytes.
 
-**Method:** run appenders, compaction and readers against it.
+**Method:** run appenders, compaction and readers against it. History lives
+at `refs/perf/data`; commits are signed with test keys listed in a fixture
+allowed-signers file.
 
 **Falsifying scenarios:**
 
@@ -324,13 +326,22 @@ an upload-pack wrapper that counts requests and bytes.
   `/` or `..`, is dropped;
 - a tree containing `.github/` or an executable file is refused by the
   appender and by compaction;
-- every commit carries the fixed identity, whatever the environment sets;
+- every commit carries the fixed identity, whatever the environment sets, and
+  a signature from a listed key;
+- an ordinary `git clone` of the fixture remote does not download
+  `refs/perf/data`, and `ci perf fetch` does, with `--filter=blob:none`;
+- a commit with no signature, or one from an unlisted key, pushed onto the
+  ref: its runs are ignored and reported, and an appender refuses to build on
+  it;
+- the ref rewound to an older commit, or deleted: a reader keeps its cached
+  history and reports the rewind; the ref replaced by a signed compaction
+  commit: the reader accepts it;
 - a fresh `ci perf history` fetches only the shard files of the series it
   charts, in one request;
 - with the remote unreachable, `ci perf show` of a cached run succeeds and
   reports the cache's age;
 - after compaction, detail older than 90 days is gone, runs older than 365 days
-  are rollups, and the branch has one root commit.
+  are rollups, and the ref has one signed root commit.
 
 **Size model:** spike S6.
 
@@ -351,7 +362,10 @@ an upload-pack wrapper that counts requests and bytes.
    with the unmodified run.
 4. **No counters:** compare two records without `task.instructions`, and two
    records of which only one has it.
-5. **Determinism:** run every comparison twice, and compare the reports byte
+5. **CPU gate:** A/A pairs and injections as in steps 2–3 on a hosted runner
+   whose gate metric is `cpu-user`, against the `cpu-user` thresholds; and a
+   comparison of a run gated on instructions with one gated on CPU time.
+6. **Determinism:** run every comparison twice, and compare the reports byte
    for byte.
 
 **Expected:** at most 8 of the 100 A/A pairs flag a series. A gate whose true
@@ -361,7 +375,9 @@ injection flagged and the halved one not; `Degraded(noGate)` with each reason
 counted and exit status zero when nothing is gated; a series with one side
 missing its counter ungated; a series whose sides differ in comparability key
 shown as not comparable, naming the components; a series that head served from
-the store `unchanged`; improvements reported and not gated.
+the store `unchanged`; improvements reported and not gated; the CPU gate's A/A
+pairs within the same bound; the mixed comparison ungated with reason
+`gate-metric-differs` throughout, and every report naming its gate metric.
 
 ### Oracle 14: overhead budget
 
@@ -421,14 +437,15 @@ internal-JSON log.
 **Source of truth:** the intended configuration, written down beside the
 workflows.
 
-**Method:** a review, by someone other than the author, of the `perf-data`
-ruleset, the deployment environment and the appending and compaction jobs'
-permissions, exported through the GitHub API and compared with the intended
-configuration. A pull request that adds a workflow trying to push to
-`perf-data` is refused.
+**Method:** a review, by someone other than the author, of the deployment
+environment that holds the CI signing key, its deployment-branch rule, the
+allowed-signers file `nix/perf-data-signers`, and the appending and compaction
+jobs' permissions, exported through the GitHub API and compared with the
+intended configuration. A pull request whose workflow asks for the
+environment is refused the key.
 
 This is configuration evidence, not a test; it is repeated whenever the
-workflows or the ruleset change.
+workflows, the environment or the signers file change.
 
 ## Spikes
 
@@ -437,11 +454,16 @@ in [decisions.md](./decisions.md).
 
 - **S1: Counters where CI runs.** Can user-mode instructions be counted on the
   hosted Linux, macOS and Windows runners, on a self-hosted Linux machine and
-  on a developer machine, and what does each refuse? _Decides_ Q1.
+  on a developer machine, and what does each refuse? It reads
+  `perf_event_paranoid`, probes for a PMU inside each hosted virtual machine,
+  tries `perf_event_paranoid` 2 where the job can set it, and counts a known
+  loop. _Decides_ each environment's gate metric under OD20: instructions where
+  counted, user CPU time on hosted runners where not.
 - **S2: Instruction noise.** What is the spread of equal-input differences of
   `task.instructions` per action kind, on a dedicated machine and on a hosted
-  runner, and how many equal-input pairs does a month of `main` produce?
-  _Decides_ OBG5's priors and floors.
+  runner, and the same for `task.cpu.user` on hosted runners; how many
+  equal-input pairs does a month of `main` produce? _Decides_ OBG5's priors and
+  floors, including the `cpu-user` rows.
 - **S3: Time-trace cost.** What do the reduced trace, at 500 µs, 5 ms and
   50 ms, and the fork's summary mode cost on the corpus, per compiler? Which
   LLVM work does each LDC event enclose? _Decides_ OBC7's source per compiler,
@@ -456,11 +478,16 @@ in [decisions.md](./decisions.md).
   call returns the root's resource usage beside its `waitid` reaping?
   _Decides_ the sources of OBA1–OBA2, or their lower-bound fallbacks; without
   an exact `task.instructions`, nothing is gated.
-- **S6: Branch growth.** Generate a year of synthetic records at `main`'s
-  landing rate, then measure the branch's packed size before and after
+- **S6: History growth.** Generate a year of synthetic records at `main`'s
+  landing rate, then measure the history's packed size before and after
   compaction, the size of a `blob:none` clone, the bytes one `history` query
   fetches, and the server-side size after a re-rooted push. _Decides_ the shard
   count and OBH7's thresholds.
+- **S7: A custom ref on GitHub.** Does GitHub accept a push to
+  `refs/perf/data`, keep it, serve it to a `--filter=blob:none` fetch with
+  batched blob requests, leave it out of ordinary clones, and start no workflow
+  for it? Which ruleset or setting, if any, can protect it? _Decides_ whether
+  OBH1–OBH10 hold as written; a refusal reopens OD19.
 
 ## Evidence ledger
 
@@ -479,6 +506,6 @@ Nothing is implemented. Every row is planned.
 | OBD1–OBD12  | planned | —        | everything |
 | OBH1–OBH10  | planned | —        | everything |
 | OBP1–OBP4   | planned | —        | everything |
-| OBG1–OBG9   | planned | —        | everything |
+| OBG1–OBG10  | planned | —        | everything |
 | OBQ1–OBQ8   | planned | —        | everything |
 | OBU1–OBU5   | planned | —        | everything |

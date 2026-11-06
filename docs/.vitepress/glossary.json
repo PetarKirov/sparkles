@@ -1623,7 +1623,7 @@
     "term": "run record",
     "aliases": ["perf record"],
     "summary": "The measurements of one ci run, kept as a small schema-versioned directory of JSON files that names no person, so runs can be shown, compared and charted later.",
-    "definition": "A directory holding one run's facts, its run and CI job metrics, and every task's metrics keyed by series and comparability key. Records are written locally for every run and shared through the `perf-data` branch. See [the observability specification §11](/specs/build-primitives/observability/SPEC#_11-run-records).",
+    "definition": "A directory holding one run's facts, its run and CI job metrics, and every task's metrics keyed by series and comparability key. Records are written locally for every run and shared through the data-only ref `refs/perf/data`. See [the observability specification §11](/specs/build-primitives/observability/SPEC#_11-run-records).",
     "authority": [
       {
         "text": "Observability specification §11",

@@ -8,9 +8,10 @@ reviewed: 2026-11-06
 
 Each record states its question, the alternatives, the choice and when to
 revisit it. Records marked **accepted** were decided by the owner on
-2026-11-06: OD1–OD4 in the brief that commissioned this specification, and
-OD18 after its first review. Records marked
-**proposed** await the owner's decision. Open questions close the page, each
+2026-11-06: OD1–OD4 in the brief that commissioned this specification, OD18
+after its first review, and OD5–OD17, OD19 and OD20 when the owner answered
+the review's questions. Records marked **proposed** await the owner's decision,
+and a record marked **superseded** names the record that replaced it. Open questions close the page, each
 with a recommended answer, its resolver and the point by which it must be
 decided.
 
@@ -32,7 +33,10 @@ it, and each requirement family names its owning package (SPEC §2).
 **Revisit when** a family gains a consumer outside this repository, which
 would justify a package specification of its own.
 
-## OD2: History lives on an orphan branch of this repository (accepted)
+## OD2: History lives on an orphan branch of this repository (superseded)
+
+_Superseded by [OD19](#od19-history-lives-on-refs-perf-data-accepted). The
+record is kept as the owner's first choice and its reasons._
 
 **Question.** Where do run records from CI and from developers' machines meet,
 so that a fresh checkout can compare and chart without local history?
@@ -72,6 +76,9 @@ gains contributors whose pushes cannot be trusted with it.
 
 ## OD3: The gate reads instructions retired only (accepted)
 
+_Refined by [OD20](#od20-hosted-runners-without-counters-gate-on-user-cpu-time-accepted),
+which adds a CPU-time gate where hosts have no counters._
+
 **Question.** Which metric may fail a comparison?
 
 **Alternatives.**
@@ -108,7 +115,7 @@ and queue wait reach users with `apps/ci` M7, whose `ci test` writes the first
 records, because Event Horizon's supervised runs already sample them. History
 and the gate follow (PLAN.md).
 
-## OD5: Local records are published only by `ci perf push` (proposed)
+## OD5: Local records are published only by `ci perf push` (accepted)
 
 **Question.** How do developers' records reach `perf-data`?
 
@@ -128,7 +135,7 @@ Local records are marked `origin: local` and are never CI's baseline.
 as a self-hosted macOS machine; then an opt-in for that machine is cheaper
 than remembering to push.
 
-## OD6: The vocabulary is a leaf package beside the in-binary packages (proposed)
+## OD6: The vocabulary is a leaf package beside the in-binary packages (accepted)
 
 **Question.** The build graph, the task DAG, Event Horizon, `apps/ci` and the
 test runner must share one vocabulary (invariant 6). The test runner's catalog
@@ -158,7 +165,7 @@ without the shim, as the harness does.
 
 **Revisit when** the test runner's in-binary rule changes.
 
-## OD7: Records live outside the build store (proposed)
+## OD7: Records live outside the build store (accepted)
 
 **Question.** Where are local records kept?
 
@@ -174,7 +181,7 @@ and holds content-addressed results only
 evicted to make room for objects. The run directory holds task directories,
 which are removed after reporting.
 
-## OD8: The compiler summarizes its own time trace (proposed)
+## OD8: The compiler summarizes its own time trace (accepted)
 
 **Question.** A DMD time trace of one `sparkles:build-primitives` test-root
 compile, at the frontend's default granularity of 500 µs, made it take about
@@ -206,7 +213,7 @@ it uses the reduced coarse trace. Spike S3 measures both against the budget
 summary mode's clock reads exceed the budget, for example one per CTFE call.
 The summary mode would then time CTFE per evaluated expression, not per call.
 
-## OD9: Measurements are side outputs, outside every key (proposed)
+## OD9: Measurements are side outputs, outside every key (accepted)
 
 **Question.** A compile's time summary differs on every run. How is it stored
 without breaking reuse?
@@ -219,7 +226,7 @@ address is unchanged, a dependent never reads timing data, and two producers
 of one result stay interchangeable. The build graph's BGA3, BGA6 and BGN5 are
 amended to name the measurement directory.
 
-## OD10: Series keys keep the compiler vendor, comparability keys the toolchain (proposed)
+## OD10: Series keys keep the compiler vendor, comparability keys the toolchain (accepted)
 
 **Question.** A series must line up across runs and machines, keyed by task id
 and variant key. The variant key includes the toolchain identity, so every
@@ -235,7 +242,7 @@ comparability key, and the gate never compares across one.
 A test binary's own result key is not in the comparability key: a code change
 changes the binary, and the comparison exists to measure exactly that.
 
-## OD11: Noise is estimated from executions with equal inputs (proposed)
+## OD11: Noise is estimated from executions with equal inputs (accepted)
 
 **Question.** A series' history mixes real changes with noise. How is noise
 estimated from it?
@@ -262,7 +269,7 @@ series is not gated until it has history.
 **Revisit when** S2 shows that equal-input pairs are too rare for most compile
 series, for example because CI's store stays warm.
 
-## OD12: Four qualities, not three (proposed)
+## OD12: Four qualities, not three (accepted)
 
 **Question.** The brief names three qualities: exact, lower bound and
 unavailable. Are they enough?
@@ -276,7 +283,7 @@ already labels such values as estimates
 unavailable is the absence of a value, with a reason (OBV7–OBV8). An estimate
 is never gated.
 
-## OD13: Memory is three metrics, not one (proposed)
+## OD13: Memory is three metrics, not one (accepted)
 
 **Question.** The brief asks for peak tree RSS. What can each platform report
 truthfully?
@@ -291,7 +298,7 @@ not a resident set.
 Windows' `task.mem.commit`, each defined by what its source measures. A single
 "peak tree RSS" would mean a different thing on each platform.
 
-## OD14: Platform counters with different meanings get different ids (proposed)
+## OD14: Platform counters with different meanings get different ids (accepted)
 
 **Question.** Windows' process cycle time and macOS's `ri_instructions` are
 counters too. Are they `task.cycles` and `task.instructions`?
@@ -304,7 +311,7 @@ include pipes and devices, so they are `task.io.read-calls` and
 `task.io.write-calls`, not storage reads. Only the Linux user-mode counters are
 `task.instructions` and `task.cycles`, and only they are gated.
 
-## OD15: Flakiness instead of retries (proposed)
+## OD15: Flakiness instead of retries (accepted)
 
 **Question.** The brief asks for retries and flaky results per test binary.
 
@@ -316,7 +323,7 @@ died during a test, and `ci` runs every package's tests in two legs, `-t 1` and
 derived: a verdict that differs between the two legs of a run, or between runs
 with equal input keys (OBT3).
 
-## OD16: CI's records come from the run that validated the landed tree (proposed)
+## OD16: CI's records come from the run that validated the landed tree (accepted)
 
 **Question.** `main` does not re-run CI when the landed tree equals the tree a
 pull request or merge-queue run built; the mirroring job copies its checks.
@@ -325,20 +332,18 @@ Which run's records describe a `main` commit?
 **Choice.** The validating run's, appended by the job that establishes
 `main`'s checks: from that run's artifacts on the mirror path, and by the
 rebuilt run itself on the rebuild path (OBH4). Pull request runs never append,
-so `perf-data` holds nothing from CI but `main`.
+so the history holds nothing from CI but `main`.
 
-**Trade-offs.** The append right needs a credential that a pull request's
-workflow cannot obtain. `GITHUB_TOKEN` cannot provide that, because every job
-holding it is the same actor, and a ruleset bypass names actors, not
-workflows. Hence the App, whose credentials live in an environment restricted
-to `main` (OBH8). An environment restricts by ref, not by job, so review of
-`main`'s workflows keeps the credential to the two jobs that need it, and the
-appending job lives in `main-checks.yml`, never in `ci.yml`, which also runs for
-pull requests and the merge queue. Maintainers stay on the ruleset's bypass
-list for fast-forward updates, so that `ci perf push` works with their own
-credentials.
+**Trade-offs.** Nothing on the server stops a pull request's workflow, or
+anyone with write access, from pushing to `refs/perf/data` (OD19). What a
+pull request cannot obtain is the CI signing key, which lives in an environment
+restricted to `main`, and readers trust only signed commits (OBH8). An
+environment restricts by ref, not by job, so review of `main`'s workflows keeps
+the key to the two jobs that need it, and the appending job lives in
+`main-checks.yml`, never in `ci.yml`, which also runs for pull requests and the
+merge queue.
 
-## OD17: ELF first for object and link analysis (proposed)
+## OD17: ELF first for object and link analysis (accepted)
 
 **Question.** Object and link analysis needs a reader per object format and a
 report from each linker.
@@ -359,16 +364,79 @@ refinement. An item that evidence shows cannot stay on within the overhead
 budget (OBO1) is not dropped: it becomes off by default under OBO3, with the
 measurement and the proposed change recorded here for the owner.
 
+## OD19: History lives on `refs/perf/data` (accepted)
+
+**Question.** OD2 put the history on an orphan branch, `perf-data`. Every
+ordinary clone fetches every branch, and the branch appears in the
+repository's branch lists. Is a branch the right home?
+
+**Alternatives.**
+
+- **The branch**, bounded by compaction, with a negative refspec documented for
+  contributors who want to leave it out.
+- **A ref outside `refs/heads/` and `refs/tags/`**, `refs/perf/data`, which
+  ordinary clones and fetches never download and no branch list shows.
+
+**Choice.** `refs/perf/data`, decided by the owner on 2026-11-06, superseding
+the branch of OD2 so that clones stay small and no branch clutters the
+repository's interface. `ci perf fetch` and every lazy read fetch the ref
+explicitly with `--filter=blob:none`, and `ci perf push` and CI's appending job
+push to it with the same conflict-free `mktree` append (OBH1–OBH10).
+
+**Evidence.** GitHub documents three kinds of ruleset: branch, tag and push.
+Branch and tag rulesets select branches and tags by name pattern; push
+rulesets restrict file paths, extensions and sizes, and can be created only for
+private and internal repositories
+([creating rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/creating-rulesets-for-a-repository),
+[the rulesets REST API](https://docs.github.com/en/rest/repos/rules?apiVersion=2022-11-28)).
+No documented ruleset protects a ref such as `refs/perf/data`, and this
+repository is public. So nothing on the server limits updates, rewinds or
+deletion of the ref beyond write access to the repository. Spike S7 confirms
+that GitHub accepts, keeps and serves the ref, including to partial fetches,
+and that a push to it starts no workflow.
+
+**Consequence.** The App and the rulesets of the branch design are dropped.
+Integrity moves to the readers: every commit is signed with a key from an
+allowed-signers file on `main`, readers ignore and report unsigned additions,
+and a rewind is believed only when it is a signed compaction (OBH8). The
+negative-refspec advice is no longer needed.
+
+**Revisit when** GitHub offers rulesets for arbitrary refs, which would put
+the push right back on the server.
+
+## OD20: Hosted runners without counters gate on user CPU time (accepted)
+
+**Question.** OD3 gates on instructions retired only. GitHub's hosted runners
+are virtual machines that may expose no PMU, in which case no CI comparison
+could gate. What gates there?
+
+**Choice.** Decided by the owner on 2026-11-06, refining OD3. Test first:
+spike S1 checks whether hosted runners count user-mode instructions.
+
+- **Where the host counts them**, the gate is instructions retired, as OD3
+  decided.
+- **On hosted runners that cannot**, the gate is user CPU time,
+  `task.cpu.user`, with its own noise estimate and wider floors (OBG4–OBG5).
+- **Developers' machines** gate on perf counters; one without them is not
+  gated.
+
+Each run records its gate metric (OBG1). A comparison states which gate it ran
+under, and gates only when both sides share the metric; instructions from one
+side are never compared with CPU time from the other (OBG10).
+
+**Trade-offs.** CPU time on a shared virtual machine is far noisier than
+instructions, so the CPU gate catches only large regressions. Its floors stay
+uncalibrated, and the gate report-only, until S2 measures hosted-runner noise.
+
+**Revisit when** hosted runners expose counters, or a self-hosted runner with a
+PMU takes over the gated leg.
+
 ## Open questions
 
 Unless a question says otherwise, its resolver is the owner.
 
-- **Q1: The gate on hosted CI runners.** Affects OBG1, OBG6 and OBH4. Hosted
-  virtual machines often expose no PMU to the guest, and some images set
-  `perf_event_paranoid` above 2. If spike S1 confirms that, no CI comparison
-  can gate. _Recommended:_ keep the rule; set `perf_event_paranoid` to 2 in the
-  CI jobs that can; and add one self-hosted Linux runner with a PMU that runs
-  the gated `ci test` leg for `main` and for pull requests. _Decide by_ O6.
+- **Q1: The gate on hosted CI runners.** Resolved by OD20: test first with
+  S1, and gate on user CPU time where hosted runners have no counters.
 - **Q2: Build-action task ids.** Affects OBD2 and build graph BGA8, which
   requires stable ids but not their form. _Recommended:_ BGA8 states the form
   `<kind>:<package>:<role>:<vendor>:<d>`, where `<d>` is the first twelve
@@ -376,11 +444,9 @@ Unless a question says otherwise, its resolver is the owner.
   by the vendor, so that no id embeds a toolchain or a result key and two
   vendors' variants stay distinct in one graph. _Resolver:_ the build graph's
   owner. _Decide by_ E2, which exposes the ids.
-- **Q3: The vocabulary package's name.** Affects OBV1. _Recommended:_
-  `sparkles:metrics`. _Decide by_ O1.
-- **Q4: Retention thresholds.** Affects OBD12 and OBH7. _Recommended:_ the
-  stated defaults (detail 90 days, runs 365 days, 256 MiB), revisited when S6
-  measures the branch's real growth. _Decide by_ O5.
+- **Q3: The vocabulary package's name.** Resolved: `sparkles:metrics`.
+- **Q4: Retention thresholds.** Resolved: 90 days of detail, 365 days of runs
+  and 256 MiB, revisited after S6.
 - **Q5: Gating local comparisons.** Affects OBG3. _Recommended:_ `--gate` with
   `--local` compares two local runs of the same machine only, which is useful
   before pushing and never mixes machines. _Decide by_ O6.
@@ -389,8 +455,5 @@ Unless a question says otherwise, its resolver is the owner.
   that build with Nix's internal-JSON log written to a file, and the job's `ci`
   run ingests the file through an option, so no shell script parses it.
   _Decide by_ O5.
-- **Q7: A branch, or a ref outside `refs/heads/`.** Affects OBH1, OBH7 and
-  OBH8. A ref such as `refs/perf/data` is not fetched by ordinary clones, but
-  rulesets protect only branches and tags, so its push right could not be
-  limited to the App. _Recommended:_ keep the branch, with the 256 MiB bound and
-  the documented negative refspec. _Decide by_ O5.
+- **Q7: A branch, or a ref outside `refs/heads/`.** Resolved by OD19:
+  `refs/perf/data`.
