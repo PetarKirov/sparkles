@@ -57,12 +57,19 @@ timestamp is sampled against so a GPU time lands on the CPU's timeline
 (`PRF11`). druntime's `MonoTime` is `CLOCK_MONOTONIC` on Linux and Android
 and `QueryPerformanceCounter` on Windows; elsewhere there is no domain to
 calibrate against, and `hasMonoTimeDomain` is false.
+
+On macOS MoltenVK offers `CLOCK_MONOTONIC_RAW` and samples
+`mach_continuous_time` for it, which counts sleep, where `MonoTime` is
+`mach_absolute_time`, which does not: the profiler subtracts the sleep the
+two differ by when it calibrates (`hostClockOffsetNanos`).
 */
 version (linux)
     enum VkTimeDomainKHR monoTimeDomain = VkTimeDomainKHR.VK_TIME_DOMAIN_CLOCK_MONOTONIC_KHR;
 else version (Windows)
     enum VkTimeDomainKHR monoTimeDomain =
         VkTimeDomainKHR.VK_TIME_DOMAIN_QUERY_PERFORMANCE_COUNTER_KHR;
+else version (OSX)
+    enum VkTimeDomainKHR monoTimeDomain = VkTimeDomainKHR.VK_TIME_DOMAIN_CLOCK_MONOTONIC_RAW_KHR;
 else
     enum VkTimeDomainKHR monoTimeDomain = VkTimeDomainKHR.VK_TIME_DOMAIN_DEVICE_KHR;
 
