@@ -50,7 +50,7 @@ import std.traits : fullyQualifiedName,
     isSomeChar,
     isStaticArray,
     isUnsigned;
-import std.sumtype : isSumType;
+import std.sumtype : isSumType, match;
 import std.typecons : Nullable, Ternary;
 
 import optional : Optional, some;
@@ -286,7 +286,7 @@ private auto encPayload(V)(scope const ref V v)
 /// Whether aggregate `T` declares dynamic identity fields.
 private template HasIdentity(T)
 {
-    static if (is(T == struct))
+    static if (is(T == struct) && !isSumType!T)
     {
         static immutable bool HasIdentity = () {
             alias r2 = sdlAggregateRoles!(Unqual!T).sdlFieldRoles;
@@ -3012,6 +3012,36 @@ private enum fullSource =
     assert(noVariant.error.variants[0].rolePath[] == ".u[0]@choice");
 }
 
+/// A scalar union encodes as its active member, on every scalar channel: a
+/// positional value, an attribute, a single child, and a scalar sequence.
+@("wired.sdl.codec.unionEncode")
+@system unittest
+{
+    static struct Leaf
+    {
+        @SdlTagValue(0) SumType!(int, string) id;
+        @SdlAttribute() SumType!(int, string) choice;
+    }
+    static struct UnionDoc
+    {
+        SumType!(int, string) single;
+        SumType!(int, string)[] many;
+        @SdlChild() Leaf leaf;
+    }
+
+    UnionDoc doc;
+    doc.single = "s";
+    doc.many = [SumType!(int, string)(1), SumType!(int, string)("two")];
+    doc.leaf = Leaf(SumType!(int, string)(7), SumType!(int, string)("c"));
+    const encoded = toSDL(doc);
+    assert(encoded.hasValue, encoded.error.toString);
+    assert(encoded.value[] == "single \"s\"\nmany 1 \"two\"\nleaf 7 choice=\"c\"\n",
+        encoded.value[].idup);
+    const back = fromSDL!(UnionDoc, sdlFull)(encoded.value[]);
+    assert(back.hasValue, back.error.toString);
+    assert(back.value == doc);
+}
+
 // Shapes SPEC §5.2 accepts must actually decode. Each of these passed the
 // compile-time role projection while the walk that consumes it did not
 // instantiate, so nothing in the suite reached them.
@@ -3310,6 +3340,9 @@ private SdlScalar encScalar(T)(scope const ref T v, ref EncBuilder b,
         return SdlScalar(encOwn(b, v));
     else static if (isSomeChar!U)
         return SdlScalar(cast(dchar) v);
+    // A scalar union is its active member's scalar (SPEC §6).
+    else static if (isSumType!U)
+        return v.match!((ref const member) => encScalar(member, b, enumStyle, enumRepr));
     else static if (isIntegral!U)
     {
         static if (isSigned!U)
@@ -4045,7 +4078,7 @@ if (is(T == struct))
                         encAddValue(b, cIdx, encScalar(value.tupleof[i]
                             .yes ? true : false, b));
                     }
-                    else static if (is(C == struct) && !isSomeChar!C
+                    else static if (is(C == struct) && !isSumType!C && !isSomeChar!C
                         && !is(C == string))
                     {
                         encodeAggregate!(C)(b, encPayload(value.tupleof[i]),
@@ -4091,7 +4124,7 @@ if (is(T == struct))
                     const cIdx = encAppendNode(b, name.namespace_, name.localName, childDepth);
                     scope (exit) popSegment(b.path, mark);
 
-                    static if (is(Unqual!(EncPayload!V) == struct)
+                    static if (is(Unqual!(EncPayload!V) == struct) && !isSumType!(EncPayload!V)
                         && !is(EncPayload!V == bool) && !isSomeChar!(EncPayload!V)
                         && !is(EncPayload!V == string))
                     {
@@ -4120,7 +4153,7 @@ if (is(T == struct))
                 && !isAssociativeArray!(Unqual!V))
             {
                 alias E = ForeachType!(Unqual!V);
-                static if (is(E == struct) && !isSomeChar!E && !is(E == enum))
+                static if (is(E == struct) && !isSumType!E && !isSomeChar!E && !is(E == enum))
                 {
                     // Aggregate sequence: one sibling per element.
                     foreach (element, elem; value.tupleof[i])
@@ -4212,7 +4245,7 @@ if (is(T == struct))
                         childDepth);
                     scope (exit) popSegment(b.path, mark);
 
-                    static if (is(M == struct) && !isSomeChar!M && !is(M == enum))
+                    static if (is(M == struct) && !isSumType!M && !isSomeChar!M && !is(M == enum))
                         encodeAggregate!(M)(b, entry.value, cIdx);
                     else
                     {
