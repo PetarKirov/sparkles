@@ -1012,24 +1012,28 @@ bool runNative(alias present, alias handle, alias draw = noDraw, alias setup = n
     }
     // Android is `linux` too, and has neither Wayland nor X11: its window is
     // the activity's, its frames paced by `AChoreographer`. Wayland's are
-    // paced by the compositor's frame callbacks; X11 presents at once, and
-    // its FIFO swapchain paces it.
+    // paced by the compositor's frame callbacks; X11 and AppKit present at
+    // once, and their FIFO swapchains pace them (on AppKit, MoltenVK's
+    // `CAMetalLayer` with display sync).
     version (Android)
-        enum integrated = true;
+        enum supported = true;
     else version (linux)
-        enum integrated = true;
+        enum supported = true;
+    else version (OSX)
+        enum supported = true;
     else
-        enum integrated = false;
-    static if (!integrated)
+        enum supported = false;
+    static if (!supported)
     {
-        whyNot(i"the native arm runs on Wayland, X11 and Android only so far");
+        whyNot(i"the native arm runs on Wayland, X11, AppKit and Android only so far");
         return false;
     }
     else
     {
         bool drove;
         const opened = openNative!((ref wsi) {
-            enum paced = backendKindOf!(typeof(wsi)) != BackendKind.x11;
+            enum kind = backendKindOf!(typeof(wsi));
+            enum paced = kind != BackendKind.x11 && kind != BackendKind.appkit;
             drove = drive!(present, handle, draw, setup, shutdown)(wsi, loop, cfg, request,
                 paced: paced);
         })(loop, preferenceOf(cfg.native.windowSystem), wsiConfig);
@@ -1053,6 +1057,7 @@ private BackendPreference preferenceOf(WindowSystem system) @safe pure nothrow @
         case WindowSystem.auto_: return BackendPreference.automatic;
         case WindowSystem.wayland: return BackendPreference.wayland;
         case WindowSystem.x11: return BackendPreference.x11;
+        case WindowSystem.appkit: return BackendPreference.appkit;
     }
 }
 
@@ -1266,7 +1271,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
     auto first = MonoTime.currTime + 5.seconds;
     while (!ready && MonoTime.currTime < first)
     {
-        if (wsi.runIntegratedOnce(loop, 100.msecs).hasError)
+        if (tickNative(wsi, loop, 100.msecs).hasError)
             break;
         cast(void) wsi.drain((WindowEvent e) {
             noteEvent(e);
@@ -1851,7 +1856,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         bool closing;
         do
         {
-            if (wsi.runIntegratedOnce(loop, 1.seconds).hasError)
+            if (tickNative(wsi, loop, 1.seconds).hasError)
                 return false;
             cast(void) wsi.drain((WindowEvent e) {
                 noteEvent(e);
@@ -2509,7 +2514,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
             // stays stale must not keep input and a close from arriving.
             bool pollNow()
             {
-                if (wsi.runIntegratedOnce(loop, Duration.zero).hasError)
+                if (tickNative(wsi, loop, Duration.zero).hasError)
                     return false;
                 drainEvents();
                 return true;
@@ -2735,7 +2740,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         if (cfg.idleTimeoutMs >= 0 && cfg.idleTimeoutMs.msecs < timeout)
             timeout = cfg.idleTimeoutMs.msecs;
         const parkedAt = MonoTime.currTime;
-        if (wsi.runIntegratedOnce(loop, timeout).hasError)
+        if (tickNative(wsi, loop, timeout).hasError)
             break;
         drainEvents();
         if (session.nextTitlePattern.length && session.nextTitleFace.settled)
