@@ -611,7 +611,9 @@ struct NativeHandles
 
 Each variant contains only the exact native objects a renderer needs. Wayland exposes
 `wl_display*` plus `wl_surface*`; X11 exposes connection/display plus window/visual;
-Win32 exposes `HINSTANCE` and `HWND`; AppKit exposes `NSWindow*` and `NSView*`. The
+Win32 exposes `HINSTANCE` and `HWND`; AppKit exposes `NSWindow*`, its content `NSView*`,
+and the `CAMetalLayer*` that view hosts — a surface is made from the layer, never the
+view. The
 variant is queryable only after `ready` and until destruction begins. Backends may add
 new variants only in a versioned API change; field reinterpretation is forbidden.
 On Wayland, any consumer that may dispatch or round-trip the display—including a
@@ -672,8 +674,16 @@ Vulkan ICD—must additionally hold the backend's owner-thread native-I/O borrow
 - Event Horizon remains the application loop: non-blocking NSEvent drains surround a
   single CFRunLoop wait whose `CFFileDescriptor` source observes Event Horizon's native
   kqueue descriptor. No helper thread, duplicate kqueue, or polling timeout is used.
-- The content `NSView` supplies a layer suitable for Metal and exposes its pixel size
-  from backing conversion, not logical bounds alone.
+- The content `NSView` hosts a `CAMetalLayer` (layer-hosting: the layer is set before
+  `wantsLayer`), whose `contentsScale` follows the backing scale, and exposes its pixel
+  size from backing conversion, not logical bounds alone. A layer-hosting view receives
+  no `drawRect:`, so frame opportunities (`Exposed` then `FrameReady`) come from the
+  window ordering front, a metrics change, and the window becoming unoccluded. AppKit
+  offers no frame callbacks to this host yet: a renderer presents when it wants a frame,
+  and a FIFO swapchain paces it.
+- The window is server-decorated; `WindowStateChanged` reports `maximized` while zoomed,
+  `activated` while key, `resizing` through a live resize and `suspended` while
+  miniaturized.
 - Keyboard text and composition implement `NSTextInputClient`; key events remain
   separate from insert/marked-text callbacks.
 - Live resize produces metrics/frame opportunities without blocking Event Horizon.
@@ -726,7 +736,8 @@ claim a native feature that SDL does not expose publicly.
 `sparkles:vulkan-wsi` owns Vulkan instance extension selection, native surface creation,
 swapchain/frame synchronization, and present/rebuild policy. It validates the closed WSI
 handle pair, reuses the loader and per-instance dispatch in `sparkles:vulkan`, creates
-Wayland, XCB, Win32 and Android surfaces, and selects a graphics+present device. It
+Wayland, XCB, Win32, Android and — through `VK_EXT_metal_surface` on a portability ICD
+such as MoltenVK — AppKit surfaces, and selects a graphics+present device. It
 also owns the backend-neutral `CommandPool`, `FrameSync`, and `Swapchain`, including
 acquire decisions, resize decisions, and deferred retirement. `sparkles:ui-sdl3` consumes those types
 through compatibility re-exports rather than maintaining a second policy. WSI itself
@@ -735,6 +746,7 @@ contains no Vulkan type.
 Skia Graphite sits above those seams:
 
 ```text
+ui-app -> ui-vulkan -----------------> Vulkan (all, MoltenVK on macOS) -> vulkan-wsi -> wsi
 ui-app -> ui-skia -> Skia Graphite -> Vulkan (Linux/Windows/Android) -> vulkan-wsi -> wsi
                          |-> Metal (macOS) -------------------------------> wsi
 
@@ -808,8 +820,8 @@ evidence.
 
 The native-desktop baseline is complete only when all `F01`–`F17` requirements are
 `verified` on Wayland, X11, Win32, and AppKit; the comparison matrix cites the evidence;
-the native handle bridge creates a real Vulkan surface on Linux/Windows and a real Metal
-layer on macOS; and `sparkles:ui-app` can select the native host without application
+the native handle bridge creates a real Vulkan surface on Linux/Windows and, from the
+view's Metal layer, on macOS; and `sparkles:ui-app` can select the native host without application
 code naming a backend.
 
 Graphite and `ui-app` integration follow that baseline. TSF follows native Graphite and
