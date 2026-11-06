@@ -355,8 +355,11 @@ struct DqlParser
 
         while (currentToken.kind != DqlTokenKind.eof)
         {
+            // A token that is not an infix operator (a group's `)`) ends the
+            // expression; its binding power of zero would otherwise pass
+            // the check at the outermost level.
             const binding = infixBindingPower(currentToken.kind);
-            if (binding[0] < minBindingPower)
+            if (binding[0] == 0 || binding[0] < minBindingPower)
                 break;
 
             const opKind = currentToken.kind;
@@ -709,6 +712,27 @@ unittest
     // Test commas inside quoted regex / glob
     auto res8 = parseDql(engine, `regexMatch(text.text, "^[a,b]+$")`);
     assert(!res8.hasError);
+}
+
+@("dql.parser: a group's closing parenthesis ends its expression")
+@safe
+unittest
+{
+    DqlEngine engine;
+    auto grouped = parseDql(engine, "(a || b) && c");
+    assert(!grouped.hasError);
+    assert(grouped.value.nodes[grouped.value.rootIndex].kind == DqlNodeKind.and_);
+
+    auto negated = parseDql(engine, "!(a != null || b == c)");
+    assert(!negated.hasError);
+    assert(negated.value.nodes[negated.value.rootIndex].kind == DqlNodeKind.not_);
+
+    auto nested = parseDql(engine,
+        "pointer && (pointer.phase == pressed || (pointer.button == left)) && x >= 1");
+    assert(!nested.hasError);
+
+    assert(parseDql(engine, "a)").hasError);
+    assert(parseDql(engine, "(a").hasError);
 }
 
 @("dql.parser: stored fuzzy query text survives later string pool growth")
