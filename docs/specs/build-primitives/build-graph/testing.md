@@ -71,9 +71,12 @@ the code under test.
 - a root version mentioned by no dependency, which must be pruned;
 - a root version mentioned only in a `.txt` file under a dependency's string
   import root, which must survive pruning;
-- a dependency with a string literal holding `version (` and an inherited
+- a dependency with `mixin("version", " (", name, ")")` and an inherited
   identifier it never names, which must keep every inherited identifier and
-  be reported;
+  be reported, and the same with the literal in an `enum` that a `mixin`
+  uses;
+- a dependency that only passes `"version ("` to a function, which must
+  still be pruned;
 - `isVersion!"Apple"` and `isVersion!"unittest"`, which must pass the lint,
   and `isVersion!"SomeConfigVersion"` outside a `unittest` block, which must
   fail planning with its location;
@@ -307,7 +310,9 @@ timestamps, owners and groups, and no archive may be thin.
    kernel release, CPU model and features, and system type it ran on. Reusing
    it from a machine whose kernel release or CPU model differs, faked through
    a builder that reports other values, must rerun the test; reusing it from a
-   matching machine must not.
+   matching machine must not. A rerun must lower a derivation whose path
+   differs from the reused one's (BGN6), and a test whose output records a
+   failure must be rerun the same way on the next request.
 
 ### Oracle 12: Nix backend
 
@@ -339,8 +344,9 @@ timestamps, owners and groups, and no archive may be thin.
 9. **Narrowing (BGN2):** with a manifest that resolved `m` to `b/m.d` under
    `-Ia -Ib` in the local store, create `a/m.d`. The backend must not narrow,
    and the build must compile `a/m.d`. With an unchanged tree, a narrowed
-   build must be rebuilt with full roots if its dependency output names a file
-   outside its inputs. No narrowed derivation's output may reach the binary
+   build that a fixture compiler makes report an absent candidate which the
+   full roots hold, as a failed `__traits(compiles, { import opt; })` does,
+   must be rebuilt with full roots. No narrowed derivation's output may reach the binary
    cache the run pushes to.
 
 ### Oracle 13: hidden edges
@@ -418,7 +424,9 @@ of records, against a scripted sequence of publications, lookups and leases.
 4. **Digest records:** evict an archive whose link result survives, then
    request the link. The link must hit without rebuilding the archive. Then
    request a test of a new binary that links the archive: the archive must
-   rebuild, with the digests its record holds.
+   rebuild, with the digests its record holds. With a wrapped archiver that
+   makes the rebuild differ, the record must take the new digests and the
+   action must be reported as nondeterministic.
 5. **Separate bounds:** publish results until the results bound evicts. No
    manifest list or record may be evicted for it. Fill the records bound with
    manifest lists: lists whose results are gone must go first.
@@ -450,7 +458,8 @@ name the substituted component, and only that one. Then:
 
 `ci cache explain <task>` must print the same classification and execute
 nothing. A redacted environment value in a fixture action must appear in the
-stored preimage only as its digest.
+stored preimage only as a keyed digest: neither the value nor its plain
+SHA-256 digest may occur in the store.
 
 ### Oracle 19: determinism check
 
@@ -498,8 +507,9 @@ shares no state with the incremental one.
    output, verdict and diagnostic of the incremental build must equal the cold
    build's.
 2. **Precision:** in each incremental step, the actions that executed must be
-   exactly those whose keys changed. An edit that moves no line must execute no
-   archive, link or test downstream of the compiles it reran (BGA10).
+   exactly those whose keys changed. A comment-only edit that moves no line
+   must execute no archive, link or test downstream of the compiles it reran
+   (BGA10).
 3. **Edit sequences:** random sequences of edits drawn from: edit a module,
    create a file at an absent candidate, create a `.di` or `package.d` beside
    a module, edit a string import, delete a file, revert an edit (A→B→A), and

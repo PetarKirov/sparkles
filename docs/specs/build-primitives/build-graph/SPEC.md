@@ -259,26 +259,27 @@ The scan has these further rules:
 - **Generated roots:** a root filled by a generator (§7) is not scanned. A
   variant with such a root keeps every inherited identifier.
 - **Conditions built as strings:** a variant **must** keep every inherited
-  identifier if a string literal in a scanned D file contains `version` or
-  `debug` followed by `(`, with optional whitespace between them. Planning
-  reports each such literal. The one exemption is the literal in
+  identifier if, in a scanned D file, the string literals of one `mixin`'s
+  arguments, joined in order, or the string literals that initialize one
+  manifest constant (`enum`), contain `version` or `debug` followed by `(`,
+  with optional whitespace between them. Planning reports each such `mixin`
+  or constant. The one exemption is the `mixin` in
   `sparkles.base.meta.isVersion`, whose arguments the next rule checks.
 - **The `isVersion` lint:** planning **must** fail on a use of
   `sparkles.base.meta.isVersion`, outside a `unittest` block, whose argument is
   not a string literal naming one of D's predefined version identifiers. It
-  names the file and line. The lint applies to modules that import
-  `sparkles.base.meta` or the `sparkles.base` package module. A `unittest`
-  block compiles only in its own package's test root, which inherits nothing.
-
-_Rationale:_ a `mixin` turns a string into a condition that no file spells out,
-and the literal can reach the `mixin` through a constant, so the scan does not
-try to tell which literals do. See
-[D34](./decisions.md#d34-pruning-sees-string-imports-and-mixed-in-conditions-accepted).
+  names the file and line. A use is found by resolving the template's name
+  through the module's imports, including selective and renamed imports and
+  `sparkles.base`'s public import of `sparkles.base.meta`. A `unittest` block
+  compiles only in its own package's test root, which inherits nothing.
 
 _Rationale:_ dub passes a test root's versions down to every dependency, so
 without pruning, any root with a configuration-local version forks its whole
 dependency closure. Version identifiers are module-local in D, so an identifier
-no file the compile can reach mentions cannot change the object code.
+no file the compile can reach mentions cannot change the object code. A
+`mixin` writes a condition that no file spells out, which
+[D34](./decisions.md#d34-pruning-sees-string-imports-and-mixed-in-conditions-accepted)
+handles.
 
 **BGV2: Roles.** A variant has one of these roles:
 
@@ -456,11 +457,13 @@ changed member would leave the archive, and every link key that digests it,
 unchanged.
 
 **BGA11: Toolchain paths are remapped.** With a compiler that supports a prefix
-map, a compile **must** map the toolchain's store paths, the druntime and
-Phobos sources and the compiler's import directories, to a fixed prefix in
-debug information and `__FILE__`, with the same mechanism BGA5 uses. The
-toolchain's prebuilt druntime and Phobos **must** be built with the same map.
-No output then refers to the toolchain's store closure.
+map, a compile **must** map the store paths of the compiler's import
+directories to a fixed prefix in debug information and `__FILE__`, with the
+same mechanism BGA5 uses. Those directories hold the druntime and Phobos
+sources. The toolchain's prebuilt druntime and Phobos **must** be built with
+the same map. No debug information or `__FILE__` in an output then names a
+druntime or Phobos source by its store path. A linked binary's interpreter and
+run path still name the C library, which this requirement does not cover.
 
 _Rationale:_ a Phobos `assert` records its source file's store path, so every
 binary that links Phobos keeps the whole toolchain alive in its Nix closure
@@ -596,9 +599,11 @@ what their searches did not find, as compiles do (BGK2):
 - **The link:** a link's declared key covers its `-L` search order. For every
   library it links, including those that `pragma(lib)` names in its inputs,
   the key covers the path the library resolved to and the candidates absent
-  before it in that order. Planning resolves each library over the search
-  order as the linker does. The toolchain's own library directories are
-  covered by toolchain identity (§8).
+  before it in that order. Each library is resolved over the search order as
+  the linker does: a `-l` library at planning, and a library that
+  `pragma(lib)` names when the link is keyed, once the objects naming it
+  exist. The toolchain's own library directories are covered by toolchain
+  identity (§8).
 
 _Rationale:_ a `.pc` file or a library created earlier on a search path changes
 what an action uses without changing anything it read.
@@ -665,8 +670,9 @@ publishes, and **must** hold the lease until its run ends.
   not when the graph is planned, so it sees what concurrent producers
   published meanwhile. Lookup creates the lease, then checks that
   `results/<key>` exists, then reads it. A missing entry is a miss.
-- **Read only:** outputs are read in place, and no process writes into
-  `results/`.
+- **Read only:** outputs are read in place, and no process modifies a
+  published entry. An entry leaves `results/` only by the renames that
+  eviction, removal, replacement and corruption handling make.
 
 **BGS5: Eviction.** The store **must** enforce two configured size bounds, each
 by evicting its least recently used entries first:
@@ -692,7 +698,9 @@ Eviction follows these rules:
   and its exit status. A consumer whose key needs only those digests (BGK1)
   reads them from the record, and a lookup that needs the bytes is a miss. An
   action whose result is only recorded is executed only when an action that
-  misses needs its bytes.
+  misses needs its bytes. If that execution's output digests differ from the
+  record, the new digests replace it and the action is reported as
+  nondeterministic, as BGS3 reports.
 - **Manifests:** a manifest whose result is neither present nor recorded is a
   miss, and is dropped from its list. A list left empty is removed.
 
@@ -734,6 +742,10 @@ a diagnostic is reported. Corruption is detected at three points:
   published entry to `trash/`, and publish the new one;
 - run the determinism check (BGS9).
 
+Removal and replacement **must** wait for every live lease on an entry held by
+another process, as eviction does (BGS5 steps 1 and 3), and report the
+entries they wait for. The operating process's own leases do not hold it back.
+
 `apps/ci` exposes them as `ci cache` subcommands. The store's top directory,
 and the directory under which `ci` keeps its run directories, each hold a
 `CACHEDIR.TAG` file, as the
@@ -763,20 +775,25 @@ it as one of:
 Each miss is reported with its class. `ci cache explain <task>` plans the task
 and prints the classification of its lookup against the current tree and
 store, executing nothing. A value marked redacted (TDM4) **must** appear in a
-preimage only as its digest.
+preimage only as a digest keyed with a secret private to the store, so that
+the preimage shows that the value changed without letting its value be
+guessed and checked.
 
 **BGS9: The determinism check.** The store **must** provide a check that
 re-executes a given set of actions **cold and unshared**:
 
-- **Cold:** each action runs with its own lookup bypassed. Its inputs are the
-  bytes its published result was keyed on, read from the store by digest.
+- **Cold:** each action runs with its own lookup bypassed, on the inputs its
+  published result was keyed on. A compile reads its sources from the tree,
+  which **must** still match the result's manifest; otherwise the action is
+  reported as not checkable, and is not compared. An archive, link or test
+  reads the outputs it consumes from the shared store.
 - **Unshared:** its outputs go to a private store, created empty for the check
   and discarded after it, and never reach the shared store or a binary cache.
 
 The check compares each action's output digests, manifest, diagnostics and
 exit status with its published result. A difference **must** fail the check,
 name the action, its result key and each differing item, and remove the
-published result (BGS7). BGS3's nondeterminism reports feed the same report.
+published result as BGS7's removal does. BGS3's nondeterminism reports feed the same report.
 
 _Rationale:_ a determinism check must run cold and unshared, or it tests the
 cache ([reproducibility](../../../research/build-systems/reproducibility.md)).
@@ -961,7 +978,8 @@ for the same declared key, under these constraints
 - **Still absent:** it narrows only while every absent candidate of that
   manifest is still absent.
 - **Checked afterwards:** the narrowed build's own dependency output **must**
-  list only files among its inputs. Otherwise, or if the build fails, it is
+  list only files among its inputs, and only absent candidates that are
+  absent from the full roots too. Otherwise, or if the build fails, it is
   rerun with the full roots.
 - **Never shared:** a narrowed derivation's outputs **must not** be pushed to
   a shared store or binary cache.
@@ -1001,6 +1019,12 @@ action's standard output, standard error and exit status. A derivation whose
 action failed in a way BGA9 publishes therefore succeeds, with the failure
 recorded, and the backend replays it as BGA7 requires. A test derivation that
 records a failure is never reused (BGA9).
+
+- **Reruns:** a test the backend must not reuse, because its output records a
+  failure or a machine that does not match (BGX3), is rerun by lowering it
+  again with one more environment attribute, naming the output it replaces.
+  The new derivation's path therefore differs, and Nix runs it instead of
+  substituting the old output.
 
 **BGN7: Garbage-collector roots.** A run **must** hold an indirect
 garbage-collector root for every store path it looks up or realises, from the

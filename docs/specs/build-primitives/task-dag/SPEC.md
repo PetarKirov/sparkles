@@ -148,7 +148,7 @@ actionable selection error.
 A rename counts as a deletion plus an addition. A path outside every package
 selects nothing. The invalidator list is declarative and unit-tested, and it
 does not silently grow from arbitrary top-level changes. The repository's list
-is part of the [`apps/ci` command specification](../../ci/task-dag/SPEC.md#4-selection-policy).
+is part of the [`apps/ci` command specification](../../ci/task-dag/SPEC.md#_4-selection-policy).
 
 ### 2.4 Selection algebra
 
@@ -204,7 +204,7 @@ work, not an arbitrary shell string. A process action carries its argument
 vector, environment, working directory, stdin policy, timeout and
 task-directory policy as data. Its environment is either a delta over the
 command's own environment or complete, replacing it. A build-graph action's is
-always complete ([BGA4](../build-graph/SPEC.md#4-the-action-graph)). An
+always complete ([BGA4](../build-graph/SPEC.md#_4-the-action-graph)). An
 in-process action names a typed handler.
 
 **TDM4: Redaction.** An environment value marked redacted **must** be passed to

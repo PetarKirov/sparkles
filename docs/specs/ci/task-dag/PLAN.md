@@ -23,7 +23,9 @@ prerequisite gate and the command cutovers.
   - the complete `sparkles.wired.sdl` backend;
   - Event Horizon M19 items 1–5;
   - bounded cross-worker channels;
-  - build graph E1a (the pinned test runner) and E3.
+  - the test runner's out-of-process runner (TRD1 and TRD9 in
+    `docs/specs/test-runner/`), which supersedes build graph E1a, and build
+    graph E3.
 - Event Horizon M19 item 6 is delivered by the cutovers below, not by a
   separate port of the legacy process layer. `apps/ci` carries no second
   process executor.
