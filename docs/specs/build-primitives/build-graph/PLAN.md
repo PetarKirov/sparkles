@@ -118,6 +118,10 @@ scenarios, oracle 14 and oracle 20 pass.
   specification amended. The shader compiler is keyed by its manifest (BGG5)
   and built as a host variant (BGG6).
 - Toolchain identity (§8), with the toolchain's store paths remapped (BGA11).
+- **The LDC fork:** its dependency output reports, for each file, the content
+  digest of the bytes the compiler read (BGK2), with tests that fail without
+  it, and the toolchain is bumped to it. BGK7's check then compares those
+  digests.
 - **Isolation spike (D39):** Landlock write confinement and an unshared
   network namespace for local build actions, with the list of test actions
   that write into the tree and a decision for each. The result is recorded in
@@ -134,8 +138,8 @@ Gate:
   test-only driver. Oracle 3 includes its write check.
 - Oracle 21 passes over a replay of at least the last 50 commits of `main`
   and a seeded run of its edit sequences.
-- Oracle 4's step 5 passes too: D31 is decided, and BGK7 accepted, before the
-  store is shared by more than the test-only driver.
+- Oracle 4's mid-compile scenarios (step 5) pass, before the store is shared
+  by more than the test-only driver.
 - A second run of the driver in another worktree, with no source change,
   compiles nothing.
 - An edit to one `sparkles:base` module recompiles only the variants whose

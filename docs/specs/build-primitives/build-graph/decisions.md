@@ -672,40 +672,78 @@ dependency output on failure keys it conservatively (BGK6).
 **Revisit when** a replayed failure is found that a cold build of the same key
 does not reproduce.
 
-## D31: A source edited during a compile (proposed)
+## D31: A source edited during a compile (accepted)
 
 **Question.** A manifest digests each file after the compiler has read it. If
 an editor saves a module while a 30–60 s compile runs, the manifest pairs the
 new digest with object code built from the old content, and every worktree
-reuses that result until it is evicted. BGK7 detects the edit. What happens to
-the result then?
+reuses that result until it is evicted. How is the edit detected, and what
+happens to the result?
 
 **Alternatives.**
 
-- **(a) Don't publish, use for this run.** The outputs serve the current run,
-  which reports `unstable input`; the next run compiles again.
-- **(b) Rerun until stable.** The action runs again until a run sees no
-  change, up to a bound. The run's result then matches the tree it reports.
-- **(c) Snapshot first.** Copy or reflink the inputs before compiling, so no
-  edit can reach the compiler. The manifest is not known before the compile,
-  so this would snapshot whole roots; its cost is unmeasured.
+- **(a) Check, and don't publish.** Record the inputs' state before the
+  compile, check it after, and on a conflict use the outputs for this run
+  without publishing them.
+- **(b) Rerun until stable.** Run the action again until a run sees no change.
+- **(c) Snapshot first.** Ingest the inputs into content-addressed storage,
+  hashing while copying, and compile from a view materialized from it. D's
+  read set is unknown before the compile, so this stages whole import roots.
 
-**Evidence.** Rattle hashes a file, re-stats it, and caches the digest only if
-the file "did not change mid-read", and it commits a node's record only after
-the concurrent nodes finish
-([rattle](../../../research/build-systems/rattle.md)). Ninja checks against the
-command's start time on the file system's clock
-([ninja](../../../research/build-systems/ninja.md)); build2's `depdb` applies an
-mtime rule ([build2](../../../research/build-systems/build2.md)). The
-perfect-dependencies paper lists "simultaneous outside modification" among the
-ways a command stops being a function of its reads
-([perfect-dependencies](../../../research/build-systems/perfect-dependencies.md)).
+**Evidence.** A survey of eighteen tools, read in their sources, sorts them
+into families:
 
-**Choice.** Not made. The detection rule (BGK7) is common to (a) and (b) and
-stays proposed with them.
+- **Hash before, check after, refuse to publish:** Bazel's
+  `--guard_against_concurrent_changes` compares a stat proxy (ctime, mtime,
+  inode) after execution, rehashes when only ctime changed, and skips the
+  upload while keeping the outputs. Its local action cache has no such
+  check, which a revert of the edit can exploit. ccache refuses to store when
+  an input's times are within 100 ms of the invocation's wall-clock start,
+  which leaves a window of that size plus the clock's granularity.
+- **Start time on the file system's clock:** Ninja records the time of a file
+  written when the command starts, and Zig stats a freshly written probe file
+  ([ninja](../../../research/build-systems/ninja.md)).
+- **Hash after:** Rattle hashes reads after the command, so an ordinary edit,
+  with no revert, leaves a stale result that the next run treats as fresh
+  ([rattle](../../../research/build-systems/rattle.md)). A manifest built from
+  the compiler's dependency output, digested afterwards, is in this family.
+- **The reader reports its digests:** rustc emits the checksums of the bytes
+  it read for Cargo's `-Z checksum-freshness`, which makes the record
+  consistent by construction.
+- **Snapshot first:** Nix builds, Pants and BuildKit read only an ingested
+  snapshot, and are safe where ingest hashes in the same pass as the copy
+  ([pants](../../../research/build-systems/pants.md),
+  [buildkit](../../../research/build-systems/buildkit.md)).
+- **No guard:** Turborepo, Nx, Gradle, Buck2 and BuildXL can store, and some
+  push, a result under a key that does not describe what the step read
+  ([buck2](../../../research/build-systems/buck2.md),
+  [buildxl](../../../research/build-systems/buildxl.md)).
 
-**Revisit when** evidence on how other tools handle the case is recorded; then
-accept one remedy, and BGK7 with it.
+**Choice.** (a), as BGK7 states, with (c) as the precondition for sharing
+(BGS11):
+
+- **Before:** a stat proxy and digest for every file the previous manifest
+  predicts, and a start time from a probe file on the file system's clock.
+- **After:** a changed proxy of a predicted file is a conflict, after a rehash
+  when only ctime changed; a newly read file with a time at or after the probe
+  is a conflict.
+- **On a conflict:** the outputs serve this run, and nothing reaches the local
+  or any other store, so the next run redoes the action. This is Bazel's
+  guard, extended to the local store.
+- **Compiler digests:** the LDC fork's dependency output gains a digest of the
+  bytes read per file (BGK2), which turns the check into a consistency check.
+- **No rerun loop:** rerunning until stable livelocks under an editor's
+  autosave. A watch mode may rerun once.
+- **Sharing:** a result reaches a shared or remote cache only if it was built
+  from a snapshot. The Nix backend's staged store paths are one.
+
+**Trade-offs.** An edit that keeps a file's size within one timestamp tick
+escapes the stat check; compiler-reported digests and snapshots close it. A
+conflicting run pays for one uncached compile in the next run.
+
+**Revisit when** the local backend gains a remote cache, which then needs
+snapshot ingest (BGS11), or when compiling from a snapshot is measured cheap
+enough to use locally too.
 
 ## D32: Nix input narrowing is kept, constrained (accepted)
 

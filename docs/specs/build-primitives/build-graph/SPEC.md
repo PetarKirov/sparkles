@@ -514,6 +514,12 @@ The manifest comes from the compiler's dependency output. On LDC, that is
 `--makedeps` plus the fork's extensions for C headers and absent candidates
 ([decisions.md](./decisions.md#d12-complete-dependency-output-in-the-ldc-fork)).
 
+- **Compiler-reported digests:** where the compiler's dependency output
+  carries the content digest of the bytes it read for each file, as the LDC
+  fork's does, the manifest **must** record those digests rather than digests
+  taken afterwards. A file's entry then describes what the compile read,
+  whenever the file changed.
+
 **BGK3: Several manifests per declared key.** The store **must** keep, under one
 declared key, a bounded list of manifests. Each manifest leads to its own
 **result key**: the digest of the declared key and the manifest's entries. A
@@ -550,22 +556,42 @@ _Rationale:_ the process clock and a file system's timestamps can disagree, on
 a network file system most of all, and a racy check that compares the two
 misses the edits it exists to catch.
 
-**BGK7: Inputs edited during a compile (proposed).** A compile **must** detect
-that a file in its manifest changed while it ran: the file's modification or
-change time is not older than the action's start time minus BGK5's margin,
-with both times read from the clock BGK5 uses. What then happens to the result
-is open. [D31](./decisions.md#d31-a-source-edited-during-a-compile-proposed)
-records the candidates, of which these two keep the detection rule:
+**BGK7: Inputs edited during a compile.** A compile **must** detect that a file
+it read changed while it ran, and a compile that detects one **must not**
+publish
+([D31](./decisions.md#d31-a-source-edited-during-a-compile-accepted)):
 
-- **(a) Not published:** the outputs serve the current run, and the result is
-  not published and is reported as `unstable input`.
-- **(b) Rerun:** the action runs again until a run sees no such change, up to
-  a bound.
+1. **Before the compile:** for every file the most recently used manifest of
+   its declared key lists, it records a stat proxy (inode, size, modification
+   and change times in nanoseconds) and the file's digest. It takes its start
+   time from the file system's clock, as BGK5 does: the modification time of a
+   probe file it writes and stats.
+2. **After the compile:** it stats every file of the new manifest. A
+   **conflict** is any of:
+   - a file recorded before the compile whose stat proxy changed. When only
+     the change time changed, as a new hard link makes it, the file is
+     rehashed, and it conflicts only if its digest changed;
+   - a file the compile read that no earlier manifest listed, whose
+     modification or change time is at or after the start probe's;
+   - with compiler-reported digests (BGK2), a reported digest that differs
+     from the one recorded before the compile.
+3. **On a conflict:** the outputs serve the current run, which reports the
+   action as `unstable input`. Nothing from the action is written to the
+   local store or to any other: no result, manifest or digest-cache entry. The
+   next run therefore looks the action up afresh.
+4. **No rerun loop:** the action **must not** be rerun until it is stable. A
+   command in a watch mode **may** rerun it once.
+
+The stat check has a residual gap: an edit that keeps a file's size and lands
+within one timestamp tick of the read leaves the proxy unchanged. Only
+compiler-reported digests (BGK2), or compiling from a snapshot (BGS11), close
+it.
 
 _Rationale:_ a manifest digests each file after the compiler read it. An editor
-that saves a module mid-compile pairs the new digest with object code built
-from the old content, and every worktree on the machine then reuses that
-wrong result.
+that saves a module mid-compile would pair the new digest with object code
+built from the old content, and every worktree on the machine would reuse that
+wrong result. Rerunning until stable can loop for as long as an editor
+autosaves.
 
 **BGK6: Incomplete dependency output.** If a compile's dependency output is
 missing, unparseable, or comes from a compiler that cannot list C headers or
@@ -808,6 +834,18 @@ separate stores on one machine. Each entry, record and manifest list
 the reading process does not know is a miss, and is left in place for a
 process that does.
 
+**BGS11: Snapshots before sharing.** A result **must** be published to a store
+or cache shared beyond its machine only if its action read a snapshot of its
+inputs: the inputs ingested into content-addressed storage, hashed in the same
+pass that copies them, and the action run on a view materialized from that
+storage. Hard links into the tree are not a snapshot, because an editor that
+writes in place changes the linked file. The Nix backend satisfies this
+requirement (BGN2). The local backend's store is per machine (BGS1), and any
+remote cache it gains **must** meet this requirement first.
+
+_Rationale:_ a snapshot is the only design without a timestamp window, and a
+wrong result in a shared cache reaches every machine that uses it.
+
 ## 7. Generators
 
 A **generator** is a tool the graph runs to produce files that a compile
@@ -966,7 +1004,9 @@ backend.
 **BGN2: Sources.** A compile derivation's source inputs **must** be its declared
 inputs plus the complete file sets of the import, C import and string import
 roots it searches. Each enters the store as a content-addressed path that the
-build graph computes itself. Whole-repository source copies are not used.
+build graph computes itself, hashing each file in the same pass that copies it,
+so the derivation reads a snapshot (BGS11). Whole-repository source copies are
+not used.
 
 An edit to any file under a searched root therefore re-runs the compiles that
 search it, unlike the local backend's manifest check (BGK4).
