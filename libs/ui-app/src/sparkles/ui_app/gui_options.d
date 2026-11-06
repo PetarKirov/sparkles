@@ -15,7 +15,7 @@ by field.
 */
 module sparkles.ui_app.gui_options;
 
-import sparkles.core_cli.args : Description, Option, Switches;
+import sparkles.core_cli.args : Description, Flatten, Option, Switches;
 import sparkles.metadata.case_style : CaseStyle;
 import sparkles.metadata.wire : WireCase;
 import sparkles.ui.theme : Theme;
@@ -109,6 +109,25 @@ enum int defaultWindowCols = 100;
 enum int defaultWindowRows = 30;
 
 /**
+The interface face's option (design-system `GLY10`), declared once (`CLI1`):
+$(LREF GuiOptions) flattens it beside the other font options, and an
+application whose font options are its own — `apps/terminal`, whose flags are
+the highest layer of its configuration — flattens this group alone and passes
+it on in `RunConfig.gui.interfaceFont`.
+*/
+struct InterfaceFontOptions
+{
+    @(Option("ui-font", placeholder: "FONT", description:
+        "Proportional face for the interface — tabs, buttons, menus, labels "
+        ~ "and documentation: a path, a family name, or a comma-separated "
+        ~ "preference list. Default: the desktop's interface font, else the "
+        ~ "first installed of Inter, Adwaita Sans, Cantarell, Noto Sans, Roboto, "
+        ~ "DejaVu Sans… (Roboto on Android). 'none' keeps the interface in the "
+        ~ "cell font."))
+    string uiFont; ///
+}
+
+/**
 The window/font/theme options, declared once (`CLI1`). Every field carries its
 `@(Option(...))` here, so the help text is written once and two applications
 cannot describe the same flag differently.
@@ -146,14 +165,9 @@ struct GuiOptions
     @(Option("font-bold-italic", description: "Bold-italic face."))
     string fontBoldItalic = defaultGuiFontFamily;
 
-    @(Option("ui-font", placeholder: "FONT", description:
-        "Proportional face for the interface — tabs, buttons, menus, labels "
-        ~ "and documentation: a path, a family name, or a comma-separated "
-        ~ "preference list. Default: the desktop's interface font, else the "
-        ~ "first installed of Inter, Adwaita Sans, Cantarell, Noto Sans, Roboto, "
-        ~ "DejaVu Sans… (Roboto on Android). 'none' keeps the interface in the "
-        ~ "cell font."))
-    string uiFont;
+    /// `--ui-font`, as its own group (`InterfaceFontOptions`).
+    @Flatten
+    InterfaceFontOptions interfaceFont;
 
     @(Option("font-codepoint-map", description:
         "Render a codepoint range from a specific family (repeatable): "
@@ -323,8 +337,8 @@ FontRequest fontRequestOf(O)(const O o) @safe pure nothrow
     r.boldItalic = o.fontBoldItalic;
     r.codepointMaps = o.fontCodepointMap.dup;
     r.searchDirs = o.fontDir.dup;
-    static if (__traits(hasMember, O, "uiFont"))
-        r.ui = o.uiFont;
+    static if (__traits(hasMember, O, "interfaceFont"))
+        r.ui = o.interfaceFont.uiFont;
     return r;
 }
 
@@ -468,7 +482,7 @@ unittest
 
     // The interface face: the desktop's unless `--ui-font` names one.
     assert(r.ui is null);
-    p.uiFont = "Inter";
+    p.interfaceFont.uiFont = "Inter";
     assert(fontRequestOf(p).ui == "Inter");
 }
 
@@ -479,8 +493,21 @@ unittest
     import sparkles.core_cli.args : parseCli;
 
     auto parsed = parseCli!GuiOptions(["app", "--ui-font", "Cantarell"]);
-    assert(parsed && parsed.value.uiFont == "Cantarell");
-    assert(parseCli!GuiOptions(["app"]).value.uiFont is null, "the desktop's by default");
+    assert(parsed && parsed.value.interfaceFont.uiFont == "Cantarell");
+    assert(parseCli!GuiOptions(["app"]).value.interfaceFont.uiFont is null, "the desktop's by default");
+
+    // The group alone, beside font options of an application's own.
+    static struct OwnFonts
+    {
+        @(Option("font")) string font;
+        @Flatten InterfaceFontOptions interfaceFont;
+    }
+
+    auto own = parseCli!OwnFonts(["app", "--font", "Iosevka", "--ui-font", "Inter"]);
+    assert(own && own.value.font == "Iosevka" && own.value.interfaceFont.uiFont == "Inter");
+    GuiOptions gui;
+    gui.interfaceFont = own.value.interfaceFont;
+    assert(fontRequestOf(gui).ui == "Inter", "passed on in `RunConfig.gui`");
 }
 
 @("ui_app.gui_options.theme")
