@@ -298,6 +298,12 @@ positive `dy`/`discreteY` scrolls the content view down, positive
 negative `dy`. `inverted` reports the platform's natural-scrolling flag
 without changing the deltas.
 */
+/*
+`phase` is the gesture a continuous source reports (AppKit's trackpad
+phases, Wayland's `axis_stop`): `began`/`changed` while the fingers move,
+`ended` (deltas possibly zero) when they lift, `momentum` for inertia the
+platform synthesizes after; `none` where the source reports no gesture.
+*/
 struct ScrollEvent
 {
     LogicalPosition logicalPosition;
