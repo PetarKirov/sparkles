@@ -226,8 +226,10 @@ excluding `.`, `[` and `]`; it names an SDL qualified name, split at its first
 `:` into namespace and local name, and matches that name exactly (an
 unprefixed segment matches only unnamespaced names, as `byChild` does). An
 index follows a segment and counts, from zero, the nodes of that name under
-one parent. A malformed path — an empty segment, an index before any segment,
-non-digits or an overflowing number inside `[]`, an unclosed `[` — is
+one parent; a segment takes at most one, and a path at most sixteen
+segments. A malformed path — an empty segment, an index before any segment
+or after another index, non-digits or an overflowing number inside `[]`, an
+unclosed `[`, a seventeenth segment — is
 rejected with the byte offset of the fault, and nothing is selected.
 _Oracle:_ a table of accepted and rejected paths with their offsets.
 _Violation:_ a malformed path that selects, or a well-formed one rejected.
@@ -467,6 +469,23 @@ struct SdlOpenDocument(SdlParserConfig config = sdlFull, Allocator = Mallocator)
     auto editor();                                       // an SdlEditor to commit
     SdlExpected!void commit(ref SdlEditor!(config, Allocator) editor);
 }
+
+// sparkles.wired.sdl.select — §3.2; the editor's remove, removeAttribute,
+// replaceAttribute and setAttribute also take a range of their targets.
+struct SdlPath
+{
+    static Expected!(SdlPath, DqlParseError) parse(const(char)[] text); // borrows text
+    SdlNodeSelection nodes(SdlNode start) const;                         // @nogc
+    SdlAttributeSelection!SdlNodeSelection attributes(SdlNode start) const;
+}
+struct SdlSelector
+{
+    static Expected!(SdlSelector, SdlSelectorError) parse(const(char)[] path,
+        const(char)[] filter = null);
+    SdlSelectedNodes nodes(SdlNode start);
+    SdlAttributeSelection!SdlSelectedNodes attributes(SdlNode start);
+}
+struct SdlNodeResolver { SdlNode node; /* the DQL host-resolver protocol */ }
 
 SdlEmbeddedRecipe locateEmbeddedRecipe(const(char)[] host);   // content, close, isJson, found
 bool hasEmbeddedRecipeHeader(const(char)[] head);             // the header alone

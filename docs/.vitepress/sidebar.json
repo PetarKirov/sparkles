@@ -1011,6 +1011,10 @@
               {
                 "text": "Walk an SDL document",
                 "link": "/libs/wired/how-to/sdl-walk-a-document"
+              },
+              {
+                "text": "Select SDL nodes with a path",
+                "link": "/libs/wired/how-to/sdl-select-nodes"
               }
             ]
           },

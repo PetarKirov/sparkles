@@ -1,0 +1,126 @@
+# Select SDL nodes with a path
+
+Nested `byChild` loops get long when a tool wants "every `dependency` inside
+a `configuration` that pins a version". A selector says it in one line: a
+[DQL path](../../../specs/dql/SPEC.md#_2-1-path-addressing-grammar) picks
+the nodes, and an optional [DQL](../../../specs/dql/SPEC.md) filter keeps
+the ones that match. The editor takes the result directly, so a lossless
+edit of every match is one call.
+
+## Select by path
+
+`SdlPath.parse` checks a path and borrows it; `nodes(start)` walks the
+selection lazily, in document order, without allocating:
+
+```d
+auto path = SdlPath.parse("configuration.dependency");
+foreach (dependency; path.value.nodes(document.root))
+    writeln(dependency.byValue.front.stringValue);
+```
+
+Each segment is a child step that keeps the children of that name; `ns:name`
+names a namespaced tag. An index keeps only the k-th match, counted from
+zero under each parent: `configuration[1].dependency` reads the second
+configuration's dependencies.
+
+`attributes(start)` reads the last segment as an attribute name instead:
+`dependency.path` yields the `path` attribute of every root `dependency`.
+
+A malformed path is an error with its byte offset, never a partial
+selection.
+
+## Filter with DQL
+
+`SdlSelector.parse(path, filter)` adds a filter, evaluated with each
+selected node as its subject. Inside the filter:
+
+| Path in the filter              | Means                                           |
+| ------------------------------- | ----------------------------------------------- |
+| `version`                       | the node's first `version` attribute            |
+| `values[0]`                     | its first value                                 |
+| `targetType.values[0]`          | the first value of its first `targetType` child |
+| `dependency[1].version`         | the `version` of its second `dependency` child  |
+| `dflags` (alone, as a category) | whether it has a `dflags` child                 |
+| `x == null`                     | `x` is absent or SDL `null`                     |
+
+Strings, booleans, integers and floats compare as themselves; `&&`, `||`,
+`!`, parentheses, `globMatch`, `regexMatch` and `fuzzyMatch` work as in any
+DQL query. A filter on an attribute selection tests the node that holds the
+attributes.
+
+The selector owns its DQL engine and the ranges refer to it, so keep the
+selector in a variable while you iterate.
+
+## Edit what you selected
+
+`remove`, `removeAttribute`, `replaceAttribute` and `setAttribute` accept a
+selection and apply the operation to each target, exactly as a loop of
+single calls would.
+
+## Example
+
+```d
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "sdl_select"
+    dependency "sparkles:wired" version="*"
+    buildType "checked" {
+        buildOptions "optimize" "inline" "debugInfo"
+    }
++/
+import std.experimental.allocator.mallocator : Mallocator;
+import std.stdio : write, writeln;
+
+import sparkles.base.buffer : UniqueBuffer;
+import sparkles.wired.sdl : parseSdlDocument, SdlPath, SdlQualifiedName,
+    SdlScalar, SdlSelector, sdlEditor;
+
+enum text = `name "app"
+dependency "sparkles:base" version="*"
+dependency "silly" version="~>1.1"
+configuration "unittest" {
+    dependency "sparkles:test-utils" version="*" // in-tree
+}
+`;
+
+void main()
+{
+    auto parsed = parseSdlDocument(text, "dub.sdl");
+    assert(parsed.hasValue, parsed.error.toString);
+    auto root = parsed.document.root;
+
+    foreach (node; SdlPath.parse("configuration.dependency").value.nodes(root))
+        writeln("configuration dependency: ", node.byValue.front.stringValue);
+
+    // Every in-tree dependency, at the root or in a configuration, points
+    // at the checkout instead of the registry.
+    auto editor = sdlEditor(parsed.document, text);
+    foreach (path; ["dependency.version", "configuration.dependency.version"])
+    {
+        auto inTree = SdlSelector.parse(path,
+            "globMatch(values[0], `sparkles:*`) && version == `*`");
+        editor.replaceAttribute(inTree.value.attributes(root),
+            SdlQualifiedName(null, "path"), SdlScalar("../.."));
+    }
+    UniqueBuffer!char output;
+    Mallocator allocator;
+    const written = editor.write(output, allocator);
+    assert(!written.hasError, written.hasError ? written.error.toString : "");
+    write(output[]);
+}
+```
+
+```ansi
+configuration dependency: sparkles:test-utils
+name "app"
+dependency "sparkles:base" path="../.."
+dependency "silly" version="~>1.1"
+configuration "unittest" {
+    dependency "sparkles:test-utils" path="../.." // in-tree
+}
+```
+
+The comment, the layout and the pinned `silly` survive; only the two
+attributes the selectors named changed. See
+[editing §3.2](../../../specs/wired/sdl/editing.md#3-2-path-selection) for
+the full contract.
