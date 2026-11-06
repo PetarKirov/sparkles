@@ -23,6 +23,12 @@ names a namespaced tag. An index keeps only the k-th match, counted from
 zero under each parent: `configuration[1].dependency` reads the second
 configuration's dependencies.
 
+SDL names may hold `.`, which a plain segment cannot spell. Quote such a
+name as a JSON string in brackets: `build["my.tool"].dependency`, or
+`["ns:my.tool"]` for a namespaced one. `writeDqlSegment` from
+`sparkles.dql.path` prints a name that way when it needs to, so a path you
+build from names always parses back.
+
 `attributes(start)` reads the last segment as an attribute name instead:
 `dependency.path` yields the `path` attribute of every root `dependency`.
 
@@ -42,6 +48,7 @@ selected node as its subject. Inside the filter:
 | `dependency[1].version`         | the `version` of its second `dependency` child  |
 | `dflags` (alone, as a category) | whether it has a `dflags` child                 |
 | `x == null`                     | `x` is absent or SDL `null`                     |
+| `["dflags.ldc"] == null`        | it has no `dflags.ldc` attribute                |
 
 Strings, booleans, integers and floats compare as themselves; `&&`, `||`,
 `!`, parentheses, `globMatch`, `regexMatch` and `fuzzyMatch` work as in any

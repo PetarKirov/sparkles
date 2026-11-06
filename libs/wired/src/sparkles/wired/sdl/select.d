@@ -26,29 +26,29 @@ import sparkles.dql.engine : DqlEngine, DqlParseError;
 import sparkles.dql.ast : DqlFilter;
 import sparkles.dql.eval : evalDql;
 import sparkles.dql.parser : parseDql;
-import sparkles.dql.path : DqlPathStepKind, DqlPathSteps, dqlPathSteps, validateDqlPath;
+import sparkles.dql.path : DqlPathStep, DqlPathStepKind, DqlPathSteps, dqlPathSteps,
+    validateDqlPath;
 import sparkles.wired.sdl.document : SdlAttributeRange, SdlAttributeView, SdlChildRange,
     SdlNode, SdlQualifiedName, SdlScalar, SdlScalarKind;
 
 /// The most steps a selection path may have.
 enum size_t sdlSelectorMaxSteps = 16;
 
-/// One step of an SDL path: a qualified name and an optional index.
+/// One step of an SDL path: a segment, identifier or quoted, and an
+/// optional index.
 private struct SdlStep
 {
-    SdlQualifiedName name;
+    DqlPathStep member;
     bool indexed;
     size_t index;
-}
 
-/// `segment` as a qualified name: split at its first `:`.
-private SdlQualifiedName qualifiedNameOf(return scope const(char)[] segment)
-    @safe pure nothrow @nogc
-{
-    foreach (i, c; segment)
-        if (c == ':')
-            return SdlQualifiedName(segment[0 .. i], segment[i + 1 .. $]);
-    return SdlQualifiedName(null, segment);
+    /** Whether the segment names `name`. A segment's decoded text is the
+    name split at its first `:`; SDL names hold no other `:`, so it names
+    exactly the name whose full spelling it is. */
+    bool matches(scope const SdlQualifiedName name) const scope @safe pure nothrow @nogc
+        => name.namespace_.length
+            ? member.nameEquals(name.namespace_, ":", name.localName)
+            : member.nameEquals(name.localName);
 }
 
 /// Reads the next step of non-empty `steps` — a member and the index after
@@ -57,7 +57,7 @@ private SdlStep nextStep(ref return scope DqlPathSteps steps) @safe pure nothrow
 in (!steps.empty)
 {
     SdlStep step;
-    step.name = qualifiedNameOf(steps.front.name);
+    step.member = steps.front;
     steps.popFront();
     if (!steps.empty && steps.front.kind == DqlPathStepKind.index)
     {
@@ -205,7 +205,7 @@ struct SdlNodeSelection
             {
                 const child = _levels[level].front;
                 _levels[level].popFront();
-                if (child.qualifiedName != step.name)
+                if (!step.matches(child.qualifiedName))
                     continue;
                 const ordinal = _matched[level]++;
                 if (step.indexed)
@@ -275,7 +275,7 @@ struct SdlAttributeSelection(Nodes)
             {
                 const attribute = _attributes.front;
                 _attributes.popFront();
-                if (attribute.qualifiedName != _step.name)
+                if (!_step.matches(attribute.qualifiedName))
                     continue;
                 if (_step.indexed && _matched++ != _step.index)
                     continue;
@@ -426,7 +426,7 @@ struct SdlNodeResolver
         }
         // The scalars live in the document, which outlives the evaluation
         // that asked; dip1000 sees only the borrowed views.
-        if (step.name == SdlQualifiedName(null, "values"))
+        if (step.member.nameEquals("values"))
         {
             if (!step.indexed)
                 return Reach.malformed;
@@ -437,11 +437,12 @@ struct SdlNodeResolver
         }
         if (step.indexed)
             return Reach.malformed;
-        foreach (attribute; current.byAttribute(step.name))
-        {
-            () @trusted { scalar = attribute.value; }();
-            return Reach.scalar;
-        }
+        foreach (attribute; current.byAttribute)
+            if (step.matches(attribute.qualifiedName))
+            {
+                () @trusted { scalar = attribute.value; }();
+                return Reach.scalar;
+            }
         return Reach.absent;
     }
 
@@ -450,8 +451,9 @@ struct SdlNodeResolver
         @safe pure nothrow @nogc
     {
         size_t ordinal;
-        foreach (candidate; parent.byChild(step.name))
-            if (ordinal++ == (step.indexed ? step.index : 0))
+        foreach (candidate; parent.byChild)
+            if (step.matches(candidate.qualifiedName)
+                && ordinal++ == (step.indexed ? step.index : 0))
             {
                 // The views refer to the document's core, which outlives
                 // the resolver; dip1000 sees only the loop variable.
@@ -732,21 +734,43 @@ unittest
 
 version (unittest)
 {
-    // The segment spelling of `name`, or null when a step cannot spell it.
-    private string segmentOf(SdlQualifiedName name)
-    {
-        import sparkles.dql.path : isDqlSegmentByte;
-
-        const text = name.namespace_.length
+    // A name's full spelling: `ns:local`, or `local`.
+    private string spelling(SdlQualifiedName name)
+        => name.namespace_.length
             ? (name.namespace_ ~ ":" ~ name.localName).idup : name.localName.idup;
-        foreach (char c; text)
-            if (!isDqlSegmentByte(c))
-                return null;
-        return text.length ? text : null;
+
+    // One reference step: a full spelling and an optional index.
+    private struct NameStep
+    {
+        string name;
+        bool indexed;
+        size_t index;
+    }
+
+    // `steps` as DQL prints a path: identifiers bare, other names quoted.
+    private string printed(const(NameStep)[] steps)
+    {
+        import std.conv : to;
+        import sparkles.dql.path : writeDqlSegment;
+
+        static struct Text
+        {
+            string text;
+            void put(scope const(char)[] part) { text ~= part; }
+        }
+
+        Text path;
+        foreach (i, step; steps)
+        {
+            writeDqlSegment(path, step.name, i == 0);
+            if (step.indexed)
+                path.text ~= "[" ~ step.index.to!string ~ "]";
+        }
+        return path.text;
     }
 
     // Every name path below `node` to `depth` steps, in first-seen order.
-    private void namePaths(SdlNode node, string prefix, size_t depth, ref string[] paths)
+    private void namePaths(SdlNode node, NameStep[] prefix, size_t depth, ref NameStep[][] paths)
     {
         import std.algorithm.searching : canFind;
 
@@ -754,18 +778,16 @@ version (unittest)
             return;
         foreach (child; node.byChild)
         {
-            const segment = segmentOf(child.qualifiedName);
-            if (segment is null)
-                continue;
-            const path = prefix.length ? prefix ~ "." ~ segment : segment;
+            auto path = prefix ~ NameStep(spelling(child.qualifiedName));
             if (!paths.canFind(path))
                 paths ~= path;
             namePaths(child, path, depth - 1, paths);
         }
     }
 
-    // The reference selection: nested loops over the children, one per step.
-    private void referenceNodes(SdlNode node, const(SdlStep)[] steps, ref size_t[] cells)
+    // The reference selection: nested loops over the children, one per
+    // step, comparing full spellings.
+    private void referenceNodes(SdlNode node, const(NameStep)[] steps, ref size_t[] cells)
     {
         if (steps.length == 0)
         {
@@ -773,30 +795,91 @@ version (unittest)
             return;
         }
         size_t ordinal;
-        foreach (child; node.byChild(steps[0].name))
-            if (!steps[0].indexed || ordinal++ == steps[0].index)
+        foreach (child; node.byChild)
+            if (spelling(child.qualifiedName) == steps[0].name
+                && (!steps[0].indexed || ordinal++ == steps[0].index))
                 referenceNodes(child, steps[1 .. $], cells);
     }
 
-    private SdlStep[] stepsOf(string path)
+    // `steps` with step `at` indexed by `index`.
+    private NameStep[] withIndex(const(NameStep)[] steps, size_t at, size_t index)
     {
-        SdlStep[] steps;
-        auto reader = dqlPathSteps(path);
-        while (!reader.empty)
-            steps ~= nextStep(reader);
-        return steps;
+        auto copy = steps.dup;
+        copy[at].indexed = true;
+        copy[at].index = index;
+        return copy;
     }
 
-    // `path` with `[index]` after its step `at`.
-    private string indexed(string path, size_t at, size_t index)
+    /* SDS2's oracle over one document: every name path to depth three,
+    printed as DQL prints it and with and without an index, selects what the
+    nested loops select; attribute selections likewise. */
+    private void checkPathOracle(SdlNode root, string label, ref size_t nodePaths,
+        ref size_t attributePaths)
     {
-        import std.array : join, split;
-        import std.conv : to;
+        NameStep[][] paths;
+        namePaths(root, null, 3, paths);
+        foreach (base; paths)
+        {
+            auto variants = [base, withIndex(base, base.length - 1, 0),
+                withIndex(base, base.length - 1, 1)];
+            if (base.length > 1)
+                variants ~= withIndex(base, 0, 1);
+            foreach (steps; variants)
+            {
+                const path = printed(steps);
+                size_t[] expected, actual;
+                referenceNodes(root, steps, expected);
+                auto parsed = SdlPath.parse(path);
+                assert(parsed.hasValue, label ~ ": " ~ path);
+                foreach (node; parsed.value.nodes(root))
+                    actual ~= node.cellIndex;
+                assert(actual == expected, label ~ ": " ~ path);
+                nodePaths++;
+            }
 
-        auto parts = path.split(".");
-        parts[at] ~= "[" ~ index.to!string ~ "]";
-        return parts.join(".");
+            // Attribute selections: every attribute name on the nodes `base`
+            // selects, plain and with an index, against nested loops.
+            if (base.length >= 3)
+                continue;
+            size_t[] owners;
+            referenceNodes(root, base, owners);
+            foreach (node; SdlPath.parse(printed(base)).value.nodes(root))
+                foreach (attribute; node.byAttribute)
+                {
+                    const name = spelling(attribute.qualifiedName);
+                    foreach (leaf; [NameStep(name), NameStep(name, true, 0)])
+                    {
+                        const path = printed(base ~ leaf);
+                        size_t[] expected, actual;
+                        foreach (owner; SdlPath.parse(printed(base)).value.nodes(root))
+                        {
+                            size_t ordinal;
+                            foreach (candidate; owner.byAttribute)
+                                if (spelling(candidate.qualifiedName) == name
+                                    && (!leaf.indexed || ordinal++ == leaf.index))
+                                    expected ~= candidate.cellIndex;
+                        }
+                        foreach (selected; SdlPath.parse(path).value.attributes(root))
+                            actual ~= selected.cellIndex;
+                        assert(actual == expected, label ~ ": " ~ path);
+                        attributePaths++;
+                    }
+                }
+        }
     }
+
+    // Tags and attributes whose names are not DQL identifiers.
+    private enum dottedRecipe = `name "dotted"
+my.tool "a" opt.level=3 x:my.flag=true
+my.tool "b" {
+    dep.name "inner" dflags.ldc="-O"
+    dep.name "second"
+}
+x:my.tool "c" {
+    a.b.c 1
+}
+plain "d" weird$name=1
+`;
 }
 
 @("sdl.select.properties.repositoryRecipes.paths")
@@ -814,55 +897,52 @@ version (unittest)
         auto parsed = parseRecipe(host, file);
         if (!parsed.hasValue)
             continue;
-        auto root = parsed.document.root;
-        string[] paths;
-        namePaths(root, null, 3, paths);
-        foreach (base; paths)
-        {
-            const steps = stepsOf(base).length;
-            string[] variants = [base, indexed(base, steps - 1, 0), indexed(base, steps - 1, 1)];
-            if (steps > 1)
-                variants ~= indexed(base, 0, 1);
-            foreach (path; variants)
-            {
-                size_t[] expected, actual;
-                referenceNodes(root, stepsOf(path), expected);
-                foreach (node; SdlPath.parse(path).value.nodes(root))
-                    actual ~= node.cellIndex;
-                assert(actual == expected, file ~ ": " ~ path);
-                nodePaths++;
-            }
-
-            // Attribute selections: every attribute name on the nodes `base`
-            // selects, plain and with an index, against nested loops.
-            if (steps >= 3)
-                continue;
-            foreach (node; SdlPath.parse(base).value.nodes(root))
-                foreach (attribute; node.byAttribute)
-                {
-                    const segment = segmentOf(attribute.qualifiedName);
-                    if (segment is null)
-                        continue;
-                    foreach (path; [base ~ "." ~ segment, base ~ "." ~ segment ~ "[0]"])
-                    {
-                        const leaf = stepsOf(path)[$ - 1];
-                        size_t[] expected, actual;
-                        foreach (owner; SdlPath.parse(base).value.nodes(root))
-                        {
-                            size_t ordinal;
-                            foreach (candidate; owner.byAttribute(leaf.name))
-                                if (!leaf.indexed || ordinal++ == leaf.index)
-                                    expected ~= candidate.cellIndex;
-                        }
-                        foreach (selected; SdlPath.parse(path).value.attributes(root))
-                            actual ~= selected.cellIndex;
-                        assert(actual == expected, file ~ ": " ~ path);
-                        attributePaths++;
-                    }
-                }
-        }
+        checkPathOracle(parsed.document.root, file, nodePaths, attributePaths);
     }
     assert(nodePaths > 1000 && attributePaths > 1000, "too few selections were compared");
+}
+
+@("sdl.select.properties.dottedNames.paths")
+@system unittest
+{
+    auto parsed = parseSdlDocument!sdlFull(dottedRecipe);
+    assert(parsed.hasValue, parsed.hasError ? parsed.error.toString : "");
+    size_t nodePaths, attributePaths;
+    checkPathOracle(parsed.document.root, "dotted", nodePaths, attributePaths);
+    assert(nodePaths >= 20 && attributePaths >= 8);
+
+    // The quoted spellings select what they name, namespaces included.
+    const root = parsed.document.root;
+    size_t count(string path)
+    {
+        size_t n;
+        foreach (_; SdlPath.parse(path).value.nodes(root))
+            n++;
+        return n;
+    }
+    assert(count(`["my.tool"]`) == 2);
+    assert(count(`["my.tool"][1]["dep.name"]`) == 2);
+    assert(count(`["x:my.tool"].["a.b.c"]`) == 1);
+    assert(count("my") == 0);
+    assert(SdlPath.parse(`["my.tool"]["opt.level"]`).value.attributes(root).front
+        .value.integer == 3);
+    assert(SdlPath.parse(`["my.tool"]["x:my.flag"]`).value.attributes(root).front
+        .value.boolean);
+
+    // Filters reach the same names.
+    auto ldc = SdlSelector.parse(`["my.tool"]["dep.name"]`, `["dflags.ldc"] == null`);
+    size_t kept;
+    foreach (node; ldc.value.nodes(root))
+    {
+        assert(node.byValue.front.stringValue == "second");
+        kept++;
+    }
+    assert(kept == 1);
+    auto level = SdlSelector.parse(`["my.tool"]`,
+        `["opt.level"] > 2 && ["x:my.flag"] == true`);
+    assert(!level.value.nodes(root).empty);
+    auto inner = SdlSelector.parse(`["my.tool"]`, `["dep.name"][1].values[0] == second`);
+    assert(inner.value.nodes(root).front.byValue.front.stringValue == "b");
 }
 
 @("sdl.select.properties.repositoryRecipes.filters")
