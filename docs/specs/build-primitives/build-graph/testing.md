@@ -19,16 +19,20 @@ the code under test.
 | 4. digest audit          | BGK5, BGK7, BGS6                   |
 | 5. relocation            | BGA5–BGA6, BGG4, invariant 3       |
 | 6. backend agreement     | BGN1, BGN5                         |
-| 7. concurrency           | BGS1–BGS5, BGS7                    |
+| 7. concurrency           | BGS1–BGS4                          |
 | 8. layout lint           | BGV4–BGV5                          |
 | 9. key sensitivity       | BGK1, BGK9, BGA4, BGA10, BGT1–BGT3 |
 | 10. generators           | BGG1–BGG3, BGG5–BGG6               |
 | 11. test actions         | BGX1–BGX3                          |
 | 12. Nix inputs           | BGN2–BGN4                          |
 | 13. hidden edges         | BGR8, BGK8                         |
-| 14. task exposure        | BGA8                               |
+| 14. task exposure        | BGA8, invariant 7                  |
 | 15. pinned test runner   | BGT4                               |
 | 16. publication faults   | BGA7, BGA9, BGS2, BGS6             |
+| 17. store lifecycle      | BGS1, BGS5, BGS7, BGS10            |
+| 18. miss explanation     | BGS8                               |
+| 19. determinism check    | BGS9                               |
+| 20. planning read set    | BGP1                               |
 
 ## Oracles
 
@@ -331,6 +335,11 @@ root must pass.
 identical. Every action edge must be `onSuccess`, and a link's argument vector
 must carry its claimed thread count.
 
+**Edges are not inputs (invariant 7):** plan a package's coverage fallback
+(the plain compile behind an `onFailure` edge) and the same package's plain
+test. The plain compile must have one key in both graphs, and one result
+serves both.
+
 ### Oracle 16: publication faults
 
 **Source of truth:** BGA9's table of which endings publish, applied to injected
@@ -354,6 +363,91 @@ endings whose cause the test controls.
 6. Cut power to a virtual machine between a publishing rename and the next
    write, then look the key up after reboot. The entry must be complete or
    absent.
+
+### Oracle 17: store lifecycle
+
+**Method:** run a store with small bounds, a few MiB of results and a few KiB
+of records, against a scripted sequence of publications, lookups and leases.
+
+1. **Recency:** publish A then B, create a lease on A, end it, and exceed the
+   bound. B must be evicted before A. Changing A's access time must not change
+   the order.
+2. **Off the publish path:** a publication that crosses the bound must
+   complete before eviction starts, and eviction must stop at 90 % of the
+   bound.
+3. **Leased overshoot:** hold leases on more than the bound. Nothing leased
+   may be evicted, the overshoot must be reported, and eviction must resume
+   when the leases end.
+4. **Digest records:** evict an archive whose link result survives, then
+   request the link. The link must hit without rebuilding the archive. Then
+   request a test of a new binary that links the archive: the archive must
+   rebuild, with the digests its record holds.
+5. **Separate bounds:** publish results until the results bound evicts. No
+   manifest list or record may be evicted for it. Fill the records bound with
+   manifest lists: lists whose results are gone must go first.
+6. **Operations (BGS7):** remove by key, task, package and toolchain identity,
+   each against a store holding entries of two packages and two toolchains.
+   Exactly the named entries must move to `trash/`. Replace a result: the new
+   entry must be published and the old one must be in `trash/`.
+7. **`CACHEDIR.TAG`:** the store's top directory and `ci`'s `runs/` directory
+   must each hold a tag file whose signature line the specification defines.
+8. **Format versions (BGS10):** run two builds of the graph with different
+   layout versions on one machine. Each must use its own `v<N>/` directory.
+   Write an entry with an unknown format version: lookup must miss and leave it
+   in place. Garbage collection must remove an older layout's directory only
+   when no lease in it is live.
+
+### Oracle 18: miss explanation
+
+**Source of truth:** the substitution that oracle 9 made, which the test knows.
+
+**Method:** for each substitution of oracle 9, look the affected action up
+after a run that published it. The miss must be classed `declared` and must
+name the substituted component, and only that one. Then:
+
+- edit a file a manifest lists: the miss must be classed `manifest` and must
+  name that file;
+- create a file at an absent candidate: it must be classed `manifest` and must
+  name that path;
+- evict the result and its record: it must be classed `evicted`.
+
+`ci cache explain <task>` must print the same classification and execute
+nothing. A redacted environment value in a fixture action must appear in the
+stored preimage only as its digest.
+
+### Oracle 19: determinism check
+
+**Source of truth:** fixture actions whose determinism the test controls.
+
+**Method:**
+
+1. A deterministic compile: the check must pass, and the private store must be
+   gone afterwards. The shared store must hold no new entry, and the run must
+   push nothing to a binary cache.
+2. A compile through a wrapper that writes the time into its object: the check
+   must fail, name the key and the object, and remove the published result.
+3. A compile whose published result was planted with different bytes under
+   the right key: the check must fail, which shows it executes the action
+   rather than reading the store. With lookup re-enabled in the check, the
+   same fixture passes, which is the revert check.
+4. The sample (CIC13): for a fixed commit id and plan, the sampled actions
+   must be the same on two runs, and must differ for another commit id.
+
+### Oracle 20: planning read set
+
+**Source of truth:** the system call trace of planning.
+
+**Method:**
+
+1. Plan the repository's test selection under
+   `strace -f -e trace=%file`. Every file planning opened and every failed
+   lookup must be in the read set, and so must every environment variable the
+   planner's driver read.
+2. Edit a sample of files outside the read set, one at a time, and re-plan.
+   No such edit may change the plan.
+3. **CIC5:** every path in the read set outside package directories must lie
+   under one of `ci`'s invalidators. Remove an invalidator from the list: the
+   check must fail, naming a path it covered.
 
 ## The recipe vocabulary
 

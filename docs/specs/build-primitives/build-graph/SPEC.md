@@ -86,6 +86,10 @@ the choices behind each section in [decisions.md](./decisions.md).
    key report the same diagnostics, exit status and outputs.
 6. **The source tree is read, never written.** Generated files live in action
    outputs.
+7. **A result is keyed by its action's inputs, never by graph edges.** An edge
+   decides whether an action runs, not what it produces. A fallback compile
+   that runs only after another action failed shares its key with the same
+   compile run unconditionally.
 
 ## 2. Recipe resolution
 
@@ -584,17 +588,20 @@ what an action uses without changing anything it read.
 
 The store's layout is:
 
-| Directory                 | Holds                                             |
-| ------------------------- | ------------------------------------------------- |
-| `<store>/results/<key>/`  | a published result: outputs, diagnostics, digests |
-| `<store>/manifests/<key>` | the manifest list of a declared key               |
-| `<store>/leases/<key>/`   | one lease file per process using a result         |
-| `<store>/staging/`        | entries being written                             |
-| `<store>/trash/`          | entries being evicted or discarded                |
+| Directory                  | Holds                                                  |
+| -------------------------- | ------------------------------------------------------ |
+| `<store>/results/<key>/`   | a published result: outputs, diagnostics, digests      |
+| `<store>/manifests/<key>`  | the manifest list of a declared key                    |
+| `<store>/records/<key>`    | the digest record of an evicted result (BGS5)          |
+| `<store>/preimages/<task>` | the declared-key preimage a task last published (BGS8) |
+| `<store>/leases/<key>/`    | one lease file per process using a result              |
+| `<store>/staging/`         | entries being written                                  |
+| `<store>/trash/`           | entries being evicted or discarded                     |
 
 **BGS1: One store per machine.** Results **must** live in one store per user and
-machine, at `$XDG_CACHE_HOME/sparkles/build` (`~/.cache/sparkles/build` when
-unset), shared by every worktree and process.
+machine, under `$XDG_CACHE_HOME/sparkles/build` (`~/.cache/sparkles/build` when
+unset), shared by every worktree and process. `<store>` is that directory's
+`v<N>/` subdirectory, where `<N>` is the store's layout version (BGS10).
 
 **BGS2: Atomic publication.** A result **must** become visible only complete.
 
@@ -642,15 +649,48 @@ publishes, and **must** hold the lease until its run ends.
 - **Read only:** outputs are read in place, and no process writes into
   `results/`.
 
-**BGS5: Eviction.** The store **must** enforce a configured size bound, 20 GiB
-by default, by evicting least-recently-used results. An eviction:
+**BGS5: Eviction.** The store **must** enforce two configured size bounds, each
+by evicting its least recently used entries first:
+
+- **Results:** output bytes, 20 GiB by default.
+- **Records:** manifest lists, digest records and key preimages, 1 GiB by
+  default. Large results therefore never evict the small records that later
+  lookups need.
+
+A result's recency is the time a lease on it was last created (BGS4); the
+store does not read access times
+([D38](./decisions.md#d38-plain-lru-touched-at-lease-creation-accepted)).
+Eviction follows these rules:
+
+- **Off the publish path:** eviction runs when a bound is exceeded, in a task
+  of its own, and evicts down to 90 % of the bound. Publication never waits
+  for it.
+- **Leased overshoot:** a result with a live lease is never evicted, so the
+  store **may** exceed its bound while leases hold it. The overshoot is
+  reported, and eviction resumes when the leases end.
+- **Digest records:** evicting a result removes its output bytes but keeps a
+  record under its result key: its output digests and sizes, its diagnostics
+  and its exit status. A consumer whose key needs only those digests (BGK1)
+  reads them from the record, and a lookup that needs the bytes is a miss. An
+  action whose result is only recorded is executed only when an action that
+  misses needs its bytes.
+- **Manifests:** a manifest whose result is neither present nor recorded is a
+  miss, and is dropped from its list. A list left empty is removed.
+
+An eviction of a result:
 
 1. skips a result with a live lease;
 2. renames the result into `trash/` under a unique name;
 3. checks the leases again, and renames the result back if one appeared;
-4. discards it instead if its key has been republished meanwhile.
+4. discards it instead if its key has been republished meanwhile;
+5. writes its digest record.
 
-Garbage collection removes `trash/` and stale `staging/` entries.
+Garbage collection removes `trash/`, stale `staging/` entries, and the
+directories of older layout versions in which no lease is live.
+
+_Rationale:_ archive and link keys digest their inputs' outputs. Without the
+record, evicting an archive whose link result survives would force the archive
+to be rebuilt only to recompute a digest, and the link would then hit.
 
 **BGS6: Corruption.** An entry whose recorded digests do not match its files
 **must** be treated as a miss. It is renamed into `trash/` before it is
@@ -664,9 +704,73 @@ a diagnostic is reported. Corruption is detected at three points:
   one rehashes every hit.
 - **Verification** (BGS7) rehashes every entry it is asked to check.
 
-**BGS7: Inspection.** The store **must** provide operations to report its size,
-list entries by key and age, verify entries by rehashing every recorded digest
-(BGS6), and collect garbage. `apps/ci` exposes them as `ci cache` subcommands.
+**BGS7: Inspection and repair.** The store **must** provide operations to:
+
+- report its size, and list entries by key, task and age;
+- collect garbage;
+- **verify** entries, by rehashing every recorded digest (BGS6);
+- **remove** the results of one result key, one task, one package, or one
+  toolchain identity, by moving them to `trash/`;
+- **replace** a result: execute its action with lookup bypassed, move the
+  published entry to `trash/`, and publish the new one;
+- run the determinism check (BGS9).
+
+`apps/ci` exposes them as `ci cache` subcommands. The store's top directory,
+and the directory under which `ci` keeps its run directories, each hold a
+`CACHEDIR.TAG` file, as the
+[Cache Directory Tagging Specification](https://bford.info/cachedir/) defines,
+so backup tools skip them.
+
+_Rationale:_ a wrong result that passes every digest check, such as one keyed
+on an incomplete manifest, is never evicted by age while it keeps being used.
+Removal by toolchain identity retires every result a defective compiler
+built.
+
+**BGS8: Explaining a miss.** For every action it publishes, the store **must**
+keep the preimage of its declared key under the action's task id (BGA8): each
+component BGK1 lists, by name, with its value or digest. A task's newer
+preimage replaces its older one. On a miss, the build graph **must** classify
+it as one of:
+
+1. **declared:** no manifest list exists for the declared key. The
+   explanation names each component that differs from the task's recorded
+   preimage, or says that none is recorded.
+2. **manifest:** a list exists but no manifest matches. The explanation names,
+   for the most recently used manifest, its first file entry whose digest
+   differs, or its first absent candidate that now exists.
+3. **evicted:** a manifest matches, but its result is gone and no record
+   serves the lookup.
+
+Each miss is reported with its class. `ci cache explain <task>` plans the task
+and prints the classification of its lookup against the current tree and
+store, executing nothing. A value marked redacted (TDM4) **must** appear in a
+preimage only as its digest.
+
+**BGS9: The determinism check.** The store **must** provide a check that
+re-executes a given set of actions **cold and unshared**:
+
+- **Cold:** each action runs with its own lookup bypassed. Its inputs are the
+  bytes its published result was keyed on, read from the store by digest.
+- **Unshared:** its outputs go to a private store, created empty for the check
+  and discarded after it, and never reach the shared store or a binary cache.
+
+The check compares each action's output digests, manifest, diagnostics and
+exit status with its published result. A difference **must** fail the check,
+name the action, its result key and each differing item, and remove the
+published result (BGS7). BGS3's nondeterminism reports feed the same report.
+
+_Rationale:_ a determinism check must run cold and unshared, or it tests the
+cache ([reproducibility](../../../research/build-systems/reproducibility.md)).
+Which actions are checked, and when, is the consumer's policy; `ci` checks a
+sample on every CI run
+([CIC13](../../ci/task-dag/SPEC.md#_1-3-ci-pipeline)).
+
+**BGS10: Format versions.** The store's layout version names its directory
+(BGS1), so two revisions of the build graph with different layouts use
+separate stores on one machine. Each entry, record and manifest list
+**must** record the format version of its own encoding. An entry in a format
+the reading process does not know is a miss, and is left in place for a
+process that does.
 
 ## 7. Generators
 
@@ -861,3 +965,16 @@ Each operation returns its errors as values. Planning and keying read recipes,
 lex source files for version pruning and the layout lint, digest files and
 query `pkg-config`, each through an explicit driver. They perform no other
 I/O.
+
+**BGP1: Planning's read set.** Planning **must** record its **read set** and
+report it with the plan:
+
+- every file it read or listed, with its content digest or listing digest;
+- every path it probed and found absent;
+- every environment variable it consulted;
+- every `pkg-config` query, with its arguments.
+
+The read set is what a plan depends on. A consumer that decides when to plan
+again, such as `ci`'s invalidator list
+([CIC5](../../ci/task-dag/SPEC.md#_4-selection-policy)), is checked against it.
+See [D37](./decisions.md#d37-planning-records-its-read-set-accepted).
