@@ -1,11 +1,8 @@
 # Reviewed exceptions to `ci --check-adhoc-sdl` (lossless editing SDE9,
-# docs/specs/wired/sdl/editing.md): text-matching calls whose argument holds an
-# SDL marker but that do no SDL work. One per line: `path | literal | reason`,
-# the literal as the audit reports it. An entry that matches nothing fails the
-# audit, so delete it when its site goes.
-apps/ci/src/app.d | test-runner/src | matches a `sourcePaths` value decoded through the dub.sdl schema, not recipe text
-libs/build-primitives/src/sparkles/build_primitives/dub_recipe.d | dflags- | the dub.json reader's platform-suffixed keys (`dflags-ldc`); JSON, not SDL
-libs/test-runner-impl/src/sparkles/test_runner/reporting.d | libs/test-runner | the test runner recognizing its own source path in a stack frame
-libs/test-runner-impl/src/sparkles/test_runner/runner_impl.d | test-runner | the test runner recognizing its own executable name
-apps/ci/src/app.d | largeBareScopes | commit-message scopes (`test-runner`, …), checked by the detailed-scope hook; not SDL
-apps/ci/tools/standardize-build-settings.d | legacySettings | compares a node's own source text, located through the parsed document, with the exact legacy settings it removes through the editor
+# docs/specs/wired/sdl/editing.md): marked operands the audit's rule cannot
+# tell from SDL work. One per line: `path | literal | reason`, the literal as
+# the audit reports it. An entry that matches nothing fails the audit, so
+# delete it when its site goes.
+apps/ci/tools/standardize-build-settings.d | managed | the canonical managed region, handed to the editor as a fragment (which it parses and checks) and compared byte for byte with the region located by its marker comments: an up-to-date region is left untouched, which is the lossless test, not a reading of SDL
+libs/twoslash-d/src/sparkles/twoslash_d/notation.d | dflags | twoslash's own `// @dflags:` directive keyword, compared with a word parsed from a D comment; not SDL
+libs/wired/bench/runtime/tools/gen-sdl-datasets.d | subPackage {\n | the benchmark dataset generator wraps each recipe's bytes, unread, in an inline `subPackage { … }`; it imports only Phobos by design (Nix runs it with `ldc2 -run`), and the writer cannot embed unparsed bytes
