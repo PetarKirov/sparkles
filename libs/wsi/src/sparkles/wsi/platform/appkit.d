@@ -282,6 +282,8 @@ private extern class NSApplication : NSResponder
 {
     static NSApplication sharedApplication() @selector("sharedApplication");
     void setActivationPolicy(long policy) @selector("setActivationPolicy:");
+    void finishLaunching() @selector("finishLaunching");
+    void activateIgnoringOtherApps(bool flag) @selector("activateIgnoringOtherApps:");
     NSEvent nextEventMatchingMask(ulong mask, NSDate untilDate,
         NSString mode, bool dequeue)
         @selector("nextEventMatchingMask:untilDate:inMode:dequeue:");
@@ -722,6 +724,8 @@ struct AppKitWsi
     private EventQueue!maxEvents events_;
     private ulong nextSequence_ = 1;
     private bool open_;
+    private bool regular_;   // `ActivationPolicy.regular`
+    private bool activated_; // brought frontmost with its first window
     private bool closed_;
     private bool hasStickyError_;
     private WsiError stickyError_;
@@ -765,6 +769,11 @@ struct AppKitWsi
             config.activation == ActivationPolicy.accessory
                 ? NSApplicationActivationPolicyAccessory
                 : NSApplicationActivationPolicyRegular);
+        // What `-[NSApplication run]` would do first: without it a process
+        // launched from a shell never becomes active, so its windows are
+        // never key.
+        wsi.application_.finishLaunching();
+        wsi.regular_ = config.activation == ActivationPolicy.regular;
         wsi.runLoop_ = CFRunLoopGetCurrent();
         if (wsi.runLoop_ is null)
             return appKitFailure!void(WsiOperation.open, 0,
@@ -898,6 +907,15 @@ struct AppKitWsi
         if (config.visible)
         {
             window.makeKeyAndOrderFront(null);
+            // A regular application launched from a shell is brought to the
+            // front with its first window, as one launched from the Finder
+            // is. Cooperative since macOS 14: the user's active application
+            // may keep the focus.
+            if (regular_ && !activated_)
+            {
+                application_.activateIgnoringOtherApps(true);
+                activated_ = true;
+            }
             // The layer-hosting view gets no `drawRect:`: its first frame
             // opportunity is the window going on screen.
             offerFrame(index);
