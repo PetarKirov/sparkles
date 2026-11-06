@@ -314,6 +314,33 @@ can tell it from SDL work. The legacy-setting removal in
 not by their text, and `standardize-build-settings --check` still reports
 no change on the tree.
 
+### S20 — Keyed typed write-back
+
+`updateSDL` pairs aggregate-sequence elements by identity, keeping the
+longest run in common order, and edits only the elements whose meaning
+changed ([editing §3.1](./editing.md#3-1-typed-write-back)). Scalar unions
+encode, and write back in place; `updateSDL` applies to any node, not only
+the root.
+
+Gate:
+
+- `sdl.typedEdit.keyed.*`: removing the first or a middle element removes
+  exactly it and its attached comments; inserting first or in the middle
+  leaves every other byte; a changed identity between kept neighbours keeps
+  its comments; a nested configuration's change edits only its value; a
+  reordering keeps the longest run's bytes; equal identities pair in order.
+- `build_primitives.dub_manifest.roundTrip.lossless`: over every repository
+  recipe, removing the first configuration and inserting a dependency first
+  decodes as the change, loses no comment outside the removed node and its
+  attached comments, and leaves every other configuration's bytes in the
+  output.
+- `wired.sdl.codec.unionEncode`: a scalar union round-trips on every scalar
+  channel; `sdl.typedEdit.unionsChangeInPlace` writes a changed member as one
+  value edit.
+- `sdl.typedEdit.updatesANonRootNode`: an update of a non-root node edits
+  that node.
+- Laws 4 and 5 of SPEC §10, unchanged.
+
 ## S11–S18 closure: 2026-10-27
 
 Every gate from S11 to S18 holds on this branch, delivered as one pull request.
