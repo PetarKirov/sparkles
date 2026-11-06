@@ -6,3 +6,4 @@
 apps/ci/tools/standardize-build-settings.d | managed | the canonical managed region, handed to the editor as a fragment (which it parses and checks) and compared byte for byte with the region located by its marker comments: an up-to-date region is left untouched, which is the lossless test, not a reading of SDL
 libs/twoslash-d/src/sparkles/twoslash_d/notation.d | dflags | twoslash's own `// @dflags:` directive keyword, compared with a word parsed from a D comment; not SDL
 libs/wired/bench/runtime/tools/gen-sdl-datasets.d | subPackage {\n | the benchmark dataset generator wraps each recipe's bytes, unread, in an inline `subPackage { … }`; it imports only Phobos by design (Nix runs it with `ldc2 -run`), and the writer cannot embed unparsed bytes
+apps/twoslash-extract/src/app.d | dflags | the unit of a count in the `--dub` status line (`…, 3 dflags`), printed with `writeln`; the fragment ` dflags` reads as an indented bare key, but no recipe is written
