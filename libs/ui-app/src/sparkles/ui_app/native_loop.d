@@ -64,6 +64,7 @@ import sparkles.profiling : FrameClock, FrameFlags, FrameHistory, FramePhase, Fr
     FrameStats, writeChromeTrace;
 // `PRF20`: empty inline functions unless built with `version (SparklesTracy)`.
 import sparkles.profiling.tracy : tracyFrameMark, tracyPlot, tracyZone;
+import sparkles.profiling.counters.frame : FrameCounters;
 import sparkles.profiling.zones : cpuZone, FrameZones, ZoneStats;
 import sparkles.wsi;
 
@@ -734,7 +735,14 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
     const summarizeFrames = cfg.native.debugging.traceFrames
         || cfg.native.debugging.traceFramesOver > 0 || cfg.native.debugging.frames > 0
         || cfg.native.debugging.resizeStress || cfg.native.debugging.gpuTiming
-        || cfg.native.debugging.frameTrace.length;
+        || cfg.native.debugging.frameTrace.length || cfg.native.debugging.frameCounters;
+    // `--debug frame-counters`: the frame thread's hardware counters, read at
+    // each pass's edges (`PRF23`). Opened here: they count this thread.
+    FrameCounters* counters = new FrameCounters;
+    if (cfg.native.debugging.frameCounters)
+        counters.start();
+    scope (exit)
+        counters.stop();
     // Kept under any frame switch: a display time arrives frames after its
     // frame, and finds its record here (`PRF13`).
     if (summarizeFrames)
@@ -778,6 +786,8 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                 note(i"native window gpu: $(gpuTimes)");
             if (zoneTimes.any)
                 note(i"native window $(*zoneTimes)");
+            if (cfg.native.debugging.frameCounters)
+                note(i"native window counters: $(counters.stats)");
             if (memory.samples)
                 note(i"native window memory: $(memory)");
         }
@@ -1955,6 +1965,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
             // The pass's zones, on this thread, until it ends however it does.
             zones = FrameZones.init;
             () @trusted { FrameZones.current = &zones; }();
+            counters.beginFrame();
             scope (exit)
                 FrameZones.current = null;
             // Tracy's zones for the pass: the frame, and within it the phases
@@ -2104,6 +2115,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                     flags |= FrameFlags.outOfDate;
                 auto r = recordOf(started, timing, flags);
                 r.cpu = took;
+                counters.endFrame(keep: shown);
                 if (shown)
                 {
                     frameTimes.note(r);

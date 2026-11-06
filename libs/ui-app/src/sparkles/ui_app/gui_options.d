@@ -244,6 +244,9 @@ struct NativeDebug
 
     @Description("Write the run's last 4096 frames as a Chrome trace (Perfetto, chrome://tracing) to PATH when the window closes.")
     string frameTrace; ///
+
+    @Description("Read the frame thread's hardware counters (instructions, cycles, cache misses, page faults) for each frame, and summarize them when the window closes.")
+    bool frameCounters; ///
 }
 
 /**
