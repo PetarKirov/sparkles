@@ -1582,6 +1582,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
             pending = PendingSpecimen.init;
         }
         frameTimes.noteRefresh(refresh);
+        gpuTimes.noteRefresh(refresh); // the device's hitches by the same display
         if (history is null)
             return;
         if (auto r = history.markShown(tag, shown - opened))
