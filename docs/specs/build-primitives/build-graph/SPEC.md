@@ -216,9 +216,10 @@ silently drifting into a different build system.
 another package's directory through `importPaths`, `sourcePaths`, `sourceFiles`,
 `stringImportPaths`, `cImportPaths` or `cSourcePaths` without a `dependency` on
 it, in any configuration. Resolution reports each violation, naming the recipe
-line and the package reached. There is no exception: the test runner's
-implementation is a pinned, prebuilt component (BGT1), so no package
-source-includes it.
+line and the package reached. There is no exception: the test runner runs out
+of process, so a test binary links only its shim and no package
+source-includes its implementation. TRD1, TRD9 and TRM8 in
+`docs/specs/test-runner/` define that model.
 
 ## 3. Variants
 
@@ -849,9 +850,10 @@ platform of the variant that reads its outputs.
   linking, the C library, startup objects and system headers;
 - the linker;
 - every generator tool;
-- the **pinned test runner**: the test runner's implementation, built from a
-  pinned revision of this repository rather than from the working tree
-  ([decisions.md](./decisions.md#d16-the-test-runner-implementation-is-pinned-and-prebuilt)).
+- for a test action, the **runner core** that runs it: the identity of the
+  `ci` build whose core drives the test binary. The test runner runs out of
+  process, and this item follows TRM8 of its process model
+  (`docs/specs/test-runner/process-model.md`).
 
 **BGT2: Store toolchains.** When a component resolves into a Nix store path, its
 identity **may** be that path's closure of store paths, without reading file
@@ -861,12 +863,17 @@ contents. A wrapper script's referenced store paths are part of its closure.
 digests of the files BGT1 lists, found through the compiler's own reported
 configuration. It **may** be cached per BGK5.
 
-**BGT4: The pinned test runner.** Every test root **must** link the pinned test
-runner's prebuilt library and compile against its import directory. The
-test-runner shim, `sparkles:test-runner`, stays an in-tree `sourceLibrary` that
-every package depends on through an ordinary `dependency`. A change to the
-working tree's test-runner implementation affects only that package's own
-tests until the pin is bumped.
+**BGT4: The pinned test runner (superseded).** Superseded by the test runner's
+out-of-process model, TRM8 and decision TRD9 in `docs/specs/test-runner/`:
+test binaries link only the shim, never the runner's implementation, and
+BGT1's runner-core item replaces this requirement. Its former text, not normative:
+
+> Every test root must link the pinned test runner's prebuilt library and
+> compile against its import directory. The test-runner shim,
+> `sparkles:test-runner`, stays an in-tree `sourceLibrary` that every package
+> depends on through an ordinary `dependency`. A change to the working tree's
+> test-runner implementation affects only that package's own tests until the
+> pin is bumped.
 
 ## 9. Test actions and result reuse
 

@@ -11,29 +11,29 @@ falsifying scenarios that check it, and the evidence recorded so far. An oracle
 is the source of the expected result. Each one is chosen to be independent of
 the code under test.
 
-| Oracle                       | Covers                              |
-| ---------------------------- | ----------------------------------- |
-| 1. dub agreement             | BGR1–BGR7, BGV1–BGV2, invariant 4   |
-| 2. build equivalence         | BGA1–BGA4, BGA7, BGV1–BGV3          |
-| 3. manifest completeness     | BGK2–BGK4, BGK6, invariant 6        |
-| 4. digest audit              | BGK5, BGK7, BGS6                    |
-| 5. relocation                | BGA5–BGA6, BGA11, BGG4, invariant 3 |
-| 6. backend agreement         | BGN1, BGN5–BGN6                     |
-| 7. concurrency               | BGS1–BGS4                           |
-| 8. layout lint               | BGV4–BGV5                           |
-| 9. key sensitivity           | BGK1, BGK9, BGA4, BGA10, BGT1–BGT3  |
-| 10. generators               | BGG1–BGG3, BGG5–BGG6                |
-| 11. test actions             | BGX1–BGX3                           |
-| 12. Nix backend              | BGN1–BGN4, BGN7–BGN8                |
-| 13. hidden edges             | BGR8, BGK8                          |
-| 14. task exposure            | BGA8, invariant 7                   |
-| 15. pinned test runner       | BGT4                                |
-| 16. publication faults       | BGA7, BGA9, BGS2, BGS6              |
-| 17. store lifecycle          | BGS1, BGS5, BGS7, BGS10             |
-| 18. miss explanation         | BGS8                                |
-| 19. determinism check        | BGS9                                |
-| 20. planning read set        | BGP1                                |
-| 21. incremental equals clean | invariant 5, BGK4, BGA10            |
+| Oracle                              | Covers                              |
+| ----------------------------------- | ----------------------------------- |
+| 1. dub agreement                    | BGR1–BGR7, BGV1–BGV2, invariant 4   |
+| 2. build equivalence                | BGA1–BGA4, BGA7, BGV1–BGV3          |
+| 3. manifest completeness            | BGK2–BGK4, BGK6, invariant 6        |
+| 4. digest audit                     | BGK5, BGK7, BGS6                    |
+| 5. relocation                       | BGA5–BGA6, BGA11, BGG4, invariant 3 |
+| 6. backend agreement                | BGN1, BGN5–BGN6                     |
+| 7. concurrency                      | BGS1–BGS4                           |
+| 8. layout lint                      | BGV4–BGV5                           |
+| 9. key sensitivity                  | BGK1, BGK9, BGA4, BGA10, BGT1–BGT3  |
+| 10. generators                      | BGG1–BGG3, BGG5–BGG6                |
+| 11. test actions                    | BGX1–BGX3                           |
+| 12. Nix backend                     | BGN1–BGN4, BGN7–BGN8                |
+| 13. hidden edges                    | BGR8, BGK8                          |
+| 14. task exposure                   | BGA8, invariant 7                   |
+| 15. pinned test runner (superseded) | BGT4 (superseded)                   |
+| 16. publication faults              | BGA7, BGA9, BGS2, BGS6              |
+| 17. store lifecycle                 | BGS1, BGS5, BGS7, BGS10             |
+| 18. miss explanation                | BGS8                                |
+| 19. determinism check               | BGS9                                |
+| 20. planning read set               | BGP1                                |
+| 21. incremental equals clean        | invariant 5, BGK4, BGA10            |
 
 ## Oracles
 
@@ -247,8 +247,8 @@ and its test binary misreads the aggregate.
 **Method:** for each component of the declared key (BGK1) and each component
 BGT1 lists, substitute a variant of it: another argument, environment entry or
 recipe file; another compiler build, configuration file, C driver wrapper,
-linker or generator binary; another pinned test runner. Every affected key must
-change, and no unaffected one may.
+linker or generator binary; for test actions, another build of the runner core
+inside `ci` (BGT1). Every affected key must change, and no unaffected one may.
 
 **Search inputs (BGK9):**
 
@@ -348,7 +348,7 @@ timestamps, owners and groups, and no archive may be thin.
 **Method:** a fixture recipe with `importPaths "../other/src"` and no
 `dependency` must be reported, with its recipe line. So must the cycle-safe
 packages' source includes of the test runner, since BGR8 and D15 allow no
-exception, until E1a removes them.
+exception, until the out-of-process runner (TRD1) removes them.
 
 **Execution-time reaches (BGK8):** a fixture package's ImportC source with
 `#include "../other/include/x.h"`, where `other` is a package it does not
@@ -356,9 +356,10 @@ depend on, must fail the compile, naming the header and `other`, and leave no
 result in the store. The same include through a declared dependency's C import
 root must pass.
 
-### Oracle 15: pinned test runner
+### Oracle 15: pinned test runner (superseded)
 
-**Method:**
+Superseded with BGT4. Oracle 9's substitution of the runner core checks the
+key that replaces it. The former method, not run:
 
 1. Change the working tree's test-runner implementation. Only that package's
    own test root may rebuild, and every other test binary must still link the
@@ -676,7 +677,7 @@ dub run --single apps/ci/tools/scan-recipe-vocabulary.d
 | BGR5        | verified                                                                                                                     | `resolveLibraries` in `libs/build-primitives/src/sparkles/build_primitives/resolve/libraries.d`; oracle 1's resolved libraries, lflags and dflags against dub's final step (D20)                                                                                                                                                                                                                                                                                                                              |
 | BGR6        | verified                                                                                                                     | `loadSingleFileProject` in `libs/build-primitives/src/sparkles/build_primitives/resolve/project.d`; oracle 1 over the examples `ci --example-files` runs and the fences `ci --verify` runs, the comparison snippets apart (D25, proposed)                                                                                                                                                                                                                                                                     |
 | BGR7        | verified                                                                                                                     | `apps/ci/tools/resolve-oracle.d` and `apps/ci/tools/dub-resolve-probe.d`: 621 requests, 3651 targets, zero unaccepted disagreements, 52 accepted (D22), 94 refused by both                                                                                                                                                                                                                                                                                                                                    |
-| BGR8        | partial: reported; the test-runner source includes remain until E1a, and `ui-app`'s specification reach until D24 is decided | `hiddenEdges` in `libs/build-primitives/src/sparkles/build_primitives/resolve/hidden_edges.d`; the `sparkles:math` dependencies and the DQL test moved into `libs/dql/test`                                                                                                                                                                                                                                                                                                                                   |
+| BGR8        | partial: reported; the test-runner source includes remain until the out-of-process runner (TRD1) lands, and `ui-app`'s specification reach until D24 is decided | `hiddenEdges` in `libs/build-primitives/src/sparkles/build_primitives/resolve/hidden_edges.d`; the `sparkles:math` dependencies and the DQL test moved into `libs/dql/test`                                                                                                                                                                                                                                                                                                                                   |
 | BGV1–BGV5   | unverified                                                                                                                   | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | BGA1–BGA4   | unverified                                                                                                                   | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | BGA5        | partial: oracle 5 steps 1 and 3 by hand, with no build-graph keys (step 2's keys, steps 4 and 5)                             | E0 spike 1 (D18): LDC `8d5c3c8887` with `--ffile-prefix-map=<root>=.`, the `unittest` build type plus `-g`, `-cov` and `-checkaction=context`; `sparkles:base`, `sparkles:event-horizon` and `sparkles:ui` byte-identical across two worktrees and naming neither; test binaries built in one run from the other after the fixes in `libs/base/src/sparkles/base/source_uri.d`, `libs/wired/src/sparkles/wired/sdl/conformance.d` and `apps/shader-compile/src/toolchain_tests.d`; DMD's outputs differ (D19) |
