@@ -8,7 +8,7 @@ side is lives in `sparkles:ui-app`. The desktop flags are `TerminalCli`
 */
 module app;
 
-import cli : TerminalCli, guiOptionsFrom, parsedLaunch, viewOptionsFrom;
+import cli : commandLine, TerminalCli, guiOptionsFrom, parsedLaunch, viewOptionsFrom;
 import settings : ScrollbarWidth;
 import settings_load : loadTerminalConfig, LoadedConfig;
 import desktop_terminal : DesktopTerminal;
@@ -190,7 +190,7 @@ int launchDesktop(ref CommandNode!TerminalCli node)
         else
             restoredSession = app.host.restore(saved.value);
     }
-    if (!restoredSession && !app.host.start(getcwd(), command.join(" ")))
+    if (!restoredSession && !app.host.start(getcwd(), commandLine(command)))
     {
         stderr.writeln("Error: could not start a pane.");
         return 1;
