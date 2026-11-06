@@ -1005,6 +1005,16 @@ if (isImageSource!Images)
         updateScissor();
     }
 
+    /// Drops every clip open now, cell and pixel alike: for a client whose
+    /// other renderer has one global scissor and resets it before painting
+    /// chrome over a pane that clipped (`resetClip` in hue's raylib arm).
+    void resetClips()
+    {
+        clips_.clear();
+        hasPixelClip_ = false;
+        updateScissor();
+    }
+
     /// Moves what follows by `dx` and `dy` cells, each rounded to whole
     /// pixels half away from zero (`UVK14`).
     void pushShift(float dx, float dy)

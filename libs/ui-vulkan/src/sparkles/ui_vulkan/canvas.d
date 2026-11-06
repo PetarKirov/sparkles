@@ -1615,7 +1615,7 @@ struct VulkanCanvas(B)
     static foreach (name; ["fillRect", "textRun", "textRunIn", "glyph", "line", "rule",
             "scrollbar", "image", "pushClip", "popClip", "pushShift", "popShift", "pushEffect",
             "popEffect", "fillPx", "outlinePx", "roundedPx", "shadowPx", "eraseOutsidePx", "clipPx",
-            "unclipPx", "pushOffsetPx",
+            "unclipPx", "resetClips", "pushOffsetPx",
             "popOffsetPx", "imageQuadPx", "imageSourcePx", "clusterPx", "labelPx"])
         mixin("/// Through `Painter." ~ name ~ "`; only between `beginFrame` and `endFrame`.\n"
             ~ "void " ~ name ~ "(Args...)(auto ref Args args) @system\n"
