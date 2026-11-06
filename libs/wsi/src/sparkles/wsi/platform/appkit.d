@@ -374,6 +374,9 @@ private extern class NSWindow : NSResponder
     void miniaturize(NSObject sender) @selector("miniaturize:");
     void deminiaturize(NSObject sender) @selector("deminiaturize:");
     bool isKeyWindow() @selector("isKeyWindow");
+    ulong styleMask() @selector("styleMask");
+    void setCollectionBehavior(ulong behavior) @selector("setCollectionBehavior:");
+    void toggleFullScreen(NSObject sender) @selector("toggleFullScreen:");
 }
 
 /** Private NSView subclass forwarding only lossless native observations. */
@@ -642,6 +645,20 @@ private class SparklesWsiWindow : NSWindow
             activeOwner.onLiveResize(this, false);
     }
 
+    void windowDidEnterFullScreen(NSObject notification)
+        @selector("windowDidEnterFullScreen:")
+    {
+        if (activeOwner !is null)
+            activeOwner.onToplevelState(this);
+    }
+
+    void windowDidExitFullScreen(NSObject notification)
+        @selector("windowDidExitFullScreen:")
+    {
+        if (activeOwner !is null)
+            activeOwner.onToplevelState(this);
+    }
+
     void windowDidMiniaturize(NSObject notification)
         @selector("windowDidMiniaturize:")
     {
@@ -720,6 +737,8 @@ private enum ulong NSWindowStyleMaskMiniaturizable = 4;
 private enum ulong NSWindowStyleMaskResizable = 8;
 private enum ulong NSBackingStoreBuffered = 2;
 private enum ulong NSWindowOcclusionStateVisible = 1 << 1;
+private enum ulong NSWindowStyleMaskFullScreen = 1 << 14;
+private enum ulong NSWindowCollectionBehaviorFullScreenPrimary = 1 << 7;
 
 // AppKit is main-thread-only: every native callback and owner call runs on
 // the main thread, so plain TLS is the correct storage for the pin.
@@ -932,6 +951,10 @@ struct AppKitWsi
         nativeTitle.release();
         window.center();
         window.setReleasedWhenClosed(false);
+        // A resizable window may take a Space of its own (`setFullscreen`, and
+        // the title bar's green button).
+        if (style & NSWindowStyleMaskResizable)
+            window.setCollectionBehavior(NSWindowCollectionBehaviorFullScreenPrimary);
         window.setContentView(view);
         window.setDelegate(window);
 
@@ -1099,6 +1122,23 @@ struct AppKitWsi
         // does not return for: end this host's wait so the frame is drawn.
         if (inOwnWait_)
             CFRunLoopStop(runLoop_);
+    }
+
+    /**
+    Takes the window to its own full-screen Space, or back
+    (`toggleFullScreen:`, only when the state differs). The transition is
+    animated: the metrics and the `fullscreen` state follow when it ends.
+    */
+    WsiResult!void setFullscreen(WindowId id, bool fullscreen)
+    {
+        auto checked = checkedSlot(id, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!void(checked.error);
+        auto window = windows_.at(checked.value).window;
+        const now = (window.styleMask() & NSWindowStyleMaskFullScreen) != 0;
+        if (now != fullscreen)
+            window.toggleFullScreen(null);
+        return wsiOk();
     }
 
     /// Miniaturizes the window into the Dock.
@@ -1862,6 +1902,8 @@ struct AppKitWsi
         ushort flags;
         if (slot.window.isZoomed())
             flags |= ToplevelState.maximized;
+        if (slot.window.styleMask() & NSWindowStyleMaskFullScreen)
+            flags |= ToplevelState.fullscreen;
         if (slot.window.isKeyWindow())
             flags |= ToplevelState.activated;
         if (slot.liveResizing)
