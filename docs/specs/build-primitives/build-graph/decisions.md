@@ -8,9 +8,9 @@ reviewed: 2026-11-01
 
 Each record states its question, the alternatives, the choice and when to
 revisit it. Records marked **accepted** were accepted by the owner: D1–D17 on
-2026-11-01, in a design interview to rework the `apps/ci` task DAG, and
-D18–D21, the E0 spike results, on 2026-11-02. Records
-marked **proposed** await the owner's decision.
+2026-11-01, in a design interview to rework the `apps/ci` task DAG;
+D18–D21, the E0 spike results, on 2026-11-02; and D22–D23, from E1, on
+2026-11-06. Records marked **proposed** await the owner's decision.
 
 ## D1: Own the build instead of isolating dub (accepted)
 
@@ -502,7 +502,7 @@ The vocabulary is in [testing.md](./testing.md#the-recipe-vocabulary).
 **Revisit when** a recipe in scope adopts a directive the table lacks: rerun
 the scan, and BGR2's resolution error names it first.
 
-## D22: Resolved paths are normalized (proposed)
+## D22: Resolved paths are normalized (accepted)
 
 **Question.** dub joins a recipe's relative path to its package directory and
 keeps the result as written, so `libs/x/../y/src` and `libs/y/src` are two
@@ -519,7 +519,7 @@ resolver list equal to dub's with its repeats removed.
 **Revisit when** a compiler is found to treat two spellings of one directory
 differently.
 
-## D23: Behaviour copied from dub (proposed)
+## D23: Behaviour copied from dub (accepted)
 
 **Question.** Oracle 1's independence holds only where the resolver is not a
 copy of dub. Which parts are copies?
