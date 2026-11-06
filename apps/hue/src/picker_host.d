@@ -35,6 +35,7 @@ import sparkles.source_view.search : SearchPolicy;
 import picker_grep : GrepFinder, modeLabel, PickerSource, ScanStep;
 import picker_sources : ChoiceFinder, collectFilesFinder, FilesFinder,
     PickerTarget;
+import sparkles.ui.components.scroll_body : ScrollBody, scrollSeconds;
 import sparkles.ui.components.scroll_view : ScrollArea, ScrollAreaAxis,
     scrollLayout;
 import sparkles.ui.state : CaptureState;
@@ -175,6 +176,61 @@ struct PickerHost
     private MonoTime lastEase;
     private bool easeArmed;
 
+    /**
+    The list's view, in rows: what a wheel, a trackpad and a touch drag move,
+    with the fling a lifted trackpad or a released finger coasts into
+    (`INP26`). The list shows whole rows from it and the selection is kept
+    in view (`PickerState.scrollRowsTo`); keys still move the selection. Before
+    it, every wheel event stepped the selection by its whole rows, so a
+    trackpad's stream of small events ran the list away.
+    */
+    private ScrollBody listBody;
+    /// The monotonic seconds the list's wheel tracking reads: a seam a test
+    /// drives, so a lift lands inside the fling window deterministically.
+    double function() @safe nothrow @nogc clock = &scrollSeconds;
+    private MonoTime lastList;
+
+    // Follow the list where a key or a new query left it, unless it is
+    // coasting.
+    private void listFollow() @safe nothrow @nogc
+    {
+        listBody.content = state.rowCount;
+        listBody.viewport = state.viewRows;
+        if (!listBody.motion.active
+            && state.firstRow != cast(size_t) listBody.motion.whole)
+            listBody.motion.jumpTo(state.firstRow, listBody.limit);
+    }
+
+    // Show the rows the body has reached; whether the view moved.
+    private bool listScrolled() @safe nothrow @nogc
+        => state.scrollRowsTo(cast(long) listBody.motion.whole);
+
+    // One frame of the list's coast, timed by the host's ticks.
+    private bool stepList() @safe nothrow @nogc
+    {
+        if (!listBody.motion.active)
+            return false;
+        const now = MonoTime.currTime;
+        const dt = lastList == MonoTime.init ? 1.0f / 60
+            : cast(float)((now - lastList).total!"hnsecs") / 10_000_000.0f;
+        lastList = now;
+        listBody.content = state.rowCount;
+        listBody.viewport = state.viewRows;
+        cast(void) listBody.animate(dt > 0.1f ? 0.1f : dt);
+        if (!listBody.motion.active)
+            lastList = MonoTime.init;
+        return listScrolled();
+    }
+
+    // A fresh list starts still, at its top.
+    private void resetList() @safe nothrow @nogc
+    {
+        listBody.cancelDrag();
+        listBody.motion.stop();
+        listBody.motion.jumpTo(0, 0);
+        lastList = MonoTime.init;
+    }
+
     /// What the host's pointer can do — feeds the bar's hover easing.
     InputCapabilities caps = cellPointer;
 
@@ -234,6 +290,7 @@ struct PickerHost
         finder = collectFilesFinder(root, includeGlobs, excludeGlobs);
         state.viewRows = pickerVisibleRows; // paint 16, keep `pickerTopK`
         state.open();
+        resetList();
         focus = ScopeFocus!Scope_(Scope_.pickerInput);
         selectedIndex_ = size_t.max;
         selectedPath_ = null;
@@ -277,6 +334,7 @@ struct PickerHost
         grep.openCorpus(root, includeGlobs, excludeGlobs);
         state.viewRows = pickerVisibleRows;
         state.open();
+        resetList();
         focus = ScopeFocus!Scope_(Scope_.pickerInput);
         selectedIndex_ = size_t.max;
         selectedPath_ = null;
@@ -297,6 +355,7 @@ struct PickerHost
         choices = rows;
         state.viewRows = pickerVisibleRows;
         state.open();
+        resetList();
         focus = ScopeFocus!Scope_(Scope_.pickerInput);
         selectedIndex_ = size_t.max;
         selectedPath_ = null;
@@ -308,6 +367,7 @@ struct PickerHost
     void close() @safe nothrow @nogc
     {
         state.close();
+        resetList();
         scheduler.cancel();
     }
 
@@ -342,7 +402,7 @@ struct PickerHost
     /// pending generation) rather than blocking on input.
     bool busy() const @safe nothrow @nogc
         => state.active && (state.searching || scheduler.hasInFlight
-            || grep.searching);
+            || grep.searching || listBody.motion.active);
 
     /// Documents scanned per frame in grep mode. A budget in FILES rather
     /// than milliseconds: the scan is clock-free so it can run on the pool,
@@ -360,6 +420,7 @@ struct PickerHost
     {
         if (!state.active && !scheduler.hasInFlight)
             return false;
+        const coasted = state.active && stepList();
         const before = fingerprint();
         final switch (source)
         {
@@ -380,7 +441,7 @@ struct PickerHost
         const changed = fingerprint() != before;
         if (changed)
             refreshHighlights();
-        return changed || easeBars();
+        return changed || coasted || easeBars();
     }
 
     /// The selected row's resolved absolute path (null when nothing is
@@ -518,6 +579,7 @@ struct PickerHost
     */
     PickerAction handleKey(in KeyEvent k) @system
     {
+        listBody.motion.stop(); // a key takes the list from a coast
         switch (commandFor(k, keyContext()).cmd)
         {
         case Command.pickerClose:
@@ -648,7 +710,14 @@ struct PickerHost
                     return;
                 }
                 if (w.pos.x < geometry.panelCols)
-                    state.moveSelection(w.dy); // web sign: positive is down
+                {
+                    // The view moves by the scroll's distance, in rows (web
+                    // sign: positive is down), and the selection follows
+                    // into it.
+                    listFollow();
+                    listBody.scroll(w, clock());
+                    cast(void) listScrolled();
+                }
             },
             (in PointerEvent p) {
                 // An active preview grab keeps every motion (`STM11`),
@@ -1144,10 +1213,11 @@ unittest
     assert(hole.width > 0);
 
     // The wheel scrolls the element under the cursor (`DCK7` inside the
-    // modal): over the list it moves the selection…
+    // modal): over the list it is the list's — three rows fit, so nothing
+    // moves…
     assert(host.handleOverlay(Event(WheelEvent(dy: 1, pos: Point(3, 3))),
         geometry) == PickerAction.consumed);
-    assert(host.state.selection == 1);
+    assert(host.state.firstRow == 0 && host.state.selection == 0);
 
     // …over the preview hole it forwards, position made pane-local.
     assert(host.handleOverlay(Event(WheelEvent(dy: 2,
@@ -1428,6 +1498,66 @@ unittest
     cast(void) host.handleOverlay(Event(PointerEvent(pos: Point(bar.x, bar.y),
         action: PointerAction.release, button: PointerButton.left)), geometry);
     assert(!host.state.scroll.v.dragging, "the grab ended");
+}
+
+@("picker.host.aTrackpadScrollsTheListByDistance")
+@system
+unittest
+{
+    // A trackpad sends many small precise events. Each one used to step the
+    // selection by its whole rows, so a gentle swipe ran the list away; the
+    // view now moves by the distance the fingers travel, the selection
+    // follows into it, the lift flings, and a key takes the list back.
+    import std.conv : to;
+
+    auto fixture = pickerFixture("hue-picker-trackpad");
+    const root = fixture.dir;
+    foreach (i; 0 .. 40)
+        fixture.writeFileAt("zeta" ~ i.to!string ~ ".d", "int x;\n");
+
+    auto owner = makeUnique!PickerHost();
+    auto host = &owner.get();
+    scope (exit) host.shutdown();
+    host.open(root);
+    foreach (ch; "zeta")
+        host.handleKey(KeyEvent(Key.char_, ch));
+    drain(*host);
+
+    const geometry = PickerGeometry(panelCols: 34, panelRows: 14);
+    cast(void) host.buildView(geometry); // sizes the list's window
+    assert(host.state.rowCount > host.state.viewRows);
+    // A swipe 10 ms apart per event, on a clock the test owns.
+    static double now = 100;
+    host.clock = () => now;
+    // Ten events of 0.3 rows: three rows of travel, not ten.
+    foreach (i; 0 .. 10)
+    {
+        now += 0.01;
+        assert(host.handleOverlay(Event(WheelEvent(precise: true, fdy: 0.3f,
+            begins: i == 0, pos: Point(3, 3))), geometry) == PickerAction.consumed);
+    }
+    now += 0.01;
+    assert(host.state.firstRow == 3, "the view moved by the distance");
+    assert(host.state.selection >= host.state.firstRow
+        && host.state.selection < host.state.firstRow + host.state.viewRows,
+        "the selection followed into the view");
+
+    // The lift releases into the list's own fling; the platform's inertia
+    // after it moves nothing.
+    assert(host.handleOverlay(Event(WheelEvent(precise: true, ends: true,
+        pos: Point(3, 3))), geometry) == PickerAction.consumed);
+    assert(host.listBody.motion.active, "the lift flings");
+    assert(host.busy, "a coasting list keeps the loop ticking");
+    const coasting = host.state.firstRow;
+    cast(void) host.handleOverlay(Event(WheelEvent(precise: true, fdy: 5,
+        momentum: true, pos: Point(3, 3))), geometry);
+    assert(host.state.firstRow == coasting, "platform inertia is ignored");
+
+    // A key stops the coast and moves the selection, as before.
+    const sel = host.state.selection;
+    host.handleKey(KeyEvent(key: Key.down));
+    assert(!host.listBody.motion.active, "a key takes the list from a coast");
+    assert(host.state.selection == sel + 1);
 }
 
 @("picker_host.PickerHost.servesThePromptClipboard")

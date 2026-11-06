@@ -3176,11 +3176,14 @@ unittest
         assert(w.pickerDoc.pane.vm.top == before + 2,
             "wheel over the preview scrolls the document");
 
+        // Over the list the wheel is the list's (it scrolls by distance, so
+        // a list that fits stays put) and never reaches the document.
         const sel = w.picker.get.state.selection;
+        const docTop = w.pickerDoc.pane.vm.top;
         assert(w.handle(Event(WheelEvent(dy: 1, pos: Point(ox + 3, 4)))));
-        assert(w.picker.get.state.selection == sel + 1,
-            "wheel over the list moves the selection");
-        assert(w.handle(Event(KeyEvent(key: Key.up)))); // back for the typing
+        assert(w.picker.get.state.selection == sel
+            && w.pickerDoc.pane.vm.top == docTop,
+            "wheel over the list is the list's");
 
         // The focus bands are PAINTED, not just declared: with the prompt
         // focused, its row's background differs from an idle row's, and the
