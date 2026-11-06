@@ -14,10 +14,11 @@ test action reports its time, CPU, memory, page faults, I/O, stall time,
 hardware counters and build-cache outcome. Compiles also report where the
 compiler spent its time, and tests their own memory and garbage collection.
 Each run is kept as a small, schema-versioned record that names no person. CI
-and developers share records through a data-only branch of the repository, so
-any checkout can show a run, compare two runs and chart a task's history. Only
-instructions retired can fail the regression gate, because time on shared and
-virtual machines is too noisy to gate on.
+and developers share records through a data-only ref of the repository that
+ordinary clones never fetch, so any checkout can show a run, compare two runs
+and chart a task's history. The regression gate reads instructions retired
+where the host counts them, and user CPU time with a wider threshold on hosted
+CI runners that cannot; it never compares one with the other.
 
 ## Introduction
 
@@ -56,14 +57,15 @@ All of them speak one metric vocabulary, in which every value carries its unit
 and its quality: exact, a lower bound, an estimate, or absent with a reason.
 A run's measurements become a [run record](../../../glossary.md#run-record),
 keyed so that the same task lines up across runs and machines. Records travel
-through an orphan branch of this repository, `perf-data`, appended by CI and
-pushed explicitly by developers. A comparison gates only on user-mode
-instructions retired, between samples whose
+through a data-only ref of this repository, `refs/perf/data`, appended by CI
+and pushed explicitly by developers. A comparison gates on user-mode
+instructions retired where the host counts them, and on user CPU time on hosted
+CI runners that cannot, never mixing the two, between samples whose
 [comparability key](../../../glossary.md#comparability-key) matches, against a
 noise threshold estimated from repeated executions of identical inputs.
 
 The specification owns the metric set, the overhead budget, the record format,
-the history branch, privacy, comparison and the gate, and the `ci perf`
+the history ref, privacy, comparison and the gate, and the `ci perf`
 commands. It does not own how work is scheduled, built or tested; the task
 DAG, the build graph and the test runner keep those contracts and link here
 for their observation obligations. The test runner's `--bench` mode, which
@@ -71,14 +73,14 @@ measures individual test bodies with statistical repetition, is a separate
 measurement model; it shares this vocabulary, and its results do not enter run
 records. Sampling profilers, per-function hardware counters, dashboards
 outside the repository and alerting are out of scope. So is a long-term store
-other than `perf-data`, for the reasons
-[decisions.md](./decisions.md#od2-history-lives-on-an-orphan-branch-of-this-repository-accepted)
+other than `refs/perf/data`, for the reasons
+[decisions.md](./decisions.md#od19-history-lives-on-refs-perf-data-accepted)
 records.
 
 Section 1 states the invariants and §2 the owners. Section 3 defines the
 metric vocabulary. Sections 4–9 define the metrics, by scope: every action,
 compiles, links and archives, tests, runs and CI jobs. Section 10 sets the
-overhead budget. Sections 11–13 define the run record, the `perf-data` branch
+overhead budget. Sections 11–13 define the run record, the `refs/perf/data` history
 and the privacy rules, §14 comparison and the regression gate, §15 the
 `ci perf` commands and §16 how reporters show metrics. Delivery order lives in
 [PLAN.md](./PLAN.md), oracles, spikes and evidence in [testing.md](./testing.md),
@@ -736,7 +738,7 @@ before it, and **must** skip a record of any other version with a warning that
 names the version.
 
 **OBD7: Immutable records.** A record **must not** change once written. The
-only exception is compaction on `perf-data`, which removes `detail/` files and
+only exception is compaction of `refs/perf/data`, which removes `detail/` files and
 replaces old records by rollups (OBH7).
 
 **OBD8: Measurements are side outputs.** An action's measurement files, such
@@ -776,15 +778,17 @@ eviction never removes history. Local records older than 90 days, or beyond
 512 MiB in total, **must** be removed oldest first; both bounds are
 configurable.
 
-## 12. History on the `perf-data` branch
+## 12. History on `refs/perf/data`
 
-The `perf-data` branch of this repository holds the shared history. It has no
-common ancestor with `main`, and holds data only.
+The ref `refs/perf/data` of this repository holds the shared history: a
+chain of commits with no common ancestor with `main`, holding data only. It
+lies outside `refs/heads/` and `refs/tags/`, so an ordinary clone or fetch
+never downloads it and no branch list shows it.
 
-**OBH1: Layout.** The branch **must** hold:
+**OBH1: Layout.** The ref's tree **must** hold:
 
 ```text
-README.md                                      what the branch is, with the schema's link
+README.md                                      what the ref is, with the schema's link
 runs/<yyyy>/<mm>/<dd>/<commit12>-<run id>/     one run record, as OBD4
 rollups/<yyyy>/<mm>/<s>.json                   compacted series summaries (OBH7)
 ```
@@ -795,24 +799,25 @@ run's directory name from the identity it trusts (OBH5), never from the
 record's own claims, and a directory once written is never written again.
 
 **OBH2: Data only.** Every writer **must** refuse to commit a tree containing
-a `.github/` directory or an executable file, so that a push to the branch
-triggers no workflow and carries no code. The server enforces only who may
-push (OBH8).
+a `.github/` directory or an executable file, so that the ref carries no code
+even if a later tool checks it out.
 
 **OBH3: Append without conflicts.** Appending **must**:
 
-1. fetch the branch's tip;
+1. fetch the ref, `+refs/perf/data:refs/perf/data`, and verify its tip
+   (OBH8);
 2. build the new tree with `git mktree` from the tip's tree and the new run
    directories, through no index and no working tree, skipping a directory
    that already exists;
-3. create a commit with the fixed identity of OBH6 and push it without force;
+3. create a signed commit with the fixed identity of OBH6, and push it to
+   `refs/perf/data` without force;
 4. on a rejected push, repeat from step 1, with jittered back-off, for at most
    ten minutes, and then fail, reporting the runs not appended.
 
 Each run writes only its own directory, so two appenders never touch the same
 path and a retry needs no merge. A repeated append of the same runs is a no-op.
 
-**OBH4: CI appends what landed.** Records reach the branch from the workflow
+**OBH4: CI appends what landed.** Records reach the ref from the workflow
 that establishes `main`'s checks:
 
 - **Mirror path:** when the landed tree equals the tree that a pull request or
@@ -827,8 +832,8 @@ that establishes `main`'s checks:
 The appending job **must** live in `main-checks.yml` for both paths, after the
 mirroring step or after the rebuild it `needs`, never in `ci.yml`, which also
 runs for pull requests and the merge queue. It reads artifacts with
-`actions: read`, writes with the credential of OBH8, and runs on
-`.#ci-minimal`.
+`actions: read`, pushes with `contents: write`, signs with the CI key of OBH8,
+and runs on `.#ci-minimal`.
 
 **OBH5: Appended records are untrusted.** An appender **must** take a run's
 identity from the provider's API for the run it appends, and **must** validate
@@ -836,56 +841,70 @@ every record before appending it: the run identifier's syntax, its schema
 version, its size (OBD10), the privacy scan (OBP4), and at most four records
 per job the API lists for the run. The invocation ordinal `<n>` is the one part
 of the identifier a record supplies; the appender checks that it is a small
-integer and drops a second record that claims the same identifier. A record that fails is dropped and reported in the job's summary, and
-the others are appended.
+integer and drops a second record that claims the same identifier. A record
+that fails is dropped and reported in the job's summary, and the others are
+appended.
 
 _Rationale:_ a pull request's code writes its own records, so a record is
 attacker-controlled input until checked. A forged record can mislead a
 comparison but cannot run code or overwrite another run.
 
 **OBH6: Local publication is explicit.** A developer's records **must** reach
-the branch only through `ci perf push`, which **must** refuse a record of a
-dirty tree unless `--allow-dirty` is given, run the privacy scan, and mark each
-record `origin: local`. Every commit on the branch **must** carry the fixed
-author and committer `perf-data <perf-data@users.noreply.invalid>`, whatever
-identity the environment supplies.
+the ref only through `ci perf push`, which **must** refuse a record of a dirty
+tree unless `--allow-dirty` is given, run the privacy scan, mark each record
+`origin: local`, and append as OBH3 states, signing with the developer's key.
+Every commit on the ref **must** carry the fixed author and committer
+`perf-data <perf-data@users.noreply.invalid>`, whatever identity the
+environment supplies; the signature, not the identity, says who wrote it.
 
-**OBH7: Retention and size.** A scheduled workflow **must** compact the branch
+**OBH7: Retention and size.** A scheduled workflow **must** compact the ref
 monthly:
 
 1. remove `detail/` files older than 90 days;
 2. replace the run directories older than 365 days by rollups: per series,
-   comparability key, month and quality, the sample count and the median,
-   minimum and maximum of each numeric metric, and the count of each value of
-   an enum or boolean metric;
-3. write the result as a new root commit and replace the branch with
-   `--force-with-lease`, starting again from step 1 when the lease fails.
+   comparability key, gate metric, month and quality, the sample count and the
+   median, minimum and maximum of each numeric metric, and the count of each
+   value of an enum or boolean metric;
+3. write the result as a new root commit, signed with the CI key and marked as
+   a compaction, and replace the ref with
+   `--force-with-lease=refs/perf/data:<old tip>`, starting again from step 1
+   when the lease fails.
 
-The thresholds are configurable. After compaction, the branch's packed size
+The thresholds are configurable. After compaction, the history's packed size
 **must not** exceed 256 MiB; a compaction that cannot meet the bound **must**
 fail and name the largest series.
 
-_Rationale:_ an ordinary clone fetches every branch, so every clone pays for
-the history. The contributor documentation names the negative refspec that
-leaves the branch out.
+**OBH8: Integrity by signature.** GitHub's rulesets protect branches and tags,
+and its push rulesets, which restrict file paths and sizes, apply only to
+private and internal repositories. So nothing on the server limits who may
+update, rewind or delete `refs/perf/data` beyond write access to the
+repository. Integrity is therefore checked by readers:
 
-**OBH8: Protection.** Two repository rulesets **must** protect `perf-data`:
+- every commit on the ref **must** be signed with an SSH key listed in the
+  allowed-signers file `nix/perf-data-signers` on `main`, whose principals are
+  role names, such as `ci` or `maintainer-1`, never a person's name or email;
+- the CI key **must** live in a deployment environment whose deployment
+  branches allow only `main`; an environment restricts by ref, not by job, so
+  review of `main`'s workflows keeps the key to the appending and compaction
+  jobs;
+- a reader **must** verify the commits it uses, and **must** ignore, and
+  report, the runs a commit with a missing or unlisted signature added;
+- a reader **must** accept a tip that does not descend from its cached tip only
+  when the new tip is a compaction commit signed with the CI key; otherwise it
+  keeps its cached history and reports the rewind;
+- an appender **must** refuse to append onto a tip it cannot verify, and fail.
 
-- one that limits updates to one GitHub App and the repository's maintainers,
-  and allows a non-fast-forward update only to the App;
-- one, with no bypass, that forbids the branch's deletion.
+_Rationale:_ a signature check on read protects every reader whatever the
+server allows. A rewind or deletion by someone with write access loses at most
+what no reader had cached, and is reported rather than believed.
 
-The App's credentials **must** live in a deployment environment whose
-deployment branches allow only `main`. An environment restricts by ref, not by
-job, so review of `main`'s workflows is what keeps the credential to the
-appending and compaction jobs.
-
-**OBH9: Lazy fetch.** `ci perf` **must** read the branch through a bare partial
-clone at `$XDG_CACHE_HOME/sparkles/perf/cache.git`, cloned on first use with
-`--filter=blob:none` and the `perf-data` branch only, from the repository's
-canonical URL, which `apps/ci` declares and `--history-remote URL` overrides.
-It **must** fetch the blobs a command needs in one batched request per command,
-and **must** reach every git command through `runGit`.
+**OBH9: Lazy fetch.** `ci perf` **must** read the ref through a bare partial
+clone at `$XDG_CACHE_HOME/sparkles/perf/cache.git`, created on first use, from
+the repository's canonical URL, which `apps/ci` declares and
+`--history-remote URL` overrides. It **must** fetch only
+`+refs/perf/data:refs/perf/data`, with `--filter=blob:none`, fetch the blobs a
+command needs in one batched request per command, and reach every git command
+through `runGit`.
 
 **OBH10: Offline.** When the remote cannot be reached, `ci perf` **must** use
 the cached clone and the local records, and **must** report the age of the
@@ -930,14 +949,33 @@ other failure rejects it, and a rejected record is not written.
 
 ## 14. Comparison and the regression gate
 
-**OBG1: The gated metric.** The gate **must** read `task.instructions` only,
-and only exact values that some run measured by executing the action, found as
-OBG3 states. Wall time, CPU time, memory and every other metric are
-informational: compared, shown, and never gated.
+**OBG1: The gate metric.** Each run record **must** state its gate metric, one
+of:
 
-_Rationale:_ on a dedicated machine, the user-mode instructions of a
-deterministic action vary by well under a percent between identical runs,
-while wall and CPU time on shared and virtual machines vary by more.
+- `instructions`, `task.instructions`, when the run's host counts exact
+  user-mode instructions (OBA2, OBA3);
+- `cpu-user`, `task.cpu.user`, when it cannot and the run is on a CI
+  provider's hosted runner;
+- none otherwise, with the reason the counters are absent.
+
+The gate **must** read only the gate metric, and only values that some run
+measured by executing the action, found as OBG3 states: exact values for
+`instructions`, and exact or lower-bound values of the same quality on both
+sides for `cpu-user`. Every other metric is informational: compared, shown,
+and never gated.
+
+**OBG10: One gate metric per comparison.** A comparison **must** gate only when
+both runs have the same gate metric, and **must** state that metric in its
+report and its JSON. A series whose sides would need different metrics, such
+as instructions from a developer's machine and CPU time from a hosted runner,
+**must** be `ungated` with reason `gate-metric-differs`; instructions are never
+compared with CPU time.
+
+_Rationale:_ on a host that counts them, the user-mode instructions of a
+deterministic action vary by well under a percent between identical runs.
+Hosted virtual machines may expose no counters, and their CPU time, although
+far noisier, is still a measure of work rather than of waiting; a wider
+threshold and its own noise estimate keep it usable.
 
 **OBG2: Comparable pairs.** A series **must** be compared only between samples
 with equal comparability keys (OBD3). A series whose samples differ in
@@ -957,12 +995,13 @@ run, or a revision resolving to its CI record of the same job, or with
 - a side with no such measurement makes the series `ungated` with reason
   `stored`, and the report names the run each value came from.
 
-**OBG4: The noise model.** Each series' noise **must** be estimated from
-executions with equal inputs. An action's **input key** is its result key for
+**OBG4: The noise model.** Each series' noise **must** be estimated, separately
+for each gate metric and from that metric's samples, from executions with
+equal inputs. An action's **input key** is its result key for
 a compile and its declared key ([BGK1](../build-graph/SPEC.md#_5-keys-and-the-input-manifest))
 otherwise. From the series' history with head's comparability key:
 
-1. group the measured exact samples by input key, and order each group by run
+1. group the measured samples that OBG1 admits by input key, and order each group by run
    start, then by run identifier;
 2. within each group of two or more, take the relative difference of each pair
    of consecutive samples, `(x₂ − x₁) ÷ x₁`;
@@ -979,22 +1018,26 @@ increase over base exceeds `max(f, k × σ)` and its absolute increase exceeds
 `a`. Here `f` is the kind's floor, `a` its absolute floor, and `k` the
 multiplier, 5 by default. The defaults are:
 
-| Kind                                     | Prior `σ` | Floor `f` | Absolute floor `a` |
-| ---------------------------------------- | --------- | --------- | ------------------ |
-| `compile`, `archive`, `link`, `generate` | 0.3%      | 0.5%      | 10⁷ instructions   |
-| `test`                                   | none      | 2%        | 10⁸ instructions   |
+| Gate metric    | Kind                                     | Prior `σ` | Floor `f` | Absolute floor `a` |
+| -------------- | ---------------------------------------- | --------- | --------- | ------------------ |
+| `instructions` | `compile`, `archive`, `link`, `generate` | 0.3%      | 0.5%      | 10⁷ instructions   |
+| `instructions` | `test`                                   | none      | 2%        | 10⁸ instructions   |
+| `cpu-user`     | `compile`, `archive`, `link`, `generate` | none      | 5%        | 200 ms             |
+| `cpu-user`     | `test`                                   | none      | 10%       | 1 s                |
 
-A `test` series without 16 differences is not gated. Every default is
+A series whose row has no prior is not gated without 16 differences. Spike S2
+calibrates the `cpu-user` rows on hosted runners before they gate. Every default is
 configurable.
 
 _Rationale:_ at `k = 5` a normal tail flags about three series in ten million,
 which leaves room for heavier tails and for the error of a median absolute
 deviation over a few dozen differences; OBG9 checks the combined rate.
 
-**OBG6: No gate without counters.** A series **must** be gated only when both
-sides have an exact measured `task.instructions`. Otherwise it is `ungated`,
-with the reason: the absence reason of a side, `estimate`, `stored`,
-`not-comparable` or `insufficient-noise`. When a comparison gates no series,
+**OBG6: No gate without its metric.** A series **must** be gated only when both
+sides have a value of the comparison's gate metric that OBG1 admits.
+Otherwise it is `ungated`, with the reason: the absence reason of a side,
+`estimate`, `stored`, `not-comparable`, `gate-metric-differs` or
+`insufficient-noise`. When a comparison gates no series,
 its outcome **must** be `Degraded(noGate)`, with the reasons counted, and its
 exit status zero.
 
@@ -1008,9 +1051,9 @@ gated.
 **OBG8: Determinism.** For the same two records and the same history, a
 comparison **must** produce the same classifications and the same report.
 
-**OBG9: The false-positive bound.** Over A/A pairs, two runs of one commit with
-one comparability key, the gate **must** flag at least one series in no more
-than 5% of pairs.
+**OBG9: The false-positive bound.** For each gate metric, over A/A pairs, two
+runs of one commit with one comparability key, the gate **must** flag at least
+one series in no more than 5% of pairs.
 
 ## 15. The `ci perf` commands
 
@@ -1035,8 +1078,9 @@ CPU time, stall times, peak memory, instructions and cache outcome, and each
 value's quality marker. `--task` filters by the task-DAG selector forms
 ([TDS4](../task-dag/SPEC.md#_2-2-from)) applied to task ids.
 
-**OBQ3: `compare`.** `ci perf compare` **must** print one row per series of
-either run: the base and head values of each selected metric, the relative
+**OBQ3: `compare`.** `ci perf compare` **must** print the comparison's gate
+metric, or the reason it has none (OBG10), and one row per series of either
+run: the base and head values of each selected metric, the relative
 delta, the threshold, and the classification: `regression`, `improvement`,
 `within-noise`, `unchanged`, `ungated` with its reason, `not-comparable`,
 `added` or `removed`, plus the `stalled` mark (OBA6). Rows are sorted by
@@ -1049,8 +1093,9 @@ first-parent history when known and by run start otherwise. It **must** mark
 changes of comparability key, flaky verdicts (OBT3) and no-op runs (OBR5).
 
 **OBQ5: `push` and `fetch`.** `ci perf push` publishes as OBH6 states.
-`ci perf fetch` fetches the blobs of a date range ahead of use; no other
-command needs it first.
+`ci perf fetch` fetches `+refs/perf/data:refs/perf/data` with
+`--filter=blob:none` and then the blobs of a date range, ahead of use; every
+other command fetches lazily what it needs (OBH9).
 
 **OBQ6: Machine output.** `--json FILE` **must** write one JSON document with
 the content of the human report, in the vocabulary's ids and units
@@ -1077,8 +1122,8 @@ as `TaskUsage` events arrive ([TDO2](../task-dag/SPEC.md#_7-2-interactive-tty)).
 **OBU3: CI provider summaries.** Under a provider with a step summary
 ([TDO6](../task-dag/SPEC.md#_7-6-ci-provider-integration)), the reporter
 **must** write the summary of OBU1 as a Markdown table with the ten slowest
-tasks, and, when a comparison ran, its regressions and the count of ungated
-series by reason.
+tasks, and, when a comparison ran, its gate metric, its regressions and the
+count of ungated series by reason.
 
 **OBU4: Markers.** Every report **must** mark a lower bound with `≥`, an
 estimate with `≈`, a stored measurement with `*` and an absent value with

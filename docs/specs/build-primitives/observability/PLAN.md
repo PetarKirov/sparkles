@@ -19,7 +19,7 @@ and the gate come last, once history exists to calibrate them.
 
 - This specification, reviewed.
 - Spikes S1, S3 and S5 before O1 starts, because they decide the counter,
-  time-trace and spawn sources that O1 builds. S2, S4 and S6 before the
+  time-trace and spawn sources that O1 builds. S2, S4, S6 and S7 before the
   milestones that need them: O6, O3 and O5.
 - The amendments this specification needs elsewhere, each in its owner's
   page:
@@ -95,10 +95,11 @@ test runner's process model); the TRP16 amendment.
 
 Gate: oracle 9 passes, including its older-runner and older-worker scenarios.
 
-## O5: The `perf-data` branch
+## O5: History on `refs/perf/data`
 
-- The branch, its README, the App, the environment and the ruleset (OBH1–OBH2,
-  OBH6, OBH8), and the contributor documentation's negative refspec.
+- The ref and its README, the signing keys, the allowed-signers file and the
+  environment that holds the CI key, and signature checks in every reader
+  (OBH1–OBH2, OBH6, OBH8).
 - Appending from CI on the mirror and rebuild paths, with validation
   (OBH3–OBH5), and CI job metrics (OBJ1–OBJ3).
 - `ci perf push`, `fetch` and `history`, with flakiness and no-op marks, the
@@ -106,7 +107,7 @@ Gate: oracle 9 passes, including its older-runner and older-worker scenarios.
 - The compaction workflow (OBH7).
 - `runGit` gains what the fixed commit identity needs.
 
-Prerequisites: S6; CI workflows running `ci test` (`apps/ci` M7).
+Prerequisites: S6 and S7; CI workflows running `ci test` (`apps/ci` M7).
 
 Gate: oracle 12 passes against a local remote, oracle 16 for `history`,
 `push` and the CI job metrics, and oracle 17. S6's size model meets OBH7's
@@ -115,16 +116,17 @@ bound. A week of `main` landings appends with no lost record.
 ## O6: Comparison and the gate
 
 - `ci perf compare`, with comparability, the noise model, the threshold and
-  the `stalled` mark (OBG1–OBG8, OBQ3, OBA6).
+  the `stalled` mark (OBG1–OBG10, OBQ3, OBA6).
 - The gate in CI, report-only: it reports in the step summary and never fails a
   job.
 - Calibration of OBG5's priors and floors from S2 and the accumulated history;
   then enforcement.
 
-Prerequisites: S1, S2, and the answer to Q1, which names the leg that gates.
+Prerequisites: S1, which fixes each environment's gate metric (OD20), and S2.
 
 Gate: oracle 13 passes, oracle 16 for `compare`, and the gate is enforcing on
-the leg Q1 names.
+every leg whose gate metric S1 established, the `cpu-user` gate once S2 has
+calibrated it.
 
 ## O7: Platform parity and the Nix backend
 
@@ -144,6 +146,6 @@ Gate: oracles 2, 3 and 8 on macOS and Windows, and oracle 10's Nix scenario.
 | O2        | Run records and reports             | not started |
 | O3        | Compile and link families           | not started |
 | O4        | Test usage                          | not started |
-| O5        | The `perf-data` branch              | not started |
+| O5        | History on `refs/perf/data`         | not started |
 | O6        | Comparison and the gate             | not started |
 | O7        | Platform parity and the Nix backend | not started |
