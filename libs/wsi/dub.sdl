@@ -11,13 +11,12 @@ dflags "-preview=in" "-preview=dip1000"
 libs "imm32" platform="windows"
 lflags "-framework" "AppKit" "-framework" "CoreFoundation" "-framework" "UniformTypeIdentifiers" "-framework" "QuartzCore" platform="osx"
 
-// `sparkles:math` is source-imported for the same reason as input: its
-// unittest configuration depends on the repository runner and a normal dub
-// edge would participate in configuration-union cycle detection.
-importPaths "src" "../math/src"
+importPaths "src"
 sourcePaths "src"
 
 dependency "sparkles:base" path="../.."
+// math depends on `sparkles:base` alone, so this edge closes no cycle.
+dependency "sparkles:math" path="../.."
 dependency "sparkles:input" path="../.."
 dependency "sparkles:event-horizon" path="../.."
 // JNI and the activity on Android; every module there is `version (Android)`,

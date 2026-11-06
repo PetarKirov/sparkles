@@ -10,12 +10,14 @@ targetPath "build"
 // test-runner-impl's dependency closure (impl → ui → text-buffer): a
 // `dependency "sparkles:test-runner"` would close a cycle. The unittest
 // configuration source-includes the runner instead, as `sparkles:input` does.
-importPaths "src" "../test-runner/src" "../math/src"
+importPaths "src" "../test-runner/src"
 sourcePaths "src"
 
 dflags "-preview=in" "-preview=dip1000"
 
 dependency "sparkles:base" path="../.."
+// math depends on `sparkles:base` alone, so this edge closes no cycle.
+dependency "sparkles:math" path="../.."
 
 configuration "library" {
     targetType "library"
@@ -23,7 +25,7 @@ configuration "library" {
 
 configuration "unittest" {
     sourcePaths "../test-runner/src" "../test-runner-impl/src" "../profiling/src/sparkles/profiling/counters"
-    importPaths "src" "../test-runner/src" "../test-runner-impl/src" "../math/src" "../profiling/src"
+    importPaths "src" "../test-runner/src" "../test-runner-impl/src" "../profiling/src"
     dflags "-checkaction=context" "-allinst"
     // Small chunks and fan-out make a few hundred bytes several levels deep.
     versions "SparklesTextBufferSmallNodes"
