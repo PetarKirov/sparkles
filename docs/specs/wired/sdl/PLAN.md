@@ -380,11 +380,14 @@ name-and-value filter).
 
 Gate:
 
-- the path reader accepts exactly DQL §2.1 — a table of accepted and
-  rejected paths, each rejection at its byte offset — and is
-  `@safe pure nothrow @nogc`;
-- SDS2's oracle: over every repository recipe, every name path present in it
-  to depth three, with and without an index, selects exactly what nested
+- the path reader accepts exactly DQL §2.1, quoted segments included — a
+  table of accepted and rejected paths, each rejection at its byte offset
+  (an unterminated string, a bad escape, an empty `[]` among them) — and is
+  `@safe pure nothrow @nogc`; DQL's printed paths parse back to the same
+  steps;
+- SDS2's oracle: over every repository recipe and a fixture with dotted tag
+  and attribute names, every name path present in it to depth three, printed
+  as DQL prints it, with and without an index, selects exactly what nested
   `byChild` loops select, in the same order; attribute selections likewise
   against nested `byAttribute` loops;
 - SDS3's oracle: over every repository recipe, a fixed set of filters —

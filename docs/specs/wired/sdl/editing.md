@@ -219,20 +219,22 @@ nested child loops. The path uses the
 optional [DQL](../../dql/SPEC.md) filter expression narrows what it selects,
 so the repository has one query language rather than one per format.
 
-**SDS1 — The path is a DQL path.** A path is
-`Segment ( "." Segment | "[" Digits "]" )*`, read by `sparkles.dql.path`. A
-segment is a run of bytes that the DQL lexer keeps inside one identifier,
-excluding `.`, `[` and `]`; it names an SDL qualified name, split at its first
-`:` into namespace and local name, and matches that name exactly (an
-unprefixed segment matches only unnamespaced names, as `byChild` does). An
-index follows a segment and counts, from zero, the nodes of that name under
-one parent; a segment takes at most one, and a path at most sixteen
-segments. A malformed path — an empty segment, an index before any segment
-or after another index, non-digits or an overflowing number inside `[]`, an
-unclosed `[`, a seventeenth segment — is
-rejected with the byte offset of the fault, and nothing is selected.
-_Oracle:_ a table of accepted and rejected paths with their offsets.
-_Violation:_ a malformed path that selects, or a well-formed one rejected.
+**SDS1 — The path is a DQL path.** A path follows the
+[DQL path grammar](../../dql/SPEC.md#_2-1-path-addressing-grammar), read by
+`sparkles.dql.path`: identifier segments, quoted segments (`["my.tool"]`,
+JSON-escaped), and `[Digits]` indexes. A segment's decoded text names an SDL
+qualified name, split at its first `:` into namespace and local name
+(`["ns:my.tool"]` too), and matches that name exactly (an unprefixed segment
+matches only unnamespaced names, as `byChild` does). An index follows a
+segment and counts, from zero, the nodes of that name under one parent; a
+segment takes at most one, and a path at most sixteen segments. A malformed
+path — an empty segment, an index before any segment or after another index,
+non-digits or an overflowing number inside `[]`, an empty `[]`, an
+unterminated string or a bad escape in a quoted segment, a seventeenth
+segment — is rejected with the byte offset of the fault, and nothing is
+selected. _Oracle:_ a table of accepted and rejected paths with their
+offsets. _Violation:_ a malformed path that selects, or a well-formed one
+rejected.
 
 **SDS2 — A path selects by child steps.** From a start node (the root, for
 a document), a node selection of n segments yields, in document order, every
@@ -240,12 +242,13 @@ node reached by n child steps, where each step keeps the children whose name
 the segment names and, when it carries an index k, only the k-th of them. An
 index past the last match selects nothing. An attribute selection treats its
 last segment as an attribute name instead, with its index counting that
-node's attributes of the name, and yields attributes in document order.
-SDL names may contain `.`, which the grammar reserves as the separator, so
-neither a selection nor a filter can address such a name. _Oracle:_ over every repository recipe,
-every name path present to depth three, with and without an index, against
-nested `byChild` and `byAttribute` loops. _Violation:_ a missing, extra or
-reordered target.
+node's attributes of the name, and yields attributes in document order. An
+SDL name that is not a DQL identifier — `my.tool`, say — is addressed by a
+quoted segment: `build["my.tool"].dependency`. _Oracle:_ over every
+repository recipe and a fixture with dotted tag and attribute names, every
+name path present to depth three, with and without an index, written as DQL
+prints it (quoting where needed), against nested `byChild` and `byAttribute`
+loops. _Violation:_ a missing, extra or reordered target.
 
 **SDS3 — A filter is DQL over the selected node.** The filter is parsed
 by `parseDql` and evaluated by `evalDql` with each selected node — for an
@@ -253,8 +256,8 @@ attribute selection, the node that holds the attribute — as the subject. A
 path in the filter is zero or more child steps, each taking the first child
 of its name or, with an index, the k-th, followed by a leaf: `values[i]`,
 the node's i-th value, or an attribute name, its first attribute of that
-name. A bare identifier (a DQL category) holds when the node has a child at
-that path. Strings compare as text, booleans as `bool`, integers as `long`,
+name; quoted segments work here too (`["dflags.ldc"] == null`). A bare
+identifier (a DQL category) holds when the node has a child at that path. Strings compare as text, booleans as `bool`, integers as `long`,
 and floats and decimals as `double`; an absent target, or an SDL `null`, is
 `== null`. A target of another kind (a character, binary, date or
 duration) is not null and fails every comparison and match, and so does a
