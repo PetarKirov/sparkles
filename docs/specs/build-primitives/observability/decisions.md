@@ -431,29 +431,29 @@ uncalibrated, and the gate report-only, until S2 measures hosted-runner noise.
 **Revisit when** hosted runners expose counters, or a self-hosted runner with a
 PMU takes over the gated leg.
 
-## Open questions
+## Questions
 
-Unless a question says otherwise, its resolver is the owner.
+Every question was resolved by the owner on 2026-11-06; each entry records the
+answer and where the contract states it.
 
-- **Q1: The gate on hosted CI runners.** Resolved by OD20: test first with
-  S1, and gate on user CPU time where hosted runners have no counters.
-- **Q2: Build-action task ids.** Affects OBD2 and build graph BGA8, which
-  requires stable ids but not their form. _Recommended:_ BGA8 states the form
-  `<kind>:<package>:<role>:<vendor>:<d>`, where `<d>` is the first twelve
-  hexadecimal digits of the variant key with its toolchain identity replaced
-  by the vendor, so that no id embeds a toolchain or a result key and two
-  vendors' variants stay distinct in one graph. _Resolver:_ the build graph's
-  owner. _Decide by_ E2, which exposes the ids.
-- **Q3: The vocabulary package's name.** Resolved: `sparkles:metrics`.
-- **Q4: Retention thresholds.** Resolved: 90 days of detail, 365 days of runs
-  and 256 MiB, revisited after S6.
-- **Q5: Gating local comparisons.** Affects OBG3. _Recommended:_ `--gate` with
-  `--local` compares two local runs of the same machine only, which is useful
-  before pushing and never mixes machines. _Decide by_ O6.
-- **Q6: Nix fetch figures before `ci` exists.** Affects OBJ2. The figures come
-  from the build of `ci` itself. _Recommended:_ the workflow's setup step runs
-  that build with Nix's internal-JSON log written to a file, and the job's `ci`
-  run ingests the file through an option, so no shell script parses it.
-  _Decide by_ O5.
-- **Q7: A branch, or a ref outside `refs/heads/`.** Resolved by OD19:
-  `refs/perf/data`.
+- **Q1: The gate on hosted CI runners.** Resolved on 2026-11-06 by OD20: test
+  first with S1, and gate on user CPU time where hosted runners have no
+  counters.
+- **Q2: Build-action task ids.** Resolved on 2026-11-06, as recommended: a
+  build action's task id is `<kind>:<package>:<role>:<vendor>:<d>`, where `<d>`
+  is the first twelve hexadecimal digits of the variant key with its toolchain
+  identity replaced by the compiler's vendor (OBD2). A toolchain bump keeps the
+  series, and the comparability key tells the bump apart. The build graph
+  adopts the form in BGA8 at E2.
+- **Q3: The vocabulary package's name.** Resolved on 2026-11-06:
+  `sparkles:metrics`.
+- **Q4: Retention thresholds.** Resolved on 2026-11-06: 90 days of
+  detail, 365 days of runs and 256 MiB, revisited after S6.
+- **Q5: Gating local comparisons.** Resolved on 2026-11-06, as recommended:
+  `--gate --local` compares only two local records of one machine, with equal
+  host facts, and a local run compared with CI records is report-only (OBG3).
+- **Q6: Nix fetch figures before `ci` exists.** Resolved on 2026-11-06, as
+  recommended: the setup build writes Nix's `--log-format internal-json` log to
+  a file, and the job's `ci` run ingests it through `--nix-log FILE` (OBJ2).
+- **Q7: A branch, or a ref outside `refs/heads/`.** Resolved on 2026-11-06 by
+  OD19: `refs/perf/data`.

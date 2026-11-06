@@ -633,8 +633,11 @@ records (OBH4). On a provider without such an API they are absent.
 
 **OBJ2: Substitution.** A job **must** record the store paths and bytes Nix
 fetched while building the `ci` tool, read from Nix's internal-JSON log of
-that build, and the bytes the job pushed to the binary cache when it pushed
-any.
+that build. The job's setup step runs that build with
+`--log-format internal-json`, writing the log to a file, and the job's `ci`
+invocation ingests the file through its `--nix-log FILE` option, so no shell
+step parses it. The job also records the bytes it pushed to the binary cache,
+when it pushed any.
 
 **OBJ3: Per-job critical path.** `ci.job.critical-path` **must** be the
 `run.critical-path` of the job's `ci` run, or the sum over its runs when it ran
@@ -701,7 +704,11 @@ It is a name, never an ordering input.
 ([TDM1](../task-dag/SPEC.md#_3-1-task-nodes)) and, for a build-graph action, of
 its variant key ([BGV1](../build-graph/SPEC.md#_3-variants)) with the
 toolchain identity replaced by the compiler's vendor. A task id **must not**
-itself embed a toolchain identity or a result key.
+itself embed a toolchain identity or a result key. A build-graph action's task
+id **must** have the form `<kind>:<package>:<role>:<vendor>:<d>`, where
+`<vendor>` is the compiler's vendor and `<d>` the first twelve hexadecimal
+digits of the variant key with its toolchain identity replaced by that vendor;
+the build graph adopts the form in BGA8.
 
 _Rationale:_ a toolchain bump changes every variant key, and a series that
 broke at every bump could not show what the bump did. Keeping the vendor
@@ -994,6 +1001,11 @@ run, or a revision resolving to its CI record of the same job, or with
   history;
 - a side with no such measurement makes the series `ungated` with reason
   `stored`, and the report names the run each value came from.
+
+With `--gate --local`, both sides **must** be local records of one machine,
+whose OBR7 host facts are equal; otherwise the comparison is refused. A
+comparison of a local run with CI records **must** be report-only: it gates
+nothing, and its report says so.
 
 **OBG4: The noise model.** Each series' noise **must** be estimated, separately
 for each gate metric and from that metric's samples, from executions with

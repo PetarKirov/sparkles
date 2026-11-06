@@ -25,7 +25,7 @@ and the gate come last, once history exists to calibrate them.
   page:
   - the build graph: BGA3 and BGA6 name the measurement directory, and BGN5
     excludes the measurement output (OBD8), made with this specification;
-    BGA8 states the id form of Q2 (OBD2), once Q2 is decided;
+    BGA8 adopts the task-id form of OBD2 at E2, and points to it;
   - `apps/ci`: §5.7's unavailable sampling is a run degradation, not a
     `Degraded` outcome (invariant 1, OBD11), made with this specification;
   - the test runner's process model: TRP1 admits `sparkles:metrics` and
