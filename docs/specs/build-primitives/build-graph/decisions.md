@@ -556,3 +556,64 @@ the resolver's own unit tests, which state the expected result independently
 of dub's code.
 
 **Revisit when** a disagreement traces to one of these copies.
+
+## D24: A test that reads a specification (proposed)
+
+**Question.** `sparkles:ui-app`'s unittest configuration string-imports
+`docs/specs/ui-app/resilience.md` through `stringImportPaths
+"../../docs/specs/ui-app"`, so that its tests check the scenarios the
+specification lists. The directory belongs to no sub-package, only to the root
+recipe, which builds nothing. BGR8 reports the reach. Package selection
+assigns the file to no package, so editing it selects no test. How does a
+test read a specification?
+
+**Alternatives.**
+
+- **A specification package:** `docs/specs/ui-app/dub.sdl` declares a
+  `sourceLibrary` with `stringImportPaths "."` and no sources. The root
+  recipe lists it, and the unittest configuration depends on it. dub folds
+  a source library's settings into each consumer (BGR3 step 1), so the test
+  build keeps the same string import path. The directory gains an owner, so
+  selection maps an edit to the catalog to `ui-app`'s tests.
+- **Move the catalog** into `libs/ui-app/` and include it from the
+  specification page. Specifications then no longer live under
+  `docs/specs/`.
+- **Exempt the root recipe:** a recipe that builds nothing owns no
+  directory, so a reach into a path no sub-package owns is no hidden edge.
+  The files read are still inputs of the compile (§5), but selection keeps
+  missing them.
+
+**Choice.** Proposed: a specification package. It is the only alternative
+that keeps both BGR8's rule and the specification's place.
+
+**Revisit when** a second package's tests read a specification: each gets
+its own specification package, or a shared one if two read the same
+catalog.
+
+## D25: The migration comparison snippets (proposed)
+
+**Question.** `ci --example-files` runs
+`docs/libs/event-horizon/tutorial/snippets/`, 70 of whose programs depend on
+other event loops: vibe-core, eventcore, libasync and Photon from the
+registry, and Collie, Kiss and Hunt by `path` into `snippets/.deps/`, which
+`apps/ci/tools/prepare-event-horizon-comparisons.d` clones and patches before
+the run. Neither DUB lock pins any of them, so BGR4 makes each a resolution
+error, and dub, offline, cannot resolve them either. Oracle 1 counts the 70
+as refused by both. Are they in scope?
+
+**Alternatives.**
+
+- **Pin them:** add the registry packages and their dependencies to
+  `nix/ci-dub-lock.json`, and the three patched checkouts to the flake as
+  pinned, patched sources, so that the resolver and an offline dub resolve
+  them.
+- **Leave them out of scope:** BGR6's single-file packages are those whose
+  dependencies the locks pin; the comparison suite keeps running through dub,
+  online, until it is pinned.
+
+**Choice.** Proposed: leave them out of scope for E1, and pin them when
+`ci --example-files` moves onto the build graph. They compare other
+libraries' behaviour; none is a dependency of this repository's packages.
+
+**Revisit when** `ci --example-files` moves onto the build graph, or a
+comparison snippet's dependency becomes a dependency of a package in scope.

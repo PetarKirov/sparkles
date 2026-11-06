@@ -78,6 +78,14 @@ fixture is reported, and so are the cycle-safe packages' source includes of
 the test runner until E1a removes them. `dub test :build-primitives` is
 green.
 
+Progress: strict reading, resolution, the registry and libraries are done, and
+oracle 1 covers all 621 requests in scope, single-file packages included, with
+zero unaccepted disagreements. The repository's recipes now declare their
+`sparkles:math` dependencies, and the DQL test moved out of `ui`. What BGR8
+still reports is the test runner's source includes, which E1a removes, and
+`ui-app`'s string import of its specification, which awaits D24. D25 proposes
+leaving the migration comparison snippets out of scope.
+
 ## E2: Variants and the action graph
 
 - Variant keys with pruned downward versions, and roles (BGV1–BGV3), with dedup
