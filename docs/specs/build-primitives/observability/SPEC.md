@@ -765,8 +765,12 @@ as a compile's summary and the analyses of its outputs, **must**:
 
 **OBD9: A hit's stored measurements.** A hit **must** record its own
 measurements, such as `task.wall` for the lookup, and, in a separate `stored`
-member, the measurements stored with the result it reused. Stored measurements
-**must not** enter a comparison or a history series unless asked for.
+member, the measurements stored with the result it reused and the run
+identifier of the run that produced it. A test skipped by a shared verdict
+([BGX4](../build-graph/SPEC.md#_9-test-actions-and-result-reuse)) records, in
+the same member, the run identifier of the run that published the verdict.
+Stored measurements **must not** enter a comparison or a history series unless
+asked for.
 
 **OBD10: Bounded size.** A record **must not** exceed 4 MiB uncompressed. A
 record that would **must** drop, in order, per-test metrics, then top-ten

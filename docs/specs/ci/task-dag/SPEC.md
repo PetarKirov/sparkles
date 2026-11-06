@@ -220,8 +220,9 @@ one data file:
   their shards as JSON, and sets it as an output through the CI-provider
   module (TDO6). The repository's workflows are generated from that output.
 - **Shards:** a placement's tasks are packed into its shards longest first, by
-  the `task.wall` that the run records of the build-primitives observability
-  specification (`docs/specs/build-primitives/observability/`) hold. A task
+  the `task.wall` that the
+  [run records](../../build-primitives/observability/SPEC.md#_11-run-records)
+  hold. A task
   with no recorded wall time takes a declared default weight.
 
 **CIC15: No diffs on CI.** The repository's workflows **must not** pass

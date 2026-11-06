@@ -1003,8 +1003,8 @@ key, looked up by asking whether the path exists.
 - **A missing verdict** costs a run of the test, never a failure.
 
 A task skipped by a shared verdict carries the run-record id of the run that
-published it, as the observability specification's OD16
-(`docs/specs/build-primitives/observability/`) requires.
+published it, as
+[observability OBD9](../observability/SPEC.md#_11-run-records) requires.
 
 _Rationale:_ BGX3 compares machine facts on reuse, but an existence query
 cannot compare anything, so the facts enter the key. The gate keeps a run whose
