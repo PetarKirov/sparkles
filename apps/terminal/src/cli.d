@@ -521,3 +521,28 @@ unittest
     // Unset, the desktop's.
     assert(parseCli!TerminalCli(["terminal"]).value.interfaceFont.uiFont is null);
 }
+
+/**
+The shell command line for the words after `--`. One word is a script and
+passes verbatim (`terminal -- 'vim file'`, `terminal -- 'ls | less'`); more
+than one are a command and its arguments, each quoted POSIX-style where it needs it, so
+`terminal -- sh -c 'echo a; echo b'` runs `sh` with the script as one
+argument. The `'…'\''…'` quoting reads the same in fish and the POSIX shells.
+*/
+string commandLine(in string[] words) @safe pure
+{
+    import std.process : escapeShellCommand;
+
+    if (words.length <= 1)
+        return words.length ? words[0] : null;
+    return escapeShellCommand(words);
+}
+
+@("cli.commandLine.oneScriptOrQuotedWords")
+@safe pure unittest
+{
+    assert(commandLine(null) is null);
+    assert(commandLine(["ls | less"]) == "ls | less", "one word is a script");
+    assert(commandLine(["sh", "-c", "echo a; echo b"]) == `sh -c 'echo a; echo b'`, "plain words stay plain");
+    assert(commandLine(["printf", "it's"]) == `printf 'it'\''s'`);
+}
