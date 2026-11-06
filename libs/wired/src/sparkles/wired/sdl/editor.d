@@ -13,7 +13,7 @@ module sparkles.wired.sdl.editor;
 
 import std.experimental.allocator.common : stateSize;
 import std.experimental.allocator.mallocator : Mallocator;
-import std.range.primitives : put;
+import std.range.primitives : ElementType, isInputRange, put;
 
 import sparkles.base.buffer : UniqueBuffer;
 import sparkles.base.text.edits : mapOffset, TextEdit, validateEdits, writeEdited;
@@ -168,6 +168,16 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
         record(attribute.span, start, op);
     }
 
+    /// Replaces every attribute of `attributes` — a selection (editing
+    /// §3.2) or any range of them — in order, as the single form does (SDS5).
+    void replaceAttribute(Attributes)(scope Attributes attributes, SdlQualifiedName name,
+        in SdlScalar value)
+    if (isInputRange!Attributes && is(ElementType!Attributes : const SdlAttributeView))
+    {
+        foreach (attribute; attributes)
+            replaceAttribute(attribute, name, value);
+    }
+
     /** Sets attribute `name` of `node`: replaces the one attribute of that
     name, or inserts ` name=value` after the node's last value, attribute or
     name. No edit when it already has that value; a name held by several
@@ -205,6 +215,14 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
         record(SdlSpan.at(lastItemEnd(node)), start, op);
     }
 
+    /// Sets attribute `name` of every node of `nodes`, in order (SDS5).
+    void setAttribute(Nodes)(scope Nodes nodes, SdlQualifiedName name, in SdlScalar value)
+    if (isInputRange!Nodes && is(ElementType!Nodes : const SdlNode))
+    {
+        foreach (node; nodes)
+            setAttribute(node, name, value);
+    }
+
     /** Removes `attribute`, the spaces and tabs before it on its line, and a
     `\` continuation that separates it from the previous token. */
     void removeAttribute(scope SdlAttributeView attribute)
@@ -229,6 +247,14 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
             start = previous;
         }
         record(SdlSpan(start, attribute.span.endOffset), _text.length, op);
+    }
+
+    /// Removes every attribute of `attributes`, in order (SDS5).
+    void removeAttribute(Attributes)(scope Attributes attributes)
+    if (isInputRange!Attributes && is(ElementType!Attributes : const SdlAttributeView))
+    {
+        foreach (attribute; attributes)
+            removeAttribute(attribute);
     }
 
     /// Inserts the nodes of `fragment` before `sibling` (SDE4).
@@ -303,6 +329,15 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
         _nodeDelta -= subtreeSize(node.cellIndex);
         replaces(node.cellIndex, node.cellIndex + subtreeSize(node.cellIndex));
         record(SdlSpan(start, end), _text.length, op);
+    }
+
+    /// Removes every node of `nodes`, in order, as the single form does
+    /// (SDS5); a node inside another removed one is `editConflict`.
+    void remove(Nodes)(scope Nodes nodes, SdlAttachedComments comments = SdlAttachedComments.keep)
+    if (isInputRange!Nodes && is(ElementType!Nodes : const SdlNode))
+    {
+        foreach (node; nodes)
+            remove(node, comments);
     }
 
     /// Replaces the lines strictly inside `node`'s block with `fragment`.

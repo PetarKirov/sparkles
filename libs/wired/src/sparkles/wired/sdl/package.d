@@ -13,5 +13,6 @@ public import sparkles.wired.sdl.open_document;
 public import sparkles.wired.sdl.policy;
 public import sparkles.wired.sdl.reader;
 public import sparkles.wired.sdl.schema_annotations;
+public import sparkles.wired.sdl.select;
 public import sparkles.wired.sdl.typed_edit;
 public import sparkles.wired.sdl.writer;
