@@ -118,17 +118,27 @@ graph TD
 
 ### 2.1 Path Addressing Grammar
 
-Paths follow member access and static-array indexing conventions:
+Paths follow member access and static-array indexing conventions, with a
+quoted form for a name that is not an identifier:
 
 ```
-Path       := Segment ( "." Segment | "[" Digits "]" )*
-Segment    := Identifier
+Path       := Segment ( "." Segment | "[" Digits "]" | "[" String "]" )*
+Segment    := Identifier | "[" String "]"
 Digits     := [0-9]+
+String     := a JSON string literal: "…" with JSON escapes
 ```
 
 - **Member Access**: `pointer.phase`, `keyboard.logical.character`,
   `ready.metrics.logicalSize.width`. A segment is the field's identifier, or
   the name a `@WireName` attribute gives it; `@Aliases` adds further spellings.
+- **Quoted Segments**: `["my.tool"]` names the member `my.tool`, which an
+  identifier segment cannot spell. The string uses JSON escaping (`\"`,
+  `\\`, `\/`, `\b`, `\f`, `\n`, `\r`, `\t`, `\uXXXX` with surrogate pairs), as
+  [wired's diagnostic paths](../wired/SPEC.md) do. A quoted segment opens a
+  path or follows another step, with or without a `.`:
+  `build["my.tool"].dependency` is `build.["my.tool"].dependency`.
+  The first byte after `[` tells the two bracket forms apart: a digit begins
+  an index, `"` a name. `["phase"]` and `phase` are the same segment.
 - **SumType Unrolling**: an alternative's fields are addressed under the
   alternative's name, its type name with the schema's suffix (`Event` by
   default) stripped and recased to camelCase. In a `WindowEvent`,
@@ -137,15 +147,24 @@ Digits     := [0-9]+
   the field holding the `SumType` does not appear in the path.
 - **Positional Indexes**: `stops[0]` addresses an element of a static array;
   the schema lists one path per index. Dynamic arrays and associative arrays
-  have no element paths. The property tree extends this grammar with quoted
-  and keyed segments (`["…"]`, `[#7]`) that DQL's parser does not accept.
+  have no element paths. The property tree extends this grammar with keyed
+  segments (`[#7]`), which DQL's parser does not accept.
 
-A segment is a run of the bytes the lexer keeps inside one identifier,
-excluding `.`, `[` and `]`. `sparkles.dql.path` reads the grammar step by
-step: `validateDqlPath` reports the first fault at its byte offset, and
-`dqlPathSteps` walks an accepted path without allocating, so a host that
-addresses its own data by DQL paths (the SDL selector of `sparkles:wired`)
-does not re-implement it.
+An identifier segment is a run of the bytes the lexer keeps inside one
+identifier, excluding `.`, `[` and `]`. The lexer keeps a quoted segment,
+escapes and all, inside the identifier token of its path, so a filter can
+compare one (`["dflags.ldc"] == null`). `sparkles.dql.path` reads the grammar
+step by step: `validateDqlPath` reports the first fault at its byte offset,
+`dqlPathSteps` walks an accepted path without allocating, and a step compares
+or writes its decoded name, so a host that addresses its own data by DQL
+paths (the SDL selector of `sparkles:wired`) does not re-implement it.
+
+Every path DQL prints — the schema's paths and so the help output — writes
+a segment as an identifier when it is one (not empty, every byte an
+identifier byte, not starting with a digit or `-`, and not a keyword such as
+`null`) and quoted otherwise, so a printed path parses back to the same
+steps. Schema lookups compare paths step by step, so either spelling of a
+segment finds it.
 
 ### 2.2 Operators and Functions
 
