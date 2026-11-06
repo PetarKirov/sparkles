@@ -438,6 +438,27 @@ struct WaylandWsi
         return prepareAndArm();
     }
 
+    /**
+    Asks the compositor to show the window full screen, on the output it
+    chooses, or to restore it. The compositor answers with a configure: the
+    metrics and the `fullscreen` state follow it, and it may refuse.
+    */
+    WsiResult!void setFullscreen(WindowId id, bool fullscreen)
+    {
+        auto checked = checkedSlot(id, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!void(checked.error);
+        auto paused = pausePoll();
+        if (paused.hasError)
+            return paused;
+        ref slot = windows_.at(checked.value);
+        if (fullscreen)
+            xdg_toplevel_set_fullscreen(slot.toplevel, null);
+        else
+            xdg_toplevel_unset_fullscreen(slot.toplevel);
+        return prepareAndArm();
+    }
+
     /// Retitles the window (`F13`): what the window list, the dock and a
     /// server-drawn title bar show. A client-drawn bar reads its own copy.
     WsiResult!void setTitle(WindowId id, in char[] title)
@@ -4055,6 +4076,12 @@ private void xdg_toplevel_set_fullscreen()(xdg_toplevel* self, wl_output* output
 {
     wl_proxy_marshal_flags(cast(wl_proxy*) self, XDG_TOPLEVEL_SET_FULLSCREEN, null,
         wl_proxy_get_version(cast(wl_proxy*) self), 0, output);
+}
+
+private void xdg_toplevel_unset_fullscreen()(xdg_toplevel* self)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, XDG_TOPLEVEL_UNSET_FULLSCREEN, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), 0);
 }
 
 private void xdg_toplevel_move()(xdg_toplevel* self, wl_seat* seat,
