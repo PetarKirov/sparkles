@@ -842,6 +842,22 @@ struct WheelEvent
     */
     bool begins;
 
+    /**
+    The fingers lifted: the last event of a continuous scroll a trackpad
+    reported as a gesture (`INP26`). Its deltas may be zero. A consumer with
+    momentum of its own (`ScrollBody`) flings from the velocity it saw;
+    `false` from a producer that cannot tell.
+    */
+    bool ends;
+
+    /**
+    Inertia the platform synthesized after the fingers lifted (macOS'
+    momentum phase), not the user's own movement (`INP26`). A consumer that
+    flings on `ends` ignores these, so a scroll coasts once, by one model;
+    any other consumer scrolls by them as before.
+    */
+    bool momentum;
+
     /// The exact distance on each axis: `fdx`/`fdy` when the producer gave
     /// them, else the whole cells.
     float exactX() const @safe pure nothrow @nogc => fdx != 0 ? fdx : dx;
