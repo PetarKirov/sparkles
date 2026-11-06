@@ -578,6 +578,7 @@ struct TerminalView
             cols: s.cols, rows: s.rows, max_scrollback: opts.scrollbackLimit,
         };
         ghostty_terminal_new(null, &s.terminal, topts);
+        enableGraphemeClusters(s.terminal);
         // The options carry no cell pixel size; set it up front so kitty
         // placement math and pixel-size reports never see zeros.
         ghostty_terminal_resize(s.terminal, s.cols, s.rows, s.cellWidth, s.cellHeight);
