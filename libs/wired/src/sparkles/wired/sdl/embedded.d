@@ -87,6 +87,29 @@ SdlEmbeddedRecipe locateEmbeddedRecipe(scope const(char)[] host) @safe pure noth
     return SdlEmbeddedRecipe.init;
 }
 
+/** Writes `recipe` — SDL text, such as `toSDL`'s output — as the leading
+`/+ dub.sdl: … +/` comment of a single-file package, which
+$(LREF locateEmbeddedRecipe) finds again with the same recipe. The recipe
+must not contain `+/`, since DUB ends the comment at the first one. */
+void writeEmbeddedRecipe(Writer)(ref Writer writer, scope const(char)[] recipe)
+in (!containsCommentClose(recipe), "a recipe holding `+/` cannot be embedded")
+{
+    put(writer, "/+ dub.sdl:\n");
+    put(writer, recipe);
+    if (recipe.length && recipe[$ - 1] != '\n')
+        put(writer, "\n");
+    put(writer, "+/\n");
+}
+
+// Whether `text` holds `+/`.
+private bool containsCommentClose(scope const(char)[] text) @safe pure nothrow @nogc
+{
+    foreach (i; 1 .. text.length)
+        if (text[i - 1] == '+' && text[i] == '/')
+            return true;
+    return false;
+}
+
 /** The length of the logical newline sequence at `host[at]` — `\n`, `\r`,
 `\r\n`, U+2028 or U+2029 — or `0`. */
 package size_t newlineWidthAt(scope const(char)[] host, size_t at) @safe pure nothrow @nogc
@@ -213,6 +236,25 @@ unittest
 
     assert(hasEmbeddedRecipeHeader("#!/bin/dub\n\n/+  dub.sdl:"));
     assert(!hasEmbeddedRecipeHeader("// dub.sdl:"));
+}
+
+@("sdl.embedded.writeEmbeddedRecipe.locatesTheSameRecipe")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.base.buffer : checkWriter;
+
+    checkWriter!((ref w) => writeEmbeddedRecipe(w, "name \"probe\"\n"))(
+        "/+ dub.sdl:\nname \"probe\"\n+/\n");
+    // A recipe without a final newline gets one before the close.
+    checkWriter!((ref w) => writeEmbeddedRecipe(w, "name \"probe\""))(
+        "/+ dub.sdl:\nname \"probe\"\n+/\n");
+
+    UniqueBuffer!char host;
+    writeEmbeddedRecipe(host, "name \"probe\"\n");
+    const recipe = locateEmbeddedRecipe(host[]);
+    assert(recipe.found && !recipe.isJson);
+    assert(recipe.recipe(host[]) == "\nname \"probe\"\n");
 }
 
 @("sdl.embedded.writeEmbeddedRendering.keepsEveryNewline")
