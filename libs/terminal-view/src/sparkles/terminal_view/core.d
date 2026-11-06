@@ -390,6 +390,62 @@ unittest
     assert(cell.style.underline == GHOSTTY_SGR_UNDERLINE_CURLY);
 }
 
+/**
+Turns on grapheme clustering (DEC mode 2027) for a new terminal, as Ghostty's
+own application does by default: a flag's regional-indicator pair, a ZWJ
+sequence and an emoji with its skin-tone modifier each occupy one cell (two
+columns wide) holding the whole cluster, rather than one cell per code point.
+
+A program may still turn the mode off, and a full reset (`RIS`) restores
+libghostty-vt's default, which is off: the C API has no per-terminal mode
+defaults.
+*/
+void enableGraphemeClusters(GhosttyTerminal terminal) @system nothrow @nogc
+{
+    ghostty_terminal_mode_set(terminal, GHOSTTY_MODE_GRAPHEME_CLUSTER, true);
+}
+
+/// A flag, a ZWJ family and a skin-toned thumb each become one wide cell.
+@("terminal_view.enableGraphemeClusters.joinsEmojiSequences")
+@system nothrow @nogc
+unittest
+{
+    CoreState s;
+    GhosttyTerminalOptions options = { cols: 20, rows: 1 };
+    assert(ghostty_terminal_new(null, &s.terminal, options) == GHOSTTY_SUCCESS);
+    scope (exit) ghostty_terminal_free(s.terminal);
+    enableGraphemeClusters(s.terminal);
+    assert(ghostty_render_state_new(null, &s.render_state) == GHOSTTY_SUCCESS);
+    scope (exit) ghostty_render_state_free(s.render_state);
+    assert(ghostty_render_state_row_iterator_new(null, &s.row_iter) == GHOSTTY_SUCCESS);
+    scope (exit) ghostty_render_state_row_iterator_free(s.row_iter);
+    assert(ghostty_render_state_row_cells_new(null, &s.cells) == GHOSTTY_SUCCESS);
+    scope (exit) ghostty_render_state_row_cells_free(s.cells);
+
+    // 🇧🇬, 👨‍👩‍👧, 👍🏽, then a marker that must land at column 6.
+    static immutable text = "\U0001F1E7\U0001F1EC\U0001F468‍\U0001F469‍\U0001F467\U0001F44D\U0001F3FDX";
+    ghostty_terminal_vt_write(s.terminal, cast(const(ubyte)*) text.ptr, text.length);
+    ghostty_render_state_update(s.render_state, s.terminal);
+    ghostty_render_state_get(s.render_state, GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR, &s.row_iter);
+    assert(ghostty_render_state_row_iterator_next(s.row_iter));
+    ghostty_render_state_row_get(s.row_iter, GHOSTTY_RENDER_STATE_ROW_DATA_CELLS, &s.cells);
+
+    static immutable uint[] flag = [0x1F1E7, 0x1F1EC];
+    static immutable uint[] family = [0x1F468, 0x200D, 0x1F469, 0x200D, 0x1F467];
+    static immutable uint[] thumb = [0x1F44D, 0x1F3FD];
+    static immutable uint[][] wide = [flag, family, thumb];
+    foreach (expected; wide)
+    {
+        assert(ghostty_render_state_row_cells_next(s.cells));
+        assert(cellGrapheme(s.cells, s.grapheme) == expected);
+        // The wide cell's spacer tail holds nothing.
+        assert(ghostty_render_state_row_cells_next(s.cells));
+        assert(cellGrapheme(s.cells, s.grapheme).length == 0);
+    }
+    assert(ghostty_render_state_row_cells_next(s.cells));
+    assert(cellGrapheme(s.cells, s.grapheme) == [uint('X')]);
+}
+
 // Decorations use cell geometry, not the font's glyph bounds; a wide cell
 // carries one continuous line and the phase continues across adjacent cells.
 private void drawCellDecorations(P)(ref P painter, in ResolvedCell cell,
