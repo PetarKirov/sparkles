@@ -7,7 +7,7 @@
  * `time_running`, then one value per opened counter). This module holds that
  * common core so a change to the scaling/rounding is made once, not twice.
  */
-module sparkles.test_runner.perf_group;
+module sparkles.profiling.counters.perf_group;
 
 version (linux)
 {

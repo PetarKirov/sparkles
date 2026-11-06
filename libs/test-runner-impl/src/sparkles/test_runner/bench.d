@@ -30,12 +30,12 @@ import core.time : Duration, MonoTime, msecs;
 import std.typecons : Nullable;
 
 import sparkles.test_runner.attributes : benchmark, ctfe;
-import sparkles.test_runner.capability : BackendCapabilities, harnessPendingCapabilities;
+import sparkles.profiling.counters.capability : BackendCapabilities, harnessPendingCapabilities;
 import sparkles.test_runner.model : Test, TestResult, Thrown;
 import sparkles.test_runner.skip : TestSkipped;
-import sparkles.test_runner.perf : PerfGroup, PerfStats;
-import sparkles.test_runner.raw : RawEvent, RawGroup, RawStats;
-import sparkles.test_runner.syscalls : SyscallGroup, SyscallStats;
+import sparkles.profiling.counters.perf : PerfGroup, PerfStats;
+import sparkles.profiling.counters.raw : RawEvent, RawGroup, RawStats;
+import sparkles.profiling.counters.syscalls : SyscallGroup, SyscallStats;
 import sparkles.test_runner.tier0 : Tier0Group, Tier0Stats;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -534,7 +534,7 @@ struct CounterGroups
 @safe
 unittest
 {
-    import sparkles.test_runner.capability : Capability, reasonFor;
+    import sparkles.profiling.counters.capability : Capability, reasonFor;
 
     const blocks = CounterGroups.none.capabilities;
     assert(blocks.length == 6);

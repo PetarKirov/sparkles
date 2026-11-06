@@ -23,7 +23,7 @@ import core.runtime : Runtime, UnitTestResult;
 import core.time : Duration, MonoTime;
 
 import sparkles.test_runner.bench : BenchConfig, BenchStats, CounterGroups;
-import sparkles.test_runner.capability : Capability, capabilityName, CapabilityReport;
+import sparkles.profiling.counters.capability : Capability, capabilityName, CapabilityReport;
 import sparkles.test_runner.driver : detectCompiler, DriverOptions, runCtfeTests;
 import sparkles.test_runner.stack_budget : installStackBudgetHandler;
 import sparkles.test_runner.workers : joinTestWorkers, startTestWorkers;
@@ -897,7 +897,7 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
     if (const pfmNames = pfmSelectorNames(options.metrics))
     {
         import sparkles.test_runner.event_naming : PfmResolver;
-        import sparkles.test_runner.raw : RawEvent;
+        import sparkles.profiling.counters.raw : RawEvent;
 
         auto resolver = PfmResolver.tryLoad();
         foreach (name; pfmNames)
@@ -969,7 +969,7 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
         stdout.write(formatted!writeMetricCatalog(cat, colored));
         stdout.writeln;
         {
-            import sparkles.test_runner.psi : PsiSource;
+            import sparkles.profiling.counters.psi : PsiSource;
             import sparkles.test_runner.workload : WallSource, withWorkloadBlocks;
 
             auto wallProbe = WallSource.tryOpen(true);
@@ -1189,7 +1189,7 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
         // raw:r04c2), matching sortValue's header fallback.
         foreach (ref ev; rawEvents)
         {
-            import sparkles.test_runner.raw : rawHeader;
+            import sparkles.profiling.counters.raw : rawHeader;
 
             knownColumns ~= ev.id;
             knownColumns ~= rawHeader(ev.id);
@@ -1395,7 +1395,7 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
     // window — for a handful of long single-pass windows the stderr spinner
     // is disclosure enough, and keeping display I/O out of measurement is
     // the model's point.
-    import sparkles.test_runner.psi : PsiSource;
+    import sparkles.profiling.counters.psi : PsiSource;
     import sparkles.test_runner.workload : runWorkload, WallSource, WorkloadWindow;
 
     auto workloadTests = tests.filter!(t => t.traits.isWorkload).array;

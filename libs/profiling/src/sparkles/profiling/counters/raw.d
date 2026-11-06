@@ -16,9 +16,9 @@
  * configs are inherently µarch-specific; the named-event resolution layer
  * (libpfm4) lands separately and feeds the same group.
  */
-module sparkles.test_runner.raw;
+module sparkles.profiling.counters.raw;
 
-import sparkles.test_runner.capability : Capability, CapabilityAbsence,
+import sparkles.profiling.counters.capability : Capability, CapabilityAbsence,
     CapabilityReport, has, hasNamedColumns, hasSnapshot, isCounterBackend,
     reasonFor;
 
@@ -104,7 +104,7 @@ version (linux)
         PERF_EVENT_IOC_DISABLE, PERF_EVENT_IOC_ENABLE;
     import core.sys.posix.unistd : posixClose = close;
 
-    import sparkles.test_runner.perf_group : GroupSnapshot;
+    import sparkles.profiling.counters.perf_group : GroupSnapshot;
 
     /// The raw-event counter group (Linux). `tryOpen` once; `count` brackets
     /// one benchmark's timed body per iteration. With no events it degrades
@@ -244,7 +244,7 @@ version (linux)
             uint iters, uint batch = 1)
         in (iters > 0)
         {
-            import sparkles.test_runner.perf_group : bracketCountingPass, readScaledGroup;
+            import sparkles.profiling.counters.perf_group : bracketCountingPass, readScaledGroup;
 
             const leader = leaderFd();
 
@@ -291,7 +291,7 @@ version (linux)
         /// so edge snapshots stay cumulative (see `PerfGroup.enable`).
         void enable() @safe
         {
-            import sparkles.test_runner.perf_group : groupIoctl;
+            import sparkles.profiling.counters.perf_group : groupIoctl;
 
             const leader = leaderFd();
             if (leader >= 0)
@@ -301,7 +301,7 @@ version (linux)
         /// ditto
         void disable() @safe
         {
-            import sparkles.test_runner.perf_group : groupIoctl;
+            import sparkles.profiling.counters.perf_group : groupIoctl;
 
             const leader = leaderFd();
             if (leader >= 0)
@@ -311,7 +311,7 @@ version (linux)
         /// Captures one window-edge reading.
         RawSnapshot snapshot() const @safe
         {
-            import sparkles.test_runner.perf_group : snapshotGroup;
+            import sparkles.profiling.counters.perf_group : snapshotGroup;
 
             const leader = leaderFd();
             return leader >= 0
@@ -323,7 +323,7 @@ version (linux)
         RawStats windowStats(in RawSnapshot a, in RawSnapshot b)
             const @safe pure nothrow
         {
-            import sparkles.test_runner.perf_group : windowDeltas;
+            import sparkles.profiling.counters.perf_group : windowDeltas;
 
             RawStats s;
             s.iters = 1;

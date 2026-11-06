@@ -35,10 +35,13 @@ configuration "tracy" {
 }
 
 configuration "unittest" {
-    // Fast path: depend on the runner shim (pulls the prebuilt impl library),
-    // so `dub test` recompiles only this package, not the runner sources.
-    dependency "sparkles:test-runner" path="../.."
+    // Cycle-safe: the runner's impl depends on this package for its counters,
+    // so this package source-includes the shim and the impl, and takes the
+    // impl's own dependencies.
+    sourcePaths "src" "../test-runner/src" "../test-runner-impl/src"
+    importPaths "src" "../test-runner/src" "../test-runner-impl/src"
     dependency "sparkles:base" path="../.."
+    dependency "sparkles:ui" path="../.."
     // `FrameSummary` round-trips through JSON without custom code (PRF17).
     dependency "sparkles:wired" path="../.."
 
@@ -47,8 +50,10 @@ configuration "unittest" {
 
 // The tests again, with Tracy: `dub test :profiling -c unittest-tracy`.
 configuration "unittest-tracy" {
-    dependency "sparkles:test-runner" path="../.."
+    sourcePaths "src" "../test-runner/src" "../test-runner-impl/src"
+    importPaths "src" "../test-runner/src" "../test-runner-impl/src"
     dependency "sparkles:base" path="../.."
+    dependency "sparkles:ui" path="../.."
     dependency "sparkles:wired" path="../.."
     versions "SparklesTracy"
     cImportPaths "$SPARKLES_TRACY_PREFIX/include/tracy"

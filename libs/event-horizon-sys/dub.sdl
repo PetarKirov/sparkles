@@ -24,8 +24,8 @@ configuration "unittest" {
     // sparkles:test-utils will depend on this package (VFS PLAN M4), which
     // puts it in the test runner's own dependency closure; like base, it
     // source-includes the runner instead of depending on it.
-    sourcePaths "../test-runner/src" "../test-runner-impl/src"
-    importPaths "src" "../test-runner/src" "../test-runner-impl/src"
+    sourcePaths "../test-runner/src" "../test-runner-impl/src" "../profiling/src/sparkles/profiling/counters"
+    importPaths "src" "../test-runner/src" "../test-runner-impl/src" "../profiling/src"
     buildRequirements "disallowDeprecations"
 
     dflags "-checkaction=context" "-allinst"

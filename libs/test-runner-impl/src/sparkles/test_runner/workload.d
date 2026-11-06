@@ -7,7 +7,7 @@
  * snapshots, plus a wall-clock decomposition into on-CPU time (rusage),
  * runqueue wait (schedstat), and a clamped residual. Sources are read
  * cumulatively at the edges (no per-iteration ioctl bracket, no `RESET` —
- * see `sparkles.test_runner.perf_group.GroupSnapshot`), so the driver's
+ * see `sparkles.profiling.counters.perf_group.GroupSnapshot`), so the driver's
  * whole-body candidate window and in-body `workloadWindow` calls overlap
  * freely in a single pass — a workload body is never re-run for counting,
  * because it may be expensive or non-idempotent.
@@ -48,15 +48,15 @@ import sparkles.test_runner.attributes : CacheRegime, workloadUda = workload;
 import sparkles.test_runner.cache_regime : appendNote, applyCold, applyWarm,
     CacheRegimeStamp, FsKind, fsKind, probeResidency, resolveStamp;
 import sparkles.test_runner.bench : BenchConfig, CounterGroups, elapsedNs, errorCell;
-import sparkles.test_runner.capability : BackendCapabilities, Capability,
+import sparkles.profiling.counters.capability : BackendCapabilities, Capability,
     CapabilityAbsence, CapabilityReport;
 import sparkles.test_runner.execution : executeTest, toThrown;
 import sparkles.test_runner.model : Test, TestResult, Thrown;
-import sparkles.test_runner.perf : PerfStats;
-import sparkles.test_runner.psi : PsiReading, PsiSource;
-import sparkles.test_runner.raw : RawStats;
+import sparkles.profiling.counters.perf : PerfStats;
+import sparkles.profiling.counters.psi : PsiReading, PsiSource;
+import sparkles.profiling.counters.raw : RawStats;
 import sparkles.test_runner.skip : TestSkipped;
-import sparkles.test_runner.syscalls : SyscallStats;
+import sparkles.profiling.counters.syscalls : SyscallStats;
 import sparkles.test_runner.tier0 : Tier0Stats;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -287,7 +287,7 @@ version (linux)
     /// thread, where the workload phase runs).
     private SchedstatReading readThreadSchedstat(scope char[] buf) @safe nothrow @nogc
     {
-        import sparkles.test_runner.capability : readSmallFile;
+        import sparkles.profiling.counters.capability : readSmallFile;
 
         auto r = parseSchedstat(readSmallFile("/proc/thread-self/schedstat", buf));
         if (!r.ok)
@@ -560,7 +560,7 @@ PsiStats psiWindow(in PsiReading before, in PsiReading after) @safe pure nothrow
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.test_runner.psi : PsiFileReading;
+    import sparkles.profiling.counters.psi : PsiFileReading;
 
     PsiReading a, b;
     a.io = PsiFileReading(someUs: 1_000, fullUs: 500, ok: true);
@@ -1067,7 +1067,7 @@ unittest
     assert(merged[7].backend == "harness");
     version (Posix)
     {
-        import sparkles.test_runner.capability : Capability, has;
+        import sparkles.profiling.counters.capability : Capability, has;
 
         assert(merged[4].report.has(Capability.counting));
     }
@@ -1119,7 +1119,7 @@ unittest
 
     const off = WallSource.tryOpen(false);
     assert(!off.available);
-    import sparkles.test_runner.capability : Capability, has;
+    import sparkles.profiling.counters.capability : Capability, has;
 
     assert(!off.capabilities.has(Capability.counting));
 }

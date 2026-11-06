@@ -14,7 +14,7 @@ import sparkles.base.text.writers : byteSize, duration, formatted, writeDuration
 import sparkles.base.text.width : Align;
 
 import sparkles.test_runner.bench : BenchStats;
-import sparkles.test_runner.capability : allCapabilities, BackendCapabilities,
+import sparkles.profiling.counters.capability : allCapabilities, BackendCapabilities,
     capabilityName, has, reasonFor;
 import sparkles.test_runner.ctfe_trace : CtfeTestCost;
 import sparkles.test_runner.metrics : MetricClass, MetricDescriptor;
@@ -1008,8 +1008,8 @@ package BenchTableModel buildWorkloadTable(in WorkloadWindow[] rows, bool colore
     import std.conv : to;
     import std.math : isNaN;
     import sparkles.test_runner.metrics : isEstimatedScale, scaled;
-    import sparkles.test_runner.perf : ipc;
-    import sparkles.test_runner.raw : rawHeader;
+    import sparkles.profiling.counters.perf : ipc;
+    import sparkles.profiling.counters.raw : rawHeader;
 
     const hasPerf = rows.canFind!(r => !r.perf.isNull);
     const hasTier0 = rows.canFind!(r => !r.tier0.isNull);
@@ -1224,7 +1224,7 @@ unittest
 {
     import std.algorithm.searching : canFind;
     import std.typecons : nullable;
-    import sparkles.test_runner.perf : PerfStats;
+    import sparkles.profiling.counters.perf : PerfStats;
 
     WorkloadWindow plain;
     plain.name = "ingest";
@@ -1275,7 +1275,7 @@ unittest
 {
     import std.algorithm.searching : canFind, startsWith;
     import std.typecons : nullable;
-    import sparkles.test_runner.perf : PerfStats;
+    import sparkles.profiling.counters.perf : PerfStats;
 
     WorkloadWindow scaledWin;
     scaledWin.name = "multiplexed";
@@ -1315,7 +1315,7 @@ unittest
 {
     import std.algorithm.searching : countUntil;
     import std.typecons : nullable;
-    import sparkles.test_runner.perf : PerfStats;
+    import sparkles.profiling.counters.perf : PerfStats;
     import sparkles.test_runner.workload : PsiStats;
 
     WorkloadWindow withPsi;
@@ -1491,7 +1491,7 @@ unittest
     import std.algorithm.searching : canFind;
     import std.typecons : Nullable;
     import sparkles.test_runner.bench : Metric, Unit;
-    import sparkles.test_runner.perf : PerfStats;
+    import sparkles.profiling.counters.perf : PerfStats;
 
     BenchStats row;
     row.name = "a";
@@ -1933,7 +1933,7 @@ string formatCapabilityBlock(in BackendCapabilities[] blocks, bool colored) @saf
 @safe
 unittest
 {
-    import sparkles.test_runner.capability : Capability, CapabilityAbsence,
+    import sparkles.profiling.counters.capability : Capability, CapabilityAbsence,
         CapabilityReport;
 
     static immutable CapabilityAbsence[1] tracing = [
@@ -1954,7 +1954,7 @@ unittest
 unittest
 {
     import std.algorithm.searching : canFind;
-    import sparkles.test_runner.capability : Capability, CapabilityReport;
+    import sparkles.profiling.counters.capability : Capability, CapabilityReport;
 
     const blocks = [
         BackendCapabilities("perf", CapabilityReport(Capability.counting, null)),

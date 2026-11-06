@@ -28,11 +28,11 @@
  * is root-or-blessed with the `RESTRICT_TO_KNOWN` allowlist, and sampling is
  * Instruments/xctrace-brokered only.
  */
-module sparkles.test_runner.perf;
+module sparkles.profiling.counters.perf;
 
 import std.math : isNaN;
 
-import sparkles.test_runner.capability : Capability, CapabilityAbsence,
+import sparkles.profiling.counters.capability : Capability, CapabilityAbsence,
     CapabilityReport, has, hasNamedColumns, hasSnapshot, isCounterBackend,
     probeMaxPrecise, probePmuType, reasonFor;
 
@@ -74,7 +74,7 @@ version (linux)
         PERF_EVENT_IOC_DISABLE, PERF_EVENT_IOC_ENABLE;
     import core.sys.posix.unistd : posixClose = close;
 
-    import sparkles.test_runner.perf_group : GroupSnapshot;
+    import sparkles.profiling.counters.perf_group : GroupSnapshot;
 
     /// One counted event. `type`/`config` are `perf_event_attr` field types;
     /// the values come from the `perf_type_id` / `perf_hw_id` / `perf_sw_ids`
@@ -129,12 +129,12 @@ version (linux)
         /// (user-only fallback, dropped LLC pair, or scaled mode) — the
         /// bench header discloses `status()` once when this holds, so a
         /// silently narrowed or rescoped run never passes for a default one.
-        package bool degraded() const @safe pure nothrow @nogc
+        bool degraded() const @safe pure nothrow @nogc
             => userOnly || cacheDropped || scaledMode;
 
         /// Whether only the fixed-backed columns (ipc/instr/cycles) can
         /// carry values — false here: perf_event events are configurable.
-        package bool fixedCountersOnly() const @safe pure nothrow @nogc => false;
+        bool fixedCountersOnly() const @safe pure nothrow @nogc => false;
 
         /// The bare reason counting is unavailable — single-sourced between
         /// `status()` and `capabilities()` so the two never diverge.
@@ -204,7 +204,7 @@ version (linux)
         /// group's events on this host — a live mmap probe.
         private static bool probeRdpmc(int fd) @safe nothrow
         {
-            import sparkles.test_runner.rdpmc : RdpmcCounter;
+            import sparkles.profiling.counters.rdpmc : RdpmcCounter;
 
             auto reader = RdpmcCounter.tryMap(fd);
             const cap = reader.capRdpmc;
@@ -355,7 +355,7 @@ version (linux)
             uint iters, uint batch = 1)
         in (iters > 0)
         {
-            import sparkles.test_runner.perf_group : bracketCountingPass, readScaledGroup;
+            import sparkles.profiling.counters.perf_group : bracketCountingPass, readScaledGroup;
 
             const base = bracketCountingPass(fds[0], timed, between, iters, batch);
 
@@ -408,7 +408,7 @@ version (linux)
         /// (a whole-body candidate around in-body windows) compose freely.
         void enable() @safe
         {
-            import sparkles.test_runner.perf_group : groupIoctl;
+            import sparkles.profiling.counters.perf_group : groupIoctl;
 
             if (opened)
                 groupIoctl(fds[0], PERF_EVENT_IOC_ENABLE);
@@ -417,7 +417,7 @@ version (linux)
         /// ditto
         void disable() @safe
         {
-            import sparkles.test_runner.perf_group : groupIoctl;
+            import sparkles.profiling.counters.perf_group : groupIoctl;
 
             if (opened)
                 groupIoctl(fds[0], PERF_EVENT_IOC_DISABLE);
@@ -427,7 +427,7 @@ version (linux)
         /// group is closed or the read failed.
         PerfSnapshot snapshot() const @safe
         {
-            import sparkles.test_runner.perf_group : snapshotGroup;
+            import sparkles.profiling.counters.perf_group : snapshotGroup;
 
             return opened ? PerfSnapshot(snapshotGroup(fds[0], nOpen)) : PerfSnapshot();
         }
@@ -438,7 +438,7 @@ version (linux)
         PerfStats windowStats(in PerfSnapshot a, in PerfSnapshot b)
             const @safe pure nothrow @nogc
         {
-            import sparkles.test_runner.perf_group : windowDeltas;
+            import sparkles.profiling.counters.perf_group : windowDeltas;
 
             PerfStats s;
             s.iters = 1;
@@ -580,11 +580,11 @@ else version (OSX)
         /// Process-wide scope is a permanent departure from the Linux
         /// default (per-bracket events) — always disclosed once per run via
         /// the bench header's degraded-mode line.
-        package bool degraded() const @safe pure nothrow @nogc => opened;
+        bool degraded() const @safe pure nothrow @nogc => opened;
 
         /// Only ipc/instr/cycles can ever carry values here — the metric
         /// catalog must not advertise the configurable-event columns.
-        package bool fixedCountersOnly() const @safe pure nothrow @nogc => true;
+        bool fixedCountersOnly() const @safe pure nothrow @nogc => true;
 
         /// The bare reason counting is unavailable — single-sourced between
         /// `status()` and `capabilities()`.
@@ -865,8 +865,8 @@ else
         @safe pure nothrow @nogc
         {
             bool available() const => false;
-            package bool degraded() const => false;
-            package bool fixedCountersOnly() const => false;
+            bool degraded() const => false;
+            bool fixedCountersOnly() const => false;
             string status() const => "unavailable (not Linux)";
             CapabilityReport capabilities() const
                 => CapabilityReport(Capability.none, stubAbsence[]);

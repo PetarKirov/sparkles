@@ -1380,7 +1380,7 @@ version (OSX)
     private enum int darwinRusageInfoV4 = 4;
 
     /// xnu `struct rusage_info_v4` (16-byte uuid + 35 × uint64 = 296).
-    /// Layout matches `sparkles.test_runner.perf` / the macOS SDK header.
+    /// Layout matches `sparkles.profiling.counters.perf` / the macOS SDK header.
     private struct DarwinRusageInfo
     {
         ubyte[16] ri_uuid;

@@ -128,23 +128,25 @@ The runner is two dub packages:
 - **`sparkles:test-runner-impl`** (`libs/test-runner-impl`) — the prebuilt
   implementation library, linked across an `extern(C)` seam.
 
-Measurement modules (all under
-`libs/test-runner-impl/src/sparkles/test_runner/`):
+Measurement modules, under `libs/test-runner-impl/src/sparkles/test_runner/`
+except the counters marked †, which live in `sparkles:profiling` as
+`sparkles.profiling.counters.*` (`libs/profiling/src/sparkles/profiling/counters/`)
+so a frame loop reads the same counters a benchmark does:
 
 | Module           | Role                                                                   |
 | ---------------- | ---------------------------------------------------------------------- |
 | `bench.d`        | protocol driver, `benchIter`/`benchCase`/`blackBox`, `BenchStats`      |
-| `perf.d`         | hardware-counter tier (`perf_event` group)                             |
-| `perf_group.d`   | shared counting bracket + multiplex-delta scaling                      |
+| `perf.d` †       | hardware-counter tier (`perf_event` group)                             |
+| `perf_group.d` † | shared counting bracket + multiplex-delta scaling                      |
 | `tier0.d`        | no-privilege tier (`getrusage` + `/proc/self/io`)                      |
-| `syscalls.d`     | syscall-tracepoint tier                                                |
+| `syscalls.d` †   | syscall-tracepoint tier                                                |
 | `metrics.d`      | the metric catalog seam (§5)                                           |
-| `capability.d`   | the capability seam: flags, reports, backend trait, host probes (§6.2) |
-| `raw.d`          | raw hardware-event tier (`raw:r<hex>` selectors)                       |
+| `capability.d` † | the capability seam: flags, reports, backend trait, host probes (§6.2) |
+| `raw.d` †        | raw hardware-event tier (`raw:r<hex>` selectors)                       |
 | `event_naming.d` | symbolic event names via soft libpfm4 (`pfm:<name>`)                   |
-| `rdpmc.d`        | user-space counter reads (the `selfMonitoring` primitive)              |
+| `rdpmc.d` †      | user-space counter reads (the `selfMonitoring` primitive)              |
 | `workload.d`     | the `@workload` window model: wall source, decomposition, driver       |
-| `psi.d`          | PSI stall integrals (`/proc/pressure` parser + diagnostic source)      |
+| `psi.d` †        | PSI stall integrals (`/proc/pressure` parser + diagnostic source)      |
 | `cache_regime.d` | page-cache regime control: fs probes, residency, the stamp policy      |
 | `bench_json.d`   | the `--bench-json` emitter (§8.3)                                      |
 | `reporting.d`    | tables, live displays, progress                                        |

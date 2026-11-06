@@ -19,9 +19,9 @@
  * `CONFIG_PSI=n` kernels (or `psi=0` boots) have no `/proc/pressure`; the
  * source degrades to a reasoned capability absence, never fails a run.
  */
-module sparkles.test_runner.psi;
+module sparkles.profiling.counters.psi;
 
-import sparkles.test_runner.capability : Capability, CapabilityAbsence,
+import sparkles.profiling.counters.capability : Capability, CapabilityAbsence,
     CapabilityReport;
 
 /// One pressure file's monotonic stall totals, in µs. `fullUs == -1` marks
@@ -236,7 +236,7 @@ struct PsiSource
             return s;
         version (linux)
         {
-            import sparkles.test_runner.capability : readSmallFile;
+            import sparkles.profiling.counters.capability : readSmallFile;
 
             char[256] buf = void;
             s.ok_ = parsePsiFile(readSmallFile("/proc/pressure/io", buf[])).ok;
@@ -257,7 +257,7 @@ struct PsiSource
         PsiReading r;
         version (linux)
         {
-            import sparkles.test_runner.capability : readSmallFile;
+            import sparkles.profiling.counters.capability : readSmallFile;
 
             if (!available)
                 return r;
@@ -274,7 +274,7 @@ struct PsiSource
 @safe
 unittest
 {
-    import sparkles.test_runner.capability : has, reasonFor;
+    import sparkles.profiling.counters.capability : has, reasonFor;
 
     const off = PsiSource.tryOpen(false);
     assert(!off.available);

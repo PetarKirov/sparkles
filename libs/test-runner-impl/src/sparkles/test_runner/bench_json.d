@@ -481,7 +481,7 @@ unittest
     import std.json : JSONType, parseJSON;
     import std.typecons : Nullable;
     import sparkles.test_runner.bench : Metric, Unit;
-    import sparkles.test_runner.perf : PerfStats;
+    import sparkles.profiling.counters.perf : PerfStats;
 
     BenchStats measured;
     measured.name = "mir-ion";
@@ -599,7 +599,7 @@ unittest
 unittest
 {
     import std.json : parseJSON;
-    import sparkles.test_runner.perf : PerfStats;
+    import sparkles.profiling.counters.perf : PerfStats;
 
     BenchStats row;
     row.name = "scaled";
@@ -648,7 +648,7 @@ unittest
 unittest
 {
     import std.json : parseJSON;
-    import sparkles.test_runner.perf : PerfStats;
+    import sparkles.profiling.counters.perf : PerfStats;
 
     BenchStats counted;
     counted.name = "counted";
@@ -674,8 +674,8 @@ unittest
 {
     import std.json : JSONType, parseJSON;
     import std.typecons : nullable;
-    import sparkles.test_runner.perf : PerfStats;
-    import sparkles.test_runner.syscalls : SyscallStats;
+    import sparkles.profiling.counters.perf : PerfStats;
+    import sparkles.profiling.counters.syscalls : SyscallStats;
 
     WorkloadWindow w;
     w.name = "ingest";
