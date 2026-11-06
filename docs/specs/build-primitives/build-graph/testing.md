@@ -11,28 +11,29 @@ falsifying scenarios that check it, and the evidence recorded so far. An oracle
 is the source of the expected result. Each one is chosen to be independent of
 the code under test.
 
-| Oracle                   | Covers                             |
-| ------------------------ | ---------------------------------- |
-| 1. dub agreement         | BGR1–BGR7, BGV1–BGV2, invariant 4  |
-| 2. build equivalence     | BGA1–BGA4, BGA7, BGV1–BGV3         |
-| 3. manifest completeness | BGK2–BGK4, BGK6                    |
-| 4. digest audit          | BGK5, BGK7, BGS6                   |
-| 5. relocation            | BGA5–BGA6, BGG4, invariant 3       |
-| 6. backend agreement     | BGN1, BGN5                         |
-| 7. concurrency           | BGS1–BGS4                          |
-| 8. layout lint           | BGV4–BGV5                          |
-| 9. key sensitivity       | BGK1, BGK9, BGA4, BGA10, BGT1–BGT3 |
-| 10. generators           | BGG1–BGG3, BGG5–BGG6               |
-| 11. test actions         | BGX1–BGX3                          |
-| 12. Nix inputs           | BGN2–BGN4                          |
-| 13. hidden edges         | BGR8, BGK8                         |
-| 14. task exposure        | BGA8, invariant 7                  |
-| 15. pinned test runner   | BGT4                               |
-| 16. publication faults   | BGA7, BGA9, BGS2, BGS6             |
-| 17. store lifecycle      | BGS1, BGS5, BGS7, BGS10            |
-| 18. miss explanation     | BGS8                               |
-| 19. determinism check    | BGS9                               |
-| 20. planning read set    | BGP1                               |
+| Oracle                       | Covers                              |
+| ---------------------------- | ----------------------------------- |
+| 1. dub agreement             | BGR1–BGR7, BGV1–BGV2, invariant 4   |
+| 2. build equivalence         | BGA1–BGA4, BGA7, BGV1–BGV3          |
+| 3. manifest completeness     | BGK2–BGK4, BGK6, invariant 6        |
+| 4. digest audit              | BGK5, BGK7, BGS6                    |
+| 5. relocation                | BGA5–BGA6, BGA11, BGG4, invariant 3 |
+| 6. backend agreement         | BGN1, BGN5–BGN6                     |
+| 7. concurrency               | BGS1–BGS4                           |
+| 8. layout lint               | BGV4–BGV5                           |
+| 9. key sensitivity           | BGK1, BGK9, BGA4, BGA10, BGT1–BGT3  |
+| 10. generators               | BGG1–BGG3, BGG5–BGG6                |
+| 11. test actions             | BGX1–BGX3                           |
+| 12. Nix backend              | BGN1–BGN4, BGN7–BGN8                |
+| 13. hidden edges             | BGR8, BGK8                          |
+| 14. task exposure            | BGA8, invariant 7                   |
+| 15. pinned test runner       | BGT4                                |
+| 16. publication faults       | BGA7, BGA9, BGS2, BGS6              |
+| 17. store lifecycle          | BGS1, BGS5, BGS7, BGS10             |
+| 18. miss explanation         | BGS8                                |
+| 19. determinism check        | BGS9                                |
+| 20. planning read set        | BGP1                                |
+| 21. incremental equals clean | invariant 5, BGK4, BGA10            |
 
 ## Oracles
 
@@ -129,8 +130,15 @@ not required, because dub orders objects differently.
 - creating the module a failed `__traits(compiles, { import opt; })` probed
   changes it.
 
-**Gate:** zero opened files missing from manifests and zero preceding failed
-lookups missing from absent candidates, across the repository's compiles.
+**Writes (invariant 6):** the same trace's writes, renames and deletions must
+all fall inside the action's private output directory. A compile that writes
+anywhere else fails the oracle.
+
+**Gate:** zero opened files missing from manifests, zero preceding failed
+lookups missing from absent candidates, and zero writes outside private output
+directories, across the repository's compiles. The oracle reruns in full on
+every change to the LDC pin, since a compiler that reports a read input as
+unused makes incremental builds wrong without failing any of them.
 
 ### Oracle 4: digest audit
 
@@ -170,6 +178,10 @@ lookups missing from absent candidates, across the repository's compiles.
    path.
 5. Two runs of `ci docs verify` on unchanged examples must produce equal
    result keys for every example compile.
+6. **Toolchain paths (BGA11):** no output of an LDC build, test binaries and
+   applications included, may contain a store path of the toolchain's
+   druntime or Phobos sources. Each shipped application's Nix closure is
+   measured before and after the map, and recorded (D40).
 
 ### Oracle 6: backend agreement
 
@@ -179,6 +191,9 @@ outputs for each declared key and manifest.
 **Expected:** byte-identical outputs where the action is deterministic. Where
 it is not, test binaries that pass and fail identically, with each
 nondeterministic action listed with its cause.
+
+A compile that fails must fail through both backends with the same diagnostics
+and exit status, and a hit on that failure must replay them (BGN6).
 
 ### Oracle 7: concurrency
 
@@ -288,10 +303,13 @@ timestamps, owners and groups, and no archive may be thin.
    No test binary may call it, and the compile-time-probe and extracted modes
    must still find their import paths and flags.
 2. A test that declares no runtime inputs must run on every request.
-3. With the Nix backend (E4), a sandboxed result's key must change with the
-   kernel release and the CPU model.
+3. With the Nix backend (E4), a sandboxed test's output must record the
+   kernel release, CPU model and features, and system type it ran on. Reusing
+   it from a machine whose kernel release or CPU model differs, faked through
+   a builder that reports other values, must rerun the test; reusing it from a
+   matching machine must not.
 
-### Oracle 12: Nix inputs
+### Oracle 12: Nix backend
 
 **Method:**
 
@@ -300,7 +318,25 @@ timestamps, owners and groups, and no archive may be thin.
    derivation must still succeed.
 3. A derivation's input set must not contain files outside its declared
    inputs and roots.
-4. **Narrowing (BGN2):** with a manifest that resolved `m` to `b/m.d` under
+4. **Staging (BGN1):** a derivation with more inputs than `MAX_ARG_STRLEN`
+   allows in one argument must stage them all from its `passAsFile` list. With
+   the store and the build directory on two mounts, staging must copy, and on
+   one mount it must hard-link.
+5. **Lowering (BGN3):** lower the repository's graph twice. The second
+   lowering must add no derivation, and a dry run must print the same store
+   paths without contacting the daemon.
+6. **Addressing (BGN4):** every compile, archive and link derivation must be
+   content-addressed where the feature is enabled, and every test and generate
+   derivation input-addressed.
+7. **Garbage-collector roots (BGN7):** run `nix-collect-garbage` between a
+   run's lookup of a result and its use. The result must survive, and must be
+   collectable after the run ends.
+8. **Infrastructure failures (BGN8):** kill a remote builder mid-compile, and
+   make a substitution fail. The action must be retried, and must succeed on
+   another builder or locally, with no failure recorded for it. A test that
+   exceeds its own timeout in the sandbox must end as a timeout, not be
+   retried, and not be published.
+9. **Narrowing (BGN2):** with a manifest that resolved `m` to `b/m.d` under
    `-Ia -Ib` in the local store, create `a/m.d`. The backend must not narrow,
    and the build must compile `a/m.d`. With an unchanged tree, a narrowed
    build must be rebuilt with full roots if its dependency output names a file
@@ -448,6 +484,31 @@ stored preimage only as its digest.
 3. **CIC5:** every path in the read set outside package directories must lie
    under one of `ci`'s invalidators. Remove an invalidator from the list: the
    check must fail, naming a path it covered.
+
+### Oracle 21: incremental equals clean
+
+**Source of truth:** a cold build of the same tree on an empty store, which
+shares no state with the incremental one.
+
+**Method:**
+
+1. **Commit replay:** for each of the last N commits of `main`, build commit
+   `k` incrementally on the store that commit `k-1` left, then cold. Every
+   output, verdict and diagnostic of the incremental build must equal the cold
+   build's.
+2. **Precision:** in each incremental step, the actions that executed must be
+   exactly those whose keys changed. An edit that moves no line must execute no
+   archive, link or test downstream of the compiles it reran (BGA10).
+3. **Edit sequences:** random sequences of edits drawn from: edit a module,
+   create a file at an absent candidate, create a `.di` or `package.d` beside
+   a module, edit a string import, delete a file, revert an edit (A→B→A), and
+   switch to another worktree. The six scenarios of
+   [`rebuild-behavior.d`](../../../research/build-systems/examples/rebuild-behavior.d)
+   seed the generator. Each step is checked as in step 1, and a failing
+   sequence is kept with its seed, minimized.
+
+**Revert check:** with absent candidates dropped from manifests, step 3's
+create-at-absent-candidate edit must fail the oracle.
 
 ## The recipe vocabulary
 

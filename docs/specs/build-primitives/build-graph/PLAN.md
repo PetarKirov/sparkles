@@ -120,7 +120,11 @@ scenarios, oracle 14 and oracle 20 pass.
   sources (§7), with the shader compiler's direct invocation mode and its
   specification amended. The shader compiler is keyed by its manifest (BGG5)
   and built as a host variant (BGG6).
-- Toolchain identity (§8).
+- Toolchain identity (§8), with the toolchain's store paths remapped (BGA11).
+- **Isolation spike (D39):** Landlock write confinement and an unshared
+  network namespace for local build actions, with the list of test actions
+  that write into the tree and a decision for each. The result is recorded in
+  D39 before E3's gate.
 - Test actions with declared runtime inputs, no reuse, and the test runner
   taking its import paths, string import paths, dflags, versions and probe
   directory as arguments, never calling dub (BGX1–BGX2). This includes making
@@ -130,7 +134,9 @@ Gate:
 
 - Oracles 2–5, 7, 9, 10 and 16–19, steps 1–2 of oracle 11, oracle 13's
   execution-time scenario, and oracle 8's revert check pass through the
-  test-only driver.
+  test-only driver. Oracle 3 includes its write check.
+- Oracle 21 passes over a replay of at least the last 50 commits of `main`
+  and a seeded run of its edit sequences.
 - Oracle 4's step 5 passes too: D31 is decided, and BGK7 accepted, before the
   store is shared by more than the test-only driver.
 - A second run of the driver in another worktree, with no source change,
@@ -142,11 +148,22 @@ Gate:
 
 - Content-addressed source inputs, and derivations created without evaluation
   (BGN1–BGN4), with BGN2's constrained narrowing.
+- Diagnostics in outputs, garbage-collector roots, and infrastructure failures
+  kept apart from action failures (BGN6–BGN8).
 - Remote builders from `/etc/nix/machines`.
-- Sandboxed test actions whose results may be reused (BGX3).
+- Sandboxed test actions whose results may be reused, recording the machine
+  they ran on (BGX3).
 
-Gate: oracles 6 and 12, and step 3 of oracle 11, pass for the repository's test
-roots on x86_64-linux, with one remote builder of another system type.
+Gate:
+
+- Oracles 6 and 12, and step 3 of oracle 11, pass for the repository's test
+  roots on x86_64-linux, with one remote builder of another system type.
+- **Measurements:** the per-derivation overhead with the sandbox on, the
+  number of derivations, the bytes staged, and the edit loop's time against
+  the local backend's are measured and recorded. They are D2's revisit
+  measurement. Their definitions belong to the build-primitives observability
+  specification (`docs/specs/build-primitives/observability/`), which this
+  plan does not restate.
 
 ## Progress
 

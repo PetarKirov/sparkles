@@ -151,6 +151,15 @@ events and dry runs; commit hook output stays concise.
   fail-fast code and command-owned live regions.
 - Measure idle behavior, peak memory, weighted saturation and the pipeline's
   wall time against the current CI.
+- Measure the build graph's no-op run time, planning time, the stats and
+  manifests each lookup reads, and the cutoff rate, split by whether an edit
+  moved lines and by whether it changed a module's interface or only a body.
+  The definitions belong to the build-primitives observability specification
+  (`docs/specs/build-primitives/observability/`). The results decide two open
+  build-graph questions: a planning memo past about one second of no-op
+  planning (D37), and interface cutoff (D35).
+- Shards recompile common libraries until a binary cache shares results
+  (build graph D41); the measurement records what that costs.
 
 Gate: `ci pipeline` covers every job `ci.yml` runs or names it as skipped.
 Forced cancellation leaves no child process or live-region control residue.
