@@ -280,44 +280,196 @@ interface font where `desktop` names one, else a conventional sans list
 (`uiFontFamilyOf`) — resolved like the cell font, through the system font
 database or the request's directories, and on Android from `/system/fonts`
 (Roboto). Leaves `session.uiRegular` empty where nothing resolves or `none`
-was asked for: interface runs then draw in the cell font.
+was asked for: interface runs then draw in the cell font. `session.uiFamily`
+keeps the family asked for, which a desktop change is compared against.
 */
 void resolveInterfaceFace(ref NativeSession session, in NativeRequest request,
     in SystemAppearance desktop) @system
 {
+    session.uiFamily = uiFontFamilyOf(request.font.ui, desktop);
+    const found = lookUpInterfaceFace(session.uiFamily, request);
+    if (found.why.length)
+        whyNot(found.why);
+    session.uiRegular = found.regular;
+    session.uiBold = found.bold;
+}
+
+/// An interface face's files, read; `why` says what failed where `regular`
+/// is empty and a family was asked for.
+struct InterfaceFaceFiles
+{
+    const(ubyte)[] regular, bold; ///
+    string why; /// ditto
+}
+
+/**
+`family`'s regular and bold files, resolved for `request` and read —
+`resolveInterfaceFace`'s lookup, apart from any session, so a thread may run
+it. Empty for an empty family.
+*/
+InterfaceFaceFiles lookUpInterfaceFace(string family, in NativeRequest request) @system nothrow
+{
+    import std.conv : text;
     import std.file : read;
     import sparkles.raylib_text.font_discovery : FontSources;
     import sparkles.raylib_text.font_resolve : resolveUiFace;
 
-    session.uiRegular = session.uiBold = null;
-    const family = uiFontFamilyOf(request.font.ui, desktop);
+    InterfaceFaceFiles found;
     if (!family.length)
-        return;
-    FontSources sources;
-    sources.dirs = request.font.searchDirs.dup ~ request.extraFontSources.dup;
-    sources.useSystemFontDb = request.font.useSystemFontDb;
-    version (Android)
-    {
-        sources.dirs ~= "/system/fonts";
-        sources.useSystemFontDb = false;
-    }
-    string regular, bold;
-    if (!resolveUiFace(family, sources, regular, bold))
-    {
-        whyNot(i"no interface face resolved for `$(family)`: interface text draws in the cell font");
-        return;
-    }
+        return found;
     try
     {
-        session.uiRegular = cast(const(ubyte)[]) read(regular);
+        FontSources sources;
+        sources.dirs = request.font.searchDirs.dup ~ request.extraFontSources.dup;
+        sources.useSystemFontDb = request.font.useSystemFontDb;
+        version (Android)
+        {
+            sources.dirs ~= "/system/fonts";
+            sources.useSystemFontDb = false;
+        }
+        string regular, bold;
+        if (!resolveUiFace(family, sources, regular, bold))
+        {
+            found.why = text("no interface face resolved for `", family,
+                "`: interface text draws in the cell font");
+            return found;
+        }
+        found.regular = cast(const(ubyte)[]) read(regular);
         if (bold.length)
-            session.uiBold = cast(const(ubyte)[]) read(bold);
+            found.bold = cast(const(ubyte)[]) read(bold);
     }
     catch (Exception e)
     {
-        whyNot(i"the interface face `$(regular)` could not be read: $(e.msg)");
-        session.uiRegular = session.uiBold = null;
+        found = InterfaceFaceFiles.init;
+        found.why = "the interface face could not be read: " ~ e.msg;
     }
+    return found;
+}
+
+/**
+An interface face the desktop changed to, looked up on a thread of its own:
+the font database is asked through `fc-match`, a process, and no frame
+waits on it. The face being drawn stays bound until the lookup settles.
+*/
+final class InterfaceFaceLookup
+{
+    import core.thread : Thread;
+
+    string family; /// the family being looked up
+    private Thread thread_;
+    private InterfaceFaceFiles found_;
+
+    /// Starts looking `family` up for `request`; null where no thread could
+    /// start (the face is then looked up at once by `take`).
+    static InterfaceFaceLookup start(string family, const NativeRequest request) @system
+    {
+        auto lookup = new InterfaceFaceLookup;
+        lookup.family = family;
+        try
+        {
+            lookup.thread_ = new Thread(() { lookup.found_ = lookUpInterfaceFace(family, request); });
+            lookup.thread_.isDaemon = true;
+            lookup.thread_.start();
+        }
+        catch (Exception)
+            lookup.found_ = lookUpInterfaceFace(family, request);
+        return lookup;
+    }
+
+    /// Whether `take` would not wait.
+    bool settled() @system => thread_ is null || !thread_.isRunning;
+
+    /// The files found, once settled.
+    InterfaceFaceFiles take() @system
+    {
+        if (thread_ !is null)
+            thread_.join(false);
+        thread_ = null;
+        return found_;
+    }
+}
+
+/**
+Follows the desktop's interface font while the window runs: a change to the
+family `desktop` names starts a lookup of it (`InterfaceFaceLookup`), unless
+`--ui-font` chose the face or the same family is already drawn or sought.
+True when a lookup was started.
+*/
+bool followDesktopInterfaceFont(ref NativeSession session, in NativeRequest request,
+    in SystemAppearance desktop) @system
+{
+    if (request.font.ui.length)
+        return false;
+    const family = uiFontFamilyOf(null, desktop);
+    if (session.nextUi !is null ? session.nextUi.family == family : session.uiFamily == family)
+        return false;
+    session.nextUi = InterfaceFaceLookup.start(family, request);
+    return true;
+}
+
+/**
+Adopts a settled lookup's face into `session`: true when the interface face
+changed, and the caller rebinds it. A family that resolved nothing keeps the
+face already drawn.
+*/
+bool adoptInterfaceFace(ref NativeSession session) @system
+{
+    if (session.nextUi is null || !session.nextUi.settled)
+        return false;
+    const family = session.nextUi.family;
+    const found = session.nextUi.take();
+    session.nextUi = null;
+    if (!found.regular.length)
+    {
+        if (found.why.length)
+            whyNot(found.why);
+        return false;
+    }
+    session.uiFamily = family;
+    session.uiRegular = found.regular;
+    session.uiBold = found.bold;
+    return true;
+}
+
+@("ui_app.native_loop.followsTheDesktopsInterfaceFont")
+@system unittest
+{
+    import core.thread : Thread;
+    import core.time : msecs;
+    import std.file : getSize;
+    import std.path : buildPath;
+    import std.process : environment;
+    import sparkles.appearance.types : parseFontDescription;
+
+    const dir = environment.get("SPARKLES_FONTS_PATH");
+    assert(dir !is null, "SPARKLES_FONTS_PATH is unset: run inside `nix develop`");
+    NativeSession session;
+    NativeRequest request;
+    request.font.searchDirs = [dir];
+    SystemAppearance desktop;
+    desktop.font = parseFontDescription("Noto Sans 11");
+    desktop.hasFont = true;
+    resolveInterfaceFace(session, request, desktop);
+    const noto = session.uiRegular;
+    assert(noto.length == getSize(dir.buildPath("NotoSans.ttf")));
+
+    assert(!followDesktopInterfaceFont(session, request, desktop), "the same family: nothing to do");
+    // The desktop changes its interface font: looked up apart, then adopted.
+    desktop.font = parseFontDescription("Roboto 11");
+    assert(followDesktopInterfaceFont(session, request, desktop));
+    assert(!followDesktopInterfaceFont(session, request, desktop), "already being sought");
+    assert(session.uiRegular is noto, "the old face is drawn until the new one is found");
+    while (!session.nextUi.settled)
+        Thread.sleep(1.msecs);
+    assert(adoptInterfaceFace(session));
+    assert(session.uiRegular.length == getSize(dir.buildPath("Roboto-Regular.ttf")));
+    assert(session.uiBold.length == getSize(dir.buildPath("Roboto-Bold.ttf")));
+    assert(session.nextUi is null && !adoptInterfaceFace(session));
+
+    // A face `--ui-font` chose stays, whatever the desktop says.
+    request.font.ui = "Noto Sans";
+    desktop.font = parseFontDescription("Cantarell 11");
+    assert(!followDesktopInterfaceFont(session, request, desktop));
 }
 
 @("ui_app.native_loop.resolveInterfaceFace")
@@ -401,6 +553,10 @@ struct NativeSession
     /// draws it — what the target declares `proportionalText` by.
     const(ubyte)[] uiRegular, uiBold;
     bool uiFaceBound; /// ditto
+    /// The family the interface face was asked for, and a lookup of one the
+    /// desktop changed to (`followDesktopInterfaceFont`).
+    string uiFamily;
+    InterfaceFaceLookup nextUi; /// ditto
     bool delegate(in SpecimenFontRequest) @system setSpecimen; ///
     ulong specimenGeneration; /// latest accepted request
     MonoTime specimenRequestedAt; /// event arrival, when supplied by the caller
@@ -2060,6 +2216,8 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
             {
                 const next = portal.current.overriddenBy(pinnedAppearance);
                 frameAppearance(next, true);
+                // The interface font too, where the desktop chooses it.
+                cast(void) followDesktopInterfaceFont(session, request, next);
                 lc.exposed();
                 if (next.hasScheme && (!appearance.hasScheme
                     || next.prefersDark != appearance.prefersDark))
@@ -2459,7 +2617,8 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         }
         // A gesture in flight is ticked at the display's rate until it rests;
         // a title face being looked up is checked as often.
-        if ((input.gesturing || session.nextTitlePattern.length) && timeout > gestureTick)
+        if ((input.gesturing || session.nextTitlePattern.length || session.nextUi !is null)
+                && timeout > gestureTick)
             timeout = gestureTick;
         if (cfg.idleTimeoutMs >= 0 && cfg.idleTimeoutMs.msecs < timeout)
             timeout = cfg.idleTimeoutMs.msecs;
@@ -2469,6 +2628,13 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         drainEvents();
         if (session.nextTitlePattern.length && session.nextTitleFace.settled)
             lc.exposed(); // the frame takes the new face
+        // An interface face the desktop changed to, once found: bound with
+        // the cell font's rules, and laid out again by the next frame.
+        if (adoptInterfaceFace(session))
+        {
+            bindInterfaceFace();
+            lc.exposed();
+        }
         // A wake with nothing to draw is still a frame pass for an
         // application that asked to be woken (`HST16`), or for an idle
         // timeout.
