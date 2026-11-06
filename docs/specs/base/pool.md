@@ -56,9 +56,11 @@ runs, so compaction never disturbs a reader.
 
 The package is fixed-capacity by design. A pool is a value as large as its
 capacity and cannot be copied, so a large one belongs in a long-lived owner or
-in heap memory its owner allocates. Growable storage, a struct-of-arrays record layout, ECS component
-stores, and handles packed into one integer are outside this contract; §7
-records how they would extend it. Pools are not `shared`: code that reaches one
+in heap memory its owner allocates. The one exception is the heap slot table
+(§3.1), an identity layer whose columns grow. Growable record storage, a
+struct-of-arrays record layout, ECS component stores, and handles packed into
+one integer are outside this contract; §7 records how they would extend it.
+Pools are not `shared`: code that reaches one
 from several threads synchronizes access itself.
 
 §1 states the contract at a glance and §2 the API. §3–§5 specify the slot
@@ -108,6 +110,10 @@ alias PoolResult(T) = Expected!(T, PoolError, NoGcHook);
 struct SlotTable(H, size_t capacity, Reuse reuse = Reuse.lifo,
     Wrap wrap = Wrap.retire, uint generationLimit = uint.max);
     // insert, remove, resolve, isLive, liveAt, handleAt, byLive, clear
+
+struct HeapSlotTable(H, Reuse reuse = Reuse.lifo, Wrap wrap = Wrap.retire,
+    uint generationLimit = uint.max);
+    // the SlotTable operations, plus reserve and slotCapacity
 
 struct Pool(H, Record, size_t capacity, Reuse reuse = Reuse.lifo,
     Wrap wrap = Wrap.retire, uint generationLimit = uint.max);
@@ -179,6 +185,35 @@ one table's handle through another is not detected.
 _Rationale:_ Detecting it would add a runtime owner identity to every handle.
 The tag already separates pools of different types, which is where mixing
 happens in practice.
+
+### 3.1 The heap slot table
+
+`HeapSlotTable(H, reuse, wrap, generationLimit)` is a slot table whose
+generations, live bits and free list are heap columns that grow, for a
+consumer that cannot bound its number of identities, such as the node handles
+of an open SDL document. It holds no records, so POOL8's fixed record address
+does not apply. A record store beside it, indexed by slot, grows with it.
+
+**POOL19: The growable table keeps the slot-table contract.** POOL1 and
+POOL3–POOL7 **must** hold as for `SlotTable`, with the table's _capacity_ the
+number of slots it has allocated. `insert` **must not** report `full` while
+memory can be allocated and the index space (below `uint.max`) lasts.
+`reserve(n)` **must** make at least `n` slots available without growing
+again. An empty table **must** own no memory.
+
+**POOL20: Growth preserves identity.** Growing **must** keep every live
+handle resolving to the slot it resolved to, every freed slot freed, and the
+order in which freed slots are reissued.
+
+**POOL21: Reuse order with growth.** Under `Reuse.lifo`, `insert` **must**
+return the most recently freed slot, then a never-issued slot, and grow only
+when there is neither. Under `Reuse.fifo`, it **must** return a never-issued
+slot while the allocated capacity has one, then the least recently freed slot,
+and grow only when there is neither — the fixed table's order (POOL6), with
+the allocated capacity in place of the fixed one.
+
+_Rationale:_ Under FIFO, always preferring a never-issued slot would never
+reuse one, and the table would grow without bound.
 
 ## 4. The record pool
 
@@ -289,7 +324,7 @@ is designed against the requirements above rather than around them.
 - **Struct-of-arrays records:** one column per record field, for passes that
   touch one field of every record. Such a layout gives up POOL8's single record
   address.
-- **Growable storage:** heap columns that reallocate as the pool fills. They
+- **Growable record storage:** heap record columns that reallocate as the pool fills. They
   give up POOL8 entirely.
 - **Dense and sparse-set layers:** swap-remove packing behind an index, and
   component stores keyed by another table's handles, as in EnTT.

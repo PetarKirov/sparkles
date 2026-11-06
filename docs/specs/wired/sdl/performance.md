@@ -57,7 +57,9 @@ is an explicit amendment to the accepted SPEC, stated in
 **SDP1 — Benchmark.** The `wired_bench` runtime harness
 (`libs/wired/bench/runtime`) gains SDL rows: `parse`, `decode` (into the
 `dub.sdl` schema) and `encode` first, and `edit` (resolve and write one
-attribute change) once the editor exists. Datasets are pinned like the JSON
+attribute change) once the editor exists, and `commit` (one small edit at a
+time committed to an open document, [editing §10](./editing.md#10-incremental-re-parse))
+once the open document does. Datasets are pinned like the JSON
 ones, in the harness's Nix data package: a snapshot of the repository's
 recipes taken at a named commit, a concatenated large recipe, and a
 generated deep and wide document. Each row verifies itself once, untimed,
@@ -185,13 +187,14 @@ invalid-UTF-8 columns.
 
 ## 5. Decisions
 
-| Question                 | Choice                                                                       | Alternative and why not                                                                                                                                |
-| ------------------------ | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Who owns the source      | the document, as in JSON (SDP3)                                              | the caller: decode and editing would need the source passed alongside, and positions could not be computed                                             |
-| Where positions live     | byte spans; positions on demand, eager in errors                             | eager everywhere: 24 bytes more per span, and the per-byte position update is the lexer's hottest loop                                                 |
-| Span type                | the shared `TextSpan`                                                        | an SDL span with `uint` offsets: a second copy of a primitive base already owns                                                                        |
-| Line table               | base's line index, extended (§4), fed by the lexer                           | an SDL-local table: a second copy of a primitive base already owns                                                                                     |
-| Arena growth             | pool sized once; cell arrays grow (SDP4)                                     | exact pre-count: doubles lexing, which is what this page removes                                                                                       |
-| Allocator                | kept (SDP6)                                                                  | `sparkles.base.buffer` blocks: no allocator parameter, which `@nogc` callers and the editor need                                                       |
-| Node views               | a core reference and a cell index, 16 bytes (S13)                            | today's four slices and an index: about 72 bytes, and no way to reach the source or line table; a pointer to the document itself dangles when it moves |
-| Node handles for editing | none in the first slice ([editing §8](./editing.md#8-deferred-capabilities)) | generational pool handles: need a heap-backed slot table in base, and no consumer needs them yet                                                       |
+| Question                 | Choice                                                                                                                          | Alternative and why not                                                                                                                                |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Who owns the source      | the document, as in JSON (SDP3)                                                                                                 | the caller: decode and editing would need the source passed alongside, and positions could not be computed                                             |
+| Where positions live     | byte spans; positions on demand, eager in errors                                                                                | eager everywhere: 24 bytes more per span, and the per-byte position update is the lexer's hottest loop                                                 |
+| Span type                | the shared `TextSpan`                                                                                                           | an SDL span with `uint` offsets: a second copy of a primitive base already owns                                                                        |
+| Line table               | base's line index, extended (§4), fed by the lexer                                                                              | an SDL-local table: a second copy of a primitive base already owns                                                                                     |
+| Arena growth             | pool sized once; cell arrays grow (SDP4)                                                                                        | exact pre-count: doubles lexing, which is what this page removes                                                                                       |
+| Allocator                | kept (SDP6)                                                                                                                     | `sparkles.base.buffer` blocks: no allocator parameter, which `@nogc` callers and the editor need                                                       |
+| Node views               | a core reference and a cell index, 16 bytes (S13)                                                                               | today's four slices and an index: about 72 bytes, and no way to reach the source or line table; a pointer to the document itself dangles when it moves |
+| Node handles for editing | generational handles in a growable slot table, carried by anchor ([editing §9](./editing.md#9-open-documents-and-node-handles)) | none, as in the first slice: every caller re-selects its nodes after each commit, which an interactive editor or language server cannot do             |
+| Re-parse after an edit   | the edited region only, spliced into a copy ([editing §10](./editing.md#10-incremental-re-parse))                               | the whole host: correct, but a one-line edit to a large document costs the whole document                                                              |

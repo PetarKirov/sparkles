@@ -43,10 +43,12 @@ preserved by construction. The replacement-range primitive itself is not
 SDL-specific and is owned by `sparkles:base`
 ([text edits](../../base/text/edits.md)), shared with the D formatter.
 
-Out of scope: a concrete syntax tree with editable trivia objects,
-incremental re-parsing, and edit sessions whose node handles survive
-across commits (see [§8](#8-deferred-capabilities)). The canonical writer
-stays the way to produce a document from a typed value.
+An **open document** keeps a host, its parsed document and its node
+handles across a sequence of commits ([§9](#9-open-documents-and-node-handles)),
+and re-parses only the part of the host an edit touched
+([§10](#10-incremental-re-parse)). Out of scope: a concrete syntax tree with
+editable trivia objects, and path selectors ([§8](#8-deferred-capabilities)). The canonical
+writer stays the way to produce a document from a typed value.
 
 ## Contract at a glance
 
@@ -62,6 +64,11 @@ stays the way to produce a document from a typed value.
 | SDE8  | Editing allocates only through the editor's buffers and the caller's allocator; `@safe pure` |
 | SDE9  | Every in-repository SDL edit, read and detection goes through this layer or the schema       |
 | SDE10 | Replacement text survives the editor growing or moving                                       |
+| SDE11 | A node handle names the same node across commits until an operation replaces that node       |
+| SDE12 | A handle whose node was replaced is reported stale, never re-aimed at another node           |
+| SDE13 | A failed commit leaves the host, the document and every handle as they were                  |
+| SDE14 | An incremental re-parse produces exactly the document a full re-parse would                  |
+| SDE15 | An edit the incremental reader cannot localize falls back to a full re-parse                 |
 
 ## 1. Model
 
@@ -474,12 +481,126 @@ syntax highlighter's injection of the SDL grammar.
 
 ## 8. Deferred capabilities
 
-- **Persistent node handles** across commits, for an interactive editor or
-  a language server. Entry condition: a consumer that keeps a document open
-  across edits. It would build on generational handles from `sparkles.base.pool`,
-  which first needs a heap-backed slot table there.
 - **Path selectors** (the DQL path grammar as a node query). Entry
   condition: a second consumer whose selection is not a name-and-value
   filter.
-- **Incremental re-parse** of an edited range. Entry condition: a
-  measurement showing whole-document re-parse dominates an edit workload.
+
+## 9. Open documents and node handles
+
+An `SdlOpenDocument` owns a copy of a host — a recipe, or a D program that
+embeds one — the document parsed from it, and a growable slot table
+([pool POOL19](../../base/pool.md#3-1-the-heap-slot-table)) of **node
+handles**. A caller asks for a node's handle (`handleOf`), edits through an
+`SdlEditor` the open document lends (`editor`), and **commits** the editor:
+the edited host is rendered and re-parsed as `write` does, and on success it
+replaces the host and the document, and every handle is carried over to the
+new document or retired. Handles are issued lazily, so a document that never
+asks for one pays for no table.
+
+A node keeps its **identity** across a commit unless an operation of that
+commit replaces it. The operations replace:
+
+| Operation                                                         | Nodes it replaces                                                     |
+| ----------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `replaceNode(n, …)`, `remove(n, …)`                               | `n` and every node below it                                           |
+| `replaceBody(n, …)`                                               | every node below `n`; `n` itself keeps its identity                   |
+| `replaceRegion(r, …)`                                             | every node whose span shares a byte with `r`, and every node below it |
+| value and attribute operations, `setValues`, insertions, `append` | none; an inserted node is new and has no handle until one is asked    |
+
+`updateSDL` is built from these operations, so it replaces exactly the nodes
+its `replaceNode` and `replaceBody` calls name. Attributes and values have no
+handles; they are reached through their node.
+
+A surviving node's counterpart in the new document is found by its
+**anchor**, the first byte of its span (its name, or its first value when it
+is anonymous), carried through the commit's edits by `mapOffset` with
+`afterInsertions` bias: it is the new node whose span starts at the mapped
+anchor, provided its qualified name is unchanged. The root always maps to the
+root.
+
+**SDE11 — Handles follow their node.** A handle issued for a node resolves,
+after any number of successful commits, to that node's counterpart, as long
+as no commit replaced it. _Oracle:_ a property test that issues a handle for
+every node of every repository recipe, commits random value, attribute,
+insertion, removal and body edits, and after each commit checks every handle
+against a model that labels each node with a unique value; plus hand cases
+for an insertion before an unindented node, an anonymous node whose first
+value is replaced, and `replaceBody`. _Violation:_ a live handle that
+resolves to a different node, or a surviving node's handle that does not
+resolve.
+
+**SDE12 — Replaced nodes go stale.** After a commit, resolving the handle of
+a node that commit replaced, or whose anchor no longer starts a node of the
+same name, returns `PoolError.stale`, and `handleOf` for a node that took its
+place issues a new handle. `Handle.init` and a handle beyond the table return
+`PoolError.invalid`. _Oracle:_ the SDE11 test's removals and replacements,
+and a `replaceRegion` over a node. _Violation:_ a replaced node's handle that
+resolves.
+
+**SDE13 — Failed commits change nothing.** A commit whose editor failed, or
+whose result does not re-parse (SDE2), returns the error and leaves the host,
+the document and every handle unchanged. _Oracle:_ a test that commits a
+conflicting edit set and an invalid fragment between two good commits.
+_Violation:_ any observable change after a failed commit.
+
+Handles are local to the open document that issued them, as pool handles are
+to their table (POOL7): resolving one open document's handle through another
+is not detected.
+
+## 10. Incremental re-parse
+
+Writing and committing both re-parse the edited host (SDE2). For a large host
+and a small edit, a full re-parse costs the whole host while the edit costs a
+line, so the reader re-parses only a **region** around the edits and splices
+it into a copy of the old document:
+
+1. Take the deepest node whose block interior contains every edit. The
+   interior runs from the end of the node's `{` to the start of its `}`, and
+   for the root it is the content. The node's `}` must start its line after
+   only spaces and tabs; otherwise the node's parent is taken instead.
+2. Of that node's children, a child is **affected** when its extent shares a
+   byte or an end point with an edit. The region runs from the end of the last
+   unaffected child before them (or the interior start) to the start of the
+   first unaffected child after them (or the interior end). It is widened by
+   one child on either side until each bounding child is alone on its lines,
+   so that the region starts and ends at a line boundary.
+3. The reader lexes and parses the region's new text at the node's depth.
+   It copies the old document's cells before and after the region, shifting
+   every offset after it by the edits' length change and re-slicing names and
+   payloads into the new document's source and pool. Comments and line starts
+   are spliced the same way, and the child index is rebuilt.
+
+**SDE14 — Incremental equals full.** The document an incremental re-parse
+produces equals, field for field, the full parse of the same text: each node's
+name, spans, extent, braces, terminator, `aloneOnLines`, depth and children;
+each value and attribute, payloads included; the comments; the line table;
+and the content. _Oracle:_ a property test over every repository recipe and a
+generated deep, wide document that applies random edits — to values and
+attributes, insertions, removals, body and region replacements, including ones
+that open comments or strings, or add braces — and compares the two
+documents. It is mutation-checked by a test that perturbs one spliced offset
+and expects the comparison to fail. _Violation:_ any differing field.
+
+**SDE15 — Unlocalizable edits fall back.** The region's parse is used only
+when all of the following hold:
+
+- its new text parses at the node's depth;
+- every top-level node in it ends with a real terminator, not the end of
+  input, unless the region ends the content;
+- its new text still ends with a newline followed by only spaces and tabs,
+  unless the region ends the content;
+- no newline sequence was joined across its start, as when a CR comes
+  before it and an LF now comes after.
+
+Otherwise the whole host is re-parsed, and that parse's result or error is
+the one reported. This covers an edit that opens a block comment or a
+multi-line string, a line continuation into the next node, a brace that
+changes the nesting, and invalid UTF-8. _Oracle:_ the SDE14 property test
+counts both paths and requires each to occur, and the error for each failing
+edit set equals the full parse's. _Violation:_ an error that differs from the
+full parse's, or a localized result that differs (SDE14).
+
+The `sdl.commit` benchmark row
+([performance SDP1](./performance.md#1-measurement)) commits one small edit
+at a time to an open document and reports retired instructions per input
+byte, so the gain shows against the full re-parse it replaces.
