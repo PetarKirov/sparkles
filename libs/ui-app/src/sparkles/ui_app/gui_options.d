@@ -257,7 +257,7 @@ struct NativeDebug
     @Description("Close the window after N frames are presented: a scripted run's end.")
     uint frames; ///
 
-    @Description("Resize the window every 30 frames: toggle maximize on Wayland, step through a band of sizes on X11.")
+    @Description("Resize the window every 30 frames: toggle maximize on Wayland and AppKit, step through a band of sizes on X11.")
     bool resizeStress; ///
 
     @Description("Treat frame N as a lost device, which no software driver produces on demand, so the rebuild can be seen to redraw.")
@@ -274,6 +274,9 @@ struct NativeDebug
 
     @Description("Capture frame N with RenderDoc, where its layer is in the process (renderdoccmd capture); measures GPU scopes, so the capture carries their debug labels.")
     uint renderdocCapture; ///
+
+    @Description("Capture a presented frame into the PNG at PATH: the last of a frames=N run, else an early one — read back from the swapchain, so no screen-recording grant is needed.")
+    string shot; ///
 }
 
 /**
