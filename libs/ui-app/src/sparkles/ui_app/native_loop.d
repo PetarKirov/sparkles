@@ -328,7 +328,26 @@ InterfaceFaceFiles lookUpInterfaceFace(string family, in NativeRequest request) 
             sources.useSystemFontDb = false;
         }
         string regular, bold;
-        if (!resolveUiFace(family, sources, regular, bold))
+        bool resolved = resolveUiFace(family, sources, regular, bold);
+        // The resolver skips collections, which the raylib arm cannot open,
+        // and macOS keeps its interface faces in them; but its system face,
+        // SF Pro, is a plain variable TrueType this arm's `sparkles:font`
+        // reads. It is what `sans-serif` means there.
+        version (OSX)
+        {
+            import std.algorithm.searching : endsWith;
+            import std.file : exists;
+
+            enum systemUi = "/System/Library/Fonts/SFNS.ttf";
+            if (!resolved && family.endsWith("sans-serif") && sources.useSystemFontDb
+                && systemUi.exists)
+            {
+                regular = systemUi;
+                bold = null;
+                resolved = true;
+            }
+        }
+        if (!resolved)
         {
             found.why = text("no interface face resolved for `", family,
                 "`: interface text draws in the cell font");
