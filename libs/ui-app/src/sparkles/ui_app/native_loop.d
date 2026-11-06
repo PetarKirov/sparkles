@@ -727,6 +727,10 @@ struct NativeSession
     void delegate(PointerShape) @system setCursor;           ///
     void delegate(scope const(char)[]) @system setClipboard; ///
     void delegate(uint request) @system readClipboard;       ///
+    /// Takes the window full screen or back; null where the window
+    /// system cannot.
+    void delegate(bool on) @system setFullscreen;
+    bool fullscreen; /// as last asked for, or as the window system reports
     void delegate(int px) @system setFontSize;               ///
     void delegate(bool on) @system setTextInput;             ///
     /// The fingers down, as the last drain left them.
@@ -1000,10 +1004,15 @@ struct NativeHost
     /// A window has no out-of-band channel.
     void writeOutOfBand(scope const(char)[]) @safe pure nothrow @nogc {}
 
-    /// Not offered by the window system yet.
-    bool fullscreenSupported() const @safe pure nothrow @nogc => false;
-    /// ditto
-    void toggleFullscreen() @safe pure nothrow @nogc {}
+    /// Whether the window system can take the window full screen.
+    bool fullscreenSupported() const @system => session_.setFullscreen !is null;
+    /// Takes the window full screen, or back; the size that results
+    /// arrives as a resize.
+    void toggleFullscreen() @system
+    {
+        if (session_.setFullscreen !is null)
+            session_.setFullscreen(!session_.fullscreen);
+    }
 
     /// Captures the next frame drawn into a PNG at `path`.
     void screenshot(in char[] path) @safe
@@ -1993,6 +2002,11 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         cast(void) wsi.offerClipboard(window, "text/plain;charset=utf-8",
             cast(const(ubyte)[]) text);
     };
+    static if (__traits(hasMember, Wsi, "setFullscreen"))
+        session.setFullscreen = (bool on) {
+            if (!wsi.setFullscreen(window, on).hasError)
+                session.fullscreen = on;
+        };
     session.readClipboard = (uint request) {
         clip.ask(request);
         if (clip.inFlight)
@@ -2371,6 +2385,9 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                         && !session.frame.state.has(ToplevelState.resizing))
                         cropRefused = false;
                     session.frame.state = w.state;
+                    // Where the window system reports it, the state is
+                    // its, a user's own toggle included.
+                    session.fullscreen = w.state.has(ToplevelState.fullscreen);
                     // The resize's room goes with it.
                     if (gpu.up && !resizing() && cornerOf(gpu.swapchain.extent,
                         metrics.physicalSize.width, metrics.physicalSize.height,
