@@ -1294,7 +1294,8 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                 apiVersion: apiVersion13,
                 validation: cfg.native.debugging.vulkanValidation,
                 // Scopes as debug labels too, for RenderDoc and Nsight.
-                debugLabels: cfg.native.debugging.gpuTiming));
+                debugLabels: cfg.native.debugging.gpuTiming
+                    || cfg.native.debugging.renderdocCapture > 0));
             made = !context.hasError;
             if (!made)
                 whyNot(i"the native arm found no Vulkan device for the window: $(context.error.diagnostic[])");
@@ -1507,7 +1508,13 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
     const opened = MonoTime.currTime;
     // The device's time is measured where a switch reports it.
     const timeDevice = traceFrames || cfg.native.debugging.gpuTiming
-        || cfg.native.debugging.frameTrace.length;
+        || cfg.native.debugging.frameTrace.length || cfg.native.debugging.renderdocCapture > 0;
+    // `--debug renderdoc-capture=N`: RenderDoc captures frame N, its GPU
+    // scopes labelled (`PRF12`).
+    RenderDoc renderDoc;
+    scope (exit)
+        if (cfg.native.debugging.renderdocCapture > 0)
+            note(i"native window renderdoc: $(renderDoc.captures) captures");
     gpu.clock = FrameClock.since(opened);
     ulong recorded; // frames recorded, presented or not
     struct PendingSpecimen
@@ -2070,6 +2077,13 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                     gpu.tagPresents = !feedback && (history !is null || changed);
                     gpu.waitPresents = gpu.tagPresents && !gpu.vk.displayTiming
                         && gpu.vk.presentWait;
+                }
+                if (presented + 1 == cfg.native.debugging.renderdocCapture)
+                {
+                    if (renderDoc.find())
+                        renderDoc.triggerCapture();
+                    else
+                        note(i"native window renderdoc: not in the process; run under renderdoccmd capture");
                 }
                 outcome = cropped
                     ? drawFrame!draw(*gpu, host, session, request.ground, timing, &beforePresent)

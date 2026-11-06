@@ -10,6 +10,7 @@ public import sparkles.vulkan_wsi.error;
 public import sparkles.vulkan_wsi.frame;
 public import sparkles.vulkan_wsi.gpu_profiler;
 public import sparkles.vulkan_wsi.memory_budget;
+public import sparkles.vulkan_wsi.renderdoc;
 public import sparkles.vulkan_wsi.surface;
 public import sparkles.vulkan_wsi.swapchain;
 public import sparkles.vulkan_wsi.window_surface;

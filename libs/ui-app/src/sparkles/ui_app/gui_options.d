@@ -247,6 +247,9 @@ struct NativeDebug
 
     @Description("Read the frame thread's hardware counters (instructions, cycles, cache misses, page faults) for each frame, and summarize them when the window closes.")
     bool frameCounters; ///
+
+    @Description("Capture frame N with RenderDoc, where its layer is in the process (renderdoccmd capture); measures GPU scopes, so the capture carries their debug labels.")
+    uint renderdocCapture; ///
 }
 
 /**
