@@ -99,6 +99,45 @@ unittest
     assert(y == 0 && h == 20, "taller than the rect: the whole rect");
 }
 
+/// How far into a `rectPx`-wide rect a `runPx`-wide run starts, aligned
+/// `align` (0 start, 1 centre, 2 end); never before the rect's start.
+float alignOffsetPx(ubyte align_, int rectPx, float runPx) @safe pure nothrow @nogc
+{
+    const slack = rectPx - runPx;
+    if (slack <= 0 || align_ == 0)
+        return 0;
+    return cast(float) cast(int)(align_ == 1 ? slack / 2 : slack);
+}
+
+@("pixelGeometry.alignOffsetPx")
+@safe pure nothrow @nogc unittest
+{
+    assert(alignOffsetPx(0, 100, 60) == 0, "start");
+    assert(alignOffsetPx(1, 100, 60) == 20, "centre, on a whole pixel");
+    assert(alignOffsetPx(2, 100, 60) == 40, "end");
+    assert(alignOffsetPx(1, 50, 60) == 0, "a run wider than its rect starts at it");
+}
+
+/// `px` in whole cells of `cell`, rounded up; at least one cell for any ink.
+int cellsCeil(float px, int cell) @safe pure nothrow @nogc
+{
+    if (px <= 0 || cell <= 0)
+        return 0;
+    const n = cast(int)(px / cell);
+    return n * cell < px ? n + 1 : n;
+}
+
+@("pixelGeometry.cellsCeil")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(cellsCeil(0, 8) == 0);
+    assert(cellsCeil(8, 8) == 1);
+    assert(cellsCeil(8.01f, 8) == 2);
+    assert(cellsCeil(23, 17) == 2);
+    assert(cellsCeil(5, 0) == 0);
+}
+
 // ---------------------------------------------------------------------------
 // Rules and lines
 // ---------------------------------------------------------------------------
