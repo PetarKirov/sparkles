@@ -458,6 +458,38 @@ int typeStepDp(TypeStep step) @safe pure nothrow @nogc
     }
 }
 
+/**
+The interface-face step a run draws at, or -1 for the cell font: an interface
+run (`FontRole.ui`, `GLY10`) at its own step, and a docs run (`GLY7`) at body
+size, or caption when it asks for less than 90 % of the cell font.
+*/
+int uiStepOf(FontRole role, TypeStep step, ushort fontScale) @safe pure nothrow @nogc
+{
+    switch (role)
+    {
+        case FontRole.ui:
+        case FontRole.uiMono:
+            return step;
+        case FontRole.docs:
+            return fontScale < 90 ? TypeStep.caption : TypeStep.body;
+        default:
+            return -1;
+    }
+}
+
+@("style.uiStepOf")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(uiStepOf(FontRole.ui, TypeStep.title, 100) == TypeStep.title);
+    assert(uiStepOf(FontRole.uiMono, TypeStep.caption, 100) == TypeStep.caption,
+        "interface data: the cell font at a step");
+    assert(uiStepOf(FontRole.docs, TypeStep.body, 80) == TypeStep.caption);
+    assert(uiStepOf(FontRole.docs, TypeStep.body, 100) == TypeStep.body);
+    assert(uiStepOf(FontRole.code, TypeStep.title, 100) == -1);
+    assert(uiStepOf(FontRole.inherit, TypeStep.body, 100) == -1);
+}
+
 /// A resolved box border: per-side widths in CSS (density-independent) px, one
 /// stroke style, and the already-resolved edge color+alpha. A zero-width side
 /// draws nothing; the `alpha` channel drives the `.twoslash-hover` underline's

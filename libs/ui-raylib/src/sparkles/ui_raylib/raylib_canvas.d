@@ -36,6 +36,8 @@ import sparkles.ui.pixel_geometry : arrowTriangle, borderRects, centredSpan, Cli
     cornerRadiusPx, densityPx, lineRects, railExpandedPx, railIdlePx, roundedBorderPx,
     ruleRect, ScissorBox, scissorBoxOfStack, scrollbarMinExtentPx, ScrollbarRail,
     scrollbarRail, scrollbarRailPx, shadowRect, shiftPx;
+public import sparkles.ui.pixel_geometry : alignOffsetPx, cellsCeil;
+public import sparkles.ui.style : uiStepOf;
 import sparkles.ui.degradation : projectColor;
 import sparkles.ui.glyphs : admits, projectGlyph;
 import sparkles.ui.style : BorderStyle, FontRole, Shadow, Visual;
@@ -824,77 +826,6 @@ struct GuiMeasure
     private bool usesUiFace(in UiTextStyle style) const @safe pure nothrow @nogc
         => uiStepOf(style.fontRole, style.typeStep, style.fontScale) >= 0
             && uiFonts !is null && uiFonts.present;
-}
-
-/// How far into a `rectPx`-wide rect a `runPx`-wide run starts, aligned
-/// `align` (0 start, 1 centre, 2 end); never before the rect's start.
-float alignOffsetPx(ubyte align_, int rectPx, float runPx) @safe pure nothrow @nogc
-{
-    const slack = rectPx - runPx;
-    if (slack <= 0 || align_ == 0)
-        return 0;
-    return cast(float) cast(int)(align_ == 1 ? slack / 2 : slack);
-}
-
-@("uiRaylib.alignOffsetPx")
-@safe pure nothrow @nogc unittest
-{
-    assert(alignOffsetPx(0, 100, 60) == 0, "start");
-    assert(alignOffsetPx(1, 100, 60) == 20, "centre, on a whole pixel");
-    assert(alignOffsetPx(2, 100, 60) == 40, "end");
-    assert(alignOffsetPx(1, 50, 60) == 0, "a run wider than its rect starts at it");
-}
-
-/**
-The interface-face step a run draws at, or -1 for the cell font: an interface
-run (`FontRole.ui`, `GLY10`) at its own step, and a docs run (`GLY7`) at body
-size, or caption when it asks for less than 90 % of the cell font.
-*/
-int uiStepOf(FontRole role, TypeStep step, ushort fontScale) @safe pure nothrow @nogc
-{
-    switch (role)
-    {
-        case FontRole.ui:
-        case FontRole.uiMono:
-            return step;
-        case FontRole.docs:
-            return fontScale < 90 ? TypeStep.caption : TypeStep.body;
-        default:
-            return -1;
-    }
-}
-
-@("uiRaylib.uiStepOf")
-@safe pure nothrow @nogc
-unittest
-{
-    assert(uiStepOf(FontRole.ui, TypeStep.title, 100) == TypeStep.title);
-    assert(uiStepOf(FontRole.uiMono, TypeStep.caption, 100) == TypeStep.caption,
-        "interface data: the cell font at a step");
-    assert(uiStepOf(FontRole.docs, TypeStep.body, 80) == TypeStep.caption);
-    assert(uiStepOf(FontRole.docs, TypeStep.body, 100) == TypeStep.body);
-    assert(uiStepOf(FontRole.code, TypeStep.title, 100) == -1);
-    assert(uiStepOf(FontRole.inherit, TypeStep.body, 100) == -1);
-}
-
-/// `px` in whole cells of `cell`, rounded up; at least one cell for any ink.
-int cellsCeil(float px, int cell) @safe pure nothrow @nogc
-{
-    if (px <= 0 || cell <= 0)
-        return 0;
-    const n = cast(int)(px / cell);
-    return n * cell < px ? n + 1 : n;
-}
-
-@("uiRaylib.guiMeasure.cellsCeil")
-@safe pure nothrow @nogc
-unittest
-{
-    assert(cellsCeil(0, 8) == 0);
-    assert(cellsCeil(8, 8) == 1);
-    assert(cellsCeil(8.01f, 8) == 2);
-    assert(cellsCeil(23, 17) == 2);
-    assert(cellsCeil(5, 0) == 0);
 }
 
 @("uiRaylib.guiMeasure.withoutFacesIsTheCellMeasure")
