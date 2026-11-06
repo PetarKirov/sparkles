@@ -91,7 +91,8 @@ leaving the migration comparison snippets out of scope.
 - Variant keys with pruned downward versions, and roles (BGV1–BGV3), with dedup
   across requests. D13's divergent mode gains its lint, which rejects a
   dependency whose sources test a version withheld from it, on the same
-  source lexer.
+  source lexer. Pruning scans string import roots and string literals, and
+  lints `isVersion` arguments.
 - The unittest layout rule and its lint (BGV4–BGV5). The repository's remaining
   violations are fixed first, so the lint gates from its first commit.
 - The action graph and its task-node exposure (BGA1–BGA3, BGA8), without
@@ -104,7 +105,8 @@ scenarios and oracle 14 pass.
 ## E3: Local execution and the shared store
 
 - Compile, archive, link and test actions on the task-DAG executor, with the
-  explicit environment, relocation and argument normalization (BGA4–BGA7).
+  explicit environment, relocation and argument normalization (BGA4–BGA7), and
+  the publication rules for failed and interrupted actions (BGA9).
 - Declared keys, manifests and result keys (§5).
 - The shared store with staging, leases, eviction and inspection (§6).
 - Registry sources without Nix: fetched by the lockfile's URL into the store
@@ -120,8 +122,10 @@ scenarios and oracle 14 pass.
 
 Gate:
 
-- Oracles 2–5, 7, 9 and 10, steps 1–2 of oracle 11, and oracle 8's revert
-  check pass through the test-only driver.
+- Oracles 2–5, 7, 9, 10 and 16, steps 1–2 of oracle 11, and oracle 8's
+  revert check pass through the test-only driver. Oracle 4's step 5 gates
+  too: D31 is decided, and BGK7 accepted, before the store is shared by more
+  than the test-only driver.
 - A second run of the driver in another worktree, with no source change,
   compiles nothing.
 - An edit to one `sparkles:base` module recompiles only the variants whose
@@ -130,7 +134,7 @@ Gate:
 ## E4: The Nix backend
 
 - Content-addressed source inputs, and derivations created without evaluation
-  (BGN1–BGN4).
+  (BGN1–BGN4), with BGN2's constrained narrowing.
 - Remote builders from `/etc/nix/machines`.
 - Sandboxed test actions whose results may be reused (BGX3).
 

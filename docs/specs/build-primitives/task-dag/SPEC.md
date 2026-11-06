@@ -201,8 +201,11 @@ summaries.
 
 **TDM3: Closed actions.** A `TaskAction` **must** be a closed sum type for known
 work, not an arbitrary shell string. A process action carries its argument
-vector, environment delta, working directory, stdin policy, timeout and
-task-directory policy as data. An in-process action names a typed handler.
+vector, environment, working directory, stdin policy, timeout and
+task-directory policy as data. Its environment is either a delta over the
+command's own environment or complete, replacing it. A build-graph action's is
+always complete ([BGA4](../build-graph/SPEC.md#4-the-action-graph)). An
+in-process action names a typed handler.
 
 **TDM4: Redaction.** An environment value marked redacted **must** be passed to
 the child and **must never** appear in an event or a dry run. Every occurrence

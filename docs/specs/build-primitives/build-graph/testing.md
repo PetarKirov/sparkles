@@ -16,18 +16,19 @@ the code under test.
 | 1. dub agreement         | BGR1–BGR7, BGV1–BGV2, invariant 4 |
 | 2. build equivalence     | BGA1–BGA4, BGA7, BGV1–BGV3        |
 | 3. manifest completeness | BGK2–BGK4, BGK6                   |
-| 4. digest audit          | BGK5, BGS6                        |
+| 4. digest audit          | BGK5, BGK7, BGS6                  |
 | 5. relocation            | BGA5–BGA6, BGG4, invariant 3      |
 | 6. backend agreement     | BGN1, BGN5                        |
 | 7. concurrency           | BGS1–BGS5, BGS7                   |
 | 8. layout lint           | BGV4–BGV5                         |
-| 9. key sensitivity       | BGK1, BGT1–BGT3                   |
+| 9. key sensitivity       | BGK1, BGA4, BGT1–BGT3             |
 | 10. generators           | BGG1–BGG3                         |
 | 11. test actions         | BGX1–BGX3                         |
 | 12. Nix inputs           | BGN2–BGN4                         |
 | 13. hidden edges         | BGR8                              |
 | 14. task exposure        | BGA8                              |
 | 15. pinned test runner   | BGT4                              |
+| 16. publication faults   | BGA7, BGA9, BGS2, BGS6            |
 
 ## Oracles
 
@@ -63,6 +64,14 @@ the code under test.
 - a build type defined only in the root recipe;
 - a root version mentioned by a dependency, which must survive pruning;
 - a root version mentioned by no dependency, which must be pruned;
+- a root version mentioned only in a `.txt` file under a dependency's string
+  import root, which must survive pruning;
+- a dependency with a string literal holding `version (` and an inherited
+  identifier it never names, which must keep every inherited identifier and
+  be reported;
+- `isVersion!"Apple"` and `isVersion!"unittest"`, which must pass the lint,
+  and `isVersion!"SomeConfigVersion"` outside a `unittest` block, which must
+  fail planning with its location;
 - an ABI-critical dflag in a root's configuration, which must reach every
   dependency;
 - an unsupported directive, which must fail with its location.
@@ -127,7 +136,21 @@ lookups missing from absent candidates, across the repository's compiles.
    rewrite within the file system's timestamp granularity of its digest
    record. The next lookup must rehash it.
 2. Force a digest cache hit, then audit it by rehashing.
-3. Corrupt a store entry. The next lookup must remove it.
+3. Corrupt a store entry three ways: truncate a declared output, which the
+   next lookup must detect by its size; delete one, which the next lookup must
+   detect by its absence; and flip a byte without changing the size, which a
+   lookup with the hash-sample fraction set to one, and `ci cache verify`,
+   must detect. Each detected entry must be removed and rebuilt.
+4. **The clock:** on a file system whose clock is set apart from the host's
+   (a network mount, or a FUSE mount that adds an offset), repeat step 1. The
+   rehash must still happen. Set a file's modification time in the future:
+   every read must rehash it and report it.
+5. **A mid-compile edit (BGK7, proposed):** run a compile whose compiler is
+   wrapped to pause after reading a fixture module, rewrite that module during
+   the pause, then let it finish. The edit must be detected. Under remedy (a)
+   the result must not be in the store and the run must report
+   `unstable input`; under remedy (b) the published result must equal a cold
+   build of the edited tree.
 
 ### Oracle 5: relocation
 
@@ -199,6 +222,17 @@ recipe file; another compiler build, configuration file, C driver wrapper,
 linker or generator binary; another pinned test runner. Every affected key must
 change, and no unaffected one may.
 
+**Environment probes (BGA4):**
+
+- Put a recording `cc` and `ld` first on the executor's own `PATH`. No action
+  may call them, and every compile and link must run the absolute driver and
+  linker its toolchain identity names.
+- Set `DFLAGS`, `CC` and `NIX_CFLAGS_COMPILE` in the executor's environment.
+  No key and no output may change.
+- Compile a D module and an ImportC source that embed `__DATE__`, `__TIME__`
+  and `__TIMESTAMP__`, on two days with the fixture files' modification times
+  changed. The outputs must be byte-identical.
+
 ### Oracle 10: generators
 
 **Method:**
@@ -230,6 +264,12 @@ change, and no unaffected one may.
    derivation must still succeed.
 3. A derivation's input set must not contain files outside its declared
    inputs and roots.
+4. **Narrowing (BGN2):** with a manifest that resolved `m` to `b/m.d` under
+   `-Ia -Ib` in the local store, create `a/m.d`. The backend must not narrow,
+   and the build must compile `a/m.d`. With an unchanged tree, a narrowed
+   build must be rebuilt with full roots if its dependency output names a file
+   outside its inputs. No narrowed derivation's output may reach the binary
+   cache the run pushes to.
 
 ### Oracle 13: hidden edges
 
@@ -252,6 +292,30 @@ exception, until E1a removes them.
 **Method:** plan the same request twice. The task ids, claims and edges must be
 identical. Every action edge must be `onSuccess`, and a link's argument vector
 must carry its claimed thread count.
+
+### Oracle 16: publication faults
+
+**Source of truth:** BGA9's table of which endings publish, applied to injected
+endings whose cause the test controls.
+
+**Method:**
+
+1. A fixture module with a type error: the first compile must publish a
+   failed result. A second run, and a run in a second worktree, must not
+   execute the compile and must print the same diagnostics and exit status.
+2. A failing test: its result must not be in the store, and the next request
+   must run it.
+3. End a compile by `SIGKILL`, by its timeout, and by a fail-fast
+   cancellation. None may leave a result, and the next run must compile.
+4. A wrapped compiler that exits zero without writing its object: the action
+   must fail and publish nothing.
+5. Make publication fail: a full file system (a small loop-mounted store), a
+   read-only `results/`, and a rename that fails. The action's outcome and the
+   run's verdict must equal those of a run whose publication succeeded, and
+   each failure must be reported.
+6. Cut power to a virtual machine between a publishing rename and the next
+   write, then look the key up after reboot. The entry must be complete or
+   absent.
 
 ## The recipe vocabulary
 
