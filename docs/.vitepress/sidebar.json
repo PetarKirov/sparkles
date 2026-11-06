@@ -749,6 +749,17 @@
         "link": "/libs/shaders/"
       },
       {
+        "text": "source-view",
+        "link": "/libs/source-view/",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Highlighted editing",
+            "link": "/libs/source-view/reference/editing"
+          }
+        ]
+      },
+      {
         "text": "syntax",
         "link": "/libs/syntax/",
         "collapsed": true,
