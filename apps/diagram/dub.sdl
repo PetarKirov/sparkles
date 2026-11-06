@@ -18,7 +18,16 @@ dependency "sparkles:input" path="../.."
 dependency "sparkles:ui" path="../.."
 dependency "sparkles:ui-app" path="../.."
 
+// The board on the native arm, beside the terminal: `sparkles:wsi` windows
+// drawn by `sparkles:ui-vulkan`.
 configuration "application" {
+    targetType "executable"
+    subConfiguration "sparkles:ui-app" "full-vulkan"
+}
+
+// The raylib window beside the terminal, kept until it is retired:
+// `dub build :diagram -c raylib`.
+configuration "raylib" {
     targetType "executable"
     subConfiguration "sparkles:ui-app" "full"
 }

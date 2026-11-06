@@ -8,7 +8,7 @@ module app;
 
 import sparkles.base.logger : LogLevel;
 import sparkles.core_cli.args : Command, failRun, Flatten, Option, ranOk, runCli, RunExpected;
-import sparkles.ui_app.gui_options : GuiOptions;
+import sparkles.ui_app.gui_options : GuiOptions, NativeOptions;
 import sparkles.ui_app.host : PointerUnit, RunConfig;
 import sparkles.ui_app.run : asRunResult;
 import sparkles.ui_app.run_app : appThemeOf, runApp;
@@ -30,6 +30,9 @@ struct Diagram
 
     @Flatten("GUI Options")
     GuiOptions gui;
+
+    @Flatten("Native Window Options")
+    NativeOptions native;
 
     @(Option("config-file", description:
         "Load a grid JSON config at startup. Invalid file aborts.",
@@ -55,6 +58,7 @@ struct Diagram
         RunConfig cfg = {
             title: "diagram",
             gui: gui,
+            native: native,
             motion: true, // hover affordances want bare pointer motion
             // Space+LMB pan needs key releases (`IXN3` / `INP16`): a window
             // reports them, and so does a terminal speaking the kitty

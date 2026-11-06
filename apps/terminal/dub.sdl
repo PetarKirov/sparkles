@@ -30,20 +30,6 @@ dependency "sparkles:doc-view" path="../.."
 // dub leaves a library's app.d out); listed first so dub picks it there. No
 // raylib: the window, its input and its frames are `sparkles:wsi`'s, the
 // drawing `sparkles:ui-vulkan`'s.
-
-// macOS builds the native arm by default: dub takes the first configuration
-// whose platforms match, and this one is the `vulkan` configuration below,
-// for `osx` only. AppKit through MoltenVK runs every application the raylib
-// arm does; `-c application` still names the raylib window.
-configuration "macos" {
-    platforms "osx"
-    targetType "executable"
-    subConfiguration "sparkles:ui-app" "gui-vulkan"
-    subConfiguration "sparkles:terminal-view" "vulkan"
-    dependency "sparkles:ui-vulkan" path="../.."
-    versions "TerminalVulkan"
-}
-
 configuration "android" {
     platforms "android"
     targetType "dynamicLibrary"
@@ -55,7 +41,20 @@ configuration "android" {
     versions "TerminalVulkan"
 }
 
+// The desktop terminal, on every platform: the panes, the chrome and the
+// document viewer drawn by the Vulkan canvas on `sparkles:ui-app`'s native arm
+// (Wayland, X11, AppKit through MoltenVK, Win32). No raylib in the closure.
 configuration "application" {
+    targetType "executable"
+    subConfiguration "sparkles:ui-app" "gui-vulkan"
+    subConfiguration "sparkles:terminal-view" "vulkan"
+    dependency "sparkles:ui-vulkan" path="../.."
+    versions "TerminalVulkan"
+}
+
+// The raylib window, kept beside the native arm until it is retired:
+// `dub build :terminal -c raylib`.
+configuration "raylib" {
     targetType "executable"
     dependency "raylib-d" version="~>6.2.0"
     libs "raylib"
@@ -68,7 +67,25 @@ configuration "application" {
     subConfiguration "sparkles:ui" "gpu-effects"
 }
 
+// The tests against the native arm, the one that ships. Above
+// `unittest-raylib`: the Nix source closure ends at this block.
 configuration "unittest" {
+    targetType "library"
+    excludedSourceFiles "src/app.d"
+
+    dependency "sparkles:test-runner" path="../.."
+    dependency "sparkles:test-utils" path="../.."
+    dependency "sparkles:ui-vulkan" path="../.."
+    subConfiguration "sparkles:ui" "gpu-effects"
+    subConfiguration "sparkles:ui-app" "gui-vulkan"
+    subConfiguration "sparkles:terminal-view" "vulkan"
+    versions "TerminalVulkan"
+
+    dflags "-checkaction=context" "-allinst"
+}
+
+// The same tests against the raylib arm: `dub test :terminal -c unittest-raylib`.
+configuration "unittest-raylib" {
     targetType "library"
     excludedSourceFiles "src/app.d"
     dependency "raylib-d" version="~>6.2.0"
@@ -80,32 +97,6 @@ configuration "unittest" {
     subConfiguration "sparkles:ui" "gpu-effects"
 
     dflags "-checkaction=context" "-allinst"
-}
-
-configuration "unittest-vulkan" {
-    targetType "library"
-    excludedSourceFiles "src/app.d"
-
-    dependency "sparkles:test-runner" path="../.."
-    dependency "sparkles:test-utils" path="../.."
-    dependency "sparkles:ui-vulkan" path="../.."
-    subConfiguration "sparkles:ui" "gpu-effects"
-    subConfiguration "sparkles:ui-app" "gui-vulkan"
-    subConfiguration "sparkles:terminal-view" "vulkan"
-    versions "TerminalVulkan"
-
-    dflags "-checkaction=context" "-allinst"
-}
-
-// The desktop terminal on the native arm: the panes, the chrome and the
-// document viewer drawn by the Vulkan canvas. Raylib stays on `application` and `unittest`, which Android's version list
-// still names `Have_raylib_d`.
-configuration "vulkan" {
-    targetType "executable"
-    subConfiguration "sparkles:ui-app" "gui-vulkan"
-    subConfiguration "sparkles:terminal-view" "vulkan"
-    dependency "sparkles:ui-vulkan" path="../.."
-    versions "TerminalVulkan"
 }
 
 // BEGIN managed build types — apps/ci/tools/standardize-build-settings.d
