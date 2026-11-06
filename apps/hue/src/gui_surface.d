@@ -3,10 +3,10 @@ The one seam between hue's window code and the arm that draws it (`P2.B4`).
 
 `gui.d` reads its window — size, frame time, title, pointer, a screenshot —
 its cell font's metrics, and makes canvases, and nothing else of the
-backend: this module is that list. The raylib arm (`gui`, the default) wraps
-the window, the face set and the effect backend the arm publishes; the
-Vulkan arm (`HueGuiVulkan`, the `vulkan` configuration) wraps the native
-host and its canvas. Either way `GuiCanvas` satisfies the canvas concept
+backend: this module is that list. The Vulkan arm (`HueGuiVulkan`, the
+default `application` configuration) wraps the native host and its canvas;
+the raylib arm (the `raylib` configuration) wraps the window, the face set
+and the effect backend the arm publishes. Either way `GuiCanvas` satisfies the canvas concept
 (`isCanvas`) plus the pixel fill hue's chrome takes (`fillPixels`).
 
 What the Vulkan arm cannot do yet is said here rather than at each use: no

@@ -77,7 +77,7 @@
               finalAttrs: args:
               let
                 # The application's directory: `apps/<pname>` unless another
-                # configuration of an app is its own package (`terminal-vulkan`).
+                # configuration of an app is its own package (`terminal-raylib`).
                 appDir = args.appDir or "apps/${finalAttrs.pname}";
                 # Explicit `sourceDirs` override, else the computed closure.
                 srcDirs = args.sourceDirs or (sparklesSrcClosure appDir);
@@ -205,7 +205,7 @@
 
                 # dub names the binary after the package (`appDir`), the derivation
                 # after `pname`: they differ for a second configuration of an app
-                # (`terminal-vulkan`).
+                # (`terminal-raylib`).
                 installPhase =
                   args.installPhase or ''
                     install -Dm755 build/${baseNameOf appDir} $out/bin/${finalAttrs.pname}

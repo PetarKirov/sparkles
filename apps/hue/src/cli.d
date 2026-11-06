@@ -609,7 +609,7 @@ struct HueCli
     GuiOptions gui;
 
     /// The native (Vulkan) window's window system and diagnostics (the
-    /// `vulkan` configuration); the raylib window ignores them.
+    /// default configuration); the raylib window ignores them.
     @Flatten("Native Window Options")
     NativeOptions native;
 

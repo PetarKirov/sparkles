@@ -94,7 +94,7 @@ in
         unstamped = libhue;
         libName = "hue";
         app = "hue";
-        check = config.legacyPackages.checkHueBuildInfo;
+        check = config.legacyPackages.checkHueRaylibBuildInfo;
       };
 
       # The font set is defined once, in nix/packages/fonts.nix, and shared

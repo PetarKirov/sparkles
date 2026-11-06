@@ -29,6 +29,106 @@
       # The LDC with the WASI runtimes: `--build` and `--build-each-commit`
       # compile the WebAssembly modules with it (`$SPARKLES_WASI_LDC`).
       wasiLdc = inputs'.dlang-nix.packages.ldc-sparkles;
+
+      # The terminal, for one of its dub configurations: the default
+      # (`application`), the native arm — `sparkles:wsi` windows drawn by
+      # `sparkles:ui-vulkan`, on every platform, through MoltenVK on macOS — or
+      # `raylib`, the raylib window kept until it is retired.
+      terminalPackage =
+        {
+          pname,
+          configuration,
+          raylib ? false,
+          description,
+        }:
+        config.legacyPackages.buildSparklesApp (finalAttrs: {
+          inherit pname;
+          version = "0.1.0";
+          appDir = "apps/terminal";
+          dubBuildFlags = [ "--config=${configuration}" ];
+
+          # The about page shows the commit (`TPG2`), so this package is
+          # rebuilt (step 2 only) on every commit.
+          stampBuildInfo = true;
+          checkBuildInfo =
+            if raylib then
+              config.legacyPackages.checkTerminalRaylibBuildInfo
+            else
+              config.legacyPackages.checkTerminalBuildInfo;
+
+          nativeBuildInputs = [ pkgs.pkg-config ];
+
+          buildInputs = [
+            # The document viewer (`TDV`, sparkles:doc-view) highlights through
+            # sparkles:syntax.
+            pkgs.tree-sitter
+            inputs'.ghostty.packages.libghostty-vt
+            inputs'.ghostty.packages.libghostty-vt.dev
+          ]
+          ++ lib.optional raylib pkgs.raylib;
+
+          links = config.legacyPackages.terminalLinks;
+
+          # The credits page (`TPG15`), beside the executable: the document and
+          # its staged licence texts, the files the docs site renders (`TPG16`).
+          installPhase = ''
+            install -Dm755 build/terminal $out/bin/${finalAttrs.pname}
+            mkdir -p $out/share/sparkles-terminal
+            cp -r ${config.legacyPackages.sparklesCredits.bundle} $out/share/sparkles-terminal/credits
+          '';
+
+          # The terminal shells out to `fc-match` (fontconfig) at runtime to
+          # resolve fonts (see apps/terminal/src/app.d). Under `nix run` PATH is the
+          # ambient user environment, so wrap the binary to guarantee fontconfig
+          # is reachable instead of relying on the user's PATH. Step 2 runs
+          # this, after the build-info section is replaced.
+          postFixup = ''
+            wrapProgram $out/bin/${finalAttrs.pname} \
+              --set-default SPARKLES_TS_GRAMMAR_PATH ${config.packages.ts-grammars} \
+              --prefix PATH : ${lib.makeBinPath [ pkgs.fontconfig ]}
+          '';
+
+          meta = {
+            inherit description;
+            mainProgram = finalAttrs.pname;
+          };
+        });
+
+      # The sparkles:ui catalog, for one of its dub configurations: the native
+      # arm (the default) or the raylib window, each beside the terminal arm.
+      # libghostty-vt is the Terminal page's: it embeds
+      # `sparkles:terminal-view` (TVW7). `fc-match` is on the same footing as the
+      # terminal's.
+      uiGalleryPackage =
+        {
+          pname,
+          configuration,
+          raylib ? false,
+          description,
+        }:
+        config.legacyPackages.buildSparklesApp (finalAttrs: {
+          inherit pname;
+          version = "0.1.0";
+          appDir = "apps/ui-gallery";
+          dubBuildFlags = [ "--config=${configuration}" ];
+
+          nativeBuildInputs = [ pkgs.pkg-config ];
+          buildInputs = [
+            inputs'.ghostty.packages.libghostty-vt
+            inputs'.ghostty.packages.libghostty-vt.dev
+          ]
+          ++ lib.optional raylib pkgs.raylib;
+
+          postFixup = ''
+            wrapProgram $out/bin/${finalAttrs.pname} \
+              --prefix PATH : ${lib.makeBinPath [ pkgs.fontconfig ]}
+          '';
+
+          meta = {
+            inherit description;
+            mainProgram = finalAttrs.pname;
+          };
+        });
     in
     {
       # Sources retained by ci's runtime closure and published with all-desktop.
@@ -265,64 +365,20 @@
           | tee "$out"
       '';
 
-      # `buildSparklesApp` derives the source closure from apps/terminal/dub.sdl
-      # (transitively: base, core-cli, ghostty, math, and the test-runner
-      # shim+impl) and supplies the shared dub plumbing, so only the raylib +
-      # libghostty-vt build inputs and the fontconfig runtime wrapper remain.
-      packages.terminal = config.legacyPackages.buildSparklesApp (finalAttrs: {
+      # `buildSparklesApp` derives the source closure from apps/terminal/dub.sdl and
+      # supplies the shared dub plumbing (`terminalPackage` above).
+      packages.terminal = terminalPackage {
         pname = "terminal";
-        version = "0.1.0";
+        configuration = "application";
+        description = "A minimal terminal emulator using libghostty-vt";
+      };
 
-        # macOS ships the native (Vulkan) arm, which runs there through
-        # MoltenVK: the loader nixpkgs builds already searches its driver.
-        # Elsewhere the raylib window, named, until the native arm is the
-        # default everywhere.
-        dubBuildFlags = [
-          (if pkgs.stdenv.hostPlatform.isDarwin then "--config=vulkan" else "--config=application")
-        ];
-
-        # The about page shows the commit (`TPG2`), so this package is
-        # rebuilt (step 2 only) on every commit.
-        stampBuildInfo = true;
-        checkBuildInfo = config.legacyPackages.checkTerminalBuildInfo;
-
-        nativeBuildInputs = [ pkgs.pkg-config ];
-
-        buildInputs = [
-          # The document viewer (`TDV`, sparkles:doc-view) highlights through
-          # sparkles:syntax.
-          pkgs.tree-sitter
-          pkgs.raylib
-          inputs'.ghostty.packages.libghostty-vt
-          inputs'.ghostty.packages.libghostty-vt.dev
-        ];
-
-        links = config.legacyPackages.terminalLinks;
-
-        # The credits page (`TPG15`), beside the executable: the document and
-        # its staged licence texts, the files the docs site renders (`TPG16`).
-        installPhase = ''
-          install -Dm755 build/${finalAttrs.pname} $out/bin/${finalAttrs.pname}
-          mkdir -p $out/share/sparkles-terminal
-          cp -r ${config.legacyPackages.sparklesCredits.bundle} $out/share/sparkles-terminal/credits
-        '';
-
-        # The terminal shells out to `fc-match` (fontconfig) at runtime to
-        # resolve fonts (see apps/terminal/src/app.d). Under `nix run` PATH is
-        # the ambient user environment, so wrap the binary to guarantee
-        # fontconfig is reachable instead of relying on the user's PATH.
-        # Step 2 runs this, after the build-info section is replaced.
-        postFixup = ''
-          wrapProgram $out/bin/${finalAttrs.pname} \
-            --set-default SPARKLES_TS_GRAMMAR_PATH ${config.packages.ts-grammars} \
-            --prefix PATH : ${lib.makeBinPath [ pkgs.fontconfig ]}
-        '';
-
-        meta = {
-          description = "A minimal terminal emulator using libghostty-vt";
-          mainProgram = finalAttrs.pname;
-        };
-      });
+      packages.terminal-raylib = terminalPackage {
+        pname = "terminal-raylib";
+        configuration = "raylib";
+        raylib = true;
+        description = "The terminal in its raylib window, kept until the raylib arm is retired";
+      };
 
       # Buttons on the terminal's about page, desktop and Android alike. The
       # document carries them; the page does not.
@@ -346,67 +402,18 @@
         };
       });
 
-      # The sparkles:ui catalog. It reaches raylib through `sparkles:ui-app`'s
-      # `full` configuration — the gallery itself names no backend — so the
-      # build inputs are the window's, not the application's. libghostty-vt is
-      # the Terminal page's: it embeds `sparkles:terminal-view` (TVW7).
-      # `fc-match` is on the same footing as the terminal's: the font set
-      # shells out to it at runtime, and under `nix run` PATH is the ambient
-      # user environment.
-      packages.ui-gallery = config.legacyPackages.buildSparklesApp (finalAttrs: {
+      packages.ui-gallery = uiGalleryPackage {
         pname = "ui-gallery";
-        version = "0.1.0";
+        configuration = "application";
+        description = "A browsable catalog of the sparkles:ui toolkit, in a terminal or a window";
+      };
 
-        # macOS ships the native (Vulkan) arm, which runs there through
-        # MoltenVK: the loader nixpkgs builds already searches its driver.
-        # Elsewhere the raylib window, named, until the native arm is the
-        # default everywhere.
-        dubBuildFlags = [
-          (if pkgs.stdenv.hostPlatform.isDarwin then "--config=vulkan" else "--config=application")
-        ];
-
-        nativeBuildInputs = [ pkgs.pkg-config ];
-        buildInputs = [
-          pkgs.raylib
-          inputs'.ghostty.packages.libghostty-vt
-          inputs'.ghostty.packages.libghostty-vt.dev
-        ];
-
-        postFixup = ''
-          wrapProgram $out/bin/${finalAttrs.pname} \
-            --prefix PATH : ${lib.makeBinPath [ pkgs.fontconfig ]}
-        '';
-
-        meta = {
-          description = "A browsable catalog of the sparkles:ui toolkit, in a terminal or a window";
-          mainProgram = finalAttrs.pname;
-        };
-      });
-
-      # The native arm's builds (`configuration "vulkan"`): sparkles:wsi windows
-      # drawn by sparkles:ui-vulkan, whose canvas SPIR-V comes prebuilt
-      # (`ui-vulkan-shaders`). Packaged so the desktop aggregate compiles
-      # them; `dub test` builds neither. raylib stays a build input: the
-      # native host resolves its cell font through sparkles:raylib-text,
-      # which links it, until sparkles:font's catalog replaces that.
-      packages.ui-gallery-vulkan = config.legacyPackages.buildSparklesApp (finalAttrs: {
-        pname = "ui-gallery-vulkan";
-        version = "0.1.0";
-        appDir = "apps/ui-gallery";
-        dubBuildFlags = [ "--config=vulkan" ];
-
-        nativeBuildInputs = [ pkgs.pkg-config ];
-        buildInputs = [
-          pkgs.raylib
-          inputs'.ghostty.packages.libghostty-vt
-          inputs'.ghostty.packages.libghostty-vt.dev
-        ];
-
-        meta = {
-          description = "The sparkles:ui catalog on the native Vulkan arm";
-          mainProgram = finalAttrs.pname;
-        };
-      });
+      packages.ui-gallery-raylib = uiGalleryPackage {
+        pname = "ui-gallery-raylib";
+        configuration = "raylib";
+        raylib = true;
+        description = "The sparkles:ui catalog in its raylib window, kept until the raylib arm is retired";
+      };
 
       # The Vulkan canvas's text lab (`apps/text-lab`): the native arm only.
       packages.text-lab = config.legacyPackages.buildSparklesApp (finalAttrs: {
@@ -418,7 +425,7 @@
           pkgs.pkg-config
           pkgs.makeWrapper
         ];
-        buildInputs = [ pkgs.raylib ];
+        buildInputs = [ ];
 
         postFixup = ''
           wrapProgram $out/bin/${finalAttrs.pname} \
@@ -427,26 +434,6 @@
 
         meta = {
           description = "The Vulkan canvas's text rendering, switched live and seen through a loupe";
-          mainProgram = finalAttrs.pname;
-        };
-      });
-
-      packages.terminal-vulkan = config.legacyPackages.buildSparklesApp (finalAttrs: {
-        pname = "terminal-vulkan";
-        version = "0.1.0";
-        appDir = "apps/terminal";
-        dubBuildFlags = [ "--config=vulkan" ];
-
-        nativeBuildInputs = [ pkgs.pkg-config ];
-        buildInputs = [
-          pkgs.tree-sitter
-          pkgs.raylib
-          inputs'.ghostty.packages.libghostty-vt
-          inputs'.ghostty.packages.libghostty-vt.dev
-        ];
-
-        meta = {
-          description = "The terminal on the native Vulkan arm (text waits on the font atlas)";
           mainProgram = finalAttrs.pname;
         };
       });

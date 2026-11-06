@@ -178,28 +178,44 @@
         assert lib.assertMsg (!(doc.components ? ${name})) "${name} is a PATH wrapper, not a linked input";
         doc;
 
+      # The default configurations draw on the native arm: raylib is not in
+      # them; the `raylib` configurations link it.
+      assertRaylib =
+        linked: doc:
+        if linked then
+          assertLinked "raylib" doc
+        else
+          assert lib.assertMsg (!(doc.components ? raylib)) "the native arm's configuration links no raylib";
+          doc;
+
       # The terminal's about page (`TPG1`): the GUI configuration links
       # libghostty-vt and not the TUI backend.
-      checkTerminalBuildInfo =
-        doc:
+      checkTerminalBuildInfoWith =
+        raylib: doc:
         let
           c = doc.components;
         in
         assert lib.assertMsg (
           !(c ? "sparkles:ui-tui") && !(c ? "sparkles:tui")
         ) "the gui configuration does not link the tui backend";
-        assertNotLinked "fontconfig" (assertLinked "libghostty-vt" doc);
+        lib.pipe doc [
+          (assertLinked "libghostty-vt")
+          (assertRaylib raylib)
+          (assertNotLinked "fontconfig")
+        ];
 
       # hue ships both front ends (`BLD1`) and links its native inputs.
-      checkHueBuildInfo =
-        doc:
+      checkHueBuildInfoWith =
+        raylib: doc:
         assert lib.assertMsg (doc.components ? "sparkles:tui") "hue links its TUI front end";
         lib.pipe doc [
           (assertLinked "libghostty-vt")
-          (assertLinked "raylib")
+          (assertRaylib raylib)
           (assertLinked "tree-sitter")
           (assertNotLinked "fontconfig")
         ];
+      checkTerminalBuildInfo = checkTerminalBuildInfoWith false;
+      checkHueBuildInfo = checkHueBuildInfoWith false;
     in
     {
       # Where a binary carries the document, for the stamping steps.
@@ -218,6 +234,8 @@
       legacyPackages.assertBuildInfo = assertBuildInfo;
       legacyPackages.checkTerminalBuildInfo = checkTerminalBuildInfo;
       legacyPackages.checkHueBuildInfo = checkHueBuildInfo;
+      legacyPackages.checkTerminalRaylibBuildInfo = checkTerminalBuildInfoWith true;
+      legacyPackages.checkHueRaylibBuildInfo = checkHueBuildInfoWith true;
       legacyPackages.inTreeComponents = inTreeComponents;
       legacyPackages.buildInfoObjcopy = buildInfoObjcopy;
       legacyPackages.emptyBuildInfoJson = emptyBuildInfoJson;

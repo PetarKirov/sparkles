@@ -68,31 +68,13 @@ dependency "sparkles:ui" path="../.."
 // picker, the diff session's writes, settings).
 dependency "sparkles:doc-view" path="../.."
 
-// Default build (BLD1): the raylib GPU backend (src/gui.d, version(HueGui)) and
-// sparkles:doc-view's ansi-fence decoder (`ansi_decode`, compiled because
-// this configuration links sparkles:ghostty) are in, so a stock `dub build :hue` and
-// the installed binary have `--gui` and the markdown preview out of the box.
-// Pulls raylib (a system dependency) + libghostty-vt.
-
-// macOS builds the native arm by default: dub takes the first configuration
-// whose platforms match, and this one is the `vulkan` configuration below,
-// for `osx` only. AppKit through MoltenVK runs every application the raylib
-// arm does; `-c application` still names the raylib window.
-configuration "macos" {
-    platforms "osx"
-    targetType "executable"
-
-    libs "curl"
-    versions "HueCurl"
-
-    dependency "sparkles:ghostty" path="../.."
-    subConfiguration "sparkles:ui-app" "full-vulkan"
-    versions "HueGui" "HueGuiVulkan"
-
-    dependency "sparkles:dmd-fmt" path="../.."
-    versions "HueDmdFmt"
-}
-
+// Default build (BLD1): the window drawn by `sparkles:ui-vulkan` on
+// `sparkles:ui-app`'s native arm (`sparkles:wsi`: Wayland, X11, AppKit through
+// MoltenVK, Win32), and sparkles:doc-view's ansi-fence decoder (compiled
+// because this configuration links sparkles:ghostty), so a stock
+// `dub build :hue` and the installed binary have `--gui` and the markdown preview
+// out of the box, with no raylib in the closure. `gui_surface` is the seam: the
+// same `gui.d`, the arm's host and canvas behind it. Pulls libghostty-vt.
 configuration "application" {
     targetType "executable"
 
@@ -103,16 +85,10 @@ configuration "application" {
     libs "curl"
     versions "HueCurl"
 
-    // The shared raylib text core; pulls raylib-d + libs "raylib" transitively.
-    dependency "sparkles:raylib-text" path="../.."
-    // The sparkles:ui → raylib bridge (RaylibCanvas + input synthesis),
-    // extracted from the old in-app src/gui_canvas.d.
-    dependency "sparkles:ui-raylib" path="../.."
-    subConfiguration "sparkles:ui" "gpu-effects"
     // The off-screen VT that decodes ` ```ansi ` fenced blocks (`sparkles.doc_view.ansi_decode`).
     dependency "sparkles:ghostty" path="../.."
-    subConfiguration "sparkles:ui-app" "full"
-    versions "HueGui"
+    subConfiguration "sparkles:ui-app" "full-vulkan"
+    versions "HueGui" "HueGuiVulkan"
 
     // The in-process D formatter behind the format preview (FPR2): pulls the
     // pinned dmd:lexer + dmd:frontend fork into this configuration's closure.
@@ -122,26 +98,30 @@ configuration "application" {
     versions "HueDmdFmt"
 }
 
-// The window drawn by `sparkles:ui-vulkan` on `sparkles:ui-app`'s native arm
-// (`sparkles:wsi`: Wayland, X11, AppKit through MoltenVK, Android) — the
-// application closure with no raylib in it. `gui_surface` is the seam: the
-// same `gui.d`, the arm's host and canvas behind it; the CRT is not drawn by
-// this renderer yet. `dub build :hue -c vulkan`.
-configuration "vulkan" {
+// The raylib window (src/gui.d through `sparkles:ui-raylib`), kept beside the
+// native arm until it is retired: `dub build :hue -c raylib`. Pulls raylib (a
+// system dependency) + libghostty-vt. It alone draws the CRT for now.
+configuration "raylib" {
     targetType "executable"
 
     libs "curl"
     versions "HueCurl"
 
+    // The shared raylib text core; pulls raylib-d + libs "raylib" transitively.
+    dependency "sparkles:raylib-text" path="../.."
+    // The sparkles:ui → raylib bridge (RaylibCanvas + input synthesis),
+    // extracted from the old in-app src/gui_canvas.d.
+    dependency "sparkles:ui-raylib" path="../.."
+    subConfiguration "sparkles:ui" "gpu-effects"
     dependency "sparkles:ghostty" path="../.."
-    subConfiguration "sparkles:ui-app" "full-vulkan"
-    versions "HueGui" "HueGuiVulkan"
+    subConfiguration "sparkles:ui-app" "full"
+    versions "HueGui"
 
     dependency "sparkles:dmd-fmt" path="../.."
     versions "HueDmdFmt"
 }
 
-// Android build (BLD5): the same GUI closure as `application`, but emitted as
+// Android build (BLD5): the same GUI closure as `raylib`, but emitted as
 // a shared library — raylib's PLATFORM_ANDROID backend owns `android_main()`
 // (inside the APK's NativeActivity) and calls this library's `main()`. dub
 // cannot drive the cross build (nix does, with a raw ldc2 invocation — see
@@ -151,7 +131,7 @@ configuration "vulkan" {
 // Be clear about how little that checks, though. On a host `version (Android)`
 // is false, so android_glue.d collapses to an empty module and NONE of the
 // Android code paths in app.d/gui.d are analysed — this builds the same module
-// set as `application`, emitted as a dynamicLibrary. The nix `libhue-android`
+// set as `raylib`, emitted as a dynamicLibrary. The nix `libhue-android`
 // build is the only compiler that ever sees the gated code.
 // The Posix TUI modules (tui.d, workspace.d, twoslash_tui.d) stay in the
 // source set — on the Android *triple* the app never imports them
