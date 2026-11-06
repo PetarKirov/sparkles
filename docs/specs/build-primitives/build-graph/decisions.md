@@ -301,7 +301,15 @@ None remain from E0:
 - **O3:** whether DMD variants share across worktrees at all. Resolved by D19:
   they do not.
 
-## D16: The test runner's implementation is pinned and prebuilt (accepted)
+## D16: The test runner's implementation is pinned and prebuilt (superseded)
+
+**Superseded** by the test runner's out-of-process model: decisions TRD1 and
+TRD9 and requirement TRM8, in `docs/specs/test-runner/`. The runner runs as a
+separate process that test binaries talk to through the shim, so no test
+binary links its implementation. The pin covers only the standalone runner
+that plain `dub test` uses, and a test action's key covers the runner core
+inside the `ci` build that runs it (BGT1). The record below was accepted on
+2026-11-01 and is kept as history.
 
 **Question.** The test runner's implementation depends on `sparkles:ui` and much
 of the repository, while every package's tests depend on the runner. So the

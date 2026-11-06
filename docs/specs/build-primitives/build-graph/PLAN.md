@@ -48,16 +48,13 @@ in [decisions.md](./decisions.md).
 Gate: each spike's result is recorded; the LDC fork's tests pass in the
 toolchain the flake pins.
 
-## E1a: The pinned test runner
+## E1a: The pinned test runner (superseded)
 
-- Build the test runner's implementation from a pinned revision of this
-  repository, expose the library and its import directory through the flake,
-  and link it from the shim (D16, BGT4).
-- Replace every source include of the implementation with an ordinary
-  dependency on the shim.
-
-Gate: `ci --test` and every package's `dub test` pass with the pinned runner;
-oracle 15's first scenario passes.
+Superseded with D16 and BGT4 by the test runner's out-of-process model (TRD1,
+TRD9 and TRM8 in `docs/specs/test-runner/`), which the test runner's own plan
+delivers. Its aim stands: every source include of the runner's implementation
+is replaced by an ordinary dependency on the shim, so BGR8 holds without an
+exception.
 
 ## E1: Recipe resolution and the oracle
 
@@ -170,7 +167,7 @@ Gate:
 | Milestone | State       |
 | --------- | ----------- |
 | E0        | in progress |
-| E1a       | not started |
+| E1a       | superseded  |
 | E1        | in progress |
 | E2        | not started |
 | E3        | not started |
