@@ -319,9 +319,10 @@ struct FieldSetup
     bool clipboardWrite;
     bool clipboardRead;
 
-    /// The setup of a host with `clipboard` (see `FieldClipboard`).
+    /// The setup of a host with `clipboard` (see `FieldClipboard`,
+    /// `RequestClipboard`).
     static FieldSetup of(Clipboard)(EditorTarget target, in Clipboard clipboard)
-        => FieldSetup(target, clipboard.write !is null, clipboard.read !is null);
+        => FieldSetup(target, clipboard.write !is null, readsClipboard(clipboard));
 
     /// A single-line field set up this way.
     EditorField singleLine(scope const(char)[] text = "") const @safe pure nothrow @nogc
@@ -363,7 +364,37 @@ FieldClipboard!(Write, Read) fieldClipboard(Write, Read)(Write write, Read read)
 void useClipboard(Clipboard)(ref EditorField field, in Clipboard clipboard)
 {
     field.context.clipboardWrite = clipboard.write !is null;
-    field.context.clipboardRead = clipboard.read !is null;
+    field.context.clipboardRead = readsClipboard(clipboard);
+}
+
+/**
+What a host's clipboard can do, for a host that reads it by request
+(`INP25`): `write` as $(LREF FieldClipboard)'s, and `ask(request, text)`
+in place of a read. `ask` returns true with the clipboard's text once the
+host's answer is in hand; until then it returns false (passing the read on to
+the host the first time it sees `request`), and the field keeps waiting:
+$(LREF serveClipboard) leaves its read pending, so a later serve, with the
+answer in hand, pastes it through the same path. Either member may be null.
+*/
+struct RequestClipboard(Write, Ask)
+{
+    /// Puts text on the clipboard.
+    Write write;
+    /// Answers a field's read, or passes it on and answers later.
+    Ask ask;
+}
+
+/// ditto
+RequestClipboard!(Write, Ask) requestClipboard(Write, Ask)(Write write, Ask ask)
+    => RequestClipboard!(Write, Ask)(write, ask);
+
+// Whether `clipboard` reads at all, at once or by request.
+private bool readsClipboard(Clipboard)(in Clipboard clipboard)
+{
+    static if (__traits(hasMember, Clipboard, "ask"))
+        return clipboard.ask !is null;
+    else
+        return clipboard.read !is null;
 }
 
 /**
@@ -396,10 +427,24 @@ FieldResult serveClipboard(Clipboard)(ref EditorField field, in Clipboard clipbo
     }
     field.pendingCopy = Text.init;
     const request = field.pendingRead;
-    field.pendingRead = 0;
-    if (request && clipboard.read !is null)
-        return field.pasteAnswer(request, clipboard.read());
-    return FieldResult.init;
+    static if (__traits(hasMember, Clipboard, "ask"))
+    {
+        // Read by request: the read waits, pending, for the host's answer.
+        if (request == 0)
+            return FieldResult.init;
+        const(char)[] text;
+        if (clipboard.ask !is null && !clipboard.ask(request, text))
+            return FieldResult.init;
+        field.pendingRead = 0;
+        return clipboard.ask is null ? FieldResult.init : field.pasteAnswer(request, text);
+    }
+    else
+    {
+        field.pendingRead = 0;
+        if (request && clipboard.read !is null)
+            return field.pasteAnswer(request, clipboard.read());
+        return FieldResult.init;
+    }
 }
 
 /// A host serving a field's clipboard.
@@ -423,6 +468,46 @@ unittest
     assert(board == "abc" && field.empty, "cut puts the text on the board");
     const r = serveClipboard(field, field.key(KeyEvent(Key.char_, 'v', Mods(ctrl: true))), clipboard);
     assert(r.changed && field.text == "abc", "paste reads it back");
+}
+
+/// A host that reads by request: the paste waits for the answer, which a
+/// later serve pastes through the same path; the read is asked for once.
+@("editor.field.serveClipboard.byRequest")
+@safe pure nothrow
+unittest
+{
+    import sparkles.input.events : Key, Mods;
+    import sparkles.ui.editor.keys : EditorTarget;
+
+    uint asked, asks;
+    string answer;
+    bool answered;
+    auto clipboard = requestClipboard((scope const(char)[] t) {},
+        (uint request, out const(char)[] text) {
+            if (!answered)
+            {
+                if (request != asked)
+                    ++asks;
+                asked = request;
+                return false;
+            }
+            text = answer;
+            return true;
+        });
+    auto field = FieldSetup.of(EditorTarget.window, clipboard).singleLine("ab");
+    assert(field.context.clipboardRead, "a request clipboard declares paste");
+
+    auto r = serveClipboard(field, field.key(KeyEvent(Key.char_, 'v', Mods(ctrl: true))), clipboard);
+    assert(!r.changed && field.text == "ab" && asked != 0, "the read went to the host");
+    r = serveClipboard(field, clipboard);
+    assert(!r.changed && asks == 1, "a waiting read is asked for once");
+
+    answer = "c";
+    answered = true;
+    r = serveClipboard(field, clipboard);
+    assert(r.changed && field.text == "abc", "the answer pastes");
+    r = serveClipboard(field, clipboard);
+    assert(!r.changed && field.text == "abc", "once");
 }
 
 /**
