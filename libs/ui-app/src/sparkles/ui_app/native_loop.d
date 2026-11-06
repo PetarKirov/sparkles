@@ -235,8 +235,7 @@ private bool measureCellFontImpl(in FontRequest request, in string[] extraSource
     string boldPath, italicPath, boldItalicPath;
     if (loaded is null)
         fontVariantPaths(path, boldPath, italicPath, boldItalicPath);
-    static const(ubyte)[] load(string p)
-        => p.length ? cast(const(ubyte)[]) read(p) : null;
+    static const(ubyte)[] load(string p) => p.length ? mappedFont(p) : null;
     const hh = hhea(face.value);
     const span = hh.hasValue ? long(hh.value.ascender) - hh.value.descender : 0;
     const upem = face.value.unitsPerEm;
@@ -255,6 +254,17 @@ private bool measureCellFontImpl(in FontRequest request, in string[] extraSource
     string nerdPath, regularPath, emojiPath;
     if (loaded is null)
         systemFallbackFacePaths(path, sources, nerdPath, regularPath, emojiPath);
+    // The resolver skips Apple Color Emoji for the raylib arm, which cannot
+    // open a collection; this arm's `sparkles:font` reads the collection's
+    // first face and its `sbix` strikes.
+    version (OSX)
+    {
+        import std.file : exists;
+
+        enum appleEmoji = "/System/Library/Fonts/Apple Color Emoji.ttc";
+        if (loaded is null && !emojiPath.length && sources.useSystemFontDb && appleEmoji.exists)
+            emojiPath = appleEmoji;
+    }
     const count = loaded !is null ? loaded.fallbacks.length : 3;
     const paths = [regularPath, nerdPath, emojiPath];
     foreach (i; 0 .. count)
@@ -613,6 +623,40 @@ bool adoptInterfaceFace(ref NativeSession session) @system
     request.font.ui = "none";
     resolveInterfaceFace(session, request, desktop);
     assert(!session.uiRegular.length && !session.uiBold.length);
+}
+
+/**
+A font file's bytes, mapped read-only where the platform maps files (a face
+outlives every frame, so the mapping is the process's), else read. Apple
+Color Emoji is 190 MB: mapped, only the strikes a frame draws are paged in,
+and from the system's own cache.
+*/
+private const(ubyte)[] mappedFont(string path) @system
+{
+    version (Posix)
+    {
+        import core.sys.posix.fcntl : open, O_RDONLY;
+        import core.sys.posix.sys.mman : mmap, MAP_FAILED, MAP_PRIVATE, PROT_READ;
+        import core.sys.posix.sys.stat : fstat, stat_t;
+        import core.sys.posix.unistd : close;
+        import std.string : toStringz;
+
+        const fd = open(path.toStringz, O_RDONLY);
+        if (fd >= 0)
+        {
+            scope (exit) close(fd);
+            stat_t st;
+            if (fstat(fd, &st) == 0 && st.st_size > 0)
+            {
+                auto at = mmap(null, cast(size_t) st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+                if (at != MAP_FAILED)
+                    return (cast(const(ubyte)*) at)[0 .. cast(size_t) st.st_size];
+            }
+        }
+    }
+    import std.file : read;
+
+    return cast(const(ubyte)[]) read(path);
 }
 
 /// Why the native arm did not open, on standard error — logcat on Android,
