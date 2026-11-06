@@ -27,7 +27,8 @@
  * in the DUB cache the shell seeds.
  *
  * Usage (from the repository root), one `--request` per request, as
- * `<package>,<configuration>,<build type>,<test root>`:
+ * `<package>,<configuration>,<build type>,<test root>`, where `<package>` is
+ * a sub-package (`:base`) or a single-file package's `.d` file:
  *
  *   dub run --single apps/ci/tools/dub-resolve-probe.d -- \
  *       [--compiler=ldc2] --out=probe.json --request=:base,,unittest,true --request=:ui,gui,checked,false
@@ -36,18 +37,18 @@
  */
 module dub_resolve_probe;
 
-import std.algorithm : map, splitter;
+import std.algorithm : endsWith, map, splitter;
 import std.array : array;
 import std.conv : to;
 import std.file : getcwd, tempDir, write;
 import std.getopt : getopt;
 import std.json : JSONValue;
-import std.path : buildPath;
+import std.path : absolutePath, buildPath;
 
 import dub.compilers.buildsettings : BuildOption, BuildRequirement, BuildSettings;
 import dub.compilers.compiler : getCompiler;
 import dub.compilers.utils : resolveLibs;
-import dub.dub : Dub, SkipPackageSuppliers;
+import dub.dub : Dub, SkipPackageSuppliers, UpgradeOptions;
 import dub.generators.generator : GeneratorSettings, ProjectGenerator;
 import dub.internal.logging : LogLevel, setLogLevel;
 import dub.internal.vibecompat.inet.path : NativePath;
@@ -130,10 +131,18 @@ JSONValue probe(string package_, string config, string buildType, bool testRoot,
     result["cache"] = cache;
     try
     {
+        // Rooted at the working directory, as `ci` runs `dub --root <repo>`.
         auto dub = new Dub(getcwd, null, SkipPackageSuppliers.all);
-        dub.loadPackage();
+        if (package_.endsWith(".d"))
+            dub.loadSingleFilePackage(NativePath(absolutePath(package_)));
+        else
+            dub.loadPackage();
         if (package_.length > 1 && package_[0] == ':')
             dub.loadPackage(dub.packageManager.getSubPackage(dub.project.rootPackage, package_[1 .. $], false));
+        // As `dub run`/`dub test` select what a recipe without selections
+        // needs, from the packages already present; nothing is written.
+        if (!dub.project.hasAllDependencies)
+            dub.upgrade(UpgradeOptions.select | UpgradeOptions.noSaveSelections);
 
         GeneratorSettings gs;
         gs.compiler = getCompiler(compilerName);
