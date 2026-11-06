@@ -59,7 +59,7 @@ import sparkles.ui.style : Palette;
 import sparkles.ui_vulkan;
 import sparkles.vulkan;
 import sparkles.vulkan_wsi;
-import sparkles.vulkan_wsi.presenter : pollCompleted, PresentWait;
+import sparkles.vulkan_wsi.presenter : pollCompleted, PresentWait, waitForNewest;
 import sparkles.profiling : FrameClock, FrameFlags, FrameHistory, FramePhase, FrameRecord,
     FrameStats, writeChromeTrace;
 // `PRF20`: empty inline functions unless built with `version (SparklesTracy)`.
@@ -680,6 +680,19 @@ private struct Gpu
 
     @disable this(this);
 
+    /*
+    The swapchain is about to be retired (a rebuild) or destroyed (a surface
+    released): its outstanding present ids go with it. Ids are per swapchain,
+    and a retired one may not be waited on (`VUID-vkWaitForPresentKHR-
+    swapchain-04997`) — an X11 loop paced by present wait would otherwise wait,
+    before the rebuilt swapchain's first frame, on the one it replaced, and
+    after a released surface on a handle already destroyed.
+    */
+    void swapchainGoes() @safe pure nothrow @nogc
+    {
+        presentWait.forget();
+    }
+
     void destroy() @system
     {
         if (!up)
@@ -699,6 +712,26 @@ private struct Gpu
         vk.destroy();
         up = false;
     }
+}
+
+@("ui_app.native_loop.aGoneSwapchainIsNotWaitedOn")
+@system unittest
+{
+    // An X11 loop paced by present wait (`PRF13`) waits only on the
+    // swapchain it presents to: a rebuild drops the retired one's ids, and
+    // the ids keep increasing on the next.
+    Gpu gpu;
+    const old = cast(VkSwapchainKHR) cast(void*) 0x40;
+    gpu.presentWait.submitted(old, 7);
+    gpu.presentWait.submitted(old, 8);
+    gpu.swapchainGoes();
+    assert(gpu.presentWait.outstanding == 0, "nothing left to wait on");
+    assert(!gpu.presentWait.waitForNewest(gpu.vk, 50.msecs), "no wait, no call");
+    assert(gpu.presentWait.idFor(3) == 9, "ids still increase");
+
+    const next = cast(VkSwapchainKHR) cast(void*) 0x41;
+    gpu.presentWait.submitted(next, 9);
+    assert(gpu.presentWait.outstanding == 1 && gpu.presentWait.lastSubmitted == 9);
 }
 
 private bool drive(alias present, alias handle, alias draw, alias setup, alias shutdown,
@@ -1130,6 +1163,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         }
         gpu.canvas.releaseTargets();
         gpu.views.destroy(gpu.vk);
+        gpu.swapchainGoes();
         underBorrow(() {
             gpu.swapchain.destroy(gpu.vk);
             if (gpu.vk.surface !is null)
@@ -1241,6 +1275,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         timing.settle += lap();
         gpu.canvas.releaseTargets();
         timing.release += lap();
+        const before = gpu.swapchain.handle;
         bool ok;
         cast(void) nativeIo(() {
             auto updated = Swapchain.recreate(gpu.swapchain, gpu.vk, window, force,
@@ -1257,6 +1292,9 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
             return ok;
         });
         timing.swapchain += lap();
+        // A new handle retired the old one, the rebuild failed or not.
+        if (gpu.swapchain.handle !is before)
+            gpu.swapchainGoes();
         if (!ok)
             return false;
         gpu.views.create(gpu.vk, gpu.swapchain);
@@ -1967,6 +2005,13 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                 drainEvents();
                 continue;
             }
+            // X11 presents at once: a loop drawing continuously would draw
+            // frames mailbox never shows. Wait until the last present is
+            // shown, so it draws one a refresh and each is shown, its
+            // display time stamped as the wait ends (`PRF13`).
+            if (!paced && gpu.up && gpu.vk.presentWait)
+                cast(void) waitForNewest(gpu.presentWait, gpu.vk, 50.msecs,
+                    (ulong id, MonoTime at) { onShown(id - 1, at, Duration.zero); });
             const started = MonoTime.currTime;
             lastPass = started;
             // The pass's zones, on this thread, until it ends however it does.
@@ -2075,8 +2120,10 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                     // Without the window system's feedback, the device's.
                     gpu.presentTag = recorded;
                     gpu.tagPresents = !feedback && (history !is null || changed);
-                    gpu.waitPresents = gpu.tagPresents && !gpu.vk.displayTiming
-                        && gpu.vk.presentWait;
+                    // Unpaced, every present carries an id: the next pass
+                    // waits for it.
+                    gpu.waitPresents = gpu.vk.presentWait
+                        && (!paced || gpu.tagPresents && !gpu.vk.displayTiming);
                 }
                 if (presented + 1 == cfg.native.debugging.renderdocCapture)
                 {
