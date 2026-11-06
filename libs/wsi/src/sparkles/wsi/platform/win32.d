@@ -109,6 +109,11 @@ struct Win32Wsi
         PhysicalPosition lastPointer;
         PointerCaptureMode captureMode;
         bool relativePointer;
+        // Full screen (`setFullscreen`): the style and placement it
+        // replaced, restored when it ends.
+        bool fullscreen;
+        LONG_PTR windowedStyle;
+        WINDOWPLACEMENT windowedPlacement;
     }
 
     private HINSTANCE instance_;
@@ -278,6 +283,51 @@ struct Win32Wsi
         if (!SetWindowTextW(windows_.at(checked.value).hwnd, wide.ptr))
             return win32Failure!void(WsiOperation.command, GetLastError(),
                 "SetWindowTextW failed");
+        return wsiOk();
+    }
+
+    /**
+    Shows the window full screen on its monitor, or restores it: the
+    borderless way, the frame's styles dropped and the window sized to the
+    monitor, then the style and placement it had put back. The size that
+    results arrives as a `SurfaceMetricsChangedEvent`.
+    */
+    WsiResult!void setFullscreen(WindowId id, bool fullscreen)
+    {
+        auto checked = checkedSlot(id, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!void(checked.error);
+        ref slot = windows_.at(checked.value);
+        if (slot.fullscreen == fullscreen)
+            return wsiOk();
+        HWND hwnd = slot.hwnd;
+        if (fullscreen)
+        {
+            MONITORINFO monitor;
+            monitor.cbSize = MONITORINFO.sizeof;
+            slot.windowedPlacement.length = WINDOWPLACEMENT.sizeof;
+            if (!GetWindowPlacement(hwnd, &slot.windowedPlacement)
+                || !GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &monitor))
+                return win32Failure!void(WsiOperation.command, GetLastError(),
+                    "the window's placement or monitor is unknown");
+            slot.windowedStyle = GetWindowLongPtrW(hwnd, GWL_STYLE);
+            SetWindowLongPtrW(hwnd, GWL_STYLE, slot.windowedStyle & ~cast(LONG_PTR) WS_OVERLAPPEDWINDOW);
+            const r = monitor.rcMonitor;
+            if (!SetWindowPos(hwnd, HWND_TOP, r.left, r.top, r.right - r.left, r.bottom - r.top,
+                    SWP_NOOWNERZORDER | SWP_FRAMECHANGED))
+                return win32Failure!void(WsiOperation.command, GetLastError(),
+                    "SetWindowPos failed");
+        }
+        else
+        {
+            SetWindowLongPtrW(hwnd, GWL_STYLE, slot.windowedStyle);
+            SetWindowPlacement(hwnd, &slot.windowedPlacement);
+            if (!SetWindowPos(hwnd, null, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE
+                    | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED))
+                return win32Failure!void(WsiOperation.command, GetLastError(),
+                    "SetWindowPos failed");
+        }
+        slot.fullscreen = fullscreen;
         return wsiOk();
     }
 

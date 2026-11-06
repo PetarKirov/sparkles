@@ -366,6 +366,40 @@ struct X11Wsi
     }
 
     /**
+    Asks the window manager to show the window full screen, or to restore
+    it: EWMH's `_NET_WM_STATE` client message, adding or removing
+    `_NET_WM_STATE_FULLSCREEN`. The size that results arrives as a
+    `SurfaceMetricsChangedEvent`; without a window manager nothing changes.
+    */
+    WsiResult!void setFullscreen(WindowId id, bool fullscreen)
+    {
+        auto checked = checkedSlot(id, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!void(checked.error);
+        const state = internAtom(connection_, "_NET_WM_STATE");
+        const full = internAtom(connection_, "_NET_WM_STATE_FULLSCREEN");
+        if (state == XCB_NONE || full == XCB_NONE)
+            return x11Failure!void(WsiOperation.command, 0,
+                "the X server has no _NET_WM_STATE atoms");
+        xcb_client_message_event_t message;
+        message.response_type = XCB_CLIENT_MESSAGE;
+        message.format = 32;
+        message.window = windows_.at(checked.value).window;
+        message.type = state;
+        message.data.data32[0] = fullscreen ? 1 : 0; // _NET_WM_STATE_ADD / _REMOVE
+        message.data.data32[1] = full;
+        message.data.data32[2] = 0;
+        message.data.data32[3] = 1; // the source: an application
+        xcb_send_event(connection_, 0, bootstrap_.root,
+            XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT | XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY,
+            cast(const(char)*) &message);
+        auto flushed = flushCommands();
+        if (flushed.hasError)
+            return flushed;
+        return hasStickyError_ ? wsiErr!void(stickyError_) : wsiOk();
+    }
+
+    /**
     Asks for the window's size, in logical units — pixels, X11 having no
     scale. A window manager may refuse or adjust the request; the size that
     results arrives as a `SurfaceMetricsChangedEvent`, as any resize does.
