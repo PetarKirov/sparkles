@@ -286,6 +286,34 @@ SDP6 for scratch, keeping the allocator parameter.
 
 Gate: SDP7; S11 rows; the recorded fixed-width scratch decisions re-measured.
 
+### S19 — Audit completeness
+
+The SDE9 audit reads the two shapes it could not see: SDL text built by
+concatenation (`~`, `~=`), and SDL text compared whole (`==`, `!=`, a
+`case` label). A match or comparison whose subject is a decoded value — a
+read of the document views, the `dub.sdl` schema or `std.json`, or a name
+bound from one — is typed work, and the audit says so by itself instead of
+through the allowlist. The markers name recipe forms only: the bare
+package name `test-runner` gives way to its recipe spellings,
+`sparkles:test-runner` and `test-runner/src`. A concatenation counts only
+when its operand holds recipe syntax, since a marker in prose (`+/-` in a
+key hint) builds no SDL. Markers are read in a literal's decoded value, so
+the quoted markers also match inside a `"…"` literal. Every allowlist entry
+is reclassified by the rule or migrated.
+
+Gate: `sdlAudit.*` tests pin, as positive fixtures, a concatenated
+recipe line, a marked constant built with `~`, `==` and `!=` against raw
+text, and a `case` label on a raw `switch`; and, as negative fixtures,
+concatenated prose holding a marker, and the
+same comparisons on `node.name`, a `foreach` variable over a JSON object, a
+lambda parameter over `valuesOf`, and a local initialized from
+`qualifiedName.localName`. `ci --check-adhoc-sdl` passes on the tree with
+no allowlist entry that the rule covers; any entry left states why no rule
+can tell it from SDL work. The legacy-setting removal in
+`standardize-build-settings` matches nodes by name, values and attributes,
+not by their text, and `standardize-build-settings --check` still reports
+no change on the tree.
+
 ## S11–S18 closure: 2026-10-27
 
 Every gate from S11 to S18 holds on this branch, delivered as one pull request.
