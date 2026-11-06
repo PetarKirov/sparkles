@@ -156,7 +156,7 @@ sparkles/
 │   ├── versions/src/sparkles/versions/
 │   ├── ui/src/sparkles/ui/          # canvas-first toolkit: geometry + style (Slot/Palette) + theme (one design language) + canvas (isCanvas!T) + widget + layout + state + display_list + interp/{immediate,cells,html}
 │   │   └── components/             # box, header, table, live, tasklist, progress, meter, tree, layout, theme, osc_link, demo (moved from core-cli)
-│   ├── ui-app/src/sparkles/ui_app/  # the application host: backend.d (pick) + gui_options.d/gui_setup.d (window+font CLI) + host.d/run.d (the loop) + tui_loop.d/gui_loop.d (arms) + record.d (headless target)
+│   ├── ui-app/src/sparkles/ui_app/  # the application host: backend.d (pick) + gui_options.d/gui_setup.d (window+font CLI) + interface_font.d (the interface face: choice, sizes, measurer) + host.d/run.d (the loop) + tui_loop.d/gui_loop.d (arms) + record.d (headless target)
 │   ├── twoslash/src/sparkles/twoslash/  # protocol (node model) + ingest (wired JSON) + overlay planner + render_html/render_ansi/render_widgets (sparkles:ui view) + style
 │   │   ├── schemes/                # semver.d, dmd.d, calver_*.d, pypi.d, maven.d, deb.d, … + registry.d
 │   │   ├── operations.d, ranges.d, parsing.d, traits.d, any.d
