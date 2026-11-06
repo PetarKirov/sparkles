@@ -1519,6 +1519,10 @@
           {
             "text": "Glyph inspection",
             "link": "/libs/ui-vulkan/reference/glyph-inspection"
+          },
+          {
+            "text": "Run on macOS",
+            "link": "/libs/ui-vulkan/how-to/run-on-macos"
           }
         ]
       },
