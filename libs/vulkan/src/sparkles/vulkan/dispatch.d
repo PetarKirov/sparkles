@@ -324,6 +324,12 @@ private enum CommandSet[] deviceSets = [
     CommandSet(khrPresentWait, [
         "WaitForPresentKHR",
     ]),
+    // Optional: when a present reached the display, and the display's
+    // refresh period (`VK_GOOGLE_display_timing`, Android's).
+    CommandSet(googleDisplayTiming, [
+        "GetRefreshCycleDurationGOOGLE",
+        "GetPastPresentationTimingGOOGLE",
+    ]),
     // Core in 1.1: whether a resource wants a dedicated allocation. Optional
     // so a 1.0 table stays complete.
     CommandSet(vkVersion11, [
@@ -389,6 +395,8 @@ enum string khrImageFormatList = "VK_KHR_image_format_list";
 enum string khrPresentId = "VK_KHR_present_id";
 /// ditto — needs `VK_KHR_present_id`
 enum string khrPresentWait = "VK_KHR_present_wait";
+/// ditto — when each present reached the display, and the refresh period
+enum string googleDisplayTiming = "VK_GOOGLE_display_timing";
 /// ditto — each heap's budget and usage, through the 1.1 memory query
 enum string extMemoryBudget = "VK_EXT_memory_budget";
 /// ditto
@@ -536,6 +544,7 @@ struct DeviceCommands
     static assert(matchesHeaderMacro(khrPresentId, VK_KHR_PRESENT_ID_EXTENSION_NAME));
     static assert(matchesHeaderMacro(khrPresentWait, VK_KHR_PRESENT_WAIT_EXTENSION_NAME));
     static assert(matchesHeaderMacro(extMemoryBudget, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME));
+    static assert(matchesHeaderMacro(googleDisplayTiming, VK_GOOGLE_DISPLAY_TIMING_EXTENSION_NAME));
     version (Android)
         static assert(matchesHeaderMacro(khrAndroidSurface,
             VK_KHR_ANDROID_SURFACE_EXTENSION_NAME));
