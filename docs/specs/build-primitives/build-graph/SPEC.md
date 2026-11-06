@@ -59,7 +59,14 @@ selects, how tasks are reported and how many run at once belong to the
 The graph declares test actions and the conditions under which a test result
 may be reused, but owns no test policy. A per-module compilation mode, a
 remote-execution protocol of its own, and a general workflow language are out
-of scope.
+of scope. So are:
+
+- **speculative execution:** the plan is static, so the graph has no
+  unresolved discovery to speculate on;
+- **a resident compiler process,** unless its state enters no key and
+  removing it leaves every output identical;
+- **build provenance,** which would record an action's terminal inputs beside
+  its result, never inside its key.
 
 Section 1 states the invariants. Sections 2–4 define recipe resolution,
 variants and the action graph; §5 the action key and the input manifest; §6 the
@@ -388,8 +395,8 @@ identity could hash one driver while the compiler runs another.
   C preprocessor's output (`--ffile-prefix-map=<root>=.` on LDC). So every
   in-tree path the outputs record is relative to the root, such as
   `./libs/base/src/…`, and so is the debug information's compilation
-  directory, which is the root itself. Store paths are not remapped: they
-  already name no worktree.
+  directory, which is the root itself. Store paths name no worktree, so this
+  map leaves them alone; BGA11 maps the toolchain's for another reason.
 - **Fallback:** with a compiler that cannot map them, the repository root's
   absolute path is part of the action key.
 
@@ -446,6 +453,17 @@ and test key downstream of it unchanged. That is the graph's early cutoff.
 _Rationale:_ a thin archive records its members' paths, not their bytes, so a
 changed member would leave the archive, and every link key that digests it,
 unchanged.
+
+**BGA11: Toolchain paths are remapped.** With a compiler that supports a prefix
+map, a compile **must** map the toolchain's store paths, the druntime and
+Phobos sources and the compiler's import directories, to a fixed prefix in
+debug information and `__FILE__`, with the same mechanism BGA5 uses. The
+toolchain's prebuilt druntime and Phobos **must** be built with the same map.
+No output then refers to the toolchain's store closure.
+
+_Rationale:_ a Phobos `assert` records its source file's store path, so every
+binary that links Phobos keeps the whole toolchain alive in its Nix closure
+([D40](./decisions.md#d40-toolchain-store-paths-are-remapped-accepted)).
 
 ## 5. Keys and the input manifest
 
@@ -876,10 +894,13 @@ include:
 **BGX3: Result reuse.** A test action's result **must not** be reused unless one
 of these holds, and otherwise every request runs it:
 
-- **Sandboxed:** it ran in the Nix sandbox (§10), and its key also covers:
-  - the kernel release;
-  - the CPU model and features;
-  - the build system's type.
+- **Sandboxed:** it ran in the Nix sandbox (§10). Its output records the
+  machine it observed at run time: the kernel release, the CPU model and
+  features, and the system type. A reuse **must** compare them with the
+  machine the test would otherwise run on, and a mismatch is a miss: the
+  test runs again, without reuse. That machine is the requesting one for its
+  own system type, and for another system type any remote builder configured
+  for it.
 - **Declared:** the test declares every runtime input it reads, and the key
   covers them.
 
@@ -888,12 +909,16 @@ A test that needs the network is never reused.
 _Rationale:_ tests in this repository read the network, the kernel, `/proc`
 and flake inputs, and the Nix sandbox isolates none of the kernel's features. A
 reused result for an undeclared input reports a pass that was never observed.
+The machine facts are compared on reuse, not keyed, because Nix chooses the
+builder after the derivation's hash is fixed
+([D33](./decisions.md#d33-sandboxed-tests-record-the-machine-they-ran-on-accepted)).
 
 ## 10. The Nix backend
 
 The Nix backend lowers the same action graph to Nix derivations, so that
 `/etc/nix/machines` remote builders, the Nix store and binary caches execute
-and share it.
+and share it. It uses neither dynamic derivations, recursive Nix nor
+import-from-derivation: every derivation is known before any builds.
 
 **BGN1: Same graph.** The Nix backend **must** lower the actions §4 defines, with
 the same declared keys, argument vectors and declared outputs as the local
@@ -901,7 +926,14 @@ backend.
 
 - **Staging helper:** each derivation's builder is a small, deterministic
   staging helper. It copies or hard-links each store input, never symlinks it,
-  to its repository-relative path under a private root directory.
+  to its repository-relative path under a private root directory. It
+  hard-links an input only when the input and the private root are on one
+  mount, and copies it otherwise.
+- **The input list:** the helper reads the list of inputs to stage from a file
+  (`passAsFile`), never from an argument or an environment variable, which
+  `MAX_ARG_STRLEN` bounds.
+- **Other systems:** a derivation for another system type uses that system's
+  toolchain, whose identity enters its keys (§8).
 - **The argument vector:** the helper then runs the action's normalized
   argument vector there, with the private root in the root placeholder's place
   (BGA6). So the recorded paths are root-relative, exactly as in the local
@@ -937,15 +969,54 @@ other machine shares.
 directly from their description (`nix derivation add`). Nix expression
 evaluation is not on the build path.
 
-**BGN4: Content addressing.** Derivations **should** be content-addressed
-(`ca-derivations`), so that a compile whose output is unchanged stops the
-rebuild of the archives and links that consume it. Where that feature is
-unavailable, the backend **must** fall back to input-addressed derivations and
-report it. That is the exception policy for this recommendation.
+- **Lowering:** derivations are added in topological order and in batches,
+  and one already in the store is not added again.
+- **Dry run:** a dry run computes each derivation's store path in process,
+  without the Nix daemon, so it writes nothing (TDY2).
+
+**BGN4: Content addressing.** `compile`, `archive` and `link` derivations
+**should** be content-addressed (`ca-derivations`), so that a compile whose
+output is unchanged stops the rebuild of the archives and links that consume
+it. Where that feature is unavailable, the backend **must** fall back to
+input-addressed derivations and report it. That is the exception policy for
+this recommendation. `test` and `generate` derivations are input-addressed.
+
+_Rationale:_ a content-addressed derivation is a claim that equal inputs give
+equal bytes. A test's output records an observation, not a function of its
+inputs, and a generator tool's determinism is not checked by the graph.
 
 **BGN5: Agreement.** For the same declared key and manifest, the local backend
 and the Nix backend **must** produce interchangeable outputs. The agreement
 oracle in [testing.md](./testing.md#oracle-6-backend-agreement) checks it.
+
+**BGN6: Diagnostics in the output.** A derivation's output **must** hold the
+action's standard output, standard error and exit status. A derivation whose
+action failed in a way BGA9 publishes therefore succeeds, with the failure
+recorded, and the backend replays it as BGA7 requires. A test derivation that
+records a failure is never reused (BGA9).
+
+**BGN7: Garbage-collector roots.** A run **must** hold an indirect
+garbage-collector root for every store path it looks up or realises, from the
+lookup until the run ends. A concurrent `nix-collect-garbage` therefore cannot
+delete a result between its lookup and its use, as BGS4's leases ensure
+locally.
+
+**BGN8: Infrastructure failures.** A failure of the Nix machinery **must not**
+be recorded or reported as the action's result:
+
+- **Infrastructure:** an unreachable or crashed builder, a failed substitution
+  or copy, a lost connection, or a builder killed for memory. The backend
+  retries it, on another builder or locally, up to a bound, and reports it as
+  an infrastructure failure when the bound is reached.
+- **The action's own ending:** the staging helper reports the action's
+  timeout or termination by a signal distinctly. That is the action's outcome,
+  which BGA9 does not publish and the backend does not retry.
+
+An outcome recorded in an output by BGN6 is authoritative.
+
+_Rationale:_ a remote builder that dies mid-compile says nothing about the
+compile. Reporting it as a compile failure would fail a run, and publishing it
+would replay a failure no cold build gives (invariant 5).
 
 ## 11. Public surface
 
