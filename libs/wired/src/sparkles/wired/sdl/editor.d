@@ -26,7 +26,7 @@ import sparkles.wired.sdl.embedded : isEmbeddedRendering, locateEmbeddedRecipe,
     newlineWidthAt, SdlEmbeddedRecipe, writeEmbeddedRendering;
 import sparkles.wired.sdl.error;
 import sparkles.wired.sdl.lexer : isSdlIdentifier, lexSDL, SdlTokenKind;
-import sparkles.wired.sdl.reader : parseSdlDocumentIn, SdlParseResult;
+import sparkles.wired.sdl.reader : parseSdlDocumentIn, reparseEdited, SdlParseResult;
 import sparkles.wired.sdl.writer : writeSdlScalar;
 
 /// Whether removing a node also removes the comments attached above it.
@@ -1203,8 +1203,13 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
             parsedText = rendering[];
             content = moved.content;
         }
+        // Only the edited region is re-parsed when it can be (§10, SDE14).
         static if (stateSize!Allocator == 0)
-            parsed = parseSdlDocumentIn!(config, Allocator)(parsedText, _sourceName, content);
+        {
+            bool localized;
+            parsed = reparseEdited!(config, Allocator)(_core, parsedText, _sourceName, content,
+                edits, localized);
+        }
         else
             parsed = parseSdlDocumentIn!(config, Allocator)(parsedText, _sourceName, content,
                 allocator);
