@@ -10,6 +10,8 @@ module sparkles.profiling.frame;
 
 import core.time : Duration, MonoTime;
 
+import sparkles.profiling.zones : FrameZones;
+
 /// Where a frame's CPU time goes. A program records the phases it has.
 enum FramePhase : ubyte
 {
@@ -83,6 +85,7 @@ struct FrameRecord
     bool shownKnown;          /// `shown` is set (`PRF13`)
     FrameFlags flags;         ///
     Duration shown;           /// when it reached the display, from the run's origin
+    FrameZones zones;         /// its named CPU zones (`PRF22`)
 
 @safe pure nothrow @nogc:
 
@@ -112,7 +115,7 @@ struct FrameRecord
     }
 }
 
-static assert(FrameRecord.sizeof <= 640, "PRF1: a record stays small");
+static assert(FrameRecord.sizeof <= 768, "PRF1: a record stays small");
 
 /**
 The time a frame is measured by (`PRF4`): from the run's origin, through a
@@ -158,7 +161,8 @@ struct FrameClock
 /**
 Times one frame at a time on a $(LREF FrameClock): `begin`, then a `lap` at
 the end of each phase (which credits the time since the previous lap), then
-`end`.
+`end`. Between `begin` and `end` the calling thread's CPU zones
+(`sparkles.profiling.zones`) collect into the frame.
 */
 struct FrameTimer
 {
@@ -176,6 +180,7 @@ struct FrameTimer
         current.number = next++;
         current.start = mark = clock.now;
         current.flags = flags;
+        () @trusted { FrameZones.current = &current.zones; }();
     }
 
     /// Credits the time since the last lap (or the start) to `phase`.
@@ -202,7 +207,17 @@ struct FrameTimer
     ref FrameRecord end() return
     {
         current.cpu = clock.now - current.start;
+        release();
         return current;
+    }
+
+    ~this() { release(); }
+
+    // Stops collecting zones, if this timer's frame collects them.
+    private void release() @trusted
+    {
+        if (FrameZones.current is &current.zones)
+            FrameZones.current = null;
     }
 }
 

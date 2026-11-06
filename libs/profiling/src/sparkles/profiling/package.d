@@ -9,3 +9,4 @@ public import sparkles.profiling.histogram;
 public import sparkles.profiling.history;
 public import sparkles.profiling.stats;
 public import sparkles.profiling.trace;
+public import sparkles.profiling.zones;
