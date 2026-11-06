@@ -338,7 +338,10 @@ the scheme from the settings portal (`sparkles:appearance`) before the first
 frame and delivers it, then delivers each change; `--appearance` pins
 it. The client frame the host draws follows the contrast itself: high
 contrast draws the bar's foot and the window's rings as libadwaita's
-high-contrast stylesheet does.
+high-contrast stylesheet does. The interface face (design-system `GLY10`) follows
+the desktop's interface font the same way unless `--ui-font` chose it: the face
+drawn stays bound while the new one is looked up, off the frame, and the next
+frame lays out and draws in it.
 
 **RES46: Insets.** Changes to the safe area (a soft keyboard, a cutout, a
 system bar) **must** arrive as metrics changes and be cold-start equivalent.
@@ -540,7 +543,7 @@ lead to.
 | RES42 | partial     | `resilience.RSC6.model.theChosenFontSizeOutlivesScaleAndSize` — cell metrics only; rasterization and input scale untested                                                                                                                                                                                                                              |
 | RES43 | not started | blocked on `F09`                                                                                                                                                                                                                                                                                                                                       |
 | RES44 | not started | blocked on `F09`                                                                                                                                                                                                                                                                                                                                       |
-| RES45 | partial     | `ui_app.assembler.colorSchemeReports` — the event; equivalence untested                                                                                                                                                                                                                                                                                |
+| RES45 | partial     | `ui_app.assembler.colorSchemeReports` — the event; `ui_app.native_loop.followsTheDesktopsInterfaceFont` — the interface font; equivalence untested                                                                                                                                                                                                     |
 | RES46 | partial     | `wsi.types.safeRegionIsTheSurfaceInsideItsInsets`                                                                                                                                                                                                                                                                                                      |
 | RES47 | not started | RSC44                                                                                                                                                                                                                                                                                                                                                  |
 | RES50 | not started | RSC36                                                                                                                                                                                                                                                                                                                                                  |
