@@ -71,8 +71,9 @@ the frame's number (monotonic over the run, `ulong`); its start, as a
 `MonoTime`-derived offset from the run's origin; the CPU duration of each
 phase of `FramePhase` (`wait`, `build`, `acquire`, `record`, `submit`,
 `present`, `rebuild`); its total CPU time; up to `maxGpuScopes` (16) GPU
-scopes, each a name index, a start and a duration; and `FrameFlags`. A record
-**must** be copyable, `@safe pure nothrow @nogc` to fill, and at most 640 bytes.
+scopes, each a name index, a start and a duration; its CPU zones' times
+(`PRF22`); and `FrameFlags`. A record **must** be copyable, `@safe pure nothrow
+@nogc` to fill, and at most 768 bytes.
 
 **PRF2: Frame flags.** `FrameFlags` **must** be a bit set with at least
 `rebuilt` (the swapchain was rebuilt before the frame), `suboptimal`,
@@ -176,6 +177,14 @@ scopes), and print the extended summary under any frame switch.
 
 **PRF20: Tracy, optional.** With `version (SparklesTracy)`, frame marks and
 CPU zones **may** be sent to Tracy; without it, nothing of Tracy is compiled.
+
+**PRF22: CPU zones.** `cpuZone!"name"` **must** time the rest of its scope and
+add it, by name, to the frame the calling thread is recording; on another
+thread, or between frames, it **must** add nothing. A frame **must** keep up to
+`maxCpuZones` (16) names' summed times and entry counts, and `ZoneStats` **must**
+summarize each name's mean and 95th percentile over the frames that entered it.
+The native arm **must** print that summary under any frame switch. Zones
+**must** allocate nothing, and with `PRF20`'s version each is a Tracy zone too.
 
 ## Overhead
 
