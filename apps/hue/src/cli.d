@@ -43,7 +43,7 @@ import sparkles.diff : WhitespaceMode;
 import sparkles.ui_app.backend : Backend, BackendPolicy,
     hostPickBackend = pickBackend, platformForcedBackend;
 import sparkles.ui_app.display : displayAvailable;
-import sparkles.ui_app.gui_options : defaultTheme, GuiOptions;
+import sparkles.ui_app.gui_options : defaultTheme, GuiOptions, NativeOptions;
 
 import settings : AnsiCopyMode, DefaultView, HueConfig, TableCopyMode;
 import settings_load : LoadedConfig, loadHueConfig;
@@ -180,6 +180,7 @@ struct ViewRenderOptions
     bool diffShowFormatting;
     bool diffChrome = true;
     GuiOptions gui;
+    NativeOptions native;        /// the root's native-window options, as given
     bool formatPreview = false;  /// `FMV8`: start in the format preview
     int formatWidth = 0;         /// ruler column (0 = discover)
     string formatter;            /// preferred formatter name
@@ -606,6 +607,11 @@ struct HueCli
 
     @Flatten("GUI Options")
     GuiOptions gui;
+
+    /// The native (Vulkan) window's window system and diagnostics (the
+    /// `vulkan` configuration); the raylib window ignores them.
+    @Flatten("Native Window Options")
+    NativeOptions native;
 
     @Subcommands
     SumType!(View, Diff, Pr, Gallery, Site, ThemeCmd, OverlayCmd, ConfigCmd, CreditsCmd) command;

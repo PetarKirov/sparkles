@@ -102,6 +102,25 @@ configuration "application" {
     versions "HueDmdFmt"
 }
 
+// The window drawn by `sparkles:ui-vulkan` on `sparkles:ui-app`'s native arm
+// (`sparkles:wsi`: Wayland, X11, AppKit through MoltenVK, Android) — the
+// application closure with no raylib in it. `gui_surface` is the seam: the
+// same `gui.d`, the arm's host and canvas behind it; the CRT is not drawn by
+// this renderer yet. `dub build :hue -c vulkan`.
+configuration "vulkan" {
+    targetType "executable"
+
+    libs "curl"
+    versions "HueCurl"
+
+    dependency "sparkles:ghostty" path="../.."
+    subConfiguration "sparkles:ui-app" "full-vulkan"
+    versions "HueGui" "HueGuiVulkan"
+
+    dependency "sparkles:dmd-fmt" path="../.."
+    versions "HueDmdFmt"
+}
+
 // Android build (BLD5): the same GUI closure as `application`, but emitted as
 // a shared library — raylib's PLATFORM_ANDROID backend owns `android_main()`
 // (inside the APK's NativeActivity) and calls this library's `main()`. dub
