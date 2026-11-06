@@ -35,6 +35,8 @@ import sparkles.syntax.theme : ResolvedTheme, resolveSyntaxTheme = resolveTheme;
 import sparkles.ui.editor.state : ReadOnlySpan;
 import commands : Command, CommandBinding, CommandContext, CommandId, commandBindings, commandCatalog;
 import examples : Example, exampleText;
+import document_text : decodeDocument, DocumentBytes, encodeDocument, enterEnding;
+import sparkles.syntax.ts.registry : canonicalLanguageOfPath;
 
 private class DisplayedFrame
 {
@@ -58,6 +60,8 @@ class Document
     size_t firstLine;
     bool followCaret = true;
     string language = "text";
+    bool bom;
+    string predominant = "\n";
 
     this(ulong id, string name, string content = "") @safe pure nothrow
     {
@@ -68,6 +72,10 @@ class Document
     }
 
     bool dirty() const @safe pure nothrow @nogc => field.state.text != saved;
+
+    /// Exact file bytes; the envelope is separate from the editable text.
+    string encodedBytes() const @safe pure nothrow
+        => encodeDocument(DocumentBytes(field.text, bom, predominant));
 }
 
 /// Thin shared-widget component, instantiated by recording, TUI and Vulkan hosts.
@@ -229,6 +237,24 @@ struct EditorApp
 
     CommandContext context() @safe => CommandContext(document.id, bindings);
 
+    /// Admit bytes before replacing any active state; unsupported UTF-8 leaves every tab intact.
+    bool openBytes(string name, string bytes) @safe
+    {
+        const decoded = decodeDocument(bytes);
+        if (decoded.hasError) { status = decoded.error; return false; }
+        ensureInitialized();
+        const id = nextId++;
+        auto opened = new Document(id, name, decoded.value.content);
+        opened.bom = decoded.value.bom;
+        opened.predominant = decoded.value.predominant;
+        opened.language = canonicalLanguageOfPath(name);
+        if (opened.language == "txt" || opened.language == "log") opened.language = "text";
+        opened.field.target = target;
+        tabs ~= opened;
+        activeTab = tabs.length - 1;
+        return true;
+    }
+
     private void ensureInitialized() @safe
     {
         if (tabs.length) return;
@@ -324,7 +350,15 @@ struct EditorApp
             break;
         case Command.edit:
             if (id.argument <= EditorAction.max)
-                document.field.run(commandOf(cast(EditorAction) id.argument));
+            {
+                if (id.argument == EditorAction.newline)
+                {
+                    const predominant = document.predominant;
+                    document.field.insertEach((in Text current, size_t position)
+                        => enterEnding(current, position, predominant));
+                }
+                else document.field.run(commandOf(cast(EditorAction) id.argument));
+            }
             break;
         case Command.quit:
             bool dirty;
@@ -642,4 +676,21 @@ struct EditorApp
     app.handleKey(KeyEvent(Key.enter));
     assert(app.themeName == "github-light" && !app.commands.palette.active);
     assert(app.document.field.text == "untouched");
+}
+
+/// Enter honors each selected line's convention; undo restores the exact BOM/mixed-ending bytes.
+@("editor.app.mixedEndingEnterAndUndo")
+@safe unittest
+{
+    import sparkles.ui.editor.selection : EditRange, SelectionSet;
+    EditorApp app;
+    assert(app.openBytes("mixed.txt", "\xef\xbb\xbfa\r\nb\nc\r\n"));
+    EditRange[2] ranges = [EditRange.caret(1), EditRange.caret(4)];
+    app.document.field.state.selection = SelectionSet.of(ranges[], 0);
+    app.execute(CommandId(Command.edit, EditorAction.newline));
+    assert(app.document.encodedBytes == "\xef\xbb\xbfa\r\n\r\nb\n\nc\r\n");
+    app.execute(CommandId(Command.edit, EditorAction.undo));
+    assert(app.document.encodedBytes == "\xef\xbb\xbfa\r\nb\nc\r\n");
+    assert(!app.openBytes("invalid.txt", "\xff"));
+    assert(app.document.encodedBytes == "\xef\xbb\xbfa\r\nb\nc\r\n");
 }

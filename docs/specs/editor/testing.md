@@ -280,3 +280,20 @@ outside a configured grammar environment correctly reports unavailable
 highlighting; the successful capture used the native development shell's
 grammar bundle. Generated settings, language discovery and complete Unicode
 layout/IME remain unverified.
+
+### Document insertion policy — 2026-11-06
+
+The shared UI suite passes 822 tests after adding per-selection insertion.
+Tests cover one undo transaction, length admission, protected spans,
+composition-first coordinates and exception safety. An independent review
+reproduced document loss from a throwing policy. `stepInPlace` now keeps the
+move path for nonthrowing providers and publishes a copied step only on
+success for throwing providers; the failing regression and independent repair
+probe confirm text, selection and history survive. The checked example prints
+`aAbcB` and then `abc` after one undo.
+
+The editor's nine app/document tests pass, including Enter at two carets on
+different line-ending conventions and exact BOM/mixed-ending bytes after
+undo. Invalid UTF-8 leaves the active tab unchanged. A checked native build
+also passes. This proves the in-memory admission/insertion envelope, not
+desktop save atomicity, Android providers or recovery durability.
