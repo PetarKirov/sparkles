@@ -19,6 +19,10 @@
         pname = "hue";
         version = "0.1.0";
 
+        # Named, not dub's default: on macOS the default is the native
+        # (Vulkan) arm.
+        dubBuildFlags = [ "--config=application" ];
+
         # `hue --version` reports the commit (`TPG2`), so this package is
         # rebuilt (step 2 only) on every commit.
         stampBuildInfo = true;
