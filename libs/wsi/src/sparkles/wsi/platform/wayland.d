@@ -2841,6 +2841,9 @@ struct WaylandWsi
         owner.emitPointer(PointerPhase.left);
         if (owner.pointerFocus_ is surface)
             owner.pointerFocus_ = null;
+        // A gesture that leaves the surface sends its `axis_stop` elsewhere
+        // (or nowhere): the next one here begins afresh.
+        owner.fingerScrolling_ = false;
     }
 
     private extern (C) static void onPointerMotion(void* data, wl_pointer*,
