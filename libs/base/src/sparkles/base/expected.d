@@ -1152,7 +1152,7 @@ static:
     }
 
     /// Handler for case when empty error is accessed.
-    void onAccessEmptyError() nothrow @nogc @safe
+    void onAccessEmptyError() pure nothrow @nogc @safe
     {
         assert(0, "Error not set");
     }
@@ -1172,6 +1172,17 @@ static:
         assertThrown!Throwable(ok(42).error);
         assertThrown!Throwable(err!int("foo").value);
     }
+}
+
+@("expected.Abort.accessorsArePure")
+@safe pure nothrow @nogc
+unittest
+{
+    // Both handlers are pure, so a pure function can read either side.
+    const failed = err!int("foo");
+    assert(failed.error == "foo");
+    const succeeded = ok(42);
+    assert(succeeded.value == 42);
 }
 
 @("expected.accessors return by ref only with access handlers")
