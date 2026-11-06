@@ -678,9 +678,14 @@ Vulkan ICD—must additionally hold the backend's owner-thread native-I/O borrow
   `wantsLayer`), whose `contentsScale` follows the backing scale, and exposes its pixel
   size from backing conversion, not logical bounds alone. A layer-hosting view receives
   no `drawRect:`, so frame opportunities (`Exposed` then `FrameReady`) come from the
-  window ordering front, a metrics change, and the window becoming unoccluded. AppKit
-  offers no frame callbacks to this host yet: a renderer presents when it wants a frame,
-  and a FIFO swapchain paces it.
+  window ordering front, a metrics change, and the window becoming unoccluded. Paced
+  frames come from `requestFrame`: one `FrameReady` at the next refresh of the window's
+  display, from the view's `CADisplayLink` (macOS 14+), carrying the time that frame is
+  shown; an idle renderer stops asking, and nothing wakes.
+- The process finishes launching on open, and a regular application asks to come to the
+  front with its first window. Since macOS 14 activation is cooperative: launched from a
+  shell, the process gets the focus unless the user's active application keeps it, which
+  a test that needs the focus must account for.
 - The window is server-decorated; `WindowStateChanged` reports `maximized` while zoomed,
   `activated` while key, `resizing` through a live resize and `suspended` while
   miniaturized.
