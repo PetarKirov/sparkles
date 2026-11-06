@@ -383,6 +383,20 @@ auto sdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator)(
 // sparkles.wired.sdl.typed_edit — §3.1
 void updateSDL(T, Editor)(ref Editor editor, SdlNode node, const ref T value);
 
+// sparkles.wired.sdl.open_document — §9
+alias SdlNodeHandle = Handle!SdlNodeTag;
+struct SdlOpenDocument(SdlParserConfig config = sdlFull, Allocator = Mallocator)
+{
+    SdlExpected!void open(const(char)[] host, const(char)[] sourceName = null,
+        SdlHostKind kind = SdlHostKind.recipe);
+    ref const(SdlDocument!Allocator) document() const;
+    const(char)[] host() const;
+    PoolResult!SdlNodeHandle handleOf(SdlNode node);     // issued once per node
+    PoolResult!SdlNode node(in SdlNodeHandle handle) const; // stale once replaced
+    auto editor();                                       // an SdlEditor to commit
+    SdlExpected!void commit(ref SdlEditor!(config, Allocator) editor);
+}
+
 SdlEmbeddedRecipe locateEmbeddedRecipe(const(char)[] host);   // content, close, isJson, found
 bool hasEmbeddedRecipeHeader(const(char)[] head);             // the header alone
 void writeEmbeddedRendering(Writer)(ref Writer writer, const(char)[] host, in SdlEmbeddedRecipe recipe);

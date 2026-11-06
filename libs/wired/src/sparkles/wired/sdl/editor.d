@@ -26,7 +26,7 @@ import sparkles.wired.sdl.embedded : isEmbeddedRendering, locateEmbeddedRecipe,
     newlineWidthAt, SdlEmbeddedRecipe, writeEmbeddedRendering;
 import sparkles.wired.sdl.error;
 import sparkles.wired.sdl.lexer : isSdlIdentifier, lexSDL, SdlTokenKind;
-import sparkles.wired.sdl.reader : parseSdlDocumentIn;
+import sparkles.wired.sdl.reader : parseSdlDocumentIn, SdlParseResult;
 import sparkles.wired.sdl.writer : writeSdlScalar;
 
 /// Whether removing a node also removes the comments attached above it.
@@ -42,6 +42,13 @@ private struct PendingEdit
     uint textStart, textLength; // replacement, in the editor's text buffer (SDE10)
     uint operation; // 1-based, in the order operations were made
     uint sequence; // creation order, which orders insertions at one point
+}
+
+/// Preorder cells `[first, end)` of the borrowed document that an operation
+/// replaces, so they lose their identity on a commit (§9).
+package struct SdlReplacedCells
+{
+    uint first, end;
 }
 
 private struct FragmentCheck
@@ -83,6 +90,7 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
     private UniqueBuffer!char _text;
     private UniqueBuffer!PendingEdit _edits;
     private UniqueBuffer!FragmentCheck _fragments;
+    private UniqueBuffer!SdlReplacedCells _replaced;
     private long _nodeDelta; // expected change in node count (SDE2)
     private bool _nodeCountKnown = true;
     private uint _operations;
@@ -293,6 +301,7 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
                 start = previous;
         }
         _nodeDelta -= subtreeSize(node.cellIndex);
+        replaces(node.cellIndex, node.cellIndex + subtreeSize(node.cellIndex));
         record(SdlSpan(start, end), _text.length, op);
     }
 
@@ -316,6 +325,7 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
         foreach (i; 0 .. cell.childCount)
             _nodeDelta -= subtreeSize(_core.childIndexes[cell.childStart + i]);
         _nodeDelta += shape.nodes;
+        replaces(node.cellIndex + 1, node.cellIndex + subtreeSize(node.cellIndex));
         const start = _text.length;
         if (shape.nodes)
         {
@@ -382,6 +392,7 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
         if (!shape.valid)
             return;
         _nodeDelta += cast(long) shape.nodes - cast(long) subtreeSize(node.cellIndex);
+        replaces(node.cellIndex, node.cellIndex + subtreeSize(node.cellIndex));
         const start = _text.length;
         if (cell.aloneOnLines)
         {
@@ -414,6 +425,13 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
             return fail(SdlErrorCode.editConflict, SdlSpan.init,
                 "the region is outside the content");
         _nodeCountKnown = false;
+        // Every node sharing a byte with the region loses its identity (§9).
+        foreach (cell; 1 .. _core.nodes.length)
+        {
+            const span = _core.nodes[cell].span;
+            if (span.startOffset < region.endOffset && region.startOffset < span.endOffset)
+                replaces(cell, cell + subtreeSize(cell));
+        }
         const start = _text.length;
         put(_text, text);
         record(SdlSpan(region.startOffset, region.endOffset), start, op);
@@ -425,6 +443,24 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
     may be written again. */
     SdlExpected!void write(Writer, Allocator)(ref Writer writer, ref Allocator allocator)
     {
+        UniqueBuffer!char output;
+        UniqueBuffer!TextEdit edits;
+        SdlParseResult!Allocator parsed;
+        auto rendered = render(allocator, output, edits, parsed);
+        if (rendered.hasError)
+            return rendered;
+        put(writer, output[]);
+        return sdlOk();
+    }
+
+    /** Package seam for commits (§9): renders the edited host into `output`,
+    the resolved edits — sorted, borrowing the editor's text — into `edits`,
+    and the checked re-parse of the output into `parsed`; `write` without the
+    copy. */
+    package SdlExpected!void render(Allocator)(ref Allocator allocator,
+        ref UniqueBuffer!char output, ref UniqueBuffer!TextEdit edits,
+        ref SdlParseResult!Allocator parsed)
+    {
         if (_failed)
             return sdlErr!void(_failure);
 
@@ -434,7 +470,7 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
             sorted ~= e;
         sortEdits(sorted[]);
 
-        UniqueBuffer!TextEdit edits;
+        edits.clear(releaseStorage: false);
         edits.reserve(sorted.length);
         foreach (ref e; sorted[])
             edits ~= TextEdit(TextSpan(e.start, e.end),
@@ -450,22 +486,36 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
 
         foreach (ref check; _fragments[])
         {
-            auto parsed = parseFragment(_text[check.textStart .. check.textStart + check.textLength],
+            auto fragment = parseFragment(_text[check.textStart .. check.textStart + check.textLength],
                 allocator);
-            if (parsed.hasError)
+            if (fragment.hasError)
                 return sdlErr!void(editError(SdlErrorCode.editFragmentInvalid, SdlSpan.init,
                     "a fragment does not parse as whole nodes", check.operation));
         }
 
-        UniqueBuffer!char output;
+        output.clear(releaseStorage: false);
         output.reserve(_host.length + _text.length);
         writeEdited(output, _host, edits[]);
 
-        auto checked = reparse(output[], edits[], allocator);
-        if (checked.hasError)
-            return checked;
-        put(writer, output[]);
-        return sdlOk();
+        return reparse(output[], edits[], allocator, parsed);
+    }
+
+    /// Package seam: the cells the operations so far replace (§9).
+    package const(SdlReplacedCells)[] replaced() const return scope => _replaced[];
+
+    /// Package seam: whether the editor borrows the document whose core is
+    /// `core`.
+    package bool borrows(scope const(SdlCore)* core) const => core is _core;
+
+    /** Package seam: after a commit replaced the borrowed document, every
+    further operation and write fails instead of reading freed cells. */
+    package void retire()
+    {
+        _core = null;
+        _host = null;
+        _failed = false;
+        fail(SdlErrorCode.editTargetMissing, SdlSpan.init,
+            "the editor's document was committed");
     }
 
     /// Package seam: records `error` as the editor's failure, for layers
@@ -544,6 +594,12 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
 
     private SdlNodeCell cellOf(scope SdlNode node) const
         => (() @trusted => _core.nodes[node.cellIndex])();
+
+    private void replaces(size_t first, size_t end)
+    {
+        if (first < end)
+            _replaced ~= SdlReplacedCells(cast(uint) first, cast(uint) end);
+    }
 
     private void record(SdlSpan range, size_t textStart, uint operation)
     {
@@ -1127,7 +1183,7 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
     }
 
     private SdlExpected!void reparse(Allocator)(scope const(char)[] output,
-        scope const TextEdit[] edits, ref Allocator allocator)
+        scope const TextEdit[] edits, ref Allocator allocator, ref SdlParseResult!Allocator parsed)
     {
         SdlSpan content = SdlSpan.init;
         UniqueBuffer!char rendering;
@@ -1148,9 +1204,9 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
             content = moved.content;
         }
         static if (stateSize!Allocator == 0)
-            auto parsed = parseSdlDocumentIn!(config, Allocator)(parsedText, _sourceName, content);
+            parsed = parseSdlDocumentIn!(config, Allocator)(parsedText, _sourceName, content);
         else
-            auto parsed = parseSdlDocumentIn!(config, Allocator)(parsedText, _sourceName, content,
+            parsed = parseSdlDocumentIn!(config, Allocator)(parsedText, _sourceName, content,
                 allocator);
         if (parsed.hasError)
         {
@@ -1491,49 +1547,6 @@ version (unittest)
             result.children ~= model(child);
         return result;
     }
-
-    /// Parses a recipe file, or the recipe a `.d` file embeds.
-    private auto parseRecipe(scope const(char)[] text, string path)
-    {
-        import core.lifetime : move;
-        import sparkles.wired.sdl.config : sdlDubRecipe;
-        import sparkles.wired.sdl.embedded : parseEmbeddedSdlDocument;
-        import sparkles.wired.sdl.reader : parseSdlDocument;
-
-        if (path[$ - 2 .. $] != ".d")
-            return parseSdlDocument!sdlDubRecipe(text, path);
-        auto embedded = parseEmbeddedSdlDocument!sdlDubRecipe(text, path);
-        return move(embedded.parsed);
-    }
-
-    /// Every `dub.sdl` and every embedded recipe under `apps`, `libs` and `docs`.
-    private string[] repositoryRecipes()
-    {
-        import sparkles.wired.sdl.embedded : hasEmbeddedRecipeHeader;
-        import std.file : dirEntries, exists, readText, SpanMode;
-        import std.path : buildNormalizedPath, dirName, extension;
-        import std.algorithm.searching : canFind;
-
-        const root = buildNormalizedPath(__FILE_FULL_PATH__.dirName, "../../../../../..");
-        string[] paths;
-        foreach (top; ["apps", "libs", "docs"])
-        {
-            const dir = buildNormalizedPath(root, top);
-            if (!dir.exists)
-                continue;
-            foreach (entry; dirEntries(dir, SpanMode.depth))
-            {
-                const path = entry.name;
-                if (path.canFind("/.dub/") || path.canFind("/node_modules/") || path.canFind("/build/")
-                    || !entry.isFile)
-                    continue;
-                if (path[$ - 8 .. $] == "/dub.sdl"
-                    || (path.extension == ".d" && hasEmbeddedRecipeHeader(readText(path))))
-                    paths ~= path;
-            }
-        }
-        return paths;
-    }
 }
 
 @("sdl.editor.properties.repositoryRecipes")
@@ -1542,6 +1555,7 @@ version (unittest)
     import core.exception : AssertError;
     import std.file : readText;
     import sparkles.wired.sdl.config : sdlDubRecipe;
+    import sparkles.wired.sdl.test_corpus : parseRecipe, repositoryRecipes;
 
     const paths = repositoryRecipes();
     assert(paths.length > 100, "the repository walk found too few recipes");
