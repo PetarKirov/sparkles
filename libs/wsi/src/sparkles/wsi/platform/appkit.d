@@ -254,6 +254,8 @@ private extern class NSEvent : NSObject
     double scrollingDeltaY() @selector("scrollingDeltaY");
     bool hasPreciseScrollingDeltas()
         @selector("hasPreciseScrollingDeltas");
+    ulong phase() @selector("phase");
+    ulong momentumPhase() @selector("momentumPhase");
     bool isDirectionInvertedFromDevice()
         @selector("isDirectionInvertedFromDevice");
 }
@@ -1698,11 +1700,35 @@ struct AppKitWsi
             scroll.discreteX = cast(int) scroll.dx;
             scroll.discreteY = cast(int) scroll.dy;
         }
-        scroll.source = precise ? ScrollSource.continuous : ScrollSource.wheel;
-        scroll.unit = precise ? ScrollUnit.pixel : ScrollUnit.logical;
+        scroll.phase = appKitScrollPhase(event.phase(), event.momentumPhase());
+        // A precise source that reports a gesture is fingers on a trackpad
+        // (or a Magic Mouse's surface); without one it is a continuous wheel.
+        scroll.source = !precise ? ScrollSource.wheel
+            : scroll.phase != ScrollPhase.none ? ScrollSource.finger : ScrollSource.continuous;
+        // Precise deltas are points, as every other AppKit coordinate is.
+        scroll.unit = ScrollUnit.logical;
         scroll.inverted = event.isDirectionInvertedFromDevice();
         scroll.modifiers = appKitMods(event.modifierFlags());
         emit(idAt(index), scroll);
+    }
+
+    /**
+    The scroll's gesture phase from `NSEvent.phase` and `momentumPhase`
+    (`NSEventPhase` bits: began 1, stationary 2, changed 4, ended 8,
+    cancelled 16, mayBegin 32). Any momentum bit wins: the fingers are off.
+    */
+    package static ScrollPhase appKitScrollPhase(ulong phase, ulong momentum)
+        @safe pure nothrow @nogc
+    {
+        if (momentum != 0)
+            return ScrollPhase.momentum;
+        if (phase & (8 | 16))
+            return ScrollPhase.ended;
+        if (phase & (1 | 32))
+            return ScrollPhase.began;
+        if (phase & (2 | 4))
+            return ScrollPhase.changed;
+        return ScrollPhase.none;
     }
 
     /// AppKit button numbers: 0/1/2 are left/right/middle, 3/4 the thumbs.
@@ -2636,6 +2662,21 @@ unittest
     assert(AppKitWsi.appKitKeyLocation(0x52) == KeyLocation.numpad);
     assert(AppKitWsi.appKitKeyLocation(0x5C) == KeyLocation.numpad);
     assert(AppKitWsi.appKitKeyLocation(0x00) == KeyLocation.standard);
+}
+
+
+@("wsi.appkit.scrollPhasesFollowTheGesture")
+@safe pure nothrow @nogc unittest
+{
+    assert(AppKitWsi.appKitScrollPhase(0, 0) == ScrollPhase.none);
+    assert(AppKitWsi.appKitScrollPhase(1, 0) == ScrollPhase.began);
+    assert(AppKitWsi.appKitScrollPhase(32, 0) == ScrollPhase.began);
+    assert(AppKitWsi.appKitScrollPhase(4, 0) == ScrollPhase.changed);
+    assert(AppKitWsi.appKitScrollPhase(2, 0) == ScrollPhase.changed);
+    assert(AppKitWsi.appKitScrollPhase(8, 0) == ScrollPhase.ended);
+    assert(AppKitWsi.appKitScrollPhase(16, 0) == ScrollPhase.ended);
+    assert(AppKitWsi.appKitScrollPhase(0, 1) == ScrollPhase.momentum);
+    assert(AppKitWsi.appKitScrollPhase(0, 8) == ScrollPhase.momentum);
 }
 
 @("wsi.appkit.modifiersComeFromNSEventFlags")
