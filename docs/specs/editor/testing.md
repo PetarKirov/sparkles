@@ -424,3 +424,21 @@ The first review stopped producing output without a final report and was
 interrupted. A second invocation with a five-minute limit returned the concrete
 findings above. This review covers the file/close checkpoint, not the remaining
 recovery, provider, Unicode or workload acceptance gates.
+
+### Session record format groundwork — 2026-11-07
+
+The editor suite passes 31 tests. `session_record.d` uses the shared wired
+JSON codec behind a versioned header and a BLAKE3 digest of the payload.
+Round-trip fixtures preserve Unicode text, BOM and mixed-ending metadata,
+saved baselines, directed selections, the active document and theme. Writer
+and reader validation refuse duplicate/zero document identities, missing
+active documents, invalid primary selections, non-UTF-8 caret boundaries and
+NUL-containing native paths. Tests reject every truncated prefix and every
+single-byte corruption of a valid record. UTF-8 validation and hashing use
+the existing SIMD-capable base implementations.
+
+This is format groundwork only: the application does not yet write recovery
+checkpoints, restore sessions, acknowledge durable recovery generations or
+meet the one-second checkpoint gate. Background immutable-generation storage,
+checkpoint scheduling, restart/error decisions and orderly-exit flushing
+remain required before EAP26 can be accepted.
