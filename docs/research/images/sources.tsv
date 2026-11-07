@@ -72,3 +72,14 @@ c	AOMediaCodec/SVT-AV1	https://gitlab.com/AOMediaCodec/SVT-AV1	master	a3ca29b7bb
 c	webm/libvpx	https://chromium.googlesource.com/webm/libvpx	main	fb0a26ad923b58c3663aaa9523992cf779b1563b	23031	140	23
 c	videolan/x264	https://code.videolan.org/videolan/x264	master	0480cb05fa188d37ae87e8f4fd8f1aea3711f7ee	3223	8	5
 c	aom	https://aomedia.googlesource.com/aom	main	60ce6c8920646d6c1e236e386dee9b65c7ae8e12	36933	378	37
+dlang	libmir/mir-algorithm	https://github.com/libmir/mir-algorithm	master	2da212382e434ef86e93f7b028bc2309205ae00e	1589	5	2
+dlang	libmir/mir-core	https://github.com/libmir/mir-core	master	4397b03a804b0368100e99252016c7b32aa562d1	305	1	1
+dlang	libmir/dcv	https://github.com/libmir/dcv	master	c777e2aa990548e0784a9c854ff9576f149364bb	798	35	17
+dlang	libmir/dcompute	https://github.com/libmir/dcompute	master	cdb5792d49ba2e43149acf219f3a6a61e9bff07e	131	1	1
+dlang	TurkeyMan/color	https://github.com/TurkeyMan/color	master	e9d31e416b1718cd2983bf2c39a96814626227c3	24	1	1
+dlang	AuburnSounds/gamut	https://github.com/AuburnSounds/gamut	main	7f07b8ca3602a03f367312186901f9f96d7c512b	475	3	2
+dlang	AuburnSounds/intel-intrinsics	https://github.com/AuburnSounds/intel-intrinsics	master	2141185c60cb166c79970d624b22d61fc980a96d	1316	5	1
+dlang	AuburnSounds/Dplug	https://github.com/AuburnSounds/Dplug	master	f4a6d71ae358798858fe3683bfcb9f21daad55ef	3660	38	7
+dlang	CyberShadow/ae	https://github.com/CyberShadow/ae	master	7870bc3cd03cd43fce638fcf3cf5a685cadea70a	3939	9	2
+go	golang/image	https://github.com/golang/image	master	b06f1de3f4900ff828b8f114c37eb9ea10dfed90	1	6	9
+cpp	google/skia	https://github.com/google/skia	main	3ad790ab4d6d596efae0d70e4b8bf7d339121984	1	67	98
