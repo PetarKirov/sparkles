@@ -38,13 +38,15 @@ int main(string[] args) @system
         }
     enforce(temporaryClose != 0, "The baseline did not close a save temporary.");
     struct Case { string name, injection, mode; }
-    Case[6] cases = [
+    Case[8] cases = [
         Case("write", "write:error=ENOSPC:when=2", "precommit"),
         Case("temporary-sync", "fsync:error=EIO:when=1", "precommit"),
         Case("temporary-close", text("close:error=EIO:when=", temporaryClose), "precommit"),
         Case("replacement", "renameat:error=EACCES:when=1", "precommit"),
         Case("atomic-create", "linkat:error=EEXIST:when=1", "create-failure"),
         Case("directory-sync", "fsync:error=EIO:when=2", "directory-sync-failure"),
+        Case("recovery-temporary-sync", "fsync:error=EIO:when=3", "recovery-precommit"),
+        Case("recovery-directory-sync", "fsync:error=EIO:when=4", "recovery-directory-sync-failure"),
     ];
     foreach (case_; cases)
     {

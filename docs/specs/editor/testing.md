@@ -442,3 +442,21 @@ checkpoints, restore sessions, acknowledge durable recovery generations or
 meet the one-second checkpoint gate. Background immutable-generation storage,
 checkpoint scheduling, restart/error decisions and orderly-exit flushing
 remain required before EAP26 can be accepted.
+
+### Immutable recovery archive primitives — 2026-11-07
+
+The editor suite passes 32 tests. `session_archive.d` appends immutable,
+positive, numbered generations and refuses duplicate-generation replacement.
+Reads validate the record digest, schema and generation/file identity. Both
+writer and reader enforce the same 512 MiB encoded-record limit. The caller
+must provide a private directory whose creation is already durable; archive
+initialization, active-instance ownership and discovery are not yet wired.
+
+The existing syscall-fault suite now passes eight cases. New recovery cases
+inject temporary `fsync` failure before the second generation commits, and
+directory `fsync` failure after it commits. Both assert that the earlier
+generation still contains its original dirty text and that the source
+document was not changed. The latter also verifies a committed second
+generation with an unconfirmed-durability receipt. These tests establish the
+archive primitives' ordering; they do not establish app checkpoint cadence,
+power-loss behavior, restore decisions or session flushing at exit.
