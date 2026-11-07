@@ -102,6 +102,8 @@ in
       androidPackages.all-android = pkgs.linkFarm "sparkles-all-android" {
         hue-apk = config.packages.hue-apk;
         hue-apk-repo = config.packages.hue-apk-repo;
+        # The raylib arm, until the raylib window is retired.
+        hue-raylib-apk = config.packages.hue-raylib-apk;
         hue-apk-unsigned = config.packages.hue-apk-unsigned;
         hue-aab-unsigned = config.packages.hue-aab-unsigned;
         hello-apk = config.packages.hello-apk;

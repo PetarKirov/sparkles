@@ -1,7 +1,22 @@
-# The hue Android build: `packages.libhue-android` (the whole app closure as
-# one shared library per ABI, via buildDAndroidLib — dub cannot drive cross
-# builds) and `packages.hue-apk` (libhue.so + the asset bundle, assembled by
-# buildAndroidApk).
+# The hue Android build, on two arms:
+#
+#   packages.libhue-android         the native arm (`BLD5`): apps/hue's
+#                                   `android` dub configuration — the activity
+#                                   `sparkles:wsi`'s, the drawing
+#                                   `sparkles:ui-vulkan`'s, no raylib — as
+#                                   lib<abi>/libhue.so
+#   packages.hue-apk                libhue.so + the asset bundle (buildAndroidApk)
+#   packages.hue-apk-repo           …with the whole repository as the documents
+#   packages.libhue-raylib-android  the raylib arm: the same closure on raylib's
+#                                   PLATFORM_ANDROID, by the raw ldc2 cross
+#                                   build (buildDAndroidLib), kept until the
+#                                   raylib window is retired
+#   packages.hue-raylib-apk         its APK, under its own application id
+#
+# The release artifacts (mkHueApk, mkHueAab, hue-apk-unsigned,
+# hue-aab-unsigned) still carry the raylib library: the native one requires
+# Vulkan 1.1, which narrows the devices a published APK installs on, and has
+# been run on the emulator only.
 #
 # The asset bundle mirrors the layout android_paths.d derives under the app's
 # data dir: `fonts/*.ttf` with `<file>.ttf.charset` sidecars (fc-query runs
@@ -27,8 +42,8 @@ in
       ndk = config.legacyPackages.androidNdk;
       sources = config.legacyPackages.sparklesSources;
 
-      # The version identifiers dub would define for the android configuration
-      # (HueGui + the Have_* set of the dependency graph).
+      # The version identifiers dub would define for the `android-raylib`
+      # configuration (HueGui + the Have_* set of the dependency graph).
       versions = [
         "HueGui"
         # hue selects sparkles:ui-app's `gui` configuration on Android (dub sets
@@ -67,8 +82,8 @@ in
       # The JNI shim additionally lives outside the normal app source closure.
       srcDirs = sources.srcClosure "apps/hue" ++ [ "libs/android/c" ];
 
-      libhue = config.legacyPackages.buildDAndroidLib {
-        pname = "libhue-android";
+      libhueRaylib = config.legacyPackages.buildDAndroidLib {
+        pname = "libhue-raylib-android";
         libName = "hue";
         mainFile = "apps/hue/src/app.d";
         inherit srcDirs versions;
@@ -84,14 +99,14 @@ in
           "${config.packages.ui-shaders}"
         ];
         emptyBuildInfo = true;
-        description = "hue (full GUI closure) as an Android shared library, per ABI";
+        description = "hue (full GUI closure, raylib arm) as an Android shared library, per ABI";
       };
 
       # The build document in `.build_info` (`TPG2`), per ABI. Nothing in hue
       # on Android shows it yet (HUE-O6); it is there for tooling and that
       # page. The unstamped library stays cached across commits.
-      libhueStamped = config.legacyPackages.stampAndroidLib {
-        unstamped = libhue;
+      libhueRaylibStamped = config.legacyPackages.stampAndroidLib {
+        unstamped = libhueRaylib;
         libName = "hue";
         app = "hue";
         check = config.legacyPackages.checkHueRaylibBuildInfo;
@@ -289,15 +304,15 @@ in
 
       # The native arm (`BLD5`): dub builds the `android` configuration — the
       # activity `sparkles:wsi`'s, the drawing `sparkles:ui-vulkan`'s, no raylib.
-      libhueVulkan = config.legacyPackages.buildSparklesAndroidLib {
-        pname = "libhue-vulkan-android";
+      libhue = config.legacyPackages.buildSparklesAndroidLib {
+        pname = "libhue-android";
         appDir = "apps/hue";
         libName = "hue";
         inherit ((androidHost system)) ldcAndroid;
         emptyBuildInfo = true;
       };
-      libhueVulkanStamped = config.legacyPackages.stampAndroidLib {
-        unstamped = libhueVulkan;
+      libhueStamped = config.legacyPackages.stampAndroidLib {
+        unstamped = libhue;
         libName = "hue";
         app = "hue";
         # The native arm links no raylib.
@@ -308,26 +323,26 @@ in
     in
     lib.optionalAttrs (androidHost system).supported {
       androidPackages.libhue-android = libhue;
-      androidPackages.libhue-vulkan-android = libhueVulkan;
+      androidPackages.libhue-raylib-android = libhueRaylib;
       androidPackages.hue-android-assets = hueAssets;
-      # hue on the native arm, under its own application id beside the raylib
-      # APK until it replaces it.
-      androidPackages.hue-vulkan-apk = config.legacyPackages.buildAndroidApk {
-        pname = "hue-vulkan";
-        manifest = manifestFor "vulkan";
-        renamePackage = "dev.petar_kirov.sparkles.hue.vulkan";
-        resDir = "${config.packages.hue-icon}/res";
-        libs = apkLibs libhueVulkanStamped;
-        assetsDir = hueAssets;
-        description = "hue — syntax-highlighting viewer on the native arm (Android NativeActivity APK)";
-      };
       androidPackages.hue-apk = config.legacyPackages.buildAndroidApk {
         pname = "hue";
-        manifest = manifestFor "raylib";
+        manifest = manifestFor "vulkan";
         resDir = "${config.packages.hue-icon}/res";
         libs = apkLibs libhueStamped;
         assetsDir = hueAssets;
-        description = "hue — syntax-highlighting viewer (Android NativeActivity APK)";
+        description = "hue — syntax-highlighting viewer (Android NativeActivity APK, native arm)";
+      };
+      # The raylib arm's APK, under its own application id: beside the native
+      # one, not replacing it, until the raylib window is retired.
+      androidPackages.hue-raylib-apk = config.legacyPackages.buildAndroidApk {
+        pname = "hue-raylib";
+        manifest = manifestFor "raylib";
+        renamePackage = "dev.petar_kirov.sparkles.hue.raylib";
+        resDir = "${config.packages.hue-icon}/res";
+        libs = apkLibs libhueRaylibStamped;
+        assetsDir = hueAssets;
+        description = "hue — syntax-highlighting viewer (Android NativeActivity APK, raylib)";
       };
       # Same app, the whole sparkles repository embedded as the browse surface
       # (dogfooding: hue reading its own codebase on-device).
@@ -339,7 +354,7 @@ in
       # whichever landed on ./result.
       androidPackages.hue-apk-repo = config.legacyPackages.buildAndroidApk {
         pname = "hue-repo";
-        manifest = manifestFor "raylib";
+        manifest = manifestFor "vulkan";
         renamePackage = "dev.petar_kirov.sparkles.hue.repo";
         resDir = "${config.packages.hue-icon}/res";
         libs = apkLibs libhueStamped;
@@ -361,7 +376,8 @@ in
       # See docs/specs/hue/fdroid.md § Version mapping.
       #
       # Sample assets, not the repo-embedded ones: hue-apk-repo is a dogfooding
-      # variant with its own package id and is not published.
+      # variant with its own package id and is not published. The raylib
+      # library, not the native arm's (see the header).
       legacyPackages.mkHueApk =
         {
           versionName,
@@ -373,7 +389,7 @@ in
           version = versionName;
           manifest = manifestFor "raylib";
           resDir = "${config.packages.hue-icon}/res";
-          libs = apkLibs libhueStamped;
+          libs = apkLibs libhueRaylibStamped;
           assetsDir = hueAssets;
           debug = false;
           sign = false;
@@ -392,7 +408,7 @@ in
           inherit versionName versionCode;
           manifest = manifestFor "raylib";
           resDir = "${config.packages.hue-icon}/res";
-          libs = apkLibs libhueStamped;
+          libs = apkLibs libhueRaylibStamped;
           assetsDir = hueAssets;
           description = "hue — release App Bundle, unsigned (signed outside nix for Play)";
         };
@@ -409,7 +425,7 @@ in
         pname = "hue";
         manifest = manifestFor "raylib";
         resDir = "${config.packages.hue-icon}/res";
-        libs = apkLibs libhueStamped;
+        libs = apkLibs libhueRaylibStamped;
         assetsDir = hueAssets;
         debug = false;
         sign = false;
