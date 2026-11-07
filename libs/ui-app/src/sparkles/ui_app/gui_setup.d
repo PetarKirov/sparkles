@@ -152,9 +152,9 @@ struct GuiSession
 /**
 Opens a window and loads its font set, in the order above.
 
-Returns `false` when no font could be resolved — the caller's cue to report the
-family it asked for, since the window is open by then and painting into it
-without a font would produce a blank one.
+Returns `false`, having said why on standard error, when the window would not
+open or no font could be resolved — the window is open by then, and painting
+into it without a font would produce a blank one.
 */
 bool openGuiSession(in GuiRequest req, out GuiSession session) @system
 {
@@ -184,7 +184,10 @@ bool openGuiSession(in GuiRequest req, out GuiSession session) @system
     //    platform") runs on into font loading with no GL context and dies on a
     //    null texture — a SIGSEGV where an error message belongs.
     if (!session.window.ready)
+    {
+        whyNot("the window would not open (no display, or no GL context)");
         return false;
+    }
     if (req.hasLaunchBackground)
     {
         session.window.beginFrame();
@@ -230,7 +233,10 @@ bool openGuiSession(in GuiRequest req, out GuiSession session) @system
 
     if (!FontSet.tryLoad(family, session.fontSizePx, session.fonts,
             maps, faces, sources, session.atlasScale))
+    {
+        whyNot(i"could not load a font from '$(family)' (is fontconfig available?)");
         return false;
+    }
 
     // 3b. The interface faces, one per type step, each at its size in drawing
     //     units: dp times the panel scale (1 for a pinned capture, as above).
@@ -283,4 +289,24 @@ void loadUiFaces(ref GuiSession session, string family,
     session.uiRegular = regular;
     session.uiBold = bold;
     session.reloadUiFaces();
+}
+
+// Why the session did not open, where the native arm's reasons go too: the
+// platform log on Android, standard error elsewhere.
+private void whyNot(Args...)(Args args) @system
+{
+    import std.conv : text;
+
+    version (Android)
+    {
+        import sparkles.base.logger : error;
+
+        error(text(args));
+    }
+    else
+    {
+        import std.stdio : stderr;
+
+        stderr.writeln(text(args));
+    }
 }
