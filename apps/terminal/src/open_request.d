@@ -433,7 +433,8 @@ null after a warning when it could not be made.
 */
 string installOpenShim() @system
 {
-    import std.file : mkdirRecurse, symlink, thisExePath;
+    import std.file : mkdirRecurse, symlink;
+    import sparkles.base.driver_libc : thisProgramPath;
     import std.path : buildPath;
     import std.process : environment;
 
@@ -445,7 +446,7 @@ string installOpenShim() @system
     {
         mkdirRecurse(bin);
         foreach (name; shimNames)
-            symlink(thisExePath, buildPath(bin, name));
+            symlink(thisProgramPath, buildPath(bin, name));
     }
     catch (Exception e)
     {
@@ -476,14 +477,15 @@ private int execNext(string[] args) @system
 {
     import core.sys.posix.unistd : execv;
     import std.algorithm.iteration : splitter;
-    import std.file : exists, isFile, thisExePath;
+    import std.file : exists, isFile;
+    import sparkles.base.driver_libc : thisProgramPath;
     import std.path : baseName, buildPath;
     import std.process : environment;
     import std.stdio : stderr;
     import std.string : toStringz;
 
     const name = args.length ? args[0].baseName : "sparkles-open";
-    const self = realPathOf(thisExePath);
+    const self = realPathOf(thisProgramPath);
     if (name != "sparkles-open")
         foreach (dir; environment.get("PATH", "").splitter(':'))
         {
