@@ -12,7 +12,8 @@ import sparkles.ui.components.command_palette : PaletteViewOptions, viewCommandP
 import sparkles.ui.components.editor : editorView, EditorViewOptions, scrollToPrimary;
 import sparkles.ui.components.lantern_view : BoxLayout, LabelArena, viewLantern;
 import sparkles.ui.editor.field : EditorField, forwardClipboard;
-import sparkles.ui.editor.command : EditCommand;
+import sparkles.ui.editor.command : EditCommand, EditKind;
+import sparkles.ui.components.controls : chip, ControlSize;
 import sparkles.ui.editor.keys : commandOf, EditorAction, EditorTarget, windowTarget;
 import sparkles.ui.geometry : Insets, Point, SizeSpec;
 import sparkles.ui.layout : Frame;
@@ -23,6 +24,7 @@ import sparkles.ui.theme_catalog : canonicalThemeNames;
 import sparkles.ui.command_palette : PaletteEntry;
 import sparkles.ui.state : hitAt, hoverTargets, HoverTarget, sourceOffsetAt;
 import sparkles.ui.widget : Builder, Widget, WidgetKind, WidgetTree;
+import sparkles.ui.wrap : TextWrap;
 import sparkles.ui_app.backend : Backend;
 import sparkles.ui_app.host : canReadClipboard, withPreedit;
 import sparkles.ui_app.run_app : AppTheme;
@@ -40,6 +42,7 @@ import sparkles.syntax.ts.registry : canonicalLanguageOfPath;
 import sparkles.ui.editor.state : EditorState;
 import sparkles.ui.editor.selection : SelectionSet;
 import document_io : DocumentIo, FileOperation;
+import document_files : SaveAuthorization;
 import std.path : absolutePath, baseName;
 
 private class DisplayedFrame
@@ -54,6 +57,16 @@ private class DisplayedFrame
     }
 }
 
+private class SaveIntent
+{
+    ulong document;
+    string path;
+    Text revision;
+    bool bom;
+}
+
+private enum Dialog : ubyte { none, openPath, savePath }
+
 /// A tab owns its reference-counted field; arrays contain tab references, never Text values.
 class Document
 {
@@ -67,6 +80,8 @@ class Document
     bool bom;
     string predominant = "\n";
     string path, savedBytes;
+    bool saving;
+    string durabilityWarning;
 
     this(ulong id, string name, string content = "") @safe pure nothrow
     {
@@ -116,9 +131,105 @@ struct EditorApp
     private string[] themeNames;
     private DocumentIo files;
     private ulong[ulong] openOrigins;
+    private SaveIntent[ulong] saves;
+    private SaveIntent replacement;
+    private string replacementWarning;
+    private Dialog dialog;
+    private EditorField pathInput;
+    private ulong dialogEpoch;
+    private ulong pasteDialog;
     Command startupCommand;
 
     bool filesBusy() const scope @safe pure nothrow @nogc => files !is null && files.busy;
+
+    /// Capture one revision before asynchronous destination inspection.
+    bool saveTo(string path) @safe
+    {
+        ensureInitialized();
+        if (saves.length || replacement !is null)
+        {
+            status = "Resolve the pending save before saving again.";
+            return false;
+        }
+        try { path = absolutePath(path); }
+        catch (Exception) { status = "The destination path could not be resolved."; return false; }
+        foreach (tab; tabs)
+            if (tab.id != document.id && tab.path == path)
+            {
+                status = "That destination is already open in another tab.";
+                return false;
+            }
+        foreach (intent; saves)
+            if (intent.path == path)
+            {
+                status = "Another save is already using that destination.";
+                return false;
+            }
+        auto intent = new SaveIntent;
+        intent.document = document.id;
+        intent.path = path;
+        intent.revision = document.field.state.text;
+        intent.bom = document.bom;
+        if (files is null) files = new DocumentIo;
+        const request = files.probe(path, intent.revision, intent.bom, intent.document,
+            document.savedBytes, document.path == path);
+        if (request.hasError) { status = request.error; return false; }
+        document.saving = true;
+        saves[request.value.value] = intent;
+        status = "Checking destination…";
+        return true;
+    }
+
+    bool overwritePending() const scope @safe pure nothrow @nogc => replacement !is null;
+
+    /// Consent applies to this captured revision and destination only.
+    void resolveOverwrite(bool accepted) @safe
+    {
+        if (replacement is null) return;
+        auto intent = replacement;
+        replacement = null;
+        ++dialogEpoch;
+        if (accepted) submitSave(intent, SaveAuthorization.replaceConfirmed);
+        else
+        {
+            foreach (tab; tabs) if (tab.id == intent.document) tab.saving = false;
+            status = "Save cancelled; the destination was not changed.";
+        }
+    }
+
+    private bool modal() const scope @safe pure nothrow @nogc
+        => dialog != Dialog.none || replacement !is null;
+
+    private void beginPath(Dialog requested) @safe
+    {
+        if (saves.length)
+        {
+            status = "Wait for the pending destination check or save to finish.";
+            return;
+        }
+        if (commands.palette.active) commands.palette.cancel(commands.palette.snapshot.ticket);
+        endPicker(false);
+        document.field.run(EditCommand.of(EditKind.blur), MonoTime.currTime);
+        lantern.reset();
+        dialog = requested;
+        ++dialogEpoch;
+        pathInput = EditorField.singleLine(requested == Dialog.savePath ? document.path : "", target);
+        pathInput.run(EditCommand.of(EditKind.selectAll), MonoTime.currTime);
+        status = null;
+    }
+
+    private void submitSave(SaveIntent intent, SaveAuthorization authorization) @safe
+    {
+        const request = files.save(intent.path, intent.revision, intent.bom, intent.document, authorization);
+        if (request.hasError)
+        {
+            foreach (tab; tabs) if (tab.id == intent.document) tab.saving = false;
+            status = request.error;
+            return;
+        }
+        saves[request.value.value] = intent;
+        status = "Saving…";
+    }
 
     /// Open asynchronously; a pending read never replaces an edited buffer.
     bool openPath(string path) @safe
@@ -145,8 +256,50 @@ struct EditorApp
         if (files is null) return;
         foreach (result; files.poll())
         {
-            if (result.operation != FileOperation.open) continue;
             ulong ticket = result.ticket.value;
+            if (result.operation != FileOperation.open)
+            {
+                auto found = ticket in saves;
+                if (found is null) continue;
+                auto intent = *found;
+                saves.remove(ticket);
+                if (result.error.length)
+                {
+                    foreach (tab; tabs) if (tab.id == intent.document) tab.saving = false;
+                    status = result.path ~ ": " ~ result.error;
+                }
+                else if (result.operation == FileOperation.probe)
+                {
+                    if (result.destinationExists)
+                    {
+                        if (commands.palette.active) commands.palette.cancel(commands.palette.snapshot.ticket);
+                        endPicker(false);
+                        lantern.reset();
+                        document.field.run(EditCommand.of(EditKind.blur), MonoTime.currTime);
+                        ++dialogEpoch;
+                        replacement = intent;
+                        replacementWarning = (result.externalChange ? "The destination differs from the saved version. " : "")
+                            ~ "Replacing this file cannot check for concurrent changes atomically. "
+                            ~ "Another writer's changes after this check may be overwritten. Replace this time?";
+                        status = null;
+                    }
+                    else submitSave(intent, SaveAuthorization.createOnly);
+                }
+                else
+                {
+                    foreach (tab; tabs) if (tab.id == intent.document)
+                    {
+                        tab.saved = Text(result.revision);
+                        tab.savedBytes = result.bytes;
+                        tab.path = result.path;
+                        tab.name = baseName(result.path);
+                        tab.saving = false;
+                        tab.durabilityWarning = result.receipt.durable ? null : result.receipt.warning;
+                    }
+                    status = result.receipt.durable ? "Saved." : "Written, but durability is unconfirmed: " ~ result.receipt.warning;
+                }
+                continue;
+            }
             ulong origin;
             if (const found = ticket in openOrigins) origin = *found;
             openOrigins.remove(ticket);
@@ -157,7 +310,7 @@ struct EditorApp
                 if (shotPath.length) captureError = lastOpenError;
                 continue;
             }
-            const activate = document.id == origin && !commands.palette.active && !lantern.active && !lantern.shown;
+            const activate = document.id == origin && !modal && !commands.palette.active && !lantern.active && !lantern.shown;
             bool duplicate;
             foreach (i, tab; tabs)
                 if (tab.path == result.path)
@@ -245,6 +398,7 @@ struct EditorApp
     private ulong selectingDocument;
     private size_t selectionAnchor;
     private enum size_t tabHitBase = 0x7400_0000;
+    private enum size_t dialogConfirmHit = 0x7500_0000, dialogCancelHit = 0x7500_0001;
 
     /// Retain the committed frame for event routing; no second layout/hit model.
     void paint(H)(ref H host, const WidgetTree tree, const Frame[] frames)
@@ -268,6 +422,22 @@ struct EditorApp
         }
         if (pointer.button != PointerButton.left && pointer.action != PointerAction.drag) return;
         const hit = hits.hitAt(pointer.pos.x, pointer.pos.y);
+        if (modal)
+        {
+            if (pointer.action == PointerAction.press)
+            {
+                if (hit == dialogConfirmHit + 2 * dialogEpoch) execute(CommandId(Command.confirm));
+                else if (hit == dialogCancelHit + 2 * dialogEpoch) execute(CommandId(Command.cancel));
+                else if (dialog != Dialog.none && displayed !is null)
+                {
+                    const offset = sourceOffsetAt(displayed.tree, displayed.frames,
+                        Point(cast(int) pointer.pos.x, cast(int) pointer.pos.y));
+                    if (offset >= 0 && cast(size_t) offset <= pathInput.state.text.length)
+                        pathInput.run(EditCommand.setRange(cast(size_t) offset, cast(size_t) offset), MonoTime.currTime);
+                }
+            }
+            return;
+        }
         if (commands.palette.active)
         {
             const base = PaletteViewOptions.init.hitBase;
@@ -303,18 +473,21 @@ struct EditorApp
             pasteRequest = chunk.request;
             pasteDocument = document.id;
             pastePalette = commands.palette.active ? commands.palette.snapshot.ticket.value : 0;
+            pasteDialog = dialog != Dialog.none ? dialogEpoch : 0;
         }
         pasteBytes ~= chunk.text[];
         if (!chunk.last) return;
         collectingPaste = false;
         scope (exit) pasteBytes.length = 0;
-        if (document.id != pasteDocument
+        if (document.id != pasteDocument || pasteDialog != (dialog != Dialog.none ? dialogEpoch : 0)
             || (commands.palette.active ? commands.palette.snapshot.ticket.value : 0) != pastePalette)
         {
             status = "Paste cancelled because its input target changed.";
             return;
         }
-        if (pastePalette)
+        if (pasteDialog) pathInput.paste(pasteBytes, pasteRequest, MonoTime.currTime);
+        else if (modal) return;
+        else if (pastePalette)
             apply(commands.paste(pasteBytes, pasteRequest, context, MonoTime.currTime));
         else
             document.field.paste(pasteBytes, pasteRequest, MonoTime.currTime);
@@ -330,7 +503,7 @@ struct EditorApp
 
     size_t tabCount() const @safe pure nothrow @nogc => tabs.length;
 
-    CommandContext context() @safe => CommandContext(document.id, bindings);
+    CommandContext context() @safe => CommandContext(document.id, bindings, modal);
 
     /// Admit bytes before replacing any active state; unsupported UTF-8 leaves every tab intact.
     bool openBytes(string name, string bytes) @safe
@@ -383,6 +556,31 @@ struct EditorApp
         final switch (id.operation)
         {
         case Command.none: break;
+        case Command.open: beginPath(Dialog.openPath); break;
+        case Command.saveAs: beginPath(Dialog.savePath); break;
+        case Command.save:
+            if (document.path.length) saveTo(document.path);
+            else beginPath(Dialog.savePath);
+            break;
+        case Command.confirm:
+            if (replacement !is null) resolveOverwrite(true);
+            else if (dialog != Dialog.none)
+            {
+                const requested = dialog;
+                const path = pathInput.text;
+                if (!path.length) { status = "Enter a destination path."; break; }
+                dialog = Dialog.none;
+                ++dialogEpoch;
+                if (requested == Dialog.openPath) openPath(path);
+                else saveTo(path);
+            }
+            break;
+        case Command.cancel:
+            if (replacement !is null) resolveOverwrite(false);
+            dialog = Dialog.none;
+            ++dialogEpoch;
+            pathInput.run(EditCommand.of(EditKind.blur), now);
+            break;
         case Command.palette:
             endPicker(false);
             commands.open(PaletteInvocation(document.id, document.id), context);
@@ -487,6 +685,11 @@ struct EditorApp
     {
         ensureInitialized();
         if (key.action == KeyAction.release) return;
+        if (dialog != Dialog.none && pathInput.state.composition.active)
+        {
+            pathInput.key(key, now);
+            return;
+        }
         if (commands.palette.active)
         {
             apply(commands.key(key, context, now));
@@ -498,7 +701,10 @@ struct EditorApp
         if (resolved.kind == StepKind.execute)
             execute(CommandId(resolved.cmd.cmd, resolved.cmd.arg), now);
         else if (resolved.kind == StepKind.unbound)
-            document.field.key(key, now);
+        {
+            if (dialog != Dialog.none) pathInput.key(key, now);
+            else if (!modal) document.field.key(key, now);
+        }
     }
 
     /// The same event vocabulary reaches every rendering host.
@@ -509,13 +715,17 @@ struct EditorApp
         document.field.context.clipboardWrite = __traits(compiles, host.clipboard(""));
         commands.query.context.clipboardRead = canReadClipboard!H;
         commands.query.context.clipboardWrite = __traits(compiles, host.clipboard(""));
+        pathInput.context.clipboardRead = canReadClipboard!H;
+        pathInput.context.clipboardWrite = __traits(compiles, host.clipboard(""));
         event.match!(
             (in KeyEvent key) { handleKey(key); },
             (in PasteEvent paste) { receivePaste(paste); },
             (in PointerEvent pointer) { this.pointer(pointer); },
             (in CompositionEvent update) {
                 withPreedit(host, update, (scope const(char)[] preedit) {
-                    if (commands.palette.active) commands.query.compose(update, preedit, MonoTime.currTime);
+                    if (dialog != Dialog.none) pathInput.compose(update, preedit, MonoTime.currTime);
+                    else if (modal) return;
+                    else if (commands.palette.active) commands.query.compose(update, preedit, MonoTime.currTime);
                     else document.field.compose(update, preedit, MonoTime.currTime);
                 });
             },
@@ -528,6 +738,7 @@ struct EditorApp
             (in _) {});
         forwardClipboard(document.field, host);
         forwardClipboard(commands.query, host);
+        forwardClipboard(pathInput, host);
         if (quitRequested) host.quit();
     }
 
@@ -588,7 +799,24 @@ struct EditorApp
                 slot: i == activeTab ? Slot.selection : Slot.muted,
                 padding: Insets(0, 1, 0, 1), paintBackground: true));
         children ~= b.add(Widget(kind: WidgetKind.row, children: tabNodes, height: SizeSpec.fixed(1)));
-        if (commands.palette.active)
+        if (modal)
+        {
+            children ~= b.add(Widget(kind: WidgetKind.text, text: replacement !is null
+                ? "Replace existing file: " ~ replacement.path
+                : dialog == Dialog.openPath ? "Open file" : "Save as", slot: Slot.info));
+            if (replacement !is null)
+                children ~= b.add(Widget(kind: WidgetKind.text, text: replacementWarning,
+                    wrap: TextWrap.greedy, slot: Slot.warn));
+            if (dialog != Dialog.none)
+                children ~= editorView(b, pathInput.state, EditorViewOptions(visibleLines: 1, placeholder: "Path…"));
+            uint[] actions;
+            actions ~= chip(b, replacement !is null ? "Replace this time" : "Enter: confirm", dialogConfirmHit + 2 * dialogEpoch,
+                false, ControlSize(rows: 3));
+            actions ~= chip(b, "Esc: cancel", dialogCancelHit + 2 * dialogEpoch, false, ControlSize(rows: 3));
+            children ~= b.add(Widget(kind: WidgetKind.row, children: actions, height: SizeSpec.fixed(3)));
+            children ~= b.add(Widget(kind: WidgetKind.text, height: SizeSpec.grow()));
+        }
+        else if (commands.palette.active)
         {
             const reserved = inspector ? 12 : 11;
             const rows = host.size.height > reserved + 3
@@ -644,6 +872,8 @@ struct EditorApp
                     document.field.state.composition.active, "  highlighting ",
                     highlighting.busy ? "pending" : highlighting.error.length ? highlighting.error : "ready")));
         if (status.length) children ~= b.add(Widget(kind: WidgetKind.text, text: status, slot: Slot.warn));
+        if (document.durabilityWarning.length)
+            children ~= b.add(Widget(kind: WidgetKind.text, text: "Durability warning: " ~ document.durabilityWarning, slot: Slot.warn));
         children ~= b.add(Widget(kind: WidgetKind.text, text: "UTF-8  •  " ~ (document.dirty ? "Modified" : "Saved"),
             slot: Slot.muted, height: SizeSpec.fixed(1)));
         return b.finish(b.add(Widget(kind: WidgetKind.column, children: children,
@@ -707,6 +937,40 @@ struct EditorApp
     assert(app.document.field.text == value);
     app.execute(CommandId(Command.edit, EditorAction.undo));
     assert(app.document.field.empty);
+}
+
+/// A completed save acknowledges only the captured revision, preserving newer edits.
+@("editor.app.saveAcknowledgesCapturedRevision")
+@safe unittest
+{
+    version (Posix) {}
+    else
+    {
+        import sparkles.test_runner.skip : skipTest;
+        skipTest("The native POSIX file adapter is not available.");
+    }
+    import core.thread : Thread;
+    import core.time : seconds;
+    import sparkles.test_utils.tmpfs : TmpFS;
+    import std.path : buildPath;
+    import std.file : readText;
+    auto fixture = TmpFS.create();
+    const path = buildPath(fixture.dir, "captured.txt");
+    EditorApp app;
+    scope (exit) app.dispose();
+    app.document.field.insert("first");
+    assert(app.saveTo(path));
+    app.document.field.insert(" later");
+    const until = MonoTime.currTime + 3.seconds;
+    while (app.filesBusy && MonoTime.currTime < until)
+    {
+        app.pollDocuments();
+        (() @trusted => Thread.yield())();
+    }
+    assert(!app.filesBusy);
+    assert((() @trusted => readText(path))() == "first");
+    assert(app.document.path == path && app.document.field.text == "first later" && app.document.dirty);
+    assert(app.document.saved == Text("first"));
 }
 
 /// Pointer placement uses the displayed source ledger; tab and palette hits share the same frames.
@@ -890,4 +1154,90 @@ struct EditorApp
     assert(app.document.field.text == "a");
     app.execute(CommandId(Command.edit, EditorAction.undo));
     assert(app.document.field.empty);
+}
+
+/// Save As accepts path input without inserting it into the document.
+@("editor.app.saveAsKeyboardFlow")
+@safe unittest
+{
+    version (Posix) {}
+    else
+    {
+        import sparkles.test_runner.skip : skipTest;
+        skipTest("The native POSIX file adapter is not available.");
+    }
+    import core.thread : Thread;
+    import core.time : seconds;
+    import sparkles.input : charEvent, Key;
+    import sparkles.test_utils.tmpfs : TmpFS;
+    import std.path : buildPath;
+    import std.file : readText;
+    auto fixture = TmpFS.create();
+    const path = buildPath(fixture.dir, "from-dialog.txt");
+    EditorApp app;
+    scope (exit) app.dispose();
+    app.document.field.insert("document");
+    app.execute(CommandId(Command.saveAs));
+    foreach (c; path) app.handleKey(KeyEvent(Key.char_, c));
+    app.handleKey(KeyEvent(Key.enter));
+    const until = MonoTime.currTime + 3.seconds;
+    while (app.filesBusy && MonoTime.currTime < until)
+    {
+        app.pollDocuments();
+        (() @trusted => Thread.yield())();
+    }
+    assert(!app.filesBusy && app.document.field.text == "document" && !app.document.dirty);
+    assert((() @trusted => readText(path))() == "document");
+}
+
+/// Existing files remain intact until consent, including a change after the check.
+@("editor.app.overwriteDecisionAndCapturedRevision")
+@safe unittest
+{
+    version (Posix) {}
+    else
+    {
+        import sparkles.test_runner.skip : skipTest;
+        skipTest("The native POSIX file adapter is not available.");
+    }
+    import core.thread : Thread;
+    import core.time : seconds;
+    import sparkles.test_utils.tmpfs : TmpFS;
+    import std.file : readText, write;
+    auto fixture = TmpFS.create();
+    const path = fixture.writeFile("external");
+    EditorApp app;
+    scope (exit) app.dispose();
+    app.document.field.insert("captured");
+    foreach (accept; [false, true])
+    {
+        assert(app.saveTo(path));
+        const until = MonoTime.currTime + 3.seconds;
+        while (app.filesBusy && MonoTime.currTime < until)
+        {
+            app.pollDocuments();
+            (() @trusted => Thread.yield())();
+        }
+        assert(!app.filesBusy && app.overwritePending && app.document.saving);
+        assert((() @trusted => readText(path))() == "external");
+        const original = app.document.id;
+        app.execute(CommandId(Command.newTab));
+        assert(app.document.id == original, "Overwrite consent holds focus on its captured operation.");
+        if (accept)
+        {
+            (() @trusted { write(path, "changed after validation"); })();
+            app.document.field.insert(" later");
+        }
+        app.execute(CommandId(accept ? Command.confirm : Command.cancel));
+        const saveUntil = MonoTime.currTime + 3.seconds;
+        while (app.filesBusy && MonoTime.currTime < saveUntil)
+        {
+            app.pollDocuments();
+            (() @trusted => Thread.yield())();
+        }
+        assert(!app.filesBusy && !app.overwritePending && !app.document.saving);
+        assert((() @trusted => readText(path))() == (accept ? "captured" : "external"));
+        assert(app.document.dirty);
+    }
+    assert(app.document.saved == Text("captured") && app.document.field.text == "captured later");
 }

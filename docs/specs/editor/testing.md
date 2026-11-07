@@ -339,3 +339,23 @@ invalid-UTF-8 operands with exit status 1 before starting the rendering host;
 an independent review identified and prompted the startup/runtime-error split.
 A native capture of `document_text.d` confirms real-file text and syntax reach
 the pane. Interactive open failures remain recoverable status messages.
+
+### Native save workflow — 2026-11-07
+
+The editor suite passes 21 tests. Save As accepts a path through the shared
+single-line editor without inserting it into the document. Save captures a
+text revision before background destination inspection; a completion records
+that revision while later edits remain dirty. Existing destinations require
+an operation-specific decision disclosing the validation/replacement race.
+Tests cancel without modifying the destination, then change the destination
+after inspection and explicitly authorize replacement of that captured
+revision. Another tab cannot receive the decision. Dialog pointer actions
+carry an opening generation, and the disclosure wraps at the available width.
+Directory-durability warnings persist separately from transient status.
+
+Open, Save, Save As and dialog actions use the common command table. The
+theme prefix uses F4, preserving terminal Ctrl+K editing. App inputs now pass
+monotonic timestamps to the editor; a regression test verifies that typing
+separated by a one-second pause undoes as two groups. Native window-close
+interception, dirty-close decisions, recovery and Android providers remain
+open; these tests do not establish those capabilities.

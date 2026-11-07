@@ -50,12 +50,12 @@ The palette's approved test interfaces remain in
 [testing §2](./testing.md#2-command-palette-tdd). Its shared implementation is
 available; complete backend/input parity remains an acceptance gate.
 
-1. Finish CLI-open validation and record native captures. Keep worker-prepared
-   text and invocation/focus identities intact while reads complete.
-2. Mount Open/Save/Save As and Save/Discard/Cancel on the common command policy.
-   Compare existing bytes with the saved baseline; disclose the replacement
-   race and require informed authorization for that operation. A completion
-   acknowledges only its captured revision, even after later edits.
+1. Open/Save/Save As now use the common command policy. Background saves
+   capture revisions, compare destination bytes with the saved baseline and
+   require informed replacement consent. Complete native dialog captures and
+   failure/focus acceptance alongside dirty-close integration.
+2. Implement Save/Discard/Cancel for tab closure and deliberate exit,
+   including native window-close interception and in-flight save decisions.
 3. Add Android document-provider access/grants and the native IME experiments.
    Their actual guarantees remain separate from the native POSIX adapter.
 4. Implement recovery/session checkpoints under EAD11, including durable
@@ -92,12 +92,13 @@ evidence for a promised capability.
   decoration overlay, background highlighting and theme preview; exact
   in-memory document envelopes and per-selection Enter conventions. Native
   file primitives, syscall-fault checks and CLI-open integration are at the
-  current validation checkpoint. Save/close UI, generated settings/fonts,
+  current validation checkpoint. Native Save/Save As and overwrite decisions
+  pass app tests. Dirty-close UI, generated settings/fonts,
   language discovery, recovery and Unicode layout/touch/IME remain open.
 - Evidence and reviews: [testing §6](./testing.md#6-evidence-ledger).
-- Next executable action: finish the native-file checkpoint, then implement
-  save/conflict and dirty-close decisions through shared command/widget/editor
-  mechanisms, preserving the storage receipt and revision contracts.
+- Next executable action: implement dirty-close decisions through shared
+  command/widget/editor mechanisms, preserving storage receipts and captured
+  revisions; then deliver recovery/session checkpoints and the remaining gates.
 - Owner policies: visual bidi movement/collapse, convention-aware Enter and
   one-second recovery checkpoints are accepted in EAD9–EAD11. Layout,
   storage and scheduling implementations still require their acceptance tests.

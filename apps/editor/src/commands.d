@@ -10,8 +10,8 @@ import examples : Example;
 
 /// App operations; shared editing operations carry an EditorAction argument.
 enum Command : ubyte { none, palette, guide, newTab, nextTab, previousTab, inspector,
-    example, themes, selectTheme, toggleTheme, edit, quit }
-enum Scope : ubyte { always, document }
+    example, themes, selectTheme, toggleTheme, edit, quit, open, save, saveAs, confirm, cancel }
+enum Scope : ubyte { application, document, dialog }
 alias CommandId = PaletteCommand!Command;
 alias CommandBinding = Binding!(Command, Scope);
 
@@ -23,16 +23,25 @@ CommandBinding[] commandBindings(EditorTarget target) @safe pure nothrow
     auto previous = next; previous.shift = typeof(previous.shift).yes;
     auto create = chord('n'); create.ctrl = true;
     auto quit = chord('q'); quit.ctrl = true;
-    auto leader = chord('k'); leader.ctrl = true;
-    CommandBinding[] result = [bind(Scope.always, palette, Command.palette, "Commands"),
-        bind(Scope.always, chord(Key.f1), Command.guide, "Key guide", reveal: true),
-        bind(Scope.always, create, Command.newTab, "New tab"),
-        bind(Scope.always, previous, Command.previousTab, "Previous tab"),
-        bind(Scope.always, next, Command.nextTab, "Next tab"),
-        bind(Scope.always, chord(Key.f12), Command.inspector, "Toggle inspector"),
-        bind(Scope.always, leader, chord('t'), Command.themes, "Choose theme"),
-        bind(Scope.always, leader, chord('d'), Command.toggleTheme, "Toggle dark/light theme"),
-        bind(Scope.always, quit, Command.quit, "Quit")];
+    auto open = chord('o'); open.ctrl = true;
+    auto save = chord('s'); save.ctrl = true;
+    auto saveAs = save; saveAs.shift = typeof(save.shift).yes;
+    auto leader = chord(Key.f4);
+    CommandBinding[] result = [bind(Scope.application, palette, Command.palette, "Commands"),
+        bind(Scope.application, chord(Key.f1), Command.guide, "Key guide", reveal: true),
+        bind(Scope.application, create, Command.newTab, "New tab"),
+        bind(Scope.application, previous, Command.previousTab, "Previous tab"),
+        bind(Scope.application, next, Command.nextTab, "Next tab"),
+        bind(Scope.application, chord(Key.f12), Command.inspector, "Toggle inspector"),
+        bind(Scope.application, leader, chord('t'), Command.themes, "Choose theme"),
+        bind(Scope.application, leader, chord('d'), Command.toggleTheme, "Toggle dark/light theme"),
+        bind(Scope.application, open, Command.open, "Open file"),
+        bind(Scope.application, saveAs, Command.saveAs, "Save as"),
+        bind(Scope.application, save, Command.save, "Save"),
+        bind(Scope.application, quit, Command.quit, "Quit"),
+        bind(Scope.dialog, chord(Key.enter), Command.confirm, "Confirm"),
+        bind(Scope.dialog, chord(Key.escape), Command.cancel, "Cancel"),
+        bind(Scope.dialog, chord(Key.back), Command.cancel, "Cancel")];
     foreach (original; editorBindings(target))
     {
         if (original.cmd == EditorAction.none) continue;
@@ -72,13 +81,18 @@ struct CommandContext
 {
     ulong document;
     const(CommandBinding)[] bindings;
+    bool modal;
 
     bool available(CommandId command, ulong target) const scope @safe pure nothrow @nogc
-        => command.operation != Command.none
-            && (command.operation != Command.edit || (target == document && document != 0));
+    {
+        if (command.operation == Command.none) return false;
+        const dialogCommand = command.operation == Command.confirm || command.operation == Command.cancel;
+        if (modal != dialogCommand) return false;
+        return command.operation != Command.edit || (target == document && document != 0);
+    }
 
     bool reachable(Scope scope_) const scope @safe pure nothrow @nogc
-        => scope_ == Scope.always || document != 0;
+        => scope_ == Scope.dialog ? modal : !modal && (scope_ == Scope.application || document != 0);
 
     string shortcut(CommandId command, ulong target) const scope @safe pure
     {
