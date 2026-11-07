@@ -481,6 +481,16 @@ the host into the rendered output.
 | `deep_wide`   | commit           |   17.0 |  16.8 |
 | `deep_wide`   | commit-unchanged |  150.5 |  0.17 |
 
+## S20–S21 follow-ups: moves
+
+S20's moves replaced the moved node: a commit retired its handle and its
+descendants', as a replacement does. Moves now replace nothing, and a
+moved node's anchor goes where its bytes went (editing §9).
+
+| Gate                                                  | Evidence                                                                                                                                                                                                    |
+| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SDE11 over moves; SDE12 for a moved-and-replaced node | `SdlEditor.movedOffset`; `sdl.open_document.properties.repositoryRecipes` with random moves, some re-indenting and some with an edit inside, mutation-checked; `.movesKeepHandles`; `.replacedNodesGoStale` |
+
 ## S21–S22 closure: 2026-11-06
 
 | Milestone | Gate                                                          | Evidence                                                                                                                                                                                                                                                    |

@@ -65,7 +65,7 @@ canonical writer stays the way to produce a document from a typed value.
 | SDE8  | Editing allocates only through the editor's buffers and the caller's allocator; `@safe pure` |
 | SDE9  | Every in-repository SDL edit, read and detection goes through this layer or the schema       |
 | SDE10 | Replacement text survives the editor growing or moving                                       |
-| SDE11 | A node handle names the same node across commits until an operation replaces that node       |
+| SDE11 | A node handle names the same node across commits, moves included, until one replaces it      |
 | SDE12 | A handle whose node was replaced is reported stale, never re-aimed at another node           |
 | SDE13 | A failed commit leaves the host, the document and every handle as they were                  |
 | SDE14 | An incremental re-parse produces exactly the document a full re-parse would                  |
@@ -479,7 +479,9 @@ except an insertion at their start and an operation on an ancestor that
 spans `n`'s whole extent, which stay and so may overlap the removal (SDE3).
 Insertions just before or after the moved bytes stay where they were; moves
 to one point arrive in the order they were made; two moves into each
-other's bytes are `editConflict`. _Oracle:_ hand cases for comments,
+other's bytes are `editConflict`. A move replaces no node: in an open
+document, `n` and every node below it keep their handles (SDE11, §9).
+_Oracle:_ hand cases for comments,
 trailing comments and raw spellings, edits before and after the move, a
 host without a final newline, CRLF, re-indentation around a multi-line raw
 string, a moved parent carrying a child's move, and every rejection; and a
@@ -713,34 +715,48 @@ and that state must outlive the open document.
 A node keeps its **identity** across a commit unless an operation of that
 commit replaces it. The operations replace:
 
-| Operation                                                                  | Nodes it replaces                                                     |
-| -------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| `replaceNode(n, …)`, `remove(n, …)`, `moveAfter(n, …)`, `moveBefore(n, …)` | `n` and every node below it                                           |
-| `replaceBody(n, …)`                                                        | every node below `n`; `n` itself keeps its identity                   |
-| `replaceRegion(r, …)`                                                      | every node whose span shares a byte with `r`, and every node below it |
-| value and attribute operations, `setValues`, insertions, `append`          | none; an inserted node is new and has no handle until one is asked    |
+| Operation                                                         | Nodes it replaces                                                     |
+| ----------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `replaceNode(n, …)`, `remove(n, …)`                               | `n` and every node below it                                           |
+| `replaceBody(n, …)`                                               | every node below `n`; `n` itself keeps its identity                   |
+| `replaceRegion(r, …)`                                             | every node whose span shares a byte with `r`, and every node below it |
+| `moveAfter(n, …)`, `moveBefore(n, …)`                             | none; `n` and every node below it go with their bytes                 |
+| value and attribute operations, `setValues`, insertions, `append` | none; an inserted node is new and has no handle until one is asked    |
 
 `updateSDL` is built from these operations, so it replaces exactly the nodes
 its `replaceNode` and `replaceBody` calls name. Attributes and values have no
-handles; they are reached through their node.
+handles; they are reached through their node. A node that one operation
+moves and another replaces — `replaceNode` on a moved node, say — is
+replaced.
 
 A surviving node's counterpart in the new document is found by its
 **anchor**, the first byte of its span (its name, or its first value when it
-is anonymous), carried through the commit's edits by `mapOffset` with
-`afterInsertions` bias: it is the new node whose span starts at the mapped
-anchor, provided its qualified name is unchanged. The root always maps to the
-root.
+is anonymous). The anchor of a node no move carries goes through the
+commit's edits by `mapOffset` with `afterInsertions` bias. The anchor of a
+node a move carries — the moved node, or one below it — goes where its
+bytes went: through the edits made inside the moved bytes (with the same
+bias), their re-indentation, and the separators placed before them, to the
+moved text's place in the output; when a move carries that text in turn,
+on through that move, and so on outwards. The counterpart is the new node
+whose span starts at the mapped anchor, provided its qualified name is
+unchanged. The root always maps to the root.
 
 **SDE11 — Handles follow their node.** A handle issued for a node resolves,
 after any number of successful commits, to that node's counterpart, as long
-as no commit replaced it. _Oracle:_ a property test that issues a handle for
-every node of every repository recipe, commits random value, attribute,
-insertion, removal and body edits, and after each commit checks every handle
-against a model that labels each node with a unique value; plus hand cases
-for an insertion before an unindented node, an anonymous node whose first
-value is replaced, and `replaceBody`. _Violation:_ a live handle that
-resolves to a different node, or a surviving node's handle that does not
-resolve.
+as no commit replaced it — moves included: a moved node's handle, and the
+handles of every node below it, resolve to the same nodes at their new
+place. _Oracle:_ a property test that issues a handle for every node of
+every repository recipe, commits random value, attribute, insertion,
+removal, body and move edits — moves beside the next sibling and beside any
+node outside the moved one, which re-indents it, some with a value edit
+inside — and after each commit checks every handle against a model that
+labels each node with a unique value; plus hand cases for an insertion
+before an unindented node, an anonymous node whose first value is replaced,
+`replaceBody`, a moved parent carrying a move among its children with
+edits inside and around it, a re-indenting move out of a block, and a
+moved node that is then replaced. _Violation:_ a live handle that resolves
+to a different node, or a surviving node's handle — a moved one's included
+— that does not resolve.
 
 **SDE12 — Replaced nodes go stale.** After a commit, resolving the handle of
 a node that commit replaced, or whose anchor no longer starts a node of the
