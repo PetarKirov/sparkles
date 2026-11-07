@@ -52,10 +52,12 @@ selected node as its subject. Inside the filter:
 | ------------------------------- | ----------------------------------------------- |
 | `version`                       | the node's first `version` attribute            |
 | `values[0]`                     | its first value                                 |
+| `attributes[1]`                 | its second attribute's value, whatever its name |
 | `targetType.values[0]`          | the first value of its first `targetType` child |
 | `dependency[1].version`         | the `version` of its second `dependency` child  |
 | `dflags` (alone, as a category) | whether it has a `dflags` child                 |
 | `x == null`                     | `x` is absent or SDL `null`                     |
+| `attributes[1] == null`         | it has at most one attribute                    |
 | `["dflags.ldc"] == null`        | it has no `dflags.ldc` attribute                |
 
 Strings, booleans, integers and floats compare as themselves; `&&`, `||`,

@@ -603,8 +603,10 @@ struct SdlSelectedNodes
 
 /** A DQL host resolver over one SDL node (SDS3). A path is zero or more
 child steps, each taking the first child of its name or, with `[k]`, the
-k-th, then a leaf: `values[i]`, the i-th value, or an attribute name, its
-first attribute of that name. A category holds when a child exists at the
+k-th, then a leaf: `values[i]`, the i-th value, `attributes[i]`, the value of
+the i-th attribute whatever its name, or an attribute name, its first
+attribute of that name; so `attributes[1] == null` holds when the node has at
+most one attribute. A category holds when a child exists at the
 path. Strings resolve as text, booleans as `bool`, integers as `long`, floats
 and decimals as `double`; an absent target or SDL `null` is null. */
 struct SdlNodeResolver
@@ -638,6 +640,17 @@ struct SdlNodeResolver
                 return Reach.absent;
             () @trusted { scalar = current.valueAt(step.index); }();
             return Reach.scalar;
+        }
+        if (step.member.nameEquals("attributes") && step.indexed)
+        {
+            size_t ordinal;
+            foreach (attribute; current.byAttribute)
+                if (ordinal++ == step.index)
+                {
+                    () @trusted { scalar = attribute.value; }();
+                    return Reach.scalar;
+                }
+            return Reach.absent;
         }
         if (step.indexed)
             return Reach.malformed;
@@ -845,6 +858,7 @@ unittest
 {
     import std.algorithm.comparison : equal;
     import std.algorithm.iteration : map;
+    import std.range.primitives : walkLength;
 
     auto parsed = parseSdlDocument!sdlFull(recipe);
     const root = parsed.document.root;
@@ -880,6 +894,17 @@ unittest
     const bad = SdlSelector.parse("dependency", "path ==");
     assert(bad.hasError && bad.error.part == SdlSelectorPart.filter);
     assert(SdlSelector.parse("a.", "").error.part == SdlSelectorPart.path);
+
+    // `attributes[i]` reads the i-th attribute, whatever its name, so it
+    // counts them; a bare `attributes` is still an attribute's name.
+    auto lone = SdlSelector.parse("configuration.dependency", "attributes[1] == null").value;
+    assert(lone.nodes(root).map!(n => n.byValue.front.stringValue).equal(["sparkles:test-utils"]));
+    auto second = SdlSelector.parse("..dependency", "attributes[1] == true").value;
+    assert(second.nodes(root).map!(n => n.byValue.front.stringValue).equal(["silly"]));
+    assert(SdlSelector.parse("..dependency", "attributes[0] == `*`").value.nodes(root)
+        .map!(n => n.byValue.front.stringValue).equal(["silly"]));
+    assert(SdlSelector.parse("..dependency", "attributes == null").value.nodes(root)
+        .walkLength == 4);
 }
 
 /// A selector binds like a value: copies count as owners of one parsed
@@ -1409,6 +1434,9 @@ plain "d" weird$name=1
             n => hasAttribute(n, "path") && !hasAttribute(n, "version")),
         Case("globMatch(values[0], `sparkles:*`)", &sparklesPackage),
         Case("dflags", n => !n.byChild(SdlQualifiedName(null, "dflags")).empty),
+        Case("attributes[1] == null", n => n.attributeCount <= 1),
+        Case("attributes[0] == `../..` && attributes[1] == null",
+            n => n.attributeCount == 1 && isText(n.byAttribute.front.value, "../..")),
         Case("!(values[1] != null || platform == linux)",
             n => !(!valueIsNull(n, 1) || isText(firstAttribute(n, "platform"), "linux"))),
     ];
