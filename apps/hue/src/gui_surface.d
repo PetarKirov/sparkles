@@ -9,9 +9,9 @@ the raylib arm (the `raylib` configuration) wraps the window, the face set
 and the effect backend the arm publishes. Either way `GuiCanvas` satisfies the canvas concept
 (`isCanvas`) plus the pixel fill hue's chrome takes (`fillPixels`).
 
-What the Vulkan arm cannot do yet is said here rather than at each use: no
-CRT (`NoCrt` stands in, and a configuration that turns it on is reported
-once), and the system pointer always shows.
+The CRT is `sparkles.ui.crt`'s effect on both: the raylib arm's effect backend
+runs its GLSL passes, the native canvas its SPIR-V ones (`UVK15`), and each
+arm hides the window system's pointer while the tube draws its own.
 */
 module gui_surface;
 
@@ -23,7 +23,6 @@ import sparkles.base.term_control : PointerShape;
 
 version (HueGuiVulkan)
 {
-    import sparkles.ui.effect : EffectRecord;
     import sparkles.ui.geometry : Size;
     import sparkles.ui_app.native_loop : NativeCanvas, NativeHost;
     import sparkles.ui_vulkan.painter : rgba;
@@ -68,7 +67,6 @@ version (HueGuiVulkan)
     struct GuiSurface
     {
         NativeHost* host;
-        private bool crtReported;
 
         int width() const @system => host.pixels.width;
         int height() const @system => host.pixels.height;
@@ -90,7 +88,7 @@ version (HueGuiVulkan)
         void toggleFullscreen() @system { host.toggleFullscreen(); }
         void screenshot(in char[] path) @system { host.screenshot(path); }
         void pointerShape(PointerShape shape) @system { host.pointerShape(shape); }
-        void pointerVisible(bool) @system {}
+        void pointerVisible(bool on) @system { host.pointerVisible(on); }
 
         int cellW() const @system => host.cellWidth;
         int cellH() const @system => host.cellHeight;
@@ -107,57 +105,7 @@ version (HueGuiVulkan)
 
         GuiCanvas canvasAt(float x = 0, float y = 0, bool effects = false) @system
             => GuiCanvas(host.canvas, cast(int) x, cast(int) y);
-
-        /// Once: a configuration asked for the CRT, which this arm lacks.
-        void noteCrtAsked() @system
-        {
-            import sparkles.base.logger : warning;
-
-            if (crtReported)
-                return;
-            crtReported = true;
-            warning(i"hue: the CRT effect is not drawn by the Vulkan renderer yet");
-        }
     }
-
-    /**
-    The CRT's stand-in on the Vulkan arm: the fields `crt_config` sets and
-    the calls `gui.d` makes, with nothing drawn. `enabled` reads false
-    whatever is asked; the asking is remembered so it can be reported.
-    */
-    struct NoCrt
-    {
-        float bloomIntensity = 0, bloomRadius = 0, bloomThreshold = 0, brightness = 1,
-            chromaticAberration = 0, curvature = 0, dividerTension = 0, flicker = 0,
-            focusHalo = 0, hoverGlow = 0, lensPower = 0, lensRadius = 0, magnify = 1,
-            mask = 0, scanlines = 0, selectionBloom = 0, tilt = 0, vignette = 0;
-        bool systemPointer = true, uiReactive;
-        PointerShape pointerShape;
-        bool asked; /// a configuration turned it on
-
-        bool enabled() const @safe pure nothrow @nogc => false;
-        void enabled(bool on) @safe pure nothrow @nogc { asked |= on; }
-        bool drawsOwnPointer() const @safe pure nothrow @nogc => false;
-
-        // Never reached while `enabled` is false; here so the calls compile.
-        static CrtPoint mapPointerToUi(float x, float y, int, int) @safe pure nothrow @nogc
-            => CrtPoint(x, y);
-        void setUiContext(in CrtUiContext) @safe pure nothrow @nogc {}
-        void writeParams(Args...)(auto ref Args) {}
-
-        /// Registered like the real one, so the effect's id exists; with no
-        /// implementation, a renderer that met it would skip it.
-        static EffectRecord effectRecord() @safe pure nothrow
-            => EffectRecord(name: "crt");
-    }
-
-    /// ditto
-    struct CrtPoint { float x, y; }
-    /// ditto
-    struct CrtUiContext {}
-    /// ditto
-    CrtUiContext crtUiContextOf(Args...)(auto ref Args) => CrtUiContext.init;
-    alias CrtEffect = NoCrt;
 }
 else
 {
@@ -204,7 +152,5 @@ else
                 c.fx = fx;
             return c;
         }
-
-        void noteCrtAsked() @system {}
     }
 }
