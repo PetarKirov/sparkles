@@ -209,10 +209,12 @@ kernel's, not a limit of the probe. The setup features differ the same way: 6.11
 lacks `MIN_TIMEOUT`, `RW_ATTR` and `NO_IOWAIT`. macOS has none; Android was not
 probed from an app context.
 
-The opcode probe answers only "does the kernel know this opcode". It does not
-show which setup, enter or SQE flags a kernel accepts, whether the
-`kernel.io_uring_disabled` sysctl or a seccomp or io_uring BPF filter would
-refuse this process, or which `URING_CMD` targets a driver implements.
+The opcode probe answers only "does the kernel know this opcode". Schema 3 adds
+the ring-less `IORING_REGISTER_QUERY` (Linux 6.18), which reports the setup,
+enter and SQE flags a kernel accepts, and the `kernel.io_uring_disabled` and
+`kernel.io_uring_group` sysctls; none of the reports above carries them yet. No
+report shows whether a seccomp or io_uring BPF filter would refuse this
+process, or which `URING_CMD` targets a driver implements.
 
 ## Gaps
 

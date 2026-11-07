@@ -198,6 +198,21 @@ struct IoReport
     string status;           /// `available`, or why not; the details are in `attempts`
     string[] uringOpcodes;   /// every opcode the kernel's probe reports as supported
     string[] uringFeatures;  /// `IORING_FEAT_*` bits from `io_uring_setup`
+    string disabled;         /// `kernel.io_uring_disabled`: 0 all, 1 `io_uring_group` and root, 2 nobody
+    string group;            /// `kernel.io_uring_group`: the group 1 admits; -1 none
+    UringQuery query;        /// `IORING_REGISTER_QUERY` (Linux 6.18), which needs no ring
+}
+
+/// What the kernel's io_uring accepts, from the ring-less query.
+struct UringQuery
+{
+    uint requestOpcodes;  /// the number of `IORING_OP_*` opcodes; 0 when not queried
+    uint registerOpcodes; /// the number of `IORING_[UN]REGISTER_*` opcodes
+    uint queryOpcodes;    /// the number of `IO_URING_QUERY_*` queries
+    string[] features;    /// every `IORING_FEAT_*` bit
+    string[] setupFlags;  /// every `IORING_SETUP_*` flag
+    string[] enterFlags;  /// every `IORING_ENTER_*` flag
+    string[] sqeFlags;    /// every `IOSQE_*` flag
 }
 
 struct VulkanReport
@@ -953,6 +968,11 @@ version (linux) void probeUring(ref IoReport io)
     import sparkles.event_horizon.sys.uring : Operation, SetupFeatures, Uring, setup;
 
     io.backend = "io_uring";
+    // Before the ring: the sysctls explain a refused setup, and the query needs none.
+    io.disabled = readFile(io.attempts, "io_uring_disabled sysctl", "/proc/sys/kernel/io_uring_disabled").strip;
+    io.group = readFile(io.attempts, "io_uring_group sysctl", "/proc/sys/kernel/io_uring_group").strip;
+    queryUring(io);
+
     Uring ring;
     const ret = ring.setup(8);
     Attempt setupAttempt = { what: "io_uring support", call: "io_uring_setup(8, 0)" };
@@ -984,6 +1004,66 @@ version (linux) void probeUring(ref IoReport io)
     foreach (op; [EnumMembers!Operation].sort.uniq)
         if (probe.isSupported(op))
             io.uringOpcodes ~= op.to!string;
+}
+
+/// Ask the kernel what io_uring accepts, without a ring (`IORING_REGISTER_QUERY`, Linux 6.18).
+version (linux) void queryUring(ref IoReport io) @trusted
+{
+    import core.stdc.errno : EBADF, EINVAL, errno;
+    import sparkles.event_horizon.sys.uring : EnterFlags, io_uring_query, io_uring_query_hdr,
+        io_uring_query_opcode, IO_URING_QUERY_OPCODES, SetupFeatures, SetupFlags, SubmissionEntryFlags;
+
+    io_uring_query_opcode ops;
+    io_uring_query_hdr hdr = { query_data: cast(ulong) &ops, query_op: IO_URING_QUERY_OPCODES, size: ops.sizeof };
+    Attempt a = { what: "io_uring limits", call: "io_uring_register(-1, IORING_REGISTER_QUERY, IO_URING_QUERY_OPCODES)" };
+    if (io_uring_query(&hdr) < 0)
+    {
+        const e = errno;
+        a = errnoAttempt(a, e);
+        if (e == EINVAL || e == EBADF)
+        {
+            a.status = attemptUnsupported;
+            a.message = "no IORING_REGISTER_QUERY before Linux 6.18";
+        }
+    }
+    else if (hdr.result < 0)
+        a = errnoAttempt(a, -hdr.result);
+    else
+    {
+        a.status = attemptOk;
+        io.query = UringQuery(
+            requestOpcodes: ops.nr_request_opcodes,
+            registerOpcodes: ops.nr_register_opcodes,
+            queryOpcodes: ops.nr_query_opcodes,
+            features: flagNames!SetupFeatures(ops.feature_flags),
+            setupFlags: flagNames!SetupFlags(ops.ring_setup_flags),
+            enterFlags: flagNames!EnterFlags(ops.enter_flags),
+            sqeFlags: flagNames!SubmissionEntryFlags(ops.sqe_flags),
+        );
+    }
+    io.attempts ~= a;
+}
+
+/// The names of the single-bit members of `E` set in `mask`, then `bit N` for
+/// each set bit `E` does not name (a flag newer than the binding).
+string[] flagNames(E)(ulong mask)
+{
+    string[] names;
+    ulong named;
+    static foreach (m; __traits(allMembers, E))
+    {{
+        enum ulong v = cast(ulong) __traits(getMember, E, m);
+        static if (v != 0 && (v & (v - 1)) == 0)
+            if ((mask & v) && !(named & v))
+            {
+                names ~= m;
+                named |= v;
+            }
+    }}
+    foreach (bit; 0 .. 64)
+        if (mask & ~named & (1UL << bit))
+            names ~= "bit " ~ bit.to!string;
+    return names;
 }
 
 // -----------------------------------------------------------------------------
@@ -2189,4 +2269,13 @@ version (CRuntime_Glibc)
     // The probe's own run path leads back to that glibc too, when it has one.
     if (const dir = libcDirOf(readLink("/proc/self/exe")))
         assert(glibcVersionIn(dir).length);
+}
+
+@("media_hw_probe.flagNames")
+@safe pure unittest
+{
+    enum Flags : uint { NONE = 0, A = 1, B = 1 << 1, ALSO_B = 1 << 1, AB = 3 }
+    assert(flagNames!Flags(0) == null);
+    // Aliases and multi-bit members name nothing twice; an unnamed bit is numbered.
+    assert(flagNames!Flags(0b1011) == ["A", "B", "bit 3"]);
 }

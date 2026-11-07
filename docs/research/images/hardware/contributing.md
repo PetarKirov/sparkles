@@ -64,7 +64,7 @@ are still useful.
 | ------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | System | OS name and version, kernel release, architecture, total memory, Mac or phone model name                                                 |
 | CPU    | model name, core types, SIMD and crypto feature flags                                                                                    |
-| I/O    | `io_uring` setup features and supported opcodes (Linux)                                                                                  |
+| I/O    | `io_uring` sysctls, setup features, supported opcodes and the flags the kernel accepts (Linux)                                           |
 | Vulkan | driver manifests and the glibc each driver loads; per device: name, driver, extensions, feature structs, limits, formats, video profiles |
 | Media  | `vainfo` per render node and `nvidia-smi` (Linux), VideoToolbox (macOS), codec lists (Android)                                           |
 
