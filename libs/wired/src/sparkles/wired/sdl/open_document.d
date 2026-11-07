@@ -113,8 +113,10 @@ struct SdlOpenDocument(SdlParserConfig config = sdlFull, Allocator = Mallocator)
     /// The document parsed from the host as it now stands.
     ref const(SdlDocument!Allocator) document() const return => _document;
 
-    /// The host as it now stands.
-    const(char)[] host() const return scope => _host[];
+    /// The host as it now stands: a recipe's is its document's source once a
+    /// commit's re-parse kept the rendered text as that (editing §10.1).
+    const(char)[] host() const return scope
+        => _host.length || !_document.valid ? _host[] : _document.source;
 
     /** The handle of `node`, issuing one the first time it is asked;
     `PoolError.invalid` for a view of another document. */
@@ -123,8 +125,8 @@ struct SdlOpenDocument(SdlParserConfig config = sdlFull, Allocator = Mallocator)
         if (!_document.valid || node.core !is (() @trusted => _document.core)())
             return poolErr!SdlNodeHandle(PoolError.invalid);
         const cell = node.cellIndex;
-        if (_slotOf.length != _document.core.nodes.length)
-            _slotOf.length = _document.core.nodes.length;
+        if (_slotOf.length != _document.core.nodeCount)
+            _slotOf.length = _document.core.nodeCount;
         if (_slotOf[cell])
             return poolOk(_table.handleAt(_slotOf[cell] - 1));
         auto issued = _table.insert();
@@ -154,7 +156,7 @@ struct SdlOpenDocument(SdlParserConfig config = sdlFull, Allocator = Mallocator)
 
     /// An editor over the current document and host, to `commit`.
     auto editor() return scope
-        => SdlEditor!(config, Allocator)(_document, _host[]);
+        => SdlEditor!(config, Allocator)(_document, host);
 
     /** Writes `editor`'s edits into the host, keeps the re-parsed document
     and carries every handle over (SDE11) or retires it (SDE12). On failure
@@ -206,7 +208,7 @@ struct SdlOpenDocument(SdlParserConfig config = sdlFull, Allocator = Mallocator)
     {
         HeapBuffer!uint slots;
         if (_table.liveCount)
-            slots.length = next.core.nodes.length;
+            slots.length = next.core.nodeCount;
         const old = (() @trusted => _document.core)();
         const fresh = (() @trusted => next.core)();
 
@@ -241,20 +243,20 @@ private size_t counterpart(scope const(SdlCore)* old, scope const(SdlCore)* next
     foreach (range; replaced)
         if (cell >= range.first && cell < range.end)
             return size_t.max;
-    const was = old.nodes[cell];
+    const was = old.nodeAt(cell);
     const anchor = mapOffset(edits, was.span.startOffset);
     // Cells after the root are in preorder, so their span starts increase.
-    size_t low = 1, high = next.nodes.length;
+    size_t low = 1, high = next.nodeCount;
     while (low < high)
     {
         const mid = low + (high - low) / 2;
-        if (next.nodes[mid].span.startOffset < anchor)
+        if (next.nodeAt(mid).span.startOffset < anchor)
             low = mid + 1;
         else
             high = mid;
     }
-    if (low == next.nodes.length || next.nodes[low].span.startOffset != anchor
-        || next.nodes[low].qualifiedName != was.qualifiedName)
+    if (low == next.nodeCount || next.nodeAt(low).span.startOffset != anchor
+        || next.nodeAt(low).qualifiedName != was.qualifiedName)
         return size_t.max;
     return low;
 }
@@ -474,10 +476,13 @@ version (unittest)
         editor.replaceValue(open.node(handle).value, 0, SdlScalar(10));
         assert(!open.commit(editor).hasError);
         assert(open.node(handle).value.byValue.front.integer == 10);
-        // The commit took the region path, which sizes each array once where
-        // the opening parse grew them; the replaced document's blocks went.
-        assert(counts.calls - opened.calls < opened.calls);
-        assert(counts.live == opened.live);
+        // The commit took the region path, which shares the opening parse's
+        // cells and keeps the rendered host as its source (editing §10.1):
+        // it allocated a few small blocks, and only the replaced document's
+        // core went.
+        assert(counts.calls - opened.calls <= 16 && counts.live - opened.live < 16);
+        assert((counts.bytes - opened.bytes) * 100 < opened.bytes);
+
 
         // An embedded host, through a copy of the same allocator.
         auto program = SdlOpenDocument!(sdlDubRecipe, Counting)(Counting(&counts));

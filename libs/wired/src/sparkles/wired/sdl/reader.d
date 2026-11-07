@@ -353,32 +353,30 @@ private void parseInto(SdlParserConfig config, Allocator)(
         return;
     }
     if (!result.document.finish(counts.nodes, counts.values, counts.attributes,
-        layout.comments[]))
+        layout.comments[], LineIndex(layout.lineStarts[], text.length, contentStart(text))))
     {
         result.document = SdlDocument!Allocator.init;
         result.error = startError(SdlErrorCode.allocationFailed, text, sourceName,
             "allocator rejected an SDL arena block");
-        return;
     }
-    core.lines = LineIndex(layout.lineStarts[], text.length, contentStart(text));
-    finalizeChildren(result.document);
 }
 
 /** Re-parses `text` — `old`'s source after `edits`, which are sorted and
-valid — re-lexing only the region editing §10 names and splicing `old`'s
-cells before and after it into the new document (SDE14). Whenever the region
-cannot be localized it parses all of `text` instead (SDE15), so the result
-and any error are a full parse's; `localized` reports which path ran.
-No edits over `old`'s own text and content copy `old` without lexing a byte.
-`content` is the new content, or invalid for the source after any byte-order
-mark. */
+valid — re-lexing only the region editing §10 names and sharing `old`'s
+cells before and after it with the new document (SDE14, editing §10.1).
+Whenever the region cannot be localized it parses all of `text` instead
+(SDE15), so the result and any error are a full parse's; `localized` reports
+which path ran. No edits over `old`'s own text and content share all of `old`
+without lexing a byte. `content` is the new content, or invalid for the
+source after any byte-order mark. */
 package SdlParseResult!Allocator reparseEdited(SdlParserConfig config, Allocator = Mallocator)(
     scope const(SdlCore)* old, scope const(char)[] text, scope const(char)[] sourceName,
     SdlSpan content, scope const TextEdit[] edits, out bool localized)
 if (stateSize!Allocator == 0)
 {
     SdlParseResult!Allocator result;
-    reparseInto!config(result, old, text, sourceName, content, edits, localized);
+    UniqueBuffer!char none;
+    reparseInto!config(result, old, text, none, sourceName, content, edits, localized);
     return result;
 }
 
@@ -393,18 +391,50 @@ if (stateSize!Allocator != 0)
 
     SdlParseResult!Allocator result;
     result.document.alloc = move(alloc);
-    reparseInto!config(result, old, text, sourceName, content, edits, localized);
+    UniqueBuffer!char none;
+    reparseInto!config(result, old, text, none, sourceName, content, edits, localized);
+    return result;
+}
+
+/** ditto, over text the caller hands over: a localized result keeps `text`
+as its source instead of copying it, and leaves it empty (performance SDP8),
+unless it is short enough to sit inline in the buffer; a full parse copies it
+and leaves it as it was. */
+package SdlParseResult!Allocator reparseEdited(SdlParserConfig config, Allocator = Mallocator)(
+    scope const(SdlCore)* old, ref UniqueBuffer!char text, scope const(char)[] sourceName,
+    SdlSpan content, scope const TextEdit[] edits, out bool localized)
+if (stateSize!Allocator == 0)
+{
+    SdlParseResult!Allocator result;
+    reparseInto!config(result, old, (() @trusted => text[])(), text, sourceName, content,
+        edits, localized);
+    return result;
+}
+
+/// ditto, through a stateful allocator.
+package SdlParseResult!Allocator reparseEdited(SdlParserConfig config, Allocator)(
+    scope const(SdlCore)* old, ref UniqueBuffer!char text, scope const(char)[] sourceName,
+    SdlSpan content, scope const TextEdit[] edits, out bool localized, Allocator alloc)
+if (stateSize!Allocator != 0)
+{
+    import core.lifetime : move;
+
+    SdlParseResult!Allocator result;
+    result.document.alloc = move(alloc);
+    reparseInto!config(result, old, (() @trusted => text[])(), text, sourceName, content,
+        edits, localized);
     return result;
 }
 
 private void reparseInto(SdlParserConfig config, Allocator)(
     ref SdlParseResult!Allocator result, scope const(SdlCore)* old,
-    scope const(char)[] text, scope const(char)[] sourceName, SdlSpan content,
-    scope const TextEdit[] edits, out bool localized)
+    scope const(char)[] text, ref UniqueBuffer!char adopted, scope const(char)[] sourceName,
+    SdlSpan content, scope const TextEdit[] edits, out bool localized)
 {
     if (text.length < uint.max && !content.isValid)
         content = SdlSpan(contentStart(text), text.length);
-    if (old !is null && spliceRegion!config(result, old, text, sourceName, content, edits))
+    if (old !is null
+        && spliceRegion!config(result, old, text, adopted, sourceName, content, edits))
     {
         localized = true;
         return;
@@ -440,18 +470,6 @@ private bool onlyIndentBefore(scope const(char)[] text, size_t at, size_t floor,
     return at >= floor && atLineStart(text, at, lineZero);
 }
 
-/// One past the last cell of `cell`'s subtree.
-private size_t subtreeEnd(scope const(SdlCore)* core, size_t cell) @safe pure nothrow @nogc
-{
-    if (cell == 0)
-        return core.nodes.length;
-    const depth = core.nodes[cell].depth;
-    size_t end = cell + 1;
-    while (end < core.nodes.length && core.nodes[end].depth > depth)
-        end++;
-    return end;
-}
-
 /// The region a splice re-lexes (editing §10), in old and new offsets.
 private struct SpliceBounds
 {
@@ -460,22 +478,25 @@ private struct SpliceBounds
     bool afterOpener;    // the region starts right after the owner's `{`
     size_t regionStart;  // the same in the old text and the new
     size_t a, b;         // the old cells `[a, b)` the region replaces
+    size_t replaced;     // how many of `owner`'s children `[a, b)` holds
     bool endsContent;    // the region runs to the end of the content
     size_t oldLexEnd;    // where lexing the region stops, in the old text
     size_t newRegionEnd; // the region's end in the new text
     size_t newLexEnd;    // `oldLexEnd` in the new text
     bool relex = true;   // `false` when there are no edits: every cell is kept
+    UniqueBuffer!(size_t, 16) chain; // the root, ..., `owner`: the region's ancestors
 }
 
 /** Steps 1–3 of editing §10: the region `edits` re-lex, or `false` when it
 cannot be localized (SDE15). No edits over `old`'s own text make a region
 that is empty and keeps every cell. */
-private bool locateRegion(SdlParserConfig config)(out SpliceBounds bounds,
+private bool locateRegion(SdlParserConfig config)(ref SpliceBounds bounds,
     scope const(SdlCore)* old, scope const(char)[] text, SdlSpan content,
     scope const TextEdit[] edits)
 {
     const oldText = old.source;
-    if (text.length >= uint.max || oldText.length == 0 || old.nodes.length == 0)
+    const n = old.nodeCount;
+    if (text.length >= uint.max || oldText.length == 0 || n == 0)
         return false;
     const long delta = cast(long) text.length - cast(long) oldText.length;
     const oldContent = old.content;
@@ -487,10 +508,12 @@ private bool locateRegion(SdlParserConfig config)(out SpliceBounds bounds,
     {
         if (text != oldText)
             return false;
+        // An empty region at the end: every cell before it is kept.
         bounds.regionStart = bounds.oldLexEnd = bounds.newRegionEnd = bounds.newLexEnd
             = text.length;
-        bounds.a = bounds.b = old.nodes.length;
+        bounds.a = bounds.b = n;
         bounds.endsContent = true;
+        bounds.chain ~= 0;
         bounds.relex = false;
         return true;
     }
@@ -504,13 +527,14 @@ private bool locateRegion(SdlParserConfig config)(out SpliceBounds bounds,
     // starts its line.
     size_t owner;
     size_t interiorStart = oldContent.startOffset, interiorEnd = oldContent.endOffset;
+    bounds.chain ~= 0;
     descend: while (true)
     {
-        const cell = old.nodes[owner];
+        const cell = old.nodeAt(owner);
+        size_t c = owner + 1;
         foreach (k; 0 .. cell.childCount)
         {
-            const c = old.childIndexes[cell.childStart + k];
-            const child = old.nodes[c];
+            const child = old.nodeAt(c);
             if (child.span.startOffset > maxEnd)
                 break;
             if (child.hasBlock && child.openBrace.endOffset <= minStart
@@ -519,37 +543,58 @@ private bool locateRegion(SdlParserConfig config)(out SpliceBounds bounds,
                     child.openBrace.endOffset, lineZero))
             {
                 owner = c;
+                bounds.chain ~= c;
                 interiorStart = child.openBrace.endOffset;
                 interiorEnd = child.closeBrace.startOffset;
                 continue descend;
             }
+            c += child.subtreeSize;
         }
         break;
     }
 
-    // 2. The affected children, widened to children alone on their lines.
-    const ownerCell = old.nodes[owner];
-    const window = old.childIndexes[ownerCell.childStart .. ownerCell.childStart + ownerCell.childCount];
-    size_t first;
-    while (first < window.length && old.nodes[window[first]].extent.endOffset < minStart)
-        first++;
-    size_t hi = first;
-    while (hi < window.length && old.nodes[window[hi]].extent.startOffset <= maxEnd)
-        hi++;
-    ptrdiff_t lo = cast(ptrdiff_t) first - 1;
-    while (lo >= 0 && !old.nodes[window[lo]].aloneOnLines)
-        lo--;
-    while (hi < window.length && !old.nodes[window[hi]].aloneOnLines)
-        hi++;
-    const size_t regionStart = lo >= 0 ? old.nodes[window[lo]].extent.endOffset : interiorStart;
-    const size_t regionEnd = hi < window.length ? old.nodes[window[hi]].extent.startOffset
-        : interiorEnd;
+    // 2. The affected children, widened to children alone on their lines:
+    // `lo` the last child before them alone on its lines, `hi` the first one
+    // after them that is, by their positions among `owner`'s children.
+    const ownerCell = old.nodeAt(owner);
+    const ownerEnd = owner + ownerCell.subtreeSize;
+    const childCount = ownerCell.childCount;
+    size_t k, c = owner + 1;
+    ptrdiff_t lo = -1;
+    size_t afterLo = owner + 1; // the cell of child `lo + 1`
+    size_t loEnd = interiorStart;
+    while (k < childCount)
+    {
+        const child = old.nodeAt(c);
+        if (child.extent.endOffset >= minStart)
+            break;
+        c += child.subtreeSize;
+        k++;
+        if (child.aloneOnLines)
+        {
+            lo = k - 1;
+            afterLo = c;
+            loEnd = child.extent.endOffset;
+        }
+    }
+    while (k < childCount && old.nodeAt(c).extent.startOffset <= maxEnd)
+    {
+        c += old.subtreeSizeAt(c);
+        k++;
+    }
+    while (k < childCount && !old.nodeAt(c).aloneOnLines)
+    {
+        c += old.subtreeSizeAt(c);
+        k++;
+    }
+    // `c` is now child `k`'s cell, or `ownerEnd` past the last child.
+    const size_t regionStart = loEnd;
+    const size_t regionEnd = k < childCount ? old.nodeAt(c).extent.startOffset : interiorEnd;
     if (regionStart >= regionEnd || regionStart > minStart || maxEnd > regionEnd
         || cast(long) regionEnd + delta < cast(long) regionStart)
         return false;
-    const ownerEnd = subtreeEnd(old, owner);
-    const a = cast(size_t)(lo + 1) < window.length ? window[lo + 1] : ownerEnd;
-    const b = hi < window.length ? window[hi] : ownerEnd;
+    const a = afterLo;
+    const b = k < childCount ? c : ownerEnd;
 
     // 3. The region's new text must still start and end at line boundaries.
     const endsContent = regionEnd == oldContent.endOffset;
@@ -573,72 +618,213 @@ private bool locateRegion(SdlParserConfig config)(out SpliceBounds bounds,
             != newLexEnd - regionStart)
             return false;
     }
-    bounds = SpliceBounds(delta, owner, owner && lo < 0, regionStart, a, b, endsContent,
-        oldLexEnd, newRegionEnd, newLexEnd);
+    bounds.delta = delta;
+    bounds.owner = owner;
+    bounds.afterOpener = owner && lo < 0;
+    bounds.regionStart = regionStart;
+    bounds.a = a;
+    bounds.b = b;
+    bounds.replaced = k - cast(size_t)(lo + 1);
+    bounds.endsContent = endsContent;
+    bounds.oldLexEnd = oldLexEnd;
+    bounds.newRegionEnd = newRegionEnd;
+    bounds.newLexEnd = newLexEnd;
     return true;
+}
+
+/// Shared pieces shorter than this are copied into the new block, so runs
+/// stay at least this long (editing §10.1).
+private enum size_t absorbBelow = 16;
+
+/// A range `[from, to)` of an old document's logical cells, inside one of its
+/// runs, which the new document copies or shares.
+private struct Piece
+{
+    size_t from, to;
+    bool copy;
+    bool tail; // after the region: shifted by the edits' length change
+}
+
+/// Appends `[from, to)` of `runs`' logical cells to `pieces`, one piece per
+/// run it crosses, each copied when shorter than `absorbBelow` or `copy`.
+private void addPieces(ref UniqueBuffer!Piece pieces, scope const(SdlRun)[] runs,
+    size_t from, size_t to, bool tail, bool copy = false) @safe pure nothrow @nogc
+{
+    while (from < to)
+    {
+        const run = runs[runOf!"base"(runs, from)];
+        const runEnd = run.base + (run.hi - run.lo);
+        const end = to < runEnd ? to : runEnd;
+        pieces ~= Piece(from, end, copy || end - from < absorbBelow, tail);
+        from = end;
+    }
+}
+
+/// The first of `count` logical items that `keep` rejects, `keep` holding
+/// for a prefix.
+private size_t prefixLength(alias keep)(size_t count)
+{
+    size_t lo = 0, hi = count;
+    while (lo < hi)
+    {
+        const mid = lo + (hi - lo) / 2;
+        if (keep(mid))
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    return lo;
+}
+
+/** Splices the region's own comments or line starts between `old`'s before
+it (`[0, head)`) and after it (`[tail, count)`, shifted by `delta`): pieces
+shorter than `absorbBelow` are copied, by `item`, into `copies`, after the
+region's own ones, and the rest are shared; appends the runs to `runs`. */
+private void spliceItems(T, alias item)(scope const(SdlRun)[] oldRuns, size_t count,
+    size_t head, size_t tail, uint delta, scope const(T)[] region,
+    ref UniqueBuffer!T copies, ref UniqueBuffer!SdlRun runs, bool copyAll)
+{
+    size_t logical;
+    void addCopies(scope const(T)[] items)
+    {
+        if (items.length == 0)
+            return;
+        const at = copies.length;
+        foreach (ref x; items)
+            copies ~= x;
+        if (runs.length && runs[$ - 1].block is null && runs[$ - 1].hi == at)
+            runs[$ - 1].hi += cast(uint) items.length;
+        else
+            runs ~= SdlRun(null, cast(uint) at, cast(uint)(at + items.length), cast(uint) logical);
+        logical += items.length;
+    }
+    void addOld(size_t from, size_t to, bool shifted)
+    {
+        UniqueBuffer!Piece pieces;
+        addPieces(pieces, oldRuns, from, to, shifted, copyAll);
+        foreach (piece; pieces[])
+        {
+            if (piece.copy)
+            {
+                foreach (i; piece.from .. piece.to)
+                {
+                    T x = item(i, shifted);
+                    addCopies((() @trusted => (&x)[0 .. 1])());
+                }
+                continue;
+            }
+            const run = oldRuns[runOf!"base"(oldRuns, piece.from)];
+            const lo = run.lo + (piece.from - run.base);
+            runs ~= SdlRun(run.block, cast(uint) lo, cast(uint)(lo + piece.to - piece.from),
+                cast(uint) logical, run.delta + (shifted ? delta : 0));
+            logical += piece.to - piece.from;
+        }
+    }
+    addOld(0, head, false);
+    addCopies(region);
+    addOld(tail, count, true);
 }
 
 /** The region path of `reparseEdited`: fills `result` and returns `true`, or
 returns `false`, leaving `result` to be discarded, when the edits cannot be
-localized (editing §10, SDE15). */
+localized (editing §10, SDE15) or sharing would hold too much (§10.1). */
 private bool spliceRegion(SdlParserConfig config, Allocator)(
     ref SdlParseResult!Allocator result, scope const(SdlCore)* old,
-    scope const(char)[] text, scope const(char)[] sourceName, SdlSpan content,
-    scope const TextEdit[] edits)
+    scope const(char)[] text, ref UniqueBuffer!char adopted,
+    scope const(char)[] sourceName, SdlSpan content, scope const TextEdit[] edits)
 {
+    // Only blocks this document can free may be shared (§10.1); a document
+    // of another allocator type has its kept cells copied instead.
+    if (old.blocks.length == 0)
+        return false;
+    bool share = true;
+    foreach (block; old.blocks)
+        share &= SdlDocument!Allocator.canHold(block);
+    // A full parse, which makes a flat document again, once the old one's
+    // blocks hold more than twice what a full parse of the text would: its
+    // pool, and cell arrays that grow by doubling. The rule reads only the
+    // old document, so every allocator takes the same path (SDE16).
+    const cells = old.nodeCount * SdlNodeCell.sizeof + old.valueCount * SdlValueCell.sizeof
+        + old.attributeCount * SdlAttributeCell.sizeof + old.commentCount * SdlComment.sizeof
+        + old.lineCount * size_t.sizeof;
+    if (SdlDocument!Allocator.heldBytes(old.blocks)
+        > 2 * (2 * text.length + sourceName.length + 2 * cells))
+        return false;
+
     SpliceBounds bounds;
     if (!locateRegion!config(bounds, old, text, content, edits))
         return false;
-    const delta = bounds.delta;
+    SdlRun[3] scratch;
+    const(SdlRun)[] oldNodes, oldComments, oldLines;
+    () @trusted { old.runsInto(scratch, oldNodes, oldComments, oldLines); }();
+    auto document = &result.document;
+    const lineZero = contentStart(text);
+
+    // No edits: every cell is shared as it is (SDE17).
+    if (!bounds.relex && share)
+        return document.finishShared(0, 0, 0, null, null, oldNodes, oldComments, oldLines,
+            old.blocks, text, sourceName, adopted, content, lineZero);
+
+    const uint delta = cast(uint) bounds.delta; // modulo 2³², as runs add it
     const regionStart = bounds.regionStart;
     const a = bounds.a, b = bounds.b;
+    const n = old.nodeCount;
     const endsContent = bounds.endsContent;
     const oldLexEnd = bounds.oldLexEnd, newRegionEnd = bounds.newRegionEnd;
     const newLexEnd = bounds.newLexEnd;
-    const lineZero = contentStart(text);
 
-    // 4. The new document's pool, source and source name, as `parseInto`.
-    size_t poolBytes = sourceName.length;
-    if (!checkedAdd(poolBytes, text.length) || !checkedAdd(poolBytes, text.length))
+    // 4. What the new block copies: the region's ancestors, and every short
+    // piece before and after it; the rest is shared.
+    UniqueBuffer!Piece pieces;
+    size_t next;
+    foreach (ancestor; bounds.chain[])
+    {
+        addPieces(pieces, oldNodes, next, ancestor, false, !share);
+        addPieces(pieces, oldNodes, ancestor, ancestor + 1, false, true);
+        next = ancestor + 1;
+    }
+    addPieces(pieces, oldNodes, next, a, false, !share);
+    const regionPiece = pieces.length;
+    addPieces(pieces, oldNodes, b, n, true, !share);
+
+    size_t copiedNodes, copiedValues, copiedAttributes, headPool, tailPool;
+    foreach (k, piece; pieces[])
+        if (piece.copy)
+            foreach (i; piece.from .. piece.to)
+            {
+                const cell = old.nodeAt(i);
+                copiedNodes++;
+                copiedValues += cell.valueCount;
+                copiedAttributes += cell.attributeCount;
+                size_t bytes;
+                foreach (v; 0 .. cell.valueCount)
+                    bytes += old.valueAt(cell.valueStart + v).value.borrowedBytes.length;
+                foreach (t; 0 .. cell.attributeCount)
+                    bytes += old.attributeAt(cell.attributeStart + t).value.borrowedBytes.length;
+                (k < regionPiece ? headPool : tailPool) += bytes;
+            }
+
+    // The new block: its pool holds the copies' payloads, then the region's,
+    // which never exceed the region's text.
+    size_t poolBytes = headPool;
+    if (!checkedAdd(poolBytes, tailPool) || !checkedAdd(poolBytes, newLexEnd - regionStart))
         return false;
-    const n = old.nodes.length;
-    const va = a < n ? old.nodes[a].valueStart : old.values.length;
-    const aa = a < n ? old.nodes[a].attributeStart : old.attributes.length;
-    const vb = b < n ? old.nodes[b].valueStart : old.values.length;
-    const ab = b < n ? old.nodes[b].attributeStart : old.attributes.length;
     const guess = (newRegionEnd - regionStart) / 32 + 8;
-    if (!result.document.acquire(a + (n - b) + guess, va + (old.values.length - vb) + guess,
-        aa + (old.attributes.length - ab) + guess / 2, poolBytes))
+    if (!document.acquire(copiedNodes + guess, copiedValues + guess,
+        copiedAttributes + guess / 2, poolBytes))
         return false;
-    auto document = &result.document;
     auto core = document.core;
     auto pool = document.pool;
-    if (sourceName.length)
-    {
-        pool[0 .. sourceName.length] = cast(const(ubyte)[]) sourceName[];
-        document.ownedSourceName = () @trusted {
-            return (cast(const(char)*) pool.ptr)[0 .. sourceName.length];
-        }();
-    }
-    pool[sourceName.length .. sourceName.length + text.length] = cast(const(ubyte)[]) text[];
-    core.source = () @trusted {
-        return (cast(const(char)*) pool.ptr + sourceName.length)[0 .. text.length];
-    }();
-    core.content = content;
-    size_t poolAt = sourceName.length + text.length;
+    // The pass reads names from the text it lexes; a shared core spells them
+    // from its own source (§10.1), which `finishShared` sets.
+    () @trusted { core.source = text; }();
 
     // Offsets up to the region's start stay; offsets after it shift. No
     // kept offset lies strictly inside the region.
-    uint shift(uint offset) => offset <= regionStart ? offset : cast(uint)(offset + delta);
+    uint shift(uint offset) => offset <= regionStart ? offset : offset + delta;
     SdlSpan shifted(SdlSpan span)
         => span.isValid ? SdlSpan(shift(span.startOffset), shift(span.endOffset)) : span;
-    SdlQualifiedName renamed(SdlQualifiedName name, SdlSpan nameSpan)
-    {
-        const source = core.source;
-        return SdlQualifiedName(
-            source[nameSpan.startOffset .. nameSpan.startOffset + name.namespace_.length],
-            source[nameSpan.endOffset - name.localName.length .. nameSpan.endOffset]);
-    }
+    size_t poolAt;
     SdlScalar rebased(SdlScalar scalar)
     {
         scalar.setSpan(shifted(scalar.span));
@@ -648,70 +834,81 @@ private bool spliceRegion(SdlParserConfig config, Allocator)(
         poolAt += bytes.length;
         return scalar;
     }
-    void copyNode(size_t to, size_t from, size_t valueBase, size_t attributeBase)
+    PassCounts counts;
+    counts.nodes = 0;
+    void copyNode(size_t from)
     {
-        SdlNodeCell cell = old.nodes[from];
+        SdlNodeCell cell = old.nodeAt(from);
         cell.nameSpan = shifted(cell.nameSpan);
         cell.span = shifted(cell.span);
         cell.extent = shifted(cell.extent);
         cell.openBrace = shifted(cell.openBrace);
         cell.closeBrace = shifted(cell.closeBrace);
         cell.terminator = shifted(cell.terminator);
-        if (from)
-            cell.qualifiedName = renamed(cell.qualifiedName, cell.nameSpan);
-        cell.valueStart -= valueBase;
-        cell.attributeStart -= attributeBase;
-        cell.childStart = 0;
-        cell.childCount = 0;
-        core.nodes[to] = cell;
-    }
-    void copyValues(size_t to, size_t from, size_t count)
-    {
-        foreach (i; 0 .. count)
-            core.values[to + i] = SdlValueCell(rebased(old.values[from + i].value));
-    }
-    void copyAttributes(size_t to, size_t from, size_t count)
-    {
-        foreach (i; 0 .. count)
+        foreach (v; 0 .. cell.valueCount)
+            core.flatValues[counts.values + v]
+                = SdlValueCell(rebased(old.valueAt(cell.valueStart + v).value));
+        foreach (t; 0 .. cell.attributeCount)
         {
-            SdlAttributeCell cell = old.attributes[from + i];
-            cell.nameSpan = shifted(cell.nameSpan);
-            cell.span = shifted(cell.span);
-            cell.qualifiedName = renamed(cell.qualifiedName, cell.nameSpan);
-            cell.value = rebased(cell.value);
-            core.attributes[to + i] = cell;
+            SdlAttributeCell attribute = old.attributeAt(cell.attributeStart + t);
+            attribute.nameSpan = shifted(attribute.nameSpan);
+            attribute.span = shifted(attribute.span);
+            attribute.value = rebased(attribute.value);
+            core.flatAttributes[counts.attributes + t] = attribute;
         }
+        cell.valueStart = counts.values;
+        cell.attributeStart = counts.attributes;
+        counts.values += cell.valueCount;
+        counts.attributes += cell.attributeCount;
+        core.flatNodes[counts.nodes++] = cell;
     }
 
-    // 5. The cells before the region, the region's own, then those after.
-    foreach (i; 0 .. a)
-        copyNode(i, i, 0, 0);
-    copyValues(0, 0, va);
-    copyAttributes(0, 0, aa);
+    // 5. The copies before the region, the region's cells, then the copies
+    // after it. The ancestors' child counts and subtree sizes change.
+    UniqueBuffer!(size_t, 16) ancestorSlots;
+    size_t ownerSlot;
+    foreach (piece; pieces[0 .. regionPiece])
+        if (piece.copy)
+            foreach (i; piece.from .. piece.to)
+            {
+                const slot = counts.nodes;
+                copyNode(i);
+                if (ancestorSlots.length < bounds.chain.length
+                    && i == bounds.chain[ancestorSlots.length])
+                {
+                    ancestorSlots ~= slot;
+                    if (i == bounds.owner)
+                    {
+                        ownerSlot = slot;
+                        core.flatNodes[slot].childCount -= bounds.replaced;
+                    }
+                }
+            }
+    assert(ancestorSlots.length == bounds.chain.length, "an ancestor was not copied");
+    const regionFirst = counts.nodes;
 
-    PassCounts counts;
-    counts.nodes = a;
-    counts.values = va;
-    counts.attributes = aa;
+    poolAt = headPool + tailPool;
     counts.poolEnd = poolAt;
     SdlLexerLayout layout;
     layout.recordLines = true;
     PassRegion region;
     region.active = true;
     region.start = regionStart;
-    region.baseDepth = bounds.owner ? old.nodes[bounds.owner].depth + 1 : 0;
+    region.baseDepth = bounds.owner ? old.nodeAt(bounds.owner).depth + 1 : 0;
     region.poolAt = poolAt;
     region.afterOpener = bounds.afterOpener;
+    region.parent = ownerSlot;
     SdlError failure;
-    if (bounds.relex && !runPass!config(core.source[0 .. newLexEnd], sourceName,
+    if (bounds.relex && !runPass!config(text[0 .. newLexEnd], sourceName,
+
         SdlSpan(regionStart, endsContent ? content.endOffset : newRegionEnd), counts,
         *document, layout, failure, region))
         return false;
     if (!endsContent)
     {
         // Only the end of the input may end a node without a terminator.
-        foreach (k; a .. counts.nodes)
-            if (core.nodes[k].terminator.length == 0)
+        foreach (k; regionFirst .. counts.nodes)
+            if (core.flatNodes[k].terminator.length == 0)
                 return false;
         // The region must end with a newline token, not a continuation's
         // newline, then indentation: what the next node's line start was.
@@ -723,57 +920,138 @@ private bool spliceRegion(SdlParserConfig config, Allocator)(
         if (tail != newRegionEnd)
             return false;
     }
-    poolAt = counts.poolEnd;
+    const regionNodes = counts.nodes - regionFirst;
+    foreach (slot; ancestorSlots[])
+        core.flatNodes[slot].subtreeSize += regionNodes - (b - a);
+    const regionPool = counts.poolEnd;
 
-    const tailNodes = n - b;
-    const tailValues = old.values.length - vb;
-    const tailAttributes = old.attributes.length - ab;
-    while (core.nodes.length < counts.nodes + tailNodes)
+    size_t tailNodes, tailValues, tailAttributes;
+    foreach (piece; pieces[regionPiece .. $])
+        if (piece.copy)
+            foreach (i; piece.from .. piece.to)
+            {
+                const cell = old.nodeAt(i);
+                tailNodes++;
+                tailValues += cell.valueCount;
+                tailAttributes += cell.attributeCount;
+            }
+    while (core.flatNodes.length < counts.nodes + tailNodes)
         if (!document.grow!"nodes"(counts.nodes))
             return false;
-    while (core.values.length < counts.values + tailValues)
+    while (core.flatValues.length < counts.values + tailValues)
         if (!document.grow!"values"(counts.values))
             return false;
-    while (core.attributes.length < counts.attributes + tailAttributes)
+    while (core.flatAttributes.length < counts.attributes + tailAttributes)
         if (!document.grow!"attributes"(counts.attributes))
             return false;
-    foreach (i; 0 .. tailNodes)
-        copyNode(counts.nodes + i, b + i, vb - counts.values, ab - counts.attributes);
-    copyValues(counts.values, vb, tailValues);
-    copyAttributes(counts.attributes, ab, tailAttributes);
-    counts.nodes += tailNodes;
-    counts.values += tailValues;
-    counts.attributes += tailAttributes;
+    poolAt = headPool;
+    foreach (piece; pieces[regionPiece .. $])
+        if (piece.copy)
+            foreach (i; piece.from .. piece.to)
+                copyNode(i);
+    assert(poolAt == headPool + tailPool && regionPool <= pool.length);
 
-    // 6. Comments and line starts, spliced the same way.
+    // 6. The node runs: the new block's cells in logical order, which is
+    // their order in it, between the shared runs.
+    UniqueBuffer!SdlRun nodeRuns;
+    size_t logical, stored;
+    void addNew(size_t count)
+    {
+        if (count == 0)
+            return;
+        if (nodeRuns.length && nodeRuns[$ - 1].block is null && nodeRuns[$ - 1].hi == stored)
+            nodeRuns[$ - 1].hi += cast(uint) count;
+        else
+            nodeRuns ~= SdlRun(null, cast(uint) stored, cast(uint)(stored + count),
+                cast(uint) logical);
+        stored += count;
+        logical += count;
+    }
+    foreach (k, piece; pieces[])
+    {
+        if (k == regionPiece)
+            addNew(regionNodes);
+        if (piece.copy)
+        {
+            addNew(piece.to - piece.from);
+            continue;
+        }
+        const run = oldNodes[runOf!"base"(oldNodes, piece.from)];
+        const lo = run.lo + (piece.from - run.base);
+        nodeRuns ~= SdlRun(run.block, cast(uint) lo, cast(uint)(lo + piece.to - piece.from),
+            cast(uint) logical, run.delta + (piece.tail ? delta : 0));
+        logical += piece.to - piece.from;
+    }
+    if (regionPiece == pieces.length)
+        addNew(regionNodes);
+    assert(stored == counts.nodes, "a copied cell is in no run");
+    const fresh = document.filling;
+    size_t values, attributes;
+    foreach (ref run; nodeRuns[])
+    {
+        const block = run.block is null ? fresh : run.block;
+        const first = (() @trusted => &block.nodes[run.lo])();
+        const last = (() @trusted => &block.nodes[run.hi - 1])();
+        run.valueLo = cast(uint) first.valueStart;
+        run.valueBase = cast(uint) values;
+        values += last.valueStart + last.valueCount - first.valueStart;
+        run.attributeLo = cast(uint) first.attributeStart;
+        run.attributeBase = cast(uint) attributes;
+        attributes += last.attributeStart + last.attributeCount - first.attributeStart;
+    }
+
+    // 7. Comments and line starts: those before the region, the region's
+    // own, then those after it, shifted.
     UniqueBuffer!SdlComment comments;
-    comments.reserve(old.comments.length + layout.comments.length);
-    foreach (ref comment; old.comments)
-        if (comment.span.endOffset <= regionStart)
-            comments ~= comment;
-    foreach (ref comment; layout.comments[])
-        comments ~= comment;
-    foreach (ref comment; old.comments)
-        if (comment.span.startOffset >= oldLexEnd)
-            comments ~= SdlComment(shifted(comment.span), comment.kind);
+    UniqueBuffer!SdlRun commentRuns;
+    {
+        const count = old.commentCount;
+        const head = prefixLength!(i => old.commentAt(i).span.endOffset <= regionStart)(count);
+        const tail = prefixLength!(i => old.commentAt(i).span.startOffset < oldLexEnd)(count);
+        spliceItems!(SdlComment, (i, moved) {
+            const comment = old.commentAt(i);
+            return SdlComment(moved ? shiftedBy(comment.span, delta) : comment.span,
+                comment.kind);
+        })(oldComments, count, head, tail, delta, layout.comments[], comments, commentRuns,
+            !share);
+    }
+    UniqueBuffer!size_t lineStarts;
+    UniqueBuffer!SdlRun lineRuns;
+    {
+        const count = old.lineCount;
+        const head = prefixLength!(i => old.lineStart(i) <= regionStart)(count);
+        const tail = prefixLength!(i => old.lineStart(i) <= oldLexEnd)(count);
+        spliceItems!(size_t, (i, moved) => cast(size_t)(cast(uint) old.lineStart(i)
+            + (moved ? delta : 0)))(oldLines, count, head, tail, delta, layout.lineStarts[],
+            lineStarts, lineRuns, !share);
+    }
 
-    const oldStarts = old.lines.lineStarts;
-    UniqueBuffer!size_t starts;
-    starts.reserve(oldStarts.length + layout.lineStarts.length);
-    foreach (start; oldStarts[1 .. $])
-        if (start <= regionStart)
-            starts ~= start;
-    foreach (start; layout.lineStarts[])
-        starts ~= start;
-    foreach (start; oldStarts[1 .. $])
-        if (start > oldLexEnd)
-            starts ~= cast(size_t)(start + delta);
+    // The old blocks the runs share, by ascending address, each once.
+    UniqueBuffer!(const(SdlBlock)*) others;
+    void hold(scope const(SdlRun)[] runs)
+    {
+        foreach (ref run; runs)
+            if (run.block !is null)
+                others ~= run.block;
+    }
+    hold(nodeRuns[]);
+    hold(commentRuns[]);
+    hold(lineRuns[]);
+    {
+        import std.algorithm.sorting : sort;
+        import std.algorithm.iteration : uniq;
+        import std.algorithm.mutation : copy;
 
-    if (!document.finish(counts.nodes, counts.values, counts.attributes, comments[]))
-        return false;
-    core.lines = LineIndex(starts[], text.length, lineZero);
-    finalizeChildren(*document);
-    return true;
+        auto sorted = others[];
+        sort(sorted);
+        others.length = sorted.length - sorted.uniq.copy(sorted).length;
+
+    }
+
+
+    return document.finishShared(counts.nodes, counts.values, counts.attributes, comments[],
+        lineStarts[], nodeRuns[], commentRuns[], lineRuns[], others[], text, sourceName,
+        adopted, content, lineZero);
 }
 
 /// How many cells the pass filled; the arrays may be longer.
@@ -798,6 +1076,7 @@ private struct PassRegion
     uint baseDepth;    // the depth of the region's top-level nodes
     size_t poolAt;     // where the region's payloads go
     bool afterOpener;  // the region starts right after a `{`
+    size_t parent;     // the cell whose children the region's top-level nodes are
 }
 
 /**
@@ -837,7 +1116,7 @@ private bool runPass(SdlParserConfig config, Allocator)(
     if (!region.active)
     {
         const rootSpan = rootStartSpan(text);
-        core.nodes[0] = SdlNodeCell(
+        core.flatNodes[0] = SdlNodeCell(
             qualifiedName: SdlQualifiedName.init,
             nameSpan: rootSpan,
             span: rootSpan,
@@ -863,8 +1142,13 @@ private bool runPass(SdlParserConfig config, Allocator)(
 
     bool room(string field)(size_t used, SdlSpan at)
     {
-        if (used < __traits(getMember, core, field).length
-            || document.grow!field(used))
+        static if (field == "nodes")
+            const capacity = core.flatNodes.length;
+        else static if (field == "values")
+            const capacity = core.flatValues.length;
+        else
+            const capacity = core.flatAttributes.length;
+        if (used < capacity || document.grow!field(used))
             return true;
         return fail(SdlErrorCode.allocationFailed, at, "allocator rejected an SDL arena block");
     }
@@ -874,8 +1158,8 @@ private bool runPass(SdlParserConfig config, Allocator)(
     void finishLayout(size_t node, SdlTokenKind terminatorKind,
         SdlSpan terminatorSpan, in SdlToken next)
     {
-        core.nodes[node].terminator = terminatorSpan;
-        nodeExtent(text, content, core.nodes[node], terminatorKind, next.kind, next.span);
+        core.flatNodes[node].terminator = terminatorSpan;
+        nodeExtent(text, content, core.flatNodes[node], terminatorKind, next.kind, next.span);
     }
 
     bool decodeValue(SdlToken token, out SdlScalar scalar)
@@ -945,7 +1229,7 @@ private bool runPass(SdlParserConfig config, Allocator)(
                 failure = parseError(SdlErrorCode.unexpectedEof,
                     cursor.token.span, sourceName, "missing closing '}'");
                 cursor.locate(failure);
-                failure.relatedSpan = core.nodes[openBlocks[$ - 1]].openBrace;
+                failure.relatedSpan = core.flatNodes[openBlocks[$ - 1]].openBrace;
                 failure.hasRelatedSpan = true;
                 return false;
             }
@@ -977,8 +1261,9 @@ private bool runPass(SdlParserConfig config, Allocator)(
             contextDepth--;
             const owner = openBlocks[$ - 1];
             openBlocks.popBack();
-            core.nodes[owner].span = SdlSpan(core.nodes[owner].span.startOffset, end);
-            core.nodes[owner].closeBrace = close.span;
+            core.flatNodes[owner].span = SdlSpan(core.flatNodes[owner].span.startOffset, end);
+            core.flatNodes[owner].closeBrace = close.span;
+            core.flatNodes[owner].subtreeSize = counts.nodes - owner;
             finishLayout(owner, closeTerminator, closeTerminatorSpan, cursor.token);
             continue;
         }
@@ -1007,7 +1292,7 @@ private bool runPass(SdlParserConfig config, Allocator)(
         const thisNode = counts.nodes++;
         if (!room!"nodes"(thisNode, SdlSpan.at(tagStart)))
             return false;
-        core.nodes[thisNode] = SdlNodeCell(
+        core.flatNodes[thisNode] = SdlNodeCell(
             qualifiedName: tagName,
             nameSpan: tagNameSpan,
             span: SdlSpan.at(tagStart),
@@ -1019,6 +1304,7 @@ private bool runPass(SdlParserConfig config, Allocator)(
             extent: SdlSpan(lineStart, tagStart),
             aloneOnLines: startsLine,
         );
+        core.flatNodes[openBlocks.length ? openBlocks[$ - 1] : region.parent].childCount++;
 
         size_t tagValues;
         while (scalarToken(cursor.token.kind))
@@ -1027,7 +1313,7 @@ private bool runPass(SdlParserConfig config, Allocator)(
             if (!decodeValue(cursor.token, scalar)
                 || !room!"values"(counts.values, cursor.token.span))
                 return false;
-            core.values[counts.values++] = SdlValueCell(scalar);
+            core.flatValues[counts.values++] = SdlValueCell(scalar);
             tagValues++;
             cursor.pop();
             if (cursor.failed) { takeCursorError(); return false; }
@@ -1057,7 +1343,7 @@ private bool runPass(SdlParserConfig config, Allocator)(
             if (!decodeValue(valueToken, scalar)
                 || !room!"attributes"(counts.attributes, valueToken.span))
                 return false;
-            core.attributes[counts.attributes++] = SdlAttributeCell(
+            core.flatAttributes[counts.attributes++] = SdlAttributeCell(
                 attributeName, attributeNameSpan,
                 SdlSpan(attributeNameSpan.startOffset, valueToken.span.endOffset), scalar);
             tagAttributes++;
@@ -1065,8 +1351,8 @@ private bool runPass(SdlParserConfig config, Allocator)(
             if (cursor.failed) { takeCursorError(); return false; }
         }
 
-        core.nodes[thisNode].valueCount = tagValues;
-        core.nodes[thisNode].attributeCount = tagAttributes;
+        core.flatNodes[thisNode].valueCount = tagValues;
+        core.flatNodes[thisNode].attributeCount = tagAttributes;
 
         if (cursor.token.kind == SdlTokenKind.openBrace)
         {
@@ -1089,8 +1375,8 @@ private bool runPass(SdlParserConfig config, Allocator)(
             while (terminator(cursor.token.kind));
             contextDepth++;
             openBlocks ~= thisNode;
-            core.nodes[thisNode].hasBlock = true;
-            core.nodes[thisNode].openBrace = opener.span;
+            core.flatNodes[thisNode].hasBlock = true;
+            core.flatNodes[thisNode].openBrace = opener.span;
             continue;
         }
 
@@ -1103,12 +1389,15 @@ private bool runPass(SdlParserConfig config, Allocator)(
         else if (cursor.token.kind != SdlTokenKind.eof)
             return fail(SdlErrorCode.unexpectedToken, cursor.token.span,
                 "tag declaration requires a newline, semicolon, or document EOF");
-        core.nodes[thisNode].span = SdlSpan(tagStart, terminatorToken.span.endOffset);
+        core.flatNodes[thisNode].span = SdlSpan(tagStart, terminatorToken.span.endOffset);
         finishLayout(thisNode, terminatorToken.kind, terminatorToken.span,
             cursor.token);
     }
+    if (!region.active)
+        core.flatNodes[0].subtreeSize = counts.nodes;
     counts.poolEnd = poolAt;
     counts.hasLast = cursor.hasPrevious;
+
     counts.lastKind = cursor.previousKind;
     counts.lastEnd = cursor.previousEnd;
     return true;
@@ -1173,59 +1462,6 @@ private void nodeExtent(scope const(char)[] text, SdlSpan content,
     }
 }
 
-/** Links each node to its parent's contiguous child-index window.
-
-Nodes are in source preorder, so a node's parent is the most recent node one
-level shallower. Tracking that per level makes both passes linear; scanning
-backwards for it instead costs O(n) per node, which is quadratic in the number
-of siblings — the shape every flat document has.
-*/
-private void finalizeChildren(Allocator)(ref SdlDocument!Allocator document)
-{
-    if (document.core.nodes.length < 2)
-        return;
-
-    // Deepest node decides the ladder's height; the root sits below level 0.
-    uint deepest;
-    foreach (i; 1 .. document.core.nodes.length)
-        if (document.core.nodes[i].depth != uint.max
-            && document.core.nodes[i].depth > deepest)
-            deepest = document.core.nodes[i].depth;
-
-    auto lastAtDepth = UniqueBuffer!(size_t, 32)();
-    foreach (_; 0 .. cast(size_t) deepest + 1)
-        lastAtDepth ~= 0;
-
-    size_t parentOf(size_t i)
-    {
-        const depth = document.core.nodes[i].depth;
-        return depth == 0 ? 0 : lastAtDepth[depth - 1];
-    }
-
-    foreach (i; 1 .. document.core.nodes.length)
-    {
-        document.core.nodes[parentOf(i)].childCount++;
-        lastAtDepth[document.core.nodes[i].depth] = i;
-    }
-
-    size_t next;
-    foreach (ref node; document.core.nodes)
-    {
-        node.childStart = next;
-        next += node.childCount;
-        node.childCount = 0;
-    }
-
-    foreach (ref slot; lastAtDepth[])
-        slot = 0;
-    foreach (i; 1 .. document.core.nodes.length)
-    {
-        const parent = parentOf(i);
-        document.core.childIndexes[document.core.nodes[parent].childStart
-            + document.core.nodes[parent].childCount++] = i;
-        lastAtDepth[document.core.nodes[i].depth] = i;
-    }
-}
 
 @("sdl.reader.grammarArenaAndFiltering")
 @safe
@@ -2003,10 +2239,10 @@ unittest
         auto parsed = parseSdlDocument!sdlFull(test.source);
         assert(parsed.hasValue, parsed.error.toString);
         const core = parsed.document.core;
-        assert(core.nodes.length == test.extents.length + 1, test.source);
+        assert(core.nodeCount == test.extents.length + 1, test.source);
         foreach (i, expected; test.extents)
         {
-            const actual = core.nodes[i + 1].extent.sliceOf(test.source);
+            const actual = core.nodeAt(i + 1).extent.sliceOf(test.source);
             if (actual != expected)
                 throw new AssertError(("extent of node " ~ (cast(char)('1' + i)) ~ " in "
                     ~ test.source ~ ": `" ~ actual ~ "`").idup);
@@ -2029,8 +2265,10 @@ unittest
     static immutable string[] texts = ["# one", "// two", "/* three\n */", "-- four", "# five"];
     const comments = parsed.document.comments;
     assert(comments.length == texts.length);
-    foreach (i, comment; comments)
+    foreach (i; 0 .. comments.length)
     {
+        const comment = comments[i];
+
         assert(comment.span.sliceOf(source) == texts[i]);
         assert(comment.kind == (i == 2 ? SdlCommentKind.block : SdlCommentKind.line));
     }
@@ -2195,31 +2433,34 @@ version (unittest)
         ";", " ", "é", "\xE2\x80\xA8", "w {\n    q 1\n}\n", "#", "--", "\"",
     ];
 
+    // One or two non-overlapping edits of `old`, half of them at line starts.
+    size_t generate(scope const(SdlCore)* old, ref TextEdit[2] edits)
+    {
+        const contentEnd = old.content.endOffset;
+        size_t count = 1 + next(2);
+        size_t cursor = old.content.startOffset;
+        foreach (k; 0 .. count)
+        {
+            if (cursor > contentEnd)
+                return k;
+            size_t start = cursor + next(contentEnd - cursor + 1);
+            if (next(2))
+                while (start > cursor && old.source[start - 1] != '\n')
+                    start--;
+            const end = next(3) ? start : start + next((contentEnd - start) / 8 + 1);
+            edits[k] = replacing(start, end, snippets[next(snippets.length)]);
+            cursor = end + 1;
+        }
+        return count;
+    }
+
     size_t localized, total;
     void exercise(SdlParserConfig config)(scope const(SdlCore)* old, string name, size_t rounds)
     {
-        const contentEnd = old.content.endOffset;
         foreach (round; 0 .. rounds)
         {
-            // One or two non-overlapping edits, half of them at line starts.
             TextEdit[2] edits;
-            size_t count = 1 + next(2);
-            size_t cursor = old.content.startOffset;
-            foreach (k; 0 .. count)
-            {
-                if (cursor > contentEnd)
-                {
-                    count = k;
-                    break;
-                }
-                size_t start = cursor + next(contentEnd - cursor + 1);
-                if (next(2))
-                    while (start > cursor && old.source[start - 1] != '\n')
-                        start--;
-                const end = next(3) ? start : start + next((contentEnd - start) / 8 + 1);
-                edits[k] = replacing(start, end, snippets[next(snippets.length)]);
-                cursor = end + 1;
-            }
+            const count = generate(old, edits);
             if (!count)
                 continue;
             const verdict = reparseBothWays!config(old, name, edits[0 .. count], localized);
@@ -2273,7 +2514,73 @@ version (unittest)
     // Both paths run; most edits that leave the text valid localize.
     assert(total > 5000 && localized > total / 10 && localized < total,
         "the region path ran too rarely, or always");
+
+    // Chained (editing §10.1): each edit applies to the document the one
+    // before produced, which is dropped while the next shares its blocks —
+    // through `Mallocator`, and through a counting allocator that must get
+    // every block back.
+    size_t chained, chainedLocal, mostBlocks;
+    void chain(SdlParserConfig config, A...)(scope const(char)[] source, string name,
+        size_t rounds, A alloc)
+    {
+        import core.lifetime : move;
+        import sparkles.base.text.edits : writeEdited;
+        import sparkles.wired.sdl.test_corpus : documentDifference;
+
+        auto current = parseSdlDocument!config(source, name, alloc);
+        assert(current.hasValue, name);
+        foreach (round; 0 .. rounds)
+        {
+            TextEdit[2] edits;
+            const count = generate(current.document.core, edits);
+            if (!count)
+                continue;
+            UniqueBuffer!char text;
+            writeEdited(text, current.document.source, edits[0 .. count]);
+            bool local;
+            auto incremental = reparseEdited!config(current.document.core, text[], name,
+                SdlSpan.init, edits[0 .. count], local, alloc);
+            auto full = parseSdlDocument!config(text[], name);
+            string verdict;
+            if (full.hasError != incremental.hasError)
+                verdict = "one path failed";
+            else if (full.hasError)
+                verdict = full.error.code == incremental.error.code
+                    && full.error.span == incremental.error.span ? null : "different errors";
+            else
+                verdict = documentDifference(incremental.document, full.document);
+            if (verdict !is null)
+            {
+                import std.conv : to;
+
+                assert(false, name ~ " (chained, round " ~ round.to!string ~ "): " ~ verdict
+                    ~ " after " ~ edits[0 .. count].to!string);
+            }
+            chained++;
+            chainedLocal += local;
+            if (incremental.hasValue)
+                current = move(incremental);
+            if (current.document.core.blocks.length > mostBlocks)
+                mostBlocks = current.document.core.blocks.length;
+        }
+    }
+    chain!sdlFull(deep[], "deep.sdl", 1500);
+    {
+        import sparkles.wired.sdl.test_corpus : AllocationCounts, CountingAllocator;
+
+        AllocationCounts counts;
+        chain!sdlFull(deep[], "deep.sdl", 500, CountingAllocator!()(&counts));
+        assert(counts.live == 0, "a chained document leaked a block");
+    }
+    foreach (path; paths[0 .. 40])
+        if (path[$ - 2 .. $] != ".d")
+            chain!sdlDubRecipe(readText(path), path, 24);
+    // Some document shared the blocks of several generations before it.
+    assert(chained > 2000 && chainedLocal > chained / 10 && mostBlocks >= 4,
+        "the chained region path ran too rarely, or never shared");
+
 }
+
 
 @("sdl.reader.reparseEdited.oracleCatchesASplice")
 @system unittest
@@ -2281,29 +2588,44 @@ version (unittest)
     import sparkles.base.text.edits : writeEdited;
     import sparkles.wired.sdl.test_corpus : documentDifference;
 
-    // The mutation check: perturb one spliced offset, or the spliced line
-    // table, of a localized result, and the SDE14 comparison must see it.
-    enum source = "a 1\nb {\n    c 2\n}\nd 3\n";
-    auto parsed = parseSdlDocument!sdlFull(source);
+    // The mutation check: perturb a shared run's shift, a line run's, or a
+    // copied cell, of a localized result, and the SDE14 comparison must see
+    // it. The nodes after the edit are enough to be shared, not copied.
+    UniqueBuffer!char source;
+    source ~= "a 1\nb {\n    c 2\n}\n";
+    foreach (_; 0 .. 20)
+        source ~= "d 3\n";
+    auto parsed = parseSdlDocument!sdlFull(source[]);
     const edits = [replacing(14, 15, "20")];
     UniqueBuffer!char text;
-    writeEdited(text, source, edits);
+    writeEdited(text, source[], edits);
     bool local;
     auto incremental = reparseEdited!sdlFull(parsed.document.core, text[], null, SdlSpan.init,
         edits, local);
     auto full = parseSdlDocument!sdlFull(text[]);
     assert(local && documentDifference(incremental.document, full.document) is null);
 
-    auto last = &incremental.document.core.nodes[$ - 1];
-    const kept = last.extent;
-    last.extent = SdlSpan(kept.startOffset + 1, kept.endOffset);
+    // The result shares the cells after the edit through a shifted run.
+    auto core = incremental.document.core;
+    const old = parsed.document.core.blocks[0];
+    assert(!core.flat && core.nodeRuns.length > 1 && core.blocks.length == 2);
+    const fresh = core.blocks[core.blocks[0] is old];
+    auto shiftedRun = cast(SdlRun*) &core.nodeRuns[$ - 1];
+    assert(shiftedRun.block is old && shiftedRun.delta == 1);
+    shiftedRun.delta = 0;
     assert(documentDifference(incremental.document, full.document) !is null);
-    last.extent = kept;
+    shiftedRun.delta = 1;
     assert(documentDifference(incremental.document, full.document) is null);
-    incremental.document.core.lines = LineIndex(text[]);
-    incremental.document.core.lines = LineIndex(text[][0 .. $ - 1] ~ "\r");
+    auto lineRun = cast(SdlRun*) &core.lineRuns[$ - 1];
+    lineRun.delta++;
+    assert(documentDifference(incremental.document, full.document) !is null);
+    lineRun.delta--;
+    assert(documentDifference(incremental.document, full.document) is null);
+    auto copied = cast(SdlNodeCell*) &fresh.nodes[0];
+    copied.extent = SdlSpan(copied.extent.startOffset + 1, copied.extent.endOffset);
     assert(documentDifference(incremental.document, full.document) !is null);
 }
+
 
 @("sdl.reader.reparseEdited.noEditsCopyWithoutLexing")
 @system unittest
@@ -2360,9 +2682,106 @@ version (unittest)
     assert(local);
     assert(documentDifference(incremental.document, parseSdlDocument!sdlFull(text[]).document)
         is null);
-    // The splice still copies every kept cell and the source, so its bytes
-    // are the document's; it sizes each array once instead of growing it
-    // (6 blocks and 2.7 MB here, against 10 and 4.7 MB).
+    // The old document was parsed through `Mallocator`, another allocator
+    // type, so the kept cells are copied rather than shared (editing §10.1),
+    // each array sized once where the full parse grew it.
     assert(localCounts.calls < fullCounts.calls);
     assert(localCounts.bytes < fullCounts.bytes * 2 / 3);
+}
+
+@("sdl.reader.reparseEdited.allocatesTheEdit")
+@system unittest
+{
+    import sparkles.base.text.edits : writeEdited;
+    import sparkles.wired.sdl.test_corpus : AllocationCounts, CountingAllocator,
+        documentDifference;
+
+    // Performance SDP8: a one-value edit of a document re-parsed through its
+    // own allocator type, which hands over the edited text, allocates the
+    // same few blocks at the start and at the end of documents of two sizes.
+    alias Counting = CountingAllocator!();
+    AllocationCounts[2][2] counts;
+    size_t[2] fullBytes;
+    foreach (size, repeats; [1000, 4000])
+    {
+        UniqueBuffer!char source;
+        foreach (i; 0 .. repeats)
+            source ~= "node 1 \"two\" k=3 {\n    leaf on\n}\n";
+        AllocationCounts parseCounts;
+        auto parsed = parseSdlDocument!sdlFull(source[], null, Counting(&parseCounts));
+        assert(parsed.hasValue);
+        fullBytes[size] = parseCounts.bytes;
+        foreach (where, at; [5, source.length - 33 + 5])
+        {
+            assert(source[][at .. at + 1] == "1");
+            const edits = [replacing(at, at + 1, "10")];
+            UniqueBuffer!char text;
+            writeEdited(text, source[], edits);
+            bool local;
+            auto incremental = reparseEdited!sdlFull(parsed.document.core, text, null,
+                SdlSpan.init, edits, local, Counting(&counts[size][where]));
+            assert(local && text.length == 0, "the text was not handed over");
+            const reference = parseSdlDocument!sdlFull(incremental.document.source);
+            assert(documentDifference(incremental.document, reference.document) is null);
+        }
+    }
+    foreach (where; 0 .. 2)
+    {
+        const small = counts[0][where], large = counts[1][where];
+        assert(small.calls == large.calls && small.bytes == large.bytes,
+            "an edit's allocation grew with the document");
+        assert(small.calls <= 16 && small.bytes <= 16 * 1024 && small.bytes * 50 < fullBytes[0]);
+    }
+}
+
+
+@("sdl.reader.reparseEdited.retentionIsBounded")
+@system unittest
+{
+    import core.lifetime : move;
+    import sparkles.base.text.edits : writeEdited;
+    import sparkles.wired.sdl.test_corpus : AllocationCounts, CountingAllocator,
+        documentDifference;
+
+    // Editing §10.1: edits all over a document leave blocks partly shared,
+    // and what the document holds stays within a few full parses' worth, as
+    // the re-parse falls back to a full one when it would hold more.
+    alias Counting = CountingAllocator!();
+    UniqueBuffer!char source;
+    foreach (i; 0 .. 400)
+        source ~= i % 4 ? "n 1000 \"text\"\n" : "b {\n    c 1000\n}\n";
+    AllocationCounts counts;
+    {
+        auto current = parseSdlDocument!sdlFull(source[], null, Counting(&counts));
+        const fullBytes = counts.bytes;
+        size_t flatAgain;
+        uint state = 7;
+        foreach (round; 0 .. 600)
+        {
+            state = state * 1_103_515_245 + 12_345;
+            // A value at the start of one of the document's lines.
+            const text = current.document.source;
+            size_t at = (state >> 8) % (text.length - 8);
+            while (at < text.length && (text[at] < '0' || text[at] > '9'))
+                at++;
+            if (at == text.length)
+                continue;
+            const edits = [replacing(at, at + 1, round % 2 ? "2" : "3")];
+            UniqueBuffer!char edited;
+            writeEdited(edited, text, edits);
+            bool local;
+            auto next = reparseEdited!sdlFull(current.document.core, edited, null, SdlSpan.init,
+                edits, local, Counting(&counts));
+            assert(next.hasValue);
+            current = move(next);
+            const core = current.document.core;
+            flatAgain += core.flat;
+            assert(SdlDocument!Counting.heldBytes(core.blocks) <= 4 * fullBytes,
+                "a shared document holds too much");
+        }
+        assert(flatAgain, "the re-parse never fell back to a full one");
+        const reference = parseSdlDocument!sdlFull(current.document.source);
+        assert(documentDifference(current.document, reference.document) is null);
+    }
+    assert(counts.live == 0);
 }

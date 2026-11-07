@@ -48,6 +48,7 @@ See [SPEC §5](../../../specs/wired/sdl/SPEC.md#_5-typed-sdl-roles) and
 | `SdlDocument`                                 | `root`, its owned `source`, `position(offset)`, and `comments`.      |
 | `SdlNode.extent`                              | The bytes the node owns: whole lines, or its inline range.           |
 | `SdlComment`, `SdlCommentKind`                | A comment's span and whether it is a line or a block comment.        |
+| `SdlCommentRange`                             | `comments`: a random-access range of `SdlComment` in source order.   |
 | `SdlScalar`                                   | One value: `kind`, then the payload accessor for that kind.          |
 | `SdlNameQuery`                                | A name to filter `byChild`/`byAttribute`, optionally any namespace.  |
 | `SdlSpan`, `SdlPosition`                      | A source byte range; the line and column of an offset.               |
