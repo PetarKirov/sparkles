@@ -58,9 +58,10 @@ cell's name, spans, layout and links, every value and attribute with its
 payload, the comments, the line table and positions, read through the core's
 accessors and again through the public views, so a shared document's runs are
 checked on both paths. Each document must also keep the ownership rule of
-editing §10.1: every name it returns lies in its own source, and every
-payload in the pool of a block it holds, so a splice that borrows from the
-document it was made from is caught. */
+editing §10.1: every name and payload it returns lies in the pool of a block
+it holds, so a splice that borrows from the text it was given, or from a
+document whose blocks it does not hold, is caught. */
+
 package string documentDifference(A, B)(ref const A a, ref const B b) @system
 {
     import std.conv : to;
@@ -95,10 +96,10 @@ package string documentDifference(A, B)(ref const A a, ref const B b) @system
             return false;
         }
         bool named(in typeof(core.nodeAt(0).qualifiedName) name)
-            => within(name.localName, core.source) && within(name.namespace_, core.source);
+            => held(name.localName) && held(name.namespace_);
         foreach (i; 0 .. core.nodeCount)
             if (!named(core.nodeAt(i).qualifiedName) || !named(SdlNode(core, i).qualifiedName))
-                return "node " ~ i.to!string ~ "'s name is not in its source";
+                return "node " ~ i.to!string ~ "'s name is not in a block it holds";
         foreach (i; 0 .. core.attributeCount)
             if (!named(core.attributeAt(i).qualifiedName)
                 || !named(SdlAttributeView(core, i).qualifiedName)

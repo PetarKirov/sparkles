@@ -324,6 +324,14 @@ struct SdlScalar
             _span = shiftedBy(_span, delta);
     }
 
+    /// ditto, without the test `movedBy` leaves out.
+    pragma(inline, true)
+    package void moveSpan(uint delta) scope @safe pure nothrow @nogc
+    {
+        _span = movedBy(_span, delta);
+    }
+
+
 
     /** Package seam for the incremental reader (editing §10): the borrowed
     bytes of the payload — a string, a binary value, or a zone's spelling —
@@ -501,30 +509,34 @@ package struct SdlAttributeCell
 /// `span` moved by `delta` bytes, modulo 2³²; an invalid span stays invalid.
 package SdlSpan shiftedBy(SdlSpan span, uint delta) @safe pure nothrow @nogc
 {
-    if (delta == 0 || !span.isValid)
+    // The fields, not `isValid`: a method call runs the span's invariant.
+    if (delta == 0 || span.bytes.startOffset == uint.max)
         return span;
     SdlSpan result;
-    result.bytes = TextSpan(span.startOffset + delta, span.endOffset + delta);
+    result.bytes = TextSpan(span.bytes.startOffset + delta, span.bytes.endOffset + delta);
     return result;
 }
 
-/// `name`'s spelling in `source`, read through `nameSpan`: the lengths of
-/// `name`'s halves are all it reads of `name` (editing §10.1).
-package SdlQualifiedName respelled(scope const SdlQualifiedName name, SdlSpan nameSpan,
-    return scope const(char)[] source) @safe pure nothrow @nogc
+/** `span` moved by `delta` bytes, modulo 2³², without a test: only for a
+span a view returns — a node's name, declaration and extent, a scalar's, an
+attribute's — which a parse always sets, and an encoded document, whose spans
+are invalid, never shifts (editing §10.1). */
+pragma(inline, true)
+package SdlSpan movedBy(SdlSpan span, uint delta) @safe pure nothrow @nogc
 {
-    const start = nameSpan.startOffset, end = nameSpan.endOffset;
-    return SdlQualifiedName(source[start .. start + name.namespace_.length],
-        source[end - name.localName.length .. end]);
+    SdlSpan result;
+    result.bytes = TextSpan(span.bytes.startOffset + delta, span.bytes.endOffset + delta);
+    return result;
 }
 
 /** One batch of cells, built once by a parse or a region re-parse and never
+
 changed after (editing §10.1).
 
 A block is reference-counted: every document whose runs read it holds one
 reference, and the last to drop it frees it, through the copy of the
 allocator that made it, which a stateful allocator keeps right after the
-header in the header's own allocation. Payloads of its cells lie in its pool.
+header in the header's own allocation. The names and payloads of its cells lie in its pool.
 */
 package struct SdlBlock
 {
@@ -570,6 +582,9 @@ package struct SdlRun
     uint delta;
     uint valueLo, valueBase;
     uint attributeLo, attributeBase;
+    /// The core whose node runs hold it (`SdlCore.seal`), which views of
+    /// its cells reach through it.
+    const(SdlCore)* core;
 }
 
 /// The last run whose `key` is at most `index`.
@@ -631,6 +646,31 @@ package struct SdlCore
     const(SdlBlock*)[] blocks;
     /// `blocks`' storage for a flat parse's one block.
     const(SdlBlock)*[1] onlyBlock;
+    /// A flat core's cells as one run over `flatView`, so a view reads every
+    /// core alike (`seal`).
+    SdlBlock flatView;
+    /// ditto
+    SdlRun flatRun;
+
+    // Narrow trust: the core does not move once sealed, so its run's address
+    // lives as long as the views it serves.
+    private const(SdlRun)* flatRunAddress() const @trusted pure nothrow @nogc => &flatRun;
+
+    /** Points `flatRun` at the flat arrays and every node run at this core,
+
+    once the cells are in place; the core does not move after. */
+    void seal() @trusted pure nothrow @nogc
+    {
+        // Narrow trust: `flatView` only views the flat arrays, and a run's
+        // `core` is the one field `seal` sets in the core's own table.
+        flatView.nodes = flatNodes;
+        flatView.values = flatValues;
+        flatView.attributes = flatAttributes;
+        flatRun = SdlRun(&flatView, 0, cast(uint) flatNodes.length, 0, 0);
+        flatRun.core = &this;
+        foreach (ref run; cast(SdlRun[]) nodeRuns)
+            run.core = &this;
+    }
 
     /// Whether the cells are the `flat` arrays.
     pragma(inline, true)
@@ -654,10 +694,9 @@ package struct SdlCore
     size_t lineCount() const scope @safe pure nothrow @nogc
         => flat ? (flatLines is null ? 0 : flatLines.lineCount) : lineTotal;
 
-    /** Node `index`'s cell as its block stores it, and the run that places it,
-    `null` for a flat core: views read one field through it, shifting a span
-    by `run.delta` and spelling a name from `source`. The shared path stays
-    out of line, so a flat core's reads inline to an array index. */
+    /** Node `index`'s cell as its block stores it, and the run that places
+    it, `null` for a flat core; `nodeAt` resolves the rest. The shared path
+    stays out of line, so a flat core's reads inline to an array index. */
     pragma(inline, true)
     const(SdlNodeCell)* rawNode(size_t index, out const(SdlRun)* run) const @trusted
         pure nothrow @nogc
@@ -669,18 +708,58 @@ package struct SdlCore
         return sharedNode(index, run);
     }
 
-    /// ditto, for attribute `index` in document order.
+    /// Attribute `index`'s cell as its block stores it, and its node run:
+    /// `flatRun` for a flat core.
+
     pragma(inline, true)
     const(SdlAttributeCell)* rawAttribute(size_t index, out const(SdlRun)* run) const @trusted
         pure nothrow @nogc
     {
         if (flat)
+        {
+            run = flatRunAddress;
             return &flatAttributes[index];
+        }
         return sharedAttribute(index, run);
+    }
+
+    /** Node `index`'s cell, and in `run` its run: `flatRun` for a flat core.
+    A `run` already set is where sequential reads were, so the search looks
+    forward from it a few runs before it falls back to a binary search. */
+    pragma(inline, true)
+    package const(SdlNodeCell)* locateNode(size_t index, ref const(SdlRun)* run) const
+        @trusted pure nothrow @nogc
+    {
+        if (flat)
+        {
+            run = flatRunAddress;
+            return &flatNodes[index];
+        }
+        return locateShared(index, run);
+    }
+
+    pragma(inline, false)
+    private const(SdlNodeCell)* locateShared(size_t index, ref const(SdlRun)* run) const
+        @trusted pure nothrow @nogc
+    {
+        if (run !is null && run !is &flatRun && run.base <= index)
+        {
+            const end = nodeRuns.ptr + nodeRuns.length;
+            foreach (_; 0 .. 4)
+            {
+                if (index < run.base + (run.hi - run.lo))
+                    return &run.block.nodes[run.lo + (index - run.base)];
+                if (++run == end)
+                    break;
+            }
+        }
+        run = &nodeRuns[runOf!"base"(nodeRuns, index)];
+        return &run.block.nodes[run.lo + (index - run.base)];
     }
 
     pragma(inline, false)
     package const(SdlNodeCell)* sharedNode(size_t index, out const(SdlRun)* run) const
+
         @trusted pure nothrow @nogc
     {
         run = &nodeRuns[runOf!"base"(nodeRuns, index)];
@@ -696,8 +775,8 @@ package struct SdlCore
         return &run.block.attributes[run.attributeLo + (index - run.attributeBase)];
     }
 
-    /** Node `index` as a full parse would hold it: spans shifted, its name
-    spelled from `source`, and `valueStart` and `attributeStart` logical. */
+    /** Node `index` as a full parse would hold it: spans shifted, and
+    `valueStart` and `attributeStart` logical. */
     SdlNodeCell nodeAt(size_t index) const @safe pure nothrow @nogc
     {
         const(SdlRun)* run;
@@ -710,8 +789,6 @@ package struct SdlCore
         cell.openBrace = shiftedBy(cell.openBrace, run.delta);
         cell.closeBrace = shiftedBy(cell.closeBrace, run.delta);
         cell.terminator = shiftedBy(cell.terminator, run.delta);
-        cell.qualifiedName = (() @trusted => respelled(cell.qualifiedName, cell.nameSpan,
-            source))();
         cell.valueStart = run.valueBase + (cell.valueStart - run.valueLo);
         cell.attributeStart = run.attributeBase + (cell.attributeStart - run.attributeLo);
         return cell;
@@ -742,8 +819,8 @@ package struct SdlCore
         return cell;
     }
 
-    /// Attribute `index` in document order, its spans shifted and its name
-    /// spelled from `source`.
+    /// Attribute `index` in document order, its spans shifted.
+
     SdlAttributeCell attributeAt(size_t index) const @safe pure nothrow @nogc
     {
         const(SdlRun)* run;
@@ -753,8 +830,6 @@ package struct SdlCore
         cell.nameSpan = shiftedBy(cell.nameSpan, run.delta);
         cell.span = shiftedBy(cell.span, run.delta);
         cell.value.shiftSpan(run.delta);
-        cell.qualifiedName = (() @trusted => respelled(cell.qualifiedName, cell.nameSpan,
-            source))();
         return cell;
     }
 
@@ -1006,6 +1081,7 @@ struct SdlDocument(Allocator = Mallocator)
         count(lines.lineCount * size_t.sizeof);
         core.onlyBlock[0] = building;
         core.blocks = (() @trusted => core.onlyBlock[])();
+        core.seal();
         building = null;
         return true;
     }
@@ -1121,8 +1197,10 @@ struct SdlDocument(Allocator = Mallocator)
         core.flatAttributes = null;
         core.flatComments = null;
         core.flatLines = null;
+        core.seal();
         building = null;
         return true;
+
     }
 
     /// The bytes `blocks` hold together.
@@ -1300,106 +1378,76 @@ struct SdlDocument(Allocator = Mallocator)
     }
 }
 
-/** Copyable borrowed view of one SDL node: its document's core and a cell
-index, 16 bytes.
+/** Copyable borrowed view of one SDL node: its run — the core's `flatRun`
+for a flat document — and its cell, 16 bytes (editing §10.1). A read is one
+load, plus the run's shift for a span; the run reaches the core.
 
 `dip1000` tracks every view, range, and payload slice back to the owning
 document: a view cannot outlive the `SdlDocument` it was reached through.
 */
 struct SdlNode
 {
-    private const(SdlCore)* _core;
-    private size_t _cell;
+    private const(SdlRun)* _run;
+    private const(SdlNodeCell)* _at;
 
     package this(return scope const(SdlCore)* core, size_t cell)
         @safe pure nothrow @nogc
     {
-        _core = core;
-        _cell = cell;
+        if (core !is null)
+            _at = (() @trusted => core.locateNode(cell, _run))();
     }
 
-    // A flat core's cell, read in place; the views' fast path.
-    pragma(inline, true)
-    private ref const(SdlNodeCell) flatCell() const return scope @trusted pure nothrow @nogc
-        => _core.flatNodes[_cell];
-
-    // A shared core's cell and its run (editing §10.1), out of line so the
-    // flat path stays small. Narrow trust: the cell is the core's, which
-    // outlives `scope this`.
-    private const(SdlNodeCell)* sharedCell(out const(SdlRun)* run) const scope @trusted
-        pure nothrow @nogc
-        => _core.sharedNode(_cell, run);
-
-    pragma(inline, false)
-    private SdlSpan sharedSpan(string field)() const scope @safe pure nothrow @nogc
+    // A view whose cell a range already placed.
+    private this(return scope const(SdlRun)* run, return scope const(SdlNodeCell)* at)
+        @safe pure nothrow @nogc
     {
-        const(SdlRun)* run;
-        return shiftedBy(__traits(getMember, sharedCell(run), field), run.delta);
-    }
-
-    pragma(inline, false)
-    private auto sharedField(string field)() const scope @safe pure nothrow @nogc
-    {
-        const(SdlRun)* run;
-        return __traits(getMember, sharedCell(run), field);
+        _run = run;
+        _at = at;
     }
 
     package const(SdlCore)* core() const return scope @safe pure nothrow @nogc
-        => _core;
-    package size_t cellIndex() const scope @safe pure nothrow @nogc => _cell;
+        => _run is null ? null : _run.core;
+    // Narrow trust: `_at` lies in `_run`'s range of its block.
+    package size_t cellIndex() const scope @trusted pure nothrow @nogc
+        => _run is null ? 0 : _run.base + (_at - (_run.block.nodes.ptr + _run.lo));
 
     /// Full stored name. The synthetic root returns the empty/default name.
     pragma(inline, true)
     SdlQualifiedName qualifiedName() const return scope @safe pure nothrow @nogc
-        => _core.flat ? (() @trusted => flatCell.qualifiedName)() : sharedName();
-
-    pragma(inline, false)
-    private SdlQualifiedName sharedName() const return scope @safe pure nothrow @nogc
-    {
-        const(SdlRun)* run;
-        const cell = sharedCell(run);
-        return (() @trusted => respelled(cell.qualifiedName,
-            shiftedBy(cell.nameSpan, run.delta), _core.source))();
-    }
+        => (() @trusted => _at.qualifiedName)();
 
     /// Exact qualified-name span, or the root's zero-width source-start span.
     pragma(inline, true)
     SdlSpan nameSpan() const scope @safe pure nothrow @nogc
-        => _core.flat ? flatCell.nameSpan : sharedSpan!"nameSpan";
+        => movedBy(_at.nameSpan, _run.delta);
 
     /// Complete declaration span, from the name through the terminator.
     pragma(inline, true)
-    SdlSpan span() const scope @safe pure nothrow @nogc
-        => _core.flat ? flatCell.span : sharedSpan!"span";
+    SdlSpan span() const scope @safe pure nothrow @nogc => movedBy(_at.span, _run.delta);
 
     /** The bytes that belong to this node and to nothing else (editing §2):
     whole lines when it is alone on them, else the inline range; removing it
     leaves its neighbours intact. Invalid for an encoded document. */
     pragma(inline, true)
     SdlSpan extent() const scope @safe pure nothrow @nogc
-        => _core.flat ? flatCell.extent : sharedSpan!"extent";
+        => movedBy(_at.extent, _run.delta);
 
     /// Whether no other node's tokens and no enclosing brace share its lines.
     pragma(inline, true)
-    bool aloneOnLines() const scope @safe pure nothrow @nogc
-        => _core.flat ? flatCell.aloneOnLines : sharedField!"aloneOnLines";
+    bool aloneOnLines() const scope @safe pure nothrow @nogc => _at.aloneOnLines;
 
     /// Number of positional scalar values.
     pragma(inline, true)
-    size_t valueCount() const scope @safe pure nothrow @nogc
-        => _core.flat ? flatCell.valueCount : sharedField!"valueCount";
+    size_t valueCount() const scope @safe pure nothrow @nogc => _at.valueCount;
     /// Number of attributes, including duplicates.
     pragma(inline, true)
-    size_t attributeCount() const scope @safe pure nothrow @nogc
-        => _core.flat ? flatCell.attributeCount : sharedField!"attributeCount";
+    size_t attributeCount() const scope @safe pure nothrow @nogc => _at.attributeCount;
     /// Number of direct children, including repeated names.
     pragma(inline, true)
-    size_t childCount() const scope @safe pure nothrow @nogc
-        => _core.flat ? flatCell.childCount : sharedField!"childCount";
+    size_t childCount() const scope @safe pure nothrow @nogc => _at.childCount;
     /// Whether the source declaration carried a `{ }` block.
     pragma(inline, true)
-    bool hasBlock() const scope @safe pure nothrow @nogc
-        => _core.flat ? flatCell.hasBlock : sharedField!"hasBlock";
+    bool hasBlock() const scope @safe pure nothrow @nogc => _at.hasBlock;
 
     /// Positional value `index`, by index rather than by walking the range.
     package SdlScalar valueAt(size_t index) const return scope @safe pure nothrow @nogc
@@ -1414,44 +1462,18 @@ struct SdlNode
     pragma(inline, true)
     SdlValueRange byValue() const return scope @safe pure nothrow @nogc
     {
-        if (_core.flat)
-        {
-            const start = flatCell.valueStart;
-            return (() @trusted => SdlValueRange(_core.flatValues[start
-                .. start + flatCell.valueCount], 0))();
-        }
-        return sharedValues();
-    }
-
-    pragma(inline, false)
-    private SdlValueRange sharedValues() const return scope @safe pure nothrow @nogc
-    {
-        const(SdlRun)* run;
-        const cell = sharedCell(run);
-        // Narrow trust: as for `sharedCell`; the values are in the same block.
-        return (() @trusted => SdlValueRange(run.block.values[cell.valueStart
-            .. cell.valueStart + cell.valueCount], run.delta))();
+        const start = _at.valueStart;
+        // Narrow trust: the values lie in the block of the cell.
+        return (() @trusted => SdlValueRange(_run.block.values[start
+            .. start + _at.valueCount], _run.delta))();
     }
 
     /// Forward range over every attribute in source order.
     pragma(inline, true)
     SdlAttributeRange byAttribute() const return scope @safe pure nothrow @nogc
-    {
-        size_t start, count;
-        if (_core.flat)
-        {
-            start = flatCell.attributeStart;
-            count = flatCell.attributeCount;
-        }
-        else
-        {
-            const(SdlRun)* run;
-            const cell = sharedCell(run);
-            start = run.attributeBase + (cell.attributeStart - run.attributeLo);
-            count = cell.attributeCount;
-        }
-        return (() @trusted => SdlAttributeRange(_core, start, start + count))();
-    }
+        // Narrow trust: a node's attributes lie together in the block of its cell.
+        => (() @trusted => SdlAttributeRange(_run,
+            _run.block.attributes.ptr + _at.attributeStart, _at.attributeCount))();
 
     /// Every attribute matching an exact full qualified name.
     SdlFilteredAttributeRange byAttribute(return scope SdlQualifiedName name) const
@@ -1466,7 +1488,7 @@ struct SdlNode
     /// Forward range over direct children in source order.
     pragma(inline, true)
     SdlChildRange byChild() const return scope @safe pure nothrow @nogc
-        => (() @trusted => SdlChildRange(_core, _cell + 1, childCount))();
+        => (() @trusted => SdlChildRange(_run, _at, _at.childCount))();
 
     /// Every direct child matching an exact full qualified name.
     SdlFilteredChildRange byChild(return scope SdlQualifiedName name) const
@@ -1479,74 +1501,52 @@ struct SdlNode
         => SdlFilteredChildRange(byChild, query);
 }
 
-/// Borrowed attribute occurrence: its document's core and a cell index.
+/// Borrowed attribute occurrence: its node's run and its cell, as for
+/// `SdlNode`.
 struct SdlAttributeView
 {
-    private const(SdlCore)* _core;
-    private size_t _cell;
+    private const(SdlRun)* _run;
+    private const(SdlAttributeCell)* _at;
 
     package this(return scope const(SdlCore)* core, size_t cell)
         @safe pure nothrow @nogc
     {
-        _core = core;
-        _cell = cell;
+        if (core !is null)
+            _at = (() @trusted => core.rawAttribute(cell, _run))();
     }
 
-    // As for `SdlNode`: a flat core's cell in place, a shared one's out of line.
-    pragma(inline, true)
-    private ref const(SdlAttributeCell) flatCell() const return scope @trusted
-        pure nothrow @nogc
-        => _core.flatAttributes[_cell];
-
-    // Narrow trust: as for `SdlNode.sharedCell`.
-    private const(SdlAttributeCell)* sharedCell(out const(SdlRun)* run) const scope @trusted
-        pure nothrow @nogc
-        => _core.sharedAttribute(_cell, run);
-
-    pragma(inline, false)
-    private SdlSpan sharedSpan(string field)() const scope @safe pure nothrow @nogc
+    // A view whose cell a range already placed.
+    private this(return scope const(SdlRun)* run, return scope const(SdlAttributeCell)* at)
+        @safe pure nothrow @nogc
     {
-        const(SdlRun)* run;
-        return shiftedBy(__traits(getMember, sharedCell(run), field), run.delta);
+        _run = run;
+        _at = at;
     }
 
     package const(SdlCore)* core() const return scope @safe pure nothrow @nogc
-        => _core;
-    package size_t cellIndex() const scope @safe pure nothrow @nogc => _cell;
+        => _run is null ? null : _run.core;
+    // Narrow trust: `_at` lies in the attributes `_run` places.
+    package size_t cellIndex() const scope @trusted pure nothrow @nogc
+        => _run is null ? 0
+            : _run.attributeBase + (_at - (_run.block.attributes.ptr + _run.attributeLo));
 
     /// Full stored attribute name.
     pragma(inline, true)
     SdlQualifiedName qualifiedName() const return scope @safe pure nothrow @nogc
-        => _core.flat ? (() @trusted => flatCell.qualifiedName)() : sharedName();
-
-    pragma(inline, false)
-    private SdlQualifiedName sharedName() const return scope @safe pure nothrow @nogc
-    {
-        const(SdlRun)* run;
-        const cell = sharedCell(run);
-        return (() @trusted => respelled(cell.qualifiedName,
-            shiftedBy(cell.nameSpan, run.delta), _core.source))();
-    }
-
+        => (() @trusted => _at.qualifiedName)();
     /// Exact qualified-name source span.
     pragma(inline, true)
     SdlSpan nameSpan() const scope @safe pure nothrow @nogc
-        => _core.flat ? flatCell.nameSpan : sharedSpan!"nameSpan";
+        => movedBy(_at.nameSpan, _run.delta);
     /// Span from name start through scalar end.
     pragma(inline, true)
-    SdlSpan span() const scope @safe pure nothrow @nogc
-        => _core.flat ? flatCell.span : sharedSpan!"span";
+    SdlSpan span() const scope @safe pure nothrow @nogc => movedBy(_at.span, _run.delta);
     /// Borrowed scalar value and its exact token span.
     pragma(inline, true)
     SdlScalar value() const return scope @safe pure nothrow @nogc
-        => _core.flat ? (() @trusted => flatCell.value)() : sharedValue();
-
-    pragma(inline, false)
-    private SdlScalar sharedValue() const return scope @safe pure nothrow @nogc
     {
-        const(SdlRun)* run;
-        SdlScalar scalar = (() @trusted => sharedCell(run).value)();
-        scalar.shiftSpan(run.delta);
+        SdlScalar scalar = (() @trusted => _at.value)();
+        scalar.moveSpan(_run.delta);
         return scalar;
     }
 }
@@ -1571,7 +1571,7 @@ struct SdlValueRange
     in (!empty)
     {
         SdlScalar scalar = (() @trusted => _cells[_index].value)();
-        scalar.shiftSpan(_delta);
+        scalar.moveSpan(_delta);
         return scalar;
     }
     /// ditto
@@ -1582,29 +1582,36 @@ struct SdlValueRange
     SdlValueRange save() const return scope @safe pure nothrow @nogc => this;
 }
 
-/// Forward range over attributes.
+/// Forward range over attributes: one node's, which lie together in one
+/// block, so each step moves to the next cell.
 struct SdlAttributeRange
 {
-    private const(SdlCore)* _core;
-    private size_t _index;
-    private size_t _end;
-    private this(return scope const(SdlCore)* core, size_t start, size_t end)
-        @safe pure nothrow @nogc
+    private const(SdlRun)* _run;
+    private const(SdlAttributeCell)* _at;
+    private size_t _remaining;
+    private this(return scope const(SdlRun)* run, return scope const(SdlAttributeCell)* at,
+        size_t count) @safe pure nothrow @nogc
     {
-        _core = core;
-        _index = start;
-        _end = end;
+        _run = run;
+        _at = at;
+        _remaining = count;
     }
     /// Forward-range primitives.
-    bool empty() const scope @safe pure nothrow @nogc => _index >= _end;
+    pragma(inline, true)
+    bool empty() const scope @safe pure nothrow @nogc => _remaining == 0;
     /// ditto
     pragma(inline, true)
     SdlAttributeView front() const return scope @safe pure nothrow @nogc
-    in (!empty) => SdlAttributeView(_core, _index);
+    in (!empty) => SdlAttributeView(_run, _at);
     /// ditto
     pragma(inline, true)
     void popFront() scope @safe pure nothrow @nogc
-    in (!empty) { _index++; }
+    in (!empty)
+    {
+        _remaining--;
+        // Narrow trust: the next attribute of the same node, in the same block.
+        () @trusted { _at++; }();
+    }
     /// ditto
     SdlAttributeRange save() const return scope @safe pure nothrow @nogc => this;
 }
@@ -1612,36 +1619,61 @@ struct SdlAttributeRange
 /// Forward range over direct child nodes.
 ///
 /// Iteration steps from the first child, which follows its parent, over each
-/// child's subtree to the next; every yielded view refers to the whole
+/// child's subtree to the next. It keeps the current child's cell and run, so
+/// a step inside the run is pointer arithmetic, and a step past its end looks
+/// forward from it (editing §10.1); every yielded view refers to the whole
 /// document's core.
 struct SdlChildRange
 {
-    private const(SdlCore)* _core;
-    private size_t _next;
+    private const(SdlRun)* _run;
+    private const(SdlNodeCell)* _at;
     private size_t _remaining;
-    private this(return scope const(SdlCore)* core, size_t first, size_t count)
-        @safe pure nothrow @nogc
+    // Placed on the parent; steps to its first child.
+    private this(return scope const(SdlRun)* run, return scope const(SdlNodeCell)* at,
+        size_t count) @safe pure nothrow @nogc
     {
-        _core = core;
-        _next = first;
+        _run = run;
+        _at = at;
         _remaining = count;
+        if (count)
+            step(1);
     }
     /// Forward-range primitives.
+    pragma(inline, true)
     bool empty() const scope @safe pure nothrow @nogc => _remaining == 0;
     /// ditto
     pragma(inline, true)
     SdlNode front() const return scope @safe pure nothrow @nogc
-    in (!empty) => SdlNode(_core, _next);
+    in (!empty) => SdlNode(_run, _at);
     /// ditto
     pragma(inline, true)
     void popFront() scope @safe pure nothrow @nogc
     in (!empty)
     {
-        _next += _core.subtreeSizeAt(_next);
-        _remaining--;
+        if (--_remaining)
+            step(_at.subtreeSize);
     }
     /// ditto
     SdlChildRange save() const return scope @safe pure nothrow @nogc => this;
+
+    // Narrow trust: a run's cells are one block's, so inside it the next
+    // cell is `by` further on; past it the core places the index afresh.
+    pragma(inline, true)
+    private void step(size_t by) scope @trusted pure nothrow @nogc
+    {
+        if (by < _run.block.nodes.ptr + _run.hi - _at)
+            _at += by;
+        else
+            relocate(by);
+    }
+
+    pragma(inline, false)
+    private void relocate(size_t by) scope @trusted pure nothrow @nogc
+    {
+        const next = SdlNode(_run, _at).cellIndex + by;
+        _at = _run.core.locateNode(next, _run);
+    }
+
 }
 
 /// Random-access range over a document's comments, in source order (editing

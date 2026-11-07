@@ -736,8 +736,9 @@ produces equals, field for field, the full parse of the same text: each node's
 name, spans, extent, braces, terminator, `aloneOnLines`, depth and children;
 each value and attribute, payloads included; the comments; the line table;
 and the content. Each document also keeps the ownership rule of §10.1: every
-name its views return lies in its own source, and every payload in the pool
-of a block it holds. _Oracle:_ a property test over every repository recipe and a
+name and payload its views return lies in the pool of a block it holds.
+_Oracle:_ a property test over every repository recipe and a
+
 generated deep, wide document that applies random edits — to values and
 attributes, insertions, removals, body and region replacements, including ones
 that open comments or strings, or add braces — and compares the two
@@ -807,9 +808,20 @@ region re-parse, and never changes after; it is reference-counted, and every
 document that reads it holds a reference. A document sees its cells as a
 sequence of **runs**: each run is a range of one block, placed at a logical
 index, with a shift added to every valid offset it holds. A full parse makes
-one block and one run per kind, its **flat** form, which views read directly;
-a re-parse makes a document of several runs, which views read by a binary
-search for the run holding an index.
+one block and one run per kind, its **flat** form.
+
+However its cells are stored, a document's logical node indexes run in
+source preorder, every node keeps its depth, and a node's subtree is the
+contiguous index range after it; the region path and the selector's
+any-depth step rely on this. Comments and line starts keep source order.
+
+A view is its run and its cell, 16 bytes: a read is one load, plus the run's
+shift for a span, the same for a flat document, whose one run covers every
+cell, as for a shared one. A child range keeps its current child's run, so a
+step inside the run is pointer arithmetic, and a step past its end searches
+forward from it, one run or a few, before it falls back to a binary search;
+reading a document in order costs no search per cell. Only random access by
+index — `SdlNode(core, i)`, the accessors the editor uses — searches.
 
 A region re-parse builds one new block, holding:
 
@@ -829,11 +841,10 @@ children are found from its **subtree size**, the number of nodes in its
 preorder subtree, itself included, which only the copied ancestors change;
 there is no child-index arena to rebuild.
 
-Names and payloads follow one ownership rule. A name is read from the
-document's own source through its span, so a shared cell's name is always
-its current spelling. A payload — a string, binary value or zone — lies in
-the pool of the block that holds its cell, which every document reading the
-cell holds too; payloads of copied cells are copied with them. The source
+Names and payloads follow one ownership rule: each lies in the pool of the
+block that holds its cell, which every document reading the cell holds too.
+A full parse's names slice the source copy in its pool; a region's, and the
+names and payloads of copied cells, are copied into the new block. The source
 itself is the document's own: a copy of the text it was given, or, when the
 caller hands it the rendered text it owns (the editor does), that text
 itself.

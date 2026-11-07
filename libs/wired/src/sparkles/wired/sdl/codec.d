@@ -3300,11 +3300,15 @@ private void encFinish(ref EncBuilder b) @safe pure
         nodes[at].subtreeSize = nodes.length - at;
     }
     visit(0);
+    // Sealed in place: the builder holds the arena where it is for the
+    // whole synchronous write.
     () @trusted {
         b.doc.core.flatNodes = nodes;
         b.doc.core.flatValues = values;
         b.doc.core.flatAttributes = attributes;
+        b.doc.core.seal();
     }();
+
 }
 
 /// Builds the canonical $(LREF SdlScalar) payload for one wire value.
