@@ -4,8 +4,13 @@ _The reviewable implementation sequence for [SPEC.md](./SPEC.md). Each
 milestone lands code, tests and the evidence its gate names. Decisions and open
 questions live in [decisions.md](./decisions.md)._
 
-**Status (September 21, 2026):** nothing implemented. Every requirement in
-`SPEC.md` is `unverified`.
+**Status (November 7, 2026):** M0 is delivered (PR #507), with its
+`git check-ignore -v` parity gate. Every requirement in `SPEC.md` is still
+`unverified`. The work resumes as the file-system layer of the
+[build graph](../build-graph/SPEC.md#_12-file-system-access): every listing
+the graph makes is a fileset resolution, so the build graph's E2 needs M1–M3,
+and M5 for the listing digests its planning read set records
+([D44](../build-graph/decisions.md#d44-the-build-graph-reaches-files-through-the-vfs-accepted)).
 
 ## Dependency graph
 

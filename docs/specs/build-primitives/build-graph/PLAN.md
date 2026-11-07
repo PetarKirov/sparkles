@@ -96,10 +96,15 @@ migration comparison snippets are out of scope (D25).
 - The action graph and its task-node exposure (BGA1–BGA3, BGA8), without
   execution.
 - Planning's read set (BGP1), checked against `ci`'s invalidators (CIC5).
+- **File access through the VFS (§12):** the resolver and planning move off
+  `std.file` onto the roots BGF2 names (BGF1–BGF3), and every listing is a
+  fileset resolution (BGF5). This needs the
+  [filesets plan](../filesets/PLAN.md)'s M1–M3 first, and its M5 for the
+  listing digests BGP1 records.
 
 Gate: a test-only planner prints a deterministic action graph for the
 repository's test selection, with one compile per variant. Oracle 8's planning
-scenarios, oracle 14 and oracle 20 pass.
+scenarios, oracle 14, oracle 20 and oracle 24's planning steps pass.
 
 ## E3: Local execution and the shared store
 
@@ -111,7 +116,10 @@ scenarios, oracle 14 and oracle 20 pass.
   hidden-edge check (BGK8) and the library search inputs (BGK9).
 - The shared store (§6): staging, leases, eviction with digest records and
   separate bounds, format versions, inspection and repair, miss explanations
-  and the determinism check (BGS1–BGS10).
+  and the determinism check (BGS1–BGS10), on the VFS beneath its own root
+  (BGF4).
+- Digest caching and stat proxies from the VFS's `Stat` (BGF6), after the
+  VFS's identity amendment to VFO6 is delivered.
 - Registry sources without Nix: fetched by the lockfile's URL into the store
   and verified by its hash (BGR4).
 - Typed generators, the test-root module and content-addressed generated
@@ -135,8 +143,8 @@ scenarios, oracle 14 and oracle 20 pass.
 Gate:
 
 - Oracles 2–5, 7, 9, 10 and 16–19, steps 1–2 of oracle 11, oracle 13's
-  execution-time scenario, and oracle 8's revert check pass through the
-  test-only driver. Oracle 3 includes its write check.
+  execution-time scenario, oracle 8's revert check and oracle 24's store
+  step pass through the test-only driver. Oracle 3 includes its write check.
 - Oracle 21 passes over a replay of at least the last 50 commits of `main`
   and a seeded run of its edit sequences.
 - Oracle 4's mid-compile scenarios (step 5) pass, before the store is shared

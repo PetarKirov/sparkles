@@ -71,7 +71,8 @@ of scope. So are:
 Section 1 states the invariants. Sections 2–4 define recipe resolution,
 variants and the action graph; §5 the action key and the input manifest; §6 the
 shared store; §7 generators; §8 toolchain identity; §9 test actions and result
-reuse; §10 the Nix backend; §11 the public surface. Delivery order lives in
+reuse; §10 the Nix backend; §11 the public surface; §12 file-system access.
+Delivery order lives in
 [PLAN.md](./PLAN.md), oracles and evidence in [testing.md](./testing.md), and
 the choices behind each section in [decisions.md](./decisions.md).
 
@@ -1145,14 +1146,15 @@ The library exposes these operations, under `sparkles.build_primitives`:
 
 Each operation returns its errors as values. Planning and keying read recipes,
 lex source files for version pruning and the layout lint, digest files and
-query `pkg-config`, each through an explicit driver. They perform no other
-I/O.
+query `pkg-config`. They reach files only through the capability VFS, on the
+roots §12 names, and perform no other I/O.
 
 **BGP1: Planning's read set.** Planning **must** record its **read set** and
 report it with the plan:
 
 - every file it read or listed, with its content digest or listing digest;
 - every path it probed and found absent;
+- every symbolic link a lookup crossed, with its target (BGF3);
 - every environment variable it consulted;
 - every `pkg-config` query, with its arguments.
 
@@ -1160,3 +1162,90 @@ The read set is what a plan depends on. A consumer that decides when to plan
 again, such as `ci`'s invalidator list
 ([CIC5](../../ci/task-dag/SPEC.md#_4-selection-policy)), is checked against it.
 See [D37](./decisions.md#d37-planning-records-its-read-set-accepted).
+
+## 12. File-system access
+
+The build graph reaches the file system only through the
+[capability VFS](../../base/vfs/SPEC.md): a held directory handle and one name
+beneath it, never a path resolved from the process's root. Its listings are
+[fileset](../filesets/SPEC.md) resolutions answered through that VFS. The
+processes an action starts are outside this section: a compiler, linker,
+generator or test reads paths, and the manifest and BGK8 check what it read.
+
+**BGF1: Every operation through the VFS.** Every file-system operation the
+build graph performs itself **must** be a VFS operation on a handle
+([VFO3](../../base/vfs/SPEC.md#vfo3-the-operation-set)), on a backend its
+caller supplies ([VFB1](../../base/vfs/backends.md#vfb1-the-concept)):
+`RingVfs` for operations the task-DAG executor runs on its event loop,
+`BlockingVfs` for planning in a process without one, and `MemVfs` in tests.
+This covers:
+
+- reading recipes and lockfiles (§2), and lexing sources (BGV1, BGV5);
+- digesting files and probing absent candidates (BGK2, BGK5, BGK9), and the
+  stat proxies of BGK7;
+- creating action output and measurement directories (BGA3);
+- every store operation (§6).
+
+No module of the build graph **may** call `std.file`, open a `std.stdio.File`,
+or make a system call that names a path.
+
+**BGF2: The roots.** The only directories the build graph opens with
+`openRoot` ([VFH7](../../base/vfs/SPEC.md#vfh7-the-ambient-constructor))
+**must** be these, each once per run:
+
+| Root                                                          | Rights                          | Policy               |
+| ------------------------------------------------------------- | ------------------------------- | -------------------- |
+| the worktree                                                  | read-only                       | `symlinks = beneath` |
+| the store, `<store>` (BGS1)                                   | all; entries created owner-only | the default          |
+| the worktree's private git directory (BGK5)                   | create, write, remove           | the default          |
+| each pinned registry source directory (BGR4)                  | read-only                       | the default          |
+| each directory a `pkg-config` query or a link searches (BGK9) | read-only                       | the default          |
+| each host toolchain directory (BGT3)                          | read-only                       | `symlinks = beneath` |
+
+Every other access descends from one of them, and the read set (BGP1) names
+each entry by its root and the path beneath it.
+
+_Rationale:_ a read-only worktree makes invariant 6 a property of the types:
+no planning or keying code holds a handle that can write the source tree. A
+fixed set of roots makes everything the graph can reach enumerable, and every
+escape from it findable by searching for `ambientAuthority(`.
+
+**BGF3: Links in the worktree.** A committed relative link whose target stays
+in the worktree **must** resolve
+([VFP5](../../base/vfs/SPEC.md#vfp5-beneath)); `ui-app`'s link to its
+resilience catalog is one
+([D24](./decisions.md#d24-a-test-reads-a-specification-through-a-link-accepted)).
+A link that is absolute or climbs above the worktree **must** fail planning
+with the VFS's `escapesRoot`, naming the link. The read set records every link
+a lookup crossed, with its target, so retargeting a link changes the plan.
+
+**BGF4: Store operations.** The store **must** mutate itself with the VFS's
+primitives on handles beneath `<store>`:
+
+- **Publication** moves a staged entry into `results/` with `renameAt`, which
+  cannot leave the store's root
+  ([VFO8](../../base/vfs/SPEC.md#vfo8-rename-stays-in-one-root)).
+- **Manifest lists, preimages and digest records** are written with
+  `writeFileAtomic` ([VFO9](../../base/vfs/SPEC.md#vfo9-atomic-write)).
+- **Eviction and discard** remove trees with `removeTree`, which never
+  descends a link ([VFD2](../../base/vfs/SPEC.md#vfd2-never-descend-a-link)).
+
+The store's root refuses links
+([VFP4](../../base/vfs/SPEC.md#vfp4-no-symlinks)). A link planted in the
+store fails the lookup that meets it with `symlinkRefused`, and BGS6 treats
+its entry as corrupt.
+
+**BGF5: Listings are filesets.** Every directory listing the build graph
+makes, such as a source root's modules, the string import roots that pruning
+scans (BGV1), and a generator's declared input directories (BGG3), **must** be
+a fileset resolved by the fileset driver over the root that holds it
+([FSD1](../filesets/SPEC.md#_11-drivers-fsd)). The graph walks no directory
+itself, and the listing digests BGP1 records come from the resolution.
+
+**BGF6: Identity for digest caching.** BGK5's cache tuple and BGK7's stat
+proxies **must** come from the VFS's `Stat`, with the file identity and the
+change time requested in its mask
+([VFO6](../../base/vfs/SPEC.md#vfo6-stat)). A tuple decides only whether a file
+is read again; it never stands in for a handle.
+
+See [D44](./decisions.md#d44-the-build-graph-reaches-files-through-the-vfs-accepted).
