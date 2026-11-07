@@ -241,6 +241,7 @@ _Loop-side_ modules may import anything.
 | `live`             | loop-side    | ring-backed capability implementations (`RingClock`, `RingNet`, `RingProc`), the process spawn machinery (§13), and the `Env` row                                       |
 | `proc`             | effects-side | process vocabulary (`StdioMode`, `StdioSpec`, `ProcessConfig`, `ExitStatus`), `isProc`, `SimProc` (§13)                                                                 |
 | `channel`          | effects-side | `Channel!T` — bounded intra-worker fiber channel (§14)                                                                                                                  |
+| `admission`        | effects-side | `Admission` — a counted budget of units with a reserved share, `tryAcquire` and parking `acquire` (§14.2)                                                               |
 | `vfs`              | loop-side    | `RingVfs`, the capability VFS backend over the loop, and the `fs` member of the row (§10.5)                                                                             |
 | `signals`, `watch` | loop-side    | concrete ring-driven modules (M7): `SignalFd`, `Watcher`; concept seams follow demand (§10.3)                                                                           |
 | `group`            | loop-side    | `LoopGroup`, `LoopGroupConfig`, `Topology` (§11)                                                                                                                        |
@@ -2580,6 +2581,48 @@ works on every backend that has the parker (`io_uring`, kqueue, IOCP).
 The executor-gated fiber verbs exist because the single-threaded `TestSched`
 has no fiber parker: there, a `Condition` wait would block its only thread.
 Deterministic single-executor code keeps using `Channel`.
+
+### 14.2 Admission
+
+Module `admission` (effects-side). `Admission` is a counted budget of units —
+in-flight operations, slots, bytes, descriptors — that work acquires before
+it starts and releases when it ends. It is the one primitive behind the loop's
+op-slot budget, the fork server's request slots (§17) and `Channel`'s
+capacity, and the admission budget a fileset resolution and its schemes share
+([filesets FSS6](../build-primitives/filesets/SPEC.md#8-the-scheme-seam-fss),
+[decision A6](../build-primitives/filesets/decisions.md#a6-the-admission-budget-belongs-to-event-horizon)).
+
+```d
+struct Admission
+{
+    this(uint capacity, uint inUse = 0);
+    bool tryAcquire(uint n = 1, bool reserved = false); // never waits
+    void release(uint n = 1, bool reserved = false);    // wakes who now fit
+    IoResult!void acquire(X)(ref X exec, uint n = 1);   // parks while short
+    void reserve(uint n);  // hold n units back for reserved acquisitions
+    void close();          // wakes every parked fiber
+    uint capacity() const; uint inUse() const; uint available() const;
+    uint reserved() const; uint reservedInUse() const;
+    bool closed() const;   uint parked() const;
+}
+```
+
+- **Reserved units.** An ordinary acquisition never takes a reserved unit,
+  and a reserved acquisition takes only reserved units, so whoever holds the
+  reserve never finds the budget exhausted by others: the loop's held op
+  slots (fiber-parker.md EFP22).
+- **Order.** Parked fibers are woken first come, first served: a release
+  wakes waiters from the head while the free units cover them, and a smaller
+  request behind the head does not overtake it. `tryAcquire` does not queue,
+  and may take units a parked fiber is waiting for; a woken fiber re-checks
+  and parks again.
+- **Closing.** `close` is idempotent and wakes every parked fiber. An
+  acquisition that finds enough free units still succeeds, so a channel's
+  buffered items drain; one that would have to wait fails with `EPIPE`.
+- **Cancellation** follows §8.4: `acquire` checks the latched interrupt
+  before every attempt and parks through the one-shot cancel discipline, so
+  it is a checkpoint, and an interrupted fiber gets `ECANCELED`.
+- Like `Channel`, it is address-pinned and belongs to one executor.
 
 ## 15. The UI event loop
 
