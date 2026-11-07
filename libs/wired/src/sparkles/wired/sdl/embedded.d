@@ -217,6 +217,26 @@ if (stateSize!Allocator == 0)
     return result;
 }
 
+/// ditto; a stateful allocator is retained by the parsed document.
+SdlEmbeddedParse!Allocator parseEmbeddedSdlDocument(
+    SdlParserConfig config = sdlDubRecipe, Allocator)(
+    scope const(char)[] host, scope const(char)[] sourceName, Allocator alloc)
+if (stateSize!Allocator != 0)
+{
+    import core.lifetime : move;
+
+    SdlEmbeddedParse!Allocator result;
+    result.recipe = locateEmbeddedRecipe(host);
+    if (!result.recipe.found || result.recipe.isJson)
+        return result;
+    UniqueBuffer!char rendering;
+    rendering.reserve(host.length);
+    writeEmbeddedRendering(rendering, host, result.recipe);
+    result.parsed = parseSdlDocumentIn!config(rendering[], sourceName,
+        result.recipe.content, move(alloc));
+    return result;
+}
+
 @("sdl.embedded.locateEmbeddedRecipe.shapes")
 @safe pure nothrow @nogc
 unittest

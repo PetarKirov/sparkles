@@ -398,6 +398,15 @@ Gate:
 - the editor's range overloads apply one operation per selected target, and
   one consumer's hand-written name-and-value filter moves onto a selector.
 
+## S22 follow-ups: 2026-11-07
+
+S22 left the region path to stateless allocators: a stateful one took the
+full parse, and `SdlOpenDocument` refused one. Both limits are lifted.
+
+| Gate                                                   | Evidence                                                                                                                                                                                                                                                                                                        |
+| ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SDE16; a stateful `SdlOpenDocument`, its lifetime rule | `reparseEdited`'s allocator overload; `sdl.reader.reparseEdited.properties` repeating every edit through `CountingAllocator`, `.statefulAllocatorLocalizes`; `sdl.editor.write.statefulAllocatorLocalizes`; `sdl.open_document.statefulAllocator`; [editing §9](./editing.md#9-open-documents-and-node-handles) |
+
 ## S21–S22 closure: 2026-11-06
 
 | Milestone | Gate                                                          | Evidence                                                                                                                                                                                                                                                    |

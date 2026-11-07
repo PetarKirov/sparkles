@@ -1239,15 +1239,13 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
             content = moved.content;
         }
         // Only the edited region is re-parsed when it can be (§10, SDE14).
+        bool localized;
         static if (stateSize!Allocator == 0)
-        {
-            bool localized;
             parsed = reparseEdited!(config, Allocator)(_core, parsedText, _sourceName, content,
                 edits, localized);
-        }
         else
-            parsed = parseSdlDocumentIn!(config, Allocator)(parsedText, _sourceName, content,
-                allocator);
+            parsed = reparseEdited!(config, Allocator)(_core, parsedText, _sourceName, content,
+                edits, localized, allocator);
         if (parsed.hasError)
         {
             auto error = editError(SdlErrorCode.editResultInvalid, parsed.error.span,
@@ -1772,4 +1770,29 @@ version (unittest)
     Mallocator allocator;
     assert(!editor.write(output, allocator).hasError);
     assert(output[] == "name \"y\"\ndependency \"a\" version=\"*\" path=\"../..\"\nnew 2\n");
+}
+
+@("sdl.editor.write.statefulAllocatorLocalizes")
+@system pure nothrow @nogc unittest
+{
+    import sparkles.wired.sdl.reader : parseSdlDocument;
+    import sparkles.wired.sdl.test_corpus : AllocationCounts, CountingAllocator;
+
+    UniqueBuffer!char source;
+    foreach (i; 0 .. 4000)
+        source ~= "node 1 \"two\" k=3 {\n    leaf on\n}\n";
+    AllocationCounts fullCounts, writeCounts;
+    auto parsed = parseSdlDocument!sdlFull(source[], null, CountingAllocator!()(&fullCounts));
+    assert(parsed.hasValue);
+    auto editor = sdlEditor(parsed.document, source[]);
+    SdlNode last;
+    foreach (node; parsed.document.root.byChild)
+        last = node;
+    editor.replaceValue(last, 0, SdlScalar(10));
+    auto allocator = CountingAllocator!()(&writeCounts);
+    UniqueBuffer!char output;
+    assert(!editor.write(output, allocator).hasError);
+    assert(output[][$ - 34 .. $] == "node 10 \"two\" k=3 {\n    leaf on\n}\n");
+    // The full parse grows its arrays; the region path sizes them once.
+    assert(writeCounts.calls < fullCounts.calls && writeCounts.live == 0);
 }
