@@ -74,11 +74,11 @@ sequences that work with this library, and only together do they run the
 terminal without raylib. macOS is in scope: Vulkan runs there through MoltenVK
 on the AppKit window's `CAMetalLayer`, so this canvas is to be the native
 renderer on every desktop and the raylib canvas a compatibility configuration.
-Out of scope here are multi-pass visual effects such as bloom and
-the CRT tube; and Skia Graphite itself, the general-purpose renderer the
-window-system plan schedules after this library.
-Open questions [UVQ1 and UVQ2](./decisions.md#open-questions) track the last
-two.
+Effects are in scope at the frame's root, where an application brackets
+bloom or the CRT tube; a bracket nested inside another draws unaffected.
+Out of scope is Skia Graphite itself, the general-purpose renderer the
+window-system plan schedules after this library; open question
+[UVQ2](./decisions.md#open-questions) tracks it.
 
 Section 1 states the invariants, §2 the frame and its ownership, §3 the
 drawing operations, §4 text, §5 images, §6 resources and lifetimes, and §7
@@ -223,8 +223,17 @@ shift, as `PushShift` defines.
 `dx·cellW` and `dy·cellH` pixels, each rounded half away from zero, until its
 `popShift()`. Nested shifts add their rounded offsets.
 
-**UVK15: Effects.** An effect bracket **must** draw its contents unaffected
-and count once as `effect`.
+**UVK15: Effects.** _(Revised.)_ An effect bracket at the frame's root
+whose record carries passes for the device's Vulkan version
+(`vulkan13Backend`, `vulkan11Backend`) **must** draw its contents into an
+image of its own and run those passes over the bracket's rectangle, as the
+record's `EffectPass`es name their sources, each pass's uniform block filled
+by name from the record's parameters and from `uResolution`, `uExtentCells`,
+`uTime` and `colDiffuse`; the last pass **must** composite onto the target at
+that rectangle, upright. Any other bracket — nested in another, naming no
+effect or none the registry holds, one with no artifact for the device, or
+on a target without dynamic rendering, turned or of an sRGB format —
+**must** draw its contents unaffected and count once as `effect`.
 
 **UVK16: Degradation report.** `endFrame` **must** return, per frame, a count
 for each of `effect`, `missingFace`, `glyphMiss`, `unshapedCluster`,

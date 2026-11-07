@@ -119,6 +119,20 @@ struct DrawRun
     bool erase;
 }
 
+/**
+An effect bracket at the frame's root: the draw runs between its push and
+its pop, and the pixels it covers (`UVK15`). The canvas runs the effect's
+passes over those runs, or draws them unaffected and says so.
+*/
+struct EffectBracket
+{
+    EffectId id;        ///
+    uint firstRun;      /// the first of its runs
+    uint endRun;        /// one past its last
+    ScissorBox rect;    /// in display pixels, within the target
+    Size cells;         /// its size in cells, as the bracket named it
+}
+
 /// What became of an image a painter asked for.
 enum ImageOutcome : ubyte
 {
@@ -356,6 +370,10 @@ if (isImageSource!Images)
     private Size target_;
     private UniqueBuffer!Instance instances_;
     private UniqueBuffer!DrawRun runs_;
+    private UniqueBuffer!EffectBracket brackets_;
+    private uint effectDepth_;
+    private bool bracketOpen_; // the root bracket is being recorded
+    private bool breakRun_;    // the next record starts a run
     private UniqueBuffer!ClipEntry clips_;
     private UniqueBuffer!ShiftEntry shifts_;
     private int shiftX_, shiftY_;
@@ -373,6 +391,9 @@ if (isImageSource!Images)
         target_ = target;
         instances_.clear();
         runs_.clear();
+        brackets_.clear();
+        effectDepth_ = 0;
+        bracketOpen_ = breakRun_ = false;
         clips_.clear();
         shifts_.clear();
         shiftX_ = shiftY_ = 0;
@@ -386,6 +407,18 @@ if (isImageSource!Images)
 
     /// The frame's draw runs, in drawing order.
     const(DrawRun)[] runs() const return => runs_[];
+
+    /// The effect brackets at the frame's root, in drawing order; one left
+    /// open ends with the frame.
+    const(EffectBracket)[] brackets() return
+    {
+        if (bracketOpen_)
+        {
+            brackets_[][$ - 1].endRun = cast(uint) runs_.length;
+            bracketOpen_ = false;
+        }
+        return brackets_[];
+    }
 
     /// The frame's metrics.
     ref const(FrameMetrics) metrics() const return => m_;
@@ -1195,17 +1228,43 @@ if (isImageSource!Images)
         imageQuadPx(slot, x, y, w, h, sx, sy, sw, sh, size.width, size.height, v4(1, 1, 1, 1));
     }
 
-    /// An effect bracket draws its contents unaffected and counts once
-    /// (`UVK15`).
+    /**
+    An effect bracket at the frame's root is recorded (`brackets`), its
+    draws in runs of their own, for the canvas to run the effect over; one
+    inside another, or naming no effect, draws its contents unaffected and
+    counts once (`UVK15`).
+    */
     void pushEffect(in Rect r, EffectId id)
     {
-        report.count(Degradation.effect);
+        if (effectDepth_++ != 0 || !id.valid)
+        {
+            report.count(Degradation.effect);
+            return;
+        }
+        // Never past the target: a bracket over a whole window gets exactly
+        // the window, the partial cell at its edge included.
+        const x0 = clampTo(px(r.x), target_.width), y0 = clampTo(py(r.y), target_.height);
+        const x1 = clampTo(px(r.x) + r.width * m_.cellW, target_.width);
+        const y1 = clampTo(py(r.y) + r.height * m_.cellH, target_.height);
+        brackets_.put(EffectBracket(id, cast(uint) runs_.length, cast(uint) runs_.length,
+            ScissorBox(x0, y0, x1 - x0, y1 - y0), Size(r.width, r.height)));
+        bracketOpen_ = breakRun_ = true;
     }
 
     /// ditto
     void popEffect()
     {
+        if (effectDepth_ == 0)
+            return;
+        if (--effectDepth_ == 0 && bracketOpen_)
+        {
+            brackets_[][$ - 1].endRun = cast(uint) runs_.length;
+            bracketOpen_ = false;
+            breakRun_ = true;
+        }
     }
+
+    private static int clampTo(int v, int hi) => v < 0 ? 0 : v > hi ? hi : v;
 
     /// A run's extent in cells, as layout measured it.
     Size measure(scope const(char)[] text) const => Size(cast(int) visibleWidth(text), 1);
@@ -1293,9 +1352,10 @@ if (isImageSource!Images)
         if (clipped_)
             return;
         auto all = runs_[];
-        if (!all.length || all[$ - 1].scissor != scissor_ || all[$ - 1].images != bound
-            || all[$ - 1].erase != erase)
+        if (!all.length || breakRun_ || all[$ - 1].scissor != scissor_
+            || all[$ - 1].images != bound || all[$ - 1].erase != erase)
             runs_.put(DrawRun(cast(uint) instances_.length, 0, scissor_, bound, erase));
+        breakRun_ = false;
         instances_.put(i);
         ++runs_[][$ - 1].count;
     }
@@ -1530,6 +1590,7 @@ unittest
     p.fillRect(Rect(0, 0, 2, 2), Visual(hasBg: true, bgAlpha: 255));
     p.popEffect();
     assert(p.instances.length == 1, "the contents, unaffected");
+    assert(p.brackets.length == 0, "no effect named: nothing to run");
     p.textRunIn(Rect(0, 0, 4, 1), "Logs", Visual(fontRole: FontRole.ui));
     p.textRunIn(Rect(0, 1, 4, 1), "code", Visual(fontRole: FontRole.code));
     p.glyph(Point(0, 2), 'x', Visual.init);
@@ -1822,3 +1883,38 @@ unittest
 /// What is under text drawn with `v`: its background, when it paints one.
 vec4 backgroundOf(in Visual v) @safe pure nothrow @nogc
     => v.hasBg && v.bgAlpha == 255 ? rgba(v.bg, 255) : v4(0, 0, 0, 0);
+
+@("ui_vulkan.painter.aRootBracketIsItsOwnRuns")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.ui.effect : Builtin;
+
+    // `UVK15`: the root bracket's draws are runs of their own, so the canvas
+    // can draw them elsewhere; one inside it degrades and counts.
+    Painter!NoImages p;
+    p.begin(Size(400, 300), metrics10x20);
+    const fill = Visual(hasBg: true, bgAlpha: 255);
+    p.fillRect(Rect(0, 0, 2, 2), fill);
+    p.pushEffect(Rect(1, 1, 50, 50), Builtin.bloom);
+    p.fillRect(Rect(2, 2, 2, 2), fill); // same scissor and images: would have merged
+    p.pushEffect(Rect(2, 2, 2, 2), Builtin.dim);
+    p.fillRect(Rect(3, 3, 1, 1), fill);
+    p.popEffect();
+    p.popEffect();
+    p.fillRect(Rect(0, 5, 2, 2), fill);
+    assert(p.runs.length == 3, "before, inside, after");
+    const b = p.brackets;
+    assert(b.length == 1 && b[0].id == Builtin.bloom);
+    assert(b[0].firstRun == 1 && b[0].endRun == 2);
+    // From the origin (5, 3), clamped to the target: 50 cells reach past
+    // its 400 by 300 pixels.
+    assert(b[0].rect == ScissorBox(15, 23, 385, 277) && b[0].cells == Size(50, 50));
+    assert(p.report[Degradation.effect] == 1, "the nested one");
+
+    // A bracket left open ends with the frame.
+    p.begin(Size(400, 300), metrics10x20);
+    p.pushEffect(Rect(0, 0, 4, 4), Builtin.bloom);
+    p.fillRect(Rect(0, 0, 2, 2), fill);
+    assert(p.brackets.length == 1 && p.brackets[0].endRun == 1);
+}
