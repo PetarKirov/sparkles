@@ -331,6 +331,7 @@
           preBuild = ''
             chmod -R u+w "$NIX_BUILD_TOP"
           ''
+          + lib.optionalString (needsUiShaders srcDirs) (placeUiShaders "$NIX_BUILD_TOP/${src.name}")
           + lib.optionalString (needsUiVulkanShaders srcDirs) (
             placeUiVulkanShaders "$NIX_BUILD_TOP/${src.name}"
           );

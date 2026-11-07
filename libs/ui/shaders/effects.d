@@ -4,16 +4,19 @@ each a thin wrapper around the transform in `sparkles.ui.effect_shaders`.
 
 Device-only, and outside `sparkles:ui`'s source paths on purpose: only
 `shader-compile` ever compiles this module, with LDC's Vulkan target (which
-predefines `LDC_DCompute`), and what it produces is the GLSL under
-`generated/` that `sparkles.ui.effect` string-imports. An ordinary build never
-sees it — its `Sampler2D.sample` names a SPIR-V intrinsic no CPU has.
+predefines `LDC_DCompute`), and what it produces — GLSL for both OpenGL
+dialects, and SPIR-V for Vulkan 1.3 and 1.1 — lands under `generated/`, which
+`sparkles.ui.effect` string-imports. An ordinary build never sees it — its
+`Sampler2D.sample` names a SPIR-V intrinsic no CPU has.
 
 The interface is raylib's: `fragTexCoord`/`fragColor` are the varyings its
 default vertex shader emits, `texture0` the sampler it binds, `finalColor`
 the output. `uExtentCells` and the per-effect uniforms are what
-`ui_raylib.effect_gpu` uploads at composite time.
+`ui_raylib.effect_gpu` uploads at composite time. On Vulkan the same names
+hold: the varyings at locations 0 and 1, the images beside the shared
+sampler, and the uniforms one block `sparkles:ui-vulkan` fills by name.
 */
-@compute(CompileFor.deviceOnly)
+@compute(CompileFor.deviceOnly) @profiles(gl330, gles100, vulkan13, vulkan11)
 module effects;
 
 import sparkles.shaders;
