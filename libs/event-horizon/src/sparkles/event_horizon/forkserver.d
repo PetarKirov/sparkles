@@ -41,6 +41,7 @@ import core.sys.posix.unistd : _exit, close, fork, pid_t;
 import core.stdc.errno : EAGAIN, ECHILD, EINVAL, EMSGSIZE, ENOMEM, EPIPE,
     errno, EWOULDBLOCK;
 
+import sparkles.event_horizon.admission : Admission;
 import sparkles.event_horizon.errors : IoErrorStage, IoResult, ioErr, ioOk,
     OpKind;
 
@@ -128,13 +129,16 @@ struct ForkServer
     private ForkServerConfig cfg;
     private bool[] slotBusy;
     private uint nextTag;
-    private uint outstanding;
+    // The request slots' admission budget (SPEC §14.2): a unit is held from
+    // `submit` until `release`. `slotBusy` says which slot.
+    private Admission slots_;
 
     /// `true` once `start` succeeded and `shutdown` has not run.
     bool running() const @safe pure nothrow @nogc => zygote > 0;
 
-    /// Outstanding = submitted and not yet taken + taken and not released.
-    uint inFlight() const @safe pure nothrow @nogc => outstanding;
+    /// Outstanding requests: submitted and not yet released, whether or not
+    /// their response was taken.
+    uint inFlight() const @safe pure nothrow @nogc => slots_.inUse;
 
     /// The fd completions arrive on — registerable with the loop's `pollAdd`
     /// so a response wakes an event-driven host.
@@ -195,6 +199,7 @@ struct ForkServer
         s.ctrl = fds[0];
         s.zygote = pid;
         s.slotBusy = new bool[](cfg.slots);
+        s.slots_ = Admission(cfg.slots);
         return ioOk();
     }
 
@@ -208,6 +213,9 @@ struct ForkServer
         if (input.length > cfg.slotBytes)
             return ioErr!uint(EMSGSIZE, OpKind.send, IoErrorStage.submit,
                 "forkserver: input exceeds the slot size");
+        if (!slots_.tryAcquire())
+            return ioErr!uint(EAGAIN, OpKind.send, IoErrorStage.submit,
+                "forkserver: every slot is in flight");
         uint slot = uint.max;
         foreach (i, busy; slotBusy)
             if (!busy)
@@ -215,19 +223,20 @@ struct ForkServer
                 slot = cast(uint) i;
                 break;
             }
-        if (slot == uint.max)
-            return ioErr!uint(EAGAIN, OpKind.send, IoErrorStage.submit,
-                "forkserver: every slot is in flight");
+        assert(slot != uint.max, "forkserver: a free unit with no free slot");
 
         inputArea(slot)[0 .. input.length] = input[];
         header(slot).outLen = 0;
         const tag = ++nextTag;
         const frame = ReqFrame(tag, kind, slot, input.length);
         if (!sendFrame(ctrl, &frame, frame.sizeof))
-            return ioErr!uint(errno, OpKind.send, IoErrorStage.submit,
+        {
+            const e = errno;
+            slots_.release();
+            return ioErr!uint(e, OpKind.send, IoErrorStage.submit,
                 "forkserver: request send failed");
+        }
         slotBusy[slot] = true;
-        ++outstanding;
         return ioOk(cast(uint) tag);
     }
 
@@ -246,10 +255,11 @@ struct ForkServer
     }
 
     /// Return `r`'s slot to the free pool (its `output` view dies here).
-    void release(in ForkResponse r) @safe pure nothrow @nogc
+    void release(in ForkResponse r) @safe nothrow @nogc
     in (r.slot < slotBusy.length && slotBusy[r.slot], "release of a free slot")
     {
         slotBusy[r.slot] = false;
+        slots_.release();
     }
 
     /// Stop the zygote (idempotent). Closing our socket end is the signal;
@@ -269,7 +279,7 @@ struct ForkServer
         }
         teardownArena();
         slotBusy = null;
-        outstanding = 0;
+        slots_ = Admission.init;
     }
 
     ~this() @system
@@ -312,7 +322,6 @@ struct ForkServer
             return false; // EAGAIN (nothing yet), 0 (zygote died), or error
         r = ForkResponse(frame.tag, frame.status, frame.slot,
             outputArea(frame.slot)[0 .. cast(size_t) frame.outLen]);
-        --outstanding;
         return true;
     }
 
@@ -526,8 +535,10 @@ version (unittest)
     auto refused = s.submit(cast(const(ubyte)[]) "b");
     assert(refused.hasError && refused.error.code == EAGAIN);
     auto done = s.wait();
+    assert(s.inFlight == 1, "a taken response holds its slot until released");
     assert(!done.hasError);
     s.release(done.value);
+    assert(s.inFlight == 0);
     assert(!s.submit(cast(const(ubyte)[]) "b").hasError);
     auto second = s.wait();
     assert(!second.hasError && second.value.ok);
