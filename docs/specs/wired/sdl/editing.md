@@ -134,6 +134,16 @@ So in `a 1; b 2⏎` the extent of `a` is `a 1; ` and removing it leaves
 `b 2⏎`; the extent of `b` is ` b 2`, and removing it leaves `a 1;⏎`. In
 `a {; b 1; }` the extent of `b` is ` b 1;`, leaving `a {; }`.
 
+A node's **inline text** is its extent without the spaces, tabs and line
+breaks at either end, and without its `;` terminator and the blanks before
+that: its tokens and the comments its extent holds — a block comment
+between the preceding terminator and the node, one before its `;`, and,
+when the line's newline ends the node, the line's trailing comment. In
+`a 1 /* x */; /* y */ b 2 // z⏎` the inline texts are `a 1 /* x */` and
+`/* y */ b 2 // z`. A node is **single-line** when its inline text holds no
+line break and no line comment, and, alone on its lines, it has no attached
+comments (below).
+
 Leading comments are not part of an extent. An operation may opt in to
 treating the **attached comments** of a node — the maximal run of
 comment-only lines directly above it, with no blank line between — as part
@@ -148,33 +158,55 @@ The set is the union of what the repository's editors do
 ([§7](#7-migration-coverage)), not a general tree API. The range column is
 normative: it is what SDE1 checks.
 
-| Operation                   | Range it may change                                                                                                                                                                             | Resolves to                                                                                                                          |
-| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| replace a value             | the value's span                                                                                                                                                                                | the canonical spelling of the new scalar                                                                                             |
-| replace an attribute        | the attribute's span                                                                                                                                                                            | `name=value`, with a new name and/or value; the separator before it is untouched                                                     |
-| set an attribute            | an existing singular attribute's span; otherwise the point after the node's last value or attribute, or after its name if it has none                                                           | replace in place, or insert ` name=value`; a name held by more than one attribute is `editAmbiguousTarget`                           |
-| remove an attribute         | the attribute's span and the spaces and tabs before it on its line; when a `\` continuation separates it from the previous token, also that `\`, the spaces and tabs before it, and its newline | deletion; a comment between the `\` and the attribute makes it `editUnsupportedLayout`                                               |
-| insert child nodes          | one point: the start of a whole-line sibling's extent, its end, or the start of a block's `}` line (the end of the content for the root); for an inline anchor, its extent's end or start       | the fragment, re-indented and separated (SDE4)                                                                                       |
-| append to a node            | for a node with a block, as inserting before its `}` line; for one without, the point after its last value, attribute or name, before any trailing comment and its terminator                   | without a block: ` {`, a newline, the fragment, a newline, the node's indentation and `}`                                            |
-| remove a node               | the node's extent, plus its attached comments when asked, plus the one blank line or newline SDE5 names                                                                                         | deletion                                                                                                                             |
-| move a node                 | the removal of the node with its attached comments, as removing it names; and one point, as inserting beside a whole-line sibling names                                                         | deletion there; at the point, the moved lines with the edits made inside them, re-indented only when the indentation differs (SDE18) |
-| replace a node's block body | the bytes strictly between its `{` terminator and the start of its `}` line                                                                                                                     | the fragment, re-indented                                                                                                            |
-| replace a region            | a span of the content the caller derives from the document, such as the lines from one comment through another (a managed region)                                                               | the caller's text                                                                                                                    |
-| set a node's values         | from its first value to its last, or the point after its name when it has none                                                                                                                  | the canonical spellings, space-separated                                                                                             |
-| insert an attribute         | the point after the node's last value, attribute or name                                                                                                                                        | ` name=value`, whatever attributes of that name exist                                                                                |
-| replace a node              | the node's extent when it is alone on its lines; else from its first byte through its last token                                                                                                | the fragment, re-indented; at an inline node, one single-line node                                                                   |
-| update from a typed value   | the union of the ranges of the operations above that it resolves to                                                                                                                             | the operations that make the node decode as the value (§3.1)                                                                         |
+| Operation                   | Range it may change                                                                                                                                                                                   | Resolves to                                                                                                                                                                             |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| replace a value             | the value's span                                                                                                                                                                                      | the canonical spelling of the new scalar                                                                                                                                                |
+| replace an attribute        | the attribute's span                                                                                                                                                                                  | `name=value`, with a new name and/or value; the separator before it is untouched                                                                                                        |
+| set an attribute            | an existing singular attribute's span; otherwise the point after the node's last value or attribute, or after its name if it has none                                                                 | replace in place, or insert ` name=value`; a name held by more than one attribute is `editAmbiguousTarget`                                                                              |
+| remove an attribute         | the attribute's span and the spaces and tabs before it on its line; when a `\` continuation separates it from the previous token, also that `\`, the spaces and tabs before it, and its newline       | deletion; a comment between the `\` and the attribute makes it `editUnsupportedLayout`                                                                                                  |
+| insert child nodes          | one point: the start of a whole-line sibling's extent, its end, or the start of a block's `}` line (the end of the content for the root); beside an inline sibling, the point placement names (below) | the fragment, re-indented and separated (SDE4), or on the sibling's line between separators                                                                                             |
+| append to a node            | for a node with a block, as inserting before its `}` line; for one without, the point after its last value, attribute or name, before any trailing comment and its terminator                         | without a block: ` {`, a newline, the fragment, a newline, the node's indentation and `}`                                                                                               |
+| remove a node               | the node's extent, plus its attached comments when asked, plus the one blank line or newline SDE5 names                                                                                               | deletion                                                                                                                                                                                |
+| move a node                 | the removal of the node, with its attached comments, as removing it names; and one point, as placement beside the sibling names (below)                                                               | deletion there; at the point, the moved bytes with the edits made inside them: whole lines, re-indented only when the indentation differs, or an inline text between separators (SDE18) |
+| replace a node's block body | the bytes strictly between its `{` terminator and the start of its `}` line                                                                                                                           | the fragment, re-indented                                                                                                                                                               |
+| replace a region            | a span of the content the caller derives from the document, such as the lines from one comment through another (a managed region)                                                                     | the caller's text                                                                                                                                                                       |
+| set a node's values         | from its first value to its last, or the point after its name when it has none                                                                                                                        | the canonical spellings, space-separated                                                                                                                                                |
+| insert an attribute         | the point after the node's last value, attribute or name                                                                                                                                              | ` name=value`, whatever attributes of that name exist                                                                                                                                   |
+| replace a node              | the node's extent when it is alone on its lines; else from its first byte through its last token                                                                                                      | the fragment, re-indented; at an inline node, one single-line node                                                                                                                      |
+| update from a typed value   | the union of the ranges of the operations above that it resolves to                                                                                                                                   | the operations that make the node decode as the value (§3.1)                                                                                                                            |
 
 Fragments are SDL source text, not typed values. The editor parses a
 fragment under the document's profile and rejects it unless it is a
-sequence of whole nodes; comments in it are kept. At an inline anchor (an
-inline sibling, or a block whose `}` shares a line with content) a fragment
-must be a single node without a child block, and is inserted on that line
-with a `; ` separator; anything else there is `editUnsupportedLayout`.
-Re-indentation prefixes only the lines that begin outside a string or a
-continued line, so multi-line backtick strings and `\` continuations keep
-their bytes. Values and attributes are rendered with the canonical scalar
-writer; a caller with a typed value renders it with `writeSDL` first.
+sequence of whole nodes; comments in it are kept. Re-indentation prefixes
+only the lines that begin outside a string or a continued line, so
+multi-line backtick strings and `\` continuations keep their bytes. Values
+and attributes are rendered with the canonical scalar writer; a caller with
+a typed value renders it with `writeSDL` first.
+
+**Placement beside a sibling.** Beside a whole-line sibling, content goes
+as whole lines at its extent's start or end (SDE4). Beside an **inline
+sibling** `s`, one not alone on its lines, content that is one node on one
+line — a fragment of one node without a child block whose bytes, once the
+blanks and line breaks at its ends go, hold no line break; or a
+single-line moved node (§2) — goes on `s`'s line, joined by synthesized
+separators:
+
+- after `s` ending in `;`: just after that `;`, as ` x;`;
+- after any other `s`: at its extent's end, as `; x` — unless a line
+  comment ends `s`, which nothing can follow on its line;
+- before `s` that starts its line: at its first byte, as `x; `;
+- before any other `s`: at its extent's start, just after the preceding
+  `;`, as ` x;`.
+
+Other content — more than one node or line, a child block in a fragment, a
+moved node that is not single-line, or anything after a line comment —
+goes as whole lines where a line boundary allows, indented like the line
+`s` starts on: after `s` when only spaces and tabs follow its extent on its
+last line, at the start of the next line; before `s` when it starts its
+line, at the start of that line. Anywhere else — between two nodes of one line, or inside a one-line
+block — it is `editUnsupportedLayout`. Appending to a block whose `}` shares
+a line with content inserts on that line, as `x; ` just before the `}`, and
+takes one node on one line.
 
 Set-style operations are idempotent: setting an attribute to the value it
 already has produces no edit.
@@ -205,9 +237,11 @@ and is not compared.
   before them; when there is none, after the nearest sibling above the next
   node left in place that does not move away, else just before that node;
   when the field has no
-  element left, new ones are appended. An element that is not alone on its
-  lines, or whose destination is not, is written canonically at its new
-  place instead, and its old node removed with its attached comments.
+  element left, new ones are appended. An element whose move placement
+  does not allow (§3) — more than one line, a line comment or attached
+  comments, bound for a point between two nodes of one line — is written
+  canonically at its new place instead, and its old node removed with its
+  attached comments.
 - **Cost.** Identities are hashed and the run is found by patience sorting,
   so pairing a sequence of _n_ elements takes O(_n_ log _n_) time beside
   the edits it makes.
@@ -346,7 +380,12 @@ range outside the content, make the edit set fail with `editConflict`
 naming both operations. An insertion at the start or end of another
 operation's range is not an overlap: it applies before or after that range
 respectively, and insertions at one point apply in the order they were
-made. _Violation:_ output produced from a conflicting set.
+made. Two deletions that overlap only in spaces and tabs — the blank
+between two nodes of one line, which both their extents take — are not a
+conflict either: they delete both ranges, and when that leaves only blanks
+before them on their line, the blanks after them too, and the whole line
+when nothing else is left on it. _Violation:_ output produced from a
+conflicting set, or two neighbours on one line that cannot both be removed.
 
 **SDE4 — Newlines and indentation follow the host.** Inserted lines are
 separated from the surrounding bytes by newlines: one before the text
@@ -468,27 +507,53 @@ _Violation:_ output containing stale or reallocated text.
 
 **SDE18 — A move keeps the node's bytes.** `moveAfter(n, s)` and
 `moveBefore(n, s)` remove `n` as removing it with its attached comments
-does (SDE5), and insert its bytes — those comment lines through its extent
-— where inserting after or before `s` would (SDE4). Both nodes are alone on
-their lines, else `editUnsupportedLayout`; `s` inside `n`, or `n` itself, is
-`editConflict`. The bytes arrive as they were, re-indented only when `s`'s
-indentation differs from `n`'s, with the edits made inside them applied —
-whichever order the move and those edits were made in, and a move among
-`n`'s descendants included. An edit inside is one within the moved bytes,
-except an insertion at their start and an operation on an ancestor that
-spans `n`'s whole extent, which stay and so may overlap the removal (SDE3).
-Insertions just before or after the moved bytes stay where they were; moves
-to one point arrive in the order they were made; two moves into each
-other's bytes are `editConflict`. A move replaces no node: in an open
-document, `n` and every node below it keep their handles (SDE11, §9).
-_Oracle:_ hand cases for comments,
+does (SDE5), and place its **moved bytes** where placement beside `s` puts
+content (§3). On `s`'s line, the moved bytes are `n`'s inline text (§2),
+and `n` must be single-line. As whole lines, they are, for `n` alone on its
+lines, its attached comment lines through its extent; otherwise its inline
+text, which becomes a line of its own, after the indentation of the line
+`n` starts on. So in `a 1; b 2⏎c 3⏎`, moving `a` after `c` gives
+`b 2⏎c 3⏎a 1⏎`, moving `c` after `a` gives `a 1; c 3; b 2⏎`, and moving `b`
+before `a` gives `b 2; a 1;⏎`; in `x {; a; b; }⏎`, moving `a` after `b`
+gives `x {; b; a; }⏎`. Separators: `n`'s own `;` and the blanks around its
+inline text go with its removal; those at its new place are synthesized,
+as an insertion's are; every other byte stays, a neighbour's `;` included.
+Whole lines arrive as they were, re-indented only when the indentation of
+the line `s` starts on differs from that of `n`'s (an inline text's
+continuation lines with it, around a multi-line block or raw string); an
+inline text on `s`'s line arrives between its separators. `s` inside `n`,
+or `n` itself, is `editConflict`; a placement §3 does not allow is
+`editUnsupportedLayout`; before the node that follows it on its line, `n`
+is already in place, and the move makes no edit. The moved bytes carry
+the edits made inside them — whichever order the move and those edits
+were made in, and a move among `n`'s descendants included. An edit inside
+is one within the moved bytes, except an insertion at their start and an
+operation on an ancestor that spans `n`'s whole extent, which stay and so
+may overlap the removal (SDE3); at the end of an inline text, an insertion
+an operation on `n` made (an attribute after its last value) is inside,
+and one placed beside `n` is not. Insertions just before or after the
+moved bytes stay where they were; moves to one point arrive in the order
+they were made; two moves into each other's bytes are `editConflict`. A
+move replaces no node: in an open document, `n` and every node below it
+keep their handles (SDE11, §9). _Oracle:_ hand cases for comments,
 trailing comments and raw spellings, edits before and after the move, a
 host without a final newline, CRLF, re-indentation around a multi-line raw
-string, a moved parent carrying a child's move, and every rejection; and a
-property test that moves the first child of every repository recipe's root,
-and of its first block, after its last sibling, and checks the rotated
-meaning and the moved bytes. _Violation:_ a moved node that loses a byte, a
-comment, or an edit made inside it, or a bystander that changes.
+string, a moved parent carrying a child's move, and every rejection; for
+shared lines, each shape above — along a line, inside a one-line block,
+off a shared line and onto one, comments in the extent, a node after a
+line comment, more than one line at a shared line's edges, an inline node
+whose block re-indents, an attribute at an inline text's end, neighbours
+leaving one line, a host without a final newline, CRLF; a property test
+that moves the first child of every repository recipe's root, and of its
+first block, after its last sibling, and checks the rotated meaning and
+the moved bytes; and one over every recipe with nodes put on shared lines
+— neighbouring plain one-line nodes joined by `; `, a block folded onto one
+line — that moves each node sharing a line to the start and the end of its
+siblings, a first sibling after it, and it after its successor, and checks
+the rearranged meaning, every sibling's inline text in the output, and
+that each refusal is one `canMove` predicts. _Violation:_ a moved node that
+loses a byte, a comment, or an edit made inside it, a bystander that
+changes, or a refusal of a placement §3 allows.
 
 ## 5. Interface
 
@@ -746,7 +811,8 @@ after any number of successful commits, to that node's counterpart, as long
 as no commit replaced it — moves included: a moved node's handle, and the
 handles of every node below it, resolve to the same nodes at their new
 place. _Oracle:_ a property test that issues a handle for every node of
-every repository recipe, commits random value, attribute, insertion,
+every repository recipe, as it is and with nodes put on shared lines
+(SDE18's), commits random value, attribute, insertion,
 removal, body and move edits — moves beside the next sibling and beside any
 node outside the moved one, which re-indents it, some with a value edit
 inside — and after each commit checks every handle against a model that

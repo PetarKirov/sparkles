@@ -412,7 +412,7 @@ private void patchSequence(E, Editor)(ref Editor editor, scope SdlNode d, scope 
         foreach (t; group[])
         {
             const old = keep[t];
-            if (old != none && at.has && at.node.aloneOnLines && mine[old].node.aloneOnLines)
+            if (old != none && at.has && editor.canMove(mine[old].node, at.node, at.after))
             {
                 at.insert(editor, inserted[], appended);
                 inserted.clear();
@@ -420,7 +420,9 @@ private void patchSequence(E, Editor)(ref Editor editor, scope SdlNode d, scope 
                 patchChild!E(editor, d, mine[old], e, theirs[t], left, right);
                 continue;
             }
-            // Not movable here: written in its new place instead.
+            // Not movable here — more than one line, a line comment or
+            // attached comments, bound between two nodes of one line —
+            // so written afresh in its new place.
             if (old != none)
                 editor.remove(mine[old].node, SdlAttachedComments.remove);
             if (render(e, theirs[t].position, right))
@@ -782,6 +784,31 @@ version (unittest)
     assert(writtenBack!((ref Recipe v) { v.deps = [v.deps[2], v.deps[1], v.deps[0]]; })(odd)
         == "name \"o\"\n// z\n/* z */ dependency \"z\"\ndependency \"y\"   path=\"..\"   # y\n"
             ~ "#\tabout x\ndependency   `x`\tversion=`1`  // x\n");
+}
+
+@("sdl.typedEdit.keyed.reorderOnSharedLines")
+@system unittest
+{
+    // Elements that share a line move with their bytes too: `a` stays,
+    // `c` and `b` leave its line for lines of their own above it, `c`'s
+    // comment with it; `a` keeps its own `;`.
+    assert(writtenBack!((ref Recipe v) { v.deps = [v.deps[2], v.deps[1], v.deps[0]]; })(
+        "name \"d\"\ndependency \"a\"; dependency \"b\"; dependency \"c\" /* c */\n")
+        == "name \"d\"\ndependency \"c\" /* c */\ndependency \"b\"\ndependency \"a\";\n");
+    // Within a one-line block, the element moves along the line.
+    assert(writtenBack!((ref Recipe v) {
+        v.configurations[0].deps = [v.configurations[0].deps[1], v.configurations[0].deps[0]];
+    })("name \"d\"\nconfiguration \"lib\" {; dependency \"x\"; dependency `y`; }\n")
+        == "name \"d\"\nconfiguration \"lib\" {; dependency `y`; dependency \"x\"; }\n");
+    // Onto a shared line from a line of its own.
+    assert(writtenBack!((ref Recipe v) { v.deps = [v.deps[0], v.deps[2], v.deps[1]]; })(
+        "name \"d\"\ndependency \"a\"; dependency \"c\"\ndependency `b`  version=`1`\n")
+        == "name \"d\"\ndependency \"a\"; dependency `b`  version=`1`; dependency \"c\"\n");
+    // An element with an attached comment cannot go between two nodes of
+    // one line: it is written afresh there, and its comment goes.
+    assert(writtenBack!((ref Recipe v) { v.deps = [v.deps[0], v.deps[2], v.deps[1]]; })(
+        "name \"d\"\ndependency \"a\"; dependency \"c\"\n// about b\ndependency `b`\n")
+        == "name \"d\"\ndependency \"a\"; dependency \"b\"; dependency \"c\"\n");
 }
 
 @("sdl.typedEdit.keyed.duplicatesPairInOrder")
