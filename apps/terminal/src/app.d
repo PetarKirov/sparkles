@@ -13,6 +13,7 @@ import settings : ScrollbarWidth;
 import settings_load : loadTerminalConfig, LoadedConfig;
 import desktop_terminal : DesktopTerminal;
 import logging : desktopStateDir;
+import sparkles.base.driver_libc : reexecOntoDriverGlibc;
 import sparkles.core_cli.args : CommandNode, runCli;
 import sparkles.terminal_view.component : TerminalViewOptions;
 import sparkles.wired.json : readJSONFile;
@@ -42,6 +43,9 @@ int main(string[] args)
 
         if (args.length && isShimName(args[0]))
             return openShim(args);
+        // Before anything opens a driver: run on the drivers' glibc when
+        // theirs is newer than the one this program was built with.
+        reexecOntoDriverGlibc();
         return runCli!TerminalCli(args, (ref CommandNode!TerminalCli node) => prepareDesktop(node));
     }
 }
@@ -53,13 +57,13 @@ private int prepareDesktop(ref CommandNode!TerminalCli node)
     if (node.commandSelected)
         return 0;
 
-    import std.file : thisExePath;
+    import sparkles.base.driver_libc : thisProgramPath;
 
     import about_page : adoptBuild, processBuild;
     import logging : installTerminalLog;
 
     installTerminalLog(desktopStateDir());
-    adoptBuild(thisExePath);
+    adoptBuild(thisProgramPath);
     const name = processBuild.info.name.length ? processBuild.info.name : "sparkles:terminal";
     logBuildInfo(processBuild.info.version_, processBuild.info.commitLabel, name);
     return 0;
@@ -224,10 +228,11 @@ includes then show as located errors, the texts being staged only by Nix.
 */
 private string bundledCredits()
 {
-    import std.file : exists, thisExePath;
+    import std.file : exists;
     import std.path : buildNormalizedPath, dirName;
+    import sparkles.base.driver_libc : thisProgramPath;
 
-    const bin = thisExePath.dirName;
+    const bin = thisProgramPath.dirName;
     foreach (dir; ["../share/sparkles-terminal/credits", "../../../docs/credits"])
     {
         const doc = buildNormalizedPath(bin, dir, "terminal.md");
