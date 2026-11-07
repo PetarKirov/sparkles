@@ -506,7 +506,7 @@ void scissorInTarget(int x, int y, int w, int h, int targetHeight) @system
 @safe pure nothrow unittest
 {
     import std.algorithm.searching : canFind;
-    import sparkles.ui.effect : Builtin, hasGpuEffects;
+    import sparkles.ui.effect : Builtin, hasGpuEffects, vulkan11Backend, vulkan13Backend;
 
     static assert(hasGpuEffects, "ui-raylib must select sparkles:ui's gpu-effects configuration");
 
@@ -527,6 +527,17 @@ void scissorInTarget(int x, int y, int w, int h, int targetHeight) @system
         assert(impl.source.canFind("void main()"));
         assert(impl.source.canFind("texture0") && impl.source.canFind("fragTexCoord"));
     }
+    // The same entry points as SPIR-V for each Vulkan version, which the
+    // Vulkan canvas runs: whole modules, little-endian magic first.
+    foreach (EffectId id; [b.scanlines, b.phosphor, b.dim, b.spectrum, b.curvature, b.bloom])
+        foreach (key; [vulkan13Backend, vulkan11Backend])
+        {
+            const impl = reg.lookup(id).implFor(key);
+            assert(impl !is null, key);
+            foreach (source; impl.passes.length ? [impl.passes[0].source] : [impl.source])
+                assert(source.length % 4 == 0
+                    && (cast(const(ubyte)[]) source)[0 .. 4] == [0x03, 0x02, 0x23, 0x07], key);
+        }
     // A transform that reads its position needs the bracket's extent; one
     // that does not (phosphor, dim) has it optimised away, and the backend
     // treats the missing uniform as exactly that.
