@@ -85,6 +85,18 @@ primitive is missing.
 call sites. If it cannot, it is this library's budget wearing a wider name, and
 should not be adopted.
 
+**Gate met (November 7, 2026).** The primitive is `Admission` in
+`sparkles.event_horizon.admission`
+([event-horizon SPEC §14.2](../../event-horizon/SPEC.md#_14-2-admission)), and
+all three call sites now count with it, each ported in a commit of its own
+with `dub test :event-horizon` green. `Channel` is two admissions, free slots
+and buffered items, the second starting fully in use. The loop's `OpSlab`
+reserves its held op slots as the reserved share. The fork server holds a unit
+from `submit` to `release`. Two of the ports changed behaviour, each towards
+what the surrounding code documented. The op slab no longer counts an active
+internal cancel against the user budget. The fork server's `inFlight` now
+counts a taken but unreleased response, as its comment always said.
+
 ### A7 — Dispatch policy is a compile-time seam decided by measurement
 
 Candidate policies — per file on visit, per leaf directory, whole list at the
