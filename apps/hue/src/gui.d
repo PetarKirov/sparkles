@@ -4089,6 +4089,11 @@ int runGui(GuiArgs guiArgs) @system
                 hoverShape());
         window.pointerShape(curShape);
         crt.pointerShape = curShape;
+        // A touchscreen has no pointer for the tube to draw, whatever the
+        // settings say, and a finger touches the glass: a tap lands where it
+        // is seen, mapped out of screen space as the system pointer is.
+        if (touchTarget)
+            crt.systemPointer = true;
         // `PTR1`: the pass declares whether it draws a pointer; the window owns
         // whether one is on screen. Asked every frame, so disabling the effect
         // — or switching to the system pointer — hands the cursor straight back.
