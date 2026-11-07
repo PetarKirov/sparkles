@@ -191,7 +191,15 @@ private bool measureCellFontImpl(in FontRequest request, in string[] extraSource
 
     FontSources sources;
     sources.dirs = request.searchDirs.dup ~ extraSources.dup;
-    sources.useSystemFontDb = request.useSystemFontDb;
+    // Directories the application supplies are where its faces are, as on the
+    // raylib arm (`openGuiSession`); and Android has no font database, only
+    // `/system/fonts`.
+    sources.useSystemFontDb = request.useSystemFontDb && extraSources.length == 0;
+    version (Android)
+    {
+        sources.dirs ~= "/system/fonts";
+        sources.useSystemFontDb = false;
+    }
     string path = loaded !is null ? loaded.path : resolveFontPath(request.family, sources);
     // A family the resolver cannot offer the raylib arm, as it lives only in
     // a collection: its members, opened by index.
@@ -403,7 +411,7 @@ InterfaceFaceFiles lookUpInterfaceFace(string family, in NativeRequest request) 
     {
         FontSources sources;
         sources.dirs = request.font.searchDirs.dup ~ request.extraFontSources.dup;
-        sources.useSystemFontDb = request.font.useSystemFontDb;
+        sources.useSystemFontDb = request.font.useSystemFontDb && request.extraFontSources.length == 0;
         version (Android)
         {
             sources.dirs ~= "/system/fonts";
