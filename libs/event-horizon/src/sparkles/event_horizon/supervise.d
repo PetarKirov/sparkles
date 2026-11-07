@@ -78,6 +78,7 @@ else
 }
 
 import sparkles.base.buffer : SharedBuffer;
+import sparkles.base.unique : makeUnique;
 import sparkles.event_horizon.backend.concept : canSubmitOp;
 import sparkles.event_horizon.backend.select : DefaultBackend;
 import sparkles.event_horizon.blocking_pool : BlockingPool, sharedBlockingPool;
@@ -280,8 +281,10 @@ package alias RelayTestHook = void delegate(RelayKind kind);
 package alias RelayHandledTestHook = void delegate(RelayKind kind,
     bool cgroupOwned, bool migrated, scope const(char)[] cgroupPath);
 
-/// One supervised run's state: frame-resident, mutated by the supervising
-/// fiber (and, for the ledger, by the sampler's accepted job).
+/// One supervised run's state, mutated by the supervising fiber (and, for
+/// the ledger, by the sampler's accepted job). `superviseImpl` owns it on the
+/// heap (`Unique`): at some 22 KiB, its relay channel's 32 messages among it,
+/// it would take a third of the supervising fiber's 64 KiB stack.
 private struct Run
 {
     ChildProcess* child;
@@ -623,7 +626,11 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
     if (prepared.hasError)
         return ioErr!SupervisedProcessResult(prepared.error);
 
-    Run run;
+    // On the heap, not in this frame (see `Run`), and destroyed as the frame
+    // would have destroyed it: once, when this function returns, after every
+    // scope guard below has run and every worker holding it has ended.
+    auto runOwner = makeUnique!Run();
+    auto run = runOwner.ptr;
     run.sched = &s;
     run.pool = pool;
     run.collect = cfg.collectOutput;
@@ -737,7 +744,7 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
             shield.parent.removeChild(&shield);
     };
 
-    auto rp = &run;
+    auto rp = run;
     auto childP = &child;
     auto schedP = &s;
     const policy = cfg.residualPolicy;
@@ -1602,7 +1609,7 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
 
     auto ctx = s.currentContext();
     auto sP = &s;
-    auto rp3 = &run;
+    auto rp3 = run;
     cast(void) protect!(() {
         version (linux)
         {

@@ -24,13 +24,18 @@ module sparkles.event_horizon.channel;
 import core.lifetime : move;
 import core.stdc.errno : ECANCELED, EPIPE;
 
+import sparkles.event_horizon.admission : Admission;
 import sparkles.event_horizon.capability : SpawnOptions, isFiberExecutor;
-import sparkles.event_horizon.cause : FiberContext, Interrupt, interruptRequested;
+import sparkles.event_horizon.cause : interruptRequested;
 import sparkles.event_horizon.errors : IoErrorStage, IoResult, OpKind, ioErr, ioOk;
 
 /**
 A bounded FIFO channel of `T` (moved in and out — `T` need not be
 copyable), capacity `N`, for fibers of one executor.
+
+Its bound is two admission budgets (SPEC §14.2): free slots, which a put
+acquires and a take releases, and buffered items, which start all in use and
+which a put releases and a take acquires. Each side parks on its own budget.
 */
 struct Channel(T, uint N = 16)
 if (N > 0)
@@ -44,23 +49,25 @@ if (N > 0)
     IoResult!void put(X)(ref X exec, T item)
     if (isFiberExecutor!X)
     {
-        for (;;)
+        if (interruptRequested(*exec.currentContext()))
+            return ioErr!void(ECANCELED, OpKind.none, IoErrorStage.submit,
+                "channel put interrupted");
+        if (_closed)
+            return ioErr!void(EPIPE, OpKind.none, IoErrorStage.submit, "channel closed");
+        auto slot = _space.acquire(exec);
+        if (slot.hasError)
+            return slot.error.code == ECANCELED
+                ? ioErr!void(ECANCELED, OpKind.none, IoErrorStage.submit,
+                    "channel put interrupted")
+                : ioErr!void(EPIPE, OpKind.none, IoErrorStage.submit, "channel closed");
+        if (_closed)
         {
-            if (interruptRequested(*exec.currentContext()))
-                return ioErr!void(ECANCELED, OpKind.none, IoErrorStage.submit,
-                    "channel put interrupted");
-            if (_closed)
-                return ioErr!void(EPIPE, OpKind.none, IoErrorStage.submit,
-                    "channel closed");
-            if (_count < N)
-            {
-                _items[(_head + _count) % N] = move(item);
-                ++_count;
-                wakeOne(_takers);
-                return ioOk();
-            }
-            parkOn(exec, _putters);
+            // A take freed a slot after the close woke this putter.
+            _space.release();
+            return ioErr!void(EPIPE, OpKind.none, IoErrorStage.submit, "channel closed");
         }
+        store(move(item));
+        return ioOk();
     }
 
     /// Takes the oldest item, parking while the buffer is empty. Buffered
@@ -68,46 +75,30 @@ if (N > 0)
     IoResult!T take(X)(ref X exec)
     if (isFiberExecutor!X)
     {
-        for (;;)
-        {
-            if (interruptRequested(*exec.currentContext()))
-                return ioErr!T(ECANCELED, OpKind.none, IoErrorStage.submit,
-                    "channel take interrupted");
-            if (_count > 0)
-            {
-                auto item = move(_items[_head]);
-                _head = (_head + 1) % N;
-                --_count;
-                wakeOne(_putters);
-                return ioOk(move(item));
-            }
-            if (_closed)
-                return ioErr!T(EPIPE, OpKind.none, IoErrorStage.submit,
-                    "channel closed");
-            parkOn(exec, _takers);
-        }
+        auto got = _items.acquire(exec);
+        if (got.hasError)
+            return got.error.code == ECANCELED
+                ? ioErr!T(ECANCELED, OpKind.none, IoErrorStage.submit,
+                    "channel take interrupted")
+                : ioErr!T(EPIPE, OpKind.none, IoErrorStage.submit, "channel closed");
+        return ioOk(load());
     }
 
     /// Non-parking put; `false` when full or closed.
     bool tryPut(T item)
     {
-        if (_closed || _count >= N)
+        if (_closed || !_space.tryAcquire())
             return false;
-        _items[(_head + _count) % N] = move(item);
-        ++_count;
-        wakeOne(_takers);
+        store(move(item));
         return true;
     }
 
     /// Non-parking take; `false` when empty.
     bool tryTake(out T item)
     {
-        if (_count == 0)
+        if (!_items.tryAcquire())
             return false;
-        item = move(_items[_head]);
-        _head = (_head + 1) % N;
-        --_count;
-        wakeOne(_putters);
+        item = load();
         return true;
     }
 
@@ -117,8 +108,8 @@ if (N > 0)
         if (_closed)
             return;
         _closed = true;
-        wakeAll(_putters);
-        wakeAll(_takers);
+        _space.close();
+        _items.close();
     }
 
     /// `true` once `close` ran (buffered items may still be takeable).
@@ -131,86 +122,31 @@ if (N > 0)
     enum uint capacity = N;
 
 private:
-    /// One parked fiber; lives on the parked verb's stack frame (address-
-    /// stable until the wake — the SPEC §6.5 argument, non-I/O edition).
-    static struct Waiter
+    // Stores into a slot the caller acquired, and hands a taker the item.
+    void store(T item)
     {
-        FiberContext* fiber;
-        void function(void* execPtr, FiberContext* f) nothrow @nogc wakeFn;
-        void* execPtr;
-        Waiter* next;
-        Waiter** owner; /// the list this waiter is queued on (for unlink)
+        _items_[(_head + _count) % N] = move(item);
+        ++_count;
+        _items.release();
     }
 
-    void parkOn(X)(ref X exec, ref Waiter* list)
+    // Removes the oldest item, whose unit the caller acquired, and frees
+    // its slot for a putter.
+    T load()
     {
-        Waiter w;
-        w.fiber = exec.currentContext();
-        w.wakeFn = function(void* p, FiberContext* f) nothrow @nogc {
-            (() @trusted => (cast(X*) p).wake(f))();
-        };
-        w.execPtr = (() @trusted => cast(void*) &exec)();
-        w.owner = (() @trusted => &list)();
-
-        // FIFO append.
-        auto tail = (() @trusted => &list)();
-        while (*tail !is null)
-            tail = (() @trusted => &(*tail).next)();
-        *tail = (() @trusted => &w)();
-
-        // The one-shot cancel hook (SPEC §8.4, non-I/O park): latching has
-        // already happened in interruptFiber; we only need the wake.
-        auto ctx = w.fiber;
-        ctx.cancelFn = function(void* p, Interrupt) nothrow @nogc {
-            auto self = (() @trusted => cast(Waiter*) p)();
-            self.wakeFn(self.execPtr, self.fiber);
-        };
-        ctx.cancelCtx = (() @trusted => cast(void*) &w)();
-
-        exec.park();
-
-        ctx.cancelFn = null;
-        ctx.cancelCtx = null;
-        unlink(w);
+        auto item = move(_items_[_head]);
+        _head = (_head + 1) % N;
+        --_count;
+        _space.release();
+        return move(item);
     }
 
-    /// Removes a waiter from its list if still queued (a woken waiter was
-    /// already popped; a cancel-woken one was not).
-    void unlink(ref Waiter w) @trusted nothrow @nogc
-    {
-        if (w.owner is null)
-            return;
-        for (auto p = w.owner; *p !is null; p = &(*p).next)
-            if (*p is &w)
-            {
-                *p = w.next;
-                break;
-            }
-        w.owner = null;
-    }
-
-    void wakeOne(ref Waiter* list) @trusted nothrow @nogc
-    {
-        auto w = list;
-        if (w is null)
-            return;
-        list = w.next;
-        w.owner = null;
-        w.wakeFn(w.execPtr, w.fiber);
-    }
-
-    void wakeAll(ref Waiter* list) @trusted nothrow @nogc
-    {
-        while (list !is null)
-            wakeOne(list);
-    }
-
-    T[N] _items;
+    T[N] _items_;
     uint _head;
     uint _count;
     bool _closed;
-    Waiter* _putters;
-    Waiter* _takers;
+    Admission _space = Admission(N);
+    Admission _items = Admission(N, N);
 }
 
 // ── tests (deterministic, ring-free, via TestSched) ─────────────────────────
