@@ -1788,23 +1788,23 @@ enum RegisterOpCode : uint
     /// `IORING_UNREGISTER_NAPI` (from Linux 6.9)
     UNREGISTER_NAPI          = 28,
 
-    /// `IORING_REGISTER_CLOCK` (from Linux 6.10)
+    /// `IORING_REGISTER_CLOCK` (from Linux 6.12)
     /// Select the clock source used by ring-side timeouts.
     REGISTER_CLOCK           = 29,
 
-    /// `IORING_REGISTER_CLONE_BUFFERS` (from Linux 6.10)
+    /// `IORING_REGISTER_CLONE_BUFFERS` (from Linux 6.12)
     /// Clone the registered buffer table from a source ring into this ring.
     REGISTER_CLONE_BUFFERS   = 30,
 
-    /// `IORING_REGISTER_SEND_MSG_RING` (from Linux 6.10)
+    /// `IORING_REGISTER_SEND_MSG_RING` (from Linux 6.13)
     /// Synchronously send an `IORING_OP_MSG_RING` SQE without owning a ring.
     REGISTER_SEND_MSG_RING   = 31,
 
-    /// `IORING_REGISTER_ZCRX_IFQ` (from Linux 6.11)
+    /// `IORING_REGISTER_ZCRX_IFQ` (from Linux 6.15)
     /// Register a NIC hardware receive queue for zerocopy RX.
     REGISTER_ZCRX_IFQ        = 32,
 
-    /// `IORING_REGISTER_RESIZE_RINGS` (from Linux 6.12)
+    /// `IORING_REGISTER_RESIZE_RINGS` (from Linux 6.13)
     /// Resize the SQ / CQ of an existing ring without re-creating it.
     REGISTER_RESIZE_RINGS    = 33,
 
@@ -1812,15 +1812,15 @@ enum RegisterOpCode : uint
     /// Register a user-provided memory region (currently used by the wait_reg API).
     REGISTER_MEM_REGION      = 34,
 
-    /// `IORING_REGISTER_QUERY` (from Linux 6.15)
+    /// `IORING_REGISTER_QUERY` (from Linux 6.18)
     /// Query various aspects of io_uring — see `linux/io_uring/query.h`.
     REGISTER_QUERY           = 35,
 
-    /// `IORING_REGISTER_ZCRX_CTRL` (from Linux 6.16)
+    /// `IORING_REGISTER_ZCRX_CTRL` (from Linux 6.19)
     /// Auxiliary zcrx control operations (subcommands defined by `enum zcrx_ctrl_op`).
     REGISTER_ZCRX_CTRL       = 36,
 
-    /// `IORING_REGISTER_BPF_FILTER` (from Linux 6.16)
+    /// `IORING_REGISTER_BPF_FILTER` (from Linux 7.0)
     /// Register a BPF program that filters completions before they reach userspace.
     REGISTER_BPF_FILTER      = 37,
 
