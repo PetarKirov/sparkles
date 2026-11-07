@@ -220,12 +220,26 @@ private bool measureCellFontImpl(in FontRequest request, in string[] extraSource
     if (metrics.hasError)
         return false;
     const m = metrics.value;
-    const cellH = cast(int)(m.height < 1 ? 1 : m.height);
-    // Both measured down from the cell's top (`FTM19`); without `post`, the
-    // underline a pixel under the baseline. Kept inside the cell.
-    const ascent = cast(int) m.baseline;
+    const hh = hhea(face.value);
+    const span = hh.hasValue ? long(hh.value.ascender) - hh.value.descender : 0;
+    const upem = face.value.unitsPerEm;
+    // The cell is the line the size names, `px` tall, with its baseline where
+    // the exact em puts the ascender (truncated, as stb_truetype places the
+    // raylib arm's glyphs): FTM19's height and baseline at the whole em
+    // round each half of the line separately, which left the cell from one
+    // pixel short to two pixels tall against the raylib arm's grid. Without
+    // `hhea`, FTM19's own.
+    const cellH = span > 0 ? px : cast(int)(m.height < 1 ? 1 : m.height);
+    const ascent = span > 0
+        ? cast(int)(long(hh.value.ascender) * px / span)
+        : cast(int) m.baseline;
+    // Measured down from the cell's top (`FTM19`), so moved with the
+    // baseline; without `post`, the underline a pixel under the baseline.
+    // Kept inside the cell.
     const thickness = cast(int)(m.hasUnderline && m.underlineThickness > 0 ? m.underlineThickness : 1);
-    int underlineY = m.hasUnderline ? cast(int) m.underlinePosition : ascent + 1;
+    int underlineY = m.hasUnderline
+        ? cast(int) m.underlinePosition + ascent - cast(int) m.baseline
+        : ascent + 1;
     if (underlineY + thickness > cellH)
         underlineY = cellH - thickness;
     // The family's styled faces, found as the raylib arm finds them without
@@ -236,9 +250,6 @@ private bool measureCellFontImpl(in FontRequest request, in string[] extraSource
     if (loaded is null)
         fontVariantPaths(path, boldPath, italicPath, boldItalicPath);
     static const(ubyte)[] load(string p) => p.length ? mappedFont(p) : null;
-    const hh = hhea(face.value);
-    const span = hh.hasValue ? long(hh.value.ascender) - hh.value.descender : 0;
-    const upem = face.value.unitsPerEm;
     // The cell is as wide as the glyphs drawn in it: FTM19's width (the
     // advance of `0`, rounded to nearest, ties to even) at the exact em the
     // glyphs draw at — px · upem / span, the raylib arm's
@@ -3935,4 +3946,31 @@ private void writeFrameTrace(in FrameHistory!4096 history, scope const(string)[]
     }
     catch (Exception e)
         whyNot(i"native window frame trace: $(path): $(e.msg)");
+}
+/// A cell is the line its size names, as on the raylib arm, whatever the
+/// face's rounding at a whole em would make it.
+@("ui_app.native_loop.aCellIsTheLineItsSizeNames")
+@system unittest
+{
+    import std.file : read;
+    import std.path : buildPath;
+    import std.process : environment;
+    const root = environment.get("SPARKLES_FONTS_PATH");
+    assert(root.length, "SPARKLES_FONTS_PATH is required");
+    foreach (name; ["DejaVuSansMono.ttf", "FiraCodeNerdFontMono-Regular.ttf",
+            "MapleMono-NF-CN-Regular.ttf"])
+    {
+        CellFont loaded;
+        loaded.path = "/this/path/does/not/exist.ttf";
+        loaded.bytes = cast(const(ubyte)[]) read(buildPath(root, name));
+        loaded.fallbacks = [FallbackFont(loaded.bytes)];
+        foreach (px; 10 .. 41)
+        {
+            CellFont c;
+            assert(remeasureCellFont(loaded, px, c));
+            assert(c.cellH == px, name);
+            assert(c.ascent > px / 2 && c.ascent < px, name);
+            assert(c.underlineY > c.ascent - 1 && c.underlineY + c.underlineHeight <= px, name);
+        }
+    }
 }
