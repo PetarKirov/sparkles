@@ -5,8 +5,9 @@ milestone lands code, tests and the evidence its gate names. Decisions and open
 questions live in [decisions.md](./decisions.md)._
 
 **Status (November 7, 2026):** M0 is delivered (PR #507), with its
-`git check-ignore -v` parity gate. Every requirement in `SPEC.md` is still
-`unverified`. The work resumes as the file-system layer of the
+`git check-ignore -v` parity gate. M1 is delivered with its gate; the state of
+each requirement is in the SPEC's [evidence ledger](./SPEC.md#evidence-ledger).
+The work resumes as the file-system layer of the
 [build graph](../build-graph/SPEC.md#_12-file-system-access): every listing
 the graph makes is a fileset resolution, so the build graph's E2 needs M1–M3,
 and M5 for the listing digests its planning read set records
@@ -64,6 +65,15 @@ fixture format.
 **Gate.** The brute-force differential oracle agrees with the compiled
 predicate on the whole fixture set. Allocation instrumentation shows zero
 allocation on the evaluation path.
+
+**Delivered.** Modules `fileset/pattern.d`, `value.d`, `tree_literal.d`;
+oracles and fixtures in `fileset/testing.d`; the audit in
+`fileset/allocation_audit.d`. Two scope items finish in M3, because both need
+a resolution: [`FSV4`](./SPEC.md#4-the-fileset-value-fsv)'s empty-directory
+report is part of the resolution result, and `FSD2`'s driver is M3's adapter
+instantiated over `MemVfs`. M1 delivers the tree-literal format and the
+`MemVfs` it builds. [`FSG2`](./SPEC.md#5-matching-fsg) is checked by M4's
+differential gate.
 
 ### M2 — The prefix lattice and verdicts
 
