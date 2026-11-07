@@ -1,7 +1,8 @@
 # `sparkles:build-primitives` filesets — Specification
 
-_**Status:** proposed; M0 delivered, no requirement verified; resumed on November 7,
-2026 as the build graph's file-system layer · **Date:** September 21, 2026 ·
+_**Status:** proposed; M0 and M1 delivered (see the
+[evidence ledger](#evidence-ledger)); resumed on November 7, 2026 as the build
+graph's file-system layer · **Date:** September 21, 2026 ·
 **Owner:** `sparkles:build-primitives`_
 
 _Normative at the contract level. Delivery order and gates live in
@@ -133,8 +134,15 @@ non-`Expected` types.
 
 **`FSG1` — Anchoring.** A pattern containing `/` is anchored to the fileset
 root; a pattern containing no `/` matches at any depth; a leading `/` forces
-the root. This is `.gitignore`'s rule. _Detection:_ `*.md` matches `a/b.md`;
-`src/*.d` does not match `lib/src/x.d`; `/*.md` does not match `a/b.md`.
+the root. This is `.gitignore`'s rule. A trailing `/` restricts the pattern to
+directories, and a pattern that matches a directory selects every file
+beneath it (`FSV3`). A pattern is matched one path component at a time, so a
+brace alternative may not contain `/`, and a `.` or `..` component is refused;
+a leading `!` is refused too, because in `.gitignore` it negates and a fileset
+spells negation as a difference (`FSV2`). Each refusal is a returned
+`unsupportedPattern` error ([A11](./decisions.md#a11-patterns-compile-one-component-at-a-time)).
+_Detection:_ `*.md` matches `a/b.md`; `src/*.d` does not match `lib/src/x.d`;
+`/*.md` does not match `a/b.md`.
 
 **`FSG2` — This replaces `globAny`.** The current implementation matches each
 glob against both the base name and the root-relative path, which makes
@@ -144,8 +152,10 @@ migration (`PLAN` M9). _Detection:_ the M4 differential gate reports the
 divergence set rather than hiding it.
 
 **`FSG3` — Case and normalization are matching policy only.** A fileset carries
-an explicit case policy. Its default is case-sensitive. No policy affects
-identity or ordering (invariant 5). _Detection:_ changing the policy changes
+an explicit case policy. Its default is case-sensitive. Matching always
+normalizes both the pattern and the name to NFC, which is the glob engine's
+policy: a pattern written in one normalization form matches a name stored in
+the other. No policy affects identity or ordering (invariant 5). _Detection:_ changing the policy changes
 which entries match and never changes the ordering of those that do.
 
 **`FSG4` — Glob compilation is bounded.** Patterns compile to the bounded
@@ -456,8 +466,26 @@ The trace required for acceptance is
 
 Each requirement's evidence state is `unverified`, `partial` (naming the
 missing case), or `verified` (naming the configuration whose acceptance suite
-passed). Every requirement in this document is currently **unverified**.
+passed). The ledger below records the state of each; a requirement it does
+not list is **unverified**.
 
+### Evidence ledger
+
+| Requirements           | State                   | Evidence                                                                                                                                                                                                                                                                                                                                                                                           | Gap                                                                                        |
+| ---------------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `FSV1`, `FSV2`, `FSV5` | verified (Linux x86_64) | `Filesets.union_`, `Filesets.intersection` and `Filesets.difference` return a plain `Fileset`; no complement member exists; `Filesets.glob` and `Filesets.ignored` return `FilesetExpected`, and `FilesetEvaluator.contains` returns `bool` (`fileset.value.algebra`, `fileset.value.globFails`)                                                                                                   | —                                                                                          |
+| `FSV3`                 | verified (Linux x86_64) | a pattern naming a directory selects the files beneath it and no directory is ever evaluated as a member (`fileset.value.directoryNamesSubtree`, and the M1 gate)                                                                                                                                                                                                                                  | —                                                                                          |
+| `FSG1`, `FSG3`         | verified (Linux x86_64) | `PatternSet.add` with the detection cases verbatim (`fileset.pattern.anchoring`, `fileset.pattern.globstar`, `fileset.pattern.casePolicy`, `fileset.pattern.normalization`); the M1 gate: `FilesetEvaluator` agrees with `naiveContains`, a backtracking interpreter of the pattern text, on every file of 3 hand-written fixtures and 2400 seeded random tree × fileset pairs, case policy random | —                                                                                          |
+| `FSG4`                 | verified (Linux x86_64) | `SegmentProgram` is fuzzy's bounded NFA; a 70-instruction segment and a 63-segment pattern return `patternTooComplex` and leave nothing behind (`fileset.pattern.bounds`); a name up to `maxMatchedNameBytes` of any bytes never fails the engine (`fileset.pattern.nameBound`)                                                                                                                    | —                                                                                          |
+| invariant 2            | verified for evaluation | `FilesetEvaluator` entering directories and deciding files with zero libc and zero GC allocations (`fileset.allocation.evaluationHasZeroCalls`, configuration `allocation-audit`)                                                                                                                                                                                                                  | the resolution machine (M3)                                                                |
+| `FSD2`                 | partial                 | the tree-literal format and `memTree`, which builds a `MemVfs` from one (`fileset.treeLiteral.build`)                                                                                                                                                                                                                                                                                              | the adapter answering a resolution from it (M3); the acceptance suite on Windows and macOS |
+| `FSV4`                 | unverified              | —                                                                                                                                                                                                                                                                                                                                                                                                  | a resolution result to report it in (M3)                                                   |
+
+Every M1 row was verified with DMD 2.112.1 and LDC 1.43.0. On the host that
+ran it, `dub test :build-primitives` cannot build: compiling
+`dub_manifest.d` needs more than 16 GB under either compiler. The fileset
+modules were therefore tested by a package that compiles only them against
+the same dependencies and flags.
 Two limits are stated rather than papered over. The three-driver differential
 proves the drivers agree, not that any of them is correct; the brute-force
 oracle supplies that for membership. And a deterministic in-memory driver does

@@ -127,6 +127,32 @@ added shadowing header is a false "unchanged", accepted there on cost grounds.
 And the cache itself must be **advisory, never an authority**, as
 [git's `cache-tree`](../../../research/content-addressing/git-cache-tree.md) is.
 
+### A11 — Patterns compile one component at a time
+
+A pattern is split at `/` and each component other than `**` compiles to its
+own bounded NFA from `sparkles.fuzzy.glob`; the pattern is then an automaton
+over path components whose state is one bit per segment position, so a
+directory's state for one pattern is a single word
+([`FSG1`](./SPEC.md#5-matching-fsg), [`FSG4`](./SPEC.md#5-matching-fsg)).
+
+The alternative, one NFA over the whole relative path, was rejected because
+the planner needs a verdict per _directory_
+([`FSA3`](./SPEC.md#6-analysis-and-planning-fsa)): with a whole-path NFA a
+directory's verdict is a question about every possible continuation of a
+prefix, which the engine does not answer, whereas a set of live segment
+positions answers it directly (empty means `skip`; a completed pattern means
+`acceptAll`). It also keeps each match bounded by one name's length, 255
+bytes ([`FSM7`](./SPEC.md#7-the-resolution-machine-fsm)), instead of a
+path's, which is what lets evaluation be infallible
+([`FSV5`](./SPEC.md#4-the-fileset-value-fsv)).
+
+Three consequences are recorded in `FSG1` as amended: a brace alternative may
+not contain `/` (`{src/a,lib}` is refused rather than silently split), a `.`
+or `..` component is refused because no listing yields one, and a leading `!`
+is refused because `.gitignore` reads it as negation. And one is recorded in
+`FSG3`: the engine normalizes both sides to NFC, so normalization is part of
+every policy, not only of a case-insensitive one.
+
 ## Open
 
 ### D1 — Which Merkle shape
