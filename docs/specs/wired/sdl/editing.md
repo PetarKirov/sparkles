@@ -269,15 +269,18 @@ by `parseDql` and evaluated by `evalDql` with each selected node — for an
 attribute selection, the node that holds the attribute — as the subject. A
 path in the filter is zero or more child steps, each taking the first child
 of its name or, with an index, the k-th, followed by a leaf: `values[i]`,
-the node's i-th value, or an attribute name, its first attribute of that
-name; quoted segments work here too (`["dflags.ldc"] == null`). A bare
+the node's i-th value; `attributes[i]`, the value of its i-th attribute
+whatever the attribute's name, so `attributes[1] == null` says it has at
+most one; or an attribute name, its first attribute of that name; quoted segments work here too (`["dflags.ldc"] == null`). A bare
 identifier (a DQL category) holds when the node has a child at that path. Strings compare as text, booleans as `bool`, integers as `long`,
 and floats and decimals as `double`; an absent target, or an SDL `null`, is
 `== null`. A target of another kind (a character, binary, date or
 duration) is not null and fails every comparison and match, and so does a
-malformed leaf (`values` without an index, an index on an attribute name).
+malformed leaf (`values` without an index, an index on an attribute name
+other than `attributes`).
 _Oracle:_ over every repository recipe, a fixed set of filters against the
-hand-written predicates they spell. _Violation:_ a node kept or dropped
+hand-written predicates they spell, attribute counts among them.
+_Violation:_ a node kept or dropped
 against its predicate.
 
 **SDS4 — Path-only selection allocates nothing.** Reading a path and

@@ -59,14 +59,14 @@ See [SPEC §4](../../../specs/wired/sdl/SPEC.md#_4-ordered-arena-document).
 
 In the `sparkles:wired-sdl-select` sub-package, module `sparkles.wired.sdl.select`.
 
-| Name                                   | Is                                                                         |
-| -------------------------------------- | -------------------------------------------------------------------------- |
-| `SdlPath.parse(path)`                  | A borrowed, validated path (`..` first: any depth); `nodes`, `attributes`. |
-| `SdlSelector.parse(path, filter)`      | A path plus a DQL filter over each selected node; copies share it.         |
-| `SdlNodeSelection`, `SdlSelectedNodes` | The node ranges, in document order: unfiltered and filtered.               |
-| `SdlAttributeSelection!Nodes`          | The attributes the last segment names, of the nodes `Nodes` yields.        |
-| `SdlNodeResolver`                      | The DQL host resolver over one node: `values[i]`, attributes, children.    |
-| `SdlSelectorError`, `SdlSelectorPart`  | A fault's input (path or filter) and DQL's error at an offset in it.       |
+| Name                                   | Is                                                                                       |
+| -------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `SdlPath.parse(path)`                  | A borrowed, validated path (`..` first: any depth); `nodes`, `attributes`.               |
+| `SdlSelector.parse(path, filter)`      | A path plus a DQL filter over each selected node; copies share it.                       |
+| `SdlNodeSelection`, `SdlSelectedNodes` | The node ranges, in document order: unfiltered and filtered.                             |
+| `SdlAttributeSelection!Nodes`          | The attributes the last segment names, of the nodes `Nodes` yields.                      |
+| `SdlNodeResolver`                      | The DQL host resolver over one node: `values[i]`, `attributes[i]`, attributes, children. |
+| `SdlSelectorError`, `SdlSelectorPart`  | A fault's input (path or filter) and DQL's error at an offset in it.                     |
 
 The editor's `remove`, `removeAttribute`, `replaceAttribute` and
 `setAttribute` accept a selection. See
