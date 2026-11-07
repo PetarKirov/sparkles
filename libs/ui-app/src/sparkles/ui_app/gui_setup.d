@@ -301,7 +301,9 @@ private void whyNot(Args...)(Args args) @system
     {
         import sparkles.base.logger : error;
 
-        error(text(args));
+        // The loggers take interpolated text only.
+        const line = text(args);
+        error(i"$(line)");
     }
     else
     {
