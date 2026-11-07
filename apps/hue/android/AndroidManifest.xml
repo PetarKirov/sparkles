@@ -1,16 +1,28 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- The hue APK manifest: a pure NativeActivity app — no Java, no DEX
     (hasCode="false"). The framework's android.app.NativeActivity loads
-    lib/<abi>/libhue.so (android.app.lib_name) directly; raylib's
-    PLATFORM_ANDROID backend inside it provides ANativeActivity_onCreate /
+    lib/<abi>/libhue.so (android.app.lib_name) directly. On the native arm,
+    sparkles:wsi's entry (AndroidWsiMain, apps/hue/src/android_entry.d) owns
+    the activity and runs hue's main() on a thread of its own; in the raylib
+    APK, raylib's PLATFORM_ANDROID backend provides ANativeActivity_onCreate /
     android_main and calls hue's main().
 
-    Rotation resizes IN PLACE (orientation/screenSize in configChanges): the
-    nix raylib-android build carries raylib-android-in-place-resize.patch,
-    which teaches raylib's Android backend to refresh its size-derived state
-    on WINDOW_RESIZED/CONFIG_CHANGED — hue then reflows through its normal
+    A template: nix/packages/android/hue.nix substitutes the label, the
+    graphics feature, the soft keyboard's mode and the entry's name, so
+    both arms' APKs are one source.
+
+    theme NoActionBar: the default theme has an action bar. The native arm
+    lays the window out edge to edge and reads what covers it as insets, so
+    an action bar would put a strip above the first row; raylib draws full
+    screen over it either way (as in the terminal's manifest).
+
+    Rotation resizes IN PLACE (orientation/screenSize in configChanges). The
+    native arm follows the surface it is given. The nix raylib-android build
+    carries raylib-android-in-place-resize.patch, which teaches raylib's
+    Android backend to refresh its size-derived state on
+    WINDOW_RESIZED/CONFIG_CHANGED — hue then reflows through its normal
     resize path with all state (scroll, document, theme) preserved. Stock
-    Stock raylib cannot do this (verified through the released 6.0 tag, which
+    raylib cannot do this (verified through the released 6.0 tag, which
     is what the flake pins); without the patch, keep orientation OUT of
     configChanges so a restart re-inits at the new size.
 
@@ -24,7 +36,8 @@
         apply as DEFAULTS when the manifest omits it, so declaring it here would
         shadow them and let the APK claim an API level the native code was not
         built against. nix/packages/android/{ndk,sdk}.nix are the source. -->
-    <uses-feature android:glEsVersion="0x00020000" android:required="true" />
+    <!-- OpenGL ES for raylib, Vulkan 1.1 for the native arm. -->
+    @feature@
 
     <!-- android:debuggable is NOT declared here: aapt2's debug-mode flag injects
         it for debug builds (see nix/packages/android/build-apk.nix), so a release
@@ -41,23 +54,31 @@
         mipmaps from one SVG). hasCode="false" does not conflict with having
         resources: resources are data the framework resolves by numeric id, and
         no R.java or DEX is involved. -->
+    <!-- enableOnBackInvokedCallback="false": an app targeting API 36 gets
+        predictive back, under which the system no longer dispatches
+        KEYCODE_BACK and leaves the activity on Back itself. hue reads Back as
+        a key (close the explorer, else leave), so it opts out. -->
     <application
-        android:label="sparkles:hue"
+        android:label="@label@"
+        android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
         android:icon="@mipmap/ic_launcher"
         android:hasCode="false"
         android:allowBackup="false"
+        android:enableOnBackInvokedCallback="false"
         android:extractNativeLibs="true">
         <activity
             android:name="android.app.NativeActivity"
             android:exported="true"
             android:configChanges="orientation|screenSize|screenLayout|keyboard|keyboardHidden|density"
-            android:windowSoftInputMode="stateAlwaysHidden"
+            android:windowSoftInputMode="@softInputMode@"
             android:screenOrientation="fullUser">
             <meta-data android:name="android.app.lib_name" android:value="hue" />
-            <!-- The entry point (sparkles.android.main_thread): it wires the
+            <!-- The entry point. On the native arm, sparkles_wsi_onCreate
+                (sparkles:wsi's AndroidWsiMain). Under raylib,
+                sparkles_onCreate (sparkles.android.main_thread): it wires the
                 main thread's looper, which the soft keyboard's text field
                 needs, then starts the app as ANativeActivity_onCreate. -->
-            <meta-data android:name="android.app.func_name" android:value="sparkles_onCreate" />
+            <meta-data android:name="android.app.func_name" android:value="@funcName@" />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
