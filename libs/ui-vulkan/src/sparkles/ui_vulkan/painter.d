@@ -120,9 +120,10 @@ struct DrawRun
 }
 
 /**
-An effect bracket at the frame's root: the draw runs between its push and
-its pop, and the pixels it covers (`UVK15`). The canvas runs the effect's
-passes over those runs, or draws them unaffected and says so.
+An effect bracket: the draw runs between its push and its pop, the pixels it
+covers, and the brackets nested in it (`UVK15`, `EFX11`). The canvas runs the
+effect's passes over those runs, the nested brackets' results among them, or
+draws them unaffected and says so.
 */
 struct EffectBracket
 {
@@ -131,7 +132,14 @@ struct EffectBracket
     uint endRun;        /// one past its last
     ScissorBox rect;    /// in display pixels, within the target
     Size cells;         /// its size in cells, as the bracket named it
+    /// One past its last descendant in `Painter.brackets`, which lists
+    /// brackets in the order they open: those nested in it follow it.
+    uint endBracket;
 }
+
+/// How deep brackets nest before one more draws its contents unaffected and
+/// counts: each level the canvas runs holds a target-sized image.
+enum maxEffectDepth = 8;
 
 /// What became of an image a painter asked for.
 enum ImageOutcome : ubyte
@@ -372,7 +380,9 @@ if (isImageSource!Images)
     private UniqueBuffer!DrawRun runs_;
     private UniqueBuffer!EffectBracket brackets_;
     private uint effectDepth_;
-    private bool bracketOpen_; // the root bracket is being recorded
+    // Each open level's bracket, or `noBracket` where it records none.
+    private uint[maxEffectDepth] open_;
+    private enum noBracket = uint.max;
     private bool breakRun_;    // the next record starts a run
     private UniqueBuffer!ClipEntry clips_;
     private UniqueBuffer!ShiftEntry shifts_;
@@ -393,7 +403,7 @@ if (isImageSource!Images)
         runs_.clear();
         brackets_.clear();
         effectDepth_ = 0;
-        bracketOpen_ = breakRun_ = false;
+        breakRun_ = false;
         clips_.clear();
         shifts_.clear();
         shiftX_ = shiftY_ = 0;
@@ -408,16 +418,22 @@ if (isImageSource!Images)
     /// The frame's draw runs, in drawing order.
     const(DrawRun)[] runs() const return => runs_[];
 
-    /// The effect brackets at the frame's root, in drawing order; one left
-    /// open ends with the frame.
+    /// The frame's effect brackets, in the order they open, so a bracket's
+    /// nested ones follow it; one left open ends with the frame.
     const(EffectBracket)[] brackets() return
     {
-        if (bracketOpen_)
-        {
-            brackets_[][$ - 1].endRun = cast(uint) runs_.length;
-            bracketOpen_ = false;
-        }
+        foreach_reverse (level; 0 .. effectDepth_ < maxEffectDepth ? effectDepth_ : maxEffectDepth)
+            if (open_[level] != noBracket)
+                close(open_[level]);
+        effectDepth_ = 0;
         return brackets_[];
+    }
+
+    private void close(uint bracket)
+    {
+        auto b = &brackets_[][bracket];
+        b.endRun = cast(uint) runs_.length;
+        b.endBracket = cast(uint) brackets_.length;
     }
 
     /// The frame's metrics.
@@ -1229,16 +1245,19 @@ if (isImageSource!Images)
     }
 
     /**
-    An effect bracket at the frame's root is recorded (`brackets`), its
-    draws in runs of their own, for the canvas to run the effect over; one
-    inside another, or naming no effect, draws its contents unaffected and
-    counts once (`UVK15`).
+    An effect bracket is recorded (`brackets`), its draws in runs of their
+    own, for the canvas to run the effect over, nested ones included
+    (`EFX11`); one naming no effect, or nested past `maxEffectDepth`, draws
+    its contents unaffected and counts once (`UVK15`).
     */
     void pushEffect(in Rect r, EffectId id)
     {
-        if (effectDepth_++ != 0 || !id.valid)
+        const level = effectDepth_++;
+        if (level >= maxEffectDepth || !id.valid)
         {
             report.count(Degradation.effect);
+            if (level < maxEffectDepth)
+                open_[level] = noBracket;
             return;
         }
         // Never past the target: a bracket over a whole window gets exactly
@@ -1246,9 +1265,10 @@ if (isImageSource!Images)
         const x0 = clampTo(px(r.x), target_.width), y0 = clampTo(py(r.y), target_.height);
         const x1 = clampTo(px(r.x) + r.width * m_.cellW, target_.width);
         const y1 = clampTo(py(r.y) + r.height * m_.cellH, target_.height);
+        open_[level] = cast(uint) brackets_.length;
         brackets_.put(EffectBracket(id, cast(uint) runs_.length, cast(uint) runs_.length,
             ScissorBox(x0, y0, x1 - x0, y1 - y0), Size(r.width, r.height)));
-        bracketOpen_ = breakRun_ = true;
+        breakRun_ = true;
     }
 
     /// ditto
@@ -1256,12 +1276,11 @@ if (isImageSource!Images)
     {
         if (effectDepth_ == 0)
             return;
-        if (--effectDepth_ == 0 && bracketOpen_)
-        {
-            brackets_[][$ - 1].endRun = cast(uint) runs_.length;
-            bracketOpen_ = false;
-            breakRun_ = true;
-        }
+        const level = --effectDepth_;
+        if (level >= maxEffectDepth || open_[level] == noBracket)
+            return;
+        close(open_[level]);
+        breakRun_ = true;
     }
 
     private static int clampTo(int v, int hi) => v < 0 ? 0 : v > hi ? hi : v;
@@ -1884,14 +1903,14 @@ unittest
 vec4 backgroundOf(in Visual v) @safe pure nothrow @nogc
     => v.hasBg && v.bgAlpha == 255 ? rgba(v.bg, 255) : v4(0, 0, 0, 0);
 
-@("ui_vulkan.painter.aRootBracketIsItsOwnRuns")
+@("ui_vulkan.painter.aBracketIsItsOwnRuns")
 @safe pure nothrow @nogc
 unittest
 {
     import sparkles.ui.effect : Builtin;
 
-    // `UVK15`: the root bracket's draws are runs of their own, so the canvas
-    // can draw them elsewhere; one inside it degrades and counts.
+    // `UVK15`: a bracket's draws are runs of their own, so the canvas can
+    // draw them elsewhere; one inside it too, listed after it (`EFX11`).
     Painter!NoImages p;
     p.begin(Size(400, 300), metrics10x20);
     const fill = Visual(hasBg: true, bgAlpha: 255);
@@ -1903,18 +1922,40 @@ unittest
     p.popEffect();
     p.popEffect();
     p.fillRect(Rect(0, 5, 2, 2), fill);
-    assert(p.runs.length == 3, "before, inside, after");
+    assert(p.runs.length == 4, "before, the outer's, the inner's, after");
     const b = p.brackets;
-    assert(b.length == 1 && b[0].id == Builtin.bloom);
-    assert(b[0].firstRun == 1 && b[0].endRun == 2);
+    assert(b.length == 2 && b[0].id == Builtin.bloom && b[1].id == Builtin.dim);
+    assert(b[0].firstRun == 1 && b[0].endRun == 3 && b[0].endBracket == 2);
+    assert(b[1].firstRun == 2 && b[1].endRun == 3 && b[1].endBracket == 2);
     // From the origin (5, 3), clamped to the target: 50 cells reach past
     // its 400 by 300 pixels.
     assert(b[0].rect == ScissorBox(15, 23, 385, 277) && b[0].cells == Size(50, 50));
-    assert(p.report[Degradation.effect] == 1, "the nested one");
+    assert(p.report[Degradation.effect] == 0, "both recorded");
 
-    // A bracket left open ends with the frame.
+    // One naming no effect counts; one inside it is still recorded.
+    p.begin(Size(400, 300), metrics10x20);
+    p.pushEffect(Rect(0, 0, 9, 9), EffectId.init);
+    p.pushEffect(Rect(1, 1, 2, 2), Builtin.dim);
+    p.fillRect(Rect(1, 1, 1, 1), fill);
+    p.popEffect();
+    p.popEffect();
+    assert(p.brackets.length == 1 && p.brackets[0].id == Builtin.dim);
+    assert(p.report[Degradation.effect] == 1);
+
+    // Past `maxEffectDepth`, the deepest ones count and draw unaffected.
+    p.begin(Size(400, 300), metrics10x20);
+    foreach (_; 0 .. maxEffectDepth + 2)
+        p.pushEffect(Rect(0, 0, 4, 4), Builtin.dim);
+    foreach (_; 0 .. maxEffectDepth + 2)
+        p.popEffect();
+    assert(p.brackets.length == maxEffectDepth && p.report[Degradation.effect] == 2);
+    assert(p.brackets[0].endBracket == maxEffectDepth);
+
+    // Brackets left open end with the frame.
     p.begin(Size(400, 300), metrics10x20);
     p.pushEffect(Rect(0, 0, 4, 4), Builtin.bloom);
     p.fillRect(Rect(0, 0, 2, 2), fill);
-    assert(p.brackets.length == 1 && p.brackets[0].endRun == 1);
+    p.pushEffect(Rect(0, 0, 2, 2), Builtin.dim);
+    assert(p.brackets.length == 2 && p.brackets[0].endRun == 1 && p.brackets[0].endBracket == 2);
+    assert(p.brackets[1].endBracket == 2);
 }

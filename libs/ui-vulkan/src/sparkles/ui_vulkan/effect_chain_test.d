@@ -1,6 +1,6 @@
 /**
-The effect chain on a real driver (`UVK15`): brackets at a frame's root run
-through their records' SPIR-V passes on lavapipe, with the validation layer
+The effect chain on a real driver (`UVK15`, `EFX11`): brackets, nested ones
+included, run through their records' SPIR-V passes on lavapipe, with the validation layer
 listening, and the targets read back. Opt-in, as every readback is
 (`SPARKLES_VULKAN_READBACK=1`).
 */
@@ -105,6 +105,84 @@ private bool near(in ubyte[4] got, RgbColor want, int tolerance = 2) @safe pure 
     assert(luma(w / 2, h / 2) > 40 && luma(w / 2, h / 2) < 160);
     // Outside the curved glass, at the very corners, nothing is lit.
     assert(luma(0, 0) < 20 && luma(w - 1, h - 1) < 20);
+}
+
+@("ui_vulkan.effect_chain.runsANestedBracketInsideItsParent")
+@system unittest
+{
+    // `EFX11`: `dim` inside `dim`. The inner bracket's result is what the
+    // outer one reads, so its half is dimmed twice and the other half once;
+    // what follows the outer bracket is untouched, and nothing degrades.
+    if (!readbackEnabled)
+        return skipTest(readbackSkipReason);
+    auto rig = new Rig;
+    rig.open("ui-vulkan-effect-nested", 40, 50);
+    scope (success)
+        rig.close();
+    EffectRegistry reg;
+    rig.canvas.effects(&reg);
+
+    const red = RgbColor(220, 40, 30), blue = RgbColor(20, 60, 230), green = RgbColor(30, 200, 60);
+    FrameReport report;
+    const frame = rig.draw((ref Canvas c) {
+        c.pushEffect(Rect(0, 0, 4, 4), Builtin.dim);
+        c.fillRect(Rect(0, 0, 4, 4), Visual(bg: red, hasBg: true));
+        c.pushEffect(Rect(2, 0, 2, 4), Builtin.dim);
+        c.fillRect(Rect(2, 0, 2, 4), Visual(bg: blue, hasBg: true));
+        c.popEffect();
+        c.popEffect();
+        c.fillRect(Rect(0, 4, 4, 1), Visual(bg: green, hasBg: true));
+    }, FrameMetrics(cellW: 10, cellH: 10), RgbColor(0, 0, 0), report);
+    assert(report[Degradation.effect] == 0, "both brackets ran");
+    const once = dimTier0(Tier0Input(Point(0, 0), Size(4, 4), red));
+    const inner = dimTier0(Tier0Input(Point(0, 0), Size(2, 4), blue));
+    const twice = dimTier0(Tier0Input(Point(0, 0), Size(4, 4), inner));
+    assert(twice != inner, "the outer effect reads the inner one's result");
+    foreach (y; [2, 20, 37])
+    {
+        assert(near(pixel(frame, 40, 8, y), once), "outside the inner bracket: dimmed once");
+        assert(near(pixel(frame, 40, 32, y), twice, 3), "inside it: dimmed twice");
+    }
+    assert(near(pixel(frame, 40, 20, 45), green, 0), "after the brackets: untouched");
+    // A scratch target and a bracket copy for each level.
+    assert(rig.canvas.effectImages == 4);
+}
+
+@("ui_vulkan.effect_chain.siblingsOfSeveralSizesKeepTheirImages")
+@system unittest
+{
+    // `EFX11`: images are pooled per (level, role, size), so brackets of
+    // two sizes side by side reuse theirs frame after frame rather than
+    // remaking one image for each, every frame.
+    if (!readbackEnabled)
+        return skipTest(readbackSkipReason);
+    auto rig = new Rig;
+    rig.open("ui-vulkan-effect-siblings", 40, 40);
+    scope (success)
+        rig.close();
+    EffectRegistry reg;
+    rig.canvas.effects(&reg);
+
+    const red = RgbColor(220, 40, 30);
+    size_t[3] held;
+    foreach (i; 0 .. held.length)
+    {
+        FrameReport report;
+        const frame = rig.draw((ref Canvas c) {
+            c.pushEffect(Rect(0, 0, 4, 1), Builtin.dim);
+            c.fillRect(Rect(0, 0, 4, 1), Visual(bg: red, hasBg: true));
+            c.popEffect();
+            c.pushEffect(Rect(0, 2, 2, 2), Builtin.dim);
+            c.fillRect(Rect(0, 2, 2, 2), Visual(bg: red, hasBg: true));
+            c.popEffect();
+        }, FrameMetrics(cellW: 10, cellH: 10), RgbColor(0, 0, 0), report);
+        assert(report[Degradation.effect] == 0);
+        const dimRed = dimTier0(Tier0Input(Point(0, 0), Size(4, 1), red));
+        assert(near(pixel(frame, 40, 5, 5), dimRed) && near(pixel(frame, 40, 5, 25), dimRed));
+        held[i] = rig.canvas.effectImages;
+    }
+    assert(held[0] == 3, "a scratch target and one bracket copy per size");
+    assert(held[1] == held[0] && held[2] == held[0], "kept, not remade");
 }
 
 @("ui_vulkan.effect_chain.withoutARegistryABracketDegrades")

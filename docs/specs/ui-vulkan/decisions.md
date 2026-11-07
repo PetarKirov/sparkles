@@ -326,9 +326,12 @@ shaders. _Resolved_ when hue's CRT moved to the native arm: `shaders/effects.d`
 is compiled for both Vulkan profiles beside its GLSL, the records carry the
 SPIR-V under their own backend keys, and the canvas runs a root bracket's
 passes through `EffectChain`, reading each pass's interface from its SPIR-V
-(revised `UVK15`). Nested brackets still degrade: a bracket inside another
-would need its draws placed relative to the bracket's own origin, and no
-consumer nests one.
+(revised `UVK15`). Nested brackets run too: each nesting level draws into a
+target-sized scratch image of its own, in the target's coordinates, so a
+bracket's draws need no moving, and its last pass composites onto its
+parent's scratch image. Images are pooled per level, role and size
+(`EFX11`), so sibling brackets of several sizes keep theirs from frame to
+frame.
 
 **UVQ3: A Vulkan 1.1 shader profile.** The shaders plan's only Vulkan
 profile emitted SPIR-V 1.6 for Vulkan 1.3; the reference phone runs Vulkan
