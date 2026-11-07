@@ -4,6 +4,7 @@
     targetPath "build"
     dependency "sparkles:build-primitives" path="../../.."
     dependency "sparkles:wired" path="../../.."
+    dependency "sparkles:wired-sdl-select" path="../../.."
     buildType "checked" {
         buildOptions "optimize" "inline" "debugInfo"
     }
@@ -17,7 +18,8 @@ link policy. Platform/compiler-specific flags never leak into other toolchains.
 */
 module standardize_build_settings;
 
-import std.algorithm : canFind, endsWith, startsWith;
+import std.algorithm : canFind, endsWith, filter, map, startsWith;
+import std.array : join;
 import std.experimental.allocator.mallocator : Mallocator;
 import std.file : readText, write;
 import std.stdio : stderr, writeln;
@@ -27,6 +29,7 @@ import sparkles.base.buffer : UniqueBuffer;
 import sparkles.base.text.span : TextSpan;
 import sparkles.build_primitives.git_env : runGit;
 import sparkles.wired.sdl : parseSdlDocument, sdlDubRecipe, sdlEditor, SdlNode, SdlSpan;
+import sparkles.wired.sdl.select : SdlSelector;
 
 // Linux uses lld; Nix must supply wrapped-lld.nix, not the raw ELF linker.
 // Template linkage stays package-scoped: forcing it onto mir-ion crashes LDC.
@@ -93,6 +96,10 @@ SDL";
 /// names is a stale copy.
 private immutable string[] managedBuildTypes = ["unittest", "unittest-debug",
     "unittest-cov", "unittest-cov-ctfe", "checked", "bench", "bench-unchecked", "bench-static"];
+
+/// The DQL filter that keeps a node named by one managed build type.
+private enum managedBuildTypeFilter = "values[1] == null && ("
+    ~ managedBuildTypes.map!(name => `values[0] == "` ~ name ~ `"`).join(" || ") ~ ")";
 
 /// A setting by content: its name, its string values in order, and its one
 /// `platform` attribute.
@@ -191,23 +198,20 @@ string normalize(string source) @safe
 
     void removeLegacySettings(scope SdlNode parent)
     {
-        foreach (node; parent.byChild)
-            if (!inRegion(node) && legacySettings.canFind!((s, n) => isSetting(n, s))(node))
-                editor.remove(node);
+        editor.remove(parent.byChild.filter!(node => !inRegion(node)
+            && legacySettings.canFind!((s, n) => isSetting(n, s))(node)));
     }
 
     removeLegacySettings(root);
-    foreach (node; root.byChild)
-    {
-        if (inRegion(node) || node.valueCount != 1)
-            continue;
-        const name = node.qualifiedName.localName;
-        const value = node.byValue.front;
-        if (name == "buildType" && managedBuildTypes.canFind(value.stringValue))
-            editor.remove(node);
-        else if (name == "configuration" && value.stringValue != "offline")
-            removeLegacySettings(node);
-    }
+    // Outside the region, a configuration other than `offline` may hold
+    // legacy settings, and a managed build type is a stale copy.
+    auto configurations = SdlSelector.parse("configuration",
+        `values[1] == null && values[0] != "offline"`);
+    foreach (configuration; configurations.value.nodes(root))
+        if (!inRegion(configuration))
+            removeLegacySettings(configuration);
+    auto staleBuildTypes = SdlSelector.parse("buildType", managedBuildTypeFilter);
+    editor.remove(staleBuildTypes.value.nodes(root).filter!(node => !inRegion(node)));
 
     if (hasRegion)
     {
@@ -293,6 +297,19 @@ string normalize(string source) @safe
         ~ "    lflags \"--export-dynamic\" platform=\"linux-ldc\" optional=true\n"
         ~ "    lflags \"--export-dynamic\" \"-v\" platform=\"linux-ldc\"\n}\n\n" ~ managed,
         normalized);
+}
+
+/// A build type or configuration named by more than one value is not the
+/// policy's, nor is `configuration "offline"`: each is kept, and so are the
+/// settings it holds.
+@("buildSettings.normalize.selectsByOneName")
+@safe unittest
+{
+    const source = "buildType \"checked\" \"x\" {\n}\n"
+        ~ "configuration \"unittest\" \"x\" {\n    lflags \"--export-dynamic\" platform=\"linux-ldc\"\n}\n"
+        ~ "configuration \"offline\" {\n    lflags \"--export-dynamic\" platform=\"linux-ldc\"\n}\n";
+    const normalized = normalize(source);
+    assert(normalized == source ~ "\n" ~ managed, normalized);
 }
 
 /// Package-specific calibration types are outside the managed policy.
