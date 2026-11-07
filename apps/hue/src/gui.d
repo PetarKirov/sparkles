@@ -2583,6 +2583,12 @@ int runGui(GuiArgs guiArgs) @system
     // The frame's view half (`P2.B4`): the previous frame's tail, then fold,
     // dispatch, derive — everything the host calls `present`. Returns false
     // when the run is over, which the caller turns into `quit` + `skipFrame`.
+    // How long frames keep coming after the last input (`stepFrame`):
+    // longer than the bars' expand easing, the one transition input starts
+    // with no `Timeline` of its own to ask by.
+    enum settleAfterInput = dur!"msecs"(600);
+    MonoTime settleUntil;
+
     bool stepFrame(H)(ref H h, out FrameGeom geom)
     {
         // The action bar crosses from the view half to the paint half like any
@@ -2605,6 +2611,7 @@ int runGui(GuiArgs guiArgs) @system
         // during the arm's drain, and the gesture thresholds it fed the
         // recogniser are the host's to scale now (`HST17` note).
         keyBuf.length = 0;
+        const hadInput = evBuf.length != 0;
         foreach (e; evBuf)
             e.match!((in KeyEvent k) { keyBuf ~= k; },
                 // A clipboard read's answer (`INP25`), for the field that asked.
@@ -4558,6 +4565,23 @@ int runGui(GuiArgs guiArgs) @system
             touch: touchTarget, barTree: barTree, barFrames: barFrames,
             toolbarY: toolbarY,
         );
+
+        // An arm that draws only when asked (the native one, `HST16`) must be
+        // asked for what this frame leaves unfinished. Input is handled after
+        // the layout the paint half reads was taken, so a key that opened the
+        // search line or a tap that toggled the tree shows on the next frame;
+        // and the bars ease, the toast and the copy flash fade, and the CRT
+        // animates over several. A frame that took input asks for frames
+        // until the easing has settled; an animation asks while it runs. An
+        // arm drawing at a fixed cadence (raylib's) draws them anyway.
+        static if (__traits(hasMember, H, "requestFrame"))
+        {
+            if (hadInput)
+                settleUntil = MonoTime.currTime + settleAfterInput;
+            if (MonoTime.currTime < settleUntil || crt.enabled
+                || flash.toast.visible || flash.copiedFlash.visible || pop.fade.visible)
+                h.requestFrame();
+        }
         return true;
     }
 
