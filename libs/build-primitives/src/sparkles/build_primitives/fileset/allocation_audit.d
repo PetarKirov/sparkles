@@ -44,6 +44,70 @@ version (linux)
         return __real_realloc(pointer, size);
     }
 
+    /// The resolution machine's steps, and the in-memory driver answering
+    /// them, allocate nothing once both are made.
+    @("fileset.allocation.resolutionStepsHaveZeroCalls")
+    @system unittest
+    {
+        import core.memory : GC;
+
+        import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+        import sparkles.build_primitives.fileset.driver : FilesetDriver, filesetRights;
+        import sparkles.build_primitives.fileset.machine : Resolution, StepKind;
+        import sparkles.build_primitives.fileset.pattern : CasePolicy;
+        import sparkles.build_primitives.fileset.tree_literal : memTree;
+        import sparkles.build_primitives.fileset.value : Filesets;
+        import sparkles.base.vfs.mem : MemVfs;
+
+        auto tree = memTree("src/a.d\nsrc/b/c.d\nsrc/b/run +x\nsrc/gen/x.d\ndocs/i.md\nvendor/v/w\n"
+            ~ "e/\nbin/tool +x\nbin/notes\n");
+        assert(!tree.hasError);
+        auto root = openRoot!filesetRights(&tree.value.get().vfs, "", ambientAuthority());
+        auto sets = Filesets(CasePolicy.sensitive);
+        const f = sets.unionOf(
+            sets.difference(sets.glob("src/**/*.d").value, sets.glob("gen/").value),
+            sets.intersection(sets.glob("bin/*").value, sets.executable),
+            sets.glob("vendor/").value, sets.glob("e/").value);
+        auto m = Resolution(sets, f);
+        auto driver = FilesetDriver!(MemVfs, filesetRights)(64);
+        auto cursor = m.start();
+        size_t members, units, empties;
+
+        const gcBefore = GC.allocatedInCurrentThread();
+        allocationCalls = 0;
+        auditActive = true;
+        for (;;)
+        {
+            StepKind kind;
+            if (!m.step(sets, cursor, 2, kind))
+                break;
+            driver.retire(m.retired);
+            if (kind == StepKind.done)
+                break;
+            if (kind == StepKind.needIO)
+                foreach (i; 0 .. m.batch.length)
+                    driver.perform(m, root.value.borrow, i);
+            else if (kind == StepKind.unit)
+            {
+                ++units;
+                foreach (name; m.unitMembers)
+                    ++members;
+                empties += m.unitEmpty;
+            }
+        }
+        auditActive = false;
+        const gcAfter = GC.allocatedInCurrentThread();
+
+        assert(m.error.code == m.error.code.init, m.error.context);
+        assert(members == 4); // src/a.d, src/b/c.d, bin/tool, vendor/v/w
+        // `e`, and `docs` and `src/gen`: entered because the unanchored
+        // `vendor/` and `e/` could still match beneath them, and memberless.
+        assert(empties == 3);
+        assert(units > 5);
+        assert(allocationCalls == 0, "a resolution step called the libc allocator");
+        assert(gcAfter == gcBefore, "a resolution step allocated on the GC heap");
+    }
+
     @("fileset.allocation.evaluationHasZeroCalls")
     @system unittest
     {

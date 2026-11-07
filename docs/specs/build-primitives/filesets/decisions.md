@@ -187,6 +187,50 @@ It would make root derivation trivially sound, but `Keep` and `K*` would then
 disagree about a directory named with the Kelvin sign, so a fileset's meaning
 would depend on whether a component happened to contain a metacharacter.
 
+### A13 — An empty directory is a memberless leaf of the walk
+
+[`FSV4`](./SPEC.md#4-the-fileset-value-fsv) asked for "the directories that
+were entered and yielded no members" while its detection wants exactly the
+empty directory reported, never its ancestors. Read recursively, the first
+phrase reports `src` as well as `src/empty`, because `src` yields no member
+either. FSV4 now reports a directory the resolution listed that holds no
+member file and no subdirectory the resolution entered: the leaves of the
+walk that hold nothing selected. Each one is decided from the directory's own
+listing, with no second pass.
+
+The rejected reading, "physically empty", is narrower. It would not report a
+directory that holds only non-members, which a consumer copying the
+selection must still create to keep the shape.
+
+**Open:** with an unanchored pattern in the fileset, every directory is live,
+so every memberless leaf is reported: `*.md` over a source tree reports each
+directory without Markdown. Whether consumers want that, or want the report
+limited to directories beneath an `acceptAll` verdict or a literal root, is
+the owner's call. The build graph's listings, the first consumer, do not read
+the report.
+
+### A14 — The driver opens every directory with `walk`
+
+The capability VFS applies a root's resolution policy, link following and
+mount checking, in `walk`. `openDir` performs the bare single-name open.
+So the driver opens each fileset root and each child directory with `walk`
+on one name, and the root's policy decides every crossing
+([`FSD6`](./SPEC.md#11-drivers-fsd), [`FSD7`](./SPEC.md#11-drivers-fsd)).
+Opening children with `openDir` would cross mounts silently.
+
+Two consequences. First, the VFS's own lookups may `stat`: its
+device comparison does so on every step. `FSO4`'s count is of the machine's
+`stat` requests, not of backend calls. Second, under `symlinks = beneath` a
+link is judged as both a directory and a file: it is listed at its own path if
+its target is a directory beneath the root, and stays a member as a link value
+if its target is a file or is missing. A link the policy refuses is reported
+as incomplete and is not a member, so a consumer that, like the build graph
+(BGF3), must reject an escaping link finds it in the report.
+
+The executable bit is read only from a regular file (`FSO1`). On Linux a link's
+mode is always 0777, so `executable` would otherwise select every link on
+disk and none in `MemVfs`; the three-backend gate found that.
+
 ## Open
 
 ### D1 — Which Merkle shape

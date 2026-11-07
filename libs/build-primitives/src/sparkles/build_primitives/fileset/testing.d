@@ -21,11 +21,14 @@ module sparkles.build_primitives.fileset.testing;
 import std.algorithm.searching : canFind;
 import std.array : join, split;
 import std.ascii : toLower;
+import std.conv : octal;
 import std.random : Mt19937, uniform;
 
 import sparkles.base.vfs.handles : DirRef;
 import sparkles.base.vfs.types : EntryKind, Rights;
 
+import sparkles.build_primitives.fileset.driver : PathCollector, resolve, resolveWith;
+import sparkles.build_primitives.fileset.machine : ResolutionErrorCode, ResolutionLimits;
 import sparkles.build_primitives.fileset.pattern : CasePolicy;
 import sparkles.build_primitives.fileset.value : Fileset, FilesetOp, Filesets;
 
@@ -62,7 +65,7 @@ FoundFile[] bruteForceFiles(V, Rights R)(DirRef!(V, R) dir, string prefix = "")
         auto st = dir.statAt(name);
         assert(!st.hasError, "brute-force walk: stat failed");
         kind = st.value.kind;
-        exec = st.value.executable;
+        exec = kind == EntryKind.regular && st.value.executable;
         if (kind == EntryKind.directory)
             subdirs ~= name;
         else if (kind == EntryKind.regular || kind == EntryKind.symlink)
@@ -768,4 +771,557 @@ none (FSA6).
     const withObjects = sets.union_(tracked, sets.glob("build/**/*.o").value);
     auto forced = plannedWalk(root.value.borrow, sets, withObjects);
     assert(forced.members == ["build/a.o", "build/obj/b.o", "src/a.d"]);
+}
+
+// ---------------------------------------------------------------- M3
+
+/// Resolves `f` beneath `root` with the machine and the inline executor.
+PathCollector machineResolve(V, Rights R)(DirRef!(V, R) root, ref const Filesets sets, Fileset f,
+    ResolutionLimits limits = ResolutionLimits.init, size_t budget = 4096)
+{
+    PathCollector sink;
+    auto r = resolve(root, sets, f, sink, limits, budget);
+    assert(!r.hasError, r.hasError ? r.error.context : "");
+    return sink;
+}
+
+/// Writes the tree of a tree literal beneath the directory `dir` on disk.
+void materialize(string literal, string dir) @system
+{
+    import std.algorithm.searching : findSplit;
+    import std.file : mkdirRecurse, setAttributes, write;
+    import std.path : buildPath, dirName;
+    import std.string : lineSplitter, strip;
+
+    foreach (raw; literal.lineSplitter)
+    {
+        auto line = raw.strip;
+        if (line.length == 0 || line[0] == '#')
+            continue;
+        if (auto link = line.findSplit(" -> "))
+        {
+            mkdirRecurse(buildPath(dir, link[0]).dirName);
+            version (Posix)
+            {
+                import std.file : symlink;
+
+                symlink(link[2], buildPath(dir, link[0]));
+            }
+            else
+            {
+                import sparkles.test_runner.skip : skipTest;
+
+                skipTest("the tree holds a symbolic link, which needs POSIX here");
+            }
+            continue;
+        }
+        if (line[$ - 1] == '/')
+        {
+            mkdirRecurse(buildPath(dir, line));
+            continue;
+        }
+        string content;
+        auto path = line;
+        if (auto eq = line.findSplit(" = "))
+        {
+            path = eq[0];
+            content = eq[2];
+        }
+        bool exec;
+        if (path.length > 3 && path[$ - 3 .. $] == " +x")
+        {
+            exec = true;
+            path = path[0 .. $ - 3];
+        }
+        const full = buildPath(dir, path);
+        mkdirRecurse(full.dirName);
+        write(full, content);
+        version (Posix)
+            setAttributes(full, exec ? octal!755 : octal!644);
+    }
+}
+
+
+/// A fresh scratch directory for one native fixture.
+string scratchTree(string label) @system
+{
+    import std.conv : to;
+    import std.file : mkdirRecurse, tempDir;
+    import std.path : buildPath;
+    import std.process : thisProcessID;
+
+    static size_t counter;
+    const dir = buildPath(tempDir, "sparkles-fileset-" ~ thisProcessID.to!string ~ "-" ~ label
+        ~ "-" ~ (++counter).to!string);
+    mkdirRecurse(dir);
+    return dir;
+}
+
+/**
+M3's gate, first half: on M1's fixture set, the machine resolves the same
+members as the planned walk and the brute-force walk; with a budget of one it
+produces the same transcript as with an unbounded one (FSM6).
+*/
+@("fileset.gate.m3.machineAgreesWithOracles")
+@system unittest
+{
+    import std.algorithm.iteration : filter, map;
+    import std.algorithm.sorting : sort;
+    import std.array : array;
+    import std.conv : text;
+
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+    import sparkles.build_primitives.fileset.value : FilesetEvaluator;
+
+    size_t checked;
+    void check(string literal, CasePolicy policy,
+        scope Fileset delegate(ref Filesets) @safe make, string label, bool tiny)
+    {
+        auto tree = openFixture(literal);
+        auto root = openRoot!(Rights.readOnly)(&tree.value.get().vfs, "", ambientAuthority());
+        auto sets = Filesets(policy);
+        const f = make(sets);
+        auto ev = FilesetEvaluator(sets, f);
+        const brute = bruteForceFiles(root.value.borrow)
+            .filter!(file => ev.contains(sets, file.path, file.executable))
+            .map!(file => file.path).array;
+        auto got = machineResolve(root.value.borrow, sets, f);
+        auto members = got.members.dup;
+        members.sort();
+        assert(members == brute, text(label, ":\n machine ", members, "\n brute   ", brute));
+        assert(members == plannedWalk(root.value.borrow, sets, f).members, label);
+        if (tiny)
+            assert(machineResolve(root.value.borrow, sets, f, ResolutionLimits.init, 1).transcript
+                == got.transcript, label ~ ": a budget of one changed the result");
+        ++checked;
+    }
+
+    foreach (fx; fixtureSet())
+        foreach (i, make; fx.filesets)
+            check(fx.tree, fx.policy, make, text(fx.name, "#", i), true);
+
+    auto rng = Mt19937(20_261_109);
+    foreach (round; 0 .. 200)
+    {
+        const literal = randomTree(rng);
+        foreach (k; 0 .. 6)
+        {
+            auto seed = rng.front;
+            rng.popFront();
+            const policy = (seed & 1) ? CasePolicy.insensitive : CasePolicy.sensitive;
+            check(literal, policy, (ref Filesets s) @safe {
+                auto local = Mt19937(seed);
+                return randomFileset(s, local);
+            }, text("random round ", round, " seed ", seed), k == 0);
+        }
+    }
+    assert(checked > 1000);
+}
+
+version (Posix)
+{
+    /**
+    M3's gate, second half: the one adapter over `MemVfs`, `BlockingVfs` and
+    `RingVfs` (the latter on scheduler fibers, concurrently) produces
+    byte-identical transcripts over one fixture set (FSD1).
+    */
+    @("fileset.gate.m3.threeBackends")
+    @system unittest
+    {
+        import std.conv : text;
+        import std.file : rmdirRecurse;
+
+        import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+        import sparkles.build_primitives.fileset.driver : filesetRights;
+        import sparkles.build_primitives.fileset.driver_loop : LoopExecutor;
+        import sparkles.event_horizon.admission : Admission;
+        import sparkles.event_horizon.sched : Sched;
+        import sparkles.event_horizon.sys : BlockingVfs;
+        import sparkles.event_horizon.vfs : RingVfs;
+
+        Sched s;
+        schedOrSkip(s);
+
+        size_t compared;
+        uint peak;
+        void check(string literal, CasePolicy policy,
+            scope Fileset delegate(ref Filesets) @safe make, string label)
+        {
+            auto sets = Filesets(policy);
+            const f = make(sets);
+
+            auto tree = openFixture(literal);
+            auto memRoot = openRoot!filesetRights(&tree.value.get().vfs, "", ambientAuthority());
+            const mem = machineResolve(memRoot.value.borrow, sets, f).transcript;
+
+            const dir = scratchTree("diff");
+            scope (exit) rmdirRecurse(dir);
+            materialize(literal, dir);
+            auto blocking = new BlockingVfs;
+            auto blockingRoot = openRoot!filesetRights(blocking, dir, ambientAuthority());
+            assert(!blockingRoot.hasError);
+            const native = machineResolve(blockingRoot.value.borrow, sets, f).transcript;
+
+            string ring;
+            auto r = s.run(() {
+                auto rv = new RingVfs;
+                auto ringRoot = openRoot!filesetRights(rv, dir, ambientAuthority());
+                auto budget = new Admission(4);
+                auto exec = LoopExecutor!Sched(&s, budget);
+                PathCollector sink;
+                auto res = resolveWith(ringRoot.value.borrow, sets, f, sink, exec);
+                assert(!res.hasError);
+                ring = sink.transcript;
+                if (exec.peak > peak)
+                    peak = exec.peak;
+            });
+            assert(!r.hasError);
+            assert(mem == native && native == ring, text(label, "\nMemVfs:\n", mem,
+                "BlockingVfs:\n", native, "RingVfs:\n", ring));
+            ++compared;
+        }
+
+        foreach (fx; fixtureSet())
+            foreach (i, make; fx.filesets)
+                check(fx.tree, fx.policy, make, text(fx.name, "#", i));
+        auto rng = Mt19937(20_261_110);
+        foreach (round; 0 .. 30)
+        {
+            const literal = randomTree(rng);
+            auto seed = rng.front;
+            rng.popFront();
+            check(literal, CasePolicy.sensitive, (ref Filesets st) @safe {
+                auto local = Mt19937(seed);
+                return randomFileset(st, local);
+            }, text("random round ", round));
+        }
+        assert(compared > 50);
+        assert(peak > 1, "the event-horizon driver never ran two requests at once");
+    }
+
+    /// FSS6: with a budget of one in-flight operation the event-horizon
+    /// driver completes and never exceeds it.
+    @("fileset.driver.FSS6.budgetOfOne")
+    @system unittest
+    {
+        import std.file : rmdirRecurse;
+
+        import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+        import sparkles.build_primitives.fileset.driver : filesetRights;
+        import sparkles.build_primitives.fileset.driver_loop : LoopExecutor;
+        import sparkles.event_horizon.admission : Admission;
+        import sparkles.event_horizon.sched : Sched;
+        import sparkles.event_horizon.vfs : RingVfs;
+
+        Sched s;
+        schedOrSkip(s);
+        const dir = scratchTree("budget");
+        scope (exit) rmdirRecurse(dir);
+        materialize("a/x +x\na/y\nb/z +x\nc/\nd/e/f +x\n", dir);
+        auto sets = Filesets(CasePolicy.sensitive);
+        const f = sets.executable;
+        string[] members;
+        uint peak;
+        auto r = s.run(() {
+            auto rv = new RingVfs;
+            auto root = openRoot!filesetRights(rv, dir, ambientAuthority());
+            auto budget = new Admission(1);
+            auto exec = LoopExecutor!Sched(&s, budget);
+            PathCollector sink;
+            assert(!resolveWith(root.value.borrow, sets, f, sink, exec).hasError);
+            members = sink.members;
+            peak = exec.peak;
+        });
+        assert(!r.hasError);
+        assert(members == ["a/x", "b/z", "d/e/f"]);
+        assert(peak == 1);
+    }
+}
+
+/// FSM1: the machine's modules import nothing that performs I/O. Checked by
+/// reading their sources, not by inspection.
+@("fileset.machine.FSM1.importsNothingEffectful")
+@system unittest
+{
+    import std.algorithm.searching : canFind, startsWith;
+    import std.file : readText;
+    import std.path : buildPath, dirName;
+    import std.string : lineSplitter, strip;
+
+    static immutable machineModules = ["machine.d", "plan.d", "value.d", "pattern.d"];
+    static immutable forbidden = ["std.file", "std.stdio", "std.process", "std.socket",
+        "core.sys", "core.stdc.stdio", "sparkles.event_horizon", "sparkles.base.vfs.handles",
+        "sparkles.base.vfs.mem", "sparkles.base.vfs.walk", "sparkles.base.io.fd"];
+    foreach (m; machineModules)
+    {
+        const src = readText(buildPath(__FILE_FULL_PATH__.dirName, m));
+        bool inUnittest;
+        foreach (raw; src.lineSplitter)
+        {
+            const line = raw.strip;
+            if (!line.canFind("import "))
+                continue;
+            foreach (bad; forbidden)
+                assert(!line.canFind(" " ~ bad), m ~ " imports " ~ bad ~ ": " ~ line);
+        }
+    }
+}
+
+/// An executor that runs a batch inline, recording each batch's kinds, and
+/// calls `beforeStats` once, just before the first batch of stats runs.
+struct RecordingExecutor
+{
+    import sparkles.build_primitives.fileset.machine : Request, RequestKind;
+
+    size_t[] sizes;             /// each batch's length
+    size_t stats;               /// stat requests performed
+    void delegate() beforeStats; /// called once, if set
+
+    /// Runs `batch` inline.
+    void run(Perform)(scope const(Request)[] batch, scope Perform perform)
+    {
+        sizes ~= batch.length;
+        if (batch.length && batch[0].kind == RequestKind.stat)
+        {
+            stats += batch.length;
+            if (beforeStats !is null)
+            {
+                beforeStats();
+                beforeStats = null;
+            }
+        }
+        foreach (i; 0 .. batch.length)
+            perform(i);
+    }
+}
+
+/// FSM3: the requests one directory's entries need arrive as one batch.
+@("fileset.machine.FSM3.oneBatchPerDirectory")
+@system unittest
+{
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+
+    auto tree = openFixture("d/a +x\nd/b\nd/c +x\nd/e\nd/f\nd/s1/\nd/s2/x\nd/s3/\n");
+    auto root = openRoot!(Rights.readOnly)(&tree.value.get().vfs, "", ambientAuthority());
+    auto sets = Filesets(CasePolicy.sensitive);
+    const f = sets.executable;
+    PathCollector sink;
+    RecordingExecutor exec;
+    assert(!resolveWith(root.value.borrow, sets, f, sink, exec).hasError);
+    // The root's listing, `d`'s listing, `d`'s 5 stats, `d`'s 3 subdirectories,
+    // `s2`'s stat.
+    assert(exec.sizes == [1, 1, 5, 3, 1]);
+    assert(exec.stats == 6);
+    assert(sink.members == ["d/a", "d/c"]);
+}
+
+/// FSO4's machine half: a fileset whose verdicts need no metadata issues no
+/// `stat` request; FSM5: units arrive after their children.
+@("fileset.machine.noStatWithoutNeed")
+@system unittest
+{
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+
+    auto tree = openFixture("src/a.d\nsrc/b/c.d\nsrc/b/d.txt\nvendor/x/y\ndocs/z.md\n");
+    auto root = openRoot!(Rights.readOnly)(&tree.value.get().vfs, "", ambientAuthority());
+    auto sets = Filesets(CasePolicy.sensitive);
+    const f = sets.union_(sets.glob("src/**/*.d").value, sets.glob("vendor/").value);
+    PathCollector sink;
+    RecordingExecutor exec;
+    assert(!resolveWith(root.value.borrow, sets, f, sink, exec).hasError);
+    assert(exec.stats == 0);
+    assert(sink.members == ["src/b/c.d", "src/a.d", "vendor/x/y"], "units arrive post-order");
+}
+
+/// FSV4: an entered directory with no member and no entered subdirectory is
+/// reported, and is not a member.
+@("fileset.machine.FSV4.emptyDirectories")
+@system unittest
+{
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+
+    auto tree = openFixture("src/a.d\nsrc/empty/\nsrc/deep/er/\ndocs/x.md\n");
+    auto root = openRoot!(Rights.readOnly)(&tree.value.get().vfs, "", ambientAuthority());
+    auto sets = Filesets(CasePolicy.sensitive);
+    auto got = machineResolve(root.value.borrow, sets, sets.glob("src/**").value);
+    assert(got.members == ["src/a.d"]);
+    assert(got.emptyDirs == ["src/deep/er", "src/empty"]);
+}
+
+/// FSM6: a cursor is valid only for its resolution and its step.
+@("fileset.machine.FSM6.staleCursor")
+@system unittest
+{
+    import sparkles.build_primitives.fileset.machine : Resolution, StepKind;
+
+    auto sets = Filesets(CasePolicy.sensitive);
+    const f = sets.everything;
+    auto a = Resolution(sets, f), b = Resolution(sets, f);
+    auto ca = a.start(), cb = b.start();
+    StepKind kind;
+    assert(!a.step(sets, cb, 16, kind));
+    assert(a.error.code == ResolutionErrorCode.staleCursor);
+    auto old = cb;
+    assert(b.step(sets, cb, 16, kind) && kind == StepKind.needIO);
+    assert(!b.step(sets, old, 16, kind), "an old cursor of the same resolution");
+}
+
+/// FSM7: nesting and name length are bounded, and exceeding either is a
+/// returned error.
+@("fileset.machine.FSM7.bounds")
+@system unittest
+{
+    import std.array : replicate;
+
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+
+    auto deep = openFixture("d/".replicate(65) ~ "f\n");
+    auto root = openRoot!(Rights.readOnly)(&deep.value.get().vfs, "", ambientAuthority());
+    auto sets = Filesets(CasePolicy.sensitive);
+    PathCollector sink;
+    auto r = resolve(root.value.borrow, sets, sets.everything, sink);
+    assert(r.hasError && r.error.code == ResolutionErrorCode.depthExceeded);
+    auto shallow = openFixture("d/".replicate(64) ~ "f\n");
+    auto ok = openRoot!(Rights.readOnly)(&shallow.value.get().vfs, "", ambientAuthority());
+    assert(!resolve(ok.value.borrow, sets, sets.everything, sink).hasError, "64 is within");
+
+    auto named = openFixture("short\n" ~ "n".replicate(16) ~ "\n");
+    auto nroot = openRoot!(Rights.readOnly)(&named.value.get().vfs, "", ambientAuthority());
+    ResolutionLimits lim;
+    lim.maxNameLength = 15;
+    auto n = resolve(nroot.value.borrow, sets, sets.everything, sink, lim);
+    assert(n.hasError && n.error.code == ResolutionErrorCode.nameTooLong);
+}
+
+/// FSM2: a request a driver cannot perform fails the resolution, naming its
+/// kind.
+@("fileset.machine.FSM2.unsupportedRequest")
+@system unittest
+{
+    import sparkles.base.io.errors : ErrorKind;
+    import sparkles.build_primitives.fileset.machine : RequestKind, Resolution, StepKind;
+
+    auto sets = Filesets(CasePolicy.sensitive);
+    const f = sets.executable;
+    auto m = Resolution(sets, f);
+    auto c = m.start();
+    StepKind kind;
+    assert(m.step(sets, c, 64, kind) && kind == StepKind.needIO);
+    assert(m.batch[0].kind == RequestKind.readDir);
+    m.entry(0, "tool", EntryKind.regular);
+    m.listed(0);
+    assert(m.step(sets, c, 64, kind) && kind == StepKind.needIO);
+    assert(m.batch.length == 1 && m.batch[0].kind == RequestKind.stat);
+    m.failed(0, ErrorKind.unsupported);
+    assert(!m.step(sets, c, 64, kind));
+    assert(m.error.code == ResolutionErrorCode.unsupportedRequest);
+    assert(m.error.kind == RequestKind.stat);
+}
+
+/// FSE3: an entry gone between `readDir` and `stat` is recorded as
+/// incomplete, and the resolution completes.
+@("fileset.machine.FSE3.vanishingEntry")
+@system unittest
+{
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+
+    auto tree = openFixture("d/a +x\nd/b +x\nd/c\n");
+    auto vfs = &tree.value.get().vfs;
+    auto root = openRoot!(Rights.readOnly)(vfs, "", ambientAuthority());
+    auto sets = Filesets(CasePolicy.sensitive);
+    PathCollector sink;
+    RecordingExecutor exec;
+    exec.beforeStats = () { assert(vfs.remove("d/a")); };
+    assert(!resolveWith(root.value.borrow, sets, sets.executable, sink, exec).hasError);
+    assert(sink.members == ["d/b"]);
+    assert(sink.unreadable == ["d/a: notFound"]);
+}
+
+/// FSD5: a directory renamed mid-walk still resolves the entries already
+/// enumerated beneath it, through the handle the walk holds.
+@("fileset.driver.FSD5.renameMidWalk")
+@system unittest
+{
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+
+    auto tree = openFixture("d/a +x\nd/b\nd/c +x\n");
+    auto vfs = &tree.value.get().vfs;
+    auto root = openRoot!(Rights.readOnly)(vfs, "", ambientAuthority());
+    auto sets = Filesets(CasePolicy.sensitive);
+    PathCollector sink;
+    RecordingExecutor exec;
+    exec.beforeStats = () { assert(vfs.rename("d", "moved")); };
+    assert(!resolveWith(root.value.borrow, sets, sets.executable, sink, exec).hasError);
+    assert(sink.members == ["d/a", "d/c"]);
+    assert(sink.unreadable.length == 0);
+}
+
+/// FSD6: a link out of the root resolves nothing outside it under either
+/// policy; under `symlinks = beneath` a link to a sibling directory resolves
+/// to that directory's entries.
+@("fileset.driver.FSD6.confinement")
+@system unittest
+{
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+    import sparkles.base.vfs.types : ResolvePolicy, SymlinkPolicy;
+
+    enum literal = "outside/secret\nr/real/x.d\nr/alias -> real\nr/etc -> /outside\nr/up -> ../outside\n";
+    auto tree = openFixture(literal);
+    auto vfs = &tree.value.get().vfs;
+    auto sets = Filesets(CasePolicy.sensitive);
+    const f = sets.everything;
+
+    auto plain = openRoot!(Rights.readOnly)(vfs, "r", ambientAuthority());
+    auto byDefault = machineResolve(plain.value.borrow, sets, f);
+    assert(byDefault.members == ["real/x.d", "alias", "etc", "up"],
+        "by default every link is a member, its target data");
+
+    ResolvePolicy beneath;
+    beneath.symlinks = SymlinkPolicy.beneath;
+    auto followed = openRoot!(Rights.readOnly)(vfs, "r", ambientAuthority(), beneath);
+    auto got = machineResolve(followed.value.borrow, sets, f);
+    import std.algorithm.sorting : sort;
+    auto members = got.members.dup;
+    members.sort();
+    assert(members == ["alias/x.d", "real/x.d"]);
+    assert(got.unreadable == ["etc: escapesRoot", "up: escapesRoot"]);
+}
+
+/// FSD7: a mount beneath the root is not crossed by default, and the
+/// boundary is reported; a root opened with `crossMounts` crosses it.
+@("fileset.driver.FSD7.mounts")
+@system unittest
+{
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+    import sparkles.base.vfs.types : ResolvePolicy;
+
+    auto tree = openFixture("r/a\nr/m/b\n");
+    auto vfs = &tree.value.get().vfs;
+    assert(vfs.mount("r/m"));
+    auto sets = Filesets(CasePolicy.sensitive);
+    const f = sets.everything;
+
+    auto confined = openRoot!(Rights.readOnly)(vfs, "r", ambientAuthority());
+    auto got = machineResolve(confined.value.borrow, sets, f);
+    assert(got.members == ["a"]);
+    assert(got.unreadable == ["m: crossesMount"]);
+
+    ResolvePolicy crossing;
+    crossing.crossMounts = true;
+    auto open = openRoot!(Rights.readOnly)(vfs, "r", ambientAuthority(), crossing);
+    assert(machineResolve(open.value.borrow, sets, f).members == ["m/b", "a"]);
+}
+
+version (Posix)
+{
+    // Makes `s`, or skips the test where the host has no event loop for it.
+    private void schedOrSkip(ref imported!"sparkles.event_horizon.sched".Sched s) @trusted
+    {
+        import sparkles.event_horizon.sched : Sched;
+        import sparkles.test_runner.skip : skipTest;
+
+        auto created = Sched.create(s);
+        if (created.hasError)
+            skipTest("no event loop on this host");
+    }
 }
