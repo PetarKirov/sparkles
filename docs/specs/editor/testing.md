@@ -479,3 +479,12 @@ and reclaims/reloads its dirty text. The original document remains unchanged.
 Repeat it with `dub run --single apps/editor/tools/recovery-owner-probe.d -b checked`.
 This tests process interruption after a filesystem acknowledgment; power-loss,
 application scheduling, startup offers and orderly-exit integration remain open.
+
+The document model now lives in `editor_document.d`, independently of the UI
+component, which re-exports it for callers. The record's editing-state format
+is version 2: it additionally preserves boundary affinity, vertical goal
+columns, protected intervals and native-save durability warnings. Unknown
+fields are refused, and the earlier version-1 prototype is reported as
+unsupported and preserved. No application recovery writer used that prototype.
+Round trips cover the richer metadata; caret validation also refuses positions
+inside combining sequences or CRLF graphemes. All 34 editor tests pass.

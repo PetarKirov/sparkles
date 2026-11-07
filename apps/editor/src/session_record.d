@@ -5,15 +5,26 @@ import sparkles.base.expected : Expected, err, ok;
 import sparkles.base.hash : blake3;
 import sparkles.base.text.cstring : hasInteriorNul;
 import sparkles.base.text.utf8 : validateUtf8;
+import sparkles.base.text.seek : isGraphemeBoundary;
 import sparkles.wired.json : fromJSON, toJSON;
+import sparkles.wired.policy : WireStrict;
+import sparkles.text_buffer.summary : Affinity;
 
-/// Byte positions for one selection; direction remains significant.
+/// Byte positions, boundary affinity and a portable vertical-goal sentinel.
+@WireStrict
 struct SessionSelection
 {
     ulong anchor, head;
+    Affinity affinity;
+    ulong goal = ulong.max;
 }
 
+/// Protected byte interval, independent of the platform's size_t width.
+@WireStrict
+struct SessionSpan { ulong start, end; }
+
 /// Owned strings are serialized on a worker, separately from persistent Text snapshots.
+@WireStrict
 struct SessionTab
 {
     ulong id;
@@ -23,9 +34,12 @@ struct SessionTab
     string content, savedContent;
     SessionSelection[] selections;
     ulong primary, firstLine;
+    SessionSpan[] readOnly;
+    string durabilityWarning;
 }
 
 /// One coherent session generation, including its accepted theme and active document.
+@WireStrict
 struct SessionRecord
 {
     ulong generation;
@@ -34,7 +48,7 @@ struct SessionRecord
     SessionTab[] tabs;
 }
 
-private enum header = "SPARKLES-EDITOR-SESSION/1\n";
+private enum header = "SPARKLES-EDITOR-SESSION/2\n";
 private enum digestLength = 32;
 
 /// Encode one generation with a format version and BLAKE3 payload integrity.
@@ -80,32 +94,46 @@ private string invalidRecord(in SessionRecord record) @safe pure nothrow
         ids[tab.id] = true;
         active |= tab.id == record.active;
         if (tab.path.hasInteriorNul) return "A session document path contains a NUL byte.";
-        foreach (value; [tab.name, tab.path, tab.language, tab.content, tab.savedContent])
+        foreach (value; [tab.name, tab.path, tab.language, tab.content, tab.savedContent, tab.durabilityWarning])
             if (validateUtf8(value).hasError) return "A session document is not valid UTF-8.";
         if (tab.predominant != "\n" && tab.predominant != "\r\n")
             return "A session document has an invalid newline convention.";
         if (!tab.selections.length || tab.primary >= tab.selections.length)
             return "A session document has no valid primary selection.";
         foreach (selection; tab.selections)
+        {
+            if (selection.affinity != Affinity.before && selection.affinity != Affinity.after)
+                return "A session selection has an invalid boundary affinity.";
             foreach (position; [selection.anchor, selection.head])
-                if (position > tab.content.length || (position < tab.content.length
-                    && (cast(ubyte) tab.content[cast(size_t) position] & 0xc0) == 0x80))
-                    return "A session selection is outside a UTF-8 boundary.";
+                if (!validPosition(tab.content, position)
+                    || !isGraphemeBoundary(tab.content, cast(size_t) position))
+                    return "A session selection is outside a grapheme boundary.";
+        }
+        foreach (span; tab.readOnly)
+            if (span.start > span.end || !validPosition(tab.content, span.start)
+                || !validPosition(tab.content, span.end))
+                return "A session protected interval is outside a UTF-8 boundary.";
     }
     return active ? null : "The session active document does not exist.";
 }
+
+private bool validPosition(string content, ulong position) @safe pure nothrow @nogc
+    => position <= content.length && (position == content.length
+        || (cast(ubyte) content[cast(size_t) position] & 0xc0) != 0x80);
 
 /// Unicode, line envelopes, selection direction and saved baselines survive recovery encoding.
 @("editor.sessionRecord.exactRoundTrip")
 @safe nothrow unittest
 {
+    import sparkles.text_buffer.summary : Affinity;
     SessionRecord original;
     original.generation = 42;
     original.active = 7;
     original.theme = "github-dark";
     original.tabs = [SessionTab(id: 7, name: "日本語.txt", path: "/sample/日本語.txt",
         bom: true, predominant: "\r\n", content: "a\r\n日本語\nb", savedContent: "a\r\nb",
-        selections: [SessionSelection(6, 3)], firstLine: 1)];
+        selections: [SessionSelection(6, 3, Affinity.after, 9)], firstLine: 1,
+        readOnly: [SessionSpan(0, 3)], durabilityWarning: "directory sync unconfirmed")];
     const encoded = encodeSession(original);
     assert(encoded.hasValue);
     const decoded = decodeSession(encoded.value);
@@ -116,7 +144,7 @@ private string invalidRecord(in SessionRecord record) @safe pure nothrow
 @("editor.sessionRecord.rejectsInvalidMetadata")
 @safe nothrow unittest
 {
-    foreach (which; 0 .. 6)
+    foreach (which; 0 .. 9)
     {
         SessionRecord record;
         record.active = 7;
@@ -130,6 +158,15 @@ private string invalidRecord(in SessionRecord record) @safe pure nothrow
         case 3: record.tabs[0].id = 0; break;
         case 4: record.tabs[0].primary = 1; break;
         case 5: record.tabs[0].path = "/tmp/bad\0path"; break;
+        case 6:
+            record.tabs[0].content = "e\u0301";
+            record.tabs[0].selections[0].head = 1;
+            break;
+        case 7:
+            record.tabs[0].content = "\r\n";
+            record.tabs[0].selections[0].head = 1;
+            break;
+        case 8: record.tabs[0].readOnly = [SessionSpan(0, 1)]; break;
         }
         assert(encodeSession(record).hasError);
     }
