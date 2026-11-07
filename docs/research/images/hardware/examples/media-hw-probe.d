@@ -180,6 +180,7 @@ struct HostReport
     ulong memoryBytes;
     string libcVersion;    /// the glibc the probe ran on; empty for any other C library
     string libcReexecFrom; /// the glibc it started on, when it re-executed onto a driver's newer one
+    DriverManifest[] drivers; /// the Vulkan and EGL driver manifests, and the glibc each driver loads
 }
 
 struct CpuReport
@@ -221,13 +222,13 @@ struct VulkanReport
     string status;
     string loaderVersion;
     string[] instanceExtensions;
-    DriverManifest[] drivers; /// the driver manifests the loader reads, and the glibc each driver loads
     GpuReport[] devices;
 }
 
-/// One Vulkan driver manifest (ICD JSON) and the C library its driver is built against.
+/// One Vulkan (ICD) or EGL (libglvnd vendor) driver manifest and the glibc its driver loads.
 struct DriverManifest
 {
+    string api;         /// `vulkan` or `egl`
     string manifest;    /// the JSON file, with the home directory shown as `~`
     string library;     /// its `library_path`, resolved
     string libcDir;     /// the directory of the `libc.so.6` the driver loads
@@ -406,7 +407,7 @@ void probeHost(ref Report r, bool reexec)
     {
         r.host.os = "linux";
         r.host.osVersion = osReleaseName(r.host.attempts);
-        selectLibc(r.host, r.vulkan, reexec);
+        selectLibc(r.host, reexec);
         probeLinuxCpu(r.cpu);
         probeUring(r.io);
         probeVaapi(r.media);
@@ -473,331 +474,85 @@ string osReleaseName(ref Attempt[] log)
 // The C library the GPU drivers need (Linux)
 // -----------------------------------------------------------------------------
 
-/*
-A process has one C library, and the drivers the Vulkan loader opens share it.
-A driver built against a newer glibc than the probe's fails to load — Mesa's
-`libLLVM` reports "version `GLIBC_2.44' not found" and the loader skips RADV
-and lavapipe — so the probe re-executes itself, once, through the newest glibc
-any driver manifest leads to: a glibc runs programs built against an older
-release, never the reverse. On NixOS a driver names its glibc in its run path;
-elsewhere it is the system's, beside the driver or in a standard directory.
+/**
+Record the glibc the probe runs on and the one each driver manifest leads to,
+and run on the drivers' glibc when it is newer (`sparkles.base.driver_libc`):
+a driver built against a newer glibc than the probe's does not load. Returns
+only when the probe stays on the glibc it has.
 */
-
-version (linux)
+void selectLibc(ref HostReport host, bool reexec) @system
 {
-    /// Set in a re-executed probe's environment to the glibc it started on, so
-    /// it records the switch and never re-executes twice.
-    enum libcReexecEnv = "SPARKLES_LIBC_REEXEC_FROM";
+    import std.conv : text;
+    import sparkles.base.driver_libc : DriverApi, DriverLibc, forEachDriverLibc, reexecOntoDriverGlibc,
+        ReexecStatus;
 
-    version (X86_64)
+    const outcome = reexecOntoDriverGlibc(allow: reexec);
+    if (outcome.status == ReexecStatus.unsupported)
     {
-        enum dynamicLinker = "ld-linux-x86-64.so.2";
-        enum multiarchDir = "x86_64-linux-gnu";
+        host.attempts ~= Attempt(what: "C library", status: attemptUnsupported,
+            message: "not glibc; the drivers' C library is not checked");
+        return;
     }
-    else version (AArch64)
-    {
-        enum dynamicLinker = "ld-linux-aarch64.so.1";
-        enum multiarchDir = "aarch64-linux-gnu";
-    }
-    else
-    {
-        enum dynamicLinker = "";
-        enum multiarchDir = "";
-    }
+    host.libcVersion = text(outcome.running);
+    host.libcReexecFrom = outcome.startedOn.known ? text(outcome.startedOn) : null;
+    host.attempts ~= Attempt(what: "C library", status: attemptOk, call: "gnu_get_libc_version");
 
-    /// Where a distribution keeps its glibc (Debian's multiarch, Fedora's `lib64`, Arch's `lib`).
-    immutable string[] systemLibDirs = [
-        "/lib/" ~ multiarchDir, "/usr/lib/" ~ multiarchDir, "/lib64", "/usr/lib64", "/lib", "/usr/lib",
-    ];
-
-    /// Where a manifest's bare library name is found: NixOS's driver directory, then the system's.
-    immutable string[] driverLibDirs = ["/run/opengl-driver/lib"] ~ systemLibDirs;
-
-    version (CRuntime_Glibc)
-        extern (C) const(char)* gnu_get_libc_version() nothrow @nogc;
-
-    /**
-    Record the glibc the probe runs on and the one each Vulkan driver loads, and
-    when a driver's is newer, re-execute onto it — unless `reexec` is off or this
-    already is the re-executed probe. Returns only when the probe stays.
-    */
-    void selectLibc(ref HostReport host, ref VulkanReport vulkan, bool reexec)
-    {
-        import std.process : environment;
-
-        version (CRuntime_Glibc)
+    forEachDriverLibc((in DriverLibc d) nothrow {
+        try
+            host.drivers ~= DriverManifest(
+                api: d.api == DriverApi.vulkan ? "vulkan" : "egl",
+                manifest: homeAsTilde(d.manifest.idup),
+                library: d.library.idup,
+                libcDir: d.libcDir.idup,
+                libcVersion: d.release.known ? text(d.release) : null,
+            );
+        catch (Exception)
         {
-            host.libcVersion = gnu_get_libc_version().fromStringz.idup;
-            host.libcReexecFrom = environment.get(libcReexecEnv, null);
-            host.attempts ~= Attempt(what: "C library", status: attemptOk, call: "gnu_get_libc_version");
         }
-        else
-        {
-            host.attempts ~= Attempt(what: "C library", status: attemptUnsupported,
-                message: "not glibc; the drivers' C library is not checked");
-            return;
-        }
+    });
+    host.drivers.sort!((a, b) => a.api < b.api || (a.api == b.api && a.manifest < b.manifest));
+    foreach (d; host.drivers)
+    {
+        Attempt a = { what: d.api ~ " driver manifest", path: d.manifest };
+        a.status = d.libcVersion.length ? attemptOk : attemptUnavailable;
+        if (!d.library.length)
+            a.message = "no driver library found for this manifest";
+        else if (!d.libcVersion.length)
+            a.message = d.library ~ ": no glibc found in its run path or the system's";
+        host.attempts ~= a;
+    }
 
-        vulkan.drivers = driverManifests(vulkan.attempts);
-        DriverManifest newest;
-        foreach (d; vulkan.drivers)
-            if (compareVersions(d.libcVersion, newest.libcVersion) > 0)
-                newest = d;
-        if (compareVersions(newest.libcVersion, host.libcVersion) <= 0)
-            return;
-
+    if (outcome.status == ReexecStatus.declined || outcome.status == ReexecStatus.failed)
+    {
         Attempt a = {
             what: "run on the drivers' glibc",
-            path: buildPath(newest.libcDir, dynamicLinker),
-            message: newest.manifest.baseName ~ " loads glibc " ~ newest.libcVersion
-                ~ ", newer than the probe's " ~ host.libcVersion,
+            call: "sparkles.base.driver_libc.reexecOntoDriverGlibc",
+            message: text("a driver loads glibc ", outcome.drivers, ", newer than the probe's ",
+                outcome.running),
         };
-        if (host.libcReexecFrom.length)
-        {
-            a.status = attemptFailed;
-            a.message ~= ", after re-executing once already";
-        }
-        else if (!reexec)
+        if (outcome.status == ReexecStatus.declined)
         {
             a.status = attemptWarning;
             a.message ~= "; --no-libc-reexec keeps the probe's, so that driver may not load";
         }
+        else if (outcome.error)
+            a = errnoAttempt(a, outcome.error);
         else
-            reexecOnto(newest.libcDir, host.libcVersion, a);
-        host.attempts ~= a;
-    }
-
-    /**
-    Replace this process with itself, run by the dynamic linker in `libcDir` with
-    that directory searched first, so the whole process uses that glibc. Returns
-    only when `execve` fails, with `a` saying why.
-    */
-    void reexecOnto(string libcDir, string fromVersion, ref Attempt a) @system
-    {
-        import core.runtime : Runtime;
-        import core.stdc.errno : errno;
-        import core.sys.posix.unistd : execve;
-        import std.file : readLink;
-        import std.process : environment;
-        import std.string : toStringz;
-
-        try
-        {
-            const self = readLink("/proc/self/exe");
-            string[] args = Runtime.args;
-            a.argv = [a.path, "--argv0", args[0], "--library-path", libcDir, self] ~ args[1 .. $];
-            auto env = environment.toAA;
-            env[libcReexecEnv] = fromVersion;
-            auto argvz = a.argv.map!(s => s.toStringz).array ~ null;
-            auto envz = env.byKeyValue.map!(kv => (kv.key ~ "=" ~ kv.value).toStringz).array ~ null;
-            stdout.flush();
-            execve(a.path.toStringz, argvz.ptr, envz.ptr);
-            a = errnoAttempt(a, errno);
-        }
-        catch (Exception e)
         {
             a.status = attemptFailed;
-            a.message = e.msg;
+            a.message ~= "; the re-execution could not be prepared";
         }
-    }
-
-    /**
-    Every Vulkan driver manifest the loader reads: the files and directories
-    `VK_DRIVER_FILES` (or the older `VK_ICD_FILENAMES`) lists when set, else the
-    loader's search path. Each is resolved to its driver library and the glibc
-    that library loads.
-    */
-    DriverManifest[] driverManifests(ref Attempt[] log)
-    {
-        import std.json : JSONException;
-        import std.process : environment;
-
-        string[] files;
-        const listed = environment.get("VK_DRIVER_FILES", environment.get("VK_ICD_FILENAMES", null));
-        foreach (entry; listed.length ? listed.split(':') : icdSearchDirs)
-            files ~= entry.endsWith(".json") ? [entry] : jsonFiles(entry);
-
-        DriverManifest[] drivers;
-        bool[string] seen;
-        string[string] versions;
-        foreach (file; files)
-        {
-            if (file in seen)
-                continue;
-            seen[file] = true;
-
-            DriverManifest d = { manifest: homeAsTilde(file) };
-            Attempt a = { what: "Vulkan driver manifest", path: d.manifest };
-            try
-            {
-                const libraryPath = parseJSON(readText(file))["ICD"]["library_path"].str;
-                d.library = resolveLibrary(libraryPath, file.dirName);
-                d.libcDir = d.library.length ? libcDirOf(d.library) : null;
-                if (d.libcDir.length)
-                    d.libcVersion = versions.require(d.libcDir, glibcVersionIn(d.libcDir));
-                a.status = d.libcVersion.length ? attemptOk : attemptUnavailable;
-                if (!d.library.length)
-                    a.message = libraryPath ~ ": found only by the dynamic linker's own search";
-                else if (!d.libcVersion.length)
-                    a.message = d.library ~ ": no glibc found in its run path or the system's";
-            }
-            catch (Exception e)
-            {
-                a.status = attemptFailed;
-                a.message = e.msg;
-            }
-            log ~= a;
-            drivers ~= d;
-        }
-        return drivers;
-    }
-
-    /// The loader's manifest directories on Linux, in its order, plus Nix's
-    /// `vulkan-loader`'s system directory (`/run/opengl-driver/share`).
-    string[] icdSearchDirs()
-    {
-        import std.process : environment;
-
-        const home = environment.get("HOME", null);
-        string[] bases = [environment.get("XDG_CONFIG_HOME", home.length ? home ~ "/.config" : null)];
-        bases ~= environment.get("XDG_CONFIG_DIRS", "/etc/xdg").split(':');
-        bases ~= ["/etc", "/run/opengl-driver/share"];
-        bases ~= environment.get("XDG_DATA_HOME", home.length ? home ~ "/.local/share" : null);
-        bases ~= environment.get("XDG_DATA_DIRS", "/usr/local/share:/usr/share").split(':');
-        return bases.filter!(b => b.length).map!(b => b ~ "/vulkan/icd.d").array;
-    }
-
-    /// The `*.json` files of `dir`, by name; none when it is not a directory.
-    string[] jsonFiles(string dir)
-    {
-        import std.file : isDir;
-
-        try
-            return dir.isDir ? dirEntries(dir, "*.json", SpanMode.shallow).map!(e => e.name).array.sort.release : null;
-        catch (Exception)
-            return null;
-    }
-
-    /// `path` with the home directory written `~`, which keeps the user name out of the report.
-    string homeAsTilde(string path)
-    {
-        import std.process : environment;
-
-        const home = environment.get("HOME", null);
-        return home.length > 1 && path.startsWith(home ~ "/") ? "~" ~ path[home.length .. $] : path;
-    }
-
-    /// A manifest's `library_path`: absolute, relative to the manifest, or a bare
-    /// name looked up where drivers live; empty when it is not there.
-    string resolveLibrary(string libraryPath, string manifestDir)
-    {
-        if (libraryPath.startsWith("/"))
-            return libraryPath;
-        if (libraryPath.canFind('/'))
-            return buildPath(manifestDir, libraryPath);
-        foreach (dir; driverLibDirs)
-            if (buildPath(dir, libraryPath).exists)
-                return buildPath(dir, libraryPath);
-        return null;
-    }
-
-    /// The directory of the `libc.so.6` that `library` loads: the first of its
-    /// run path, its own directory and the system's that holds glibc's dynamic
-    /// linker too.
-    string libcDirOf(string library)
-    {
-        import std.array : replace;
-
-        const origin = library.dirName;
-        auto candidates = elfRunPath(library).map!(p => p.replace("${ORIGIN}", origin).replace("$ORIGIN", origin)).array
-            ~ origin ~ systemLibDirs;
-        foreach (dir; candidates)
-            if (buildPath(dir, "libc.so.6").exists && buildPath(dir, dynamicLinker).exists)
-                return dir;
-        return null;
-    }
-
-    /// The `DT_RUNPATH` entries of an ELF64 shared object, else its `DT_RPATH`
-    /// ones; empty when it has neither or is not one.
-    string[] elfRunPath(string path) @system
-    {
-        import std.bitmanip : peek;
-        import std.mmfile : MmFile;
-        import std.system : Endian;
-
-        enum : uint { shtDynamic = 6 }
-        enum : long { dtNull = 0, dtRpath = 15, dtRunpath = 29 }
-
-        scope file = new MmFile(path);
-        const b = cast(const(ubyte)[]) file[];
-        T at(T)(ulong off) => off + T.sizeof <= b.length ? b[off .. off + T.sizeof].peek!(T, Endian.littleEndian) : T.init;
-        string stringAt(ulong off)
-        {
-            auto end = off;
-            while (end < b.length && b[end])
-                end++;
-            return off < b.length ? (cast(const(char)[]) b[off .. end]).idup : null;
-        }
-
-        if (b.length < 64 || b[0 .. 4] != [0x7f, 'E', 'L', 'F'] || b[4] != 2 || b[5] != 1)
-            return null; // not little-endian ELF64
-        const shoff = at!ulong(0x28), shentsize = at!ushort(0x3A), shnum = at!ushort(0x3C);
-        foreach (i; 0 .. shnum)
-        {
-            const sh = shoff + i * shentsize;
-            if (at!uint(sh + 4) != shtDynamic)
-                continue;
-            const strtab = at!ulong(shoff + at!uint(sh + 0x28) * shentsize + 0x18);
-            const off = at!ulong(sh + 0x18), end = off + at!ulong(sh + 0x20);
-            string runpath, rpath;
-            for (ulong e = off; e + 16 <= end; e += 16)
-            {
-                const tag = at!long(e);
-                if (tag == dtNull)
-                    break;
-                if (tag == dtRunpath)
-                    runpath = stringAt(strtab + at!ulong(e + 8));
-                else if (tag == dtRpath)
-                    rpath = stringAt(strtab + at!ulong(e + 8));
-            }
-            const chosen = runpath.length ? runpath : rpath;
-            return chosen.length ? chosen.split(':') : null;
-        }
-        return null;
-    }
-
-    /// The release version in the banner of `dir`'s `libc.so.6`
-    /// (`… stable release version 2.44.`); empty when it has none.
-    string glibcVersionIn(string dir) @system
-    {
-        import std.algorithm : find;
-        import std.mmfile : MmFile;
-
-        enum marker = "release version ";
-        try
-        {
-            scope file = new MmFile(buildPath(dir, "libc.so.6"));
-            auto rest = (cast(const(ubyte)[]) file[]).find(cast(const(ubyte)[]) marker);
-            if (!rest.length)
-                return null;
-            rest = rest[marker.length .. $];
-            size_t n;
-            while (n < rest.length && (rest[n] == '.' || (rest[n] >= '0' && rest[n] <= '9')))
-                n++;
-            return (cast(const(char)[]) rest[0 .. n]).idup.strip(".");
-        }
-        catch (Exception)
-            return null;
+        host.attempts ~= a;
     }
 }
 
-/// `a` against `b` as dotted numbers (`2.44` after `2.9`); the empty version sorts first.
-int compareVersions(string a, string b) @safe pure
+/// `path` with the home directory written `~`, which keeps the user name out of the report.
+string homeAsTilde(string path)
 {
-    import std.algorithm : cmp;
+    import std.process : environment;
 
-    static uint[] parts(string v) => v.length ? v.split('.').map!(p => p.to!uint).array : null;
-    return cmp(parts(a), parts(b));
+    const home = environment.get("HOME", null);
+    return home.length > 1 && path.startsWith(home ~ "/") ? "~" ~ path[home.length .. $] : path;
 }
 
 // -----------------------------------------------------------------------------
@@ -2245,30 +2000,6 @@ string codecKind(string name)
     assert(codecs[0].name == "c2.qti.avc.decoder" && codecs[0].kind == "hardware");
     assert(codecs[0].maxSize == "4096x2304" && codecs[0].features == ["adaptive-playback"]);
     assert(codecs[1].mime == "video/x-vnd.on2.vp9" && codecs[1].kind == "software");
-}
-
-@("media_hw_probe.compareVersions")
-@safe pure unittest
-{
-    assert(compareVersions("2.44", "2.9") > 0);
-    assert(compareVersions("2.40", "2.40") == 0);
-    assert(compareVersions("", "2.17") < 0);
-    assert(compareVersions("2.34", "2.34.1") < 0);
-}
-
-version (CRuntime_Glibc)
-@("media_hw_probe.glibcVersionIn.matchesTheRunningLibc")
-@system unittest
-{
-    // The banner of the libc.so.6 mapped into this process names the version it reports.
-    const mapped = readText("/proc/self/maps").lineSplitter
-        .map!(l => l.split.length >= 6 ? l.split[5] : null)
-        .filter!(p => p.baseName == "libc.so.6");
-    assert(!mapped.empty);
-    assert(glibcVersionIn(mapped.front.dirName) == gnu_get_libc_version().fromStringz);
-    // The probe's own run path leads back to that glibc too, when it has one.
-    if (const dir = libcDirOf(readLink("/proc/self/exe")))
-        assert(glibcVersionIn(dir).length);
 }
 
 @("media_hw_probe.flagNames")
