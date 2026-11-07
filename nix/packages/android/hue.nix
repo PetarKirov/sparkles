@@ -237,40 +237,95 @@ in
         find $out/docs -depth -name '.*' -exec rm -rf {} +
       '';
 
-      # The native-lib set both APK variants share: libhue.so + every grammar
-      # parser (dlopen'd by bare soname from the app's linker namespace — see
-      # ts-grammars.nix).
-      apkLibs = lib.mapAttrs' (name: t: {
-        name = t.abi;
-        value = {
-          "libhue.so" = "${libhueStamped}/lib/${t.abi}/libhue.so";
-        }
-        // (
-          let
-            grammarLibDir = "${config.packages.ts-grammars-android}/lib/${t.abi}";
-          in
-          # The soname list comes from ts-grammars.nix as data, NOT from
-          # reading the built tree: `builtins.readDir` on a path carrying
-          # derivation context is import-from-derivation, and would force the
-          # entire grammar closure to build during evaluation (breaking
-          # `nix flake check`, which the desktop `test` job runs).
-          lib.listToAttrs (
-            map (so: {
-              name = so;
-              value = "${grammarLibDir}/${so}";
-            }) config.legacyPackages.tsGrammarsAndroid.sonames
-          )
-        );
-      }) ndk.targets;
+      # The native-lib set every APK variant shares: `library`'s libhue.so +
+      # every grammar parser (dlopen'd by bare soname from the app's linker
+      # namespace — see ts-grammars.nix).
+      apkLibs =
+        library:
+        lib.mapAttrs' (name: t: {
+          name = t.abi;
+          value = {
+            "libhue.so" = "${library}/lib/${t.abi}/libhue.so";
+          }
+          // (
+            let
+              grammarLibDir = "${config.packages.ts-grammars-android}/lib/${t.abi}";
+            in
+            # The soname list comes from ts-grammars.nix as data, NOT from
+            # reading the built tree: `builtins.readDir` on a path carrying
+            # derivation context is import-from-derivation, and would force the
+            # entire grammar closure to build during evaluation (breaking
+            # `nix flake check`, which the desktop `test` job runs).
+            lib.listToAttrs (
+              map (so: {
+                name = so;
+                value = "${grammarLibDir}/${so}";
+              }) config.legacyPackages.tsGrammarsAndroid.sonames
+            )
+          );
+        }) ndk.targets;
+
+      # The manifest for an arm (`"vulkan"`, the native one, or `"raylib"`):
+      # its graphics feature, the activity's entry, and how the soft keyboard
+      # meets the window. The native arm lays the window out edge to edge and
+      # reads what covers it as insets, the keyboard included, so the content
+      # rect follows the keyboard (`adjustResize`); raylib's window is full
+      # screen, and hue subtracts the keyboard's inset itself.
+      manifestFor =
+        renderer:
+        let
+          vulkan = renderer == "vulkan";
+        in
+        pkgs.replaceVars ../../../apps/hue/android/AndroidManifest.xml {
+          label = "sparkles:hue";
+          feature =
+            if vulkan then
+              ''<uses-feature android:name="android.hardware.vulkan.version" android:version="0x400003" android:required="true" />''
+            else
+              ''<uses-feature android:glEsVersion="0x00020000" android:required="true" />'';
+          softInputMode = if vulkan then "adjustResize|stateAlwaysHidden" else "stateAlwaysHidden";
+          funcName = if vulkan then "sparkles_wsi_onCreate" else "sparkles_onCreate";
+        };
+
+      # The native arm (`BLD5`): dub builds the `android` configuration — the
+      # activity `sparkles:wsi`'s, the drawing `sparkles:ui-vulkan`'s, no raylib.
+      libhueVulkan = config.legacyPackages.buildSparklesAndroidLib {
+        pname = "libhue-vulkan-android";
+        appDir = "apps/hue";
+        libName = "hue";
+        inherit ((androidHost system)) ldcAndroid;
+        emptyBuildInfo = true;
+      };
+      libhueVulkanStamped = config.legacyPackages.stampAndroidLib {
+        unstamped = libhueVulkan;
+        libName = "hue";
+        app = "hue";
+        # The native arm links no raylib.
+        nativeComponents =
+          abi: removeAttrs (config.legacyPackages.androidNativeComponents abi) [ "raylib" ];
+        check = config.legacyPackages.checkHueBuildInfo;
+      };
     in
     lib.optionalAttrs (androidHost system).supported {
       androidPackages.libhue-android = libhue;
+      androidPackages.libhue-vulkan-android = libhueVulkan;
       androidPackages.hue-android-assets = hueAssets;
+      # hue on the native arm, under its own application id beside the raylib
+      # APK until it replaces it.
+      androidPackages.hue-vulkan-apk = config.legacyPackages.buildAndroidApk {
+        pname = "hue-vulkan";
+        manifest = manifestFor "vulkan";
+        renamePackage = "dev.petar_kirov.sparkles.hue.vulkan";
+        resDir = "${config.packages.hue-icon}/res";
+        libs = apkLibs libhueVulkanStamped;
+        assetsDir = hueAssets;
+        description = "hue — syntax-highlighting viewer on the native arm (Android NativeActivity APK)";
+      };
       androidPackages.hue-apk = config.legacyPackages.buildAndroidApk {
         pname = "hue";
-        manifest = ../../../apps/hue/android/AndroidManifest.xml;
+        manifest = manifestFor "raylib";
         resDir = "${config.packages.hue-icon}/res";
-        libs = apkLibs;
+        libs = apkLibs libhueStamped;
         assetsDir = hueAssets;
         description = "hue — syntax-highlighting viewer (Android NativeActivity APK)";
       };
@@ -284,10 +339,10 @@ in
       # whichever landed on ./result.
       androidPackages.hue-apk-repo = config.legacyPackages.buildAndroidApk {
         pname = "hue-repo";
-        manifest = ../../../apps/hue/android/AndroidManifest.xml;
+        manifest = manifestFor "raylib";
         renamePackage = "dev.petar_kirov.sparkles.hue.repo";
         resDir = "${config.packages.hue-icon}/res";
-        libs = apkLibs;
+        libs = apkLibs libhueStamped;
         assetsDir = hueAssetsRepo;
         description = "hue — syntax-highlighting viewer with the sparkles repo embedded (Android APK)";
       };
@@ -316,9 +371,9 @@ in
           pname = "hue";
           inherit versionName versionCode;
           version = versionName;
-          manifest = ../../../apps/hue/android/AndroidManifest.xml;
+          manifest = manifestFor "raylib";
           resDir = "${config.packages.hue-icon}/res";
-          libs = apkLibs;
+          libs = apkLibs libhueStamped;
           assetsDir = hueAssets;
           debug = false;
           sign = false;
@@ -335,9 +390,9 @@ in
         config.legacyPackages.buildAndroidAab {
           pname = "hue";
           inherit versionName versionCode;
-          manifest = ../../../apps/hue/android/AndroidManifest.xml;
+          manifest = manifestFor "raylib";
           resDir = "${config.packages.hue-icon}/res";
-          libs = apkLibs;
+          libs = apkLibs libhueStamped;
           assetsDir = hueAssets;
           description = "hue — release App Bundle, unsigned (signed outside nix for Play)";
         };
@@ -352,9 +407,9 @@ in
       # publisher always goes through mkHueApk with a real version.
       androidPackages.hue-apk-unsigned = config.legacyPackages.buildAndroidApk {
         pname = "hue";
-        manifest = ../../../apps/hue/android/AndroidManifest.xml;
+        manifest = manifestFor "raylib";
         resDir = "${config.packages.hue-icon}/res";
-        libs = apkLibs;
+        libs = apkLibs libhueStamped;
         assetsDir = hueAssets;
         debug = false;
         sign = false;
