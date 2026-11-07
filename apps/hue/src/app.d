@@ -30,6 +30,7 @@ import std.stdio : stderr, write;
 import std.string : chompPrefix;
 import std.sumtype : match, SumType;
 
+import sparkles.base.driver_libc : reexecOntoDriverGlibc;
 import sparkles.syntax;
 import sparkles.syntax.md.model : MdDoc;
 import sparkles.source_view.markdown : OverflowPolicy, ScrollOverflow,
@@ -1213,10 +1214,11 @@ installed executable (staged with its licence texts), else the repository's
 */
 string creditsDocument() @system
 {
-    import std.file : exists, thisExePath;
+    import std.file : exists;
     import std.path : buildNormalizedPath, dirName;
+    import sparkles.base.driver_libc : thisProgramPath;
 
-    const bin = thisExePath.dirName;
+    const bin = thisProgramPath.dirName;
     foreach (dir; ["../share/hue/credits", "../../../docs/credits"])
     {
         const doc = buildNormalizedPath(bin, dir, "hue.md");
@@ -1318,6 +1320,10 @@ private ReviewSession openReview(ref Document doc, DocumentPipeline* pipeline,
 }
 int main(string[] args)
 {
+    // Before anything opens a driver: run on the drivers' glibc when theirs
+    // is newer than the one this program was built with (Linux only).
+    reexecOntoDriverGlibc();
+
     version (Android)
     {
         import android_glue : loadDebugEnv;
