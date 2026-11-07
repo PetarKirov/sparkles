@@ -203,12 +203,13 @@ finds no normative text duplicating this one.
 
 ## Progress
 
-| Milestone | State                                                    | Pull request |
-| --------- | -------------------------------------------------------- | ------------ |
-| M0        | delivered; reshaped for readers and for creation sharing | #535, #594   |
-| M1        | delivered                                                | #626         |
-| M2        | delivered                                                | #627         |
-| M3        | delivered                                                | #629         |
-| M4        | delivered                                                | #628         |
-| M5        | delivered                                                | #628         |
-| Mapping   | `VFO11`, `VFB7`, `VFM6`, delivered with font M7          | —            |
+| Milestone | State                                                                     | Pull request |
+| --------- | ------------------------------------------------------------------------- | ------------ |
+| M0        | delivered; reshaped for readers and for creation sharing                  | #535, #594   |
+| M1        | delivered                                                                 | #626         |
+| M2        | delivered                                                                 | #627         |
+| M3        | delivered                                                                 | #629         |
+| M4        | delivered                                                                 | #628         |
+| M5        | delivered                                                                 | #628         |
+| Mapping   | `VFO11`, `VFB7`, `VFM6`, delivered with font M7                           | —            |
+| Identity  | `VFO6`'s change time and file identity: planned, for the build graph's E3 | —            |
