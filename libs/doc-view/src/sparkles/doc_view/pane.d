@@ -46,6 +46,7 @@ import sparkles.doc_view.viewer_model : ScrollAnchor, ViewerModel;
 import sparkles.ui.components.scroll_view : OverlayBar;
 import sparkles.ui.scroll_motion : ScrollMotion;
 import sparkles.doc_view.scroll_latch : ScrollLatch;
+import sparkles.test_runner.attributes : benchmark;
 
 /**
 What every pane of one application shares: the grammars, the highlighting
@@ -1541,4 +1542,62 @@ version (unittest)
         if (c == "image")
             return true;
     return false;
+}
+
+version (unittest)
+{
+    // One relayout per timed call, alternating between two widths the way a
+    // drag that settles back and forth would. Heap state bound as a method
+    // delegate, so the deferred case reads storage that outlives this body.
+    private static struct RelayoutState
+    {
+        DocViewPane* pane;
+        int width = 100;
+
+        size_t run() @system
+        {
+            import sparkles.test_runner.bench : blackBox;
+
+            width = width == 93 ? 107 : 93;
+            pane.vm.relayout(width);
+            return blackBox(pane.vm.rows.length);
+        }
+    }
+}
+
+// The window-resize reflow of a large source file in the raw code view: what
+// a GUI host re-runs once a drag settles on a new width. Opening (reading,
+// highlighting, parsing) is setup; only the relayout is timed. The file is
+// hue's own window module (5k lines), or `HUE_BENCH_FILE`.
+@("pane.relayout.largeCodeFile")
+@benchmark
+@system unittest
+{
+    import std.conv : text;
+    import std.file : exists;
+    import std.path : baseName, buildPath, dirName;
+    import std.process : environment;
+    import sparkles.test_runner.bench : benchCase;
+    import sparkles.test_runner.skip : skipTest;
+
+    if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
+        skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
+    // The repository root: six directories up from this file.
+    const root = __FILE_FULL_PATH__.dirName.dirName.dirName.dirName.dirName.dirName;
+    const path = environment.get("HUE_BENCH_FILE", buildPath(root, "apps", "hue", "src", "gui.d"));
+    if (!path.exists)
+        skipTest("bench file not found: " ~ path ~ " (set HUE_BENCH_FILE)");
+
+    auto env = DocViewEnv.create(GrammarRegistry.fromEnvironment());
+    auto st = new RelayoutState(new DocViewPane);
+    assert(st.pane.open(env, path, chromeTheme(RgbColor(200, 200, 200), RgbColor(20, 20, 20))));
+    assert(!st.pane.vm.showPreview, "the raw code view");
+    st.pane.vm.relayout(st.width);
+    st.pane.vm.completeLayout();
+    // Mid-document, so the scroll anchor has a real line to keep.
+    st.pane.vm.top = cast(long) st.pane.vm.rows.length / 2;
+    benchCase(name: path.baseName, labels: ["op": "relayout"],
+        timed: &st.run, after: (ref size_t rows) {
+            assert(rows > 0, text("no rows laid out for ", path));
+        });
 }
