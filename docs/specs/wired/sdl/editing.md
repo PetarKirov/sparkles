@@ -601,6 +601,24 @@ benchmark dataset generator's `subPackage { … }` wrapper. The six earlier
 entries are covered by the rule, and `standardize-build-settings` now
 matches legacy settings by content.
 
+**Selectors and typed write-back, 2026-11-07.** Each tool that reads or
+edits SDL was weighed against path selection (§3.2), typed write-back (§3.1)
+and open documents (§9). `standardize-build-settings` selects the
+configurations it cleans and the stale managed build types by path and DQL
+filter, and removes each selection in one call (SDS5); over the tree's 161
+recipes, and three perturbed copies of each, its output is byte-identical
+to the walk it replaced. The `shader-compile` fixtures already select the
+checkout's `path` attributes. The rest stay as they are:
+`dub_deps.writeInTreeDeps` rewrites a dependency at any depth and only when
+`version` is its sole attribute, which neither a fixed-depth path nor a DQL
+filter can state; `add-checked-buildtype` appends a fragment that carries a
+comment, which a typed value cannot; the readers in `apps/ci`
+(`integratesTestRunner`, `credits`, `example_manifest`), `compare-app-builds`,
+`gen-dsv-corpus` and `dub_recipe` decode through the `dub.sdl` schema, which
+a selector would only re-spell; `compile-cost` writes its probe recipe with
+`toSDL` and `writeEmbeddedRecipe`; and no tool parses a document twice, so
+none needs an open document.
+
 | Site                                                                       | Today                                                                                                                                                                                                  | Moves to                                                                                                                                                                                                                                                                       |
 | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `apps/ci/tools/standardize-build-settings.d` (`normalize`)                 | regex removal of the managed region, a legacy three-line comment, and eight named `buildType` blocks; a line filter dropping four legacy `dflags`/`lflags` settings; `strip`, then the region appended | replace or remove the region by its marker comments; remove the legacy comment's lines; remove `buildType` and setting nodes matched by name, values and attributes outside the region and outside `buildType`/`configuration "offline"`; append the region at the end of root |

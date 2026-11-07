@@ -67,6 +67,16 @@ selector in a variable while you iterate.
 selection and apply the operation to each target, exactly as a loop of
 single calls would.
 
+A selection is an ordinary range, so a predicate the filter cannot state,
+such as a byte range, narrows it with `filter`. In the repository,
+`apps/ci/tools/standardize-build-settings.d` removes stale build types that
+way:
+
+```d
+auto stale = SdlSelector.parse("buildType", `values[1] == null && values[0] == "checked"`);
+editor.remove(stale.value.nodes(root).filter!(node => !inRegion(node)));
+```
+
 ## Example
 
 ```d
