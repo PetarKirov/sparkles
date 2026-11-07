@@ -12,8 +12,9 @@ revisit it. Records marked **accepted** were accepted by the owner: D1–D17 on
 D18–D21, the E0 spike results, on 2026-11-02; and D22–D25, from E1, on
 2026-11-06. The records from D30 on answer a review of the
 [build-systems catalog](../../../research/build-systems/index.md), and those
-marked accepted were accepted on 2026-11-06. Records marked **proposed** await
-the owner's decision.
+marked accepted were accepted on 2026-11-06. D44, routing the graph's file
+access through the capability VFS, was accepted on 2026-11-07. Records marked
+**proposed** await the owner's decision.
 
 ## D1: Own the build instead of isolating dub (accepted)
 
@@ -1149,3 +1150,43 @@ taken now; they return at M13, built from `--list-placements`, when the
 workflow shape stops changing.
 
 **Revisit when** M13 generates the workflows.
+
+## D44: The build graph reaches files through the VFS (accepted)
+
+**Question.** The build graph reads recipes, scans and digests sources, probes
+for absent files and writes a shared store. The E1 resolver and the
+repository's walkers do this with `std.file` on path strings. Should the graph
+keep paths, or use the repository's capability VFS, whose specification the
+owner has accepted?
+
+**Alternatives.**
+
+- Keep paths, and confine them by checking prefixes after the fact.
+- Route every operation through the VFS, on a fixed set of roots, with
+  listings as fileset resolutions.
+
+**Choice.** Route it through the VFS, accepted by the owner on 2026-11-07
+(§12, BGF1–BGF6). All I/O goes through `sparkles.base.vfs` and its
+event-horizon backends, and the fileset effort resumes as the graph's
+file-system layer.
+
+- **Planning** runs over the backend its caller supplies, so its tests plan
+  fixture trees on `MemVfs` with no temporary directories, and the executor
+  runs the same code on `RingVfs`.
+- **The worktree** is a read-only root opened with `symlinks = beneath`, so
+  D24's committed link resolves and a link out of the tree fails planning.
+  The fileset specification's FSD6 gains that policy as a consumer's choice.
+- **The store** uses `renameAt`, `writeFileAtomic` and `removeTree` beneath
+  its own root, and refuses links.
+- **Listings** are fileset resolutions (BGF5), so the graph's E2 needs the
+  filesets' M1–M3, and M5 for listing digests.
+- **The VFS** gains the file identity and change time in its `Stat` (VFO6),
+  which BGK5's cache and BGK7's stat proxies need, before E3.
+
+**Trade-offs.** The E1 resolver moves off `std.file` in E2, and the
+repository's old walkers (`dir_walk`, `glob_walk`) are not used by the graph;
+filesets' M9 retires them. Processes an action starts still read paths: the
+manifest, BGK8 and the D39 isolation spike cover them, not the VFS.
+
+**Revisit when** a VFS backend cannot answer an operation the graph needs on
+a supported platform.

@@ -1,7 +1,8 @@
 # `sparkles:build-primitives` filesets — Specification
 
-_**Status:** proposed; no requirement is implemented · **Date:** September 21, 2026
-· **Owner:** `sparkles:build-primitives`_
+_**Status:** proposed; M0 delivered, no requirement verified; resumed on November 7,
+2026 as the build graph's file-system layer · **Date:** September 21, 2026 ·
+**Owner:** `sparkles:build-primitives`_
 
 _Normative at the contract level. Delivery order and gates live in
 [PLAN.md](./PLAN.md); consequential choices and unresolved questions live in
@@ -408,8 +409,14 @@ Which resolver serves the root is reported by the root
 consumer that requires the kernel's guarantee opens the root with
 `requireKernel`, and gets `unsupported` where it is absent
 ([`VFR3`](../../base/vfs/SPEC.md#vfr3-a-root-may-require-the-kernel-resolver)).
-_Detection:_ a fixture whose root contains a symbolic link to `/etc` resolves
-no entry outside the root, on every backend.
+A consumer may instead open a root with `symlinks = beneath`
+([`VFP5`](../../base/vfs/SPEC.md#vfp5-beneath)): a link whose target stays
+beneath the root resolves, and any other fails with `escapesRoot`. The build
+graph opens a worktree this way, because the repository commits relative links
+([BGF3](../build-graph/SPEC.md#_12-file-system-access)). _Detection:_ a
+fixture whose root contains a symbolic link to `/etc` resolves no entry outside
+the root, on every backend and under either policy; under `beneath`, a link to
+a sibling directory resolves to that directory's entries.
 
 _Superseded:_ this requirement formerly required `openat2` with
 `RESOLVE_BENEATH`, `RESOLVE_NO_MAGICLINKS` and `RESOLVE_NO_XDEV`, and forbade
