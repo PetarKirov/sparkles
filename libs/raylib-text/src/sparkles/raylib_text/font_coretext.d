@@ -28,6 +28,11 @@ a `.ttc` is the collection header, not a font, so the load produces garbage
 rather than failing. That rules out Menlo and Courier, macOS's two obvious
 monospace families, which is why $(LREF genericMonospaceFamilies) leads with
 the `.ttf` faces instead. See $(LREF isLoadableFontFile).
+
+A caller that can open a collection's members (`sparkles:font` can) asks
+$(LREF familyFaces) for them too, and finds a member by its PostScript name,
+which every $(LREF CtFace) carries: CoreText does not report a face's index in
+its collection.
 */
 module sparkles.raylib_text.font_coretext;
 
@@ -101,13 +106,15 @@ enum uint ctTraitBold = 1 << 1;        /// `kCTFontTraitBold`
 enum uint ctTraitMonoSpace = 1 << 10;  /// `kCTFontTraitMonoSpace`
 enum uint ctTraitColorGlyphs = 1 << 13; /// `kCTFontTraitColorGlyphs`
 
-/// One face CoreText knows about: the file backing it and its symbolic traits.
-/// Only faces `LoadFontEx` can actually open are ever reported — see the
-/// module header on collections.
+/// One face CoreText knows about: the file backing it, its symbolic traits
+/// and its PostScript name. Only faces `LoadFontEx` can actually open are
+/// reported, unless collections were asked for — see the module header.
 struct CtFace
 {
     string path;  /// absolute path to the font file
     uint traits;  /// `kCTFontSymbolicTrait` bits
+    /// `kCTFontNameAttribute`: what tells a collection's members apart.
+    string postScriptName;
 
     bool bold() const @safe pure nothrow @nogc => (traits & ctTraitBold) != 0;
     /// ditto
@@ -146,6 +153,22 @@ immutable string[] genericMonospaceAliases = ["monospace", "mono", "monospaced"]
 /// Collections (`.ttc`, `.dfont`) cannot be: see the module header.
 bool isLoadableFontFile(scope const(char)[] path) @safe pure nothrow @nogc
     => path.asciiEndsWithFold(".ttf") || path.asciiEndsWithFold(".otf");
+
+/// `true` when `path` names an OpenType collection (`.ttc`, `.otc`), whose
+/// members `sparkles:font` opens by index. A `.dfont` is a resource fork, not
+/// one of these.
+bool isCollectionFile(scope const(char)[] path) @safe pure nothrow @nogc
+    => path.asciiEndsWithFold(".ttc") || path.asciiEndsWithFold(".otc");
+
+@("font_coretext.isCollectionFile.collectionsOnly")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(isCollectionFile("/System/Library/Fonts/Menlo.ttc"));
+    assert(isCollectionFile("/x/Noto.OTC"));
+    assert(!isCollectionFile("/System/Library/Fonts/Monaco.ttf"));
+    assert(!isCollectionFile("/Library/Fonts/Something.dfont"));
+}
 
 @("font_coretext.isLoadableFontFile.rejectsCollections")
 @safe pure nothrow
@@ -260,6 +283,7 @@ private
         const(void)* kDictValueCallBacks;
         const(void)* kSetCallBacks;
         const(void)* kFamilyName;
+        const(void)* kName;
         const(void)* kUrl;
         const(void)* kTraits;
         const(void)* kSymbolicTrait;
@@ -355,6 +379,7 @@ private
             "CTFontManagerCopyAvailableFontFamilyNames");
 
         a.kFamilyName = strGlobal(c, "kCTFontFamilyNameAttribute");
+        a.kName = strGlobal(c, "kCTFontNameAttribute");
         a.kUrl = strGlobal(c, "kCTFontURLAttribute");
         a.kTraits = strGlobal(c, "kCTFontTraitsAttribute");
         a.kSymbolicTrait = strGlobal(c, "kCTFontSymbolicTrait");
@@ -372,7 +397,7 @@ private
             && a.descMatching !is null && a.descCopyAttr !is null
             && a.descFromUrl !is null && a.availableFamilies !is null
             && a.kDictKeyCallBacks !is null && a.kDictValueCallBacks !is null
-            && a.kSetCallBacks !is null && a.kFamilyName !is null
+            && a.kSetCallBacks !is null && a.kFamilyName !is null && a.kName !is null
             && a.kUrl !is null && a.kTraits !is null
             && a.kSymbolicTrait !is null && a.kCharacterSet !is null;
     }
@@ -458,8 +483,11 @@ family the user installed through Font Book: the family name is matched
 $(B exactly) (it is passed as a mandatory attribute), so an unknown family
 yields an empty array instead of CoreText's nearest guess — which is what
 makes "did this family resolve?" answerable at all.
+
+With `collections`, the members of `.ttc` and `.otc` files are reported too,
+for a caller that opens them by index: Menlo and Courier exist only so.
 */
-CtFace[] familyFaces(string family) @trusted nothrow
+CtFace[] familyFaces(string family, bool collections = false) @trusted nothrow
 {
     const trimmed = family.asciiStrip;
     if (!ct.ok || trimmed.length == 0)
@@ -501,10 +529,16 @@ CtFace[] familyFaces(string family) @trusted nothrow
         if (d is null)
             continue;
         const path = descPath(d);
-        if (path.length == 0 || !isLoadableFontFile(path))
+        if (path.length == 0 || !(isLoadableFontFile(path) || collections && isCollectionFile(path)))
             continue;
+        string postScriptName;
+        if (auto ps = ct.descCopyAttr(d, ct.kName))
+        {
+            postScriptName = cfStrToD(ps);
+            ct.release(ps);
+        }
         try
-            faces ~= CtFace(path, descTraits(d));
+            faces ~= CtFace(path, descTraits(d), postScriptName);
         catch (Exception)
             return faces; // OOM appending — return what we have
     }

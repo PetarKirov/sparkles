@@ -46,7 +46,7 @@ import sparkles.ui.effect : EffectRegistry;
 import sparkles.ui.geometry : Size;
 import sparkles.ui.image : ImageRegistry;
 import sparkles.ui_app.backend : Backend;
-import sparkles.ui_app.gui_options : FontRequest, WindowCells, WindowSystem;
+import sparkles.ui_app.gui_options : defaultGuiFont, FontRequest, WindowCells, WindowSystem;
 import sparkles.ui_app.interface_font : InterfaceMeasure, uiFontFamilyOf, uiStepSizes, xHeightRatio;
 import sparkles.ui_app.host : HostState, isHost, noDraw, noSetup, noShutdown, PointerUnit,
     RunConfig, TouchGestures, withRealSize;
@@ -127,6 +127,11 @@ struct CellFont
     /// The faces text falls back to where the cell font has no glyph, in
     /// order (`systemFallbackFacePaths`), each at its own exact em.
     FallbackFont[] fallbacks;
+    /// The face's index in its file, and its styled siblings' (bold, italic,
+    /// bold-italic): non-zero where the family lives in a collection, as
+    /// macOS's Menlo does.
+    uint index;
+    uint[3] styleIndices; /// ditto
 }
 
 /// A fallback face's bytes and the em its glyphs draw at: the cell's line
@@ -187,11 +192,26 @@ private bool measureCellFontImpl(in FontRequest request, in string[] extraSource
     FontSources sources;
     sources.dirs = request.searchDirs.dup ~ extraSources.dup;
     sources.useSystemFontDb = request.useSystemFontDb;
-    const path = loaded !is null ? loaded.path : resolveFontPath(request.family, sources);
+    string path = loaded !is null ? loaded.path : resolveFontPath(request.family, sources);
+    // A family the resolver cannot offer the raylib arm, as it lives only in
+    // a collection: its members, opened by index.
+    import sparkles.ui_app.collection_face : FaceAt;
+
+    FaceAt[4] inCollection;
+    version (OSX)
+    {
+        import sparkles.ui_app.collection_face : collectionFamily;
+
+        if (loaded is null && !path.length && sources.useSystemFontDb
+            && collectionFamily(request.family, (string p) => mappedFont(p), inCollection))
+            path = inCollection[0].path;
+    }
     if (path.length == 0)
         return false;
-    const bytes = loaded !is null ? loaded.bytes : cast(const(ubyte)[]) read(path);
-    auto face = openFace(bytes);
+    const index = loaded !is null ? loaded.index : inCollection[0].index;
+    const bytes = loaded !is null ? loaded.bytes
+        : inCollection[0].path.length ? mappedFont(path) : cast(const(ubyte)[]) read(path);
+    auto face = openFace(bytes, index);
     if (face.hasError)
         return false;
     auto cmap = charMap(face.value);
@@ -247,9 +267,16 @@ private bool measureCellFontImpl(in FontRequest request, in string[] extraSource
     import sparkles.raylib_text.font_discovery : fontVariantPaths;
 
     string boldPath, italicPath, boldItalicPath;
-    if (loaded is null)
+    if (loaded is null && inCollection[0].path.length)
+    {
+        boldPath = inCollection[1].path;
+        italicPath = inCollection[2].path;
+        boldItalicPath = inCollection[3].path;
+    }
+    else if (loaded is null)
         fontVariantPaths(path, boldPath, italicPath, boldItalicPath);
-    static const(ubyte)[] load(string p) => p.length ? mappedFont(p) : null;
+    // A sibling in the regular face's own collection shares its bytes.
+    const(ubyte)[] load(string p) => !p.length ? null : p == path ? bytes : mappedFont(p);
     // The cell is as wide as the glyphs drawn in it: FTM19's width (the
     // advance of `0`, rounded to nearest, ties to even) at the exact em the
     // glyphs draw at — px · upem / span, the raylib arm's
@@ -289,6 +316,9 @@ private bool measureCellFontImpl(in FontRequest request, in string[] extraSource
         span > 0 ? ulong(px) * upem : cast(ulong)(em < 1 ? 1 : em), span > 0 ? cast(ulong) span : 1,
         ascent, underlineY, thickness,
         ascent - (em * 28 + 50) / 100); // about half the x-height
+    cell.index = index;
+    cell.styleIndices = loaded !is null ? loaded.styleIndices
+        : [inCollection[1].index, inCollection[2].index, inCollection[3].index];
     // Icons, text the face lacks, and emoji, from the faces the raylib arm
     // falls back to.
     import sparkles.raylib_text.font_resolve : systemFallbackFacePaths;
@@ -1371,8 +1401,17 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         : pixelsForPoints(request.fontSizePoints, DisplayMetrics(scale: cast(float) scale));
     if (!measureCellFont(request.font, request.extraFontSources, pxAt(1), session.font))
     {
-        whyNot(i"the native arm resolved no cell font for `$(request.font.family)`");
-        return false;
+        // A family that is not installed costs its look, not the window:
+        // the default list, said aloud.
+        FontRequest fallback;
+        fallback.searchDirs = request.font.searchDirs.dup;
+        if (request.font.family == defaultGuiFont
+            || !measureCellFont(fallback, request.extraFontSources, pxAt(1), session.font))
+        {
+            whyNot(i"the native arm resolved no cell font for `$(request.font.family)`");
+            return false;
+        }
+        whyNot(i"no font `$(request.font.family)`; drawing in the default face");
     }
 
     WindowConfig config;
@@ -1725,9 +1764,9 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         const follows = session.specimen.bytes.length && session.specimen.request.uiFollows;
         cast(void) gpu.canvas.cellFont(faces, em.value, TextMetrics(ascent: f.ascent,
             underlineY: f.underlineY, underlineHeight: f.underlineHeight, strikeY: f.strikeY), fallbacks,
-            follows ? session.specimen.request.faceIndex : 0,
+            follows ? session.specimen.request.faceIndex : f.index,
             follows ? session.specimen.request.coordinates : null,
-            follows ? session.specimen.request.styleIndices[] : null);
+            follows ? session.specimen.request.styleIndices[] : f.styleIndices[]);
         if (session.specimen.bytes.length)
             cast(void) gpu.canvas.specimenFont(session.specimen.bytes, session.specimen.request.faceIndex,
                 session.specimen.ppem, session.specimen.request.coordinates, session.specimen.metrics,
