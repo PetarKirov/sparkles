@@ -369,6 +369,7 @@ valid — re-lexing only the region editing §10 names and splicing `old`'s
 cells before and after it into the new document (SDE14). Whenever the region
 cannot be localized it parses all of `text` instead (SDE15), so the result
 and any error are a full parse's; `localized` reports which path ran.
+No edits over `old`'s own text and content copy `old` without lexing a byte.
 `content` is the new content, or invalid for the source after any byte-order
 mark. */
 package SdlParseResult!Allocator reparseEdited(SdlParserConfig config, Allocator = Mallocator)(
@@ -403,8 +404,7 @@ private void reparseInto(SdlParserConfig config, Allocator)(
 {
     if (text.length < uint.max && !content.isValid)
         content = SdlSpan(contentStart(text), text.length);
-    if (old !is null && edits.length
-        && spliceRegion!config(result, old, text, sourceName, content, edits))
+    if (old !is null && spliceRegion!config(result, old, text, sourceName, content, edits))
     {
         localized = true;
         return;
@@ -452,12 +452,26 @@ private size_t subtreeEnd(scope const(SdlCore)* core, size_t cell) @safe pure no
     return end;
 }
 
-/** The region path of `reparseEdited`: fills `result` and returns `true`, or
-returns `false`, leaving `result` to be discarded, when the edits cannot be
-localized (editing §10, SDE15). */
-private bool spliceRegion(SdlParserConfig config, Allocator)(
-    ref SdlParseResult!Allocator result, scope const(SdlCore)* old,
-    scope const(char)[] text, scope const(char)[] sourceName, SdlSpan content,
+/// The region a splice re-lexes (editing §10), in old and new offsets.
+private struct SpliceBounds
+{
+    long delta;          // the edits' length change
+    size_t owner;        // the node whose interior holds the region
+    bool afterOpener;    // the region starts right after the owner's `{`
+    size_t regionStart;  // the same in the old text and the new
+    size_t a, b;         // the old cells `[a, b)` the region replaces
+    bool endsContent;    // the region runs to the end of the content
+    size_t oldLexEnd;    // where lexing the region stops, in the old text
+    size_t newRegionEnd; // the region's end in the new text
+    size_t newLexEnd;    // `oldLexEnd` in the new text
+    bool relex = true;   // `false` when there are no edits: every cell is kept
+}
+
+/** Steps 1–3 of editing §10: the region `edits` re-lex, or `false` when it
+cannot be localized (SDE15). No edits over `old`'s own text make a region
+that is empty and keeps every cell. */
+private bool locateRegion(SdlParserConfig config)(out SpliceBounds bounds,
+    scope const(SdlCore)* old, scope const(char)[] text, SdlSpan content,
     scope const TextEdit[] edits)
 {
     const oldText = old.source;
@@ -469,6 +483,17 @@ private bool spliceRegion(SdlParserConfig config, Allocator)(
     if (content.startOffset != oldContent.startOffset || lineZero != contentStart(oldText)
         || cast(long) content.endOffset != oldContent.endOffset + delta)
         return false;
+    if (edits.length == 0)
+    {
+        if (text != oldText)
+            return false;
+        bounds.regionStart = bounds.oldLexEnd = bounds.newRegionEnd = bounds.newLexEnd
+            = text.length;
+        bounds.a = bounds.b = old.nodes.length;
+        bounds.endsContent = true;
+        bounds.relex = false;
+        return true;
+    }
     const minStart = edits[0].range.startOffset;
     size_t maxEnd;
     foreach (ref e; edits)
@@ -548,6 +573,29 @@ private bool spliceRegion(SdlParserConfig config, Allocator)(
             != newLexEnd - regionStart)
             return false;
     }
+    bounds = SpliceBounds(delta, owner, owner && lo < 0, regionStart, a, b, endsContent,
+        oldLexEnd, newRegionEnd, newLexEnd);
+    return true;
+}
+
+/** The region path of `reparseEdited`: fills `result` and returns `true`, or
+returns `false`, leaving `result` to be discarded, when the edits cannot be
+localized (editing §10, SDE15). */
+private bool spliceRegion(SdlParserConfig config, Allocator)(
+    ref SdlParseResult!Allocator result, scope const(SdlCore)* old,
+    scope const(char)[] text, scope const(char)[] sourceName, SdlSpan content,
+    scope const TextEdit[] edits)
+{
+    SpliceBounds bounds;
+    if (!locateRegion!config(bounds, old, text, content, edits))
+        return false;
+    const delta = bounds.delta;
+    const regionStart = bounds.regionStart;
+    const a = bounds.a, b = bounds.b;
+    const endsContent = bounds.endsContent;
+    const oldLexEnd = bounds.oldLexEnd, newRegionEnd = bounds.newRegionEnd;
+    const newLexEnd = bounds.newLexEnd;
+    const lineZero = contentStart(text);
 
     // 4. The new document's pool, source and source name, as `parseInto`.
     size_t poolBytes = sourceName.length;
@@ -645,16 +693,17 @@ private bool spliceRegion(SdlParserConfig config, Allocator)(
     counts.nodes = a;
     counts.values = va;
     counts.attributes = aa;
+    counts.poolEnd = poolAt;
     SdlLexerLayout layout;
     layout.recordLines = true;
     PassRegion region;
     region.active = true;
     region.start = regionStart;
-    region.baseDepth = owner ? old.nodes[owner].depth + 1 : 0;
+    region.baseDepth = bounds.owner ? old.nodes[bounds.owner].depth + 1 : 0;
     region.poolAt = poolAt;
-    region.afterOpener = owner && lo < 0;
+    region.afterOpener = bounds.afterOpener;
     SdlError failure;
-    if (!runPass!config(core.source[0 .. newLexEnd], sourceName,
+    if (bounds.relex && !runPass!config(core.source[0 .. newLexEnd], sourceName,
         SdlSpan(regionStart, endsContent ? content.endOffset : newRegionEnd), counts,
         *document, layout, failure, region))
         return false;
@@ -2254,6 +2303,36 @@ version (unittest)
     incremental.document.core.lines = LineIndex(text[]);
     incremental.document.core.lines = LineIndex(text[][0 .. $ - 1] ~ "\r");
     assert(documentDifference(incremental.document, full.document) !is null);
+}
+
+@("sdl.reader.reparseEdited.noEditsCopyWithoutLexing")
+@system unittest
+{
+    import sparkles.wired.sdl.test_corpus : AllocationCounts, CountingAllocator,
+        documentDifference;
+
+    enum source = "a 1 // one\nb {\n    c \"x\" k=2\n}\n";
+    auto parsed = parseSdlDocument!sdlFull(source, "t.sdl");
+    const old = parsed.document.core;
+    bool local;
+    auto copy = reparseEdited!sdlFull(old, source, "t.sdl", SdlSpan.init, null, local);
+    assert(local && copy.document.core !is old);
+    assert(documentDifference(copy.document, parsed.document) is null);
+
+    // A stateful allocator gets the copy too.
+    AllocationCounts counts;
+    {
+        auto counted = reparseEdited!sdlFull(old, source, "t.sdl", SdlSpan.init, null, local,
+            CountingAllocator!()(&counts));
+        assert(local && documentDifference(counted.document, parsed.document) is null);
+        assert(counts.calls && counts.live == counts.calls);
+    }
+    assert(counts.live == 0);
+
+    // No edits but other text is not a copy: the text parses in full.
+    auto other = reparseEdited!sdlFull(old, "a 2 // one\nb {\n    c \"x\" k=2\n}\n", "t.sdl",
+        SdlSpan.init, null, local);
+    assert(!local && other.hasValue);
 }
 
 @("sdl.reader.reparseEdited.statefulAllocatorLocalizes")

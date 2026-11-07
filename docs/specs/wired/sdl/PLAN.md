@@ -400,12 +400,30 @@ Gate:
 
 ## S22 follow-ups: 2026-11-07
 
-S22 left the region path to stateless allocators: a stateful one took the
-full parse, and `SdlOpenDocument` refused one. Both limits are lifted.
+S22 left two limits. A commit with no edits re-parsed the whole host, and
+the region path served only stateless allocators: a stateful one took the
+full parse, and `SdlOpenDocument` refused one. Both are lifted.
 
 | Gate                                                   | Evidence                                                                                                                                                                                                                                                                                                        |
 | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | SDE16; a stateful `SdlOpenDocument`, its lifetime rule | `reparseEdited`'s allocator overload; `sdl.reader.reparseEdited.properties` repeating every edit through `CountingAllocator`, `.statefulAllocatorLocalizes`; `sdl.editor.write.statefulAllocatorLocalizes`; `sdl.open_document.statefulAllocator`; [editing §9](./editing.md#9-open-documents-and-node-handles) |
+| SDE17; an `sdl.commit-unchanged` row, its before first | `sdl.reader.reparseEdited.noEditsCopyWithoutLexing`; `sdl.editor.write.noEditsParsesNothing`; `sdl.open_document.unchangedCommitParsesNothing`; `sdl.commit-unchanged`                                                                                                                                          |
+
+Retired instructions per input byte (`--perf`, `-b bench`, LDC 1.43; before
+is this branch's parent with the new row added). `commit-unchanged` counts
+its bytes once per commit, as `commit` does; what remains of it is copying
+the host into the rendered output.
+
+| Dataset       | Row              | Before | After |
+| ------------- | ---------------- | -----: | ----: |
+| `dub_recipes` | parse            |  192.0 | 192.0 |
+| `dub_recipes` | edit             |   35.6 |  35.1 |
+| `dub_recipes` | commit           |   41.4 |  41.0 |
+| `dub_recipes` | commit-unchanged |  193.4 |  0.84 |
+| `deep_wide`   | parse            |  150.0 | 149.9 |
+| `deep_wide`   | edit             |   26.2 |  26.1 |
+| `deep_wide`   | commit           |   17.0 |  16.8 |
+| `deep_wide`   | commit-unchanged |  150.5 |  0.17 |
 
 ## S21–S22 closure: 2026-11-06
 

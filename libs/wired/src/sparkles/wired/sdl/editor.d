@@ -475,7 +475,8 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
     /** Renders the edited host, re-parses it with `allocator` (SDE2, and the
     embedded-recipe checks of SDE7), then copies it to `writer`; on any
     failure nothing reaches `writer`. The editor is unchanged, so the same set
-    may be written again. */
+    may be written again. With no edits the host is written as it is, and
+    nothing is parsed: it is the borrowed document's own text (§10). */
     SdlExpected!void write(Writer, Allocator)(ref Writer writer, ref Allocator allocator)
     {
         UniqueBuffer!char output;
@@ -491,7 +492,8 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
     /** Package seam for commits (§9): renders the edited host into `output`,
     the resolved edits — sorted, borrowing the editor's text — into `edits`,
     and the checked re-parse of the output into `parsed`; `write` without the
-    copy. */
+    copy. With no edits the output is the host and `parsed` stays empty: the
+    borrowed document is the output's parse. */
     package SdlExpected!void render(Allocator)(ref Allocator allocator,
         ref UniqueBuffer!char output, ref UniqueBuffer!TextEdit edits,
         ref SdlParseResult!Allocator parsed)
@@ -1220,6 +1222,9 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
     private SdlExpected!void reparse(Allocator)(scope const(char)[] output,
         scope const TextEdit[] edits, ref Allocator allocator, ref SdlParseResult!Allocator parsed)
     {
+        // No edits: the output is the host, whose parse is the borrowed document.
+        if (edits.length == 0)
+            return sdlOk();
         SdlSpan content = SdlSpan.init;
         UniqueBuffer!char rendering;
         const(char)[] parsedText = output;
@@ -1770,6 +1775,31 @@ version (unittest)
     Mallocator allocator;
     assert(!editor.write(output, allocator).hasError);
     assert(output[] == "name \"y\"\ndependency \"a\" version=\"*\" path=\"../..\"\nnew 2\n");
+}
+
+@("sdl.editor.write.noEditsParsesNothing")
+@system pure nothrow @nogc unittest
+{
+    import sparkles.wired.sdl.embedded : parseEmbeddedSdlDocument;
+    import sparkles.wired.sdl.reader : parseSdlDocument;
+    import sparkles.wired.sdl.test_corpus : AllocationCounts, CountingAllocator;
+
+    enum source = "name \"x\" // kept\ndependency \"a\" version=\"*\"\n";
+    auto parsed = parseSdlDocument!sdlFull(source);
+    auto editor = sdlEditor(parsed.document, source);
+    AllocationCounts counts;
+    auto allocator = CountingAllocator!()(&counts);
+    UniqueBuffer!char output;
+    assert(!editor.write(output, allocator).hasError);
+    assert(output[] == source && counts.calls == 0);
+
+    // An embedded recipe's host is written as it is, too.
+    enum host = "#!/usr/bin/env dub\n/+ dub.sdl:\n    name \"p\"\n+/\nvoid main() {}\n";
+    auto embedded = parseEmbeddedSdlDocument!sdlFull(host);
+    auto embeddedEditor = sdlEditor(embedded.parsed.document, host);
+    output.clear();
+    assert(!embeddedEditor.write(output, allocator).hasError);
+    assert(output[] == host && counts.calls == 0);
 }
 
 @("sdl.editor.write.statefulAllocatorLocalizes")
