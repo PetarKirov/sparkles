@@ -95,6 +95,10 @@ Nix cannot read a git tag without import-from-derivation, so the release build
 takes the version as a parameter (`legacyPackages.mkHueApk`) rather than
 inventing one. `packages.hue-apk` keeps its date stamp: it is a development
 track, never published, and its versions never need to interleave with these.
+The release artifacts carry the raylib arm's library (`libhue-raylib-android`)
+while `hue-apk` carries the native arm's ([`AND15`](./android.md)): the native
+arm requires Vulkan 1.1, which narrows the devices a published APK installs on,
+and has not yet run on hardware.
 
 ## Architecture decisions
 
@@ -297,7 +301,7 @@ Two measured facts shaped the bundle build:
 - **A dex-less bundle is accepted.** hue has `hasCode="false"` and no bytecode
   at all, which was the main risk in the whole Play path. bundletool 1.18.2
   builds it and generates installable splits from it.
-- **Release artifacts are stripped**, debug ones are not. `libhue-android` is
+- **Release artifacts are stripped**, debug ones are not. `libhue-raylib-android` is
   built unstripped so `ndk-stack` can symbolize a device tombstone against it,
   and the debug APK keeps those symbols; nobody symbolizes a user's crash from
   a store copy. Stripping is therefore a property of the artifact, decided in

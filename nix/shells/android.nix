@@ -69,9 +69,10 @@ in
       hueLogcat = pkgs.writeShellApplication {
         name = "hue-logcat";
         text = ''
-          # The port's log surface: D code logs under tag "hue", raylib under
-          # "raylib"; AndroidRuntime/DEBUG carry crashes and tombstones.
-          exec adb logcat -v color -s hue raylib AndroidRuntime DEBUG "$@"
+          # The port's log surface: D code logs under tag "hue", the native
+          # arm's failures under "sparkles-wsi", raylib under "raylib";
+          # AndroidRuntime/DEBUG carry crashes and tombstones.
+          exec adb logcat -v color -s hue sparkles-wsi raylib AndroidRuntime DEBUG "$@"
         '';
       };
       hueEmulator = pkgs.writeShellApplication {
