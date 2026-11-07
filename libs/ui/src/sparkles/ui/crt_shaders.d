@@ -1,7 +1,7 @@
 /**
 The CRT's geometry, written once (`CRT8`, `CRT10`): where a screen position
 reads from on the tube. The tube's fragment shader (`libs/ui/shaders/effects.d`)
-samples at what these return, and `sparkles.ui_raylib.crt_projection` maps
+samples at what these return, and `sparkles.ui.crt_projection` maps
 the pointer and the displayed pixel through the very same functions — so
 the cursor drawn on the GPU and the point input lands on cannot drift apart.
 
@@ -15,7 +15,7 @@ fragment shader is handed, with `(0, 0)` at the bottom left.
 
 The module is `@compute(CompileFor.hostAndDevice)`, like
 $(MREF sparkles,ui,effect_shaders), and for the same reason carries no tests:
-they live in `sparkles.ui_raylib.crt_projection`, beside the maps that use it.
+they live in `sparkles.ui.crt_projection`, beside the maps that use it.
 */
 @compute(CompileFor.hostAndDevice)
 module sparkles.ui.crt_shaders;

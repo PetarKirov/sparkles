@@ -1,19 +1,20 @@
 /**
-The CRT monitor, as an effect behind the `sparkles:ui-raylib` seam (`UIA7`,
-`EFX21`).
+The CRT monitor, as an effect (`EFX21`): its parameters, the record that
+draws it, and the geometry the pointer is mapped through.
 
 Barrel curvature fitted to the screen, a mouse-directed tilt and magnifier,
 scanlines and a roll bar, an RGB phosphor mask, chromatic aberration, bloom
-and a vignette, plus reactions to the UI's structure (`EFX23`) — written once
-for desktop GLSL 330 and Android ES 100, and run by the effect backend as a
-four-pass tier-2 effect on the frame's root bracket.
+and a vignette, plus reactions to the UI's structure (`EFX23`) — written once,
+in `shaders/effects.d`, and run by a GPU backend (`sparkles:ui-raylib`'s or
+`sparkles:ui-vulkan`'s) as a four-pass tier-2 effect on the frame's root
+bracket. Nothing here touches a device: a backend recognises the record's
+artifacts, and the host reads the pointer declaration.
 */
-module sparkles.ui_raylib.crt;
+module sparkles.ui.crt;
 
-import raylib;
 import sparkles.base.term_control : PointerShape;
 import sparkles.input.gesture : PointF;
-public import sparkles.ui_raylib.crt_projection : CrtProjection, toShaderBox, UiRect;
+public import sparkles.ui.crt_projection : CrtProjection, toShaderBox, UiRect;
 import std.algorithm : map;
 import std.array : array;
 
@@ -104,7 +105,7 @@ CrtUiContext crtUiContextOf(in FrameList frame, in Point pointerCell,
     return c;
 }
 
-@("uiRaylib.crt.uiContextIsHarvestedFromTheFrame")
+@("ui.crt.uiContextIsHarvestedFromTheFrame")
 @safe nothrow unittest
 {
     import sparkles.ui.canvas : fillRectOp, RecordingCanvas, ruleOp, Scrollbar,
@@ -142,7 +143,7 @@ CrtUiContext crtUiContextOf(in FrameList frame, in Point pointerCell,
 }
 
 /// Every value the CRT's passes read, in the order `writeParams` sets them.
-private static immutable string[] crtParamNames = [
+package(sparkles) static immutable string[] crtParamNames = [
     "mouse", "mouseTilt", "mouseMagnify", "cursorShape", "uCurvature",
     "uScanlines", "uMask", "uChromaAberration", "uVignette", "uFlicker",
     "uBrightness", "uLensRadius", "uLensPower", "uBloomIntensity",
@@ -244,7 +245,7 @@ struct CrtEffect
     A $(B declaration), not an action. Whether a cursor is on screen is the
     window's state, and a pass that is disabled, reconfigured or destroyed
     between frames should not have to remember to hand it back — so the host
-    reads this and calls $(REF Window.pointerVisible, sparkles,ui_raylib,window).
+    reads this and shows or hides the window's pointer.
     */
     bool drawsOwnPointer() const @safe pure nothrow @nogc
         => proj_.enabled && !systemPointer_;
@@ -394,20 +395,29 @@ struct CrtEffect
     Register it once and bracket the ROOT of the frame with the id: the CRT is
     then one more effect in the pipeline, not a pass the application wraps
     around it. The values it reads each frame are $(LREF writeParams)'s.
+
+    The passes are the GPU half, which only a build of `sparkles:ui`'s
+    `gpu-effects` configuration carries (`hasGpuEffects`); elsewhere the
+    record has no implementation, and a canvas paints the bracket unaffected.
     */
     static EffectRecord effectRecord() @safe pure nothrow
     {
         import sparkles.ui.effect : bloomPasses, crtTubeGlsl, EffectImpl,
-            EffectPass, EffectTier, glslBackend;
+            EffectPass, EffectTier, glslBackend, hasGpuEffects;
 
-        EffectPass[] passes = bloomPasses()[0 .. 3];
-        passes ~= EffectPass(crtTubeGlsl, from: 0, inputs: [3]);
+        EffectImpl[] impls;
+        static if (hasGpuEffects)
+        {
+            EffectPass[] passes = bloomPasses()[0 .. 3];
+            passes ~= EffectPass(crtTubeGlsl, from: 0, inputs: [3]);
+            impls = [EffectImpl(glslBackend, passes: passes)];
+        }
         return EffectRecord(
             name: "crt",
             tier: EffectTier.layer,
             // A terminal has no tube: the frame paints as it is.
             degradation: Degradation.unaffected,
-            impls: [EffectImpl(glslBackend, passes: passes)],
+            impls: impls,
             params: crtParamNames.map!(n => EffectParam(n)).array,
         );
     }
@@ -459,34 +469,19 @@ struct CrtEffect
     }
 }
 
-@("ui_raylib.crt.isATier2EffectOnTheRoot")
+@("ui.crt.isATier2EffectOnTheRoot")
 @safe unittest
 {
-    import std.algorithm : canFind;
-    import sparkles.ui.effect : EffectTier, glslBackend;
+    import sparkles.ui.effect : EffectTier, glslBackend, hasGpuEffects;
 
-    // `EFX21`: the CRT is a record like any other — bloom's three passes,
-    // then the tube compositing the bracket with the glow as `texture1`.
+    // `EFX21`: the CRT is a record like any other. Its passes are the GPU
+    // half, tested where a build carries them
+    // (`ui_raylib.effect_gpu.crtIsBloomThenTheTube`); without it there is
+    // nothing a backend could run, and the bracket paints unaffected.
     auto rec = CrtEffect.effectRecord();
     assert(rec.tier == EffectTier.layer && !rec.honouredByCells);
-    const impl = rec.implFor(glslBackend);
-    assert(impl.passes.length == 4);
-    assert(impl.passes[0].from == 0 && impl.passes[0].downscale == 2);
-    assert(impl.passes[3].from == 0 && impl.passes[3].inputs == [3]);
-    // The tube is generated from `shaders/effects.d` (`EFX25`) and reads the clock
-    // and the size the backend supplies to every pass.
-    assert(impl.passes[3].source.canFind("entry point `crtTube`"));
-    assert(impl.passes[3].source.canFind("uTime") && impl.passes[3].source.canFind("uResolution"));
-    // Every parameter is read by some pass (the threshold and radius by
-    // bloom's, the rest by the tube's) — one no pass declares is a knob that
-    // silently does nothing.
-    foreach (name; crtParamNames)
-    {
-        bool read;
-        foreach (ref pass; impl.passes)
-            read = read || pass.source.canFind(name);
-        assert(read, name);
-    }
+    static if (!hasGpuEffects)
+        assert(rec.implFor(glslBackend) is null);
 
     // `writeParams` updates in place: the list does not grow frame on frame.
     EffectRegistry reg;
@@ -512,7 +507,7 @@ struct CrtEffect
     assert(crt.pointerPos == PointF(410, 110), "the projection sees the pointer too");
 }
 
-@("ui_raylib.crt.defaults")
+@("ui.crt.defaults")
 @system
 unittest
 {
@@ -620,7 +615,7 @@ unittest
 
 
 
-@("ui_raylib.crt.systemPointer.suppressesTheShaderCursor")
+@("ui.crt.systemPointer.suppressesTheShaderCursor")
 @system
 unittest
 {

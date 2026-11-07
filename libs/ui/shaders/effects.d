@@ -125,7 +125,7 @@ private vec3 bloomBlur(Sampler2D texture0, vec2 uv, vec2 dir, vec2 uResolution,
         texture1.sample(fragTexCoord).xyz * uBloomIntensity);
 
 // ── the CRT's tube (tier 2) ─────────────────────────────────────────────────
-// The composite pass of `sparkles.ui_raylib.crt.CrtEffect` (`EFX21`), after
+// The composite pass of `sparkles.ui.crt.CrtEffect` (`EFX21`), after
 // bloom's first three passes. It bends and magnifies the bracket with the
 // geometry in `sparkles.ui.crt_shaders` — the functions the CPU's pointer maps
 // call — then adds the glow, lights the UI elements the frame list names, draws
