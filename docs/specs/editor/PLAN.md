@@ -33,41 +33,38 @@ accepted. Each implementation commit must build and pass its relevant tests.
 
 ## Milestones
 
-| Slice                             | Obligations                                       | Deliverable and acceptance gate                                                                                                                                                                     | Status                                                                                                                                          |
-| --------------------------------- | ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| S0 — Contract and feasibility     | EAP1–EAP3, EAP9, EAP17, EAP20, EAP23–EAP24, EAP29 | Agreed ownership, palette test interfaces and risk experiments below; cold read, semantic review and publication validation recorded separately                                                     | partial: contract accepted; implementation feasibility gates remain open                                                                        |
-| P — Shared command palette        | EAP8–EAP11                                        | Display-independent state and catalog, shared widget view, invocation-target/context/identity/lifecycle scenarios, recording and TUI/Vulkan adapters; one public-behavior red→green slice at a time | partial: shared view/input and effective-shortcut tests pass; backend parity pending                                                            |
-| A — Thin editor shell             | EAP1–EAP7, EAP27–EAP28                            | Standard CLI/build identity, editable examples, tabs, command guide/palette and basic inspector; app recording-flow and native smoke evidence                                                       | partial: shell, tabs, commands, clipboard, pointer and native/TUI smoke; examples and full tools pending                                        |
-| H — Highlighting and presentation | EAP12–EAP16                                       | Shared per-line highlighted presentation with editor decorations, revision-safe background work, themes and generated settings; active-line and preview/cancel scenarios                            | partial: shared syntax/editor overlay and background revisions verified; examples/themes under validation, settings and language picker pending |
-| U — Layout and input              | EAP17–EAP20                                       | Shared layout-backed navigation/hit-testing, Unicode corpus, terminal touch extraction and live IME on required native targets                                                                      | not started                                                                                                                                     |
-| F — Real documents                | EAP21–EAP25                                       | UTF-8 fidelity, safe desktop saves, system document access on Android, conflict and dirty-close decisions; fault/provider tests and real-device evidence                                            | not started                                                                                                                                     |
-| R — Session recovery              | EAP26                                             | Owner-accepted checkpoint/loss policy, versioned settings/session storage, dirty-buffer recovery and interruption/corruption tests; no implicit writes to originals                                 | not started                                                                                                                                     |
-| V — Acceptance and measurements   | EAP2, EAP27–EAP30 and all earlier obligations     | Required target matrix, 1/10 MiB and long-line workloads, independent adversarial review, docs and per-commit build checks                                                                          | not started                                                                                                                                     |
+| Slice                             | Obligations                                       | Deliverable and acceptance gate                                                                                                                                                                     | Status                                                                                                                                                 |
+| --------------------------------- | ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| S0 — Contract and feasibility     | EAP1–EAP3, EAP9, EAP17, EAP20, EAP23–EAP24, EAP29 | Agreed ownership, palette test interfaces and risk experiments below; cold read, semantic review and publication validation recorded separately                                                     | partial: contract accepted; implementation feasibility gates remain open                                                                               |
+| P — Shared command palette        | EAP8–EAP11                                        | Display-independent state and catalog, shared widget view, invocation-target/context/identity/lifecycle scenarios, recording and TUI/Vulkan adapters; one public-behavior red→green slice at a time | partial: shared view/input and effective-shortcut tests pass; backend parity pending                                                                   |
+| A — Thin editor shell             | EAP1–EAP7, EAP27–EAP28                            | Standard CLI/build identity, editable examples, tabs, command guide/palette and basic inspector; app recording-flow and native smoke evidence                                                       | partial: shell, tabs, editable examples, commands, clipboard, pointer and native/TUI smoke; full tools pending                                         |
+| H — Highlighting and presentation | EAP12–EAP16                                       | Shared per-line highlighted presentation with editor decorations, revision-safe background work, themes and generated settings; active-line and preview/cancel scenarios                            | partial: shared syntax/editor overlay, background revisions and theme preview verified; font/settings and language picker pending                      |
+| U — Layout and input              | EAP17–EAP20                                       | Shared layout-backed navigation/hit-testing, Unicode corpus, terminal touch extraction and live IME on required native targets                                                                      | not started                                                                                                                                            |
+| F — Real documents                | EAP21–EAP25                                       | UTF-8 fidelity, safe desktop saves, system document access on Android, conflict and dirty-close decisions; fault/provider tests and real-device evidence                                            | partial: byte/Enter policy and native storage primitives/fault checks verified; CLI open under validation; save/close UI and Android providers pending |
+| R — Session recovery              | EAP26                                             | Owner-accepted checkpoint/loss policy, versioned settings/session storage, dirty-buffer recovery and interruption/corruption tests; no implicit writes to originals                                 | not started                                                                                                                                            |
+| V — Acceptance and measurements   | EAP2, EAP27–EAP30 and all earlier obligations     | Required target matrix, 1/10 MiB and long-line workloads, independent adversarial review, docs and per-commit build checks                                                                          | not started                                                                                                                                            |
 
-## Next slice: command palette
+## Next slice: document workflows
 
-The approved test interfaces are state transitions, command discovery and
-shared view integration ([testing §2](./testing.md#2-command-palette-tdd)).
-Proposed names and storage layouts are not approved APIs.
+The palette's approved test interfaces remain in
+[testing §2](./testing.md#2-command-palette-tdd). Its shared implementation is
+available; complete backend/input parity remains an acceptance gate.
 
-1. Define the command descriptor and identity relationship to existing
-   `Binding!(Cmd, Scope)` data. Distinguish operation plus arguments from a
-   shortcut; support commands without shortcuts. Record ownership, bounded
-   query/results storage and exhaustion outcomes before implementing them.
-2. Write a failing public-behavior test for opening and cancelling a palette:
-   no command effect, unchanged document and restored focus. Implement that
-   behavior, then proceed to query, navigation and acceptance as separate
-   cycles.
-3. Add manually enumerated context/argument cases, including a command
-   invalidated between search and acceptance. Establish exactly-once command
-   emission and stale-result rejection before asynchronous adapters.
-4. Produce the shared view and replay the same behavior through recording,
-   TUI and Vulkan adapters. Reuse fuzzy matching and picker mechanisms rather
-   than duplicating their algorithms.
+1. Finish CLI-open validation and record native captures. Keep worker-prepared
+   text and invocation/focus identities intact while reads complete.
+2. Mount Open/Save/Save As and Save/Discard/Cancel on the common command policy.
+   Compare existing bytes with the saved baseline; disclose the replacement
+   race and require informed authorization for that operation. A completion
+   acknowledges only its captured revision, even after later edits.
+3. Add Android document-provider access/grants and the native IME experiments.
+   Their actual guarantees remain separate from the native POSIX adapter.
+4. Implement recovery/session checkpoints under EAD11, including durable
+   revision display, continuous-edit scheduling, corruption and storage-failure
+   scenarios, and orderly-exit flush/decision handling.
 
-Success is a backend-independent palette usable by the editor and another
-consumer. Wiring Hue wholesale is not a prerequisite; the shared interfaces
-must permit its command policy without importing Hue types.
+Generated font/settings controls, language discovery, code-editor presentation
+and conveniences, shared Unicode layout/touch input and workload acceptance
+remain required. The native file work does not replace their delivery gates.
 
 ## Bounded feasibility experiments
 
@@ -90,15 +87,17 @@ evidence for a promised capability.
 - Implementation base: `755e1b9101` on `origin/main`, after PR 715;
   editor specification commit `b5ea7fddd`. The worktree remains separate from
   the font-rendering worktree.
-- Completed scope: shared palette core lifecycle, bounded catalog, fuzzy
-  discovery/witnesses, navigation, invocation revalidation, stamped row actions,
-  query input, widget view and effective-shortcut discovery. The initial
-  `apps/editor` shell is under validation. Touch extraction, native IME and
-  full application conformance remain open.
+- Completed scope: shared palette core/view/input/shortcut discovery; the
+  Vulkan/TUI editor shell, independent tabs, editable examples, syntax/editor
+  decoration overlay, background highlighting and theme preview; exact
+  in-memory document envelopes and per-selection Enter conventions. Native
+  file primitives, syscall-fault checks and CLI-open integration are at the
+  current validation checkpoint. Save/close UI, generated settings/fonts,
+  language discovery, recovery and Unicode layout/touch/IME remain open.
 - Evidence and reviews: [testing §6](./testing.md#6-evidence-ledger).
-- Next executable action: finish the reviewed frontend checkpoint, validate
-  the editor shell in recording/TUI/Vulkan, then integrate document storage,
-  highlighted editing and generated settings through their shared mechanisms.
+- Next executable action: finish the native-file checkpoint, then implement
+  save/conflict and dirty-close decisions through shared command/widget/editor
+  mechanisms, preserving the storage receipt and revision contracts.
 - Owner policies: visual bidi movement/collapse, convention-aware Enter and
   one-second recovery checkpoints are accepted in EAD9–EAD11. Layout,
   storage and scheduling implementations still require their acceptance tests.

@@ -37,6 +37,10 @@ import commands : Command, CommandBinding, CommandContext, CommandId, commandBin
 import examples : Example, exampleText;
 import document_text : decodeDocument, DocumentBytes, encodeDocument, enterEnding;
 import sparkles.syntax.ts.registry : canonicalLanguageOfPath;
+import sparkles.ui.editor.state : EditorState;
+import sparkles.ui.editor.selection : SelectionSet;
+import document_io : DocumentIo, FileOperation;
+import std.path : absolutePath, baseName;
 
 private class DisplayedFrame
 {
@@ -62,6 +66,7 @@ class Document
     string language = "text";
     bool bom;
     string predominant = "\n";
+    string path, savedBytes;
 
     this(ulong id, string name, string content = "") @safe pure nothrow
     {
@@ -88,6 +93,7 @@ struct EditorApp
     string status;
     string shotPath;
     string captureError;
+    string lastOpenError;
     private int shotCountdown = 3;
     private Document[] tabs;
     private size_t activeTab;
@@ -108,6 +114,88 @@ struct EditorApp
     private AppTheme themeBefore;
     private ResolvedTheme syntaxBefore;
     private string[] themeNames;
+    private DocumentIo files;
+    private ulong[ulong] openOrigins;
+    Command startupCommand;
+
+    bool filesBusy() const scope @safe pure nothrow @nogc => files !is null && files.busy;
+
+    /// Open asynchronously; a pending read never replaces an edited buffer.
+    bool openPath(string path) @safe
+    {
+        ensureInitialized();
+        try { path = absolutePath(path); }
+        catch (Exception) { status = "The document path could not be resolved."; return false; }
+        foreach (i, tab; tabs)
+            if (tab.path == path)
+            {
+                activeTab = i;
+                return true;
+            }
+        if (files is null) files = new DocumentIo;
+        const request = files.open(path);
+        if (request.hasError) { status = request.error; return false; }
+        openOrigins[request.value.value] = document.id;
+        return true;
+    }
+
+    /// Publish only completed worker-prepared text; preserve the user's active-tab choice.
+    void pollDocuments() @safe
+    {
+        if (files is null) return;
+        foreach (result; files.poll())
+        {
+            if (result.operation != FileOperation.open) continue;
+            ulong ticket = result.ticket.value;
+            ulong origin;
+            if (const found = ticket in openOrigins) origin = *found;
+            openOrigins.remove(ticket);
+            if (result.error.length)
+            {
+                lastOpenError = result.path ~ ": " ~ result.error;
+                status = lastOpenError;
+                if (shotPath.length) captureError = lastOpenError;
+                continue;
+            }
+            const activate = document.id == origin && !commands.palette.active && !lantern.active && !lantern.shown;
+            bool duplicate;
+            foreach (i, tab; tabs)
+                if (tab.path == result.path)
+                {
+                    if (activate) activeTab = i;
+                    duplicate = true;
+                    break;
+                }
+            if (duplicate) continue;
+            auto opened = new Document(nextId++, baseName(result.path));
+            opened.field.state = EditorState.create(Text(result.revision));
+            opened.field.state.selection = SelectionSet.caret(0);
+            opened.field.target = target;
+            opened.saved = Text(result.revision);
+            opened.path = result.path;
+            opened.savedBytes = result.bytes;
+            opened.bom = result.decoded.bom;
+            opened.predominant = result.decoded.predominant;
+            opened.language = canonicalLanguageOfPath(result.path);
+            if (opened.language == "txt" || opened.language == "log") opened.language = "text";
+            if (activate && tabs.length == 1 && tabs[0].field.empty && !tabs[0].dirty && !tabs[0].path.length
+                && tabs[0].name == "Untitled")
+                tabs[0] = opened;
+            else
+            {
+                tabs ~= opened;
+                if (activate) activeTab = tabs.length - 1;
+            }
+            status = null;
+        }
+    }
+
+    /// Stop application-owned workers even when opening the rendering host fails.
+    void dispose() @safe nothrow
+    {
+        if (files !is null) files.shutdown();
+        if (highlighting !is null) highlighting.shutdown();
+    }
 
     /// The selected theme is a reversible preview until the palette emits acceptance.
     void previewPicker() @safe
@@ -148,12 +236,13 @@ struct EditorApp
     /// The host shuts workers down before releasing document snapshots.
     void shutdown(H)(ref H host)
     {
-        if (highlighting !is null) highlighting.shutdown();
+        dispose();
     }
     private DisplayedFrame displayed;
     private HoverTarget[] hits;
     private const(PaletteChoice!Command)[] paletteChoices;
     private bool selecting;
+    private ulong selectingDocument;
     private size_t selectionAnchor;
     private enum size_t tabHitBase = 0x7400_0000;
 
@@ -172,6 +261,11 @@ struct EditorApp
             return;
         }
         if (pointer.action != PointerAction.press && pointer.action != PointerAction.drag) return;
+        if (pointer.action == PointerAction.drag && selectingDocument != document.id)
+        {
+            selecting = false;
+            return;
+        }
         if (pointer.button != PointerButton.left && pointer.action != PointerAction.drag) return;
         const hit = hits.hitAt(pointer.pos.x, pointer.pos.y);
         if (commands.palette.active)
@@ -195,6 +289,7 @@ struct EditorApp
         {
             selectionAnchor = pointer.mods.shift ? document.field.state.selection.primary.anchor : at;
             selecting = true;
+            selectingDocument = document.id;
         }
         if (selecting) document.field.run(EditCommand.setRange(selectionAnchor, at));
     }
@@ -440,12 +535,25 @@ struct EditorApp
     WidgetTree view(H)(ref H host)
     {
         ensureInitialized();
+        pollDocuments();
+        if (filesBusy) host.wakeIn(8.msecs);
+        if (!filesBusy && startupCommand != Command.none)
+        {
+            const command = startupCommand;
+            startupCommand = Command.none;
+            execute(CommandId(command));
+        }
+        if (shotPath.length && captureError.length)
+        {
+            host.quit();
+            return WidgetTree.init;
+        }
         if (highlighting is null) highlighting = new HighlightSession;
         highlighting.request(document.field.state.text, document.language, document.id);
         highlighting.poll();
         previewPicker();
         if (highlighting.busy) host.wakeIn(8.msecs);
-        if (shotPath.length && !highlighting.busy)
+        if (shotPath.length && !highlighting.busy && !filesBusy)
         {
             if (highlighting.error.length)
             {
@@ -693,4 +801,77 @@ struct EditorApp
     assert(app.document.encodedBytes == "\xef\xbb\xbfa\r\nb\nc\r\n");
     assert(!app.openBytes("invalid.txt", "\xff"));
     assert(app.document.encodedBytes == "\xef\xbb\xbfa\r\nb\nc\r\n");
+}
+
+/// Opening a real file preserves dirty tabs; invalid UTF-8 cannot replace the active buffer.
+@("editor.app.backgroundFileOpenPreservesOtherTabs")
+@safe unittest
+{
+    version (Posix) {}
+    else
+    {
+        import sparkles.test_runner.skip : skipTest;
+        skipTest("The native POSIX file adapter is not available.");
+    }
+    import core.thread : Thread;
+    import core.time : MonoTime, seconds;
+    import sparkles.test_utils.tmpfs : TmpFS;
+    auto fixture = TmpFS.create();
+    const path = fixture.writeFile("\xef\xbb\xbfdisk\r\n");
+    EditorApp app;
+    scope (exit) app.dispose();
+    app.document.field.insert("unsaved");
+    const original = app.document.id;
+    assert(app.openPath(path));
+    const until = MonoTime.currTime + 3.seconds;
+    while (app.filesBusy && MonoTime.currTime < until)
+    {
+        app.pollDocuments();
+        (() @trusted => Thread.yield())();
+    }
+    assert(!app.filesBusy && app.document.id != original);
+    assert(app.document.encodedBytes == "\xef\xbb\xbfdisk\r\n" && !app.document.dirty);
+    assert(app.document.field.state.selection.primary.head == 0);
+    app.execute(CommandId(Command.previousTab));
+    assert(app.document.id == original && app.document.field.text == "unsaved" && app.document.dirty);
+    const bad = fixture.writeFile("\xff");
+    assert(app.openPath(bad));
+    const badUntil = MonoTime.currTime + 3.seconds;
+    while (app.filesBusy && MonoTime.currTime < badUntil)
+    {
+        app.pollDocuments();
+        (() @trusted => Thread.yield())();
+    }
+    assert(!app.filesBusy && app.document.id == original && app.document.field.text == "unsaved");
+    assert(app.status.length);
+}
+
+/// An asynchronous read cannot change the document captured by an open palette.
+@("editor.app.backgroundOpenDoesNotStealPaletteTarget")
+@safe unittest
+{
+    version (Posix) {}
+    else
+    {
+        import sparkles.test_runner.skip : skipTest;
+        skipTest("The native POSIX file adapter is not available.");
+    }
+    import core.thread : Thread;
+    import core.time : MonoTime, seconds;
+    import sparkles.test_utils.tmpfs : TmpFS;
+    auto fixture = TmpFS.create();
+    const path = fixture.writeFile("opened in the background");
+    EditorApp app;
+    scope (exit) app.dispose();
+    const origin = app.document.id;
+    assert(app.openPath(path));
+    app.execute(CommandId(Command.palette));
+    const until = MonoTime.currTime + 3.seconds;
+    while (app.filesBusy && MonoTime.currTime < until)
+    {
+        app.pollDocuments();
+        (() @trusted => Thread.yield())();
+    }
+    assert(!app.filesBusy && app.tabCount == 2 && app.document.id == origin);
+    assert(app.commands.palette.active && app.commands.palette.snapshot.invocation.target == origin);
 }

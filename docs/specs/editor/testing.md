@@ -297,3 +297,45 @@ different line-ending conventions and exact BOM/mixed-ending bytes after
 undo. Invalid UTF-8 leaves the active tab unchanged. A checked native build
 also passes. This proves the in-memory admission/insertion envelope, not
 desktop save atomicity, Android providers or recovery durability.
+
+### Native storage primitives — 2026-11-06
+
+The native POSIX adapter reads regular descriptors with `O_NONBLOCK` before
+checking their type, so a FIFO does not trap a reader waiting for its writer.
+Tests cover exact input bytes, bounded admission, directory/FIFO refusal,
+ordinary permission preservation, symlink destination refusal and two
+competing creators producing one complete winner.
+
+Save writes a private temporary in the retained destination directory,
+syncs/closes it, then commits through no-replace `linkat` for a new destination
+or consent-gated `renameat` for replacement. A receipt distinguishes commit
+from acknowledged directory durability. The event-horizon worker retains
+captured text revisions, validates UTF-8/builds persistent text off-frame,
+limits outstanding jobs to eight and delivers const results after completion.
+The app/storage suite passed 15 tests before the CLI-open integration.
+
+The checked [fault probe](../../../apps/editor/tools/storage-fault-probe.d)
+and [fault runner](../../../apps/editor/tools/storage-faults.d) passed real
+Linux syscall injection at all six stages: write (`ENOSPC`), temporary sync
+(`EIO`), temporary close (`EIO`), replacement (`EACCES`), no-replace creation
+(`EEXIST`) and directory sync (`EIO`). Every pre-commit failure asserts that
+the original destination is unchanged or a new destination absent. Directory
+sync failure asserts committed replacement bytes with `durable == false`.
+The runner derives the temporary-close ordinal from a decoded baseline trace
+and checks that the injected failure reached that descriptor.
+
+An independent review found no storage/worker ownership defect in these
+paths. Metadata comparison does not establish an atomic read snapshot under
+concurrent in-place writers. Shutdown joins running filesystem calls and
+retains completed receipts for polling after shutdown. The app still resolves
+outstanding save acknowledgments before normal teardown.
+Crash/power-loss durability, Save/Discard/Cancel UI and Android-provider
+semantics remain open gates; syscall injection does not replace those tests.
+
+The integrated app suite passes 17 tests, including real-file open with a
+worker-prepared text root, preserved dirty tabs, failed UTF-8 admission and
+retained palette targets. Checked desktop CLI checks reject nonexistent and
+invalid-UTF-8 operands with exit status 1 before starting the rendering host;
+an independent review identified and prompted the startup/runtime-error split.
+A native capture of `document_text.d` confirms real-file text and syntax reach
+the pane. Interactive open failures remain recoverable status messages.

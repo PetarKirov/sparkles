@@ -24,6 +24,7 @@ configuration "unittest" {
     targetType "library"
     excludedSourceFiles "src/app.d"
     dependency "sparkles:test-runner" path="../.."
+    dependency "sparkles:test-utils" path="../.."
     subConfiguration "sparkles:ui-app" "tui"
     dflags "-checkaction=context" "-allinst"
 }
