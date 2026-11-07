@@ -280,19 +280,20 @@ the row instead of producing a throughput number.
 ## SDL rows
 
 The SDL backend's benchmark ([performance SDP1](../../../../docs/specs/wired/sdl/performance.md#1-measurement))
-lives in `src/sparkles/wired_bench/sdl.d`: five `@benchmark` tests,
-`sdl.parse`, `sdl.decode`, `sdl.encode`, `sdl.edit` and `sdl.commit`, written against the public
+lives in `src/sparkles/wired_bench/sdl.d`: six `@benchmark` tests,
+`sdl.parse`, `sdl.decode`, `sdl.encode`, `sdl.edit`, `sdl.commit` and `sdl.commit-unchanged`, written against the public
 `sparkles.wired.sdl` API only, so they compile unchanged across changes to
 the backend's internal representation.
 
-| Op       | Row          | Contract                                                                                                                                              |
-| -------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `parse`  | `wired`      | bytes → `SdlDocument` (`parseSdlDocument`); recipes under `sdlDubRecipe`, `deep_wide` under `sdlFull`. Documents are released untimed.                |
-| `parse`  | `dub-sdlang` | the same bytes through DUB's own pinned SDLang parser (`parseSource`): an external reference point, not a target. `unittest-foreign` only.            |
-| `decode` | `wired`      | bytes → the `dub.sdl` schema (`parseDubManifest` from `sparkles:build-primitives`), parse included. Recipe datasets only.                             |
-| `encode` | `wired`      | a parsed document (untimed `setup`) → canonical SDL text (`writeSdlDocument`), into one retained buffer per document.                                 |
-| `edit`   | `wired`      | a parsed document (untimed `setup`) → one lossless change through `SdlEditor` (a `probe` attribute on the first tag), re-parse included.              |
-| `commit` | `wired`      | an `SdlOpenDocument` (untimed `setup`) → 8 commits, each one `probe` attribute on a node found by handle, re-parse kept. Bytes count once per commit. |
+| Op                 | Row          | Contract                                                                                                                                              |
+| ------------------ | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `parse`            | `wired`      | bytes → `SdlDocument` (`parseSdlDocument`); recipes under `sdlDubRecipe`, `deep_wide` under `sdlFull`. Documents are released untimed.                |
+| `parse`            | `dub-sdlang` | the same bytes through DUB's own pinned SDLang parser (`parseSource`): an external reference point, not a target. `unittest-foreign` only.            |
+| `decode`           | `wired`      | bytes → the `dub.sdl` schema (`parseDubManifest` from `sparkles:build-primitives`), parse included. Recipe datasets only.                             |
+| `encode`           | `wired`      | a parsed document (untimed `setup`) → canonical SDL text (`writeSdlDocument`), into one retained buffer per document.                                 |
+| `edit`             | `wired`      | a parsed document (untimed `setup`) → one lossless change through `SdlEditor` (a `probe` attribute on the first tag), re-parse included.              |
+| `commit`           | `wired`      | an `SdlOpenDocument` (untimed `setup`) → 8 commits, each one `probe` attribute on a node found by handle, re-parse kept. Bytes count once per commit. |
+| `commit-unchanged` | `wired`      | the same open documents → 8 commits each of an editor with no edits. Bytes count once per commit; every host must equal its text.                     |
 
 Throughput is normalized over the dataset's input bytes for every row.
 
@@ -326,6 +327,7 @@ committed beside its dataset in `sdl.d`:
 - `decode` — a SHA-256 over the decoded values themselves, field by field.
   `writeSDL` cannot write the `dub.sdl` schema back today (it rejects
   `DubBuildType`), so the typed round trip cannot be hashed;
+- `commit-unchanged` — every host equal to its dataset text;
 - `edit` and `commit` — the SHA-256 of every edited document or committed
   host, each preceded by its file
   name;

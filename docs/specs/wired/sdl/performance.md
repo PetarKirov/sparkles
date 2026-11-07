@@ -59,7 +59,8 @@ is an explicit amendment to the accepted SPEC, stated in
 `dub.sdl` schema) and `encode` first, and `edit` (resolve and write one
 attribute change) once the editor exists, and `commit` (one small edit at a
 time committed to an open document, [editing §10](./editing.md#10-incremental-re-parse))
-once the open document does. Datasets are pinned like the JSON
+once the open document does, beside `commit-unchanged` (as many commits
+with no edits). Datasets are pinned like the JSON
 ones, in the harness's Nix data package: a snapshot of the repository's
 recipes taken at a named commit, a concatenated large recipe, and a
 generated deep and wide document. Each row verifies itself once, untimed,
