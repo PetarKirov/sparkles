@@ -567,3 +567,32 @@ void scissorInTarget(int x, int y, int w, int h, int targetHeight) @system
     assert(impl.passes[3].source.canFind("uBloomIntensity")
         && impl.passes[3].source.canFind("texture1"), "the composite reads the glow");
 }
+
+@("ui_raylib.effect_gpu.crtIsBloomThenTheTube")
+@safe unittest
+{
+    import std.algorithm.searching : canFind;
+    import sparkles.ui.crt : CrtEffect, crtParamNames;
+
+    // `EFX21`: bloom's three passes, then the tube compositing the bracket
+    // with the glow as `texture1`.
+    const rec = CrtEffect.effectRecord();
+    const impl = rec.implFor(glslBackend);
+    assert(impl !is null && impl.passes.length == 4);
+    assert(impl.passes[0].from == 0 && impl.passes[0].downscale == 2);
+    assert(impl.passes[3].from == 0 && impl.passes[3].inputs == [3]);
+    // The tube is generated from `shaders/effects.d` (`EFX25`) and reads the
+    // clock and the size the backend supplies to every pass.
+    assert(impl.passes[3].source.canFind("entry point `crtTube`"));
+    assert(impl.passes[3].source.canFind("uTime") && impl.passes[3].source.canFind("uResolution"));
+    // Every parameter is read by some pass (the threshold and radius by
+    // bloom's, the rest by the tube's) — one no pass declares is a knob that
+    // silently does nothing.
+    foreach (name; crtParamNames)
+    {
+        bool read;
+        foreach (ref pass; impl.passes)
+            read = read || pass.source.canFind(name);
+        assert(read, name);
+    }
+}
