@@ -6,7 +6,8 @@ original node beside the encoding, field by field of the schema, and edits
 only what differs — a positional value, an attribute, a child added, removed
 or changed. Elements of an aggregate sequence pair by identity — their name
 and positional values — so an element removed, inserted or changed in the
-middle edits only that element. Everything the schema does not claim (unknown
+middle edits only that element, and a reordered one moves with its bytes and
+comments. Everything the schema does not claim (unknown
 tags such as DUB's `x:` extensions, comments, layout) is never touched, and
 spellings that mean the same scalar (`"a"` and `` `a` ``) are left as written.
 
@@ -314,74 +315,123 @@ private void patchChild(E, Editor)(ref Editor editor, scope SdlNode d, in Kid mi
 private bool sameIdentity(scope SdlNode left, scope SdlNode right)
     => left.qualifiedName == right.qualifiedName && sameValues(left, right);
 
+/// A hash of an element's identity: its name and its values' canonical
+/// spellings, so equal identities hash equally.
+private size_t identityHash(scope SdlNode node)
+{
+    UniqueBuffer!(char, 128) text;
+    const name = node.qualifiedName;
+    put(text, name.namespace_);
+    put(text, ":");
+    put(text, name.localName);
+    // A value without a spelling ends the hash early; `sameIdentity` decides.
+    foreach (value; node.byValue)
+    {
+        put(text, " ");
+        if (writeSdlScalar(value, text).hasError)
+            break;
+    }
+    return hashOf(text[]);
+}
+
 /** Pairs an aggregate sequence's elements (editing §3.1): each new element
-with the first unpaired old one of the same identity; of those pairs, the
-longest run in the same relative order in both keeps its nodes. Between two
-kept pairs, the remaining old and new elements pair by position — they are
-changed in place — and the surplus old ones are removed with their attached
-comments, while the surplus new ones are inserted after the last paired node
-before them, else before the next kept one. A reordered element is therefore
-written in its new place, not moved with its bytes. */
+with the first unpaired old one of the same identity; of those pairs, a
+longest run in the same relative order in both stays in place. Every other
+identity pair moves, with its bytes and attached comments, to its new place.
+Between two pairs left in place, the old and new elements without an
+identity pair pair by position — they are changed in place — and the
+surplus old ones are removed with their attached comments. Moved and new
+elements go after the last node left in place before them, else above the
+next one and its comments. Identities are hashed and the run is a patience
+sort, so pairing is O(n log n) in the sequence's length. */
 private void patchSequence(E, Editor)(ref Editor editor, scope SdlNode d, scope SdlNode e,
     scope const Kid[] mine, scope const Kid[] theirs, ref UniqueBuffer!char appended,
     ref UniqueBuffer!char left, ref UniqueBuffer!char right)
 {
     enum none = size_t.max;
 
-    // keep[j]: the old element new element `j` keeps, or `none`.
+    // keep[j]: the old element new element `j` pairs with by identity, or
+    // `none`; paired[k]: whether old element `k` has a partner.
     UniqueBuffer!size_t keep;
-    UniqueBuffer!bool taken;
+    UniqueBuffer!bool paired;
     keep.length = theirs.length;
-    taken.length = mine.length;
-    foreach (k; 0 .. mine.length)
-        taken[k] = false;
+    paired.length = mine.length;
+    keep[][] = none;
+    paired[][] = false;
+    pairByIdentity(mine, theirs, keep[]);
     foreach (j; 0 .. theirs.length)
-    {
-        keep[j] = none;
-        foreach (k; 0 .. mine.length)
-            if (!taken[k] && sameIdentity(mine[k].node, theirs[j].node))
-            {
-                keep[j] = k;
-                taken[k] = true;
-                break;
-            }
-    }
+        if (keep[j] != none)
+            paired[keep[j]] = true;
 
-    // The longest run of identity pairs whose old positions increase.
-    UniqueBuffer!size_t run, before;
-    run.length = theirs.length;
+    // A longest run of pairs whose old positions increase: patience sort.
+    // tails[l] ends the run of length l + 1 with the smallest old position.
+    UniqueBuffer!size_t tails, before;
+    tails.length = theirs.length;
     before.length = theirs.length;
-    size_t last = none, best;
+    size_t runs;
     foreach (j; 0 .. theirs.length)
     {
-        run[j] = 0;
-        before[j] = none;
         if (keep[j] == none)
             continue;
-        run[j] = 1;
-        foreach (p; 0 .. j)
-            if (keep[p] != none && keep[p] < keep[j] && run[p] + 1 > run[j])
-            {
-                run[j] = run[p] + 1;
-                before[j] = p;
-            }
-        if (run[j] > best)
+        size_t low, high = runs;
+        while (low < high)
         {
-            best = run[j];
-            last = j;
+            const mid = low + (high - low) / 2;
+            if (keep[tails[mid]] < keep[j])
+                low = mid + 1;
+            else
+                high = mid;
         }
+        before[j] = low ? tails[low - 1] : none;
+        tails[low] = j;
+        if (low == runs)
+            runs++;
     }
     UniqueBuffer!bool kept;
     kept.length = theirs.length;
-    foreach (j; 0 .. theirs.length)
-        kept[j] = false;
-    for (size_t j = last; j != none; j = before[j])
+    kept[][] = false;
+    for (size_t j = runs ? tails[runs - 1] : none; j != none; j = before[j])
         kept[j] = true;
 
+    UniqueBuffer!size_t group, free;
     UniqueBuffer!char inserted;
     size_t anchor = none; // the last old element left in place
+
+    // Places `group` — moved and new elements, in order — after the anchor,
+    // else just above `stationary` and its comments, else at the end.
+    void place(size_t stationary)
+    {
+        if (!group.length)
+            return;
+        Place at;
+        if (anchor != none)
+            at = Place(mine[anchor].node, true, true);
+        else if (stationary != none)
+            at = placeAbove(d, mine, keep[], kept[], mine[stationary]);
+        inserted.clear();
+        foreach (t; group[])
+        {
+            const old = keep[t];
+            if (old != none && at.has && at.node.aloneOnLines && mine[old].node.aloneOnLines)
+            {
+                at.insert(editor, inserted[], appended);
+                inserted.clear();
+                at.move(editor, mine[old].node);
+                patchChild!E(editor, d, mine[old], e, theirs[t], left, right);
+                continue;
+            }
+            // Not movable here: written in its new place instead.
+            if (old != none)
+                editor.remove(mine[old].node, SdlAttachedComments.remove);
+            if (render(e, theirs[t].position, right))
+                put(inserted, right[]);
+        }
+        at.insert(editor, inserted[], appended);
+        group.clear();
+    }
+
     size_t k = 0, j = 0;
-    while (j < theirs.length || k < mine.length)
+    for (;;)
     {
         // The gap up to the next kept pair, or to the end.
         size_t next = j;
@@ -389,31 +439,31 @@ private void patchSequence(E, Editor)(ref Editor editor, scope SdlNode d, scope 
             next++;
         const oldEnd = next < theirs.length ? keep[next] : mine.length;
 
-        const olds = oldEnd - k, news = next - j;
-        const paired = olds < news ? olds : news;
-        foreach (q; 0 .. paired)
+        free.clear();
+        foreach (q; k .. oldEnd)
+            if (!paired[q])
+                () @trusted { free ~= q; }();
+        size_t q;
+        foreach (t; j .. next)
         {
-            patchChild!E(editor, d, mine[k + q], e, theirs[j + q], left, right);
-            anchor = k + q;
-        }
-        foreach (q; paired .. olds)
-            editor.remove(mine[k + q].node, SdlAttachedComments.remove);
-        inserted.clear();
-        foreach (q; paired .. news)
-            if (render(e, theirs[j + q].position, right))
-                put(inserted, right[]);
-        if (inserted.length)
-        {
-            if (anchor != none)
-                editor.insertAfter(mine[anchor].node, inserted[]);
-            else if (next < theirs.length)
-                insertAbove(editor, d, mine[keep[next]], inserted[]);
+            if (keep[t] == none && q < free.length)
+            {
+                place(free[q]);
+                patchChild!E(editor, d, mine[free[q]], e, theirs[t], left, right);
+                anchor = free[q++];
+            }
             else
-                put(appended, inserted[]); // the field has no element left
+                () @trusted { group ~= t; }();
         }
+        foreach (r; q .. free.length)
+            editor.remove(mine[free[r]].node, SdlAttachedComments.remove);
 
         if (next == theirs.length)
+        {
+            place(none);
             break;
+        }
+        place(keep[next]);
         patchChild!E(editor, d, mine[keep[next]], e, theirs[next], left, right);
         anchor = keep[next];
         k = keep[next] + 1;
@@ -421,19 +471,127 @@ private void patchSequence(E, Editor)(ref Editor editor, scope SdlNode d, scope 
     }
 }
 
-/// Inserts `fragment` just before `kid` and the comments above it: after
-/// the sibling before it, else before `kid` itself.
-private void insertAbove(Editor)(ref Editor editor, scope SdlNode parent, in Kid kid,
-    scope const(char)[] fragment)
+/** Sets `keep[j]` to the first old element of new element `j`'s identity
+not taken by an earlier new element. Old elements are grouped by identity
+in an open-addressed table; each group is a list in source order with a
+cursor at its first unpaired member, so duplicates pair first to first. */
+private void pairByIdentity(scope const Kid[] mine, scope const Kid[] theirs, size_t[] keep)
 {
-    if (kid.position == 0)
-        return editor.insertBefore(kid.node, fragment);
-    size_t position;
-    foreach (sibling; parent.byChild)
-        if (++position == kid.position)
-            return editor.insertAfter(sibling, fragment);
+    enum none = size_t.max;
+    if (!mine.length)
+        return;
+    size_t capacity = 8;
+    while (capacity < 2 * mine.length)
+        capacity *= 2;
+    const mask = capacity - 1;
+
+    // slots: group + 1, or 0; per group its hash, first member, cursor and
+    // last member; link[k]: the member after old element `k`.
+    UniqueBuffer!size_t slots, hashes, first, cursor, last, link;
+    slots.length = capacity;
+    slots[][] = 0;
+    link.length = mine.length;
+
+    size_t find(size_t hash, scope SdlNode node, out size_t slot)
+    {
+        for (slot = hash & mask; slots[slot]; slot = (slot + 1) & mask)
+        {
+            const g = slots[slot] - 1;
+            if (hashes[g] == hash && sameIdentity(mine[first[g]].node, node))
+                return g;
+        }
+        return none;
+    }
+
+    foreach (k; 0 .. mine.length)
+    {
+        const hash = identityHash(mine[k].node);
+        size_t slot;
+        const g = find(hash, mine[k].node, slot);
+        link[k] = none;
+        if (g == none)
+        {
+            slots[slot] = hashes.length + 1;
+            hashes ~= hash;
+            first ~= k;
+            cursor ~= k;
+            last ~= k;
+        }
+        else
+        {
+            if (cursor[g] == none)
+                cursor[g] = k;
+            else
+                link[last[g]] = k;
+            last[g] = k;
+        }
+    }
+    foreach (j; 0 .. theirs.length)
+    {
+        size_t slot;
+        const g = find(identityHash(theirs[j].node), theirs[j].node, slot);
+        if (g == none || cursor[g] == none)
+            continue;
+        keep[j] = cursor[g];
+        cursor[g] = link[cursor[g]];
+    }
 }
 
+/// Where a sequence's moved and new elements go: beside a sibling, or, with
+/// none, appended to the field.
+private struct Place
+{
+    SdlNode node;
+    bool after;
+    bool has;
+
+    void insert(Editor)(ref Editor editor, scope const(char)[] text,
+        ref UniqueBuffer!char appended)
+    {
+        if (!text.length)
+            return;
+        if (!has)
+            put(appended, text); // the field has no element left
+        else if (after)
+            editor.insertAfter(node, text);
+        else
+            editor.insertBefore(node, text);
+    }
+
+    void move(Editor)(ref Editor editor, scope SdlNode moved)
+    {
+        if (after)
+            editor.moveAfter(moved, node);
+        else
+            editor.moveBefore(moved, node);
+    }
+}
+
+/** Just above `kid` and the comments above it: after the nearest sibling
+before it that does not move away, else before `kid` itself. */
+private Place placeAbove(scope SdlNode parent, scope const Kid[] mine, scope const size_t[] keep,
+    scope const bool[] kept, in Kid kid)
+{
+    enum none = size_t.max;
+    // The positions of the field's elements that move: paired, not kept.
+    UniqueBuffer!bool moves;
+    moves.length = kid.position;
+    moves[][] = false;
+    foreach (j; 0 .. keep.length)
+        if (keep[j] != none && !kept[j] && mine[keep[j]].position < kid.position)
+            moves[mine[keep[j]].position] = true;
+    Place at = Place(kid.node, false, true);
+    size_t position;
+    foreach (sibling; parent.byChild)
+    {
+        if (position == kid.position)
+            break;
+        if (!moves[position])
+            at = Place(sibling, true, true);
+        position++;
+    }
+    return at;
+}
 /// Inserts the encoded child after the field's last existing child, or
 /// queues it for one append to the parent when the field has none.
 private void insertChild(Editor)(ref Editor editor, scope const Kid[] mine,
@@ -602,18 +760,110 @@ version (unittest)
             ~ "// the app\nconfiguration \"app\" {\n    targetType \"executable\"\n}\n");
 }
 
-@("sdl.typedEdit.keyed.reorderRewritesTheMovedElement")
+@("sdl.typedEdit.keyed.reorderMovesTheElement")
 @system unittest
 {
-    // `a` and `b` keep their order and bytes; `c` is written in its new
-    // place and removed, with its comment, from the old one.
+    // `a` and `b` stay; `c` moves before them with its comment.
     assert(writtenBack!((ref Recipe v) { v.deps = [v.deps[2], v.deps[0], v.deps[1]]; })(keyedSource)
-        == keyedName ~ "dependency \"c\" version=\"3\"\n" ~ keyedA ~ keyedB ~ keyedLib ~ keyedApp);
+        == keyedName ~ keyedC ~ keyedA ~ keyedB ~ keyedLib ~ keyedApp);
+    // A moved element is then changed in place, children included; the
+    // blank line before the library stays with the library.
+    assert(writtenBack!((ref Recipe v) {
+        v.configurations = [v.configurations[1], v.configurations[0]];
+        v.configurations[0].targetType = "dynamicLibrary";
+        v.configurations[0].deps[0].version_ = "1";
+    })(keyedSource)
+        == keyedName ~ keyedA ~ keyedB ~ keyedC
+            ~ "// the app\nconfiguration \"app\" {\n    targetType \"dynamicLibrary\"\n"
+            ~ "    dependency \"x\" version=\"1\" # x\n}\n" ~ keyedLib);
+    // Odd spacing, raw strings, tabs and trailing comments move as written.
+    enum odd = "name \"o\"\n#\tabout x\ndependency   `x`\tversion=`1`  // x\n"
+        ~ "dependency \"y\"   path=\"..\"   # y\n// z\n/* z */ dependency \"z\"\n";
+    assert(writtenBack!((ref Recipe v) { v.deps = [v.deps[2], v.deps[1], v.deps[0]]; })(odd)
+        == "name \"o\"\n// z\n/* z */ dependency \"z\"\ndependency \"y\"   path=\"..\"   # y\n"
+            ~ "#\tabout x\ndependency   `x`\tversion=`1`  // x\n");
+}
+
+@("sdl.typedEdit.keyed.duplicatesPairInOrder")
+@system unittest
+{
     // Equal identities pair in order: the first stays and changes.
     enum twice = "name \"t\"\ndependency \"a\" version=\"1\" # 1\ndependency \"a\" version=\"2\"\n";
     assert(writtenBack!((ref Recipe v) { v.deps = v.deps[1 .. $]; })(twice)
         == "name \"t\"\ndependency \"a\" version=\"2\" # 1\n");
+    enum source = "name \"t\"\ndependency \"a\" version=\"1\" # one\ndependency \"b\"\n"
+        ~ "dependency \"a\" version=\"2\" # two\n";
+    // The two `a`s keep their order and bytes; `b` moves above them.
+    assert(writtenBack!((ref Recipe v) { v.deps = [v.deps[1], v.deps[0], v.deps[2]]; })(source)
+        == "name \"t\"\ndependency \"b\"\ndependency \"a\" version=\"1\" # one\n"
+            ~ "dependency \"a\" version=\"2\" # two\n");
+    // Swapping them pairs first with first: each changes in place.
+    assert(writtenBack!((ref Recipe v) { v.deps = [v.deps[2], v.deps[1], v.deps[0]]; })(source)
+        == "name \"t\"\ndependency \"a\" version=\"2\" # one\ndependency \"b\"\n"
+            ~ "dependency \"a\" version=\"1\" # two\n");
 }
+
+@("sdl.typedEdit.keyed.largeSequenceIsFast")
+@system unittest
+{
+    import std.algorithm.searching : canFind;
+    import std.conv : text;
+    import std.datetime.stopwatch : AutoStart, StopWatch;
+
+    // 5000 commented elements, reversed and then shuffled: every element
+    // keeps its bytes, and pairing stays O(n log n).
+    enum count = 5000;
+    string[] blocks;
+    foreach (i; 0 .. count)
+        blocks ~= text(i % 2 ? "" : text("// c", i, "\n"), "dependency \"d", i, "\" version=\"", i, "\"\n");
+    string source = "name \"big\"\n";
+    foreach (block; blocks)
+        source ~= block;
+
+    auto watch = StopWatch(AutoStart.yes);
+    const reversed = writtenBack!((ref Recipe v) {
+        Dep[] deps;
+        foreach_reverse (dep; v.deps)
+            deps ~= dep;
+        v.deps = deps;
+    })(source);
+    const reverseTime = watch.peek;
+    string expected = "name \"big\"\n";
+    foreach_reverse (block; blocks)
+        expected ~= block;
+    assert(reversed == expected);
+
+    // A fixed shuffle, by a linear congruential generator.
+    size_t[] order;
+    foreach (i; 0 .. count)
+        order ~= i;
+    uint state = 12345;
+    foreach_reverse (i; 1 .. count)
+    {
+        state = state * 1664525 + 1013904223;
+        const swap = state % (i + 1);
+        const t = order[i];
+        order[i] = order[swap];
+        order[swap] = t;
+    }
+    watch.reset();
+    const shuffled = writtenBack!((ref Recipe v) {
+        Dep[] deps;
+        foreach (i; order)
+            deps ~= v.deps[i];
+        v.deps = deps;
+    })(source);
+    const shuffleTime = watch.peek;
+    foreach (block; blocks)
+        assert(shuffled.canFind(block));
+    assert(shuffled.length == source.length);
+
+    // The quadratic pairing took seconds here; this takes milliseconds.
+    import std.datetime : seconds;
+    assert(reverseTime < 2.seconds && shuffleTime < 2.seconds,
+        text("reverse ", reverseTime, ", shuffle ", shuffleTime));
+}
+
 
 @("sdl.typedEdit.aliasSpellingsStay")
 @system unittest

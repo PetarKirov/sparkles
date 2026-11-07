@@ -316,11 +316,14 @@ no change on the tree.
 
 ### S20 — Keyed typed write-back
 
-`updateSDL` pairs aggregate-sequence elements by identity, keeping the
-longest run in common order, and edits only the elements whose meaning
-changed ([editing §3.1](./editing.md#3-1-typed-write-back)). Scalar unions
-encode, and write back in place; `updateSDL` applies to any node, not only
-the root.
+`updateSDL` pairs aggregate-sequence elements by identity, keeping a
+longest run in common order in place and moving every other identity pair
+with its bytes and attached comments (the editor's moves, SDE18), and edits
+only the elements whose meaning changed
+([editing §3.1](./editing.md#3-1-typed-write-back)). Pairing hashes
+identities and finds the run by patience sorting, O(_n_ log _n_) per
+sequence. Scalar unions encode, and write back in place; `updateSDL`
+applies to any node, not only the root.
 
 Gate:
 
@@ -328,7 +331,13 @@ Gate:
   exactly it and its attached comments; inserting first or in the middle
   leaves every other byte; a changed identity between kept neighbours keeps
   its comments; a nested configuration's change edits only its value; a
-  reordering keeps the longest run's bytes; equal identities pair in order.
+  reordered element moves byte for byte with its comments and is then
+  changed in place (`reorderMovesTheElement`); equal identities pair first
+  to first, in order (`duplicatesPairInOrder`); a 5000-element sequence
+  reversed and shuffled keeps every element's bytes within two seconds
+  each, where the quadratic pairing took seven (`largeSequenceIsFast`).
+- `sdl.editor.move.*` and `sdl.editor.properties.movesInRepositoryRecipes`:
+  SDE18's hand cases and property test.
 - `build_primitives.dub_manifest.roundTrip.lossless`: over every repository
   recipe, removing the first configuration and inserting a dependency first
   decodes as the change, loses no comment outside the removed node and its
