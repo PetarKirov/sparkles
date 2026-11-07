@@ -37,7 +37,8 @@ import sparkles.syntax.theme : ResolvedTheme, resolveSyntaxTheme = resolveTheme;
 import sparkles.ui.editor.state : ReadOnlySpan;
 import commands : Command, CommandBinding, CommandContext, CommandId, commandBindings, commandCatalog;
 import examples : Example, exampleText;
-import document_text : decodeDocument, DocumentBytes, encodeDocument, enterEnding;
+import document_text : decodeDocument, enterEnding;
+public import editor_document : Document;
 import sparkles.syntax.ts.registry : canonicalLanguageOfPath;
 import sparkles.ui.editor.state : EditorState;
 import sparkles.ui.editor.selection : SelectionSet;
@@ -66,37 +67,6 @@ private class SaveIntent
 }
 
 private enum Dialog : ubyte { none, openPath, savePath, dirtyClose }
-
-/// A tab owns its reference-counted field; arrays contain tab references, never Text values.
-class Document
-{
-    ulong id;
-    string name;
-    EditorField field;
-    Text saved;
-    size_t firstLine;
-    bool followCaret = true;
-    string language = "text";
-    bool bom;
-    string predominant = "\n";
-    string path, savedBytes;
-    bool saving;
-    string durabilityWarning;
-
-    this(ulong id, string name, string content = "") @safe pure nothrow
-    {
-        this.id = id;
-        this.name = name;
-        field = EditorField.make(content);
-        saved = field.state.text;
-    }
-
-    bool dirty() const @safe pure nothrow @nogc => field.state.text != saved;
-
-    /// Exact file bytes; the envelope is separate from the editable text.
-    string encodedBytes() const @safe pure nothrow
-        => encodeDocument(DocumentBytes(field.text, bom, predominant));
-}
 
 /// Thin shared-widget component, instantiated by recording, TUI and Vulkan hosts.
 struct EditorApp
