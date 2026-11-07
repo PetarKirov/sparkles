@@ -567,6 +567,19 @@ void noSetup(Host)(ref Host) {}
 /// Default end-of-run phase, before the host's surface and resources close.
 void noShutdown(Host)(ref Host) {}
 
+/// Default native close policy: approve closure immediately.
+void quitOnClose(Host)(ref Host host) { host.quit(); }
+
+/// The default leaves ordinary applications' window-close behavior unchanged.
+@("ui_app.host.quitOnClose")
+@safe pure nothrow @nogc unittest
+{
+    static struct Host { mixin HostState; }
+    Host host;
+    quitOnClose(host);
+    assert(host.quitRequested);
+}
+
 /**
 Normalizes a resize event to carry the surface size the host actually has
 (`HST7`).

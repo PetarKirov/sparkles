@@ -1,17 +1,18 @@
 /** One command policy for keyboard resolution, Lantern and the command palette. */
 module commands;
 
-import sparkles.input.events : chord, Key, unparseChordPath;
+import sparkles.input.events : chord, Key, KeyEvent, unparseChordPath;
 import sparkles.ui.command_bindings : effectiveCommandShortcut;
 import sparkles.ui.command_palette : PaletteCommand, PaletteEntry;
 import sparkles.ui.editor.keys : EditorAction, EditorTarget, editorBindings;
-import sparkles.ui.keymap : Binding, bind;
+import sparkles.ui.keymap : Binding, bind, terminalScope;
 import examples : Example;
 
 /// App operations; shared editing operations carry an EditorAction argument.
 enum Command : ubyte { none, palette, guide, newTab, nextTab, previousTab, inspector,
-    example, themes, selectTheme, toggleTheme, edit, quit, open, save, saveAs, confirm, cancel }
-enum Scope : ubyte { application, document, dialog }
+    example, themes, selectTheme, toggleTheme, edit, quit, open, save, saveAs, confirm, cancel,
+    closeTab, discard }
+enum Scope : ubyte { @terminalScope modalModifiers, application, document, dialog, closing }
 alias CommandId = PaletteCommand!Command;
 alias CommandBinding = Binding!(Command, Scope);
 
@@ -26,6 +27,8 @@ CommandBinding[] commandBindings(EditorTarget target) @safe pure nothrow
     auto open = chord('o'); open.ctrl = true;
     auto save = chord('s'); save.ctrl = true;
     auto saveAs = save; saveAs.shift = typeof(save.shift).yes;
+    auto close = chord('w'); close.ctrl = true;
+    close.shift = target == EditorTarget.terminal ? typeof(close.shift).yes : typeof(close.shift).no;
     auto leader = chord(Key.f4);
     CommandBinding[] result = [bind(Scope.application, palette, Command.palette, "Commands"),
         bind(Scope.application, chord(Key.f1), Command.guide, "Key guide", reveal: true),
@@ -38,10 +41,14 @@ CommandBinding[] commandBindings(EditorTarget target) @safe pure nothrow
         bind(Scope.application, open, Command.open, "Open file"),
         bind(Scope.application, saveAs, Command.saveAs, "Save as"),
         bind(Scope.application, save, Command.save, "Save"),
+        bind(Scope.application, close, Command.closeTab, "Close tab"),
         bind(Scope.application, quit, Command.quit, "Quit"),
         bind(Scope.dialog, chord(Key.enter), Command.confirm, "Confirm"),
         bind(Scope.dialog, chord(Key.escape), Command.cancel, "Cancel"),
-        bind(Scope.dialog, chord(Key.back), Command.cancel, "Cancel")];
+        bind(Scope.dialog, chord(Key.back), Command.cancel, "Cancel"),
+        bind(Scope.closing, chord('s'), Command.confirm, "Save and close"),
+        bind(Scope.closing, chord('d'), Command.discard, "Discard changes"),
+        bind(Scope.closing, chord('c'), Command.cancel, "Cancel close")];
     foreach (original; editorBindings(target))
     {
         if (original.cmd == EditorAction.none) continue;
@@ -82,17 +89,26 @@ struct CommandContext
     ulong document;
     const(CommandBinding)[] bindings;
     bool modal;
+    bool closing;
 
     bool available(CommandId command, ulong target) const scope @safe pure nothrow @nogc
     {
         if (command.operation == Command.none) return false;
+        if (command.operation == Command.discard) return closing;
         const dialogCommand = command.operation == Command.confirm || command.operation == Command.cancel;
         if (modal != dialogCommand) return false;
         return command.operation != Command.edit || (target == document && document != 0);
     }
 
     bool reachable(Scope scope_) const scope @safe pure nothrow @nogc
-        => scope_ == Scope.dialog ? modal : !modal && (scope_ == Scope.application || document != 0);
+        => scope_ == Scope.modalModifiers ? false : scope_ == Scope.closing ? closing
+            : scope_ == Scope.dialog ? modal : !modal && (scope_ == Scope.application || document != 0);
+
+    /// Modified input belongs to the focused field, never to plain decision letters.
+    bool scopeActive(Scope scope_, in KeyEvent key) const scope @safe pure nothrow @nogc
+        => scope_ == Scope.modalModifiers
+            ? modal && (key.mods.ctrl || key.mods.alt || key.mods.super_ || key.mods.shift)
+            : reachable(scope_);
 
     string shortcut(CommandId command, ulong target) const scope @safe pure
     {

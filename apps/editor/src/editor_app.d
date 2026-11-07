@@ -65,7 +65,7 @@ private class SaveIntent
     bool bom;
 }
 
-private enum Dialog : ubyte { none, openPath, savePath }
+private enum Dialog : ubyte { none, openPath, savePath, dirtyClose }
 
 /// A tab owns its reference-counted field; arrays contain tab references, never Text values.
 class Document
@@ -138,6 +138,8 @@ struct EditorApp
     private EditorField pathInput;
     private ulong dialogEpoch;
     private ulong pasteDialog;
+    private ulong closingDocument;
+    private bool exiting;
     Command startupCommand;
 
     bool filesBusy() const scope @safe pure nothrow @nogc => files !is null && files.busy;
@@ -193,6 +195,8 @@ struct EditorApp
         else
         {
             foreach (tab; tabs) if (tab.id == intent.document) tab.saving = false;
+            closingDocument = 0;
+            exiting = false;
             status = "Save cancelled; the destination was not changed.";
         }
     }
@@ -218,6 +222,77 @@ struct EditorApp
         status = null;
     }
 
+    private void showDirtyClose(ulong id) @safe
+    {
+        foreach (i, tab; tabs) if (tab.id == id) activeTab = i;
+        if (commands.palette.active) commands.palette.cancel(commands.palette.snapshot.ticket);
+        endPicker(false);
+        lantern.reset();
+        document.field.run(EditCommand.of(EditKind.blur), MonoTime.currTime);
+        closingDocument = id;
+        dialog = Dialog.dirtyClose;
+        ++dialogEpoch;
+    }
+
+    private void removeDocument(ulong id) @safe
+    {
+        foreach (i, tab; tabs) if (tab.id == id)
+        {
+            tabs = tabs[0 .. i] ~ tabs[i + 1 .. $];
+            if (activeTab > i) --activeTab;
+            else if (activeTab >= tabs.length) activeTab = tabs.length ? tabs.length - 1 : 0;
+            break;
+        }
+    }
+
+    private void continueExit() @safe
+    {
+        foreach (tab; tabs)
+            if (tab.dirty || tab.durabilityWarning.length)
+            {
+                showDirtyClose(tab.id);
+                return;
+            }
+        quitRequested = true;
+    }
+
+    private void requestClose(bool all) @safe
+    {
+        if (filesBusy)
+        {
+            status = "Wait for pending file operations before closing.";
+            return;
+        }
+        exiting = all;
+        if (all) continueExit();
+        else if (document.dirty || document.durabilityWarning.length) showDirtyClose(document.id);
+        else removeDocument(document.id);
+    }
+
+    /// Native window closure uses the same policy as the Quit command.
+    void closeRequested(H)(ref H host)
+    {
+        if (pathDialog) execute(CommandId(Command.cancel));
+        if (dialog == Dialog.dirtyClose) exiting = true;
+        else if (replacement !is null)
+        {
+            closingDocument = replacement.document;
+            exiting = true;
+        }
+        else execute(CommandId(Command.quit));
+        if (quitRequested) host.quit();
+    }
+
+    private void finishClose(ulong id) @safe
+    {
+        if (closingDocument != id) return;
+        removeDocument(id);
+        closingDocument = 0;
+        dialog = Dialog.none;
+        ++dialogEpoch;
+        if (exiting) continueExit();
+    }
+
     private void submitSave(SaveIntent intent, SaveAuthorization authorization) @safe
     {
         const request = files.save(intent.path, intent.revision, intent.bom, intent.document, authorization);
@@ -225,6 +300,7 @@ struct EditorApp
         {
             foreach (tab; tabs) if (tab.id == intent.document) tab.saving = false;
             status = request.error;
+            if (closingDocument == intent.document) showDirtyClose(intent.document);
             return;
         }
         saves[request.value.value] = intent;
@@ -267,6 +343,7 @@ struct EditorApp
                 {
                     foreach (tab; tabs) if (tab.id == intent.document) tab.saving = false;
                     status = result.path ~ ": " ~ result.error;
+                    if (closingDocument == intent.document) showDirtyClose(intent.document);
                 }
                 else if (result.operation == FileOperation.probe)
                 {
@@ -276,6 +353,7 @@ struct EditorApp
                         endPicker(false);
                         lantern.reset();
                         document.field.run(EditCommand.of(EditKind.blur), MonoTime.currTime);
+                        foreach (i, tab; tabs) if (tab.id == intent.document) activeTab = i;
                         ++dialogEpoch;
                         replacement = intent;
                         replacementWarning = (result.externalChange ? "The destination differs from the saved version. " : "")
@@ -296,7 +374,16 @@ struct EditorApp
                         tab.saving = false;
                         tab.durabilityWarning = result.receipt.durable ? null : result.receipt.warning;
                     }
-                    status = result.receipt.durable ? "Saved." : "Written, but durability is unconfirmed: " ~ result.receipt.warning;
+                    status = (result.receipt.durable ? "Saved." : "Written, but durability is unconfirmed.")
+                        ~ (result.receipt.warning.length ? " " ~ result.receipt.warning : "");
+                    if (closingDocument == intent.document)
+                    {
+                        bool ready;
+                        foreach (tab; tabs) if (tab.id == intent.document)
+                            ready = !tab.dirty && !tab.durabilityWarning.length;
+                        if (ready) finishClose(intent.document);
+                        else showDirtyClose(intent.document);
+                    }
                 }
                 continue;
             }
@@ -332,7 +419,9 @@ struct EditorApp
             opened.language = canonicalLanguageOfPath(result.path);
             if (opened.language == "txt" || opened.language == "log") opened.language = "text";
             if (activate && tabs.length == 1 && tabs[0].field.empty && !tabs[0].dirty && !tabs[0].path.length
-                && tabs[0].name == "Untitled")
+                && tabs[0].name == "Untitled" && !tabs[0].saving
+                && tabs[0].field.state.history.length == 1
+                && !tabs[0].field.state.composition.active && !tabs[0].field.state.record.pendingRequest)
                 tabs[0] = opened;
             else
             {
@@ -399,6 +488,7 @@ struct EditorApp
     private size_t selectionAnchor;
     private enum size_t tabHitBase = 0x7400_0000;
     private enum size_t dialogConfirmHit = 0x7500_0000, dialogCancelHit = 0x7500_0001;
+    private enum size_t dialogDiscardHit = 0x7600_0000;
 
     /// Retain the committed frame for event routing; no second layout/hit model.
     void paint(H)(ref H host, const WidgetTree tree, const Frame[] frames)
@@ -428,7 +518,8 @@ struct EditorApp
             {
                 if (hit == dialogConfirmHit + 2 * dialogEpoch) execute(CommandId(Command.confirm));
                 else if (hit == dialogCancelHit + 2 * dialogEpoch) execute(CommandId(Command.cancel));
-                else if (dialog != Dialog.none && displayed !is null)
+                else if (hit == dialogDiscardHit + dialogEpoch) execute(CommandId(Command.discard));
+                else if (pathDialog && displayed !is null)
                 {
                     const offset = sourceOffsetAt(displayed.tree, displayed.frames,
                         Point(cast(int) pointer.pos.x, cast(int) pointer.pos.y));
@@ -473,13 +564,13 @@ struct EditorApp
             pasteRequest = chunk.request;
             pasteDocument = document.id;
             pastePalette = commands.palette.active ? commands.palette.snapshot.ticket.value : 0;
-            pasteDialog = dialog != Dialog.none ? dialogEpoch : 0;
+            pasteDialog = pathDialog ? dialogEpoch : 0;
         }
         pasteBytes ~= chunk.text[];
         if (!chunk.last) return;
         collectingPaste = false;
         scope (exit) pasteBytes.length = 0;
-        if (document.id != pasteDocument || pasteDialog != (dialog != Dialog.none ? dialogEpoch : 0)
+        if (document.id != pasteDocument || pasteDialog != (pathDialog ? dialogEpoch : 0)
             || (commands.palette.active ? commands.palette.snapshot.ticket.value : 0) != pastePalette)
         {
             status = "Paste cancelled because its input target changed.";
@@ -503,7 +594,10 @@ struct EditorApp
 
     size_t tabCount() const @safe pure nothrow @nogc => tabs.length;
 
-    CommandContext context() @safe => CommandContext(document.id, bindings, modal);
+    private bool pathDialog() const scope @safe pure nothrow @nogc
+        => dialog == Dialog.openPath || dialog == Dialog.savePath;
+
+    CommandContext context() @safe => CommandContext(document.id, bindings, modal, dialog == Dialog.dirtyClose);
 
     /// Admit bytes before replacing any active state; unsupported UTF-8 leaves every tab intact.
     bool openBytes(string name, string bytes) @safe
@@ -527,12 +621,14 @@ struct EditorApp
     {
         if (tabs.length) return;
         tabs ~= new Document(nextId++, "Untitled");
-        configure(EditorTarget.terminal);
+        configure(target);
     }
 
     private void configure(EditorTarget selected) @safe
     {
         target = selected;
+        commands.query.target = target;
+        pathInput.target = target;
         bindings = commandBindings(target);
         if (!choosingTheme)
         {
@@ -564,7 +660,17 @@ struct EditorApp
             break;
         case Command.confirm:
             if (replacement !is null) resolveOverwrite(true);
-            else if (dialog != Dialog.none)
+            else if (dialog == Dialog.dirtyClose)
+            {
+                dialog = Dialog.none;
+                ++dialogEpoch;
+                if (document.path.length)
+                {
+                    if (!saveTo(document.path)) showDirtyClose(closingDocument);
+                }
+                else beginPath(Dialog.savePath);
+            }
+            else if (pathDialog)
             {
                 const requested = dialog;
                 const path = pathInput.text;
@@ -572,15 +678,19 @@ struct EditorApp
                 dialog = Dialog.none;
                 ++dialogEpoch;
                 if (requested == Dialog.openPath) openPath(path);
-                else saveTo(path);
+                else if (!saveTo(path) && closingDocument) showDirtyClose(closingDocument);
             }
             break;
         case Command.cancel:
             if (replacement !is null) resolveOverwrite(false);
             dialog = Dialog.none;
+            closingDocument = 0;
+            exiting = false;
             ++dialogEpoch;
             pathInput.run(EditCommand.of(EditKind.blur), now);
             break;
+        case Command.closeTab: requestClose(false); break;
+        case Command.discard: finishClose(closingDocument); break;
         case Command.palette:
             endPicker(false);
             commands.open(PaletteInvocation(document.id, document.id), context);
@@ -653,12 +763,7 @@ struct EditorApp
                 else document.field.run(commandOf(cast(EditorAction) id.argument), now);
             }
             break;
-        case Command.quit:
-            bool dirty;
-            foreach (tab; tabs) dirty |= tab.dirty;
-            if (dirty) status = "Unsaved changes: save or discard before closing.";
-            else quitRequested = true;
-            break;
+        case Command.quit: requestClose(true); break;
         }
     }
 
@@ -685,7 +790,7 @@ struct EditorApp
     {
         ensureInitialized();
         if (key.action == KeyAction.release) return;
-        if (dialog != Dialog.none && pathInput.state.composition.active)
+        if (pathDialog && pathInput.state.composition.active)
         {
             pathInput.key(key, now);
             return;
@@ -699,10 +804,13 @@ struct EditorApp
         document.followCaret = true;
         const resolved = step(lantern, bindings, key, context);
         if (resolved.kind == StepKind.execute)
+        {
+            if (key.action == KeyAction.repeat && modal) return;
             execute(CommandId(resolved.cmd.cmd, resolved.cmd.arg), now);
+        }
         else if (resolved.kind == StepKind.unbound)
         {
-            if (dialog != Dialog.none) pathInput.key(key, now);
+            if (pathDialog) pathInput.key(key, now);
             else if (!modal) document.field.key(key, now);
         }
     }
@@ -723,7 +831,7 @@ struct EditorApp
             (in PointerEvent pointer) { this.pointer(pointer); },
             (in CompositionEvent update) {
                 withPreedit(host, update, (scope const(char)[] preedit) {
-                    if (dialog != Dialog.none) pathInput.compose(update, preedit, MonoTime.currTime);
+                    if (pathDialog) pathInput.compose(update, preedit, MonoTime.currTime);
                     else if (modal) return;
                     else if (commands.palette.active) commands.query.compose(update, preedit, MonoTime.currTime);
                     else document.field.compose(update, preedit, MonoTime.currTime);
@@ -734,7 +842,7 @@ struct EditorApp
                 document.firstLine = wanted < 0 ? 0 : cast(size_t) wanted;
                 document.followCaret = false;
             },
-            (in EndOfInput _) { execute(CommandId(Command.quit)); },
+            (in EndOfInput _) { closeRequested(host); },
             (in _) {});
         forwardClipboard(document.field, host);
         forwardClipboard(commands.query, host);
@@ -747,6 +855,11 @@ struct EditorApp
     {
         ensureInitialized();
         pollDocuments();
+        if (quitRequested)
+        {
+            host.quit();
+            return WidgetTree.init;
+        }
         if (filesBusy) host.wakeIn(8.msecs);
         if (!filesBusy && startupCommand != Command.none)
         {
@@ -803,15 +916,20 @@ struct EditorApp
         {
             children ~= b.add(Widget(kind: WidgetKind.text, text: replacement !is null
                 ? "Replace existing file: " ~ replacement.path
-                : dialog == Dialog.openPath ? "Open file" : "Save as", slot: Slot.info));
+                : dialog == Dialog.dirtyClose ? "Close " ~ document.name ~ ": Save, Discard or Cancel?"
+                : dialog == Dialog.openPath ? "Open file" : "Save as", slot: Slot.info,
+                wrap: TextWrap.greedy));
             if (replacement !is null)
                 children ~= b.add(Widget(kind: WidgetKind.text, text: replacementWarning,
                     wrap: TextWrap.greedy, slot: Slot.warn));
-            if (dialog != Dialog.none)
+            if (pathDialog)
                 children ~= editorView(b, pathInput.state, EditorViewOptions(visibleLines: 1, placeholder: "Path…"));
             uint[] actions;
-            actions ~= chip(b, replacement !is null ? "Replace this time" : "Enter: confirm", dialogConfirmHit + 2 * dialogEpoch,
+            actions ~= chip(b, replacement !is null ? "Replace this time"
+                : dialog == Dialog.dirtyClose ? "Save" : "Enter: confirm", dialogConfirmHit + 2 * dialogEpoch,
                 false, ControlSize(rows: 3));
+            if (dialog == Dialog.dirtyClose)
+                actions ~= chip(b, "Discard", dialogDiscardHit + dialogEpoch, false, ControlSize(rows: 3));
             actions ~= chip(b, "Esc: cancel", dialogCancelHit + 2 * dialogEpoch, false, ControlSize(rows: 3));
             children ~= b.add(Widget(kind: WidgetKind.row, children: actions, height: SizeSpec.fixed(3)));
             children ~= b.add(Widget(kind: WidgetKind.text, height: SizeSpec.grow()));
@@ -874,7 +992,9 @@ struct EditorApp
         if (status.length) children ~= b.add(Widget(kind: WidgetKind.text, text: status, slot: Slot.warn));
         if (document.durabilityWarning.length)
             children ~= b.add(Widget(kind: WidgetKind.text, text: "Durability warning: " ~ document.durabilityWarning, slot: Slot.warn));
-        children ~= b.add(Widget(kind: WidgetKind.text, text: "UTF-8  •  " ~ (document.dirty ? "Modified" : "Saved"),
+        children ~= b.add(Widget(kind: WidgetKind.text, text: "UTF-8  •  "
+            ~ (document.dirty ? "Modified" : document.durabilityWarning.length ? "Written" : "Saved")
+            ~ (document.durabilityWarning.length ? " • durability unconfirmed" : ""),
             slot: Slot.muted, height: SizeSpec.fixed(1)));
         return b.finish(b.add(Widget(kind: WidgetKind.column, children: children,
             width: SizeSpec.grow(), height: SizeSpec.grow(), padding: Insets(1, 1, 1, 1))));
@@ -909,6 +1029,8 @@ struct EditorApp
 @safe unittest
 {
     import sparkles.ui_app.record : RecordingHost;
+    import sparkles.input : Key;
+    import sparkles.ui.editor.keys : windowCommandMods;
     EditorApp app;
     app.execute(CommandId(Command.palette));
     assert(app.commands.palette.rowCount > 0);
@@ -917,6 +1039,10 @@ struct EditorApp
     scope (exit) app.shutdown(host);
     app.view(host);
     assert(app.commands.palette.active && app.commands.palette.rowCount > 0);
+    app.commands.insert("ab", app.context);
+    app.handleKey(KeyEvent(Key.char_, 'a', windowCommandMods));
+    app.handleKey(KeyEvent(Key.char_, 'x'));
+    assert(app.commands.query.text == "x", "Startup input adopts the native host's editing keys.");
 }
 
 /// Chunked transport is one paste and one undo revision, including clipboard answers.
@@ -1203,6 +1329,7 @@ struct EditorApp
     import core.thread : Thread;
     import core.time : seconds;
     import sparkles.test_utils.tmpfs : TmpFS;
+    import sparkles.input : Key;
     import std.file : readText, write;
     auto fixture = TmpFS.create();
     const path = fixture.writeFile("external");
@@ -1211,14 +1338,20 @@ struct EditorApp
     app.document.field.insert("captured");
     foreach (accept; [false, true])
     {
+        const savedDocument = app.document.id;
         assert(app.saveTo(path));
+        app.execute(CommandId(Command.newTab));
         const until = MonoTime.currTime + 3.seconds;
         while (app.filesBusy && MonoTime.currTime < until)
         {
             app.pollDocuments();
             (() @trusted => Thread.yield())();
         }
-        assert(!app.filesBusy && app.overwritePending && app.document.saving);
+        assert(!app.filesBusy && app.overwritePending);
+        assert(app.document.id == savedDocument, "Overwrite consent must show its captured document.");
+        assert(app.document.saving);
+        app.handleKey(KeyEvent(Key.enter, action: KeyAction.repeat));
+        assert(app.overwritePending && !app.filesBusy, "A held Enter cannot authorize a newly opened overwrite decision.");
         assert((() @trusted => readText(path))() == "external");
         const original = app.document.id;
         app.execute(CommandId(Command.newTab));
@@ -1240,4 +1373,224 @@ struct EditorApp
         assert(app.document.dirty);
     }
     assert(app.document.saved == Text("captured") && app.document.field.text == "captured later");
+}
+
+/// Cancel retains focus; Discard authorizes only the requested dirty document.
+@("editor.app.closeDecisionsArePerDocument")
+@safe unittest
+{
+    EditorApp app;
+    app.document.field.insert("keep A");
+    const first = app.document.id;
+    app.execute(CommandId(Command.newTab));
+    app.document.field.insert("close B");
+    const second = app.document.id;
+    app.execute(CommandId(Command.closeTab));
+    assert(app.tabCount == 2 && !app.quitRequested);
+    app.execute(CommandId(Command.cancel));
+    assert(app.document.id == second && app.document.field.text == "close B");
+    app.execute(CommandId(Command.closeTab));
+    app.execute(CommandId(Command.discard));
+    assert(app.tabCount == 1 && app.document.id == first && app.document.field.text == "keep A");
+    app.execute(CommandId(Command.quit));
+    app.execute(CommandId(Command.cancel));
+    assert(!app.quitRequested && app.document.id == first && app.document.field.text == "keep A");
+    app.execute(CommandId(Command.quit));
+    app.execute(CommandId(Command.discard));
+    assert(app.quitRequested);
+}
+
+/// Modified shortcuts cannot fall through to plain-letter destructive decisions.
+@("editor.app.modifiedKeysCannotDiscard")
+@safe unittest
+{
+    import sparkles.input : Key, Mods;
+    EditorApp app;
+    app.document.field.insert("keep this");
+    const id = app.document.id;
+    app.execute(CommandId(Command.closeTab));
+    foreach (mods; [Mods(ctrl: true), Mods(alt: true), Mods(super_: true), Mods(shift: true)])
+    {
+        app.handleKey(KeyEvent(Key.char_, 'd', mods));
+        assert(app.tabCount == 1 && app.document.id == id && app.document.field.text == "keep this");
+    }
+    app.execute(CommandId(Command.cancel));
+    assert(app.document.field.text == "keep this");
+}
+
+/// An empty tab remains owned while history or an outstanding save depends on it.
+@("editor.app.backgroundOpenRetainsEmptyTabOwnership")
+@safe unittest
+{
+    version (Posix) {}
+    else
+    {
+        import sparkles.test_runner.skip : skipTest;
+        skipTest("The native POSIX file adapter is not available.");
+    }
+    import core.thread : Thread;
+    import core.time : seconds;
+    import sparkles.test_utils.tmpfs : TmpFS;
+    import std.path : buildPath;
+    auto fixture = TmpFS.create();
+    const path = fixture.writeFile("opened");
+    foreach (saving; [false, true])
+    {
+        EditorApp app;
+        scope (exit) app.dispose();
+        const original = app.document.id;
+        if (!saving)
+        {
+            app.document.field.insert("undoable");
+            app.execute(CommandId(Command.edit, EditorAction.undo));
+        }
+        assert(app.openPath(path));
+        if (saving) assert(app.saveTo(buildPath(fixture.dir, "saved-empty.txt")));
+        const until = MonoTime.currTime + 3.seconds;
+        while (app.filesBusy && MonoTime.currTime < until)
+        {
+            app.pollDocuments();
+            (() @trusted => Thread.yield())();
+        }
+        assert(!app.filesBusy && app.tabCount == 2);
+        app.execute(CommandId(Command.previousTab));
+        assert(app.document.id == original);
+        if (!saving)
+        {
+            app.execute(CommandId(Command.edit, EditorAction.redo));
+            assert(app.document.field.text == "undoable");
+        }
+        else assert(app.document.path == buildPath(fixture.dir, "saved-empty.txt") && !app.document.saving);
+    }
+}
+
+/// Closing the last native tab preserves editing policy before another frame.
+@("editor.app.lastNativeTabRetainsKeyboardPolicy")
+@safe unittest
+{
+    import sparkles.input : Key, Mods;
+    import sparkles.ui_app.record : RecordingHost;
+    EditorApp app;
+    scope (exit) app.dispose();
+    RecordingHost host;
+    host.backend = Backend.gui;
+    cast(void) app.view(host);
+    app.execute(CommandId(Command.closeTab));
+    app.document.field.insert("keep this");
+    app.handleKey(KeyEvent(Key.char_, 'w', Mods(ctrl: true)));
+    assert(app.document.field.text == "keep this", "Native Close must not become terminal kill-word.");
+    app.execute(CommandId(Command.cancel));
+}
+
+/// Native close cancels path input and promotes a tab-close decision to whole-app exit.
+@("editor.app.nativeCloseResolvesExistingModal")
+@safe unittest
+{
+    import sparkles.ui_app.record : RecordingHost;
+    foreach (command; [Command.open, Command.saveAs])
+    {
+        EditorApp app;
+        RecordingHost host;
+        app.execute(CommandId(command));
+        app.closeRequested(host);
+        assert(app.quitRequested && host.quitRequested);
+    }
+    EditorApp app;
+    scope (exit) app.dispose();
+    RecordingHost host;
+    app.document.field.insert("keep A");
+    app.execute(CommandId(Command.newTab));
+    app.document.field.insert("close B");
+    app.execute(CommandId(Command.closeTab));
+    app.closeRequested(host);
+    app.execute(CommandId(Command.discard));
+    assert(!app.quitRequested && app.document.field.text == "keep A");
+    app.execute(CommandId(Command.discard));
+    cast(void) app.view(host);
+    assert(app.quitRequested && host.quitRequested);
+}
+
+/// Saving during exit waits for its receipt and asks the host to quit on completion.
+@("editor.app.saveBeforeExitWaitsForReceipt")
+@safe unittest
+{
+    version (Posix) {}
+    else
+    {
+        import sparkles.test_runner.skip : skipTest;
+        skipTest("The native POSIX file adapter is not available.");
+    }
+    import core.thread : Thread;
+    import core.time : seconds;
+    import sparkles.test_utils.tmpfs : TmpFS;
+    import sparkles.ui_app.record : RecordingHost;
+    import sparkles.ui.geometry : Size;
+    import std.file : readText;
+    auto fixture = TmpFS.create();
+    const path = fixture.writeFile("disk");
+    EditorApp app;
+    scope (exit) app.dispose();
+    assert(app.openPath(path));
+    const until = MonoTime.currTime + 3.seconds;
+    while (app.filesBusy && MonoTime.currTime < until)
+    {
+        app.pollDocuments();
+        (() @trusted => Thread.yield())();
+    }
+    app.document.field.insert("new ");
+    app.execute(CommandId(Command.quit));
+    app.execute(CommandId(Command.confirm));
+    assert(app.filesBusy && !app.quitRequested);
+    while (app.filesBusy && MonoTime.currTime < until)
+    {
+        app.pollDocuments();
+        (() @trusted => Thread.yield())();
+    }
+    assert(app.overwritePending && !app.quitRequested);
+    app.execute(CommandId(Command.confirm));
+    RecordingHost host;
+    host.size = Size(80, 28);
+    while (app.filesBusy && MonoTime.currTime < until)
+    {
+        app.pollDocuments();
+        (() @trusted => Thread.yield())();
+    }
+    cast(void) app.view(host);
+    assert(app.quitRequested && host.quitRequested);
+    assert((() @trusted => readText(path))() == "new disk");
+}
+
+/// A failed close-time save retains dirty text and returns to a cancellable decision.
+@("editor.app.failedSaveCannotCloseDirtyDocument")
+@safe unittest
+{
+    version (Posix) {}
+    else
+    {
+        import sparkles.test_runner.skip : skipTest;
+        skipTest("The native POSIX file adapter is not available.");
+    }
+    import core.thread : Thread;
+    import core.time : seconds;
+    import sparkles.input : Key;
+    import sparkles.test_utils.tmpfs : TmpFS;
+    auto fixture = TmpFS.create();
+    EditorApp app;
+    scope (exit) app.dispose();
+    app.document.field.insert("must survive");
+    const id = app.document.id;
+    app.execute(CommandId(Command.quit));
+    app.execute(CommandId(Command.confirm));
+    foreach (c; fixture.dir) app.handleKey(KeyEvent(Key.char_, c));
+    app.handleKey(KeyEvent(Key.enter));
+    const until = MonoTime.currTime + 3.seconds;
+    while (app.filesBusy && MonoTime.currTime < until)
+    {
+        app.pollDocuments();
+        (() @trusted => Thread.yield())();
+    }
+    assert(!app.filesBusy && !app.quitRequested && app.document.id == id && app.document.dirty);
+    assert(app.document.field.text == "must survive" && app.status.length);
+    app.execute(CommandId(Command.cancel));
+    assert(!app.quitRequested && app.document.id == id && app.document.field.text == "must survive");
 }

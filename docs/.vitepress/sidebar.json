@@ -2306,6 +2306,10 @@
             "link": "/libs/ui/reference/numeric-editors"
           },
           {
+            "text": "Application close decisions",
+            "link": "/libs/ui-app/reference/application-close"
+          },
+          {
             "text": "Specimen font hosting",
             "link": "/libs/ui-app/reference/specimen-fonts"
           },

@@ -359,3 +359,68 @@ monotonic timestamps to the editor; a regression test verifies that typing
 separated by a one-second pause undoes as two groups. Native window-close
 interception, dirty-close decisions, recovery and Android providers remain
 open; these tests do not establish those capabilities.
+
+### Dirty-close decisions and native close policy — 2026-11-07
+
+The editor suite passes 24 tests, including per-document Cancel/Discard,
+Save before exit with a captured-revision receipt, and failed Save retaining
+dirty text and returning to a cancellable decision. Exit approval reached
+from a worker completion is forwarded to the host from the next view.
+Closing waits for pending file operations; successful writes with unconfirmed
+durability return to the decision and retain a persistent warning.
+
+The shared `requestAppClose` policy test proves deferred approval and the
+immediate-close default for ordinary components. The Vulkan host routes both
+its client-frame close action and window-system close event through this
+policy. The editor hook uses its Quit command's Save/Discard/Cancel workflow.
+The full host suite passes 148 tests in the native development shell. An
+initial run outside the shell failed four existing font-fixture environment
+assertions; the configured rerun passes them.
+
+The checked [native close probe](../../../apps/editor/tools/native-close-probe.d)
+starts its own Xvfb server and launches the real Vulkan editor. It inserts a
+character, sends `WM_DELETE_WINDOW`, verifies the process remains alive,
+cancels with Escape, requests close again and explicitly discards with D.
+The editor exits successfully only after Discard. This exercises X11 event
+translation and the live host loop. Repeat it after building the editor:
+
+```sh
+dub run --single apps/editor/tools/native-close-probe.d -b checked
+```
+
+Regressions also verify that overwrite consent returns to its captured tab
+after a tab switch during inspection, that a repeated Enter cannot accept a
+new decision, and that startup palette input adopts native editing keys.
+The checked close-policy example prints `close deferred` then `close approved`.
+Client-frame pointer-close, Wayland and Android lifecycle acceptance remain
+separate from the X11 probe.
+
+Recovery/session storage, abrupt interruption, native close during unavailable
+surface startup, and Android provider guarantees remain open gates. The legacy
+raylib host retains its old native-close behavior.
+
+### Argon adversarial review follow-up — 2026-11-07
+
+An `agy` review using `gemini-4-argon-medium` identified destructive modified
+shortcut fallthrough, replacement of an empty tab with live save/history
+ownership, loss of native key policy after closing the last tab, and ignored
+native close requests during another decision. Regression tests reproduced
+each issue before its fix. All 28 editor tests now pass. Modal modifiers use
+the keymap's terminal-scope mechanism, so they still reach path-field editing
+without reaching plain-letter Discard. Empty-tab replacement checks history,
+save, composition and clipboard ownership. Reinitialization preserves the
+host's selected editor target. Native close cancels transient path input or
+promotes a pending tab/save decision to whole-application exit.
+
+The review also identified misleading durability presentation and lost cleanup
+warnings. A committed revision still records written bytes, while the status
+now says Written with unconfirmed durability rather than Saved; the persistent
+warning continues to block implicit close. Successful saves retain cleanup
+warnings in status. Symlink and unreadable/over-limit destination refusal
+remain conservative failures that preserve the document; no weaker write is
+silently attempted when inspection fails.
+
+The first review stopped producing output without a final report and was
+interrupted. A second invocation with a five-minute limit returned the concrete
+findings above. This review covers the file/close checkpoint, not the remaining
+recovery, provider, Unicode or workload acceptance gates.

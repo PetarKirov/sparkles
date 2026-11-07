@@ -252,6 +252,46 @@ private void shutdownApp(A, H)(ref A app, ref H host)
 }
 
 /**
+Ask the component to resolve a native close request. An optional
+`app.closeRequested(ref host)` may defer closure to a later frame; it calls
+`host.quit()` only once closure is approved. Without the hook, quit immediately.
+*/
+void requestAppClose(A, H)(ref A app, ref H host)
+{
+    static if (__traits(hasMember, A, "closeRequested"))
+        app.closeRequested(host);
+    else host.quit();
+}
+
+/// Native close requests default to quitting; an app hook may defer the decision.
+@("ui_app.run_app.closeRequestCanBeDeferred")
+@safe unittest
+{
+    static struct Deferred
+    {
+        bool allow;
+        size_t asked;
+        void closeRequested(ref RecordingHost host) @safe
+        {
+            ++asked;
+            if (allow) host.quit();
+        }
+    }
+    Deferred app;
+    RecordingHost host;
+    requestAppClose(app, host);
+    assert(app.asked == 1 && !host.quitRequested);
+    app.allow = true;
+    requestAppClose(app, host);
+    assert(app.asked == 2 && host.quitRequested);
+    static struct Ordinary {}
+    Ordinary ordinary;
+    RecordingHost defaultHost;
+    requestAppClose(ordinary, defaultHost);
+    assert(defaultHost.quitRequested);
+}
+
+/**
 Runs a component: picks a backend under `policy`, opens it, and drives
 `app.view`/`app.handle` until the application quits.
 
@@ -274,6 +314,7 @@ RunOutcome runApp(A)(ref A app, in RunConfig cfg, BackendPolicy policy)
             (ref h) { app.paint(h, snap.tree, snap.frames); },
             noSetup,
             (ref h) { shutdownApp(app, h); },
+            (ref h) { requestAppClose(app, h); },
         )(cfg, policy);
     else
         return run!(
@@ -281,6 +322,7 @@ RunOutcome runApp(A)(ref A app, in RunConfig cfg, BackendPolicy policy)
             (ref h, in Event e) { app.handle(h, e); },
             noDraw, noSetup,
             (ref h) { shutdownApp(app, h); },
+            (ref h) { requestAppClose(app, h); },
         )(cfg, policy);
 }
 

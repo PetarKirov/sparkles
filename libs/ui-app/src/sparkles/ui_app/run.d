@@ -16,7 +16,7 @@ module sparkles.ui_app.run;
 import sparkles.ui_app.backend : Backend, BackendPolicy, isInteractive,
     pickBackend, platformForcedBackend;
 import sparkles.core_cli.args : failRun, ranOk, RunExpected;
-import sparkles.ui_app.host : noDraw, noSetup, noShutdown, RunConfig, windowTitle;
+import sparkles.ui_app.host : noDraw, noSetup, noShutdown, quitOnClose, RunConfig, windowTitle;
 
 /// Why a run did not happen. `ok` is the only value that means a loop ran.
 enum RunOutcome : ubyte
@@ -156,13 +156,16 @@ Params:
         a no-op.
     shutdown = called once after the loop and its daemons stop, before the
         host's surface closes, as `(ref host)`. Defaults to a no-op.
+    close = called for a native window-close request, as `(ref host)`. The
+        default calls `host.quit()`. A callback may defer that call while
+        rendering a decision; native close requests alone no longer close it.
     cfg = the run configuration, including the window/font request
     policy = the backend decision's inputs. Its `guiCompiledIn` is overwritten
         with the truth, so a caller cannot accidentally claim an arm this build
         does not carry.
 */
 RunOutcome run(alias present, alias handle, alias draw = noDraw,
-    alias setup = noSetup, alias shutdown = noShutdown)(in RunConfig cfg, BackendPolicy policy)
+    alias setup = noSetup, alias shutdown = noShutdown, alias close = quitOnClose)(in RunConfig cfg, BackendPolicy policy)
 {
     const arms = compiledArms();
     policy.guiCompiledIn = arms.gui;
@@ -196,7 +199,7 @@ RunOutcome run(alias present, alias handle, alias draw = noDraw,
                 req.extraFontSources = cfg.extraFontSources.dup;
                 if (cfg.hasLaunchBackground)
                     req.ground = cfg.launchBackground;
-                return runNative!(present, handle, draw, setup, shutdown)(cfg, req)
+                return runNative!(present, handle, draw, setup, shutdown, close)(cfg, req)
                     ? RunOutcome.ok : RunOutcome.openFailed;
             }
             else version (UiAppGui)

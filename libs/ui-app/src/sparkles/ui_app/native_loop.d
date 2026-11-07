@@ -49,7 +49,7 @@ import sparkles.ui_app.backend : Backend;
 import sparkles.ui_app.gui_options : defaultGuiFont, FontRequest, WindowCells, WindowSystem;
 import sparkles.ui_app.interface_font : InterfaceMeasure, uiFontFamilyOf, uiStepSizes, xHeightRatio;
 import sparkles.ui_app.host : HostState, isHost, noDraw, noSetup, noShutdown, PointerUnit,
-    RunConfig, TouchGestures, withRealSize;
+    quitOnClose, RunConfig, TouchGestures, withRealSize;
 import sparkles.ui_app.lifecycle : Failure, FrameResult, Lifecycle, Rebuild, Surface;
 import sparkles.ui_app.frame_title : fitTitle, TitleFace, titleCssPx, titleCssPxOf,
     titleFacePattern, titlePatternOf, TitleStrip;
@@ -1421,7 +1421,7 @@ Runs `present`/`handle` in a native window until the application quits or
 the window closes. `false` when no window, font or device could be opened.
 */
 bool runNative(alias present, alias handle, alias draw = noDraw, alias setup = noSetup,
-    alias shutdown = noShutdown)(in RunConfig cfg, in NativeRequest request) @system
+    alias shutdown = noShutdown, alias close = quitOnClose)(in RunConfig cfg, in NativeRequest request) @system
 {
     DefaultLoop loop;
     if (DefaultLoop.create(loop, LoopConfig()).hasError)
@@ -1458,7 +1458,7 @@ bool runNative(alias present, alias handle, alias draw = noDraw, alias setup = n
         bool drove;
         const opened = openNative!((ref wsi) {
             enum paced = backendKindOf!(typeof(wsi)) != BackendKind.x11;
-            drove = drive!(present, handle, draw, setup, shutdown)(wsi, loop, cfg, request,
+            drove = drive!(present, handle, draw, setup, shutdown, close)(wsi, loop, cfg, request,
                 paced: paced);
         })(loop, preferenceOf(cfg.native.windowSystem), wsiConfig);
         if (opened.hasError)
@@ -1650,7 +1650,7 @@ package string enabledOn(bool device, bool swapchain) @safe pure nothrow @nogc
     assert(enabledOn(false, false) == "off (not offered)");
 }
 
-private bool drive(alias present, alias handle, alias draw, alias setup, alias shutdown,
+private bool drive(alias present, alias handle, alias draw, alias setup, alias shutdown, alias close,
     Wsi)(ref Wsi wsi, ref DefaultLoop loop, in RunConfig cfg, in NativeRequest request,
     bool paced) @system
 {
@@ -2836,6 +2836,12 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
     taken or not, so the frame is drawn again.
     */
     bool frameDirty;
+    void requestWindowClose()
+    {
+        close(host);
+        if (host.quitRequested) lc.close();
+        else lc.exposed();
+    }
     bool routeFrame(in sparkles.wsi.events.PointerEvent p)
     {
         if (!session.frame.active)
@@ -2883,7 +2889,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                         cast(void) wsi.setMinimized(window);
                     break;
                 case FrameAction.close:
-                    lc.close();
+                    requestWindowClose();
                     break;
                 case FrameAction.windowMenu:
                     static if (__traits(hasMember, Wsi, "showWindowMenu"))
@@ -3009,7 +3015,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                 (in PresentedEvent p) { onPresented(p); input_ = false; },
                 (in ExposedEvent _) { lc.exposed(); input_ = false; },
                 (in OccludedEvent o) { lc.occluded(o.occluded); input_ = false; },
-                (in CloseRequestedEvent _) { lc.close(); input_ = false; },
+                (in CloseRequestedEvent _) { requestWindowClose(); input_ = false; },
                 (in MemoryPressureEvent m) { lc.memoryPressure(m.critical); input_ = false; },
                 (in DataOfferEvent _) {
                     noteOffer(e);
