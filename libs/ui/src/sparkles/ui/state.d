@@ -430,20 +430,104 @@ DocRow[] documentRows(in WidgetTree tree, in Frame[] frames)
     // the paragraph after it look like the block's body).
     int clipTop = int.min, clipBottom = int.max;
 
+    // Two walks over the same spans: the first sizes each row and its source
+    // range, the second copies the text into one buffer per channel. Appending
+    // span by span grew every row a few bytes at a time — a 5k-line code view
+    // is 220k spans, and the appends were most of this function's time.
+    bool sizing = true;
+    auto textAt = new size_t[](rows.length);
+    auto sourceAt = new size_t[](rows.length);
+    char[] textBuf, sourceBuf;
+
     void addText(int y, const(char)[] text, size_t srcStart, size_t srcEnd)
     {
         if (y < 0 || y >= cast(int) rows.length || y < clipTop || y >= clipBottom)
             return;
-        rows[y].text ~= text;
-        if (srcStart != size_t.max)
+        const sourced = srcStart != size_t.max;
+        if (sizing)
         {
-            rows[y].sourceText ~= text;
-            if (srcStart < rows[y].srcStart)
-                rows[y].srcStart = srcStart;
-            if (srcEnd > rows[y].srcEnd)
-                rows[y].srcEnd = srcEnd;
+            textAt[y] += text.length;
+            if (sourced)
+            {
+                sourceAt[y] += text.length;
+                if (srcStart < rows[y].srcStart)
+                    rows[y].srcStart = srcStart;
+                if (srcEnd > rows[y].srcEnd)
+                    rows[y].srcEnd = srcEnd;
+            }
+            return;
+        }
+        textBuf[textAt[y] .. textAt[y] + text.length] = text[];
+        textAt[y] += text.length;
+        if (sourced)
+        {
+            sourceBuf[sourceAt[y] .. sourceAt[y] + text.length] = text[];
+            sourceAt[y] += text.length;
         }
     }
+
+    // One laid-out line of spans at row `y`. A line's spans usually slice one
+    // buffer end to end (a code line's clusters), so a contiguous run is
+    // copied once rather than cluster by cluster.
+    void addSpans(int y, scope const(TextSpan)[] spans)
+    {
+        if (y < 0 || y >= cast(int) rows.length || y < clipTop || y >= clipBottom)
+            return;
+        if (sizing)
+        {
+            auto row = &rows[y];
+            size_t text, source;
+            foreach (ref const s; spans)
+            {
+                text += s.text.length;
+                if (s.srcStart == size_t.max)
+                    continue;
+                source += s.text.length;
+                if (s.srcStart < row.srcStart)
+                    row.srcStart = s.srcStart;
+                if (s.srcEnd > row.srcEnd)
+                    row.srcEnd = s.srcEnd;
+            }
+            textAt[y] += text;
+            sourceAt[y] += source;
+            return;
+        }
+        size_t i;
+        while (i < spans.length)
+        {
+            const sourced = spans[i].srcStart != size_t.max;
+            const(char)[] run = spans[i].text;
+            size_t j = i + 1;
+            for (; j < spans.length; ++j)
+            {
+                const next = spans[j].text;
+                if ((spans[j].srcStart != size_t.max) != sourced
+                    || cast(size_t) next.ptr != cast(size_t) run.ptr + run.length)
+                    break;
+                // Adjacent slices: one slice over both.
+                run = () @trusted { return run.ptr[0 .. run.length + next.length]; }();
+            }
+            addText(y, run, sourced ? 0 : size_t.max, 0);
+            i = j;
+        }
+    }
+
+    // Each row's length becomes its start in the channel's buffer.
+    static char[] place(size_t[] at)
+    {
+        size_t total;
+        foreach (ref a; at)
+        {
+            const length = a;
+            a = total;
+            total += length;
+        }
+        return new char[](total);
+    }
+
+    // A row nothing reached keeps a null text, as it always had.
+    static const(char)[] slice(char[] buf, size_t start, size_t end)
+        => end > start ? buf[start .. end] : null;
 
     void walk(uint idx)
     {
@@ -465,13 +549,10 @@ DocRow[] documentRows(in WidgetTree tree, in Frame[] frames)
                 if (frames[idx].spanLines.length)
                 {
                     foreach (li, line; frames[idx].spanLines)
-                        foreach (ref const s; line)
-                            addText(inner.y + cast(int) li * frames[idx].lineRows, s.text,
-                                s.srcStart, s.srcEnd);
+                        addSpans(inner.y + cast(int) li * frames[idx].lineRows, line);
                 }
                 else
-                    foreach (ref const s; node.spans)
-                        addText(inner.y, s.text, s.srcStart, s.srcEnd);
+                    addSpans(inner.y, node.spans);
                 break;
             case glyph, line, scrollbar, box, image:
                 break;
@@ -494,6 +575,16 @@ DocRow[] documentRows(in WidgetTree tree, in Frame[] frames)
     }
 
     walk(tree.root);
+    textBuf = place(textAt);
+    sourceBuf = place(sourceAt);
+    const textStart = textAt.dup, sourceStart = sourceAt.dup;
+    sizing = false;
+    walk(tree.root);
+    foreach (y, ref row; rows)
+    {
+        row.text = slice(textBuf, textStart[y], textAt[y]);
+        row.sourceText = slice(sourceBuf, sourceStart[y], sourceAt[y]);
+    }
     return rows;
 }
 
@@ -947,6 +1038,39 @@ in (frames.length == tree.nodes.length,
     assert(rows[1].srcStart > 100 && rows[1].srcEnd <= 116);
 }
 
+
+@("ui.state.documentRows.rowsJoinInWalkOrderAndBlankRowsStayNull")
+@safe unittest
+{
+    import sparkles.ui.geometry : SizeSpec;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind;
+
+    // Row 0: a chrome cell, then a line whose source spans a synthetic marker
+    // interrupts. Row 1: a spacer nothing writes to. Row 2: one more line.
+    auto b = Builder();
+    const num = b.add(Widget(kind: WidgetKind.text, text: "7 "));
+    const line = b.add(Widget(kind: WidgetKind.rich, spans: [
+        TextSpan("ab", srcStart: 10, srcEnd: 12),
+        TextSpan("·"),
+        TextSpan("cd", srcStart: 12, srcEnd: 14),
+    ]));
+    const first = b.container(WidgetKind.row, [num, line]);
+    Widget gap = Widget(kind: WidgetKind.box);
+    gap.height = SizeSpec.fixed(1);
+    const spacer = b.add(gap);
+    const last = b.add(Widget(kind: WidgetKind.rich,
+        spans: [TextSpan("ef", srcStart: 20, srcEnd: 22)]));
+    auto tree = b.finish(b.container(WidgetKind.column, [first, spacer, last]));
+
+    const rows = documentRows(tree, layout(tree));
+    assert(rows.length == 3);
+    assert(rows[0].text == "7 ab·cd" && rows[0].sourceText == "abcd");
+    assert(rows[0].srcStart == 10 && rows[0].srcEnd == 14);
+    assert(rows[1].text is null && rows[1].sourceText is null);
+    assert(rows[1].srcStart == size_t.max);
+    assert(rows[2].text == "ef" && rows[2].sourceText == "ef");
+}
 // ── Scrollbar (STM2) ─────────────────────────────────────────────────────────
 
 /// A scrollbar thumb's resolved geometry on its track, in abstract units.
