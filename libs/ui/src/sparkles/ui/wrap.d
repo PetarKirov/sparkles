@@ -226,31 +226,57 @@ TextSpan[][] wrapSpans(F = typeof(null))(const(TextSpan)[] spans, int width, int
     bool clipToWidth = false, scope F measure = null, TextStyle inheritedStyle = TextStyle.init,
     bool measureMonotone = false)
 {
-    // The cell path is a pure function of the authored spans and the wrap
-    // parameters, and a document lays the same rows out several times (a
-    // gutter pass, then the final one; again after a theme change): planning
-    // costs far more than a lookup. A measurer's results depend on its faces,
-    // so a measured wrap is never cached.
+    // The rows are the caller's own: a measured layout commits advances into
+    // them, so a cached result is copied out.
     static if (is(F == typeof(null)))
     {
-        const authored = !(spans.length && spans[0].wrapPlan !is null);
-        if (authored)
-        {
-            const key = WrapCacheKey(width, hangIndent, algorithm, whitespace, clipToWidth,
-                inheritedStyle);
-            if (auto hit = wrapCache.find(key, spans))
-                return copyRows(hit);
-            // The rows borrow the spans they wrap: wrap the cache's own copy,
-            // or a caller reusing its text buffer rewrites the cached rows.
-            auto owned = WrapCache.ownedCopy(spans);
-            auto lines = wrapSpansUncached(owned, width, hangIndent, algorithm, whitespace,
-                clipToWidth, measure, inheritedStyle, measureMonotone);
-            wrapCache.store(key, owned, lines);
-            return copyRows(lines);
-        }
+        if (!(spans.length && spans[0].wrapPlan !is null))
+            return copyRows(cachedWrapSpans(spans, width, hangIndent, algorithm, whitespace,
+                clipToWidth, inheritedStyle));
     }
     return wrapSpansUncached(spans, width, hangIndent, algorithm, whitespace, clipToWidth,
         measure, inheritedStyle, measureMonotone);
+}
+
+/**
+$(LREF wrapSpans) on the cell path, without the copy: the rows may be the wrap
+cache's own, so they are read-only.
+
+A layout measuring in cells only reads its rows, and a document lays the same
+rows out several times — a gutter pass and the final one, and again on every
+resize. Copying each row out of the cache cost more than planning it the
+first time.
+*/
+const(TextSpan[])[] sharedWrapSpans(const(TextSpan)[] spans, int width, int hangIndent = 0,
+    TextWrap algorithm = TextWrap.greedy, WhitespaceMode whitespace = WhitespaceMode.collapse,
+    bool clipToWidth = false, TextStyle inheritedStyle = TextStyle.init)
+{
+    if (spans.length && spans[0].wrapPlan !is null)
+        return wrapSpansUncached(spans, width, hangIndent, algorithm, whitespace,
+            clipToWidth, null, inheritedStyle, false);
+    return cachedWrapSpans(spans, width, hangIndent, algorithm, whitespace,
+        clipToWidth, inheritedStyle);
+}
+
+// The cell path is a pure function of the authored spans and the wrap
+// parameters, and a document lays the same rows out several times (a gutter
+// pass, then the final one; again after a theme change): planning costs far
+// more than a lookup. A measurer's results depend on its faces, so a measured
+// wrap is never cached. The rows returned are the cache's.
+private TextSpan[][] cachedWrapSpans(const(TextSpan)[] spans, int width, int hangIndent,
+    TextWrap algorithm, WhitespaceMode whitespace, bool clipToWidth, TextStyle inheritedStyle)
+{
+    const key = WrapCacheKey(width, hangIndent, algorithm, whitespace, clipToWidth,
+        inheritedStyle);
+    if (auto hit = wrapCache.find(key, spans))
+        return hit;
+    // The rows borrow the spans they wrap: wrap the cache's own copy, or a
+    // caller reusing its text buffer rewrites the cached rows.
+    auto owned = WrapCache.ownedCopy(spans);
+    auto lines = wrapSpansUncached(owned, width, hangIndent, algorithm, whitespace,
+        clipToWidth, null, inheritedStyle, false);
+    wrapCache.store(key, owned, lines);
+    return lines;
 }
 
 // The wrap parameters a cached result was planned for.
@@ -327,7 +353,7 @@ private WrapCache wrapCache; // thread-local, as module variables are
 
 // Fresh rows over the same spans: a caller may adjust a row's spans (a
 // measured layout commits their advances) without touching the cache.
-private TextSpan[][] copyRows(TextSpan[][] lines) @safe nothrow
+private TextSpan[][] copyRows(scope const(TextSpan[])[] lines) @safe nothrow
 {
     auto rows = new TextSpan[][](lines.length);
     foreach (i, row; lines)
@@ -1013,6 +1039,27 @@ unittest
     const moved = [TextSpan("a long line that will wrap at ten cells", srcStart: 9)];
     assert(wrapSpans(moved, 10)[0][0].srcStart != first[0][0].srcStart);
     assert(wrapSpans(spans, 12).length != 0, "another width is planned anew");
+}
+
+@("ui.wrap.sharedWrapSpans.servesTheCachedRows")
+@safe unittest
+{
+    // The read-only entry point hands out the cache's rows, not copies: a
+    // layout that only reads them pays a lookup, not a copy per row.
+    const spans = [TextSpan("a long line that will wrap at ten cells", srcStart: 4)];
+    const first = sharedWrapSpans(spans, 10);
+    const second = sharedWrapSpans(spans, 10);
+    assert(first.length > 1 && first.length == second.length);
+    foreach (i; 0 .. first.length)
+        assert(first[i] is second[i], "the same row, shared");
+    static assert(!__traits(compiles, { auto rows = sharedWrapSpans(spans, 10); rows[0] = null; }),
+        "a row cannot be reseated");
+
+    // `wrapSpans` still gives the caller rows of its own, equal to the shared ones.
+    auto own = wrapSpans(spans, 10);
+    assert(own.length == first.length);
+    foreach (i; 0 .. own.length)
+        assert(own[i] == first[i] && own[i] !is first[i]);
 }
 
 @("ui.wrap.cachedRowsOutliveTheCallersBuffer")
