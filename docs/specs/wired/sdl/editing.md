@@ -78,6 +78,7 @@ canonical writer stays the way to produce a document from a typed value.
 | SDS3  | A filter is a DQL expression evaluated with each selected node as its subject                |
 | SDS4  | Path-only selection is `@safe pure nothrow @nogc` and allocates nothing                      |
 | SDS5  | Editor operations accept a selection and apply once per target                               |
+| SDS6  | A leading `..` lets a path's first step match at any depth below the start node              |
 
 ## 1. Model
 
@@ -244,8 +245,9 @@ path — an empty segment, an index before any segment or after another index,
 non-digits or an overflowing number inside `[]`, an empty `[]`, an
 unterminated string or a bad escape in a quoted segment, a seventeenth
 segment — is rejected with the byte offset of the fault, and nothing is
-selected. _Oracle:_ a table of accepted and rejected paths with their
-offsets. _Violation:_ a malformed path that selects, or a well-formed one
+selected. A leading `..` is the selector's own (SDS6); the offsets of
+faults after it count from the path's first byte. _Oracle:_ a table of
+accepted and rejected paths with their offsets. _Violation:_ a malformed path that selects, or a well-formed one
 rejected.
 
 **SDS2 — A path selects by child steps.** From a start node (the root, for
@@ -281,7 +283,9 @@ against its predicate.
 **SDS4 — Path-only selection allocates nothing.** Reading a path and
 walking a selection without a filter is `@safe pure nothrow @nogc`, holds a
 borrowed path and a cursor per segment, and visits only the children of the
-nodes each step keeps. A filter allocates while it is parsed (the DQL
+nodes each step keeps; an any-depth path (SDS6) holds a cursor and a ring of
+seventeen cells instead, and visits the start node's subtree once, plus the
+ancestors and siblings it checks. A filter allocates while it is parsed (the DQL
 engine's pools and compiled matchers); evaluating it allocates only where
 DQL's own evaluation does (`regexMatch`). _Oracle:_ a `@nogc` unittest.
 _Violation:_ an allocation or attribute failure in that test.
@@ -292,6 +296,25 @@ take, and apply the one operation to each in order. The edits are those of
 the single-target operations, so SDE1 to SDE3 apply to each, and two targets
 whose ranges overlap are `editConflict`. _Oracle:_ a range call and the loop
 of single calls write the same output. _Violation:_ different output.
+
+**SDS6 — A leading `..` selects at any depth.** A selection path may
+begin with `..`, which the selector reads before the DQL path that
+follows, as the property tree reads its keyed `[#k]` step. The shared
+grammar has no descendant step, so a DQL filter, the property tree and
+every other reader of it reject `..`, and so does a selection path
+anywhere but at its start. `..p` selects, in document order, every node
+that `p` selects from the start node or from any node below it; each node
+has one such anchor, so none is selected twice. An attribute selection
+`..x` has no node steps, and so reads the `x` attributes of the start
+node and of every node below it. Indexes count under one parent, as in
+SDS2: `..configuration[1].dependency` reads the dependencies of every
+second configuration. _Oracle:_ over every repository recipe and the
+dotted fixture, every name path to depth two below any node, with and
+without an index, against the union of nested `byChild` loops from every
+node, ordered by source offset; `..x` against every node's `byAttribute`;
+every repository recipe again after an incremental re-parse, which shares
+its unchanged cells; a fixture nested forty deep. _Violation:_ a missing,
+extra, repeated or reordered target.
 
 ## 4. Requirements
 
@@ -523,6 +546,7 @@ struct SdlOpenDocument(SdlParserConfig config = sdlFull, Allocator = Mallocator)
 struct SdlPath
 {
     static Expected!(SdlPath, DqlParseError) parse(const(char)[] text); // borrows text
+    bool anyDepth() const;                                               // leads with `..`
     SdlNodeSelection nodes(SdlNode start) const;                         // @nogc
     SdlAttributeSelection!SdlNodeSelection attributes(SdlNode start) const;
 }
