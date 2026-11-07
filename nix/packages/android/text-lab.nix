@@ -63,6 +63,9 @@ in
           # sparkles:font's HarfBuzz engine (the canvas shapes clusters).
           "UiAppGuiVulkan"
           "SparklesFontEngine"
+          # sparkles:ui's `gpu-effects`, which ui-vulkan selects: the effects'
+          # SPIR-V comes prebuilt from `ui-shaders`.
+          "SparklesUiGpuEffects"
           "Have_optional"
           "Have_bolts"
         ]
@@ -82,7 +85,10 @@ in
         ];
         # The canvas's SPIR-V, prebuilt (`ui-vulkan-shaders`): its
         # `generated/shaders` string imports.
-        stringImportDirs = [ "${config.packages.ui-vulkan-shaders}" ];
+        stringImportDirs = [
+          "${config.packages.ui-vulkan-shaders}"
+          "${config.packages.ui-shaders}"
+        ];
         staticLibs = abi: [
           "${config.packages.harfbuzz-android}/lib/${abi}/libharfbuzz.a"
           "${config.packages.freetype-android}/lib/${abi}/libfreetype.a"

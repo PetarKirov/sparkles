@@ -397,21 +397,25 @@ struct CrtEffect
     around it. The values it reads each frame are $(LREF writeParams)'s.
 
     The passes are the GPU half, which only a build of `sparkles:ui`'s
-    `gpu-effects` configuration carries (`hasGpuEffects`); elsewhere the
-    record has no implementation, and a canvas paints the bracket unaffected.
+    `gpu-effects` configuration carries (`hasGpuEffects`): as GLSL for the
+    raylib canvas and as SPIR-V for the Vulkan one. Elsewhere the record has
+    no implementation, and a canvas paints the bracket unaffected.
     */
     static EffectRecord effectRecord() @safe pure nothrow
     {
-        import sparkles.ui.effect : bloomPasses, crtTubeGlsl, EffectImpl,
-            EffectPass, EffectTier, glslBackend, hasGpuEffects;
+        import sparkles.ui.effect : bloomPasses, EffectImpl, EffectPass, EffectTier,
+            generatedBackends, generatedEffect;
 
+        // One implementation per backend the tube was generated for: the
+        // same four passes as GLSL and as each Vulkan version's SPIR-V.
         EffectImpl[] impls;
-        static if (hasGpuEffects)
-        {
-            EffectPass[] passes = bloomPasses()[0 .. 3];
-            passes ~= EffectPass(crtTubeGlsl, from: 0, inputs: [3]);
-            impls = [EffectImpl(glslBackend, passes: passes)];
-        }
+        static foreach (backend; generatedBackends)
+            if (const tube = generatedEffect!"crtTube"(backend))
+            {
+                EffectPass[] passes = bloomPasses(backend)[0 .. 3];
+                passes ~= EffectPass(tube, from: 0, inputs: [3]);
+                impls ~= EffectImpl(backend, passes: passes);
+            }
         return EffectRecord(
             name: "crt",
             tier: EffectTier.layer,

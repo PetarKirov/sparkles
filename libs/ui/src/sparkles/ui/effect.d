@@ -241,6 +241,27 @@ struct EffectParam
 /// Android — the generated built-ins come in both, and pick by `version`.
 enum string glslBackend = "glsl";
 
+/**
+The `EffectImpl.backend` keys for a Vulkan fragment target: a source
+registered under one is a SPIR-V module's bytes, for a device at Vulkan 1.3
+(SPIR-V 1.6) or at Vulkan 1.1 (SPIR-V 1.3).
+
+The interface is the GLSL one, compiled from the same entry point:
+`fragTexCoord` and `fragColor` are inputs at locations 0 and 1, the images
+`texture0`, `texture1`, … are read through the shared sampler at binding 0,
+and every `@uniform` is a member of one `std140` block, named as the
+parameter — so a backend fills it by name, from what it supplies
+(`uResolution`, `uExtentCells`, `uTime`, the vertex colour's `colDiffuse`)
+and the record's $(LREF EffectParam)s.
+*/
+enum string vulkan13Backend = "spirv-vulkan1.3";
+/// ditto
+enum string vulkan11Backend = "spirv-vulkan1.1";
+
+/// Every backend key the generated built-ins carry an artifact for, in a
+/// build with the GPU half ($(LREF hasGpuEffects)).
+enum string[] generatedBackends = [glslBackend, vulkan13Backend, vulkan11Backend];
+
 /// One registered effect: its tier, its tier-0 transform where it has one, and
 /// what it degrades to (`EFX13`).
 struct EffectRecord
@@ -499,13 +520,13 @@ EffectRecord[] builtinRecords() @safe pure nothrow
 {
     return [
         EffectRecord(name: "scanlines", tier: EffectTier.color,
-            tier0: &scanlinesTier0, impls: glslImpl(scanlinesGlsl)),
+            tier0: &scanlinesTier0, impls: generatedImpls!"scanlines"),
         EffectRecord(name: "phosphor", tier: EffectTier.color,
-            tier0: &phosphorTier0, impls: glslImpl(phosphorGlsl)),
+            tier0: &phosphorTier0, impls: generatedImpls!"phosphor"),
         EffectRecord(name: "dim", tier: EffectTier.color,
-            tier0: &dimTier0, impls: glslImpl(dimGlsl)),
+            tier0: &dimTier0, impls: generatedImpls!"dim"),
         EffectRecord(name: "spectrum", tier: EffectTier.color,
-            tier0: &spectrumTier0, impls: glslImpl(spectrumGlsl)),
+            tier0: &spectrumTier0, impls: generatedImpls!"spectrum"),
         EffectRecord(
             name: "curvature",
             tier: EffectTier.distortion,
@@ -513,14 +534,14 @@ EffectRecord[] builtinRecords() @safe pure nothrow
             // grid can approximate, and claiming otherwise is what `EFX12`
             // exists to stop. A terminal states the degradation instead.
             degradation: Degradation.unaffected,
-            impls: glslImpl(curvatureGlsl),
+            impls: generatedImpls!"curvature",
             params: [EffectParam("uAmount", [0.18f, 0, 0, 0], 1)],
         ),
         EffectRecord(
             name: "bloom",
             tier: EffectTier.layer,
             degradation: Degradation.unaffected,
-            impls: hasGpuEffects ? [EffectImpl(glslBackend, passes: bloomPasses)] : null,
+            impls: bloomImpls(),
             // The CRT's defaults (`CRT3`).
             params: [
                 EffectParam("uBloomThreshold", [0.65f, 0, 0, 0], 1),
@@ -547,32 +568,50 @@ version (SparklesUiGpuEffects)
 else
     enum bool hasGpuEffects = false; /// ditto
 
-/// A record's GLSL implementation, or none when the build carries no GPU half.
-private EffectImpl[] glslImpl(string source) @safe pure nothrow
-    => source is null ? null : [EffectImpl(glslBackend, source)];
+/// A one-pass record's implementations: `entry`'s artifact for every
+/// generated backend, or none when the build carries no GPU half.
+private EffectImpl[] generatedImpls(string entry)() @safe pure nothrow
+{
+    EffectImpl[] impls;
+    static foreach (backend; generatedBackends)
+        if (const source = generatedEffect!entry(backend))
+            impls ~= EffectImpl(backend, source);
+    return impls;
+}
 
 /**
-The `bloom` built-in's four passes: extract the bright part at half size,
-blur it horizontally, then vertically, then add it back over the bracket.
+The `bloom` built-in's four passes for `backend`: extract the bright part at
+half size, blur it horizontally, then vertically, then add it back over the
+bracket.
 
 Each pass is a `@fragment` entry point in `shaders/effects.d` (`bloomExtract`,
 `bloomBlurH`, `bloomBlurV`, `bloomComposite`), generated like the tier-0
 built-ins; the colour maths is `effect_shaders.bloomBright` and `bloomOver`.
 Public because a larger tier-2 effect — the CRT — reuses them as its own
 first three passes rather than keeping a second copy. Empty when the build
-carries no GPU half ($(LREF hasGpuEffects)).
+carries no GPU half ($(LREF hasGpuEffects)), or for a key none is generated
+for.
 */
-EffectPass[] bloomPasses() @safe pure nothrow
+EffectPass[] bloomPasses(scope const(char)[] backend = glslBackend) @safe pure nothrow
 {
-    version (SparklesUiGpuEffects)
-        return [
-            EffectPass(bloomExtractGlsl, downscale: 2, from: 0),
-            EffectPass(bloomBlurHGlsl, downscale: 2),
-            EffectPass(bloomBlurVGlsl, downscale: 2),
-            EffectPass(bloomCompositeGlsl, from: 0, inputs: [3]),
-        ];
-    else
+    if (generatedEffect!"bloomExtract"(backend) is null)
         return null;
+    return [
+        EffectPass(generatedEffect!"bloomExtract"(backend), downscale: 2, from: 0),
+        EffectPass(generatedEffect!"bloomBlurH"(backend), downscale: 2),
+        EffectPass(generatedEffect!"bloomBlurV"(backend), downscale: 2),
+        EffectPass(generatedEffect!"bloomComposite"(backend), from: 0, inputs: [3]),
+    ];
+}
+
+// `bloom`'s implementations: its passes for every generated backend.
+private EffectImpl[] bloomImpls() @safe pure nothrow
+{
+    EffectImpl[] impls;
+    static foreach (backend; generatedBackends)
+        if (auto passes = bloomPasses(backend))
+            impls ~= EffectImpl(backend, passes: passes);
+    return impls;
 }
 
 // The unseeded registry's view: the same records, evaluated at compile time.
@@ -607,39 +646,43 @@ version (SparklesUiGpuEffects)
     else
         private enum string glslDialect = ".frag";
 
-    /// The built-ins' fragment shaders, generated from their D transforms.
-    enum string scanlinesGlsl = import("scanlines" ~ glslDialect);
-    /// ditto
-    enum string phosphorGlsl = import("phosphor" ~ glslDialect);
-    /// ditto
-    enum string dimGlsl = import("dim" ~ glslDialect);
-    /// ditto
-    enum string spectrumGlsl = import("spectrum" ~ glslDialect);
-    /// ditto — the tier-1 warp, sampling at what `effect_shaders.curvature` returns.
-    enum string curvatureGlsl = import("curvature" ~ glslDialect);
-    /// ditto — `bloom`'s four passes ($(LREF bloomPasses)).
-    enum string bloomExtractGlsl = import("bloomExtract" ~ glslDialect);
-    /// ditto
-    enum string bloomBlurHGlsl = import("bloomBlurH" ~ glslDialect);
-    /// ditto
-    enum string bloomBlurVGlsl = import("bloomBlurV" ~ glslDialect);
-    /// ditto
-    enum string bloomCompositeGlsl = import("bloomComposite" ~ glslDialect);
-    /// ditto — the CRT's tube (`shaders/effects.d`), which `sparkles:ui-raylib`'s
-    /// `CrtEffect` runs after bloom's first three passes.
-    enum string crtTubeGlsl = import("crtTube" ~ glslDialect);
+    /**
+    The artifact `shader-compile` generated from `entry`, a `@fragment` of
+    `shaders/effects.d`, for `backend`: GLSL in this build's dialect, or the
+    SPIR-V module for a Vulkan version; `null` for any other key.
+    */
+    string generatedEffect(string entry)(scope const(char)[] backend) @safe pure nothrow @nogc
+    {
+        if (backend == glslBackend)
+            return import(entry ~ glslDialect);
+        if (backend == vulkan13Backend)
+            return import(entry ~ ".frag.spv");
+        if (backend == vulkan11Backend)
+            return import(entry ~ ".vk11.frag.spv");
+        return null;
+    }
 }
 else
 {
-    /// The built-ins' fragment shaders: none, in a build without the GPU half
-    /// ($(LREF hasGpuEffects)).
-    enum string scanlinesGlsl = null;
-    enum string phosphorGlsl = null; /// ditto
-    enum string dimGlsl = null; /// ditto
-    enum string spectrumGlsl = null; /// ditto
-    enum string curvatureGlsl = null; /// ditto
-    enum string crtTubeGlsl = null; /// ditto
+    /// ditto — none, in a build without the GPU half ($(LREF hasGpuEffects)).
+    string generatedEffect(string entry)(scope const(char)[] backend) @safe pure nothrow @nogc
+        => null;
 }
+
+/// The built-ins' fragment shaders in this build's GLSL dialect, generated
+/// from their D transforms; `null` without the GPU half.
+enum string scanlinesGlsl = generatedEffect!"scanlines"(glslBackend);
+/// ditto
+enum string phosphorGlsl = generatedEffect!"phosphor"(glslBackend);
+/// ditto
+enum string dimGlsl = generatedEffect!"dim"(glslBackend);
+/// ditto
+enum string spectrumGlsl = generatedEffect!"spectrum"(glslBackend);
+/// ditto — the tier-1 warp, sampling at what `effect_shaders.curvature` returns.
+enum string curvatureGlsl = generatedEffect!"curvature"(glslBackend);
+/// ditto — the CRT's tube (`shaders/effects.d`), which `sparkles.ui.crt`'s
+/// `CrtEffect` runs after bloom's first three passes.
+enum string crtTubeGlsl = generatedEffect!"crtTube"(glslBackend);
 
 version (SparklesUiGpuEffects) {} else
 @("ui.effect.builtins.carryOnlyTheirCpuHalfWithoutGpuEffects")

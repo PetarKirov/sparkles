@@ -1,6 +1,6 @@
 # Generated shaders, built once per package that generates them:
 #
-#   * `ui-shaders`: sparkles:ui's effect GLSL;
+#   * `ui-shaders`: sparkles:ui's effect GLSL and SPIR-V;
 #   * `vulkan-wsi-shaders`: sparkles:vulkan-wsi's triangle SPIR-V;
 #   * `ui-vulkan-shaders`: sparkles:ui-vulkan's canvas SPIR-V.
 #
@@ -33,12 +33,12 @@
         {
           package,
           lib',
-          ext,
+          exts,
         }:
         rootDir: ''
           chmod -R u+w "${rootDir}"
           install -d "${rootDir}/libs/${lib'}/generated/shaders"
-          cp ${package}/*.${ext} ${package}/.stamp \
+          cp ${lib.concatMapStringsSep " " (ext: "${package}/*.${ext}") exts} ${package}/.stamp \
             "${rootDir}/libs/${lib'}/generated/shaders/"
         '';
 
@@ -102,7 +102,10 @@
       # canvas, and sparkles:vulkan-wsi's `gpu-shaders` configuration, which
       # the triangle examples select. Re-exported by `sparklesSources`.
       legacyPackages.uiShaderPlacement = rec {
-        needsUiShaders = srcDirs: builtins.elem "libs/ui-raylib/src" srcDirs;
+        # ui-raylib and ui-vulkan both select `gpu-effects`: the GLSL for the
+        # one, the SPIR-V for the other.
+        needsUiShaders =
+          srcDirs: builtins.elem "libs/ui-raylib/src" srcDirs || builtins.elem "libs/ui-vulkan/src" srcDirs;
         needsUiVulkanShaders = srcDirs: builtins.elem "libs/ui-vulkan/src" srcDirs;
         uiShaderDirs =
           srcDirs:
@@ -110,17 +113,20 @@
         placeUiShaders = placeShaders {
           package = config.packages.ui-shaders;
           lib' = "ui";
-          ext = "frag";
+          exts = [
+            "frag"
+            "spv"
+          ];
         };
         placeUiVulkanShaders = placeShaders {
           package = config.packages.ui-vulkan-shaders;
           lib' = "ui-vulkan";
-          ext = "spv";
+          exts = [ "spv" ];
         };
         placeVulkanWsiShaders = placeShaders {
           package = config.packages.vulkan-wsi-shaders;
           lib' = "vulkan-wsi";
-          ext = "spv";
+          exts = [ "spv" ];
         };
       };
 
@@ -129,7 +135,7 @@
           pname = "ui-shaders";
           lib' = "ui";
           extraDirs = [ "libs/ui/shaders" ];
-          description = "sparkles:ui's effect fragment shaders, generated from their single-source D";
+          description = "sparkles:ui's effect fragment shaders, GLSL and SPIR-V generated from their single-source D";
         };
         vulkan-wsi-shaders = prebuiltShaders {
           pname = "vulkan-wsi-shaders";
