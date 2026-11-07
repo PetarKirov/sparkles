@@ -304,6 +304,10 @@ unittest
 // Integration: real short-lived children under the executor
 // ─────────────────────────────────────────────────────────────────────────────
 
+// The children are `sh` scripts, the liveness probe is `kill(pid, 0)`, and
+// the cross-worker test needs `LoopGroup`: POSIX only, to the end of the module.
+version (Posix):
+
 version (unittest)
 {
     import std.algorithm.searching : canFind;
