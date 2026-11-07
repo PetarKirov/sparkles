@@ -563,11 +563,16 @@ int runGui(GuiArgs guiArgs) @system
         fontSizePxOverride: capture.fontSizePx,
     };
     version (HueGuiVulkan)
+    {
         // Touch through the shared recogniser (`IXB8`): taps, drags as
         // scrolls, long-presses and pinches, which the touch block below
-        // consumes. A desktop window has no touchscreen to resolve. The raylib
-        // arm keeps the pointer emulation its APK was verified with.
+        // consumes; a long-press then drags as the left button, so the
+        // selection it starts follows the finger. A desktop window has no
+        // touchscreen to resolve. The raylib arm keeps the pointer emulation
+        // its APK was verified with.
         cfg.touchGestures = TouchGestures.all;
+        cfg.longPressDrags = true;
+    }
     else
         cfg.traceSink = &raylibTraceLog;
     version (Android)
@@ -2854,7 +2859,9 @@ int runGui(GuiArgs guiArgs) @system
                     toolbarPress = toolbarPress.released(hh.hot);
             }
 
-            touchTap = inp.fin.leftPressed;
+            // A long-press that drags presses the left button too: that press
+            // starts a selection, and is no tap.
+            touchTap = inp.fin.leftPressed && !inp.fin.longPress;
             touchLongPress = inp.fin.longPress;
             touchPinch = inp.fin.pinch;
 
