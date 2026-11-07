@@ -3,7 +3,7 @@ The CRT's geometry, with no GPU in it (`CRT8`, `CRT10`, `PTR2`).
 
 Everything about $(I where) a screen pixel reads from — the tube's curvature,
 its fit to the screen, the magnifier lens, and the two maps that answer for a
-pointer — separated from $(REF CrtEffect, sparkles,ui_raylib,crt), which also
+pointer — separated from $(REF CrtEffect, sparkles,ui,crt), which also
 owns a render texture, twenty-five uniform values and the compositor cursor.
 It is `@safe pure nothrow @nogc`, so the maps are testable as arithmetic
 rather than through a `@system` wrapper that works by luck of field ordering.
@@ -14,7 +14,7 @@ fragment shader is compiled from, so the picture and the pointer agree by
 construction. They used to be a GLSL `curve()` and a hand twin here that
 nothing could hold together.
 */
-module sparkles.ui_raylib.crt_projection;
+module sparkles.ui.crt_projection;
 
 import sparkles.input.gesture : PointF;
 import sparkles.shaders : v2;
@@ -173,7 +173,7 @@ float[4] toShaderBox(in UiRect r, float screenW, float screenH)
     ];
 }
 
-@("ui_raylib.crt_projection.identityWhenDisabled")
+@("ui.crt_projection.identityWhenDisabled")
 @safe pure nothrow @nogc
 unittest
 {
@@ -187,7 +187,7 @@ unittest
     assert(p.mapScreenToUi(1, 2, 0, 0) == PointF(1, 2));
 }
 
-@("ui_raylib.crt_projection.toShaderBox")
+@("ui.crt_projection.toShaderBox")
 @safe pure nothrow @nogc
 unittest
 {
@@ -212,7 +212,7 @@ Applying the lens before curvature instead centred it on the screen point the
 mouse had not yet been displaced from, and the pointer drifted out of the circle
 the further it travelled from the middle of the screen.
 */
-@("ui_raylib.crt_projection.magnifierLensIsCentredOnTheCursor")
+@("ui.crt_projection.magnifierLensIsCentredOnTheCursor")
 @safe pure nothrow @nogc
 unittest
 {
@@ -281,7 +281,7 @@ cancel exactly; the tilt's apex is that centre, so the map must be a fixed point
 of itself. Testing those two properties is testing that the self-reference was
 resolved rather than papered over with the previous frame's value.
 */
-@("ui_raylib.crt_projection.mapPointerToUi.resolvesTheDistortionsCentredOnIt")
+@("ui.crt_projection.mapPointerToUi.resolvesTheDistortionsCentredOnIt")
 @safe pure nothrow @nogc
 unittest
 {
@@ -340,7 +340,7 @@ The corners, at a larger radius, still overhang and are cut — that is the
 rounded face of the tube, and it should be the only part of the window without
 an image.
 */
-@("ui_raylib.crt_projection.curve.seatsEachEdgeMidpointOnItsScreenEdge")
+@("ui.crt_projection.curve.seatsEachEdgeMidpointOnItsScreenEdge")
 @safe pure nothrow @nogc
 unittest
 {
