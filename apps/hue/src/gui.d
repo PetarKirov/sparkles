@@ -2756,10 +2756,12 @@ int runGui(GuiArgs guiArgs) @system
         const docRows = docCells.height;
         // Auto `--code-max-lines` follows the pane height (COD6): a tall
         // fence's fixed viewport re-fits when the pane's row count changes.
+        // Only the preview has fences; any other view would rebuild the
+        // whole document, undebounced, on the first frame of every resize.
         if (vm.viewRows != docRows)
         {
             vm.viewRows = docRows;
-            if (vm.codeMaxLines < 0 && vm.widthCols > 0)
+            if (vm.codeMaxLines < 0 && vm.widthCols > 0 && vm.buildsPreview)
                 vm.rebuild();
         }
         const docY0 = docCells.y * cellH;

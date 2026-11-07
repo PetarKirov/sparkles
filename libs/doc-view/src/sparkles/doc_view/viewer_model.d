@@ -289,6 +289,20 @@ struct ViewerModel
     /// it current) — what `auto` resolves against.
     int viewRows;
 
+    /**
+    Whether a rebuild lays out the markdown preview: the only view whose
+    layout reads `viewRows` (the auto max-lines of its fences and tables).
+
+    A host that re-fits fences when the pane's height changes asks this
+    first. Every other view lays out the same at any height, so rebuilding
+    one for a taller pane re-did the whole document for nothing — on a large
+    source file, as long as the reflow the width change itself was waiting
+    for.
+    */
+    bool buildsPreview() const @safe pure nothrow @nogc
+        => !conflictOpen && showPreview && !diff.files.length && !tw.code.length
+            && preview.present;
+
     /// `codeMaxLines` resolved: an explicit value wins; `auto` fits the
     /// whole box — the body plus its two border rows — in the pane, so a
     /// document holding one long fence never needs a scroll to reach the
@@ -4046,6 +4060,20 @@ version (unittest)
         }
         return a[];
     }
+}
+
+@("viewer_model.buildsPreview.onlyTheMarkdownPreviewReadsThePaneHeight")
+@system unittest
+{
+    // A host re-fits fences on a height change only where there are fences:
+    // the raw view, and the preview's own raw stop, lay out the same at any
+    // pane height.
+    auto raw = anchorFixture(anchorSource(), 100);
+    assert(!raw.buildsPreview, "source");
+    auto md = anchorFixture(anchorSource(), 100, preview: true);
+    assert(md.buildsPreview, "the preview");
+    md.cycleView();
+    assert(!md.showPreview && !md.buildsPreview, "Tab: the markdown's source");
 }
 
 @("viewer_model.scrollAnchor.reflowKeepsTheFirstLine")
