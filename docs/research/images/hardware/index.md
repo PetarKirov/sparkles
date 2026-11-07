@@ -8,7 +8,7 @@ compute features and the platform media API.
 | Field        | Value                                                                                                 |
 | ------------ | ----------------------------------------------------------------------------------------------------- |
 | Probe        | [`media-hw-probe.d`][probe], flake app `media-hw-probe`                                               |
-| Probe build  | each report records its schema (`sparkles.media-hw-probe/1` or `/2`) and the commit it ran            |
+| Probe build  | each report records its schema (`sparkles.media-hw-probe/1` to `/3`) and the commit it ran            |
 | Reports      | nine: three Linux desktops, three Linux laptops, one Mac, two Android phones (raw JSON in `reports/`) |
 | Missing      | Windows, on-device Android; see [Gaps](#gaps)                                                         |
 | Contributing | [Run the probe](./contributing.md)                                                                    |

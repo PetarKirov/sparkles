@@ -3,7 +3,7 @@
 How to add a machine to the [hardware matrix](./index.md): run one read-only
 command and send back the JSON it writes.
 
-**Last reviewed:** October 28, 2026
+**Last reviewed:** November 7, 2026
 
 ## Run it
 
@@ -43,21 +43,30 @@ when every Vulkan call succeeds. To retry a failed command by hand, run its
 `argv`; for a phone, set `ANDROID_SERIAL` to the serial first, since the report
 leaves the serial out.
 
-The probe has only been run on NixOS, macOS and over `adb`. On another Linux
-distribution the Nix-built Vulkan loader may not load the system's GPU driver. If
-the report's `vulkan.status` is an error or its only device is `llvmpipe`, send it
-anyway and say which distribution and driver you have; the `cpu`, `io` and `media`
-sections are still useful.
+A GPU driver shares the probe's C library, and one built against a newer glibc
+than the probe's does not load: on a NixOS newer than the probe's, Mesa's RADV
+and lavapipe report ``version `GLIBC_2.44' not found``. So on Linux the probe
+reads every Vulkan driver manifest first, finds the glibc each driver loads,
+and when one is newer than its own it runs itself again on that glibc, once.
+The report's `host.libcVersion` is the glibc it ran on, `host.libcReexecFrom`
+the one it started on, and `vulkan.drivers` lists each manifest with its
+driver's glibc. `--no-libc-reexec` keeps the probe's own glibc and records a
+warning instead.
+
+The probe has only been run on NixOS, macOS and over `adb`. If the report's
+`vulkan.status` is an error or its only device is `llvmpipe`, send it anyway and
+say which distribution and driver you have; the `cpu`, `io` and `media` sections
+are still useful.
 
 ## What it reads
 
-| Area   | Source                                                                                         |
-| ------ | ---------------------------------------------------------------------------------------------- |
-| System | OS name and version, kernel release, architecture, total memory, Mac or phone model name       |
-| CPU    | model name, core types, SIMD and crypto feature flags                                          |
-| I/O    | `io_uring` setup features and supported opcodes (Linux)                                        |
-| Vulkan | per device: name, driver, extensions, feature structs, limits, formats, video profiles         |
-| Media  | `vainfo` per render node and `nvidia-smi` (Linux), VideoToolbox (macOS), codec lists (Android) |
+| Area   | Source                                                                                                                                   |
+| ------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| System | OS name and version, kernel release, architecture, total memory, Mac or phone model name                                                 |
+| CPU    | model name, core types, SIMD and crypto feature flags                                                                                    |
+| I/O    | `io_uring` setup features and supported opcodes (Linux)                                                                                  |
+| Vulkan | driver manifests and the glibc each driver loads; per device: name, driver, extensions, feature structs, limits, formats, video profiles |
+| Media  | `vainfo` per render node and `nvidia-smi` (Linux), VideoToolbox (macOS), codec lists (Android)                                           |
 
 It writes nothing except the report: no driver state changes, no files on the
 device, no network access. It never reads the host name, user names, serial
