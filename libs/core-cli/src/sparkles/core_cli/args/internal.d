@@ -166,14 +166,14 @@ int reportCliError(in CliError e)
  */
 int reportCliError(Output, Errors)(in CliError e, ref Output output, ref Errors errors)
 {
-    import std.file : thisExePath;
     import std.range.primitives : put;
 
+    import sparkles.base.driver_libc : thisProgramPath;
     import sparkles.core_cli.build_info : buildInfoSection, versionReport;
 
     if (e.isVersion)
     {
-        auto report = versionReport(buildInfoSection(thisExePath));
+        auto report = versionReport(buildInfoSection(thisProgramPath));
         if (report.stdoutText.length)
             put(output, report.stdoutText);
         if (report.stderrText.length)
