@@ -83,6 +83,9 @@ features and the platform media API. Every cell is verified on a device.
 
 ## Master catalog
 
+The terms the deep-dives share (stride, view, plane, transfer function,
+suspendable decoding and the rest) are defined once in [Concepts](./concepts.md).
+
 Every subject the survey covers, with the depth it gets. The tier is a working
 assignment, and any subject can be promoted or demoted:
 
