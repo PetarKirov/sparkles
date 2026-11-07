@@ -20,10 +20,13 @@ what the chain supplies, as raylib's backend does, and every other member
 from the record's parameter of that name.
 
 Pipelines are made per artifact, target format and role, on first use, and
-kept; images are kept per role and remade when the size changes, the old
-one retired through the canvas so no frame in flight loses it. Descriptor
-sets live in per-slot pools, reset when the slot is begun again. Only the
-dynamic-rendering path runs effects; the canvas degrades without it.
+kept; images are kept per nesting level and role, as `EFX11` pools them,
+and remade when the size changes, the old one retired through the canvas so
+no frame in flight loses it. A nested bracket runs at the next level: its
+last pass composites onto its parent's scratch image, which the parent's
+passes then read like any other draw. Descriptor sets live in per-slot
+pools, reset when the slot is begun again. Only the dynamic-rendering path
+runs effects; the canvas degrades without it.
 */
 module sparkles.ui_vulkan.effect_chain;
 
@@ -142,7 +145,20 @@ struct EffectChain(B)
     private VkShaderModule vertex_;
     private VkSampler linear_;
     private Program[] programs_;
-    private GpuImage[] images_; // 0: the scratch target; 1: the bracket; 2 + k: pass k's output
+    // Images pooled by nesting level, role, format and size, as `EFX11` asks:
+    // role 0 is the scratch target, 1 the bracket, 2 + k pass k's output.
+    // Each its own allocation, so a pointer to one outlives the pool growing.
+    private static struct Pooled
+    {
+        uint level, role;
+        ulong used; // the frame that last used it
+        GpuImage image;
+    }
+    private Pooled*[] images_;
+    private ulong frame_;
+    // Frames an image may go unused before it is retired: siblings of
+    // several sizes keep theirs, and a resize does not hold the old ones.
+    private enum keepFrames = 3;
     private SlotPool[] pools_;
     private void delegate(ref GpuImage) @system retire_;
 
@@ -220,25 +236,39 @@ struct EffectChain(B)
         return impl;
     }
 
-    /// Resets `slot`'s descriptor sets: its previous frame has completed.
+    /**
+    Resets `slot`'s descriptor sets: its previous frame has completed. Retires
+    the images no bracket has used for a few frames.
+    */
     void beginFrame(uint slot) @system
     {
         foreach (ref p; pools_)
             if (p.slot == slot)
                 device_.resetDescriptorPool(device_.device, p.pool, 0);
+        ++frame_;
+        for (size_t i; i < images_.length;)
+        {
+            if (images_[i].used + keepFrames >= frame_)
+            {
+                ++i;
+                continue;
+            }
+            retire_(images_[i].image);
+            images_[i] = images_[$ - 1];
+            images_.length -= 1;
+        }
     }
 
     /**
-    The image a bracket's draws are rendered into, at least `extent` and of
-    `format`; remade, the old one retired, when either changes.
+    The image the draws of a bracket at nesting `level` are rendered into, at
+    least `extent` and of `format`; remade, the old one retired, when either
+    changes.
     */
-    VkExpected!(GpuImage*) scratch(VkFormat format, VkExtent2D extent) @system
-    {
-        auto r = acquire(0, format, extent);
-        if (r < 0)
-            return err!(GpuImage*)(r);
-        return ok!VkResult(&images_[0]);
-    }
+    VkExpected!(GpuImage*) scratch(uint level, VkFormat format, VkExtent2D extent) @system
+        => acquire(level, 0, format, extent);
+
+    /// How many images the chain holds: the pool `EFX11` bounds.
+    size_t imageCount() const @safe pure nothrow @nogc => images_.length;
 
     /**
     Records `impl`'s passes (`prepare` made its pipelines) over the bracket at
@@ -249,17 +279,23 @@ struct EffectChain(B)
     */
     VkResult record(VkCommandBuffer commands, uint slot, const(EffectRecord)* rec,
         const(EffectImpl)* impl, ref FrameBuffers!B buffers, ScissorBox rect, Size cells,
-        VkImage targetImage, VkImageView target, VkFormat format, VkExtent2D drawn, float time)
+        VkImage targetImage, VkImageView target, VkFormat format, VkExtent2D drawn, float time,
+        uint level = 0)
         @system
     {
         with (VkPipelineStageFlagBits) with (VkAccessFlagBits) with (VkImageLayout)
         {
             const w = cast(uint) rect.w, h = cast(uint) rect.h;
-            auto r = acquire(1, format, VkExtent2D(w, h));
-            if (r < 0)
-                return r;
-            auto scratchImage = images_[0].handle;
-            auto bracket = images_[1].handle;
+            auto scratched = acquire(level, 0, format, drawn);
+            auto copied = acquire(level, 1, format, VkExtent2D(w, h));
+            if (scratched.hasError)
+                return scratched.error;
+            if (copied.hasError)
+                return copied.error;
+            auto scratchImage = scratched.value.handle;
+            auto bracket = copied.value.handle;
+            auto bracketView = copied.value.view;
+            VkResult r;
             transition(*device_, commands, scratchImage, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                 VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
                 VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
@@ -288,7 +324,7 @@ struct EffectChain(B)
             VkImageView[16] views;
             if (passes.length + 1 > views.length)
                 return VkResult.VK_ERROR_FEATURE_NOT_PRESENT;
-            views[0] = images_[1].view;
+            views[0] = bracketView;
             foreach (k, ref pass; passes)
             {
                 const last = k + 1 == passes.length;
@@ -306,10 +342,10 @@ struct EffectChain(B)
                 {
                     const d = pass.downscale ? pass.downscale : 1;
                     const out_ = VkExtent2D(w / d ? w / d : 1, h / d ? h / d : 1);
-                    r = acquire(2 + k, format, out_);
-                    if (r < 0)
-                        return r;
-                    auto image = &images_[2 + k];
+                    auto output = acquire(level, cast(uint)(2 + k), format, out_);
+                    if (output.hasError)
+                        return output.error;
+                    auto image = output.value;
                     transition(*device_, commands, image.handle, VK_IMAGE_LAYOUT_UNDEFINED,
                         VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                         0, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
@@ -356,8 +392,8 @@ struct EffectChain(B)
         foreach (ref p; programs_)
             destroyProgram(p);
         programs_ = null;
-        foreach (ref image; images_)
-            image.destroy(*device_, *memory_);
+        foreach (p; images_)
+            p.image.destroy(*device_, *memory_);
         images_ = null;
         foreach (ref p; pools_)
             device_.destroyDescriptorPool(device_.device, p.pool, null);
@@ -382,29 +418,46 @@ struct EffectChain(B)
 
     // ── internals ──────────────────────────────────────────────────────────
 
-    private VkResult acquire(size_t role, VkFormat format, VkExtent2D extent) @system
+    // The pooled image for `role` at nesting `level`, of `format` and
+    // `extent`, made if the pool has none. The scratch target only has to be
+    // large enough, and a level keeps one, remade larger; the others are
+    // sampled whole, so they are exactly the size asked for, one per size.
+    private VkExpected!(GpuImage*) acquire(uint level, uint role, VkFormat format,
+        VkExtent2D extent) @system
     {
-        if (images_.length <= role)
-            images_.length = role + 1;
-        auto image = &images_[role];
-        // The scratch target only has to be large enough; the others are
-        // sampled whole, so they are exactly the size asked for.
-        const fits = role == 0
-            ? image.extent.width >= extent.width && image.extent.height >= extent.height
-            : image.extent == extent;
-        if (image.handle !is null && image.format == format && fits)
-            return VkResult.VK_SUCCESS;
-        if (image.handle !is null)
-            retire_(*image);
+        foreach (p; images_)
+        {
+            if (p.level != level || p.role != role || p.image.format != format)
+                continue;
+            const fits = role == 0
+                ? p.image.extent.width >= extent.width && p.image.extent.height >= extent.height
+                : p.image.extent == extent;
+            if (fits)
+            {
+                p.used = frame_;
+                return ok!VkResult(&p.image);
+            }
+        }
+        if (role == 0)
+            foreach (i, p; images_)
+                if (p.level == level && p.role == 0)
+                {
+                    retire_(p.image);
+                    images_[i] = images_[$ - 1];
+                    images_.length -= 1;
+                    break;
+                }
+        auto made = new Pooled(level, role, frame_);
         with (VkImageUsageFlagBits)
         {
-            auto made = GpuImage.create(*image, *device_, *memory_, format, extent,
+            auto r = GpuImage.create(made.image, *device_, *memory_, format, extent,
                 VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
                 | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
-            if (made.hasError)
-                return made.error;
+            if (r.hasError)
+                return err!(GpuImage*)(r.error);
         }
-        return VkResult.VK_SUCCESS;
+        images_ ~= made;
+        return ok!VkResult(&made.image);
     }
 
     private Program* programFor(string source, VkFormat format, bool composite) @system

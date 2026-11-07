@@ -1050,8 +1050,8 @@ struct NativeHost
 
     /**
     Binds the effect registry the canvas resolves a bracket's id against
-    (`EFX11`, `EFX13`): a bracket at the frame's root whose record carries
-    passes for the device runs them (`UVK15`), the CRT's included; any other
+    (`EFX11`, `EFX13`): a bracket, nested or not, whose record carries passes
+    for the device runs them (`UVK15`), the CRT's included; any other
     draws its contents unaffected (`EFX3`). `pageFg` is unused — the canvas
     paints resolved colours — and accepted so an application binds its
     registry the same on every arm.

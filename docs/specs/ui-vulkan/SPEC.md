@@ -74,8 +74,8 @@ sequences that work with this library, and only together do they run the
 terminal without raylib. macOS is in scope: Vulkan runs there through MoltenVK
 on the AppKit window's `CAMetalLayer`, so this canvas is to be the native
 renderer on every desktop and the raylib canvas a compatibility configuration.
-Effects are in scope at the frame's root, where an application brackets
-bloom or the CRT tube; a bracket nested inside another draws unaffected.
+Effects are in scope wherever an application brackets them, bloom or the
+CRT tube at the frame's root and brackets nested inside others alike.
 Out of scope is Skia Graphite itself, the general-purpose renderer the
 window-system plan schedules after this library; open question
 [UVQ2](./decisions.md#open-questions) tracks it.
@@ -223,17 +223,20 @@ shift, as `PushShift` defines.
 `dx·cellW` and `dy·cellH` pixels, each rounded half away from zero, until its
 `popShift()`. Nested shifts add their rounded offsets.
 
-**UVK15: Effects.** _(Revised.)_ An effect bracket at the frame's root
-whose record carries passes for the device's Vulkan version
+**UVK15: Effects.** _(Revised.)_ An effect bracket whose record carries passes for the device's Vulkan version
 (`vulkan13Backend`, `vulkan11Backend`) **must** draw its contents into an
 image of its own and run those passes over the bracket's rectangle, as the
 record's `EffectPass`es name their sources, each pass's uniform block filled
 by name from the record's parameters and from `uResolution`, `uExtentCells`,
 `uTime` and `colDiffuse`; the last pass **must** composite onto the target at
-that rectangle, upright. Any other bracket — nested in another, naming no
-effect or none the registry holds, one with no artifact for the device, or
-on a target without dynamic rendering, turned or of an sRGB format —
-**must** draw its contents unaffected and count once as `effect`.
+that rectangle, upright. A bracket nested in another **must** run the same
+way one level down, its last pass compositing onto its parent's image
+before the parent's passes read it (`EFX11`). Any other bracket — naming no
+effect or none the registry holds, one with no artifact for the device,
+nested deeper than `maxEffectDepth`, or on a target without dynamic
+rendering, turned or of an sRGB format — **must** draw its contents
+unaffected, the brackets nested in it running where it would have, and
+count once as `effect`.
 
 **UVK16: Degradation report.** `endFrame` **must** return, per frame, a count
 for each of `effect`, `missingFace`, `glyphMiss`, `unshapedCluster`,

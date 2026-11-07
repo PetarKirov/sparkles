@@ -628,53 +628,79 @@ struct VulkanCanvas(B)
             }
         }
 
-        // The root's effect brackets (`UVK15`). Each one an effect can run
-        // over is drawn into the chain's scratch image instead, the passes
-        // run, and the last composites onto the target; the target's pass
-        // resumes after it. The rest — no artifact for this device, a
-        // device without dynamic rendering, a turned or sRGB target the
-        // passes were not written for — draw where they are, and count.
+        // The effect brackets (`UVK15`, `EFX11`). Each one an effect can run
+        // over is drawn into the chain's scratch image for its nesting level
+        // instead, its own nested brackets composited there the same way,
+        // then its passes run and the last composites onto what it is
+        // nested in — the target, or its parent's scratch image — whose pass
+        // resumes after it. The rest — no artifact for this device, a device
+        // without dynamic rendering, a turned or sRGB target the passes were
+        // not written for — draw where they are, nested brackets running
+        // there, and count.
         const canRun = effectsReady_ && effectRegistry_ !is null && facts_.dynamicRendering
             && target_.turn % 4 == 0 && !isSrgb(target_.format);
-        size_t next;
-        beginPass(format.value.renderPass, framebuffer);
-        foreach (ref bracket; painter_.brackets)
+        const brackets = painter_.brackets;
+
+        // The runs `[lo, hi)` and the brackets `[bi, bEnd)` among them, into
+        // the pass in progress on `view` (of `image`) at nesting `level`.
+        // That pass is open again on success, and ended on failure.
+        VkResult drawSpan(size_t lo, size_t hi, size_t bi, size_t bEnd, uint level,
+            VkImage image, VkImageView view)
         {
-            const(EffectImpl)* impl;
-            const record = effectRegistry_ is null ? null : effectRegistry_.lookup(bracket.id);
-            if (canRun && bracket.rect.w > 0 && bracket.rect.h > 0)
-                impl = effects_.prepare(record, target_.format);
-            if (impl is null)
+            size_t next = lo;
+            while (bi < bEnd)
             {
-                painter_.report.count(Degradation.effect);
-                continue;
-            }
-            auto scratch = effects_.scratch(target_.format, drawn);
-            if (scratch.hasError)
-            {
+                const bracket = brackets[bi];
+                const(EffectImpl)* impl;
+                const record = effectRegistry_ is null ? null : effectRegistry_.lookup(bracket.id);
+                if (canRun && bracket.rect.w > 0 && bracket.rect.h > 0)
+                    impl = effects_.prepare(record, target_.format);
+                if (impl is null)
+                {
+                    painter_.report.count(Degradation.effect);
+                    ++bi; // what it brackets, nested brackets included, runs here
+                    continue;
+                }
+                auto scratch = effects_.scratch(level, target_.format, drawn);
+                if (scratch.hasError)
+                {
+                    endPass();
+                    return scratch.error;
+                }
+                auto scratchImage = scratch.value.handle;
+                auto scratchView = scratch.value.view;
+                drawRuns(next, bracket.firstRun);
                 endPass();
-                return fail!FrameReport(scratch.error);
+                with (VkPipelineStageFlagBits)
+                    transition(*device_, commands_, scratchImage,
+                        VkImageLayout.VK_IMAGE_LAYOUT_UNDEFINED,
+                        VkImageLayout.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                        VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0,
+                        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                        VkAccessFlagBits.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+                beginRenderingOn(scratchView, drawn, clear: true);
+                auto r = drawSpan(bracket.firstRun, bracket.endRun, bi + 1, bracket.endBracket,
+                    level + 1, scratchImage, scratchView);
+                if (r < 0)
+                    return r;
+                endPass();
+                r = effects_.record(commands_, slot_, record, impl, buffers_, bracket.rect,
+                    bracket.cells, image, view, target_.format, drawn, effectTime_, level);
+                if (r < 0)
+                    return r;
+                beginRenderingOn(view, drawn, clear: false);
+                next = bracket.endRun;
+                bi = bracket.endBracket;
             }
-            drawRuns(next, bracket.firstRun);
-            endPass();
-            with (VkPipelineStageFlagBits)
-                transition(*device_, commands_, scratch.value.handle,
-                    VkImageLayout.VK_IMAGE_LAYOUT_UNDEFINED,
-                    VkImageLayout.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                    VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0,
-                    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                    VkAccessFlagBits.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
-            beginRenderingOn(scratch.value.view, drawn, clear: true);
-            drawRuns(bracket.firstRun, bracket.endRun);
-            endPass();
-            const r = effects_.record(commands_, slot_, record, impl, buffers_, bracket.rect,
-                bracket.cells, target_.image, target_.view, target_.format, drawn, effectTime_);
-            if (r < 0)
-                return fail!FrameReport(r);
-            beginRenderingOn(target_.view, drawn, clear: false);
-            next = bracket.endRun;
+            drawRuns(next, hi);
+            return VkResult.VK_SUCCESS;
         }
-        drawRuns(next, painter_.runs.length);
+
+        beginPass(format.value.renderPass, framebuffer);
+        const drew = drawSpan(0, painter_.runs.length, 0, brackets.length, 0,
+            target_.image, target_.view);
+        if (drew < 0)
+            return fail!FrameReport(drew);
         endPass();
 
         auto layout = VkImageLayout.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
@@ -1662,8 +1688,8 @@ struct VulkanCanvas(B)
 
     /**
     Binds the effect registry a bracket's id resolves against (`EFX13`), which
-    must outlive the canvas. A bracket at the frame's root whose record
-    carries passes for this device's Vulkan version is run (`UVK15`); one
+    must outlive the canvas. A bracket, nested or not, whose record carries
+    passes for this device's Vulkan version is run (`UVK15`); one
     without, or with no registry bound, paints its contents unaffected.
     */
     void effects(const(EffectRegistry)* registry) @safe pure nothrow @nogc
@@ -1680,6 +1706,9 @@ struct VulkanCanvas(B)
 
     /// How many effect-pass pipelines the canvas has made.
     size_t effectPrograms() const @safe pure nothrow @nogc => effects_.programCount;
+
+    /// How many images the effect brackets hold (`EFX11`).
+    size_t effectImages() const @safe pure nothrow @nogc => effects_.imageCount;
 
     /// Whether the device was lost (`UVK33`).
     bool lost() const => lost_;
