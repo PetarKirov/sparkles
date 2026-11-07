@@ -553,3 +553,219 @@ finds.
     }
     assert(compared > 10_000, "the gate compared too little to mean anything");
 }
+
+// ---------------------------------------------------------------- the M2 gate
+
+/// What a planned walk found, and what it cost.
+struct PlannedWalk
+{
+    string[] members;           /// in byte order
+    size_t stats;               /// `statAt` calls made
+    ulong matchesUnderAcceptAll; /// segment matches made beneath `acceptAll`
+}
+
+/**
+Resolves `f` beneath `root` the way the plan says to: from each start root,
+skipping `skip` directories, collecting `acceptAll` ones without matching, and
+stat-ing a file only when its verdict is `undecided` (FSA1–FSA4).
+*/
+PlannedWalk plannedWalk(V, Rights R)(DirRef!(V, R) root, ref const Filesets sets, Fileset f)
+{
+    import std.algorithm.sorting : sort;
+
+    import sparkles.build_primitives.fileset.plan : plan, rootState;
+    import sparkles.build_primitives.fileset.value : DirVerdict, EntryFacts, FileVerdict,
+        FilesetEvaluator;
+
+    PlannedWalk result;
+    auto ev = FilesetEvaluator(sets, f);
+    auto p = plan(sets, f);
+
+    void collectAll(D)(D dir, string prefix)
+    {
+        const before = ev.segmentMatches;
+        foreach (file; bruteForceFiles(dir, prefix))
+            result.members ~= file.path;
+        result.matchesUnderAcceptAll += ev.segmentMatches - before;
+    }
+
+    void walk(D)(D dir, ulong[] state, string prefix)
+    {
+        auto listing = dir.list();
+        assert(!listing.hasError);
+        string[] names;
+        EntryKind[] kinds;
+        for (;;)
+        {
+            auto more = listing.value.next();
+            assert(!more.hasError);
+            if (!more.value)
+                break;
+            names ~= listing.value.front.name.idup;
+            kinds ~= listing.value.front.kind;
+        }
+        foreach (i, name; names)
+        {
+            auto kind = kinds[i];
+            if (kind == EntryKind.unknown)
+            {
+                ++result.stats;
+                kind = dir.statAt(name).value.kind;
+            }
+            if (kind == EntryKind.directory)
+            {
+                auto child = new ulong[](ev.stateWords);
+                const v = ev.enter(sets, state, name, child);
+                if (v == DirVerdict.skip)
+                    continue;
+                auto sub = dir.openDir(name);
+                assert(!sub.hasError);
+                if (v == DirVerdict.acceptAll)
+                    collectAll(sub.value.borrow, prefix ~ name ~ "/");
+                else
+                    walk(sub.value.borrow, child, prefix ~ name ~ "/");
+            }
+            else if (kind == EntryKind.regular || kind == EntryKind.symlink)
+            {
+                auto v = ev.fileVerdict(sets, state, name, EntryFacts.init);
+                if (v == FileVerdict.undecided)
+                {
+                    ++result.stats;
+                    v = ev.fileVerdict(sets, state, name,
+                        EntryFacts.stat(dir.statAt(name).value.executable));
+                }
+                if (v == FileVerdict.accept)
+                    result.members ~= prefix ~ name;
+            }
+        }
+    }
+
+    foreach (r; 0 .. p.length)
+    {
+        const start = p[r].idup;
+        auto state = new ulong[](ev.stateWords), scratch = new ulong[](ev.stateWords);
+        const v = rootState(ev, sets, start, state, scratch);
+        if (v == DirVerdict.skip)
+            continue;
+        const prefix = start.length ? start ~ "/" : "";
+        if (start.length == 0)
+        {
+            if (v == DirVerdict.acceptAll)
+                collectAll(root, prefix);
+            else
+                walk(root, state, prefix);
+            continue;
+        }
+        auto dir = root.walk(start);
+        if (dir.hasError)
+            continue; // an absent or non-directory root holds no member
+        if (v == DirVerdict.acceptAll)
+            collectAll(dir.value.borrow, prefix);
+        else
+            walk(dir.value.borrow, state, prefix);
+    }
+    result.members.sort();
+    return result;
+}
+
+/**
+M2's gate, which runs on every fixture for the life of the library: for every
+fileset, the planned walk and a brute-force walk that ignores every verdict
+produce the same members (FSA1), and a fileset the plan proves empty has
+none (FSA6).
+*/
+@("fileset.gate.m2.plannedEqualsBruteForce")
+@system unittest
+{
+    import std.algorithm.iteration : filter, map;
+    import std.array : array;
+    import std.conv : text;
+
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+    import sparkles.build_primitives.fileset.plan : plan;
+    import sparkles.build_primitives.fileset.value : FilesetEvaluator;
+
+    size_t filesets, emptyProofs;
+    void check(string literal, CasePolicy policy,
+        scope Fileset delegate(ref Filesets) @safe make, string label)
+    {
+        auto tree = openFixture(literal);
+        auto root = openRoot!(Rights.readOnly)(&tree.value.get().vfs, "", ambientAuthority());
+        auto sets = Filesets(policy);
+        const f = make(sets);
+        auto ev = FilesetEvaluator(sets, f);
+        const brute = bruteForceFiles(root.value.borrow)
+            .filter!(file => ev.contains(sets, file.path, file.executable))
+            .map!(file => file.path).array;
+        const planned = plannedWalk(root.value.borrow, sets, f);
+        assert(planned.members == brute, text(label, ":\n planned ", planned.members,
+            "\n brute   ", brute));
+        assert(planned.matchesUnderAcceptAll == 0, label);
+        if (plan(sets, f).staticallyEmpty)
+        {
+            assert(brute.length == 0, text(label, ": statically empty, yet ", brute));
+            ++emptyProofs;
+        }
+        ++filesets;
+    }
+
+    foreach (fx; fixtureSet())
+        foreach (i, make; fx.filesets)
+            check(fx.tree, fx.policy, make, text(fx.name, "#", i));
+
+    auto rng = Mt19937(20_261_108);
+    foreach (round; 0 .. 300)
+    {
+        const literal = randomTree(rng);
+        foreach (k; 0 .. 8)
+        {
+            auto seed = rng.front;
+            rng.popFront();
+            const policy = (seed & 1) ? CasePolicy.insensitive : CasePolicy.sensitive;
+            check(literal, policy, (ref Filesets s) @safe {
+                auto local = Mt19937(seed);
+                return randomFileset(s, local);
+            }, text("random round ", round, " seed ", seed));
+        }
+    }
+    assert(filesets > 2000 && emptyProofs > 0, text(filesets, " filesets, ", emptyProofs,
+        " empty proofs"));
+}
+
+/// FSA3: a fileset naming a whole subtree accepts it without matching
+/// beneath it; FSA4: only `undecided` files are stat-ed.
+@("fileset.plan.FSA3.acceptAllWithoutMatching")
+@system unittest
+{
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+
+    auto tree = openFixture("vendor/a/b/c.d\nvendor/x\nsrc/a.d\nbin/run +x\nbin/notes\n");
+    auto root = openRoot!(Rights.readOnly)(&tree.value.get().vfs, "", ambientAuthority());
+    auto sets = Filesets(CasePolicy.sensitive);
+    const vendored = sets.glob("vendor/**").value;
+    auto w = plannedWalk(root.value.borrow, sets, vendored);
+    assert(w.members == ["vendor/a/b/c.d", "vendor/x"]);
+    assert(w.matchesUnderAcceptAll == 0 && w.stats == 0);
+
+    const scripts = sets.intersection(sets.glob("bin/*").value, sets.executable);
+    auto s = plannedWalk(root.value.borrow, sets, scripts);
+    assert(s.members == ["bin/run"]);
+    assert(s.stats == 2, "one stat per undecided file, none elsewhere");
+}
+
+/// FSA5: a fileset admitting files beneath an ignored directory enters it.
+@("fileset.plan.FSA5.forcedEntry")
+@system unittest
+{
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+
+    auto tree = openFixture("src/a.d\nbuild/a.o\nbuild/obj/b.o\nbuild/log.txt\n");
+    auto root = openRoot!(Rights.readOnly)(&tree.value.get().vfs, "", ambientAuthority());
+    auto sets = Filesets(CasePolicy.sensitive);
+    const tracked = sets.difference(sets.everything, sets.ignored("build/\n").value);
+    auto alone = plannedWalk(root.value.borrow, sets, tracked);
+    assert(alone.members == ["src/a.d"]);
+    const withObjects = sets.union_(tracked, sets.glob("build/**/*.o").value);
+    auto forced = plannedWalk(root.value.borrow, sets, withObjects);
+    assert(forced.members == ["build/a.o", "build/obj/b.o", "src/a.d"]);
+}

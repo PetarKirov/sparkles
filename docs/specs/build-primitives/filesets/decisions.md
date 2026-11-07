@@ -153,6 +153,28 @@ is refused because `.gitignore` reads it as negation. And one is recorded in
 `FSG3`: the engine normalizes both sides to NFC, so normalization is part of
 every policy, not only of a case-insensitive one.
 
+### A12 — A start root is a literal no other name matches
+
+The planner opens a start root directly, without listing its ancestors
+([`FSA2`](./SPEC.md#6-analysis-and-planning-fsa)). That is sound only if the
+literal it opens is the _only_ name the pattern's component matches; otherwise
+a sibling spelled differently, but matching, is never listed and its members
+are lost, which is an `FSA1` violation.
+
+Matching normalizes to NFC under every policy ([A11](#a11-patterns-compile-one-component-at-a-time)),
+and NFC maps three non-ASCII code points onto ASCII: U+212A KELVIN SIGN to
+`K`, U+1FEF GREEK VARIA to `` ` ``, and U+037E GREEK QUESTION MARK to `;`. No
+other non-ASCII sequence normalizes to pure ASCII, because composition only
+ever produces non-ASCII characters. So under the case-sensitive policy an
+ASCII literal without those three characters is matched by its own bytes and
+nothing else; under the case-insensitive policy no literal is, since case
+folding is itself a second spelling.
+
+Rejected: matching literal components byte-exactly while globs normalize.
+It would make root derivation trivially sound, but `Keep` and `K*` would then
+disagree about a directory named with the Kelvin sign, so a fileset's meaning
+would depend on whether a component happened to contain a metacharacter.
+
 ## Open
 
 ### D1 — Which Merkle shape
