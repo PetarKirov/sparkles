@@ -143,6 +143,13 @@ the screen locked nothing is presented and a scripted run stalls: capture
 headless under `xvfb-run` with lavapipe (`VK_ICD_FILENAMES` naming
 `lvp_icd`) instead.
 
+On Android the native arm is `.#hue-apk` (raylib: `.#hue-raylib-apk`); the
+terminal's is still `.#terminal-vulkan-apk` beside the raylib `.#terminal-apk`.
+Run them on the emulator from `nix develop .#android`:
+`hue-emulator -no-window -gpu swiftshader_indirect` (Vulkan through
+SwiftShader), then `adb install`, `adb shell input …` to drive it and
+`adb exec-out screencap -p > shot.png` to see it.
+
 ### Build types: `debug` to test, `checked` to ship, never `release`
 
 Every in-repo `dub.sdl` and every single-file example's inline recipe declares:

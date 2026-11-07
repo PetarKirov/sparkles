@@ -55,7 +55,8 @@ hue's end-to-end drag-over-decoration case passes.
 
 ## HUE-O4 — Android 16 enforces edge-to-edge, and the toolbar does not handle insets {#hue-o4}
 
-**Status:** open, latent — introduced by targeting API 36, not yet observed on a
+**Status:** resolved on the native arm (the default APK, [`AND15`](./android.md));
+open on the raylib APK — introduced by targeting API 36, not yet observed on a
 device. **Requirements:** [`AND6`](./android.md) (touch toolbar),
 [`FDR4`](./fdroid.md) (declared API levels). **Feeds:** the planned mobile UI
 redesign.
@@ -82,6 +83,13 @@ Close this issue when the toolkit carries a safe-area/inset concept through
 layout, hue's Android surfaces derive their placement from it, and the toolbar
 is confirmed reachable on an Android 16 device with gesture navigation — the
 emulator's default configuration included.
+
+The native arm meets it: its host lays the surface out inside the safe insets
+the window system reports (`NativeHost.pixels`, the canvas's origin at the
+insets' top-left), so every surface hue draws, the toolbar included, starts
+inside them, and the soft keyboard's inset ends the layout above it. On the
+API 36 emulator with gesture navigation the toolbar sits above the gesture
+handle and takes taps. The raylib APK still reads no insets.
 
 ## HUE-O5 — The widget-HTML interpreter cannot lay out positioned stacks {#hue-o5}
 

@@ -294,3 +294,14 @@ paints on this canvas too (the credits, a markdown preview with its tables
 and code blocks, scroll on a phone). Gaps beside the gate: chrome text in the cell
 font rather than the interface face, no pinch tried by hand (`adb` injects
 one finger), and screenshots read back in the panel's orientation.
+
+hue followed the terminal onto this arm (`packages.hue-apk`, hue's
+[`AND15`](../hue/android.md)): the same host, canvas and recogniser, with no
+slice of its own here. On the emulator (API 36, SwiftShader) it draws its
+documents and explorer inside the insets, types into its search line from the
+soft keyboard, selects by a long-press and a drag, copies and pastes, turns, and
+runs the CRT (`UVK15`) upright, skipping it, as specified, on the turned
+swapchain. Not yet run on hardware. What it needed of the host was the
+application's own font directories searched without fontconfig, a long-press
+that drags as the left button (`RunConfig.longPressDrags`), and the soft
+keyboard kept away when the window returns.
