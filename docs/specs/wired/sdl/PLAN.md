@@ -407,9 +407,56 @@ Gate:
 - the editor's range overloads apply one operation per selected target, and
   one consumer's hand-written name-and-value filter moves onto a selector.
 
+## S22 follow-ups: shared storage, 2026-11-07
+
+The region path still copied the source and every kept cell into the new
+document, so a one-value edit of a 4000-tag document allocated 2.7 MB. Re-parses
+now share the unchanged cells ([editing §10.1](./editing.md#10-1-shared-storage)),
+and the editor hands over the rendered text ([performance SDP8](./performance.md#2-architecture)).
+
+| Gate                                                       | Evidence                                                                                                                                                                                                |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SDP8: an edit's allocation does not grow with the document | `sdl.reader.reparseEdited.allocatesTheEdit`: 8 blocks and 3226 bytes (edit at the start) or 3258 (at the end), equal at 2001 and 8001 nodes, whose full parses allocate 1.16 MB and 4.60 MB             |
+| SDE14 over shared documents; the ownership rule of §10.1   | `sdl.reader.reparseEdited.properties`, its chained pass (Mallocator and a counting allocator, which gets every block back); `.oracleCatchesASplice` perturbs a run's shift, a line run's, a copy        |
+| SDE16 across allocator types; retention bounded            | `sdl.reader.reparseEdited.statefulAllocatorLocalizes` (kept cells copied); `.retentionIsBounded` (600 edits, held blocks under 4 full parses, the fallback seen); `sdl.open_document.statefulAllocator` |
+
+Retired instructions per input byte (`--perf`, `-b bench`, LDC 1.43). The `walk`
+rows are new; their before is the same rows run on this branch's parent. The
+first after column shares cells but re-resolves each read; the second is the
+shipped one, whose views keep their run.
+
+| Dataset       | Row              | Before | Shared | After |
+| ------------- | ---------------- | -----: | -----: | ----: |
+| `dub_recipes` | parse            |  192.1 |  188.1 | 188.0 |
+| `dub_recipes` | decode           |  369.9 |  366.3 | 365.7 |
+| `dub_recipes` | edit             |   35.2 |    7.9 |   8.0 |
+| `dub_recipes` | commit           |   41.0 |   34.2 |  35.8 |
+| `dub_recipes` | commit-unchanged |   0.87 |   0.81 |  0.80 |
+| `dub_recipes` | encode           |   39.0 |   39.9 |  39.1 |
+| `dub_recipes` | walk             |   1.75 |   3.05 |  2.01 |
+| `dub_recipes` | walk-edited      |   1.76 |   17.2 |  2.05 |
+| `deep_wide`   | parse            |  150.0 |  148.6 | 148.4 |
+| `deep_wide`   | edit             |   26.1 |   10.9 |  11.0 |
+| `deep_wide`   | commit           |   16.9 |    2.0 |   2.1 |
+| `deep_wide`   | commit-unchanged |   0.17 |   0.17 |  0.17 |
+| `deep_wide`   | encode           |   80.7 |   81.1 |  80.6 |
+| `deep_wide`   | walk             |   0.58 |   1.40 |  0.63 |
+| `deep_wide`   | walk-edited      |   0.58 |   10.2 |  0.63 |
+
+A view is now its run and its cell, and a child range steps inside its run
+by pointer arithmetic, so a shared document reads as fast as a flat one. What
+`walk` still pays over the parent's arrays is a few instructions per element:
+a child step reads the child's subtree size and checks the run's end, where a
+child-index window was one load, and a span read adds the run's shift. On
+`deep_wide`, whose nodes carry many values, that is +9%; recipes have few
+values per node, so it is +15% there. Removing it would take a second view
+type for flat documents, which every consumer would have to be generic over,
+or the child-index arena back, which an edit cannot share.
+
 ## S22 follow-ups: 2026-11-07
 
-S22 left two limits. A commit with no edits re-parsed the whole host, and
+S22 left two limits.
+A commit with no edits re-parsed the whole host, and
 the region path served only stateless allocators: a stateful one took the
 full parse, and `SdlOpenDocument` refused one. Both are lifted.
 
@@ -433,6 +480,23 @@ the host into the rendered output.
 | `deep_wide`   | edit             |   26.2 |  26.1 |
 | `deep_wide`   | commit           |   17.0 |  16.8 |
 | `deep_wide`   | commit-unchanged |  150.5 |  0.17 |
+
+## S20–S21 follow-ups: moves
+
+S20's moves replaced the moved node: a commit retired its handle and its
+descendants', as a replacement does. Moves now replace nothing, and a
+moved node's anchor goes where its bytes went (editing §9). A move also
+needed the node and its destination each alone on their lines, and
+`updateSDL` wrote any other reordered element afresh. A node sharing a
+line now moves its inline text, along its line, onto another's or onto a
+line of its own (editing §2, §3, SDE18); `updateSDL` writes an element
+afresh only where placement allows no move — more than one line, a line
+comment or attached comments, bound between two nodes of one line.
+
+| Gate                                                                            | Evidence                                                                                                                                                                                                                                                                                     |
+| ------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SDE11 over moves; SDE12 for a moved-and-replaced node                           | `SdlEditor.movedOffset`; `sdl.open_document.properties.repositoryRecipes` with random moves, some re-indenting and some with an edit inside, mutation-checked; `.movesKeepHandles`; `.replacedNodesGoStale`                                                                                  |
+| SDE18 on shared lines; placement beside an inline sibling; SDE3's blank overlap | `sdl.editor.move.sharedLines`, `.rejects`; `sdl.editor.properties.movesOnSharedLines` (every recipe with nodes put on shared lines, mutation-checked); `sdl.open_document.properties.repositoryRecipes` over the same hosts; `sdl.typedEdit.keyed.reorderOnSharedLines`; `SdlEditor.canMove` |
 
 ## S21–S22 closure: 2026-11-06
 

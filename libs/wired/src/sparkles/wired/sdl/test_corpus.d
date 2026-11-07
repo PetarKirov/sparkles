@@ -55,14 +55,19 @@ package auto parseRecipe()(scope const(char)[] text, string path)
 /** The first difference between two parsed documents, field by field — the
 SDE14 oracle — or `null` when they are equal: the source, the content, every
 cell's name, spans, layout and links, every value and attribute with its
-payload, the comments and the line table. Each document's names and payloads
-must also lie in its own source and pool, so a splice that borrows from the
-document it was made from is caught. */
+payload, the comments, the line table and positions, read through the core's
+accessors and again through the public views, so a shared document's runs are
+checked on both paths. Each document must also keep the ownership rule of
+editing §10.1: every name and payload it returns lies in the pool of a block
+it holds, so a splice that borrows from the text it was given, or from a
+document whose blocks it does not hold, is caught. */
+
 package string documentDifference(A, B)(ref const A a, ref const B b) @system
 {
     import std.conv : to;
     import sparkles.base.buffer : UniqueBuffer;
-    import sparkles.wired.sdl.document : SdlCore, SdlScalar, SdlScalarKind;
+    import sparkles.wired.sdl.document : SdlAttributeView, SdlCore, SdlNode, SdlScalar,
+        SdlScalarKind;
     import sparkles.wired.sdl.writer : writeSdlScalar;
 
     static string spelled(in SdlScalar s)
@@ -81,18 +86,53 @@ package string documentDifference(A, B)(ref const A a, ref const B b) @system
     static string owned(D)(ref const D d)
     {
         const core = d.core;
-        foreach (i, ref node; core.nodes)
-            if (!within(node.qualifiedName.localName, core.source)
-                || !within(node.qualifiedName.namespace_, core.source))
-                return "node " ~ i.to!string ~ "'s name is not in its source";
-        foreach (i, ref attribute; core.attributes)
-            if (!within(attribute.qualifiedName.localName, core.source)
-                || !within(attribute.value.borrowedBytes, d.pool))
+        bool held(scope const(void)[] payload)
+        {
+            if (payload.length == 0)
+                return true;
+            foreach (block; core.blocks)
+                if (within(payload, block.pool))
+                    return true;
+            return false;
+        }
+        bool named(in typeof(core.nodeAt(0).qualifiedName) name)
+            => held(name.localName) && held(name.namespace_);
+        foreach (i; 0 .. core.nodeCount)
+            if (!named(core.nodeAt(i).qualifiedName) || !named(SdlNode(core, i).qualifiedName))
+                return "node " ~ i.to!string ~ "'s name is not in a block it holds";
+        foreach (i; 0 .. core.attributeCount)
+            if (!named(core.attributeAt(i).qualifiedName)
+                || !named(SdlAttributeView(core, i).qualifiedName)
+                || !held(core.attributeAt(i).value.borrowedBytes))
                 return "attribute " ~ i.to!string ~ " is not in its document";
-        foreach (i, ref value; core.values)
-            if (!within(value.value.borrowedBytes, d.pool))
-                return "value " ~ i.to!string ~ "'s payload is not in its pool";
+        foreach (i; 0 .. core.valueCount)
+            if (!held(core.valueAt(i).value.borrowedBytes))
+                return "value " ~ i.to!string ~ "'s payload is not in a block it holds";
         return null;
+    }
+
+    // What a node's views show: its scalars, its attributes and its children.
+    static string viewed(scope const(SdlCore)* core, size_t i)
+    {
+        const node = SdlNode(core, i);
+        string text = node.qualifiedName.namespace_.idup ~ ":" ~ node.qualifiedName.localName.idup
+            ~ " " ~ node.span.to!string ~ node.nameSpan.to!string ~ node.extent.to!string
+            ~ node.aloneOnLines.to!string ~ node.hasBlock.to!string;
+        foreach (k; 0 .. node.valueCount)
+            text ~= " v" ~ spelled(node.valueAt(k));
+        foreach (value; node.byValue)
+            text ~= " " ~ spelled(value);
+        foreach (attribute; node.byAttribute)
+            text ~= " " ~ attribute.qualifiedName.namespace_.idup ~ ":"
+                ~ attribute.qualifiedName.localName.idup ~ attribute.nameSpan.to!string
+                ~ attribute.span.to!string ~ "=" ~ spelled(attribute.value);
+        size_t children;
+        foreach (child; node.byChild)
+        {
+            text ~= " #" ~ child.cellIndex.to!string;
+            children++;
+        }
+        return children == node.childCount ? text : text ~ " (child count)";
     }
 
     if (a.valid != b.valid)
@@ -110,42 +150,52 @@ package string documentDifference(A, B)(ref const A a, ref const B b) @system
         return "source";
     if (x.content != y.content)
         return "content";
-    if (x.nodes.length != y.nodes.length)
-        return "node count " ~ x.nodes.length.to!string ~ " vs " ~ y.nodes.length.to!string;
-    foreach (i; 0 .. x.nodes.length)
+    if (x.nodeCount != y.nodeCount)
+        return "node count " ~ x.nodeCount.to!string ~ " vs " ~ y.nodeCount.to!string;
+    foreach (i; 0 .. x.nodeCount)
     {
-        const p = x.nodes[i], q = y.nodes[i];
-        const where = "node " ~ i.to!string ~ " (" ~ p.qualifiedName.localName.idup ~ "): ";
+        const p = x.nodeAt(i), q = y.nodeAt(i);
+        const where = "node " ~ i.to!string ~ " (" ~ q.qualifiedName.localName.idup ~ "): ";
         if (p.qualifiedName != q.qualifiedName)
             return where ~ "name";
         static foreach (field; ["nameSpan", "span", "extent", "openBrace", "closeBrace",
             "terminator", "valueStart", "valueCount", "attributeStart", "attributeCount",
-            "childStart", "childCount", "depth", "hasBlock", "aloneOnLines"])
+            "subtreeSize", "childCount", "depth", "hasBlock", "aloneOnLines"])
             if (__traits(getMember, p, field) != __traits(getMember, q, field))
                 return where ~ field ~ " " ~ __traits(getMember, p, field).to!string ~ " vs "
                     ~ __traits(getMember, q, field).to!string;
+        const v = viewed(x, i), w = viewed(y, i);
+        if (v != w)
+            return where ~ "views: " ~ v ~ " vs " ~ w;
+        foreach (offset; [p.span.startOffset, p.span.endOffset])
+            if (a.position(offset) != b.position(offset))
+                return where ~ "position of " ~ offset.to!string;
     }
-    if (x.childIndexes != y.childIndexes)
-        return "child indexes";
-    if (x.values.length != y.values.length)
+    if (x.valueCount != y.valueCount)
         return "value count";
-    foreach (i; 0 .. x.values.length)
-        if (spelled(x.values[i].value) != spelled(y.values[i].value))
-            return "value " ~ i.to!string ~ ": " ~ spelled(x.values[i].value) ~ " vs "
-                ~ spelled(y.values[i].value);
-    if (x.attributes.length != y.attributes.length)
+    foreach (i; 0 .. x.valueCount)
+        if (spelled(x.valueAt(i).value) != spelled(y.valueAt(i).value))
+            return "value " ~ i.to!string ~ ": " ~ spelled(x.valueAt(i).value) ~ " vs "
+                ~ spelled(y.valueAt(i).value);
+    if (x.attributeCount != y.attributeCount)
         return "attribute count";
-    foreach (i; 0 .. x.attributes.length)
+    foreach (i; 0 .. x.attributeCount)
     {
-        const p = x.attributes[i], q = y.attributes[i];
+        const p = x.attributeAt(i), q = y.attributeAt(i);
         if (p.qualifiedName != q.qualifiedName || p.nameSpan != q.nameSpan || p.span != q.span
             || spelled(p.value) != spelled(q.value))
             return "attribute " ~ i.to!string;
     }
-    if (x.comments != y.comments)
-        return "comments";
-    if (x.lines.lineStarts != y.lines.lineStarts)
-        return "line starts";
+    if (x.commentCount != y.commentCount)
+        return "comment count";
+    foreach (i; 0 .. x.commentCount)
+        if (x.commentAt(i) != y.commentAt(i) || a.comments[i] != b.comments[i])
+            return "comment " ~ i.to!string;
+    if (x.lineZero != y.lineZero || x.lineCount != y.lineCount)
+        return "line count";
+    foreach (i; 0 .. x.lineCount)
+        if (x.lineStart(i) != y.lineStart(i))
+            return "line start " ~ i.to!string;
     return null;
 }
 

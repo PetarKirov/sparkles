@@ -48,6 +48,7 @@ See [SPEC §5](../../../specs/wired/sdl/SPEC.md#_5-typed-sdl-roles) and
 | `SdlDocument`                                 | `root`, its owned `source`, `position(offset)`, and `comments`.      |
 | `SdlNode.extent`                              | The bytes the node owns: whole lines, or its inline range.           |
 | `SdlComment`, `SdlCommentKind`                | A comment's span and whether it is a line or a block comment.        |
+| `SdlCommentRange`                             | `comments`: a random-access range of `SdlComment` in source order.   |
 | `SdlScalar`                                   | One value: `kind`, then the payload accessor for that kind.          |
 | `SdlNameQuery`                                | A name to filter `byChild`/`byAttribute`, optionally any namespace.  |
 | `SdlSpan`, `SdlPosition`                      | A source byte range; the line and column of an offset.               |
@@ -58,14 +59,14 @@ See [SPEC §4](../../../specs/wired/sdl/SPEC.md#_4-ordered-arena-document).
 
 In the `sparkles:wired-sdl-select` sub-package, module `sparkles.wired.sdl.select`.
 
-| Name                                   | Is                                                                      |
-| -------------------------------------- | ----------------------------------------------------------------------- |
-| `SdlPath.parse(path)`                  | A borrowed, validated DQL path; `nodes(start)`, `attributes(start)`.    |
-| `SdlSelector.parse(path, filter)`      | An owned path plus a DQL filter over each selected node.                |
-| `SdlNodeSelection`, `SdlSelectedNodes` | The node ranges, in document order: unfiltered and filtered.            |
-| `SdlAttributeSelection!Nodes`          | The attributes the last segment names, of the nodes `Nodes` yields.     |
-| `SdlNodeResolver`                      | The DQL host resolver over one node: `values[i]`, attributes, children. |
-| `SdlSelectorError`, `SdlSelectorPart`  | A fault's input (path or filter) and DQL's error at an offset in it.    |
+| Name                                   | Is                                                                                       |
+| -------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `SdlPath.parse(path)`                  | A borrowed, validated path (`..` first: any depth); `nodes`, `attributes`.               |
+| `SdlSelector.parse(path, filter)`      | A path plus a DQL filter over each selected node; copies share it.                       |
+| `SdlNodeSelection`, `SdlSelectedNodes` | The node ranges, in document order: unfiltered and filtered.                             |
+| `SdlAttributeSelection!Nodes`          | The attributes the last segment names, of the nodes `Nodes` yields.                      |
+| `SdlNodeResolver`                      | The DQL host resolver over one node: `values[i]`, `attributes[i]`, attributes, children. |
+| `SdlSelectorError`, `SdlSelectorPart`  | A fault's input (path or filter) and DQL's error at an offset in it.                     |
 
 The editor's `remove`, `removeAttribute`, `replaceAttribute` and
 `setAttribute` accept a selection. See

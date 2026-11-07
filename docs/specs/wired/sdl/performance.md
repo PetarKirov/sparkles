@@ -51,6 +51,7 @@ is an explicit amendment to the accepted SPEC, stated in
 | SDP5 | Typed decode visits each child and attribute of a node a bounded number of times           |
 | SDP6 | Scratch storage uses `sparkles.base.buffer`; arena blocks keep the caller's allocator      |
 | SDP7 | No optimization changes a conformance, law, golden, error or position result               |
+| SDP8 | An edit's re-parse allocates in proportion to the edit, not to the document                |
 
 ## 1. Measurement
 
@@ -94,9 +95,10 @@ the lexer counts no column for it. A position is then the line found by
 binary search, and the column counted from that line's start exactly as the
 lexer counts today: one per UTF-8 sequence, one per invalid byte.
 
-The cells, the source copy and the line table live in one heap block, the
-document's **core**, which does not depend on the allocator type and does
-not move when the document does. Node and attribute views refer to the core,
+The document's **core** — its source, its line table and the runs that
+place its cells ([editing §10.1](./editing.md#10-1-shared-storage)) — lives
+in one heap block, which does not depend on the allocator type and does not
+move when the document does. Node and attribute views refer to the core,
 so a view — and the typed decoder walking it — can turn any span into a
 position, and moving a document never invalidates its views. Errors keep
 eager positions, computed when the error is made.
@@ -114,8 +116,7 @@ source. That bound holds because every decoding shrinks or copies — escapes
 shrink, Base64 shrinks, a zone is a substring, invalid UTF-8 is rejected
 rather than replaced, names are copied raw — and an escape-free string or
 name may instead slice the source copy directly. The index-addressed cell
-arrays (nodes,
-values, attributes, children, line starts) start from a cheap bound on the
+arrays (nodes, values, attributes, line starts) start from a cheap bound on the
 source length and grow geometrically on the rare overflow; nothing holds a
 pointer into them while they can grow. The count-then-fill pass goes.
 
@@ -138,6 +139,25 @@ not part of this work.
 **SDP7 — Unchanged results.** Every optimization keeps the conformance
 suite, both round-trip laws, the typed goldens, and the error-code and
 position goldens green, on every platform CI tests.
+
+**SDP8 — Edits allocate what they touch.** A region re-parse
+([editing §10](./editing.md#10-incremental-re-parse)) shares the old
+document's unchanged cells, comments, line starts and payloads instead of
+copying them, and, when the caller hands over the rendered text, keeps that
+text as its source instead of copying it
+([editing §10.1](./editing.md#10-1-shared-storage)). What it allocates is the
+region's cells and payloads, copies of the region's ancestors and of shared
+pieces shorter than 16 cells, and the new document's core and run tables,
+one entry per run. Views and ranges keep the run they read, so reading in
+order searches nothing, flat or shared, and only random access by index
+pays a binary search over the runs. _Oracle:_ a test re-parses a one-value edit at the
+
+start and at the end of a generated document of two sizes, the larger four
+times the smaller, through a counting allocator, and requires the bytes and
+the blocks to stay under one bound at both sizes; the SDP1 rows show parse,
+decode and encode unchanged within 3%, and `walk-edited` reading as fast as
+`walk`. _Violation:_ bytes that grow with the
+document, or a parse or decode row that regresses.
 
 ## 3. Amendment to the accepted SPEC
 
@@ -188,14 +208,18 @@ invalid-UTF-8 columns.
 
 ## 5. Decisions
 
-| Question                 | Choice                                                                                                                          | Alternative and why not                                                                                                                                |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Who owns the source      | the document, as in JSON (SDP3)                                                                                                 | the caller: decode and editing would need the source passed alongside, and positions could not be computed                                             |
-| Where positions live     | byte spans; positions on demand, eager in errors                                                                                | eager everywhere: 24 bytes more per span, and the per-byte position update is the lexer's hottest loop                                                 |
-| Span type                | the shared `TextSpan`                                                                                                           | an SDL span with `uint` offsets: a second copy of a primitive base already owns                                                                        |
-| Line table               | base's line index, extended (§4), fed by the lexer                                                                              | an SDL-local table: a second copy of a primitive base already owns                                                                                     |
-| Arena growth             | pool sized once; cell arrays grow (SDP4)                                                                                        | exact pre-count: doubles lexing, which is what this page removes                                                                                       |
-| Allocator                | kept (SDP6)                                                                                                                     | `sparkles.base.buffer` blocks: no allocator parameter, which `@nogc` callers and the editor need                                                       |
-| Node views               | a core reference and a cell index, 16 bytes (S13)                                                                               | today's four slices and an index: about 72 bytes, and no way to reach the source or line table; a pointer to the document itself dangles when it moves |
-| Node handles for editing | generational handles in a growable slot table, carried by anchor ([editing §9](./editing.md#9-open-documents-and-node-handles)) | none, as in the first slice: every caller re-selects its nodes after each commit, which an interactive editor or language server cannot do             |
-| Re-parse after an edit   | the edited region only, spliced into a copy ([editing §10](./editing.md#10-incremental-re-parse))                               | the whole host: correct, but a one-line edit to a large document costs the whole document                                                              |
+| Question                                                                                                                                               | Choice                                                                                                                                                 | Alternative and why not                                                                                                                                                                                                                                                                                                                                                            |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Who owns the source                                                                                                                                    | the document, as in JSON (SDP3)                                                                                                                        | the caller: decode and editing would need the source passed alongside, and positions could not be computed                                                                                                                                                                                                                                                                         |
+| Where positions live                                                                                                                                   | byte spans; positions on demand, eager in errors                                                                                                       | eager everywhere: 24 bytes more per span, and the per-byte position update is the lexer's hottest loop                                                                                                                                                                                                                                                                             |
+| Span type                                                                                                                                              | the shared `TextSpan`                                                                                                                                  | an SDL span with `uint` offsets: a second copy of a primitive base already owns                                                                                                                                                                                                                                                                                                    |
+| Line table                                                                                                                                             | base's line index, extended (§4), fed by the lexer; a shared document reads its blocks' line starts through runs                                       | an SDL-local table for every document: a second copy of a primitive base already owns                                                                                                                                                                                                                                                                                              |
+| Arena growth                                                                                                                                           | pool sized once; cell arrays grow (SDP4)                                                                                                               | exact pre-count: doubles lexing, which is what this page removes                                                                                                                                                                                                                                                                                                                   |
+| Allocator                                                                                                                                              | kept (SDP6)                                                                                                                                            | `sparkles.base.buffer` blocks: no allocator parameter, which `@nogc` callers and the editor need                                                                                                                                                                                                                                                                                   |
+| Node views                                                                                                                                             | the cell's run and the cell, 16 bytes ([editing §10.1](./editing.md#10-1-shared-storage)); the run reaches the core                                    |
+| today's four slices and an index: about 72 bytes, and no way to reach the source or line table; a pointer to the document itself dangles when it moves |
+| Node handles for editing                                                                                                                               | generational handles in a growable slot table, carried by anchor ([editing §9](./editing.md#9-open-documents-and-node-handles))                        | none, as in the first slice: every caller re-selects its nodes after each commit, which an interactive editor or language server cannot do                                                                                                                                                                                                                                         |
+| Re-parse after an edit                                                                                                                                 | the edited region only, spliced into a document that shares the rest ([editing §10](./editing.md#10-incremental-re-parse))                             | the whole host: correct, but a one-line edit to a large document costs the whole document                                                                                                                                                                                                                                                                                          |
+| What an edit shares                                                                                                                                    | immutable reference-counted blocks read through runs, each with a logical base and an offset shift ([editing §10.1](./editing.md#10-1-shared-storage)) | copying every kept cell (S22): memory and copying grow with the document. Fixed-size chunks: an edit that adds a node misaligns every chunk after it, so all are copied. A persistent balanced tree: every read descends several levels, and a fresh parse could no longer be read as an array. Chunk-relative offsets: the same shift, paid on every cell instead of once per run |
+| The source after an edit                                                                                                                               | the rendered text the editor hands over, or a copy                                                                                                     | a rope or piece table shared with the old source: the lexer, the editor and every span slice one contiguous source, and the editor renders one anyway                                                                                                                                                                                                                              |
+| Children of a node                                                                                                                                     | a subtree size and a child count per node                                                                                                              | a child-index arena: every entry after an edit moves, so none of it can be shared                                                                                                                                                                                                                                                                                                  |

@@ -1,9 +1,10 @@
-/** Path selection over a parsed SDL document (editing §3.2, SDS1–SDS5).
+/** Path selection over a parsed SDL document (editing §3.2, SDS1–SDS6).
 
 A path in the DQL path grammar (`configuration.dependency`,
 `configuration[1].dependency`) selects nodes by name-and-index child steps;
 read as an attribute selection, its last segment names attributes instead
-(`dependency.path`). An optional DQL filter narrows the selection, evaluated
+(`dependency.path`). A leading `..` lets the first step match at any depth
+(`..dependency`). An optional DQL filter narrows the selection, evaluated
 by DQL's own evaluator with each selected node as its subject through
 $(LREF SdlNodeResolver):
 
@@ -14,13 +15,13 @@ foreach (attribute; selector.attributes(document.root))
 ---
 
 $(LREF SdlPath) borrows a path and selects without a filter or any
-allocation; $(LREF SdlSelector) owns its path, its DQL engine and its filter.
+allocation; $(LREF SdlSelector) shares one parsed path, DQL engine and filter
+among its copies, reference-counted off the collected heap.
 */
 module sparkles.wired.sdl.select;
 
 import core.lifetime : move;
 
-import sparkles.base.buffer : UniqueBuffer;
 import sparkles.base.expected : Expected, err, ok;
 import sparkles.dql.engine : DqlEngine, DqlParseError;
 import sparkles.dql.ast : DqlFilter;
@@ -29,7 +30,7 @@ import sparkles.dql.parser : parseDql;
 import sparkles.dql.path : DqlPathStep, DqlPathStepKind, DqlPathSteps, dqlPathSteps,
     validateDqlPath;
 import sparkles.wired.sdl.document : SdlAttributeRange, SdlAttributeView, SdlChildRange,
-    SdlNode, SdlQualifiedName, SdlScalar, SdlScalarKind;
+    SdlCore, SdlNode, SdlQualifiedName, SdlScalar, SdlScalarKind;
 
 /// The most steps a selection path may have.
 enum size_t sdlSelectorMaxSteps = 16;
@@ -105,24 +106,53 @@ private Expected!(size_t, DqlParseError) checkSdlPath(scope const(char)[] path)
     return ok!DqlParseError(count);
 }
 
-/** A validated selection path (SDS1) that borrows its text: it selects
+/** The shape of a selection path: its SDL steps, and whether a leading `..`
+lets its first step match at any depth (SDS6). */
+private struct SdlPathShape
+{
+    size_t steps;
+    bool anyDepth;
+}
+
+/** The shape of `path` — an SDL path, after an optional leading `..` — or
+its first fault, at its byte offset in `path`. */
+private Expected!(SdlPathShape, DqlParseError) checkSelectionPath(scope const(char)[] path)
+    @safe pure nothrow @nogc
+{
+    const anyDepth = path.length >= 2 && path[0 .. 2] == "..";
+    const skip = anyDepth ? 2 : 0;
+    const steps = checkSdlPath(path[skip .. $]);
+    if (steps.hasError)
+        return err!SdlPathShape(DqlParseError(steps.error.message,
+            steps.error.offset + skip, steps.error.length));
+    return ok!DqlParseError(SdlPathShape(steps.value, anyDepth));
+}
+
+// The SDL path after a selection path's leading `..`, if any.
+private const(char)[] stepsOf(return scope const(char)[] path, bool anyDepth)
+    @safe pure nothrow @nogc
+    => anyDepth ? path[2 .. $] : path;
+
+/** A validated selection path (SDS1, SDS6) that borrows its text: it selects
 nodes or attributes without a filter, allocating nothing (SDS4). */
 struct SdlPath
 {
     private const(char)[] _text;
     private size_t _steps;
+    private bool _anyDepth;
 
     /// Validates `text`; the error's offset is a byte offset into it.
     static Expected!(SdlPath, DqlParseError) parse(return scope const(char)[] text)
         @safe pure nothrow @nogc
     {
-        const steps = checkSdlPath(text);
-        if (steps.hasError)
-            return err!SdlPath(DqlParseError(steps.error.message, steps.error.offset,
-                steps.error.length));
+        const shape = checkSelectionPath(text);
+        if (shape.hasError)
+            return err!SdlPath(DqlParseError(shape.error.message, shape.error.offset,
+                shape.error.length));
         SdlPath path;
         path._text = text;
-        path._steps = steps.value;
+        path._steps = shape.value.steps;
+        path._anyDepth = shape.value.anyDepth;
         return ok!DqlParseError(path);
     }
 
@@ -132,21 +162,27 @@ struct SdlPath
     /// The number of name-and-index steps.
     size_t length() const scope @safe pure nothrow @nogc => _steps;
 
+    /// Whether the path begins with `..`, so its first step matches at any depth.
+    bool anyDepth() const scope @safe pure nothrow @nogc => _anyDepth;
+
     /// The nodes the path selects below `start` (SDS2), in document order.
     SdlNodeSelection nodes(return scope SdlNode start) const return scope
         @safe pure nothrow @nogc
-        => SdlNodeSelection(_text, _steps, start);
+        => SdlNodeSelection(stepsOf(_text, _anyDepth), _steps, _anyDepth, start);
 
     /** The attributes the path selects below `start`: its last step names
     attributes of the nodes the others select (SDS2), in document order. */
     SdlAttributeSelection!SdlNodeSelection attributes(return scope SdlNode start) const
         return scope @safe pure nothrow @nogc
-        => SdlAttributeSelection!SdlNodeSelection(SdlNodeSelection(_text, _steps - 1, start),
-            stepAt(_text, _steps - 1));
+        => SdlAttributeSelection!SdlNodeSelection(
+            SdlNodeSelection(stepsOf(_text, _anyDepth), _steps - 1, _anyDepth, start),
+            stepAt(stepsOf(_text, _anyDepth), _steps - 1));
 }
 
 /** Forward range over the nodes `steps` child steps of a path reach from a
-start node, in document order (SDS2). With no steps, the start node itself. */
+start node, in document order (SDS2). With no steps, the start node itself.
+At any depth (SDS6), the steps may begin at the start node or at any node
+below it: with no steps, that is the start node and every node below it. */
 struct SdlNodeSelection
 {
     private const(char)[] _path;
@@ -157,12 +193,30 @@ struct SdlNodeSelection
     private SdlNode _front;
     private bool _empty;
 
-    private this(return scope const(char)[] path, size_t steps, return scope SdlNode start)
-        @safe pure nothrow @nogc
+    // At any depth: the cells of the start node's subtree, scanned in
+    // document order, and the last cell seen at each level, modulo the ring.
+    private bool _anyDepth;
+    private const(SdlCore)* _core;
+    private size_t _cell, _end;
+    private uint _base;
+    private size_t[sdlSelectorMaxSteps + 1] _ring;
+
+    private this(return scope const(char)[] path, size_t steps, bool anyDepth,
+        return scope SdlNode start) @safe pure nothrow @nogc
     in (steps <= sdlSelectorMaxSteps)
     {
         _path = path;
         _steps = steps;
+        _anyDepth = anyDepth;
+        if (anyDepth)
+        {
+            _core = start.core;
+            _cell = start.cellIndex;
+            _base = level(_cell);
+            _end = _cell + _core.subtreeSizeAt(_cell);
+            scan();
+            return;
+        }
         if (steps == 0)
         {
             _front = start;
@@ -182,7 +236,9 @@ struct SdlNodeSelection
     void popFront() scope @safe pure nothrow @nogc
     in (!empty)
     {
-        if (_steps == 0)
+        if (_anyDepth)
+            scan();
+        else if (_steps == 0)
             _empty = true;
         else
             advance();
@@ -230,6 +286,83 @@ struct SdlNodeSelection
         }
         _empty = true;
     }
+
+    // The document stores its nodes in document order, each cell with its
+    // depth and subtree size, so a subtree is the run of cells after its root. A cell
+    // matches when its last `_steps` ancestors-or-self spell the path and
+    // the highest of them is a child of the start node or of a node below
+    // it. That anchor is unique, so no node is yielded twice.
+    private void scan() scope @safe pure nothrow @nogc
+    {
+        while (_cell < _end)
+        {
+            const cell = _cell++;
+            const at = level(cell);
+            _ring[at % _ring.length] = cell;
+            if (at >= _base + _steps && matchesUpward(cell))
+            {
+                () @trusted { _front = SdlNode(_core, cell); }();
+                return;
+            }
+        }
+        _empty = true;
+    }
+
+    private bool matchesUpward(size_t cell) const scope @safe pure nothrow @nogc
+    {
+        foreach_reverse (k; 0 .. _steps)
+        {
+            const step = stepAt(_path, k);
+            if (!step.matches(nodeAt(cell).qualifiedName))
+                return false;
+            const parent = parentOf(cell);
+            if (step.indexed && ordinalOf(parent, cell, step) != step.index)
+                return false;
+            cell = parent;
+        }
+        return true;
+    }
+
+    // The parent of a cell the scan has reached: the nearest earlier cell
+    // whose subtree holds it, which is the last cell the scan saw one level
+    // up, unless a deeper subtree has since taken that ring slot; then the
+    // scan walks back to it.
+    private size_t parentOf(size_t cell) const scope @safe pure nothrow @nogc
+    {
+        const remembered = _ring[(level(cell) - 1) % _ring.length];
+        if (holds(remembered, cell))
+            return remembered;
+        size_t parent = cell - 1;
+        while (!holds(parent, cell))
+            parent--;
+        return parent;
+    }
+
+    // Whether `cell` lies in `ancestor`'s subtree, below it.
+    private bool holds(size_t ancestor, size_t cell) const scope @safe pure nothrow @nogc
+        => ancestor < cell && cell < ancestor + _core.subtreeSizeAt(ancestor);
+
+    // How many of `parent`'s children before `cell` the step names.
+    private size_t ordinalOf(size_t parent, size_t cell, in SdlStep step) const scope
+        @safe pure nothrow @nogc
+    {
+        size_t ordinal;
+        foreach (child; SdlNode(_core, parent).byChild)
+        {
+            if (child.cellIndex == cell)
+                break;
+            ordinal += step.matches(child.qualifiedName);
+        }
+        return ordinal;
+    }
+
+    private SdlNode nodeAt(size_t cell) const return scope @safe pure nothrow @nogc
+        => SdlNode(_core, cell);
+
+    // A cell's depth below the root, which is level 0 (its stored depth,
+    // `uint.max`, wraps to it).
+    private uint level(size_t cell) const scope @safe pure nothrow @nogc
+        => cast(uint)(_core.nodeAt(cell).depth + 1);
 }
 
 /** Forward range over the attributes a step names, of each node `Nodes`
@@ -309,61 +442,129 @@ struct SdlSelectorError
     DqlParseError error;  /// The fault, at a byte offset into that input.
 }
 
-/** A selection path and an optional DQL filter (SDS3), owning both and the
-DQL engine the filter lives in. The ranges it returns refer to it, so it
-must stay in place while they are used. */
+/** A selection path and an optional DQL filter (SDS3). Its state, the path,
+the DQL engine and the filter that lives in it, is parsed once into one
+reference-counted block off the collected heap: copies of a selector are
+owners of the same block, freed with the last of them, so a selector binds
+like any value (`auto s = SdlSelector.parse(…).value;`). The count is not
+atomic, so copies are for one thread. The ranges it returns borrow the
+selector, so keep it in a variable while they are used: dip1000 rejects a
+range declared from a temporary selector, but not a `foreach` over
+`SdlSelector.parse(…).value.nodes(root)`, whose temporary dies before the
+loop runs (a range checks, as far as it can, that its selector is alive).
+(An owning range would need a destructor, and dip1000 infers no `scope`
+for a parameter of such a type, so Phobos adaptors such as `map` would
+refuse it a borrowed start node.) */
 struct SdlSelector
 {
-    private UniqueBuffer!char _path;
-    private size_t _steps;
-    private DqlEngine _engine;
-    private DqlFilter _filter;
+    private static struct State
+    {
+        size_t owners;
+        const(char)[] text; // the path's own bytes, freed with the state
+        SdlPath path;       // over `text`
+        DqlEngine engine;
+        DqlFilter filter;
+    }
+
+    private State* _state;
 
     /** Validates `path` and parses `filter`, which may be empty to keep
     every node; a fault names its part and its offset there. */
     static Expected!(SdlSelector, SdlSelectorError) parse(scope const(char)[] path,
         scope const(char)[] filter = null) @safe
     {
-        const steps = checkSdlPath(path);
-        if (steps.hasError)
-            return err!SdlSelector(SdlSelectorError(SdlSelectorPart.path, steps.error));
-        SdlSelector selector;
-        selector._path ~= path;
-        selector._steps = steps.value;
-        auto parsed = parseDql(selector._engine, filter);
+        const checked = SdlPath.parse(path);
+        if (checked.hasError)
+            return err!SdlSelector(SdlSelectorError(SdlSelectorPart.path, checked.error));
+        auto selector = SdlSelector(allocate(path));
+        auto parsed = parseDql(selector._state.engine, filter);
         if (parsed.hasError)
             return err!SdlSelector(SdlSelectorError(SdlSelectorPart.filter, parsed.error));
-        selector._filter = move(parsed.value);
-        return ok!SdlSelectorError(move(selector));
+        selector._state.filter = move(parsed.value);
+        return ok!SdlSelectorError(selector);
     }
 
-    /// The selection path, borrowed from this selector.
-    SdlPath path() const return scope @safe pure nothrow @nogc
+    // A copy is one more owner.
+    this(this) scope @safe pure nothrow @nogc
     {
-        SdlPath result;
-        result._text = _path[];
-        result._steps = _steps;
-        return result;
+        if (_state !is null)
+            _state.owners++;
     }
+
+    // The last owner frees the state.
+    ~this() scope @safe nothrow @nogc
+    {
+        if (_state is null || --_state.owners)
+            return;
+        () @trusted { release(_state); }();
+        _state = null;
+    }
+
+    /** A state over a copy of `path`, which has validated, with the caller
+    its one owner. The collector scans it: the DQL engine keeps compiled
+    regular expressions on the collected heap. */
+    private static State* allocate(scope const(char)[] path) @trusted nothrow @nogc
+    {
+        import core.exception : onOutOfMemoryError;
+        import core.lifetime : emplace;
+        import core.memory : GC, pureMalloc;
+
+        auto state = cast(State*) pureMalloc(State.sizeof);
+        auto text = cast(char*) pureMalloc(path.length);
+        if (state is null || text is null)
+            onOutOfMemoryError();
+        emplace(state);
+        GC.addRange(state, State.sizeof, typeid(State));
+        text[0 .. path.length] = path[];
+        state.owners = 1;
+        state.text = text[0 .. path.length];
+        state.path = SdlPath.parse(state.text).value;
+        return state;
+    }
+
+    // Destroys and frees `state`, whose last owner is gone.
+    private static void release(State* state) @system nothrow @nogc
+    {
+        import core.memory : GC, pureFree;
+
+        auto text = state.text;
+        destroy!false(*state);
+        GC.removeRange(state);
+        pureFree(state);
+        pureFree(cast(void*) text.ptr);
+    }
+
+    /// The selection path.
+    SdlPath path() const @safe pure nothrow @nogc
+    in (_state !is null, "a selector from `parse`")
+        => _state.path;
 
     /// Whether `node` passes the filter (an empty filter passes everything).
-    bool accepts(scope SdlNode node) @safe
-        => evalDql(_engine, _filter, SdlNodeResolver(node));
+    bool accepts(scope SdlNode node) scope @safe
+    in (_state !is null, "a selector from `parse`")
+        => evalDql(_state.engine, _state.filter, SdlNodeResolver(node));
 
     /// The nodes the path selects below `start` that pass the filter.
     SdlSelectedNodes nodes(return scope SdlNode start) return @safe
-        => SdlSelectedNodes(&this, SdlNodeSelection(_path[], _steps, start));
+    in (_state !is null, "a selector from `parse`")
+        => SdlSelectedNodes(&this, _state.path.nodes(start));
 
     /** The attributes the path selects below `start`, of the nodes that
     pass the filter: the filter's subject is the node holding them. */
-    SdlAttributeSelection!SdlSelectedNodes attributes(return scope SdlNode start)
-        return @safe
-        => SdlAttributeSelection!SdlSelectedNodes(
-            SdlSelectedNodes(&this, SdlNodeSelection(_path[], _steps - 1, start)),
-            stepAt(_path[], _steps - 1));
+    SdlAttributeSelection!SdlSelectedNodes attributes(return scope SdlNode start) return
+        @safe
+    in (_state !is null, "a selector from `parse`")
+    {
+        const path = _state.path;
+        const steps = stepsOf(path._text, path._anyDepth);
+        return SdlAttributeSelection!SdlSelectedNodes(SdlSelectedNodes(&this,
+            SdlNodeSelection(steps, path._steps - 1, path._anyDepth, start)),
+            stepAt(steps, path._steps - 1));
+    }
 }
 
-/// Input range over a selection's nodes that pass its selector's filter.
+/// Forward range over a selection's nodes that pass its selector's filter; it
+/// borrows the selector, which must outlive it.
 struct SdlSelectedNodes
 {
     private SdlSelector* _selector;
@@ -377,7 +578,7 @@ struct SdlSelectedNodes
         skip();
     }
 
-    /// Input-range primitives.
+    /// Forward-range primitives.
     bool empty() const scope @safe pure nothrow @nogc => _nodes.empty;
     /// ditto
     SdlNode front() const return scope @safe pure nothrow @nogc
@@ -385,10 +586,13 @@ struct SdlSelectedNodes
     /// ditto
     void popFront() scope @safe
     in (!empty)
+    in (_selector._state !is null, "the selector this range borrows is gone")
     {
         _nodes.popFront();
         skip();
     }
+    /// ditto
+    SdlSelectedNodes save() return scope @safe => this;
 
     private void skip() scope @safe
     {
@@ -399,8 +603,10 @@ struct SdlSelectedNodes
 
 /** A DQL host resolver over one SDL node (SDS3). A path is zero or more
 child steps, each taking the first child of its name or, with `[k]`, the
-k-th, then a leaf: `values[i]`, the i-th value, or an attribute name, its
-first attribute of that name. A category holds when a child exists at the
+k-th, then a leaf: `values[i]`, the i-th value, `attributes[i]`, the value of
+the i-th attribute whatever its name, or an attribute name, its first
+attribute of that name; so `attributes[1] == null` holds when the node has at
+most one attribute. A category holds when a child exists at the
 path. Strings resolve as text, booleans as `bool`, integers as `long`, floats
 and decimals as `double`; an absent target or SDL `null` is null. */
 struct SdlNodeResolver
@@ -434,6 +640,17 @@ struct SdlNodeResolver
                 return Reach.absent;
             () @trusted { scalar = current.valueAt(step.index); }();
             return Reach.scalar;
+        }
+        if (step.member.nameEquals("attributes") && step.indexed)
+        {
+            size_t ordinal;
+            foreach (attribute; current.byAttribute)
+                if (ordinal++ == step.index)
+                {
+                    () @trusted { scalar = attribute.value; }();
+                    return Reach.scalar;
+                }
+            return Reach.absent;
         }
         if (step.indexed)
             return Reach.malformed;
@@ -641,6 +858,7 @@ unittest
 {
     import std.algorithm.comparison : equal;
     import std.algorithm.iteration : map;
+    import std.range.primitives : walkLength;
 
     auto parsed = parseSdlDocument!sdlFull(recipe);
     const root = parsed.document.root;
@@ -676,6 +894,135 @@ unittest
     const bad = SdlSelector.parse("dependency", "path ==");
     assert(bad.hasError && bad.error.part == SdlSelectorPart.filter);
     assert(SdlSelector.parse("a.", "").error.part == SdlSelectorPart.path);
+
+    // `attributes[i]` reads the i-th attribute, whatever its name, so it
+    // counts them; a bare `attributes` is still an attribute's name.
+    auto lone = SdlSelector.parse("configuration.dependency", "attributes[1] == null").value;
+    assert(lone.nodes(root).map!(n => n.byValue.front.stringValue).equal(["sparkles:test-utils"]));
+    auto second = SdlSelector.parse("..dependency", "attributes[1] == true").value;
+    assert(second.nodes(root).map!(n => n.byValue.front.stringValue).equal(["silly"]));
+    assert(SdlSelector.parse("..dependency", "attributes[0] == `*`").value.nodes(root)
+        .map!(n => n.byValue.front.stringValue).equal(["silly"]));
+    assert(SdlSelector.parse("..dependency", "attributes == null").value.nodes(root)
+        .walkLength == 4);
+}
+
+/// A selector binds like a value: copies count as owners of one parsed
+/// state, freed with the last of them; a range borrows its selector.
+@("sdl.select.SdlSelector.binds")
+@safe unittest
+{
+    import std.algorithm.comparison : equal;
+    import std.algorithm.iteration : map;
+
+    auto parsed = parseSdlDocument!sdlFull(recipe);
+    auto root = parsed.document.root;
+    auto selector = SdlSelector.parse("configuration.dependency", "version != null").value;
+    assert(selector._state.owners == 1);
+    {
+        auto copy = selector;
+        assert(selector._state.owners == 2);
+        assert(copy.nodes(root).map!(n => n.byValue.front.stringValue).equal(["silly"]));
+    }
+    assert(selector._state.owners == 1);
+    assert(selector.path.text == "configuration.dependency");
+
+    auto optional = SdlSelector.parse("configuration.dependency", "optional == true").value;
+    auto silly = optional.nodes(root);
+    auto saved = silly.save;
+    assert(silly.front.byValue.front.stringValue == "silly");
+    silly.popFront();
+    assert(silly.empty && !saved.empty);
+}
+
+/// Copies held in collected arrays, built from a literal and grown by
+/// appending, each count as an owner (AGENTS.md: druntime fills such arrays
+/// by blitting; the postblit, unlike a copy constructor, still runs).
+@("sdl.select.SdlSelector.ownersInArrays")
+@safe unittest
+{
+    auto selector = SdlSelector.parse("dependency", "version == `*`").value;
+    SdlSelector[] copies = [selector, selector];
+    assert(selector._state.owners == 3);
+    copies ~= selector;
+    copies ~= copies;
+    // Seven live copies at least: a grown array leaves its old block's
+    // counted copies for the collector to destroy, never an uncounted one.
+    assert(selector._state.owners >= 7);
+}
+
+/// A leading `..` lets the first step match at any depth (SDS6): below the
+/// start node, in document order, each node once.
+@("sdl.select.SdlPath.anyDepth")
+@safe unittest
+{
+    import std.algorithm.comparison : equal;
+    import std.algorithm.iteration : map;
+
+    auto parsed = parseSdlDocument!sdlFull(recipe);
+    auto root = parsed.document.root;
+    auto names(string path)
+        => SdlPath.parse(path).value.nodes(root).map!(n => n.byValue.front.stringValue);
+    assert(names("..dependency").equal(["sparkles:base", "optional", "sparkles:test-utils",
+        "silly"]));
+    assert(names("..configuration[1].dependency").equal(["sparkles:test-utils", "silly"]));
+    assert(names("..dependency[1]").equal(["optional", "silly"]));
+    assert(SdlPath.parse("..dependency.version").value.attributes(root)
+        .map!(a => a.value.stringValue).equal(["~>1.3.0", "*"]));
+    assert(SdlPath.parse("..optional").value.attributes(root).map!(a => a.value.boolean)
+        .equal([true]));
+    assert(SdlPath.parse("..dependency").value.anyDepth);
+
+    // From a node below the root, only its own subtree counts.
+    auto unittest_ = SdlPath.parse("configuration[1]").value.nodes(root).front;
+    assert(SdlPath.parse("..dependency").value.nodes(unittest_)
+        .map!(n => n.byValue.front.stringValue).equal(["sparkles:test-utils", "silly"]));
+
+    // `..` begins a path and nowhere else.
+    assert(SdlPath.parse("..").error.offset == 2);
+    assert(SdlPath.parse("...a").error.offset == 2);
+    assert(SdlPath.parse("..[0]").error.offset == 2);
+    assert(SdlPath.parse("a..b").error.offset == 2);
+    assert(SdlSelector.parse("..dependency", "version == `*`").value.nodes(root)
+        .map!(n => n.byValue.front.stringValue).equal(["silly"]));
+}
+
+/// Nesting deeper than the path's steps, and deeper than its ancestor ring,
+/// still finds each node's parent.
+@("sdl.select.SdlPath.anyDepth.deep")
+@safe unittest
+{
+    import std.algorithm.comparison : equal;
+    import std.algorithm.iteration : map;
+    import std.range : repeat;
+    import std.array : join;
+
+    enum chain = "c {\n".repeat(40).join ~ "}\n".repeat(40).join;
+    enum text = "p 1 {\n" ~ chain ~ "q 1\n p 2 {\n q 2\n}\n}\nq 3\np 3 {\n" ~ chain ~ "q 4\n}\n";
+    auto parsed = parseSdlDocument!sdlFull(text);
+    assert(parsed.hasValue, parsed.hasError ? parsed.error.toString : "");
+    auto root = parsed.document.root;
+    auto values(string path)
+        => SdlPath.parse(path).value.nodes(root).map!(n => n.byValue.front.integer);
+    assert(values("..p.q").equal([1, 2, 4]));
+    assert(values("..q").equal([1, 2, 3, 4]));
+    assert(values("..p[1].q").equal([4])); // p 2 is the first p of its parent
+    size_t chains;
+    foreach (_; SdlPath.parse("..c.c").value.nodes(root))
+        chains++;
+    assert(chains == 2 * 39);
+}
+
+/// Any-depth selection allocates nothing either (SDS4).
+@("sdl.select.SdlPath.anyDepth.nogc")
+@safe pure nothrow @nogc
+unittest
+{
+    auto parsed = parseSdlDocument!sdlFull(recipe);
+    size_t count;
+    foreach (node; SdlPath.parse("..dependency").value.nodes(parsed.document.root))
+        count++;
+    assert(count == 4);
 }
 
 ///
@@ -868,6 +1215,74 @@ version (unittest)
         }
     }
 
+    // The start node and every node below it.
+    private void subtree(SdlNode node, ref SdlNode[] nodes)
+    {
+        nodes ~= node;
+        foreach (child; node.byChild)
+            subtree(child, nodes);
+    }
+
+    /* SDS6's oracle over one document: every name path to depth two below
+    any node, read at any depth from the root, selects the union of what the
+    nested loops select from each node, ordered by source offset; and `..x`
+    selects the `x` attributes of every node. */
+    private void checkAnyDepthOracle(SdlNode root, string label, ref size_t nodePaths,
+        ref size_t attributePaths)
+    {
+        import std.algorithm.searching : canFind;
+        import std.algorithm.sorting : sort;
+        import std.algorithm.iteration : map;
+        import std.array : array;
+        import std.typecons : tuple;
+
+        SdlNode[] anchors;
+        subtree(root, anchors);
+        NameStep[][] paths;
+        string[] attributeNames;
+        foreach (anchor; anchors)
+        {
+            namePaths(anchor, null, 2, paths);
+            foreach (attribute; anchor.byAttribute)
+                if (!attributeNames.canFind(spelling(attribute.qualifiedName)))
+                    attributeNames ~= spelling(attribute.qualifiedName);
+        }
+        size_t offsetOf(size_t cell)
+        {
+            foreach (node; anchors)
+                if (node.cellIndex == cell)
+                    return node.span.startOffset;
+            assert(0);
+        }
+        foreach (base; paths)
+            foreach (steps; [base, withIndex(base, 0, 1), withIndex(base, base.length - 1, 0)])
+            {
+                const path = ".." ~ printed(steps);
+                size_t[] cells, actual;
+                foreach (anchor; anchors)
+                    referenceNodes(anchor, steps, cells);
+                auto ordered = cells.map!(c => tuple(offsetOf(c), c)).array;
+                ordered.sort();
+                foreach (node; SdlPath.parse(path).value.nodes(root))
+                    actual ~= node.cellIndex;
+                assert(actual == ordered.map!(t => t[1]).array, label ~ ": " ~ path);
+                nodePaths++;
+            }
+        foreach (name; attributeNames)
+        {
+            size_t[] expected, actual;
+            foreach (anchor; anchors)
+                foreach (attribute; anchor.byAttribute)
+                    if (spelling(attribute.qualifiedName) == name)
+                        expected ~= attribute.cellIndex;
+            foreach (attribute; SdlPath.parse(".." ~ printed([NameStep(name)])).value
+                .attributes(root))
+                actual ~= attribute.cellIndex;
+            assert(actual == expected, label ~ ": .." ~ name);
+            attributePaths++;
+        }
+    }
+
     // Tags and attributes whose names are not DQL identifiers.
     private enum dottedRecipe = `name "dotted"
 my.tool "a" opt.level=3 x:my.flag=true
@@ -890,7 +1305,7 @@ plain "d" weird$name=1
 
     const files = repositoryRecipes();
     assert(files.length > 100, "the repository walk found too few recipes");
-    size_t nodePaths, attributePaths;
+    size_t nodePaths, attributePaths, deepPaths, deepAttributes;
     foreach (file; files)
     {
         const host = readText(file);
@@ -898,8 +1313,42 @@ plain "d" weird$name=1
         if (!parsed.hasValue)
             continue;
         checkPathOracle(parsed.document.root, file, nodePaths, attributePaths);
+        checkAnyDepthOracle(parsed.document.root, file, deepPaths, deepAttributes);
     }
     assert(nodePaths > 1000 && attributePaths > 1000, "too few selections were compared");
+    assert(deepPaths > 1000 && deepAttributes > 300, "too few any-depth selections were compared");
+}
+
+@("sdl.select.properties.editedRecipes.anyDepth")
+@system unittest
+{
+    import std.file : readText;
+    import sparkles.wired.sdl.config : sdlDubRecipe;
+    import sparkles.wired.sdl.open_document : SdlOpenDocument;
+    import sparkles.wired.sdl.test_corpus : repositoryRecipes;
+
+    // After an incremental re-parse the document shares the unchanged cells
+    // with the one before; selections at any depth read it the same way.
+    size_t shared_, nodePaths, attributePaths;
+    foreach (file; repositoryRecipes())
+    {
+        SdlOpenDocument!sdlDubRecipe open;
+        if (open.open(readText(file), file).hasError)
+            continue;
+        auto last = SdlPath.parse("..dependency").value.nodes(open.document.root);
+        if (last.empty)
+            continue;
+        SdlNode target;
+        foreach (node; last)
+            target = node;
+        auto editor = open.editor;
+        editor.replaceValue(target, 0, SdlScalar("sparkles:edited"));
+        assert(!open.commit(editor).hasError, file);
+        shared_ += !open.document.core.flat;
+        checkAnyDepthOracle(open.document.root, file, nodePaths, attributePaths);
+    }
+    assert(shared_ > 50, "too few re-parses shared their cells");
+    assert(nodePaths > 1000);
 }
 
 @("sdl.select.properties.dottedNames.paths")
@@ -909,6 +1358,9 @@ plain "d" weird$name=1
     assert(parsed.hasValue, parsed.hasError ? parsed.error.toString : "");
     size_t nodePaths, attributePaths;
     checkPathOracle(parsed.document.root, "dotted", nodePaths, attributePaths);
+    size_t deepPaths, deepAttributes;
+    checkAnyDepthOracle(parsed.document.root, "dotted", deepPaths, deepAttributes);
+    assert(deepPaths >= 15 && deepAttributes >= 4);
     assert(nodePaths >= 20 && attributePaths >= 8);
 
     // The quoted spellings select what they name, namespaces included.
@@ -982,6 +1434,9 @@ plain "d" weird$name=1
             n => hasAttribute(n, "path") && !hasAttribute(n, "version")),
         Case("globMatch(values[0], `sparkles:*`)", &sparklesPackage),
         Case("dflags", n => !n.byChild(SdlQualifiedName(null, "dflags")).empty),
+        Case("attributes[1] == null", n => n.attributeCount <= 1),
+        Case("attributes[0] == `../..` && attributes[1] == null",
+            n => n.attributeCount == 1 && isText(n.byAttribute.front.value, "../..")),
         Case("!(values[1] != null || platform == linux)",
             n => !(!valueIsNull(n, 1) || isText(firstAttribute(n, "platform"), "linux"))),
     ];

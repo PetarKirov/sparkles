@@ -13,6 +13,8 @@ bytes and the edits made inside them.
 */
 module sparkles.wired.sdl.editor;
 
+import core.lifetime : emplace;
+import core.memory : pureFree, pureMalloc;
 import std.experimental.allocator.common : stateSize;
 import std.experimental.allocator.mallocator : Mallocator;
 import std.range.primitives : ElementType, isInputRange, put;
@@ -46,18 +48,110 @@ private struct PendingEdit
     uint sequence; // creation order, which orders insertions at one point
     uint move; // 1-based move whose removal or insertion this is, else 0
     uint cell; // the node a whole-node replacement replaces, else 0
+    bool beside; // an insertion beside a node (SDE4, a move's arrival), not inside one
+}
+
+/// How a single node joins the line it is placed on (§3).
+private enum InlineJoin : ubyte
+{
+    fragmentThenSeparator, /// `x; `, before a node that starts its line
+    separatorThenFragment, /// `; x`, after a node its line's newline ends
+    spaceFragmentSemicolon, /// ` x;`, just after a `;`
 }
 
 /// A node's bytes moved to another point (SDE18). The insertion's text is
 /// composed when the editor writes, from the edits made inside those bytes.
 private struct PendingMove
 {
-    uint start, end; // the moved bytes: the attached comments through the extent
-    uint cell, extentStart; // the moved node, and where its own lines begin
+    uint start, end; // the moved bytes: whole lines, or the node's inline text
+    uint cell, extentStart; // the moved node, and where its own bytes begin
     uint point; // where they go
     uint indentStart, indentLength; // the destination's indentation, in the host
     bool reindent; // whether it differs from the moved node's
     uint operation;
+    uint cellEnd; // past the moved node's last descendant
+    bool inlineText; // the bytes are the node's inline text (§2), not whole lines
+    bool onLine; // they arrive on the point's line, joined as `join` says
+    InlineJoin join;
+    uint leadStart, leadLength; // an inline text's line indentation, put before it as a line
+}
+
+/// The footprint of one replacement — its range and its new length — which
+/// is all that carrying an offset through it needs.
+private struct Shift
+{
+    uint start, end, length;
+}
+
+/** Where a move's bytes went in the last render (§9): the footprints of
+the edits made inside them and of their re-indentation, and where their
+text begins — in the edited bytes of the move that carries them, or in the
+output. */
+private struct MoveImage
+{
+    uint parent; // 1-based move whose bytes hold this one's insertion, else 0
+    uint at; // where the composed text starts: in the parent's edited bytes, or the output
+    uint prefix; // bytes written before the moved ones: a line break or a separator
+    uint lead; // indentation put before an inline text arriving as a line
+    uint inner, innerEnd; // the inner edits' footprints, in `MoveState.shifts`
+    uint reindent, reindentEnd; // the re-indentation's footprints, in `MoveState.shifts`
+}
+
+/// Where content goes beside a sibling (§3).
+private enum Spot : ubyte
+{
+    lines, /// whole lines at `point`
+    onLine, /// on the sibling's line at `point`, joined as `join` says
+    none, /// nowhere: between two nodes of one line
+}
+
+private struct Placement
+{
+    Spot spot;
+    size_t point;
+    InlineJoin join; // for `onLine`
+    size_t indentOf; // for `lines`: an offset on the line whose indentation the lines take
+}
+
+/** What an editor keeps for its moves, allocated with the first one, so an
+editor that moves nothing builds and frees none of it. */
+private struct MoveState
+{
+    UniqueBuffer!PendingMove moves;
+    UniqueBuffer!char composed; // the moves' texts, as of the last render
+    UniqueBuffer!TextSpan texts; // each move's text in `composed`
+    UniqueBuffer!MoveImage images; // each move's place, as of the last render
+    UniqueBuffer!Shift shifts; // the footprints `images` name
+}
+
+/// Owns an editor's `MoveState`, made on the first move and freed with the
+/// box; movable, not copyable.
+private struct MoveBox
+{
+    private MoveState* _state;
+
+    @disable this(this);
+
+    ~this() @safe pure nothrow @nogc
+    {
+        if (_state)
+            () @trusted { destroy!false(*_state); pureFree(_state); }();
+    }
+
+    bool exists() const @safe pure nothrow @nogc => _state !is null;
+
+    ref inout(MoveState) get() inout return scope @safe pure nothrow @nogc => *_state;
+
+    void create() @safe pure nothrow @nogc
+    {
+        if (_state)
+            return;
+        _state = () @trusted {
+            auto state = cast(MoveState*) pureMalloc(MoveState.sizeof);
+            assert(state, "out of memory");
+            return emplace(state);
+        }();
+    }
 }
 
 /// Preorder cells `[first, end)` of the borrowed document that an operation
@@ -87,7 +181,7 @@ private struct FragmentShape
     size_t nodes; // every node, nested ones included
     size_t topLevel; // nodes at depth 0
     bool hasBlock;
-    bool multiLine;
+    bool multiLine; // more than one line, once blanks and line breaks at its ends go
 }
 
 /** Accumulates lossless edits to one document's host and writes the result.
@@ -107,9 +201,8 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
     private UniqueBuffer!PendingEdit _edits;
     private UniqueBuffer!FragmentCheck _fragments;
     private UniqueBuffer!SdlReplacedCells _replaced;
-    private UniqueBuffer!PendingMove _moves;
-    private UniqueBuffer!char _composed; // the moves' texts, as of the last render
-    private UniqueBuffer!TextSpan _moveTexts; // each move's text in `_composed`
+    private MoveBox _moving; // made by the first move
+    private uint _deletions; // edits that only delete, which SDE3 may join
     private long _nodeDelta; // expected change in node count (SDE2)
     private bool _nodeCountKnown = true;
     private uint _operations;
@@ -337,9 +430,11 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
     `sibling` (SDE18): its old place goes as `remove` with
     `SdlAttachedComments.remove` removes it, and its bytes arrive where
     `insertAfter(sibling, …)` inserts, re-indented when the indentation
-    there differs. Edits made inside the moved bytes, before or after the
-    move, travel with them; insertions just before or after them stay. Both
-    nodes must be alone on their lines. */
+    there differs. A node sharing its line moves its inline text (§2), and
+    arrives on `sibling`'s line between separators when it fits on one
+    line, else as a line of its own where a line boundary allows (§3).
+    Edits made inside the moved bytes, before or after the move, travel
+    with them; insertions just before or after them stay. */
     void moveAfter(scope SdlNode node, scope SdlNode sibling)
     {
         const op = begin();
@@ -380,8 +475,7 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
         const shape = analyze(fragment, op);
         if (!shape.valid)
             return;
-        foreach (i; 0 .. cell.childCount)
-            _nodeDelta -= subtreeSize(_core.childIndexes[cell.childStart + i]);
+        _nodeDelta -= subtreeSize(node.cellIndex) - 1;
         _nodeDelta += shape.nodes;
         replaces(node.cellIndex + 1, node.cellIndex + subtreeSize(node.cellIndex));
         const start = _text.length;
@@ -484,9 +578,9 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
                 "the region is outside the content");
         _nodeCountKnown = false;
         // Every node sharing a byte with the region loses its identity (§9).
-        foreach (cell; 1 .. _core.nodes.length)
+        foreach (cell; 1 .. _core.nodeCount)
         {
-            const span = _core.nodes[cell].span;
+            const span = _core.nodeAt(cell).span;
             if (span.startOffset < region.endOffset && region.startOffset < span.endOffset)
                 replaces(cell, cell + subtreeSize(cell));
         }
@@ -508,7 +602,8 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
         auto rendered = render(allocator, output, edits, parsed);
         if (rendered.hasError)
             return rendered;
-        put(writer, output[]);
+        // A localized re-parse keeps the output as its source (§10.1).
+        put(writer, output.length || !parsed.hasValue ? output[] : parsed.document.source);
         return sdlOk();
     }
 
@@ -516,7 +611,9 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
     the resolved edits — sorted, borrowing the editor's text — into `edits`,
     and the checked re-parse of the output into `parsed`; `write` without the
     copy. With no edits the output is the host and `parsed` stays empty: the
-    borrowed document is the output's parse. */
+    borrowed document is the output's parse. A recipe's re-parse that
+    localizes keeps the output as its source and leaves `output` empty
+    (editing §10.1). */
     package SdlExpected!void render(Allocator)(ref Allocator allocator,
         ref UniqueBuffer!char output, ref UniqueBuffer!TextEdit edits,
         ref SdlParseResult!Allocator parsed)
@@ -529,7 +626,9 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
         foreach (ref e; _edits[])
             sorted ~= e;
         sortEdits(sorted[]);
-        if (_moves.length)
+        if (_deletions > 1)
+            mergeBlankOverlaps(sorted);
+        if (_moving.exists)
         {
             const composed = composeMoves(sorted);
             if (composed.hasError)
@@ -538,8 +637,17 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
 
         edits.clear(releaseStorage: false);
         edits.reserve(sorted.length);
+        long delta;
         foreach (ref e; sorted[])
-            edits ~= TextEdit(TextSpan(e.start, e.end), textOf(e));
+        {
+            const text = textOf(e);
+            // What is left of a move here is outermost: its text starts in
+            // the output.
+            if (e.move && e.start == e.end)
+                moving.images[e.move - 1].at = cast(uint)(e.start + delta);
+            delta += cast(long) text.length - (e.end - e.start);
+            edits ~= TextEdit(TextSpan(e.start, e.end), text);
+        }
         const validation = validateEdits(_host.length, edits[]);
         if (validation.hasError)
         {
@@ -562,11 +670,47 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
         output.reserve(_host.length + _text.length);
         writeEdited(output, _host, edits[]);
 
-        return reparse(output[], edits[], allocator, parsed);
+        return reparse(output, edits[], allocator, parsed);
     }
 
     /// Package seam: the cells the operations so far replace (§9).
     package const(SdlReplacedCells)[] replaced() const return scope => _replaced[];
+
+    /// Package seam: whether any operation so far moves a node.
+    package bool moves() const => _moving.exists;
+
+    /** Package seam (§9): sets `innermost[c]`, for every cell `c` a move
+    carries, to the 1-based innermost such move — moved subtrees nest or are
+    disjoint, so it is the one whose node comes last. Other entries stay. */
+    package void markMoved(scope uint[] innermost) const
+    {
+        foreach (m, ref move; moving.moves[])
+            foreach (c; move.cell .. move.cellEnd)
+                if (!innermost[c] || moving.moves[innermost[c] - 1].cell < move.cell)
+                    innermost[c] = cast(uint) m + 1;
+    }
+
+    /** Package seam (§9): where host offset `offset`, inside the bytes that
+    1-based move `move` carries and outside any move inside them, lands in
+    the output of the last successful render: through the edits made inside
+    the bytes, their re-indentation and placement, and every move carrying
+    them in turn. */
+    package uint movedOffset(uint move, uint offset) const
+    {
+        const first = moving.images[move - 1];
+        uint at = mapShifts(moving.shifts[first.inner .. first.innerEnd], offset - moving.moves[move - 1].start);
+        for (uint m = move;;)
+        {
+            // From the move's edited bytes to its text's place in the
+            // edited bytes of the move carrying it, or in the output.
+            const image = moving.images[m - 1];
+            at = mapShifts(moving.shifts[image.reindent .. image.reindentEnd], at + image.lead);
+            at += image.at + image.prefix;
+            if (!image.parent)
+                return at;
+            m = image.parent;
+        }
+    }
 
     /// Package seam: whether the editor borrows the document whose core is
     /// `core`.
@@ -599,6 +743,9 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
     // ── Resolution helpers ─────────────────────────────────────────────
 
     private uint begin() => ++_operations;
+
+    /// The move state, which exists once an operation moved a node.
+    private ref inout(MoveState) moving() inout return scope => _moving.get;
 
     private void fail(SdlErrorCode code, SdlSpan span, string reason, uint operation = 0)
     {
@@ -658,7 +805,7 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
     }
 
     private SdlNodeCell cellOf(scope SdlNode node) const
-        => (() @trusted => _core.nodes[node.cellIndex])();
+        => (() @trusted => _core.nodeAt(node.cellIndex))();
 
     private void replaces(size_t first, size_t end)
     {
@@ -667,12 +814,15 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
     }
 
     private void record(SdlSpan range, size_t textStart, uint operation, uint move = 0,
-        uint cell = 0)
+        uint cell = 0, bool beside = false)
     {
         if (range.startOffset < _content.startOffset || range.endOffset > _content.endOffset)
             return fail(SdlErrorCode.editConflict, range, "the edit leaves the content", operation);
+        if (range.startOffset < range.endOffset && _text.length == textStart)
+            _deletions++;
         _edits ~= PendingEdit(range.startOffset, range.endOffset, cast(uint) textStart,
-            cast(uint)(_text.length - textStart), operation, cast(uint) _edits.length, move, cell);
+            cast(uint)(_text.length - textStart), operation, cast(uint) _edits.length, move, cell,
+            beside);
     }
 
     private bool renderScalar(in SdlScalar value, SdlSpan target)
@@ -710,30 +860,69 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
 
     // ── Insertion ──────────────────────────────────────────────────────
 
-    private enum InlineJoin : ubyte { fragmentThenSeparator, separatorThenFragment, spaceFragmentSemicolon }
-
     private void insertBeside(scope SdlNode sibling, scope const(char)[] fragment, uint op,
         bool after)
     {
-        const cell = cellOf(sibling);
         const shape = analyze(fragment, op);
         if (!shape.valid)
             return;
-        if (cell.aloneOnLines)
+        const single = shape.topLevel == 1 && !shape.hasBlock && !shape.multiLine;
+        const place = placeBeside(cellOf(sibling), after, single);
+        final switch (place.spot)
         {
-            const point = after ? cell.extent.endOffset : cell.extent.startOffset;
-            return insertLines(point, fragment, Indent(lineIndent(cell.span.startOffset)), shape, op);
+        case Spot.lines:
+            return insertLines(place.point, fragment, Indent(lineIndent(place.indentOf)), shape, op);
+        case Spot.onLine:
+            return inlineInsert(place.point, fragment, shape, op, place.join);
+        case Spot.none:
+            return fail(SdlErrorCode.editUnsupportedLayout, SdlSpan.at(place.point),
+                "an inline anchor takes one single-line node without a block", op);
         }
+    }
+
+    /** Where content goes beside `cell` (§3): beside a whole-line sibling,
+    as lines at its extent's edge. Beside an inline one, a single node of
+    one line goes on its line, joined by separators, unless it would follow
+    a line comment; other content goes as lines where a line boundary
+    allows — after a node only blanks follow on its last line, before one
+    that starts its line — and nowhere else. */
+    private Placement placeBeside(in SdlNodeCell cell, bool after, bool singleLine) const
+    {
+        if (cell.aloneOnLines)
+            return Placement(Spot.lines, after ? cell.extent.endOffset : cell.extent.startOffset,
+                InlineJoin.init, cell.span.startOffset);
         const startsLine = lineStartAt(lineIndentStart(cell.extent.startOffset))
             && cell.extent.startOffset == cell.span.startOffset;
-        const semicolonEnded = cell.terminator.isValid && cell.terminator.length == 1
-            && _host[cell.terminator.startOffset] == ';';
+        if (singleLine && !(after && endsInLineComment(cell)))
+        {
+            if (!after)
+                return Placement(Spot.onLine, cell.extent.startOffset, startsLine
+                    ? InlineJoin.fragmentThenSeparator : InlineJoin.spaceFragmentSemicolon);
+            if (endsWithSemicolon(cell))
+                return Placement(Spot.onLine, cell.terminator.endOffset,
+                    InlineJoin.spaceFragmentSemicolon);
+            return Placement(Spot.onLine, cell.extent.endOffset, InlineJoin.separatorThenFragment);
+        }
         if (after)
-            inlineInsert(cell.extent.endOffset, fragment, shape, op,
-                semicolonEnded ? InlineJoin.fragmentThenSeparator : InlineJoin.separatorThenFragment);
-        else
-            inlineInsert(cell.extent.startOffset, fragment, shape, op,
-                startsLine ? InlineJoin.fragmentThenSeparator : InlineJoin.spaceFragmentSemicolon);
+        {
+            const next = nextLineStart(cell.extent.endOffset);
+            if (next != size_t.max)
+                return Placement(Spot.lines, next, InlineJoin.init, cell.span.startOffset);
+        }
+        else if (startsLine)
+            return Placement(Spot.lines, lineStart(cell.extent.startOffset), InlineJoin.init,
+                cell.span.startOffset);
+        return Placement(Spot.none, after ? cell.extent.endOffset : cell.extent.startOffset);
+    }
+
+    /// Whether `node` can move beside `sibling` (SDE18), as `moveAfter` or
+    /// `moveBefore` would; for the typed write-back, which otherwise writes
+    /// the element afresh.
+    package bool canMove(scope SdlNode node, scope SdlNode sibling, bool after) const
+    {
+        const cell = cellOf(node);
+        return placeBeside(cellOf(sibling), after, isSingleLine(cell, inlineText(cell))).spot
+            != Spot.none;
     }
 
     private void moveBeside(scope SdlNode node, scope SdlNode sibling, uint op, bool after)
@@ -741,25 +930,131 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
         if (!owns(node.core) || !owns(sibling.core) || !isNonRoot(node) || !isNonRoot(sibling))
             return;
         const cell = cellOf(node), target = cellOf(sibling);
-        if (!cell.aloneOnLines || !target.aloneOnLines)
-            return fail(SdlErrorCode.editUnsupportedLayout, cell.span,
-                "a move takes nodes alone on their lines", op);
         const end = node.cellIndex + subtreeSize(node.cellIndex);
         if (sibling.cellIndex >= node.cellIndex && sibling.cellIndex < end)
             return fail(SdlErrorCode.editConflict, target.span,
                 "a node cannot move beside itself or into itself", op);
+        const text = inlineText(cell);
+        const place = placeBeside(target, after, isSingleLine(cell, text));
+        if (place.spot == Spot.none)
+            return fail(SdlErrorCode.editUnsupportedLayout, cell.span,
+                "a node with more than one line, a line comment or attached comments cannot "
+                ~ "move between nodes of one line", op);
         size_t attached;
         const removal = removalRange(cell, SdlAttachedComments.remove, attached);
-        const point = after ? target.extent.endOffset : target.extent.startOffset;
-        const from = lineIndent(cell.span.startOffset), to = lineIndent(target.span.startOffset);
-        const indentStart = lineStart(target.span.startOffset);
-        const move = cast(uint) _moves.length + 1;
-        _moves ~= PendingMove(cast(uint) attached, cast(uint) cell.extent.endOffset,
-            cast(uint) node.cellIndex, cast(uint) cell.extent.startOffset,
-            cast(uint) point, cast(uint) indentStart, cast(uint) to.length, from != to, op);
-        replaces(node.cellIndex, end);
-        record(removal, _text.length, op, move);
-        record(SdlSpan.at(point), _text.length, op, move);
+        // Before the node after it on its line: the point is the blank the
+        // two extents share, inside the removal, and the node is already
+        // there.
+        if (place.point > removal.startOffset && place.point < removal.endOffset)
+            return;
+
+        PendingMove move;
+        move.cell = cast(uint) node.cellIndex;
+        move.cellEnd = cast(uint) end;
+        move.point = cast(uint) place.point;
+        move.operation = op;
+        move.inlineText = place.spot == Spot.onLine || !cell.aloneOnLines;
+        if (move.inlineText)
+        {
+            move.start = move.extentStart = cast(uint) text.startOffset;
+            move.end = cast(uint) text.endOffset;
+        }
+        else
+        {
+            move.start = cast(uint) attached;
+            move.extentStart = cast(uint) cell.extent.startOffset;
+            move.end = cast(uint) cell.extent.endOffset;
+        }
+        if (place.spot == Spot.onLine)
+        {
+            move.onLine = true;
+            move.join = place.join;
+        }
+        else
+        {
+            const from = lineIndent(cell.span.startOffset), to = lineIndent(place.indentOf);
+            move.indentStart = cast(uint) lineStart(place.indentOf);
+            move.indentLength = cast(uint) to.length;
+            move.reindent = from != to;
+            if (move.inlineText)
+            {
+                // The inline text becomes a line: its own line's indentation
+                // goes before it, and re-indents with its continuation lines.
+                move.leadStart = cast(uint) lineStart(cell.span.startOffset);
+                move.leadLength = cast(uint) from.length;
+            }
+        }
+        if (!_moving.exists)
+            _moving.create();
+        const index = cast(uint) moving.moves.length + 1;
+        moving.moves ~= move;
+        record(removal, _text.length, op, index);
+        record(SdlSpan.at(place.point), _text.length, op, index, 0, true);
+    }
+
+    /** A node's inline text (§2): its extent without the spaces, tabs and
+    line breaks at either end, and without its `;` terminator. */
+    private SdlSpan inlineText(in SdlNodeCell cell) const
+    {
+        size_t start = cell.extent.startOffset, end = cell.extent.endOffset;
+        while (start < end && (isBlank(_host[start]) || newlineWidthAt(_host, start)))
+            start++;
+        end = trimBlankEnd(start, end);
+        if (end > start && endsWithSemicolon(cell) && cell.terminator.startOffset == end - 1)
+            end = trimBlankEnd(start, end - 1);
+        return SdlSpan(start, end);
+    }
+
+    private size_t trimBlankEnd(size_t start, size_t end) const
+    {
+        while (end > start && (isBlank(_host[end - 1]) || _host[end - 1] == '\n'
+            || _host[end - 1] == '\r' || newlineWidthAt(_host, end - 1)))
+            end--;
+        return end;
+    }
+
+    /// Whether `cell`'s inline text `text` can go on another node's line:
+    /// one line, no line comment, and no attached comments above it.
+    private bool isSingleLine(in SdlNodeCell cell, SdlSpan text) const
+    {
+        if (cell.aloneOnLines && attachedCommentsStart(cell.extent.startOffset) != cell.extent.startOffset)
+            return false;
+        foreach (at; text.startOffset .. text.endOffset)
+            if (newlineWidthAt(_host, at))
+                return false;
+        foreach (ref comment; _core.comments)
+            if (comment.kind == SdlCommentKind.line && comment.span.startOffset >= text.startOffset
+                && comment.span.startOffset < text.endOffset)
+                return false;
+        return true;
+    }
+
+    private bool endsWithSemicolon(in SdlNodeCell cell) const
+        => cell.terminator.isValid && cell.terminator.length == 1
+            && _host[cell.terminator.startOffset] == ';';
+
+    /// Whether a line comment ends `cell`'s extent, so nothing can follow
+    /// it on its line.
+    private bool endsInLineComment(in SdlNodeCell cell) const
+    {
+        const end = trimBlankEnd(cell.extent.startOffset, cell.extent.endOffset);
+        foreach (ref comment; _core.comments)
+            if (comment.kind == SdlCommentKind.line && comment.span.endOffset == end)
+                return true;
+        return false;
+    }
+
+    /// The start of the line after `at` when only spaces and tabs follow
+    /// `at` on its line, the content's end when the content ends there
+    /// instead, else `size_t.max`.
+    private size_t nextLineStart(size_t at) const
+    {
+        while (at < _content.endOffset && isBlank(_host[at]))
+            at++;
+        if (at >= _content.endOffset)
+            return _content.endOffset;
+        const width = newlineWidthAt(_host, at);
+        return width ? at + width : size_t.max;
     }
 
     /// Inserts `fragment` as whole lines at `point` (SDE4).
@@ -774,7 +1069,7 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
         if (!(point == _host.length && !endsWithNewline(_host)))
             put(_text, newline);
         _nodeDelta += shape.nodes;
-        record(SdlSpan.at(point), start, op);
+        record(SdlSpan.at(point), start, op, 0, 0, true);
     }
 
     /// Inserts a single block-less node on an inline anchor's line (§3).
@@ -805,7 +1100,7 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
         _fragments ~= FragmentCheck(cast(uint)(start + (join == InlineJoin.fragmentThenSeparator ? 0
             : join == InlineJoin.separatorThenFragment ? 2 : 1)), cast(uint) node.length, op);
         _nodeDelta += 1;
-        record(SdlSpan.at(point), start, op);
+        record(SdlSpan.at(point), start, op, 0, 0, true);
     }
 
     /// Appends to a node without a block: ` {`, the fragment, and `}`.
@@ -841,9 +1136,11 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
     /** Writes `fragment` into `output`: its common indentation replaced by
     `indent` on every line that begins outside a string or a continued line,
     its line breaks there spelled `newline`, and one final line break
-    dropped. */
+    dropped. With `shifts`, appends the footprint of each change it makes to
+    the fragment's bytes, in order. */
     private static void reindentInto(ref UniqueBuffer!char output,
-        scope const(char)[] fragment, in Indent indent, scope const(char)[] newline)
+        scope const(char)[] fragment, in Indent indent, scope const(char)[] newline,
+        UniqueBuffer!Shift* shifts = null)
     {
         // Lines that begin inside a multi-line token keep their bytes.
         UniqueBuffer!TextSpan protectedRanges;
@@ -912,12 +1209,16 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
                 size_t ws;
                 while (ws < line.length && isBlank(line[ws]))
                     ws++;
+                const strip = ws < line.length ? (common < ws ? common : ws) : line.length;
                 if (ws < line.length)
                 {
                     put(output, indent.outer);
                     put(output, indent.step);
-                    put(output, line[common < ws ? common : ws .. $]);
+                    put(output, line[strip .. $]);
                 }
+                if (shifts)
+                    *shifts ~= Shift(cast(uint) at, cast(uint)(at + strip), cast(uint)(ws < line.length
+                        ? indent.outer.length + indent.step.length : 0));
             }
             continued = endsWithContinuation(line);
             if (end >= body.length)
@@ -926,7 +1227,11 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
             if (isProtected(end))
                 put(output, body[end .. end + width]);
             else
+            {
                 put(output, newline);
+                if (shifts)
+                    *shifts ~= Shift(cast(uint) end, cast(uint)(end + width), cast(uint) newline.length);
+            }
             at = end + width;
         }
     }
@@ -952,8 +1257,6 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
             case eof:
                 break;
             case newline:
-                if (depth == 0 && shape.nodes)
-                    shape.multiLine = true;
                 goto case semicolon;
             case semicolon:
                 atStatement = true;
@@ -992,6 +1295,8 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
                 depth ? "the fragment leaves a block open" : "the fragment holds no node", op);
             return shape;
         }
+        // A final line break does not make it more than one line.
+        shape.multiLine = hasNewline(trimNode(fragment));
         shape.valid = true;
         return shape;
     }
@@ -1013,7 +1318,7 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
     /// or the start of the host, or just after a logical newline.
     private bool lineStartAt(size_t at) const
     {
-        if (at == 0 || (at == _core.lines.lineStart(0) && _recipe.found == false))
+        if (at == 0 || (at == _core.lineZero && _recipe.found == false))
             return true;
         foreach (width; newlineWidths)
             if (at >= width && newlineWidthAt(_host, at - width) == width)
@@ -1071,10 +1376,9 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
     private const(char)[] indentStep() const
     {
         size_t parentStart = size_t.max;
-        foreach (i, ref cell; _core.nodes)
+        foreach (i; 1 .. _core.nodeCount)
         {
-            if (i == 0)
-                continue;
+            const cell = _core.nodeAt(i);
             if (cell.depth == 0)
                 parentStart = cell.span.startOffset;
             else if (cell.depth == 1 && parentStart != size_t.max && cell.aloneOnLines)
@@ -1102,8 +1406,10 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
         const cell = cellOf(parent);
         if (!cell.childCount)
             return fallback;
-        return lineIndent(_core.nodes[_core.childIndexes[cell.childStart + cell.childCount - 1]]
-            .span.startOffset);
+        size_t last = parent.cellIndex + 1;
+        foreach (_; 1 .. cell.childCount)
+            last += _core.subtreeSizeAt(last);
+        return lineIndent(_core.nodeAt(last).span.startOffset);
     }
 
     /// The end of a node's last value, attribute or name.
@@ -1124,23 +1430,26 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
     private size_t previousTokenEnd(scope SdlAttributeView attribute) const
     {
         size_t end = 0;
-        foreach (ref cell; _core.nodes)
+        foreach (k; 0 .. _core.nodeCount)
+        {
+            const cell = _core.nodeAt(k);
             if (attribute.cellIndex >= cell.attributeStart
                 && attribute.cellIndex < cell.attributeStart + cell.attributeCount)
             {
                 end = cell.nameSpan.endOffset;
                 foreach (i; cell.valueStart .. cell.valueStart + cell.valueCount)
-                    end = _core.values[i].value.span.endOffset;
+                    end = _core.valueAt(i).value.span.endOffset;
                 foreach (i; cell.attributeStart .. attribute.cellIndex)
-                    end = _core.attributes[i].span.endOffset;
+                    end = _core.attributeAt(i).span.endOffset;
                 break;
             }
+        }
         return end;
     }
 
     private bool hasCommentIn(size_t start, size_t end) const
     {
-        foreach (ref comment; _core.comments)
+        foreach (comment; _core.comments)
             if (comment.span.startOffset < end && comment.span.endOffset > start)
                 return true;
         return false;
@@ -1159,7 +1468,7 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
                 continue;
             }
             bool skipped;
-            foreach (ref comment; _core.comments)
+            foreach (comment; _core.comments)
                 if (comment.span.startOffset == at)
                 {
                     at = comment.span.endOffset;
@@ -1261,7 +1570,7 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
         size_t at = line.startOffset;
         while (at < line.endOffset && isBlank(_host[at]))
             at++;
-        foreach (ref comment; _core.comments)
+        foreach (comment; _core.comments)
             if (comment.span.startOffset == at)
             {
                 size_t end = comment.span.endOffset;
@@ -1274,14 +1583,29 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
 
     private size_t subtreeSize(size_t cell) const
     {
-        const depth = _core.nodes[cell].depth;
-        size_t end = cell + 1;
-        while (end < _core.nodes.length && _core.nodes[end].depth > depth)
-            end++;
-        return end - cell;
+        return _core.subtreeSizeAt(cell);
     }
 
     // ── Moves ──────────────────────────────────────────────────────────
+
+    /// Carries `offset` through `shifts`, sorted and valid, as `mapOffset`
+    /// does with its default bias: past the insertions at it.
+    private static uint mapShifts(scope const Shift[] shifts, uint offset) @safe pure nothrow @nogc
+    {
+        long delta;
+        foreach (ref s; shifts)
+        {
+            if (offset < s.start)
+                break;
+            if (offset < s.end)
+            {
+                const into = offset - s.start;
+                return cast(uint)(s.start + delta + (into < s.length ? into : s.length));
+            }
+            delta += cast(long) s.length - (s.end - s.start);
+        }
+        return cast(uint)(offset + delta);
+    }
 
     /// The replacement text of `edit`: a move's composed text for its
     /// insertion, else the operation's own.
@@ -1289,8 +1613,8 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
     {
         if (edit.move && edit.start == edit.end)
         {
-            const text = _moveTexts[edit.move - 1];
-            return _composed[text.startOffset .. text.endOffset];
+            const text = moving.texts[edit.move - 1];
+            return moving.composed[text.startOffset .. text.endOffset];
         }
         return _text[edit.textStart .. edit.textStart + edit.textLength];
     }
@@ -1303,18 +1627,21 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
     private SdlExpected!void composeMoves(ref UniqueBuffer!PendingEdit sorted)
     {
         enum ubyte waiting = 0, started = 1, composed = 2;
-        _composed.clear(releaseStorage: false);
-        _moveTexts.length = _moves.length;
+        moving.composed.clear(releaseStorage: false);
+        moving.texts.length = moving.moves.length;
+        moving.images.length = moving.moves.length;
+        moving.images[][] = MoveImage.init;
+        moving.shifts.clear(releaseStorage: false);
         UniqueBuffer!bool consumed;
         consumed.length = sorted.length;
         consumed[][] = false;
         UniqueBuffer!ubyte state;
-        state.length = _moves.length;
+        state.length = moving.moves.length;
         state[][] = waiting;
         UniqueBuffer!size_t stack, inner;
         UniqueBuffer!TextEdit shifted;
         UniqueBuffer!char piece;
-        foreach (first; 0 .. _moves.length)
+        foreach (first; 0 .. moving.moves.length)
         {
             stack.clear(releaseStorage: false);
             stack ~= first;
@@ -1338,7 +1665,7 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
                         const dependency = sorted[i].move - 1;
                         if (state[dependency] == started)
                             return sdlErr!void(editError(SdlErrorCode.editConflict, SdlSpan.init,
-                                "two moves go into each other's bytes", _moves[m].operation));
+                                "two moves go into each other's bytes", moving.moves[m].operation));
                         if (state[dependency] == waiting)
                         {
                             stack ~= dependency;
@@ -1350,11 +1677,27 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
                 }
 
                 // Every move inside is composed: apply what is left inside.
-                const move = _moves[m];
+                const move = moving.moves[m];
                 shifted.clear(releaseStorage: false);
+                moving.images[m].inner = cast(uint) moving.shifts.length;
+                long delta;
                 foreach (i; inner[])
-                    shifted ~= TextEdit(TextSpan(sorted[i].start - move.start,
-                        sorted[i].end - move.start), textOf(sorted[i]));
+                {
+                    const e = sorted[i];
+                    const text = textOf(e);
+                    const start = e.start - move.start, end = e.end - move.start;
+                    if (e.move && e.start == e.end)
+                    {
+                        // A move arriving inside: its text starts here in
+                        // this move's edited bytes.
+                        moving.images[e.move - 1].parent = cast(uint) m + 1;
+                        moving.images[e.move - 1].at = cast(uint)(start + delta);
+                    }
+                    delta += cast(long) text.length - (end - start);
+                    shifted ~= TextEdit(TextSpan(start, end), text);
+                    moving.shifts ~= Shift(start, end, cast(uint) text.length);
+                }
+                moving.images[m].innerEnd = cast(uint) moving.shifts.length;
                 const bytes = _host[move.start .. move.end];
                 const validation = validateEdits(bytes.length, shifted[]);
                 if (validation.hasError)
@@ -1367,7 +1710,7 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
                 writeEdited(piece, bytes, shifted[]);
                 foreach (i; inner[])
                     consumed[i] = true;
-                _moveTexts[m] = placeMoved(move, piece[]);
+                moving.texts[m] = placeMoved(m, piece[]);
                 state[m] = composed;
                 stack.length = stack.length - 1;
             }
@@ -1384,11 +1727,13 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
     /** The indexes in `sorted` of the edits inside move `m`'s bytes not yet
     applied by a move inside them: every edit within them but the move's
     own, an insertion at their start, which stays where it is, and one over
-    the node's whole extent that does not replace that node. */
+    the node's whole extent that does not replace that node. At the end of
+    an inline text, an insertion an operation on the node made (an
+    attribute) is inside, and one beside the node is not. */
     private void innerEdits(scope const PendingEdit[] sorted, scope const bool[] consumed,
         size_t m, ref UniqueBuffer!size_t inner) const
     {
-        const move = _moves[m];
+        const move = moving.moves[m];
         inner.clear(releaseStorage: false);
         size_t low, high = sorted.length;
         while (low < high)
@@ -1399,28 +1744,55 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
             else
                 high = mid;
         }
-        for (size_t i = low; i < sorted.length && sorted[i].start < move.end; i++)
+        for (size_t i = low; i < sorted.length
+            && (sorted[i].start < move.end || (move.inlineText && sorted[i].start == move.end)); i++)
         {
             const e = sorted[i];
             // An edit over the node's whole lines replaces it only when it
             // names it; one that names an ancestor (a body) overlaps.
             const whole = e.start <= move.extentStart && e.end == move.end
                 && e.start != e.end && e.cell != move.cell;
-            if (consumed[i] || e.end > move.end || e.move == m + 1 || whole
+            const atEnd = e.start == move.end && (e.start != e.end || e.beside);
+            if (consumed[i] || e.end > move.end || e.move == m + 1 || whole || atEnd
                 || (e.start == e.end && e.start == move.start))
                 continue;
             inner ~= i;
         }
     }
 
-    /** Appends to `_composed` the moved lines `piece` as inserting them at
-    the move's point takes them (SDE4): a newline before them when the
-    point does not start a line, and their final line break, unless the
-    point ends a host that has none. Re-indented when the move asked;
-    otherwise byte for byte. */
-    private TextSpan placeMoved(in PendingMove move, scope const(char)[] piece)
+    /** Appends to `composed` the moved bytes `piece` as inserting them at
+    the move's point takes them (§3). As lines (SDE4): a newline before them
+    when the point does not start a line, and their final line break,
+    unless the point ends a host that has none; an inline text first takes
+    its line's indentation. Re-indented when the move asked; otherwise byte
+    for byte. On the point's line: between the separators of its join.
+    Records the placement in move `m`'s image. */
+    private TextSpan placeMoved(size_t m, scope const(char)[] piece)
     {
-        const start = _composed.length;
+        const move = moving.moves[m];
+        const start = moving.composed.length;
+        moving.images[m].reindent = moving.images[m].reindentEnd = cast(uint) moving.shifts.length;
+        if (move.onLine)
+        {
+            const before = move.join == InlineJoin.separatorThenFragment ? "; "
+                : move.join == InlineJoin.spaceFragmentSemicolon ? " " : "";
+            const after = move.join == InlineJoin.fragmentThenSeparator ? "; "
+                : move.join == InlineJoin.spaceFragmentSemicolon ? ";" : "";
+            put(moving.composed, before);
+            moving.images[m].prefix = cast(uint) before.length;
+            put(moving.composed, piece);
+            put(moving.composed, after);
+            return TextSpan(cast(uint) start, cast(uint) moving.composed.length);
+        }
+
+        UniqueBuffer!char line;
+        if (move.leadLength)
+        {
+            line ~= _host[move.leadStart .. move.leadStart + move.leadLength];
+            line ~= piece;
+            piece = line[];
+        }
+        moving.images[m].lead = move.leadLength;
         const newline = newlineFor(move.point);
         size_t length = piece.length;
         foreach (width; widthsLongestCrLf)
@@ -1430,18 +1802,91 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
                 break;
             }
         if (!lineStartAt(move.point))
-            put(_composed, newline);
+            put(moving.composed, newline);
+        moving.images[m].prefix = cast(uint)(moving.composed.length - start);
         if (move.reindent)
-            reindentInto(_composed, piece,
-                Indent(_host[move.indentStart .. move.indentStart + move.indentLength]), newline);
+        {
+            reindentInto(moving.composed, piece,
+                Indent(_host[move.indentStart .. move.indentStart + move.indentLength]), newline,
+                &moving.shifts);
+            moving.images[m].reindentEnd = cast(uint) moving.shifts.length;
+        }
         else
-            put(_composed, piece[0 .. length]);
+            put(moving.composed, piece[0 .. length]);
         if (!(move.point == _host.length && !endsWithNewline(_host)))
-            put(_composed, !move.reindent && length < piece.length ? piece[length .. $] : newline);
-        return TextSpan(cast(uint) start, cast(uint) _composed.length);
+            put(moving.composed, !move.reindent && length < piece.length ? piece[length .. $] : newline);
+        return TextSpan(cast(uint) start, cast(uint) moving.composed.length);
     }
 
     // ── Writing ────────────────────────────────────────────────────────
+
+    /** Joins, in `sorted`, each two deletions that overlap only in spaces
+    and tabs into one deleting both (SDE3): the blank between two nodes of
+    one line belongs to both their extents. A joined deletion that starts
+    its line also takes the blanks after it, as a line's first node does,
+    and the whole line when nothing else is left on it, unless another
+    edit starts among the bytes it would take. */
+    private void mergeBlankOverlaps(ref UniqueBuffer!PendingEdit sorted) const
+    {
+        static bool deletes(in PendingEdit e) => e.start < e.end && e.textLength == 0;
+        UniqueBuffer!bool joined; // by kept index; allocated on the first join
+        size_t kept;
+        foreach (i; 0 .. sorted.length)
+        {
+            if (kept)
+            {
+                const previous = sorted[kept - 1], e = sorted[i];
+                const overlapEnd = e.end < previous.end ? e.end : previous.end;
+                if (deletes(previous) && deletes(e) && e.start < previous.end
+                    && isBlankRun(_host[e.start .. overlapEnd]))
+                {
+                    if (e.end > previous.end)
+                        sorted[kept - 1].end = e.end;
+                    if (!joined.length)
+                    {
+                        joined.length = sorted.length;
+                        joined[][] = false;
+                    }
+                    joined[kept - 1] = true;
+                    continue;
+                }
+            }
+            sorted[kept++] = sorted[i];
+        }
+        sorted.length = kept;
+        if (!joined.length)
+            return;
+        foreach (i; 0 .. kept)
+        {
+            const begin = lineIndentStart(sorted[i].start);
+            if (!joined[i] || !lineStartAt(begin))
+                continue;
+            size_t start = sorted[i].start, end = sorted[i].end;
+            while (end < _content.endOffset && isBlank(_host[end]))
+                end++;
+            // Every node of the line went: so does the line, indentation
+            // and line break included (SDE5).
+            const width = end < _content.endOffset ? newlineWidthAt(_host, end) : 0;
+            if (width && (i == 0 || sorted[i - 1].end <= begin))
+            {
+                start = begin;
+                end += width;
+            }
+            if (i + 1 == kept || sorted[i + 1].start >= end)
+            {
+                sorted[i].start = cast(uint) start;
+                sorted[i].end = cast(uint) end;
+            }
+        }
+    }
+
+    private static bool isBlankRun(scope const(char)[] text) @safe pure nothrow @nogc
+    {
+        foreach (c; text)
+            if (!isBlank(c))
+                return false;
+        return true;
+    }
 
     private static void sortEdits(PendingEdit[] edits) @safe pure nothrow @nogc
     {
@@ -1506,7 +1951,7 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
             return parseSdlDocumentIn!(config, Allocator)(text, null, SdlSpan.init, allocator);
     }
 
-    private SdlExpected!void reparse(Allocator)(scope const(char)[] output,
+    private SdlExpected!void reparse(Allocator)(ref UniqueBuffer!char output,
         scope const TextEdit[] edits, ref Allocator allocator, ref SdlParseResult!Allocator parsed)
     {
         // No edits: the output is the host, whose parse is the borrowed document.
@@ -1514,30 +1959,32 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
             return sdlOk();
         SdlSpan content = SdlSpan.init;
         UniqueBuffer!char rendering;
-        const(char)[] parsedText = output;
         if (_recipe.found)
         {
             // SDE7: DUB ends the recipe at the first `+/`; it must be where the
             // original one maps, and the `/+` count inside must not change.
-            const moved = locateEmbeddedRecipe(output);
+            const moved = locateEmbeddedRecipe(output[]);
             const expected = mapOffset(edits, _recipe.close.startOffset);
             if (!moved.found || moved.isJson || moved.close.startOffset != expected
-                || countOpeners(moved.recipe(output)) != countOpeners(_recipe.recipe(_host)))
+                || countOpeners(moved.recipe(output[])) != countOpeners(_recipe.recipe(_host)))
                 return sdlErr!void(editError(SdlErrorCode.editFragmentInvalid, SdlSpan.init,
                     "the edit changes where DUB or the D compiler ends the recipe", _operations));
             rendering.reserve(output.length);
-            writeEmbeddedRendering(rendering, output, moved);
-            parsedText = rendering[];
+            writeEmbeddedRendering(rendering, output[], moved);
             content = moved.content;
         }
-        // Only the edited region is re-parsed when it can be (§10, SDE14).
+        // Only the edited region is re-parsed when it can be (§10, SDE14),
+        // and then the document keeps the text it parsed — the rendering, or
+        // a recipe's output — instead of copying it (§10.1).
+        auto parsedText = _recipe.found ? &rendering : &output;
         bool localized;
         static if (stateSize!Allocator == 0)
-            parsed = reparseEdited!(config, Allocator)(_core, parsedText, _sourceName, content,
+            parsed = reparseEdited!(config, Allocator)(_core, *parsedText, _sourceName, content,
                 edits, localized);
         else
-            parsed = reparseEdited!(config, Allocator)(_core, parsedText, _sourceName, content,
+            parsed = reparseEdited!(config, Allocator)(_core, *parsedText, _sourceName, content,
                 edits, localized, allocator);
+
         if (parsed.hasError)
         {
             auto error = editError(SdlErrorCode.editResultInvalid, parsed.error.span,
@@ -1547,7 +1994,7 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
             return sdlErr!void(error);
         }
         if (_nodeCountKnown
-            && cast(long) parsed.document.core.nodes.length != cast(long) _core.nodes.length + _nodeDelta)
+            && cast(long) parsed.document.core.nodeCount != cast(long) _core.nodeCount + _nodeDelta)
             return sdlErr!void(editError(SdlErrorCode.editResultInvalid, SdlSpan.init,
                 "the edited text has an unexpected number of nodes", _operations));
         return sdlOk();
@@ -1879,6 +2326,83 @@ version (unittest) private bool canFindError(string output, string needle) @safe
     })(source) == expected);
 }
 
+@("sdl.editor.move.sharedLines")
+@system unittest
+{
+    // Within one line: the node's inline text moves, its `;` and the blank
+    // after it go with the removal, and the separators at its new place
+    // are an insertion's. A neighbour keeps its own `;`.
+    assert(edited!((ref e, root) => e.moveAfter(child(root, 0), child(root, 1)))("a 1; b 2\n")
+        == "b 2; a 1\n");
+    assert(edited!((ref e, root) => e.moveBefore(child(root, 1), child(root, 0)))("a 1; b 2\n")
+        == "b 2; a 1;\n");
+    assert(edited!((ref e, root) => e.moveAfter(child(root, 0), child(root, 2)))("a; b; c\n")
+        == "b; c; a\n");
+    // Inside a one-line block, each way.
+    enum block = "x {; a; b; }\n";
+    assert(edited!((ref e, root) => e.moveAfter(child(child(root, 0), 0), child(child(root, 0), 1)))(block)
+        == "x {; b; a; }\n");
+    assert(edited!((ref e, root) => e.moveBefore(child(child(root, 0), 1), child(child(root, 0), 0)))(block)
+        == "x {; b; a; }\n");
+    // From a shared line to a line of its own, and back.
+    enum mixed = "a 1; b 2\nc 3\n";
+    assert(edited!((ref e, root) => e.moveAfter(child(root, 0), child(root, 2)))(mixed)
+        == "b 2\nc 3\na 1\n");
+    assert(edited!((ref e, root) => e.moveBefore(child(root, 1), child(root, 2)))(mixed)
+        == "a 1;\nb 2\nc 3\n");
+    assert(edited!((ref e, root) => e.moveAfter(child(root, 2), child(root, 0)))(mixed)
+        == "a 1; c 3; b 2\n");
+    assert(edited!((ref e, root) => e.moveAfter(child(root, 2), child(root, 1)))("  a 1; b 2\nc 3\n")
+        == "  a 1; b 2; c 3\n");
+    // Comments in the extent go with the node: a block comment before it,
+    // one before its `;`, and the line's trailing comment, which makes it
+    // a line wherever it goes.
+    enum commented = "a 1 /* x */; /* y */ b 2 // z\nc 3\n";
+    assert(edited!((ref e, root) => e.moveAfter(child(root, 0), child(root, 2)))(commented)
+        == "/* y */ b 2 // z\nc 3\na 1 /* x */\n");
+    assert(edited!((ref e, root) => e.moveAfter(child(root, 1), child(root, 2)))(commented)
+        == "a 1 /* x */;\nc 3\n/* y */ b 2 // z\n");
+    assert(edited!((ref e, root) => e.moveBefore(child(root, 1), child(root, 0)))(commented)
+        == "/* y */ b 2 // z\na 1 /* x */;\nc 3\n");
+    // After a node a line comment ends, a node goes on the next line.
+    assert(edited!((ref e, root) => e.moveAfter(child(root, 3), child(root, 1)))(
+        "a 1; b 2 // z\nd 4\nc 3\n") == "a 1; b 2 // z\nc 3\nd 4\n");
+    // More than one line goes beside a shared line at its edges.
+    enum tall = "a 1; b 2\nc {\n  d\n}\n";
+    assert(edited!((ref e, root) => e.moveBefore(child(root, 2), child(root, 0)))(tall)
+        == "c {\n  d\n}\na 1; b 2\n");
+    assert(edited!((ref e, root) => e.moveAfter(child(root, 2), child(root, 1)))(tall)
+        == "a 1; b 2\nc {\n  d\n}\n");
+    // An inline node whose block spans lines becomes lines, re-indented.
+    assert(edited!((ref e, root) => e.moveAfter(child(child(root, 0), 1), child(root, 1)))(
+        "x {\n    a; b {\n        c\n    }\n}\nz\n") == "x {\n    a;\n}\nz\nb {\n    c\n}\n");
+    // Edits inside travel, an attribute at the text's end included.
+    assert(edited!((ref e, root) {
+        e.moveAfter(child(root, 1), child(root, 2));
+        e.setAttribute(child(root, 1), SdlQualifiedName(null, "k"), SdlScalar(true));
+        e.replaceValue(child(root, 1), 0, SdlScalar(20));
+    })(mixed) == "a 1;\nc 3\nb 20 k=true\n");
+    // Neighbours moved off one line: their removals share the blank.
+    assert(edited!((ref e, root) {
+        e.moveAfter(child(root, 0), child(root, 3));
+        e.moveAfter(child(root, 1), child(root, 3));
+    })("a 1; b 2; c 3\nd 4\n") == "c 3\nd 4\na 1\nb 2\n");
+    assert(edited!((ref e, root) {
+        e.remove(child(root, 0));
+        e.remove(child(root, 1));
+    })("a 1; b 2; c 3\n") == "c 3\n");
+    // A single line goes into a one-line block; a shared line leaves for its own.
+    assert(edited!((ref e, root) => e.moveAfter(child(child(root, 0), 0), child(child(root, 1), 0)))(
+        "x {\n  a 1\n}\nq {; b; c; }\n") == "x {\n}\nq {; b; a 1; c; }\n");
+    assert(edited!((ref e, root) => e.moveAfter(child(root, 1), child(root, 0)))(
+        "p {\n  a 1\n}\nq 0; r 1\n") == "p {\n  a 1\n}\nq 0\nr 1\n");
+    // A host without a final newline, and CRLF.
+    assert(edited!((ref e, root) => e.moveAfter(child(root, 0), child(root, 2)))("a 1; b 2\nc 3")
+        == "b 2\nc 3\na 1");
+    assert(edited!((ref e, root) => e.moveAfter(child(root, 0), child(root, 2)))("a 1; b 2\r\nc 3\r\n")
+        == "b 2\r\nc 3\r\na 1\r\n");
+}
+
 @("sdl.editor.move.rejects")
 @system unittest
 {
@@ -1887,10 +2411,14 @@ version (unittest) private bool canFindError(string output, string needle) @safe
         .canFindError("into itself"));
     assert(edited!((ref e, root) => e.moveAfter(child(root, 0), child(root, 0)))(source)
         .canFindError("beside itself"));
-    assert(edited!((ref e, root) => e.moveAfter(child(root, 1), child(root, 0)))(source)
-        .canFindError("alone on their lines"));
+    // More than one line, a line comment or attached comments cannot go
+    // between two nodes of one line.
     assert(edited!((ref e, root) => e.moveBefore(child(root, 0), child(root, 2)))(source)
-        .canFindError("alone on their lines"));
+        .canFindError("between nodes of one line"));
+    assert(edited!((ref e, root) => e.moveAfter(child(root, 0), child(root, 1)))("s 1 // c\nq 0; r 1\n")
+        .canFindError("between nodes of one line"));
+    assert(edited!((ref e, root) => e.moveAfter(child(root, 0), child(root, 1)))("// c\ns 1\nq 0; r 1\n")
+        .canFindError("between nodes of one line"));
     // An edit across the moved bytes' edge overlaps the removal.
     assert(edited!((ref e, root) {
         e.moveAfter(child(child(root, 0), 0), child(root, 0));
@@ -2074,7 +2602,8 @@ version (unittest)
                         continue;
                     editor.append(node, "probe \"p\"");
                     // The point is the start of the `}` line.
-                    const close = node.core.nodes[node.cellIndex].closeBrace.startOffset;
+                    const close = node.core.nodeAt(node.cellIndex).closeBrace.startOffset;
+
                     size_t lineStart = close;
                     while (lineStart > 0 && (host[lineStart - 1] == ' ' || host[lineStart - 1] == '\t'))
                         lineStart--;
@@ -2197,6 +2726,206 @@ version (unittest)
         }
     }
     assert(checked > 150);
+}
+
+version (unittest)
+{
+    /** A copy of `host`, whose document's root is `root`, with nodes put on
+    shared lines, so that moves meet them: every other pair of neighbouring
+    plain one-line root children joined by `; `, and the first block whose
+    children are all plain lines folded onto its node's line as
+    `x {; a; b; }`. A plain line is one node ending in its newline, without
+    a block, a comment, a raw string or a `;` that a join would break. */
+    package string joinSomeLines(scope const(char)[] host, SdlNode root)
+    {
+        import std.algorithm.searching : canFind, endsWith;
+        import std.string : stripRight;
+
+        static bool plain(scope const(char)[] line)
+        {
+            if (!line.endsWith("\n"))
+                return false;
+            const text = line.stripRight;
+            return text.length && !text.canFind('\n') && !text.canFind('\r') && !text.canFind('#')
+                && !text.canFind("//") && !text.canFind("--") && !text.canFind("/*")
+                && !text.canFind('`') && !text.canFind('\\') && !text.endsWith(";");
+        }
+
+        static bool plainNode(scope const(char)[] host, SdlNode node)
+            => node.aloneOnLines && !node.hasBlock && plain(node.extent.sliceOf(host));
+
+        string joined;
+        size_t at, pairs;
+        bool folded;
+        SdlNode[] kids;
+        foreach (kid; root.byChild)
+            kids ~= kid;
+        for (size_t k = 0; k < kids.length; k++)
+        {
+            const a = kids[k];
+            if (k + 1 < kids.length && plainNode(host, a) && plainNode(host, kids[k + 1])
+                && a.extent.endOffset == kids[k + 1].extent.startOffset && pairs++ % 2 == 0)
+            {
+                joined ~= host[at .. a.extent.startOffset];
+                joined ~= a.extent.sliceOf(host).stripRight;
+                joined ~= "; ";
+                at = kids[k + 1].span.startOffset;
+                k++;
+                continue;
+            }
+            if (folded || !a.aloneOnLines || !a.childCount)
+                continue;
+            // The block's children, back to back, all plain, nothing else
+            // between its braces.
+            SdlNode[] inner;
+            foreach (c; a.byChild)
+                inner ~= c;
+            bool ok = true;
+            foreach (i, c; inner)
+                ok = ok && plainNode(host, c)
+                    && (i == 0 || inner[i - 1].extent.endOffset == c.extent.startOffset);
+            if (!ok)
+                continue;
+            const head = host[a.span.startOffset .. inner[0].extent.startOffset].stripRight;
+            const tail = host[inner[$ - 1].extent.endOffset .. a.extent.endOffset];
+            size_t close;
+            while (close < tail.length && (tail[close] == ' ' || tail[close] == '\t'))
+                close++;
+            if (!head.endsWith("{") || close == tail.length || tail[close] != '}')
+                continue;
+            joined ~= host[at .. a.span.startOffset];
+            joined ~= head;
+            joined ~= ";";
+            foreach (c; inner)
+            {
+                joined ~= " ";
+                joined ~= c.extent.sliceOf(host).stripRight[c.span.startOffset - c.extent.startOffset .. $];
+                joined ~= ";";
+            }
+            joined ~= " ";
+            at = inner[$ - 1].extent.endOffset + close;
+            folded = true;
+        }
+        joined ~= host[at .. $];
+        return joined;
+    }
+}
+
+@("sdl.editor.properties.movesOnSharedLines")
+@system unittest
+{
+    import core.exception : AssertError;
+    import std.algorithm.searching : canFind;
+    import std.file : readText;
+    import std.string : strip, stripRight;
+    import sparkles.wired.sdl.config : sdlDubRecipe;
+    import sparkles.wired.sdl.test_corpus : parseRecipe, repositoryRecipes;
+
+    // SDE18 over every recipe with nodes put on shared lines: moves of and
+    // beside the nodes that share a line, to the start and the end of the
+    // root, and between neighbours of one line, at the root and in the
+    // folded block. Each output means the rearranged model, holds the moved
+    // node's inline text and every bystander's; a move refused is one SDE18
+    // names: more than one line between two nodes of one line.
+    static string inlineText(scope const(char)[] host, SdlNode node)
+    {
+        auto text = node.extent.sliceOf(host).strip;
+        if (text.length && text[$ - 1] == ';')
+            text = text[0 .. $ - 1].stripRight;
+        return text.idup;
+    }
+
+    size_t moved, refused, hosts;
+    foreach (path; repositoryRecipes())
+    {
+        const original = readText(path);
+        auto first = parseRecipe(original, path);
+        if (!first.hasValue)
+            continue;
+        const host = joinSomeLines(original, first.document.root);
+        if (host == original)
+            continue;
+        auto parsed = parseRecipe(host, path);
+        if (!parsed.hasValue)
+            throw new AssertError(path ~ ": the joined host does not parse: " ~ parsed.error.toString);
+        if (model(parsed.document.root) != model(first.document.root))
+            throw new AssertError(path ~ ": joining lines changed the meaning");
+        hosts++;
+
+        // Moves among the children of `parent`, reached by `trail` from the root.
+        void moves(SdlNode parent, size_t[] trail)
+        {
+            SdlNode[] kids;
+            foreach (k; parent.byChild)
+                kids ~= k;
+            foreach (i, n; kids)
+            {
+                if (n.aloneOnLines)
+                    continue;
+                size_t[3][] cases = [[i, kids.length - 1, 1], [i, 0, 0], [0, i, 1]];
+                if (i + 1 < kids.length)
+                    cases ~= [i + 1, i, 0];
+                foreach (c; cases)
+                {
+                    const from = c[0], to = c[1], after = c[2] == 1;
+                    if (from == to)
+                        continue;
+                    auto expected = model(parsed.document.root);
+                    auto siblings = &expected;
+                    foreach (t; trail)
+                        siblings = &siblings.children[t];
+                    auto block = siblings.children[from];
+                    auto rest = siblings.children[0 .. from] ~ siblings.children[from + 1 .. $];
+                    const target = to > from ? to - 1 : to;
+                    const point = after ? target + 1 : target;
+                    siblings.children = rest[0 .. point] ~ block ~ rest[point .. $];
+
+                    auto editor = sdlEditor!sdlDubRecipe(parsed.document, host);
+                    const movable = editor.canMove(kids[from], kids[to], after);
+                    if (after)
+                        editor.moveAfter(kids[from], kids[to]);
+                    else
+                        editor.moveBefore(kids[from], kids[to]);
+                    UniqueBuffer!char output;
+                    Mallocator allocator;
+                    const written = editor.write(output, allocator);
+                    if (written.hasError)
+                    {
+                        if (movable || written.error.code != SdlErrorCode.editUnsupportedLayout)
+                            throw new AssertError(path ~ ": " ~ written.error.toString);
+                        refused++;
+                        continue;
+                    }
+                    if (!movable)
+                        throw new AssertError(path ~ ": canMove refused a move that writes");
+                    auto reparsed = parseRecipe(output[], path);
+                    if (!reparsed.hasValue)
+                        throw new AssertError(path ~ ": " ~ reparsed.error.toString);
+                    if (model(reparsed.document.root) != expected)
+                        throw new AssertError(path ~ ": the move changed the wrong meaning:\n"
+                            ~ output[].idup);
+                    foreach (k; kids)
+                        if (!output[].canFind(inlineText(host, k)))
+                            throw new AssertError(path ~ ": a node lost its bytes: "
+                                ~ inlineText(host, k) ~ "\n" ~ output[].idup);
+                    moved++;
+                }
+            }
+        }
+
+        moves(parsed.document.root, null);
+        size_t index;
+        foreach (kid; parsed.document.root.byChild)
+        {
+            bool shared_;
+            foreach (c; kid.byChild)
+                shared_ = shared_ || !c.aloneOnLines;
+            if (shared_ && kid.childCount > 1)
+                moves(kid, [index]);
+            index++;
+        }
+    }
+    assert(hosts > 300 && moved > 4000 && refused > 10, "the property test exercised too little");
 }
 
 @("sdl.editor.replacementsSurviveGrowthAndMoves")

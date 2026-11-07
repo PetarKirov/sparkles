@@ -168,7 +168,7 @@ private string[] oracleKind(SdlTokenKind kind) @safe pure nothrow
         SdlPosition at = lexer.position(token.value.span.startOffset);
         at = parsed.document.position(parsed.document.root.span.startOffset);
         const(char)[] source = parsed.document.source;
-        const(SdlComment)[] comments = parsed.document.comments;
+        auto comments = parsed.document.comments;
         SdlSpan extent = parsed.document.root.extent;
         auto editor = sdlEditor!sdlDubCompat(parsed.document, text);
         editor.setAttribute(parsed.document.root.byChild.front, SdlQualifiedName(null, "x"),

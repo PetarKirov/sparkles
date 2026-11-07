@@ -88,7 +88,7 @@ The modules also export these names, each specified where it is used:
 | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
 | `SdlTokenKind`, `SdlToken`, `SdlLexer`, `lexSDL`, `SdlScalarStorage`, `decodeSdlScalar`                                                                                     | §11     |
 | `SdlNameQuery`, `SdlNamespaceMatch`, `SdlFilteredAttributeRange`, `SdlFilteredChildRange`                                                                                   | §4      |
-| `SdlValueRange`, `SdlAttributeRange`, `SdlChildRange`, `SdlAttributeView`, `SdlPosition`, `SdlComment`, `SdlCommentKind`                                                    | §4      |
+| `SdlValueRange`, `SdlAttributeRange`, `SdlChildRange`, `SdlCommentRange`, `SdlAttributeView`, `SdlPosition`, `SdlComment`, `SdlCommentKind`                                 | §4      |
 | `SdlTagValueAttr`, `SdlAttributeAttr`, `SdlChildAttr`, `SdlTagNameAttr`, `SdlTagNamespaceAttr`, `SdlExtraAttr`                                                              | §5      |
 | `SdlExpected`, `sdlOk`, `sdlErr`                                                                                                                                            | §7      |
 | `OwnedSdlExtras`, `SdlOwnedExtraMember`, `SdlOwnedExtraNode`, `SdlOwnedExtraAttribute`, `SdlExtraChannel`                                                                   | §8      |
@@ -331,10 +331,13 @@ field's type (`numberOutOfRange`).
 ## 4. Ordered arena document
 
 `parseSdlDocument` returns an owning, movable, non-copyable `SdlDocument` backed
-by contiguous arenas. The document owns a copy of the text it parsed, and its
-cells, that copy, its line table and its layout live in one heap block, the
-document's **core**, which does not move when the document does. `SdlNode` and
-`SdlAttributeView` are a core reference and a cell index; they, `SdlScalar` and
+by contiguous arenas. The document owns a copy of the text it parsed; that
+copy, its line table and the placement of its cells live in one heap block,
+the document's **core**, which does not move when the document does. A
+document re-parsed after an edit shares its unchanged cells with the one it
+was made from ([editing §10.1](./editing.md#10-1-shared-storage)). `SdlNode` and
+`SdlAttributeView` are the address of a cell and of the run placing it, which
+reaches the core; they, `SdlScalar` and
 the ranges are small, copyable borrowed views whose lifetime cannot exceed the
 document under `-preview=dip1000`. `root()` is `scope return`: its view is bound to the
 document object itself, so a consumer must keep the document alive, and in
@@ -348,7 +351,7 @@ struct SdlDocument(Allocator = Mallocator)
     const(char)[] sourceName() return scope const;
     const(char)[] source() return scope const;      // the owned copy spans index
     SdlPosition position(size_t offset) const;      // §4.1
-    const(SdlComment)[] comments() return scope const; // §4.2
+    SdlCommentRange comments() return scope const;  // §4.2
 }
 
 struct SdlNode
@@ -367,9 +370,11 @@ struct SdlNode
 ```
 
 The arena stores nodes in source preorder. Each node records contiguous extents
-into value, attribute, and direct-child-index arenas; the child-index arena is
-needed because descendants occur between direct siblings in node preorder.
+into the value and attribute arenas, its child count, and its subtree size —
+the nodes of its preorder subtree, itself included — so its first child
+follows it and each child's next sibling follows that child's subtree.
 Strings and binary data live in owned pools. There are no parent pointers or
+
 per-node GC allocations. Repeated qualified names are separate entries and are
 never collapsed into an associative array.
 

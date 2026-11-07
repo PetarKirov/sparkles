@@ -3191,7 +3191,7 @@ private struct EncDocument
 
     SdlCore core; /// GC-owned cells; no source, so every span is invalid.
 
-    bool valid() const scope @safe pure nothrow @nogc => core.nodes.length != 0;
+    bool valid() const scope @safe pure nothrow @nogc => core.flatNodes.length != 0;
 
     // Narrow trust: the root refers to `core`, which lives in the builder
     // for the whole synchronous build-and-write.
@@ -3223,11 +3223,11 @@ private size_t encAppendNode(ref EncBuilder b, scope const(char)[] ns,
     cell.depth = depth;
     // Narrow trust: the cell aliases caller-owned name bytes that stay alive
     // for the whole synchronous build-and-write.
-    () @trusted { b.doc.core.nodes ~= cell; }();
-    b.kids.length = b.doc.core.nodes.length;
-    b.vals.length = b.doc.core.nodes.length;
-    b.attrs.length = b.doc.core.nodes.length;
-    return b.doc.core.nodes.length - 1;
+    () @trusted { b.doc.core.flatNodes ~= cell; }();
+    b.kids.length = b.doc.core.flatNodes.length;
+    b.vals.length = b.doc.core.flatNodes.length;
+    b.attrs.length = b.doc.core.flatNodes.length;
+    return b.doc.core.flatNodes.length - 1;
 }
 
 private void encAddValue(ref EncBuilder b, size_t node, scope SdlScalar s) @safe pure
@@ -3267,47 +3267,48 @@ private string encOwn(ref EncBuilder b, scope const(char)[] s) @safe pure
     return owned;
 }
 
-/** Flattens per-node extents into the arena and links child indices. */
+/** Lays the nodes out in preorder from the root, as a parse does, each with
+its values, attributes, child count and subtree size, so the arena reads as a
+flat parsed one. */
 private void encFinish(ref EncBuilder b) @safe pure
 {
-    size_t valueCursor;
-    foreach (i, ref node; b.doc.core.nodes)
+    import sparkles.wired.sdl.document : SdlAttributeCell, SdlNodeCell, SdlValueCell;
+
+    SdlNodeCell[] nodes;
+    SdlValueCell[] values;
+    SdlAttributeCell[] attributes;
+    nodes.reserve(b.doc.core.flatNodes.length);
+    // Narrow trust: the cells alias caller-owned bytes that stay alive for
+    // the whole synchronous build-and-write, as in `encAppendNode`.
+    void visit(size_t i) @trusted
     {
-        node.valueStart = valueCursor;
+        SdlNodeCell node = b.doc.core.flatNodes[i];
+        node.valueStart = values.length;
         node.valueCount = b.vals[i].length;
-        foreach (cell; b.vals[i])
-            b.doc.core.values ~= cell;
-        valueCursor += b.vals[i].length;
-    }
-    size_t attrCursor;
-    foreach (i, ref node; b.doc.core.nodes)
-    {
-        node.attributeStart = attrCursor;
+        values ~= b.vals[i];
+        node.attributeStart = attributes.length;
         node.attributeCount = b.attrs[i].length;
-        foreach (cell; b.attrs[i])
-            b.doc.core.attributes ~= cell;
-        attrCursor += b.attrs[i].length;
-    }
-    size_t childCursor;
-    foreach (i, ref node; b.doc.core.nodes)
-    {
-        node.childStart = childCursor;
+        attributes ~= b.attrs[i];
         node.childCount = b.kids[i].length;
         // Declared emission derives block presence from the child count;
         // copied extra subtrees preset it so empty `{ }` blocks survive.
         node.hasBlock = b.kids[i].length != 0 || node.hasBlock;
-        childCursor += b.kids[i].length;
+        const at = nodes.length;
+        nodes ~= node;
+        foreach (child; b.kids[i])
+            visit(child);
+        nodes[at].subtreeSize = nodes.length - at;
     }
-    b.doc.core.childIndexes.length = childCursor;
-    foreach (i, kids; b.kids)
-        foreach (pos, child; kids)
-            b.doc.core.childIndexes[b.doc.core.nodes[i].childStart + pos] = child;
+    visit(0);
+    // Sealed in place: the builder holds the arena where it is for the
+    // whole synchronous write.
+    () @trusted {
+        b.doc.core.flatNodes = nodes;
+        b.doc.core.flatValues = values;
+        b.doc.core.flatAttributes = attributes;
+        b.doc.core.seal();
+    }();
 
-    // The arena is exactly the nodes' extents: every cell belongs to one node
-    // and every node's window lands inside it.
-    assert(b.doc.core.values.length == valueCursor);
-    assert(b.doc.core.attributes.length == attrCursor);
-    assert(b.doc.core.childIndexes.length == childCursor);
 }
 
 /// Builds the canonical $(LREF SdlScalar) payload for one wire value.
@@ -3558,9 +3559,9 @@ private size_t copyExtraSubtree(ref EncBuilder b, return scope const SdlNode n,
     const name = n.qualifiedName;
     const idx = encAppendNode(b, name.namespace_, name.localName, depth);
     {
-        auto cell = b.doc.core.nodes[idx];
+        auto cell = b.doc.core.flatNodes[idx];
         cell.hasBlock = n.hasBlock();
-        b.doc.core.nodes[idx] = cell;
+        b.doc.core.flatNodes[idx] = cell;
     }
     foreach (v; n.byValue)
         encAddValue(b, idx, copyBorrowedScalar(v));
@@ -3586,9 +3587,9 @@ private size_t appendOwnedSubtree(ref EncBuilder b,
     const idx = encAppendNode(b, tree.name.namespace_, tree.name.localName,
         depth);
     {
-        auto cell = b.doc.core.nodes[idx];
+        auto cell = b.doc.core.flatNodes[idx];
         cell.hasBlock = tree.hasBlock;
-        b.doc.core.nodes[idx] = cell;
+        b.doc.core.flatNodes[idx] = cell;
     }
     foreach (v; tree.values)
         encAddValue(b, idx, v);
@@ -4057,7 +4058,7 @@ if (is(T == struct))
         static if (R.role == SdlRoleKind.child)
         {
             const childDepth = nodeIdx == 0 ? 0u
-                : cast(uint) (b.doc.core.nodes[nodeIdx].depth + 1);
+                : cast(uint) (b.doc.core.flatNodes[nodeIdx].depth + 1);
 
             static if (isNullAwareType!(V))
             {
@@ -4274,7 +4275,7 @@ if (is(T == struct))
         alias Extras = typeof(T.tupleof[sdlExtrasIndex!T]);
         const extras = value.tupleof[sdlExtrasIndex!T];
         const extraDepth = nodeIdx == 0 ? 0u
-            : cast(uint) (b.doc.core.nodes[nodeIdx].depth + 1);
+            : cast(uint) (b.doc.core.flatNodes[nodeIdx].depth + 1);
 
         static immutable string[] singularChildNames = () {
             string[] names;

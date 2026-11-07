@@ -43,7 +43,14 @@ once per commit, so its instructions per byte compare with one re-parse.
 `commit-unchanged` commits as many editors with no edits to the same open
 documents, and is held to hosts equal to the dataset's texts: it measures what
 a commit that changes nothing costs.
+
+`walk` reads every node, value and attribute of each open document through the
+views, as typed decode does, and `walk-edited` does the same after one
+committed edit to each document's first tag, when a re-parse shares the other
+cells through shifted runs (editing §10.1). Each is held to the same walk of a
+fresh parse of the host.
 */
+
 module sparkles.wired_bench.sdl;
 
 import std.algorithm.iteration : map;
@@ -518,6 +525,30 @@ unittest
     skipIfEmpty(registered, "commit-unchanged");
 }
 
+@("sdl.walk")
+@benchmark
+@system
+unittest
+{
+    size_t registered;
+    if (sdlEngineEnabled("wired"))
+        foreach (corpus; selectedCorpora)
+        {
+            if (corpus.kind == SdlDatasetKind.document)
+            {
+                registerWalk!sdlFull(corpus, false);
+                registerWalk!sdlFull(corpus, true);
+            }
+            else
+            {
+                registerWalk!sdlDubRecipe(corpus, false);
+                registerWalk!sdlDubRecipe(corpus, true);
+            }
+            registered++;
+        }
+    skipIfEmpty(registered, "walk");
+}
+
 @("sdl.encode")
 @benchmark
 @system
@@ -831,8 +862,89 @@ private void registerCommit(SdlParserConfig config)(SdlCorpus corpus)
     );
 }
 
+/// Every name, span, value and attribute below and at `node`, read through
+/// the views as typed decode reads them, folded into one number.
+private ulong walkSum(SdlNode node)
+{
+    ulong sum = node.qualifiedName.localName.length + node.span.startOffset
+        + node.extent.endOffset + node.childCount;
+    foreach (value; node.byValue)
+        sum += value.kind + value.span.endOffset;
+    foreach (attribute; node.byAttribute)
+        sum += attribute.qualifiedName.localName.length + attribute.value.kind
+            + attribute.value.span.startOffset;
+    foreach (child; node.byChild)
+        sum += walkSum(child);
+    return sum;
+}
+
+/**
+walk — open documents (untimed `setup`) → every node, value and attribute
+read through the views; `walk-edited` reads them after one committed edit to
+each document's first node, so nearly every cell is read from a shared,
+shifted run (editing §10.1). Each walk counts the input bytes once, and must
+equal the same walk of a fresh parse of the host.
+*/
+private void registerWalk(SdlParserConfig config)(SdlCorpus corpus, bool edited)
+{
+    alias Open = SdlOpenDocument!config;
+    auto docs = new Open[corpus.texts.length];
+    ulong total;
+    bool verified, failed;
+    benchCase(
+        name: "wired",
+        timed: () {
+            ulong sum;
+            foreach (ref open; docs)
+                sum += walkSum(open.document.root);
+            total = sum;
+        },
+        after: () {
+            string error;
+            if (!verified)
+            {
+                verified = true;
+                ulong expected;
+                foreach (ref open; docs)
+                {
+                    auto fresh = parseFor(corpus.kind, open.host);
+                    if (fresh.hasValue)
+                        expected += walkSum(fresh.document.root);
+                }
+                if (failed || total != expected)
+                    error = "walk differs from a fresh parse's";
+            }
+            return verdict(error);
+        },
+        metrics: [inputBytes(corpus.bytes)],
+        labels: labelsFor(corpus, edited ? "walk-edited" : "walk"),
+        setup: () {
+            foreach (i, text; corpus.texts)
+            {
+                if (docs[i].open(text).hasError)
+                {
+                    failed = true;
+                    continue;
+                }
+                if (!edited || !docs[i].document.root.childCount)
+                    continue;
+                auto editor = docs[i].editor;
+                editor.setAttribute(docs[i].document.root.byChild.front,
+                    SdlQualifiedName(null, "probe"), SdlScalar("walk"));
+                if (docs[i].commit(editor).hasError)
+                    failed = true;
+            }
+        },
+        teardown: () {
+            foreach (ref open; docs)
+                open = Open.init;
+        },
+    );
+}
+
 /**
 commit-unchanged — open documents (untimed `setup`) → `commitsPerDocument`
+
 commits each of an editor with no edits. The throughput counts the input
 bytes once per commit, as `commit` does; every host must still equal its
 text afterwards.

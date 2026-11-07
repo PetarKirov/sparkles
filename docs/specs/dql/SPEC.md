@@ -164,7 +164,10 @@ that cannot depend on DQL reads and prints the same grammar there: the
 property tree in `sparkles:ui`, which DQL's test-only dependencies would
 close a dub cycle with. The per-step lexer, `readPathStep`, is public so
 that such a host can add a step of its own, as the property tree adds
-`[#7]`, without a second reader for the rest.
+`[#7]`, without a second reader for the rest. The SDL selector likewise
+reads a leading `..` (any depth) before the DQL path that follows; the
+grammar itself has no descendant step, so DQL's parser and the property
+tree reject one.
 
 Every path DQL prints — the schema's paths and so the help output — writes
 a segment as an identifier when it is one (not empty, every byte an

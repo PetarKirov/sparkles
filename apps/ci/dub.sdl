@@ -16,6 +16,8 @@ dependency "sparkles:code-instrumentation" path="../.."
 dependency "sparkles:core-cli" path="../.."
 dependency "sparkles:event-horizon" path="../.."
 dependency "sparkles:wired" path="../.."
+// `writeInTreeDeps` selects in-tree dependencies at any depth.
+dependency "sparkles:wired-sdl-select" path="../.."
 // The fence audit (`--audit-fences`) folds fence labels through
 // `sparkles.syntax.ts.registry.canonicalLanguage` / `isPlainTextLabel` and
 // enumerates the grammar bundle through `GrammarRegistry`, rather than

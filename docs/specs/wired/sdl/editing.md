@@ -65,7 +65,7 @@ canonical writer stays the way to produce a document from a typed value.
 | SDE8  | Editing allocates only through the editor's buffers and the caller's allocator; `@safe pure` |
 | SDE9  | Every in-repository SDL edit, read and detection goes through this layer or the schema       |
 | SDE10 | Replacement text survives the editor growing or moving                                       |
-| SDE11 | A node handle names the same node across commits until an operation replaces that node       |
+| SDE11 | A node handle names the same node across commits, moves included, until one replaces it      |
 | SDE12 | A handle whose node was replaced is reported stale, never re-aimed at another node           |
 | SDE13 | A failed commit leaves the host, the document and every handle as they were                  |
 | SDE14 | An incremental re-parse produces exactly the document a full re-parse would                  |
@@ -78,6 +78,7 @@ canonical writer stays the way to produce a document from a typed value.
 | SDS3  | A filter is a DQL expression evaluated with each selected node as its subject                |
 | SDS4  | Path-only selection is `@safe pure nothrow @nogc` and allocates nothing                      |
 | SDS5  | Editor operations accept a selection and apply once per target                               |
+| SDS6  | A leading `..` lets a path's first step match at any depth below the start node              |
 
 ## 1. Model
 
@@ -133,6 +134,16 @@ So in `a 1; b 2⏎` the extent of `a` is `a 1; ` and removing it leaves
 `b 2⏎`; the extent of `b` is ` b 2`, and removing it leaves `a 1;⏎`. In
 `a {; b 1; }` the extent of `b` is ` b 1;`, leaving `a {; }`.
 
+A node's **inline text** is its extent without the spaces, tabs and line
+breaks at either end, and without its `;` terminator and the blanks before
+that: its tokens and the comments its extent holds — a block comment
+between the preceding terminator and the node, one before its `;`, and,
+when the line's newline ends the node, the line's trailing comment. In
+`a 1 /* x */; /* y */ b 2 // z⏎` the inline texts are `a 1 /* x */` and
+`/* y */ b 2 // z`. A node is **single-line** when its inline text holds no
+line break and no line comment, and, alone on its lines, it has no attached
+comments (below).
+
 Leading comments are not part of an extent. An operation may opt in to
 treating the **attached comments** of a node — the maximal run of
 comment-only lines directly above it, with no blank line between — as part
@@ -147,33 +158,55 @@ The set is the union of what the repository's editors do
 ([§7](#7-migration-coverage)), not a general tree API. The range column is
 normative: it is what SDE1 checks.
 
-| Operation                   | Range it may change                                                                                                                                                                             | Resolves to                                                                                                                          |
-| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| replace a value             | the value's span                                                                                                                                                                                | the canonical spelling of the new scalar                                                                                             |
-| replace an attribute        | the attribute's span                                                                                                                                                                            | `name=value`, with a new name and/or value; the separator before it is untouched                                                     |
-| set an attribute            | an existing singular attribute's span; otherwise the point after the node's last value or attribute, or after its name if it has none                                                           | replace in place, or insert ` name=value`; a name held by more than one attribute is `editAmbiguousTarget`                           |
-| remove an attribute         | the attribute's span and the spaces and tabs before it on its line; when a `\` continuation separates it from the previous token, also that `\`, the spaces and tabs before it, and its newline | deletion; a comment between the `\` and the attribute makes it `editUnsupportedLayout`                                               |
-| insert child nodes          | one point: the start of a whole-line sibling's extent, its end, or the start of a block's `}` line (the end of the content for the root); for an inline anchor, its extent's end or start       | the fragment, re-indented and separated (SDE4)                                                                                       |
-| append to a node            | for a node with a block, as inserting before its `}` line; for one without, the point after its last value, attribute or name, before any trailing comment and its terminator                   | without a block: ` {`, a newline, the fragment, a newline, the node's indentation and `}`                                            |
-| remove a node               | the node's extent, plus its attached comments when asked, plus the one blank line or newline SDE5 names                                                                                         | deletion                                                                                                                             |
-| move a node                 | the removal of the node with its attached comments, as removing it names; and one point, as inserting beside a whole-line sibling names                                                         | deletion there; at the point, the moved lines with the edits made inside them, re-indented only when the indentation differs (SDE18) |
-| replace a node's block body | the bytes strictly between its `{` terminator and the start of its `}` line                                                                                                                     | the fragment, re-indented                                                                                                            |
-| replace a region            | a span of the content the caller derives from the document, such as the lines from one comment through another (a managed region)                                                               | the caller's text                                                                                                                    |
-| set a node's values         | from its first value to its last, or the point after its name when it has none                                                                                                                  | the canonical spellings, space-separated                                                                                             |
-| insert an attribute         | the point after the node's last value, attribute or name                                                                                                                                        | ` name=value`, whatever attributes of that name exist                                                                                |
-| replace a node              | the node's extent when it is alone on its lines; else from its first byte through its last token                                                                                                | the fragment, re-indented; at an inline node, one single-line node                                                                   |
-| update from a typed value   | the union of the ranges of the operations above that it resolves to                                                                                                                             | the operations that make the node decode as the value (§3.1)                                                                         |
+| Operation                   | Range it may change                                                                                                                                                                                   | Resolves to                                                                                                                                                                             |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| replace a value             | the value's span                                                                                                                                                                                      | the canonical spelling of the new scalar                                                                                                                                                |
+| replace an attribute        | the attribute's span                                                                                                                                                                                  | `name=value`, with a new name and/or value; the separator before it is untouched                                                                                                        |
+| set an attribute            | an existing singular attribute's span; otherwise the point after the node's last value or attribute, or after its name if it has none                                                                 | replace in place, or insert ` name=value`; a name held by more than one attribute is `editAmbiguousTarget`                                                                              |
+| remove an attribute         | the attribute's span and the spaces and tabs before it on its line; when a `\` continuation separates it from the previous token, also that `\`, the spaces and tabs before it, and its newline       | deletion; a comment between the `\` and the attribute makes it `editUnsupportedLayout`                                                                                                  |
+| insert child nodes          | one point: the start of a whole-line sibling's extent, its end, or the start of a block's `}` line (the end of the content for the root); beside an inline sibling, the point placement names (below) | the fragment, re-indented and separated (SDE4), or on the sibling's line between separators                                                                                             |
+| append to a node            | for a node with a block, as inserting before its `}` line; for one without, the point after its last value, attribute or name, before any trailing comment and its terminator                         | without a block: ` {`, a newline, the fragment, a newline, the node's indentation and `}`                                                                                               |
+| remove a node               | the node's extent, plus its attached comments when asked, plus the one blank line or newline SDE5 names                                                                                               | deletion                                                                                                                                                                                |
+| move a node                 | the removal of the node, with its attached comments, as removing it names; and one point, as placement beside the sibling names (below)                                                               | deletion there; at the point, the moved bytes with the edits made inside them: whole lines, re-indented only when the indentation differs, or an inline text between separators (SDE18) |
+| replace a node's block body | the bytes strictly between its `{` terminator and the start of its `}` line                                                                                                                           | the fragment, re-indented                                                                                                                                                               |
+| replace a region            | a span of the content the caller derives from the document, such as the lines from one comment through another (a managed region)                                                                     | the caller's text                                                                                                                                                                       |
+| set a node's values         | from its first value to its last, or the point after its name when it has none                                                                                                                        | the canonical spellings, space-separated                                                                                                                                                |
+| insert an attribute         | the point after the node's last value, attribute or name                                                                                                                                              | ` name=value`, whatever attributes of that name exist                                                                                                                                   |
+| replace a node              | the node's extent when it is alone on its lines; else from its first byte through its last token                                                                                                      | the fragment, re-indented; at an inline node, one single-line node                                                                                                                      |
+| update from a typed value   | the union of the ranges of the operations above that it resolves to                                                                                                                                   | the operations that make the node decode as the value (§3.1)                                                                                                                            |
 
 Fragments are SDL source text, not typed values. The editor parses a
 fragment under the document's profile and rejects it unless it is a
-sequence of whole nodes; comments in it are kept. At an inline anchor (an
-inline sibling, or a block whose `}` shares a line with content) a fragment
-must be a single node without a child block, and is inserted on that line
-with a `; ` separator; anything else there is `editUnsupportedLayout`.
-Re-indentation prefixes only the lines that begin outside a string or a
-continued line, so multi-line backtick strings and `\` continuations keep
-their bytes. Values and attributes are rendered with the canonical scalar
-writer; a caller with a typed value renders it with `writeSDL` first.
+sequence of whole nodes; comments in it are kept. Re-indentation prefixes
+only the lines that begin outside a string or a continued line, so
+multi-line backtick strings and `\` continuations keep their bytes. Values
+and attributes are rendered with the canonical scalar writer; a caller with
+a typed value renders it with `writeSDL` first.
+
+**Placement beside a sibling.** Beside a whole-line sibling, content goes
+as whole lines at its extent's start or end (SDE4). Beside an **inline
+sibling** `s`, one not alone on its lines, content that is one node on one
+line — a fragment of one node without a child block whose bytes, once the
+blanks and line breaks at its ends go, hold no line break; or a
+single-line moved node (§2) — goes on `s`'s line, joined by synthesized
+separators:
+
+- after `s` ending in `;`: just after that `;`, as ` x;`;
+- after any other `s`: at its extent's end, as `; x` — unless a line
+  comment ends `s`, which nothing can follow on its line;
+- before `s` that starts its line: at its first byte, as `x; `;
+- before any other `s`: at its extent's start, just after the preceding
+  `;`, as ` x;`.
+
+Other content — more than one node or line, a child block in a fragment, a
+moved node that is not single-line, or anything after a line comment —
+goes as whole lines where a line boundary allows, indented like the line
+`s` starts on: after `s` when only spaces and tabs follow its extent on its
+last line, at the start of the next line; before `s` when it starts its
+line, at the start of that line. Anywhere else — between two nodes of one line, or inside a one-line
+block — it is `editUnsupportedLayout`. Appending to a block whose `}` shares
+a line with content inserts on that line, as `x; ` just before the `}`, and
+takes one node on one line.
 
 Set-style operations are idempotent: setting an attribute to the value it
 already has produces no edit.
@@ -204,9 +237,11 @@ and is not compared.
   before them; when there is none, after the nearest sibling above the next
   node left in place that does not move away, else just before that node;
   when the field has no
-  element left, new ones are appended. An element that is not alone on its
-  lines, or whose destination is not, is written canonically at its new
-  place instead, and its old node removed with its attached comments.
+  element left, new ones are appended. An element whose move placement
+  does not allow (§3) — more than one line, a line comment or attached
+  comments, bound for a point between two nodes of one line — is written
+  canonically at its new place instead, and its old node removed with its
+  attached comments.
 - **Cost.** Identities are hashed and the run is found by patience sorting,
   so pairing a sequence of _n_ elements takes O(_n_ log _n_) time beside
   the edits it makes.
@@ -244,8 +279,9 @@ path — an empty segment, an index before any segment or after another index,
 non-digits or an overflowing number inside `[]`, an empty `[]`, an
 unterminated string or a bad escape in a quoted segment, a seventeenth
 segment — is rejected with the byte offset of the fault, and nothing is
-selected. _Oracle:_ a table of accepted and rejected paths with their
-offsets. _Violation:_ a malformed path that selects, or a well-formed one
+selected. A leading `..` is the selector's own (SDS6); the offsets of
+faults after it count from the path's first byte. _Oracle:_ a table of
+accepted and rejected paths with their offsets. _Violation:_ a malformed path that selects, or a well-formed one
 rejected.
 
 **SDS2 — A path selects by child steps.** From a start node (the root, for
@@ -267,21 +303,26 @@ by `parseDql` and evaluated by `evalDql` with each selected node — for an
 attribute selection, the node that holds the attribute — as the subject. A
 path in the filter is zero or more child steps, each taking the first child
 of its name or, with an index, the k-th, followed by a leaf: `values[i]`,
-the node's i-th value, or an attribute name, its first attribute of that
-name; quoted segments work here too (`["dflags.ldc"] == null`). A bare
+the node's i-th value; `attributes[i]`, the value of its i-th attribute
+whatever the attribute's name, so `attributes[1] == null` says it has at
+most one; or an attribute name, its first attribute of that name; quoted segments work here too (`["dflags.ldc"] == null`). A bare
 identifier (a DQL category) holds when the node has a child at that path. Strings compare as text, booleans as `bool`, integers as `long`,
 and floats and decimals as `double`; an absent target, or an SDL `null`, is
 `== null`. A target of another kind (a character, binary, date or
 duration) is not null and fails every comparison and match, and so does a
-malformed leaf (`values` without an index, an index on an attribute name).
+malformed leaf (`values` without an index, an index on an attribute name
+other than `attributes`).
 _Oracle:_ over every repository recipe, a fixed set of filters against the
-hand-written predicates they spell. _Violation:_ a node kept or dropped
+hand-written predicates they spell, attribute counts among them.
+_Violation:_ a node kept or dropped
 against its predicate.
 
 **SDS4 — Path-only selection allocates nothing.** Reading a path and
 walking a selection without a filter is `@safe pure nothrow @nogc`, holds a
 borrowed path and a cursor per segment, and visits only the children of the
-nodes each step keeps. A filter allocates while it is parsed (the DQL
+nodes each step keeps; an any-depth path (SDS6) holds a cursor and a ring of
+seventeen cells instead, and visits the start node's subtree once, plus the
+ancestors and siblings it checks. A filter allocates while it is parsed (the DQL
 engine's pools and compiled matchers); evaluating it allocates only where
 DQL's own evaluation does (`regexMatch`). _Oracle:_ a `@nogc` unittest.
 _Violation:_ an allocation or attribute failure in that test.
@@ -292,6 +333,25 @@ take, and apply the one operation to each in order. The edits are those of
 the single-target operations, so SDE1 to SDE3 apply to each, and two targets
 whose ranges overlap are `editConflict`. _Oracle:_ a range call and the loop
 of single calls write the same output. _Violation:_ different output.
+
+**SDS6 — A leading `..` selects at any depth.** A selection path may
+begin with `..`, which the selector reads before the DQL path that
+follows, as the property tree reads its keyed `[#k]` step. The shared
+grammar has no descendant step, so a DQL filter, the property tree and
+every other reader of it reject `..`, and so does a selection path
+anywhere but at its start. `..p` selects, in document order, every node
+that `p` selects from the start node or from any node below it; each node
+has one such anchor, so none is selected twice. An attribute selection
+`..x` has no node steps, and so reads the `x` attributes of the start
+node and of every node below it. Indexes count under one parent, as in
+SDS2: `..configuration[1].dependency` reads the dependencies of every
+second configuration. _Oracle:_ over every repository recipe and the
+dotted fixture, every name path to depth two below any node, with and
+without an index, against the union of nested `byChild` loops from every
+node, ordered by source offset; `..x` against every node's `byAttribute`;
+every repository recipe again after an incremental re-parse, which shares
+its unchanged cells; a fixture nested forty deep. _Violation:_ a missing,
+extra, repeated or reordered target.
 
 ## 4. Requirements
 
@@ -320,7 +380,12 @@ range outside the content, make the edit set fail with `editConflict`
 naming both operations. An insertion at the start or end of another
 operation's range is not an overlap: it applies before or after that range
 respectively, and insertions at one point apply in the order they were
-made. _Violation:_ output produced from a conflicting set.
+made. Two deletions that overlap only in spaces and tabs — the blank
+between two nodes of one line, which both their extents take — are not a
+conflict either: they delete both ranges, and when that leaves only blanks
+before them on their line, the blanks after them too, and the whole line
+when nothing else is left on it. _Violation:_ output produced from a
+conflicting set, or two neighbours on one line that cannot both be removed.
 
 **SDE4 — Newlines and indentation follow the host.** Inserted lines are
 separated from the surrounding bytes by newlines: one before the text
@@ -442,25 +507,53 @@ _Violation:_ output containing stale or reallocated text.
 
 **SDE18 — A move keeps the node's bytes.** `moveAfter(n, s)` and
 `moveBefore(n, s)` remove `n` as removing it with its attached comments
-does (SDE5), and insert its bytes — those comment lines through its extent
-— where inserting after or before `s` would (SDE4). Both nodes are alone on
-their lines, else `editUnsupportedLayout`; `s` inside `n`, or `n` itself, is
-`editConflict`. The bytes arrive as they were, re-indented only when `s`'s
-indentation differs from `n`'s, with the edits made inside them applied —
-whichever order the move and those edits were made in, and a move among
-`n`'s descendants included. An edit inside is one within the moved bytes,
-except an insertion at their start and an operation on an ancestor that
-spans `n`'s whole extent, which stay and so may overlap the removal (SDE3).
-Insertions just before or after the moved bytes stay where they were; moves
-to one point arrive in the order they were made; two moves into each
-other's bytes are `editConflict`. _Oracle:_ hand cases for comments,
+does (SDE5), and place its **moved bytes** where placement beside `s` puts
+content (§3). On `s`'s line, the moved bytes are `n`'s inline text (§2),
+and `n` must be single-line. As whole lines, they are, for `n` alone on its
+lines, its attached comment lines through its extent; otherwise its inline
+text, which becomes a line of its own, after the indentation of the line
+`n` starts on. So in `a 1; b 2⏎c 3⏎`, moving `a` after `c` gives
+`b 2⏎c 3⏎a 1⏎`, moving `c` after `a` gives `a 1; c 3; b 2⏎`, and moving `b`
+before `a` gives `b 2; a 1;⏎`; in `x {; a; b; }⏎`, moving `a` after `b`
+gives `x {; b; a; }⏎`. Separators: `n`'s own `;` and the blanks around its
+inline text go with its removal; those at its new place are synthesized,
+as an insertion's are; every other byte stays, a neighbour's `;` included.
+Whole lines arrive as they were, re-indented only when the indentation of
+the line `s` starts on differs from that of `n`'s (an inline text's
+continuation lines with it, around a multi-line block or raw string); an
+inline text on `s`'s line arrives between its separators. `s` inside `n`,
+or `n` itself, is `editConflict`; a placement §3 does not allow is
+`editUnsupportedLayout`; before the node that follows it on its line, `n`
+is already in place, and the move makes no edit. The moved bytes carry
+the edits made inside them — whichever order the move and those edits
+were made in, and a move among `n`'s descendants included. An edit inside
+is one within the moved bytes, except an insertion at their start and an
+operation on an ancestor that spans `n`'s whole extent, which stay and so
+may overlap the removal (SDE3); at the end of an inline text, an insertion
+an operation on `n` made (an attribute after its last value) is inside,
+and one placed beside `n` is not. Insertions just before or after the
+moved bytes stay where they were; moves to one point arrive in the order
+they were made; two moves into each other's bytes are `editConflict`. A
+move replaces no node: in an open document, `n` and every node below it
+keep their handles (SDE11, §9). _Oracle:_ hand cases for comments,
 trailing comments and raw spellings, edits before and after the move, a
 host without a final newline, CRLF, re-indentation around a multi-line raw
-string, a moved parent carrying a child's move, and every rejection; and a
-property test that moves the first child of every repository recipe's root,
-and of its first block, after its last sibling, and checks the rotated
-meaning and the moved bytes. _Violation:_ a moved node that loses a byte, a
-comment, or an edit made inside it, or a bystander that changes.
+string, a moved parent carrying a child's move, and every rejection; for
+shared lines, each shape above — along a line, inside a one-line block,
+off a shared line and onto one, comments in the extent, a node after a
+line comment, more than one line at a shared line's edges, an inline node
+whose block re-indents, an attribute at an inline text's end, neighbours
+leaving one line, a host without a final newline, CRLF; a property test
+that moves the first child of every repository recipe's root, and of its
+first block, after its last sibling, and checks the rotated meaning and
+the moved bytes; and one over every recipe with nodes put on shared lines
+— neighbouring plain one-line nodes joined by `; `, a block folded onto one
+line — that moves each node sharing a line to the start and the end of its
+siblings, a first sibling after it, and it after its successor, and checks
+the rearranged meaning, every sibling's inline text in the output, and
+that each refusal is one `canMove` predicts. _Violation:_ a moved node that
+loses a byte, a comment, or an edit made inside it, a bystander that
+changes, or a refusal of a placement §3 allows.
 
 ## 5. Interface
 
@@ -523,10 +616,11 @@ struct SdlOpenDocument(SdlParserConfig config = sdlFull, Allocator = Mallocator)
 struct SdlPath
 {
     static Expected!(SdlPath, DqlParseError) parse(const(char)[] text); // borrows text
+    bool anyDepth() const;                                               // leads with `..`
     SdlNodeSelection nodes(SdlNode start) const;                         // @nogc
     SdlAttributeSelection!SdlNodeSelection attributes(SdlNode start) const;
 }
-struct SdlSelector
+struct SdlSelector // copies share one reference-counted state; ranges borrow it
 {
     static Expected!(SdlSelector, SdlSelectorError) parse(const(char)[] path,
         const(char)[] filter = null);
@@ -601,6 +695,31 @@ benchmark dataset generator's `subPackage { … }` wrapper. The six earlier
 entries are covered by the rule, and `standardize-build-settings` now
 matches legacy settings by content.
 
+**Selectors and typed write-back, 2026-11-07.** Each tool that reads or
+edits SDL was weighed against path selection (§3.2), typed write-back (§3.1)
+and open documents (§9). `standardize-build-settings` selects the
+configurations it cleans and the stale managed build types by path and DQL
+filter, and removes each selection in one call (SDS5); over the tree's 161
+recipes, and three perturbed copies of each, its output is byte-identical
+to the walk it replaced. The `shader-compile` fixtures already select the
+checkout's `path` attributes. `dub_deps.writeInTreeDeps` rewrites a
+dependency at any depth and only when `version="*"` is its sole attribute,
+which a fixed-depth path and the filter vocabulary could not state; with
+any-depth selection (SDS6) and `attributes[i]` (SDS3) its recursive walk is
+one selector, `..dependency` filtered by
+`values[1] == null && attributes[1] == null && version == "*"`, with the
+in-tree package names checked in D. Over every tracked file that embeds a
+recipe, and three perturbed copies of each (in-tree `path` attributes
+turned to `version="*"`, an `optional=true` added, and a nested
+sub-package of edge cases), the old and new functions write the same bytes.
+The rest stay as they are: `add-checked-buildtype` appends a fragment that carries a
+comment, which a typed value cannot; the readers in `apps/ci`
+(`integratesTestRunner`, `credits`, `example_manifest`), `compare-app-builds`,
+`gen-dsv-corpus` and `dub_recipe` decode through the `dub.sdl` schema, which
+a selector would only re-spell; `compile-cost` writes its probe recipe with
+`toSDL` and `writeEmbeddedRecipe`; and no tool parses a document twice, so
+none needs an open document.
+
 | Site                                                                       | Today                                                                                                                                                                                                  | Moves to                                                                                                                                                                                                                                                                       |
 | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `apps/ci/tools/standardize-build-settings.d` (`normalize`)                 | regex removal of the managed region, a legacy three-line comment, and eight named `buildType` blocks; a line filter dropping four legacy `dflags`/`lflags` settings; `strip`, then the region appended | replace or remove the region by its marker comments; remove the legacy comment's lines; remove `buildType` and setting nodes matched by name, values and attributes outside the region and outside `buildType`/`configuration "offline"`; append the region at the end of root |
@@ -661,34 +780,49 @@ and that state must outlive the open document.
 A node keeps its **identity** across a commit unless an operation of that
 commit replaces it. The operations replace:
 
-| Operation                                                                  | Nodes it replaces                                                     |
-| -------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| `replaceNode(n, …)`, `remove(n, …)`, `moveAfter(n, …)`, `moveBefore(n, …)` | `n` and every node below it                                           |
-| `replaceBody(n, …)`                                                        | every node below `n`; `n` itself keeps its identity                   |
-| `replaceRegion(r, …)`                                                      | every node whose span shares a byte with `r`, and every node below it |
-| value and attribute operations, `setValues`, insertions, `append`          | none; an inserted node is new and has no handle until one is asked    |
+| Operation                                                         | Nodes it replaces                                                     |
+| ----------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `replaceNode(n, …)`, `remove(n, …)`                               | `n` and every node below it                                           |
+| `replaceBody(n, …)`                                               | every node below `n`; `n` itself keeps its identity                   |
+| `replaceRegion(r, …)`                                             | every node whose span shares a byte with `r`, and every node below it |
+| `moveAfter(n, …)`, `moveBefore(n, …)`                             | none; `n` and every node below it go with their bytes                 |
+| value and attribute operations, `setValues`, insertions, `append` | none; an inserted node is new and has no handle until one is asked    |
 
 `updateSDL` is built from these operations, so it replaces exactly the nodes
 its `replaceNode` and `replaceBody` calls name. Attributes and values have no
-handles; they are reached through their node.
+handles; they are reached through their node. A node that one operation
+moves and another replaces — `replaceNode` on a moved node, say — is
+replaced.
 
 A surviving node's counterpart in the new document is found by its
 **anchor**, the first byte of its span (its name, or its first value when it
-is anonymous), carried through the commit's edits by `mapOffset` with
-`afterInsertions` bias: it is the new node whose span starts at the mapped
-anchor, provided its qualified name is unchanged. The root always maps to the
-root.
+is anonymous). The anchor of a node no move carries goes through the
+commit's edits by `mapOffset` with `afterInsertions` bias. The anchor of a
+node a move carries — the moved node, or one below it — goes where its
+bytes went: through the edits made inside the moved bytes (with the same
+bias), their re-indentation, and the separators placed before them, to the
+moved text's place in the output; when a move carries that text in turn,
+on through that move, and so on outwards. The counterpart is the new node
+whose span starts at the mapped anchor, provided its qualified name is
+unchanged. The root always maps to the root.
 
 **SDE11 — Handles follow their node.** A handle issued for a node resolves,
 after any number of successful commits, to that node's counterpart, as long
-as no commit replaced it. _Oracle:_ a property test that issues a handle for
-every node of every repository recipe, commits random value, attribute,
-insertion, removal and body edits, and after each commit checks every handle
-against a model that labels each node with a unique value; plus hand cases
-for an insertion before an unindented node, an anonymous node whose first
-value is replaced, and `replaceBody`. _Violation:_ a live handle that
-resolves to a different node, or a surviving node's handle that does not
-resolve.
+as no commit replaced it — moves included: a moved node's handle, and the
+handles of every node below it, resolve to the same nodes at their new
+place. _Oracle:_ a property test that issues a handle for every node of
+every repository recipe, as it is and with nodes put on shared lines
+(SDE18's), commits random value, attribute, insertion,
+removal, body and move edits — moves beside the next sibling and beside any
+node outside the moved one, which re-indents it, some with a value edit
+inside — and after each commit checks every handle against a model that
+labels each node with a unique value; plus hand cases for an insertion
+before an unindented node, an anonymous node whose first value is replaced,
+`replaceBody`, a moved parent carrying a move among its children with
+edits inside and around it, a re-indenting move out of a block, and a
+moved node that is then replaced. _Violation:_ a live handle that resolves
+to a different node, or a surviving node's handle — a moved one's included
+— that does not resolve.
 
 **SDE12 — Replaced nodes go stale.** After a commit, resolving the handle of
 a node that commit replaced, or whose anchor no longer starts a node of the
@@ -713,7 +847,7 @@ is not detected.
 Writing and committing both re-parse the edited host (SDE2). For a large host
 and a small edit, a full re-parse costs the whole host while the edit costs a
 line, so the reader re-parses only a **region** around the edits and splices
-it into a copy of the old document:
+it into a document that shares the rest with the old one:
 
 1. Take the deepest node whose block interior contains every edit. The
    interior runs from the end of the node's `{` to the start of its `}`, and
@@ -726,21 +860,26 @@ it into a copy of the old document:
    one child on either side until each bounding child is alone on its lines,
    so that the region starts and ends at a line boundary.
 3. The reader lexes and parses the region's new text at the node's depth.
-   It copies the old document's cells before and after the region, shifting
-   every offset after it by the edits' length change and re-slicing names and
-   payloads into the new document's source and pool. Comments and line starts
-   are spliced the same way, and the child index is rebuilt.
+   The new document shares the old document's cells before and after the
+   region instead of copying them ([§10.1](#10-1-shared-storage)): those
+   after it are read through a shift by the edits' length change. Comments
+   and line starts are shared the same way.
 
 **SDE14 — Incremental equals full.** The document an incremental re-parse
 produces equals, field for field, the full parse of the same text: each node's
 name, spans, extent, braces, terminator, `aloneOnLines`, depth and children;
 each value and attribute, payloads included; the comments; the line table;
-and the content. _Oracle:_ a property test over every repository recipe and a
+and the content. Each document also keeps the ownership rule of §10.1: every
+name and payload its views return lies in the pool of a block it holds.
+_Oracle:_ a property test over every repository recipe and a
+
 generated deep, wide document that applies random edits — to values and
 attributes, insertions, removals, body and region replacements, including ones
 that open comments or strings, or add braces — and compares the two
-documents. It is mutation-checked by a test that perturbs one spliced offset
-and expects the comparison to fail. _Violation:_ any differing field.
+documents; a second pass chains the edits, each applied to the document the
+one before produced, so a re-parse of a document that already shares storage
+is compared too. It is mutation-checked by a test that perturbs one spliced
+offset and expects the comparison to fail. _Violation:_ any differing field.
 
 **SDE15 — Unlocalizable edits fall back.** The region's parse is used only
 when all of the following hold:
@@ -777,7 +916,7 @@ own bytes, whose parse is the document the editor borrows, so nothing is
 re-parsed. `write` copies the host to the writer and allocates nothing
 through the caller's allocator; `commit` keeps the host, the document and
 every handle as they are, and spends the editor as any commit does. The
-reader, given no edits over the old document's own text and content, copies
+reader, given no edits over the old document's own text and content, shares
 the old document's cells without lexing a byte. _Oracle:_ a write test and an
 embedded-recipe write that count no allocation; an open-document test that
 commits an empty editor through a counting allocator and finds the same
@@ -790,3 +929,72 @@ The `sdl.commit` benchmark row
 at a time to an open document and reports retired instructions per input
 byte, so the gain shows against the full re-parse it replaces; the
 `sdl.commit-unchanged` row commits editors with no edits (SDE17).
+
+### 10.1 Shared storage
+
+A region re-parse touches a few cells, so the new document keeps the old
+one's other cells where they are, and its memory follows the edit, not the
+document ([performance SDP8](./performance.md#2-architecture)).
+
+A document's cells — nodes with their values and attributes, comments, and
+line starts — live in **blocks**. A block is built once, by a parse or by a
+region re-parse, and never changes after; it is reference-counted, and every
+document that reads it holds a reference. A document sees its cells as a
+sequence of **runs**: each run is a range of one block, placed at a logical
+index, with a shift added to every valid offset it holds. A full parse makes
+one block and one run per kind, its **flat** form.
+
+However its cells are stored, a document's logical node indexes run in
+source preorder, every node keeps its depth, and a node's subtree is the
+contiguous index range after it; the region path and the selector's
+any-depth step rely on this. Comments and line starts keep source order.
+
+A view is its run and its cell, 16 bytes: a read is one load, plus the run's
+shift for a span, the same for a flat document, whose one run covers every
+cell, as for a shared one. A child range keeps its current child's run, so a
+step inside the run is pointer arithmetic, and a step past its end searches
+forward from it, one run or a few, before it falls back to a binary search;
+reading a document in order costs no search per cell. Only random access by
+index — `SdlNode(core, i)`, the accessors the editor uses — searches.
+
+A region re-parse builds one new block, holding:
+
+- the region's own cells, as its parse produced them;
+- a copy of each node whose subtree contains the region — the root, the
+  owner of step 1, and the nodes between them. Their spans end after the
+  region, and their subtree sizes change with it, as does the owner's child
+  count;
+- a copy of every shared piece shorter than 16 cells, so the runs do not
+  fragment as edits accumulate: a document of _n_ nodes has at most about
+  _n_/8 runs.
+
+Every other cell is shared: the old document's runs before the region as
+they were, and those after it with the edits' length change added to their
+shift and their logical indexes moved by the change in cell counts. A node's
+children are found from its **subtree size**, the number of nodes in its
+preorder subtree, itself included, which only the copied ancestors change;
+there is no child-index arena to rebuild.
+
+Names and payloads follow one ownership rule: each lies in the pool of the
+block that holds its cell, which every document reading the cell holds too.
+A full parse's names slice the source copy in its pool; a region's, and the
+names and payloads of copied cells, are copied into the new block. The source
+itself is the document's own: a copy of the text it was given, or, when the
+caller hands it the rendered text it owns (the editor does), that text
+itself.
+
+A block is freed, exactly once, when the last document holding it drops it.
+The count is atomic, so documents sharing blocks may be destroyed on any
+threads. A block keeps a copy of the allocator that made it and frees through
+that copy. Blocks are shared only between documents of the same allocator
+type; a re-parse through another type takes the same region path but copies
+every kept cell into its new block. Shared blocks can outlive the cells that
+use them — a block stays whole while one of its runs is read — so once the
+old document's blocks hold more than twice what a full parse of the text
+would allocate, the re-parse parses in full instead, and the result is flat
+again. The rule reads only the old document and the text, so every allocator
+takes the same path (SDE16). _Oracle:_ the SDE14 property test's chained
+pass, which requires some document to hold blocks of several generations
+before it and the counting allocator to get every block back, and a test
+that edits a document hundreds of times and finds what it holds bounded by
+a full parse's allocation.
