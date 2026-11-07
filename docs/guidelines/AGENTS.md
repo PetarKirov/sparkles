@@ -138,7 +138,10 @@ The raylib window, until it is retired, is the `raylib` configuration
 (`dub build :hue -c raylib`; the terminal's tests: `-c unittest-raylib`), and the
 Nix packages follow: `.#hue` is the native arm, `.#hue-raylib` the raylib one.
 Screenshots of a native-arm app come from `--debug shot=PATH` (with
-`frames=N` to end a scripted run); hue's CRT is still raylib-only.
+`frames=N` to end a scripted run; `HUE_GUI_CRT=1` turns hue's CRT on). With
+the screen locked nothing is presented and a scripted run stalls: capture
+headless under `xvfb-run` with lavapipe (`VK_ICD_FILENAMES` naming
+`lvp_icd`) instead.
 
 ### Build types: `debug` to test, `checked` to ship, never `release`
 
