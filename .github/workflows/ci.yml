@@ -60,7 +60,7 @@ jobs:
           - runner: ubuntu-latest
             system: x86_64-linux
             DC: ldc2
-            timeout: 95
+            timeout: 120
           - runner: ubuntu-latest
             system: x86_64-linux
             DC: dmd
@@ -107,6 +107,8 @@ jobs:
     # the macOS ones (a cold `ci` and shell: Setup Nix took 19m, the tests 58m),
     # and both were cancelled at their caps while saving caches after every
     # step had passed: x86_64 DMD now has 75m and macOS 110m.
+    # x86_64 LDC's last pass took 87m, and PR runs 42386797516 and 42404867685
+    # were cancelled at its 95m cap after `ci --test` had passed: it now has 120m.
     timeout-minutes: ${{ matrix.timeout }}
     steps:
       - name: Checkout
@@ -498,13 +500,15 @@ jobs:
   # No UBSan: LDC rejects `-fsanitize=undefined` for D, and `-Xcc` never
   # reaches ImportC codegen (docs/research/sanitizers/ubsan.md). One `-t N`
   # leg on 4 MiB workers (the stack watermark is off under ASan).
-  # 60m: every package is rebuilt with ASan; a 30m cap cancelled mid-package
+  # Every package is rebuilt with ASan; a 30m cap cancelled mid-package
   # the same way the test job's old 20m cap did, and run 39361822480 passed
   # every package at 43.6m and was cancelled at 45m.
+  # Main's runs take 48-59m; run 42395259454 (PR #719) was still testing,
+  # nothing failed, when its 60m cap cancelled it: it now has 75m.
   sanitize:
     name: Sanitizers (ASan, stackovf)
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 75
     steps:
       - name: Checkout
         uses: actions/checkout@v7
