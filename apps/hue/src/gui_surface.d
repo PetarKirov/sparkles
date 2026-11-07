@@ -1,9 +1,12 @@
 /**
 The one seam between hue's window code and the arm that draws it (`P2.B4`).
 
-`gui.d` reads its window — size, frame time, title, pointer, a screenshot —
-its cell font's metrics, and makes canvases, and nothing else of the
-backend: this module is that list. The Vulkan arm (`HueGuiVulkan`, the
+`gui.d` reads its window — size, frame time, title, pointer, a screenshot,
+what its input offers, the soft keyboard and the clipboard — its cell font's
+metrics, and makes canvases, and nothing else of the backend: this module is
+that list. A phone is one more target behind it: the native host knows its
+touchscreen, keyboard and insets; on the raylib APK this module stands in for
+what raylib lacks there (`version (Android)` in the raylib half only). The Vulkan arm (`HueGuiVulkan`, the
 default `application` configuration) wraps the native host and its canvas;
 the raylib arm (the `raylib` configuration) wraps the window, the face set
 and the effect backend the arm publishes. Either way `GuiCanvas` satisfies the canvas concept
@@ -20,6 +23,7 @@ version (HueGui):
 import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.term_color : RgbColor;
 import sparkles.base.term_control : PointerShape;
+import sparkles.input.capability : InputCapabilities, mousePointer, touchPointer;
 
 version (HueGuiVulkan)
 {
@@ -102,6 +106,17 @@ version (HueGuiVulkan)
         /// Reading the clipboard is a request answered by an event on this
         /// arm (`INP25`): the text arrives as `PasteEvent`s carrying `request`.
         void readClipboard(uint request) @system { host.readClipboard(request); }
+        /// Every window system this arm opens on streams the clipboard.
+        enum clipboardReadable = true;
+
+        /// What the target's input offers (`TGT5`): a touchscreen on a phone.
+        InputCapabilities capabilities() const @system => host.capabilities;
+        /// Asks for the soft keyboard or puts it away: the host's text input,
+        /// whose commits arrive as typed keys.
+        void softKeyboard(bool show) @system { host.textInput(show); }
+        /// The height the layout fills. The host's surface already ends
+        /// above whatever covers it, the soft keyboard included (`EDI9`).
+        int visibleHeight(bool keyboardUp) const @system => height;
 
         GuiCanvas canvasAt(float x = 0, float y = 0, bool effects = false) @system
             => GuiCanvas(host.canvas, cast(int) x, cast(int) y);
@@ -140,8 +155,74 @@ else
         void reload(int px) @system { fonts.reload(px); }
         bool flushPending() @system => fonts.flushPending();
 
-        void clipboard(in char[] text) @system { window.clipboard(text); }
+        /// raylib's Android SetClipboardText is an unimplemented no-op (a
+        /// TRACELOG warning — see rcore_android.c), so the APK goes through
+        /// the JNI ClipboardManager bridge instead.
+        void clipboard(in char[] text) @system
+        {
+            version (Android)
+            {
+                import android_glue : setClipboardText;
+                import sparkles.base.logger : warning;
+
+                if (!setClipboardText(text))
+                    warning(i"copy: JNI clipboard bridge failed");
+            }
+            else
+                window.clipboard(text);
+        }
         string clipboardText() @system => window.clipboardText();
+        /// The APK's bridge only writes, so a field there offers no paste
+        /// chord (`EDI5`).
+        version (Android)
+            enum clipboardReadable = false;
+        else
+            enum clipboardReadable = true;
+
+        /// What the target's input offers (`TGT5`): raylib reports the APK's
+        /// first finger as its mouse, and hue reads that as a touchscreen.
+        InputCapabilities capabilities() const @system
+        {
+            version (Android)
+                return touchPointer;
+            else
+                return mousePointer;
+        }
+
+        /// Asks for the soft keyboard or puts it away (the APK's JNI field;
+        /// a desktop window has none to ask for).
+        void softKeyboard(bool show) @system
+        {
+            version (Android)
+            {
+                import sparkles.android.soft_input : hideSoftKeyboard, showSoftKeyboard;
+
+                if (show)
+                    cast(void) showSoftKeyboard();
+                else
+                    hideSoftKeyboard();
+            }
+        }
+
+        /// The window's height above the soft keyboard while an editor has it
+        /// up (`EDI9`). The APK's window is full-screen, so the input method
+        /// does not resize it; its inset says how much of the bottom it covers.
+        int visibleHeight(bool keyboardUp) const @system
+        {
+            version (Android)
+            {
+                import sparkles.android.window_metrics : windowInsets;
+
+                if (keyboardUp)
+                {
+                    const insets = windowInsets();
+                    const covered = insets.known ? insets.keyboard[3] : 0;
+                    if (covered > 0 && covered < height)
+                        return height - covered;
+                }
+            }
+            return height;
+        }
 
         /// A canvas whose cell column 0 is at pixel `(x, y)`; with `effects`,
         /// one that paints through the effect backend (the CRT's bracket).

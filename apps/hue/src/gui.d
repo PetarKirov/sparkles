@@ -56,8 +56,7 @@ import lantern : defaultDelay, LanternState, ltnStep = step, ltnTick = tick,
 import sparkles.ui.components.lantern_view : BoxLayout, LabelArena,
     LanternStyle, Placement,
     viewLantern;
-import sparkles.input.capability : InputCapabilities, mousePointer,
-    touchPointer;
+import sparkles.input.capability : InputCapabilities, mousePointer;
 
 // hue-specific viewport/search layout (raylib-free, so it stays testable).
 import sparkles.source_view.search : Match;
@@ -130,6 +129,7 @@ import sparkles.ui.layout : Frame, layout;
 import sparkles.ui.components.scroll_view : ScrollExtents, ScrollPointer;
 import sparkles.ui.editor.field : FieldSetup, RequestClipboard, serveClipboard;
 import sparkles.ui.editor.keys : windowTarget;
+import sparkles.ui.editor.soft_keyboard : KeyboardAsk, SoftKeyboard;
 import sparkles.ui.state : CaptureState, hoverTargets, HoverState, HoverTarget,
     keyAt, keyTargets, KeyTarget, PressState, ScrollAxis, ScrollbarState,
     selectionRects, sourceOffsetAt, wantedPointerShape,
@@ -139,7 +139,7 @@ import sparkles.ui.widget : Builder, WidgetTree;
 import sparkles.ui.interp.immediate : paint;
 import sparkles.ui_app.backend : BackendPolicy;
 import sparkles.ui_app.gui_options : GuiOptions, NativeOptions;
-import sparkles.ui_app.host : PointerUnit, RunConfig;
+import sparkles.ui_app.host : PointerUnit, RunConfig, TouchGestures;
 import sparkles.ui_app.run : run, RunOutcome;
 // The arm hue draws through (`gui_surface`): the raylib window, or the
 // native Vulkan host. The CRT is the same effect record on both.
@@ -319,29 +319,14 @@ struct GuiRunState
 }
 
 /**
-The one clipboard seam. raylib's Android SetClipboardText is an
-unimplemented no-op (a TRACELOG warning — see rcore_android.c), so Android
-goes through the JNI ClipboardManager bridge instead. Writes take a slice:
-the Android side needs a length to transcode to UTF-16, and only the raylib
-path wants NUL termination.
+The one clipboard seam: writes go to the arm's window (`GuiSurface.clipboard`,
+which on the raylib APK is the JNI bridge), reads are requests it answers.
 */
 private struct ClipboardSeam
 {
     GuiSurface* surface; // its window once open
 
-    void write(scope const(char)[] text) @system
-    {
-        version (Android)
-        {
-            import android_glue : setClipboardText;
-            import sparkles.base.logger : warning;
-
-            if (!setClipboardText(text))
-                warning(i"copy: JNI clipboard bridge failed");
-        }
-        else
-            surface.clipboard(text);
-    }
+    void write(scope const(char)[] text) @system => surface.clipboard(text);
 
     // Reads by request (`INP25`), where the arm answers one with an event:
     // the field's read becomes one host read, whose `PasteEvent`s gather
@@ -410,23 +395,6 @@ private struct ClipboardSeam
             forwarded = 0;
         }
     }
-}
-
-/**
-The window's height above the soft keyboard while an editor has it up
-(`EDI9`). hue's window is full-screen, so the input method does not resize
-it; its inset says how much of the bottom it covers.
-*/
-version (Android)
-private int visibleHeight(int windowHeight, bool keyboardUp) @trusted nothrow
-{
-    import sparkles.android.window_metrics : windowInsets;
-
-    if (!keyboardUp)
-        return windowHeight;
-    const insets = windowInsets();
-    const covered = insets.known ? insets.keyboard[3] : 0;
-    return covered > 0 && covered < windowHeight ? windowHeight - covered : windowHeight;
 }
 
 /// The frame's geometry (`P2.B4` third slice): every per-frame value the view
@@ -504,15 +472,13 @@ struct FrameGeom
     bool inputMode;      // a prompt is open (inp.mode != Mode.normal)
     KeyContext kctx;     // the binding context the lantern lists
 
-    // The touch action bar (`IXB`), which only that target has. Its tree is
-    // built and hit-tested in the view half and painted in the paint half, so
-    // on Android it is per-frame data exactly like the fields above.
-    version (Android)
-    {
-        WidgetTree barTree;  // the bar's widgets, already hit-tested
-        Frame[] barFrames;   // ...and their layout
-        int toolbarY;        // pixel Y of the bar's row
-    }
+    // The touch action bar (`IXB`), which only a touch target has (`touch`).
+    // Its tree is built and hit-tested in the view half and painted in the
+    // paint half, so it is per-frame data exactly like the fields above.
+    bool touch;          // the target is a touchscreen: the bar is up
+    WidgetTree barTree;  // the bar's widgets, already hit-tested
+    Frame[] barFrames;   // ...and their layout
+    int toolbarY;        // pixel Y of the bar's row
 }
 
 /// ditto
@@ -596,7 +562,13 @@ int runGui(GuiArgs guiArgs) @system
         native: native,
         fontSizePxOverride: capture.fontSizePx,
     };
-    version (HueGuiVulkan) {} else
+    version (HueGuiVulkan)
+        // Touch through the shared recogniser (`IXB8`): taps, drags as
+        // scrolls, long-presses and pinches, which the touch block below
+        // consumes. A desktop window has no touchscreen to resolve. The raylib
+        // arm keeps the pointer emulation its APK was verified with.
+        cfg.touchGestures = TouchGestures.all;
+    else
         cfg.traceSink = &raylibTraceLog;
     version (Android)
     {
@@ -1174,12 +1146,8 @@ int runGui(GuiArgs guiArgs) @system
     SettingsPane settingsPane;
     bool submitArmed; // `DCM6`: a review submission waits for `y`
     bool conflictSaved; // `CFV4`: the resolved file was saved
-    version (Android)
-    {
-        import sparkles.ui.editor.soft_keyboard : SoftKeyboard;
-
-        SoftKeyboard fieldKeyboard; // editor focus, for the soft keyboard's edges (`EDI9`)
-    }
+    // Editor focus, for the soft keyboard's edges on a touch target (`EDI9`).
+    SoftKeyboard fieldKeyboard;
 
     void openSettingsPane() @system
     {
@@ -1597,14 +1565,13 @@ int runGui(GuiArgs guiArgs) @system
 
     // The fields' clipboard (`EDY5`): copies go through the seam; reads are
     // requests the seam passes to the window and answers when the window
-    // does (`INP25`), except on Android, whose bridge only writes, so a
-    // field there offers no paste chord (`EDI5`). The fields take the window
-    // key table (`EDK1`).
+    // does (`INP25`), where the arm can read it at all: one that only
+    // writes (the raylib APK's bridge) leaves a field no paste chord
+    // (`EDI5`). The fields take the window key table (`EDK1`).
     RequestClipboard!(void delegate(scope const(char)[]) @system,
         bool delegate(uint, out const(char)[]) @system) fieldClip;
     fieldClip.write = &clipSeam.write;
-    version (Android) {}
-    else
+    static if (GuiSurface.clipboardReadable)
         fieldClip.ask = &clipSeam.ask;
     const fieldSetup = FieldSetup.of(windowTarget, fieldClip);
     inp.setup = fieldSetup;
@@ -1761,80 +1728,61 @@ int runGui(GuiArgs guiArgs) @system
 
 
     int frame = 0;
-    // What this target's input actually offers (IXB10/TGT5). This is the one
-    // place the platform is named for interaction purposes: components ask the
+    // What this target's input actually offers (IXB10/TGT5), as the arm
+    // declares it once its window is open (`setupPhase`): components ask the
     // capability, not the platform, so a hover-driven affordance degrades by
     // declaration instead of by a `version (Android)` at every site.
-    version (Android)
-        const InputCapabilities caps = touchPointer;
-    else
-        const InputCapabilities caps = mousePointer;
+    InputCapabilities caps = mousePointer;
+    // A touchscreen: no pointer rests anywhere, so hue puts up the action bar,
+    // reads taps and long-presses for clicks, and asks for the soft keyboard.
+    bool touchTarget() => !caps.hover;
 
-    // Touch interaction (Android): raylib maps the first touch to the mouse;
-    // `sparkles:input`'s recogniser classifies those samples into taps,
-    // drag-scrolls, long-presses and pinches; hue only consumes the result.
-    // Desktop input is untouched — the helpers below are the only seam.
-    version (Android)
-    {
-        import sparkles.input.gesture : GestureRecognizer, PointF;
-        import sparkles.input.events : Gesture, GestureEvent, isNoEvent, match,
-            NoEvent, PointerAction, PointerEvent, WheelEvent;
+    // Touch interaction: the arm's events carry what `sparkles:input`'s
+    // recogniser (IXB8) resolved — taps, drag-scrolls, long-presses and
+    // pinches — and hue only consumes the result. A mouse target is
+    // untouched: the helpers below are the only seam.
+    bool touchTap, touchLongPress;
+    float touchPinch = 0;
 
-        // The recogniser is `sparkles:input`'s (IXB8): hue no longer classifies
-        // taps, drags, flings, long-presses or pinches — it consumes what they
-        // resolve to. The frame flags below are set purely by draining it.
-        //
-        // hue still POLLS raylib rather than consuming `RaylibEvents` (that is
-        // IXB7/M17), so it drives the recogniser itself for now; the drain is
-        // the same either way, which is what makes that later switch small.
-        bool touchTap, touchLongPress;
-        float touchPinch = 0;
+    // A tap is the touch spelling of a click; a long-press starts a
+    // selection (drag-extends via the existing machinery).
+    //
+    // KNOWN LIMITATION: a tap resolves on RELEASE, so the scrollbar thumb
+    // drags never engage on touch — `isDragging` is set and cleared in the
+    // same frame, because the release is reported then too. A tap in the
+    // track still jumps the viewport via the track-click branch. Fixing it
+    // needs a press-down seam distinct from "a tap happened", which is what
+    // the shared scrollbar component (IXB1) will provide; adding a second
+    // ad-hoc one here is what the component exists to stop.
+    bool clickPressed() => touchTarget ? touchTap : inp.fin.leftPressed;
+    bool selectStartPressed() => touchTarget ? touchLongPress : inp.fin.leftPressed;
 
-        // A tap is the touch spelling of a click; a long-press starts a
-        // selection (drag-extends via the existing machinery).
-        //
-        // KNOWN LIMITATION: a tap resolves on RELEASE, so the scrollbar thumb
-        // drags never engage on touch — `isDragging` is set and cleared in the
-        // same frame, because `IsMouseButtonReleased` is true then too. A tap
-        // in the track still jumps the viewport via the track-click branch.
-        // Fixing it needs a press-down seam distinct from "a tap happened",
-        // which is what the shared scrollbar component (IXB1) will provide;
-        // adding a second ad-hoc one here is what the component exists to stop.
-        bool clickPressed() => touchTap;
-        bool selectStartPressed() => touchLongPress;
+    // The bottom toolbar's product policy: which segments exist and what
+    // they do. The geometry, the hit test and the press contract are the
+    // toolkit's `actionBar` + `PressState` (IXB9), so nothing here knows
+    // where a segment sits.
+    enum toolbarSegments = 5;
 
-        // The bottom toolbar's product policy: which segments exist and what
-        // they do. The geometry, the hit test and the press contract are the
-        // toolkit's `actionBar` + `PressState` (IXB9), so nothing here knows
-        // where a segment sits.
-        enum toolbarSegments = 5;
+    // The hit-id block this bar owns. Segment i is `toolbarHitBase + i`;
+    // an activation maps back by subtracting the base. Non-zero because
+    // `0` is `hitId`'s "not hit-testable".
+    enum size_t toolbarHitBase = 0x7B_00;
 
-        // The hit-id block this bar owns. Segment i is `toolbarHitBase + i`;
-        // an activation maps back by subtracting the base. Non-zero because
-        // `0` is `hitId`'s "not hit-testable".
-        enum size_t toolbarHitBase = 0x7B_00;
+    // The press in flight over the bar, across frames: a press arms a
+    // segment, a release over the SAME segment activates it (STM10).
+    PressState toolbarPress;
 
-        // The press in flight over the bar, across frames: a press arms a
-        // segment, a release over the SAME segment activates it (STM10).
-        PressState toolbarPress;
+    // The last segment is context-sensitive: with a live selection there
+    // is otherwise NO touch route to copy it (a long-press-drag creates a
+    // selection, and Ctrl-C is the only caller of copySelection), which
+    // made the spec's "Copy … works" true only with a keyboard attached.
+    bool hasSelection() =>
+        (drag.regime == Regime.text && drag.selMax() > drag.selMin()) ||
+        (drag.regime == Regime.table && drag.selTable >= 0);
 
-        // The last segment is context-sensitive: with a live selection there
-        // is otherwise NO touch route to copy it (a long-press-drag creates a
-        // selection, and Ctrl-C is the only caller of copySelection), which
-        // made the spec's "Copy … works" true only with a keyboard attached.
-        bool hasSelection() =>
-            (drag.regime == Regime.text && drag.selMax() > drag.selMin()) ||
-            (drag.regime == Regime.table && drag.selTable >= 0);
-
-        string[toolbarSegments] toolbarLabels() => [
-            "◀ thm", "thm ▶", "view", "tree", hasSelection() ? "copy" : "ln №",
-        ];
-    }
-    else
-    {
-        bool clickPressed() => inp.fin.leftPressed;
-        bool selectStartPressed() => inp.fin.leftPressed;
-    }
+    string[toolbarSegments] toolbarLabels() => [
+        "◀ thm", "thm ▶", "view", "tree", hasSelection() ? "copy" : "ln №",
+    ];
 
     // The frame's paint half (`P2.B4`): everything inside the window bracket —
     // the `HST13` seam the component's paint phase will absorb. It sits outside
@@ -2344,12 +2292,12 @@ int runGui(GuiArgs guiArgs) @system
                 screenW - cast(int)((pos.length + 1) * cellW), 0);
         }
 
-        // Bottom toolbar (Android): the SAME tree and frames the tap handler
-        // hit-tested at the top of the loop, painted through RaylibCanvas
-        // (IXB9). Nothing here measures a label or divides a width — a
-        // collapsed bar simply produces no ops, which is also what made it
-        // untappable.
-        version (Android)
+        // Bottom toolbar (a touch target's): the SAME tree and frames the tap
+        // handler hit-tested at the top of the loop, painted through the
+        // arm's canvas (IXB9). Nothing here measures a label or divides a
+        // width — a collapsed bar simply produces no ops, which is also what
+        // made it untappable.
+        if (touch)
         {
             frameList.emit(ui, ruleOp(Rect(0, toolbarY / cellH - 1, screenCols, 1),
                 RuleEdge.bottom, Slot.inherit, Visual(fg: vm.gutterFg)));
@@ -2641,12 +2589,9 @@ int runGui(GuiArgs guiArgs) @system
         // other per-frame value, but the block that builds it is nested — so
         // its three outputs are declared out here, where the geometry the
         // frame hands on can reach them.
-        version (Android)
-        {
-            WidgetTree barTree;
-            Frame[] barFrames;
-            int toolbarY;
-        }
+        WidgetTree barTree;
+        Frame[] barFrames;
+        int toolbarY;
 
         // The previous frame's tail: the host's bracket closed after the paint
         // half ran (`HST13`), so everything that used to sit below `endFrame`
@@ -2679,13 +2624,10 @@ int runGui(GuiArgs guiArgs) @system
         // The soft keyboard follows an editor's focus (`EDI9`): the search,
         // goto and filter bar, the explorer's filter, the picker's prompt and
         // the settings pane's fields. Only the edges act, so a keyboard the
-        // user put away stays away; its text arrives through the IME field
-        // the window installed, as key events like any other.
-        version (Android)
+        // user put away stays away; its text arrives as key events like any
+        // other. A touch target's alone: a desktop has a keyboard of its own.
+        if (touchTarget)
         {
-            import sparkles.android.soft_input : hideSoftKeyboard, showSoftKeyboard;
-            import sparkles.ui.editor.soft_keyboard : KeyboardAsk;
-
             const editing = inp.mode != Mode.normal || pn.tree.searching || vm.diffEditing
                 || vm.composing || vm.conflictOpen && vm.conflict.editing
                 || !filePicker.empty && filePicker.get.state.active
@@ -2695,10 +2637,10 @@ int runGui(GuiArgs guiArgs) @system
                 case KeyboardAsk.none:
                     break;
                 case KeyboardAsk.show:
-                    cast(void) showSoftKeyboard();
+                    surface.softKeyboard(true);
                     break;
                 case KeyboardAsk.hide:
-                    hideSoftKeyboard();
+                    surface.softKeyboard(false);
                     break;
             }
         }
@@ -2804,13 +2746,9 @@ int runGui(GuiArgs guiArgs) @system
         const cellW = fonts.cellW();
         const cellH = fonts.cellH();
         const screenW = window.width;
-        // On Android the soft keyboard covers the window's bottom; the layout
-        // ends above it, so the input bar stays in view
-        // (`EDI9`).
-        version (Android)
-            const screenH = visibleHeight(window.height, fieldKeyboard.editing);
-        else
-            const screenH = window.height;
+        // The soft keyboard covers the window's bottom; the layout ends above
+        // it, so the input bar stays in view (`EDI9`).
+        const screenH = window.visibleHeight(fieldKeyboard.editing);
         // The same surface in the toolkit's unit: chrome that names cells
         // and edges (UIA2) rather than pixels reads these.
         const screenCols = screenW / cellW;
@@ -2837,14 +2775,14 @@ int runGui(GuiArgs guiArgs) @system
         const docY0 = docCells.y * cellH;
         const hdrY = (docCells.y - 1) * cellH;
 
-        // Hoisted above the touch block on purpose: the Android toolbar's tap
+        // Hoisted above the touch block on purpose: the touch toolbar's tap
         // handler lives there and must obey the SAME gate as the toolbar's
         // paint (which is `if (!inputMode)`), or the bar stays live while the
         // '/' search line covers it. `mode` is not written between here and
         // the block's old position, so this is a pure move.
         const inputMode = inp.mode != Mode.normal;
 
-        // The bottom band the Android toolbar owns while it is drawn. Both
+        // The bottom band a touch target's toolbar owns while it is drawn. Both
         // panes' horizontal scrollbars anchor above it, so one press cannot
         // be consumed by two handlers: their zone (`screenH - hIdleH - 4`)
         // otherwise sits INSIDE the toolbar row, they are evaluated first,
@@ -2852,7 +2790,7 @@ int runGui(GuiArgs guiArgs) @system
         // h-scroll drag and cycled the theme. (The general answer is IXB3's
         // pointer ownership in the shared workspace shell; this is the local
         // one until that lands.)
-        version (Android)
+        if (touchTarget)
         {
             // The toolbar, built ONCE per frame (IXB9). The tap handler below
             // hit-tests these frames and the painter at the end of the loop
@@ -2888,14 +2826,14 @@ int runGui(GuiArgs guiArgs) @system
             Point barCell(in PointF p) => Point(
                 cast(int)(p.x / cellW), cast(int)((p.y - toolbarY) / cellH));
 
-            // hue no longer DRIVES a recogniser — `RaylibEvents` owns the one
-            // in `sparkles:input`, and a second would recognise every gesture
+            // hue no longer DRIVES a recogniser — the arm's event source
+            // (`RaylibEvents`, `WsiInput`) owns the one in `sparkles:input`, and a second would recognise every gesture
             // twice. What remains here is hue's policy over resolved results.
             //
             // A tap is a press+release pair inside ONE drain, so the toolbar's
             // STM10 contract sees both edges of the same frame: a press that
             // travelled off its segment before release does not activate it
-            // (IXB9). Positions carry the gesture ANCHOR — `RaylibEvents`
+            // (IXB9). Positions carry the gesture ANCHOR — the event source
             // stamps it — so a tap acts where it began, not where slop left it.
             if (inp.fin.leftPressed || inp.fin.leftReleased)
             {
@@ -2929,7 +2867,7 @@ int runGui(GuiArgs guiArgs) @system
             // resolves them to `WheelEvent`s on the shared stream, and the
             // wheel block above already routes those by the pane under
             // `inp.fin.pos` — which for a gesture IS the anchor, because
-            // `RaylibEvents` stamps resolved events with it. One routing rule,
+            // the arm's event source stamps resolved events with it. One routing rule,
             // one code path, touch and wheel alike.
 
             // Which segments exist and what they do is hue's policy; that a
@@ -2959,20 +2897,21 @@ int runGui(GuiArgs guiArgs) @system
                 touchTap = false; // consumed — never reaches the panes
                 toolbarPress = toolbarPress.cancelled();
             }
+        }
 
-            // The system back button: close the explorer, else leave (the
-            // activity finishes). A hover popup needs no case of its own —
-            // it follows the pointer, and the pointer is wherever the last
-            // tap landed, so tapping elsewhere already dismisses it.
-            if (keyBuf.hasKey(Key.back))
-            {
-                if (pn.treeVisible)
-                    toggleExplorer();
-                else
-                    // The same exit `Command.quit` takes: from inside the view
-                    // half this is a value the loop reads, not a jump.
-                    return false;
-            }
+        // The system back button, where the target has one: close the
+        // explorer, else leave (the activity finishes). A hover popup needs no
+        // case of its own — on touch it follows the pointer, and the pointer
+        // is wherever the last tap landed, so tapping elsewhere already
+        // dismisses it.
+        if (keyBuf.hasKey(Key.back))
+        {
+            if (pn.treeVisible)
+                toggleExplorer();
+            else
+                // The same exit `Command.quit` takes: from inside the view
+                // half this is a value the loop reads, not a jump.
+                return false;
         }
 
 
@@ -4616,16 +4555,9 @@ int runGui(GuiArgs guiArgs) @system
             treeTopRows: treeTopRows, treePaneRows: treePaneRows,
             treeMaxTop: treeMaxTop,
             inputMode: inputMode, kctx: kctx,
+            touch: touchTarget, barTree: barTree, barFrames: barFrames,
+            toolbarY: toolbarY,
         );
-        // After the literal, not inside it: a version block cannot appear
-        // mid-initialiser, and the assignment order is what keeps the whole
-        // struct in one place instead of splitting it across two targets.
-        version (Android)
-        {
-            geom.barTree = barTree;
-            geom.barFrames = barFrames;
-            geom.toolbarY = toolbarY;
-        }
         return true;
     }
 
@@ -4652,6 +4584,9 @@ int runGui(GuiArgs guiArgs) @system
             else
                 surface = GuiSurface(&(h.window()), h.canvas.fonts, h.canvas.fx,
                     (() @trusted => &buf)());
+            // What the target's input offers, now that it is open: a
+            // touchscreen puts up the action bar and the soft keyboard.
+            caps = surface.capabilities;
 
             // The registry the CRT's id resolves in, bound once: the host
             // borrows it for the run.
