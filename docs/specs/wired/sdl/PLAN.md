@@ -407,9 +407,51 @@ Gate:
 - the editor's range overloads apply one operation per selected target, and
   one consumer's hand-written name-and-value filter moves onto a selector.
 
+## S22 follow-ups: shared storage, 2026-11-07
+
+The region path still copied the source and every kept cell into the new
+document, so a one-value edit of a 4000-tag document allocated 2.7 MB. Re-parses
+now share the unchanged cells ([editing §10.1](./editing.md#10-1-shared-storage)),
+and the editor hands over the rendered text ([performance SDP8](./performance.md#2-architecture)).
+
+| Gate                                                       | Evidence                                                                                                                                                                                                |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SDP8: an edit's allocation does not grow with the document | `sdl.reader.reparseEdited.allocatesTheEdit`: 8 blocks and 3226 bytes (edit at the start) or 3258 (at the end), equal at 2001 and 8001 nodes, whose full parses allocate 1.16 MB and 4.60 MB             |
+| SDE14 over shared documents; the ownership rule of §10.1   | `sdl.reader.reparseEdited.properties`, its chained pass (Mallocator and a counting allocator, which gets every block back); `.oracleCatchesASplice` perturbs a run's shift, a line run's, a copy        |
+| SDE16 across allocator types; retention bounded            | `sdl.reader.reparseEdited.statefulAllocatorLocalizes` (kept cells copied); `.retentionIsBounded` (600 edits, held blocks under 4 full parses, the fallback seen); `sdl.open_document.statefulAllocator` |
+
+Retired instructions per input byte (`--perf`, `-b bench`, LDC 1.43). The `walk`
+rows are new; their before is the same rows run on this branch's parent.
+
+| Dataset       | Row              | Before | After |
+| ------------- | ---------------- | -----: | ----: |
+| `dub_recipes` | parse            |  192.1 | 188.1 |
+| `dub_recipes` | decode           |  369.9 | 366.3 |
+| `dub_recipes` | edit             |   35.2 |   7.9 |
+| `dub_recipes` | commit           |   41.0 |  34.2 |
+| `dub_recipes` | commit-unchanged |   0.87 |  0.81 |
+| `dub_recipes` | encode           |   39.0 |  39.9 |
+| `dub_recipes` | walk             |   1.75 |  3.05 |
+| `dub_recipes` | walk-edited      |   1.76 |  17.2 |
+| `deep_wide`   | parse            |  150.0 | 148.6 |
+| `deep_wide`   | edit             |   26.1 |  10.9 |
+| `deep_wide`   | commit           |   16.9 |   2.0 |
+| `deep_wide`   | commit-unchanged |   0.17 |  0.17 |
+| `deep_wide`   | encode           |   80.7 |  81.1 |
+| `deep_wide`   | walk             |   0.58 |  1.40 |
+| `deep_wide`   | walk-edited      |   0.58 |  10.2 |
+
+Open, awaiting a decision: the `walk` rows regress past the SDP2 gate. Reading a
+flat document through the views costs 1.3 and 0.8 more instructions per byte
+(+74% and +141% of a row that does nothing else), each view choosing between the
+flat and the shared path; typed decode, the reader that does work per value,
+moved −1%. A shared document's reads pay a binary search for the run and cost
+ten to seventeen times a flat one's.
+
 ## S22 follow-ups: 2026-11-07
 
-S22 left two limits. A commit with no edits re-parsed the whole host, and
+S22 left two limits.
+A commit with no edits re-parsed the whole host, and
 the region path served only stateless allocators: a stateful one took the
 full parse, and `SdlOpenDocument` refused one. Both are lifted.
 

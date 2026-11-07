@@ -380,8 +380,7 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
         const shape = analyze(fragment, op);
         if (!shape.valid)
             return;
-        foreach (i; 0 .. cell.childCount)
-            _nodeDelta -= subtreeSize(_core.childIndexes[cell.childStart + i]);
+        _nodeDelta -= subtreeSize(node.cellIndex) - 1;
         _nodeDelta += shape.nodes;
         replaces(node.cellIndex + 1, node.cellIndex + subtreeSize(node.cellIndex));
         const start = _text.length;
@@ -484,9 +483,9 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
                 "the region is outside the content");
         _nodeCountKnown = false;
         // Every node sharing a byte with the region loses its identity (§9).
-        foreach (cell; 1 .. _core.nodes.length)
+        foreach (cell; 1 .. _core.nodeCount)
         {
-            const span = _core.nodes[cell].span;
+            const span = _core.nodeAt(cell).span;
             if (span.startOffset < region.endOffset && region.startOffset < span.endOffset)
                 replaces(cell, cell + subtreeSize(cell));
         }
@@ -508,7 +507,8 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
         auto rendered = render(allocator, output, edits, parsed);
         if (rendered.hasError)
             return rendered;
-        put(writer, output[]);
+        // A localized re-parse keeps the output as its source (§10.1).
+        put(writer, output.length || !parsed.hasValue ? output[] : parsed.document.source);
         return sdlOk();
     }
 
@@ -516,7 +516,9 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
     the resolved edits — sorted, borrowing the editor's text — into `edits`,
     and the checked re-parse of the output into `parsed`; `write` without the
     copy. With no edits the output is the host and `parsed` stays empty: the
-    borrowed document is the output's parse. */
+    borrowed document is the output's parse. A recipe's re-parse that
+    localizes keeps the output as its source and leaves `output` empty
+    (editing §10.1). */
     package SdlExpected!void render(Allocator)(ref Allocator allocator,
         ref UniqueBuffer!char output, ref UniqueBuffer!TextEdit edits,
         ref SdlParseResult!Allocator parsed)
@@ -562,7 +564,7 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
         output.reserve(_host.length + _text.length);
         writeEdited(output, _host, edits[]);
 
-        return reparse(output[], edits[], allocator, parsed);
+        return reparse(output, edits[], allocator, parsed);
     }
 
     /// Package seam: the cells the operations so far replace (§9).
@@ -658,7 +660,7 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
     }
 
     private SdlNodeCell cellOf(scope SdlNode node) const
-        => (() @trusted => _core.nodes[node.cellIndex])();
+        => (() @trusted => _core.nodeAt(node.cellIndex))();
 
     private void replaces(size_t first, size_t end)
     {
@@ -1013,7 +1015,7 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
     /// or the start of the host, or just after a logical newline.
     private bool lineStartAt(size_t at) const
     {
-        if (at == 0 || (at == _core.lines.lineStart(0) && _recipe.found == false))
+        if (at == 0 || (at == _core.lineZero && _recipe.found == false))
             return true;
         foreach (width; newlineWidths)
             if (at >= width && newlineWidthAt(_host, at - width) == width)
@@ -1071,10 +1073,9 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
     private const(char)[] indentStep() const
     {
         size_t parentStart = size_t.max;
-        foreach (i, ref cell; _core.nodes)
+        foreach (i; 1 .. _core.nodeCount)
         {
-            if (i == 0)
-                continue;
+            const cell = _core.nodeAt(i);
             if (cell.depth == 0)
                 parentStart = cell.span.startOffset;
             else if (cell.depth == 1 && parentStart != size_t.max && cell.aloneOnLines)
@@ -1102,8 +1103,10 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
         const cell = cellOf(parent);
         if (!cell.childCount)
             return fallback;
-        return lineIndent(_core.nodes[_core.childIndexes[cell.childStart + cell.childCount - 1]]
-            .span.startOffset);
+        size_t last = parent.cellIndex + 1;
+        foreach (_; 1 .. cell.childCount)
+            last += _core.subtreeSizeAt(last);
+        return lineIndent(_core.nodeAt(last).span.startOffset);
     }
 
     /// The end of a node's last value, attribute or name.
@@ -1124,23 +1127,26 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
     private size_t previousTokenEnd(scope SdlAttributeView attribute) const
     {
         size_t end = 0;
-        foreach (ref cell; _core.nodes)
+        foreach (k; 0 .. _core.nodeCount)
+        {
+            const cell = _core.nodeAt(k);
             if (attribute.cellIndex >= cell.attributeStart
                 && attribute.cellIndex < cell.attributeStart + cell.attributeCount)
             {
                 end = cell.nameSpan.endOffset;
                 foreach (i; cell.valueStart .. cell.valueStart + cell.valueCount)
-                    end = _core.values[i].value.span.endOffset;
+                    end = _core.valueAt(i).value.span.endOffset;
                 foreach (i; cell.attributeStart .. attribute.cellIndex)
-                    end = _core.attributes[i].span.endOffset;
+                    end = _core.attributeAt(i).span.endOffset;
                 break;
             }
+        }
         return end;
     }
 
     private bool hasCommentIn(size_t start, size_t end) const
     {
-        foreach (ref comment; _core.comments)
+        foreach (comment; _core.comments)
             if (comment.span.startOffset < end && comment.span.endOffset > start)
                 return true;
         return false;
@@ -1159,7 +1165,7 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
                 continue;
             }
             bool skipped;
-            foreach (ref comment; _core.comments)
+            foreach (comment; _core.comments)
                 if (comment.span.startOffset == at)
                 {
                     at = comment.span.endOffset;
@@ -1261,7 +1267,7 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
         size_t at = line.startOffset;
         while (at < line.endOffset && isBlank(_host[at]))
             at++;
-        foreach (ref comment; _core.comments)
+        foreach (comment; _core.comments)
             if (comment.span.startOffset == at)
             {
                 size_t end = comment.span.endOffset;
@@ -1274,11 +1280,7 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
 
     private size_t subtreeSize(size_t cell) const
     {
-        const depth = _core.nodes[cell].depth;
-        size_t end = cell + 1;
-        while (end < _core.nodes.length && _core.nodes[end].depth > depth)
-            end++;
-        return end - cell;
+        return _core.subtreeSizeAt(cell);
     }
 
     // ── Moves ──────────────────────────────────────────────────────────
@@ -1506,7 +1508,7 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
             return parseSdlDocumentIn!(config, Allocator)(text, null, SdlSpan.init, allocator);
     }
 
-    private SdlExpected!void reparse(Allocator)(scope const(char)[] output,
+    private SdlExpected!void reparse(Allocator)(ref UniqueBuffer!char output,
         scope const TextEdit[] edits, ref Allocator allocator, ref SdlParseResult!Allocator parsed)
     {
         // No edits: the output is the host, whose parse is the borrowed document.
@@ -1514,30 +1516,32 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
             return sdlOk();
         SdlSpan content = SdlSpan.init;
         UniqueBuffer!char rendering;
-        const(char)[] parsedText = output;
         if (_recipe.found)
         {
             // SDE7: DUB ends the recipe at the first `+/`; it must be where the
             // original one maps, and the `/+` count inside must not change.
-            const moved = locateEmbeddedRecipe(output);
+            const moved = locateEmbeddedRecipe(output[]);
             const expected = mapOffset(edits, _recipe.close.startOffset);
             if (!moved.found || moved.isJson || moved.close.startOffset != expected
-                || countOpeners(moved.recipe(output)) != countOpeners(_recipe.recipe(_host)))
+                || countOpeners(moved.recipe(output[])) != countOpeners(_recipe.recipe(_host)))
                 return sdlErr!void(editError(SdlErrorCode.editFragmentInvalid, SdlSpan.init,
                     "the edit changes where DUB or the D compiler ends the recipe", _operations));
             rendering.reserve(output.length);
-            writeEmbeddedRendering(rendering, output, moved);
-            parsedText = rendering[];
+            writeEmbeddedRendering(rendering, output[], moved);
             content = moved.content;
         }
-        // Only the edited region is re-parsed when it can be (§10, SDE14).
+        // Only the edited region is re-parsed when it can be (§10, SDE14),
+        // and then the document keeps the text it parsed — the rendering, or
+        // a recipe's output — instead of copying it (§10.1).
+        auto parsedText = _recipe.found ? &rendering : &output;
         bool localized;
         static if (stateSize!Allocator == 0)
-            parsed = reparseEdited!(config, Allocator)(_core, parsedText, _sourceName, content,
+            parsed = reparseEdited!(config, Allocator)(_core, *parsedText, _sourceName, content,
                 edits, localized);
         else
-            parsed = reparseEdited!(config, Allocator)(_core, parsedText, _sourceName, content,
+            parsed = reparseEdited!(config, Allocator)(_core, *parsedText, _sourceName, content,
                 edits, localized, allocator);
+
         if (parsed.hasError)
         {
             auto error = editError(SdlErrorCode.editResultInvalid, parsed.error.span,
@@ -1547,7 +1551,7 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
             return sdlErr!void(error);
         }
         if (_nodeCountKnown
-            && cast(long) parsed.document.core.nodes.length != cast(long) _core.nodes.length + _nodeDelta)
+            && cast(long) parsed.document.core.nodeCount != cast(long) _core.nodeCount + _nodeDelta)
             return sdlErr!void(editError(SdlErrorCode.editResultInvalid, SdlSpan.init,
                 "the edited text has an unexpected number of nodes", _operations));
         return sdlOk();
@@ -2074,7 +2078,8 @@ version (unittest)
                         continue;
                     editor.append(node, "probe \"p\"");
                     // The point is the start of the `}` line.
-                    const close = node.core.nodes[node.cellIndex].closeBrace.startOffset;
+                    const close = node.core.nodeAt(node.cellIndex).closeBrace.startOffset;
+
                     size_t lineStart = close;
                     while (lineStart > 0 && (host[lineStart - 1] == ' ' || host[lineStart - 1] == '\t'))
                         lineStart--;

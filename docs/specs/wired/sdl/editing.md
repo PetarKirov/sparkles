@@ -713,7 +713,7 @@ is not detected.
 Writing and committing both re-parse the edited host (SDE2). For a large host
 and a small edit, a full re-parse costs the whole host while the edit costs a
 line, so the reader re-parses only a **region** around the edits and splices
-it into a copy of the old document:
+it into a document that shares the rest with the old one:
 
 1. Take the deepest node whose block interior contains every edit. The
    interior runs from the end of the node's `{` to the start of its `}`, and
@@ -726,21 +726,25 @@ it into a copy of the old document:
    one child on either side until each bounding child is alone on its lines,
    so that the region starts and ends at a line boundary.
 3. The reader lexes and parses the region's new text at the node's depth.
-   It copies the old document's cells before and after the region, shifting
-   every offset after it by the edits' length change and re-slicing names and
-   payloads into the new document's source and pool. Comments and line starts
-   are spliced the same way, and the child index is rebuilt.
+   The new document shares the old document's cells before and after the
+   region instead of copying them ([§10.1](#10-1-shared-storage)): those
+   after it are read through a shift by the edits' length change. Comments
+   and line starts are shared the same way.
 
 **SDE14 — Incremental equals full.** The document an incremental re-parse
 produces equals, field for field, the full parse of the same text: each node's
 name, spans, extent, braces, terminator, `aloneOnLines`, depth and children;
 each value and attribute, payloads included; the comments; the line table;
-and the content. _Oracle:_ a property test over every repository recipe and a
+and the content. Each document also keeps the ownership rule of §10.1: every
+name its views return lies in its own source, and every payload in the pool
+of a block it holds. _Oracle:_ a property test over every repository recipe and a
 generated deep, wide document that applies random edits — to values and
 attributes, insertions, removals, body and region replacements, including ones
 that open comments or strings, or add braces — and compares the two
-documents. It is mutation-checked by a test that perturbs one spliced offset
-and expects the comparison to fail. _Violation:_ any differing field.
+documents; a second pass chains the edits, each applied to the document the
+one before produced, so a re-parse of a document that already shares storage
+is compared too. It is mutation-checked by a test that perturbs one spliced
+offset and expects the comparison to fail. _Violation:_ any differing field.
 
 **SDE15 — Unlocalizable edits fall back.** The region's parse is used only
 when all of the following hold:
@@ -777,7 +781,7 @@ own bytes, whose parse is the document the editor borrows, so nothing is
 re-parsed. `write` copies the host to the writer and allocates nothing
 through the caller's allocator; `commit` keeps the host, the document and
 every handle as they are, and spends the editor as any commit does. The
-reader, given no edits over the old document's own text and content, copies
+reader, given no edits over the old document's own text and content, shares
 the old document's cells without lexing a byte. _Oracle:_ a write test and an
 embedded-recipe write that count no allocation; an open-document test that
 commits an empty editor through a counting allocator and finds the same
@@ -790,3 +794,62 @@ The `sdl.commit` benchmark row
 at a time to an open document and reports retired instructions per input
 byte, so the gain shows against the full re-parse it replaces; the
 `sdl.commit-unchanged` row commits editors with no edits (SDE17).
+
+### 10.1 Shared storage
+
+A region re-parse touches a few cells, so the new document keeps the old
+one's other cells where they are, and its memory follows the edit, not the
+document ([performance SDP8](./performance.md#2-architecture)).
+
+A document's cells — nodes with their values and attributes, comments, and
+line starts — live in **blocks**. A block is built once, by a parse or by a
+region re-parse, and never changes after; it is reference-counted, and every
+document that reads it holds a reference. A document sees its cells as a
+sequence of **runs**: each run is a range of one block, placed at a logical
+index, with a shift added to every valid offset it holds. A full parse makes
+one block and one run per kind, its **flat** form, which views read directly;
+a re-parse makes a document of several runs, which views read by a binary
+search for the run holding an index.
+
+A region re-parse builds one new block, holding:
+
+- the region's own cells, as its parse produced them;
+- a copy of each node whose subtree contains the region — the root, the
+  owner of step 1, and the nodes between them. Their spans end after the
+  region, and their subtree sizes change with it, as does the owner's child
+  count;
+- a copy of every shared piece shorter than 16 cells, so the runs do not
+  fragment as edits accumulate: a document of _n_ nodes has at most about
+  _n_/8 runs.
+
+Every other cell is shared: the old document's runs before the region as
+they were, and those after it with the edits' length change added to their
+shift and their logical indexes moved by the change in cell counts. A node's
+children are found from its **subtree size**, the number of nodes in its
+preorder subtree, itself included, which only the copied ancestors change;
+there is no child-index arena to rebuild.
+
+Names and payloads follow one ownership rule. A name is read from the
+document's own source through its span, so a shared cell's name is always
+its current spelling. A payload — a string, binary value or zone — lies in
+the pool of the block that holds its cell, which every document reading the
+cell holds too; payloads of copied cells are copied with them. The source
+itself is the document's own: a copy of the text it was given, or, when the
+caller hands it the rendered text it owns (the editor does), that text
+itself.
+
+A block is freed, exactly once, when the last document holding it drops it.
+The count is atomic, so documents sharing blocks may be destroyed on any
+threads. A block keeps a copy of the allocator that made it and frees through
+that copy. Blocks are shared only between documents of the same allocator
+type; a re-parse through another type takes the same region path but copies
+every kept cell into its new block. Shared blocks can outlive the cells that
+use them — a block stays whole while one of its runs is read — so once the
+old document's blocks hold more than twice what a full parse of the text
+would allocate, the re-parse parses in full instead, and the result is flat
+again. The rule reads only the old document and the text, so every allocator
+takes the same path (SDE16). _Oracle:_ the SDE14 property test's chained
+pass, which requires some document to hold blocks of several generations
+before it and the counting allocator to get every block back, and a test
+that edits a document hundreds of times and finds what it holds bounded by
+a full parse's allocation.
