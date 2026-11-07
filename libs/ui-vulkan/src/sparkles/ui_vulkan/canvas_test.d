@@ -278,8 +278,12 @@ package immutable FrameMetrics[4] metricsUnderTest = [
     }, FrameMetrics(cellW: 10, cellH: 20), RgbColor(200, 100, 50));
     assert(pixel(frame, 40, 2, 2) == [0, 0, 0, 0], "drawn, nothing there: transparent");
     assert(pixel(frame, 40, 29, 9) == [255, 255, 255, 255], "the drawn part's last pixel");
-    assert(pixel(frame, 40, 30, 5)[3] != 255, "not past its right edge");
-    assert(pixel(frame, 40, 25, 10)[3] != 255, "nor below it");
+    // Beyond the drawn part the image holds whatever it held: here a fresh
+    // image's undefined contents (zeros on lavapipe, magenta on MoltenVK),
+    // so the check is that neither the fill nor the ground reached them.
+    static bool untouched(in ubyte[] p) => p != [255, 255, 255, 255] && p[0 .. 3] != [200, 100, 50];
+    assert(untouched(pixel(frame, 40, 30, 5)), "not past its right edge");
+    assert(untouched(pixel(frame, 40, 25, 10)), "nor below it");
 }
 
 @("ui_vulkan.canvas.aTurnedTargetIsDrawnPreRotated")
