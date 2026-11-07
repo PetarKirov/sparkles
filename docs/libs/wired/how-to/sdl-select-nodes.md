@@ -32,6 +32,11 @@ name as a JSON string in brackets: `build["my.tool"].dependency`, or
 `sparkles.dql.path` prints a name that way when it needs to, so a path you
 build from names always parses back.
 
+A leading `..` lets the first segment match at any depth below the start:
+`..dependency` reads every dependency, at the top level, in a
+configuration or in a sub-package, in document order. `..` begins a path
+and nowhere else, and DQL filters do not accept it.
+
 `attributes(start)` reads the last segment as an attribute name instead:
 `dependency.path` yields the `path` attribute of every root `dependency`.
 
@@ -116,16 +121,13 @@ void main()
     foreach (node; SdlPath.parse("configuration.dependency").value.nodes(root))
         writeln("configuration dependency: ", node.byValue.front.stringValue);
 
-    // Every in-tree dependency, at the root or in a configuration, points
-    // at the checkout instead of the registry.
+    // Every in-tree dependency, at any depth, points at the checkout
+    // instead of the registry.
     auto editor = sdlEditor(parsed.document, text);
-    foreach (path; ["dependency.version", "configuration.dependency.version"])
-    {
-        auto inTree = SdlSelector.parse(path,
-            "globMatch(values[0], `sparkles:*`) && version == `*`").value;
-        editor.replaceAttribute(inTree.attributes(root),
-            SdlQualifiedName(null, "path"), SdlScalar("../.."));
-    }
+    auto inTree = SdlSelector.parse("..dependency.version",
+        "globMatch(values[0], `sparkles:*`) && version == `*`").value;
+    editor.replaceAttribute(inTree.attributes(root),
+        SdlQualifiedName(null, "path"), SdlScalar("../.."));
     UniqueBuffer!char output;
     Mallocator allocator;
     const written = editor.write(output, allocator);
@@ -145,6 +147,6 @@ configuration "unittest" {
 ```
 
 The comment, the layout and the pinned `silly` survive; only the two
-attributes the selectors named changed. See
+attributes the selector named changed. See
 [editing §3.2](../../../specs/wired/sdl/editing.md#3-2-path-selection) for
 the full contract.

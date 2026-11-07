@@ -547,6 +547,7 @@ unittest
         Case(".a", 0, 0),
         Case("a.", 0, 2),
         Case("a..b", 0, 2),
+        Case("..a", 0, 0), // no descendant step: the SDL selector reads its own `..`
         Case("[0]", 0, 0),
         Case("a[]", 0, 2),
         Case("a[x]", 0, 2),
