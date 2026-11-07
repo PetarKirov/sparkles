@@ -206,12 +206,12 @@ string normalize(string source) @safe
     // Outside the region, a configuration other than `offline` may hold
     // legacy settings, and a managed build type is a stale copy.
     auto configurations = SdlSelector.parse("configuration",
-        `values[1] == null && values[0] != "offline"`);
-    foreach (configuration; configurations.value.nodes(root))
+        `values[1] == null && values[0] != "offline"`).value;
+    foreach (configuration; configurations.nodes(root))
         if (!inRegion(configuration))
             removeLegacySettings(configuration);
-    auto staleBuildTypes = SdlSelector.parse("buildType", managedBuildTypeFilter);
-    editor.remove(staleBuildTypes.value.nodes(root).filter!(node => !inRegion(node)));
+    auto staleBuildTypes = SdlSelector.parse("buildType", managedBuildTypeFilter).value;
+    editor.remove(staleBuildTypes.nodes(root).filter!(node => !inRegion(node)));
 
     if (hasRegion)
     {
