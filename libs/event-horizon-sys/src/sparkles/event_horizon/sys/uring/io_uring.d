@@ -1958,6 +1958,92 @@ struct io_uring_probe
 
 static assert(io_uring_probe.sizeof == 16);
 
+/**
+ * One entry of an `IORING_REGISTER_QUERY` chain (`linux/io_uring/query.h`, from Linux 6.18).
+ *
+ * The kernel reads `query_op`, writes at most `size` bytes of that query's result to
+ * `query_data`, sets `size` to how many it wrote and `result` to 0, or to `-errno`
+ * (`-EOPNOTSUPP` for a query this kernel does not know), then follows `next_entry`;
+ * 0 ends the chain. `size` and `result` must be non-zero and zero on entry, `__resv` zero.
+ *
+ * C API: `struct io_uring_query_hdr`
+ */
+struct io_uring_query_hdr
+{
+    ulong next_entry; /// address of the next header, or 0
+    ulong query_data; /// address of the result struct
+    uint query_op;    /// one of the `IO_URING_QUERY_*` values
+    uint size;        /// in: the result struct's size; out: the bytes written
+    int result;       /// out: 0, or `-errno`
+    private uint[3] __resv;
+}
+
+static assert(io_uring_query_hdr.sizeof == 40);
+
+/// `IO_URING_QUERY_OPCODES` (from Linux 6.18): `io_uring_query_opcode`, which needs no ring
+enum IO_URING_QUERY_OPCODES = 0;
+/// `IO_URING_QUERY_ZCRX` (from Linux 6.19): `io_uring_query_zcrx`
+enum IO_URING_QUERY_ZCRX = 1;
+/// `IO_URING_QUERY_SCQ` (from Linux 6.19): `io_uring_query_scq`
+enum IO_URING_QUERY_SCQ = 2;
+/// `IO_URING_QUERY_ZCRX_EVENT` (from Linux 7.2): `io_uring_query_zcrx_event`
+enum IO_URING_QUERY_ZCRX_EVENT = 3;
+
+/**
+ * What the running kernel's io_uring accepts, as counts and masks rather than a probe of
+ * each opcode.
+ *
+ * C API: `struct io_uring_query_opcode`
+ */
+struct io_uring_query_opcode
+{
+    uint nr_request_opcodes;  /// the number of `IORING_OP_*` opcodes (one past the last)
+    uint nr_register_opcodes; /// the number of `IORING_[UN]REGISTER_*` opcodes
+    ulong feature_flags;      /// every supported `IORING_FEAT_*` bit (`SetupFeatures`)
+    ulong ring_setup_flags;   /// every supported `IORING_SETUP_*` bit (`SetupFlags`)
+    ulong enter_flags;        /// every supported `IORING_ENTER_*` bit (`EnterFlags`)
+    ulong sqe_flags;          /// every supported `IOSQE_*` bit (`SubmissionEntryFlags`)
+    uint nr_query_opcodes;    /// the number of `IO_URING_QUERY_*` queries
+    private uint __pad;
+}
+
+static assert(io_uring_query_opcode.sizeof == 48);
+
+/// C API: `struct io_uring_query_zcrx`
+struct io_uring_query_zcrx
+{
+    ulong register_flags;  /// every supported `ZCRX_REG_*` bit
+    ulong area_flags;      /// every supported `IORING_ZCRX_AREA_*` bit
+    uint nr_ctrl_opcodes;  /// the number of `ZCRX_CTRL_*` opcodes
+    uint features;         /// `ZCRX_FEATURE_*` bits
+    uint rq_hdr_size;      /// the refill ring header's size
+    uint rq_hdr_alignment; /// the alignment the header needs
+    private ulong __resv2;
+}
+
+static assert(io_uring_query_zcrx.sizeof == 40);
+
+/// C API: `struct io_uring_query_zcrx_event`
+struct io_uring_query_zcrx_event
+{
+    uint event_flags;         /// every supported `ZCRX_EVENT_*` bit
+    uint stats_size;          /// the size of `struct zcrx_stats`
+    uint stats_off_alignment; /// the alignment the stats need within the region
+    private uint __resv1;
+    private ulong[4] __resv2;
+}
+
+static assert(io_uring_query_zcrx_event.sizeof == 48);
+
+/// C API: `struct io_uring_query_scq`
+struct io_uring_query_scq
+{
+    ulong hdr_size;      /// the SQ/CQ rings header's size
+    ulong hdr_alignment; /// the alignment the header needs
+}
+
+static assert(io_uring_query_scq.sizeof == 16);
+
 struct io_uring_restriction
 {
     RestrictionOp opcode;
@@ -2614,6 +2700,20 @@ int io_uring_register(int fd, RegisterOpCode opcode, const(void)* arg, uint nr_a
 {
     pragma(inline);
     return cast(int) syscall(SYS_io_uring_register, fd, opcode, arg, nr_args);
+}
+
+/**
+ * Runs the `IORING_REGISTER_QUERY` chain that starts at `chain`, without a ring (`fd` -1,
+ * from Linux 6.18). Each header's `result` then holds its own query's outcome.
+ *
+ * Returns: 0 on success; -1 with `errno` set otherwise: `EINVAL` from a kernel without the
+ * query interface (`EBADF` before Linux 6.13, which has no ring-less registrations) or for a
+ * malformed header.
+ */
+int io_uring_query(io_uring_query_hdr* chain)
+{
+    pragma(inline);
+    return io_uring_register(-1, RegisterOpCode.REGISTER_QUERY, chain, 0);
 }
 
 private:

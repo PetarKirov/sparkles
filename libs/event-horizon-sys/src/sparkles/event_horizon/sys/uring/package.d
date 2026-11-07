@@ -27,7 +27,9 @@
  *     * `prepCmdGetsockname` notes Linux 6.19, where the kernel added the command, not 6.7.
  *     * eight `RegisterOpCode` members note the release that added them, from the kernel's
  *       history: `CLOCK` and `CLONE_BUFFERS` 6.12, `SEND_MSG_RING` and `RESIZE_RINGS` 6.13,
- *       `ZCRX_IFQ` 6.15, `QUERY` 6.18, `ZCRX_CTRL` 6.19 and `BPF_FILTER` 7.0.
+ *       `ZCRX_IFQ` 6.15, `QUERY` 6.18, `ZCRX_CTRL` 6.19 and `BPF_FILTER` 7.0;
+ *     * the query interface (`linux/io_uring/query.h`, Linux 6.18), which upstream does not
+ *       bind: `io_uring_query` and the `io_uring_query_*` structs.
  * )
  *
  * Why vendored: Sparkles' `io_uring` backend (`sparkles:event-horizon`) stands on this

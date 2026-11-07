@@ -1,6 +1,7 @@
 /**
 Tests of the vendored `io_uring` binding (`sparkles.event_horizon.sys.uring`):
-one per defect fixed here, each failing on upstream's code.
+one per defect fixed here, each failing on upstream's code, and one per interface
+bound here that upstream lacks.
 
 A ring is opened on the real kernel; an environment that refuses io_uring
 (seccomp, the `io_uring_disabled` sysctl, a container) or a kernel without the
@@ -94,4 +95,41 @@ unittest
     }
     assert(cancelRes == 0);
     assert(targetRes == -ECANCELED);
+}
+
+@("uring.io_uring_query.agreesWithARing")
+@system nothrow @nogc
+unittest
+{
+    import core.stdc.errno : EBADF, EINVAL, errno;
+    import std.traits : EnumMembers;
+
+    io_uring_query_opcode ops;
+    io_uring_query_hdr hdr = {
+        query_data: cast(ulong) &ops,
+        query_op: IO_URING_QUERY_OPCODES,
+        size: ops.sizeof,
+    };
+    if (io_uring_query(&hdr) < 0)
+    {
+        const e = errno;
+        if (e == EINVAL || e == EBADF)
+            skipTest("no IORING_REGISTER_QUERY (Linux 6.18)");
+        assert(0, "IORING_REGISTER_QUERY failed");
+    }
+    assert(hdr.result == 0 && hdr.size == ops.sizeof);
+    assert(ops.nr_query_opcodes > IO_URING_QUERY_OPCODES);
+    assert(ops.nr_register_opcodes > RegisterOpCode.REGISTER_QUERY);
+
+    // The ring-less answer agrees with what a ring reports: every opcode the
+    // probe supports is below the count, and every feature setup returned is
+    // in the mask.
+    Uring io;
+    openRing(io);
+    assert((io.params.features & ~ops.feature_flags) == 0);
+    auto probe = io.probe();
+    assert(cast(bool) probe);
+    foreach (op; EnumMembers!Operation)
+        if (probe.isSupported(op))
+            assert(op < ops.nr_request_opcodes);
 }
