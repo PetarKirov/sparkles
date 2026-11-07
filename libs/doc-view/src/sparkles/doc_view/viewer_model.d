@@ -372,6 +372,64 @@ struct ViewerModel
     /// anchor has been captured off the outgoing rows and before anything
     /// reads the outgoing tree.
     private Builder arena_;
+
+    /**
+    Everything the raw view's widget tree is built from, other than the width.
+
+    The raw view never wraps (`TextWrap.none`), so its tree — the highlighted
+    lines and the gutter numbered from them — is the same at any width, as
+    long as these are: arrays by identity (a new document, parse or coverage
+    is a new array), the rest by value. The channels are the ones reserved at
+    the width being laid out, since the gutter's budget is a share of it.
+    */
+    private static struct RawTreeKey
+    {
+        const(char)[] source;
+        const(HighlightEvent)[] events;
+        string lang;
+        const(void)* parse;
+        bool plainSyntax;
+        bool defaultOpen;
+        const(size_t)[] foldExceptions;
+        size_t foldHitBase;
+        int tabWidth;
+        bool listWhitespace, inlineFoldMarker;
+        size_t themeIdx;
+        RgbColor pageFg, gutterFg;
+        bool hasCoverage;
+        const(void)[] coverageGutter, coverageSpans;
+        GutterChannel[] channels;
+
+        bool same(in RawTreeKey o) const @safe pure nothrow @nogc
+        {
+            if (!(source is o.source && events is o.events && lang == o.lang
+                && parse is o.parse && plainSyntax == o.plainSyntax
+                && defaultOpen == o.defaultOpen && foldExceptions == o.foldExceptions
+                && foldHitBase == o.foldHitBase && tabWidth == o.tabWidth
+                && listWhitespace == o.listWhitespace
+                && inlineFoldMarker == o.inlineFoldMarker && themeIdx == o.themeIdx
+                && pageFg == o.pageFg && gutterFg == o.gutterFg
+                && hasCoverage == o.hasCoverage && coverageGutter is o.coverageGutter
+                && coverageSpans is o.coverageSpans && channels.length == o.channels.length))
+                return false;
+            foreach (i, ref const c; channels)
+                if (c.id != o.channels[i].id || c.enabled != o.channels[i].enabled
+                    || c.width != o.channels[i].width)
+                    return false;
+            return true;
+        }
+    }
+
+    // The key the tree in the arena was built for; valid only while the raw
+    // view built it.
+    private RawTreeKey rawTreeKey;
+    private bool rawTreeKept;
+    // Set by `relayout` for the length of a rebuild that only changes the width.
+    private bool reflowing;
+    // Trees built since the model was made: what a test reads to tell a kept
+    // tree from a rebuilt one, which look alike from outside.
+    private size_t treeBuilds;
+
     WidgetTree tree;
     Frame[] frames;
     DrawOp[] ops;
@@ -883,10 +941,54 @@ struct ViewerModel
     }
 
     /// Lays the pipeline out for a new width.
+    ///
+    /// A width change keeps what the width does not reach: while every input
+    /// of the raw view's tree is unchanged (`RawTreeKey`), the tree is laid
+    /// out again rather than rebuilt — on a large source file, the
+    /// highlighting walk and the gutter's own layout pass, half the reflow.
+    /// Every other view, and any rebuild not caused by a width change,
+    /// rebuilds in full.
     void relayout(int widthCols_)
     {
+        reflowing = widthCols >= 0 && widthCols_ != widthCols;
+        scope (exit)
+            reflowing = false;
         widthCols = widthCols_;
         rebuild();
+    }
+
+    // The raw view's tree key, as the model stands now.
+    private RawTreeKey currentRawTreeKey()
+    {
+        return RawTreeKey(
+            source: source,
+            events: events,
+            lang: lang,
+            parse: rootLayer,
+            plainSyntax: plainSyntax,
+            defaultOpen: folds.defaultOpen,
+            foldExceptions: folds.exceptions,
+            foldHitBase: foldHitBase,
+            tabWidth: tabWidth,
+            listWhitespace: listWhitespace,
+            inlineFoldMarker: inlineFoldMarker,
+            themeIdx: themeIdx,
+            pageFg: pageFg,
+            gutterFg: gutterFg,
+            hasCoverage: hasCoverage,
+            coverageGutter: coverage.gutterItems,
+            coverageSpans: coverage.inlineSpans,
+            channels: reservedChannels());
+    }
+
+    // Whether this rebuild is a width change the raw view's tree survives.
+    private bool keepsRawTree()
+    {
+        if (!reflowing || !rawTreeKept || conflictOpen
+            || (showPreview && (diff.files.length || tw.code.length || preview.present)))
+            return false;
+        ensureParsed();
+        return currentRawTreeKey().same(rawTreeKey);
     }
 
     /**
@@ -1147,6 +1249,16 @@ struct ViewerModel
     private void rebuildTree(bool progressive = false, ScrollAnchor anchor = ScrollAnchor.init)
     {
         partial = false;
+        if (keepsRawTree())
+        {
+            // Laid out again at the new width; nothing in the tree moved.
+            frames = layoutDoc(tree, Constraints(maxW: widthCols));
+            ops = displayListOf(tree, frames);
+            derive(withTargets: foldable.length != 0);
+            return;
+        }
+        rawTreeKept = false;
+        ++treeBuilds;
         // The outgoing tree dies here: from this point on `tree` aliases
         // storage the builder is about to overwrite.
         arena_.reset();
@@ -1300,6 +1412,8 @@ struct ViewerModel
             frames = layoutDoc(tree, Constraints(maxW: widthCols));
             ops = displayListOf(tree, frames);
             derive(withTargets: foldable.length != 0);
+            rawTreeKey = currentRawTreeKey();
+            rawTreeKept = true;
             cells = null;
             fences.length = 0;
             cellList.length = 0;
@@ -3577,6 +3691,85 @@ terminal gets the destinations it needs to make the text clickable.
     assert("http://reference" in sawHand, "a REFERENCE link is hoverable");
     assert("http://cell" in sawHand, "a link inside a table cell is hoverable");
     assert(sawDefault, "off a link the shape returns to the default");
+}
+
+@("viewer_model.relayout.aKeptRawTreeLaysOutAsAFreshBuild")
+@system unittest
+{
+    import std.array : replicate;
+    import std.conv : text;
+    import std.process : environment;
+    import sparkles.syntax : GrammarRegistry;
+    import sparkles.test_runner.skip : skipTest;
+
+    if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
+        skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
+
+    auto reg = GrammarRegistry.fromEnvironment();
+    const labels = LabelSet.standard();
+    auto cache = TsConfigCache.create(&reg, labels);
+
+    // Twelve lines (two-digit numbers), foldable regions, lines wider than
+    // most of the widths below.
+    string src = "void f()\n{\n";
+    foreach (i; 0 .. 8)
+        src ~= text("    int a", i, " = ", "1 + ".replicate(i * 3), "1;\n");
+    src ~= "}\nint tail;\n";
+
+    ViewerModel model(int width)
+    {
+        ViewerModel vm;
+        vm.names = ["dark"];
+        vm.themes = [builtinDark];
+        vm.labels = labels;
+        vm.cache = &cache;
+        vm.widthCols = width;
+        vm.applyTheme(0);
+        vm.setDocument("f.d", "", src,
+            [HighlightEvent.sourceSpan(0, src.length)], PreviewModel.init,
+            TwoslashReturn.init, "d");
+        return vm;
+    }
+
+    void same(ref ViewerModel kept, ref ViewerModel fresh, int w)
+    {
+        assert(kept.rows == fresh.rows, text("rows at ", w));
+        assert(kept.ops == fresh.ops, text("ops at ", w));
+        assert(kept.frames == fresh.frames, text("frames at ", w));
+        assert(kept.targets == fresh.targets, text("targets at ", w));
+        assert(kept.foldMarkers == fresh.foldMarkers, text("fold markers at ", w));
+        assert(kept.channels == fresh.channels, text("gutter at ", w));
+        assert(kept.contentCols == fresh.contentCols, text("content width at ", w));
+    }
+
+    auto vm = model(100);
+    assert(vm.foldable.length && vm.channels.length == 2, "an icon strip and the numbers");
+    // The reader is on line 6; every relayout keeps that line at the top.
+    vm.top = 5;
+    const topSrc = vm.rows[5].srcStart;
+    // 9 cells leave a gutter budget of 3: the two-cell numbers no longer fit
+    // beside the icon strip, so the tree changes, and is rebuilt.
+    foreach (w; [60, 31, 9, 100, 45])
+    {
+        const builds = vm.treeBuilds;
+        vm.relayout(w);
+        auto fresh = model(w);
+        same(vm, fresh, w);
+        assert(vm.rows[cast(size_t) vm.top].srcStart == topSrc, text("the top line at ", w));
+        const gutterChanged = w == 9 || w == 100;
+        assert((vm.treeBuilds != builds) == gutterChanged,
+            text(gutterChanged ? "rebuilt" : "kept", " at ", w));
+    }
+
+    // A change the width did not make is seen by the next relayout: the
+    // fold set is part of the key.
+    vm.folds = vm.folds.toggled(vm.foldable[0].start);
+    vm.relayout(70);
+    auto folded = model(70);
+    folded.folds = folded.folds.toggled(folded.foldable[0].start);
+    folded.rebuild();
+    same(vm, folded, 70);
+    assert(vm.rows.length < 12, "folded");
 }
 
 @("viewer_model.cstFoldsInTheRawView")
