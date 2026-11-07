@@ -635,10 +635,17 @@ configurations it cleans and the stale managed build types by path and DQL
 filter, and removes each selection in one call (SDS5); over the tree's 161
 recipes, and three perturbed copies of each, its output is byte-identical
 to the walk it replaced. The `shader-compile` fixtures already select the
-checkout's `path` attributes. The rest stay as they are:
-`dub_deps.writeInTreeDeps` rewrites a dependency at any depth and only when
-`version` is its sole attribute, which neither a fixed-depth path nor a DQL
-filter can state; `add-checked-buildtype` appends a fragment that carries a
+checkout's `path` attributes. `dub_deps.writeInTreeDeps` rewrites a
+dependency at any depth and only when `version="*"` is its sole attribute,
+which a fixed-depth path and the filter vocabulary could not state; with
+any-depth selection (SDS6) and `attributes[i]` (SDS3) its recursive walk is
+one selector, `..dependency` filtered by
+`values[1] == null && attributes[1] == null && version == "*"`, with the
+in-tree package names checked in D. Over every tracked file that embeds a
+recipe, and three perturbed copies of each (in-tree `path` attributes
+turned to `version="*"`, an `optional=true` added, and a nested
+sub-package of edge cases), the old and new functions write the same bytes.
+The rest stay as they are: `add-checked-buildtype` appends a fragment that carries a
 comment, which a typed value cannot; the readers in `apps/ci`
 (`integratesTestRunner`, `credits`, `example_manifest`), `compare-app-builds`,
 `gen-dsv-corpus` and `dub_recipe` decode through the `dub.sdl` schema, which

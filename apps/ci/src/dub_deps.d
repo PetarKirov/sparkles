@@ -17,8 +17,9 @@ import std.experimental.allocator.mallocator : Mallocator;
 
 import sparkles.base.buffer : UniqueBuffer;
 import sparkles.build_primitives.dub_manifest : readDubManifest;
-import sparkles.wired.sdl : parseEmbeddedSdlDocument, sdlDubRecipe, sdlEditor, SdlNode,
+import sparkles.wired.sdl : parseEmbeddedSdlDocument, sdlDubRecipe, sdlEditor,
     SdlQualifiedName, SdlScalar, SdlScalarKind;
+import sparkles.wired.sdl.select : SdlSelector;
 
 /// Parses sub-package paths from the root `dub.sdl`.
 @safe
@@ -81,26 +82,15 @@ void writeInTreeDeps(Writer)(ref Writer writer, string code, string repoRoot, st
 
     const rel = repoRoot.relativePath(fromDir);
     auto editor = sdlEditor!sdlDubRecipe(embedded.parsed.document, code);
-    void rewrite(scope const SdlNode node)
-    {
-        foreach (child; node.byChild)
-        {
-            if (child.qualifiedName == SdlQualifiedName(null, "dependency")
-                && child.valueCount == 1 && child.attributeCount == 1)
-            {
-                const value = child.byValue.front;
-                const attribute = child.byAttribute.front;
-                if (value.kind == SdlScalarKind.string_ && names.canFind(value.stringValue)
-                    && attribute.qualifiedName == SdlQualifiedName(null, "version")
-                    && attribute.value.kind == SdlScalarKind.string_
-                    && attribute.value.stringValue == "*")
-                    editor.replaceAttribute(attribute, SdlQualifiedName(null, "path"),
-                        SdlScalar(rel));
-            }
-            rewrite(child);
-        }
-    }
-    rewrite(embedded.parsed.document.root);
+    // A dependency at any depth whose one value names an in-tree package and
+    // whose one attribute is `version="*"`.
+    auto registry = SdlSelector.parse("..dependency",
+        `values[0] != null && values[1] == null && attributes[1] == null && version == "*"`).value;
+    editor.replaceAttribute(registry.nodes(embedded.parsed.document.root)
+        .filter!(dependency => dependency.byValue.front.kind == SdlScalarKind.string_
+            && names.canFind(dependency.byValue.front.stringValue))
+        .map!(dependency => dependency.byAttribute.front),
+        SdlQualifiedName(null, "path"), SdlScalar(rel));
     UniqueBuffer!char output;
     Mallocator allocator;
     if (editor.write(output, allocator).hasError)
