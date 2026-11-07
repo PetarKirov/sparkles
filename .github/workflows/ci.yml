@@ -579,7 +579,8 @@ jobs:
     # hits this cap leaves progress in the cache for the next one.
     # The macOS cold aggregate in run 37375104839 was still compiling desktop
     # applications at its 40m cap; allow the remaining closure and example run.
-    timeout-minutes: ${{ matrix.runner == 'ubuntu-latest' && 60 || 90 }}
+    # Linux builds one derivation at a time (below), and has the same 90m.
+    timeout-minutes: 90
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -605,11 +606,15 @@ jobs:
       # step below still leaves this build's outputs in the cache. The
       # setup-nix action's post-job hook (push-to-cache: true) then pushes
       # anything else the job produced.
+      # On Linux, one derivation at a time, as the Android closure below: with
+      # every app built on both arms, the default parallelism ran the runner out
+      # of memory mid-build, cancelled with no failed step (PR #719's runs
+      # 42404867685 and 42413552229, while terminal and hue-raylib compiled).
       - name: Build & push devShells.full, all packages, and all examples
         env:
           CACHIX_CACHE: ${{ vars.CACHIX_CACHE }}
           CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
-        run: ci/with-cachix.sh nix build --print-build-logs .#all-desktop
+        run: ci/with-cachix.sh nix build --print-build-logs ${{ matrix.runner == 'ubuntu-latest' && '--max-jobs 1' || '' }} .#all-desktop
 
       - name: Run all runnable examples
         run: nix run .#run-all-examples
