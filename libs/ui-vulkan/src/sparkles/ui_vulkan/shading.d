@@ -173,6 +173,50 @@ target turned `canvasView.turn` quarter turns from it.
 }
 
 /**
+The push-constant block of an effect pass's vertex stage (`UVK15`).
+
+The generated passes were written against OpenGL's images, whose first row
+is the bottom one: a pass reads its sources at `fragTexCoord` with y up. Every
+image an effect chain makes on Vulkan is kept in that orientation — the first
+row of memory is `fragTexCoord.y = 0` — so an intermediate pass writes its
+top row (framebuffer y = 0) at y = 0. The pass that composites onto the
+canvas's target writes the picture upright instead: its top row is
+`fragTexCoord.y = 1`.
+*/
+struct EffectView
+{
+    /// 1 for the pass that composites onto the target, else 0.
+    float upright = 0;
+}
+
+/// What an effect pass's vertex stage hands the generated fragment stage:
+/// the varyings raylib's default vertex shader emits, at the locations the
+/// generated passes read them from (`fragTexCoord` 0, `fragColor` 1).
+struct EffectVaryings
+{
+    @builtin(Builtin.position) vec4 position; ///
+    vec2 fragTexCoord; ///
+    vec4 fragColor;    /// the vertex colour: white, as raylib draws a texture
+}
+
+/**
+Corner `index` (0–3, a triangle strip) of the quad covering the viewport, for
+an effect pass: `fragTexCoord` spans 0–1 across it, y up on the upright pass
+($(LREF EffectView)).
+*/
+@vertex EffectVaryings effectVertex(@builtin(Builtin.vertexIndex) int index,
+    PushConstants!EffectView effectView)
+{
+    const cx = cast(float)(index % 2);
+    const cy = cast(float)(index / 2);
+    EffectVaryings v;
+    v.position = v4(cx * 2.0f - 1.0f, cy * 2.0f - 1.0f, 0.0f, 1.0f);
+    v.fragTexCoord = v2(cx, effectView.upright > 0.5f ? 1.0f - cy : cy);
+    v.fragColor = v4(1.0f, 1.0f, 1.0f, 1.0f);
+    return v;
+}
+
+/**
 The fraction of the pixel centred at a point that a region covers, from the
 point's signed distance `d` to the region's edge in pixels, negative inside:
 exact for an edge along either axis, which is every edge of a box.

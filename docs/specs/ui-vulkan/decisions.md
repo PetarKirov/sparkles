@@ -314,16 +314,21 @@ the device.
 
 ## Open questions
 
-**UVQ1: Effects.** Multi-pass effects (bloom, the CRT tube) need offscreen targets, multi-pass
-rendering and the shaders plan's Vulkan effect profile. Owner: this library,
-after the terminal ships; entry condition: shaders M6 and a consumer needing
-an effect on the native arm.
-
 **UVQ2: Graphite.** When does Graphite join as a second canvas, and is the
 `feat/ui-skia-graphite` work revived or redone? Owner: the window-system plan's
 MG; decided after this milestone.
 
 ## Resolved questions
+
+**UVQ1: Effects.** Multi-pass effects (bloom, the CRT tube) needed
+offscreen targets, multi-pass rendering and a Vulkan build of the effect
+shaders. _Resolved_ when hue's CRT moved to the native arm: `shaders/effects.d`
+is compiled for both Vulkan profiles beside its GLSL, the records carry the
+SPIR-V under their own backend keys, and the canvas runs a root bracket's
+passes through `EffectChain`, reading each pass's interface from its SPIR-V
+(revised `UVK15`). Nested brackets still degrade: a bracket inside another
+would need its draws placed relative to the bracket's own origin, and no
+consumer nests one.
 
 **UVQ3: A Vulkan 1.1 shader profile.** The shaders plan's only Vulkan
 profile emitted SPIR-V 1.6 for Vulkan 1.3; the reference phone runs Vulkan

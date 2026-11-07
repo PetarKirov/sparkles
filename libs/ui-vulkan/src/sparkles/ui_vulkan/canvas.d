@@ -30,9 +30,11 @@ import sparkles.profiling.zones : cpuZone;
 import sparkles.shaders : v2, v4, vec4;
 import sparkles.shaders.layout : Rule, writeLayout;
 import sparkles.ui.canvas : isCanvas;
+import sparkles.ui.effect : EffectImpl, EffectRegistry;
 import sparkles.ui.geometry : Size;
 import sparkles.ui.image : ImageHandle, ImageRegistry;
 import sparkles.ui.style : TypeStep;
+import sparkles.ui_vulkan.effect_chain : EffectChain;
 import sparkles.ui_vulkan.frame_buffers : BufferSlice, FrameBuffers;
 import sparkles.ui_vulkan.glyph_atlas : AtlasGlyph, AtlasOutcome, coverageKey, DirtyRegion, GlyphAtlas,
     GlyphKey, hasColourGlyphs;
@@ -257,6 +259,10 @@ struct VulkanCanvas(B)
     private DeviceFacts facts_;
     private CanvasConfig config_;
     private const(ImageRegistry)* registry_;
+    private const(EffectRegistry)* effectRegistry_;
+    private EffectChain!B effects_;
+    private bool effectsReady_;
+    private float effectTime_ = 0;
     private Pipelines pipelines_;
     private FrameArena!B arena_;
     private FrameBuffers!B buffers_;
@@ -379,8 +385,10 @@ struct VulkanCanvas(B)
             modernShaders ? vertex13 : vertex11, modernShaders ? fragment13 : fragment11);
         if (made.hasError)
             return made;
+        // Instances, staged uploads, and the effect passes' uniform blocks.
         enum usage = VkBufferUsageFlagBits.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT
-            | VkBufferUsageFlagBits.VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+            | VkBufferUsageFlagBits.VK_BUFFER_USAGE_TRANSFER_SRC_BIT
+            | VkBufferUsageFlagBits.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
         // What a buffer over the arena's ranges needs of their memory — the
         // types it can live in, its alignment, its rounded size — asked of
         // one such buffer before any memory is chosen: Adreno's refuse the
@@ -404,6 +412,16 @@ struct VulkanCanvas(B)
         if (made.hasError)
             return made;
         uploads_ = Uploads!B(buffers_, *memory_);
+        // The effect backend runs on the dynamic-rendering path only; without
+        // it every bracket paints unaffected (`UVK15`).
+        if (facts_.dynamicRendering)
+        {
+            made = EffectChain!B.create(effects_, *device_, *memory_, facts_, modernShaders,
+                (ref GpuImage image) @system { retire(image); });
+            if (made.hasError)
+                return made;
+            effectsReady_ = true;
+        }
         // What an unbound image reads: one transparent texel.
         return GpuImage.create(placeholder_, *device_, *memory_, VkFormat.VK_FORMAT_R8G8B8A8_UNORM,
             VkExtent2D(1, 1), VkImageUsageFlagBits.VK_IMAGE_USAGE_SAMPLED_BIT
@@ -452,6 +470,8 @@ struct VulkanCanvas(B)
                 p.used = 0;
             }
         frameSets_.clear();
+        if (effectsReady_)
+            effects_.beginFrame(slot);
         retireFramebuffersNotFor(target);
 
         if (!placeholderReady_ && !lost_)
@@ -544,60 +564,117 @@ struct VulkanCanvas(B)
             VkPipelineStageFlagBits.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
             VkAccessFlagBits.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
 
-        beginPass(format.value.renderPass, framebuffer);
-        device_.cmdBindPipeline(commands_, VkPipelineBindPoint.VK_PIPELINE_BIND_POINT_GRAPHICS,
-            format.value.pipeline);
         const drawn = drawnExtent(target_);
-        auto viewport = VkViewport(x: 0, y: 0, width: drawn.width, height: drawn.height,
-            minDepth: 0, maxDepth: 1);
-        device_.cmdSetViewport(commands_, 0, 1, &viewport);
         ubyte[canvasViewBytes] push;
         const display = displayExtent(target_);
         writeLayout!(CanvasView, Rule.std430)(CanvasView(
             extent: v2(display.width, display.height),
             srgb: isSrgb(target_.format) ? 1 : 0, turn: target_.turn % 4), push[]);
-        device_.cmdPushConstants(commands_, pipelines_.layout, canvasViewStages, 0, push.length,
-            push.ptr);
-        if (instances.length)
+
+        // The runs `[lo, hi)`, in a pass already begun: the pipeline, the
+        // view and the records bound first, so a pass resumed after an
+        // effect starts from nothing.
+        void drawRuns(size_t lo, size_t hi)
         {
-            auto buffer = vertices.buffer;
-            auto offset = vertices.offset;
-            device_.cmdBindVertexBuffers(commands_, 0, 1, &buffer, &offset);
+            if (lo >= hi)
+                return;
+            device_.cmdBindPipeline(commands_, VkPipelineBindPoint.VK_PIPELINE_BIND_POINT_GRAPHICS,
+                format.value.pipeline);
+            auto viewport = VkViewport(x: 0, y: 0, width: drawn.width, height: drawn.height,
+                minDepth: 0, maxDepth: 1);
+            device_.cmdSetViewport(commands_, 0, 1, &viewport);
+            device_.cmdPushConstants(commands_, pipelines_.layout, canvasViewStages, 0, push.length,
+                push.ptr);
+            if (instances.length)
+            {
+                auto buffer = vertices.buffer;
+                auto offset = vertices.offset;
+                device_.cmdBindVertexBuffers(commands_, 0, 1, &buffer, &offset);
+            }
+            // The source is weighed by the blend constants: one paints, as
+            // premultiplied source over destination (`UVK6`); zero erases
+            // (`UVK41`). Set only where a run changes it.
+            bool erasing = true;
+            bool directBound;
+            foreach (i; lo .. hi)
+            {
+                const run = painter_.runs[i];
+                const direct = (run.images.coveragePage & directCoverageFlag) != 0;
+                if (direct != directBound)
+                {
+                    auto pipeline = direct ? coveragePipelines_.forFormat(*device_, target_.format).value.pipeline
+                        : format.value.pipeline;
+                    device_.cmdBindPipeline(commands_, VkPipelineBindPoint.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+                    if (direct)
+                        device_.cmdPushConstants(commands_, coveragePipelines_.layout, canvasViewStages,
+                            0, push.length, push.ptr);
+                    directBound = direct;
+                }
+                if (i == lo || run.erase != erasing)
+                {
+                    erasing = run.erase;
+                    const float[4] weights = erasing ? [0.0f, 0, 0, 0] : [1.0f, 1, 1, 1];
+                    device_.cmdSetBlendConstants(commands_, weights.ptr);
+                }
+                const box = turnedBox(run.scissor, int(display.width), int(display.height), target_.turn);
+                auto scissor = VkRect2D(VkOffset2D(box.x, box.y), VkExtent2D(box.w, box.h));
+                device_.cmdSetScissor(commands_, 0, 1, &scissor);
+                auto set = sets[][i];
+                device_.cmdBindDescriptorSets(commands_,
+                    VkPipelineBindPoint.VK_PIPELINE_BIND_POINT_GRAPHICS,
+                    direct ? coveragePipelines_.layout : pipelines_.layout, 0, 1,
+                    &set, 0, null);
+                device_.cmdDraw(commands_, 4, run.count, 0, run.first);
+            }
         }
-        // The source is weighed by the blend constants: one paints, as
-        // premultiplied source over destination (`UVK6`); zero erases
-        // (`UVK41`). Set only where a run changes it.
-        bool erasing = true;
-        bool directBound;
-        foreach (i, ref run; painter_.runs)
+
+        // The root's effect brackets (`UVK15`). Each one an effect can run
+        // over is drawn into the chain's scratch image instead, the passes
+        // run, and the last composites onto the target; the target's pass
+        // resumes after it. The rest — no artifact for this device, a
+        // device without dynamic rendering, a turned or sRGB target the
+        // passes were not written for — draw where they are, and count.
+        const canRun = effectsReady_ && effectRegistry_ !is null && facts_.dynamicRendering
+            && target_.turn % 4 == 0 && !isSrgb(target_.format);
+        size_t next;
+        beginPass(format.value.renderPass, framebuffer);
+        foreach (ref bracket; painter_.brackets)
         {
-            const direct = (run.images.coveragePage & directCoverageFlag) != 0;
-            if (direct != directBound)
+            const(EffectImpl)* impl;
+            const record = effectRegistry_ is null ? null : effectRegistry_.lookup(bracket.id);
+            if (canRun && bracket.rect.w > 0 && bracket.rect.h > 0)
+                impl = effects_.prepare(record, target_.format);
+            if (impl is null)
             {
-                auto pipeline = direct ? coveragePipelines_.forFormat(*device_, target_.format).value.pipeline
-                    : format.value.pipeline;
-                device_.cmdBindPipeline(commands_, VkPipelineBindPoint.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-                if (direct)
-                    device_.cmdPushConstants(commands_, coveragePipelines_.layout, canvasViewStages,
-                        0, push.length, push.ptr);
-                directBound = direct;
+                painter_.report.count(Degradation.effect);
+                continue;
             }
-            if (i == 0 || run.erase != erasing)
+            auto scratch = effects_.scratch(target_.format, drawn);
+            if (scratch.hasError)
             {
-                erasing = run.erase;
-                const float[4] weights = erasing ? [0.0f, 0, 0, 0] : [1.0f, 1, 1, 1];
-                device_.cmdSetBlendConstants(commands_, weights.ptr);
+                endPass();
+                return fail!FrameReport(scratch.error);
             }
-            const box = turnedBox(run.scissor, int(display.width), int(display.height), target_.turn);
-            auto scissor = VkRect2D(VkOffset2D(box.x, box.y), VkExtent2D(box.w, box.h));
-            device_.cmdSetScissor(commands_, 0, 1, &scissor);
-            auto set = sets[][i];
-            device_.cmdBindDescriptorSets(commands_,
-                VkPipelineBindPoint.VK_PIPELINE_BIND_POINT_GRAPHICS,
-                direct ? coveragePipelines_.layout : pipelines_.layout, 0, 1,
-                &set, 0, null);
-            device_.cmdDraw(commands_, 4, run.count, 0, run.first);
+            drawRuns(next, bracket.firstRun);
+            endPass();
+            with (VkPipelineStageFlagBits)
+                transition(*device_, commands_, scratch.value.handle,
+                    VkImageLayout.VK_IMAGE_LAYOUT_UNDEFINED,
+                    VkImageLayout.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                    VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0,
+                    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                    VkAccessFlagBits.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+            beginRenderingOn(scratch.value.view, drawn, clear: true);
+            drawRuns(bracket.firstRun, bracket.endRun);
+            endPass();
+            const r = effects_.record(commands_, slot_, record, impl, buffers_, bracket.rect,
+                bracket.cells, target_.image, target_.view, target_.format, drawn, effectTime_);
+            if (r < 0)
+                return fail!FrameReport(r);
+            beginRenderingOn(target_.view, drawn, clear: false);
+            next = bracket.endRun;
         }
+        drawRuns(next, painter_.runs.length);
         endPass();
 
         auto layout = VkImageLayout.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
@@ -1530,6 +1607,8 @@ struct VulkanCanvas(B)
             return;
         coveragePipelines_.destroy(*device_);
         coveragePipelinesReady_ = false;
+        effects_.destroy();
+        effectsReady_ = false;
         foreach (ref image; geometryImages_[]) image.destroy(*device_, *memory_);
         geometryImages_.clear();
         foreach (ref r; retired_[])
@@ -1580,6 +1659,27 @@ struct VulkanCanvas(B)
     /// The registry bound now, so a component that binds its own for part
     /// of a frame can put back the one it found (`UVX11`).
     const(ImageRegistry)* boundImages() const @safe pure nothrow @nogc => registry_;
+
+    /**
+    Binds the effect registry a bracket's id resolves against (`EFX13`), which
+    must outlive the canvas. A bracket at the frame's root whose record
+    carries passes for this device's Vulkan version is run (`UVK15`); one
+    without, or with no registry bound, paints its contents unaffected.
+    */
+    void effects(const(EffectRegistry)* registry) @safe pure nothrow @nogc
+    {
+        effectRegistry_ = registry;
+    }
+
+    /// Sets the clock the passes read as `uTime`, in seconds: the host calls
+    /// it once a frame, or pins it for a reproducible capture (`DBG1`).
+    void effectClock(float seconds) @safe pure nothrow @nogc
+    {
+        effectTime_ = seconds;
+    }
+
+    /// How many effect-pass pipelines the canvas has made.
+    size_t effectPrograms() const @safe pure nothrow @nogc => effects_.programCount;
 
     /// Whether the device was lost (`UVK33`).
     bool lost() const => lost_;
@@ -2161,6 +2261,27 @@ struct VulkanCanvas(B)
             pClearValues: &clear,
         ));
         device_.cmdBeginRenderPass(commands_, &info, VkSubpassContents.VK_SUBPASS_CONTENTS_INLINE);
+    }
+
+    // A dynamic rendering of `view` over the frame's drawn extent: cleared to
+    // transparent, or loading what is there.
+    private void beginRenderingOn(VkImageView view, VkExtent2D extent, bool clear) @system
+    {
+        VkClearValue transparent;
+        auto colour = vkInfo(VkRenderingAttachmentInfo(
+            imageView: view,
+            imageLayout: VkImageLayout.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            loadOp: clear ? VkAttachmentLoadOp.VK_ATTACHMENT_LOAD_OP_CLEAR
+                : VkAttachmentLoadOp.VK_ATTACHMENT_LOAD_OP_LOAD,
+            storeOp: VkAttachmentStoreOp.VK_ATTACHMENT_STORE_OP_STORE,
+            clearValue: transparent,
+        ));
+        auto rendering = vkInfo(VkRenderingInfo(renderArea: VkRect2D(VkOffset2D(0, 0), extent),
+            layerCount: 1, colorAttachmentCount: 1, pColorAttachments: &colour));
+        if (device_.cmdBeginRendering !is null)
+            device_.cmdBeginRendering(commands_, &rendering);
+        else
+            device_.cmdBeginRenderingKHR(commands_, &rendering);
     }
 
     private void endPass() @system

@@ -21,6 +21,10 @@ dependency "sparkles:font" path="../.."
 // Named CPU zones in the frame: shaping, glyph rasterization, atlas upload.
 dependency "sparkles:profiling" path="../.."
 subConfiguration "sparkles:font" "engine"
+// The effects' GPU half: their passes as SPIR-V, which the effect chain
+// runs (`UVK15`). Generating it needs the same dcompute-enabled LDC as the
+// canvas's own shaders below.
+subConfiguration "sparkles:ui" "gpu-effects"
 dependency "sparkles:shaders" path="../.."
 dependency "sparkles:ui" path="../.."
 dependency "sparkles:vulkan" path="../.."
