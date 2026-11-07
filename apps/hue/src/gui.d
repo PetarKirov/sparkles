@@ -142,15 +142,13 @@ import sparkles.ui_app.gui_options : GuiOptions, NativeOptions;
 import sparkles.ui_app.host : PointerUnit, RunConfig;
 import sparkles.ui_app.run : run, RunOutcome;
 // The arm hue draws through (`gui_surface`): the raylib window, or the
-// native Vulkan host, which has no CRT yet.
+// native Vulkan host. The CRT is the same effect record on both.
 import gui_surface : GuiCanvas, GuiSurface;
+import sparkles.ui.crt : CrtEffect, CrtUiContext, crtUiContextOf;
 version (HueGuiVulkan)
-{
-    import gui_surface : CrtEffect, CrtUiContext, crtUiContextOf;
     import sparkles.ui_app.native_loop : NativeCanvas;
-}
 else
-    import sparkles.ui_raylib : CrtEffect, CrtUiContext, crtUiContextOf, traceLevelTag;
+    import sparkles.ui_raylib : traceLevelTag;
 
 
 // Live D types (`PRJ12`-`PRJ16`): the `twoslash-extract --serve` oracle beside
@@ -4650,11 +4648,7 @@ int runGui(GuiArgs guiArgs) @system
         static if (windowed)
         {
             version (HueGuiVulkan)
-            {
                 surface = GuiSurface((() @trusted => &h)());
-                if (crt.asked)
-                    surface.noteCrtAsked();
-            }
             else
                 surface = GuiSurface(&(h.window()), h.canvas.fonts, h.canvas.fx,
                     (() @trusted => &buf)());
