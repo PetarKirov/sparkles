@@ -132,6 +132,15 @@ struct RunConfig
     */
     TouchGestures touchGestures = TouchGestures.none;
     /**
+    GPU target, with `touchGestures` `all`: a finger that has long-pressed
+    becomes the left button until it lifts — pressed where the long-press
+    began, dragged as it moves — so a long-press starts a selection and the
+    drag extends it, as on a target that reports the first finger as its
+    mouse. Off by default: an application that reads the raw contacts
+    (`touches`) for its own selection has no use for it.
+    */
+    bool longPressDrags;
+    /**
     GPU target: deliver scrolls with their exact, fractional distance
     (`WheelEvent.fdx`/`fdy`) every frame they move — a wheel's, and a touch
     drag's on the axis it set off along — for an application that scrolls
