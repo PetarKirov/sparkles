@@ -336,7 +336,8 @@ copy, its line table and the placement of its cells live in one heap block,
 the document's **core**, which does not move when the document does. A
 document re-parsed after an edit shares its unchanged cells with the one it
 was made from ([editing §10.1](./editing.md#10-1-shared-storage)). `SdlNode` and
-`SdlAttributeView` are a core reference and a cell index; they, `SdlScalar` and
+`SdlAttributeView` are the address of a cell and of the run placing it, which
+reaches the core; they, `SdlScalar` and
 the ranges are small, copyable borrowed views whose lifetime cannot exceed the
 document under `-preview=dip1000`. `root()` is `scope return`: its view is bound to the
 document object itself, so a consumer must keep the document alive, and in

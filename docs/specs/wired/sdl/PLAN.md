@@ -421,32 +421,37 @@ and the editor hands over the rendered text ([performance SDP8](./performance.md
 | SDE16 across allocator types; retention bounded            | `sdl.reader.reparseEdited.statefulAllocatorLocalizes` (kept cells copied); `.retentionIsBounded` (600 edits, held blocks under 4 full parses, the fallback seen); `sdl.open_document.statefulAllocator` |
 
 Retired instructions per input byte (`--perf`, `-b bench`, LDC 1.43). The `walk`
-rows are new; their before is the same rows run on this branch's parent.
+rows are new; their before is the same rows run on this branch's parent. The
+first after column shares cells but re-resolves each read; the second is the
+shipped one, whose views keep their run.
 
-| Dataset       | Row              | Before | After |
-| ------------- | ---------------- | -----: | ----: |
-| `dub_recipes` | parse            |  192.1 | 188.1 |
-| `dub_recipes` | decode           |  369.9 | 366.3 |
-| `dub_recipes` | edit             |   35.2 |   7.9 |
-| `dub_recipes` | commit           |   41.0 |  34.2 |
-| `dub_recipes` | commit-unchanged |   0.87 |  0.81 |
-| `dub_recipes` | encode           |   39.0 |  39.9 |
-| `dub_recipes` | walk             |   1.75 |  3.05 |
-| `dub_recipes` | walk-edited      |   1.76 |  17.2 |
-| `deep_wide`   | parse            |  150.0 | 148.6 |
-| `deep_wide`   | edit             |   26.1 |  10.9 |
-| `deep_wide`   | commit           |   16.9 |   2.0 |
-| `deep_wide`   | commit-unchanged |   0.17 |  0.17 |
-| `deep_wide`   | encode           |   80.7 |  81.1 |
-| `deep_wide`   | walk             |   0.58 |  1.40 |
-| `deep_wide`   | walk-edited      |   0.58 |  10.2 |
+| Dataset       | Row              | Before | Shared | After |
+| ------------- | ---------------- | -----: | -----: | ----: |
+| `dub_recipes` | parse            |  192.1 |  188.1 | 188.0 |
+| `dub_recipes` | decode           |  369.9 |  366.3 | 365.7 |
+| `dub_recipes` | edit             |   35.2 |    7.9 |   8.0 |
+| `dub_recipes` | commit           |   41.0 |   34.2 |  35.8 |
+| `dub_recipes` | commit-unchanged |   0.87 |   0.81 |  0.80 |
+| `dub_recipes` | encode           |   39.0 |   39.9 |  39.1 |
+| `dub_recipes` | walk             |   1.75 |   3.05 |  2.01 |
+| `dub_recipes` | walk-edited      |   1.76 |   17.2 |  2.05 |
+| `deep_wide`   | parse            |  150.0 |  148.6 | 148.4 |
+| `deep_wide`   | edit             |   26.1 |   10.9 |  11.0 |
+| `deep_wide`   | commit           |   16.9 |    2.0 |   2.1 |
+| `deep_wide`   | commit-unchanged |   0.17 |   0.17 |  0.17 |
+| `deep_wide`   | encode           |   80.7 |   81.1 |  80.6 |
+| `deep_wide`   | walk             |   0.58 |   1.40 |  0.63 |
+| `deep_wide`   | walk-edited      |   0.58 |   10.2 |  0.63 |
 
-Open, awaiting a decision: the `walk` rows regress past the SDP2 gate. Reading a
-flat document through the views costs 1.3 and 0.8 more instructions per byte
-(+74% and +141% of a row that does nothing else), each view choosing between the
-flat and the shared path; typed decode, the reader that does work per value,
-moved −1%. A shared document's reads pay a binary search for the run and cost
-ten to seventeen times a flat one's.
+A view is now its run and its cell, and a child range steps inside its run
+by pointer arithmetic, so a shared document reads as fast as a flat one. What
+`walk` still pays over the parent's arrays is a few instructions per element:
+a child step reads the child's subtree size and checks the run's end, where a
+child-index window was one load, and a span read adds the run's shift. On
+`deep_wide`, whose nodes carry many values, that is +9%; recipes have few
+values per node, so it is +15% there. Removing it would take a second view
+type for flat documents, which every consumer would have to be generic over,
+or the child-index arena back, which an edit cannot share.
 
 ## S22 follow-ups: 2026-11-07
 

@@ -645,7 +645,12 @@ private struct Piece
     bool tail; // after the region: shifted by the edits' length change
 }
 
+/// The bytes `name` takes in a pool.
+private size_t spelling(scope const SdlQualifiedName name) @safe pure nothrow @nogc
+    => name.namespace_.length + name.localName.length;
+
 /// Appends `[from, to)` of `runs`' logical cells to `pieces`, one piece per
+
 /// run it crosses, each copied when shorter than `absorbBelow` or `copy`.
 private void addPieces(ref UniqueBuffer!Piece pieces, scope const(SdlRun)[] runs,
     size_t from, size_t to, bool tail, bool copy = false) @safe pure nothrow @nogc
@@ -796,18 +801,24 @@ private bool spliceRegion(SdlParserConfig config, Allocator)(
                 copiedNodes++;
                 copiedValues += cell.valueCount;
                 copiedAttributes += cell.attributeCount;
-                size_t bytes;
+                size_t bytes = spelling(cell.qualifiedName);
                 foreach (v; 0 .. cell.valueCount)
                     bytes += old.valueAt(cell.valueStart + v).value.borrowedBytes.length;
                 foreach (t; 0 .. cell.attributeCount)
-                    bytes += old.attributeAt(cell.attributeStart + t).value.borrowedBytes.length;
+                {
+                    const attribute = old.attributeAt(cell.attributeStart + t);
+                    bytes += spelling(attribute.qualifiedName)
+                        + attribute.value.borrowedBytes.length;
+                }
                 (k < regionPiece ? headPool : tailPool) += bytes;
             }
 
-    // The new block: its pool holds the copies' payloads, then the region's,
-    // which never exceed the region's text.
+    // The new block's pool holds every name and payload its cells have
+    // (§10.1): the copies', then the region's payloads and its names, each
+    // no longer than the region's text.
     size_t poolBytes = headPool;
-    if (!checkedAdd(poolBytes, tailPool) || !checkedAdd(poolBytes, newLexEnd - regionStart))
+    if (!checkedAdd(poolBytes, tailPool) || !checkedAdd(poolBytes, newLexEnd - regionStart)
+        || !checkedAdd(poolBytes, newLexEnd - regionStart))
         return false;
     const guess = (newRegionEnd - regionStart) / 32 + 8;
     if (!document.acquire(copiedNodes + guess, copiedValues + guess,
@@ -825,6 +836,17 @@ private bool spliceRegion(SdlParserConfig config, Allocator)(
     SdlSpan shifted(SdlSpan span)
         => span.isValid ? SdlSpan(shift(span.startOffset), shift(span.endOffset)) : span;
     size_t poolAt;
+    SdlQualifiedName pooled(SdlQualifiedName name)
+    {
+        const(char)[] put(scope const(char)[] text)
+        {
+            pool[poolAt .. poolAt + text.length] = cast(const(ubyte)[]) text[];
+            const at = poolAt;
+            poolAt += text.length;
+            return (() @trusted => (cast(const(char)*) pool.ptr + at)[0 .. text.length])();
+        }
+        return SdlQualifiedName(put(name.namespace_), put(name.localName));
+    }
     SdlScalar rebased(SdlScalar scalar)
     {
         scalar.setSpan(shifted(scalar.span));
@@ -845,6 +867,7 @@ private bool spliceRegion(SdlParserConfig config, Allocator)(
         cell.openBrace = shifted(cell.openBrace);
         cell.closeBrace = shifted(cell.closeBrace);
         cell.terminator = shifted(cell.terminator);
+        cell.qualifiedName = pooled(cell.qualifiedName);
         foreach (v; 0 .. cell.valueCount)
             core.flatValues[counts.values + v]
                 = SdlValueCell(rebased(old.valueAt(cell.valueStart + v).value));
@@ -853,6 +876,7 @@ private bool spliceRegion(SdlParserConfig config, Allocator)(
             SdlAttributeCell attribute = old.attributeAt(cell.attributeStart + t);
             attribute.nameSpan = shifted(attribute.nameSpan);
             attribute.span = shifted(attribute.span);
+            attribute.qualifiedName = pooled(attribute.qualifiedName);
             attribute.value = rebased(attribute.value);
             core.flatAttributes[counts.attributes + t] = attribute;
         }
@@ -886,6 +910,7 @@ private bool spliceRegion(SdlParserConfig config, Allocator)(
             }
     assert(ancestorSlots.length == bounds.chain.length, "an ancestor was not copied");
     const regionFirst = counts.nodes;
+    const regionAttributes = counts.attributes;
 
     poolAt = headPool + tailPool;
     counts.poolEnd = poolAt;
@@ -920,10 +945,18 @@ private bool spliceRegion(SdlParserConfig config, Allocator)(
         if (tail != newRegionEnd)
             return false;
     }
+    // The region's names slice the text the caller lent; its block keeps
+    // copies, after the region's payloads.
+    poolAt = counts.poolEnd;
+    foreach (k; regionFirst .. counts.nodes)
+        core.flatNodes[k].qualifiedName = pooled(core.flatNodes[k].qualifiedName);
+    foreach (k; regionAttributes .. counts.attributes)
+        core.flatAttributes[k].qualifiedName = pooled(core.flatAttributes[k].qualifiedName);
     const regionNodes = counts.nodes - regionFirst;
     foreach (slot; ancestorSlots[])
         core.flatNodes[slot].subtreeSize += regionNodes - (b - a);
-    const regionPool = counts.poolEnd;
+    const regionPool = poolAt;
+
 
     size_t tailNodes, tailValues, tailAttributes;
     foreach (piece; pieces[regionPiece .. $])
