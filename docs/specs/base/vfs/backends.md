@@ -1,5 +1,5 @@
 ---
-status: draft
+status: accepted
 owner: sparkles:event-horizon
 reviewed: 2026-10-05
 ---

@@ -1,5 +1,5 @@
 ---
-status: draft
+status: accepted
 owner: sparkles:event-horizon
 reviewed: 2026-10-05
 ---
@@ -405,12 +405,19 @@ using the same compile-time rights as every other operation
 **VFO6: `Stat`.** `statAt` and `File.stat` **must** return the entry's kind
 (`regular`, `directory`, `symlink` or `other`), its executable bit, its size
 and its device. They **must** fill the modification time only when the mask
-requests it. Under `version (Posix)` a `Stat` also carries the permission
-bits. On Windows the executable bit is always false.
+requests it, and likewise the change time and the file's identity on its
+device: the inode on POSIX, the file index on Windows. Under
+`version (Posix)` a `Stat` also carries the permission bits. On Windows the
+executable bit is always false.
 
 _Rationale:_ Hashing a tree by content needs the kind and executable bit of
 every entry, and only some uses need a time; the permission bits let a caller
-recreate a file with the mode it had ([`VFO9`](#vfo9-atomic-write)).
+recreate a file with the mode it had ([`VFO9`](#vfo9-atomic-write)). A digest
+cache decides whether to rehash a file from its identity, size and both times,
+as git's index does; the build graph's does
+([BGK5](../../build-primitives/build-graph/SPEC.md#_5-keys-and-the-input-manifest)).
+Invariant 6 still holds: such a cache decides whether to read a file again,
+never which object a handle names.
 
 <a id="vfo7-listing"></a>
 **VFO7: Listing.** `list` **must** read entries through a listing independent
