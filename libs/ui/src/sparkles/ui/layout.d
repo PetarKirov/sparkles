@@ -36,7 +36,7 @@ import sparkles.ui.geometry : Constraints, Insets, Point, Rect, Size, SizeSpec;
 import sparkles.ui.image : cellPixelsOf, imageCells;
 import sparkles.ui.style : BorderStyle, TextStyle;
 import sparkles.ui.widget : Alignment, Visibility, Widget, WidgetKind, WidgetTree;
-import sparkles.ui.wrap : TextSpan, TextWrap, wrapLines, wrapSpans, spanLineWidth,
+import sparkles.ui.wrap : TextSpan, TextWrap, wrapLines, wrapSpans, sharedWrapSpans, spanLineWidth,
     clipSpanLines, sameSpanBrush, spanPaintAdvance, resolvedSpanStyle;
 
 @safe:
@@ -54,7 +54,7 @@ struct Frame
 
     /// Every `rich` node's selected styled projection, including mandatory
     /// breaks with `TextWrap.none`, retained independently of visible clipping.
-    TextSpan[][] spanLines;
+    const(TextSpan[])[] spanLines;
 
     /// For a text or rich node: the rows one of its lines occupies. A run in a
     /// face taller than the cell (a `FontRole.ui` title, design-system
@@ -62,7 +62,7 @@ struct Frame
     int lineRows = 1;
     /// Committed visible projection after frame fitting. Painting and hits
     /// share these spans; `spanLines` retains logical selection/source metadata.
-    TextSpan[][] paintSpanLines;
+    const(TextSpan[])[] paintSpanLines;
 }
 
 /// Default cell-profile measurement. Backend cell-to-pixel metrics do not
@@ -211,7 +211,7 @@ private size_t spanGroupEnd(scope const(TextSpan)[] spans, size_t start)
 
 // A target rounds a complete brush run once, not each isolated glyph. Prefix
 // differences assign that exact extent to whole clusters for paint and hits.
-private int commitSpanMetrics(TM)(ref TM tm, TextSpan[] spans, in TextStyle nodeStyle)
+private int commitSpanMetrics(TM, Row)(ref TM tm, Row spans, in TextStyle nodeStyle)
 {
     import std.exception : enforce;
     static if (!isStyledTextMeasure!TM)
@@ -294,10 +294,14 @@ private int commitSpanMetrics(TM)(ref TM tm, TextSpan[] spans, in TextStyle node
     }
 }
 
-private TextSpan[][] fitSpanMetrics(TM)(ref TM tm, TextSpan[][] lines,
+private const(TextSpan[])[] fitSpanMetrics(TM)(ref TM tm, const(TextSpan[])[] lines,
     size_t maximum, int hangIndent, in TextStyle nodeStyle, bool clip)
 {
     import sparkles.base.text.wrap_plan : ProvenanceKind;
+    // Cells commit nothing, so an unclipped row paints as it was laid out.
+    static if (!isStyledTextMeasure!TM)
+        if (!clip)
+            return lines;
     auto output = new TextSpan[][](lines.length);
     foreach (li, line; lines)
     {
@@ -587,9 +591,25 @@ if (isTextMeasure!TM)
                     }
                 // Tables/source views already committed these projections.
                 // Replanning their emitted bytes would destroy source relations.
-                frames[idx].spanLines = retained ? [node.spans.dup]
-                    : wrapSpans(node.spans, int.max, 0, TextWrap.none);
-                foreach (li, line; frames[idx].spanLines)
+                // A styled measurer commits advances into its rows, so they
+                // are its own; cells only read them, so they may be the wrap
+                // cache's.
+                static if (isStyledTextMeasure!TM)
+                {
+                    auto committed = retained ? [node.spans.dup]
+                        : wrapSpans(node.spans, int.max, 0, TextWrap.none);
+                    frames[idx].spanLines = committed;
+                }
+                else
+                {
+                    const(TextSpan[])[] committed;
+                    if (retained)
+                        committed = [node.spans.dup];
+                    else
+                        committed = sharedWrapSpans(node.spans, int.max, 0, TextWrap.none);
+                    frames[idx].spanLines = committed;
+                }
+                foreach (li, line; committed)
                 {
                     const width = commitSpanMetrics(tm, line, node.textStyle)
                         + (li ? node.hangIndent : 0);
@@ -722,7 +742,7 @@ if (isTextMeasure!TM)
                                     => measureWidth(tm, s, st), node.textStyle, monotoneMeasurePrefixes!TM);
                         }
                         else
-                            frames[idx].spanLines = wrapSpans(node.spans, avail,
+                            frames[idx].spanLines = sharedWrapSpans(node.spans, avail,
                                 node.hangIndent, node.wrap, node.whitespace);
                     }
                     content = cast(int) frames[idx].spanLines.length;
@@ -1707,4 +1727,28 @@ version (unittest)
     auto frames = layout(tree);
     assert(frames[t].rect.height == 2);
     assert(frames[t].spanLines.length == 2);
+}
+
+@("ui.layout.cellRowsAreSharedNotCopied")
+@safe unittest
+{
+    import sparkles.ui.widget : Builder, TextSpan;
+
+    // A code line: unwrapped, scrolled sideways rather than clipped. Measuring
+    // in cells reads its rows and never commits into them, so laying the same
+    // spans out again (a gutter pass, then the final one; every resize) reuses
+    // the planned rows, and painting reuses the laid-out ones.
+    auto b = Builder();
+    Widget line = Widget(kind: WidgetKind.rich, wrap: TextWrap.none,
+        spans: [TextSpan("int x = 1;", srcStart: 0, srcEnd: 10)]);
+    line.scrollsX = true;
+    const t = b.add(line);
+    const tree = b.finish(t);
+
+    const first = layout(tree, Constraints(maxW: 40));
+    const second = layout(tree, Constraints(maxW: 7));
+    assert(first[t].spanLines.length == 1);
+    assert(first[t].spanLines[0] is second[t].spanLines[0], "planned once");
+    assert(first[t].paintSpanLines[0] is first[t].spanLines[0], "painted as laid out");
+    assert(spanLineWidth(second[t].paintSpanLines[0]) == 10, "unclipped, so whole");
 }
