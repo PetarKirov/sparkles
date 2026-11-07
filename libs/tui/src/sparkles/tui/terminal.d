@@ -17,7 +17,11 @@ future concern.
 +/
 module sparkles.tui.terminal;
 
-version (Posix):
+// Android: an application has no terminal, and bionic's termios calls are
+// header inlines druntime does not declare (`sparkles.core_cli.key_input`
+// makes the same cut), so the module is empty there.
+version (Android) {} else version (Posix) version = RawTerminal;
+version (RawTerminal):
 
 import core.stdc.stdlib : getenv;
 import core.stdc.string : strlen;

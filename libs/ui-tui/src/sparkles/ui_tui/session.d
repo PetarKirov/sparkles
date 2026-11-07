@@ -30,6 +30,11 @@ out deliberately rather than by omission.
 */
 module sparkles.ui_tui.session;
 
+// The terminal it opens is `sparkles.tui.terminal`'s, which an Android
+// application has none of.
+version (Android) {} else version = RawTerminal;
+version (RawTerminal):
+
 import sparkles.tui : Grid, ImagePlacement, PosixEvents, Terminal, TerminalOptions;
 import sparkles.base.term_caps : detectTermCaps, ImageProtocol, TermCaps, TermSize;
 import sparkles.base.term_replies : applyReplies, available, ModeReply, TerminalReplies;

@@ -14,7 +14,11 @@ Posix-only (it drives the Posix backend + reader).
 +/
 module sparkles.tui.app;
 
-version (Posix):
+// Android: an application has no terminal, and bionic's termios calls are
+// header inlines druntime does not declare (`sparkles.core_cli.key_input`
+// makes the same cut), so the module is empty there.
+version (Android) {} else version (Posix) version = RawTerminal;
+version (RawTerminal):
 
 import sparkles.base.term_caps : TermSize;
 import sparkles.tui.cell : Grid;
