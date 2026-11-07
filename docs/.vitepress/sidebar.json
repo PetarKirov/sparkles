@@ -401,6 +401,10 @@
                 "link": "/libs/base/how-to/initialize-statics"
               },
               {
+                "text": "Run a GPU program on its drivers' glibc",
+                "link": "/libs/base/how-to/run-on-the-drivers-glibc"
+              },
+              {
                 "text": "Synchronize threads and fibers",
                 "link": "/libs/base/how-to/synchronize-threads-and-fibers"
               },
