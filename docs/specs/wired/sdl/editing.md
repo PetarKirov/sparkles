@@ -71,6 +71,7 @@ canonical writer stays the way to produce a document from a typed value.
 | SDE14 | An incremental re-parse produces exactly the document a full re-parse would                  |
 | SDE15 | An edit the incremental reader cannot localize falls back to a full re-parse                 |
 | SDE16 | A stateful allocator takes the same incremental path as a stateless one                      |
+| SDE17 | A write or commit with no edits parses nothing and keeps the document it has                 |
 | SDS1  | A selector's path is a DQL path, and a malformed one is rejected at its offset               |
 | SDS2  | A path selects nodes or attributes by name-and-index child steps, in document order          |
 | SDS3  | A filter is a DQL expression evaluated with each selected node as its subject                |
@@ -737,7 +738,21 @@ through it, and the region path is seen to size its arrays once where the
 full parse grew them. _Violation:_ a stateful allocator that takes the full
 parse where a stateless one localizes, or a block it never gets back.
 
+**SDE17 — No edits, no parse.** An edit set with no edits writes the host's
+own bytes, whose parse is the document the editor borrows, so nothing is
+re-parsed. `write` copies the host to the writer and allocates nothing
+through the caller's allocator; `commit` keeps the host, the document and
+every handle as they are, and spends the editor as any commit does. The
+reader, given no edits over the old document's own text and content, copies
+the old document's cells without lexing a byte. _Oracle:_ a write test and an
+embedded-recipe write that count no allocation; an open-document test that
+commits an empty editor through a counting allocator and finds the same
+document core, host and handle cells and no allocation; a reader test that
+compares the copy with the full parse. _Violation:_ a parse, an allocation,
+a new document, or a handle that moves after a commit with no edits.
+
 The `sdl.commit` benchmark row
 ([performance SDP1](./performance.md#1-measurement)) commits one small edit
 at a time to an open document and reports retired instructions per input
-byte, so the gain shows against the full re-parse it replaces.
+byte, so the gain shows against the full re-parse it replaces; the
+`sdl.commit-unchanged` row commits editors with no edits (SDE17).

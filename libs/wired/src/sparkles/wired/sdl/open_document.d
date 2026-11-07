@@ -160,7 +160,9 @@ struct SdlOpenDocument(SdlParserConfig config = sdlFull, Allocator = Mallocator)
     and carries every handle over (SDE11) or retires it (SDE12). On failure
     — the editor failed, belongs to another document, or its result does not
     re-parse — nothing changes (SDE13). Either way the editor is spent: it
-    borrowed the document this replaces. */
+    borrowed the document this replaces. An editor with no edits replaces
+    nothing: the host, the document and every handle stay as they are, and
+    nothing is parsed (§10). */
     SdlExpected!void commit(ref SdlEditor!(config, Allocator) editor)
     {
         if (!_document.valid || !editor.borrows((() @trusted => _document.core)()))
@@ -183,6 +185,12 @@ struct SdlOpenDocument(SdlParserConfig config = sdlFull, Allocator = Mallocator)
         auto rendered = editor.render(allocator, output, edits, parsed);
         if (rendered.hasError)
             return rendered;
+        if (edits.length == 0)
+        {
+            // The output is the host, and the document is its parse.
+            editor.retire();
+            return sdlOk();
+        }
 
         carryHandles(editor.replaced, edits[], parsed.document);
         editor.retire();
@@ -403,6 +411,32 @@ version (unittest)
     assert(open.host == "a 10\nb 20\n");
     assert(open.node(a).value.byValue.front.integer == 10);
     assert(open.node(b).value.byValue.front.integer == 20);
+}
+
+@("sdl.open_document.unchangedCommitParsesNothing")
+@system unittest
+{
+    import sparkles.wired.sdl.test_corpus : AllocationCounts, CountingAllocator;
+
+    alias Counting = CountingAllocator!();
+    AllocationCounts counts;
+    auto open = SdlOpenDocument!(sdlFull, Counting)(Counting(&counts));
+    enum host = "a 1\nb {\n    c 2\n}\n";
+    assert(!open.open(host).hasError);
+    const a = open.handleOf(child(open.document.root, 0)).value;
+    const c = open.handleOf(child(child(open.document.root, 1), 0)).value;
+    const core = open.document.core;
+    const calls = counts.calls;
+
+    // The same document, host and handles, and nothing allocated or parsed.
+    auto editor = open.editor;
+    assert(!open.commit(editor).hasError);
+    assert(open.document.core is core && open.host == host && counts.calls == calls);
+    assert(open.node(a).value.cellIndex == 1 && open.node(c).value.cellIndex == 3);
+    assert(open.handleCount == 2);
+    // The editor is spent, as after any commit.
+    editor.append(open.document.root, "d 4");
+    assert(!editor.ok);
 }
 
 @("sdl.open_document.statefulAllocator")
