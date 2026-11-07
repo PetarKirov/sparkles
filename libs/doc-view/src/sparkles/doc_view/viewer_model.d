@@ -3744,6 +3744,9 @@ terminal gets the destinations it needs to make the text clickable.
 
     auto vm = model(100);
     assert(vm.foldable.length && vm.channels.length == 2, "an icon strip and the numbers");
+    // The reader is on line 6; every relayout keeps that line at the top.
+    vm.top = 5;
+    const topSrc = vm.rows[5].srcStart;
     // 9 cells leave a gutter budget of 3: the two-cell numbers no longer fit
     // beside the icon strip, so the tree changes, and is rebuilt.
     foreach (w; [60, 31, 9, 100, 45])
@@ -3752,6 +3755,7 @@ terminal gets the destinations it needs to make the text clickable.
         vm.relayout(w);
         auto fresh = model(w);
         same(vm, fresh, w);
+        assert(vm.rows[cast(size_t) vm.top].srcStart == topSrc, text("the top line at ", w));
         const gutterChanged = w == 9 || w == 100;
         assert((vm.treeBuilds != builds) == gutterChanged,
             text(gutterChanged ? "rebuilt" : "kept", " at ", w));
