@@ -190,18 +190,26 @@ and is not compared.
   are removed and inserted when their count changes.
 - **Aggregate sequences** pair by identity: an element's name and positional
   values (`configuration "lib"`, `dependency "a"`). Each new element takes
-  the first unpaired old element of the same identity. Of those pairs, the
-  longest run that is in the same relative order in both keeps its nodes and
-  is updated recursively. Between two kept pairs, the remaining old and new
-  elements pair by position and change in place, so a changed identity keeps
-  its comments. Surplus old elements are removed with their attached
-  comments. Surplus new ones are inserted after the last node left in place
-  before them; when there is none, after the sibling just above the next
-  kept element and its comments; when the field has no element left, they
-  are appended.
-- **Reordering** is not a move. The longest run keeps its bytes; an element
-  outside it is written canonically at its new place and its old node is
-  removed with its attached comments.
+  the first unpaired old element of the same identity, so equal identities
+  pair first to first, in order. Of those pairs, a longest run that is in
+  the same relative order in both keeps its nodes in place and is updated
+  recursively. Between two kept pairs, the old and new elements without an
+  identity pair pair by position and change in place, so a changed identity
+  keeps its comments. Surplus old elements are removed with their attached
+  comments.
+- **Reordering** is a move. An identity pair outside the run moves its old
+  node, with its attached comments (SDE18), to its new place, and is then
+  updated recursively there like a kept pair. Moved and surplus new
+  elements go, in their new order, after the last node left in place
+  before them; when there is none, after the nearest sibling above the next
+  node left in place that does not move away, else just before that node;
+  when the field has no
+  element left, new ones are appended. An element that is not alone on its
+  lines, or whose destination is not, is written canonically at its new
+  place instead, and its old node removed with its attached comments.
+- **Cost.** Identities are hashed and the run is found by patience sorting,
+  so pairing a sequence of _n_ elements takes O(_n_ log _n_) time beside
+  the edits it makes.
 - **Other children.** A map pairs by key. A scalar child — a union among
   them, since SDL unions are scalar (SPEC §6) — changes its values in
   place; another non-aggregate child that differs is replaced whole. An
