@@ -2,7 +2,7 @@
 module editor_app;
 
 import std.conv : text;
-import core.time : msecs;
+import core.time : MonoTime, msecs;
 import sparkles.input : CompositionEvent, EndOfInput, Event, KeyAction, KeyEvent,
     match, PasteEvent, PointerAction, PointerButton, PointerEvent, WheelEvent;
 import sparkles.text_buffer.text : Text;
@@ -291,7 +291,7 @@ struct EditorApp
             selecting = true;
             selectingDocument = document.id;
         }
-        if (selecting) document.field.run(EditCommand.setRange(selectionAnchor, at));
+        if (selecting) document.field.run(EditCommand.setRange(selectionAnchor, at), MonoTime.currTime);
     }
 
     private void receivePaste(in PasteEvent chunk) @safe
@@ -315,9 +315,9 @@ struct EditorApp
             return;
         }
         if (pastePalette)
-            apply(commands.paste(pasteBytes, pasteRequest, context));
+            apply(commands.paste(pasteBytes, pasteRequest, context, MonoTime.currTime));
         else
-            document.field.paste(pasteBytes, pasteRequest);
+            document.field.paste(pasteBytes, pasteRequest, MonoTime.currTime);
         document.followCaret = true;
     }
 
@@ -376,7 +376,7 @@ struct EditorApp
     }
 
     /// One dispatcher receives keyboard, palette and future menu/touch commands.
-    void execute(CommandId id) @safe
+    void execute(CommandId id, MonoTime now = MonoTime.currTime) @safe
     {
         ensureInitialized();
         if (!context.available(id, document.id)) return;
@@ -450,9 +450,9 @@ struct EditorApp
                 {
                     const predominant = document.predominant;
                     document.field.insertEach((in Text current, size_t position)
-                        => enterEnding(current, position, predominant));
+                        => enterEnding(current, position, predominant), now);
                 }
-                else document.field.run(commandOf(cast(EditorAction) id.argument));
+                else document.field.run(commandOf(cast(EditorAction) id.argument), now);
             }
             break;
         case Command.quit:
@@ -483,22 +483,22 @@ struct EditorApp
     }
 
     /// Route modal query input first, then the shared key guide, then text insertion.
-    void handleKey(in KeyEvent key) @safe
+    void handleKey(in KeyEvent key, MonoTime now = MonoTime.currTime) @safe
     {
         ensureInitialized();
         if (key.action == KeyAction.release) return;
         if (commands.palette.active)
         {
-            apply(commands.key(key, context));
+            apply(commands.key(key, context, now));
             previewPicker();
             return;
         }
         document.followCaret = true;
         const resolved = step(lantern, bindings, key, context);
         if (resolved.kind == StepKind.execute)
-            execute(CommandId(resolved.cmd.cmd, resolved.cmd.arg));
+            execute(CommandId(resolved.cmd.cmd, resolved.cmd.arg), now);
         else if (resolved.kind == StepKind.unbound)
-            document.field.key(key);
+            document.field.key(key, now);
     }
 
     /// The same event vocabulary reaches every rendering host.
@@ -515,8 +515,8 @@ struct EditorApp
             (in PointerEvent pointer) { this.pointer(pointer); },
             (in CompositionEvent update) {
                 withPreedit(host, update, (scope const(char)[] preedit) {
-                    if (commands.palette.active) commands.query.compose(update, preedit);
-                    else document.field.compose(update, preedit);
+                    if (commands.palette.active) commands.query.compose(update, preedit, MonoTime.currTime);
+                    else document.field.compose(update, preedit, MonoTime.currTime);
                 });
             },
             (in WheelEvent wheel) {
@@ -874,4 +874,20 @@ struct EditorApp
     }
     assert(!app.filesBusy && app.tabCount == 2 && app.document.id == origin);
     assert(app.commands.palette.active && app.commands.palette.snapshot.invocation.target == origin);
+}
+
+/// Typing separated by the configured pause remains independently undoable.
+@("editor.app.typingPauseSeparatesUndo")
+@safe unittest
+{
+    import core.time : MonoTime, seconds;
+    import sparkles.input : Key;
+    EditorApp app;
+    const start = MonoTime.currTime;
+    app.handleKey(KeyEvent(Key.char_, 'a'), start);
+    app.handleKey(KeyEvent(Key.char_, 'b'), start + 1.seconds);
+    app.execute(CommandId(Command.edit, EditorAction.undo));
+    assert(app.document.field.text == "a");
+    app.execute(CommandId(Command.edit, EditorAction.undo));
+    assert(app.document.field.empty);
 }
