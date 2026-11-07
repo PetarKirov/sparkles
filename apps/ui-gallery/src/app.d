@@ -11,6 +11,7 @@ import std.array : join;
 import std.conv : text;
 import std.stdio : write, writefln, writeln;
 
+import sparkles.base.driver_libc : reexecOntoDriverGlibc;
 import sparkles.base.logger : LogLevel;
 import sparkles.core_cli.args : Command, failRun, Flatten, Option, ranOk, runCli, RunExpected;
 import sparkles.ui_app.gui_options : GuiOptions, NativeOptions, resolveTheme;
@@ -203,7 +204,13 @@ struct UiGallery
     }
 }
 
-int main(string[] args) => runCli!UiGallery(args);
+int main(string[] args)
+{
+    // Before anything opens a driver: run on the drivers' glibc when theirs
+    // is newer than the one this program was built with (Linux only).
+    reexecOntoDriverGlibc();
+    return runCli!UiGallery(args);
+}
 
 
 /// Loads the theme file `spec` names into `state.fileTheme`; `false` when `spec` is a

@@ -2,5 +2,12 @@
 module app;
 
 import cli : run;
+import sparkles.base.driver_libc : reexecOntoDriverGlibc;
 
-int main(string[] args) => run(args);
+int main(string[] args)
+{
+    // Before anything opens a driver: run on the drivers' glibc when theirs
+    // is newer than the one this program was built with (Linux only).
+    reexecOntoDriverGlibc();
+    return run(args);
+}

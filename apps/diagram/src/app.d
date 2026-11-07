@@ -6,6 +6,7 @@ Deliberately the whole file (`DIA6`): everything with behavior lives in
 */
 module app;
 
+import sparkles.base.driver_libc : reexecOntoDriverGlibc;
 import sparkles.base.logger : LogLevel;
 import sparkles.core_cli.args : Command, failRun, Flatten, Option, ranOk, runCli, RunExpected;
 import sparkles.ui_app.gui_options : GuiOptions, NativeOptions;
@@ -17,7 +18,13 @@ import grid_file : loadGridConfigFile;
 
 import diagram_app : DiagramApp;
 
-int main(string[] args) => runCli!Diagram(args);
+int main(string[] args)
+{
+    // Before anything opens a driver: run on the drivers' glibc when theirs
+    // is newer than the one this program was built with (Linux only).
+    reexecOntoDriverGlibc();
+    return runCli!Diagram(args);
+}
 
 /// The shared window/font/theme options, plus `--config-file` (`GRD8`).
 @(Command("diagram",
