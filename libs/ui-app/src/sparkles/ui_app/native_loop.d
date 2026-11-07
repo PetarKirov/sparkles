@@ -2102,6 +2102,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
     host.input_ = &input;
     input.capabilities = host.capabilities;
     input.touchGestures = touch;
+    input.longPressDrags = cfg.longPressDrags;
     input.gestures.cfg.fractional = true;
     input.fractionalScroll = cfg.fractionalScroll;
     input.scale = metrics.scale.value;

@@ -109,6 +109,15 @@ struct WsiInput
     /// ditto; its thresholds are the host's to set, in device pixels.
     GestureRecognizer gestures;
 
+    /**
+    With `touchGestures` `all`: a finger that has long-pressed becomes the
+    left button until it lifts (`RunConfig.longPressDrags`) — pressed where
+    the long-press began, dragged as it moves, released when it lifts, a
+    second finger lands or the system takes the touch.
+    */
+    bool longPressDrags;
+    private bool longPressHeld_;
+
     private enum maxContacts = 10;
     private PointerId[maxContacts] contactIds_;
     private Point[maxContacts] contactAt_;
@@ -162,7 +171,17 @@ struct WsiInput
         const anchor = gestures.anchor;
         const at = cellAt(cast(int) anchor.x, cast(int) anchor.y, cellW, cellH);
         for (auto e = gestures.next(); !isNoEvent(e); e = gestures.next())
+        {
             sink(atAnchor(e, at, mods_));
+            if (longPressDrags && !longPressHeld_ && contacts_.count == 1
+                && e.match!((in GestureEvent g) => g.gesture == Gesture.longPress, (in _) => false))
+            {
+                longPressHeld_ = true;
+                held_[PointerButton.left] = true;
+                sink(Event(PointerEvent(action: PointerAction.press, button: PointerButton.left,
+                    pos: at, mods: mods_)));
+            }
+        }
     }
 
     /**
@@ -257,6 +276,9 @@ struct WsiInput
         if (touching_)
             held_[PointerButton.left] = false;
         touching_ = false;
+        if (longPressHeld_)
+            held_[PointerButton.left] = false;
+        longPressHeld_ = false;
         contacts_.count = 0;
         contacts_.at = Point.init;
         gestures.cancel();
@@ -313,7 +335,18 @@ struct WsiInput
             cast(int) t.physicalPosition.y - originY);
         noteContact(t.contact, t.phase, px);
         if (touchGestures == TouchGestures.all)
+        {
+            if (longPressHeld_)
+            {
+                const pos = cellAt(px.x, px.y, cellW, cellH);
+                if (t.phase == TouchPhase.moved && contacts_.count == 1)
+                    sink(Event(PointerEvent(action: PointerAction.drag, button: PointerButton.left,
+                        pos: pos, mods: mods_)));
+                else if (t.phase != TouchPhase.moved)
+                    releaseLongPress(pos, sink);
+            }
             return recognise(t.phase, cellW, cellH, sink);
+        }
         if (touchGestures == TouchGestures.multiTouchOnly)
         {
             if (pointerCaptured)
@@ -360,6 +393,15 @@ struct WsiInput
                 return sink(Event(PointerEvent(action: PointerAction.release, button: PointerButton.left,
                     pos: pos, mods: mods_)));
         }
+    }
+
+    // The finger a long-press made the left button lets go of it.
+    private void releaseLongPress(Sink)(Point pos, scope Sink sink)
+    {
+        longPressHeld_ = false;
+        held_[PointerButton.left] = false;
+        sink(Event(PointerEvent(action: PointerAction.release, button: PointerButton.left,
+            pos: pos, mods: mods_)));
     }
 
     private void noteContact(PointerId id, TouchPhase phase, Point at)
@@ -979,6 +1021,47 @@ version (unittest)
     assert(held == [Event(GestureEvent(Gesture.longPress, Point(6, 2)))]);
     cast(void) translated(input, wsi, [touch(TouchPhase.ended, 1, 65, 45)]);
     assert(!input.gesturing, "a lifted long-press leaves nothing to resolve");
+}
+
+@("ui_app.wsi_input.aLongPressDragsAsTheLeftButton")
+@system unittest
+{
+    import core.time : msecs;
+
+    static WindowEvent touch(TouchPhase phase, uint contact, int x, int y)
+    {
+        TouchEvent t;
+        t.contact = PointerId(contact);
+        t.phase = phase;
+        t.physicalPosition = PhysicalPosition(x, y);
+        return ev(t);
+    }
+
+    WsiInput input;
+    input.touchGestures = TouchGestures.all;
+    input.longPressDrags = true;
+    input.gestures.cfg.cellH = 20;
+    FakeTexts wsi;
+    // Held still: the long-press, then the left button pressed where it began.
+    assert(translated(input, wsi, [touch(TouchPhase.began, 1, 65, 45)]).length == 0);
+    Event[] held;
+    input.tickGestures(MonoTime.currTime + 600.msecs, 10, 20, (Event e) { held ~= e; });
+    assert(held == [Event(GestureEvent(Gesture.longPress, Point(6, 2))),
+        Event(PointerEvent(action: PointerAction.press, button: PointerButton.left, pos: Point(6, 2)))]);
+    // The finger moves: a drag where it is, not a scroll; it lifts: the release.
+    assert(translated(input, wsi, [touch(TouchPhase.moved, 1, 125, 85),
+        touch(TouchPhase.ended, 1, 125, 85)]) == [
+        Event(PointerEvent(action: PointerAction.drag, button: PointerButton.left, pos: Point(12, 4))),
+        Event(PointerEvent(action: PointerAction.release, button: PointerButton.left, pos: Point(12, 4))),
+    ]);
+    // Without it, a long-press is the gesture alone.
+    input.longPressDrags = false;
+    cast(void) translated(input, wsi, [touch(TouchPhase.began, 1, 65, 45)]);
+    held = null;
+    input.tickGestures(MonoTime.currTime + 1200.msecs, 10, 20, (Event e) { held ~= e; });
+    assert(held == [Event(GestureEvent(Gesture.longPress, Point(6, 2)))]);
+    assert(translated(input, wsi, [touch(TouchPhase.moved, 1, 125, 85),
+        touch(TouchPhase.ended, 1, 125, 85)]).length == 0);
 }
 
 @("ui_app.wsi_input.losingFocusForgetsTheFingers")
