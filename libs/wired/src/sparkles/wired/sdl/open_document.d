@@ -194,16 +194,17 @@ struct SdlOpenDocument(SdlParserConfig config = sdlFull, Allocator = Mallocator)
             return sdlOk();
         }
 
-        carryHandles(editor.replaced, edits[], parsed.document);
+        carryHandles(editor, edits[], parsed.document);
         editor.retire();
         _host = move(output);
         _document = move(parsed.document);
         return sdlOk();
     }
 
-    /// Maps each live handle to its node's counterpart in `next`, or
-    /// removes it (§9).
-    private void carryHandles(scope const(SdlReplacedCells)[] replaced,
+    /** Maps each live handle to its node's counterpart in `next`, or
+    removes it (§9). A node a move carries is looked for where the move put
+    it; any other, where the commit's edits take its anchor. */
+    private void carryHandles(ref const SdlEditor!(config, Allocator) editor,
         scope const TextEdit[] edits, ref const SdlDocument!Allocator next)
     {
         HeapBuffer!uint slots;
@@ -211,6 +212,13 @@ struct SdlOpenDocument(SdlParserConfig config = sdlFull, Allocator = Mallocator)
             slots.length = next.core.nodeCount;
         const old = (() @trusted => _document.core)();
         const fresh = (() @trusted => next.core)();
+        HeapBuffer!uint moved; // by old cell: the innermost move carrying it, 1-based
+        if (_table.liveCount && editor.moves)
+        {
+            moved.length = old.nodeCount;
+            moved[][] = 0;
+            editor.markMoved(moved[]);
+        }
 
         UniqueBuffer!SdlNodeHandle live;
         foreach (handle; _table.byLive)
@@ -218,7 +226,15 @@ struct SdlOpenDocument(SdlParserConfig config = sdlFull, Allocator = Mallocator)
         foreach (handle; live[])
         {
             const cell = _cellOf[handle.index];
-            const target = counterpart(old, fresh, cell, replaced, edits);
+            size_t target = cell == 0 ? 0 : size_t.max; // the root maps to the root
+            if (cell != 0 && !isReplaced(editor.replaced, cell))
+            {
+                const was = old.nodeAt(cell);
+                const start = cast(uint) was.span.startOffset;
+                const anchor = moved.length && moved[cell]
+                    ? editor.movedOffset(moved[cell], start) : mapOffset(edits, start);
+                target = counterpart(fresh, was, anchor);
+            }
             if (target == size_t.max || slots[target])
             {
                 _table.remove(handle);
@@ -231,20 +247,22 @@ struct SdlOpenDocument(SdlParserConfig config = sdlFull, Allocator = Mallocator)
     }
 }
 
-/** The cell of `next` that is old cell `cell`'s counterpart after `edits`,
-or `size_t.max` when an operation replaced it or its anchor no longer starts
-a node of its name (editing §9). */
-private size_t counterpart(scope const(SdlCore)* old, scope const(SdlCore)* next,
-    size_t cell, scope const(SdlReplacedCells)[] replaced, scope const TextEdit[] edits)
+/// Whether an operation replaced cell `cell` (§9).
+private bool isReplaced(scope const(SdlReplacedCells)[] replaced, size_t cell)
     @safe pure nothrow @nogc
 {
-    if (cell == 0)
-        return 0;
     foreach (range; replaced)
         if (cell >= range.first && cell < range.end)
-            return size_t.max;
-    const was = old.nodeAt(cell);
-    const anchor = mapOffset(edits, was.span.startOffset);
+            return true;
+    return false;
+}
+
+/** The cell of `next` that is the counterpart of old non-root cell `was`
+when its anchor lands at `anchor`, or `size_t.max` when no node of its name
+starts there (editing §9). */
+private size_t counterpart(scope const(SdlCore)* next, in SdlNodeCell was, size_t anchor)
+    @safe pure nothrow @nogc
+{
     // Cells after the root are in preorder, so their span starts increase.
     size_t low = 1, high = next.nodeCount;
     while (low < high)
@@ -345,17 +363,58 @@ version (unittest)
     assert(open.node(SdlNodeHandle.init).error == PoolError.invalid);
     assert(open.node(SdlNodeHandle(99, 1)).error == PoolError.invalid);
 
-    // A moved node and everything below it are replaced; the node it passed
-    // keeps its handle.
+    // A node moved and then replaced goes stale; the node it passed keeps
+    // its handle.
     const b2 = open.handleOf(child(open.document.root, 1)).value;
     const c2 = open.handleOf(child(child(open.document.root, 1), 0)).value;
     const f2 = open.handleOf(child(open.document.root, 2)).value;
     auto mover = open.editor;
     mover.moveAfter(child(open.document.root, 1), child(open.document.root, 2));
+    mover.replaceNode(child(open.document.root, 1), "b {\n    c 31\n}");
     assert(!open.commit(mover).hasError);
-    assert(open.host == "a 10\nf 6\nb {\n    c 30\n}\n");
+    assert(open.host == "a 10\nf 6\nb {\n    c 31\n}\n");
     assert(open.node(b2).error == PoolError.stale && open.node(c2).error == PoolError.stale);
     assert(open.node(f2).hasValue && open.node(f2).value.qualifiedName.localName == "f");
+}
+
+@("sdl.open_document.movesKeepHandles")
+@system unittest
+{
+    SdlOpenDocument!() open;
+    enum host = "a 1\n// about p\np {\n  q 2 {\n    r 3\n  }\n  s 4\n}\nt 5\n";
+    assert(!open.open(host).hasError);
+    auto root = open.document.root;
+    const a = open.handleOf(child(root, 0)).value;
+    const p = open.handleOf(child(root, 1)).value;
+    const q = open.handleOf(child(child(root, 1), 0)).value;
+    const r = open.handleOf(child(child(child(root, 1), 0), 0)).value;
+    const s = open.handleOf(child(child(root, 1), 1)).value;
+    const t = open.handleOf(child(root, 2)).value;
+
+    // A moved parent, a move among its children, and edits inside and
+    // around the moved bytes: every handle follows its node.
+    auto editor = open.editor;
+    editor.moveAfter(child(root, 1), child(root, 2));
+    editor.moveBefore(child(child(root, 1), 1), child(child(root, 1), 0));
+    editor.replaceValue(child(child(root, 1), 0), 0, SdlScalar(20));
+    editor.insertBefore(child(child(child(root, 1), 0), 0), "z 0");
+    editor.insertBefore(child(root, 0), "y 0");
+    assert(!open.commit(editor).hasError);
+    assert(open.host == "y 0\na 1\nt 5\n// about p\np {\n  s 4\n  q 20 {\n    z 0\n    r 3\n  }\n}\n");
+    static string named(R)(R result) => result.value.qualifiedName.localName.idup;
+    assert(named(open.node(a)) == "a" && named(open.node(p)) == "p" && named(open.node(q)) == "q");
+    assert(named(open.node(r)) == "r" && named(open.node(s)) == "s" && named(open.node(t)) == "t");
+    assert(open.node(q).value.byValue.front.integer == 20);
+    assert(open.handleCount == 6);
+
+    // Re-indented, out of the block: the lines below the first move too.
+    auto outward = open.editor;
+    root = open.document.root;
+    outward.moveAfter(child(child(root, 3), 1), child(root, 2));
+    assert(!open.commit(outward).hasError);
+    assert(open.host == "y 0\na 1\nt 5\nq 20 {\n  z 0\n  r 3\n}\n// about p\np {\n  s 4\n}\n");
+    assert(named(open.node(q)) == "q" && named(open.node(r)) == "r" && named(open.node(s)) == "s");
+    assert(open.node(r).value.cellIndex == 6 && open.handleCount == 6);
 }
 
 @("sdl.open_document.anonymousAndEmbedded")
@@ -531,7 +590,7 @@ version (unittest)
         return end;
     }
 
-    enum Op { replaceValue, setAttribute, removeAttribute, remove, insertBefore, appendRoot, replaceBody }
+    enum Op { replaceValue, setAttribute, removeAttribute, remove, insertBefore, appendRoot, replaceBody, move }
 
     const paths = repositoryRecipes();
     assert(paths.length > 100, "the repository walk found too few recipes");
@@ -542,7 +601,7 @@ version (unittest)
         return (state >> 8) % bound;
     }
 
-    size_t commits, refused, kept, stale;
+    size_t commits, refused, kept, stale, moved;
     foreach (path; paths)
     {
         const text = readText(path);
@@ -571,6 +630,7 @@ version (unittest)
             assert(nodes.length == model.length, path);
             auto before = model.dup;
             SdlNodeHandle[] retired;
+            bool moving;
             auto editor = open.editor;
             const op = cast(Op) next(Op.max + 1);
             const at = nodes.length ? next(cast(uint) nodes.length) : 0;
@@ -619,6 +679,32 @@ version (unittest)
                     retired ~= handles[gone.id];
                 model = model[0 .. at + 1] ~ Entry(ids++, model[at].depth + 1) ~ model[end .. $];
                 break;
+            case Op.move:
+                // Beside the next sibling, or beside any node outside the
+                // moved one, re-indenting it; sometimes with an edit inside.
+                if (nodes.length < 2)
+                    continue;
+                const end = subtreeEnd(model, at);
+                size_t dest = end < model.length && model[end].depth == model[at].depth && next(2)
+                    ? end : next(cast(uint) nodes.length);
+                if (dest >= at && dest < end)
+                    continue;
+                const after = next(2) == 0;
+                if (after)
+                    editor.moveAfter(nodes[at], nodes[dest]);
+                else
+                    editor.moveBefore(nodes[at], nodes[dest]);
+                if (nodes[at].valueCount && next(2))
+                    editor.replaceValue(nodes[at], 0, SdlScalar("m"));
+                auto block = model[at .. end].dup;
+                foreach (ref entry; block)
+                    entry.depth = entry.depth + model[dest].depth - model[at].depth;
+                auto rest = model[0 .. at] ~ model[end .. $];
+                const d = dest < at ? dest : dest - (end - at);
+                const point = after ? subtreeEnd(rest, d) : d;
+                model = rest[0 .. point] ~ block ~ rest[point .. $];
+                moving = true;
+                break;
             }
             const host = open.host.idup;
             const committed = open.commit(editor);
@@ -634,7 +720,10 @@ version (unittest)
                 refused++;
             }
             else
+            {
                 commits++;
+                moved += moving;
+            }
 
             nodes = null;
             depths = null;
@@ -661,6 +750,6 @@ version (unittest)
             assert(open.handleCount == nodes.length, path);
         }
     }
-    assert(commits > 500 && stale > 100 && kept > 10_000,
+    assert(commits > 500 && stale > 100 && kept > 10_000 && moved > 50,
         "the property test exercised too little");
 }

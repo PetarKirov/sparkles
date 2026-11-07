@@ -13,6 +13,8 @@ bytes and the edits made inside them.
 */
 module sparkles.wired.sdl.editor;
 
+import core.lifetime : emplace;
+import core.memory : pureFree, pureMalloc;
 import std.experimental.allocator.common : stateSize;
 import std.experimental.allocator.mallocator : Mallocator;
 import std.range.primitives : ElementType, isInputRange, put;
@@ -58,6 +60,68 @@ private struct PendingMove
     uint indentStart, indentLength; // the destination's indentation, in the host
     bool reindent; // whether it differs from the moved node's
     uint operation;
+    uint cellEnd; // past the moved node's last descendant
+}
+
+/// The footprint of one replacement — its range and its new length — which
+/// is all that carrying an offset through it needs.
+private struct Shift
+{
+    uint start, end, length;
+}
+
+/** Where a move's bytes went in the last render (§9): the footprints of
+the edits made inside them and of their re-indentation, and where their
+text begins — in the edited bytes of the move that carries them, or in the
+output. */
+private struct MoveImage
+{
+    uint parent; // 1-based move whose bytes hold this one's insertion, else 0
+    uint at; // where the composed text starts: in the parent's edited bytes, or the output
+    uint prefix; // bytes written before the moved ones (a line break)
+    uint inner, innerEnd; // the inner edits' footprints, in `MoveState.shifts`
+    uint reindent, reindentEnd; // the re-indentation's footprints, in `MoveState.shifts`
+}
+
+/** What an editor keeps for its moves, allocated with the first one, so an
+editor that moves nothing builds and frees none of it. */
+private struct MoveState
+{
+    UniqueBuffer!PendingMove moves;
+    UniqueBuffer!char composed; // the moves' texts, as of the last render
+    UniqueBuffer!TextSpan texts; // each move's text in `composed`
+    UniqueBuffer!MoveImage images; // each move's place, as of the last render
+    UniqueBuffer!Shift shifts; // the footprints `images` name
+}
+
+/// Owns an editor's `MoveState`, made on the first move and freed with the
+/// box; movable, not copyable.
+private struct MoveBox
+{
+    private MoveState* _state;
+
+    @disable this(this);
+
+    ~this() @safe pure nothrow @nogc
+    {
+        if (_state)
+            () @trusted { destroy!false(*_state); pureFree(_state); }();
+    }
+
+    bool exists() const @safe pure nothrow @nogc => _state !is null;
+
+    ref inout(MoveState) get() inout return scope @safe pure nothrow @nogc => *_state;
+
+    void create() @safe pure nothrow @nogc
+    {
+        if (_state)
+            return;
+        _state = () @trusted {
+            auto state = cast(MoveState*) pureMalloc(MoveState.sizeof);
+            assert(state, "out of memory");
+            return emplace(state);
+        }();
+    }
 }
 
 /// Preorder cells `[first, end)` of the borrowed document that an operation
@@ -107,9 +171,7 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
     private UniqueBuffer!PendingEdit _edits;
     private UniqueBuffer!FragmentCheck _fragments;
     private UniqueBuffer!SdlReplacedCells _replaced;
-    private UniqueBuffer!PendingMove _moves;
-    private UniqueBuffer!char _composed; // the moves' texts, as of the last render
-    private UniqueBuffer!TextSpan _moveTexts; // each move's text in `_composed`
+    private MoveBox _moving; // made by the first move
     private long _nodeDelta; // expected change in node count (SDE2)
     private bool _nodeCountKnown = true;
     private uint _operations;
@@ -531,7 +593,7 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
         foreach (ref e; _edits[])
             sorted ~= e;
         sortEdits(sorted[]);
-        if (_moves.length)
+        if (_moving.exists)
         {
             const composed = composeMoves(sorted);
             if (composed.hasError)
@@ -540,8 +602,17 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
 
         edits.clear(releaseStorage: false);
         edits.reserve(sorted.length);
+        long delta;
         foreach (ref e; sorted[])
-            edits ~= TextEdit(TextSpan(e.start, e.end), textOf(e));
+        {
+            const text = textOf(e);
+            // What is left of a move here is outermost: its text starts in
+            // the output.
+            if (e.move && e.start == e.end)
+                moving.images[e.move - 1].at = cast(uint)(e.start + delta);
+            delta += cast(long) text.length - (e.end - e.start);
+            edits ~= TextEdit(TextSpan(e.start, e.end), text);
+        }
         const validation = validateEdits(_host.length, edits[]);
         if (validation.hasError)
         {
@@ -569,6 +640,42 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
 
     /// Package seam: the cells the operations so far replace (§9).
     package const(SdlReplacedCells)[] replaced() const return scope => _replaced[];
+
+    /// Package seam: whether any operation so far moves a node.
+    package bool moves() const => _moving.exists;
+
+    /** Package seam (§9): sets `innermost[c]`, for every cell `c` a move
+    carries, to the 1-based innermost such move — moved subtrees nest or are
+    disjoint, so it is the one whose node comes last. Other entries stay. */
+    package void markMoved(scope uint[] innermost) const
+    {
+        foreach (m, ref move; moving.moves[])
+            foreach (c; move.cell .. move.cellEnd)
+                if (!innermost[c] || moving.moves[innermost[c] - 1].cell < move.cell)
+                    innermost[c] = cast(uint) m + 1;
+    }
+
+    /** Package seam (§9): where host offset `offset`, inside the bytes that
+    1-based move `move` carries and outside any move inside them, lands in
+    the output of the last successful render: through the edits made inside
+    the bytes, their re-indentation and placement, and every move carrying
+    them in turn. */
+    package uint movedOffset(uint move, uint offset) const
+    {
+        const first = moving.images[move - 1];
+        uint at = mapShifts(moving.shifts[first.inner .. first.innerEnd], offset - moving.moves[move - 1].start);
+        for (uint m = move;;)
+        {
+            // From the move's edited bytes to its text's place in the
+            // edited bytes of the move carrying it, or in the output.
+            const image = moving.images[m - 1];
+            at = mapShifts(moving.shifts[image.reindent .. image.reindentEnd], at);
+            at += image.at + image.prefix;
+            if (!image.parent)
+                return at;
+            m = image.parent;
+        }
+    }
 
     /// Package seam: whether the editor borrows the document whose core is
     /// `core`.
@@ -601,6 +708,9 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
     // ── Resolution helpers ─────────────────────────────────────────────
 
     private uint begin() => ++_operations;
+
+    /// The move state, which exists once an operation moved a node.
+    private ref inout(MoveState) moving() inout return scope => _moving.get;
 
     private void fail(SdlErrorCode code, SdlSpan span, string reason, uint operation = 0)
     {
@@ -755,11 +865,13 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
         const point = after ? target.extent.endOffset : target.extent.startOffset;
         const from = lineIndent(cell.span.startOffset), to = lineIndent(target.span.startOffset);
         const indentStart = lineStart(target.span.startOffset);
-        const move = cast(uint) _moves.length + 1;
-        _moves ~= PendingMove(cast(uint) attached, cast(uint) cell.extent.endOffset,
+        if (!_moving.exists)
+            _moving.create();
+        const move = cast(uint) moving.moves.length + 1;
+        moving.moves ~= PendingMove(cast(uint) attached, cast(uint) cell.extent.endOffset,
             cast(uint) node.cellIndex, cast(uint) cell.extent.startOffset,
-            cast(uint) point, cast(uint) indentStart, cast(uint) to.length, from != to, op);
-        replaces(node.cellIndex, end);
+            cast(uint) point, cast(uint) indentStart, cast(uint) to.length, from != to, op,
+            cast(uint) end);
         record(removal, _text.length, op, move);
         record(SdlSpan.at(point), _text.length, op, move);
     }
@@ -843,9 +955,11 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
     /** Writes `fragment` into `output`: its common indentation replaced by
     `indent` on every line that begins outside a string or a continued line,
     its line breaks there spelled `newline`, and one final line break
-    dropped. */
+    dropped. With `shifts`, appends the footprint of each change it makes to
+    the fragment's bytes, in order. */
     private static void reindentInto(ref UniqueBuffer!char output,
-        scope const(char)[] fragment, in Indent indent, scope const(char)[] newline)
+        scope const(char)[] fragment, in Indent indent, scope const(char)[] newline,
+        UniqueBuffer!Shift* shifts = null)
     {
         // Lines that begin inside a multi-line token keep their bytes.
         UniqueBuffer!TextSpan protectedRanges;
@@ -914,12 +1028,16 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
                 size_t ws;
                 while (ws < line.length && isBlank(line[ws]))
                     ws++;
+                const strip = ws < line.length ? (common < ws ? common : ws) : line.length;
                 if (ws < line.length)
                 {
                     put(output, indent.outer);
                     put(output, indent.step);
-                    put(output, line[common < ws ? common : ws .. $]);
+                    put(output, line[strip .. $]);
                 }
+                if (shifts)
+                    *shifts ~= Shift(cast(uint) at, cast(uint)(at + strip), cast(uint)(ws < line.length
+                        ? indent.outer.length + indent.step.length : 0));
             }
             continued = endsWithContinuation(line);
             if (end >= body.length)
@@ -928,7 +1046,11 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
             if (isProtected(end))
                 put(output, body[end .. end + width]);
             else
+            {
                 put(output, newline);
+                if (shifts)
+                    *shifts ~= Shift(cast(uint) end, cast(uint)(end + width), cast(uint) newline.length);
+            }
             at = end + width;
         }
     }
@@ -1285,14 +1407,33 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
 
     // ── Moves ──────────────────────────────────────────────────────────
 
+    /// Carries `offset` through `shifts`, sorted and valid, as `mapOffset`
+    /// does with its default bias: past the insertions at it.
+    private static uint mapShifts(scope const Shift[] shifts, uint offset) @safe pure nothrow @nogc
+    {
+        long delta;
+        foreach (ref s; shifts)
+        {
+            if (offset < s.start)
+                break;
+            if (offset < s.end)
+            {
+                const into = offset - s.start;
+                return cast(uint)(s.start + delta + (into < s.length ? into : s.length));
+            }
+            delta += cast(long) s.length - (s.end - s.start);
+        }
+        return cast(uint)(offset + delta);
+    }
+
     /// The replacement text of `edit`: a move's composed text for its
     /// insertion, else the operation's own.
     private const(char)[] textOf(in PendingEdit edit) const return scope
     {
         if (edit.move && edit.start == edit.end)
         {
-            const text = _moveTexts[edit.move - 1];
-            return _composed[text.startOffset .. text.endOffset];
+            const text = moving.texts[edit.move - 1];
+            return moving.composed[text.startOffset .. text.endOffset];
         }
         return _text[edit.textStart .. edit.textStart + edit.textLength];
     }
@@ -1305,18 +1446,21 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
     private SdlExpected!void composeMoves(ref UniqueBuffer!PendingEdit sorted)
     {
         enum ubyte waiting = 0, started = 1, composed = 2;
-        _composed.clear(releaseStorage: false);
-        _moveTexts.length = _moves.length;
+        moving.composed.clear(releaseStorage: false);
+        moving.texts.length = moving.moves.length;
+        moving.images.length = moving.moves.length;
+        moving.images[][] = MoveImage.init;
+        moving.shifts.clear(releaseStorage: false);
         UniqueBuffer!bool consumed;
         consumed.length = sorted.length;
         consumed[][] = false;
         UniqueBuffer!ubyte state;
-        state.length = _moves.length;
+        state.length = moving.moves.length;
         state[][] = waiting;
         UniqueBuffer!size_t stack, inner;
         UniqueBuffer!TextEdit shifted;
         UniqueBuffer!char piece;
-        foreach (first; 0 .. _moves.length)
+        foreach (first; 0 .. moving.moves.length)
         {
             stack.clear(releaseStorage: false);
             stack ~= first;
@@ -1340,7 +1484,7 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
                         const dependency = sorted[i].move - 1;
                         if (state[dependency] == started)
                             return sdlErr!void(editError(SdlErrorCode.editConflict, SdlSpan.init,
-                                "two moves go into each other's bytes", _moves[m].operation));
+                                "two moves go into each other's bytes", moving.moves[m].operation));
                         if (state[dependency] == waiting)
                         {
                             stack ~= dependency;
@@ -1352,11 +1496,27 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
                 }
 
                 // Every move inside is composed: apply what is left inside.
-                const move = _moves[m];
+                const move = moving.moves[m];
                 shifted.clear(releaseStorage: false);
+                moving.images[m].inner = cast(uint) moving.shifts.length;
+                long delta;
                 foreach (i; inner[])
-                    shifted ~= TextEdit(TextSpan(sorted[i].start - move.start,
-                        sorted[i].end - move.start), textOf(sorted[i]));
+                {
+                    const e = sorted[i];
+                    const text = textOf(e);
+                    const start = e.start - move.start, end = e.end - move.start;
+                    if (e.move && e.start == e.end)
+                    {
+                        // A move arriving inside: its text starts here in
+                        // this move's edited bytes.
+                        moving.images[e.move - 1].parent = cast(uint) m + 1;
+                        moving.images[e.move - 1].at = cast(uint)(start + delta);
+                    }
+                    delta += cast(long) text.length - (end - start);
+                    shifted ~= TextEdit(TextSpan(start, end), text);
+                    moving.shifts ~= Shift(start, end, cast(uint) text.length);
+                }
+                moving.images[m].innerEnd = cast(uint) moving.shifts.length;
                 const bytes = _host[move.start .. move.end];
                 const validation = validateEdits(bytes.length, shifted[]);
                 if (validation.hasError)
@@ -1369,7 +1529,7 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
                 writeEdited(piece, bytes, shifted[]);
                 foreach (i; inner[])
                     consumed[i] = true;
-                _moveTexts[m] = placeMoved(move, piece[]);
+                moving.texts[m] = placeMoved(m, piece[]);
                 state[m] = composed;
                 stack.length = stack.length - 1;
             }
@@ -1390,7 +1550,7 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
     private void innerEdits(scope const PendingEdit[] sorted, scope const bool[] consumed,
         size_t m, ref UniqueBuffer!size_t inner) const
     {
-        const move = _moves[m];
+        const move = moving.moves[m];
         inner.clear(releaseStorage: false);
         size_t low, high = sorted.length;
         while (low < high)
@@ -1415,14 +1575,15 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
         }
     }
 
-    /** Appends to `_composed` the moved lines `piece` as inserting them at
+    /** Appends to `composed` the moved lines `piece` as inserting them at
     the move's point takes them (SDE4): a newline before them when the
     point does not start a line, and their final line break, unless the
     point ends a host that has none. Re-indented when the move asked;
-    otherwise byte for byte. */
-    private TextSpan placeMoved(in PendingMove move, scope const(char)[] piece)
+    otherwise byte for byte. Records the placement in move `m`'s image. */
+    private TextSpan placeMoved(size_t m, scope const(char)[] piece)
     {
-        const start = _composed.length;
+        const move = moving.moves[m];
+        const start = moving.composed.length;
         const newline = newlineFor(move.point);
         size_t length = piece.length;
         foreach (width; widthsLongestCrLf)
@@ -1432,15 +1593,21 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
                 break;
             }
         if (!lineStartAt(move.point))
-            put(_composed, newline);
+            put(moving.composed, newline);
+        moving.images[m].prefix = cast(uint)(moving.composed.length - start);
+        moving.images[m].reindent = moving.images[m].reindentEnd = cast(uint) moving.shifts.length;
         if (move.reindent)
-            reindentInto(_composed, piece,
-                Indent(_host[move.indentStart .. move.indentStart + move.indentLength]), newline);
+        {
+            reindentInto(moving.composed, piece,
+                Indent(_host[move.indentStart .. move.indentStart + move.indentLength]), newline,
+                &moving.shifts);
+            moving.images[m].reindentEnd = cast(uint) moving.shifts.length;
+        }
         else
-            put(_composed, piece[0 .. length]);
+            put(moving.composed, piece[0 .. length]);
         if (!(move.point == _host.length && !endsWithNewline(_host)))
-            put(_composed, !move.reindent && length < piece.length ? piece[length .. $] : newline);
-        return TextSpan(cast(uint) start, cast(uint) _composed.length);
+            put(moving.composed, !move.reindent && length < piece.length ? piece[length .. $] : newline);
+        return TextSpan(cast(uint) start, cast(uint) moving.composed.length);
     }
 
     // ── Writing ────────────────────────────────────────────────────────
