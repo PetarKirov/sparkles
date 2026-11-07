@@ -1,0 +1,224 @@
+/**
+The fileset driver: one adapter over any capability-VFS backend (FSD1).
+
+`FilesetDriver!(V, R)` answers the resolution machine's requests on the
+handles of a root its caller opened: a `readDir` opens a child of a
+directory it already holds and lists it, a `stat` is `statAt` on the
+directory holding the entry. Every operation names one entry of a held
+handle (FSD5); which links and mounts a lookup may cross is the root's policy
+(FSD6, FSD7), so a link is followed only through `walk` and only when the
+machine was told the root's policy follows links. The driver holds one handle
+per directory in progress and closes it when the machine retires it
+(FSD4: descriptor policy is the driver's).
+
+How a batch runs is an executor's choice: `InlineExecutor` performs the
+requests one after another; the event-horizon executor
+(`sparkles.build_primitives.fileset.driver_loop`) runs them concurrently
+under an admission budget. The in-memory driver is this adapter over
+`MemVfs` (FSD2), the synchronous one over `BlockingVfs` (test and
+documentation only, FSD3), and the event-horizon one over `RingVfs`.
+
+A resolution's consumer is a sink: `directory(path, members, empty)` for each
+resolved directory, after its children (FSM5), and `incomplete(path, kind)`
+for each entry that could not be read (FSE2). `PathCollector` is one.
+*/
+module sparkles.build_primitives.fileset.driver;
+
+import core.lifetime : move;
+
+import sparkles.base.expected : Expected, err, ok;
+import sparkles.base.io.errors : ErrorKind;
+import sparkles.base.text.errors : NoGcHook;
+import sparkles.base.vfs.concept : isVfs;
+import sparkles.base.vfs.handles : Dir, DirRef;
+import sparkles.base.vfs.types : EntryKind, Rights, hasRights;
+
+import sparkles.build_primitives.fileset.machine : Cursor, Request, RequestKind, Resolution, ResolutionError,
+    ResolutionErrorCode, ResolutionLimits, StepKind, noDir;
+import sparkles.build_primitives.fileset.value : Fileset, Filesets;
+
+/// The rights a fileset root needs: look up, list and stat.
+enum Rights filesetRights = cast(Rights)(Rights.lookup | Rights.list | Rights.stat);
+
+/// The result of a resolution: nothing, or why it failed.
+alias ResolutionResult = Expected!(void, ResolutionError, NoGcHook);
+
+/// Performs a batch's requests one after another.
+struct InlineExecutor
+{
+    /// Calls `perform(i)` for each request `i` of `batch`.
+    void run(Perform)(scope const(Request)[] batch, scope Perform perform)
+    {
+        foreach (i; 0 .. batch.length)
+            perform(i);
+    }
+}
+
+/**
+Answers one resolution's requests on the directory handles beneath one root.
+Move-only; it allocates its handle table when made.
+*/
+struct FilesetDriver(V, Rights R)
+if (isVfs!V && hasRights(R, filesetRights))
+{
+    @disable this(this);
+
+    private Dir!(V, R)[] handles;
+
+    /// A driver with room for `frames` directories in progress.
+    this(uint frames) @trusted nothrow @nogc
+    {
+        import core.lifetime : emplace;
+        import core.memory : pureMalloc;
+        import core.exception : onOutOfMemoryError;
+
+        auto p = cast(Dir!(V, R)*) pureMalloc(frames * Dir!(V, R).sizeof);
+        if (p is null)
+            onOutOfMemoryError();
+        handles = p[0 .. frames];
+        foreach (ref h; handles)
+            emplace(&h);
+    }
+
+    ~this() @trusted
+    {
+        import core.memory : pureFree;
+
+        foreach (ref h; handles)
+            destroy(h);
+        pureFree(handles.ptr);
+        handles = null;
+    }
+
+    /// Performs request `i` of `m`'s batch beneath `root`, and answers it.
+    void perform(ref Resolution m, DirRef!(V, R) root, size_t i)
+    {
+        const req = m.batch[i];
+        const index = cast(uint) i;
+        final switch (req.kind)
+        {
+            case RequestKind.readDir:
+                // `walk`, not `openDir`: it applies the root's policy to the
+                // one name, so a link is followed only where the policy says
+                // and a mount boundary is refused unless it allows crossing.
+                auto opened = req.dir == noDir
+                    ? root.walk(req.name)
+                    : handles[req.dir].walk(req.name);
+                if (opened.hasError)
+                    return m.failed(index, opened.error.kind);
+                auto listing = opened.value.list();
+                if (listing.hasError)
+                    return m.failed(index, listing.error.kind);
+                for (;;)
+                {
+                    auto more = listing.value.next();
+                    if (more.hasError)
+                        return m.failed(index, more.error.kind);
+                    if (!more.value)
+                        break;
+                    const e = listing.value.front;
+                    m.entry(index, e.name, e.kind);
+                }
+                handles[req.target] = move(opened.value);
+                return m.listed(index);
+            case RequestKind.stat:
+                auto st = handles[req.dir].statAt(req.name, req.mask);
+                if (st.hasError)
+                    return m.failed(index, st.error.kind);
+                return m.statted(index, st.value);
+            case RequestKind.readlink, RequestKind.readFile:
+                // Not yet performed by this driver: M4 and M5 add them.
+                return m.failed(index, ErrorKind.unsupported);
+        }
+    }
+
+    /// Closes the handle of directory `id`.
+    void retire(uint id)
+    {
+        if (id != noDir && id < handles.length)
+            handles[id] = Dir!(V, R).init;
+    }
+}
+
+/**
+Resolves `f` beneath `root` into `sink`, running each batch on `exec`.
+`followLinks` must say whether `root`'s policy follows links beneath it
+(FSD6). `budget` bounds the work of one machine step (FSM6).
+*/
+ResolutionResult resolve(V, Rights R, Sink)(DirRef!(V, R) root, ref const Filesets sets,
+    Fileset f, ref Sink sink, ResolutionLimits limits = ResolutionLimits.init, size_t budget = 4096)
+{
+    InlineExecutor exec;
+    return resolveWith(root, sets, f, sink, exec, limits, budget);
+}
+
+/// ditto, running each batch on `exec`.
+ResolutionResult resolveWith(V, Rights R, Sink, Exec)(DirRef!(V, R) root, ref const Filesets sets,
+    Fileset f, ref Sink sink, ref Exec exec, ResolutionLimits limits = ResolutionLimits.init,
+    size_t budget = 4096)
+{
+    import sparkles.base.vfs.types : SymlinkPolicy;
+
+    const followLinks = root.policy.symlinks == SymlinkPolicy.beneath;
+    auto m = Resolution(sets, f, limits, followLinks);
+    auto driver = FilesetDriver!(V, R)(limits.maxFrames);
+    auto cursor = m.start();
+    for (;;)
+    {
+        StepKind kind;
+        if (!m.step(sets, cursor, budget, kind))
+            return err!(void, NoGcHook)(m.error);
+        driver.retire(m.retired);
+        final switch (kind)
+        {
+            case StepKind.needIO:
+                exec.run(m.batch, (size_t i) { driver.perform(m, root, i); });
+                break;
+            case StepKind.unit:
+                sink.directory(m.unitPath, m.unitMembers, m.unitEmpty);
+                break;
+            case StepKind.incomplete:
+                sink.incomplete(m.incompletePath, m.incompleteKind);
+                break;
+            case StepKind.budget:
+                break;
+            case StepKind.done:
+                return ok!(ResolutionError, NoGcHook)();
+        }
+    }
+}
+
+/// A sink collecting member paths, empty directories and incomplete entries,
+/// each in the order the resolution reported them.
+struct PathCollector
+{
+    string[] members;     /// relative to the fileset root
+    string[] emptyDirs;   /// FSV4
+    string[] unreadable;  /// `path: kind` of each incomplete entry, FSE2
+
+    /// Receives a resolved directory.
+    void directory(Members)(scope const(char)[] path, Members names, bool empty)
+    {
+        foreach (name; names)
+            members ~= path.length ? (path ~ "/" ~ name).idup : name.idup;
+        if (empty)
+            emptyDirs ~= path.idup;
+    }
+
+    /// Receives an entry that could not be read.
+    void incomplete(scope const(char)[] path, ErrorKind kind)
+    {
+        import std.conv : to;
+
+        unreadable ~= (path ~ ": " ~ kind.to!string).idup;
+    }
+
+    /// One text holding everything collected, for byte comparison.
+    string transcript() const
+    {
+        import std.array : join;
+
+        return "members:\n" ~ members.join("\n") ~ "\nempty:\n" ~ emptyDirs.join("\n")
+            ~ "\nincomplete:\n" ~ unreadable.join("\n") ~ "\n";
+    }
+}

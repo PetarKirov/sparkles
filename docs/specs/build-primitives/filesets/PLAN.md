@@ -5,7 +5,8 @@ milestone lands code, tests and the evidence its gate names. Decisions and open
 questions live in [decisions.md](./decisions.md)._
 
 **Status (November 7, 2026):** M0 is delivered (PR #507), with its
-`git check-ignore -v` parity gate. M1 and M2 are delivered with their gates;
+`git check-ignore -v` parity gate. M1, M2 and M3, with E0, are delivered with
+their gates;
 the state of each requirement is in the SPEC's
 [evidence ledger](./SPEC.md#evidence-ledger).
 The work resumes as the file-system layer of the
@@ -103,6 +104,16 @@ synchronous driver, and the `event-horizon` driver. Depends on `E0`.
 **Gate.** All three drivers produce byte-identical results over one fixture
 set. The machine's modules import nothing that performs I/O — checked by grep,
 not by inspection.
+
+**Delivered.** `fileset/machine.d` (the machine), `driver.d` (the one
+adapter and `PathCollector`) and `driver_loop.d` (the event-horizon
+executor); E0 is `sparkles.event_horizon.admission`. The machine reports
+units, incomplete entries and errors. A `Plan` start root whose directory is
+absent holds no member and is not reported. The gate is
+`fileset.gate.m3.threeBackends`, beside `fileset.gate.m3.machineAgreesWithOracles`,
+which holds the machine to M1's and M2's oracles on the whole fixture set.
+`FSV4` and `FSD2`, moved from M1, are delivered here. `FSM5`'s order and
+`FSE1`, `FSE2` and `FSS6`'s scheme halves wait for M5.
 
 ### M4 — Ignore scopes, and the behaviour-preservation gate
 
