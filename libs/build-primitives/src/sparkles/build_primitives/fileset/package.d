@@ -8,5 +8,6 @@ milestones of its `PLAN.md`.
 module sparkles.build_primitives.fileset;
 
 public import sparkles.build_primitives.fileset.pattern;
+public import sparkles.build_primitives.fileset.plan;
 public import sparkles.build_primitives.fileset.tree_literal;
 public import sparkles.build_primitives.fileset.value;

@@ -5,8 +5,9 @@ milestone lands code, tests and the evidence its gate names. Decisions and open
 questions live in [decisions.md](./decisions.md)._
 
 **Status (November 7, 2026):** M0 is delivered (PR #507), with its
-`git check-ignore -v` parity gate. M1 is delivered with its gate; the state of
-each requirement is in the SPEC's [evidence ledger](./SPEC.md#evidence-ledger).
+`git check-ignore -v` parity gate. M1 and M2 are delivered with their gates;
+the state of each requirement is in the SPEC's
+[evidence ledger](./SPEC.md#evidence-ledger).
 The work resumes as the file-system layer of the
 [build graph](../build-graph/SPEC.md#_12-file-system-access): every listing
 the graph makes is a fileset resolution, so the build graph's E2 needs M1–M3,
@@ -86,6 +87,13 @@ planned resolution and a brute-force walk that ignores all verdicts produce the
 same member set. Any member the plan misses is a `FSA1` violation. This gate is
 what makes the optimizer safe to make cleverer later, and it must run on every
 fixture for the life of the library.
+
+**Delivered.** `fileset/plan.d`: `plan` derives the start roots and the
+static-emptiness diagnostic, and `rootState` positions an evaluator at a
+root. The gate lives in `fileset/testing.d` beside M1's and runs over the same
+fixture set: `plannedWalk` follows the plan and the verdicts, and is the
+reference the M3 machine must match. `FSA5` is partial until M4. Only a root
+`.gitignore` exists as a leaf before then.
 
 ### M3 — The resolution machine and three drivers
 
