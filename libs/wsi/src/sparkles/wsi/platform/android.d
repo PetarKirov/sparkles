@@ -1589,6 +1589,12 @@ struct AndroidWsi
             case NoteKind.focusGained:
                 if (live.valid)
                     emit(live, FocusChangedEvent(true));
+                // The soft keyboard's field keeps the focus once installed,
+                // and the system shows an input method again for a focused
+                // editor when its window comes back: put it away unless text
+                // input is on.
+                if (!textInput_)
+                    cast(void) showImeKeyboard(false);
                 refreshMetrics();
                 noticeClip(describePrimaryClip());
                 break;
