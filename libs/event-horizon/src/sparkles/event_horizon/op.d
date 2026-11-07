@@ -12,6 +12,7 @@ import core.lifetime : move;
 import std.experimental.allocator : dispose, makeArray, stateSize;
 import std.experimental.allocator.mallocator : Mallocator;
 
+import sparkles.event_horizon.admission : Admission;
 import sparkles.event_horizon.buffer : Buf, BufGroupId;
 import sparkles.event_horizon.errors : IoResult, OpKind, fromRes;
 public import sparkles.event_horizon.sys.descriptor : NativeHandle;
@@ -605,7 +606,7 @@ struct OpSlab(Allocator = Mallocator)
                 "op slab allocation failed");
         _slots = mem.ptr;
         _capacity = capacity;
-        _liveCount = 0;
+        _budget = Admission(capacity);
         foreach (i; 0 .. capacity)
             _slots[i].nextFree = i + 1 == capacity ? uint.max : i + 1;
         _slots[capacity].nextFree = uint.max; // reserved: never linked
@@ -616,14 +617,14 @@ struct OpSlab(Allocator = Mallocator)
 
     /// Frees the slab; every slot must have been released.
     void terminate() @trusted
-    in (_slots is null || _liveCount == 0, "op slots still in flight")
+    in (_slots is null || _budget.inUse == 0, "op slots still in flight")
     in (!_reservedActive, "internal cancel slot still active")
     {
         if (_slots !is null)
             cast(void) alloc.dispose(_slots[0 .. _capacity + 1]);
         _slots = null;
         _capacity = 0;
-        _liveCount = 0;
+        _budget = Admission.init;
         _freeHead = uint.max;
     }
 
@@ -632,7 +633,7 @@ struct OpSlab(Allocator = Mallocator)
     /// a slot (SPEC §11).
     ~this() @safe nothrow @nogc
     {
-        if (_liveCount == 0 && !_reservedActive)
+        if (_budget.inUse == 0 && !_reservedActive)
             terminate();
     }
 
@@ -640,9 +641,9 @@ struct OpSlab(Allocator = Mallocator)
     /// acquisitions leave them free, so a holder's acquisition never finds
     /// the slab exhausted (the fiber parker's parks, fiber-parker.md EFP22).
     void hold(uint n) @safe pure nothrow @nogc
-    in (n <= _capacity && _heldLive == 0)
+    in (n <= _capacity && _budget.reservedInUse == 0)
     {
-        _held = n;
+        _budget.reserve(n);
     }
 
     /// Pops a free slot and arms it; the invalid token (`raw == 0`) when
@@ -653,14 +654,11 @@ struct OpSlab(Allocator = Mallocator)
     {
         if (_freeHead == uint.max)
             return OpToken.init;
-        if (held ? _heldLive >= _held : _liveCount - _heldLive >= _capacity - _held)
+        if (!_budget.tryAcquire(1, held))
             return OpToken.init;
         const idx = _freeHead;
         auto slot = &_slots[idx];
         _freeHead = slot.nextFree;
-        ++_liveCount;
-        if (held)
-            ++_heldLive;
         slot.held = held;
 
         slot.callback = cb;
@@ -710,15 +708,14 @@ struct OpSlab(Allocator = Mallocator)
         slot.ctx = null;
         slot.state = OpState.free;
         slot.detached = false;
-        if (slot.held)
-            --_heldLive;
+        const wasHeld = slot.held;
         slot.held = false;
         ++slot.generation;
         if ((slot.generation & 0xFF_FFFF) == 0)
             slot.generation = 1;
         slot.nextFree = _freeHead;
         _freeHead = t.index;
-        --_liveCount;
+        _budget.release(1, wasHeld);
     }
 
     // ── the reserved internal cancel slot ────────────────────────────────
@@ -746,7 +743,6 @@ struct OpSlab(Allocator = Mallocator)
         slot.detached = false;
         slot.pendPrev = slot.pendNext = uint.max;
         _reservedActive = true;
-        ++_liveCount;
         return OpToken.pack(_capacity, slot.generation, OpClass.internal);
     }
 
@@ -762,7 +758,6 @@ struct OpSlab(Allocator = Mallocator)
         if ((slot.generation & 0xFF_FFFF) == 0)
             slot.generation = 1;
         _reservedActive = false;
-        --_liveCount;
     }
 
     /// `true` while an internal cancel occupies the reserved slot.
@@ -771,23 +766,24 @@ struct OpSlab(Allocator = Mallocator)
     /// Slots currently armed / cancel-pending / detached — the reserved
     /// slot counts while active (an in-flight internal cancel is work the
     /// loop must still drive), the waker is excluded by the loop.
-    uint liveCount() const @safe pure nothrow @nogc => _liveCount;
+    uint liveCount() const @safe pure nothrow @nogc
+        => _budget.inUse + (_reservedActive ? 1 : 0);
 
     /// User slots (the admission budget); the reserved slot is not
     /// advertised.
     uint capacity() const @safe pure nothrow @nogc => _capacity;
 
     /// Slots `hold` set aside, and how many of them are live.
-    uint held() const @safe pure nothrow @nogc => _held;
+    uint held() const @safe pure nothrow @nogc => _budget.reserved;
     /// ditto
-    uint heldLive() const @safe pure nothrow @nogc => _heldLive;
+    uint heldLive() const @safe pure nothrow @nogc => _budget.reservedInUse;
 
 private:
     OpSlot* _slots;
     uint _capacity;
-    uint _liveCount;
-    uint _held;
-    uint _heldLive;
+    // The user slots' admission budget (SPEC §14.2): the `hold` share is
+    // its reserved units. The internal cancel slot is outside it.
+    Admission _budget;
     uint _freeHead = uint.max;
     bool _reservedActive;
 }
@@ -868,6 +864,26 @@ unittest
     const c = slab.acquire(OpKind.nop, OpClass.user, null, null);
     assert(c);
     slab.release(c);
+}
+
+/// The internal cancel slot is outside the user budget: while it is active
+/// every user slot can still be acquired, and it counts as live work.
+@("op.OpSlab.cancelSlotOutsideBudget")
+@safe nothrow @nogc
+unittest
+{
+    OpSlab!() slab;
+    assert(!slab.initialize(2).hasError);
+    const cancel = slab.acquireCancelSlot();
+    assert(cancel);
+    const a = slab.acquire(OpKind.nop, OpClass.user, null, null);
+    const b = slab.acquire(OpKind.nop, OpClass.user, null, null);
+    assert(a && b, "an active internal cancel takes no user slot");
+    assert(slab.liveCount == 3);
+    slab.release(a);
+    slab.release(b);
+    slab.releaseCancelSlot(cancel);
+    assert(slab.liveCount == 0);
 }
 
 @("op.OpSlab.pinnedBufferReleasedOnRelease")
