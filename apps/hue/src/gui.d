@@ -4833,14 +4833,9 @@ int runGui(GuiArgs guiArgs) @system
         case RunOutcome.ok:
             return 0;
         case RunOutcome.openFailed:
-            stderr.writeln("hue --gui: could not load a font from '", gui.font,
-                "' (is fontconfig available?)");
-            version (Android)
-            {
-                import sparkles.base.logger : error;
-
-                error(i"hue: no font resolved from '$(gui.font)'");
-            }
+            // The arm has said why, just above: no window system, no device,
+            // no font, or a scripted run that presented nothing.
+            stderr.writeln("hue --gui: the window did not open");
             return 1;
         case RunOutcome.noBackend:
         case RunOutcome.notInteractive:
