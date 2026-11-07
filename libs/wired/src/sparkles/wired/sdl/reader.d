@@ -377,17 +377,41 @@ package SdlParseResult!Allocator reparseEdited(SdlParserConfig config, Allocator
 if (stateSize!Allocator == 0)
 {
     SdlParseResult!Allocator result;
+    reparseInto!config(result, old, text, sourceName, content, edits, localized);
+    return result;
+}
+
+/// ditto; a stateful allocator is retained by the returned document, and
+/// serves the region path and the fallback alike.
+package SdlParseResult!Allocator reparseEdited(SdlParserConfig config, Allocator)(
+    scope const(SdlCore)* old, scope const(char)[] text, scope const(char)[] sourceName,
+    SdlSpan content, scope const TextEdit[] edits, out bool localized, Allocator alloc)
+if (stateSize!Allocator != 0)
+{
+    import core.lifetime : move;
+
+    SdlParseResult!Allocator result;
+    result.document.alloc = move(alloc);
+    reparseInto!config(result, old, text, sourceName, content, edits, localized);
+    return result;
+}
+
+private void reparseInto(SdlParserConfig config, Allocator)(
+    ref SdlParseResult!Allocator result, scope const(SdlCore)* old,
+    scope const(char)[] text, scope const(char)[] sourceName, SdlSpan content,
+    scope const TextEdit[] edits, out bool localized)
+{
     if (text.length < uint.max && !content.isValid)
         content = SdlSpan(contentStart(text), text.length);
     if (old !is null && edits.length
         && spliceRegion!config(result, old, text, sourceName, content, edits))
     {
         localized = true;
-        return result;
+        return;
     }
-    result = SdlParseResult!Allocator.init;
+    // The failed splice's arenas go; the document's allocator stays.
+    result.document.reset();
     parseInto!config(result, text, sourceName, content);
-    return result;
 }
 
 /// Whether a line starts at `at` in `text`: just after a logical newline,
@@ -1994,32 +2018,53 @@ unittest
 
 version (unittest)
 {
-    /// Applies `edits` to `old`'s source and re-parses the result both ways;
-    /// `null` when they agree (SDE14, and SDE15's equal errors). Counts the
-    /// runs the region path took.
+    /// Applies `edits` to `old`'s source and re-parses the result both ways,
+    /// the incremental way through `Mallocator` and through a stateful
+    /// allocator; `null` when all three agree (SDE14, and SDE15's equal
+    /// errors) and the stateful one freed every block. Counts the runs the
+    /// region path took.
     private string reparseBothWays(SdlParserConfig config)(scope const(SdlCore)* old,
         scope const(char)[] sourceName, scope const TextEdit[] edits, ref size_t localized) @system
     {
         import sparkles.base.text.edits : writeEdited;
-        import sparkles.wired.sdl.test_corpus : documentDifference;
+        import sparkles.wired.sdl.test_corpus : AllocationCounts, CountingAllocator,
+            documentDifference;
 
         UniqueBuffer!char text;
         writeEdited(text, old.source, edits);
         auto full = parseSdlDocument!config(text[], sourceName);
+        string compare(R)(ref R incremental)
+        {
+            if (full.hasError != incremental.hasError)
+                return "one path failed: " ~ (full.hasError ? full.error.reason[].idup
+                    : incremental.error.reason[].idup);
+            if (full.hasError)
+                return full.error.code == incremental.error.code
+                    && full.error.span == incremental.error.span
+                    && full.error.startPosition == incremental.error.startPosition
+                    && full.error.reason[] == incremental.error.reason[] ? null : "different errors";
+            return documentDifference(incremental.document, full.document);
+        }
+
         bool local;
         auto incremental = reparseEdited!config(old, text[], sourceName, SdlSpan.init, edits,
             local);
         if (local)
             localized++;
-        if (full.hasError != incremental.hasError)
-            return "one path failed: " ~ (full.hasError ? full.error.reason[].idup
-                : incremental.error.reason[].idup);
-        if (full.hasError)
-            return full.error.code == incremental.error.code
-                && full.error.span == incremental.error.span
-                && full.error.startPosition == incremental.error.startPosition
-                && full.error.reason[] == incremental.error.reason[] ? null : "different errors";
-        return documentDifference(incremental.document, full.document);
+        if (auto difference = compare(incremental))
+            return difference;
+
+        AllocationCounts counts;
+        {
+            bool statefulLocal;
+            auto stateful = reparseEdited!config(old, text[], sourceName, SdlSpan.init, edits,
+                statefulLocal, CountingAllocator!()(&counts));
+            if (statefulLocal != local)
+                return "the stateful allocator took the other path";
+            if (auto difference = compare(stateful))
+                return "stateful: " ~ difference;
+        }
+        return counts.live ? "the stateful allocator leaked a block" : null;
     }
 
     private TextEdit replacing(size_t start, size_t end, string text) @safe pure nothrow @nogc
@@ -2209,4 +2254,36 @@ version (unittest)
     incremental.document.core.lines = LineIndex(text[]);
     incremental.document.core.lines = LineIndex(text[][0 .. $ - 1] ~ "\r");
     assert(documentDifference(incremental.document, full.document) !is null);
+}
+
+@("sdl.reader.reparseEdited.statefulAllocatorLocalizes")
+@system unittest
+{
+    import sparkles.base.text.edits : writeEdited;
+    import sparkles.wired.sdl.test_corpus : AllocationCounts, CountingAllocator,
+        documentDifference;
+
+    // A large document and a one-value edit near its end.
+    UniqueBuffer!char source;
+    foreach (i; 0 .. 4000)
+        source ~= "node 1 \"two\" k=3 {\n    leaf on\n}\n";
+    AllocationCounts fullCounts, localCounts;
+    auto parsed = parseSdlDocument!sdlFull(source[], null, CountingAllocator!()(&fullCounts));
+    assert(parsed.hasValue);
+    const at = source.length - 33 + 5;
+    assert(source[][at .. at + 1] == "1");
+    const edits = [replacing(at, at + 1, "10")];
+    UniqueBuffer!char text;
+    writeEdited(text, source[], edits);
+    bool local;
+    auto incremental = reparseEdited!sdlFull(parsed.document.core, text[], null, SdlSpan.init,
+        edits, local, CountingAllocator!()(&localCounts));
+    assert(local);
+    assert(documentDifference(incremental.document, parseSdlDocument!sdlFull(text[]).document)
+        is null);
+    // The splice still copies every kept cell and the source, so its bytes
+    // are the document's; it sizes each array once instead of growing it
+    // (6 blocks and 2.7 MB here, against 10 and 4.7 MB).
+    assert(localCounts.calls < fullCounts.calls);
+    assert(localCounts.bytes < fullCounts.bytes * 2 / 3);
 }

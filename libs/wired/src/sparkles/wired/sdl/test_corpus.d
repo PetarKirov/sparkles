@@ -1,5 +1,6 @@
 /** The repository's recipes as a test corpus, for the editing property tests
-(editing SDE1, SDE2, SDE11, SDE14).
+(editing SDE1, SDE2, SDE11, SDE14), and a counting allocator for the
+allocation tests.
 
 Every function is a template, so nothing here is compiled into a build that
 does not call it.
@@ -146,4 +147,44 @@ package string documentDifference(A, B)(ref const A a, ref const B b) @system
     if (x.lines.lineStarts != y.lines.lineStarts)
         return "line starts";
     return null;
+}
+
+/// What a $(LREF CountingAllocator) has allocated.
+package struct AllocationCounts
+{
+    size_t calls; /// successful `allocate` calls
+    size_t bytes; /// bytes those calls returned
+    size_t live;  /// blocks not yet deallocated
+}
+
+/** A stateful allocator over `Mallocator` that counts into `counts`: its
+copies share the counts, as the copies an `SdlOpenDocument` hands its
+documents must share one allocator's state. */
+package struct CountingAllocator()
+{
+    import std.experimental.allocator.mallocator : Mallocator;
+
+    AllocationCounts* counts;
+
+    enum uint alignment = Mallocator.alignment;
+
+    void[] allocate(size_t bytes) @safe pure nothrow @nogc
+    {
+        auto block = Mallocator.instance.allocate(bytes);
+        if (block !is null)
+        {
+            counts.calls++;
+            counts.bytes += block.length;
+            counts.live++;
+        }
+        return block;
+    }
+
+    bool deallocate(void[] block) @system pure nothrow @nogc
+    {
+        if (block is null)
+            return true;
+        counts.live--;
+        return Mallocator.instance.deallocate(block);
+    }
 }

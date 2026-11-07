@@ -41,18 +41,34 @@ An SDL host, its parsed document and its node handles, kept across commits.
 
 The open document is movable and not copyable. Moving it invalidates nothing
 but the views and editors borrowed from it, as moving an `SdlDocument` does.
-`Allocator` must be stateless: commits allocate the new document through it.
+
+Every document it parses allocates through `Allocator`. A stateful allocator
+is given to the constructor and kept by value, and each document parsed
+through it keeps a copy of its own, as `parseSdlDocument` does, and frees its
+arenas through that copy. The copies must therefore share one allocator's
+state — a pointer to it, or a reference-counted handle such as `RCIAllocator`
+— never duplicate it, and that state must outlive the open document.
 */
 struct SdlOpenDocument(SdlParserConfig config = sdlFull, Allocator = Mallocator)
-if (stateSize!Allocator == 0)
 {
     private UniqueBuffer!char _host;
     private SdlDocument!Allocator _document;
     private HeapSlotTable!SdlNodeHandle _table;
     private HeapBuffer!uint _cellOf; // by slot: the node it names
     private HeapBuffer!uint _slotOf; // by cell: its slot + 1, or 0 for none
+    static if (stateSize!Allocator)
+        private Allocator _allocator;
 
     @disable this(this);
+
+    static if (stateSize!Allocator)
+    {
+        /// An open document whose documents allocate through `allocator`.
+        this(Allocator allocator)
+        {
+            _allocator = move(allocator);
+        }
+    }
 
     /** Copies `host` and parses it as `kind` says; any document opened
     before, and its handles, are dropped. On failure nothing changes. */
@@ -61,10 +77,18 @@ if (stateSize!Allocator == 0)
     {
         SdlParseResult!Allocator parsed;
         if (kind == SdlHostKind.recipe)
-            parsed = parseSdlDocument!(config, Allocator)(host, sourceName);
+        {
+            static if (stateSize!Allocator)
+                parsed = parseSdlDocument!config(host, sourceName, _allocator);
+            else
+                parsed = parseSdlDocument!(config, Allocator)(host, sourceName);
+        }
         else
         {
-            auto embedded = parseEmbeddedSdlDocument!(config, Allocator)(host, sourceName);
+            static if (stateSize!Allocator)
+                auto embedded = parseEmbeddedSdlDocument!config(host, sourceName, _allocator);
+            else
+                auto embedded = parseEmbeddedSdlDocument!(config, Allocator)(host, sourceName);
             if (!embedded.recipe.found || embedded.recipe.isJson)
             {
                 SdlError error;
@@ -152,7 +176,10 @@ if (stateSize!Allocator == 0)
         UniqueBuffer!char output;
         UniqueBuffer!TextEdit edits;
         SdlParseResult!Allocator parsed;
-        Allocator allocator;
+        static if (stateSize!Allocator)
+            alias allocator = _allocator;
+        else
+            Allocator allocator;
         auto rendered = editor.render(allocator, output, edits, parsed);
         if (rendered.hasError)
             return rendered;
@@ -376,6 +403,47 @@ version (unittest)
     assert(open.host == "a 10\nb 20\n");
     assert(open.node(a).value.byValue.front.integer == 10);
     assert(open.node(b).value.byValue.front.integer == 20);
+}
+
+@("sdl.open_document.statefulAllocator")
+@system unittest
+{
+    import sparkles.wired.sdl.test_corpus : AllocationCounts, CountingAllocator;
+
+    alias Counting = CountingAllocator!();
+    AllocationCounts counts;
+    {
+        auto open = SdlOpenDocument!(sdlFull, Counting)(Counting(&counts));
+        UniqueBuffer!char source;
+        foreach (i; 0 .. 4000)
+            source ~= "node 1 \"two\" k=3 {\n    leaf on\n}\n";
+        assert(!open.open(source[]).hasError);
+        const opened = counts;
+        SdlNode last;
+        foreach (node; open.document.root.byChild)
+            last = node;
+        const handle = open.handleOf(last).value;
+
+        auto editor = open.editor;
+        editor.replaceValue(open.node(handle).value, 0, SdlScalar(10));
+        assert(!open.commit(editor).hasError);
+        assert(open.node(handle).value.byValue.front.integer == 10);
+        // The commit took the region path, which sizes each array once where
+        // the opening parse grew them; the replaced document's blocks went.
+        assert(counts.calls - opened.calls < opened.calls);
+        assert(counts.live == opened.live);
+
+        // An embedded host, through a copy of the same allocator.
+        auto program = SdlOpenDocument!(sdlDubRecipe, Counting)(Counting(&counts));
+        enum host = "#!/usr/bin/env dub\n/+ dub.sdl:\n    name \"p\"\n+/\nvoid main() {}\n";
+        assert(!program.open(host, "p.d", SdlHostKind.embedded).hasError);
+        auto e = program.editor;
+        e.append(program.document.root, "version \"1\"");
+        assert(!program.commit(e).hasError);
+        assert(program.host
+            == "#!/usr/bin/env dub\n/+ dub.sdl:\n    name \"p\"\n    version \"1\"\n+/\nvoid main() {}\n");
+    }
+    assert(counts.live == 0);
 }
 
 @("sdl.open_document.properties.repositoryRecipes")

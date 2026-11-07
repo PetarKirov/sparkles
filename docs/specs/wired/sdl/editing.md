@@ -70,6 +70,7 @@ canonical writer stays the way to produce a document from a typed value.
 | SDE13 | A failed commit leaves the host, the document and every handle as they were                  |
 | SDE14 | An incremental re-parse produces exactly the document a full re-parse would                  |
 | SDE15 | An edit the incremental reader cannot localize falls back to a full re-parse                 |
+| SDE16 | A stateful allocator takes the same incremental path as a stateless one                      |
 | SDS1  | A selector's path is a DQL path, and a malformed one is rejected at its offset               |
 | SDS2  | A path selects nodes or attributes by name-and-index child steps, in document order          |
 | SDS3  | A filter is a DQL expression evaluated with each selected node as its subject                |
@@ -470,6 +471,7 @@ void updateSDL(T, Editor)(ref Editor editor, SdlNode node, const ref T value);
 alias SdlNodeHandle = Handle!SdlNodeTag;
 struct SdlOpenDocument(SdlParserConfig config = sdlFull, Allocator = Mallocator)
 {
+    this(Allocator allocator);                           // a stateful Allocator only
     SdlExpected!void open(const(char)[] host, const(char)[] sourceName = null,
         SdlHostKind kind = SdlHostKind.recipe);
     ref const(SdlDocument!Allocator) document() const;
@@ -613,6 +615,14 @@ replaces the host and the document, and every handle is carried over to the
 new document or retired. Handles are issued lazily, so a document that never
 asks for one pays for no table.
 
+Every document an open document parses allocates through its `Allocator`. A
+stateful allocator is passed to the constructor and kept by value; each
+document parsed through it keeps a copy, as `parseSdlDocument`'s result
+does, and frees its arenas through that copy when a commit replaces it. The
+copies must therefore share one allocator's state — a pointer to it, or a
+reference-counted handle such as `RCIAllocator` — rather than duplicate it,
+and that state must outlive the open document.
+
 A node keeps its **identity** across a commit unless an operation of that
 commit replaces it. The operations replace:
 
@@ -715,6 +725,17 @@ changes the nesting, and invalid UTF-8. _Oracle:_ the SDE14 property test
 counts both paths and requires each to occur, and the error for each failing
 edit set equals the full parse's. _Violation:_ an error that differs from the
 full parse's, or a localized result that differs (SDE14).
+
+**SDE16 — Any allocator localizes.** The region path does not depend on the
+allocator: a write or commit through a stateful allocator re-parses the same
+region a stateless one does, and the new document keeps a copy of that
+allocator, as a parse through it does. _Oracle:_ the SDE14 property test
+repeats every edit through a counting allocator, requires the same path and
+the same document, and requires every block it allocated to be freed; an
+editor test and an open-document test commit one value of a large document
+through it, and the region path is seen to size its arrays once where the
+full parse grew them. _Violation:_ a stateful allocator that takes the full
+parse where a stateless one localizes, or a block it never gets back.
 
 The `sdl.commit` benchmark row
 ([performance SDP1](./performance.md#1-measurement)) commits one small edit

@@ -605,6 +605,9 @@ struct SdlDocument(Allocator = Mallocator)
         release();
     }
 
+    /// Frees every arena, keeping a stateful allocator for the next parse.
+    package void reset() => release();
+
     /** Allocates the core, the pool, and first capacities for the node,
     value and attribute arrays; the parser grows those (`grow`) and trims
     them (`finish`). */
