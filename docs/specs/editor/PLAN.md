@@ -98,9 +98,9 @@ evidence for a promised capability.
   hook. Generated settings/fonts,
   language discovery, recovery and Unicode layout/touch/IME remain open.
 - Evidence and reviews: [testing §6](./testing.md#6-evidence-ledger).
-- Next executable action: connect the validated record/archive primitives to
-  private durable directory initialization, background checkpoint scheduling
-  and startup restoration. Retain older durable generations until a newer
+- Next executable action: connect the validated record, archive and directory
+  primitives to background checkpoint scheduling and startup restoration.
+  Retain older durable generations until a newer
   write is acknowledged. Settings, Unicode, provider and workload gates remain open;
   clipboard request identity across focus changes remains an explicit input
   acceptance scenario.

@@ -460,3 +460,22 @@ document was not changed. The latter also verifies a committed second
 generation with an unconfirmed-durability receipt. These tests establish the
 archive primitives' ordering; they do not establish app checkpoint cadence,
 power-loss behavior, restore decisions or session flushing at exit.
+
+### Recovery directory ownership groundwork — 2026-11-07
+
+The editor suite passes 34 tests. `SessionDirectory` creates a private archive
+and syncs its ancestor chain up to an explicitly supplied, already durable
+platform namespace root. It refuses paths outside that root. A restricted
+ancestor fixture proves that initialization needs no read access above the
+root, as required for Android's private storage. This is a Linux filesystem
+test; it does not establish Android device acceptance.
+
+Directory `flock` leases distinguish active owners from claimable archives;
+creation and claim serialize against the registry directory. The checked
+[owner probe](../../../apps/editor/tools/recovery-owner-probe.d) launches a
+separate owner process, writes and acknowledges a dirty generation, verifies
+that another process cannot claim it, kills only that probe-owned process,
+and reclaims/reloads its dirty text. The original document remains unchanged.
+Repeat it with `dub run --single apps/editor/tools/recovery-owner-probe.d -b checked`.
+This tests process interruption after a filesystem acknowledgment; power-loss,
+application scheduling, startup offers and orderly-exit integration remain open.
