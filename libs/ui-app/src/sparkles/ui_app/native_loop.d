@@ -756,6 +756,15 @@ struct NativeSession
     float frameSeconds = 0;  /// how long the last frame took to build and submit
     string shotPath;         /// a screenshot to take on the next frame drawn
     void delegate(PointerShape) @system setCursor;           ///
+    /// Shows or hides the window system's pointer; null where it cannot.
+    void delegate(bool visible) @system setCursorVisible;
+    /// The clock effects read as `uTime`, pinned (`pinEffectClock`); negative
+    /// runs it live, from the first frame drawn.
+    float pinnedEffectClock = -1;
+    /// The registry effect brackets resolve against, bound on every frame's
+    /// canvas — one remade after a lost device included.
+    const(EffectRegistry)* effectRegistry;
+    MonoTime effectEpoch; /// ditto — when the live clock started
     void delegate(scope const(char)[]) @system setClipboard; ///
     void delegate(uint request) @system readClipboard;       ///
     /// Takes the window full screen or back; null where the window
@@ -1028,9 +1037,40 @@ struct NativeHost
     /// Binds the image registry the canvas draws images from (`IMG3`).
     void images(const(ImageRegistry)* registry) @system => session_.canvas.images(registry);
 
-    /// Effects draw their contents unaffected here (`UVK15`, `EFX3`); the
-    /// registry is accepted so an application binds it the same on every arm.
-    void effects(const(EffectRegistry)*, RgbColor) @safe pure nothrow @nogc {}
+    /**
+    Binds the effect registry the canvas resolves a bracket's id against
+    (`EFX11`, `EFX13`): a bracket at the frame's root whose record carries
+    passes for the device runs them (`UVK15`), the CRT's included; any other
+    draws its contents unaffected (`EFX3`). `pageFg` is unused — the canvas
+    paints resolved colours — and accepted so an application binds its
+    registry the same on every arm.
+    */
+    void effects(const(EffectRegistry)* registry, RgbColor pageFg) @safe pure nothrow @nogc
+    {
+        session_.effectRegistry = registry;
+    }
+
+    /**
+    Pins the clock every effect's `uTime` reads to `seconds`, for the rest of
+    the run; a negative value runs it live again (`DBG1`). A capture pins it,
+    so an animated effect — the CRT's roll and flicker — is at the same phase
+    in every run.
+    */
+    void pinEffectClock(float seconds) @safe pure nothrow @nogc
+    {
+        session_.pinnedEffectClock = seconds;
+    }
+
+    /**
+    Shows or hides the window system's pointer over the window (`PTR1`): an
+    effect that draws its own pointer hides it. A window system that cannot
+    hide it keeps it.
+    */
+    void pointerVisible(bool visible) @system
+    {
+        if (session_.setCursorVisible !is null)
+            session_.setCursorVisible(visible);
+    }
 
     /// A window has no out-of-band channel.
     void writeOutOfBand(scope const(char)[]) @safe pure nothrow @nogc {}
@@ -2019,6 +2059,16 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         if (!frameCursor)
             cast(void) wsi.setCursor(window, s);
     };
+    // Asked every frame by an application that may draw its own pointer:
+    // only a change reaches the window system.
+    static if (__traits(hasMember, Wsi, "setCursorVisible"))
+    {
+        bool cursorShown = true;
+        session.setCursorVisible = (bool visible) {
+            if (visible != cursorShown && !wsi.setCursorVisible(window, visible).hasError)
+                cursorShown = visible;
+        };
+    }
     session.title = fitTitle(request.title, 255).dup;
     // Without the application's colours the frame is Adwaita's own.
     session.framePalette = request.hasFramePalette ? request.framePalette : Palette.init;
@@ -3423,6 +3473,13 @@ private FrameOutcome drawFrame(alias draw)(ref Gpu gpu, ref NativeHost host,
     VkImage image = gpu.swapchain.images[index];
     const corner = cornerOf(gpu.swapchain.extent, session.pixelW, session.pixelH,
         quarterTurns(gpu.swapchain.transform));
+    // The effects' clock: pinned for a capture, else seconds since the
+    // first frame drawn (`DBG1`).
+    if (session.effectEpoch == MonoTime.init)
+        session.effectEpoch = MonoTime.currTime;
+    gpu.canvas.effectClock(session.pinnedEffectClock >= 0 ? session.pinnedEffectClock
+        : (MonoTime.currTime - session.effectEpoch).total!"usecs" / 1e6f);
+    gpu.canvas.effects(session.effectRegistry);
     gpu.canvas.beginFrame(CanvasTarget(image: image, view: gpu.views.views[index],
         format: gpu.swapchain.format, extent: gpu.swapchain.extent, usage: gpu.swapchain.usage,
         finalLayout: VkImageLayout.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
