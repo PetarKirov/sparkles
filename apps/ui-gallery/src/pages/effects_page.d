@@ -22,6 +22,7 @@ import sparkles.ui.geometry : Insets, SizeSpec;
 import sparkles.ui.image : ImageFit;
 import sparkles.ui.style : Slot;
 import sparkles.ui.widget : Builder, Widget, WidgetKind;
+import sparkles.ui_app.backend : Backend;
 
 import kit;
 import state : GalleryState, swatchSize;
@@ -137,16 +138,16 @@ uint view(ref Builder b, in GalleryState s)
 
 /// What this target does with a tier-1 effect, read off the registry rather
 /// than assumed — which is what makes `EFX12`'s `degradation` field load
-/// bearing instead of decorative.
+/// bearing instead of decorative. A window runs it, on either arm.
 private string degradationNote(in GalleryState s)
-    => s.guiCellW > 0
+    => s.backend == Backend.gui
         ? "This target renders the bracket to a texture, so the panel above is warped."
         : "This target has no texture, so the panel above is painted unaffected — "
         ~ "the degradation the effect declares, not a silent omission.";
 
 /// ditto, for tier 2.
 private string layerNote(in GalleryState s)
-    => s.guiCellW > 0
+    => s.backend == Backend.gui
         ? "Four passes: bright-pass at half size, blur across, blur down, add back."
         : "A cell cannot see its neighbours, so the panel above is painted "
         ~ "unaffected — the degradation bloom declares.";
