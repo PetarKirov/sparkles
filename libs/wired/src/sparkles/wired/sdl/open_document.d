@@ -415,6 +415,26 @@ version (unittest)
     assert(open.host == "y 0\na 1\nt 5\nq 20 {\n  z 0\n  r 3\n}\n// about p\np {\n  s 4\n}\n");
     assert(named(open.node(q)) == "q" && named(open.node(r)) == "r" && named(open.node(s)) == "s");
     assert(open.node(r).value.cellIndex == 6 && open.handleCount == 6);
+
+    // Nodes that share a line: along it, onto a line of their own with a
+    // block that re-indents, and onto another node's line.
+    SdlOpenDocument!() line;
+    assert(!line.open("a 1; b 2\nx {\n  c; d {\n    e\n  }\n}\n").hasError);
+    root = line.document.root;
+    const la = line.handleOf(child(root, 0)).value;
+    const lb = line.handleOf(child(root, 1)).value;
+    const lc = line.handleOf(child(child(root, 2), 0)).value;
+    const ld = line.handleOf(child(child(root, 2), 1)).value;
+    const le = line.handleOf(child(child(child(root, 2), 1), 0)).value;
+    auto along = line.editor;
+    along.moveAfter(child(root, 0), child(root, 1));
+    along.moveAfter(child(child(root, 2), 1), child(root, 2));
+    along.moveBefore(child(child(root, 2), 0), child(root, 0));
+    assert(!line.commit(along).hasError);
+    assert(line.host == "c; b 2; a 1\nx {\n}\nd {\n  e\n}\n");
+    assert(named(line.node(la)) == "a" && named(line.node(lb)) == "b" && named(line.node(lc)) == "c");
+    assert(named(line.node(ld)) == "d" && named(line.node(le)) == "e");
+    assert(line.node(le).value.cellIndex == 6 && line.handleCount == 5);
 }
 
 @("sdl.open_document.anonymousAndEmbedded")
@@ -560,6 +580,7 @@ version (unittest)
 @system unittest
 {
     import std.file : readText;
+    import sparkles.wired.sdl.editor : joinSomeLines;
     import sparkles.wired.sdl.test_corpus : repositoryRecipes;
 
     // The model: every node, in preorder, as an id with a depth. Each commit
@@ -601,14 +622,26 @@ version (unittest)
         return (state >> 8) % bound;
     }
 
-    size_t commits, refused, kept, stale, moved;
+    size_t commits, refused, kept, stale, moved, movedShared, hosts;
+    // Each recipe as it is, and with nodes put on shared lines, so that
+    // moves meet nodes that share a line.
     foreach (path; paths)
+    foreach (joined; [false, true])
     {
-        const text = readText(path);
-        SdlOpenDocument!sdlDubRecipe open;
         const kind = path[$ - 2 .. $] == ".d" ? SdlHostKind.embedded : SdlHostKind.recipe;
+        string text = readText(path);
+        SdlOpenDocument!sdlDubRecipe open;
         if (open.open(text, path, kind).hasError)
             continue; // a JSON recipe, or a fixture that is meant to fail
+        if (joined)
+        {
+            const shared_ = joinSomeLines(text, open.document.root);
+            if (shared_ == text)
+                continue;
+            text = shared_;
+            assert(!open.open(text, path, kind).hasError, path);
+            hosts++;
+        }
 
         Entry[] model;
         SdlNodeHandle[size_t] handles;
@@ -630,7 +663,7 @@ version (unittest)
             assert(nodes.length == model.length, path);
             auto before = model.dup;
             SdlNodeHandle[] retired;
-            bool moving;
+            bool moving, movingShared;
             auto editor = open.editor;
             const op = cast(Op) next(Op.max + 1);
             const at = nodes.length ? next(cast(uint) nodes.length) : 0;
@@ -704,6 +737,7 @@ version (unittest)
                 const point = after ? subtreeEnd(rest, d) : d;
                 model = rest[0 .. point] ~ block ~ rest[point .. $];
                 moving = true;
+                movingShared = !nodes[at].aloneOnLines || !nodes[dest].aloneOnLines;
                 break;
             }
             const host = open.host.idup;
@@ -723,6 +757,7 @@ version (unittest)
             {
                 commits++;
                 moved += moving;
+                movedShared += movingShared;
             }
 
             nodes = null;
@@ -750,6 +785,7 @@ version (unittest)
             assert(open.handleCount == nodes.length, path);
         }
     }
-    assert(commits > 500 && stale > 100 && kept > 10_000 && moved > 50,
+    assert(commits > 500 && stale > 100 && kept > 10_000 && moved > 50 && movedShared > 100
+        && hosts > 100,
         "the property test exercised too little");
 }

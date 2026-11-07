@@ -485,11 +485,18 @@ the host into the rendered output.
 
 S20's moves replaced the moved node: a commit retired its handle and its
 descendants', as a replacement does. Moves now replace nothing, and a
-moved node's anchor goes where its bytes went (editing §9).
+moved node's anchor goes where its bytes went (editing §9). A move also
+needed the node and its destination each alone on their lines, and
+`updateSDL` wrote any other reordered element afresh. A node sharing a
+line now moves its inline text, along its line, onto another's or onto a
+line of its own (editing §2, §3, SDE18); `updateSDL` writes an element
+afresh only where placement allows no move — more than one line, a line
+comment or attached comments, bound between two nodes of one line.
 
-| Gate                                                  | Evidence                                                                                                                                                                                                    |
-| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| SDE11 over moves; SDE12 for a moved-and-replaced node | `SdlEditor.movedOffset`; `sdl.open_document.properties.repositoryRecipes` with random moves, some re-indenting and some with an edit inside, mutation-checked; `.movesKeepHandles`; `.replacedNodesGoStale` |
+| Gate                                                                            | Evidence                                                                                                                                                                                                                                                                                     |
+| ------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SDE11 over moves; SDE12 for a moved-and-replaced node                           | `SdlEditor.movedOffset`; `sdl.open_document.properties.repositoryRecipes` with random moves, some re-indenting and some with an edit inside, mutation-checked; `.movesKeepHandles`; `.replacedNodesGoStale`                                                                                  |
+| SDE18 on shared lines; placement beside an inline sibling; SDE3's blank overlap | `sdl.editor.move.sharedLines`, `.rejects`; `sdl.editor.properties.movesOnSharedLines` (every recipe with nodes put on shared lines, mutation-checked); `sdl.open_document.properties.repositoryRecipes` over the same hosts; `sdl.typedEdit.keyed.reorderOnSharedLines`; `SdlEditor.canMove` |
 
 ## S21–S22 closure: 2026-11-06
 
