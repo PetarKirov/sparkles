@@ -62,7 +62,7 @@ In the `sparkles:wired-sdl-select` sub-package, module `sparkles.wired.sdl.selec
 | Name                                   | Is                                                                      |
 | -------------------------------------- | ----------------------------------------------------------------------- |
 | `SdlPath.parse(path)`                  | A borrowed, validated DQL path; `nodes(start)`, `attributes(start)`.    |
-| `SdlSelector.parse(path, filter)`      | An owned path plus a DQL filter over each selected node.                |
+| `SdlSelector.parse(path, filter)`      | A path plus a DQL filter over each selected node; copies share it.      |
 | `SdlNodeSelection`, `SdlSelectedNodes` | The node ranges, in document order: unfiltered and filtered.            |
 | `SdlAttributeSelection!Nodes`          | The attributes the last segment names, of the nodes `Nodes` yields.     |
 | `SdlNodeResolver`                      | The DQL host resolver over one node: `values[i]`, attributes, children. |

@@ -58,8 +58,10 @@ Strings, booleans, integers and floats compare as themselves; `&&`, `||`,
 DQL query. A filter on an attribute selection tests the node that holds the
 attributes.
 
-The selector owns its DQL engine and the ranges refer to it, so keep the
-selector in a variable while you iterate.
+A selector is a value: `SdlSelector.parse(…).value` binds to a variable,
+and copies share the parsed filter. Its ranges borrow it, so keep the
+selector in a variable while you iterate: a `foreach` over
+`SdlSelector.parse(…).value.nodes(root)` outlives its temporary.
 
 ## Edit what you selected
 
@@ -73,8 +75,8 @@ such as a byte range, narrows it with `filter`. In the repository,
 way:
 
 ```d
-auto stale = SdlSelector.parse("buildType", `values[1] == null && values[0] == "checked"`);
-editor.remove(stale.value.nodes(root).filter!(node => !inRegion(node)));
+auto stale = SdlSelector.parse("buildType", `values[1] == null && values[0] == "checked"`).value;
+editor.remove(stale.nodes(root).filter!(node => !inRegion(node)));
 ```
 
 ## Example
@@ -120,8 +122,8 @@ void main()
     foreach (path; ["dependency.version", "configuration.dependency.version"])
     {
         auto inTree = SdlSelector.parse(path,
-            "globMatch(values[0], `sparkles:*`) && version == `*`");
-        editor.replaceAttribute(inTree.value.attributes(root),
+            "globMatch(values[0], `sparkles:*`) && version == `*`").value;
+        editor.replaceAttribute(inTree.attributes(root),
             SdlQualifiedName(null, "path"), SdlScalar("../.."));
     }
     UniqueBuffer!char output;

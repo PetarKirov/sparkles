@@ -156,10 +156,10 @@ private void copyFixture(string dest)
     // selections (JSON) the same spelling.
     const recipe = dest.buildPath("dub.sdl");
     recipe.write(editRecipe(recipe.readText, (ref editor, root) {
-        auto checkout = SdlSelector.parse("dependency.path", "path == `../../../..`");
-        assert(!checkout.value.attributes(root).empty,
+        auto checkout = SdlSelector.parse("dependency.path", "path == `../../../..`").value;
+        assert(!checkout.attributes(root).empty,
             "dub.sdl no longer names the checkout as ../../../..");
-        editor.replaceAttribute(checkout.value.attributes(root),
+        editor.replaceAttribute(checkout.attributes(root),
             SdlQualifiedName(null, "path"), SdlScalar(repoRoot));
     }));
     const selections = dest.buildPath("dub.selections.json");

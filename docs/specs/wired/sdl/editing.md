@@ -526,7 +526,7 @@ struct SdlPath
     SdlNodeSelection nodes(SdlNode start) const;                         // @nogc
     SdlAttributeSelection!SdlNodeSelection attributes(SdlNode start) const;
 }
-struct SdlSelector
+struct SdlSelector // copies share one reference-counted state; ranges borrow it
 {
     static Expected!(SdlSelector, SdlSelectorError) parse(const(char)[] path,
         const(char)[] filter = null);
