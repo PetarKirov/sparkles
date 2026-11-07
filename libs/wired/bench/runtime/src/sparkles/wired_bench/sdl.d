@@ -39,6 +39,10 @@ edited texts.
 open in an `SdlOpenDocument` (editing §10), finding each target by its node
 handle, and is held to the SHA-256 of the committed hosts. Its bytes count
 once per commit, so its instructions per byte compare with one re-parse.
+
+`commit-unchanged` commits as many editors with no edits to the same open
+documents, and is held to hosts equal to the dataset's texts: it measures what
+a commit that changes nothing costs.
 */
 module sparkles.wired_bench.sdl;
 
@@ -496,6 +500,24 @@ unittest
     skipIfEmpty(registered, "commit");
 }
 
+@("sdl.commit-unchanged")
+@benchmark
+@system
+unittest
+{
+    size_t registered;
+    if (sdlEngineEnabled("wired"))
+        foreach (corpus; selectedCorpora)
+        {
+            if (corpus.kind == SdlDatasetKind.document)
+                registerUnchangedCommit!sdlFull(corpus);
+            else
+                registerUnchangedCommit!sdlDubRecipe(corpus);
+            registered++;
+        }
+    skipIfEmpty(registered, "commit-unchanged");
+}
+
 @("sdl.encode")
 @benchmark
 @system
@@ -801,6 +823,52 @@ private void registerCommit(SdlParserConfig config)(SdlCorpus corpus)
                     target = docs[i].handleOf(nodeAt(docs[i].document.root, at)).value;
                 }
             }
+        },
+        teardown: () {
+            foreach (ref open; docs)
+                open = Open.init;
+        },
+    );
+}
+
+/**
+commit-unchanged — open documents (untimed `setup`) → `commitsPerDocument`
+commits each of an editor with no edits. The throughput counts the input
+bytes once per commit, as `commit` does; every host must still equal its
+text afterwards.
+*/
+private void registerUnchangedCommit(SdlParserConfig config)(SdlCorpus corpus)
+{
+    alias Open = SdlOpenDocument!config;
+    auto docs = new Open[corpus.texts.length];
+    size_t committedBytes;
+    foreach (text; corpus.texts)
+        committedBytes += text.length * commitsPerDocument;
+    bool failed;
+    benchCase(
+        name: "wired",
+        timed: () {
+            foreach (ref open; docs)
+                foreach (_; 0 .. commitsPerDocument)
+                {
+                    auto editor = open.editor;
+                    if (open.commit(editor).hasError)
+                        failed = true;
+                }
+        },
+        after: () {
+            string error = failed ? "a parse or commit failed" : null;
+            foreach (i, ref open; docs)
+                if (!error.length && open.host != corpus.texts[i])
+                    error = "a commit with no edits changed " ~ corpus.files[i];
+            return verdict(error);
+        },
+        metrics: [inputBytes(committedBytes)],
+        labels: labelsFor(corpus, "commit-unchanged"),
+        setup: () {
+            foreach (i, text; corpus.texts)
+                if (docs[i].open(text).hasError)
+                    failed = true;
         },
         teardown: () {
             foreach (ref open; docs)
