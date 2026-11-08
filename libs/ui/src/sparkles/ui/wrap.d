@@ -291,7 +291,17 @@ private struct WrapCacheKey
 
 // The planned rows for recently wrapped spans, per thread (layout runs on
 // one). Keyed by a hash, confirmed by comparing every authored field, text
-// by content; cleared whole when it grows past its bound.
+// by content.
+//
+// Bounded by the spans it keeps, not only by its entries: a wrapped row holds
+// a span per cluster, so a large document's rows at one width are a few
+// hundred thousand spans, and a cache that kept every width a window had been
+// dragged through held gigabytes the collector scanned on every collection.
+// Two generations: `recent` takes every store and every hit, and once it is
+// full it becomes `older`, dropping what `older` held. What the current
+// layout used is in one of them, so a document's second pass at a width (the
+// gutter's, then the final one) still finds every row, while rows for widths
+// it left behind go.
 private struct WrapCache
 {
     private static struct Entry
@@ -301,9 +311,52 @@ private struct WrapCache
         TextSpan[][] lines;
     }
 
-    private Entry[][size_t] entries;
-    private size_t count;
-    enum size_t bound = 16_384;
+    private static struct Generation
+    {
+        Entry[][size_t] entries;
+        size_t count, spans;
+    }
+
+    private Generation recent, older;
+    /// Per generation: entries, and spans (authored and wrapped) kept.
+    enum size_t bound = 8_192, spanBound = 1 << 19;
+
+    // The spans an entry keeps alive.
+    private static size_t weight(scope const(TextSpan)[] owned, scope const(TextSpan[])[] lines)
+        @safe pure nothrow @nogc
+    {
+        size_t n = owned.length;
+        foreach (row; lines)
+            n += row.length;
+        return n;
+    }
+
+    private static TextSpan[][] lookup(ref Generation g, size_t hash, in WrapCacheKey key,
+        scope const(TextSpan)[] spans, out TextSpan[] owned) @safe nothrow
+    {
+        if (auto bucket = hash in g.entries)
+            foreach (ref e; *bucket)
+                if (e.key == key && e.spans == spans)
+                {
+                    owned = e.spans;
+                    return e.lines;
+                }
+        return null;
+    }
+
+    private void keep(size_t hash, in WrapCacheKey key, TextSpan[] owned, TextSpan[][] lines)
+        @safe nothrow
+    {
+        const w = weight(owned, lines);
+        if (recent.count >= bound || recent.spans + w > spanBound)
+        {
+            older = recent;
+            recent = Generation.init;
+        }
+        recent.entries[hash] ~= Entry(key, owned, lines);
+        ++recent.count;
+        recent.spans += w;
+    }
 
     private static size_t hashOfInput(in WrapCacheKey key, scope const(TextSpan)[] spans)
         @safe nothrow
@@ -315,14 +368,24 @@ private struct WrapCache
         return h;
     }
 
+    /// The rows kept for `spans` under `key`, or null. A hit in `older` moves
+    /// to `recent`, so what a layout keeps using survives the next rotation.
     TextSpan[][] find(in WrapCacheKey key, scope const(TextSpan)[] spans) @safe nothrow
     {
-        if (auto bucket = hashOfInput(key, spans) in entries)
-            foreach (ref e; *bucket)
-                if (e.key == key && e.spans == spans)
-                    return e.lines;
+        const hash = hashOfInput(key, spans);
+        TextSpan[] owned;
+        if (auto lines = lookup(recent, hash, key, spans, owned))
+            return lines;
+        if (auto lines = lookup(older, hash, key, spans, owned))
+        {
+            keep(hash, key, owned, lines);
+            return lines;
+        }
         return null;
     }
+
+    /// The spans both generations keep, for the bound's test.
+    size_t retainedSpans() const @safe pure nothrow @nogc => recent.spans + older.spans;
 
     /// `spans` with their texts copied: what an entry keeps and wraps.
     static TextSpan[] ownedCopy(scope const(TextSpan)[] spans) @safe nothrow
@@ -338,15 +401,7 @@ private struct WrapCache
 
     /// Keeps `lines`, wrapped from `owned` (an $(LREF ownedCopy)).
     void store(in WrapCacheKey key, TextSpan[] owned, TextSpan[][] lines) @safe nothrow
-    {
-        if (count >= bound)
-        {
-            entries = null;
-            count = 0;
-        }
-        entries[hashOfInput(key, owned)] ~= Entry(key, owned, lines);
-        ++count;
-    }
+        => keep(hashOfInput(key, owned), key, owned, lines);
 }
 
 private WrapCache wrapCache; // thread-local, as module variables are
@@ -1039,6 +1094,32 @@ unittest
     const moved = [TextSpan("a long line that will wrap at ten cells", srcStart: 9)];
     assert(wrapSpans(moved, 10)[0][0].srcStart != first[0][0].srcStart);
     assert(wrapSpans(spans, 12).length != 0, "another width is planned anew");
+}
+
+@("ui.wrap.sharedWrapSpans.keepsABoundedSetOfRows")
+@safe unittest
+{
+    import std.conv : text;
+
+    // Paragraphs wrapped at width after width, as a window dragged across a
+    // large document wraps them: what the cache keeps stays within its two
+    // generations, and the rows the current width just used are still there.
+    wrapCache = WrapCache.init;
+    auto paragraphs = new TextSpan[][](64);
+    foreach (i, ref p; paragraphs)
+        p = [TextSpan(text("paragraph ", i, " with enough words to wrap into several rows"))];
+    // More entries than a generation holds, so the generations rotate.
+    foreach (width; 10 .. 150)
+        foreach (ref p; paragraphs)
+            cast(void) sharedWrapSpans(p, width);
+    assert(wrapCache.recent.count <= WrapCache.bound && wrapCache.older.count <= WrapCache.bound);
+    assert(wrapCache.retainedSpans <= 2 * WrapCache.spanBound + 64);
+    foreach (ref p; paragraphs)
+    {
+        const kept = sharedWrapSpans(p, 399);
+        assert(kept is sharedWrapSpans(p, 399), "the last width's rows, kept");
+    }
+    wrapCache = WrapCache.init;
 }
 
 @("ui.wrap.sharedWrapSpans.servesTheCachedRows")
