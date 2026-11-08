@@ -353,6 +353,59 @@ directories as the fileset's does. Where the two readings of `**/` disagree, the
 fileset's is the one the site means. M9 reviews each consumer's globs with this
 record; it is closed when the last consumer is migrated.
 
+### A18 — The scheme seam, as built
+
+A scheme is a struct, and what it declares are enums read by `shapeOf`:
+`order`, `metadata` and `traversal`, each defaulting to what a path collector
+needs (`none`, nothing, `stream`). `shapeOf` refuses a fold over `none` with a
+`static assert`, so `FSS5` holds wherever a scheme is used, not only in
+`resolveScheme`. A stream implements `visit`, a fold `fold`, and both
+`incomplete` and `finish`; each returns `false` to abort, which fails the
+resolution with `schemeFailed` (`FSE1`). Where an incomplete entry lands is
+the scheme's to decide (`FSE2`, `FSE4`): `PathScheme` keeps a list in its
+result, and a digest returns `false` from `incomplete`.
+
+**Orders.** `none` is byte order, the machine's own. `partitionedOrder` is
+directories, then regular files, then links, each by name, as Snix's
+`Directory` message keeps them. `narOrder` and `gitTreeOrder` are the formats'
+own; `precedes` is the one comparison all four use.
+
+**A stream's unit comes after its subdirectories are listed.** That is still
+before any of their units, so the order is pre-order, and it lets the unit say
+which subdirectories opened, and whether the directory is empty (`FSV4`).
+Units from a stream used to arrive post-order, like a fold's; nothing outside
+the package consumed them.
+
+**A fold ends at the fileset root.** A fold's result is one value, but a
+plan's start roots may lie beneath the root. The machine hands over the
+directories above them as units of their own, each holding the subdirectories
+through which a start root that held anything was reached. It sorts the start
+roots by bytes, which keeps each directory's descendants together, so these
+units also arrive post-order. A directory above the roots that ends up holding
+nothing is dropped; the fileset root never is. Its handle is not alive: it was
+never opened.
+
+**Metadata is per member, and only on request.** A declared `executable` or
+`mtime` stats each member file not already stat-ed; `mtime` also stats member
+links; `linkTarget` reads each member link's target in the same batch as the
+stats. A link's executable bit is `false` by `FSO1`, so a fileset that asks
+for it decides a link without a stat. Directories carry no metadata: no
+scheme of interest needs it, and REAPI's directory properties can be added
+later without changing a unit's shape.
+
+**An `FsoRef` is borrowed for one call.** The driver retires a directory's
+handle once its unit is consumed, because keeping handles alive for deferred
+work would make descriptor use unbounded (`FSD4`). A scheme that wants
+concurrent reads opens its files during the call and hands the open files to
+spawned work, as `fileset.scheme.FSS4.schemeOwnedReads` does. A closure that
+captures a struct with a destructor still destroys it when the capturing
+frame ends, so such work holds the file on the heap.
+
+**The supplied tree of `FSS8` has no type yet.** The seam lets a scheme find
+one through an entry's reference and verify without opening the entry. The
+tree's shape is the content-addressing contract's, so `FSS8` stays partial
+until M6.
+
 ## Open
 
 ### D1 — Which Merkle shape

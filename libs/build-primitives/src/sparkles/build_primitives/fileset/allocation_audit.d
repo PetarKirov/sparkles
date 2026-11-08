@@ -178,6 +178,77 @@ version (linux)
         assert(gcAfter == gcBefore, "a scoped resolution step allocated on the GC heap");
     }
 
+    /// The same, for a fold declaring every metadata kind and an order to
+    /// sort by: stats, link reads, sorting units and handing over the
+    /// directories above the start roots allocate nothing either.
+    @("fileset.allocation.foldResolutionHasZeroCalls")
+    @system unittest
+    {
+        import core.memory : GC;
+
+        import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+        import sparkles.base.vfs.mem : MemVfs;
+        import sparkles.build_primitives.fileset.driver : FilesetDriver, filesetRights;
+        import sparkles.build_primitives.fileset.fso : EntryOrder, FsoMetadata, FsoNode, SchemeShape,
+            Traversal;
+        import sparkles.build_primitives.fileset.machine : Resolution, ResolutionLimits, StepKind;
+        import sparkles.build_primitives.fileset.pattern : CasePolicy;
+        import sparkles.build_primitives.fileset.tree_literal : memTree;
+        import sparkles.build_primitives.fileset.value : Filesets;
+
+        auto tree = memTree("lib/x/a.b\nlib/x/a/c\nlib/x/run +x\nlib/x/l -> a/c\nsrc/z.d\nsrc/q/r.d\n");
+        assert(!tree.hasError);
+        auto root = openRoot!filesetRights(&tree.value.get().vfs, "", ambientAuthority());
+        auto sets = Filesets(CasePolicy.sensitive);
+        const f = sets.union_(sets.glob("lib/x/").value, sets.glob("src/**/*.d").value);
+        const shape = SchemeShape(EntryOrder.gitTreeOrder,
+            cast(FsoMetadata)(FsoMetadata.executable | FsoMetadata.mtime | FsoMetadata.linkTarget),
+            Traversal.fold);
+        auto m = Resolution(sets, f, ResolutionLimits.init, false, false, shape);
+        auto driver = FilesetDriver!(MemVfs, filesetRights)(64);
+        auto cursor = m.start();
+        size_t units, entries, targets, executables;
+
+        const gcBefore = GC.allocatedInCurrentThread();
+        allocationCalls = 0;
+        auditActive = true;
+        for (;;)
+        {
+            StepKind kind;
+            if (!m.step(sets, cursor, 2, kind))
+                break;
+            if (kind != StepKind.unit)
+                driver.retire(m.retired);
+            if (kind == StepKind.done)
+                break;
+            if (kind == StepKind.needIO)
+                foreach (i; 0 .. m.batch.length)
+                    driver.perform(m, root.value.borrow, i);
+            else if (kind == StepKind.unit)
+            {
+                ++units;
+                foreach (e; m.unitEntries)
+                {
+                    ++entries;
+                    targets += e.node.target.length > 0;
+                    executables += e.node.executable;
+                }
+                driver.retire(m.retired);
+            }
+        }
+        auditActive = false;
+        const gcAfter = GC.allocatedInCurrentThread();
+
+        assert(m.error.code == m.error.code.init, m.error.context);
+        // lib/x/a, lib/x, lib, src/q, src, and the fileset root
+        assert(units == 6);
+        // c; a.b a l run; x; r.d; q z.d; lib src
+        assert(entries == 11);
+        assert(targets == 1 && executables == 1);
+        assert(allocationCalls == 0, "a fold's resolution step called the libc allocator");
+        assert(gcAfter == gcBefore, "a fold's resolution step allocated on the GC heap");
+    }
+
     @("fileset.allocation.evaluationHasZeroCalls")
     @system unittest
     {

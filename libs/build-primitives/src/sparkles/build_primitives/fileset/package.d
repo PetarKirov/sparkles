@@ -14,5 +14,6 @@ public import sparkles.build_primitives.fileset.ignore;
 public import sparkles.build_primitives.fileset.machine;
 public import sparkles.build_primitives.fileset.pattern;
 public import sparkles.build_primitives.fileset.plan;
+public import sparkles.build_primitives.fileset.scheme;
 public import sparkles.build_primitives.fileset.tree_literal;
 public import sparkles.build_primitives.fileset.value;
