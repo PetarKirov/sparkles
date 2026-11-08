@@ -3,10 +3,14 @@
     extra-substituters = [
       "https://sparkles.cachix.org"
       "https://dlang-community.cachix.org"
+      # The R2 bucket behind the Cachix caches (ci/with-r2.sh): everything CI
+      # builds, without Cachix's 10 GiB limit.
+      "https://cache.sparkles.petar-kirov.dev"
     ];
     extra-trusted-public-keys = [
       "sparkles.cachix.org-1:CPQ+GG8UKQCNUyvCrgZj8p7P+7cYqpjmGAmUPlLwbZc="
       "dlang-community.cachix.org-1:eAX1RqX4PjTDPCAp/TvcZP+DYBco2nJBackkAJ2BsDQ="
+      "cache.sparkles.petar-kirov.dev-1:pyBtPO/Mcyi5aJExiz7yfqnj9GLd65djkPwENpLFY00="
     ];
   };
 

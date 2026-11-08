@@ -184,13 +184,13 @@ fi
 
 # --- 3. nix.conf -----------------------------------------------------------
 #
-# flake.nix's nixConfig names this project's two Cachix caches. Without them a
-# container builds LDC, DMD, dub, the tree-sitter grammars and ghostty from
-# source, which is hours rather than minutes.
+# flake.nix's nixConfig names this project's caches (two on Cachix, one on
+# R2). Without them a container builds LDC, DMD, dub, the tree-sitter grammars
+# and ghostty from source, which is hours rather than minutes.
 
 export NIX_ACCEPT_FLAKE_CONFIG=1
-export NIX_SUBSTITUTERS='https://sparkles.cachix.org https://dlang-community.cachix.org'
-export NIX_TRUSTED_PUBLIC_KEYS='sparkles.cachix.org-1:CPQ+GG8UKQCNUyvCrgZj8p7P+7cYqpjmGAmUPlLwbZc= dlang-community.cachix.org-1:eAX1RqX4PjTDPCAp/TvcZP+DYBco2nJBackkAJ2BsDQ='
+export NIX_SUBSTITUTERS='https://sparkles.cachix.org https://dlang-community.cachix.org https://cache.sparkles.petar-kirov.dev'
+export NIX_TRUSTED_PUBLIC_KEYS='sparkles.cachix.org-1:CPQ+GG8UKQCNUyvCrgZj8p7P+7cYqpjmGAmUPlLwbZc= dlang-community.cachix.org-1:eAX1RqX4PjTDPCAp/TvcZP+DYBco2nJBackkAJ2BsDQ= cache.sparkles.petar-kirov.dev-1:pyBtPO/Mcyi5aJExiz7yfqnj9GLd65djkPwENpLFY00='
 
 "$here/nix-configure.sh"
 
