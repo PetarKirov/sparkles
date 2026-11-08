@@ -1556,14 +1556,20 @@ version (unittest)
         // Each call at a width no earlier call used: a drag settles on a new
         // width, so a cache warmed by the last two must not answer for it.
         bool freshWidths;
+        // A windowed preview's relayout settled to the end: every segment
+        // measured, as the frames after the resize would.
+        bool settled;
 
         size_t run() @system
         {
+            import core.time : Duration;
             import sparkles.test_runner.bench : blackBox;
 
             width = freshWidths ? (width < 60 || width >= 160 ? 60 : width + 1)
                 : width == 93 ? 107 : 93;
             pane.vm.relayout(width);
+            if (settled)
+                while (pane.vm.settleLayout(Duration.max)) {}
             return blackBox(pane.vm.rows.length);
         }
     }
@@ -1641,4 +1647,45 @@ version (unittest)
         timed: &st.run, after: (ref size_t rows) {
             assert(rows > 0, text("no rows laid out for ", path));
         });
+}
+
+// The same reflow with the preview laid out as a window around the pane
+// (`ViewerModel.windowed`, 50 rows): the frame a resize costs, and the
+// work it leaves to the frames after it, settled to the end.
+@("pane.relayout.largeMarkdownFileWindowed")
+@benchmark
+@system unittest
+{
+    import core.time : Duration;
+    import std.conv : text;
+    import std.file : exists;
+    import std.path : baseName, buildPath, dirName;
+    import std.process : environment;
+    import sparkles.test_runner.bench : benchCase;
+    import sparkles.test_runner.skip : skipTest;
+
+    if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
+        skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
+    const root = __FILE_FULL_PATH__.dirName.dirName.dirName.dirName.dirName.dirName;
+    const path = environment.get("HUE_BENCH_MD_FILE",
+        buildPath(root, "docs", "specs", "event-horizon", "SPEC.md"));
+    if (!path.exists)
+        skipTest("bench file not found: " ~ path ~ " (set HUE_BENCH_MD_FILE)");
+
+    auto env = DocViewEnv.create(GrammarRegistry.fromEnvironment());
+    foreach (settled; [false, true])
+    {
+        auto st = new RelayoutState(new DocViewPane, freshWidths: true, settled: settled);
+        assert(st.pane.open(env, path, chromeTheme(RgbColor(200, 200, 200), RgbColor(20, 20, 20))));
+        st.pane.vm.windowed = true;
+        st.pane.vm.viewRows = 50;
+        st.pane.vm.relayout(st.width);
+        while (st.pane.vm.settleLayout(Duration.max)) {}
+        st.pane.vm.top = cast(long) st.pane.vm.rows.length / 2;
+        st.pane.vm.settleLayout(Duration.zero);
+        benchCase(name: path.baseName, labels: ["op": settled ? "settled" : "resize"],
+            timed: &st.run, after: (ref size_t rows) {
+                assert(rows > 0, text("no rows laid out for ", path));
+            });
+    }
 }
