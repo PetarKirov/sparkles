@@ -784,25 +784,47 @@ private struct CellMeasureContext
         => !atoms[a].formatting && atoms[a].token.kind == UtfTokenKind.scalar
             && atoms[a].token.scalar >= ' ' && atoms[a].token.scalar <= '~';
 
-    /// Whether the candidate `[start, end)` holds only such atoms. A paragraph
-    /// with one em dash is not `plainAscii`, but its lines without one still
-    /// count: a projection starts afresh at its candidate, and a cluster
-    /// joining an ASCII atom to its neighbour has that neighbour in its range.
+    /// A cluster the count covers: one scalar atom, one or two cells wide,
+    /// that neither joins nor is joined. A boundary precedes it and none of
+    /// its state survives into the next cluster but the scalar itself, so a
+    /// projection holding only such clusters is the sum of their widths. Left
+    /// to the projection: a cluster of several scalars, a regional indicator
+    /// (its pairing counts across clusters), controls and tabs, soft hyphens,
+    /// separators, zero-width scalars, and whitespace other than a space.
+    private bool simpleCluster(size_t c) const @safe pure nothrow @nogc
+    {
+        const cluster = clusters[c];
+        if (cluster.atomEnd != cluster.atomStart + 1 || cluster.tab || cluster.softHyphen
+            || cluster.separator || cluster.width < 1 || cluster.width > 2)
+            return false;
+        const atom = atoms[cluster.atomStart];
+        if (atom.formatting || atom.token.kind != UtfTokenKind.scalar)
+            return false;
+        const s = atom.token.scalar;
+        if (s < ' ' || s >= 0x7F && s <= 0x9F || s >= 0x1F1E6 && s <= 0x1F1FF)
+            return false;
+        return !cluster.whitespace || s == ' ';
+    }
+
+    /// Whether the candidate `[start, end)` holds only simple clusters. A
+    /// paragraph with one keycap is not `plainAscii`, but its lines without one
+    /// still count: a projection starts afresh at its candidate, and a cluster
+    /// joining a scalar to its neighbour has that neighbour in its range.
     bool plainRange(size_t start, size_t end) const @safe pure nothrow @nogc
     {
         if (plainAscii)
             return true;
         if (start >= end)
             return false;
-        foreach (a; clusters[start].atomStart .. clusters[end - 1].atomEnd)
-            if (!plainAtom(a))
+        foreach (c; start .. end)
+            if (!simpleCluster(c))
                 return false;
         return true;
     }
 
-    /// The projection `build` would realize for a plain ASCII candidate with
-    /// no indent or hyphen, counted instead of realized: one cell per
-    /// retained character, the whitespace policy deciding which spaces stay.
+    /// The projection `build` would realize for a candidate of simple clusters
+    /// with no indent or hyphen, counted instead of realized: each retained
+    /// cluster its width, the whitespace policy deciding which spaces stay.
     /// `written` stays zero; nothing reads the fragments without a target
     /// measurer, and the fast path requires none.
     void countPlain(size_t start, size_t end, ref RealizedCellProjection projection) @safe nothrow @nogc
@@ -810,13 +832,16 @@ private struct CellMeasureContext
         const first = start < end ? clusters[start].atomStart : 0;
         const last = start < end ? clusters[end - 1].atomEnd : first;
         bool white(size_t index) => atoms[index].token.scalar == ' ';
+        // Each cluster here is one atom, so atom `first + i` is cluster `start + i`.
+        long cellsOf(size_t index) => clusters[start + (index - first)].width;
         size_t firstContent = last, lastContent = first;
         foreach (a; first .. last)
             if (!white(a)) { if (firstContent == last) firstContent = a; lastContent = a + 1; }
         // `content` drops a whitespace run when the policy omits it; a
         // collapsed run strictly inside the content emits one space.
         size_t emittedFirst = size_t.max, emittedLast;
-        ulong cells;
+        long cells;
+        ulong emitted;
         for (size_t cursor = first; cursor < last;)
         {
             if (white(cursor) && (options.whitespace == WhitespaceMode.collapse
@@ -830,23 +855,26 @@ private struct CellMeasureContext
                     if (emittedFirst == size_t.max) emittedFirst = cursor;
                     emittedLast = cursor;
                     ++cells;
+                    ++emitted;
                 }
                 cursor = runEnd;
                 continue;
             }
             if (emittedFirst == size_t.max) emittedFirst = cursor;
             emittedLast = cursor;
-            ++cells;
+            cells += cellsOf(cursor);
+            ++emitted;
             ++cursor;
         }
         projection = RealizedCellProjection.init;
-        projection.advance = cast(long) cells;
-        projection.bodyClusters = cells;
-        if (!cells) return;
+        projection.advance = cells;
+        projection.bodyClusters = emitted;
+        if (!emitted) return;
         projection.hasText = projection.hasSourceText = true;
         projection.first = UtfToken(scalar: atoms[emittedFirst].token.scalar);
-        // An ASCII scalar ends every earlier cluster and starts no joining
-        // sequence, so the state after it does not depend on what preceded it.
+        // A simple cluster's scalar ends every earlier cluster and starts no
+        // sequence a later scalar joins across a boundary, so the state after
+        // it does not depend on what preceded it.
         projection.trailing.push(atoms[emittedLast].token.scalar);
     }
 
