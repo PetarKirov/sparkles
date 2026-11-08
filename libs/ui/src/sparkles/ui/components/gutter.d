@@ -609,17 +609,23 @@ Params:
     channels = the strips, in left-to-right order; `cells` indexed by visual row
     rowCount = the document's height in visual rows
     document = the laid-out document's root
+    firstRow = the first row given a cell: a window of a document, whose
+        rows above it are blank (`sparkles.source_view.markdown`'s
+        `viewMarkdownWindowInto`), takes a spacer in each strip instead
 
 Returns: the composed root, or `document` unchanged when no channel is enabled.
 */
 uint withGutterColumns(ref Builder b, const(GutterChannel)[] channels,
-    size_t rowCount, uint document)
+    size_t rowCount, uint document, size_t firstRow = 0)
 {
     uint[] columns;
     foreach (ch; channels.enabledOf)
     {
         uint[] cells;
-        foreach (row; 0 .. rowCount)
+        if (firstRow > 0)
+            cells ~= b.add(Widget(kind: WidgetKind.box,
+                height: SizeSpec.fixed(cast(int) firstRow)));
+        foreach (row; firstRow .. rowCount)
             cells ~= cellWidget(b, ch, row < ch.cells.length ? &ch.cells[row] : null);
         auto w = SizeSpec.fixed(ch.width);
         w.min = w.value;   // chrome does not shrink; see `stripOf`
@@ -691,6 +697,37 @@ uint withGutterColumns(ref Builder b, const(GutterChannel)[] channels,
     // And the chrome still never reaches the content.
     assert(out_[0].sourceText == "aaaa bbbb");
     assert(out_[1].sourceText == "cccc");
+}
+
+@("ui.components.gutter.postLayoutColumnsFromAWindowsFirstRow")
+@safe unittest
+{
+    import sparkles.ui.geometry : Constraints;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.state : documentRows;
+    import sparkles.ui.widget : Builder, TextSpan;
+
+    // A window of a document: two blank rows stand for what it does not
+    // build. The strips give them a spacer and their cells start below it,
+    // on the rows they number.
+    auto b = Builder();
+    TextSpan[] a = [TextSpan("first", srcStart: 0, srcEnd: 5)];
+    TextSpan[] c = [TextSpan("second", srcStart: 6, srcEnd: 12)];
+    const docRoot = b.container(WidgetKind.column, [
+        b.add(Widget(kind: WidgetKind.box, height: SizeSpec.fixed(2))),
+        b.add(Widget(kind: WidgetKind.rich, spans: a)),
+        b.add(Widget(kind: WidgetKind.rich, spans: c)),
+    ]);
+    auto cells = new GutterCell[](4);
+    cells[2] = cellOf("7", 2);
+    cells[3] = cellOf("8", 2);
+    auto tree = b.finish(withGutterColumns(b,
+        [GutterChannel(id: "line", width: 2, cells: cells)], 4, docRoot, firstRow: 2));
+    const rows = documentRows(tree, layout(tree, Constraints(maxW: 20)));
+    assert(rows.length == 4);
+    assert(rows[0].text.length == 0 && rows[1].text.length == 0);
+    assert(rows[2].text == " 7first");
+    assert(rows[3].text == " 8second");
 }
 
 /**
