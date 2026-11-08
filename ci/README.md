@@ -69,6 +69,7 @@ PR — which gets no secrets — still run the pipeline.
 | `prepare-cloud-env.sh`       | One-line setup for an ephemeral agent container: Nix, reachable inputs, toolchain        |
 | `with-cache.sh`              | Runs a command under `cachix watch-exec` and `with-r2.sh`, pushing paths as they build   |
 | `with-r2.sh`                 | Queues each built path through a post-build hook and `nix copy`s it to the R2 bucket     |
+| `push-pin-set-r2.sh`         | Mirrors the pin set's toolchain outputs into the R2 bucket (the `pin-cache` job)         |
 | `release-pin.sh`             | Highest-tag guard, then `cachix push` + `cachix pin --keep-revisions`                    |
 | `toolchain-pin.d`            | Pins the pin set (`nix/pin-targets.nix`) to Cachix, prunes the rest, checks it is cached |
 | `notify-dub-registry.sh`     | Pokes code.dlang.org to ingest a new tag                                                 |
@@ -396,9 +397,11 @@ no credentials; CI writes it through R2's S3 API (`with-r2.sh`). Paths pushed
 there are signed with `cache.sparkles.petar-kirov.dev-1`, whose secret half
 exists only as the `NIX_R2_SIGNING_KEY` repository secret.
 
-The pins stay on Cachix: `toolchain-pin.d` and the `pin-cache` job (TC23)
-manage them there, and they fit its 10 GiB. What Cachix evicts, R2 still
-has.
+The pins stay on Cachix (`toolchain-pin.d`, TC24), and they fit its 10 GiB.
+The pin set is mostly substituted rather than built, so `with-r2.sh` never
+sees it; instead the `pin-cache` job first mirrors every `toolchain-*` output
+R2 lacks (`push-pin-set-r2.sh`), and then its gate (TC23) accepts an output
+that either cache serves. What Cachix evicts, R2 still has.
 
 `nix-cache-info` in the bucket was written once by hand, not by Nix (which
 writes `StoreDir` alone, leaving priority 50):

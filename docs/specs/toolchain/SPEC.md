@@ -287,12 +287,15 @@ of TC11–TC12. A skipped test is not a pass.
 
 **TC23: Cached before use.** Before Sparkles' lock file moves to a new
 toolchain revision, the toolchain's outputs for every host of TC21 **must** be
-available from Sparkles' binary cache, checked by querying the cache for each
-output's store path. Experimental outputs (the preview 3 sysroot of
+available from one of Sparkles' binary caches (its Cachix cache, or the R2
+cache at `cache.sparkles.petar-kirov.dev`), checked by querying the caches for
+each output's store path. Experimental outputs (the preview 3 sysroot of
 [TCW2](./wasi.md#_2-sysroots)) are excluded.
 
 _Rationale:_ A cold toolchain build exceeds Sparkles' CI job limits, and a
-cancelled build publishes nothing, so every retry starts cold.
+cancelled build publishes nothing, so every retry starts cold. Either cache
+serves CI, and the R2 one does not evict: the gate's job mirrors the
+toolchain there, so an output Cachix evicts still passes.
 
 **TC24: Pinned outputs.** The pin set **must** be the flake output
 `legacyPackages.<system>.pinTargets` (`nix/pin-targets.nix`), an attribute
