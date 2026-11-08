@@ -13,7 +13,7 @@ a resize; they never move what the pane shows, which is always laid out.
 module sparkles.doc_view.preview_window;
 
 import sparkles.source_view.markdown : MdSegment, mdSegments;
-import sparkles.syntax.md.model : MdBlock, MdBlockKind;
+import sparkles.syntax.md.model : MdBlock, MdBlockKind, Span;
 
 @safe:
 
@@ -221,6 +221,108 @@ struct SegmentIndex
     }
 }
 
+/**
+A source view's rows when it does not wrap: one per line, a folded region's
+lines sharing its first line's row (the placeholder). The lines are the
+code view's (`sparkles.source_view.code`): a trailing newline opens none.
+*/
+struct RawRowMap
+{
+    // Each row's first line.
+    private size_t[] rowLine;
+    private size_t lines;
+
+    /// The rows of a source `sourceLength` bytes long, whose lines start at
+    /// `lineStarts`, with the regions `folded` (source spans) closed.
+    this(scope const size_t[] lineStarts, size_t sourceLength, scope const(Span)[] folded)
+        pure nothrow
+    {
+        import std.algorithm.sorting : sort;
+
+        // `lineStarts` may carry an empty last line after a final newline,
+        // which the code view does not count.
+        size_t n = lineStarts.length;
+        while (n && lineStarts[n - 1] >= sourceLength)
+            --n;
+        auto order = folded.dup;
+        sort!((a, b) => a.start < b.start)(order);
+        size_t fi;
+        for (size_t li = 0; li < n; ++li)
+        {
+            rowLine ~= li;
+            const lineEnd = li + 1 < n ? lineStarts[li + 1] : size_t.max;
+            while (fi < order.length && order[fi].start < lineStarts[li])
+                ++fi;
+            size_t foldEnd;
+            bool folds;
+            for (size_t j = fi; j < order.length && order[j].start < lineEnd; ++j)
+                if (!folds || order[j].end > foldEnd)
+                {
+                    foldEnd = order[j].end;
+                    folds = true;
+                }
+            if (folds)
+                while (li + 1 < n && lineStarts[li + 1] < foldEnd)
+                    ++li;
+        }
+        lines = n;
+    }
+
+    /// The number of rows.
+    size_t length() const pure nothrow @nogc => rowLine.length;
+
+    /// The first line row `row` shows (the last row's for a row past them).
+    size_t lineOfRow(size_t row) const pure nothrow @nogc
+        => rowLine.length == 0 ? 0 : rowLine[row < rowLine.length ? row : $ - 1];
+
+    /// The row showing line `line`: its own, or its fold's placeholder.
+    size_t rowOfLine(size_t line) const pure nothrow @nogc
+    {
+        if (!rowLine.length)
+            return 0;
+        size_t lo, hi = rowLine.length;
+        while (hi - lo > 1)
+        {
+            const mid = (lo + hi) / 2;
+            if (rowLine[mid] <= line)
+                lo = mid;
+            else
+                hi = mid;
+        }
+        return lo;
+    }
+}
+
+/// The widest line of `source` in cells, tabs advancing to the next multiple
+/// of `tabWidth`.
+int widestLine(scope const(char)[] source, int tabWidth) pure nothrow @nogc
+{
+    import sparkles.base.text.grapheme : visibleWidth;
+
+    const tw = tabWidth > 0 ? tabWidth : 1;
+    long widest, col;
+    size_t seg;
+    foreach (i, char c; source)
+    {
+        if (c != '\t' && c != '\n')
+            continue;
+        col += visibleWidth(source[seg .. i]);
+        if (c == '\t')
+            col = (col / tw + 1) * tw;
+        else
+        {
+            if (col > widest)
+                widest = col;
+            col = 0;
+        }
+        seg = i + 1;
+    }
+    col += visibleWidth(source[seg .. $]);
+    if (col > widest)
+        widest = col;
+    return cast(int)(widest > int.max ? int.max : widest);
+}
+
 // Whether a block's rows re-wrap with the width.
 private bool rewraps(MdBlockKind kind) pure nothrow @nogc
 {
@@ -283,7 +385,6 @@ int estimateFromSource(in MdBlock[] blocks, const(char)[] source, int width,
 
 version (unittest)
 {
-    import sparkles.syntax.md.model : Span;
 
     private MdBlock block(MdBlockKind kind, size_t start, size_t end, ubyte level = 0)
         pure nothrow @nogc
@@ -362,4 +463,27 @@ version (unittest)
     const MdBlock[1] fence = [block(MdBlockKind.codeFence, 0, 23)];
     assert(estimateFromSource(fence, src, 10, false) == 2);
     assert(estimateFromSource(para, src, 10, true) == 1);
+}
+
+@("preview_window.RawRowMap.aFoldSharesItsFirstLinesRow")
+@safe pure nothrow unittest
+{
+    // "a0\na1 {\na2\na3\n}\na5\n": the region from `{` through `}` folds
+    // lines 1..4 into line 1's row; a region inside it changes nothing.
+    const size_t[6] starts = [0, 3, 8, 11, 14, 16];
+    const map = RawRowMap(starts[], 19, [Span(9, 12), Span(6, 15)]);
+    assert(map.length == 3);
+    assert(map.lineOfRow(0) == 0 && map.lineOfRow(1) == 1 && map.lineOfRow(2) == 5);
+    assert(map.rowOfLine(0) == 0 && map.rowOfLine(3) == 1 && map.rowOfLine(5) == 2);
+    assert(RawRowMap(starts[], 19, null).length == 6);
+    const size_t[7] trailing = [0, 3, 8, 11, 14, 16, 19];
+    assert(RawRowMap(trailing[], 19, null).length == 6, "a final newline opens no line");
+}
+
+@("preview_window.widestLine.expandsTabs")
+@safe pure nothrow @nogc unittest
+{
+    assert(widestLine("ab\n\tx\nwide line\n", 4) == 9);
+    assert(widestLine("\t\tx", 4) == 9);
+    assert(widestLine("界界", 4) == 4);
 }
