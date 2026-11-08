@@ -4,9 +4,9 @@ _The reviewable implementation sequence for [SPEC.md](./SPEC.md). Each
 milestone lands code, tests and the evidence its gate names. Decisions and open
 questions live in [decisions.md](./decisions.md)._
 
-**Status (November 7, 2026):** M0 is delivered (PR #507), with its
-`git check-ignore -v` parity gate. M1, M2 and M3, with E0, are delivered with
-their gates;
+**Status (November 8, 2026):** M0 is delivered (PR #507), with its
+`git check-ignore -v` parity gate. M1, M2, M3 and M4, with E0, are delivered
+with their gates;
 the state of each requirement is in the SPEC's
 [evidence ledger](./SPEC.md#evidence-ledger).
 The work resumes as the file-system layer of the
@@ -125,6 +125,12 @@ machine are run over real repository trees, and their results compared. Every
 divergence is either explained by
 [`FSG2`](./SPEC.md#5-matching-fsg) (the anchoring change) and recorded, or
 fixed. Nothing is deleted until this evidence exists.
+
+Delivered as `fileset.gate.m4.behaviourPreservation`. Two more classes are
+accepted beside `FSG2`: a divergence where git agrees with the machine (the
+old walker's defect) and one `FSA5`'s forced entry explains. The record, over
+this repository and ten others, linux among them, is
+[A17](./decisions.md#a17-the-m4-divergence-record).
 
 ### M5 — The FSO vocabulary and scheme declarations
 

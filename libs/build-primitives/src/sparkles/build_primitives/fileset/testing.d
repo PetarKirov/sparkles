@@ -1670,3 +1670,274 @@ version (Posix)
         assert(mismatches.length == 0, mismatches.join("\n"));
     }
 }
+
+// ---------------------------------------------------------------- the M4 gate
+
+version (Posix)
+{
+    /// How one comparison of the old walker with the machine came out.
+    struct GateTally
+    {
+        string tree;           /// what was compared
+        size_t files;          /// paths either side kept
+        size_t oldDefects;     /// divergences where git agrees with the machine
+        string[] oldDefectPaths; /// those paths, with the side that kept each
+        size_t anchoring;      /// divergences FSG2's matching explains
+        size_t forcedEntry;    /// divergences FSA5's forced entry explains
+        string[] unexplained;  /// anything else: the gate fails on one
+        string[] incomplete;   /// what the machine could not read
+    }
+
+    // The members of `make` resolved beneath `root` on the blocking backend.
+    private string[] resolveNative(string root, scope Fileset delegate(ref Filesets) @safe make,
+        ref GateTally tally) @system
+    {
+        import std.algorithm.sorting : sort;
+
+        import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+        import sparkles.event_horizon.sys : BlockingVfs;
+
+        auto vfs = new BlockingVfs;
+        auto opened = openRoot!(Rights.readOnly)(vfs, root, ambientAuthority());
+        assert(!opened.hasError, root);
+        auto sets = Filesets(CasePolicy.sensitive);
+        const f = make(sets);
+        PathCollector sink;
+        const r = resolve(opened.value.borrow, sets, f, sink);
+        assert(!r.hasError, root ~ ": " ~ (r.hasError ? r.error.context : ""));
+        tally.incomplete ~= sink.unreadable;
+        return sink.members.sort.release;
+    }
+
+    // Paths in exactly one of two sorted lists, and which.
+    private void divergences(const string[] a, const string[] b,
+        scope void delegate(string path, bool inA) @system each) @system
+    {
+        size_t i, j;
+        while (i < a.length || j < b.length)
+        {
+            if (j == b.length || (i < a.length && a[i] < b[j]))
+                each(a[i++], true);
+            else if (i == a.length || b[j] < a[i])
+                each(b[j++], false);
+            else
+            {
+                ++i;
+                ++j;
+            }
+        }
+    }
+
+    // Git's own verdict on each path: whether a `.gitignore` excludes it.
+    // `$GIT_DIR/info/exclude` and the user's excludes are not `.gitignore`
+    // scopes (A16), so their matches count as not excluded.
+    private bool[string] gitExcludes(string root, const string[] paths) @system
+    {
+        import std.algorithm.searching : canFind, findSplit, startsWith;
+        import std.string : lineSplitter;
+
+        import sparkles.build_primitives.git_env : runGit;
+
+        bool[string] verdicts;
+        foreach (p; paths)
+            verdicts[p] = false;
+        for (size_t at = 0; at < paths.length; at += 512)
+        {
+            const chunk = paths[at .. at + 512 < paths.length ? at + 512 : paths.length];
+            const asked = runGit(["-c", "core.excludesFile=/dev/null", "check-ignore", "-v",
+                "--no-index", "--"] ~ chunk, root);
+            foreach (line; asked.output.lineSplitter)
+            {
+                auto tab = line.findSplit("\t");
+                auto source = tab[0].findSplit(":");
+                auto pattern = source[2].findSplit(":")[2];
+                const fromGitignore = source[0].canFind(".gitignore")
+                    && !source[0].startsWith(".git/");
+                verdicts[tab[2]] = fromGitignore && !pattern.startsWith("!");
+            }
+        }
+        return verdicts;
+    }
+
+    /**
+    The `.gitignore` half: `walkGitRepository` against `everything -
+    gitignored - /.git` over the repository at `root`. A divergence where git
+    agrees with the machine is the old walker's; any other is the gate's
+    failure.
+    */
+    GateTally compareIgnoreWalk(string root) @system
+    {
+        import std.algorithm.sorting : sort;
+        import std.array : array;
+
+        import sparkles.build_primitives.dir_walk : walkGitRepository;
+
+        GateTally tally;
+        tally.tree = root;
+        auto old = walkGitRepository(root).array.sort.release;
+        const machine = resolveNative(root, (ref Filesets s) @safe => s.difference(
+            s.difference(s.everything, s.gitignored), s.glob("/.git").value), tally);
+        tally.files = old.length > machine.length ? old.length : machine.length;
+
+        string[] diverged;
+        bool[string] machineHas;
+        divergences(old, machine, (string p, bool inOld) {
+            diverged ~= p;
+            machineHas[p] = !inOld;
+        });
+        const git = gitExcludes(root, diverged);
+        foreach (p; diverged)
+        {
+            if (machineHas[p] == !git[p])
+            {
+                ++tally.oldDefects;
+                tally.oldDefectPaths ~= p ~ (machineHas[p] ? " (only the machine keeps it)"
+                    : " (only the old walker keeps it)");
+            }
+            else
+                tally.unexplained ~= p ~ (machineHas[p] ? ": the machine keeps what git excludes"
+                    : ": the machine drops what git keeps");
+        }
+        return tally;
+    }
+
+    // A glob written relative to `base`, as a pattern relative to the
+    // repository: an anchored one under `base`, an unanchored one anywhere
+    // beneath it.
+    private string rebase(string glob, string base) @safe
+    {
+        import std.algorithm.searching : canFind, startsWith;
+
+        auto g = glob.startsWith("/") ? glob[1 .. $] : glob;
+        const body = g.length && g[$ - 1] == '/' ? g[0 .. $ - 1] : g;
+        return body.canFind('/') || glob.startsWith("/") ? base ~ "/" ~ g : base ~ "/**/" ~ g;
+    }
+
+    /**
+    The glob half: `globWalkGitRepository` of `root/base` with `include` and
+    `exclude`, against the fileset that states the same intent over the
+    repository at `root`. A divergence the two glob semantics decide
+    differently is FSG2's; a file an include glob reaches beneath an excluded
+    directory is FSA5's; anything else is the gate's failure.
+    */
+    GateTally compareGlobWalk(string root, string base, string[] include, string[] exclude)
+        @system
+    {
+        import std.algorithm.iteration : map;
+        import std.algorithm.sorting : sort;
+        import std.array : array;
+        import std.path : buildPath;
+
+        import sparkles.build_primitives.glob_walk : globAny, globWalkGitRepository;
+        import sparkles.build_primitives.fileset.value : FilesetEvaluator;
+
+        GateTally tally;
+        tally.tree = root ~ "/" ~ base ~ " (globs)";
+        auto old = globWalkGitRepository(buildPath(root, base), include, exclude)
+            .map!(p => base ~ "/" ~ p).array.sort.release;
+
+        auto rebasedIn = include.map!(g => rebase(g, base)).array;
+        auto rebasedEx = exclude.map!(g => rebase(g, base)).array;
+        Fileset globsOf(ref Filesets s, string[] globs) @safe
+        {
+            Fileset u = s.nothing;
+            foreach (g; globs)
+                u = s.union_(u, s.glob(g).value);
+            return u;
+        }
+        Fileset kept(ref Filesets s) @safe
+            => s.difference(s.difference(s.everything, s.gitignored), s.glob("/.git").value);
+        const machine = resolveNative(root, (ref Filesets s) @safe => s.intersection(
+            s.glob(base ~ "/**").value,
+            s.union_(s.difference(kept(s), globsOf(s, rebasedEx)),
+                s.difference(globsOf(s, rebasedIn), s.glob("/.git").value))), tally);
+        bool[string] keptByScopes;
+        foreach (p; resolveNative(root, (ref Filesets s) @safe => s.intersection(
+                s.glob(base ~ "/**").value, kept(s)), tally))
+            keptByScopes[p] = true;
+        tally.files = old.length > machine.length ? old.length : machine.length;
+
+        auto sets = Filesets(CasePolicy.sensitive);
+        const inLeaf = globsOf(sets, rebasedIn), exLeaf = globsOf(sets, rebasedEx);
+        auto inEv = FilesetEvaluator(sets, inLeaf), exEv = FilesetEvaluator(sets, exLeaf);
+        divergences(old, machine, (string p, bool inOld) {
+            const rel = p[base.length + 1 .. $];
+            const newIn = inEv.contains(sets, p), newEx = exEv.contains(sets, p);
+            if (globAny(rel, include) != newIn || globAny(rel, exclude) != newEx)
+                ++tally.anchoring;
+            else if (!inOld && newIn && p !in keptByScopes)
+                ++tally.forcedEntry;
+            else
+                tally.unexplained ~= p ~ (inOld ? ": only the old walker keeps it"
+                    : ": only the machine keeps it");
+        });
+        return tally;
+    }
+
+    /// One line per tally, for the record.
+    string describe(const GateTally t) @safe
+    {
+        import std.conv : text;
+
+        return text("| `", t.tree, "` | ", t.files, " | ", t.oldDefects, " | ", t.anchoring, " | ",
+            t.forcedEntry, " | ", t.unexplained.length, " | ", t.incomplete.length, " |");
+    }
+
+    /**
+    M4's gate: the old walker and the machine over real repository trees. On
+    this repository, and on each repository `$SPARKLES_FILESET_GATE_TREES`
+    lists (`:`-separated), the `.gitignore` walks are compared; on this
+    repository, so is the docs site's own `srcExclude` configuration through
+    the glob layer. Every divergence must be the old walker's (git agrees
+    with the machine), FSG2's anchoring, or FSA5's forced entry; the
+    tallies go to `$SPARKLES_FILESET_GATE_REPORT` when it is set.
+    */
+    @("fileset.gate.m4.behaviourPreservation")
+    @system unittest
+    {
+        import std.algorithm.iteration : filter, map;
+        import std.array : array, join, split;
+        import std.file : append, exists, readText;
+        import std.json : parseJSON;
+        import std.path : buildPath;
+        import std.process : environment;
+        import std.string : strip;
+
+        import sparkles.build_primitives.git_env : runGit;
+        import sparkles.build_primitives.testing : gitAvailable;
+        import sparkles.test_runner.skip : skipTest;
+
+        if (!gitAvailable)
+            return skipTest("git is not on PATH");
+        const top = runGit(["rev-parse", "--show-toplevel"]);
+        if (top.status != 0)
+            return skipTest("not inside a git checkout");
+        const repo = top.output.strip;
+
+        GateTally[] tallies = [compareIgnoreWalk(repo)];
+        const config = buildPath(repo, "docs", ".vitepress", "docs-config.json");
+        assert(config.exists, config);
+        auto srcExclude = parseJSON(readText(config))["srcExclude"].array
+            .map!(v => v.str).array;
+        tallies ~= compareGlobWalk(repo, "docs", null, srcExclude);
+        // As hue's picker takes them: an include of what `.gitignore` excludes
+        // (the test binaries in each package's ignored `build/`), a glob whose
+        // `*` the old matcher let cross `/`, and a base-name glob.
+        tallies ~= compareGlobWalk(repo, "libs", ["*-test-*"], ["*/src/sparkles/*.d", "*.md"]);
+        foreach (tree; environment.get("SPARKLES_FILESET_GATE_TREES", "").split(":")
+                .filter!(t => t.length))
+            tallies ~= compareIgnoreWalk(tree);
+
+        string[] failures;
+        foreach (t; tallies)
+            foreach (u; t.unexplained)
+                failures ~= t.tree ~ ": " ~ u;
+        if (const report = environment.get("SPARKLES_FILESET_GATE_REPORT", null))
+            append(report, tallies.map!describe.join("\n") ~ "\n"
+                ~ tallies.map!(t => t.oldDefectPaths.map!(p => "- `" ~ t.tree ~ "`: " ~ p).join("\n"))
+                    .filter!(s => s.length).join("\n") ~ "\n");
+        assert(failures.length == 0, failures.join("\n") ~ "\nincomplete:\n"
+            ~ tallies.map!(t => t.incomplete.join("\n")).join("\n"));
+        assert(tallies[0].files > 1000, "this repository should have been walked");
+    }
+}
