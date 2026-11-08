@@ -303,6 +303,56 @@ resolving as if no `.gitignore` existed.
 leaf excludes nothing beyond what is already known, so a directory beneath
 no excluded one is `maybe` excluded and is still descended (`FSA1`).
 
+### A17 — The M4 divergence record
+
+M4's gate (`fileset.gate.m4.behaviourPreservation`) runs the old walker and
+the machine over real repositories. Each divergence falls into one of three
+classes; anything else fails the gate.
+
+- **The old walker's defect.** On the `.gitignore` walk alone
+  (`walkGitRepository` against `everything - gitignored - /.git`), git
+  itself (`git check-ignore -v --no-index`) agrees with the machine. These
+  are fixed by the machine, not reproduced by it.
+- **Anchoring ([`FSG2`](./SPEC.md#5-matching-fsg)).** Through the glob
+  layer (`globWalkGitRepository` against the fileset stating the same
+  include and exclude), the old `globAny` and the fileset pattern decide the
+  path differently: the old matcher lets `*` cross `/`, tries every glob
+  against the base name too, and has no `**` that matches zero components.
+- **Forced entry ([`FSA5`](./SPEC.md#6-analysis-and-planning-fsa)).** An
+  include glob reaches a file beneath a directory `.gitignore` excludes; the
+  old walker never enters one.
+
+The PLAN named only `FSG2`. The other two are the machine meeting
+requirements the old walker misses, so the gate accepts them and records
+them here rather than reproducing them.
+
+Recorded on November 8, 2026 (Linux x86_64, DMD 2.112.1):
+
+| Tree                                                                 | Files  | Old defects | Anchoring | Forced entry | Unexplained |
+| -------------------------------------------------------------------- | ------ | ----------- | --------- | ------------ | ----------- |
+| this repository                                                      | 5 234  | 0           | —         | —            | 0           |
+| `docs/`, the site's own `srcExclude`                                 | 2 672  | 0           | 290       | 0            | 0           |
+| `libs/`, include `*-test-*`, exclude `*/src/sparkles/*.d` and `*.md` | 1 929  | 0           | 992       | 3            | 0           |
+| linux                                                                | 72 857 | 15          | —         | —            | 0           |
+| FrameworkBenchmarks                                                  | 5 853  | 7           | —         | —            | 0           |
+| eight smaller repositories                                           | 2 712  | 0           | —         | —            | 0           |
+
+The old walker's defects are two:
+
+- **A negated bracket expression.** linux's
+  `tools/testing/selftests/arm64/signal/.gitignore` reads `mangle_*`,
+  `fake_sigreturn_*`, `!*.[ch]`. Git keeps the 15 `.c` and `.h` files; the
+  old walker drops them.
+- **A negation with a leading globstar.** FrameworkBenchmarks' root
+  `bin/` is countered by `frameworks/OCaml/.gitignore`'s `!**/bin`. Git
+  enters those `bin` directories (7 files); the old walker does not.
+
+The 290 anchoring divergences in `docs/` matter to the migration: the site's
+`srcExclude` globs are written for VitePress, whose `**/` matches zero
+directories as the fileset's does. Where the two readings of `**/` disagree, the
+fileset's is the one the site means. M9 reviews each consumer's globs with this
+record; it is closed when the last consumer is migrated.
+
 ## Open
 
 ### D1 — Which Merkle shape
