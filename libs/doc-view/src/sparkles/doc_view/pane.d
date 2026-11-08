@@ -1634,7 +1634,6 @@ version (unittest)
     // The whole document's relayout, the baseline the windowed ones beat.
     st.pane.vm.windowed = false;
     st.pane.vm.relayout(st.width);
-    st.pane.vm.completeLayout();
     // Mid-document, so the scroll anchor has a real line to keep.
     st.pane.vm.top = cast(long) st.pane.vm.rows.length / 2;
     benchCase(name: path.baseName, labels: ["op": "relayout"],
@@ -1673,7 +1672,6 @@ version (unittest)
     // The whole document's relayout, the baseline the windowed ones beat.
     st.pane.vm.windowed = false;
     st.pane.vm.relayout(st.width);
-    st.pane.vm.completeLayout();
     // Mid-document, so the scroll anchor has a real line to keep.
     st.pane.vm.top = cast(long) st.pane.vm.rows.length / 2;
     benchCase(name: path.baseName, labels: ["op": "relayout"],
