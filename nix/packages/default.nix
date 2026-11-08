@@ -304,7 +304,7 @@
         '';
 
         meta = {
-          description = "Check that all pinned toolchain outputs are in Cachix";
+          description = "Check that all pinned toolchain outputs are in Cachix or the R2 cache";
           mainProgram = "toolchain-pin-check";
         };
       };

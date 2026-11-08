@@ -10,7 +10,7 @@ command line.
 module derivation_pin_cachix;
 
 import std.algorithm.iteration : filter, map;
-import std.array : array;
+import std.array : array, join;
 import std.format : format;
 
 import sparkles.base.expected : Expected, err, ok;
@@ -56,6 +56,76 @@ CachedCheck[] checkCached(alias head)(Target[] targets, string cacheUri)
     }
 
     return targets.map!check.array;
+}
+
+/**
+`checkCached` across several caches, asked in order: an output is cached when
+any of them serves it (and the later ones are not asked), missing when every
+one answers 404, and unknown otherwise. A missing output's detail lists every
+URL asked.
+*/
+CachedCheck[] checkCachedAny(alias head)(Target[] targets, string[] cacheUris)
+{
+    CachedCheck check(Target target)
+    {
+        CachedCheck[] answers;
+        foreach (uri; cacheUris)
+        {
+            auto answer = checkCached!head([target], uri)[0];
+            if (answer.presence == Presence.cached)
+                return answer;
+            answers ~= answer;
+        }
+        foreach (answer; answers)
+            if (answer.presence == Presence.unknown)
+                return answer;
+        return CachedCheck(target, Presence.missing,
+            answers.map!(answer => answer.detail).join(", "));
+    }
+
+    return targets.map!check.array;
+}
+
+@("pinCachix.checkCachedAny.firstServingCacheWins")
+@safe
+unittest
+{
+    enum cachix = "https://sparkles.cachix.org";
+    enum r2 = "https://cache.sparkles.petar-kirov.dev";
+    auto targets = [
+        Target("toolchain-dmd", "x86_64-linux", "/nix/store/45iz365bm9kwm02x4ll7njn7vfqphq8h-dmd"),
+        Target("toolchain-input-llvm-sparkles", "x86_64-linux",
+            "/nix/store/v18d7sbkm3f85gdgskn10dbv1hz327m7-source"),
+        Target("harfbuzz", "aarch64-linux", "/nix/store/ydgp3y3s65fgbv1gg5r6f3biay85sh5m-harfbuzz"),
+        Target("skia-sparkles", "aarch64-darwin", "/nix/store/p0q348b2znkvndgmf15dhg11li4kilik-skia"),
+    ];
+    string[] asked;
+    Expected!(ushort, string) head(string url)
+    {
+        asked ~= url;
+        switch (url)
+        {
+            case cachix ~ "/45iz365bm9kwm02x4ll7njn7vfqphq8h.narinfo":
+                return ok(cast(ushort) 200);
+            case r2 ~ "/v18d7sbkm3f85gdgskn10dbv1hz327m7.narinfo":
+                return ok(cast(ushort) 200);
+            case cachix ~ "/p0q348b2znkvndgmf15dhg11li4kilik.narinfo":
+                return err!ushort("connection reset");
+            default:
+                return ok(cast(ushort) 404);
+        }
+    }
+
+    const checks = checkCachedAny!head(targets, [cachix, r2]);
+    assert(asked.length == 7, "a hit in the first cache does not ask the second");
+    assert(checks[0].presence == Presence.cached);
+    assert(checks[1].presence == Presence.cached && checks[1].detail == r2
+        ~ "/v18d7sbkm3f85gdgskn10dbv1hz327m7.narinfo", "served by the second cache alone");
+    assert(checks[2].presence == Presence.missing);
+    assert(checks[2].detail == cachix ~ "/ydgp3y3s65fgbv1gg5r6f3biay85sh5m.narinfo, "
+        ~ r2 ~ "/ydgp3y3s65fgbv1gg5r6f3biay85sh5m.narinfo");
+    assert(checks[3].presence == Presence.unknown,
+        "no answer from one cache and a 404 from the other is not proof of absence");
 }
 
 /// True when every output is cached: the gate passes.
