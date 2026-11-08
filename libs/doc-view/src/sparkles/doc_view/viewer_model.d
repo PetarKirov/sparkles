@@ -1670,6 +1670,20 @@ struct ViewerModel
         return measureSegments(budget);
     }
 
+    /// Whether `settleLayout` has work left: a windowed preview with
+    /// estimated segments, or a pane scrolled out of its window. A host that
+    /// draws only when asked asks for another frame while it does.
+    bool layoutPending() const @safe pure nothrow @nogc
+    {
+        if (!windowLive || !windowed)
+            return false;
+        foreach (e; segments.exact)
+            if (!e)
+                return true;
+        const pane = viewRows > 0 ? viewRows : 1;
+        return top < window.top || top + pane > window.bottom && window.bottom < segments.total();
+    }
+
     // Measures estimated segments within `budget`: below the window first,
     // then above it, nearest first. A height below moves only the
     // document's end; one above moves the window, which is built again (the
@@ -1678,7 +1692,9 @@ struct ViewerModel
     {
         import core.time : MonoTime;
 
-        enum batch = 8;
+        // Small batches: the budget is checked between them, and one fence
+        // or table can cost a millisecond.
+        enum batch = 2;
         const start = MonoTime.currTime;
         bool changedBelow, changedAbove;
         while (MonoTime.currTime - start < budget)
