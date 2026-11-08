@@ -1553,12 +1553,16 @@ version (unittest)
     {
         DocViewPane* pane;
         int width = 100;
+        // Each call at a width no earlier call used: a drag settles on a new
+        // width, so a cache warmed by the last two must not answer for it.
+        bool freshWidths;
 
         size_t run() @system
         {
             import sparkles.test_runner.bench : blackBox;
 
-            width = width == 93 ? 107 : 93;
+            width = freshWidths ? (width < 60 || width >= 160 ? 60 : width + 1)
+                : width == 93 ? 107 : 93;
             pane.vm.relayout(width);
             return blackBox(pane.vm.rows.length);
         }
@@ -1592,6 +1596,43 @@ version (unittest)
     auto st = new RelayoutState(new DocViewPane);
     assert(st.pane.open(env, path, chromeTheme(RgbColor(200, 200, 200), RgbColor(20, 20, 20))));
     assert(!st.pane.vm.showPreview, "the raw code view");
+    st.pane.vm.relayout(st.width);
+    st.pane.vm.completeLayout();
+    // Mid-document, so the scroll anchor has a real line to keep.
+    st.pane.vm.top = cast(long) st.pane.vm.rows.length / 2;
+    benchCase(name: path.baseName, labels: ["op": "relayout"],
+        timed: &st.run, after: (ref size_t rows) {
+            assert(rows > 0, text("no rows laid out for ", path));
+        });
+}
+
+// The same reflow in the markdown preview of a large document: the paragraphs
+// re-wrap at the new width, which the code view's tree reuse does not reach.
+// The document is the event-horizon spec (2.7k lines), or `HUE_BENCH_MD_FILE`.
+@("pane.relayout.largeMarkdownFile")
+@benchmark
+@system unittest
+{
+    import std.conv : text;
+    import std.file : exists;
+    import std.path : baseName, buildPath, dirName;
+    import std.process : environment;
+    import sparkles.test_runner.bench : benchCase;
+    import sparkles.test_runner.skip : skipTest;
+
+    if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
+        skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
+    // The repository root: six directories up from this file.
+    const root = __FILE_FULL_PATH__.dirName.dirName.dirName.dirName.dirName.dirName;
+    const path = environment.get("HUE_BENCH_MD_FILE",
+        buildPath(root, "docs", "specs", "event-horizon", "SPEC.md"));
+    if (!path.exists)
+        skipTest("bench file not found: " ~ path ~ " (set HUE_BENCH_MD_FILE)");
+
+    auto env = DocViewEnv.create(GrammarRegistry.fromEnvironment());
+    auto st = new RelayoutState(new DocViewPane, freshWidths: true);
+    assert(st.pane.open(env, path, chromeTheme(RgbColor(200, 200, 200), RgbColor(20, 20, 20))));
+    assert(st.pane.vm.showPreview && st.pane.vm.preview.present, "the markdown preview");
     st.pane.vm.relayout(st.width);
     st.pane.vm.completeLayout();
     // Mid-document, so the scroll anchor has a real line to keep.
