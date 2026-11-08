@@ -406,61 +406,97 @@ one through an entry's reference and verify without opening the entry. The
 tree's shape is the content-addressing contract's, so `FSS8` stays partial
 until M6.
 
+### A19 — Content addressing is a family of schemes, with Snix castore as the default
+
+_Was open as D1, "Which Merkle shape"; decided November 8, 2026._
+
+**The default identity is Snix's
+[castore](../../../research/content-addressing/tvix-castore.md).** A blob's
+digest is BLAKE3 over its bytes, with no header. A directory's is BLAKE3 over
+its canonical protobuf `Directory` message, which keeps directories, files and
+links in three arrays, each sorted by name (`partitionedOrder`). Each entry
+carries a size beside its digest: a file's length, and the number of entries
+beneath a directory.
+
+The other candidate was git's tree with SHA-256. Three reasons decided against
+it:
+
+- **iroh.** An iroh blob is named by plain BLAKE3 over its bytes, the same
+  digest as a castore blob
+  ([blobs](../../../research/iroh/blobs.md#hashseq-collections-and-the-hash-newtype)).
+  Once the iroh port publishes filesets, git's shape would hash every file
+  twice, with SHA-256 and with BLAKE3. The castore shape hashes it once.
+- **The ordering hazard cannot arise.** Files and directories never compare
+  against each other, so the `a` versus `a.b` case that git, irmin, Nix,
+  Software Heritage and bup each had to handle does not exist.
+- **BLAKE3 is a tree.** One large file can be hashed on several cores, and the
+  same pass can produce the bao outboard that iroh serves, which is the
+  supplied tree of `FSS8`.
+
+Two costs are accepted:
+
+- **Snix is not in nixpkgs.** The oracle comes from Snix's own repository,
+  added to the dev shell; establishing it is M6's first task.
+- **Canonicity rests on deterministic protobuf**, which Snix itself flags as a
+  risk. The encoder is written by hand for the one message, and the oracle
+  catches drift.
+
+**Content addressing is generic.** A scheme is assembled from parts over the
+seam (A18), each part a struct with required primitives and optional hooks, in
+the [design-by-introspection](../../../guidelines/design-by-introspection-01-guidelines.md)
+style:
+
+| Part                     | Is                                   | Required                       | Optional hooks (and what their absence means)                                                          |
+| ------------------------ | ------------------------------------ | ------------------------------ | ------------------------------------------------------------------------------------------------------ |
+| `MerkleFold!(Dir, Leaf)` | a fold scheme                        | a `Dir` and a `Leaf`           | —                                                                                                      |
+| `Dir`                    | the directory encoding               | `order`, `Id`, `entry`, `seal` | `keepEmpty` (dropped), `metadata` (none), `embed` (raw digest bytes), `shard` (one object)             |
+| `Leaf`                   | a file's identity, as a byte sink    | `start(size)`, `put`, `finish` | `blockSize` and `hashBlock` (serial), `verify(outboard)` (no `FSS8`)                                   |
+| `BlockTree!(H, P)`       | a binary tree over fixed blocks      | `blockSize`                    | `leafPrefix`/`nodePrefix` (no domain separation), `pad` (RFC 6962's split), `finalize` (the bare root) |
+| `Serial!(Format, H)`     | a stream scheme over one byte stream | the format's framing           | —                                                                                                      |
+| `Tee!(S...)`             | several schemes on one walk          | —                              | —                                                                                                      |
+
+`Tee` declares the union of its parts' metadata and one order, re-sorts a
+directory's entries for a part that declared another, and reads each file
+once, feeding every part's leaf. A directory's id is the format's own type,
+not a digest: castore and REAPI carry a size, OSTree a pair of digests, a CID
+its codec.
+
+**Instances are built only with an oracle,** and the dev shell may gain any
+nixpkgs package to supply one:
+
+| Instance                           | Use                                          | Oracle                   |
+| ---------------------------------- | -------------------------------------------- | ------------------------ |
+| castore, BLAKE3                    | the default identity                         | Snix                     |
+| NAR, SHA-256                       | the Nix boundary (D2)                        | `nix hash path`          |
+| git tree, SHA-1 and SHA-256        | git interoperability; the D1 spike           | `git write-tree`         |
+| iroh `Collection` and bao outboard | publishing a fileset to iroh                 | `b3sum`, `bao`, `sendme` |
+| fs-verity                          | the instance that checks `BlockTree`'s hooks | `fsverity digest`        |
+
+A `Collection` is flat, its names relative paths, so it is a stream scheme over
+castore's leaves rather than a fold. REAPI, IPFS unixfs, BitTorrent v2, OSTree
+and casync wait for a consumer; each fits the parts above. Tahoe-LAFS, SSZ and
+hypercore do not name file system trees by their bytes, and stay out of scope.
+
+**Two possible changes to the seam.** A serial format writes a directory's
+later entries after the whole subtree of an earlier one, so it needs
+subdirectory units depth-first in declared order, and to hear where a subtree
+ends; if the machine does not already provide both, a stream gains an optional
+`leave(path)`, sent only to a scheme that declares it. OSTree's identity needs
+a file's owner, which arrives in the `statx` already issued, so `FsoMetadata`
+can admit `owner` as cheaply as it admitted `mtime`.
+
+**The spike.** `GitTreeFold`, a test-only fold over the seam, computes git's
+tree hash in about 130 lines with SHA-1 from Phobos, the `gitTreeOrder` of
+`FSS1`, and the `executable` and `linkTarget` metadata, allocating nothing
+while hashing. On 207 trees (hand-written ones aimed at the hazard, M1's
+fixture set, and 200 seeded random trees with links, executables and empty
+directories), `fileset.spike.d1.gitTreeOrder` matches `git add -A -f` followed
+by `git write-tree`. Sorted by bytes instead, the same fold differs on 95 of
+them. It showed that an empty directory has no git identity, while castore
+keeps one, and that the hazard lives only in `precedes`. It becomes the git
+instance of `MerkleFold`.
+
 ## Open
-
-### D1 — Which Merkle shape
-
-**Blocks:** the content-addressing contract and `PLAN` M6. **Does not block:**
-M0–M5.
-
-The internal identity is a Merkle tree hash; _which_ is open. The research
-produced a production counter-example to the assumption that git's shape is
-obvious.
-
-|                                | git-shaped                             | REAPI/Snix-shaped                                         |
-| ------------------------------ | -------------------------------------- | --------------------------------------------------------- |
-| Ordering hazard (`a` vs `a.b`) | present; needs the `/`-suffix trick    | structurally absent (three sorted arrays)                 |
-| Independent oracle             | **`git write-tree`, on every machine** | none comparable                                           |
-| Hash                           | SHA-1 or SHA-256                       | BLAKE3, parallel by construction                          |
-| Canonicity rests on            | a byte format                          | deterministic protobuf, which Snix itself flags as a risk |
-
-[Snix](../../../research/content-addressing/tvix-castore.md), a production Nix
-reimplementation, chose the second and wrote down why: git's encoding is "very
-binary, error-prone and 'made-to-be-read-and-written-from-C'", and SHA-1 "isn't
-really a hash function to fundamentally base everything on in 2023". It keeps
-NAR strictly as a boundary format, which is the half of our position it
-validates.
-
-**Decision criterion:** how much the free `git write-tree` oracle is worth
-against structural immunity to an ordering hazard that has bitten git, irmin,
-Nix, Software Heritage and bup. A bounded spike — implement `gitTreeOrder`
-against `git write-tree` on the fixture set — would price the oracle before the
-choice is made.
-
-**The spike (November 8, 2026).** `GitTreeFold`, a test-only fold over the
-scheme seam, computes git's tree hash in about 130 lines, using SHA-1 from
-Phobos, the `gitTreeOrder` of `FSS1`, and the `executable` and `linkTarget`
-metadata. It allocates nothing while hashing. On 207 trees,
-`fileset.spike.d1.gitTreeOrder` gives the same hash as `git add -A -f` followed
-by `git write-tree`. The trees are hand-written ones aimed at the hazard, M1's
-fixture set, and 200 seeded random trees, with links, executables and empty
-directories. The same fold sorted by bytes is the control: it gives a
-different hash on 95 of the 207 trees, so the oracle catches the hazard and
-the hazard is common.
-
-The oracle is therefore cheap: no tooling beyond git, and a few seconds per
-run. Two things it showed, and that the other shape would need to answer as
-well:
-
-- **An empty directory has no git identity.** An index cannot hold one, so
-  the git shape drops a directory with no member. REAPI's shape can keep it.
-  FSV4 reports empty directories, but no fileset counts one as a member.
-- **The hazard lives only in the comparison.** `precedes` handles it in one
-  place, and the control shows what forgetting it costs.
-
-The spike does not decide D1. It removes "the oracle's cost is unknown" from
-the criterion, and leaves the trade between that oracle and the structural
-immunity of the REAPI shape.
 
 ### D2 — Whether `NarHash` is stored or recomputed
 
