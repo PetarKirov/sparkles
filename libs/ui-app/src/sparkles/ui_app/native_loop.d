@@ -1680,7 +1680,8 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
     const(string)[] traceNames; // the device scopes' names, for the trace
     const summarizeFrames = cfg.native.debugging.traceFrames
         || cfg.native.debugging.traceFramesOver > 0 || cfg.native.debugging.frames > 0
-        || cfg.native.debugging.resizeStress || cfg.native.debugging.gpuTiming
+        || cfg.native.debugging.resizeStress || cfg.native.debugging.resizeDrag
+        || cfg.native.debugging.gpuTiming
         || cfg.native.debugging.frameTrace.length || cfg.native.debugging.frameCounters
         || cfg.native.debugging.latencyLog.length;
     // `--debug frame-counters`: the frame thread's hardware counters, read at
@@ -3063,13 +3064,19 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
     const resizeStress = canStress && cfg.native.debugging.resizeStress;
     if (cfg.native.debugging.resizeStress && !canStress)
         whyNot(i"resize-stress: this window system cannot resize a window");
+    // `--debug resize-drag`: a new size every frame, a few pixels from the
+    // last, sweeping a band and back — the frames a live drag asks for.
+    enum canDrag = __traits(hasMember, Wsi, "setLogicalSize");
+    const resizeDrag = canDrag && cfg.native.debugging.resizeDrag;
+    if (cfg.native.debugging.resizeDrag && !canDrag)
+        whyNot(i"resize-drag: this window system does not let the client size its window");
     // A scripted run that stops presenting — a window minimized, a surface
     // lost for good — ends, failed, rather than waiting out a lane's timeout.
-    const scripted = resizeStress || cfg.native.debugging.frames > 0;
+    const scripted = resizeStress || resizeDrag || cfg.native.debugging.frames > 0;
     enum stalledAfter = 10.seconds;
     MonoTime lastProgress = MonoTime.currTime;
     uint stressStep;
-    bool drawsContinuously() => resizeStress
+    bool drawsContinuously() => resizeStress || resizeDrag
         || (cfg.native.debugging.frames > 0 && presented < cfg.native.debugging.frames);
     bool shotAsked;
     void stressAndBudget()
@@ -3085,6 +3092,22 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         }
         if (cfg.native.debugging.frames > 0 && presented >= cfg.native.debugging.frames)
             host.quit();
+        static if (canDrag)
+        {
+            if (resizeDrag)
+            {
+                // A triangle wave: 120 frames out, 120 back, 6 px a frame
+                // wide and 3 tall. A `frames=N` run's last ten hold the
+                // size, so its shot shows where the drag settled.
+                if (cfg.native.debugging.frames > 0 && presented + 10 >= cfg.native.debugging.frames)
+                    return;
+                ++stressStep;
+                const phase = stressStep % 240;
+                const along = phase < 120 ? phase : 240 - phase;
+                cast(void) wsi.setLogicalSize(window, LogicalSize(640 + along * 6, 420 + along * 3));
+                return;
+            }
+        }
         if (!resizeStress || presented % 30 != 0)
             return;
         static if (__traits(hasMember, Wsi, "setMaximized"))
