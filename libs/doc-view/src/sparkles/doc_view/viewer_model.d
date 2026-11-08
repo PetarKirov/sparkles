@@ -29,7 +29,10 @@ import sparkles.source_view.code : CodeViewOptions, viewCodeDocumentInto;
 import sparkles.source_view.markdown : FenceScroll, isWrap, OverflowPolicy,
     TableScroll, fenceShiftKeyBase, shiftKeyMask, tableShiftKeyBase,
     foldableSpans, highlightedFenceRenderer, MdLinkRange, MdLinkTable,
-    mdLinkRanges, MdViewOptions, MdViewTheme, viewMarkdownInto;
+    mdLinkRanges, MdSegment, MdViewOptions, MdViewTheme, viewMarkdownInto,
+    viewMarkdownWindowInto;
+import sparkles.doc_view.preview_window : PreviewWindow, SegmentIndex;
+import core.time : Duration;
 import sparkles.ui.components.gutter : blankCell, cellOf, GutterCell,
     GutterChannel, gutterWidth, withGutterColumns, withinBudget;
 import sparkles.code_instrumentation : maxCountWidth;
@@ -162,6 +165,9 @@ struct ScrollAnchor
 {
     size_t src = size_t.max;
     int rowsAbove;
+    /// `src` is the first block of a windowed preview's segment, taken where
+    /// no row was built: it restores to that segment's first row.
+    bool segmentStart;
 
     bool valid() const @safe pure nothrow @nogc => src != size_t.max;
 }
@@ -645,7 +651,7 @@ struct ViewerModel
     /// to know about.
     int contentWidthCols() => widthCols - gutterWidth(reservedChannels());
 
-    WidgetTree gutter(ref Builder b, uint docRoot)
+    WidgetTree gutter(ref Builder b, uint docRoot, size_t firstRow = 0)
     {
         channels = reservedChannels();
         const chrome = gutterWidth(channels);
@@ -659,7 +665,7 @@ struct ViewerModel
         if (channels.length == 0)
             return pass1;
         fillChannels(channels, rows1);
-        return b.finish(withGutterColumns(b, channels, rows1.length, docRoot));
+        return b.finish(withGutterColumns(b, channels, rows1.length, docRoot, firstRow));
     }
 
     /// Fills `chans` from the laid-out rows.
@@ -1012,6 +1018,17 @@ struct ViewerModel
             return held;
         if (rows.length == 0 || top < 0)
             return ScrollAnchor.init;
+        // A windowed preview scrolled past its window: the rows there were
+        // never built, so the anchor is the first segment starting at or
+        // below the top, placed by its height.
+        if (windowLive && segments.length && (top < window.top || top >= window.bottom))
+        {
+            size_t at = segments.segmentAtRow(top);
+            if (segments.topOf(at) < top && at + 1 < segments.length)
+                ++at;
+            return ScrollAnchor(segmentSource(at), cast(int)(segments.topOf(at) - top),
+                segmentStart: true);
+        }
         auto from = cast(size_t) top;
         if (from >= rows.length)
             from = rows.length - 1;
@@ -1034,6 +1051,8 @@ struct ViewerModel
     {
         if (!a.valid || rows.length == 0)
             return -1;
+        if (a.segmentStart && windowLive && segments.length)
+            return segments.topOf(segments.segmentOfSource(preview.doc.root.children, a.src));
         // `line` mode re-targets the anchor at its source line's start, so
         // the "first row at or after" branch lands on segment 0 of that line.
         size_t target = a.src;
@@ -1264,6 +1283,7 @@ struct ViewerModel
             return;
         }
         rawTreeKept = false;
+        windowLive = false;
         ++treeBuilds;
         // The outgoing tree dies here: from this point on `tree` aliases
         // storage the builder is about to overwrite.
@@ -1488,6 +1508,13 @@ struct ViewerModel
             ops = displayListOf(tree, frames);
             derive(withTargets: true);
         }
+        if (windowed)
+        {
+            buildWindow(opt, anchor);
+            cells = keyedRects(tree, frames);
+            collectStructure();
+            return;
+        }
         // A document's first build only has to fill the pane: lay out a
         // prefix of its blocks reaching past the anchor by a screen,
         // doubling it until it does, and leave the rest to
@@ -1517,6 +1544,247 @@ struct ViewerModel
             build(preview.doc);
         cells = keyedRects(tree, frames);
         collectStructure();
+    }
+
+    // ── the windowed preview ───────────────────────────────────────────────
+
+    /**
+    Lays a markdown preview out as a window around the pane rather than
+    whole: the segments from about a screen above the scroll anchor to two
+    below it are built, every other one is only placed by its height in
+    `segments`, exact once a layout measured it and estimated until then.
+    A width change then costs what the pane shows, not what the document
+    holds.
+
+    A host that sets this calls `settleLayout` once a frame: it moves the
+    window when the pane scrolls out of it, and measures the estimated
+    segments a few at a time, so the document's length (the scrollbar)
+    becomes exact over the following frames. Without it the window would
+    stay where the last build put it. Every other view is built whole.
+    */
+    bool windowed;
+    private SegmentIndex segments;
+    private PreviewWindow window;
+    // Whether the tree is a window (`window`), not the whole document.
+    private bool windowLive;
+    // What the segment heights were measured under, other than the width.
+    private SegmentKey segmentKey;
+    private int segmentWidth = -1;
+    // The options the window was built with: what a segment is measured
+    // under between builds.
+    private MdViewOptions windowOptions;
+
+    // The options a segment's height depends on, other than the width and
+    // the fold set (which re-segments).
+    private static struct SegmentKey
+    {
+        const(MdBlock)[] blocks;
+        size_t themeIdx;
+        int codeMaxLines, tableMaxLines;
+        OverflowPolicy codeOverflow, tableOverflow;
+        bool codeLineNumbers, inlineFoldMarker;
+        FontRole proseRole;
+        size_t[] activeCodeTabs;
+    }
+
+    // Brings the segment index up to the document, folds and options the
+    // window is about to be built under.
+    private void syncSegments(in MdViewOptions opt)
+    {
+        const blocks = preview.doc.root.children;
+        const width = contentWidthCols;
+        auto key = SegmentKey(blocks, themeIdx, opt.codeMaxLines, opt.tableMaxLines,
+            opt.codeOverflow, opt.tableOverflow, opt.codeLineNumbers, opt.inlineFoldMarker,
+            opt.proseRole, activeCodeTabs.dup);
+        if (key.blocks !is segmentKey.blocks)
+            segments.clear();
+        segments.resegment(blocks, folds.exceptions, preview.doc.source, width);
+        if (width != segmentWidth)
+            segments.reflow(blocks, width);
+        else if (key != segmentKey)
+            segments.invalidate();
+        segmentKey = key;
+        segmentWidth = width;
+    }
+
+    // Builds the window around `anchor` (or the row `top` shows).
+    private void buildWindow(MdViewOptions opt, ScrollAnchor anchor)
+    {
+        syncSegments(opt);
+        const blocks = preview.doc.root.children;
+        size_t at;
+        if (anchor.valid)
+            at = segments.segmentOfSource(blocks, anchor.src);
+        else if (top > 0)
+            at = segments.segmentAtRow(top);
+        const screen = viewRows > 0 ? viewRows : 60;
+        window = segments.around(at, before: screen + (anchor.rowsAbove > 0 ? anchor.rowsAbove : 0),
+            after: 2 * screen);
+        windowOptions = opt;
+        windowOptions.linkTable = null;
+        arena_.reset();
+        mdLinkTable = MdLinkTable.init;
+        const above = cast(int) window.top;
+        const run = window.empty ? MdSegment(0, 0)
+            : MdSegment(segments.segments[window.first].first, segments.segments[window.end - 1].end);
+        const mdRoot = viewMarkdownWindowInto(arena_, preview.doc, opt, run, above);
+        tree = gutter(arena_, mdRoot, firstRow: above);
+        frames = layoutDoc(tree, Constraints(maxW: widthCols));
+        ops = displayListOf(tree, frames);
+        // The window's segments are laid out: their heights are exact now.
+        // Those before it are untouched, so the window stays where it was
+        // placed; those after it move.
+        auto built = tree.nodes[mdRoot].children;
+        if (above > 0)
+            built = built[1 .. $];
+        assert(built.length == window.end - window.first, "a child per segment");
+        foreach (i, child; built)
+            segments.measured(window.first + i, frames[child].rect.height, contentWidthCols);
+        segments.commit();
+        window.bottom = window.empty ? 0 : segments.topOf(window.end) - 1;
+        windowLive = true;
+        derive(withTargets: true);
+        // The rows past the window stand for the segments not built.
+        if (rows.length < segments.total())
+            rows.length = cast(size_t) segments.total();
+    }
+
+    /**
+    One frame's share of the windowed preview's work (`windowed`): when the
+    pane has scrolled out of the window, the window is built again where the
+    pane is; otherwise estimated segments are measured, nearest the window
+    first, until `budget` is spent. True when the model changed (rows,
+    tree, or the document's length).
+    */
+    bool settleLayout(Duration budget)
+    {
+        if (!windowLive || !windowed)
+            return false;
+        const pane = viewRows > 0 ? viewRows : 1;
+        const docEnd = segments.total();
+        if (top < window.top || top + pane > window.bottom && window.bottom < docEnd)
+        {
+            rebuild();
+            return true;
+        }
+        return measureSegments(budget);
+    }
+
+    // Measures estimated segments within `budget`: below the window first,
+    // then above it, nearest first. A height below moves only the
+    // document's end; one above moves the window, which is built again (the
+    // reader's line staying put) once this frame's measuring is done.
+    private bool measureSegments(Duration budget)
+    {
+        import core.time : MonoTime;
+
+        enum batch = 8;
+        const start = MonoTime.currTime;
+        bool changedBelow, changedAbove;
+        while (MonoTime.currTime - start < budget)
+        {
+            size_t first = size_t.max, end;
+            foreach (i; window.end .. segments.length)
+                if (!segments.exact[i])
+                {
+                    first = i;
+                    end = i + batch < segments.length ? i + batch : segments.length;
+                    break;
+                }
+            if (first == size_t.max)
+                foreach_reverse (i; 0 .. window.first)
+                    if (!segments.exact[i])
+                    {
+                        end = i + 1;
+                        first = end > batch ? end - batch : 0;
+                        break;
+                    }
+            if (first == size_t.max)
+                break;
+            const before = segments.height[first .. end].dup;
+            measureRun(first, end);
+            foreach (i; first .. end)
+                if (segments.height[i] != before[i - first])
+                {
+                    if (i < window.first)
+                        changedAbove = true;
+                    else
+                        changedBelow = true;
+                }
+        }
+        segments.commit();
+        if (changedAbove)
+        {
+            rebuild();
+            return true;
+        }
+        if (changedBelow)
+        {
+            rows.length = cast(size_t) segments.total();
+            return true;
+        }
+        return false;
+    }
+
+    /**
+    Builds a windowed preview's window around source offset `src` when it
+    does not hold it, so that `visualOfSrc`/`visualOfMatch` answer its row
+    exactly: what a jump calls before it scrolls. Nothing to do otherwise.
+    */
+    void materializeAt(size_t src)
+    {
+        if (windowHolds(src))
+            return;
+        rebuildTree(false, ScrollAnchor(src, 0));
+    }
+
+    // Whether source offset `src` falls in the built rows: always, unless a
+    // windowed preview's window does not reach it.
+    private bool windowHolds(size_t src) const @safe pure nothrow @nogc
+    {
+        if (!windowLive || window.empty)
+            return true;
+        const from = window.first == 0 ? 0 : segmentSource(window.first);
+        const to = window.end >= segments.length ? size_t.max : segmentSource(window.end);
+        return from <= src && src < to;
+    }
+
+    // The first block's source offset of segment `seg`.
+    private size_t segmentSource(size_t seg) const @safe pure nothrow @nogc
+        => preview.doc.root.children[segments.segments[seg].first].span.start;
+
+    // Where `src` would be laid out, by the segments' heights: its segment's
+    // first row plus its share of the segment's rows.
+    private long estimatedRowOf(size_t src) const @safe pure nothrow @nogc
+    {
+        const blocks = preview.doc.root.children;
+        const at = segments.segmentOfSource(blocks, src);
+        const seg = segments.segments[at];
+        const from = blocks[seg.first].span.start;
+        const to = blocks[seg.end - 1].span.end;
+        long within;
+        if (to > from && src > from)
+            within = cast(long)((src < to ? src - from : to - from) * cast(ulong) segments.height[at]
+                / (to - from));
+        return segments.topOf(at) + within;
+    }
+
+    // Lays segments `[first, end)` out alone, at the content width the
+    // window is laid out at, and records their heights.
+    private void measureRun(size_t first, size_t end)
+    {
+        if (first >= end)
+            return;
+        auto b = Builder();
+        MdLinkTable scratchLinks;
+        auto opt = windowOptions;
+        opt.linkTable = &scratchLinks;
+        const run = MdSegment(segments.segments[first].first, segments.segments[end - 1].end);
+        const root = viewMarkdownWindowInto(b, preview.doc, opt, run, 0);
+        auto t = b.finish(root);
+        const f = layoutDoc(t, Constraints(maxW: contentWidthCols));
+        foreach (i, child; t.nodes[root].children)
+            segments.measured(first + i, f[child].rect.height, contentWidthCols);
     }
 
     private void derive(bool withTargets)
@@ -1828,10 +2096,16 @@ struct ViewerModel
     }
 
     /// The first visual row at/after source line `srcLine` (goto-line).
+    ///
+    /// In a windowed preview, a line outside the window answers its place
+    /// by the segments' heights, which may be estimates: `materializeAt` the
+    /// line first for the exact row a jump needs.
     long visualOfSrc(size_t srcLine) const @safe pure nothrow @nogc
     {
         const target = srcLine < lineStarts.length
             ? lineStarts[srcLine] : source.length;
+        if (!windowHolds(target))
+            return estimatedRowOf(target);
         foreach (idx, ref const r; rows)
             if (r.srcStart != size_t.max
                 && (r.srcStart >= target || r.srcEnd > target))
@@ -1859,7 +2133,10 @@ struct ViewerModel
     void gotoSrcLine(size_t line, uint column = 0)
     {
         if (line < lineStarts.length)
+        {
             revealOffset(lineStarts[line]); // `FLD6`: a fold must not hide it
+            materializeAt(lineStarts[line]);
+        }
         scrollTo(visualOfSrc(line));
     }
 
@@ -1867,6 +2144,8 @@ struct ViewerModel
     /// its byte offset), else its source line's first row.
     long visualOfMatch(in Match m) const @safe pure nothrow @nogc
     {
+        if (!windowHolds(m.start))
+            return estimatedRowOf(m.start);
         foreach (idx, ref const r; rows)
             if (r.srcStart != size_t.max && r.srcStart <= m.start
                 && m.start < r.srcEnd)
@@ -4329,6 +4608,138 @@ version (unittest)
             a ~= "\n";
         }
         return a[];
+    }
+}
+
+version (unittest)
+{
+    // A markdown document long enough to window: sections of prose that
+    // wraps, fences, lists and a table, numbered so every row is distinct.
+    private string windowSource(size_t sections)
+    {
+        import std.array : appender;
+        import std.conv : text;
+
+        auto a = appender!string;
+        foreach (i; 0 .. sections)
+        {
+            a ~= text("## Section ", i, "\n\n");
+            foreach (p; 0 .. 1 + i % 3)
+            {
+                a ~= text("Paragraph ", i, ".", p, " —");
+                foreach (w; 0 .. 6 + (i * 7 + p) % 23)
+                    a ~= text(" word", w);
+                a ~= "\n\n";
+            }
+            if (i % 4 == 1)
+                a ~= text("```d\nvoid f", i, "() {}\nint x", i, ";\n```\n\n");
+            if (i % 5 == 2)
+                a ~= text("- item ", i, " one\n- item ", i, " two with more words than fit\n\n");
+            if (i % 7 == 3)
+                a ~= text("| a | b |\n|---|---|\n| ", i, " | cell |\n\n");
+        }
+        return a[];
+    }
+
+    private ViewerModel windowFixture(string src, int width, bool windowed) @system
+    {
+        import sparkles.syntax : extractMarkdown, GrammarRegistry;
+        import std.process : environment;
+        import sparkles.test_runner.skip : skipTest;
+
+        if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
+            skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
+        ViewerModel vm;
+        vm.names = ["dark"];
+        vm.themes = [builtinDark];
+        vm.labels = LabelSet.standard();
+        vm.windowed = windowed;
+        vm.viewRows = 20;
+        vm.applyTheme(0);
+        auto registry = GrammarRegistry.fromEnvironment();
+        vm.setDocument("t.md", "", src, [HighlightEvent.sourceSpan(0, src.length)],
+            PreviewModel(present: true, doc: extractMarkdown(registry, src)),
+            TwoslashReturn.init, "markdown");
+        vm.relayout(width);
+        return vm;
+    }
+
+    // Runs the windowed model's frames until nothing is left to settle.
+    private void settleAll(ref ViewerModel vm) @system
+    {
+        foreach (_; 0 .. 1000)
+            if (!vm.settleLayout(Duration.max))
+                return;
+        assert(false, "the window never settled");
+    }
+
+    // The pane's rows of `w` are `whole`'s rows from `wholeTop` on.
+    private void checkPane(ref ViewerModel w, ref ViewerModel whole, long wholeTop,
+        string what) @system
+    {
+        import std.conv : text;
+
+        foreach (k; 0 .. w.viewRows)
+        {
+            const a = cast(size_t)(w.top + k), b = cast(size_t)(wholeTop + k);
+            if (b >= whole.rows.length)
+                break;
+            assert(a < w.rows.length, what);
+            assert(w.rows[a].text == whole.rows[b].text
+                && w.rows[a].srcStart == whole.rows[b].srcStart,
+                text(what, ": row ", k, " of the pane: `", w.rows[a].text, "` vs `",
+                    whole.rows[b].text, "`"));
+        }
+    }
+}
+
+@("viewer_model.windowed.showsTheWholeLayoutsRows")
+@system unittest
+{
+    const src = windowSource(120);
+    auto whole = windowFixture(src, 60, windowed: false);
+    auto w = windowFixture(src, 60, windowed: true);
+    assert(w.windowLive && !whole.windowLive);
+    assert(w.window.end < w.segments.length, "only a window is built");
+    checkPane(w, whole, 0, "the first screen");
+
+    // Settled, every height is exact: the document has the whole one's length.
+    settleAll(w);
+    assert(w.rows.length == whole.rows.length);
+
+    // Scrolling past the window moves it; the pane shows the whole rows.
+    foreach (t; [150L, 900, 400, cast(long) whole.rows.length - 20])
+    {
+        w.scrollTo(t);
+        whole.scrollTo(t);
+        settleAll(w);
+        assert(w.top == whole.top);
+        assert(w.window.top <= w.top && w.top < w.window.bottom);
+        checkPane(w, whole, whole.top, "scrolled");
+    }
+
+    // A width change keeps the reader's line in both, though the windowed
+    // one places it by estimates until it settles.
+    w.scrollTo(700);
+    whole.scrollTo(700);
+    foreach (width; [45, 83, 60])
+    {
+        w.relayout(width);
+        whole.relayout(width);
+        checkPane(w, whole, whole.top, "reflowed");
+        settleAll(w);
+        assert(w.rows.length == whole.rows.length, "settled to the whole length");
+        assert(w.top == whole.top, "and to the whole top");
+        checkPane(w, whole, whole.top, "settled");
+    }
+
+    // A jump far outside the window lands on the row the whole layout has.
+    foreach (line; [5UL, 600, 250])
+    {
+        w.gotoSrcLine(line);
+        whole.gotoSrcLine(line);
+        assert(w.top == whole.top);
+        checkPane(w, whole, whole.top, "jumped");
     }
 }
 
