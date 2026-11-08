@@ -789,20 +789,22 @@ version (unittest)
         }
     }
 
-    // The count also serves the plain ASCII lines of a paragraph that is not
-    // plain throughout. The same comparison over text mixing ASCII with an em
-    // dash, a wide CJK cell, and a combining mark and a keycap that join the
-    // ASCII letter before them, so a line holding only that letter must not
-    // count.
-    @("text.wrap.plainAsciiLinesOfAMixedParagraphCount") unittest
+    // The count also serves the lines of simple clusters in a paragraph that
+    // is not plain throughout, wide ones included. The same comparison over
+    // text mixing ASCII with an em dash, an arrow, a wide CJK cell and emoji,
+    // and with what must be realized: a combining mark and a keycap joining
+    // the letter before them, a flag, a zero-width space, a no-break and an
+    // ideographic space.
+    @("text.wrap.simpleLinesOfAMixedParagraphCount") unittest
     {
         import std.random : Random, uniform;
         import std.string : replace;
 
         string content(string text) => text.replace(" ", "").replace("\n", "");
 
-        static immutable pieces = ["a", "b", " ", " ", "-", "/", ".", "(x)", "—", "界",
-            "é", "1️⃣"];
+        static immutable pieces = ["a", "b", " ", " ", "-", "/", ".", "(x)", "\u2014", "\u754C",
+            "e\u0301", "1\uFE0F\u20E3", "\u00A9", "\u2705", "\U0001F1FA\U0001F1F8", "\u200B",
+            "\u00A0", "\u3000", "\u2192", "\U0001F1FA"];
         auto rng = Random(719);
         foreach (round; 0 .. 120)
         {
