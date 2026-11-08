@@ -59,6 +59,20 @@ Or `dub.json`:
 }
 ```
 
+## Nightly Android Builds
+
+Every commit on `main` publishes debug-signed APKs as a
+[GitHub pre-release](https://releases.sparkles.petar-kirov.dev/nightly/). These links always
+download the newest:
+
+| App                                        | APK                                                                            |
+| ------------------------------------------ | ------------------------------------------------------------------------------ |
+| hue, with this repository as its documents | [hue-repo.apk](https://releases.sparkles.petar-kirov.dev/nightly/hue-repo.apk) |
+| terminal                                   | [terminal.apk](https://releases.sparkles.petar-kirov.dev/nightly/terminal.apk) |
+| text lab                                   | [text-lab.apk](https://releases.sparkles.petar-kirov.dev/nightly/text-lab.apk) |
+
+Checksums: [SHA256SUMS](https://releases.sparkles.petar-kirov.dev/nightly/SHA256SUMS).
+
 ## Modules
 
 ### Base

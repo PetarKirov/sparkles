@@ -90,6 +90,9 @@ exclude_path = [
 # pages: 403 to anyone not signed in, so a checker cannot tell live from gone.
 exclude = [
     '^https://claude\.ai/artifact/',
+    # The nightly APKs (README.md): 90-200 MB downloads, which lychee would
+    # read whole, behind redirects that move to a new release on every merge.
+    '^https://releases\.sparkles\.petar-kirov\.dev/nightly/',
 ]
 
 # Don't check URLs inside code blocks (they're often illustrative, not real)

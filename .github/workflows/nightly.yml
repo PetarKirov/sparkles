@@ -1,0 +1,98 @@
+name: Nightly
+
+# Builds the development APKs from every commit that lands on `main` and
+# publishes them as a GitHub pre-release of their own:
+#
+#   hue-repo.apk   .#hue-apk-repo   hue with the repository as its documents
+#   terminal.apk   .#terminal-apk   the terminal (plain shell)
+#   text-lab.apk   .#text-lab-apk   the text lab
+#
+# The repository's releases are immutable, so a rolling release cannot be
+# updated: each build is a new `nightly-<date>-<sha>` release, the newest
+# seven are kept, and https://releases.sparkles.petar-kirov.dev/nightly/
+# redirects to the newest (`/nightly/` to its page, `/nightly/<asset>` to
+# the file). ci/publish-nightly.sh has the details.
+#
+# A run dispatched from any other branch publishes `nightly-test-…`
+# releases (only the newest is kept) and a Pages preview, never the
+# nightly itself:
+#
+#   gh workflow run nightly.yml --ref <branch>
+#
+# These are development builds, debuggable and signed with the in-tree debug
+# key (nix/packages/android/build-apk.nix), not the F-Droid release artifacts,
+# whose signing keys never reach a runner (fdroid.yml).
+#
+# Publishing with GITHUB_TOKEN starts no other workflow, so the `release:
+# published` workflows (release.yml, fdroid.yml) never see these releases.
+# The `release` tool and the dub registry read only SemVer tags, which these
+# are not.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# One publication at a time per branch. Of several merges in quick
+# succession, the running build finishes and only the newest pending one
+# follows it.
+concurrency:
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  apks:
+    name: Build & publish the nightly APKs
+    if: github.repository == 'PetarKirov/sparkles'
+    # x86_64-linux is the only host the NDK and SDK exist for.
+    runs-on: ubuntu-latest
+    # Usually cache hits: nix-build-android built and pushed `.#all-android`,
+    # which holds all three, before the commit reached main.
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ github.token }}
+      NIGHTLY_PREFIX: ${{ github.ref == 'refs/heads/main' && 'nightly' || 'nightly-test' }}
+      NIGHTLY_KEEP: ${{ github.ref == 'refs/heads/main' && '7' || '1' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Nix
+        uses: ./.github/actions/setup-nix
+        with:
+          cachix-cache: ${{ vars.CACHIX_CACHE }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
+          # As nix-build-android: restoring the Android store's 8 GiB archive
+          # exhausted the runner (run 42023216277); the binary caches hold the
+          # closure.
+          use-nix-cache: false
+
+      # One derivation at a time, as nix-build-android: a cold build of the
+      # Android libraries peaks at 9.4 GiB of the runner's 16.
+      - name: Build & push the APKs
+        env:
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          NIX_R2_SIGNING_KEY: ${{ secrets.NIX_R2_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          ci/with-cache.sh nix build --print-build-logs --max-jobs 1 \
+            --out-link result .#hue-apk-repo .#terminal-apk .#text-lab-apk
+          mkdir dist
+          cp result*/*.apk dist/
+          chmod u+w dist/*
+          (cd dist && sha256sum -- *.apk > SHA256SUMS)
+          ls -l dist
+
+      - name: Publish the release and point the redirects at it
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # A branch test deploys a preview, not the production redirects.
+          CI_BRANCH: ${{ github.ref_name }}
+        run: ci/publish-nightly.sh dist
