@@ -1,13 +1,8 @@
-/// Streaming detection of OSC color queries (OSC 4/10/11/12 with a `?` spec)
-/// in the child → terminal pty byte stream.
-///
-/// libghostty-vt parses OSC color operations and applies set/reset requests
-/// to its color state, but silently drops query requests (its stream handler
-/// ignores them), so the emulator has to answer queries itself. core.d feeds
-/// every pty chunk through an `OscScanner` and replies to the queries this
-/// module extracts the way xterm and Ghostty do — programs rely on this to
-/// adapt to the terminal's theme (e.g. yazi queries OSC 11 to pick its light
-/// or dark flavor).
+/// Streaming detection of OSC sequences in the child → terminal pty byte
+/// stream, for the host-side observers of the OSCs libghostty-vt hands no data
+/// out for (`sparkles.terminal_view.protocols`). core.d feeds every pty chunk
+/// through an `OscScanner`, splitting the libghostty-vt feed at each complete
+/// sequence. (The OSC 4/10/11/12 color queries libghostty-vt answers itself.)
 module sparkles.terminal_view.osc_query;
 
 import sparkles.base.buffer : UniqueBuffer;
@@ -202,169 +197,16 @@ unittest
     assert(!sc.overflowed);
 }
 
-/// Parse a complete OSC payload, appending every queried dynamic color code
-/// (10–12) or palette index (OSC 4) to `codes`. Returns the OSC command, or zero
-/// for unsupported/malformed commands. OSC 4 uses index/spec pairs; dynamic
-/// colors advance the code for every spec. Set specs are skipped because the
-/// VT engine applies them before the caller answers these queries.
-@safe nothrow @nogc
-int oscColorQueryCodes(scope const(char)[] payload, ref UniqueBuffer!(int, 4) codes)
-{
-    const command = decimalColorCode(takeColorField(payload));
-    if (command == 4)
-    {
-        while (payload.length)
-        {
-            const index = decimalColorCode(takeColorField(payload));
-            const spec = takeColorField(payload);
-            if (index >= 0 && index <= 255 && spec == "?")
-                codes ~= index;
-        }
-    }
-    else if (command >= 10 && command <= 12)
-    {
-        int code = command;
-        while (payload.length && code <= 12)
-        {
-            if (takeColorField(payload) == "?")
-                codes ~= code;
-            code++;
-        }
-    }
-    else
-        return 0;
-    return command;
-}
-
-private const(char)[] takeColorField(return scope ref const(char)[] payload) @safe nothrow @nogc
-{
-    size_t end;
-    while (end < payload.length && payload[end] != ';')
-        end++;
-    const field = payload[0 .. end];
-    payload = payload[end < payload.length ? end + 1 : end .. $];
-    return field;
-}
-
-private int decimalColorCode(scope const(char)[] field) @safe pure nothrow @nogc
-{
-    if (!field.length)
-        return -1;
-    int value;
-    foreach (b; field)
-    {
-        if (b < '0' || b > '9' || value > 255)
-            return -1;
-        value = value * 10 + b - '0';
-    }
-    return value;
-}
-
-///
-@("oscColorQueryCodes.singleQuery")
-@safe nothrow @nogc
-unittest
-{
-    UniqueBuffer!(int, 4) codes;
-    oscColorQueryCodes("11;?", codes);
-    assert(codes[] == [11]);
-}
-
-@("oscColorQueryCodes.multiSpecAdvancesCode")
-@safe nothrow @nogc
-unittest
-{
-    UniqueBuffer!(int, 4) codes;
-    oscColorQueryCodes("10;?;?;?", codes);
-    assert(codes[] == [10, 11, 12]);
-}
-
-@("oscColorQueryCodes.setSpecSkipped")
-@safe nothrow @nogc
-unittest
-{
-    UniqueBuffer!(int, 4) codes;
-    oscColorQueryCodes("10;#ff0000;?", codes); // set fg, query bg
-    assert(codes[] == [11]);
-
-    codes.clear();
-    oscColorQueryCodes("11;#000000", codes); // pure set: nothing to answer
-    assert(codes.length == 0);
-}
-
-@("oscColorQueryCodes.unsupportedCodesIgnored")
-@safe nothrow @nogc
-unittest
-{
-    UniqueBuffer!(int, 4) codes;
-    oscColorQueryCodes("52;c;?", codes); // clipboard: not a color query
-    oscColorQueryCodes("2;title", codes); // title set
-    oscColorQueryCodes("?", codes); // no code at all
-    oscColorQueryCodes("12;?;?", codes); // second spec would be 13: dropped
-    assert(codes[] == [12]);
-}
-
-@("oscColorQueryCodes.palettePairsAndInvalidIndices")
-@safe nothrow @nogc
-unittest
-{
-    UniqueBuffer!(int, 4) codes;
-    assert(oscColorQueryCodes("4;0;?;1;#ff0000;255;?;256;?;-1;?;x;?;99999999999999999;?;17;?;3", codes) == 4);
-    assert(codes[] == [0, 255, 17]);
-}
-
-@("oscColorQueryCodes.fragmentedPaletteBatch")
-@safe nothrow @nogc
-unittest
-{
-    OscScanner sc;
-    UniqueBuffer!(int, 4) codes;
-    foreach (chunk; ["\x1b]4;0;?;1;#123", "456;2;?;255;", "?\x1b", "\\"])
-    {
-        foreach (b; chunk)
-        {
-            if (oscScanByte(sc, b))
-            {
-                assert(!sc.overflowed);
-                assert(!sc.endedWithBel);
-                assert(oscColorQueryCodes(sc.payload[], codes) == 4);
-            }
-        }
-    }
-    assert(codes[] == [0, 2, 255]);
-}
-
-@("oscColorQueryCodes.fullPaletteBatch")
-@safe nothrow @nogc
-unittest
-{
-    OscScanner sc;
-    foreach (b; "\x1b]4")
-        oscScanByte(sc, b);
-    foreach (index; 0 .. 256)
-    {
-        char[6] pair = [';', cast(char)('0' + index / 100),
-            cast(char)('0' + index / 10 % 10), cast(char)('0' + index % 10),
-            ';', '?'];
-        foreach (b; pair[])
-            oscScanByte(sc, b);
-    }
-    assert(oscScanByte(sc, '\x07'));
-    assert(!sc.overflowed);
-    UniqueBuffer!(int, 4) codes;
-    assert(oscColorQueryCodes(sc.payload[], codes) == 4);
-    assert(codes.length == 256);
-    foreach (index, code; codes[])
-        assert(code == index);
-}
-
-@("oscColorQueryCodes.effectivePaletteRepliesBeforeDA1")
+// libghostty-vt answers palette queries from the effective palette (an
+// override earlier in the same OSC applies first), in stream order — before
+// the DA1 reply that yazi stops reading at — with the query's terminator.
+@("feedPtyChunk.colorQueriesReplyBeforeDA1")
 @system nothrow @nogc
 unittest
 {
     import core.sys.posix.unistd : pipe, close, read;
     import core.sys.posix.fcntl : fcntl, F_SETFL, O_NONBLOCK;
-    import sparkles.ghostty.c;
+    import sparkles.ghostty;
     import sparkles.terminal_view.core : CoreState, feedPtyChunk,
         effect_write_pty, effect_device_attributes;
 
@@ -377,17 +219,14 @@ unittest
     }
     assert(fcntl(fds[0], F_SETFL, O_NONBLOCK) == 0);
     CoreState s;
-    GhosttyTerminalOptions options = { cols: 20, rows: 5 };
-    assert(ghostty_terminal_new(null, &s.terminal, options) == GHOSTTY_SUCCESS);
+    assert(newTerminal(&s.terminal, 20, 5) == GHOSTTY_SUCCESS);
     scope (exit) ghostty_terminal_free(s.terminal);
     s.pty_fd = fds[1];
     s.effects_ctx.pty_fd = fds[1];
     ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_USERDATA,
         cast(const(void)*) &s.effects_ctx);
-    ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_WRITE_PTY,
-        cast(const(void)*) &effect_write_pty);
-    ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_DEVICE_ATTRIBUTES,
-        cast(const(void)*) &effect_device_attributes);
+    s.terminal.setEffect!GHOSTTY_TERMINAL_OPT_WRITE_PTY(&effect_write_pty);
+    s.terminal.setEffect!GHOSTTY_TERMINAL_OPT_DEVICE_ATTRIBUTES(&effect_device_attributes);
 
     feedPtyChunk(s, "\x1b]4;7;#123456;7;");
     feedPtyChunk(s, "?\x1b");

@@ -17,7 +17,7 @@ module sparkles.terminal_view.cell_paint;
 
 import sparkles.base.term_color : RgbColor;
 import sparkles.base.term_style : TextAttr, UnderlineStyle;
-import sparkles.ghostty.c;
+import sparkles.ghostty;
 import sparkles.terminal_view.core : CoreState, resolveCell;
 import sparkles.ui.canvas : isCanvas;
 import sparkles.ui.geometry : Point, Rect;
@@ -32,7 +32,7 @@ if (isCanvas!Canvas)
 {
     GhosttyRenderStateColors colors;
     colors.size = GhosttyRenderStateColors.sizeof;
-    ghostty_render_state_colors_get(s.render_state, &colors);
+    ghostty_render_state_get(s.render_state, GHOSTTY_RENDER_STATE_DATA_COLORS, &colors);
 
     const defaultBg = rgbOf(colors.background);
     c.fillRect(pane, Visual(fg: rgbOf(colors.foreground), bg: defaultBg,
@@ -110,14 +110,14 @@ if (isCanvas!Canvas)
         // Clear this row's dirty flag now that it has been drawn.
         bool rowClean = false;
         ghostty_render_state_row_set(s.row_iter,
-            GHOSTTY_RENDER_STATE_ROW_OPTION_DIRTY, &rowClean);
+            GHOSTTY_RENDER_STATE_ROW_OPT_DIRTY, &rowClean);
         gy++;
     }
 
     // Reset global dirty state so the next update reports changes accurately.
     GhosttyRenderStateDirty cleanState = GHOSTTY_RENDER_STATE_DIRTY_FALSE;
     ghostty_render_state_set(s.render_state,
-        GHOSTTY_RENDER_STATE_OPTION_DIRTY, &cleanState);
+        GHOSTTY_RENDER_STATE_OPT_DIRTY, &cleanState);
 }
 
 private RgbColor rgbOf(in GhosttyColorRgb c) @safe pure nothrow @nogc
@@ -155,8 +155,7 @@ unittest
     // fed styled bytes through vt_write, painted onto the recording canvas —
     // the terminal-arm pane's whole pipeline.
     CoreState s;
-    GhosttyTerminalOptions topts = { cols: 10, rows: 3 };
-    ghostty_terminal_new(null, &s.terminal, topts);
+    newTerminal(&s.terminal, 10, 3);
     assert(s.terminal !is null);
     scope (exit) ghostty_terminal_free(s.terminal);
     ghostty_render_state_new(null, &s.render_state);

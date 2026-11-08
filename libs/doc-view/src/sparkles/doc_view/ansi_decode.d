@@ -73,8 +73,7 @@ AnsiLine[] decodeAnsi(scope const(char)[] block) @system
     const ushort rowN = cast(ushort)(rows > maxDim ? maxDim : rows);
 
     GhosttyTerminal term;
-    GhosttyTerminalOptions opts = {cols: cols, rows: rowN, max_scrollback: 0};
-    if (ghostty_terminal_new(null, &term, opts) != GHOSTTY_SUCCESS)
+    if (newTerminal(&term, cols, rowN) != GHOSTTY_SUCCESS)
         return null;
     scope (exit) ghostty_terminal_free(term);
     ghostty_terminal_vt_write(term, cast(const(ubyte)*) crlf.ptr, crlf.length);
@@ -107,15 +106,14 @@ AnsiLine[] decodeAnsi(scope const(char)[] block) @system
         bool have;
         while (ghostty_render_state_row_cells_next(cells))
         {
-            uint glen;
-            ghostty_render_state_row_cells_get(cells,
-                GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_LEN, &glen);
-            if (glen == 0)
-                continue; // empty padding cell (no glyph)
-
+            // A longer cluster keeps its first 16 code points (OUT_OF_SPACE).
             uint[16] cps;
+            GhosttyCodepointBuffer graphemes = { ptr: cps.ptr, cap: cps.length };
             ghostty_render_state_row_cells_get(cells,
-                GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_BUF, cps.ptr);
+                GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_BUF, &graphemes);
+            if (graphemes.len == 0)
+                continue; // empty padding cell (no glyph)
+            const glen = graphemes.len;
 
             GhosttyColorRgb fgr = {r: 255, g: 255, b: 255};
             GhosttyColorRgb bgr;
@@ -125,7 +123,6 @@ AnsiLine[] decodeAnsi(scope const(char)[] block) @system
                 GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_FG_COLOR, &fgr);
 
             GhosttyStyle st;
-            st.size = GhosttyStyle.sizeof;
             ghostty_render_state_row_cells_get(cells,
                 GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_STYLE, &st);
 

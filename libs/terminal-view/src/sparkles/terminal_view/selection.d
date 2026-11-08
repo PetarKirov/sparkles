@@ -17,7 +17,7 @@ the pure $(LREF wordSpan) and $(LREF urlSpan) over one row's cells.
 */
 module sparkles.terminal_view.selection;
 
-import sparkles.ghostty.c;
+import sparkles.ghostty;
 import sparkles.terminal_view.input : SelectionState;
 
 /// How much a select-at takes (`TSE2`).
@@ -286,7 +286,6 @@ dchar[] readViewportRow(GhosttyTerminal t, int y, return scope dchar[] cells) @s
     foreach (x; 0 .. cells.length)
     {
         GhosttyGridRef r;
-        r.size = GhosttyGridRef.sizeof;
         if (ghostty_terminal_grid_ref(t, pointOf(GHOSTTY_POINT_TAG_VIEWPORT, cast(int) x, y), &r)
             != GHOSTTY_SUCCESS)
             break;
@@ -414,7 +413,6 @@ private bool wordSpanIs(scope const(dchar)[] row, size_t lo, size_t hi) @safe pu
 private bool rowWraps(GhosttyTerminal t, int y) @system nothrow @nogc
 {
     GhosttyGridRef r;
-    r.size = GhosttyGridRef.sizeof;
     if (y < 0 || ghostty_terminal_grid_ref(t, pointOf(GHOSTTY_POINT_TAG_VIEWPORT, 0, y), &r) != GHOSTTY_SUCCESS)
         return false;
     GhosttyRow gr;
@@ -442,7 +440,6 @@ bool moveEnd(GhosttyTerminal t, ref SelectionState sel, SelectionEnd which, int 
 bool selectAll(GhosttyTerminal t, ref SelectionState sel) @system nothrow @nogc
 {
     GhosttySelection all;
-    all.size = GhosttySelection.sizeof;
     if (ghostty_terminal_select_all(t, &all) != GHOSTTY_SUCCESS)
         return false;
     GhosttyPointCoordinate a, b;
@@ -504,9 +501,6 @@ bool withSelectionText(Sink)(GhosttyTerminal t, in SelectionState sel, scope Sin
     if (!selectionLive(sel))
         return false;
     GhosttySelection snap;
-    snap.size = GhosttySelection.sizeof;
-    snap.start.size = GhosttyGridRef.sizeof;
-    snap.end.size = GhosttyGridRef.sizeof;
     if (ghostty_tracked_grid_ref_snapshot(cast(GhosttyTrackedGridRef) sel.start, &snap.start)
             != GHOSTTY_SUCCESS
         || ghostty_tracked_grid_ref_snapshot(cast(GhosttyTrackedGridRef) sel.end, &snap.end)
@@ -514,15 +508,14 @@ bool withSelectionText(Sink)(GhosttyTerminal t, in SelectionState sel, scope Sin
         return false;
     snap.rectangle = sel.isRectangular;
 
-    GhosttyTerminalSelectionFormatOptions o;
-    o.size = GhosttyTerminalSelectionFormatOptions.sizeof;
-    o.emit = GHOSTTY_FORMATTER_FORMAT_PLAIN;
-    o.unwrap = !sel.isRectangular;
-    o.trim = true;
-    o.selection = &snap;
+    GhosttyFormatter fmt;
+    if (newPlainFormatter(&fmt, t, unwrap: !sel.isRectangular, trim: true, selection: &snap)
+            != GHOSTTY_SUCCESS)
+        return false;
+    scope (exit) ghostty_formatter_free(fmt);
     ubyte* p;
     size_t n;
-    if (ghostty_terminal_selection_format_alloc(t, null, o, &p, &n) != GHOSTTY_SUCCESS)
+    if (ghostty_formatter_format_alloc(fmt, null, &p, &n) != GHOSTTY_SUCCESS)
         return false;
     scope (exit) ghostty_free(null, p, n);
     sink(cast(const(char)[]) p[0 .. n]);
@@ -551,7 +544,6 @@ size_t selectionHyperlinks(GhosttyTerminal t, in SelectionState sel, ushort cols
         foreach (x; x0 .. x1 + 1)
         {
             GhosttyGridRef r;
-            r.size = GhosttyGridRef.sizeof;
             if (ghostty_terminal_grid_ref(t, pointOf(GHOSTTY_POINT_TAG_VIEWPORT, x, y), &r)
                 != GHOSTTY_SUCCESS)
                 continue;
@@ -660,13 +652,8 @@ The rows are the terminal's plain text; a needle spanning rows finds nothing.
 FindResult findBackward(GhosttyTerminal t, ref SelectionState sel, scope const(char)[] needle)
     @system nothrow
 {
-    GhosttyFormatterTerminalOptions o;
-    o.size = GhosttyFormatterTerminalOptions.sizeof;
-    o.emit = GHOSTTY_FORMATTER_FORMAT_PLAIN;
-    o.unwrap = false;
-    o.trim = true;
     GhosttyFormatter fmt;
-    if (ghostty_formatter_terminal_new(null, &fmt, t, o) != GHOSTTY_SUCCESS)
+    if (newPlainFormatter(&fmt, t, unwrap: false) != GHOSTTY_SUCCESS)
         return FindResult.init;
     scope (exit) ghostty_formatter_free(fmt);
     ubyte* p;
@@ -710,7 +697,7 @@ FindResult findBackward(GhosttyTerminal t, ref SelectionState sel, scope const(c
     if (h.row < sb.offset || h.row >= sb.offset + sb.len)
     {
         GhosttyTerminalScrollViewport sv;
-        sv.tag = GHOSTTY_SCROLL_VIEWPORT_DELTA;
+        sv.tag = GHOSTTY_TERMINAL_SCROLL_VIEWPORT_DELTA;
         sv.value.delta = cast(long) h.row - cast(long) sb.offset - cast(long)(sb.len / 2);
         ghostty_terminal_scroll_viewport(t, sv);
     }
@@ -813,7 +800,6 @@ private bool screenOrigin(GhosttyPointCoordinate p) @safe pure nothrow @nogc
 private int graphemeAt(in GhosttyTrackedGridRef tracked) @system nothrow @nogc
 {
     GhosttyGridRef r;
-    r.size = GhosttyGridRef.sizeof;
     if (ghostty_tracked_grid_ref_snapshot(cast(GhosttyTrackedGridRef) tracked, &r) != GHOSTTY_SUCCESS)
         return -1;
     uint[4] cps;
@@ -842,8 +828,7 @@ version (unittest)
         static Vt* open(ushort cols, ushort rows) @system
         {
             auto v = new Vt;
-            GhosttyTerminalOptions o = {cols: cols, rows: rows, max_scrollback: 1000};
-            assert(ghostty_terminal_new(null, &v.t, o) == GHOSTTY_SUCCESS);
+            assert(newTerminal(&v.t, cols, rows, 1000) == GHOSTTY_SUCCESS);
             return v;
         }
 
@@ -866,7 +851,7 @@ version (unittest)
         void scroll(int delta) @system
         {
             GhosttyTerminalScrollViewport sv;
-            sv.tag = GHOSTTY_SCROLL_VIEWPORT_DELTA;
+            sv.tag = GHOSTTY_TERMINAL_SCROLL_VIEWPORT_DELTA;
             sv.value.delta = delta;
             ghostty_terminal_scroll_viewport(t, sv);
         }

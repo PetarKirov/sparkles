@@ -24,7 +24,7 @@
             mkdir -p $out/lib/pkgconfig
             cp -a ${vt}/lib/. $out/lib/
             cp -r ${vt.dev}/include $out/include
-            substitute ${vt.dev}/share/pkgconfig/libghostty-vt.pc \
+            substitute ${vt.dev}/lib/pkgconfig/libghostty-vt.pc \
               $out/lib/pkgconfig/libghostty-vt.pc \
               --replace-fail ${vt.dev} $out \
               --replace-fail ${vt} $out

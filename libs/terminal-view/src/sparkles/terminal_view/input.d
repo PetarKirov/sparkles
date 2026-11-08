@@ -2,7 +2,7 @@ module sparkles.terminal_view.input;
 
 import core.sys.posix.unistd : write;
 
-import sparkles.ghostty.c;
+import sparkles.ghostty;
 import sparkles.base.buffer : SharedBuffer, UniqueBuffer;
 import sparkles.base.text.cstring : writeStringz;
 import sparkles.input : mousePointer, PointerAction, PointerButton,
@@ -192,7 +192,7 @@ struct HoverState {
 @system nothrow @nogc
 void mouse_encode_and_write(int pty_fd, GhosttyMouseEncoder encoder, GhosttyMouseEvent event)
 {
-    char[128] buf;
+    ubyte[128] buf;
     size_t written = 0;
     GhosttyResult res = ghostty_mouse_encoder_encode(encoder, event, buf.ptr, buf.sizeof, &written);
     if (res == GHOSTTY_SUCCESS && written > 0)
@@ -266,11 +266,9 @@ void detectLink(GhosttyTerminal terminal, GhosttyPoint pt, int max_cols,
             ghostty_terminal_grid_ref(terminal, p2, &r2) == GHOSTTY_SUCCESS) {
 
             GhosttySelection sel = { start: r1, end: r2, rectangle: false };
-            GhosttyFormatterTerminalOptions fmt_opts;
-            fmt_opts.size = GhosttyFormatterTerminalOptions.sizeof;
-            fmt_opts.selection = &sel;
             GhosttyFormatter fmt;
-            if (ghostty_formatter_terminal_new(null, &fmt, terminal, fmt_opts) == GHOSTTY_SUCCESS) {
+            if (newPlainFormatter(&fmt, terminal, unwrap: false, trim: false, selection: &sel)
+                    == GHOSTTY_SUCCESS) {
                 size_t len = 0;
                 if (ghostty_formatter_format_buf(fmt, null, 0, &len) == GHOSTTY_OUT_OF_SPACE && len > 0) {
                     import core.memory : pureMalloc, pureFree;
@@ -349,13 +347,12 @@ const(char)[] encodeKeyStroke(GhosttyKeyEncoder encoder, GhosttyKeyEvent event,
         consumed |= GHOSTTY_MODS_SHIFT;
     ghostty_key_event_set_consumed_mods(event, consumed);
 
-    if (stroke.utf8.length > 0)
-        ghostty_key_event_set_utf8(event, stroke.utf8.ptr, stroke.utf8.length);
-    else
-        ghostty_key_event_set_utf8(event, null, 0);
+    ghostty_key_event_set_utf8(event,
+        GhosttyString(cast(const(ubyte)*) stroke.utf8.ptr, stroke.utf8.length));
 
     size_t written = 0;
-    GhosttyResult res = ghostty_key_encoder_encode(encoder, event, buf.ptr, buf.length, &written);
+    GhosttyResult res = ghostty_key_encoder_encode(encoder, event,
+        cast(ubyte*) buf.ptr, buf.length, &written);
     return res == GHOSTTY_SUCCESS ? buf[0 .. written] : null;
 }
 
@@ -386,7 +383,7 @@ version (unittest)
         }
 
         void set(GhosttyKeyEncoderOption opt, bool v)
-            => ghostty_key_encoder_setopt(encoder, opt, &v);
+            => cast(void) ghostty_key_encoder_set(encoder, opt, &v);
 
         const(char)[] encode(in KeyStroke s, return scope char[] buf)
             => encodeKeyStroke(encoder, event, s, buf);
@@ -489,11 +486,11 @@ unittest
     // ignored on the other platforms, deterministic on macOS.
     f.set(GHOSTTY_KEY_ENCODER_OPT_ALT_ESC_PREFIX, true);
     GhosttyOptionAsAlt optAsAlt = GHOSTTY_OPTION_AS_ALT_TRUE;
-    ghostty_key_encoder_setopt(f.encoder,
+    ghostty_key_encoder_set(f.encoder,
         GHOSTTY_KEY_ENCODER_OPT_MACOS_OPTION_AS_ALT, &optAsAlt);
     assert(f.encode(press(GHOSTTY_KEY_X, GHOSTTY_MODS_ALT, 'x', "x"), buf) == "\x1bx");
     optAsAlt = GHOSTTY_OPTION_AS_ALT_FALSE;
-    ghostty_key_encoder_setopt(f.encoder,
+    ghostty_key_encoder_set(f.encoder,
         GHOSTTY_KEY_ENCODER_OPT_MACOS_OPTION_AS_ALT, &optAsAlt);
     f.set(GHOSTTY_KEY_ENCODER_OPT_ALT_ESC_PREFIX, false);
 
@@ -513,7 +510,7 @@ unittest
     // Kitty disambiguate mode (flag 1): the keys that are ambiguous in the
     // legacy encoding get CSI-u sequences, and a release reports.
     ubyte flags = 1;
-    ghostty_key_encoder_setopt(f.encoder, GHOSTTY_KEY_ENCODER_OPT_KITTY_FLAGS, &flags);
+    ghostty_key_encoder_set(f.encoder, GHOSTTY_KEY_ENCODER_OPT_KITTY_FLAGS, &flags);
 
     assert(f.encode(press(GHOSTTY_KEY_ESCAPE), buf) == "\x1b[27u");
     assert(f.encode(press(GHOSTTY_KEY_A, GHOSTTY_MODS_CTRL, 'a'), buf) == "\x1b[97;5u");

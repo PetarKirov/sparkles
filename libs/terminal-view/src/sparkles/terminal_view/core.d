@@ -11,7 +11,7 @@ import core.sys.posix.sys.types : pid_t;
 
 import sparkles.base.buffer : HeapBuffer, UniqueBuffer;
 import sparkles.base.term_color : RgbColor;
-import sparkles.ghostty.c;
+import sparkles.ghostty;
 import sparkles.terminal_view.input : ExitBehavior, SelectionState,
     OverlayScrollbar, HoverState;
 import sparkles.terminal_view.kitty_images : KittyImageRenderer;
@@ -58,14 +58,6 @@ struct EffectsContext
     bool schemeSet;
 }
 
-// Device-attribute constants from <ghostty/vt/device.h>. They are C #defines,
-// which ImportC does not reliably expose, so we mirror the values here.
-private enum DA_CONFORMANCE_VT220 = 62;
-private enum DA_FEATURE_COLUMNS_132 = 1;
-private enum DA_FEATURE_SELECTIVE_ERASE = 6;
-private enum DA_FEATURE_ANSI_COLOR = 22;
-private enum DA_DEVICE_TYPE_VT220 = 1;
-
 // write_pty: the terminal calls this whenever a VT sequence needs a response
 // written back to the application (DSR, mode/DA queries, …). Without it,
 // programs like vim and tmux that probe terminal capabilities would hang.
@@ -94,13 +86,13 @@ bool effect_size(GhosttyTerminal terminal, void* userdata, GhosttySizeReportSize
 extern(C) nothrow @nogc
 bool effect_device_attributes(GhosttyTerminal terminal, void* userdata, GhosttyDeviceAttributes* out_attrs)
 {
-    out_attrs.primary.conformance_level = DA_CONFORMANCE_VT220;
-    out_attrs.primary.features[0] = DA_FEATURE_COLUMNS_132;
-    out_attrs.primary.features[1] = DA_FEATURE_SELECTIVE_ERASE;
-    out_attrs.primary.features[2] = DA_FEATURE_ANSI_COLOR;
+    out_attrs.primary.conformance_level = GHOSTTY_DA_CONFORMANCE_VT220;
+    out_attrs.primary.features[0] = GHOSTTY_DA_FEATURE_COLUMNS_132;
+    out_attrs.primary.features[1] = GHOSTTY_DA_FEATURE_SELECTIVE_ERASE;
+    out_attrs.primary.features[2] = GHOSTTY_DA_FEATURE_ANSI_COLOR;
     out_attrs.primary.num_features = 3;
 
-    out_attrs.secondary.device_type = DA_DEVICE_TYPE_VT220;
+    out_attrs.secondary.device_type = GHOSTTY_DA_DEVICE_TYPE_VT220;
     out_attrs.secondary.firmware_version = 1;
     out_attrs.secondary.rom_cartridge = 0;
 
@@ -265,7 +257,6 @@ package(sparkles.terminal_view) ResolvedCell resolveCell(
 
     // Read the cell style for SGR attribute flags. Colors are already resolved
     // above via the FG/BG_COLOR queries.
-    r.style.size = GhosttyStyle.sizeof;
     ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_STYLE, &r.style);
 
     // Reverse video: swap fg/bg up front so the selection/hover swap below
@@ -344,8 +335,11 @@ private const(uint)[] cellGrapheme(GhosttyRenderStateRowCells cells,
         GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_LEN, &length);
     storage.length = length;
     if (length)
+    {
+        GhosttyCodepointBuffer graphemes = { ptr: storage[].ptr, cap: length };
         ghostty_render_state_row_cells_get(cells,
-            GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_BUF, storage[].ptr);
+            GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_BUF, &graphemes);
+    }
     return storage[];
 }
 
@@ -356,8 +350,7 @@ private const(uint)[] cellGrapheme(GhosttyRenderStateRowCells cells,
 unittest
 {
     CoreState s;
-    GhosttyTerminalOptions options = { cols: 8, rows: 2 };
-    assert(ghostty_terminal_new(null, &s.terminal, options) == GHOSTTY_SUCCESS);
+    assert(newTerminal(&s.terminal, 8, 2) == GHOSTTY_SUCCESS);
     scope (exit) ghostty_terminal_free(s.terminal);
     assert(ghostty_render_state_new(null, &s.render_state) == GHOSTTY_SUCCESS);
     scope (exit) ghostty_render_state_free(s.render_state);
@@ -376,7 +369,7 @@ unittest
     assert(ghostty_render_state_row_cells_next(s.cells));
     GhosttyRenderStateColors colors;
     colors.size = GhosttyRenderStateColors.sizeof;
-    ghostty_render_state_colors_get(s.render_state, &colors);
+    ghostty_render_state_get(s.render_state, GHOSTTY_RENDER_STATE_DATA_COLORS, &colors);
     const cell = resolveCell(s.cells, colors, 0, 0, false,
         GhosttyPointCoordinate.init, GhosttyPointCoordinate.init, s.selState, s.hoverState);
     assert(cell.codepoint == 'A' && cell.graphemeLen == 25);
@@ -396,13 +389,29 @@ own application does by default: a flag's regional-indicator pair, a ZWJ
 sequence and an emoji with its skin-tone modifier each occupy one cell (two
 columns wide) holding the whole cluster, rather than one cell per code point.
 
-A program may still turn the mode off, and a full reset (`RIS`) restores
-libghostty-vt's default, which is off: the C API has no per-terminal mode
-defaults.
+It becomes the terminal's reset default too, so a full reset (`RIS`) turns
+it back on; a program may still turn the mode off.
 */
 void enableGraphemeClusters(GhosttyTerminal terminal) @system nothrow @nogc
 {
-    ghostty_terminal_mode_set(terminal, GHOSTTY_MODE_GRAPHEME_CLUSTER, true);
+    terminalModeSetDefault(terminal, GHOSTTY_MODE_GRAPHEME_CLUSTER, true);
+}
+
+/// A full reset keeps the clustering on.
+@("terminal_view.enableGraphemeClusters.survivesAFullReset")
+@system nothrow @nogc
+unittest
+{
+    GhosttyTerminal t;
+    assert(newTerminal(&t, 10, 1) == GHOSTTY_SUCCESS);
+    scope (exit) ghostty_terminal_free(t);
+    enableGraphemeClusters(t);
+    ghostty_terminal_reset(t);
+    bool on;
+    assert(terminalModeGet(t, GHOSTTY_MODE_GRAPHEME_CLUSTER, &on) == GHOSTTY_SUCCESS && on);
+    static immutable ris = "\x1bc";
+    ghostty_terminal_vt_write(t, cast(const(ubyte)*) ris.ptr, ris.length);
+    assert(terminalModeGet(t, GHOSTTY_MODE_GRAPHEME_CLUSTER, &on) == GHOSTTY_SUCCESS && on);
 }
 
 /// A flag, a ZWJ family and a skin-toned thumb each become one wide cell.
@@ -411,8 +420,7 @@ void enableGraphemeClusters(GhosttyTerminal terminal) @system nothrow @nogc
 unittest
 {
     CoreState s;
-    GhosttyTerminalOptions options = { cols: 20, rows: 1 };
-    assert(ghostty_terminal_new(null, &s.terminal, options) == GHOSTTY_SUCCESS);
+    assert(newTerminal(&s.terminal, 20, 1) == GHOSTTY_SUCCESS);
     scope (exit) ghostty_terminal_free(s.terminal);
     enableGraphemeClusters(s.terminal);
     assert(ghostty_render_state_new(null, &s.render_state) == GHOSTTY_SUCCESS);
@@ -620,50 +628,14 @@ GhosttyBuild ghosttyBuild() @system nothrow @nogc
     return r;
 }
 
-// Write an xterm-style dynamic color report, or an OSC 4 palette report when
-// the caller supplies the current palette. Match the query's terminator and
-// expand 8-bit channels to 16 bits. An unset cursor uses the foreground.
-@system nothrow @nogc
-void replyColorQuery(ref CoreState s, int code, scope const(GhosttyColorRgb)[] palette = null)
-{
-    import core.stdc.stdio : snprintf;
-    import sparkles.terminal_view.input : pty_write;
-
-    GhosttyColorRgb rgb;
-    if (palette.length)
-        rgb = palette[code];
-    else
-    {
-        const data = code == 11 ? GHOSTTY_TERMINAL_DATA_COLOR_BACKGROUND
-            : code == 12 ? GHOSTTY_TERMINAL_DATA_COLOR_CURSOR
-            : GHOSTTY_TERMINAL_DATA_COLOR_FOREGROUND;
-        if (ghostty_terminal_get(s.terminal, data, &rgb) != GHOSTTY_SUCCESS
-            && (code != 12
-                || ghostty_terminal_get(s.terminal, GHOSTTY_TERMINAL_DATA_COLOR_FOREGROUND, &rgb) != GHOSTTY_SUCCESS))
-            return;
-    }
-
-    char[48] buf;
-    const len = snprintf(buf.ptr, buf.length,
-        palette.length ? "\x1b]4;%d;rgb:%04x/%04x/%04x%s".ptr
-            : "\x1b]%d;rgb:%04x/%04x/%04x%s".ptr,
-        code, rgb.r * 257, rgb.g * 257, rgb.b * 257,
-        s.oscScan.endedWithBel ? "\x07".ptr : "\x1b\\".ptr);
-    if (len > 0)
-        pty_write(s.pty_fd, buf.ptr, cast(size_t) len);
-}
-
-// Feed one pty chunk to the terminal while scanning it for OSC color queries
-// (see the osc_query module for why the emulator must answer them). The chunk
-// is fed in segments split at each complete OSC sequence so that a query's
-// reply is written only after the library consumed the query bytes, and
-// before any response the library generates for later queries in the same
-// chunk (yazi sends `OSC 11;?` followed by DA1 and stops reading at the DA1
-// response, so the color report has to precede it).
+// Feed one pty chunk to the terminal, split into segments at each complete
+// OSC sequence (for the host-side OSC observers, `observeOsc`) and at each
+// possible synchronized-output transition. libghostty-vt itself answers the
+// OSC 4/10/11/12 color queries, in stream order, from its effective colors.
 @system nothrow @nogc
 void feedPtyChunk(ref CoreState s, scope const(char)[] chunk)
 {
-    import sparkles.terminal_view.osc_query : oscScanByte, oscColorQueryCodes;
+    import sparkles.terminal_view.osc_query : oscScanByte;
 
     size_t segStart = 0;
     for (size_t i = 0; i < chunk.length; ++i)
@@ -695,26 +667,8 @@ void feedPtyChunk(ref CoreState s, scope const(char)[] chunk)
                 if (s.images.repaintPending)
                 {
                     GhosttyRenderStateDirty dirty = GHOSTTY_RENDER_STATE_DIRTY_FULL;
-                    ghostty_render_state_set(s.render_state, GHOSTTY_RENDER_STATE_OPTION_DIRTY, &dirty);
+                    ghostty_render_state_set(s.render_state, GHOSTTY_RENDER_STATE_OPT_DIRTY, &dirty);
                 }
-            }
-            if (oscBoundary && !s.oscScan.overflowed)
-            {
-                UniqueBuffer!(int, 4) codes;
-                const command = oscColorQueryCodes(s.oscScan.payload[], codes);
-                if (command == 4 && codes.length)
-                {
-                    // Read once per OSC batch, directly from effective VT
-                    // state: OSC overrides and resets are already applied.
-                    GhosttyColorRgb[256] palette;
-                    if (ghostty_terminal_get(s.terminal,
-                            GHOSTTY_TERMINAL_DATA_COLOR_PALETTE, &palette) == GHOSTTY_SUCCESS)
-                        foreach (code; codes[])
-                            replyColorQuery(s, code, palette[]);
-                }
-                else
-                    foreach (code; codes[])
-                        replyColorQuery(s, code);
             }
             if (oscBoundary)
             {
@@ -750,7 +704,7 @@ if (isTerminalPainter!P)
         // colors, and the cursor) instead of hardcoded white-on-black.
         GhosttyRenderStateColors colors;
         colors.size = GhosttyRenderStateColors.sizeof;
-        ghostty_render_state_colors_get(s.render_state, &colors);
+        ghostty_render_state_get(s.render_state, GHOSTTY_RENDER_STATE_DATA_COLORS, &colors);
 
         // The page: a full-surface fill rather than ClearBackground, because
         // inside a host's bracket the clear already happened (to the host's
@@ -760,11 +714,11 @@ if (isTerminalPainter!P)
 
         // Images remain frozen alongside the text during synchronized output.
         if (s.synchronizedOutput.held)
-            s.images.drawCapturedLayer(painter, GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_BG);
+            s.images.drawCapturedLayer(painter, GHOSTTY_IMAGE_LAYER_BELOW_BACKGROUND);
         else
         {
             s.images.prepare(painter, s.terminal, s.imageMutationEpoch, s.cellWidth, s.cellHeight);
-            s.images.drawLayer(painter, s.terminal, s.placement_iter, GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_BG);
+            s.images.drawLayer(painter, s.terminal, s.placement_iter, GHOSTTY_IMAGE_LAYER_BELOW_BACKGROUND);
         }
 
         GhosttyPointCoordinate sel_start_pt, sel_end_pt;
@@ -820,9 +774,9 @@ if (isTerminalPainter!P)
 
         // This layer covers cell backgrounds, never the glyphs above it.
         if (s.synchronizedOutput.held)
-            s.images.drawCapturedLayer(painter, GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_TEXT);
+            s.images.drawCapturedLayer(painter, GHOSTTY_IMAGE_LAYER_BELOW_TEXT);
         else
-            s.images.drawLayer(painter, s.terminal, s.placement_iter, GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_TEXT);
+            s.images.drawLayer(painter, s.terminal, s.placement_iter, GHOSTTY_IMAGE_LAYER_BELOW_TEXT);
 
         // --- Pass 2: glyphs and per-cell decorations. Re-fetching the row
         //     iterator rewinds it to the first row. ---
@@ -863,7 +817,7 @@ if (isTerminalPainter!P)
 
             // Clear this row's dirty flag now that it has been drawn.
             bool rowClean = false;
-            ghostty_render_state_row_set(s.row_iter, GHOSTTY_RENDER_STATE_ROW_OPTION_DIRTY, &rowClean);
+            ghostty_render_state_row_set(s.row_iter, GHOSTTY_RENDER_STATE_ROW_OPT_DIRTY, &rowClean);
 
             y += s.cellHeight;
         }
@@ -902,28 +856,28 @@ if (isTerminalPainter!P)
             if (colors.cursor_has_value)
                 cur_rgb = colors.cursor;
 
-            int cursor_style = 1; // Block
+            GhosttyCursorStyle cursor_style = GHOSTTY_CURSOR_STYLE_BLOCK;
             ghostty_render_state_get(s.render_state, GHOSTTY_RENDER_STATE_DATA_CURSOR_VISUAL_STYLE, cast(void*)&cursor_style);
 
             int c_x = cx * s.cellWidth;
             int c_y = cy * s.cellHeight;
             const c_color = Rgba(cur_rgb.r, cur_rgb.g, cur_rgb.b, 160);
 
-            if (cursor_style == 0) // Bar
+            if (cursor_style == GHOSTTY_CURSOR_STYLE_BAR)
                 painter.fill(c_x, c_y, 2, s.cellHeight, c_color);
-            else if (cursor_style == 1) // Block
+            else if (cursor_style == GHOSTTY_CURSOR_STYLE_BLOCK)
                 painter.fill(c_x, c_y, s.cellWidth, s.cellHeight, c_color);
-            else if (cursor_style == 2) // Underline
+            else if (cursor_style == GHOSTTY_CURSOR_STYLE_UNDERLINE)
                 painter.fill(c_x, c_y + s.cellHeight - 2, s.cellWidth, 2, c_color);
-            else if (cursor_style == 3) // Hollow block
+            else if (cursor_style == GHOSTTY_CURSOR_STYLE_BLOCK_HOLLOW)
                 painter.outline(c_x, c_y, s.cellWidth, s.cellHeight, c_color);
         }
 
         // Images above text (z >= 0): drawn last, over everything else.
         if (s.synchronizedOutput.held)
-            s.images.drawCapturedLayer(painter, GHOSTTY_KITTY_PLACEMENT_LAYER_ABOVE_TEXT);
+            s.images.drawCapturedLayer(painter, GHOSTTY_IMAGE_LAYER_ABOVE_TEXT);
         else
-            s.images.drawLayer(painter, s.terminal, s.placement_iter, GHOSTTY_KITTY_PLACEMENT_LAYER_ABOVE_TEXT);
+            s.images.drawLayer(painter, s.terminal, s.placement_iter, GHOSTTY_IMAGE_LAYER_ABOVE_TEXT);
 
         // Banner shown once the child has exited, so the user knows the shell
         // is gone (they can still scroll / inspect the final output).
@@ -955,7 +909,7 @@ if (isTerminalPainter!P)
 
         // Reset global dirty state so the next update reports changes accurately.
         GhosttyRenderStateDirty clean_state = GHOSTTY_RENDER_STATE_DIRTY_FALSE;
-        ghostty_render_state_set(s.render_state, GHOSTTY_RENDER_STATE_OPTION_DIRTY, &clean_state);
+        ghostty_render_state_set(s.render_state, GHOSTTY_RENDER_STATE_OPT_DIRTY, &clean_state);
         if (!s.synchronizedOutput.held)
             s.images.repaintPending = false;
 }
@@ -968,13 +922,11 @@ unittest
     // captured context, fed OSC 2 through vt_write — exactly `open`'s wiring.
     EffectsContext ctx;
     GhosttyTerminal term;
-    GhosttyTerminalOptions topts = { cols: 20, rows: 5 };
-    ghostty_terminal_new(null, &term, topts);
+    newTerminal(&term, 20, 5);
     assert(term !is null);
     scope (exit) ghostty_terminal_free(term);
     ghostty_terminal_set(term, GHOSTTY_TERMINAL_OPT_USERDATA, cast(const(void)*) &ctx);
-    ghostty_terminal_set(term, GHOSTTY_TERMINAL_OPT_TITLE_CHANGED,
-        cast(const(void)*) &effect_title_changed);
+    term.setEffect!GHOSTTY_TERMINAL_OPT_TITLE_CHANGED(&effect_title_changed);
 
     static immutable seq = "\x1b]2;hello\x07";
     ghostty_terminal_vt_write(term, cast(const(ubyte)*) seq.ptr, cast(uint) seq.length);
@@ -1003,8 +955,7 @@ unittest
 
     alias Op = RecordingPainter.Op;
     CoreState s;
-    GhosttyTerminalOptions topts = { cols: 8, rows: 2 };
-    assert(ghostty_terminal_new(null, &s.terminal, topts) == GHOSTTY_SUCCESS);
+    assert(newTerminal(&s.terminal, 8, 2) == GHOSTTY_SUCCESS);
     scope (exit) ghostty_terminal_free(s.terminal);
     ghostty_terminal_resize(s.terminal, 8, 2, 10, 20);
     ghostty_render_state_new(null, &s.render_state);

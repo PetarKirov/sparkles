@@ -11,8 +11,8 @@ module sparkles.terminal_view.synchronized_output;
 import core.time : Duration, MonoTime, seconds;
 
 import sparkles.ghostty.c : GhosttyTerminal, GhosttyRenderState,
-    ghostty_terminal_mode_get, ghostty_terminal_mode_set,
-    ghostty_render_state_update, GHOSTTY_MODE_SYNC_OUTPUT;
+    ghostty_render_state_update, GHOSTTY_MODE_SYNCHRONIZED_OUTPUT;
+import sparkles.ghostty.helpers : terminalModeGet, terminalModeSet;
 
 /// Internal stream scanner and presentation deadline, one per terminal.
 struct SynchronizedOutput
@@ -123,7 +123,7 @@ struct SynchronizedOutput
         MonoTime now = MonoTime.init) @system nothrow @nogc
     {
         bool enabled;
-        ghostty_terminal_mode_get(terminal, GHOSTTY_MODE_SYNC_OUTPUT, &enabled);
+        terminalModeGet(terminal, GHOSTTY_MODE_SYNCHRONIZED_OUTPUT, &enabled);
         if (!enabled)
         {
             active = false;
@@ -151,7 +151,7 @@ struct SynchronizedOutput
     {
         if (!active)
             return false;
-        ghostty_terminal_mode_set(terminal, GHOSTTY_MODE_SYNC_OUTPUT, false);
+        terminalModeSet(terminal, GHOSTTY_MODE_SYNCHRONIZED_OUTPUT, false);
         active = false;
         return true;
     }
@@ -167,12 +167,12 @@ struct SynchronizedOutput
 @system unittest
 {
     import core.time : msecs;
-    import sparkles.ghostty.c : GhosttyTerminalOptions, ghostty_terminal_new,
-        ghostty_terminal_free, ghostty_render_state_new, ghostty_render_state_free;
+    import sparkles.ghostty.c : ghostty_terminal_free, ghostty_render_state_new,
+        ghostty_render_state_free;
+    import sparkles.ghostty.helpers : newTerminal;
 
     GhosttyTerminal terminal;
-    GhosttyTerminalOptions options = { cols: 8, rows: 2 };
-    ghostty_terminal_new(null, &terminal, options);
+    newTerminal(&terminal, 8, 2);
     scope (exit) ghostty_terminal_free(terminal);
     GhosttyRenderState snapshot;
     ghostty_render_state_new(null, &snapshot);
@@ -181,7 +181,7 @@ struct SynchronizedOutput
     SynchronizedOutput output;
     const now = MonoTime.currTime;
     assert(output.remaining(now) == Duration.max);
-    ghostty_terminal_mode_set(terminal, GHOSTTY_MODE_SYNC_OUTPUT, true);
+    terminalModeSet(terminal, GHOSTTY_MODE_SYNCHRONIZED_OUTPUT, true);
     assert(output.observe(terminal, snapshot, now));
     assert(!output.releaseExpired(terminal, now + 999.msecs));
     assert(output.held && output.remaining(now + 999.msecs) == 1.msecs);
@@ -189,10 +189,10 @@ struct SynchronizedOutput
     assert(!output.observe(terminal, snapshot, now + 999.msecs));
     assert(output.releaseExpired(terminal, now + 1.seconds));
     bool enabled = true;
-    ghostty_terminal_mode_get(terminal, GHOSTTY_MODE_SYNC_OUTPUT, &enabled);
+    terminalModeGet(terminal, GHOSTTY_MODE_SYNCHRONIZED_OUTPUT, &enabled);
     assert(!enabled && !output.held);
     assert(output.remaining(now + 1.seconds) == Duration.max);
-    ghostty_terminal_mode_set(terminal, GHOSTTY_MODE_SYNC_OUTPUT, true);
+    terminalModeSet(terminal, GHOSTTY_MODE_SYNCHRONIZED_OUTPUT, true);
     assert(output.observe(terminal, snapshot, now + 2.seconds));
     assert(output.held, "timeout does not disable later synchronized frames");
 }
