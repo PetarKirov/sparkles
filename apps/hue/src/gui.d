@@ -601,6 +601,9 @@ int runGui(GuiArgs guiArgs) @system
     vm.themes = themes;
     vm.labels = labels;
     vm.cache = tsCache;
+    // A large preview is laid out around the pane: a resize costs what the
+    // pane shows, and `settleLayout` finishes the rest over later frames.
+    vm.windowed = true;
     vm.decodeAnsi = (const(char)[] b) => decodeAnsi(b);
     vm.themeIdx = startIdx;
     vm.tabWidth = tabWidth < 1 ? 1 : tabWidth;
@@ -1299,6 +1302,7 @@ int runGui(GuiArgs guiArgs) @system
             return;
         vm.curMatch = i % vm.matches.length;
         vm.revealOffset(vm.matches[vm.curMatch].start);
+        vm.materializeAt(vm.matches[vm.curMatch].start);
         vm.scrollTo(vm.visualOfMatch(vm.matches[vm.curMatch]) - visibleRows / 2);
     }
 
@@ -2595,6 +2599,8 @@ int runGui(GuiArgs guiArgs) @system
     // longer than the bars' expand easing, the one transition input starts
     // with no `Timeline` of its own to ask by.
     enum settleAfterInput = dur!"msecs"(600);
+    // What a frame spends measuring a windowed preview's estimated segments.
+    enum settleBudget = dur!"msecs"(3);
     MonoTime settleUntil;
 
     bool stepFrame(H)(ref H h, out FrameGeom geom)
@@ -2941,6 +2947,9 @@ int runGui(GuiArgs guiArgs) @system
         const wc = widthCols();
         if (rd.step(wc, vm.widthCols))
             relayout();
+        // The windowed preview's share of this frame: the window follows the
+        // pane, and estimated segments are measured within the budget.
+        vm.settleLayout(settleBudget);
         // The one visual-line space (scroll/selection/search): the active
         // widget tree's rows, whichever view kind built it.
         const total = vm.rows.length;
@@ -4595,7 +4604,7 @@ int runGui(GuiArgs guiArgs) @system
         {
             if (hadInput)
                 settleUntil = MonoTime.currTime + settleAfterInput;
-            if (MonoTime.currTime < settleUntil || crt.enabled
+            if (MonoTime.currTime < settleUntil || crt.enabled || vm.layoutPending
                 || flash.toast.visible || flash.copiedFlash.visible || pop.fade.visible)
                 h.requestFrame();
         }
@@ -4678,7 +4687,10 @@ int runGui(GuiArgs guiArgs) @system
         }
         if (initialLine > 0)
         {
-            const targetVisual = vm.visualOfSrc(initialLine > 0 ? initialLine - 1 : 0);
+            const startLine = initialLine > 0 ? initialLine - 1 : 0;
+            if (startLine < vm.lineStarts.length)
+                vm.materializeAt(vm.lineStarts[startLine]);
+            const targetVisual = vm.visualOfSrc(startLine);
             vm.scrollTo(targetVisual);
 
             import source_loc : SourceLoc;
@@ -4722,7 +4734,10 @@ int runGui(GuiArgs guiArgs) @system
         {
             vm.search(inp.query);
             if (vm.matches.length)
+            {
+                vm.materializeAt(vm.matches[0].start);
                 vm.scrollTo(vm.visualOfMatch(vm.matches[0]));
+            }
         }
 
         // Debug/CI: the lantern seed opens the guide's pending path at once, so a
