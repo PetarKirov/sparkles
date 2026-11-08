@@ -17,7 +17,7 @@ The raylib half (its canvas, its textures) compiles where the consumer links
 */
 module sparkles.doc_view.pane;
 
-import core.time : MonoTime, msecs;
+import core.time : Duration, MonoTime, msecs;
 import std.datetime.systime : SysTime;
 
 import sparkles.base.buffer : SharedBuffer;
@@ -155,6 +155,8 @@ struct DocViewPane
     private int laidCols = -1;
     private int docRows = 1;
     private bool dirty = true;
+    // Frames drawn since the last reflow.
+    private int sinceReflow;
     // `deferLoad`: the document is still to be read, and the paints so far.
     private bool loadPending;
     private int pendingPaints;
@@ -188,7 +190,9 @@ struct DocViewPane
         // one never rebuilds the document (`LAY7`).
         vm.paintsBlockScroll = true;
         vm.labels = env.labels;
-        vm.visibleFirst = true;
+        // Laid out as a window around the pane: a large document's resize
+        // costs what the pane shows (`ViewerModel.windowed`).
+        vm.windowed = true;
         vm.cache = &env.cache;
         vm.themeIdx = 0;
         static if (__traits(compiles, { import sparkles.doc_view.ansi_decode : decodeAnsi; }))
@@ -849,12 +853,17 @@ struct DocViewPane
             laidCols = width;
             vm.relayout(width);
             vm.restoreAnchor(keep);
+            sinceReflow = 0;
         }
         else
-            // The frame after a first build that laid out only this screen.
-            vm.completeLayout();
-        // Ask for that next frame.
-        if (vm.partial)
+        {
+            // The window follows the pane; estimated segments are measured
+            // once the width has held a few frames (a drag's next width
+            // makes them estimates again).
+            vm.settleLayout(++sinceReflow > 4 ? 3.msecs : Duration.zero);
+        }
+        // Ask for the frames that settling still needs.
+        if (vm.layoutPending)
             dirty = true;
         vm.clampView();
 
@@ -1622,6 +1631,8 @@ version (unittest)
     auto st = new RelayoutState(new DocViewPane);
     assert(st.pane.open(env, path, chromeTheme(RgbColor(200, 200, 200), RgbColor(20, 20, 20))));
     assert(!st.pane.vm.showPreview, "the raw code view");
+    // The whole document's relayout, the baseline the windowed ones beat.
+    st.pane.vm.windowed = false;
     st.pane.vm.relayout(st.width);
     st.pane.vm.completeLayout();
     // Mid-document, so the scroll anchor has a real line to keep.
@@ -1659,6 +1670,8 @@ version (unittest)
     auto st = new RelayoutState(new DocViewPane, freshWidths: true);
     assert(st.pane.open(env, path, chromeTheme(RgbColor(200, 200, 200), RgbColor(20, 20, 20))));
     assert(st.pane.vm.showPreview && st.pane.vm.preview.present, "the markdown preview");
+    // The whole document's relayout, the baseline the windowed ones beat.
+    st.pane.vm.windowed = false;
     st.pane.vm.relayout(st.width);
     st.pane.vm.completeLayout();
     // Mid-document, so the scroll anchor has a real line to keep.
