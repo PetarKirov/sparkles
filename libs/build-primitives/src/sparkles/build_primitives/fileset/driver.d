@@ -20,7 +20,12 @@ documentation only, FSD3), and the event-horizon one over `RingVfs`.
 
 A resolution's consumer is a sink: `directory(path, members, empty)` for each
 resolved directory, after its children (FSM5), and `incomplete(path, kind)`
-for each entry that could not be read (FSE2). `PathCollector` is one.
+for each entry that could not be read (FSE2). `PathCollector` is one. A sink
+that also has `ignoreDecision(path, isDir, excluded, source, line, pattern)`
+hears, for each entry a `.gitignore` rule decided, which rule it was (FSI3).
+
+A `gitignored` fileset makes the machine ask for `readFile`, which needs a
+root opened with read rights.
 */
 module sparkles.build_primitives.fileset.driver;
 
@@ -126,9 +131,66 @@ if (isVfs!V && hasRights(R, filesetRights))
                 if (st.hasError)
                     return m.failed(index, st.error.kind);
                 return m.statted(index, st.value);
-            case RequestKind.readlink, RequestKind.readFile:
-                // Not yet performed by this driver: M4 and M5 add them.
+            case RequestKind.readFile:
+                // A `.gitignore` (FSI): a root opened without read rights
+                // cannot satisfy a `gitignored` fileset (FSM2).
+                static if (hasRights(R, Rights.read))
+                    return readFile(m, root, req, index);
+                else
+                    return m.failed(index, ErrorKind.unsupported);
+            case RequestKind.readlink:
+                // Not yet performed by this driver: M5 adds it.
                 return m.failed(index, ErrorKind.unsupported);
+        }
+    }
+
+    static if (hasRights(R, Rights.read))
+    {
+        // Reads the file `req` names into the machine's room.
+        private void readFile(ref Resolution m, DirRef!(V, R) root, in Request req, uint index)
+        {
+            import sparkles.base.vfs.types : OpenMode;
+
+            if (req.dir != noDir)
+                return readInto(m, handles[req.dir].openFile!(OpenMode.read)(req.name), index);
+            // A path beneath the fileset root: walk to its directory.
+            size_t slash = req.name.length;
+            while (slash > 0 && req.name[slash - 1] != '/')
+                --slash;
+            if (slash == 0)
+                return readInto(m, root.openFile!(OpenMode.read)(req.name), index);
+            auto dir = root.walk(req.name[0 .. slash - 1]);
+            if (dir.hasError)
+                return m.failed(index, dir.error.kind);
+            return readInto(m, dir.value.openFile!(OpenMode.read)(req.name[slash .. $]), index);
+        }
+
+        private void readInto(F)(ref Resolution m, F opened, uint index)
+        {
+            if (opened.hasError)
+                return m.failed(index, opened.error.kind);
+            auto bytes = cast(ubyte[]) m.fileRoom;
+            size_t n;
+            while (n < bytes.length)
+            {
+                auto r = opened.value.read(bytes[n .. $]);
+                if (r.hasError)
+                    return m.failed(index, r.error.kind);
+                if (r.value == 0)
+                    break;
+                n += r.value;
+            }
+            bool whole = true;
+            if (n == bytes.length)
+            {
+                // Full: one more byte says whether the file was larger.
+                ubyte[1] probe;
+                auto r = opened.value.read(probe[]);
+                if (r.hasError)
+                    return m.failed(index, r.error.kind);
+                whole = r.value == 0;
+            }
+            m.fileRead(index, n, whole);
         }
     }
 
@@ -160,7 +222,10 @@ ResolutionResult resolveWith(V, Rights R, Sink, Exec)(DirRef!(V, R) root, ref co
     import sparkles.base.vfs.types : SymlinkPolicy;
 
     const followLinks = root.policy.symlinks == SymlinkPolicy.beneath;
-    auto m = Resolution(sets, f, limits, followLinks);
+    // A sink that can hear which `.gitignore` rule decided an entry is told
+    // (FSI3).
+    enum traceIgnores = __traits(hasMember, Sink, "ignoreDecision");
+    auto m = Resolution(sets, f, limits, followLinks, traceIgnores);
     auto driver = FilesetDriver!(V, R)(limits.maxFrames);
     auto cursor = m.start();
     for (;;)
@@ -179,6 +244,11 @@ ResolutionResult resolveWith(V, Rights R, Sink, Exec)(DirRef!(V, R) root, ref co
                 break;
             case StepKind.incomplete:
                 sink.incomplete(m.incompletePath, m.incompleteKind);
+                break;
+            case StepKind.ignoreDecision:
+                static if (traceIgnores)
+                    sink.ignoreDecision(m.decisionPath, m.decisionIsDir, m.decisionExcluded,
+                        m.decisionSource, m.decisionLine, m.decisionPattern);
                 break;
             case StepKind.budget:
                 break;

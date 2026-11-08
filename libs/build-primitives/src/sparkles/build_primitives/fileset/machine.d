@@ -32,6 +32,9 @@ import sparkles.base.buffer : HeapBuffer;
 import sparkles.base.io.errors : ErrorKind;
 import sparkles.base.vfs.types : EntryKind, Stat, StatMask;
 
+import sparkles.base.unique : Unique;
+import sparkles.build_primitives.fileset.ignore : IgnoreLimits, IgnoreScopes, IgnoreState, ScopeError;
+import sparkles.build_primitives.fileset.pattern : MatchScratch;
 import sparkles.build_primitives.fileset.plan : Plan, plan, rootState;
 import sparkles.build_primitives.fileset.value : DirVerdict, EntryFacts, FileVerdict, Fileset,
     FilesetEvaluator, Filesets;
@@ -43,15 +46,15 @@ enum RequestKind : ubyte
     readDir,  /// open a directory and list it
     stat,     /// stat an entry, never following it
     readlink, /// read a link's target
-    readFile, /// read a file (for `.gitignore` scopes; M4)
+    readFile, /// read a `.gitignore` into `Resolution.fileRoom` (FSM4, FSI)
 }
 
 /// One request. Names are valid until the next `step`.
 struct Request
 {
     RequestKind kind;      ///
-    uint dir;              /// the directory it is relative to; `noDir` for a root
-    const(char)[] name;    /// one entry name, or a root's path beneath the fileset root
+    uint dir;              /// the directory it is relative to; `noDir` for the fileset root
+    const(char)[] name;    /// one entry name, or a path beneath the fileset root when `dir` is `noDir`
     uint target;           /// `readDir`: the id the opened directory takes
     StatMask mask;         /// `stat`: what to fill
     bool throughLink;      /// `readDir`: `name` is a link the root's policy may follow
@@ -69,6 +72,9 @@ struct ResolutionLimits
     uint maxEntries = 1 << 16;   /// entries held at once
     uint maxFrames = 1 << 12;    /// directories held at once
     uint maxNameBytes = 1 << 22; /// bytes of names and paths held at once
+    /// The `.gitignore` scope arena (FSI2), made only for a fileset with a
+    /// `gitignored` leaf.
+    IgnoreLimits ignore;
 }
 
 /// Why a resolution failed.
@@ -100,6 +106,10 @@ enum StepKind : ubyte
     incomplete, /// an entry could not be read: read `incompletePath`, `incompleteKind`
     budget,     /// the budget is spent; step again to continue
     done,       /// the resolution is complete
+    /// a `.gitignore` rule decided an entry (only when tracing, FSI3): read
+    /// `decisionPath`, `decisionIsDir`, `decisionExcluded`, `decisionSource`,
+    /// `decisionLine` and `decisionPattern`
+    ignoreDecision,
 }
 
 /// Where a resolution is (FSM6). Valid only for the resolution that made it,
@@ -121,18 +131,34 @@ struct Resolution
     /**
     Prepares to resolve `f` of `sets`, within `limits`. `followLinks` says
     the root's policy follows links beneath it (FSD6's `symlinks =
-    beneath`): a link is then also tried as a directory.
+    beneath`): a link is then also tried as a directory. `traceIgnores`
+    asks for a `StepKind.ignoreDecision` for each entry a `.gitignore` rule
+    decides (FSI3).
+
+    A fileset with a `gitignored` leaf makes the machine read `.gitignore`
+    files: before a start root is listed, that of the fileset root and of
+    each directory down to it, and after a directory is listed, its own,
+    unless a scope already excluded it. Each read is one `readFile` batch.
     */
     this(ref const Filesets sets, Fileset f, ResolutionLimits limits = ResolutionLimits.init,
-        bool followLinks = false) @safe nothrow @nogc
+        bool followLinks = false, bool traceIgnores = false) @safe nothrow @nogc
     {
         import core.atomic : atomicOp;
+        import sparkles.base.unique : makeUnique;
 
         lim = limits;
         follow = followLinks;
         ev = FilesetEvaluator(sets, f);
         words = cast(uint) ev.stateWords;
         id = atomicOp!"+="(nextId, 1);
+        ignWord = ev.gitignoredWord;
+        if (ignWord != uint.max)
+        {
+            ign = IgnoreScopes(sets.casePolicy, lim.ignore);
+            ignScratch = makeUnique!MatchScratch();
+            scopePathBuf.length = (lim.maxNameLength + 1) * (lim.maxDepth + 1) + gitignoreName.length;
+            trace = traceIgnores;
+        }
 
         entries.length = lim.maxEntries;
         frames.length = lim.maxFrames;
@@ -141,7 +167,7 @@ struct Resolution
         requests.length = lim.maxPending;
         answers.length = lim.maxPending;
         scratch.length = words ? words : 1;
-        pathBuf.length = (lim.maxNameLength + 1) * (lim.maxDepth + 1);
+        pathBuf.length = (lim.maxNameLength + 1) * (lim.maxDepth + 1) + gitignoreName.length + 1;
 
         // The plan's roots, kept as names at the bottom of the name arena.
         auto p = plan(sets, f);
@@ -212,6 +238,21 @@ struct Resolution
         e.statted = true;
     }
 
+    /// The room a `readFile` request's file is read into; valid until the
+    /// next `step`.
+    char[] fileRoom() return @safe nothrow @nogc => ign.room;
+
+    /// Answers `readFile` request `req`: the file's first `length` bytes are
+    /// in `fileRoom`, and `whole` says there were no more.
+    void fileRead(uint req, size_t length, bool whole) @safe nothrow @nogc
+    {
+        if (req >= pending)
+            return;
+        answers[req] = Answer(true, ErrorKind.other);
+        fileLength = length;
+        fileWhole = whole;
+    }
+
     /// Answers request `req` with a failure. `ErrorKind.unsupported` ends the
     /// resolution (FSM2); any other kind makes the entry incomplete (FSE1).
     void failed(uint req, ErrorKind kind) @safe nothrow @nogc
@@ -269,6 +310,33 @@ struct Resolution
     /// ditto
     ErrorKind incompleteKind() const @safe pure nothrow @nogc => incompleteKind_;
 
+    /// The entry a `.gitignore` rule decided (`StepKind.ignoreDecision`),
+    /// relative to the fileset root, and whether it is a directory.
+    const(char)[] decisionPath() const return @safe pure nothrow @nogc
+        => pathBuf[][0 .. decisionLength];
+    /// ditto
+    bool decisionIsDir() const @safe pure nothrow @nogc => decisionIsDir_;
+    /// Whether the deciding rule excludes the entry, or re-includes it.
+    bool decisionExcluded() const @safe pure nothrow @nogc => decisionExcluded_;
+    /// The `.gitignore` that declared the deciding rule, relative to the
+    /// fileset root, its 1-based line, and its pattern as translated (FSI3).
+    const(char)[] decisionSource() const return @safe pure nothrow @nogc
+        => ign.sourceOf(ign.rule(decisionRule).scope_);
+    /// ditto
+    uint decisionLine() const @safe pure nothrow @nogc => ign.rule(decisionRule).line;
+    /// ditto
+    const(char)[] decisionPattern() const return @safe pure nothrow @nogc
+        => ign.patternOf(decisionRule);
+
+    /// The most `.gitignore` scopes, and bytes of their text, held at once
+    /// (FSI2), and the rule lines skipped because no fileset pattern
+    /// expresses them (A15).
+    uint ignorePeakScopes() const @safe pure nothrow @nogc => ign.peakScopes;
+    /// ditto
+    uint ignorePeakTextBytes() const @safe pure nothrow @nogc => ign.peakTextBytes;
+    /// ditto
+    uint ignoreSkippedRules() const @safe pure nothrow @nogc => ign.skippedRules;
+
     /// The error after `step` failed.
     ResolutionError error() const @safe pure nothrow @nogc
         => ResolutionError(code, unsupportedKind, context);
@@ -318,6 +386,7 @@ private:
     enum Phase : ubyte
     {
         listing,   // its readDir is in the batch
+        scopeRead, // its `.gitignore` read is in the batch
         evaluate,  // entries being evaluated
         stats,     // its stat batch is out
         report,    // reporting entries whose stat failed
@@ -337,11 +406,12 @@ private:
         uint cursor;
         uint memberCount, enteredChildren;
         Phase phase;
-        bool acceptAll, failed, throughLink;
+        bool acceptAll, failed, throughLink, scopeChecked;
         uint parentEntry = uint.max; // its entry in the parent's listing
         uint tagRequest;             // its readDir's index in the batch
         ErrorKind error = ErrorKind.other;
         uint entryMark, nameMark, stateMark;
+        IgnoreScopes.Mark ignMark;
     }
 
     static struct Answer
@@ -367,6 +437,26 @@ private:
     HeapBuffer!ulong scratch;
     HeapBuffer!char pathBuf;
     HeapBuffer!Span rootSpans;
+
+    // `.gitignore` scopes (FSI), when the fileset has a `gitignored` leaf.
+    enum string gitignoreName = ".gitignore";
+    uint ignWord = uint.max;
+    IgnoreScopes ign;
+    Unique!MatchScratch ignScratch;
+    HeapBuffer!char scopePathBuf;
+    IgnoreScopes.Mark rootIgnMark;
+    size_t fileLength;
+    bool fileWhole;
+    Span scopeName;   // the `.gitignore` entry being read
+    // A start root's prefix: the `.gitignore` of each directory above it.
+    bool prefixActive, prefixRead;
+    Span prefixRoot;
+    uint prefixPos, prefixState;
+    ulong prefixWord;
+    // Tracing (FSI3).
+    bool trace, decisionPending, decisionIsDir_, decisionExcluded_;
+    uint decisionRule;
+    size_t decisionLength;
     uint entriesTop, framesTop, namesTop, statesTop;
     uint pending;
     BatchKind batchKind;
@@ -384,7 +474,7 @@ private:
     RequestKind unsupportedKind;
     string context;
 
-    enum BatchKind : ubyte { none, root, stats, children }
+    enum BatchKind : ubyte { none, root, stats, children, scope_, prefix }
 
     void latch(ResolutionErrorCode c, string why) @safe pure nothrow @nogc
     {
@@ -447,14 +537,30 @@ private:
         {
             if (failed_)
                 return false;
-            if (pendingRootReport)
+            if (pendingReport)
             {
-                pendingRootReport = false;
+                pendingReport = false;
                 kind = StepKind.incomplete;
                 return true;
             }
             if (current == uint.max)
             {
+                if (prefixActive)
+                {
+                    if (continuePrefix(sets))
+                    {
+                        kind = StepKind.needIO;
+                        return true;
+                    }
+                    if (failed_)
+                        return false;
+                    if (pending)
+                    {
+                        kind = StepKind.needIO;
+                        return true;
+                    }
+                    continue;
+                }
                 if (!startNextRoot(sets))
                 {
                     kind = StepKind.done;
@@ -473,7 +579,20 @@ private:
                 case Phase.listing:
                     // Answered by `absorb`; a failed root reports here.
                     assert(0, "a listed frame is never current");
+                case Phase.scopeRead:
+                    assert(0, "a frame reading its .gitignore is answered by absorb");
                 case Phase.evaluate:
+                    if (!f.scopeChecked)
+                    {
+                        f.scopeChecked = true;
+                        if (issueScopeRead(*f))
+                        {
+                            kind = StepKind.needIO;
+                            return true;
+                        }
+                        if (failed_)
+                            return false;
+                    }
                     while (f.cursor < f.entryCount)
                     {
                         if (spent == budget)
@@ -484,8 +603,17 @@ private:
                         ++spent;
                         evaluate(sets, *f, entries[f.entries + f.cursor]);
                         ++f.cursor;
+                        if (ign.overflowed)
+                            latch(ResolutionErrorCode.capacityExceeded,
+                                "the .gitignore positions exceed IgnoreLimits.maxPositions");
                         if (failed_)
                             return false;
+                        if (decisionPending)
+                        {
+                            decisionPending = false;
+                            kind = StepKind.ignoreDecision;
+                            return true;
+                        }
                     }
                     if (issueStats(*f))
                     {
@@ -544,6 +672,8 @@ private:
                     entriesTop = f.entryMark;
                     namesTop = f.nameMark;
                     statesTop = f.stateMark;
+                    if (ign.ready)
+                        ign.release(f.ignMark);
                     f.phase = Phase.complete;
                     break;
                 case Phase.complete:
@@ -557,6 +687,8 @@ private:
                         entriesTop = 0;
                         statesTop = 0;
                         namesTop = rootsEnd;
+                        if (ign.ready)
+                            ign.release(rootIgnMark);
                     }
                     kind = StepKind.unit;
                     return true;
@@ -583,6 +715,84 @@ private:
                 statesTop = 0;
                 continue;
             }
+            if (ign.ready)
+            {
+                rootIgnMark = ign.mark;
+                if (root.length)
+                {
+                    // The scopes above the root apply to it: read them first.
+                    prefixActive = true;
+                    prefixRead = false;
+                    prefixRoot = span;
+                    prefixPos = 0;
+                    prefixState = st;
+                    prefixWord = IgnoreState.init.word;
+                    if (continuePrefix(sets))
+                        return true;
+                    if (failed_)
+                        return false;
+                    continue;
+                }
+            }
+            if (openRoot(span, st, verdict))
+                return true;
+            if (failed_)
+                return false;
+        }
+        return false;
+    }
+
+    // Reads the next `.gitignore` above a start root, or, when none is left,
+    // gives the root its ignore state and opens it. `true` when it issued a
+    // request.
+    bool continuePrefix(ref const Filesets sets) @safe nothrow @nogc
+    {
+        const root = names[][prefixRoot.start .. prefixRoot.end];
+        for (;;)
+        {
+            if (!prefixRead && !IgnoreState(prefixWord).excluded)
+            {
+                prefixRead = true;
+                const dir = root[0 .. prefixPos ? prefixPos - 1 : 0];
+                if (!request(Request(RequestKind.readFile, noDir, scopePath(dir), 0)))
+                    return false;
+                batchKind = BatchKind.prefix;
+                return true;
+            }
+            size_t end = prefixPos;
+            while (end < root.length && root[end] != '/')
+                ++end;
+            IgnoreState c;
+            if (!ign.enter(IgnoreState(prefixWord), root[prefixPos .. end], *ignScratch, c))
+            {
+                latch(ResolutionErrorCode.capacityExceeded,
+                    "the .gitignore positions exceed IgnoreLimits.maxPositions");
+                return false;
+            }
+            prefixWord = c.word;
+            if (end >= root.length)
+                break;
+            prefixPos = cast(uint)(end + 1);
+            prefixRead = false;
+        }
+        prefixActive = false;
+        stateOf(prefixState)[ignWord] = prefixWord;
+        return openRoot(prefixRoot, prefixState, ev.dirVerdict(sets, stateOf(prefixState)));
+    }
+
+    // Opens the start root `span` with state `st`: issues its readDir, or
+    // skips it. `true` when it issued the request.
+    bool openRoot(Span span, uint st, DirVerdict verdict) @safe nothrow @nogc
+    {
+        const root = names[][span.start .. span.end];
+        {
+            if (verdict == DirVerdict.skip)
+            {
+                statesTop = 0;
+                if (ign.ready)
+                    ign.release(rootIgnMark);
+                return false;
+            }
             uint depth = root.length ? 1 : 0;
             foreach (c; root)
                 if (c == '/')
@@ -603,6 +813,65 @@ private:
                 return false;
             batchKind = BatchKind.root;
             batchFrame = 0;
+            return true;
+        }
+    }
+
+    // The path of the `.gitignore` in `dir`, relative to the fileset root;
+    // valid until the next call.
+    const(char)[] scopePath(scope const(char)[] dir) @safe nothrow @nogc
+    {
+        size_t n;
+        if (dir.length)
+        {
+            scopePathBuf[][0 .. dir.length] = dir[];
+            scopePathBuf[dir.length] = '/';
+            n = dir.length + 1;
+        }
+        scopePathBuf[][n .. n + gitignoreName.length] = gitignoreName;
+        return scopePathBuf[][0 .. n + gitignoreName.length];
+    }
+
+    // Adds the scope of the `.gitignore` in `dir` just read into `fileRoom`
+    // beneath the state `word`, which it extends.
+    bool addScope(scope const(char)[] dir, ref ulong word) @safe nothrow @nogc
+    {
+        IgnoreState extended;
+        const e = fileWhole ? ign.add(IgnoreState(word), scopePath(dir), fileLength, extended)
+            : ScopeError.fileTooLarge;
+        if (e != ScopeError.none)
+        {
+            latch(ResolutionErrorCode.capacityExceeded, e == ScopeError.fileTooLarge
+                ? "a .gitignore exceeds IgnoreLimits.maxFileBytes"
+                : "the .gitignore scopes exceed IgnoreLimits");
+            return false;
+        }
+        word = extended.word;
+        return true;
+    }
+
+    // Issues the read of frame `f`'s own `.gitignore`, if it has one and no
+    // scope excluded it; `true` when it did.
+    bool issueScopeRead(ref Frame f) @safe nothrow @nogc
+    {
+        if (ignWord == uint.max || f.acceptAll || IgnoreState(stateOf(f.state)[ignWord]).excluded)
+            return false;
+        foreach (i; 0 .. f.entryCount)
+        {
+            const e = entries[f.entries + i];
+            const name = names[][e.name.start .. e.name.end];
+            if (name != gitignoreName)
+                continue;
+            // Git reads no `.gitignore` through a link.
+            if (e.kind != EntryKind.regular && e.kind != EntryKind.unknown)
+                return false;
+            if (!request(Request(RequestKind.readFile, frameIndex(f),
+                    names[][e.name.start .. e.name.end], frameIndex(f))))
+                return false;
+            scopeName = e.name;
+            batchKind = BatchKind.scope_;
+            batchFrame = frameIndex(f);
+            f.phase = Phase.scopeRead;
             return true;
         }
         return false;
@@ -635,10 +904,12 @@ private:
                         pathBuf[][0 .. root.length] = root[];
                         incompleteLength = root.length;
                         incompleteKind_ = a.error;
-                        pendingRootReport = true;
+                        pendingReport = true;
                     }
                     framesTop = 0;
                     statesTop = 0;
+                    if (ign.ready)
+                        ign.release(rootIgnMark);
                     current = uint.max;
                     batchKind = BatchKind.none;
                     return true;
@@ -689,13 +960,47 @@ private:
                 takeListing(f.children, f.childCount);
                 f.phase = Phase.children;
                 break;
+            case BatchKind.scope_:
+                auto f = &frames[batchFrame];
+                f.phase = Phase.evaluate;
+                const a = answers[0];
+                if (a.error == ErrorKind.other)
+                {
+                    if (!addScope(names[][f.path.start .. f.path.end], stateOf(f.state)[ignWord]))
+                        return false;
+                }
+                else if (!absentScope(a.error))
+                {
+                    // Unreadable: reported, and its rules do not apply (FSE2).
+                    reportIncomplete(*f, scopeName);
+                    incompleteKind_ = a.error;
+                    pendingReport = true;
+                }
+                break;
+            case BatchKind.prefix:
+                const a = answers[0];
+                const root = names[][prefixRoot.start .. prefixRoot.end];
+                if (a.error == ErrorKind.other)
+                {
+                    if (!addScope(root[0 .. prefixPos ? prefixPos - 1 : 0], prefixWord))
+                        return false;
+                }
+                else if (!absentScope(a.error))
+                {
+                    const p = requests[0].name;
+                    pathBuf[][0 .. p.length] = p[];
+                    incompleteLength = p.length;
+                    incompleteKind_ = a.error;
+                    pendingReport = true;
+                }
+                break;
         }
         pending = 0;
         batchKind = BatchKind.none;
         return true;
     }
 
-    bool pendingRootReport;
+    bool pendingReport; // an incomplete entry to hand over before going on
 
     // Gives each listed frame of `first .. first + count` its entries: the
     // staged ones, sorted by request then by name.
@@ -734,6 +1039,25 @@ private:
             return;
         }
         judge(sets, f, e, EntryFacts.init, false);
+        if (trace && !f.acceptAll)
+            traceDecision(f, e);
+    }
+
+    // Records the `.gitignore` rule deciding `e`, if one does (FSI3). An entry
+    // whose kind only a stat supplies is judged later, and is not traced.
+    void traceDecision(ref Frame f, ref Entry e) @safe nothrow @nogc
+    {
+        const name = names[][e.name.start .. e.name.end];
+        const isDir = e.kind == EntryKind.directory;
+        const d = ev.ignoreDecision(ign, stateOf(f.state), name, isDir);
+        if (!d.decided)
+            return;
+        reportIncomplete(f, e.name);
+        decisionLength = incompleteLength;
+        decisionRule = d.rule;
+        decisionExcluded_ = d.excluded;
+        decisionIsDir_ = isDir;
+        decisionPending = true;
     }
 
     // Classifies an entry of known kind; `fileOnly` re-decides only its file
@@ -752,7 +1076,7 @@ private:
                 st = allocState();
                 if (st == uint.max)
                     return;
-                v = ev.enter(sets, stateOf(f.state), name, stateOf(st));
+                v = ev.enter(sets, ign, stateOf(f.state), name, stateOf(st));
                 if (v == DirVerdict.skip)
                     statesTop -= words;
             }
@@ -769,7 +1093,7 @@ private:
                 setMember(f, e, true);
                 return;
             }
-            const v = ev.fileVerdict(sets, stateOf(f.state), name, facts);
+            const v = ev.fileVerdict(sets, ign, stateOf(f.state), name, facts);
             if (v == FileVerdict.undecided)
                 e.needStat = true;
             else
@@ -824,6 +1148,7 @@ private:
         f.entryMark = entriesTop;
         f.nameMark = namesTop;
         f.stateMark = statesTop;
+        f.ignMark = ign.mark;
         f.children = framesTop;
         f.childCount = 0;
         foreach (i; 0 .. f.entryCount)
@@ -900,6 +1225,13 @@ private:
         incompleteLength = len + n.length;
     }
 }
+
+// Whether a `.gitignore` read failed only because there is none to read: an
+// absent file or directory, a directory of that name, or a link git would
+// not follow.
+private bool absentScope(ErrorKind k) @safe pure nothrow @nogc
+    => k == ErrorKind.notFound || k == ErrorKind.notADirectory || k == ErrorKind.isADirectory
+        || k == ErrorKind.symlinkRefused;
 
 // Whether a link that failed to open as a directory is a link to a file, or
 // a dangling one: either stays a member as the link it is.

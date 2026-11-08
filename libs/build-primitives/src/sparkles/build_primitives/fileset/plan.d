@@ -200,7 +200,8 @@ private struct Lattice
         {
             case FilesetOp.nothing:
                 break;
-            case FilesetOp.everything, FilesetOp.executable, FilesetOp.ignored:
+            case FilesetOp.everything, FilesetOp.executable, FilesetOp.ignored,
+                FilesetOp.gitignored:
                 prefixes ~= Span(0, 0);
                 break;
             case FilesetOp.glob:

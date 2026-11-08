@@ -28,6 +28,7 @@ module sparkles.build_primitives.fileset.value;
 import sparkles.base.buffer : HeapBuffer, UniqueBuffer;
 import sparkles.base.unique : Unique, makeUnique;
 
+import sparkles.build_primitives.fileset.ignore : IgnoreDecisionRef, IgnoreScopes, IgnoreState;
 import sparkles.build_primitives.fileset.pattern : CasePolicy, FilesetErrorCode, FilesetExpected,
     MatchScratch, PatternSet, filesetErr, filesetOk;
 
@@ -48,6 +49,7 @@ enum FilesetOp : ubyte
     glob,         /// files a pattern selects (FSG1)
     executable,   /// files with the executable bit; needs a `stat` (FSA4)
     ignored,      /// files a root `.gitignore` excludes
+    gitignored,   /// files the `.gitignore` scopes found by a resolution exclude (FSI)
     union_,       ///
     intersection, ///
     difference,   ///
@@ -127,6 +129,7 @@ struct Filesets
     package HeapBuffer!IgnoreRule rules;
     private UniqueBuffer!(char[], 4) owned_; // translated `.gitignore` patterns
     private uint stateWords_;
+    private uint gitignoredNode_ = uint.max;
 
     /// An empty arena whose patterns match under `policy` (FSG3).
     this(CasePolicy policy) @safe pure nothrow @nogc
@@ -162,6 +165,25 @@ struct Filesets
 
     /// Every file whose executable bit is set. Deciding it needs a `stat`.
     Fileset executable() @safe pure nothrow @nogc => add(FilesetNode(FilesetOp.executable));
+
+    /**
+    The files git's `.gitignore` scopes exclude (FSI1–FSI4): those of the
+    fileset root, of each directory between it and a start root, and of every
+    directory a resolution enters, each applying to the paths beneath its own
+    directory. A resolution reads them as it walks; an excluded directory's
+    `.gitignore` is never read. Only a resolution knows the scopes, so
+    `FilesetEvaluator.contains`, which has none, finds this leaf empty. Make
+    the fileset root the repository's root so its `.gitignore` applies.
+
+    Every call returns the same leaf: an arena has one scope chain per
+    resolution.
+    */
+    Fileset gitignored() @safe pure nothrow @nogc
+    {
+        if (gitignoredNode_ == uint.max)
+            gitignoredNode_ = addLeaf(FilesetNode(FilesetOp.gitignored), 1).node;
+        return Fileset(gitignoredNode_);
+    }
 
     /**
     The files `pattern` selects (FSG1): those it matches, and every file
@@ -322,6 +344,7 @@ struct FilesetEvaluator
     private HeapBuffer!ulong pathState;
     private Fileset root_;
     private size_t words;
+    private uint scopeWord_ = uint.max;
 
     /// Prepares to evaluate `root` of `sets`. Allocates.
     this(ref const Filesets sets, Fileset root) @safe nothrow @nogc
@@ -344,8 +367,14 @@ struct FilesetEvaluator
                 reachable[n.a] = true;
                 reachable[n.b] = true;
             }
+            else if (n.op == FilesetOp.gitignored)
+                scopeWord_ = n.state;
         }
     }
+
+    /// The state word of the fileset's `gitignored` leaf, or `uint.max` when it
+    /// has none: a resolution reads `.gitignore` files only if it has one.
+    uint gitignoredWord() const @safe pure nothrow @nogc => scopeWord_;
 
     /// The fileset this evaluator evaluates.
     Fileset root() const @safe pure nothrow @nogc => root_;
@@ -373,6 +402,8 @@ struct FilesetEvaluator
             else if (n.op == FilesetOp.ignored)
                 foreach (r; 0 .. n.b)
                     state[n.state + 1 + r] = sets.patterns.start(sets.rules[n.a + r].pattern);
+            else if (n.op == FilesetOp.gitignored)
+                state[n.state] = IgnoreState.init.word;
         }
     }
 
@@ -398,6 +429,11 @@ struct FilesetEvaluator
                 case FilesetOp.ignored:
                     t = state[n.state] ? Tri.yes : n.b == 0 ? Tri.no : Tri.maybe;
                     break;
+                case FilesetOp.gitignored:
+                    // A deeper `.gitignore` may yet exclude what is not
+                    // excluded already.
+                    t = IgnoreState(state[n.state]).excluded ? Tri.yes : Tri.maybe;
+                    break;
                 case FilesetOp.union_, FilesetOp.intersection, FilesetOp.difference:
                     t = combine(n, tri[n.a], tri[n.b]);
                     break;
@@ -413,6 +449,16 @@ struct FilesetEvaluator
     */
     DirVerdict enter(ref const Filesets sets, scope const ulong[] parent, scope const(char)[] name,
         scope ulong[] child) @safe nothrow @nogc
+        => enterIn(sets, null, parent, name, child);
+
+    /// ditto, stepping the `gitignored` leaf through `scopes`, which must have
+    /// room for the child's block (`IgnoreScopes.overflowed` says when not).
+    DirVerdict enter(ref const Filesets sets, ref IgnoreScopes scopes, scope const ulong[] parent,
+        scope const(char)[] name, scope ulong[] child) @safe nothrow @nogc
+        => enterIn(sets, &scopes, parent, name, child);
+
+    private DirVerdict enterIn(ref const Filesets sets, scope IgnoreScopes* scopes,
+        scope const ulong[] parent, scope const(char)[] name, scope ulong[] child) @safe nothrow @nogc
     in (parent.length >= words && child.length >= words)
     {
         foreach (i; 0 .. root_.node + 1)
@@ -424,6 +470,13 @@ struct FilesetEvaluator
                 child[n.state] = sets.patterns.enterDir(n.a, parent[n.state], name, *scratch_);
             else if (n.op == FilesetOp.ignored)
                 enterIgnored(sets, n, parent, name, child);
+            else if (n.op == FilesetOp.gitignored)
+            {
+                IgnoreState c = IgnoreState(parent[n.state]);
+                if (scopes !is null && scopes.ready)
+                    cast(void) scopes.enter(IgnoreState(parent[n.state]), name, *scratch_, c);
+                child[n.state] = c.word;
+            }
         }
         return dirVerdict(sets, child);
     }
@@ -432,6 +485,29 @@ struct FilesetEvaluator
     /// `state`, given `facts` (FSA4).
     FileVerdict fileVerdict(ref const Filesets sets, scope const ulong[] state,
         scope const(char)[] name, EntryFacts facts) @safe nothrow @nogc
+        => fileVerdictIn(sets, null, state, name, facts);
+
+    /// ditto, deciding the `gitignored` leaf through `scopes`.
+    FileVerdict fileVerdict(ref const Filesets sets, ref IgnoreScopes scopes,
+        scope const ulong[] state, scope const(char)[] name, EntryFacts facts) @safe nothrow @nogc
+        => fileVerdictIn(sets, &scopes, state, name, facts);
+
+    /**
+    The rule of `scopes` deciding the entry `name` (a directory when `isDir`)
+    in a directory whose state is `state`, for tracing (FSI3). Undecided when
+    the fileset has no `gitignored` leaf, and beneath an excluded directory.
+    */
+    IgnoreDecisionRef ignoreDecision(ref const IgnoreScopes scopes, scope const ulong[] state,
+        scope const(char)[] name, bool isDir) @safe nothrow @nogc
+    {
+        if (scopeWord_ == uint.max || !scopes.ready)
+            return IgnoreDecisionRef.init;
+        const st = IgnoreState(state[scopeWord_]);
+        return isDir ? scopes.decideDir(st, name, *scratch_) : scopes.decideFile(st, name, *scratch_);
+    }
+
+    private FileVerdict fileVerdictIn(ref const Filesets sets, scope IgnoreScopes* scopes,
+        scope const ulong[] state, scope const(char)[] name, EntryFacts facts) @safe nothrow @nogc
     in (state.length >= words)
     {
         foreach (i; 0 .. root_.node + 1)
@@ -453,6 +529,11 @@ struct FilesetEvaluator
                     break;
                 case FilesetOp.ignored:
                     t = ignoresFile(sets, n, state, name) ? Tri.yes : Tri.no;
+                    break;
+                case FilesetOp.gitignored:
+                    const st = IgnoreState(state[n.state]);
+                    t = st.excluded || (scopes !is null && scopes.ready
+                        && scopes.excludesFile(st, name, *scratch_)) ? Tri.yes : Tri.no;
                     break;
                 case FilesetOp.union_, FilesetOp.intersection, FilesetOp.difference:
                     t = combine(n, tri[n.a], tri[n.b]);

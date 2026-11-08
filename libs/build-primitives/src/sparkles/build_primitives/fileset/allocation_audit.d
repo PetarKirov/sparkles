@@ -108,6 +108,76 @@ version (linux)
         assert(gcAfter == gcBefore, "a resolution step allocated on the GC heap");
     }
 
+    /// The same, for a fileset with `.gitignore` scopes: reading, parsing and
+    /// applying them, and tracing their decisions, allocate nothing either
+    /// (FSI2, invariant 2).
+    @("fileset.allocation.scopedResolutionHasZeroCalls")
+    @system unittest
+    {
+        import core.memory : GC;
+
+        import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+        import sparkles.base.vfs.mem : MemVfs;
+        import sparkles.base.vfs.types : Rights;
+        import sparkles.build_primitives.fileset.driver : FilesetDriver;
+        import sparkles.build_primitives.fileset.machine : Resolution, ResolutionLimits, StepKind;
+        import sparkles.build_primitives.fileset.pattern : CasePolicy;
+        import sparkles.build_primitives.fileset.tree_literal : memTree;
+        import sparkles.build_primitives.fileset.value : Filesets;
+
+        auto tree = memTree(`.gitignore = *.log\nbuild/\n*.{o,a}
+            a.log
+            build/x.c
+            src/.gitignore = !*.log\n/gen/
+            src/a.log
+            src/gen/g.d
+            src/x.d
+            src/y.{o,a}
+            lib/z/.gitignore = *.d
+            lib/z/w.d
+            lib/z/w.c
+        `);
+        assert(!tree.hasError);
+        auto root = openRoot!(Rights.readOnly)(&tree.value.get().vfs, "", ambientAuthority());
+        auto sets = Filesets(CasePolicy.sensitive);
+        const f = sets.difference(sets.everything, sets.gitignored);
+        auto m = Resolution(sets, f, ResolutionLimits.init, false, true);
+        auto driver = FilesetDriver!(MemVfs, Rights.readOnly)(64);
+        auto cursor = m.start();
+        size_t members, decisions;
+
+        const gcBefore = GC.allocatedInCurrentThread();
+        allocationCalls = 0;
+        auditActive = true;
+        for (;;)
+        {
+            StepKind kind;
+            if (!m.step(sets, cursor, 2, kind))
+                break;
+            driver.retire(m.retired);
+            if (kind == StepKind.done)
+                break;
+            if (kind == StepKind.needIO)
+                foreach (i; 0 .. m.batch.length)
+                    driver.perform(m, root.value.borrow, i);
+            else if (kind == StepKind.unit)
+                foreach (name; m.unitMembers)
+                    ++members;
+            else if (kind == StepKind.ignoreDecision)
+                decisions += m.decisionLine + m.decisionSource.length > 0;
+        }
+        auditActive = false;
+        const gcAfter = GC.allocatedInCurrentThread();
+
+        assert(m.error.code == m.error.code.init, m.error.context);
+        // .gitignore, src/.gitignore, src/a.log, src/x.d, lib/z/.gitignore, lib/z/w.c
+        assert(members == 6);
+        // a.log, build, src/a.log, src/gen, src/y.{o,a}, lib/z/w.d
+        assert(decisions == 6);
+        assert(allocationCalls == 0, "a scoped resolution step called the libc allocator");
+        assert(gcAfter == gcBefore, "a scoped resolution step allocated on the GC heap");
+    }
+
     @("fileset.allocation.evaluationHasZeroCalls")
     @system unittest
     {
