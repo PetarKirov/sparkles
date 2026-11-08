@@ -1,0 +1,69 @@
+# Garbage-collect the R2 binary cache (cache.sparkles.petar-kirov.dev).
+#
+# R2 never evicts, so without this the bucket only grows. `ci --gc-r2` keeps
+# the gc-roots of the trees of `main`'s last 30 commits (written by
+# ci/gc-root.sh and ci/push-pin-set-r2.sh), everything younger than 14 days,
+# and their closures, and deletes the rest. See ci/README.md, "Garbage-
+# collection roots".
+#
+# Weekly, because the bucket's cost is storage at cents per GB-month: a week
+# of garbage costs less than the collection's own runner minutes would.
+#
+# A pull request that changes the collector or this workflow runs it as a dry
+# run against the real bucket, so a broken collector is caught before a
+# schedule ever deletes with it. A pull request's checkout is a merge commit
+# whose first parent is `main`, so its dry run plans exactly what the next
+# scheduled run would, plus the pull request's own roots.
+name: R2 cache GC
+
+on:
+  schedule:
+    - cron: '41 3 * * 0'
+
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Report what would be deleted without deleting it
+        required: false
+        type: boolean
+        default: true
+
+  pull_request:
+    paths:
+      - apps/ci/src/r2_gc.d
+      - .github/workflows/r2-gc.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: r2-gc
+  cancel-in-progress: false
+
+jobs:
+  gc:
+    name: Collect the R2 cache
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # The roots are keyed by tree, read from the first-parent history.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 50
+
+      - name: Setup Nix
+        uses: ./.github/actions/setup-nix
+        with:
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
+          use-nix-cache: false
+
+      - name: Collect
+        env:
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          DRY_RUN: ${{ (github.event_name == 'pull_request' || inputs.dry_run) && '--dry-run' || '' }}
+        run: |
+          # shellcheck disable=SC2086 # DRY_RUN is one optional flag or empty
+          nix run .#ci-minimal -- --gc-r2 --keep-commits 30 --grace-days 14 $DRY_RUN

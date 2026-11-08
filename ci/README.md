@@ -70,6 +70,7 @@ PR — which gets no secrets — still run the pipeline.
 | `lib/r2.sh`                  | The R2 cache's credentials check, store URL, `nix copy` and S3 `PUT`                     |
 | `with-cache.sh`              | Queues each built path through a post-build hook and `nix copy`s it to the R2 bucket     |
 | `gc-root.sh`                 | Copies a build's closure to R2 and records it as a garbage-collection root               |
+| `ci --gc-r2` (`apps/ci`)     | Garbage-collects the R2 bucket, keeping the roots of `main`'s last trees (`r2-gc.yml`)   |
 | `push-pin-set-r2.sh`         | Mirrors the pin set's toolchain outputs into the R2 bucket and roots them (`pin-cache`)  |
 | `release-pin.sh`             | Highest-tag guard, then `cachix push` + `cachix pin --keep-revisions`                    |
 | `toolchain-pin.d`            | Pins the pin set (`nix/pin-targets.nix`) to Cachix, prunes the rest, checks it is cached |
@@ -437,10 +438,26 @@ They are keyed by the git **tree**, not the commit. A pull request lands by
 rebase, and when the landed tree equals the tree the pull request built,
 `main-checks.yml` mirrors the pull request's checks instead of rebuilding
 (see AGENTS.md). The same equality makes the pull request's roots `main`'s,
-with nothing copied: a collector keeps the roots of the trees of `main`'s last
-commits — `cachix pin --keep-revisions`, with git history as the revision
-list — plus anything younger than a grace period, which covers open pull
-requests and uploads still in flight.
+with nothing copied.
+
+`ci --gc-r2` collects, weekly (`.github/workflows/r2-gc.yml`). It keeps the
+roots of the trees of `HEAD`'s last 30 first-parent commits — `cachix pin
+--keep-revisions`, with git history as the revision list — and every object
+younger than 14 days, which covers open pull requests and uploads still in
+flight; marks their closures by walking narinfo `References`; and deletes the
+narinfos, NARs and roots left over, narinfos first so no client sees a
+narinfo whose NAR is gone. It never touches what it does not recognise
+(`nix-cache-info`, `log/`), and it refuses to run when no root survives. A
+pull request that changes it runs it as a dry run against the bucket; a
+manual dispatch is a dry run unless told otherwise:
+
+```bash
+gh workflow run r2-gc.yml -f dry_run=false
+```
+
+Locally, with the R2 credentials exported, `nix run .#ci-minimal -- --gc-r2
+--dry-run` prints the same plan; `R2_ENDPOINT` points it at another S3 server
+(a local MinIO, for testing).
 
 An age-based R2 lifecycle rule cannot do this: narinfos and NARs of every
 build share two prefixes, so a rule would expire the toolchain as readily as a

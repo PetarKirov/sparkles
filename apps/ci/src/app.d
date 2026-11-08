@@ -493,8 +493,25 @@ struct CliParams
 
     @(Option(`dry-run`,
         description: "With --mirror-checks: report what would be mirrored without creating "
-        ~ "anything."))
+        ~ "anything. With --gc-r2: report what would be deleted without deleting it."))
     bool dryRun;
+
+    @(Option(`gc-r2`,
+        description: "Garbage-collect the R2 binary cache: keep the gc-roots of the trees of "
+        ~ "HEAD's last --keep-commits first-parent commits, everything younger than --grace-days, "
+        ~ "and their closures; delete the rest. Reads R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, "
+        ~ "R2_ACCOUNT_ID and R2_BUCKET."))
+    bool gcR2;
+
+    @(Option(`keep-commits`,
+        description: "With --gc-r2: how many of HEAD's first-parent commits keep their roots "
+        ~ "(default 30)."))
+    int keepCommits = 30;
+
+    @(Option(`grace-days`,
+        description: "With --gc-r2: objects younger than this many days are kept, and their "
+        ~ "closures with them (default 14)."))
+    int graceDays = 14;
 
     @(Option(`report-link-rot`,
         description: "Keep one standing issue in step with the link sweep: a failing sweep opens "
@@ -552,6 +569,7 @@ enum ProgramMode
     ciStats,
     mirrorChecks,
     reportLinkRot,
+    gcR2,
     auditFences,
     linuxHostProbe,
     seedDubCache,
@@ -760,6 +778,9 @@ int ciMain(string[] args)
     if (mode == ProgramMode.reportLinkRot)
         return runReportLinkRotMode(cli);
 
+    if (mode == ProgramMode.gcR2)
+        return runGcR2Mode(cli);
+
 
     auto inputFiles = collectInputFiles(cli, mode);
 
@@ -815,7 +836,7 @@ private string validateCliMode(
             || cli.testExtracted || cli.testSanitize || cli.buildEachCommit || cli.auditFences
             || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkCommitScope
             || cli.checkVcsUrls || cli.checkDocsSidebar || cli.checkSpecEvidence || cli.checkGlossary
-            || cli.checkPinCache || cli.checkAdHocSdl || cli.checkBlobPaths || cli.ciStats || cli.mirrorChecks || cli.reportLinkRot || cli.linuxHostProbe
+            || cli.checkPinCache || cli.checkAdHocSdl || cli.checkBlobPaths || cli.ciStats || cli.mirrorChecks || cli.reportLinkRot || cli.gcR2 || cli.linuxHostProbe
             || cli.hostSystem.length || cli.files.length || cli.exclude.length))
         return "--seed-dub-cache cannot be combined with other modes or file selection";
 
@@ -909,6 +930,9 @@ private string validateCliMode(
     if (cli.mirrorChecks && cli.repo.length == 0)
         return "--mirror-checks requires --repo owner/repo";
 
+    if (cli.gcR2 && (cli.keepCommits <= 0 || cli.graceDays < 0))
+        return "--gc-r2 needs a positive --keep-commits and a non-negative --grace-days";
+
     if (cli.linuxHostProbe && (cli.verify || cli.update || cli.exampleFiles || cli.build || cli.test
             || cli.testExtracted || cli.dedupReferenceLinks || cli.fixReferenceLinks
             || cli.checkCommitScope || cli.checkVcsUrls || cli.checkDocsSidebar
@@ -978,6 +1002,9 @@ private ProgramMode resolveProgramMode(in CliParams cli)
 
     if (cli.reportLinkRot)
         return ProgramMode.reportLinkRot;
+
+    if (cli.gcR2)
+        return ProgramMode.gcR2;
 
     if (cli.exampleFiles)
         return ProgramMode.runExampleFiles;
@@ -1080,6 +1107,7 @@ private string programModeName(ProgramMode mode) @safe pure nothrow @nogc
         case ProgramMode.ciStats:            return "--ci-stats";
         case ProgramMode.mirrorChecks:       return "--mirror-checks";
         case ProgramMode.reportLinkRot:      return "--report-link-rot";
+        case ProgramMode.gcR2:               return "--gc-r2";
         case ProgramMode.auditFences:        return "--audit-fences";
         case ProgramMode.linuxHostProbe:     return "--linux-host-probe";
         case ProgramMode.seedDubCache:       return "--seed-dub-cache";
@@ -1670,6 +1698,7 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
             case ProgramMode.ciStats:
             case ProgramMode.mirrorChecks:
             case ProgramMode.reportLinkRot:
+            case ProgramMode.gcR2:
             case ProgramMode.auditFences:
             case ProgramMode.linuxHostProbe:
             case ProgramMode.seedDubCache:
@@ -6371,5 +6400,159 @@ private int runReportLinkRotMode(in CliParams cli)
 
     string action = res.value.action;
     info(i"$(action)");
+    return 0;
+}
+
+/// `--gc-r2`: garbage-collect the R2 binary cache (see `r2_gc`).
+private int runGcR2Mode(in CliParams cli)
+{
+    import core.time : days;
+    import std.algorithm.iteration : filter, map, sum;
+    import std.datetime.systime : Clock;
+    import std.format : format;
+    import std.datetime.timezone : UTC;
+    import std.parallelism : TaskPool;
+    import std.process : execute;
+    import std.stdio : writefln;
+    import std.string : lineSplitter, strip;
+
+    import sparkles.base.expected : Expected, err, ok;
+    import sparkles.base.logger : error, info, warning;
+
+    import r2_gc : Bucket, deleteObject, getObject, keptRoots, listAll, markLive, plan,
+        storeHash, youngNarinfos;
+
+    static string gib(ulong bytes) => format("%.2f GiB", bytes / 1024.0 / 1024 / 1024);
+
+    const bucket = Bucket.fromEnvironment();
+    if (bucket.hasError)
+    {
+        string msg = bucket.error;
+        error(i"--gc-r2: $(msg)");
+        return 1;
+    }
+
+    const log = execute(["git", "log", "--first-parent", "--format=%T",
+        "-n", cli.keepCommits.to!string, "HEAD"]);
+    if (log.status != 0)
+    {
+        string out_ = log.output;
+        error(i"--gc-r2: git log failed: $(out_)");
+        return 1;
+    }
+    const string[] keepTrees = log.output.lineSplitter.map!(l => l.strip.idup).filter!(l => l.length).array;
+
+    auto pool = new TaskPool(16);
+    scope (exit) pool.finish(blocking: true);
+
+    // `parallel` foreach, not `amap`: a local lambda given to a TaskPool member
+    // needs a dual context, which LDC does not support.
+    Expected!(string, string)[] getAll(string[] keys)
+    {
+        // Plain arrays: an `Expected` cannot be default-constructed.
+        auto bodies = new string[keys.length], failures = new string[keys.length];
+        foreach (i, ref body_; pool.parallel(bodies, 1))
+        {
+            auto got = getObject(bucket.value, keys[i]);
+            if (got.hasError)
+                failures[i] = got.error;
+            else
+                body_ = got.value;
+        }
+        Expected!(string, string)[] results;
+        foreach (i; 0 .. keys.length)
+            results ~= failures[i].length ? err!string(failures[i]) : ok(bodies[i]);
+        return results;
+    }
+
+    auto listed = listAll(bucket.value);
+    if (listed.hasError)
+    {
+        string msg = listed.error;
+        error(i"--gc-r2: $(msg)");
+        return 1;
+    }
+    auto objects = listed.value;
+    const now = Clock.currTime(UTC());
+    const grace = cli.graceDays.days;
+    const totalBytes = objects.map!(o => o.size).sum(0UL);
+    writefln("R2: %d objects, %s, in %s.", objects.length, gib(totalBytes), bucket.value.name);
+
+    auto roots = keptRoots(objects, keepTrees, now, grace);
+    if (roots.length == 0)
+    {
+        error(i"--gc-r2: no root survives (no gc-roots/ object for the last $(cli.keepCommits) trees, none younger than $(cli.graceDays) days); refusing to collect");
+        return 1;
+    }
+
+    string[] seeds;
+    auto rootTexts = getAll(roots.map!(o => o.key).array);
+    foreach (i, text; rootTexts)
+    {
+        if (text.hasError)
+        {
+            string msg = text.error;
+            error(i"--gc-r2: reading $(roots[i].key): $(msg)");
+            return 1;
+        }
+        foreach (line; text.value.lineSplitter)
+        {
+            const hash = storeHash(line.strip.idup);
+            if (hash.hasError)
+            {
+                string msg = hash.error;
+                warning(i"--gc-r2: $(roots[i].key): $(msg)");
+                continue;
+            }
+            seeds ~= hash.value;
+        }
+    }
+    const young = youngNarinfos(objects, now, grace);
+    writefln("R2: %d roots kept (%d trees of HEAD's last %d commits), %d store paths in them, %d narinfos younger than %d days.",
+        roots.length, keepTrees.length, cli.keepCommits, seeds.length, young.length, cli.graceDays);
+    seeds ~= young;
+
+    auto live = markLive!(hashes => getAll(hashes.map!(h => h ~ ".narinfo").array))(seeds);
+    if (live.hasError)
+    {
+        string msg = live.error;
+        error(i"--gc-r2: $(msg); deleting nothing");
+        return 1;
+    }
+    if (live.value.missing.length)
+        warning(i"--gc-r2: $(live.value.missing.length) live store paths have no narinfo in the bucket (they are served elsewhere, or were never pushed)");
+
+    const p = plan(objects, live.value, keepTrees, now, grace);
+    writefln("R2: %d live store paths. Keeping %d objects (%s); %s %d narinfos, %d NARs and %d roots (%s).",
+        live.value.paths.length, p.keptObjects, gib(p.keptBytes), cli.dryRun ? "would delete" : "deleting",
+        p.deleteNarinfos.length, p.deleteNars.length, p.deleteRoots.length, gib(p.freedBytes));
+    if (cli.dryRun)
+        return 0;
+
+    // Narinfos before the NARs they name: a client then sees a missing path,
+    // never a narinfo whose NAR is gone. Roots last.
+    size_t failures;
+    foreach (batch; [p.deleteNarinfos, p.deleteNars, p.deleteRoots])
+    {
+        auto messages = new string[batch.length];
+        foreach (i, ref message; pool.parallel(messages, 1))
+        {
+            auto res = deleteObject(bucket.value, batch[i]);
+            if (res.hasError)
+                message = res.error;
+        }
+        foreach (msg; messages)
+            if (msg.length)
+            {
+                warning(i"--gc-r2: $(msg)");
+                failures++;
+            }
+    }
+    if (failures)
+    {
+        error(i"--gc-r2: $(failures) deletions failed; the next collection retries them");
+        return 1;
+    }
+    info(i"R2: collected $(gib(p.freedBytes)).");
     return 0;
 }
