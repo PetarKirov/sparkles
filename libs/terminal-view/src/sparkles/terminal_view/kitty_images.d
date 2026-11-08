@@ -14,7 +14,7 @@ import core.stdc.string : memcmp, memcpy;
 import std.algorithm.sorting : sort;
 
 import sparkles.base.buffer : Buffer, UniqueBuffer;
-import sparkles.ghostty.c;
+import sparkles.ghostty;
 import sparkles.terminal_view.painter : ImagePixels, ImageRect, isTextureSink, NoTextures,
     PixelLayout, TextureId;
 
@@ -100,7 +100,7 @@ struct KittyImageRenderer
 
     void drawLayer(P)(ref P painter, GhosttyTerminal terminal,
         GhosttyKittyGraphicsPlacementIterator iterator,
-        GhosttyKittyPlacementLayer layer)
+        GhosttyImageLayer layer)
     if (isTextureSink!P)
     {
         auto graphics = graphicsFor(terminal);
@@ -113,8 +113,9 @@ struct KittyImageRenderer
         {
             placements.clear(releaseStorage: false);
             bool more;
+            const uint mask = layerMask(layer);
             ghostty_kitty_graphics_placement_iterator_set(iterator,
-                GHOSTTY_KITTY_GRAPHICS_PLACEMENT_ITERATOR_OPTION_LAYER, &layer);
+                GHOSTTY_KITTY_GRAPHICS_PLACEMENT_ITERATOR_OPT_LAYER, &mask);
             if (ghostty_kitty_graphics_get(graphics,
                 GHOSTTY_KITTY_GRAPHICS_DATA_PLACEMENT_ITERATOR, &iterator) != GHOSTTY_SUCCESS)
                 return;
@@ -167,7 +168,7 @@ struct KittyImageRenderer
     }
 
     /// Paint only owned state, never the terminal that is changing under a hold.
-    void drawCapturedLayer(P)(ref P painter, GhosttyKittyPlacementLayer layer)
+    void drawCapturedLayer(P)(ref P painter, GhosttyImageLayer layer)
     if (isTextureSink!P)
     {
         foreach (ref const placement; capturedPlacements[])
@@ -324,9 +325,9 @@ struct KittyImageRenderer
         auto graphics = graphicsFor(terminal);
         if (graphics is null || iterator is null)
             return;
-        GhosttyKittyPlacementLayer layer = GHOSTTY_KITTY_PLACEMENT_LAYER_ALL;
+        const uint mask = allLayers;
         ghostty_kitty_graphics_placement_iterator_set(iterator,
-            GHOSTTY_KITTY_GRAPHICS_PLACEMENT_ITERATOR_OPTION_LAYER, &layer);
+            GHOSTTY_KITTY_GRAPHICS_PLACEMENT_ITERATOR_OPT_LAYER, &mask);
         if (ghostty_kitty_graphics_get(graphics,
             GHOSTTY_KITTY_GRAPHICS_DATA_PLACEMENT_ITERATOR, &iterator) != GHOSTTY_SUCCESS)
             return;
@@ -524,9 +525,10 @@ private bool placementBefore(in Placement a, in Placement b) @safe pure nothrow 
     => a.z != b.z ? a.z < b.z :
         a.imageId != b.imageId ? a.imageId < b.imageId : a.placementId < b.placementId;
 
-private GhosttyKittyPlacementLayer placementLayer(int z) @safe pure nothrow @nogc
-    => z < int.min / 2 ? GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_BG :
-        z < 0 ? GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_TEXT : GHOSTTY_KITTY_PLACEMENT_LAYER_ABOVE_TEXT;
+// The z-index ranges of `GhosttyImageLayer`, for placements captured off the terminal.
+private GhosttyImageLayer placementLayer(int z) @safe pure nothrow @nogc
+    => z < int.min / 2 ? GHOSTTY_IMAGE_LAYER_BELOW_BACKGROUND :
+        z < 0 ? GHOSTTY_IMAGE_LAYER_BELOW_TEXT : GHOSTTY_IMAGE_LAYER_ABOVE_TEXT;
 
 private bool readPlacementGeometry(GhosttyTerminal terminal, GhosttyKittyGraphics graphics,
     GhosttyKittyGraphicsPlacementIterator iterator, ref Placement placement,
@@ -603,16 +605,18 @@ private bool readPixels(GhosttyKittyGraphicsImage image, out PixelView view)
     if (image is null)
         return false;
     GhosttyKittyImageFormat format;
-    const(ubyte)* pixels;
-    size_t length;
-    GhosttyKittyGraphicsImageData[5] keys = [GHOSTTY_KITTY_IMAGE_DATA_WIDTH,
-        GHOSTTY_KITTY_IMAGE_DATA_HEIGHT, GHOSTTY_KITTY_IMAGE_DATA_FORMAT,
-        GHOSTTY_KITTY_IMAGE_DATA_DATA_PTR, GHOSTTY_KITTY_IMAGE_DATA_DATA_LEN];
-    void*[5] values = [cast(void*) &view.width, cast(void*) &view.height,
-        cast(void*) &format, cast(void*) &pixels, cast(void*) &length];
+    // NO_VALUE until a chunked transmission completes: nothing to draw yet.
+    GhosttyString data;
+    GhosttyKittyGraphicsImageData[4] keys = [GHOSTTY_KITTY_GRAPHICS_IMAGE_DATA_WIDTH,
+        GHOSTTY_KITTY_GRAPHICS_IMAGE_DATA_HEIGHT, GHOSTTY_KITTY_GRAPHICS_IMAGE_DATA_FORMAT,
+        GHOSTTY_KITTY_GRAPHICS_IMAGE_DATA_PIXELS];
+    void*[4] values = [cast(void*) &view.width, cast(void*) &view.height,
+        cast(void*) &format, cast(void*) &data];
     if (ghostty_kitty_graphics_image_get_multi(image, keys.length, keys.ptr,
         values.ptr, null) != GHOSTTY_SUCCESS)
         return false;
+    const(ubyte)* pixels = data.ptr;
+    const size_t length = data.len;
     uint channels;
     if (!pixelLayout(format, view.layout, channels) || pixels is null ||
         view.width == 0 || view.height == 0 ||
@@ -720,8 +724,7 @@ unittest
 unittest
 {
     GhosttyTerminal terminal;
-    GhosttyTerminalOptions options = { cols: 10, rows: 4 };
-    assert(ghostty_terminal_new(null, &terminal, options) == GHOSTTY_SUCCESS);
+    assert(newTerminal(&terminal, 10, 4) == GHOSTTY_SUCCESS);
     scope (exit) ghostty_terminal_free(terminal);
     ulong storage = 1024;
     ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_STORAGE_LIMIT, &storage);
@@ -762,8 +765,7 @@ unittest
 
     installPngDecoder();
     GhosttyTerminal terminal;
-    GhosttyTerminalOptions options = { cols: 10, rows: 4 };
-    assert(ghostty_terminal_new(null, &terminal, options) == GHOSTTY_SUCCESS);
+    assert(newTerminal(&terminal, 10, 4) == GHOSTTY_SUCCESS);
     scope (exit) ghostty_terminal_free(terminal);
     ulong storage = 1024;
     ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_STORAGE_LIMIT, &storage);

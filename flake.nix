@@ -71,7 +71,7 @@
     };
 
     ghostty = {
-      url = "github:ghostty-org/ghostty";
+      url = "github:ghostty-org/ghostty/vt-1.0.0";
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.systems.follows = "systems";
       inputs.flake-compat.follows = "flake-compat";

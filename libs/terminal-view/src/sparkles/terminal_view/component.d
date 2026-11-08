@@ -42,7 +42,7 @@ version (TerminalViewRaylib)
 }
 
 import sparkles.base.term_color : RgbColor;
-import sparkles.ghostty.c;
+import sparkles.ghostty;
 import sparkles.input : EndOfInput, Event, FocusEvent, Key, KeyAction, PasteEvent,
     KeyEvent, match, Mods, mousePointer, PointerAction, PointerEvent, WheelEvent;
 import sparkles.ui.scroll_motion : ScrollMotion;
@@ -197,7 +197,7 @@ struct CursorSnapshot
     ushort x, y;
     bool visible;
     bool inViewport;
-    int style;
+    GhosttyCursorStyle style;
 
     /// Read from `state` (after `ghostty_render_state_update`).
     static CursorSnapshot of(GhosttyRenderState state) @system nothrow @nogc
@@ -222,8 +222,7 @@ unittest
     // A shell's Ctrl+A over an unchanged line is a carriage return: the
     // cursor moves, no cell changes. That must read as a reason to repaint.
     GhosttyTerminal term;
-    GhosttyTerminalOptions topts = { cols: 10, rows: 3 };
-    ghostty_terminal_new(null, &term, topts);
+    newTerminal(&term, 10, 3);
     scope (exit) ghostty_terminal_free(term);
     GhosttyRenderState state;
     ghostty_render_state_new(null, &state);
@@ -239,7 +238,7 @@ unittest
     const before = CursorSnapshot.of(state);
     assert(before.inViewport && before.x == 5 && before.y == 0);
     GhosttyRenderStateDirty clean = GHOSTTY_RENDER_STATE_DIRTY_FALSE;
-    ghostty_render_state_set(state, GHOSTTY_RENDER_STATE_OPTION_DIRTY, &clean);
+    ghostty_render_state_set(state, GHOSTTY_RENDER_STATE_OPT_DIRTY, &clean);
 
     write("\r");
     const after = CursorSnapshot.of(state);
@@ -562,7 +561,7 @@ struct TerminalView
         bool drawsPixels = false) @system
     {
         import core.stdc.stdlib : getenv;
-        import core.stdc.string : strrchr;
+        import core.stdc.string : strlen, strrchr;
 
         s.cellWidth = cellWidthPx > 0 ? cellWidthPx : 1;
         s.cellHeight = cellHeightPx > 0 ? cellHeightPx : 1;
@@ -574,10 +573,7 @@ struct TerminalView
         s.drawsPixels = drawsPixels;
         forceRedrawEnv = getenv("SPARKLES_BENCH_FORCE_REDRAW") !is null;
 
-        GhosttyTerminalOptions topts = {
-            cols: s.cols, rows: s.rows, max_scrollback: opts.scrollbackLimit,
-        };
-        ghostty_terminal_new(null, &s.terminal, topts);
+        newTerminal(&s.terminal, s.cols, s.rows, opts.scrollbackLimit);
         enableGraphemeClusters(s.terminal);
         // The options carry no cell pixel size; set it up front so kitty
         // placement math and pixel-size reports never see zeros.
@@ -623,15 +619,15 @@ struct TerminalView
         s.effects_ctx.cols = s.cols;
         s.effects_ctx.rows = s.rows;
         ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_USERDATA, cast(const(void)*) &s.effects_ctx);
-        ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_WRITE_PTY, cast(const(void)*) &effect_write_pty);
-        ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_SIZE, cast(const(void)*) &effect_size);
-        ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_DEVICE_ATTRIBUTES, cast(const(void)*) &effect_device_attributes);
-        ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_XTVERSION, cast(const(void)*) &effect_xtversion);
-        ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_ENQUIRY, cast(const(void)*) &effect_enquiry);
-        ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_TITLE_CHANGED, cast(const(void)*) &effect_title_changed);
-        ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_PWD_CHANGED, cast(const(void)*) &effect_pwd_changed);
-        ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_COLOR_SCHEME, cast(const(void)*) &effect_color_scheme);
-        ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_BELL, cast(const(void)*) &effect_bell);
+        s.terminal.setEffect!GHOSTTY_TERMINAL_OPT_WRITE_PTY(&effect_write_pty);
+        s.terminal.setEffect!GHOSTTY_TERMINAL_OPT_SIZE(&effect_size);
+        s.terminal.setEffect!GHOSTTY_TERMINAL_OPT_DEVICE_ATTRIBUTES(&effect_device_attributes);
+        s.terminal.setEffect!GHOSTTY_TERMINAL_OPT_XTVERSION(&effect_xtversion);
+        s.terminal.setEffect!GHOSTTY_TERMINAL_OPT_ENQUIRY(&effect_enquiry);
+        s.terminal.setEffect!GHOSTTY_TERMINAL_OPT_TITLE_CHANGED(&effect_title_changed);
+        s.terminal.setEffect!GHOSTTY_TERMINAL_OPT_PWD_CHANGED(&effect_pwd_changed);
+        s.terminal.setEffect!GHOSTTY_TERMINAL_OPT_COLOR_SCHEME(&effect_color_scheme);
+        s.terminal.setEffect!GHOSTTY_TERMINAL_OPT_BELL(&effect_bell);
 
         // Kitty graphics: a storage limit is required, plus the file mediums.
         // Fontless (no renderer for them), the protocol stays disabled.
@@ -642,8 +638,14 @@ struct TerminalView
             ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_STORAGE_LIMIT, &kittyStorage);
             bool kittyMedium = true;
             ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_FILE, &kittyMedium);
-            ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_TEMP_FILE, &kittyMedium);
             ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_SHARED_MEM, &kittyMedium);
+            // The temporary-file medium reads (and deletes) files only under
+            // this directory: the one a client's mkstemp would pick.
+            const(char)* tmp = getenv("TMPDIR");
+            if (tmp is null || *tmp == 0)
+                tmp = "/tmp";
+            const tmpDir = GhosttyString(cast(const(ubyte)*) tmp, strlen(tmp));
+            ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_TEMP_FILE, &tmpDir);
         }
 
         ghostty_render_state_new(null, &s.render_state);
@@ -656,7 +658,7 @@ struct TerminalView
             GhosttyRenderStateColors colors;
             colors.size = GhosttyRenderStateColors.sizeof;
             ghostty_render_state_update(s.render_state, s.terminal);
-            if (ghostty_render_state_colors_get(s.render_state, &colors) == GHOSTTY_SUCCESS)
+            if (ghostty_render_state_get(s.render_state, GHOSTTY_RENDER_STATE_DATA_COLORS, &colors) == GHOSTTY_SUCCESS)
             {
                 ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_COLOR_FOREGROUND, &colors.foreground);
                 ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_COLOR_BACKGROUND, &colors.background);
@@ -1707,7 +1709,7 @@ struct TerminalView
         // arm's events already carry both, so the oracle path is untouched.
         const ke = withKeyIdentity(k);
 
-        ghostty_key_encoder_setopt_from_terminal(s.key_encoder, s.terminal);
+        ghostty_key_encoder_set_from_terminal(s.key_encoder, s.terminal);
         char[128] buf;
         const bytes = encodeKeyEvent(s.key_encoder, s.key_event, ke, buf);
         if (bytes.length > 0)
@@ -1755,7 +1757,7 @@ struct TerminalView
         else
             cps = 1;
 
-        ghostty_key_encoder_setopt_from_terminal(s.key_encoder, s.terminal);
+        ghostty_key_encoder_set_from_terminal(s.key_encoder, s.terminal);
         char[128] buf;
         KeyEvent press;
         if (cps == 1 && softKeyPress(c, press))
@@ -1821,7 +1823,7 @@ struct TerminalView
         if (!opened || deltaLines == 0)
             return;
         GhosttyTerminalScrollViewport sv;
-        sv.tag = GHOSTTY_SCROLL_VIEWPORT_DELTA;
+        sv.tag = GHOSTTY_TERMINAL_SCROLL_VIEWPORT_DELTA;
         sv.value.delta = deltaLines;
         ghostty_terminal_scroll_viewport(s.terminal, sv);
     }
@@ -1904,7 +1906,7 @@ struct TerminalView
         if (!tracking)
             return false;
 
-        ghostty_mouse_encoder_setopt_from_terminal(s.mouse_encoder, s.terminal);
+        ghostty_mouse_encoder_set_from_terminal(s.mouse_encoder, s.terminal);
         GhosttyMouseEncoderSize encSize = {
             size: GhosttyMouseEncoderSize.sizeof,
             screen_width: cast(uint)(s.cols * s.cellWidth),
@@ -1912,12 +1914,12 @@ struct TerminalView
             cell_width: cast(uint) s.cellWidth,
             cell_height: cast(uint) s.cellHeight,
         };
-        ghostty_mouse_encoder_setopt(s.mouse_encoder,
+        ghostty_mouse_encoder_set(s.mouse_encoder,
             GHOSTTY_MOUSE_ENCODER_OPT_SIZE, &encSize);
-        ghostty_mouse_encoder_setopt(s.mouse_encoder,
+        ghostty_mouse_encoder_set(s.mouse_encoder,
             GHOSTTY_MOUSE_ENCODER_OPT_ANY_BUTTON_PRESSED, &anyPressed);
         bool trackCell = true;
-        ghostty_mouse_encoder_setopt(s.mouse_encoder,
+        ghostty_mouse_encoder_set(s.mouse_encoder,
             GHOSTTY_MOUSE_ENCODER_OPT_TRACK_LAST_CELL, &trackCell);
 
         ghostty_mouse_event_set_mods(s.mouse_event, ghosttyModsOf(mods));
@@ -1936,7 +1938,7 @@ struct TerminalView
             return RgbColor(0, 0, 0);
         GhosttyRenderStateColors colors;
         colors.size = GhosttyRenderStateColors.sizeof;
-        ghostty_render_state_colors_get(s.render_state, &colors);
+        ghostty_render_state_get(s.render_state, GHOSTTY_RENDER_STATE_DATA_COLORS, &colors);
         return RgbColor(colors.background.r, colors.background.g,
             colors.background.b);
     }
@@ -2356,7 +2358,7 @@ struct TerminalView
         if (!opened || before == scheme || s.childExited)
             return;
         bool report = false;
-        if (ghostty_terminal_mode_get(s.terminal, cast(GhosttyMode) 2031, &report) == GHOSTTY_SUCCESS
+        if (terminalModeGet(s.terminal, GHOSTTY_MODE_REPORT_COLOR_SCHEME, &report) == GHOSTTY_SUCCESS
             && report)
         {
             static immutable dark = "\x1b[?997;1n", light = "\x1b[?997;2n";
@@ -2698,7 +2700,7 @@ struct TerminalView
     private bool bracketedPaste() @system nothrow @nogc
     {
         bool bracketed = false;
-        ghostty_terminal_mode_get(s.terminal, cast(GhosttyMode) 2004, &bracketed);
+        terminalModeGet(s.terminal, GHOSTTY_MODE_BRACKETED_PASTE, &bracketed);
         return bracketed;
     }
 
@@ -2718,10 +2720,10 @@ struct TerminalView
             return;
         prevFocused = focused;
         bool focusMode = false;
-        if (ghostty_terminal_mode_get(s.terminal, cast(GhosttyMode) 1004, &focusMode) == GHOSTTY_SUCCESS
+        if (terminalModeGet(s.terminal, GHOSTTY_MODE_FOCUS_EVENT, &focusMode) == GHOSTTY_SUCCESS
             && focusMode)
         {
-            char[8] fbuf;
+            ubyte[8] fbuf;
             size_t written = 0;
             const fev = focused ? GHOSTTY_FOCUS_GAINED : GHOSTTY_FOCUS_LOST;
             if (ghostty_focus_encode(fev, fbuf.ptr, fbuf.length, &written) == GHOSTTY_SUCCESS
@@ -2740,14 +2742,8 @@ struct TerminalView
         if (!opened)
             return null;
 
-        GhosttyFormatterTerminalOptions fmtOpts;
-        fmtOpts.size = GhosttyFormatterTerminalOptions.sizeof;
-        fmtOpts.emit = GHOSTTY_FORMATTER_FORMAT_PLAIN;
-        fmtOpts.unwrap = true;
-        fmtOpts.trim = true;
-
         GhosttyFormatter fmt;
-        if (ghostty_formatter_terminal_new(null, &fmt, s.terminal, fmtOpts) != GHOSTTY_SUCCESS)
+        if (newPlainFormatter(&fmt, s.terminal, unwrap: true) != GHOSTTY_SUCCESS)
             return null;
         scope (exit) ghostty_formatter_free(fmt);
 
@@ -3021,7 +3017,7 @@ char[] encodedPaste(in char[] text, bool bracketed) @trusted
     auto encoded = new char[](needed);
     size_t written = 0;
     if (ghostty_paste_encode(data.ptr, data.length, bracketed,
-            encoded.ptr, encoded.length, &written) != GHOSTTY_SUCCESS)
+            cast(ubyte*) encoded.ptr, encoded.length, &written) != GHOSTTY_SUCCESS)
         return null;
     return encoded[0 .. written];
 }
@@ -3040,7 +3036,7 @@ const(char)[] kittyTextEvent(scope const(char)[] text, ubyte flags, return scope
 {
     import sparkles.base.text.utf : decodeToken, UtfMode;
 
-    if (!(flags & 8))
+    if (!(flags & GHOSTTY_KITTY_KEY_REPORT_ALL))
     {
         const n = text.length <= buf.length ? text.length : buf.length;
         buf[0 .. n] = text[0 .. n];
@@ -3067,7 +3063,7 @@ const(char)[] kittyTextEvent(scope const(char)[] text, ubyte flags, return scope
     }
 
     put("\x1b[0");
-    if (flags & 16)
+    if (flags & GHOSTTY_KITTY_KEY_REPORT_ASSOCIATED)
     {
         put(";;");
         bool first = true;
@@ -3331,7 +3327,7 @@ bool pasteNeedsConfirm(PasteConfirm policy, in char[] text) @safe pure nothrow @
     GhosttyRenderStateColors colors;
     colors.size = GhosttyRenderStateColors.sizeof;
     ghostty_render_state_update(tv.s.render_state, tv.s.terminal);
-    assert(ghostty_render_state_colors_get(tv.s.render_state, &colors) == GHOSTTY_SUCCESS);
+    assert(ghostty_render_state_get(tv.s.render_state, GHOSTTY_RENDER_STATE_DATA_COLORS, &colors) == GHOSTTY_SUCCESS);
     assert(colors.foreground == GhosttyColorRgb(1, 2, 3));
 }
 
@@ -3352,7 +3348,7 @@ bool pasteNeedsConfirm(PasteConfirm policy, in char[] text) @safe pure nothrow @
     GhosttyRenderStateColors current()
     {
         ghostty_render_state_update(tv.s.render_state, tv.s.terminal);
-        assert(ghostty_render_state_colors_get(tv.s.render_state, &colors) == GHOSTTY_SUCCESS);
+        assert(ghostty_render_state_get(tv.s.render_state, GHOSTTY_RENDER_STATE_DATA_COLORS, &colors) == GHOSTTY_SUCCESS);
         return colors;
     }
     const opened = current();
@@ -3380,8 +3376,7 @@ bool pasteNeedsConfirm(PasteConfirm policy, in char[] text) @safe pure nothrow @
 
     TerminalView tv;
     tv.forceFirstFrames = 0;
-    GhosttyTerminalOptions options = { cols: 30, rows: 3 };
-    assert(ghostty_terminal_new(null, &tv.s.terminal, options) == GHOSTTY_SUCCESS);
+    assert(newTerminal(&tv.s.terminal, 30, 3) == GHOSTTY_SUCCESS);
     scope (exit) ghostty_terminal_free(tv.s.terminal);
     ghostty_render_state_new(null, &tv.s.render_state);
     scope (exit) ghostty_render_state_free(tv.s.render_state);
@@ -3401,8 +3396,7 @@ bool pasteNeedsConfirm(PasteConfirm policy, in char[] text) @safe pure nothrow @
     tv.s.effects_ctx.pty_fd = replies[1];
     ghostty_terminal_set(tv.s.terminal, GHOSTTY_TERMINAL_OPT_USERDATA,
         cast(const(void)*) &tv.s.effects_ctx);
-    ghostty_terminal_set(tv.s.terminal, GHOSTTY_TERMINAL_OPT_WRITE_PTY,
-        cast(const(void)*) &effect_write_pty);
+    tv.s.terminal.setEffect!GHOSTTY_TERMINAL_OPT_WRITE_PTY(&effect_write_pty);
 
     uint firstCell()
     {
@@ -3417,8 +3411,9 @@ bool pasteNeedsConfirm(PasteConfirm policy, in char[] text) @safe pure nothrow @
             GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_LEN, &count);
         assert(count == 1);
         uint codepoint;
+        GhosttyCodepointBuffer graphemes = { ptr: &codepoint, cap: 1 };
         ghostty_render_state_row_cells_get(tv.s.cells,
-            GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_BUF, &codepoint);
+            GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_BUF, &graphemes);
         return codepoint;
     }
 
@@ -3429,10 +3424,10 @@ bool pasteNeedsConfirm(PasteConfirm policy, in char[] text) @safe pure nothrow @
         bool clean = false;
         while (ghostty_render_state_row_iterator_next(tv.s.row_iter))
             ghostty_render_state_row_set(tv.s.row_iter,
-                GHOSTTY_RENDER_STATE_ROW_OPTION_DIRTY, &clean);
+                GHOSTTY_RENDER_STATE_ROW_OPT_DIRTY, &clean);
         GhosttyRenderStateDirty dirty = GHOSTTY_RENDER_STATE_DIRTY_FALSE;
         ghostty_render_state_set(tv.s.render_state,
-            GHOSTTY_RENDER_STATE_OPTION_DIRTY, &dirty);
+            GHOSTTY_RENDER_STATE_OPT_DIRTY, &dirty);
     }
 
     feedPtyChunk(tv.s, "old");
@@ -3681,8 +3676,7 @@ private void openWithPlatform(scope const(char)[] uri) @system nothrow
 @system unittest
 {
     TerminalView tv;
-    GhosttyTerminalOptions options = { cols: 10, rows: 3, max_scrollback: 1000 };
-    assert(ghostty_terminal_new(null, &tv.s.terminal, options) == GHOSTTY_SUCCESS);
+    assert(newTerminal(&tv.s.terminal, 10, 3, 1000) == GHOSTTY_SUCCESS);
     scope (exit) ghostty_terminal_free(tv.s.terminal);
     tv.opened = true;
     scope (exit) tv.opened = false;

@@ -9,7 +9,7 @@ path, so swapping the input source cannot silently change an encoding.
 */
 module sparkles.terminal_view.event_map;
 
-import sparkles.ghostty.c;
+import sparkles.ghostty;
 import sparkles.input : Key, KeyAction, KeyEvent, Mods, PointerButton;
 import sparkles.terminal_view.input : encodeKeyStroke, KeyStroke;
 
@@ -355,7 +355,7 @@ unittest
     char[128] buf;
 
     ubyte flags = 1;
-    ghostty_key_encoder_setopt(f.encoder, GHOSTTY_KEY_ENCODER_OPT_KITTY_FLAGS, &flags);
+    ghostty_key_encoder_set(f.encoder, GHOSTTY_KEY_ENCODER_OPT_KITTY_FLAGS, &flags);
 
     assert(encodeKeyEvent(f.encoder, f.event, press(Key.escape), buf) == "\x1b[27u");
     assert(encodeKeyEvent(f.encoder, f.event,

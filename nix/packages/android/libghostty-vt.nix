@@ -1,6 +1,6 @@
 # libghostty-vt cross-built for Android, one static archive per ABI, linked
-# into libhue.so (gui_ansi.d's off-screen VT for ` ```ansi ` fences — the only
-# ghostty consumer). Ghostty's build.zig carries its own bionic support
+# into libhue.so (gui_ansi.d's off-screen VT for ` ```ansi ` fences) and
+# libterminal.so (the terminal's VT engine). Ghostty's build.zig carries its own bionic support
 # (pkg/android-ndk — zig bundles no Android libc, ziglang/zig#23906): given an
 # android target it wires the libc/include/crt paths itself from
 # `$ANDROID_NDK_HOME`, which we point at ldc-android's NDK so the sysroot
@@ -50,14 +50,14 @@ in
           ) (throw "libghostty-vt: no zig") old.nativeBuildInputs;
         in
         {
-          zigBuildFlags = map (f: if f == "${old.deps}" then "../zig-deps" else f) old.zigBuildFlags ++ [
-            "--zig-lib-dir"
-            "../zig-lib"
-          ];
+          zigBuildFlags = map (f: if f == "${old.deps}" then "../zig-deps" else f) old.zigBuildFlags;
+          # Zig 0.17 dropped `zig build --zig-lib-dir`; its `--zig-lib=` must
+          # lead the command line, so name the copy through the environment.
           preBuild = (old.preBuild or "") + ''
             cp -r ${old.deps} ../zig-deps
             cp -r ${zig}/lib/zig ../zig-lib
             chmod -R u+w ../zig-deps ../zig-lib
+            export ZIG_LIB_DIR=$(realpath ../zig-lib)
           '';
           disallowedReferences = ndk.toolchainPaths ++ [
             zig

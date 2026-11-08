@@ -105,11 +105,7 @@ struct VtOracle
     /// Create the terminal at `cols`×`rows` (default allocator, no scrollback).
     void open(ushort cols, ushort rows) @trusted
     {
-        GhosttyTerminalOptions opts;
-        opts.cols = cols;
-        opts.rows = rows;
-        opts.max_scrollback = 0;
-        const r = ghostty_terminal_new(null, &_term, opts);
+        const r = newTerminal(&_term, cols, rows);
         assert(r == GHOSTTY_SUCCESS, "ghostty_terminal_new failed");
         _cols = cols;
         _rows = rows;
@@ -155,7 +151,6 @@ struct VtOracle
                 pt.value.coordinate.y = y;
 
                 GhosttyGridRef gref;
-                gref.size = GhosttyGridRef.sizeof;
                 if (ghostty_terminal_grid_ref(_term, pt, &gref) != GHOSTTY_SUCCESS)
                 {
                     hashCell(h, 0x20, 0, 0, 0, 0, 0, 0, 0, 0, 0);
@@ -168,7 +163,6 @@ struct VtOracle
                 const cp = outLen ? cps[0] : 0x20;
 
                 GhosttyStyle st;
-                st.size = GhosttyStyle.sizeof;
                 ghostty_grid_ref_style(&gref, &st);
 
                 ubyte fgTag, fa, fb, fc;

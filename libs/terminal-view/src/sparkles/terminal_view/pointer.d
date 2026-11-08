@@ -15,7 +15,7 @@ module sparkles.terminal_view.pointer;
 
 import core.time : MonoTime;
 
-import sparkles.ghostty.c;
+import sparkles.ghostty;
 import sparkles.input : mousePointer, PointerAction, PointerButton, PointerEvent, WheelEvent;
 import sparkles.terminal_view.core : CoreState;
 import sparkles.terminal_view.event_map : ghosttyButtonOf, ghosttyModsOf;
@@ -142,7 +142,7 @@ bool pointerFrame(ref CoreState s, ref PointerTrack t, in PaneGeometry pane, flo
     if (delta == 0)
         return false;
     GhosttyTerminalScrollViewport scroll;
-    scroll.tag = GHOSTTY_SCROLL_VIEWPORT_DELTA;
+    scroll.tag = GHOSTTY_TERMINAL_SCROLL_VIEWPORT_DELTA;
     scroll.value.delta = delta;
     ghostty_terminal_scroll_viewport(s.terminal, scroll);
     const c = cellOf(s, t.pos, pane);
@@ -154,7 +154,7 @@ private:
 
 void syncEncoder(ref CoreState s, in PointerTrack t, in PaneGeometry pane) @system nothrow @nogc
 {
-    ghostty_mouse_encoder_setopt_from_terminal(s.mouse_encoder, s.terminal);
+    ghostty_mouse_encoder_set_from_terminal(s.mouse_encoder, s.terminal);
     // The pane's own extent, not the window's: an embedded pane (`TSS9`).
     GhosttyMouseEncoderSize size = {
         size: GhosttyMouseEncoderSize.sizeof,
@@ -163,12 +163,12 @@ void syncEncoder(ref CoreState s, in PointerTrack t, in PaneGeometry pane) @syst
         cell_width: cast(uint) s.cellWidth,
         cell_height: cast(uint) s.cellHeight,
     };
-    ghostty_mouse_encoder_setopt(s.mouse_encoder, GHOSTTY_MOUSE_ENCODER_OPT_SIZE, &size);
+    ghostty_mouse_encoder_set(s.mouse_encoder, GHOSTTY_MOUSE_ENCODER_OPT_SIZE, &size);
     bool any = t.anyPressed;
-    ghostty_mouse_encoder_setopt(s.mouse_encoder,
+    ghostty_mouse_encoder_set(s.mouse_encoder,
         GHOSTTY_MOUSE_ENCODER_OPT_ANY_BUTTON_PRESSED, &any);
     bool trackCell = true;
-    ghostty_mouse_encoder_setopt(s.mouse_encoder,
+    ghostty_mouse_encoder_set(s.mouse_encoder,
         GHOSTTY_MOUSE_ENCODER_OPT_TRACK_LAST_CELL, &trackCell);
 }
 
@@ -198,7 +198,7 @@ bool stepBar(ref CoreState s, in PointerTrack t, in PointerEvent p, in PaneGeome
     const target = s.sbState.view.v.offset;
     if (target != sb.offset)
     {
-        GhosttyTerminalScrollViewport scroll = { tag: GHOSTTY_SCROLL_VIEWPORT_DELTA };
+        GhosttyTerminalScrollViewport scroll = { tag: GHOSTTY_TERMINAL_SCROLL_VIEWPORT_DELTA };
         scroll.value.delta = cast(int)(target - sb.offset);
         ghostty_terminal_scroll_viewport(s.terminal, scroll);
     }

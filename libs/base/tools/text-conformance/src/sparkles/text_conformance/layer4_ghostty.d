@@ -50,22 +50,21 @@ LayerResult runLayer4(in Config cfg)
     auto d = loadWidthData(cfg); // category data, for labelling divergences
 
     GhosttyTerminal term;
-    GhosttyTerminalOptions opt = { cols: 1000, rows: 1, max_scrollback: 0 };
-    if (ghostty_terminal_new(null, &term, opt) != GHOSTTY_SUCCESS)
+    if (newTerminal(&term, 1000, 1) != GHOSTTY_SUCCESS)
         throw new Exception("ghostty_terminal_new failed");
     scope (exit) ghostty_terminal_free(term);
 
     // DEC mode 2027 (grapheme cluster) — off by default; without it ghostty
-    // measures per code point (flags → 4, emoji+VS16 → 1).
-    const graphemeMode = ghostty_mode_new(2027, false);
+    // measures per code point (flags → 4, emoji+VS16 → 1). As the reset
+    // default it survives the RIS between samples.
+    terminalModeSetDefault(term, GHOSTTY_MODE_GRAPHEME_CLUSTER, true);
 
     auto corpus = (emojiStrings(cfg) ~ graphemeBreakStrings(cfg))
         .filter!(s => !hasCursorControl(s)).array;
 
     foreach (s; corpus)
     {
-        ghostty_terminal_reset(term);            // RIS also clears mode 2027,
-        ghostty_terminal_mode_set(term, graphemeMode, true); // so re-enable it
+        ghostty_terminal_reset(term);
         ghostty_terminal_vt_write(term, cast(const(ubyte)*) s.ptr, s.length);
 
         uint x;

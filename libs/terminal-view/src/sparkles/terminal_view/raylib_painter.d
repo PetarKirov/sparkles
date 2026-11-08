@@ -14,7 +14,7 @@ import raylib : BeginScissorMode, Color, DrawRectangleLines, DrawTextEx, DrawTex
 import raylib.rlgl : rlDrawRenderBatchActive, rlPopMatrix, rlPushMatrix, rlTranslatef;
 
 import sparkles.base.text.cstring : toTempStringz;
-import sparkles.ghostty.c;
+import sparkles.ghostty;
 import sparkles.raylib_text : FontSet, LoadedFont, drawGrapheme, drawSolid;
 import sparkles.terminal_view.painter;
 
