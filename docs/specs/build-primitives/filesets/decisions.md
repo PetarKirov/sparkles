@@ -485,16 +485,27 @@ ends; if the machine does not already provide both, a stream gains an optional
 a file's owner, which arrives in the `statx` already issued, so `FsoMetadata`
 can admit `owner` as cheaply as it admitted `mtime`.
 
-**The spike.** `GitTreeFold`, a test-only fold over the seam, computes git's
+**The spike.** `GitTreeFold`, a test-only fold over the seam, computed git's
 tree hash in about 130 lines with SHA-1 from Phobos, the `gitTreeOrder` of
 `FSS1`, and the `executable` and `linkTarget` metadata, allocating nothing
 while hashing. On 207 trees (hand-written ones aimed at the hazard, M1's
 fixture set, and 200 seeded random trees with links, executables and empty
-directories), `fileset.spike.d1.gitTreeOrder` matches `git add -A -f` followed
-by `git write-tree`. Sorted by bytes instead, the same fold differs on 95 of
-them. It showed that an empty directory has no git identity, while castore
-keeps one, and that the hazard lives only in `precedes`. It becomes the git
-instance of `MerkleFold`.
+directories), it matched `git add -A -f` followed by `git write-tree`. Sorted
+by bytes instead, the same fold differed on 95 of them. It showed that an
+empty directory has no git identity, while castore keeps one, and that the
+hazard lives only in `precedes`. It is now `GitTree`, the git instance of
+`MerkleFold`, and its test is `content_addressing.git.writeTree`.
+
+**As built.** `MerkleFold` reads each file through its entry's reference
+during `fold`, at its `stat`-ed size, and fails rather than name a file whose
+size changed while it was read. BLAKE3 is `sparkles.base.hash.blake3`, native
+D with SIMD backends, so no C library joins the build. The castore id matches
+`snix-castore ingest` on the first run, on every oracle tree: empty
+directories, links, executables, nested sizes and a case collision included
+(`content_addressing.castore.snix`). Snix comes from its own repository as
+the flake input `snix-src`, built with our nixpkgs' Rust; the shells
+export it as `$SPARKLES_SNIX_CASTORE`, in the CI tier, because without it the
+gate of the default identity would degrade to a skip.
 
 ## Open
 

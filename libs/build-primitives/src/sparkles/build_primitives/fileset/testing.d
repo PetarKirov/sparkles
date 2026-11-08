@@ -865,6 +865,27 @@ string scratchTree(string label) @system
 }
 
 /**
+Whether the filesystem of `scratchTree` folds names: on one that ignores case
+(by default macOS's APFS and Windows' NTFS), `A` and `a` are one entry, so
+a tree holding both cannot be materialized there.
+*/
+bool scratchFoldsCase() @system
+{
+    import std.file : exists, rmdirRecurse, write;
+    import std.path : buildPath;
+
+    static int known = -1;
+    if (known < 0)
+    {
+        const dir = scratchTree("case-probe");
+        scope (exit) rmdirRecurse(dir);
+        write(buildPath(dir, "A"), "");
+        known = exists(buildPath(dir, "a"));
+    }
+    return known == 1;
+}
+
+/**
 M3's gate, first half: on M1's fixture set, the machine resolves the same
 members as the planned walk and the brute-force walk; with a budget of one it
 produces the same transcript as with an unbounded one (FSM6).
@@ -2506,235 +2527,4 @@ version (Posix)
         assert(bytes == 24);
         assert(peak == 1);
     }
-}
-
-// ------------------------------------------------- the D1 spike: git's shape
-
-/**
-Git's tree hash as a fold, for D1's spike: it prices the `git write-tree`
-oracle against `gitTreeOrder` before the Merkle shape is chosen. Blobs and
-trees are SHA-1 over git's object headers; a directory holding nothing is
-omitted, as an index cannot hold one.
-
-Hashing allocates nothing. Each object's header goes straight into the
-digest, a file is streamed at the size its `stat` reports, and a tree's
-entries are gathered in one buffer the fold reuses.
-*/
-struct GitTreeFoldOf(EntryOrder o)
-{
-    import std.digest.sha : SHA1;
-
-    import sparkles.base.buffer : UniqueBuffer;
-    import sparkles.build_primitives.fileset.fso : FsoKind;
-
-    enum order = o;
-    enum traversal = Traversal.fold;
-    enum metadata = cast(FsoMetadata)(FsoMetadata.executable | FsoMetadata.linkTarget);
-
-    static struct Value
-    {
-        ubyte[20] id;
-        bool empty;
-    }
-
-    alias Result = char[40];
-    string why;
-    private UniqueBuffer!(ubyte, 1024) body; // one tree's entries
-
-    // Writes git's header of a `kind` object of `length` bytes,
-    // `<kind> <length>\0`, straight into `h`.
-    static void header(ref SHA1 h, string kind, ulong length)
-    {
-        import sparkles.base.text.writers : writeText;
-
-        // An output range of text over the digest.
-        static struct Digest
-        {
-            SHA1* h;
-            void put(char c) { h.put(cast(ubyte) c); }
-            void put(scope const(char)[] s) { h.put(cast(const(ubyte)[]) s); }
-        }
-
-        auto into = Digest(&h);
-        into.writeText(i"$(kind) $(length)\0");
-    }
-
-    static ubyte[20] object(string kind, scope const(ubyte)[] bytes)
-    {
-        SHA1 h;
-        h.start();
-        header(h, kind, bytes.length);
-        h.put(bytes);
-        return h.finish();
-    }
-
-    bool fold(Entries, Exec)(scope const(char)[] path, Entries es, bool empty, ref Exec exec,
-        out Value value)
-    {
-        import sparkles.base.vfs.types : OpenMode;
-
-        body.clear(false);
-        foreach (e; es)
-        {
-            string mode;
-            ubyte[20] id;
-            final switch (e.node.kind)
-            {
-                case FsoKind.directory:
-                    if (e.value.empty)
-                        continue;
-                    mode = "40000";
-                    id = e.value.id;
-                    break;
-                case FsoKind.symlink:
-                    mode = "120000";
-                    id = object("blob", cast(const(ubyte)[]) e.node.target);
-                    break;
-                case FsoKind.regular:
-                    mode = e.node.executable ? "100755" : "100644";
-                    if (!blob(e.ref_, id))
-                        return false;
-                    break;
-            }
-            body.put(cast(const(ubyte)[]) mode);
-            body.put(cast(ubyte) ' ');
-            body.put(cast(const(ubyte)[]) e.name);
-            body.put(cast(ubyte) 0);
-            body.put(id[]);
-        }
-        value.empty = body.length == 0;
-        value.id = object("tree", body[]);
-        return true;
-    }
-
-    // Hashes the file `r` names as a blob, streamed at its stat-ed size.
-    private bool blob(Ref)(Ref r, out ubyte[20] id)
-    {
-        import sparkles.base.vfs.types : OpenMode;
-
-        auto file = r.dir.openFile!(OpenMode.read)(r.name);
-        if (file.hasError)
-            return fail("a member could not be opened");
-        const st = file.value.stat();
-        if (st.hasError)
-            return fail("a member could not be stat-ed");
-        SHA1 h;
-        h.start();
-        header(h, "blob", st.value.size);
-        ulong seen;
-        ubyte[4096] buf;
-        for (;;)
-        {
-            auto n = file.value.read(buf[]);
-            if (n.hasError)
-                return fail("a member could not be read");
-            if (n.value == 0)
-                break;
-            seen += n.value;
-            h.put(buf[0 .. n.value]);
-        }
-        if (seen != st.value.size)
-            return fail("a member changed size while it was read");
-        id = h.finish();
-        return true;
-    }
-
-    bool incomplete(scope const(char)[] path, ErrorKind kind) => fail("incomplete");
-
-    string failure() => why;
-
-    char[40] finish(ref Value root)
-    {
-        import std.digest : LetterCase, toHexString;
-
-        return toHexString!(LetterCase.lower)(root.id);
-    }
-
-    private bool fail(string s)
-    {
-        why = s;
-        return false;
-    }
-}
-
-/// The spike's scheme: git's own order.
-alias GitTreeFold = GitTreeFoldOf!(EntryOrder.gitTreeOrder);
-
-/**
-D1's spike: on hand-written trees built to hit the ordering hazard, the M1
-fixture set and seeded random trees, `GitTreeFold` over the in-memory
-driver equals `git write-tree` of the same tree, materialized and added
-whole. The same fold in NAR's byte order is the control: it must disagree
-with git on every tree where the hazard arises, and only there.
-*/
-@("fileset.spike.d1.gitTreeOrder")
-@system unittest
-{
-    import std.conv : text;
-    import std.file : rmdirRecurse;
-    import std.string : strip;
-    import std.traits : FunctionAttribute, functionAttributes;
-
-    import sparkles.build_primitives.git_env : runGit;
-    import sparkles.test_runner.skip : skipTest;
-
-    // Hashing an object never touches the GC.
-    static assert(functionAttributes!(GitTreeFold.header) & FunctionAttribute.nogc);
-    static assert(functionAttributes!(GitTreeFold.object) & FunctionAttribute.nogc);
-
-    try
-        cast(void) runGit(["--version"]);
-    catch (Exception)
-        return skipTest("git is not installed");
-
-    size_t compared, hazards;
-    // Returns whether byte order would have given another tree.
-    bool check(string literal, string label)
-    {
-        auto sets = Filesets(CasePolicy.sensitive);
-        RecordingExecutor exec;
-        GitTreeFold fold;
-        const ours = schemeResolve(literal, sets, sets.everything, fold, exec);
-        GitTreeFoldOf!(EntryOrder.narOrder) control;
-        const bytewise = schemeResolve(literal, sets, sets.everything, control, exec);
-
-        const dir = scratchTree("d1");
-        scope (exit) rmdirRecurse(dir);
-        materialize(literal, dir);
-        foreach (args; [["init", "-q"], ["-c", "core.excludesFile=/dev/null", "add", "-A", "-f"]])
-        {
-            const r = runGit(args, dir);
-            assert(r.status == 0, r.output);
-        }
-        const tree = runGit(["write-tree"], dir);
-        assert(tree.status == 0, tree.output);
-        assert(ours[] == tree.output.strip, text(label, ": ", ours[], " != ", tree.output.strip,
-            "\n", literal));
-        ++compared;
-        hazards += bytewise != ours;
-        return bytewise != ours;
-    }
-
-    // The hazard: `a` the directory sorts after `a.b`, `a-b` and `a+`, but
-    // before `a0`, as if it were `a/`; empty directories vanish.
-    assert(check("a/x = 1\na.b = 2\na-b = 3\na+ = 4\na0 = 5\nab/c\n", "hazard"));
-    assert(check("a/b/c = deep\na.b/c = d\nempty/\nhollow/inner/\nrun +x = #!\nl -> a/b\n"
-        ~ "z -> /nowhere\n", "kinds"));
-    // No directory name is a prefix of a sibling's: byte order is git's.
-    assert(!check("a/x = 1\nb.c = 2\nc/y = 3\n", "no hazard"));
-    assert(!check("", "empty tree"));
-    foreach (fx; fixtureSet())
-        check(fx.tree, fx.name);
-    auto rng = Mt19937(20_261_108);
-    foreach (round; 0 .. 200)
-    {
-        string[] lines;
-        foreach (line; randomTree(rng).split("\n"))
-            lines ~= line.length && line[$ - 1] != '/' ? line ~ " = " ~ line[0 .. line.length / 2]
-                : line;
-        check(lines.join("\n"), text("random round ", round));
-    }
-    assert(compared > 200);
-    // 95 of the 207 trees, with this seed: the hazard is common, not exotic.
-    assert(hazards > compared / 4, text(hazards, " of ", compared));
 }
