@@ -1477,7 +1477,7 @@ WrapResult tryWrapCells(SourceSnapshot source, WrapOptions options, WrapLimits l
     auto effectiveLimits = limits;
     effectiveLimits.providerWork -= styleWork + geometryWork;
     r = selectBestWrapPath(input, geometries[], provider, solverOptions, effectiveLimits,
-        scratch.solver, states, results, usage);
+        scratch.solver, states, results, usage, built: true);
     if (!r.succeeded) return r;
     if (!results)
         return context.sawOverflow ? WrapResult(status: WrapStatus.unbreakableOverflow,
