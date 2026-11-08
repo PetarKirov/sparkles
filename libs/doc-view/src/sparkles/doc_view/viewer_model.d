@@ -480,17 +480,6 @@ struct ViewerModel
         => scroll.h;
     FoldMarker[] foldMarkers;       /// gutter markers, derived with the rows
     int widthCols = -1;             /// the width the pipeline is laid out for
-    /// A markdown preview's first build lays out only what the pane shows
-    /// (`viewRows` past the anchor); a host that sets this calls
-    /// `completeLayout` on its next frame.
-    bool visibleFirst;
-    /// The tree holds a prefix of the document's blocks: its first build
-    /// laid out only what the pane shows, and `completeLayout` lays out the
-    /// rest.
-    bool partial;
-    /// The first build lays out at most this many blocks past the anchor's
-    /// before checking the pane is full.
-    enum size_t progressivePrefix = 16;
     // Built at least once; until then `held` is the position to show.
     private bool built;
     private ScrollAnchor held;
@@ -1252,33 +1241,15 @@ struct ViewerModel
         // built every document two or three times before its first frame.
         if (widthCols < 0)
             return;
-        // That first build may lay out only what the pane shows.
-        const first = !built;
         const anchor = captureAnchor();
         built = true;
         held = ScrollAnchor.init;
-        rebuildTree(first, anchor);
+        rebuildTree(anchor);
         restoreAnchor(anchor);
     }
 
-    /**
-    Lays out the rest of a document whose first build covered only its
-    visible part (`partial`). Hosts call it on the frame after that first
-    one; true when it rebuilt.
-    */
-    bool completeLayout()
+    private void rebuildTree(ScrollAnchor anchor = ScrollAnchor.init)
     {
-        if (!partial)
-            return false;
-        const anchor = captureAnchor();
-        rebuildTree(false, anchor);
-        restoreAnchor(anchor);
-        return true;
-    }
-
-    private void rebuildTree(bool progressive = false, ScrollAnchor anchor = ScrollAnchor.init)
-    {
-        partial = false;
         if (keepsRawTree())
         {
             // Laid out again at the new width; nothing in the tree moved.
@@ -1541,51 +1512,16 @@ struct ViewerModel
         mdLinkTable = MdLinkTable.init;
         opt.linkTable = &mdLinkTable;
         mdLinks = mdLinkRanges(preview.doc);
-        void build(const MdDoc doc)
+        if (windowed)
+            buildWindow(opt, anchor);
+        else
         {
-            arena_.reset();
-            mdLinkTable = MdLinkTable.init;
-            alias mb = arena_;
-            const mdRoot = viewMarkdownInto(mb, doc, opt);
-            tree = gutter(mb, mdRoot);
+            const mdRoot = viewMarkdownInto(arena_, preview.doc, opt);
+            tree = gutter(arena_, mdRoot);
             frames = layoutDoc(tree, Constraints(maxW: widthCols));
             ops = displayListOf(tree, frames);
             derive(withTargets: true);
         }
-        if (windowed)
-        {
-            buildWindow(opt, anchor);
-            cells = keyedRects(tree, frames);
-            collectStructure();
-            return;
-        }
-        // A document's first build only has to fill the pane: lay out a
-        // prefix of its blocks reaching past the anchor by a screen,
-        // doubling it until it does, and leave the rest to
-        // `completeLayout` once that first frame is up.
-        const blocks = preview.doc.root.children;
-        size_t count = blocks.length;
-        if (progressive && visibleFirst && viewRows > 0 && blocks.length > progressivePrefix)
-        {
-            size_t through;
-            if (anchor.valid)
-                foreach (i, ref const blk; blocks)
-                    if (blk.span.start <= anchor.src)
-                        through = i;
-            for (count = through + progressivePrefix; count < blocks.length; count *= 2)
-            {
-                MdDoc prefix = preview.doc;
-                prefix.root.children = preview.doc.root.children[0 .. count];
-                build(prefix);
-                const anchorRow = rowForAnchor(anchor);
-                const shown = cast(long) rows.length - (anchorRow < 0 ? 0 : anchorRow);
-                if (shown > viewRows + anchor.rowsAbove)
-                    break;
-            }
-        }
-        partial = count < blocks.length;
-        if (!partial)
-            build(preview.doc);
         cells = keyedRects(tree, frames);
         collectStructure();
     }
@@ -1835,7 +1771,7 @@ struct ViewerModel
     {
         if (windowHolds(src))
             return;
-        rebuildTree(false, ScrollAnchor(src, 0));
+        rebuildTree(ScrollAnchor(src, 0));
     }
 
     // Whether source offset `src` falls in the built rows: always, unless a
@@ -5525,7 +5461,7 @@ unittest
     assert(vm.top >= 0);
 }
 
-@("viewer_model.visibleFirst.layOutTheScreenThenTheRest")
+@("viewer_model.windowed.aRestoredPositionIsBuiltFirst")
 @system unittest
 {
     import sparkles.syntax : extractMarkdown, GrammarRegistry;
@@ -5545,13 +5481,13 @@ unittest
     auto registry = GrammarRegistry.fromEnvironment();
     auto doc = extractMarkdown(registry, src);
 
-    ViewerModel open(bool visibleFirst, ScrollAnchor keep)
+    ViewerModel open(bool windowed, ScrollAnchor keep)
     {
         ViewerModel vm;
         vm.names = ["dark"];
         vm.themes = [builtinDark];
         vm.labels = LabelSet.standard();
-        vm.visibleFirst = visibleFirst;
+        vm.windowed = windowed;
         vm.viewRows = 12;
         vm.applyTheme(0);
         vm.setDocument("t.md", "", src, [HighlightEvent.sourceSpan(0, src.length)],
@@ -5562,26 +5498,20 @@ unittest
         return vm;
     }
 
-    // Deep in the document: the first build reaches the anchor and a screen
-    // past it, not the end.
+    // Deep in the document: the first build is a window there, the reader's
+    // paragraph at the top, the rest only estimated.
     const keep = ScrollAnchor(src.indexOf("paragraph 200 "), 0);
     auto whole = open(false, keep);
     auto quick = open(true, keep);
-    assert(!whole.partial && quick.partial);
-    assert(quick.rows.length < whole.rows.length);
-    assert(quick.rows.length >= quick.top + quick.viewRows, "the screen is laid out");
+    assert(quick.window.end < quick.segments.length && quick.layoutPending);
     assert(quick.rows[cast(size_t) quick.top].srcStart == keep.src);
     assert(whole.rows[cast(size_t) whole.top].srcStart == keep.src);
 
-    // The next frame lays out the rest; the position does not move.
-    assert(quick.completeLayout());
-    assert(!quick.partial && !quick.completeLayout());
-    assert(quick.rows == whole.rows && quick.top == whole.top);
-
-    // Only the first build is partial: a relayout lays the whole document out.
-    auto resized = open(true, keep);
-    resized.relayout(50);
-    assert(!resized.partial);
+    // Settled, it is the whole layout's length and place.
+    settleAll(quick);
+    assert(!quick.layoutPending);
+    assert(quick.rows.length == whole.rows.length && quick.top == whole.top);
+    assert(quick.rows[cast(size_t) quick.top].srcStart == keep.src);
 }
 
 @("viewer_model.scrollAnchor.aPositionRestoredBeforeTheFirstLayoutHolds")
