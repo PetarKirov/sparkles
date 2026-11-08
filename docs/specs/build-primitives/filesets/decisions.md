@@ -380,7 +380,8 @@ the package consumed them.
 plan's start roots may lie beneath the root. The machine hands over the
 directories above them as units of their own, each holding the subdirectories
 through which a start root that held anything was reached. It sorts the start
-roots by bytes, which keeps each directory's descendants together, so these
+roots by path, component by component, which keeps each directory's
+descendants together, so these
 units also arrive post-order. A directory above the roots that ends up holding
 nothing is dropped; the fileset root never is. Its handle is not alive: it was
 never opened.
@@ -477,13 +478,20 @@ castore's leaves rather than a fold. REAPI, IPFS unixfs, BitTorrent v2, OSTree
 and casync wait for a consumer; each fits the parts above. Tahoe-LAFS, SSZ and
 hypercore do not name file system trees by their bytes, and stay out of scope.
 
-**Two possible changes to the seam.** A serial format writes a directory's
-later entries after the whole subtree of an earlier one, so it needs
-subdirectory units depth-first in declared order, and to hear where a subtree
-ends; if the machine does not already provide both, a stream gains an optional
-`leave(path)`, sent only to a scheme that declares it. OSTree's identity needs
-a file's owner, which arrives in the `statx` already issued, so `FsoMetadata`
-can admit `owner` as cheaply as it admitted `mtime`.
+**Two changes to the seam.** A serial format writes a directory's later
+entries after the whole subtree of an earlier one. A stream already sees
+directories depth first, subdirectories in byte order, which is NAR's; what
+it lacked was hearing where a subtree ends while the directory holding it can
+still be read. A stream that declares `leave(path, ref exec)` now hears it
+(`StepKind.leave`), and the references its `visit` was given for that
+directory stay valid until then: the driver retires a directory only after
+its subtree, so this costs no descriptor. A fold may not declare it. Start
+roots are sorted by path component instead of by bytes, so `a/b` comes
+before `a-c`, as the directory `a` does in NAR; that still keeps each
+directory's descendants together. The other change is still possible, not
+made: OSTree's identity needs a file's owner, which arrives in the `statx`
+already issued, so `FsoMetadata` can admit `owner` as cheaply as it admitted
+`mtime`.
 
 **The spike.** `GitTreeFold`, a test-only fold over the seam, computed git's
 tree hash in about 130 lines with SHA-1 from Phobos, the `gitTreeOrder` of
@@ -506,6 +514,17 @@ directories, links, executables, nested sizes and a case collision included
 the flake input `snix-src`, built with our nixpkgs' Rust; the shells
 export it as `$SPARKLES_SNIX_CASTORE`, in the CI tier, because without it the
 gate of the default identity would degrade to a skip.
+
+`Serial!(Format, H)` is not built: NAR is the one serial format with a
+consumer, so it is `NarScheme!(H, Ref)`, a stream declaring `leave`, and the
+generic part waits for a second one (casync's `catar`). Its result is
+`NarHash`, the digest and the length together. It keeps a directory's
+entries after its first subdirectory, with their references, which is why
+it is parameterized on the reference type. It writes the directories above
+the start roots itself, and the empty directory for a fileset holding
+nothing. `content_addressing.nar.dump` compares its digest and length with
+those of `nix-store --dump` on every oracle tree, and
+`content_addressing.nar.startRoots` with start roots beneath the root.
 
 ## Open
 

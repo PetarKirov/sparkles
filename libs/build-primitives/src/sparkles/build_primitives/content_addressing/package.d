@@ -11,3 +11,4 @@ module sparkles.build_primitives.content_addressing;
 public import sparkles.build_primitives.content_addressing.castore;
 public import sparkles.build_primitives.content_addressing.git;
 public import sparkles.build_primitives.content_addressing.merkle;
+public import sparkles.build_primitives.content_addressing.nar;
