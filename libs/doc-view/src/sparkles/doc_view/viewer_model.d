@@ -303,6 +303,12 @@ struct ViewerModel
         => !conflictOpen && showPreview && !diff.files.length && !tw.code.length
             && preview.present;
 
+    /// The `viewRows` the preview's fences and tables were last fitted to: a
+    /// host that debounces a pane-height change re-fits once the height it
+    /// settles on differs from this.
+    int fittedRows() const @safe pure nothrow @nogc => fittedRows_;
+    private int fittedRows_ = -1;
+
     /// `codeMaxLines` resolved: an explicit value wins; `auto` fits the
     /// whole box — the body plus its two border rows — in the pane, so a
     /// document holding one long fence never needs a scroll to reach the
@@ -1458,6 +1464,7 @@ struct ViewerModel
                 ? activeTableOwner : size_t.max,
             diffBlocks: preview.decorations, // `DVN6`
         };
+        fittedRows_ = viewRows;
         foldable = foldableSpans(preview.doc);
         // The preview shares the file's chrome with every other view: the same
         // line numbers over the same source, and the same icon strip carrying
