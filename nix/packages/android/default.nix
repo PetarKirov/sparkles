@@ -122,6 +122,9 @@ in
         terminal-apk = config.packages.terminal-apk;
         # The raylib arm, until the raylib window is retired.
         terminal-raylib-apk = config.packages.terminal-raylib-apk;
+        # The text lab's APK: its own closure (the Vulkan canvas, no
+        # tree-sitter), otherwise built by nothing in CI.
+        text-lab-apk = config.packages.text-lab-apk;
       };
     };
 }
