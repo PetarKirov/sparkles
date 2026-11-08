@@ -704,8 +704,8 @@ jobs:
           use-nix-cache: false
 
       # One derivation at a time: the compiler peaks at 9.4 GiB building
-      # `libhue-android` and at 7.1 GiB building `libterminal-android`, and the
-      # runner has 16. Built together, as the default parallelism does, they ran
+      # `libhue-android` and at 7.1 GiB building the terminal's raylib library
+      # (`libterminal-raylib-android`), and the runner has 16. Built together, as the default parallelism does, they ran
       # the runner out of memory, and the job was cancelled mid-build with no
       # failed step (runs 39334458752 and 39400408038, three and two times).
       - name: Build & push the Android APK closure

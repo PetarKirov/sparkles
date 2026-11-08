@@ -261,8 +261,8 @@ recorded against the raylib APK.
 
 **Outcome.** `apps/terminal`'s `android` configuration is the
 terminal on `sparkles:wsi`'s Android backend and this canvas, with no raylib
-(`packages.terminal-vulkan-apk`, under its own application id beside the
-raylib APK). What the phone took from raylib comes from the native host:
+(`packages.terminal-apk`; the raylib APK is `packages.terminal-raylib-apk`,
+under its own application id). What the phone took from raylib comes from the native host:
 touch resolved by the shared gesture recogniser and the fingers' raw
 contacts (`touches`) for the key row, the dividers and the selection
 handles; the soft keyboard as the host's text input; the content rect as

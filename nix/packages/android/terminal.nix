@@ -1,15 +1,17 @@
 # The terminal's Android build (docs/specs/terminal/android.md):
 #
-#   packages.libterminal-android   apps/terminal as lib<abi>/libterminal.so
+#   packages.libterminal-android   apps/terminal's `android` dub configuration
+#                                  as lib<abi>/libterminal.so: the native arm
+#                                  (`sparkles:wsi`, Vulkan), no raylib
 #   legacyPackages.mkTerminalApk   the APK, parameterized by app id, label,
-#                                  icon and session (the D5 data-driven APK)
-#   packages.terminal-apk          the plain terminal: /system/bin/sh
-#   packages.libterminal-vulkan-android
-#                                  apps/terminal's `android` dub configuration:
-#                                  the native arm (`sparkles:wsi`, Vulkan), no
-#                                  raylib
-#   packages.terminal-vulkan-apk   the plain terminal on it, beside the raylib
-#                                  one under its own app id
+#                                  icon, session and renderer (the D5
+#                                  data-driven APK)
+#   packages.terminal-apk          the plain terminal on it: /system/bin/sh
+#   packages.libterminal-raylib-android
+#                                  the raylib arm, by the raw ldc2 cross build,
+#                                  kept until the raylib window is retired
+#   packages.terminal-raylib-apk   its APK, beside the native one under its own
+#                                  app id
 #
 # The nix-on-droid app is a `mkTerminalApk` call in the nix-on-droid flake,
 # with its own app id, label, icon and bootstrap URL — nothing in sparkles
@@ -36,7 +38,7 @@ in
       # One unstamped library. The `{}` section is stable, so a commit
       # change does not rebuild it. Each APK packs a patched copy.
       mkLibterminal = config.legacyPackages.buildDAndroidLib {
-        pname = "libterminal-android";
+        pname = "libterminal-raylib-android";
         libName = "terminal";
         mainFile = "apps/terminal/src/app.d";
         srcDirs = sources.srcClosure "apps/terminal" ++ [ "libs/android/c" ];
@@ -97,7 +99,7 @@ in
       # The native arm (ui-vulkan PLAN, V7): dub builds the `android`
       # configuration — the activity sparkles:wsi's, the drawing Vulkan's.
       libterminalVulkan = config.legacyPackages.buildSparklesAndroidLib {
-        pname = "libterminal-vulkan-android";
+        pname = "libterminal-android";
         appDir = "apps/terminal";
         libName = "terminal";
         inherit ((androidHost system)) ldcAndroid;
@@ -215,8 +217,8 @@ in
         }) ndk.targets;
     in
     lib.optionalAttrs (androidHost system).supported {
-      androidPackages.libterminal-android = libterminal;
-      androidPackages.libterminal-vulkan-android = libterminalVulkan;
+      androidPackages.libterminal-android = libterminalVulkan;
+      androidPackages.libterminal-raylib-android = libterminal;
 
       /**
         The terminal APK. Every argument but `session` is packaging; `session`
@@ -256,7 +258,7 @@ in
           targetSdk ? 28,
           # "raylib", or "vulkan": the native arm (`sparkles:wsi` owns the
           # activity, `sparkles:ui-vulkan` draws).
-          renderer ? "raylib",
+          renderer ? "vulkan",
         }:
         let
           vulkan = renderer == "vulkan";
@@ -345,11 +347,11 @@ in
           });
 
       androidPackages.terminal-apk = config.legacyPackages.mkTerminalApk { };
-      androidPackages.terminal-vulkan-apk = config.legacyPackages.mkTerminalApk {
-        renderer = "vulkan";
-        appId = "dev.petar_kirov.sparkles.terminal.vulkan";
-        label = "terminal (Vulkan)";
-        pname = "terminal-vulkan";
+      androidPackages.terminal-raylib-apk = config.legacyPackages.mkTerminalApk {
+        renderer = "raylib";
+        appId = "dev.petar_kirov.sparkles.terminal.raylib";
+        label = "terminal (raylib)";
+        pname = "terminal-raylib";
       };
     };
 }
