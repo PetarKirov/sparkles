@@ -1573,6 +1573,26 @@ version (unittest)
             return blackBox(pane.vm.rows.length);
         }
     }
+
+    // A windowed model scrolled a third of the document each call: the
+    // pane leaves the window, which is built again where it now is.
+    private static struct ScrollState
+    {
+        DocViewPane* pane;
+        long step;
+
+        size_t run() @system
+        {
+            import core.time : Duration;
+            import sparkles.test_runner.bench : blackBox;
+
+            auto vm = &pane.vm;
+            const total = cast(long) vm.rows.length;
+            vm.top = (vm.top + step) % (total > vm.viewRows ? total - vm.viewRows : 1);
+            vm.settleLayout(Duration.zero);
+            return blackBox(vm.rows.length);
+        }
+    }
 }
 
 // The window-resize reflow of a large source file in the raw code view: what
@@ -1687,5 +1707,53 @@ version (unittest)
             timed: &st.run, after: (ref size_t rows) {
                 assert(rows > 0, text("no rows laid out for ", path));
             });
+        if (!settled)
+            continue;
+        auto sc = new ScrollState(st.pane, cast(long) st.pane.vm.rows.length / 3);
+        benchCase(name: path.baseName, labels: ["op": "scroll"],
+            timed: &sc.run, after: (ref size_t rows) {
+                assert(rows > 0, text("no rows laid out for ", path));
+            });
     }
+}
+
+// The raw code view's reflow with the source laid out as a window around a
+// 50-row pane: what a resize costs on hue's own window module.
+@("pane.relayout.largeCodeFileWindowed")
+@benchmark
+@system unittest
+{
+    import core.time : Duration;
+    import std.conv : text;
+    import std.file : exists;
+    import std.path : baseName, buildPath, dirName;
+    import std.process : environment;
+    import sparkles.test_runner.bench : benchCase;
+    import sparkles.test_runner.skip : skipTest;
+
+    if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
+        skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
+    const root = __FILE_FULL_PATH__.dirName.dirName.dirName.dirName.dirName.dirName;
+    const path = environment.get("HUE_BENCH_FILE", buildPath(root, "apps", "hue", "src", "gui.d"));
+    if (!path.exists)
+        skipTest("bench file not found: " ~ path ~ " (set HUE_BENCH_FILE)");
+
+    auto env = DocViewEnv.create(GrammarRegistry.fromEnvironment());
+    auto st = new RelayoutState(new DocViewPane, freshWidths: true);
+    assert(st.pane.open(env, path, chromeTheme(RgbColor(200, 200, 200), RgbColor(20, 20, 20))));
+    assert(!st.pane.vm.showPreview, "the raw code view");
+    st.pane.vm.windowed = true;
+    st.pane.vm.viewRows = 50;
+    st.pane.vm.relayout(st.width);
+    st.pane.vm.top = cast(long) st.pane.vm.rows.length / 2;
+    st.pane.vm.settleLayout(Duration.zero);
+    benchCase(name: path.baseName, labels: ["op": "resize"],
+        timed: &st.run, after: (ref size_t rows) {
+            assert(rows > 0, text("no rows laid out for ", path));
+        });
+    auto sc = new ScrollState(st.pane, cast(long) st.pane.vm.rows.length / 3);
+    benchCase(name: path.baseName, labels: ["op": "scroll"],
+        timed: &sc.run, after: (ref size_t rows) {
+            assert(rows > 0, text("no rows laid out for ", path));
+        });
 }
