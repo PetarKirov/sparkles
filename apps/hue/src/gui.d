@@ -310,6 +310,9 @@ struct GuiRunState
     /// The document wheel's scroller for the current gesture (`SCV12`).
     ScrollLatch docLatch;
     ResizeDebounce rd;
+    /// The pane-height re-fit's debounce: the preview's fences follow the
+    /// height once it holds, as the wrap follows the width.
+    ResizeDebounce refit;
     Panes pn;
     InputState inp;
     Flashes flash;
@@ -2779,13 +2782,13 @@ int runGui(GuiArgs guiArgs) @system
         // Auto `--code-max-lines` follows the pane height (COD6): a tall
         // fence's fixed viewport re-fits when the pane's row count changes.
         // Only the preview has fences; any other view would rebuild the
-        // whole document, undebounced, on the first frame of every resize.
-        if (vm.viewRows != docRows)
-        {
-            vm.viewRows = docRows;
-            if (vm.codeMaxLines < 0 && vm.widthCols > 0 && vm.buildsPreview)
-                vm.rebuild();
-        }
+        // whole document for nothing. The re-fit is debounced like the
+        // reflow: a vertical drag rebuilt the preview on every frame of it,
+        // while scrolling follows the new height at once.
+        vm.viewRows = docRows;
+        if (refit.step(docRows, vm.fittedRows) && vm.codeMaxLines < 0
+            && vm.widthCols > 0 && vm.buildsPreview)
+            vm.rebuild();
         const docY0 = docCells.y * cellH;
         const hdrY = (docCells.y - 1) * cellH;
 
