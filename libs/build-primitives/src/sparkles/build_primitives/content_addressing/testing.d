@@ -12,15 +12,21 @@ fixtures it uses.
 module sparkles.build_primitives.content_addressing.testing;
 
 import std.conv : text;
+import std.digest.sha : SHA256;
 import std.file : rmdirRecurse;
 import std.random : Mt19937;
 import std.string : strip;
 
+import sparkles.base.vfs.mem : MemVfs;
+import sparkles.base.vfs.types : Rights;
+
 import sparkles.build_primitives.content_addressing.castore;
 import sparkles.build_primitives.content_addressing.git;
 import sparkles.build_primitives.content_addressing.merkle;
+import sparkles.build_primitives.content_addressing.nar;
 import sparkles.build_primitives.fileset.fso : EntryOrder;
 import sparkles.build_primitives.fileset.pattern : CasePolicy;
+import sparkles.build_primitives.fileset.scheme : FsoRef;
 import sparkles.build_primitives.fileset.testing : RecordingExecutor, fixtureSet, materialize,
     randomTree, schemeResolve, scratchFoldsCase, scratchTree;
 import sparkles.build_primitives.fileset.value : Filesets;
@@ -218,4 +224,89 @@ skipped.
         assert(toCastoreText(ours.digest)[] == theirs, text(t.label, ": ",
             toCastoreText(ours.digest)[], " != ", theirs, "\n", t.literal));
     }
+}
+
+// --------------------------------------------------------------- NAR
+
+/// The reference type of an entry resolved over a tree literal.
+alias LiteralRef = FsoRef!(MemVfs, Rights.readOnly);
+
+/// The NAR of a fileset over a tree literal, hashed by SHA-256.
+alias LiteralNar = NarScheme!(SHA256, LiteralRef);
+
+/// `nix-store --dump` of `dir`: the NAR Nix writes for it.
+string nixDump(string dir) @system
+{
+    import std.process : Config, execute;
+
+    const r = execute(["nix-store", "--dump", dir], null, Config.stderrPassThrough);
+    assert(r.status == 0, text("nix-store --dump ", dir, ": ", r.output));
+    return r.output;
+}
+
+/// Whether `nix-store` runs here.
+bool haveNix() @system
+{
+    import std.process : execute;
+
+    try
+        return execute(["nix-store", "--version"]).status == 0;
+    catch (Exception)
+        return false;
+}
+
+/**
+The NAR's SHA-256 and length equal those of `nix-store --dump` of the same
+tree: every node kind, empty directories, files after a subdirectory's
+subtree, and the ordering hazard, which NAR's byte order meets differently
+from git's.
+*/
+@("content_addressing.nar.dump")
+@system unittest
+{
+    import std.digest.sha : sha256Of;
+
+    if (!haveNix())
+        return skipTest("nix-store is not installed");
+
+    foreach (t; diskOracleTrees())
+    {
+        const ours = idOf!LiteralNar(t.literal);
+        const nar = onDisk(t.literal, "nar", dir => nixDump(dir));
+        assert(ours.size == nar.length, text(t.label, ": ", ours.size, " != ", nar.length,
+            " bytes\n", t.literal));
+        assert(ours.digest == sha256Of(nar), text(t.label, ": ", toSri(ours.digest)[], " != ",
+            toSri(sha256Of(nar))[], "\n", t.literal));
+    }
+}
+
+/**
+A fileset whose start roots lie beneath its root, and whose roots NAR orders
+by component (`a/b` before `a-c`): the scheme writes the directories above
+the roots, and its NAR equals that of the tree holding only the members.
+*/
+@("content_addressing.nar.startRoots")
+@system unittest
+{
+    import std.digest.sha : sha256Of;
+
+    if (!haveNix())
+        return skipTest("nix-store is not installed");
+
+    enum tree = "a/b/x = 1\na/b/d/y = 2\na/c = 3\na-c/z = 4\nq = 5\n";
+    enum members = "a/b/x = 1\na/b/d/y = 2\na-c/z = 4\n";
+    auto sets = Filesets(CasePolicy.sensitive);
+    const f = sets.unionOf(sets.glob("a/b/**").value, sets.glob("a-c/**").value);
+    RecordingExecutor exec;
+    LiteralNar scheme;
+    const ours = schemeResolve(tree, sets, f, scheme, exec);
+    const nar = onDisk(members, "nar-roots", dir => nixDump(dir));
+    assert(ours.size == nar.length && ours.digest == sha256Of(nar),
+        text(toSri(ours.digest)[], " != ", toSri(sha256Of(nar))[]));
+
+    // A fileset holding nothing is the empty directory.
+    LiteralNar nothing;
+    const none = schemeResolve(tree, sets, sets.nothing, nothing, exec);
+    const empty = onDisk("", "nar-empty", dir => nixDump(dir));
+    assert(none.size == empty.length && none.digest == sha256Of(empty));
 }

@@ -137,32 +137,9 @@ if (isLeaf!Leaf && isDirFormat!(Dir, Leaf))
     // Hashes the file `r` names, streamed at the size its `stat` reports.
     private bool hashFile(Ref)(Ref r, out Leaf.Id id, out ulong size)
     {
-        import sparkles.base.vfs.types : OpenMode;
-
-        auto file = r.dir.openFile!(OpenMode.read)(r.name);
-        if (file.hasError)
-            return fail("a member could not be opened");
-        const st = file.value.stat();
-        if (st.hasError)
-            return fail("a member could not be stat-ed");
-        size = st.value.size;
-        leaf.start(size);
-        ulong seen;
-        ubyte[16 * 1024] buf = void;
-        for (;;)
-        {
-            auto n = file.value.read(buf[]);
-            if (n.hasError)
-                return fail("a member could not be read");
-            if (n.value == 0)
-                break;
-            seen += n.value;
-            if (seen > size)
-                break;
-            leaf.put(buf[0 .. n.value]);
-        }
-        if (seen != size)
-            return fail("a member changed size while it was read");
+        const why = streamFile(r, leaf, size);
+        if (why.length)
+            return fail(why);
         id = leaf.finish();
         return true;
     }
@@ -172,6 +149,41 @@ if (isLeaf!Leaf && isDirFormat!(Dir, Leaf))
         why = s;
         return false;
     }
+}
+
+/**
+Streams the file `r` names into `sink`: `sink.start(size)` with the size its
+`stat` reports, then `sink.put` with every byte. Returns why it failed, or
+`null`; a file whose size changes while it is read fails, rather than give
+bytes that never existed together.
+*/
+string streamFile(Ref, Sink)(Ref r, ref Sink sink, out ulong size)
+{
+    import sparkles.base.vfs.types : OpenMode;
+
+    auto file = r.dir.openFile!(OpenMode.read)(r.name);
+    if (file.hasError)
+        return "a member could not be opened";
+    const st = file.value.stat();
+    if (st.hasError)
+        return "a member could not be stat-ed";
+    size = st.value.size;
+    sink.start(size);
+    ulong seen;
+    ubyte[16 * 1024] buf = void;
+    for (;;)
+    {
+        auto n = file.value.read(buf[]);
+        if (n.hasError)
+            return "a member could not be read";
+        if (n.value == 0)
+            break;
+        seen += n.value;
+        if (seen > size)
+            break;
+        sink.put(buf[0 .. n.value]);
+    }
+    return seen == size ? null : "a member changed size while it was read";
 }
 
 /// A file identity that is a digest of the file's bytes alone, with no
