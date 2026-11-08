@@ -2,11 +2,6 @@ name: Setup Nix
 description: Installs Nix, configures binary caches, and optionally builds/activates a development environment using direnv or a specific Nix devShell.
 
 inputs:
-  push-to-cache:
-    description: Whether to use cachix or not
-    type: boolean
-    required: false
-    default: false
   cachix-cache:
     description: The name of the cachix cache to use
     required: false
@@ -110,12 +105,6 @@ runs:
         CACHIX_CACHE: ${{ inputs.cachix-cache }}
         CACHIX_AUTH_TOKEN: ${{ inputs.cachix-auth-token }}
       run: ci/nix-configure.sh
-
-    - uses: cachix/cachix-action@v17
-      if: ${{ fromJSON(inputs.push-to-cache || 'false') && inputs.cachix-cache != '' && inputs.cachix-auth-token != '' }}
-      with:
-        name: ${{ inputs.cachix-cache }}
-        authToken: ${{ inputs.cachix-auth-token }}
 
     - name: Restore/Save Nix Store GHA Cache
       uses: nix-community/cache-nix-action@v7
