@@ -618,7 +618,9 @@ struct TerminalView
         s.effects_ctx.cellHeight = s.cellHeight;
         s.effects_ctx.cols = s.cols;
         s.effects_ctx.rows = s.rows;
+        s.effects_ctx.core = &s;
         ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_USERDATA, cast(const(void)*) &s.effects_ctx);
+        s.terminal.setEffect!GHOSTTY_TERMINAL_OPT_RENDER_HOLD(&effect_render_hold);
         s.terminal.setEffect!GHOSTTY_TERMINAL_OPT_WRITE_PTY(&effect_write_pty);
         s.terminal.setEffect!GHOSTTY_TERMINAL_OPT_SIZE(&effect_size);
         s.terminal.setEffect!GHOSTTY_TERMINAL_OPT_DEVICE_ATTRIBUTES(&effect_device_attributes);
@@ -2920,10 +2922,9 @@ struct TerminalView
         pendingForce = true; // the next decideRedraw must repaint
         s.cols = cols > 0 ? cols : 1;
         s.rows = rows > 0 ? rows : 1;
+        // Ends any synchronized-output hold (through `effect_render_hold`):
+        // the new dimensions must be visible now.
         ghostty_terminal_resize(s.terminal, s.cols, s.rows, s.cellWidth, s.cellHeight);
-        // libghostty explicitly ends synchronization on resize. Retire our
-        // matching gate as well; the new dimensions must be visible now.
-        s.synchronizedOutput.observe(s.terminal, s.render_state);
         s.effects_ctx.cols = s.cols;
         s.effects_ctx.rows = s.rows;
         s.effects_ctx.cellWidth = s.cellWidth;
@@ -3394,9 +3395,11 @@ bool pasteNeedsConfirm(PasteConfirm policy, in char[] text) @safe pure nothrow @
     }
     assert(fcntl(replies[0], F_SETFL, O_NONBLOCK) == 0);
     tv.s.effects_ctx.pty_fd = replies[1];
+    tv.s.effects_ctx.core = &tv.s;
     ghostty_terminal_set(tv.s.terminal, GHOSTTY_TERMINAL_OPT_USERDATA,
         cast(const(void)*) &tv.s.effects_ctx);
     tv.s.terminal.setEffect!GHOSTTY_TERMINAL_OPT_WRITE_PTY(&effect_write_pty);
+    tv.s.terminal.setEffect!GHOSTTY_TERMINAL_OPT_RENDER_HOLD(&effect_render_hold);
 
     uint firstCell()
     {

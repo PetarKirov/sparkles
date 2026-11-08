@@ -1,10 +1,13 @@
 /**
-Presentation hold for DEC private mode 2026 on the pinned libghostty-vt ABI.
+Presentation hold for DEC private mode 2026, driven by libghostty-vt's render
+hold callback (`GHOSTTY_TERMINAL_OPT_RENDER_HOLD`).
 
-The terminal keeps consuming input and answering queries during a hold. Its C
-render snapshot API does not implement the hold itself, so the feed loop splits
-at possible mode transitions and freezes the snapshot at the begin byte, before
-any following text. Checking only after a pty read loses that distinction.
+The callback fires inside `ghostty_terminal_vt_write` at the byte that begins
+a hold, before any text following it in the same write, so the snapshot taken
+there is exactly the last finished frame. It fires again when the hold ends:
+the program resets the mode, a full reset (RIS), or a resize. The terminal
+keeps consuming input and answering queries during the hold. It has no clock,
+so the hold's deadline lives here.
 */
 module sparkles.terminal_view.synchronized_output;
 
@@ -12,14 +15,11 @@ import core.time : Duration, MonoTime, seconds;
 
 import sparkles.ghostty.c : GhosttyTerminal, GhosttyRenderState,
     ghostty_render_state_update, GHOSTTY_MODE_SYNCHRONIZED_OUTPUT;
-import sparkles.ghostty.helpers : terminalModeGet, terminalModeSet;
+import sparkles.ghostty.helpers : terminalModeSet;
 
-/// Internal stream scanner and presentation deadline, one per terminal.
+/// The hold and its presentation deadline, one per terminal.
 struct SynchronizedOutput
 {
-    private enum ScanState : ubyte { ground, escape, csi, string_ }
-    private ScanState state;
-    private bool osc;
     private bool active;
     private MonoTime deadline;
 
@@ -28,107 +28,15 @@ struct SynchronizedOutput
 
     bool held() const @safe pure nothrow @nogc => active;
 
-    /// Printable ASCII cannot change these scanner states.
-    package bool skipsPrintable() const @safe pure nothrow @nogc
-        => state == ScanState.ground || state == ScanState.string_;
-
     /**
-    True when the current byte could change mode 2026. The caller first feeds
-    through this byte, then calls `observe`, before feeding any following bytes.
-    Ghostty alone interprets parameters, private/ANSI modes and saved modes.
+    A hold begins (the render hold callback with `held` true): freeze
+    `snapshot` at the terminal's current, complete frame. The library pairs
+    each begin with an end, so a begin while held cannot happen; it is
+    ignored rather than extending the deadline.
     */
-    bool scanByte(char b) @safe pure nothrow @nogc
-    {
-        if (b == '\x18' || b == '\x1a')
-        {
-            state = ScanState.ground;
-            return false;
-        }
-        if (b == '\x1b')
-        {
-            // ESC terminates control strings too; the following byte starts
-            // a new escape (including the usual ST backslash).
-            state = ScanState.escape;
-            return false;
-        }
-        // Ghostty decodes UTF-8 in ground and treats high OSC bytes as
-        // payload, but recognizes C1 transitions in its other parser states.
-        if (state != ScanState.ground && !(state == ScanState.string_ && osc)
-            && b >= '\x80' && b <= '\x9f')
-        {
-            switch (b)
-            {
-                case '\x9b':
-                    state = ScanState.csi;
-                    break;
-                case '\x90':
-                case '\x98':
-                case '\x9d':
-                case '\x9e':
-                case '\x9f':
-                    state = ScanState.string_;
-                    osc = b == '\x9d';
-                    break;
-                default:
-                    state = ScanState.ground;
-                    break;
-            }
-            return false;
-        }
-        final switch (state)
-        {
-            case ScanState.ground:
-                return false;
-            case ScanState.escape:
-                if (b < ' ' || b == '\x7f')
-                    return false;
-                switch (b)
-                {
-                    case '[':
-                        state = ScanState.csi;
-                        return false;
-                    case ']':
-                    case 'P':
-                    case 'X':
-                    case '^':
-                    case '_':
-                        state = ScanState.string_;
-                        osc = b == ']';
-                        return false;
-                    default:
-                        if (b >= '0' && b <= '~')
-                        {
-                            state = ScanState.ground;
-                            return b == 'c'; // RIS
-                        }
-                        return false;
-                }
-            case ScanState.csi:
-                if (b >= '@' && b <= '~')
-                {
-                    state = ScanState.ground;
-                    return b == 'h' || b == 'l' || b == 'r'
-                        || b == 'p'; // set/reset/restore modes, DECSTR
-                }
-                return false;
-            case ScanState.string_:
-                if (osc && b == '\x07')
-                    state = ScanState.ground;
-                return false;
-        }
-    }
-
-    /// Returns true only when a new hold captured a pre-update snapshot.
-    bool observe(GhosttyTerminal terminal, GhosttyRenderState snapshot,
+    bool begin(GhosttyTerminal terminal, GhosttyRenderState snapshot,
         MonoTime now = MonoTime.init) @system nothrow @nogc
     {
-        bool enabled;
-        terminalModeGet(terminal, GHOSTTY_MODE_SYNCHRONIZED_OUTPUT, &enabled);
-        if (!enabled)
-        {
-            active = false;
-            return false;
-        }
         if (active)
             return false;
         ghostty_render_state_update(snapshot, terminal);
@@ -136,6 +44,12 @@ struct SynchronizedOutput
         // Ordinary mode traffic must not pay for a clock read.
         deadline = (now == MonoTime.init ? MonoTime.currTime : now) + timeout;
         return true;
+    }
+
+    /// The hold ends (the render hold callback with `held` false).
+    void end() @safe pure nothrow @nogc
+    {
+        active = false;
     }
 
     /// Time until a held frame is forced out; an idle terminal needs no wake.
@@ -146,7 +60,11 @@ struct SynchronizedOutput
         return now < deadline ? deadline - now : Duration.zero;
     }
 
-    /// EOF and timeout clear both our gate and the reported terminal mode.
+    /**
+    EOF and timeout clear both our gate and the reported terminal mode.
+    Setting the mode through the API never invokes the render hold callback,
+    so the gate is cleared here.
+    */
     bool release(GhosttyTerminal terminal) @system nothrow @nogc
     {
         if (!active)
@@ -167,32 +85,56 @@ struct SynchronizedOutput
 @system unittest
 {
     import core.time : msecs;
-    import sparkles.ghostty.c : ghostty_terminal_free, ghostty_render_state_new,
-        ghostty_render_state_free;
-    import sparkles.ghostty.helpers : newTerminal;
+    import sparkles.ghostty.c : GhosttyTerminalOption, ghostty_terminal_free,
+        ghostty_terminal_set, ghostty_terminal_vt_write, ghostty_render_state_new,
+        ghostty_render_state_free, GHOSTTY_TERMINAL_OPT_USERDATA,
+        GHOSTTY_TERMINAL_OPT_RENDER_HOLD;
+    import sparkles.ghostty.helpers : newTerminal, setEffect, terminalModeGet;
+
+    static struct Fixture
+    {
+        SynchronizedOutput output;
+        GhosttyRenderState snapshot;
+        MonoTime now;
+    }
+    static extern (C) void onHold(GhosttyTerminal t, void* userdata, bool held) nothrow @nogc
+    {
+        auto f = cast(Fixture*) userdata;
+        if (held)
+            f.output.begin(t, f.snapshot, f.now);
+        else
+            f.output.end();
+    }
 
     GhosttyTerminal terminal;
     newTerminal(&terminal, 8, 2);
     scope (exit) ghostty_terminal_free(terminal);
-    GhosttyRenderState snapshot;
-    ghostty_render_state_new(null, &snapshot);
-    scope (exit) ghostty_render_state_free(snapshot);
+    Fixture f;
+    ghostty_render_state_new(null, &f.snapshot);
+    scope (exit) ghostty_render_state_free(f.snapshot);
+    ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_USERDATA, &f);
+    terminal.setEffect!GHOSTTY_TERMINAL_OPT_RENDER_HOLD(&onHold);
+    void feed(string bytes)
+        => ghostty_terminal_vt_write(terminal, cast(const(ubyte)*) bytes.ptr, bytes.length);
 
-    SynchronizedOutput output;
-    const now = MonoTime.currTime;
-    assert(output.remaining(now) == Duration.max);
-    terminalModeSet(terminal, GHOSTTY_MODE_SYNCHRONIZED_OUTPUT, true);
-    assert(output.observe(terminal, snapshot, now));
-    assert(!output.releaseExpired(terminal, now + 999.msecs));
-    assert(output.held && output.remaining(now + 999.msecs) == 1.msecs);
-    // Another mode command must not indefinitely extend a broken frame.
-    assert(!output.observe(terminal, snapshot, now + 999.msecs));
-    assert(output.releaseExpired(terminal, now + 1.seconds));
+    f.now = MonoTime.currTime;
+    const now = f.now;
+    assert(f.output.remaining(now) == Duration.max);
+    feed("\x1b[?2026h");
+    assert(f.output.held);
+    assert(!f.output.releaseExpired(terminal, now + 999.msecs));
+    assert(f.output.remaining(now + 999.msecs) == 1.msecs);
+    // Another begin must not indefinitely extend a broken frame.
+    f.now = now + 999.msecs;
+    feed("\x1b[?2026h");
+    assert(f.output.releaseExpired(terminal, now + 1.seconds));
     bool enabled = true;
     terminalModeGet(terminal, GHOSTTY_MODE_SYNCHRONIZED_OUTPUT, &enabled);
-    assert(!enabled && !output.held);
-    assert(output.remaining(now + 1.seconds) == Duration.max);
-    terminalModeSet(terminal, GHOSTTY_MODE_SYNCHRONIZED_OUTPUT, true);
-    assert(output.observe(terminal, snapshot, now + 2.seconds));
-    assert(output.held, "timeout does not disable later synchronized frames");
+    assert(!enabled && !f.output.held);
+    assert(f.output.remaining(now + 1.seconds) == Duration.max);
+    f.now = now + 2.seconds;
+    feed("\x1b[?2026h");
+    assert(f.output.held, "timeout does not disable later synchronized frames");
+    feed("\x1b[?2026l");
+    assert(!f.output.held, "the program's reset ends the hold");
 }

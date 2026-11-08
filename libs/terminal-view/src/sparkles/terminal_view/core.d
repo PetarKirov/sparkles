@@ -56,6 +56,10 @@ struct EffectsContext
     // when it set one, else the default background's lightness.
     ColorScheme scheme;
     bool schemeSet;
+
+    // The state the render hold effect freezes (`effect_render_hold`); null
+    // for a terminal with no render state behind it.
+    CoreState* core;
 }
 
 // write_pty: the terminal calls this whenever a VT sequence needs a response
@@ -193,6 +197,29 @@ void effect_bell(GhosttyTerminal terminal, void* userdata)
 {
     auto ctx = cast(EffectsContext*) userdata;
     ctx.bellFlashFrames = 4;
+}
+
+// render_hold: DEC mode 2026 (`SynchronizedOutput`). Fires inside vt_write
+// at the byte that begins a hold, before any following text, so the grid and
+// image snapshots taken here are the last complete frame.
+extern(C) nothrow @nogc
+void effect_render_hold(GhosttyTerminal terminal, void* userdata, bool held)
+{
+    auto s = (cast(EffectsContext*) userdata).core;
+    if (s is null)
+        return;
+    if (!held)
+        return s.synchronizedOutput.end();
+    if (!s.synchronizedOutput.begin(terminal, s.render_state))
+        return;
+    s.images.capture(terminal, s.placement_iter, s.cellWidth, s.cellHeight);
+    // Image-only work preceding this hold is a completed prefix, even though
+    // the grid snapshot has no image dirty bit.
+    if (s.images.repaintPending)
+    {
+        GhosttyRenderStateDirty dirty = GHOSTTY_RENDER_STATE_DIRTY_FULL;
+        ghostty_render_state_set(s.render_state, GHOSTTY_RENDER_STATE_OPT_DIRTY, &dirty);
+    }
 }
 
 // Per-cell render data resolved by `resolveCell` and consumed by both passes of
@@ -629,9 +656,10 @@ GhosttyBuild ghosttyBuild() @system nothrow @nogc
 }
 
 // Feed one pty chunk to the terminal, split into segments at each complete
-// OSC sequence (for the host-side OSC observers, `observeOsc`) and at each
-// possible synchronized-output transition. libghostty-vt itself answers the
-// OSC 4/10/11/12 color queries, in stream order, from its effective colors.
+// OSC sequence for the host-side OSC observers (`observeOsc`), which must see
+// the terminal state in effect at that sequence. libghostty-vt itself answers
+// the OSC 4/10/11/12 color queries, in stream order, from its effective
+// colors, and reports synchronized output through `effect_render_hold`.
 @system nothrow @nogc
 void feedPtyChunk(ref CoreState s, scope const(char)[] chunk)
 {
@@ -641,9 +669,8 @@ void feedPtyChunk(ref CoreState s, scope const(char)[] chunk)
     for (size_t i = 0; i < chunk.length; ++i)
     {
         // Image payloads and ordinary text contain long inert ASCII runs.
-        // Scan those once, not through all three control-state machines.
-        if (s.oscScan.state == OscScanner.State.ground
-            && s.synchronizedOutput.skipsPrintable && s.images.skipsPrintable)
+        // Scan those once, not through both control-state machines.
+        if (s.oscScan.state == OscScanner.State.ground && s.images.skipsPrintable)
         {
             while (i < chunk.length && chunk[i] >= ' ' && chunk[i] <= '~')
                 ++i;
@@ -652,25 +679,11 @@ void feedPtyChunk(ref CoreState s, scope const(char)[] chunk)
         }
         const b = chunk[i];
         s.images.observeByte(b);
-        const oscBoundary = oscScanByte(s.oscScan, b);
-        const syncBoundary = s.synchronizedOutput.scanByte(b);
-        if (oscBoundary || syncBoundary)
+        if (oscScanByte(s.oscScan, b))
         {
             ghostty_terminal_vt_write(s.terminal,
                 cast(const(ubyte)*) chunk.ptr + segStart, cast(uint)(i + 1 - segStart));
             segStart = i + 1;
-            if (syncBoundary && s.synchronizedOutput.observe(s.terminal, s.render_state))
-            {
-                s.images.capture(s.terminal, s.placement_iter, s.cellWidth, s.cellHeight);
-                // Image-only work preceding this hold is a completed prefix,
-                // even though Ghostty's grid snapshot has no image dirty bit.
-                if (s.images.repaintPending)
-                {
-                    GhosttyRenderStateDirty dirty = GHOSTTY_RENDER_STATE_DIRTY_FULL;
-                    ghostty_render_state_set(s.render_state, GHOSTTY_RENDER_STATE_OPT_DIRTY, &dirty);
-                }
-            }
-            if (oscBoundary)
             {
                 import sparkles.terminal_view.protocols : PwdSnapshot, observeOsc;
 

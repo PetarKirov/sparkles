@@ -58,6 +58,7 @@ Read from the pinned libghostty-vt headers (`1.0.0`, tag `vt-1.0.0`,
 | Kitty keyboard protocol                                 | the key encoder, `GHOSTTY_KITTY_KEY_*` flags, `ghostty_key_encoder_set_from_terminal`                                                                      | Android's soft-keyboard text, which arrives as text rather than keys                 |
 | Paste encoding and safety                               | `ghostty_paste_encode`, `ghostty_paste_is_safe`                                                                                                            | the confirmation                                                                     |
 | OSC 52, OSC 9 / 99 / 777 notifications, OSC 1           | `GHOSTTY_TERMINAL_OPT_CLIPBOARD_WRITE` / `_READ` and `GHOSTTY_TERMINAL_OPT_DESKTOP_NOTIFICATION` effects for OSC 52, 9 and 777; OSC 99 and OSC 1 have none | parsing every payload: the host scanner predates these effects and still serves them |
+| Mode 2026 (synchronized output)                         | `GHOSTTY_TERMINAL_OPT_RENDER_HOLD` effect, fired at the byte that begins or ends a hold                                                                    | the snapshot it freezes and the hold's one-second deadline                           |
 
 Most of this page is therefore the host's own scanner and policy. The engine
 is extended only if a payload cannot be obtained otherwise

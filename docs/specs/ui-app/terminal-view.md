@@ -87,12 +87,14 @@ presentation contracts:
   changed images once per mutation epoch, and updates dirty rows. Placements
   preserve native dimensions, crop/offset geometry, and the below-background,
   below-text, and above-text layers. Image-only commands request a repaint.
-- `synchronized_output.d` captures the completed prefix at a mode-2026 begin
-  boundary, including image placements. Further input and query replies
-  continue without exposing partial frames. End, reset, resize, EOF, or the
-  one-second deadline releases the hold.
-- `osc_query.d` answers OSC 4 queries from the current palette, preserving
-  set/query ordering and multiple pairs within one control string.
+- `synchronized_output.d` captures the completed prefix, including image
+  placements, when libghostty-vt's render hold callback reports a mode-2026
+  begin. Further input and query replies continue without exposing partial
+  frames. End, reset, resize, EOF, or the one-second deadline releases the
+  hold.
+- libghostty-vt answers OSC 4/10/11/12 colour queries itself, in stream
+  order and from the effective colours; `osc_query.d` only splits the feed at
+  each OSC sequence for the host-side observers.
 
 Components may implement `shutdown(ref host)`. The host invokes this optional
 hook after its daemons drain and before destroying the graphics context.
