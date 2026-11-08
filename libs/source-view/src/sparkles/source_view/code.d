@@ -17,6 +17,7 @@ import sparkles.syntax.color : toRgb;
 import sparkles.syntax.event : byStyledLine, HighlightEvent;
 import sparkles.syntax.md.model : Span;
 import sparkles.syntax.theme : ResolvedTheme, StyleSpec;
+import sparkles.ui.geometry : SizeSpec;
 import sparkles.ui.style : Slot, TextStyle;
 import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind, WidgetTree;
 import sparkles.ui.wrap : TextWrap;
@@ -65,6 +66,14 @@ struct CodeViewOptions
     /// later one wins where they overlap — which is how a nested,
     /// more-specific range paints over the broader one containing it.
     const(TintedRange)[] tintedRanges;
+
+    /// The rows to build, `[firstRow, endRow)`, where a row is a source line
+    /// or a fold's placeholder: a window of a large document. The rows above
+    /// it are a blank spacer, so the window lands where the whole document
+    /// has it; nothing is built below it. Meaningful with `TextWrap.none`,
+    /// where a line is one row.
+    size_t firstRow;
+    size_t endRow = size_t.max; /// ditto
 }
 
 /**
@@ -349,11 +358,47 @@ uint viewCodeDocumentInto(ref Builder b, const(char)[] source,
             starts ~= i + 1;
     const n = starts.length;
 
+    size_t lineEnd(size_t li) => li + 1 < n ? starts[li + 1] : source.length;
+
+    // The outermost folded region starting on line `li`, if any.
+    const(Span)* foldAt(size_t li)
+    {
+        const(Span)* fr = null;
+        foreach (ref const r; foldedRegions)
+            if (r.start >= starts[li] && r.start < lineEnd(li)
+                && (fr is null || r.end > fr.end))
+                fr = (() @trusted => &r)();
+        return fr;
+    }
+
+    // The lines a window's rows show: skip the rows above it (a fold's
+    // hidden lines with its placeholder's), stop at its end.
+    size_t firstLine, row;
+    while (firstLine < n && row < opt.firstRow)
+    {
+        if (auto fr = foldAt(firstLine))
+            while (firstLine + 1 < n && starts[firstLine + 1] < fr.end)
+                ++firstLine;
+        ++firstLine;
+        ++row;
+    }
+    const spacer = row;
+    size_t endLine = firstLine;
+    for (size_t r = row; endLine < n && r < opt.endRow; ++r)
+    {
+        if (auto fr = foldAt(endLine))
+            while (endLine + 1 < n && starts[endLine + 1] < fr.end)
+                ++endLine;
+        ++endLine;
+    }
+
     // Styled runs bucketed per source line, as identity-carrying spans.
     auto byLine = new TextSpan[][](n);
     foreach (ls; byStyledLine(source, events))
     {
-        if (ls.line >= n)
+        if (ls.line >= endLine)
+            break;
+        if (ls.line < firstLine)
             continue;
         const spec = (*theme)[ls.span.label];
         byLine[ls.line] ~= TextSpan(source[ls.span.start .. ls.span.end],
@@ -363,18 +408,14 @@ uint viewCodeDocumentInto(ref Builder b, const(char)[] source,
             srcStart: ls.span.start, srcEnd: ls.span.end);
     }
 
-    size_t lineEnd(size_t li) => li + 1 < n ? starts[li + 1] : source.length;
-
     auto rows = new uint[](0);
-    for (size_t li = 0; li < n; ++li)
+    if (spacer > 0)
+        rows ~= b.add(Widget(kind: WidgetKind.box, height: SizeSpec.fixed(cast(int) spacer)));
+    for (size_t li = firstLine; li < endLine; ++li)
     {
         // A folded region starting on this line collapses line-wise to one
         // placeholder (the outermost when several start here).
-        const(Span)* fr = null;
-        foreach (ref const r; foldedRegions)
-            if (r.start >= starts[li] && r.start < lineEnd(li)
-                && (fr is null || r.end > fr.end))
-                fr = (() @trusted => &r)();
+        const fr = foldAt(li);
         if (fr !is null)
         {
             import sparkles.base.buffer : SharedBuffer;
@@ -462,6 +503,42 @@ uint viewCodeDocumentInto(ref Builder b, const(char)[] source,
                 sawKw = true;
             }
     assert(sawKw);
+}
+
+@("render.widgets.viewCodeDocument.aWindowOfRowsIsTheWholeDocumentsRows")
+@safe unittest
+{
+    import sparkles.syntax.label : LabelSet;
+    import sparkles.syntax.theme : resolveTheme;
+    import sparkles.syntax.themes : builtinDark;
+    import sparkles.ui.state : documentRows;
+    import sparkles.ui.layout : layout;
+
+    // Every window of rows, a fold's placeholder among them, shows the rows
+    // the whole document has there, below a blank spacer.
+    const src = "a0\na1 {\na2\na3\n}\na5\n\na7\na8\n";
+    const labels = LabelSet.standard();
+    const rt = resolveTheme(builtinDark, labels);
+    const ev = [HighlightEvent.sourceSpan(0, src.length)];
+    const fold = [Span(6, 15)]; // "{" on line 1 through "}" on line 4
+    CodeViewOptions opt = {wrap: TextWrap.none, foldedRegions: fold};
+    auto wholeTree = viewCodeDocument(src, ev, (() @trusted => &rt)(), RgbColor.init, opt);
+    const whole = documentRows(wholeTree, layout(wholeTree));
+    assert(whole.length == 6, "lines 2..4 fold into line 1's placeholder");
+
+    foreach (first; 0 .. whole.length)
+        foreach (end; first + 1 .. whole.length + 1)
+        {
+            opt.firstRow = first;
+            opt.endRow = end;
+            auto tree = viewCodeDocument(src, ev, (() @trusted => &rt)(), RgbColor.init, opt);
+            const rows = documentRows(tree, layout(tree));
+            assert(rows.length == end);
+            foreach (y; 0 .. first)
+                assert(rows[y].srcStart == size_t.max && !rows[y].text.length);
+            foreach (y; first .. end)
+                assert(rows[y].text == whole[y].text && rows[y].srcStart == whole[y].srcStart);
+        }
 }
 
 @("render.widgets.viewCodeDocument.tintedRanges")
