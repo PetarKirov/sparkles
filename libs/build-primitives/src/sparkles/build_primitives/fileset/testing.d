@@ -2148,6 +2148,70 @@ auto schemeResolve(S)(string literal, ref const Filesets sets, Fileset f, ref S 
         == ["", "docs", "lib", "lib/x", "lib/x/y", "other", "src", "src/b"]);
 }
 
+/// A stream that declares `leave` hears each directory end once its subtree
+/// is done, the handle of its entries still open; a stream that does not is
+/// never told, and a fold may not declare it.
+@("fileset.scheme.FSS3.leave")
+@system unittest
+{
+    import sparkles.base.vfs.mem : MemVfs;
+    import sparkles.base.vfs.types : OpenMode;
+    import sparkles.build_primitives.fileset.fso : FsoKind;
+    import sparkles.build_primitives.fileset.scheme : FsoRef, shapeOf;
+
+    static struct Leaving
+    {
+        alias Result = string[];
+        string[] events;
+        string[] laterFiles; // a directory's files, read again at its `leave`
+        FsoRef!(MemVfs, Rights.readOnly)[][string] refs;
+
+        bool visit(Entries, Exec)(scope const(char)[] path, Entries es, bool empty, ref Exec exec)
+        {
+            events ~= "visit " ~ path.idup;
+            foreach (e; es)
+                if (e.node.kind == FsoKind.regular)
+                    refs[path.idup] ~= e.ref_;
+            return true;
+        }
+
+        bool leave(Exec)(scope const(char)[] path, ref Exec exec)
+        {
+            events ~= "leave " ~ path.idup;
+            foreach (r; refs.get(path.idup, null))
+            {
+                auto file = r.dir.openFile!(OpenMode.read)(r.name);
+                assert(!file.hasError, "a directory's handle is open until its leave");
+                laterFiles ~= r.name.idup;
+            }
+            return true;
+        }
+
+        bool incomplete(scope const(char)[] path, ErrorKind kind) => false;
+        string[] finish() => events;
+    }
+
+    static assert(shapeOf!Leaving.leave);
+    static assert(!shapeOf!(RecordingScheme!(EntryOrder.none)).leave);
+    static struct FoldLeaving
+    {
+        enum order = EntryOrder.narOrder;
+        enum traversal = Traversal.fold;
+        alias Value = int;
+        alias Result = int;
+        bool leave(Exec)(scope const(char)[] path, ref Exec exec) => true;
+    }
+    static assert(!__traits(compiles, shapeOf!FoldLeaving));
+
+    auto sets = Filesets(CasePolicy.sensitive);
+    RecordingExecutor exec;
+    Leaving s;
+    const events = schemeResolve("a/b/y\na/x\nc\nd/\n", sets, sets.everything, s, exec);
+    assert(events == ["visit ", "visit a", "visit a/b", "leave a/b", "leave a", "visit d",
+        "leave d", "leave "], events.join(" | "));
+    assert(s.laterFiles == ["y", "x", "c"], s.laterFiles.join(" "));
+}
+
 /// FSS2, FSO4: what a scheme declares, and only that, is requested; a
 /// declared mtime arrives with the stat that brings the executable bit.
 @("fileset.scheme.FSS2.metadata")

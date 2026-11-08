@@ -16,6 +16,8 @@ $(TR $(TD `bool incomplete(path, ErrorKind)`) $(TD hears each entry that
 $(TR $(TD `bool visit(path, entries, empty, ref exec)`) $(TD a stream's
     directory, before its subdirectories; `false` aborts))
 $(TR $(TD `Result finish()`) $(TD a stream's result, after all of it))
+$(TR $(TD `bool leave(path, ref exec)`) $(TD optional, a stream's: hears
+    that a directory and everything beneath it are done; `false` aborts))
 $(TR $(TD `alias Value`) $(TD a fold's value of one directory))
 $(TR $(TD `bool fold(path, entries, empty, ref exec, out Value)`) $(TD a
     fold's directory, after its subdirectories; `false` aborts))
@@ -26,6 +28,13 @@ $(TR $(TD `string failure()`) $(TD optional: why it aborted))
 
 A fold that declares `EntryOrder.none` does not compile (FSS5): a value
 computed over listing order is silently different on another host.
+
+A stream sees its directories depth first, each before its subdirectories
+and these in byte order. A serial format, which writes a directory's later
+entries after the whole of an earlier subdirectory, declares `leave`: each
+directory's `leave` comes once its subtree is done, and until then the
+references the directory's `visit` was given stay valid, so the scheme can
+read its remaining files then (A19).
 
 Each entry is a `SchemeEntry`: the name, the node (FSO1), the declared
 metadata, and an `FsoRef` — the directory handle holding the entry and its
@@ -74,11 +83,15 @@ template shapeOf(S)
     else
         private enum Traversal traversal_ = Traversal.stream;
 
+    private enum bool leave_ = __traits(hasMember, S, "leave");
+    static assert(!(traversal_ == Traversal.fold && leave_),
+        S.stringof ~ " is a fold with `leave`: a fold already sees each directory "
+        ~ "after its subtree");
     static assert(!(traversal_ == Traversal.fold && order_ == EntryOrder.none),
         S.stringof ~ " is a fold over EntryOrder.none: a value over listing order "
         ~ "differs between runs and hosts (FSS5)");
 
-    enum SchemeShape shapeOf = SchemeShape(order_, metadata_, traversal_);
+    enum SchemeShape shapeOf = SchemeShape(order_, metadata_, traversal_, leave_);
 }
 
 /// The reference a scheme gets for an entry (FSS4, FSD5): the handle of the
@@ -239,6 +252,15 @@ SchemeResult!S resolveScheme(V, Rights R, S, Exec)(DirRef!(V, R) root, ref const
                     if (!okay)
                         return aborted();
                 }
+                break;
+            case StepKind.leave:
+                static if (shape.leave)
+                {
+                    if (!scheme.leave(m.leftPath, exec))
+                        return aborted();
+                }
+                else
+                    assert(0, "only a scheme with `leave` hears one");
                 break;
             case StepKind.incomplete:
                 if (!scheme.incomplete(m.incompletePath, m.incompleteKind))

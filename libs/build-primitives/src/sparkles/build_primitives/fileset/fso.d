@@ -119,6 +119,9 @@ struct SchemeShape
     EntryOrder order;      ///
     FsoMetadata metadata;  ///
     Traversal traversal;   ///
+    /// A stream hears when a directory and everything beneath it are done
+    /// (`StepKind.leave`); a serial format needs it (A19).
+    bool leave;
 }
 
 /**
