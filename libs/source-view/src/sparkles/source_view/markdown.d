@@ -513,6 +513,52 @@ uint viewMarkdownInto(ref Builder b, const MdDoc doc,
     => blocksColumn(b, doc.root.children, doc.source, opt);
 
 /**
+A run of the document's top-level blocks, `[first, end)`, that lays out as
+one child of the document's column: a block, or a folded heading together
+with the blocks its fold hides.
+
+A segment's height depends on nothing outside it but the options, so a
+viewer can lay out the segments it shows and place the rest by their
+heights ($(LREF viewMarkdownWindowInto)).
+*/
+struct MdSegment
+{
+    size_t first; /// the first block, by index into the root's children
+    size_t end;   /// one past the last block
+}
+
+/// The segments of `blocks` under the fold set `foldedSpans` (block span
+/// starts), in order: the children $(LREF viewMarkdownInto) lays out.
+MdSegment[] mdSegments(in MdBlock[] blocks, in size_t[] foldedSpans) @safe pure nothrow
+{
+    MdSegment[] segments;
+    for (size_t i = 0; i < blocks.length;)
+    {
+        const end = segmentEnd(blocks, i, foldedSpans);
+        segments ~= MdSegment(i, end);
+        i = end;
+    }
+    return segments;
+}
+
+/**
+Appends the view of the segments `[first, end)` of `doc` (as
+$(LREF mdSegments) numbers them) to `b`, the first one `above` rows down:
+the window of a document whose other segments are only placed, not built.
+
+Every row of the window is the row the whole document's view has there, as
+long as `above` is the height of the segments before it with the column's
+gap after each. Returns the column's root; its children are the segments,
+after a blank spacer when `above > 0`.
+*/
+uint viewMarkdownWindowInto(ref Builder b, const MdDoc doc, MdViewOptions opt,
+    MdSegment window, int above)
+    in (window.first <= window.end && window.end <= doc.root.children.length)
+    in (above >= 0)
+    => blocksColumn(b, doc.root.children[window.first .. window.end], doc.source, opt,
+        above: above);
+
+/**
 The frame's OSC 8 URI table: destinations interned to small ids, so a
 `TextSpan` carries a `ushort` rather than a slice and the terminal renderer
 turns a run of equal ids into one hyperlink.
@@ -685,13 +731,34 @@ private string tabTitle(ref const MdBlock fence) @safe pure nothrow
     return icon.length ? icon ~ " " ~ l.idup : l.idup;
 }
 
+// One past the last block of the segment starting at `i`: a folded heading
+// hides every following block up to the next heading of its level or above.
+private size_t segmentEnd(in MdBlock[] blocks, size_t i, in size_t[] foldedSpans)
+    @safe pure nothrow @nogc
+{
+    import std.algorithm.searching : canFind;
+
+    if (!foldedSpans.canFind(blocks[i].span.start) || blocks[i].kind != MdBlockKind.heading)
+        return i + 1;
+    const level = blocks[i].level;
+    size_t end = i + 1;
+    while (end < blocks.length
+        && !(blocks[end].kind == MdBlockKind.heading && blocks[end].level <= level))
+        ++end;
+    return end;
+}
+
 private uint blocksColumn(ref Builder b, in MdBlock[] blocks,
     const(char)[] src, MdViewOptions opt, int listDepth = 0,
-    int quoteDepth = 0)
+    int quoteDepth = 0, int above = 0)
 {
     import std.algorithm.searching : canFind;
 
     auto rows = new uint[](0);
+    // A window's spacer: the column's gap after it puts the first block
+    // `above` rows down.
+    if (above > 0)
+        rows ~= b.add(Widget(kind: WidgetKind.box, height: SizeSpec.fixed(above - 1)));
     for (size_t i = 0; i < blocks.length; ++i)
     {
         if (opt.foldedSpans.canFind(blocks[i].span.start))
@@ -705,16 +772,8 @@ private uint blocksColumn(ref Builder b, in MdBlock[] blocks,
             // reopened.
             const foldIdx = i;
             const foldStart = blocks[i].span.start;
-            const foldLevel = blocks[i].level;
-            size_t srcEnd = blocks[i].span.end;
-            if (blocks[i].kind == MdBlockKind.heading)
-                while (i + 1 < blocks.length
-                    && !(blocks[i + 1].kind == MdBlockKind.heading
-                        && blocks[i + 1].level <= foldLevel))
-                {
-                    ++i;
-                    srcEnd = blocks[i].span.end;
-                }
+            i = segmentEnd(blocks, i, opt.foldedSpans) - 1;
+            const srcEnd = blocks[i].span.end;
             rows ~= collapsedFace(b, blocks[foldIdx], foldStart, srcEnd, src,
                 opt, listDepth, quoteDepth);
             continue;
@@ -3637,6 +3696,69 @@ came to emit no hyperlinks at all while every unit test passed.
         if (t.hitId == hitBase + 0)
             sawKey = true;
     assert(sawKey, "the placeholder unfolds the folded section");
+}
+
+@("md.render_widgets.viewMarkdownWindowInto.rowsAreTheWholeViewsRows")
+@safe unittest
+{
+    import sparkles.ui.geometry : Constraints;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.state : documentRows;
+
+    // Every window of segments, placed by the heights the whole view gives
+    // them, shows exactly the whole view's rows — a fold's hidden blocks
+    // included in its heading's segment.
+    const src = "## A\n\nbody a is long enough to wrap\n\n### B\n\nbody b\n\n## C\n\nbody c\n";
+    auto doc = MdDoc(MdBlock(kind: MdBlockKind.document, children: [
+        MdBlock(kind: MdBlockKind.heading, level: 2, span: Span(0, 4),
+            inlines: [MdInline(kind: MdInlineKind.text, span: Span(3, 4))]),
+        MdBlock(kind: MdBlockKind.paragraph, span: Span(6, 34),
+            inlines: [MdInline(kind: MdInlineKind.text, span: Span(6, 34))]),
+        MdBlock(kind: MdBlockKind.heading, level: 3, span: Span(36, 41),
+            inlines: [MdInline(kind: MdInlineKind.text, span: Span(40, 41))]),
+        MdBlock(kind: MdBlockKind.paragraph, span: Span(43, 49),
+            inlines: [MdInline(kind: MdInlineKind.text, span: Span(43, 49))]),
+        MdBlock(kind: MdBlockKind.heading, level: 2, span: Span(51, 55),
+            inlines: [MdInline(kind: MdInlineKind.text, span: Span(54, 55))]),
+        MdBlock(kind: MdBlockKind.paragraph, span: Span(57, 63),
+            inlines: [MdInline(kind: MdInlineKind.text, span: Span(57, 63))]),
+    ]), src);
+    MdViewOptions opt = {foldedSpans: [36UL], maxWidth: 12};
+    const segments = mdSegments(doc.root.children, opt.foldedSpans);
+    assert(segments == [MdSegment(0, 1), MdSegment(1, 2), MdSegment(2, 4),
+        MdSegment(4, 5), MdSegment(5, 6)]);
+
+    auto whole = Builder();
+    const wholeRoot = viewMarkdownInto(whole, doc, opt);
+    auto wholeTree = whole.finish(wholeRoot);
+    auto wholeFrames = layout(wholeTree, Constraints(maxW: 12));
+    const wholeRows = documentRows(wholeTree, wholeFrames);
+    int[] tops;
+    foreach (child; wholeTree.nodes[wholeRoot].children)
+        tops ~= wholeFrames[child].rect.y;
+    assert(tops.length == segments.length);
+    assert(wholeFrames[wholeTree.nodes[wholeRoot].children[1]].rect.height > 1,
+        "the paragraph wraps");
+
+    foreach (first; 0 .. segments.length)
+        foreach (end; first + 1 .. segments.length + 1)
+        {
+            const window = MdSegment(segments[first].first, segments[end - 1].end);
+            auto b = Builder();
+            const root = viewMarkdownWindowInto(b, doc, opt, window, tops[first]);
+            auto tree = b.finish(root);
+            auto frames = layout(tree, Constraints(maxW: 12));
+            const rows = documentRows(tree, frames);
+            const bottom = end < segments.length ? tops[end] - 1 : cast(int) wholeRows.length;
+            assert(rows.length == bottom);
+            foreach (y; tops[first] .. bottom)
+                assert(rows[y].text == wholeRows[y].text
+                    && rows[y].srcStart == wholeRows[y].srcStart
+                    && rows[y].srcEnd == wholeRows[y].srcEnd);
+            foreach (y; 0 .. tops[first])
+                assert(rows[y].text.length == 0 && rows[y].srcStart == size_t.max,
+                    "the spacer is blank");
+        }
 }
 
 @("md.render_widgets.codeGroup.oneFenceBehindTabs")
