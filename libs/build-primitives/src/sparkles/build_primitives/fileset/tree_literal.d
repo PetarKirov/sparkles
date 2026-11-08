@@ -10,7 +10,8 @@ $(TABLE
 $(TR $(TH Line) $(TH Entry))
 $(TR $(TD `src/`) $(TD a directory; missing parents are created))
 $(TR $(TD `src/a.d`) $(TD an empty regular file))
-$(TR $(TD `src/a.d = text`) $(TD a regular file holding `text`))
+$(TR $(TD `src/a.d = text`) $(TD a regular file holding `text`, in which `\n`
+    is a newline and `\\` a backslash))
 $(TR $(TD `bin/run +x`) $(TD an executable regular file; `= text` may follow))
 $(TR $(TD `lib -> ../x`) $(TD a symbolic link, its target stored verbatim))
 $(TR $(TD `# note`) $(TD a comment; blank lines are skipped too))
@@ -101,6 +102,9 @@ FilesetExpected!(Unique!MemTree) memTree(scope const(char)[] literal, size_t spa
     return filesetOk(move(tree));
 }
 
+/// The most bytes one file of a tree literal may hold.
+enum size_t treeLiteralContentRoom = 4096;
+
 /// Adds the entries of `literal` to `vfs`, beneath its root.
 FilesetExpected!void loadTreeLiteral(ref MemVfs vfs, scope const(char)[] literal)
     @safe nothrow @nogc
@@ -125,7 +129,7 @@ FilesetExpected!void loadTreeLiteral(ref MemVfs vfs, scope const(char)[] literal
                     "a link needs a path and a target");
             done = vfs.symlink(path, target);
         }
-        else if (line[$ - 1] == '/')
+        else if (line[$ - 1] == '/' && find(line, " = ") == size_t.max)
             done = vfs.mkdirs(line);
         else
         {
@@ -148,7 +152,20 @@ FilesetExpected!void loadTreeLiteral(ref MemVfs vfs, scope const(char)[] literal
             if (path.length == 0)
                 return filesetErr!void(FilesetErrorCode.malformedTreeLiteral, number,
                     "a file needs a path");
-            done = vfs.writeFile(path, cast(const(ubyte)[]) content, executable);
+            char[treeLiteralContentRoom] decoded = void;
+            size_t n;
+            for (size_t i = 0; i < content.length; ++i)
+            {
+                if (n == decoded.length)
+                    return filesetErr!void(FilesetErrorCode.treeLiteralTooLarge, number,
+                        "a file's text exceeds treeLiteralContentRoom");
+                char c = content[i];
+                if (c == '\\' && i + 1 < content.length
+                    && (content[i + 1] == 'n' || content[i + 1] == '\\'))
+                    c = content[++i] == 'n' ? '\n' : '\\';
+                decoded[n++] = c;
+            }
+            done = vfs.writeFile(path, cast(const(ubyte)[]) decoded[0 .. n], executable);
         }
         if (!done)
             return filesetErr!void(FilesetErrorCode.treeLiteralTooLarge, number,
@@ -179,6 +196,15 @@ FilesetExpected!void loadTreeLiteral(ref MemVfs vfs, scope const(char)[] literal
     assert(tree.vfs.kindOf("docs") == EntryKind.directory);
     assert(tree.vfs.kindOf("lib") == EntryKind.symlink);
     assert(tree.vfs.contents("lib") == "src");
+}
+
+/// A file's text may hold newlines, escaped.
+@("fileset.treeLiteral.escapes")
+@safe nothrow @nogc unittest
+{
+    auto made = memTree(`.gitignore = *.o\n!keep.o\nback\\slash`);
+    assert(!made.hasError);
+    assert(made.value.get().vfs.contents(".gitignore") == "*.o\n!keep.o\nback\\slash");
 }
 
 @("fileset.treeLiteral.errors")

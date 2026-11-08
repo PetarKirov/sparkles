@@ -255,6 +255,54 @@ listed name, so skipping such a line changes no verdict. A rule over
 [`FSG4`](./SPEC.md#5-matching-fsg)'s bounds is the one case where skipping
 can change a verdict, and it is counted like the rest.
 
+### A16 — The resolution finds the scopes, and reads only `.gitignore` files
+
+`Filesets.gitignored` is a leaf whose scopes only a resolution knows: the
+machine reads each `.gitignore` as it walks, applying it to the paths beneath
+its own directory ([`FSI1`–`FSI4`](./SPEC.md#9-ignore-scopes-fsi)). This is
+the one content read the machine makes
+([`FSM4`](./SPEC.md#7-the-resolution-machine-fsm)). Which files it reads:
+
+- **Above a start root:** the fileset root's and each directory's on the
+  way down to the root, one `readFile` batch each, before the root is
+  listed. A start root may sit deep in the tree ([`FSA2`](./SPEC.md#6-analysis-and-planning-fsa)),
+  and the rules above it still apply to it.
+- **In the walk:** a directory's own, after it is listed and before its
+  entries are evaluated. Its entries' verdicts depend on those rules, so
+  that read is a batch of its own, ahead of the entries' one `stat` batch
+  ([`FSM3`](./SPEC.md#7-the-resolution-machine-fsm)).
+- **Not read:** one in an excluded directory, which git never reads either,
+  so forced entry beneath it ([`FSA5`](./SPEC.md#6-analysis-and-planning-fsa))
+  sees nothing re-included. One listed as a link, which git no longer
+  follows.
+  Anything outside the fileset root: `$GIT_DIR/info/exclude`,
+  `core.excludesFile`, and the `.gitignore` of a directory above the fileset
+  root.
+
+So the fileset root is the repository's root when git's view is wanted. The
+other exclude sources are the repository's or the user's configuration, not
+files of the tree, and a consumer composes them with
+`Filesets.ignored(text)` at that root.
+
+The alternative rejected was a caller-supplied chain: the caller would read
+every `.gitignore` before resolving, which is a walk of its own.
+
+Failure is split by cause. A `.gitignore` that cannot be read is reported
+incomplete ([`FSE2`](./SPEC.md#10-errors-and-partial-results-fse)) and its
+rules do not apply. One larger than `IgnoreLimits.maxFileBytes`, or scopes
+beyond any other `IgnoreLimits` bound, end the resolution with
+`capacityExceeded` ([`FSM7`](./SPEC.md#7-the-resolution-machine-fsm)). A
+silently dropped scope would include what git excludes.
+
+Reading needs a root opened with read rights. `filesetRights` alone answers
+`readFile` with `unsupported`, so a `gitignored` fileset there fails naming
+the kind ([`FSM2`](./SPEC.md#7-the-resolution-machine-fsm)) rather than
+resolving as if no `.gitignore` existed.
+
+`FilesetEvaluator.contains` and the planner have no scopes. For them the
+leaf excludes nothing beyond what is already known, so a directory beneath
+no excluded one is `maybe` excluded and is still descended (`FSA1`).
+
 ## Open
 
 ### D1 — Which Merkle shape

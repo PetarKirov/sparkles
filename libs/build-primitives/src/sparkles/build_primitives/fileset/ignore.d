@@ -257,6 +257,7 @@ struct IgnoreScopes
     private uint scopesTop, rulesTop, textTop, positionsTop;
     private uint peakScopes_, peakTextBytes_;
     private uint skipped_;
+    private bool overflowed_;
 
     /// Where the arena stands, for `release`.
     static struct Mark
@@ -266,7 +267,7 @@ struct IgnoreScopes
     }
 
     /// An arena within `limits` whose patterns match under `policy`. Allocates.
-    this(CasePolicy policy, IgnoreLimits limits) @safe nothrow
+    this(CasePolicy policy, IgnoreLimits limits) @safe nothrow @nogc
     {
         import sparkles.build_primitives.fileset.pattern : maxPatternSegments;
 
@@ -308,6 +309,10 @@ struct IgnoreScopes
 
     /// Rule lines git reads that the fileset syntax cannot, and were skipped.
     uint skippedRules() const @safe pure nothrow @nogc => skipped_;
+
+    /// Whether `enter` ever lacked room for a block. Sticky: a resolution
+    /// treats it as a bound exceeded.
+    bool overflowed() const @safe pure nothrow @nogc => overflowed_;
 
     /// The scope `s`.
     IgnoreScope opIndex(uint s) const @safe pure nothrow @nogc => scopes[s];
@@ -441,7 +446,11 @@ struct IgnoreScopes
         const count = scopes[sc].chainRules;
         const block = allocBlock(sc, count);
         if (block == noScope)
+        {
+            overflowed_ = true;
+            child = parent;
             return false;
+        }
         bool excluded;
         uint[maxScopeChain] chain = void;
         uint k;

@@ -21,9 +21,10 @@ module sparkles.build_primitives.fileset.testing;
 import std.algorithm.searching : canFind;
 import std.array : join, split;
 import std.ascii : toLower;
-import std.conv : octal;
+import std.conv : octal, to;
 import std.random : Mt19937, uniform;
 
+import sparkles.base.io.errors : ErrorKind;
 import sparkles.base.vfs.handles : DirRef;
 import sparkles.base.vfs.types : EntryKind, Rights;
 
@@ -98,6 +99,8 @@ bool naiveContains(ref const Filesets sets, Fileset f, string path, bool executa
             case FilesetOp.nothing: return false;
             case FilesetOp.everything: return true;
             case FilesetOp.executable: return executable;
+            // The scopes are known only to a resolution; a path alone has none.
+            case FilesetOp.gitignored: return false;
             case FilesetOp.union_: return eval(n.a) || eval(n.b);
             case FilesetOp.intersection: return eval(n.a) && eval(n.b);
             case FilesetOp.difference: return eval(n.a) && !eval(n.b);
@@ -815,7 +818,7 @@ void materialize(string literal, string dir) @system
             }
             continue;
         }
-        if (line[$ - 1] == '/')
+        if (line[$ - 1] == '/' && !line.canFind(" = "))
         {
             mkdirRecurse(buildPath(dir, line));
             continue;
@@ -824,8 +827,11 @@ void materialize(string literal, string dir) @system
         auto path = line;
         if (auto eq = line.findSplit(" = "))
         {
+            import std.array : replace;
+
             path = eq[0];
-            content = eq[2];
+            // The tree literal's escapes: `\n` a newline, `\\` a backslash.
+            content = eq[2].replace(`\\`, "\x00").replace(`\n`, "\n").replace("\x00", `\`);
         }
         bool exec;
         if (path.length > 3 && path[$ - 3 .. $] == " +x")
@@ -1075,12 +1081,16 @@ struct RecordingExecutor
 
     size_t[] sizes;             /// each batch's length
     size_t stats;               /// stat requests performed
+    string[] reads;             /// the name of each `readFile` request
     void delegate() beforeStats; /// called once, if set
 
     /// Runs `batch` inline.
     void run(Perform)(scope const(Request)[] batch, scope Perform perform)
     {
         sizes ~= batch.length;
+        foreach (ref r; batch)
+            if (r.kind == RequestKind.readFile)
+                reads ~= r.name.idup;
         if (batch.length && batch[0].kind == RequestKind.stat)
         {
             stats += batch.length;
@@ -1323,5 +1333,340 @@ version (Posix)
         auto created = Sched.create(s);
         if (created.hasError)
             skipTest("no event loop on this host");
+    }
+}
+
+// ---------------------------------------------------------------- M4
+
+/**
+Nested `.gitignore` scopes exercising each clause of FSI4: the root's rules,
+a deeper scope re-including (`src`) and anchoring to its own directory
+(`/gen/`), a scope inside an excluded directory that must never be read
+(`build`), and one deep scope (`lib/x`).
+*/
+enum string nestedScopes = `
+    .gitignore = *.log\nbuild/\n/top.txt\nlib/x/z.c
+    top.txt
+    a.log
+    keep/
+    src/.gitignore = !*.log\n/gen/
+    src/a.log
+    src/x.d
+    src/gen/out.d
+    src/sub/gen/in.d
+    build/.gitignore = !*
+    build/o.o
+    lib/x/.gitignore = *.d
+    lib/x/y.d
+    lib/x/z.c
+    lib/w.d
+`;
+
+/// What `nestedScopes` leaves when the scopes' exclusions are taken away.
+static immutable string[] nestedScopesKept = [".gitignore", "lib/w.d", "lib/x/.gitignore",
+    "src/.gitignore", "src/a.log", "src/sub/gen/in.d", "src/x.d"];
+
+/// Members of `f` over a tree literal, sorted, with the requests' record.
+private string[] resolveSorted(string literal, scope Fileset delegate(ref Filesets) @safe make,
+    out RecordingExecutor exec) @system
+{
+    import std.algorithm.sorting : sort;
+
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+
+    auto tree = openFixture(literal);
+    auto root = openRoot!(Rights.readOnly)(&tree.value.get().vfs, "", ambientAuthority());
+    assert(!root.hasError);
+    auto sets = Filesets(CasePolicy.sensitive);
+    const f = make(sets);
+    PathCollector sink;
+    auto r = resolveWith(root.value.borrow, sets, f, sink, exec);
+    assert(!r.hasError, r.hasError ? r.error.context : "");
+    return sink.members.sort.release;
+}
+
+/// FSI4, on the in-memory driver: each clause of git's precedence.
+@("fileset.machine.FSI4.nestedScopes")
+@system unittest
+{
+    RecordingExecutor exec;
+    const kept = resolveSorted(nestedScopes,
+        (ref Filesets s) @safe => s.difference(s.everything, s.gitignored), exec);
+    assert(kept == nestedScopesKept, kept.to!string);
+    // The excluded `build/` is never entered, so its `.gitignore` is not read.
+    assert(exec.reads == [".gitignore", ".gitignore", ".gitignore"], exec.reads.to!string);
+}
+
+/// The scopes above a start root are read before it is listed, and none is
+/// read inside an excluded directory; forced entry still reaches beneath one
+/// (FSA5).
+@("fileset.machine.FSI.prefixScopes")
+@system unittest
+{
+    import std.algorithm.sorting : sort;
+
+    RecordingExecutor exec;
+    // `lib/x` starts the walk; the root's `lib/x/z.c` still applies.
+    assert(resolveSorted(nestedScopes,
+        (ref Filesets s) @safe => s.difference(s.glob("lib/x/**").value, s.gitignored), exec)
+        == ["lib/x/.gitignore"]);
+    assert(exec.reads == [".gitignore", "lib/.gitignore", ".gitignore"], exec.reads.to!string);
+
+    // The root's `build/` excludes the start root: nothing beneath is read.
+    RecordingExecutor excluded;
+    assert(resolveSorted(nestedScopes,
+        (ref Filesets s) @safe => s.difference(s.glob("build/**").value, s.gitignored), excluded)
+        .length == 0);
+    assert(excluded.reads == [".gitignore"], excluded.reads.to!string);
+
+    RecordingExecutor forced;
+    const both = resolveSorted(nestedScopes, (ref Filesets s) @safe => s.union_(
+        s.difference(s.everything, s.gitignored), s.glob("build/**/*.o").value), forced);
+    assert(both == (nestedScopesKept.dup ~ "build/o.o").sort.release, both.to!string);
+}
+
+/// FSM2: a root opened without read rights cannot read a `.gitignore`, and
+/// says so rather than resolving without the scopes.
+@("fileset.driver.FSI.needsReadRights")
+@system unittest
+{
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+    import sparkles.build_primitives.fileset.driver : filesetRights;
+    import sparkles.build_primitives.fileset.machine : RequestKind, ResolutionErrorCode;
+
+    auto tree = openFixture(nestedScopes);
+    auto root = openRoot!filesetRights(&tree.value.get().vfs, "", ambientAuthority());
+    auto sets = Filesets(CasePolicy.sensitive);
+    const f = sets.difference(sets.everything, sets.gitignored);
+    PathCollector sink;
+    const r = resolve(root.value.borrow, sets, f, sink);
+    assert(r.hasError && r.error.code == ResolutionErrorCode.unsupportedRequest
+        && r.error.kind == RequestKind.readFile);
+}
+
+/// FSI2: the scope arena holds at most one scope per directory with a
+/// `.gitignore`, and is released as the walk leaves each subtree.
+@("fileset.machine.FSI2.residency")
+@system unittest
+{
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+    import sparkles.base.vfs.mem : MemVfs;
+    import sparkles.build_primitives.fileset.driver : FilesetDriver;
+    import sparkles.build_primitives.fileset.machine : Resolution, StepKind;
+
+    // Two siblings with scopes, each with a nested one: four `.gitignore`s,
+    // three of them never on the walk's path at once.
+    auto tree = openFixture(`
+        .gitignore = *.o
+        a/.gitignore = *.a
+        a/deep/.gitignore = *.b
+        a/deep/f.c
+        b/.gitignore = *.c
+        b/g.d
+    `);
+    auto root = openRoot!(Rights.readOnly)(&tree.value.get().vfs, "", ambientAuthority());
+    auto sets = Filesets(CasePolicy.sensitive);
+    const f = sets.difference(sets.everything, sets.gitignored);
+    auto m = Resolution(sets, f);
+    auto driver = FilesetDriver!(MemVfs, Rights.readOnly)(ResolutionLimits.init.maxFrames);
+    auto cursor = m.start();
+    for (StepKind kind; m.step(sets, cursor, 4096, kind) && kind != StepKind.done; )
+    {
+        driver.retire(m.retired);
+        if (kind == StepKind.needIO)
+            foreach (i; 0 .. m.batch.length)
+                driver.perform(m, root.value.borrow, i);
+    }
+    assert(m.error.code == ResolutionErrorCode.none);
+    assert(m.ignorePeakScopes == 3, m.ignorePeakScopes.to!string);
+}
+
+/// FSD1 with scopes: the three backends read the same `.gitignore` files
+/// and resolve the same members.
+version (Posix)
+@("fileset.driver.FSI.threeBackends")
+@system unittest
+{
+    import std.file : rmdirRecurse;
+
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+    import sparkles.build_primitives.fileset.driver_loop : LoopExecutor;
+    import sparkles.event_horizon.admission : Admission;
+    import sparkles.event_horizon.sched : Sched;
+    import sparkles.event_horizon.sys : BlockingVfs;
+    import sparkles.event_horizon.vfs : RingVfs;
+
+    Sched s;
+    schedOrSkip(s);
+    auto sets = Filesets(CasePolicy.sensitive);
+    const f = sets.difference(sets.everything, sets.gitignored);
+
+    auto tree = openFixture(nestedScopes);
+    auto memRoot = openRoot!(Rights.readOnly)(&tree.value.get().vfs, "", ambientAuthority());
+    const mem = machineResolve(memRoot.value.borrow, sets, f).transcript;
+
+    const dir = scratchTree("scopes");
+    scope (exit) rmdirRecurse(dir);
+    materialize(nestedScopes, dir);
+    auto blocking = new BlockingVfs;
+    auto blockingRoot = openRoot!(Rights.readOnly)(blocking, dir, ambientAuthority());
+    const native = machineResolve(blockingRoot.value.borrow, sets, f).transcript;
+
+    string ring;
+    auto r = s.run(() {
+        auto rv = new RingVfs;
+        auto ringRoot = openRoot!(Rights.readOnly)(rv, dir, ambientAuthority());
+        auto exec = LoopExecutor!Sched(&s, new Admission(4));
+        PathCollector sink;
+        assert(!resolveWith(ringRoot.value.borrow, sets, f, sink, exec).hasError);
+        ring = sink.transcript;
+    });
+    assert(!r.hasError);
+    assert(mem == native && native == ring, "MemVfs:\n" ~ mem ~ "BlockingVfs:\n" ~ native
+        ~ "RingVfs:\n" ~ ring);
+}
+
+/// A sink that records which rule decided each entry (FSI3).
+struct DecisionCollector
+{
+    PathCollector paths;  /// the members, as `PathCollector` collects them
+    string[string] rules; /// `source:line` by path
+    bool[string] excludedDirs; /// the directories a rule excluded
+
+    /// Receives a resolved directory.
+    void directory(Members)(scope const(char)[] path, Members names, bool empty)
+        => paths.directory(path, names, empty);
+
+    /// Receives an entry that could not be read.
+    void incomplete(scope const(char)[] path, ErrorKind kind) => paths.incomplete(path, kind);
+
+    /// Receives the rule deciding an entry.
+    void ignoreDecision(scope const(char)[] path, bool isDir, bool excluded,
+        scope const(char)[] source, uint line, scope const(char)[] pattern)
+    {
+        import std.conv : text;
+
+        rules[path.idup] = text(source, ":", line);
+        if (isDir && excluded)
+            excludedDirs[path.idup] = true;
+    }
+}
+
+version (Posix)
+{
+    import sparkles.build_primitives.testing : TmpGitRepo, gitAvailable;
+
+    /// Materializes `literal` in a fresh repository and resolves `everything -
+    /// gitignored - /.git` there, recording decisions.
+    private DecisionCollector resolveInRepository(ref TmpGitRepo repo, string literal) @system
+    {
+        import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+        import sparkles.event_horizon.sys : BlockingVfs;
+
+        materialize(literal, repo.dir);
+        auto vfs = new BlockingVfs;
+        auto root = openRoot!(Rights.readOnly)(vfs, repo.dir, ambientAuthority());
+        assert(!root.hasError);
+        auto sets = Filesets(CasePolicy.sensitive);
+        const f = sets.difference(sets.difference(sets.everything, sets.gitignored),
+            sets.glob("/.git").value);
+        DecisionCollector sink;
+        const r = resolve(root.value.borrow, sets, f, sink);
+        assert(!r.hasError, r.hasError ? r.error.context : "");
+        return sink;
+    }
+
+    // Git with no global excludes file, so only the repository's rules apply.
+    private auto gitOracle(ref TmpGitRepo repo, string[] args) @safe
+    {
+        import std.path : buildPath;
+
+        return repo.git(["-c", "core.excludesFile=" ~ buildPath(repo.dir, ".git", "no-such-file")]
+            ~ args);
+    }
+
+    /// FSI4's detection: on the nested fixture, the members are exactly the
+    /// files git reports as untracked and not ignored.
+    @("fileset.machine.FSI4.matchesGit")
+    @system unittest
+    {
+        import std.algorithm.sorting : sort;
+        import std.array : array;
+        import std.string : lineSplitter;
+
+        import sparkles.build_primitives.testing : TmpGitRepo, gitAvailable;
+        import sparkles.test_runner.skip : skipTest;
+
+        if (!gitAvailable)
+            return skipTest("git is not on PATH");
+        auto repo = TmpGitRepo.create();
+        auto got = resolveInRepository(repo, nestedScopes).paths.members.sort.release;
+        const listed = gitOracle(repo, ["ls-files", "--others", "--exclude-standard"]);
+        assert(listed.status == 0, listed.output);
+        auto want = listed.output.lineSplitter.array.sort.release;
+        assert(got == want, "machine: " ~ got.to!string ~ "\ngit:     " ~ want.to!string);
+        assert(got == nestedScopesKept);
+    }
+
+    /// FSI3's detection: for every path of the fixture, the file and line
+    /// of the deciding rule are those `git check-ignore -v` reports; beneath
+    /// an excluded directory, git names the rule that excluded it.
+    @("fileset.machine.FSI3.checkIgnoreParity")
+    @system unittest
+    {
+        import std.algorithm.searching : findSplit, startsWith;
+        import std.algorithm.sorting : sort;
+        import std.array : array, join;
+        import std.file : SpanMode, dirEntries;
+        import std.path : relativePath;
+        import std.string : lineSplitter;
+
+        import sparkles.build_primitives.testing : TmpGitRepo, gitAvailable;
+        import sparkles.test_runner.skip : skipTest;
+
+        if (!gitAvailable)
+            return skipTest("git is not on PATH");
+        auto repo = TmpGitRepo.create();
+        auto seen = resolveInRepository(repo, nestedScopes);
+
+        string[] paths;
+        foreach (e; dirEntries(repo.dir, SpanMode.breadth, false))
+        {
+            const p = relativePath(e.name, repo.dir);
+            if (p != ".git" && !p.startsWith(".git/"))
+                paths ~= p;
+        }
+        paths.sort;
+
+        // `-n` reports every path, `::` when no rule matched.
+        const asked = gitOracle(repo, ["check-ignore", "-v", "-n", "--no-index", "--"] ~ paths);
+        string[string] git;
+        foreach (line; asked.output.lineSplitter)
+        {
+            auto tab = line.findSplit("\t");
+            auto where = tab[0];
+            // `source:line:pattern`: the pattern may hold `:` itself.
+            auto first = where.findSplit(":");
+            auto second = first[2].findSplit(":");
+            git[tab[2]] = first[0].length ? first[0] ~ ":" ~ second[0] : "";
+        }
+        assert(git.length == paths.length, asked.output);
+
+        string ours(string p)
+        {
+            // Beneath an excluded directory, the rule that excluded it.
+            foreach (i, c; p)
+                if (c == '/' && p[0 .. i] in seen.excludedDirs)
+                    return seen.rules[p[0 .. i]];
+            if (auto r = p in seen.rules)
+                return *r;
+            return "";
+        }
+
+        string[] mismatches;
+        foreach (p; paths)
+            if (ours(p) != git[p])
+                mismatches ~= p ~ ": machine `" ~ ours(p) ~ "`, git `" ~ git[p] ~ "`";
+        assert(mismatches.length == 0, mismatches.join("\n"));
     }
 }

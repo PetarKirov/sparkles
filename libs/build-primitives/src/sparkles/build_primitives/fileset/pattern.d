@@ -183,7 +183,7 @@ struct PatternSet
     never allocates, and returns `capacityExceeded` for a pattern that might
     not fit. Allocates.
     */
-    void reserve(size_t patterns, size_t segments, size_t programs) @safe pure nothrow
+    void reserve(size_t patterns, size_t segments, size_t programs) @safe pure nothrow @nogc
     {
         patterns_.reserve(patterns);
         segments_.reserve(segments);
