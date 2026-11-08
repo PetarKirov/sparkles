@@ -26,7 +26,8 @@ module sparkles.build_primitives.fileset.plan;
 
 import sparkles.base.buffer : HeapBuffer;
 
-import sparkles.build_primitives.fileset.pattern : CasePolicy, PatternInfo, Segment, SegmentKind;
+import sparkles.build_primitives.fileset.pattern : CasePolicy, PatternInfo, Segment, SegmentKind,
+    uniqueUnderNfc;
 import sparkles.build_primitives.fileset.value : DirVerdict, Fileset, FilesetEvaluator,
     FilesetOp, Filesets;
 
@@ -132,10 +133,7 @@ bool rootSafe(in Segment s, CasePolicy policy) @safe pure nothrow @nogc
 {
     if (s.kind != SegmentKind.literal || !s.ascii || policy != CasePolicy.sensitive)
         return false;
-    foreach (c; s.text)
-        if (c == 'K' || c == '`' || c == ';')
-            return false;
-    return true;
+    return uniqueUnderNfc(s.text);
 }
 
 /**

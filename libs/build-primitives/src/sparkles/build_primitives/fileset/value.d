@@ -25,7 +25,7 @@ Specified in `docs/specs/build-primitives/filesets/SPEC.md` §4–§6.
 */
 module sparkles.build_primitives.fileset.value;
 
-import sparkles.base.buffer : HeapBuffer;
+import sparkles.base.buffer : HeapBuffer, UniqueBuffer;
 import sparkles.base.unique : Unique, makeUnique;
 
 import sparkles.build_primitives.fileset.pattern : CasePolicy, FilesetErrorCode, FilesetExpected,
@@ -125,12 +125,21 @@ struct Filesets
     package PatternSet patterns;
     package HeapBuffer!FilesetNode nodes;
     package HeapBuffer!IgnoreRule rules;
+    private UniqueBuffer!(char[], 4) owned_; // translated `.gitignore` patterns
     private uint stateWords_;
 
     /// An empty arena whose patterns match under `policy` (FSG3).
     this(CasePolicy policy) @safe pure nothrow @nogc
     {
         patterns = PatternSet(policy);
+    }
+
+    ~this() @safe nothrow @nogc
+    {
+        import core.memory : pureFree;
+
+        foreach (s; owned_[])
+            (() @trusted => pureFree(s.ptr))();
     }
 
     /// The matching policy.
@@ -171,11 +180,19 @@ struct Filesets
     The files a `.gitignore` at the fileset root whose text is `source`
     excludes: within the scope, the last matching rule decides, and nothing
     beneath an excluded directory is re-included (FSI4's first and third
-    clauses; nested scopes are milestone M4's). The text is borrowed.
+    clauses; nested scopes are `gitignored`'s). Each line is read as git
+    reads it (`readIgnoreLine`). The arena keeps its own translation of the
+    text. An error's offset is the failing line's, plus the offset within
+    its translated pattern.
     */
     FilesetExpected!Fileset ignored(string source) @safe nothrow @nogc
     {
+        import sparkles.build_primitives.fileset.ignore : IgnoreLineKind, ignoreLineRoom,
+            readIgnoreLine;
+
         const first = rules.length;
+        auto text = ownText(ignoreLineRoom(source.length));
+        size_t used;
         uint line;
         size_t start;
         foreach (i; 0 .. source.length + 1)
@@ -183,33 +200,44 @@ struct Filesets
             if (i < source.length && source[i] != '\n')
                 continue;
             ++line;
-            auto text = source[start .. i];
+            const lineText = source[start .. i];
             const at = start;
             start = i + 1;
-            if (text.length && text[$ - 1] == '\r')
-                text = text[0 .. $ - 1];
-            text = trimRuleEnd(text);
-            if (text.length == 0 || text[0] == '#')
+            const read = readIgnoreLine(lineText, text[used .. used + ignoreLineRoom(lineText.length)]);
+            if (read.kind == IgnoreLineKind.blank)
                 continue;
-            bool negated;
-            if (text[0] == '!')
-            {
-                negated = true;
-                text = text[1 .. $];
-            }
-            else if (text[0] == '\\' && text.length > 1 && (text[1] == '!' || text[1] == '#'))
-                text = text[1 .. $];
-            auto p = patterns.add(text);
+            // The arena owns the translation until it is destroyed.
+            auto pattern = (() @trusted => cast(string) text[used .. used + read.length])();
+            used += read.length;
+            auto p = patterns.add(pattern);
             if (p.hasError)
             {
                 rules.length = first;
                 return filesetErr!Fileset(p.error.code, at + p.error.offset, p.error.context);
             }
-            rules ~= IgnoreRule(p.value, negated, line);
+            rules ~= IgnoreRule(p.value, read.negated, line);
         }
         const count = rules.length - first;
         return filesetOk(addLeaf(FilesetNode(FilesetOp.ignored, cast(uint) first,
             cast(uint) count), 1 + count));
+    }
+
+    // Text the arena owns until it is destroyed; `n` bytes, uninitialized.
+    private char[] ownText(size_t n) @safe nothrow @nogc
+    {
+        import core.exception : onOutOfMemoryError;
+        import core.memory : pureMalloc;
+
+        if (n == 0)
+            return null;
+        auto s = (() @trusted {
+            auto p = cast(char*) pureMalloc(n);
+            return p is null ? null : p[0 .. n];
+        })();
+        if (s is null)
+            onOutOfMemoryError();
+        owned_ ~= s;
+        return s;
     }
 
     /// The files in `a` or `b`. Total (FSV1).
@@ -567,6 +595,21 @@ struct FilesetEvaluator
     assert(sets.rules[2].line == 4, "rules keep their line (FSI3)");
 }
 
+/// The `.gitignore` leaf reads each line as git does: braces are literal,
+/// `\!` escapes, an escaped trailing space stays and a trailing tab is kept.
+@("fileset.value.ignoredReadsAsGit")
+@safe nothrow @nogc unittest
+{
+    auto sets = Filesets(CasePolicy.sensitive);
+    const ign = sets.ignored("\\!bang\n*.{c,h}\nkeep\\ \nspaced   \ntab\t\n").value;
+    auto ev = FilesetEvaluator(sets, ign);
+    assert(ev.contains(sets, "!bang"));
+    assert(ev.contains(sets, "a.{c,h}") && !ev.contains(sets, "a.c"));
+    assert(ev.contains(sets, "keep ") && !ev.contains(sets, "keep"));
+    assert(ev.contains(sets, "spaced"));
+    assert(ev.contains(sets, "tab\t") && !ev.contains(sets, "tab"));
+}
+
 private Tri combine(in FilesetNode n, Tri a, Tri b) @safe pure nothrow @nogc
 {
     import std.algorithm.comparison : max, min;
@@ -577,15 +620,4 @@ private Tri combine(in FilesetNode n, Tri a, Tri b) @safe pure nothrow @nogc
         case FilesetOp.intersection: return min(a, b);
         default: return min(a, cast(Tri)(Tri.yes - b));
     }
-}
-
-// A `.gitignore` line loses trailing spaces unless the last is escaped.
-private string trimRuleEnd(string text) @safe pure nothrow @nogc
-{
-    size_t end = text.length;
-    while (end > 0 && (text[end - 1] == ' ' || text[end - 1] == '\t'))
-        --end;
-    if (end < text.length && end > 0 && text[end - 1] == '\\')
-        ++end;
-    return text[0 .. end];
 }

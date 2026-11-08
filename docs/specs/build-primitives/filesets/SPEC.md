@@ -343,8 +343,10 @@ git's for every path.
 
 **`FSI4` — Deeper scopes win.** Precedence is git's: within a scope, the last
 matching rule decides; a deeper scope overrides a shallower one; a negation
-cannot re-include a file beneath an excluded directory. _Detection:_ a nested
-fixture exercising each clause matches `git check-ignore`'s verdicts.
+cannot re-include a file beneath an excluded directory. Each line is read as
+git reads it ([A15](./decisions.md#a15-a-gitignore-line-is-read-as-git-reads-it)).
+_Detection:_ a nested fixture exercising each clause matches
+`git check-ignore`'s verdicts.
 
 ## 10. Errors and partial results (`FSE`)
 
@@ -518,11 +520,9 @@ not list is **unverified**.
 | `FSA3`, `FSA4`         | verified (Linux x86_64) | `DirVerdict` and `FileVerdict` (`fileset.value.verdicts`); a walk beneath an `acceptAll` directory makes no segment match, and only an `undecided` file is stat-ed (`fileset.plan.FSA3.acceptAllWithoutMatching`)                                                                                                                                                                                                                                   | —                                                                                |
 | `FSA5`                 | partial                 | `(everything - ignored("build/")) \| build/**/*.o` enters `build/` and yields its object files (`fileset.plan.FSA5.forcedEntry`)                                                                                                                                                                                                                                                                                                                    | `.gitignore` scopes below the root: M4                                           |
 
-Every row was verified with DMD 2.112.1 and LDC 1.43.0. On the host that
-ran it, `dub test :build-primitives` cannot build: compiling
-`dub_manifest.d` needs more than 16 GB under either compiler. The fileset
-modules were therefore tested by a package that compiles only them against
-the same dependencies and flags.
+Every row was verified with DMD 2.112.1 and LDC 1.43.0 by
+`dub test :build-primitives`, and invariant 2's rows by its
+`allocation-audit` configuration.
 
 Two limits are stated rather than papered over. The three-driver differential
 proves the drivers agree, not that any of them is correct; the brute-force

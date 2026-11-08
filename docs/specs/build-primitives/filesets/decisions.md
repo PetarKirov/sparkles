@@ -231,6 +231,30 @@ The executable bit is read only from a regular file (`FSO1`). On Linux a link's
 mode is always 0777, so `executable` would otherwise select every link on
 disk and none in `MemVfs`; the three-backend gate found that.
 
+### A15 — A `.gitignore` line is read as git reads it
+
+[`FSI4`](./SPEC.md#9-ignore-scopes-fsi) copies git's precedence, and the
+verdicts follow only if each line means what it means to git. So a line is
+read by git's rules and then translated into fileset pattern syntax
+(`readIgnoreLine`). A trailing `\r` is dropped. Only unescaped trailing
+spaces are trimmed, never tabs. One leading `!` negates, and a second is
+literal. `\!` and `\#` stay escapes. Git's globs have no brace alternatives, so
+`{` and `}` are escaped and stay literal. The rest of the syntax means the
+same in both: `*`, `?`, classes, `**`, escapes, anchoring by a leading or
+middle `/`, and a trailing `/` for directories.
+
+The root `.gitignore` leaf of M1 had read lines with its own rules. It trimmed
+trailing tabs, dropped the backslash of `\!`, which made the rule fail to
+compile, and gave braces their fileset meaning. It now shares the reader.
+
+A line git reads but no fileset pattern can express, such as one with a `.`
+or `..` component, is skipped and counted (`IgnoreScopes.skippedRules`). It
+is not an error, because a stray line in a vendored `.gitignore` must not
+fail a resolution. Git never matches a `.` or `..` component against a
+listed name, so skipping such a line changes no verdict. A rule over
+[`FSG4`](./SPEC.md#5-matching-fsg)'s bounds is the one case where skipping
+can change a verdict, and it is counted like the rest.
+
 ## Open
 
 ### D1 — Which Merkle shape
