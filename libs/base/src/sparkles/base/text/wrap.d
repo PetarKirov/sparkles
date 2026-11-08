@@ -99,9 +99,26 @@ struct CellCluster
     dchar first;
     bool whitespace, tab, separator, softHyphen, protectedUnit, ordinaryEnd, forcedEnd;
 }
+/// The plain count's per-paragraph sums, one record per cluster boundary:
+/// record `c` covers clusters `[0, c)`. A candidate line asks them in O(1)
+/// what walking its clusters would answer — the greedy solver measures
+/// every break from the same line start, so walking cost the square of the
+/// line.
+struct CellPrefix
+{
+    /// Clusters that are not simple, non-space clusters, and space runs begun.
+    size_t nonSimple, nonWhite, runStarts;
+    /// Cells of every cluster, and of the non-space ones.
+    long width, nonWhiteWidth;
+    /// The first non-space cluster at or after `c`, and one past the last
+    /// before `c` (0 when there is none).
+    size_t nextContent, prevContentEnd;
+}
 /// Bounds are record counts, never a per-cluster scalar limit.
 struct CellWrapScratch
 {
+    /// Indexed by cluster boundary; see $(LREF CellPrefix).
+    CellPrefix[] prefixes;
     UtfToken[] tokens;
     CellAtom[] atoms;
     CellCluster[] clusters;
@@ -816,10 +833,56 @@ private struct CellMeasureContext
             return true;
         if (start >= end)
             return false;
+        if (indexed)
+            return prefixes[end].nonSimple == prefixes[start].nonSimple;
         foreach (c; start .. end)
             if (!simpleCluster(c))
                 return false;
         return true;
+    }
+
+    /// The paragraph's $(LREF CellPrefix) records, when `indexSimple` filled
+    /// them; otherwise the count walks its candidate.
+    const(CellPrefix)[] prefixes;
+    private bool indexed() const @safe pure nothrow @nogc => prefixes.length == clusters.length + 1;
+
+    // A simple cluster of one space.
+    private bool whiteCluster(size_t c) const @safe pure nothrow @nogc
+        => simpleCluster(c) && atoms[clusters[c].atomStart].token.scalar == ' ';
+
+    /// Fills `into` (one record per cluster boundary) and reads the count's
+    /// answers from it from then on.
+    void indexSimple(CellPrefix[] into) @safe nothrow @nogc
+    in (into.length == clusters.length + 1)
+    {
+        CellPrefix acc;
+        bool lastWhite;
+        foreach (c; 0 .. clusters.length)
+        {
+            const simple = simpleCluster(c);
+            const white = simple && atoms[clusters[c].atomStart].token.scalar == ' ';
+            into[c] = acc;
+            acc.nonSimple += !simple;
+            acc.width += clusters[c].width;
+            if (white)
+                acc.runStarts += !lastWhite;
+            else
+            {
+                ++acc.nonWhite;
+                acc.nonWhiteWidth += clusters[c].width;
+                acc.prevContentEnd = c + 1;
+            }
+            lastWhite = white;
+        }
+        into[clusters.length] = acc;
+        size_t next = clusters.length;
+        foreach_reverse (c; 0 .. clusters.length + 1)
+        {
+            if (c < clusters.length && !whiteCluster(c))
+                next = c;
+            into[c].nextContent = next;
+        }
+        prefixes = into;
     }
 
     /// The projection `build` would realize for a candidate of simple clusters
@@ -829,6 +892,8 @@ private struct CellMeasureContext
     /// measurer, and the fast path requires none.
     void countPlain(size_t start, size_t end, ref RealizedCellProjection projection) @safe nothrow @nogc
     {
+        if (indexed)
+            return countIndexed(start, end, projection);
         const first = start < end ? clusters[start].atomStart : 0;
         const last = start < end ? clusters[end - 1].atomEnd : first;
         bool white(size_t index) => atoms[index].token.scalar == ' ';
@@ -876,6 +941,58 @@ private struct CellMeasureContext
         // sequence a later scalar joins across a boundary, so the state after
         // it does not depend on what preceded it.
         projection.trailing.push(atoms[emittedLast].token.scalar);
+    }
+
+    // `countPlain` from the prefix sums. The policy decides what stays:
+    // `preserve` keeps every cluster; `trimAroundBreak` keeps those from the
+    // first to the last non-space one; `collapse` keeps the non-space ones and
+    // one cell for each space run between them.
+    private void countIndexed(size_t start, size_t end, ref RealizedCellProjection projection)
+        @safe nothrow @nogc
+    {
+        projection = RealizedCellProjection.init;
+        if (start >= end)
+            return;
+        const p = prefixes;
+        const fc = p[start].nextContent;
+        const content = fc < end;
+        const lc = content ? p[end].prevContentEnd : 0; // one past the last non-space
+        size_t emittedFirst, emittedLast;
+        long cells;
+        ulong emitted;
+        final switch (options.whitespace)
+        {
+            case WhitespaceMode.preserve:
+                cells = p[end].width - p[start].width;
+                emitted = end - start;
+                emittedFirst = start;
+                emittedLast = end - 1;
+                break;
+            case WhitespaceMode.trimAroundBreak:
+                if (!content)
+                    return;
+                cells = p[lc].width - p[fc].width;
+                emitted = lc - fc;
+                emittedFirst = fc;
+                emittedLast = lc - 1;
+                break;
+            case WhitespaceMode.collapse:
+                if (!content)
+                    return;
+                // A run starting after the first non-space cluster and before
+                // the last one lies between them.
+                const runs = p[lc].runStarts - p[fc + 1].runStarts;
+                cells = p[end].nonWhiteWidth - p[start].nonWhiteWidth + cast(long) runs;
+                emitted = p[end].nonWhite - p[start].nonWhite + runs;
+                emittedFirst = fc;
+                emittedLast = lc - 1;
+                break;
+        }
+        projection.advance = cells;
+        projection.bodyClusters = emitted;
+        projection.hasText = projection.hasSourceText = true;
+        projection.first = UtfToken(scalar: atoms[clusters[emittedFirst].atomStart].token.scalar);
+        projection.trailing.push(atoms[clusters[emittedLast].atomStart].token.scalar);
     }
 
     WrapResult build(size_t start, size_t end, WrapGeometry geometry, bool hyphen,
@@ -1347,6 +1464,8 @@ WrapResult tryWrapCells(SourceSnapshot source, WrapOptions options, WrapLimits l
     foreach (a; 0 .. context.atoms.length)
         if (!context.plainAtom(a))
         { context.plainAscii = false; break; }
+    if (scratch.prefixes.length > clusters)
+        context.indexSimple(scratch.prefixes[0 .. clusters + 1]);
     WrapProvider provider = WrapProvider(exact: true, measure: &context.measure, geometry: &context.geometry);
     MeasurableInput input = MeasurableInput(source, scratch.primitives[0 .. clusters],
         scratch.endpoints[0 .. endpoints], scratch.sourceRecords[0 .. atoms], WrapDimension.cells);
@@ -1714,6 +1833,7 @@ private struct CellWrapPool
         s.tokens = take(scratch.tokens, records);
         s.atoms = take(scratch.atoms, records);
         s.clusters = take(scratch.clusters, records);
+        s.prefixes = take(scratch.prefixes, records + 1);
         s.opportunities = take(scratch.opportunities, records);
         if (words)
         {
