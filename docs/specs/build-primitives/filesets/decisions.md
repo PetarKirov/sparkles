@@ -437,6 +437,31 @@ Nix, Software Heritage and bup. A bounded spike — implement `gitTreeOrder`
 against `git write-tree` on the fixture set — would price the oracle before the
 choice is made.
 
+**The spike (November 8, 2026).** `GitTreeFold`, a test-only fold over the
+scheme seam, computes git's tree hash in about 130 lines, using SHA-1 from
+Phobos, the `gitTreeOrder` of `FSS1`, and the `executable` and `linkTarget`
+metadata. It allocates nothing while hashing. On 207 trees,
+`fileset.spike.d1.gitTreeOrder` gives the same hash as `git add -A -f` followed
+by `git write-tree`. The trees are hand-written ones aimed at the hazard, M1's
+fixture set, and 200 seeded random trees, with links, executables and empty
+directories. The same fold sorted by bytes is the control: it gives a
+different hash on 95 of the 207 trees, so the oracle catches the hazard and
+the hazard is common.
+
+The oracle is therefore cheap: no tooling beyond git, and a few seconds per
+run. Two things it showed, and that the other shape would need to answer as
+well:
+
+- **An empty directory has no git identity.** An index cannot hold one, so
+  the git shape drops a directory with no member. REAPI's shape can keep it.
+  FSV4 reports empty directories, but no fileset counts one as a member.
+- **The hazard lives only in the comparison.** `precedes` handles it in one
+  place, and the control shows what forgetting it costs.
+
+The spike does not decide D1. It removes "the oracle's cost is unknown" from
+the criterion, and leaves the trade between that oracle and the structural
+immunity of the REAPI shape.
+
 ### D2 — Whether `NarHash` is stored or recomputed
 
 Provisionally **stored**, beside the Merkle identity, rather than recomputed on
