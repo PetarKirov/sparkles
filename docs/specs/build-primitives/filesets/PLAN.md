@@ -155,7 +155,7 @@ conditions are `fileset.scheme.FSS2.metadata`,
 **Decided by [A19](./decisions.md#a19-content-addressing-is-a-family-of-schemes-with-snix-castore-as-the-default).**
 
 **Scope.** The generic parts of A19 (`MerkleFold`, `Serial`, `Tee`), the
-castore, NAR and git instances, BLAKE3 through ImportC (`libblake3`), and the
+castore, NAR and git instances (BLAKE3 from `sparkles.base.hash.blake3`), and the
 sibling contract under `docs/specs/build-primitives/content-addressing/`.
 `FSS8` gets its type: a supplied bao outboard, verified instead of read.
 
@@ -171,6 +171,12 @@ sibling contract under `docs/specs/build-primitives/content-addressing/`.
 
 **Gate.** Each instance matches its oracle on the fixture set, including the
 ordering fixture and a case-collision fixture. A `Tee` reads each file once.
+
+Progress: steps 1 to 3 are delivered. `content_addressing/merkle.d` holds the
+shell, `git.d` and `castore.d` the instances; `content_addressing.git.writeTree`
+checks SHA-1 and SHA-256 against `git write-tree`, and
+`content_addressing.castore.snix` checks castore against Snix, on the hazard,
+case-collision, fixture and 200 random trees.
 
 ### M7 — The subtree cache
 
