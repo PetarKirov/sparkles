@@ -40,7 +40,7 @@ Filesystem watching. Extended attributes. A REPL.
 
 **Deferred with entry conditions.** Cross-run subtree caching (`FSC*`) is
 specified but not delivered until a Merkle scheme exists to key it; see
-[decisions.md](./decisions.md#d1-which-merkle-shape).
+[decisions.md](./decisions.md#a19-content-addressing-is-a-family-of-schemes-with-snix-castore-as-the-default).
 
 ## 2. Invariants
 

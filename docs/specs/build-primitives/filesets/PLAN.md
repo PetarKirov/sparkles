@@ -32,7 +32,7 @@ M4  ignore scopes on the immutable chain  ── behaviour-preservation gate
  │
 M5  FSO vocabulary + scheme declarations
  │
-M6  content-addressing schemes            ── blocked on decisions.md D1
+M6  content-addressing schemes            ── decided by decisions.md A19
  │
 M7  subtree cache
  │
@@ -40,7 +40,7 @@ M9  consumer migration + deletion of the old modules
 ```
 
 `M0` is independent of everything and useful on its own. `E0` gates only `M3`.
-`M6` is the only milestone the open Merkle decision blocks.
+The Merkle decision that blocked `M6` is A19.
 
 ## Milestones
 
@@ -152,19 +152,25 @@ conditions are `fileset.scheme.FSS2.metadata`,
 
 ### M6 — Content-addressing schemes
 
-**Blocked on [D1](./decisions.md#d1-which-merkle-shape).**
+**Decided by [A19](./decisions.md#a19-content-addressing-is-a-family-of-schemes-with-snix-castore-as-the-default).**
 
-**Scope.** The first two schemes, and the sibling contract under
-`docs/specs/build-primitives/content-addressing/`.
+**Scope.** The generic parts of A19 (`MerkleFold`, `Serial`, `Tee`), the
+castore, NAR and git instances, BLAKE3 through ImportC (`libblake3`), and the
+sibling contract under `docs/specs/build-primitives/content-addressing/`.
+`FSS8` gets its type: a supplied bao outboard, verified instead of read.
 
-**Order within the milestone.** Merkle first, NAR second — the Merkle oracle
-needs only tooling this repository already requires, while NAR's needs Nix on
-the host. If D1 selects the git shape, `git write-tree` is that oracle;
-Software Heritage's `swh.core.nar` is a second, independent NAR implementation
-if a cross-check is wanted offline.
+**Order within the milestone.**
 
-**Gate.** Digests match the chosen oracle on the fixture set, including the
-ordering fixture and a case-collision fixture.
+1. The oracles in the dev shell: Snix from its own repository, and Nix's
+   `nix hash path`, which every Nix host has.
+2. `MerkleFold`, with the D1 spike refactored into its git instance, which
+   `git write-tree` checks without new tooling.
+3. castore with BLAKE3, the default identity.
+4. `Serial` and NAR, which may need the stream's `leave` from A19.
+5. `Tee` of castore and NAR, so NarHash is stored beside the identity (D2).
+
+**Gate.** Each instance matches its oracle on the fixture set, including the
+ordering fixture and a case-collision fixture. A `Tee` reads each file once.
 
 ### M7 — The subtree cache
 
