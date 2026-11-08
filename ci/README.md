@@ -16,9 +16,13 @@ front-ends; a behaviour change belongs in this directory so it lands on both.
 reason: **they are what makes the D toolchain exist.** `nix-install.sh` and
 `nix-configure.sh` run before `nix`, `dub`, or `ldc2` are on `PATH`, so they
 cannot be a program that a devShell provides. The remainder
-(`with-cachix.sh`, `release-pin.sh`, `run-batch.sh`, …) stay shell to keep
+(`with-cache.sh`, `release-pin.sh`, `run-batch.sh`, …) stay shell to keep
 the whole layer in one language and one dependency footprint — none of them is
 more than a guarded sequence of calls to `nix`, `cachix`, `git`, or `gh`.
+
+`with-r2.sh` comes closest: a queue file and a polling loop around
+`nix copy`. It stays shell because it wraps the builds themselves: as `ci`, it
+would make every wrapped build first compile `ci` whenever `apps/ci` changes.
 
 If any of these grows real decision logic, promote it to an `apps/ci`
 subcommand and have the script shell out to `nix run .#ci`.
@@ -29,22 +33,26 @@ Provider-neutral names. GitHub Actions maps its `inputs`/`vars`/`secrets` onto
 these in `.github/actions/setup-nix/action.yml` and at the step level; CircleCI
 supplies them from the `sparkles-ci` context.
 
-| Variable                  | Used by                                       | Purpose                                            |
-| ------------------------- | --------------------------------------------- | -------------------------------------------------- |
-| `CACHIX_CACHE`            | `nix-configure`, `with-cachix`, `release-pin` | Binary cache name                                  |
-| `CACHIX_AUTH_TOKEN`       | same                                          | Read (netrc) and write (push/pin) token            |
-| `NIX_SUBSTITUTERS`        | `nix-configure`                               | Extra substituters, space-separated                |
-| `NIX_TRUSTED_PUBLIC_KEYS` | `nix-configure`                               | Extra trusted public keys, space-separated         |
-| `NIX_GITHUB_TOKEN`        | `nix-configure`                               | `access-tokens` entry for github.com               |
-| `NIX_GITLAB_TOKEN`        | `nix-configure`                               | `access-tokens` entry for `NIX_GITLAB_DOMAIN`      |
-| `NIX_ACCEPT_FLAKE_CONFIG` | `nix-configure`                               | Trust flake.nix's `nixConfig` caches (see below)   |
-| `CI_DEVSHELL`             | `nix-devshell`                                | devShell to activate (`ci`, `pre-commit`)          |
-| `CI_NIX_SINGLE_USER`      | `nix-install`                                 | Single-user store, required to cache `/nix`        |
-| `GITHUB_TOKEN`            | `lint`, `pr-comment`                          | lychee's GitHub API budget; PR preview comment     |
-| `CLOUDFLARE_API_TOKEN`    | `deploy-cloudflare-pages`                     | Pages deploy (GitHub Actions only)                 |
-| `CLOUDFLARE_ACCOUNT_ID`   | `deploy-cloudflare-pages`                     | Pages deploy (GitHub Actions only)                 |
-| `DUB_REGISTRY_SECRET`     | `notify-dub-registry`                         | Optional; only if the package has an update secret |
-| `DC`                      | job step                                      | D compiler for the test suite (`ldc2` / `dmd`)     |
+| Variable                  | Used by                                      | Purpose                                             |
+| ------------------------- | -------------------------------------------- | --------------------------------------------------- |
+| `CACHIX_CACHE`            | `nix-configure`, `with-cache`, `release-pin` | Binary cache name                                   |
+| `CACHIX_AUTH_TOKEN`       | same                                         | Read (netrc) and write (push/pin) token             |
+| `R2_ACCESS_KEY_ID`        | `with-r2`                                    | R2 API token's S3 access key (push only)            |
+| `R2_SECRET_ACCESS_KEY`    | `with-r2`                                    | R2 API token's S3 secret (push only)                |
+| `R2_ACCOUNT_ID`           | `with-r2`                                    | The S3 endpoint's account (`CLOUDFLARE_ACCOUNT_ID`) |
+| `NIX_R2_SIGNING_KEY`      | `with-r2`                                    | Signs what is pushed to R2                          |
+| `NIX_SUBSTITUTERS`        | `nix-configure`                              | Extra substituters, space-separated                 |
+| `NIX_TRUSTED_PUBLIC_KEYS` | `nix-configure`                              | Extra trusted public keys, space-separated          |
+| `NIX_GITHUB_TOKEN`        | `nix-configure`                              | `access-tokens` entry for github.com                |
+| `NIX_GITLAB_TOKEN`        | `nix-configure`                              | `access-tokens` entry for `NIX_GITLAB_DOMAIN`       |
+| `NIX_ACCEPT_FLAKE_CONFIG` | `nix-configure`                              | Trust flake.nix's `nixConfig` caches (see below)    |
+| `CI_DEVSHELL`             | `nix-devshell`                               | devShell to activate (`ci`, `pre-commit`)           |
+| `CI_NIX_SINGLE_USER`      | `nix-install`                                | Single-user store, required to cache `/nix`         |
+| `GITHUB_TOKEN`            | `lint`, `pr-comment`                         | lychee's GitHub API budget; PR preview comment      |
+| `CLOUDFLARE_API_TOKEN`    | `deploy-cloudflare-pages`                    | Pages deploy (GitHub Actions only)                  |
+| `CLOUDFLARE_ACCOUNT_ID`   | `deploy-cloudflare-pages`                    | Pages deploy (GitHub Actions only)                  |
+| `DUB_REGISTRY_SECRET`     | `notify-dub-registry`                        | Optional; only if the package has an update secret  |
+| `DC`                      | job step                                     | D compiler for the test suite (`ldc2` / `dmd`)      |
 
 Anything unset degrades rather than failing: no Cachix token means builds run
 without a push, no `GITHUB_TOKEN` means no PR comment. That is what lets a fork
@@ -59,7 +67,8 @@ PR — which gets no secrets — still run the pipeline.
 | `nix-configure.sh`           | Writes `nix.conf` + `netrc`; adds the job user to `trusted-users` on daemon installs     |
 | `nix-devshell.sh`            | Builds a devShell (fail-fast), then exports it to later steps via direnv                 |
 | `prepare-cloud-env.sh`       | One-line setup for an ephemeral agent container: Nix, reachable inputs, toolchain        |
-| `with-cachix.sh`             | Runs a command under `cachix watch-exec`, pushing paths as they are built                |
+| `with-cache.sh`              | Runs a command under `cachix watch-exec` and `with-r2.sh`, pushing paths as they build   |
+| `with-r2.sh`                 | Queues each built path through a post-build hook and `nix copy`s it to the R2 bucket     |
 | `release-pin.sh`             | Highest-tag guard, then `cachix push` + `cachix pin --keep-revisions`                    |
 | `toolchain-pin.d`            | Pins the pin set (`nix/pin-targets.nix`) to Cachix, prunes the rest, checks it is cached |
 | `notify-dub-registry.sh`     | Pokes code.dlang.org to ingest a new tag                                                 |
@@ -191,7 +200,7 @@ every enabled step to pass.
 The aggregate Nix build job allows 60 minutes on Linux and 90 on macOS.
 The macOS leg of run `37375104839` hit its previous 40-minute cap while
 still compiling desktop applications after cold dependency builds.
-`with-cachix.sh` publishes completed paths throughout the build, but the
+`with-cache.sh` publishes completed paths throughout the build, but the
 job must finish the full closure and runnable examples in one attempt.
 
 ## `prepare-cloud-env.sh` — ephemeral agent containers
@@ -374,6 +383,40 @@ There are two ways to avoid that, and the two providers use different ones:
   PRs. The cost is that those repo variables must list every cache
   `flake.nix` names, and drift between the two is silent.
 
+## Two binary caches: Cachix and R2
+
+| Cache                                    | Holds                                                 | Bound                               |
+| ---------------------------------------- | ----------------------------------------------------- | ----------------------------------- |
+| `sparkles.cachix.org`                    | Everything CI builds, and the pinned toolchain (TC24) | 10 GiB, least recently used evicted |
+| `https://cache.sparkles.petar-kirov.dev` | Everything CI builds, with its runtime closure        | None; R2 bills storage by the GB    |
+
+The second is the Cloudflare R2 bucket `sparkles-nix-cache`, served
+through its custom domain. Nix reads it as an ordinary HTTP binary cache, with
+no credentials; CI writes it through R2's S3 API (`with-r2.sh`). Paths pushed
+there are signed with `cache.sparkles.petar-kirov.dev-1`, whose secret half
+exists only as the `NIX_R2_SIGNING_KEY` repository secret.
+
+The pins stay on Cachix: `toolchain-pin.d` and the `pin-cache` job (TC23)
+manage them there, and they fit its 10 GiB. What Cachix evicts, R2 still
+has.
+
+`nix-cache-info` in the bucket was written once by hand, not by Nix (which
+writes `StoreDir` alone, leaving priority 50):
+
+```text
+StoreDir: /nix/store
+WantMassQuery: 1
+Priority: 42
+```
+
+so Nix asks cache.nixos.org (40) and Cachix (41) first. Rewrite it with
+`curl --aws-sigv4 "aws:amz:auto:s3" --user "$KEY_ID:$SECRET" --upload-file …`
+against `https://<account>.r2.cloudflarestorage.com/sparkles-nix-cache/nix-cache-info`.
+
+Nothing prunes the bucket yet. Nix never re-uploads a path the bucket
+already has, so an age-based R2 lifecycle rule would also expire paths still
+in use; it is safe only for what Cachix keeps pinned.
+
 ## Cold start and `devShells.ci`
 
 The first pipeline on a new project has an empty `/nix` cache and pays for the
@@ -420,7 +463,7 @@ CircleCI `/nix` cache and Cachix. Subsequent runs restore instead of fetching.
 
 The `nix-build-*` jobs additionally pay ~380 MiB for the `cachix` binary's own
 closure (it pulls `aws-sdk-cpp` and `boost`), since they run without a devShell
-and `with-cachix.sh` has to fetch it via `nix run`.
+and `with-cache.sh` has to fetch it via `nix run`.
 
 ## stdin is a TTY on CircleCI
 

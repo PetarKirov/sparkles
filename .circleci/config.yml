@@ -403,7 +403,7 @@ jobs:
           cache_nix: false
       - run:
           name: Build & push devShells.full, all packages, and all examples
-          command: ci/with-cachix.sh nix build --print-build-logs .#all-desktop
+          command: ci/with-cache.sh nix build --print-build-logs .#all-desktop
           no_output_timeout: 30m
       - run:
           name: Run all runnable examples
@@ -418,7 +418,7 @@ jobs:
           cache_nix: false
       - run:
           name: Build & push devShells.full, all packages, and all examples
-          command: ci/with-cachix.sh nix build --print-build-logs .#all-desktop
+          command: ci/with-cache.sh nix build --print-build-logs .#all-desktop
           no_output_timeout: 30m
       - run:
           name: Run all runnable examples
@@ -445,7 +445,7 @@ jobs:
           cache_nix: false
       - run:
           name: Build & push the Android APK closure
-          command: ci/with-cachix.sh nix build --print-build-logs .#all-android
+          command: ci/with-cache.sh nix build --print-build-logs .#all-android
           no_output_timeout: 90m
 
   lint:
@@ -512,7 +512,7 @@ jobs:
           # Usually all cache hits: the CI pipeline already built and pushed
           # this commit's outputs before it reached main.
           name: Build devShells.full, all packages, and all examples
-          command: ci/with-cachix.sh nix build --print-build-logs .#all-desktop
+          command: ci/with-cache.sh nix build --print-build-logs .#all-desktop
           no_output_timeout: 30m
       - run:
           name: Push & pin the release closure

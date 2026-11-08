@@ -11,6 +11,16 @@ on:
     secrets:
       CACHIX_AUTH_TOKEN:
         required: false
+      # The R2 binary cache (ci/with-r2.sh). Without them the rebuild path
+      # still builds and pushes to Cachix, but not to R2.
+      R2_ACCESS_KEY_ID:
+        required: false
+      R2_SECRET_ACCESS_KEY:
+        required: false
+      CLOUDFLARE_ACCOUNT_ID:
+        required: false
+      NIX_R2_SIGNING_KEY:
+        required: false
 
   # Manual runs against any ref.
   workflow_dispatch:
@@ -575,7 +585,7 @@ jobs:
     # every application, which took 26m on x86_64 in run 41293450019. The
     # toolchain itself is pinned in Cachix (nix/pin-targets.nix, TC24), so
     # no run compiles LLVM or the LDC fork.
-    # `with-cachix.sh` pushes each path as it completes, so even a run that
+    # `with-cache.sh` pushes each path as it completes, so even a run that
     # hits this cap leaves progress in the cache for the next one.
     # The macOS cold aggregate in run 37375104839 was still compiling desktop
     # applications at its 40m cap; allow the remaining closure and example run.
@@ -602,7 +612,7 @@ jobs:
             nix-${{ runner.os }}-nixbuild-
             nix-${{ runner.os }}-
 
-      # `with-cachix.sh` pushes each path as it is built, so a failure in the
+      # `with-cache.sh` pushes each path as it is built, so a failure in the
       # step below still leaves this build's outputs in the cache. The
       # setup-nix action's post-job hook (push-to-cache: true) then pushes
       # anything else the job produced.
@@ -614,7 +624,11 @@ jobs:
         env:
           CACHIX_CACHE: ${{ vars.CACHIX_CACHE }}
           CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
-        run: ci/with-cachix.sh nix build --print-build-logs ${{ matrix.runner == 'ubuntu-latest' && '--max-jobs 1' || '' }} .#all-desktop
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          NIX_R2_SIGNING_KEY: ${{ secrets.NIX_R2_SIGNING_KEY }}
+        run: ci/with-cache.sh nix build --print-build-logs ${{ matrix.runner == 'ubuntu-latest' && '--max-jobs 1' || '' }} .#all-desktop
 
       - name: Run all runnable examples
         run: nix run .#run-all-examples
@@ -686,7 +700,7 @@ jobs:
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
           # This store's 8 GiB compressed archive exhausted the runner while
-          # restoring it (run 42023216277). with-cachix.sh already preserves
+          # restoring it (run 42023216277). with-cache.sh already preserves
           # each completed output, including progress from interrupted runs.
           use-nix-cache: false
 
@@ -699,7 +713,11 @@ jobs:
         env:
           CACHIX_CACHE: ${{ vars.CACHIX_CACHE }}
           CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
-        run: ci/with-cachix.sh nix build --print-build-logs --max-jobs 1 .#all-android
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          NIX_R2_SIGNING_KEY: ${{ secrets.NIX_R2_SIGNING_KEY }}
+        run: ci/with-cache.sh nix build --print-build-logs --max-jobs 1 .#all-android
 
   # Toolchain spec TC20: terminal and hue as self-contained programs under the
   # all-LLVM runtime profile (nix/packages/static-apps.nix), their checks and
@@ -737,7 +755,7 @@ jobs:
             nix-v2-${{ matrix.system }}-staticapps-
             nix-v2-${{ matrix.system }}-
 
-      # `with-cachix.sh` pushes each path as it completes, so a run that fails
+      # `with-cache.sh` pushes each path as it completes, so a run that fails
       # or hits the cap still leaves its progress in the cache. One build at a
       # time: each of the four compiles the DMD frontend, and four at once
       # exhausted the arm runner's memory and took the runner down.
@@ -745,8 +763,12 @@ jobs:
         env:
           CACHIX_CACHE: ${{ vars.CACHIX_CACHE }}
           CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          NIX_R2_SIGNING_KEY: ${{ secrets.NIX_R2_SIGNING_KEY }}
         run: |
-          ci/with-cachix.sh nix build --print-build-logs --keep-going --max-jobs 1 \
+          ci/with-cache.sh nix build --print-build-logs --keep-going --max-jobs 1 \
             .#legacyPackages.${{ matrix.system }}.staticAppChecks.terminal-static \
             .#legacyPackages.${{ matrix.system }}.staticAppChecks.terminal-static-tests \
             .#legacyPackages.${{ matrix.system }}.staticAppChecks.hue-static \
