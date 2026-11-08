@@ -31,7 +31,7 @@ import sparkles.source_view.markdown : FenceScroll, isWrap, OverflowPolicy,
     foldableSpans, highlightedFenceRenderer, MdLinkRange, MdLinkTable,
     mdLinkRanges, MdSegment, MdViewOptions, MdViewTheme, viewMarkdownInto,
     viewMarkdownWindowInto;
-import sparkles.doc_view.preview_window : PreviewWindow, SegmentIndex;
+import sparkles.doc_view.preview_window : PreviewWindow, RawRowMap, SegmentIndex, widestLine;
 import core.time : Duration;
 import sparkles.ui.components.gutter : blankCell, cellOf, GutterCell,
     GutterChannel, gutterWidth, withGutterColumns, withinBudget;
@@ -1021,6 +1021,11 @@ struct ViewerModel
         // A windowed preview scrolled past its window: the rows there were
         // never built, so the anchor is the first segment starting at or
         // below the top, placed by its height.
+        if (windowLive && rawWindow && (top < window.top || top >= window.bottom))
+        {
+            const line = rawRows.lineOfRow(cast(size_t) top);
+            return ScrollAnchor(line < lineStarts.length ? lineStarts[line] : source.length, 0);
+        }
         if (windowLive && segments.length && (top < window.top || top >= window.bottom))
         {
             size_t at = segments.segmentAtRow(top);
@@ -1280,10 +1285,11 @@ struct ViewerModel
             frames = layoutDoc(tree, Constraints(maxW: widthCols));
             ops = displayListOf(tree, frames);
             derive(withTargets: foldable.length != 0);
+            padRawWindow();
             return;
         }
         rawTreeKept = false;
-        windowLive = false;
+        windowLive = rawWindow = false;
         ++treeBuilds;
         // The outgoing tree dies here: from this point on `tree` aliases
         // storage the builder is about to overwrite.
@@ -1412,8 +1418,17 @@ struct ViewerModel
             // the inspector alike — one parse per document, not one per
             // rebuild.
             ensureParsed();
-            foldable = cache !is null && lang.length && rootLayer !is null
-                ? foldableSpansFromTree(*cache, lang, rootLayer.tree) : null;
+            // One fold walk per parse: a windowed source rebuilds as the pane
+            // scrolls.
+            if (rootLayer !is foldableParse || lang != foldableLang || !rawFoldableSet)
+            {
+                rawFoldable = cache !is null && lang.length && rootLayer !is null
+                    ? foldableSpansFromTree(*cache, lang, rootLayer.tree) : null;
+                foldableParse = rootLayer;
+                foldableLang = lang;
+                rawFoldableSet = true;
+            }
+            foldable = rawFoldable;
             Span[] closed;
             foreach (sp; foldable)
                 if (!folds.isOpen(sp.start))
@@ -1425,6 +1440,28 @@ struct ViewerModel
             const(HighlightEvent)[] evs = plainSyntax
                 ? [HighlightEvent.sourceSpan(0, source.length)] : events;
 
+            // A windowed source builds the rows around the anchor only.
+            size_t firstRow, endRow = size_t.max;
+            if (windowed)
+            {
+                rawRows = RawRowMap(lineStarts, source.length, closed);
+                const screen = viewRows > 0 ? viewRows : 60;
+                const at = anchor.valid ? rawRows.rowOfLine(srcLineOf(lineStarts, anchor.src))
+                    : top > 0 ? cast(size_t) top : 0;
+                const before = screen + (anchor.rowsAbove > 0 ? anchor.rowsAbove : 0);
+                firstRow = at > before ? at - before : 0;
+                endRow = at + 2 * screen;
+                if (endRow > rawRows.length)
+                    endRow = rawRows.length;
+                window = PreviewWindow(0, 1, firstRow, endRow);
+                if (rawWidestOf !is source || rawWidestTab != tabWidth)
+                {
+                    rawWidest = widestLine(source, tabWidth);
+                    rawWidestOf = source;
+                    rawWidestTab = tabWidth;
+                }
+            }
+
             alias b = arena_;
             const docRoot = viewCodeDocumentInto(b, source, evs,
                 thisCurrent(), pageFg,
@@ -1433,11 +1470,18 @@ struct ViewerModel
                     listWhitespace: listWhitespace,
                     whitespaceFg: gutterFg, hasWhitespaceFg: true,
                     inlineFoldMarker: inlineFoldMarker,
-                    tintedRanges: hasCoverage ? coverageTintedRanges(coverage) : null));
-            tree = gutter(b, docRoot);
+                    tintedRanges: hasCoverage ? coverageTintedRanges(coverage) : null,
+                    firstRow: firstRow, endRow: endRow));
+            tree = gutter(b, docRoot, firstRow);
             frames = layoutDoc(tree, Constraints(maxW: widthCols));
             ops = displayListOf(tree, frames);
+            if (windowed)
+            {
+                windowLive = rawWindow = true;
+                rawDocRoot = docRoot;
+            }
             derive(withTargets: foldable.length != 0);
+            padRawWindow();
             rawTreeKey = currentRawTreeKey();
             rawTreeKept = true;
             cells = null;
@@ -1567,6 +1611,21 @@ struct ViewerModel
     private PreviewWindow window;
     // Whether the tree is a window (`window`), not the whole document.
     private bool windowLive;
+    // The window is a source view's rows (`rawRows`), not a preview's
+    // segments.
+    private bool rawWindow;
+    private RawRowMap rawRows;
+    private uint rawDocRoot;
+    // The source's widest line in cells, so the horizontal bar reaches it
+    // wherever the window is.
+    private int rawWidest;
+    private const(char)[] rawWidestOf;
+    private int rawWidestTab;
+    // The fold provider's spans, per parse.
+    private const(void)* foldableParse;
+    private string foldableLang;
+    private Span[] rawFoldable;
+    private bool rawFoldableSet;
     // What the segment heights were measured under, other than the width.
     private SegmentKey segmentKey;
     private int segmentWidth = -1;
@@ -1606,6 +1665,23 @@ struct ViewerModel
         segmentKey = key;
         segmentWidth = width;
     }
+
+    // A windowed source's rows past the window, and its widest line.
+    private void padRawWindow()
+    {
+        if (!windowLive || !rawWindow)
+            return;
+        window.bottom = cast(long) rows.length;
+        if (rows.length < rawRows.length)
+            rows.length = rawRows.length;
+        const reach = frames[rawDocRoot].rect.x + rawWidest;
+        if (reach > contentCols)
+            contentCols = reach;
+    }
+
+    // The rows a window's document has, built or not.
+    private long windowDocRows() const @safe pure nothrow @nogc
+        => rawWindow ? cast(long) rawRows.length : segments.total();
 
     // Builds the window around `anchor` (or the row `top` shows).
     private void buildWindow(MdViewOptions opt, ScrollAnchor anchor)
@@ -1661,8 +1737,7 @@ struct ViewerModel
         if (!windowLive || !windowed)
             return false;
         const pane = viewRows > 0 ? viewRows : 1;
-        const docEnd = segments.total();
-        if (top < window.top || top + pane > window.bottom && window.bottom < docEnd)
+        if (top < window.top || top + pane > window.bottom && window.bottom < windowDocRows())
         {
             rebuild();
             return true;
@@ -1681,7 +1756,7 @@ struct ViewerModel
             if (!e)
                 return true;
         const pane = viewRows > 0 ? viewRows : 1;
-        return top < window.top || top + pane > window.bottom && window.bottom < segments.total();
+        return top < window.top || top + pane > window.bottom && window.bottom < windowDocRows();
     }
 
     // Measures estimated segments within `budget`: below the window first,
@@ -1760,6 +1835,11 @@ struct ViewerModel
     {
         if (!windowLive || window.empty)
             return true;
+        if (rawWindow)
+        {
+            const row = rawRows.rowOfLine(srcLineOf(lineStarts, src));
+            return window.top <= row && row < window.bottom;
+        }
         const from = window.first == 0 ? 0 : segmentSource(window.first);
         const to = window.end >= segments.length ? size_t.max : segmentSource(window.end);
         return from <= src && src < to;
@@ -1773,6 +1853,8 @@ struct ViewerModel
     // first row plus its share of the segment's rows.
     private long estimatedRowOf(size_t src) const @safe pure nothrow @nogc
     {
+        if (rawWindow)
+            return rawRows.rowOfLine(srcLineOf(lineStarts, src));
         const blocks = preview.doc.root.children;
         const at = segments.segmentOfSource(blocks, src);
         const seg = segments.segments[at];
@@ -4751,6 +4833,78 @@ version (unittest)
 
     // A jump far outside the window lands on the row the whole layout has.
     foreach (line; [5UL, 600, 250])
+    {
+        w.gotoSrcLine(line);
+        whole.gotoSrcLine(line);
+        assert(w.top == whole.top);
+        checkPane(w, whole, whole.top, "jumped");
+    }
+}
+
+@("viewer_model.windowed.aSourceShowsTheWholeLayoutsRows")
+@system unittest
+{
+    import std.array : appender, replicate;
+    import std.conv : text;
+    import std.process : environment;
+    import std.string : indexOf;
+    import sparkles.syntax : GrammarRegistry;
+    import sparkles.test_runner.skip : skipTest;
+
+    if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
+        skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
+    // A D source long enough to window, with functions to fold and a line
+    // wider than the pane far from the top.
+    auto a = appender!string;
+    foreach (i; 0 .. 150)
+    {
+        a ~= text("int f", i, "(int x)\n{\n    return x + ", i, ";\n}\n\n");
+        if (i == 120)
+            a ~= text("// ", "wide ", "line ".replicate(30), "\n");
+    }
+    const src = a[];
+    auto registry = GrammarRegistry.fromEnvironment();
+    auto cache = TsConfigCache.create(&registry, LabelSet.standard());
+    ViewerModel make(bool windowed)
+    {
+        auto vm = anchorFixture(src, 60);
+        vm.cache = &cache;
+        vm.windowed = windowed;
+        vm.viewRows = 20;
+        vm.rebuild();
+        // Every seventh function folded: rows are no longer lines.
+        foreach (i; 0 .. 150)
+            if (i % 7 == 3)
+                vm.foldAt(src.indexOf(text("int f", i, "(")) + 9, ViewerModel.FoldOp.close);
+        return vm;
+    }
+
+    auto whole = make(false);
+    auto w = make(true);
+    assert(w.windowLive && w.rawWindow && !whole.windowLive);
+    assert(w.rows.length == whole.rows.length, "the window stands for every row");
+    assert(w.window.bottom < whole.rows.length, "only a window is built");
+    assert(w.contentCols == whole.contentCols, "the bar reaches the widest line");
+    assert(whole.foldable.length > 100, "functions fold");
+    assert(whole.rows.length < whole.lineStarts.length - 50, "and some are folded");
+    checkPane(w, whole, 0, "the first screen");
+
+    foreach (t; [200L, 640, 30, cast(long) whole.rows.length - 20])
+    {
+        w.scrollTo(t);
+        whole.scrollTo(t);
+        settleAll(w);
+        assert(w.top == whole.top);
+        checkPane(w, whole, whole.top, "scrolled");
+    }
+    foreach (width; [45, 83])
+    {
+        w.relayout(width);
+        whole.relayout(width);
+        assert(w.top == whole.top && w.rows.length == whole.rows.length);
+        checkPane(w, whole, whole.top, "reflowed");
+    }
+    foreach (line; [700UL, 3, 400])
     {
         w.gotoSrcLine(line);
         whole.gotoSrcLine(line);
