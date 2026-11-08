@@ -418,12 +418,34 @@ writes `StoreDir` alone, leaving priority 50):
 ```text
 StoreDir: /nix/store
 WantMassQuery: 1
-Priority: 42
+Priority: 40
 ```
 
-so Nix asks cache.nixos.org (40) and Cachix (41) first. Rewrite it with
+so Nix asks it before Cachix (41), alongside cache.nixos.org (also 40, and
+first in the substituter list). Rewrite it with
 `curl --aws-sigv4 "aws:amz:auto:s3" --user "$KEY_ID:$SECRET" --upload-file …`
-against `https://<account>.r2.cloudflarestorage.com/sparkles-nix-cache/nix-cache-info`.
+against `https://<account>.r2.cloudflarestorage.com/sparkles-nix-cache/nix-cache-info`,
+then purge its URL in Cloudflare (Caching → Configuration), whose edge keeps
+it for a day.
+
+### Served from Cloudflare's edge
+
+The custom domain sits behind three Cache Rules on the `petar-kirov.dev`
+zone, without which nothing is cached (`.narinfo` is not an extension
+Cloudflare caches by default):
+
+| Rule                | Matches                   | Edge TTL | 404      |
+| ------------------- | ------------------------- | -------- | -------- |
+| `nix-cache nar`     | path starts with `/nar/`  | 1 month  | no cache |
+| `nix-cache narinfo` | path ends with `.narinfo` | 1 hour   | no cache |
+| `nix-cache info`    | path is `/nix-cache-info` | 1 day    | —        |
+
+All three ignore the origin's cache-control and bypass the browser cache. A
+NAR never changes, so a month is safe; a narinfo is cached for an hour so a
+path `ci --gc-r2` deletes stops being advertised soon after. A 404 is never
+cached, because a path pushed a minute ago must not keep looking missing.
+NARs over 512 MB exceed Cloudflare's cacheable size and come from R2
+directly.
 
 ### Garbage-collection roots
 
