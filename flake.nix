@@ -3,8 +3,8 @@
     extra-substituters = [
       "https://sparkles.cachix.org"
       "https://dlang-community.cachix.org"
-      # The R2 bucket behind the Cachix caches (ci/with-r2.sh): everything CI
-      # builds, without Cachix's 10 GiB limit.
+      # The primary cache, an R2 bucket (ci/with-cache.sh): everything CI
+      # builds. sparkles.cachix.org keeps the pinned toolchain.
       "https://cache.sparkles.petar-kirov.dev"
     ];
     extra-trusted-public-keys = [

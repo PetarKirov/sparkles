@@ -11,8 +11,8 @@ on:
     secrets:
       CACHIX_AUTH_TOKEN:
         required: false
-      # The R2 binary cache (ci/with-r2.sh). Without them the rebuild path
-      # still builds and pushes to Cachix, but not to R2.
+      # The R2 binary cache (ci/with-cache.sh). Without them the rebuild path
+      # still builds, but pushes nothing.
       R2_ACCESS_KEY_ID:
         required: false
       R2_SECRET_ACCESS_KEY:
@@ -50,8 +50,8 @@ on:
 # `link-check.yml` owns the nightly sweep. Nothing reaching this file now wants
 # less than the full matrix, so gate on the trigger list, not on `if:`.
 
-# Least privilege by default: no job here writes to the repository. The cachix
-# push authenticates with its own token, not GITHUB_TOKEN.
+# Least privilege by default: no job here writes to the repository. The R2
+# cache push authenticates with its own keys, not GITHUB_TOKEN.
 permissions:
   contents: read
 
@@ -130,7 +130,6 @@ jobs:
         if: runner.os != 'Windows'
         uses: ./.github/actions/setup-nix
         with:
-          push-to-cache: true
           cachix-cache: ${{ vars.CACHIX_CACHE }}
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
@@ -417,14 +416,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      # The dev shell comes from cachix, where `test` pushes it. No GHA
-      # `/nix` cache: twenty short jobs saving under the `test` legs' keys
-      # would race those legs for them, and their own keys would crowd the
-      # repository's cache quota.
+      # The dev shell comes from the binary caches: `nix-build` pushes it to R2
+      # as part of `.#all-desktop`. No GHA `/nix` cache: twenty short jobs
+      # saving under the `test` legs' keys would race those legs for them, and
+      # their own keys would crowd the repository's cache quota.
       - name: Setup Nix
         uses: ./.github/actions/setup-nix
         with:
-          push-to-cache: true
           cachix-cache: ${{ vars.CACHIX_CACHE }}
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
@@ -473,7 +471,6 @@ jobs:
       - name: Setup Nix
         uses: ./.github/actions/setup-nix
         with:
-          push-to-cache: true
           cachix-cache: ${{ vars.CACHIX_CACHE }}
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
@@ -530,7 +527,6 @@ jobs:
       - name: Setup Nix
         uses: ./.github/actions/setup-nix
         with:
-          push-to-cache: true
           cachix-cache: ${{ vars.CACHIX_CACHE }}
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
@@ -598,14 +594,13 @@ jobs:
       - name: Setup Nix
         uses: ./.github/actions/setup-nix
         with:
-          push-to-cache: true
           cachix-cache: ${{ vars.CACHIX_CACHE }}
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
           # The Linux fallback restored an 8 GiB compressed Android store
-          # and filled the runner during setup (run 42023216277). Use Cachix
-          # for its closure instead of restoring a second full store copy.
+          # and filled the runner during setup (run 42023216277). Use the binary
+          # caches for its closure instead of restoring a second full store copy.
           use-nix-cache: ${{ matrix.runner != 'ubuntu-latest' }}
           nix-cache-key: nix-${{ runner.os }}-nixbuild-${{ hashFiles('**/flake.lock') }}
           nix-cache-restore-prefixes: |
@@ -613,22 +608,27 @@ jobs:
             nix-${{ runner.os }}-
 
       # `with-cache.sh` pushes each path as it is built, so a failure in the
-      # step below still leaves this build's outputs in the cache. The
-      # setup-nix action's post-job hook (push-to-cache: true) then pushes
-      # anything else the job produced.
+      # step below still leaves this build's outputs in the cache.
       # On Linux, one derivation at a time, as the Android closure below: with
       # every app built on both arms, the default parallelism ran the runner out
       # of memory mid-build, cancelled with no failed step (PR #719's runs
       # 42404867685 and 42413552229, while terminal and hue-raylib compiled).
       - name: Build & push devShells.full, all packages, and all examples
         env:
-          CACHIX_CACHE: ${{ vars.CACHIX_CACHE }}
-          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           NIX_R2_SIGNING_KEY: ${{ secrets.NIX_R2_SIGNING_KEY }}
         run: ci/with-cache.sh nix build --print-build-logs ${{ matrix.runner == 'ubuntu-latest' && '--max-jobs 1' || '' }} .#all-desktop
+
+      # Roots the build in the R2 cache's garbage collection (ci/gc-root.sh).
+      - name: Record the build as an R2 cache root
+        env:
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          NIX_R2_SIGNING_KEY: ${{ secrets.NIX_R2_SIGNING_KEY }}
+        run: ci/gc-root.sh all-desktop
 
       - name: Run all runnable examples
         run: nix run .#run-all-examples
@@ -694,7 +694,6 @@ jobs:
       - name: Setup Nix
         uses: ./.github/actions/setup-nix
         with:
-          push-to-cache: true
           cachix-cache: ${{ vars.CACHIX_CACHE }}
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
@@ -711,13 +710,19 @@ jobs:
       # failed step (runs 39334458752 and 39400408038, three and two times).
       - name: Build & push the Android APK closure
         env:
-          CACHIX_CACHE: ${{ vars.CACHIX_CACHE }}
-          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           NIX_R2_SIGNING_KEY: ${{ secrets.NIX_R2_SIGNING_KEY }}
         run: ci/with-cache.sh nix build --print-build-logs --max-jobs 1 .#all-android
+
+      - name: Record the build as an R2 cache root
+        env:
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          NIX_R2_SIGNING_KEY: ${{ secrets.NIX_R2_SIGNING_KEY }}
+        run: ci/gc-root.sh all-android
 
   # Toolchain spec TC20: terminal and hue as self-contained programs under the
   # all-LLVM runtime profile (nix/packages/static-apps.nix), their checks and
@@ -744,7 +749,6 @@ jobs:
       - name: Setup Nix
         uses: ./.github/actions/setup-nix
         with:
-          push-to-cache: true
           cachix-cache: ${{ vars.CACHIX_CACHE }}
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
@@ -761,8 +765,6 @@ jobs:
       # exhausted the arm runner's memory and took the runner down.
       - name: Build & push the static programs, their checks and test suites
         env:
-          CACHIX_CACHE: ${{ vars.CACHIX_CACHE }}
-          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -773,6 +775,14 @@ jobs:
             .#legacyPackages.${{ matrix.system }}.staticAppChecks.terminal-static-tests \
             .#legacyPackages.${{ matrix.system }}.staticAppChecks.hue-static \
             .#legacyPackages.${{ matrix.system }}.staticAppChecks.hue-static-tests
+
+      - name: Record the build as an R2 cache root
+        env:
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          NIX_R2_SIGNING_KEY: ${{ secrets.NIX_R2_SIGNING_KEY }}
+        run: ci/gc-root.sh static-apps
 
   lint:
     name: Lint & markdown link check
@@ -786,7 +796,6 @@ jobs:
       - name: Setup Nix
         uses: ./.github/actions/setup-nix
         with:
-          push-to-cache: true
           nix-github-token: ${{ github.token }}
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
           cachix-cache: ${{ vars.CACHIX_CACHE }}
@@ -893,7 +902,6 @@ jobs:
       - name: Setup Nix
         uses: ./.github/actions/setup-nix
         with:
-          push-to-cache: true
           cachix-cache: ${{ vars.CACHIX_CACHE }}
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
@@ -1066,7 +1074,6 @@ jobs:
       - name: Setup Nix
         uses: ./.github/actions/setup-nix
         with:
-          push-to-cache: true
           cachix-cache: ${{ vars.CACHIX_CACHE }}
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}

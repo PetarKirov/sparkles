@@ -40,6 +40,8 @@
           # aggregate or it never reaches the binary cache, and every runner
           # rebuilds it from source.
           devshell-ci = config.devShells.ci;
+          # The lint job's shell (prek and the hooks' tools).
+          devshell-pre-commit = config.devShells.pre-commit;
         }
         // builtins.removeAttrs config.packages (
           [ "all-desktop" ] ++ androidNames ++ exclusions.excludedCiPackages

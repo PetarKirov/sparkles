@@ -20,7 +20,7 @@ cannot be a program that a devShell provides. The remainder
 the whole layer in one language and one dependency footprint — none of them is
 more than a guarded sequence of calls to `nix`, `cachix`, `git`, or `gh`.
 
-`with-r2.sh` comes closest: a queue file and a polling loop around
+`with-cache.sh` comes closest: a queue file and a polling loop around
 `nix copy`. It stays shell because it wraps the builds themselves: as `ci`, it
 would make every wrapped build first compile `ci` whenever `apps/ci` changes.
 
@@ -33,28 +33,28 @@ Provider-neutral names. GitHub Actions maps its `inputs`/`vars`/`secrets` onto
 these in `.github/actions/setup-nix/action.yml` and at the step level; CircleCI
 supplies them from the `sparkles-ci` context.
 
-| Variable                  | Used by                                      | Purpose                                             |
-| ------------------------- | -------------------------------------------- | --------------------------------------------------- |
-| `CACHIX_CACHE`            | `nix-configure`, `with-cache`, `release-pin` | Binary cache name                                   |
-| `CACHIX_AUTH_TOKEN`       | same                                         | Read (netrc) and write (push/pin) token             |
-| `R2_ACCESS_KEY_ID`        | `with-r2`                                    | R2 API token's S3 access key (push only)            |
-| `R2_SECRET_ACCESS_KEY`    | `with-r2`                                    | R2 API token's S3 secret (push only)                |
-| `R2_ACCOUNT_ID`           | `with-r2`                                    | The S3 endpoint's account (`CLOUDFLARE_ACCOUNT_ID`) |
-| `NIX_R2_SIGNING_KEY`      | `with-r2`                                    | Signs what is pushed to R2                          |
-| `NIX_SUBSTITUTERS`        | `nix-configure`                              | Extra substituters, space-separated                 |
-| `NIX_TRUSTED_PUBLIC_KEYS` | `nix-configure`                              | Extra trusted public keys, space-separated          |
-| `NIX_GITHUB_TOKEN`        | `nix-configure`                              | `access-tokens` entry for github.com                |
-| `NIX_GITLAB_TOKEN`        | `nix-configure`                              | `access-tokens` entry for `NIX_GITLAB_DOMAIN`       |
-| `NIX_ACCEPT_FLAKE_CONFIG` | `nix-configure`                              | Trust flake.nix's `nixConfig` caches (see below)    |
-| `CI_DEVSHELL`             | `nix-devshell`                               | devShell to activate (`ci`, `pre-commit`)           |
-| `CI_NIX_SINGLE_USER`      | `nix-install`                                | Single-user store, required to cache `/nix`         |
-| `GITHUB_TOKEN`            | `lint`, `pr-comment`                         | lychee's GitHub API budget; PR preview comment      |
-| `CLOUDFLARE_API_TOKEN`    | `deploy-cloudflare-pages`                    | Pages deploy (GitHub Actions only)                  |
-| `CLOUDFLARE_ACCOUNT_ID`   | `deploy-cloudflare-pages`                    | Pages deploy (GitHub Actions only)                  |
-| `DUB_REGISTRY_SECRET`     | `notify-dub-registry`                        | Optional; only if the package has an update secret  |
-| `DC`                      | job step                                     | D compiler for the test suite (`ldc2` / `dmd`)      |
+| Variable                  | Used by                                    | Purpose                                             |
+| ------------------------- | ------------------------------------------ | --------------------------------------------------- |
+| `CACHIX_CACHE`            | `nix-configure`, `release-pin`             | Cachix cache name (the pins)                        |
+| `CACHIX_AUTH_TOKEN`       | same                                       | Read (netrc) and write (push/pin) token             |
+| `R2_ACCESS_KEY_ID`        | `with-cache`, `gc-root`, `push-pin-set-r2` | R2 API token's S3 access key (write only)           |
+| `R2_SECRET_ACCESS_KEY`    | same                                       | R2 API token's S3 secret (write only)               |
+| `R2_ACCOUNT_ID`           | same                                       | The S3 endpoint's account (`CLOUDFLARE_ACCOUNT_ID`) |
+| `NIX_R2_SIGNING_KEY`      | same                                       | Signs what is pushed to R2                          |
+| `NIX_SUBSTITUTERS`        | `nix-configure`                            | Extra substituters, space-separated                 |
+| `NIX_TRUSTED_PUBLIC_KEYS` | `nix-configure`                            | Extra trusted public keys, space-separated          |
+| `NIX_GITHUB_TOKEN`        | `nix-configure`                            | `access-tokens` entry for github.com                |
+| `NIX_GITLAB_TOKEN`        | `nix-configure`                            | `access-tokens` entry for `NIX_GITLAB_DOMAIN`       |
+| `NIX_ACCEPT_FLAKE_CONFIG` | `nix-configure`                            | Trust flake.nix's `nixConfig` caches (see below)    |
+| `CI_DEVSHELL`             | `nix-devshell`                             | devShell to activate (`ci`, `pre-commit`)           |
+| `CI_NIX_SINGLE_USER`      | `nix-install`                              | Single-user store, required to cache `/nix`         |
+| `GITHUB_TOKEN`            | `lint`, `pr-comment`                       | lychee's GitHub API budget; PR preview comment      |
+| `CLOUDFLARE_API_TOKEN`    | `deploy-cloudflare-pages`                  | Pages deploy (GitHub Actions only)                  |
+| `CLOUDFLARE_ACCOUNT_ID`   | `deploy-cloudflare-pages`                  | Pages deploy (GitHub Actions only)                  |
+| `DUB_REGISTRY_SECRET`     | `notify-dub-registry`                      | Optional; only if the package has an update secret  |
+| `DC`                      | job step                                   | D compiler for the test suite (`ldc2` / `dmd`)      |
 
-Anything unset degrades rather than failing: no Cachix token means builds run
+Anything unset degrades rather than failing: no R2 keys means builds run
 without a push, no `GITHUB_TOKEN` means no PR comment. That is what lets a fork
 PR — which gets no secrets — still run the pipeline.
 
@@ -67,9 +67,10 @@ PR — which gets no secrets — still run the pipeline.
 | `nix-configure.sh`           | Writes `nix.conf` + `netrc`; adds the job user to `trusted-users` on daemon installs     |
 | `nix-devshell.sh`            | Builds a devShell (fail-fast), then exports it to later steps via direnv                 |
 | `prepare-cloud-env.sh`       | One-line setup for an ephemeral agent container: Nix, reachable inputs, toolchain        |
-| `with-cache.sh`              | Runs a command under `cachix watch-exec` and `with-r2.sh`, pushing paths as they build   |
-| `with-r2.sh`                 | Queues each built path through a post-build hook and `nix copy`s it to the R2 bucket     |
-| `push-pin-set-r2.sh`         | Mirrors the pin set's toolchain outputs into the R2 bucket (the `pin-cache` job)         |
+| `lib/r2.sh`                  | The R2 cache's credentials check, store URL, `nix copy` and S3 `PUT`                     |
+| `with-cache.sh`              | Queues each built path through a post-build hook and `nix copy`s it to the R2 bucket     |
+| `gc-root.sh`                 | Copies a build's closure to R2 and records it as a garbage-collection root               |
+| `push-pin-set-r2.sh`         | Mirrors the pin set's toolchain outputs into the R2 bucket and roots them (`pin-cache`)  |
 | `release-pin.sh`             | Highest-tag guard, then `cachix push` + `cachix pin --keep-revisions`                    |
 | `toolchain-pin.d`            | Pins the pin set (`nix/pin-targets.nix`) to Cachix, prunes the rest, checks it is cached |
 | `notify-dub-registry.sh`     | Pokes code.dlang.org to ingest a new tag                                                 |
@@ -384,24 +385,31 @@ There are two ways to avoid that, and the two providers use different ones:
   PRs. The cost is that those repo variables must list every cache
   `flake.nix` names, and drift between the two is silent.
 
-## Two binary caches: Cachix and R2
+## Two binary caches: R2 and Cachix
 
-| Cache                                    | Holds                                                 | Bound                               |
-| ---------------------------------------- | ----------------------------------------------------- | ----------------------------------- |
-| `sparkles.cachix.org`                    | Everything CI builds, and the pinned toolchain (TC24) | 10 GiB, least recently used evicted |
-| `https://cache.sparkles.petar-kirov.dev` | Everything CI builds, with its runtime closure        | None; R2 bills storage by the GB    |
+| Cache                                    | Holds                                                     | Bound                               |
+| ---------------------------------------- | --------------------------------------------------------- | ----------------------------------- |
+| `https://cache.sparkles.petar-kirov.dev` | Everything CI builds, with its closure (the primary)      | None; R2 bills storage by the GB    |
+| `sparkles.cachix.org`                    | The pin set (TC24): the toolchain and the heavy libraries | 10 GiB, least recently used evicted |
 
-The second is the Cloudflare R2 bucket `sparkles-nix-cache`, served
-through its custom domain. Nix reads it as an ordinary HTTP binary cache, with
-no credentials; CI writes it through R2's S3 API (`with-r2.sh`). Paths pushed
+The first is the Cloudflare R2 bucket `sparkles-nix-cache`, served through
+its custom domain. Nix reads it as an ordinary HTTP binary cache, with no
+credentials; CI writes it through R2's S3 API (`lib/r2.sh`). Paths pushed
 there are signed with `cache.sparkles.petar-kirov.dev-1`, whose secret half
 exists only as the `NIX_R2_SIGNING_KEY` repository secret.
 
-The pins stay on Cachix (`toolchain-pin.d`, TC24), and they fit its 10 GiB.
-The pin set is mostly substituted rather than built, so `with-r2.sh` never
-sees it; instead the `pin-cache` job first mirrors every `toolchain-*` output
-R2 lacks (`push-pin-set-r2.sh`), and then its gate (TC23) accepts an output
-that either cache serves. What Cachix evicts, R2 still has.
+Every build CI runs goes to R2 only: `with-cache.sh` pushes each path as it
+is built. Cachix used to receive the same pushes, and its 10 GiB filled with
+pull-request builds that evicted what was expensive to rebuild — the LLVM
+fork's 2.3 GiB source among them. Now it holds only what
+`toolchain-pin.d` pushes and pins (TC24) and the releases `release-pin.sh`
+pins, so its bound is a budget for pins rather than a race against CI.
+
+The pin set is mostly substituted rather than built, so `with-cache.sh`
+never sees it; the `pin-cache` job first mirrors every `toolchain-*` output R2
+lacks (`push-pin-set-r2.sh`), and then its gate (TC23) accepts an output
+that either cache serves. The toolchain thus lives in both caches: losing one
+never means compiling LLVM.
 
 `nix-cache-info` in the bucket was written once by hand, not by Nix (which
 writes `StoreDir` alone, leaving priority 50):
@@ -416,9 +424,27 @@ so Nix asks cache.nixos.org (40) and Cachix (41) first. Rewrite it with
 `curl --aws-sigv4 "aws:amz:auto:s3" --user "$KEY_ID:$SECRET" --upload-file …`
 against `https://<account>.r2.cloudflarestorage.com/sparkles-nix-cache/nix-cache-info`.
 
-Nothing prunes the bucket yet. Nix never re-uploads a path the bucket
-already has, so an age-based R2 lifecycle rule would also expire paths still
-in use; it is safe only for what Cachix keeps pinned.
+### Garbage-collection roots
+
+R2 does not evict, so the bucket needs collecting, and Nix cannot collect a
+binary cache. The roots it keeps are objects in the bucket itself:
+`gc-roots/<tree>/<label>-<system>`, one store path per line, written after a
+build by `gc-root.sh` (`all-desktop`, `all-android`, `static-apps`) and by
+`push-pin-set-r2.sh` (`pin-set`). `gc-root.sh` copies the paths' closures
+first, so a root names only what the bucket can serve.
+
+They are keyed by the git **tree**, not the commit. A pull request lands by
+rebase, and when the landed tree equals the tree the pull request built,
+`main-checks.yml` mirrors the pull request's checks instead of rebuilding
+(see AGENTS.md). The same equality makes the pull request's roots `main`'s,
+with nothing copied: a collector keeps the roots of the trees of `main`'s last
+commits — `cachix pin --keep-revisions`, with git history as the revision
+list — plus anything younger than a grace period, which covers open pull
+requests and uploads still in flight.
+
+An age-based R2 lifecycle rule cannot do this: narinfos and NARs of every
+build share two prefixes, so a rule would expire the toolchain as readily as a
+stale pull request.
 
 ## Cold start and `devShells.ci`
 
@@ -454,7 +480,7 @@ missing one is a link error). The flake-input exports
 dropping them fails the suite rather than skipping it.
 
 `devShells.ci` is in the `all-desktop` aggregate, so `nix-build-*` pushes it to
-Cachix and the other jobs restore rather than build it. `devShells.full` is in
+the R2 cache and the other jobs restore rather than build it. `devShells.full` is in
 that aggregate too, so dropping it from the test jobs does not stop it being
 built — a breakage in the full shell still fails `nix-build-*`. What the test
 jobs would no longer catch is a _test_ that needs something only `full` has, so
@@ -462,11 +488,7 @@ everything a CI job links, execs, or skips without deliberately stays in `ci`
 (see the list above).
 
 Even so, let the first pipeline finish — it is what populates both the
-CircleCI `/nix` cache and Cachix. Subsequent runs restore instead of fetching.
-
-The `nix-build-*` jobs additionally pay ~380 MiB for the `cachix` binary's own
-closure (it pulls `aws-sdk-cpp` and `boost`), since they run without a devShell
-and `with-cache.sh` has to fetch it via `nix run`.
+CircleCI `/nix` cache and the R2 cache. Subsequent runs restore instead of fetching.
 
 ## stdin is a TTY on CircleCI
 
