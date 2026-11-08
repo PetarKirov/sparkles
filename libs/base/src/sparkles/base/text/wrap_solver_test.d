@@ -789,6 +789,41 @@ version (unittest)
         }
     }
 
+    // The count also serves the plain ASCII lines of a paragraph that is not
+    // plain throughout. The same comparison over text mixing ASCII with an em
+    // dash, a wide CJK cell, and a combining mark and a keycap that join the
+    // ASCII letter before them, so a line holding only that letter must not
+    // count.
+    @("text.wrap.plainAsciiLinesOfAMixedParagraphCount") unittest
+    {
+        import std.random : Random, uniform;
+        import std.string : replace;
+
+        string content(string text) => text.replace(" ", "").replace("\n", "");
+
+        static immutable pieces = ["a", "b", " ", " ", "-", "/", ".", "(x)", "—", "界",
+            "é", "1️⃣"];
+        auto rng = Random(719);
+        foreach (round; 0 .. 120)
+        {
+            string source;
+            foreach (_; 0 .. uniform(0, 24, rng))
+                source ~= pieces[uniform(0, pieces.length, rng)];
+            foreach (whitespace; [WhitespaceMode.preserve, WhitespaceMode.collapse, WhitespaceMode.trimAroundBreak])
+                foreach (overflow; [CellOverflowPolicy.overflowUnit, CellOverflowPolicy.graphemeEmergency])
+                    foreach (solver; [WrapSolver.greedy, WrapSolver.balanced])
+                        foreach (width; [0UL, 1, 3, 7, 40])
+                        {
+                            CellGeometry[2] geometry = [CellGeometry(CellWidth.bounded(width)),
+                                CellGeometry(CellWidth.bounded(width > 2 ? width - 2 : 0))];
+                            const plan = cellWrapPlan(source, WrapOptions(width: CellWidth.bounded(width),
+                                whitespace: whitespace, overflow: overflow, solver: solver,
+                                geometry: geometry[], repeatLastGeometry: true));
+                            assert(content(render(plan)) == content(source), source);
+                        }
+        }
+    }
+
     // `cellWrapPlan` plans in arenas its thread reuses; a plan it returned
     // owns its records, so the next call cannot rewrite them.
     @("text.wrap.cellWrapPlanOwnsItsRecordsAcrossCalls") unittest
