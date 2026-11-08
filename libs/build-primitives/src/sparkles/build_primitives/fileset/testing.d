@@ -1048,7 +1048,7 @@ version (Posix)
     import std.path : buildPath, dirName;
     import std.string : lineSplitter, strip;
 
-    static immutable machineModules = ["machine.d", "plan.d", "value.d", "pattern.d"];
+    static immutable machineModules = ["machine.d", "plan.d", "value.d", "pattern.d", "ignore.d"];
     static immutable forbidden = ["std.file", "std.stdio", "std.process", "std.socket",
         "core.sys", "core.stdc.stdio", "sparkles.event_horizon", "sparkles.base.vfs.handles",
         "sparkles.base.vfs.mem", "sparkles.base.vfs.walk", "sparkles.base.io.fd"];

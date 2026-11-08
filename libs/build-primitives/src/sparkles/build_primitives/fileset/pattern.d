@@ -56,6 +56,7 @@ enum FilesetErrorCode : ubyte
     unsupportedPattern, /// valid glob syntax with no fileset meaning
     malformedTreeLiteral, /// a tree literal line does not parse (FSD2)
     treeLiteralTooLarge,  /// a tree literal does not fit its arena
+    capacityExceeded,     /// a bounded `PatternSet` has no room left (`PatternSet.reserve`)
 }
 
 /// A construction failure, with the byte offset in the source it concerns.
@@ -95,6 +96,10 @@ enum size_t maxMatchedNameBytes = 255;
 
 /// One segment's compiled glob.
 alias SegmentProgram = GlobProgram!(maxSegmentInstructions, maxSegmentRanges);
+
+/// The glob compiler's workspace for one segment. Large: heap-own it and
+/// reuse it across `PatternSet.add` calls that must not allocate.
+alias PatternCompileWorkspace = GlobCompileWorkspace!(maxSegmentInstructions, maxSegmentRanges);
 
 /// What a segment matches.
 enum SegmentKind : ubyte
@@ -152,6 +157,13 @@ struct PatternSet
     private HeapBuffer!SegmentProgram programs_;
     private HeapBuffer!PatternInfo patterns_;
     private CasePolicy casePolicy_;
+    private bool bounded_;
+
+    /// Where a set's storage stands, for `release`.
+    static struct Mark
+    {
+        private size_t segments, programs, patterns;
+    }
 
     /// An empty set matching under `policy`.
     this(CasePolicy policy) @safe pure nothrow @nogc
@@ -164,6 +176,34 @@ struct PatternSet
 
     /// The number of compiled patterns.
     size_t length() const @safe pure nothrow @nogc => patterns_.length;
+
+    /**
+    Makes room for `patterns` patterns, `segments` segments and `programs`
+    segment globs in all, and bounds the set to that room: from then on `add`
+    never allocates, and returns `capacityExceeded` for a pattern that might
+    not fit. Allocates.
+    */
+    void reserve(size_t patterns, size_t segments, size_t programs) @safe pure nothrow
+    {
+        patterns_.reserve(patterns);
+        segments_.reserve(segments);
+        programs_.reserve(programs);
+        bounded_ = true;
+    }
+
+    /// The current extent of the set.
+    Mark mark() const @safe pure nothrow @nogc
+        => Mark(segments_.length, programs_.length, patterns_.length);
+
+    /// Forgets every pattern added since `m` was taken; their indices become
+    /// invalid. Never allocates.
+    void release(Mark m) @safe pure nothrow @nogc
+    in (m.patterns <= patterns_.length, "a mark from after this extent")
+    {
+        segments_.length = m.segments;
+        programs_.length = m.programs;
+        patterns_.length = m.patterns;
+    }
 
     /// The pattern `index`.
     PatternInfo opIndex(size_t index) const @safe pure nothrow @nogc => patterns_[index];
@@ -184,6 +224,18 @@ struct PatternSet
     {
         import sparkles.base.unique : makeUnique;
 
+        auto workspace = makeUnique!PatternCompileWorkspace();
+        if (workspace.empty)
+            return filesetErr!uint(FilesetErrorCode.patternTooComplex, 0,
+                "no memory for the glob compiler's workspace");
+        return add(pattern, *workspace);
+    }
+
+    /// ditto, compiling in the caller's `workspace`: a set bounded by
+    /// `reserve` then performs no allocation.
+    FilesetExpected!uint add(string pattern, ref PatternCompileWorkspace workspace)
+        @safe pure nothrow @nogc
+    {
         if (pattern.length == 0)
             return filesetErr!uint(FilesetErrorCode.emptyPattern, 0, "the pattern is empty");
 
@@ -230,11 +282,11 @@ struct PatternSet
             }
         }
 
-        auto workspace = makeUnique!(GlobCompileWorkspace!(maxSegmentInstructions,
-            maxSegmentRanges))();
-        if (workspace.empty)
-            return filesetErr!uint(FilesetErrorCode.patternTooComplex, 0,
-                "no memory for the glob compiler's workspace");
+        if (bounded_ && (patterns_.length == patterns_.capacity
+                || segments_.capacity - segments_.length < maxPatternSegments + 1
+                || programs_.capacity - programs_.length < maxPatternSegments))
+            return filesetErr!uint(FilesetErrorCode.capacityExceeded, 0,
+                "the bounded pattern set has no room for another pattern");
 
         const segmentsBefore = segments_.length, programsBefore = programs_.length;
         PatternInfo info;
@@ -262,7 +314,7 @@ struct PatternSet
                 return filesetErr!uint(FilesetErrorCode.patternTooComplex, at,
                     "the pattern has more segments than a fileset pattern may");
             }
-            auto made = compileSegment(text, at, *workspace);
+            auto made = compileSegment(text, at, workspace);
             if (made.hasError)
             {
                 segments_.length = segmentsBefore;
@@ -352,6 +404,9 @@ struct PatternSet
                 if (s.ascii && isAscii(name))
                     return casePolicy_ == CasePolicy.sensitive
                         ? name == s.text : asciiEqualFolded(name, s.text);
+                // No program: no other name normalizes to this literal.
+                if (s.program == uint.max)
+                    return false;
                 goto case SegmentKind.glob;
             case SegmentKind.glob:
                 if (name.length > maxMatchedNameBytes)
@@ -386,6 +441,11 @@ struct PatternSet
         foreach (c; text)
             if (c == '*' || c == '?' || c == '[' || c == ']' || c == '{' || c == '}' || c == '\\')
                 literal = false;
+
+        // A case-sensitive ASCII literal that no other name normalizes to is
+        // decided by byte comparison alone (A12), so it needs no program.
+        if (literal && casePolicy_ == CasePolicy.sensitive && isAscii(text) && uniqueUnderNfc(text))
+            return filesetOk(Segment(SegmentKind.literal, true, uint.max, text));
 
         programs_ ~= SegmentProgram.init;
         const index = programs_.length - 1;
@@ -609,4 +669,17 @@ private bool escapedAt(scope const(char)[] s, size_t i) @safe pure nothrow @nogc
     while (run < i && s[i - 1 - run] == '\\')
         ++run;
     return (run & 1) != 0;
+}
+
+/**
+Whether no byte string other than the ASCII text `s` normalizes to it under
+NFC: true unless it holds `K`, `` ` `` or `;`, the images of NFC's canonical
+singletons U+212A, U+1FEF and U+037E (A12).
+*/
+package bool uniqueUnderNfc(scope const(char)[] s) @safe pure nothrow @nogc
+{
+    foreach (c; s)
+        if (c == 'K' || c == '`' || c == ';')
+            return false;
+    return true;
 }

@@ -9,6 +9,7 @@ module sparkles.build_primitives.fileset;
 
 public import sparkles.build_primitives.fileset.driver;
 public import sparkles.build_primitives.fileset.driver_loop;
+public import sparkles.build_primitives.fileset.ignore;
 public import sparkles.build_primitives.fileset.machine;
 public import sparkles.build_primitives.fileset.pattern;
 public import sparkles.build_primitives.fileset.plan;
