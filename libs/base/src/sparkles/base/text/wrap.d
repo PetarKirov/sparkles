@@ -779,6 +779,27 @@ private struct CellMeasureContext
     /// is its own one-cell cluster, so a candidate's projection is a count.
     bool plainAscii;
 
+    // An atom the count covers: printable ASCII, not formatting.
+    private bool plainAtom(size_t a) const @safe pure nothrow @nogc
+        => !atoms[a].formatting && atoms[a].token.kind == UtfTokenKind.scalar
+            && atoms[a].token.scalar >= ' ' && atoms[a].token.scalar <= '~';
+
+    /// Whether the candidate `[start, end)` holds only such atoms. A paragraph
+    /// with one em dash is not `plainAscii`, but its lines without one still
+    /// count: a projection starts afresh at its candidate, and a cluster
+    /// joining an ASCII atom to its neighbour has that neighbour in its range.
+    bool plainRange(size_t start, size_t end) const @safe pure nothrow @nogc
+    {
+        if (plainAscii)
+            return true;
+        if (start >= end)
+            return false;
+        foreach (a; clusters[start].atomStart .. clusters[end - 1].atomEnd)
+            if (!plainAtom(a))
+                return false;
+        return true;
+    }
+
     /// The projection `build` would realize for a plain ASCII candidate with
     /// no indent or hyphen, counted instead of realized: one cell per
     /// retained character, the whitespace policy deciding which spaces stay.
@@ -832,7 +853,7 @@ private struct CellMeasureContext
     WrapResult build(size_t start, size_t end, WrapGeometry geometry, bool hyphen,
         const(char)[] indent, ref RealizedCellProjection projection, size_t indentStyle = 0) @safe nothrow @nogc
     {
-        if (plainAscii && !hyphen && !indent.length && options.selectionMeasure is null)
+        if (!hyphen && !indent.length && options.selectionMeasure is null && plainRange(start, end))
         {
             countPlain(start, end, projection);
             debug
@@ -1295,9 +1316,8 @@ WrapResult tryWrapCells(SourceSnapshot source, WrapOptions options, WrapLimits l
     foreach (ref const cluster; context.clusters)
         if (cluster.softHyphen) { context.monotoneContent = false; break; }
     context.plainAscii = true;
-    foreach (ref const atom; context.atoms)
-        if (atom.formatting || atom.token.kind != UtfTokenKind.scalar
-            || atom.token.scalar < ' ' || atom.token.scalar > '~')
+    foreach (a; 0 .. context.atoms.length)
+        if (!context.plainAtom(a))
         { context.plainAscii = false; break; }
     WrapProvider provider = WrapProvider(exact: true, measure: &context.measure, geometry: &context.geometry);
     MeasurableInput input = MeasurableInput(source, scratch.primitives[0 .. clusters],
