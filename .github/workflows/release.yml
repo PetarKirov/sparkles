@@ -88,7 +88,11 @@ jobs:
         env:
           CACHIX_CACHE: ${{ vars.CACHIX_CACHE }}
           CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
-        run: ci/with-cachix.sh nix build --print-build-logs .#all-desktop
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          NIX_R2_SIGNING_KEY: ${{ secrets.NIX_R2_SIGNING_KEY }}
+        run: ci/with-cache.sh nix build --print-build-logs .#all-desktop
 
       - name: Push & pin the release closure
         env:
