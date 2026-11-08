@@ -261,6 +261,9 @@ struct NativeDebug
     @Description("Resize the window every 30 frames: toggle maximize on Wayland and AppKit, step through a band of sizes on X11.")
     bool resizeStress; ///
 
+    @Description("Resize the window a few pixels every frame, sweeping a band of sizes the way a live drag does, where the client may size its window (X11, AppKit).")
+    bool resizeDrag; ///
+
     @Description("Treat frame N as a lost device, which no software driver produces on demand, so the rebuild can be seen to redraw.")
     uint loseDeviceAt; ///
 
