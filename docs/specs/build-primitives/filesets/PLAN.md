@@ -5,7 +5,7 @@ milestone lands code, tests and the evidence its gate names. Decisions and open
 questions live in [decisions.md](./decisions.md)._
 
 **Status (November 8, 2026):** M0 is delivered (PR #507), with its
-`git check-ignore -v` parity gate. M1, M2, M3 and M4, with E0, are delivered
+`git check-ignore -v` parity gate. M1–M5, with E0, are delivered
 with their gates;
 the state of each requirement is in the SPEC's
 [evidence ledger](./SPEC.md#evidence-ledger).
@@ -140,6 +140,15 @@ this repository and ten others, linux among them, is
 **Gate.** A scheme declaring no metadata provably issues no `stat`. The `a`
 versus `a.b` fixture distinguishes `narOrder` from `gitTreeOrder`. A fold
 scheme with `none` ordering fails to compile.
+
+Delivered: `fileset/fso.d` (the vocabulary and the declarations) and
+`fileset/scheme.d` (`resolveScheme`, `FsoRef`, `PathScheme`). The machine
+orders units, requests declared metadata, reads link targets, and hands a
+fold the directories above its start roots
+([A18](./decisions.md#a18-the-scheme-seam-as-built)). The three gate
+conditions are `fileset.scheme.FSS2.metadata`,
+`fileset.scheme.FSS1.orders` and `fileset.scheme.FSS5.foldNeedsOrder`.
+`FSS8` stays partial until M6 gives the supplied tree a type.
 
 ### M6 — Content-addressing schemes
 

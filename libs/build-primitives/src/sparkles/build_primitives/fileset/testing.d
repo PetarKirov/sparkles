@@ -29,6 +29,7 @@ import sparkles.base.vfs.handles : DirRef;
 import sparkles.base.vfs.types : EntryKind, Rights;
 
 import sparkles.build_primitives.fileset.driver : PathCollector, resolve, resolveWith;
+import sparkles.build_primitives.fileset.fso : EntryOrder, FsoMetadata, Traversal;
 import sparkles.build_primitives.fileset.machine : ResolutionErrorCode, ResolutionLimits;
 import sparkles.build_primitives.fileset.pattern : CasePolicy;
 import sparkles.build_primitives.fileset.value : Fileset, FilesetOp, Filesets;
@@ -1081,27 +1082,43 @@ struct RecordingExecutor
 
     size_t[] sizes;             /// each batch's length
     size_t stats;               /// stat requests performed
+    size_t links;               /// readlink requests performed
     string[] reads;             /// the name of each `readFile` request
+    string[] names;             /// the name of every request, in order
     void delegate() beforeStats; /// called once, if set
 
     /// Runs `batch` inline.
     void run(Perform)(scope const(Request)[] batch, scope Perform perform)
     {
         sizes ~= batch.length;
+        bool anyStat;
         foreach (ref r; batch)
+        {
+            names ~= r.name.idup;
             if (r.kind == RequestKind.readFile)
                 reads ~= r.name.idup;
-        if (batch.length && batch[0].kind == RequestKind.stat)
+            stats += r.kind == RequestKind.stat;
+            links += r.kind == RequestKind.readlink;
+            anyStat |= r.kind == RequestKind.stat;
+        }
+        if (anyStat && beforeStats !is null)
         {
-            stats += batch.length;
-            if (beforeStats !is null)
-            {
-                beforeStats();
-                beforeStats = null;
-            }
+            beforeStats();
+            beforeStats = null;
         }
         foreach (i; 0 .. batch.length)
             perform(i);
+    }
+
+    /// Runs a scheme's `work` now.
+    void spawn(Work)(scope Work work)
+    {
+        work();
+    }
+
+    /// Nothing is left running.
+    void join()
+    {
     }
 }
 
@@ -1126,7 +1143,7 @@ struct RecordingExecutor
 }
 
 /// FSO4's machine half: a fileset whose verdicts need no metadata issues no
-/// `stat` request; FSM5: units arrive after their children.
+/// `stat` request; a stream sees a directory before its children (FSS3).
 @("fileset.machine.noStatWithoutNeed")
 @system unittest
 {
@@ -1140,7 +1157,7 @@ struct RecordingExecutor
     RecordingExecutor exec;
     assert(!resolveWith(root.value.borrow, sets, f, sink, exec).hasError);
     assert(exec.stats == 0);
-    assert(sink.members == ["src/b/c.d", "src/a.d", "vendor/x/y"], "units arrive post-order");
+    assert(sink.members == ["src/a.d", "src/b/c.d", "vendor/x/y"], "a stream sees units pre-order");
 }
 
 /// FSV4: an entered directory with no member and no entered subdirectory is
@@ -1283,7 +1300,7 @@ struct RecordingExecutor
 
     auto plain = openRoot!(Rights.readOnly)(vfs, "r", ambientAuthority());
     auto byDefault = machineResolve(plain.value.borrow, sets, f);
-    assert(byDefault.members == ["real/x.d", "alias", "etc", "up"],
+    assert(byDefault.members == ["alias", "etc", "up", "real/x.d"],
         "by default every link is a member, its target data");
 
     ResolvePolicy beneath;
@@ -1319,7 +1336,7 @@ struct RecordingExecutor
     ResolvePolicy crossing;
     crossing.crossMounts = true;
     auto open = openRoot!(Rights.readOnly)(vfs, "r", ambientAuthority(), crossing);
-    assert(machineResolve(open.value.borrow, sets, f).members == ["m/b", "a"]);
+    assert(machineResolve(open.value.borrow, sets, f).members == ["a", "m/b"]);
 }
 
 version (Posix)
@@ -1939,5 +1956,554 @@ version (Posix)
         assert(failures.length == 0, failures.join("\n") ~ "\nincomplete:\n"
             ~ tallies.map!(t => t.incomplete.join("\n")).join("\n"));
         assert(tallies[0].files > 1000, "this repository should have been walked");
+    }
+}
+
+// ------------------------------------------------------------------ M5: schemes
+
+/// A stream recording each directory's entries as `name` (a file),
+/// `name/` (a directory) or `name->target` (a link), and the order it saw
+/// directories in.
+struct RecordingScheme(EntryOrder o, FsoMetadata m = FsoMetadata.none)
+{
+    import sparkles.build_primitives.fileset.fso : FsoKind;
+
+    enum order = o;
+    enum metadata = m;
+    alias Result = string[];
+
+    string[] dirs;            /// each directory's path, in visiting order
+    string[][string] entries; /// each directory's entries
+    long[string] mtimes;      /// the mtime of each member that has one
+    bool[string] executable;  /// each member file's executable bit
+
+    bool visit(Entries, Exec)(scope const(char)[] path, Entries es, bool empty, ref Exec exec)
+    {
+        dirs ~= path.idup;
+        string[] got;
+        foreach (e; es)
+        {
+            const full = (path.length ? path ~ "/" ~ e.name : e.name).idup;
+            final switch (e.node.kind)
+            {
+                case FsoKind.directory:
+                    got ~= e.name.idup ~ "/";
+                    break;
+                case FsoKind.regular:
+                    got ~= e.name.idup;
+                    executable[full] = e.node.executable;
+                    break;
+                case FsoKind.symlink:
+                    got ~= e.name.idup ~ "->" ~ e.node.target.idup;
+                    break;
+            }
+            if (e.hasMtime)
+                mtimes[full] = e.mtimeNs;
+        }
+        entries[path.idup] = got;
+        return true;
+    }
+
+    bool incomplete(scope const(char)[] path, ErrorKind kind) => true;
+
+    string[] finish() => dirs;
+}
+
+/// A fold rendering each directory as `[entry,…]`, a subdirectory as its
+/// name followed by its own rendering.
+struct RenderingFold(EntryOrder o)
+{
+    import sparkles.build_primitives.fileset.fso : FsoKind;
+
+    enum order = o;
+    enum traversal = Traversal.fold;
+    alias Value = string;
+    alias Result = string;
+
+    string[] seen; /// each directory's path, in the order it was folded
+
+    bool fold(Entries, Exec)(scope const(char)[] path, Entries es, bool empty, ref Exec exec,
+        out string value)
+    {
+        assert(!seen.canFind(path), "a directory is folded once");
+        seen ~= path.idup;
+        string[] parts;
+        foreach (e; es)
+            parts ~= e.node.kind == FsoKind.directory ? e.name.idup ~ e.value : e.name.idup;
+        value = "[" ~ parts.join(",") ~ "]";
+        return true;
+    }
+
+    bool incomplete(scope const(char)[] path, ErrorKind kind) => true;
+
+    string finish(ref string root) => root;
+}
+
+/// Resolves `f` on a fresh in-memory tree with `scheme`, recording requests.
+auto schemeResolve(S)(string literal, ref const Filesets sets, Fileset f, ref S scheme,
+    out RecordingExecutor exec)
+{
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+    import sparkles.build_primitives.fileset.scheme : resolveScheme;
+
+    auto tree = openFixture(literal);
+    auto root = openRoot!(Rights.readOnly)(&tree.value.get().vfs, "", ambientAuthority());
+    auto r = resolveScheme(root.value.borrow, sets, f, scheme, exec);
+    assert(!r.hasError, r.hasError ? r.error.context : "");
+    return r.value;
+}
+
+/// FSS1: each order, pinned by the `a` versus `a.b` fixture (a link `0`
+/// tells `partitionedOrder` apart), for a stream and for a fold.
+@("fileset.scheme.FSS1.orders")
+@system unittest
+{
+    enum literal = "a/x\na.b\n0 -> x\n";
+    auto sets = Filesets(CasePolicy.sensitive);
+    const f = sets.everything;
+    RecordingExecutor exec;
+
+    RecordingScheme!(EntryOrder.narOrder) nar;
+    schemeResolve(literal, sets, f, nar, exec);
+    assert(nar.entries[""] == ["0->", "a/", "a.b"]);
+    RecordingScheme!(EntryOrder.gitTreeOrder) git;
+    schemeResolve(literal, sets, f, git, exec);
+    assert(git.entries[""] == ["0->", "a.b", "a/"]);
+    RecordingScheme!(EntryOrder.partitionedOrder) part;
+    schemeResolve(literal, sets, f, part, exec);
+    assert(part.entries[""] == ["a/", "a.b", "0->"]);
+
+    RenderingFold!(EntryOrder.narOrder) narFold;
+    assert(schemeResolve(literal, sets, f, narFold, exec) == "[0,a[x],a.b]");
+    RenderingFold!(EntryOrder.gitTreeOrder) gitFold;
+    assert(schemeResolve(literal, sets, f, gitFold, exec) == "[0,a.b,a[x]]");
+}
+
+/// FSS5: a fold over `none` does not compile; over a declared order it does.
+@("fileset.scheme.FSS5.foldNeedsOrder")
+@system unittest
+{
+    import sparkles.base.vfs.mem : MemVfs;
+    import sparkles.build_primitives.fileset.scheme : resolveScheme, shapeOf;
+
+    alias Bad = RenderingFold!(EntryOrder.none);
+    alias Good = RenderingFold!(EntryOrder.gitTreeOrder);
+    static assert(!__traits(compiles, shapeOf!Bad));
+    static assert(!__traits(compiles, (DirRef!(MemVfs, Rights.readOnly) r, ref const Filesets s,
+        Fileset f, ref Bad b, ref RecordingExecutor e) => resolveScheme(r, s, f, b, e)));
+    static assert(__traits(compiles, (DirRef!(MemVfs, Rights.readOnly) r, ref const Filesets s,
+        Fileset f, ref Good g, ref RecordingExecutor e) => resolveScheme(r, s, f, g, e)));
+    // A stream may leave its order undeclared.
+    static assert(shapeOf!(RecordingScheme!(EntryOrder.none)).order == EntryOrder.none);
+}
+
+/// FSS3, FSM5: a fold sees each directory once, after all its
+/// subdirectories, and the directories above the start roots last, the
+/// fileset root holding everything; a stream sees each directory before its
+/// subdirectories.
+@("fileset.scheme.FSS3.traversal")
+@system unittest
+{
+    enum literal = "src/a.d\nsrc/b/c.d\nsrc/b/d.txt\ndocs/i.md\nother/x\nlib/x/y/z.d\n";
+    auto sets = Filesets(CasePolicy.sensitive);
+    RecordingExecutor exec;
+
+    const planned = sets.unionOf(sets.glob("/src/**/*.d").value, sets.glob("/docs/*.md").value,
+        sets.glob("/lib/x/y/*.d").value);
+    RenderingFold!(EntryOrder.narOrder) fold;
+    assert(schemeResolve(literal, sets, planned, fold, exec)
+        == "[docs[i.md],lib[x[y[z.d]]],src[a.d,b[c.d]]]");
+    assert(fold.seen == ["docs", "lib/x/y", "lib/x", "lib", "src/b", "src", ""], fold.seen.join(" "));
+
+    // A start root that holds nothing leaves the fileset root empty.
+    RenderingFold!(EntryOrder.narOrder) none;
+    assert(schemeResolve(literal, sets, sets.glob("/nope/*.d").value, none, exec) == "[]");
+    // The fileset root as the start root.
+    RenderingFold!(EntryOrder.narOrder) all;
+    assert(schemeResolve("a/b\nc\n", sets, sets.everything, all, exec) == "[a[b],c]");
+
+    RecordingScheme!(EntryOrder.none) stream;
+    assert(schemeResolve(literal, sets, sets.everything, stream, exec)
+        == ["", "docs", "lib", "lib/x", "lib/x/y", "other", "src", "src/b"]);
+}
+
+/// FSS2, FSO4: what a scheme declares, and only that, is requested; a
+/// declared mtime arrives with the stat that brings the executable bit.
+@("fileset.scheme.FSS2.metadata")
+@system unittest
+{
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+    import sparkles.build_primitives.fileset.scheme : resolveScheme;
+
+    enum literal = "bin/run +x\nbin/notes\nlink -> bin/run\n";
+    auto sets = Filesets(CasePolicy.sensitive);
+    const f = sets.everything;
+
+    RecordingExecutor bare;
+    RecordingScheme!(EntryOrder.narOrder) none;
+    schemeResolve(literal, sets, f, none, bare);
+    assert(bare.stats == 0 && bare.links == 0, "a scheme declaring nothing causes no stat");
+    assert(none.executable["bin/run"] == false, "an undeclared bit reads false");
+    assert(none.mtimes.length == 0);
+
+    RecordingExecutor exe;
+    RecordingScheme!(EntryOrder.narOrder, FsoMetadata.executable) bits;
+    schemeResolve(literal, sets, f, bits, exe);
+    assert(exe.stats == 2 && exe.links == 0, "one stat per member file, none for the link");
+    assert(bits.executable["bin/run"] && !bits.executable["bin/notes"]);
+
+    auto tree = openFixture(literal);
+    assert(tree.value.get().vfs.setMtime("bin/notes", 1_234_567_890));
+    assert(tree.value.get().vfs.setMtime("link", 42));
+    auto root = openRoot!(Rights.readOnly)(&tree.value.get().vfs, "", ambientAuthority());
+    RecordingExecutor timed;
+    RecordingScheme!(EntryOrder.narOrder, cast(FsoMetadata)(FsoMetadata.mtime | FsoMetadata.executable)) times;
+    assert(!resolveScheme(root.value.borrow, sets, f, times, timed).hasError);
+    assert(timed.stats == 3, "a declared mtime stats links too, in the same batch");
+    assert(times.mtimes["bin/notes"] == 1_234_567_890 && times.mtimes["link"] == 42);
+    assert("bin" !in times.mtimes, "a directory carries no mtime");
+}
+
+/// FSO2: a link's target is data. Reading it names only the link; nothing
+/// is ever asked of the target's path, inside the root or outside it.
+@("fileset.scheme.FSO2.linkTargetsAreData")
+@system unittest
+{
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+    import sparkles.build_primitives.fileset.scheme : resolveScheme;
+
+    auto tree = openFixture("secret/key\nr/f\nr/out -> /etc/passwd\nr/up -> ../secret/key\nr/d/in -> ../f\n");
+    auto root = openRoot!(Rights.readOnly)(&tree.value.get().vfs, "r", ambientAuthority());
+    auto sets = Filesets(CasePolicy.sensitive);
+    RecordingExecutor exec;
+    RecordingScheme!(EntryOrder.narOrder, FsoMetadata.linkTarget) s;
+    assert(!resolveScheme(root.value.borrow, sets, sets.everything, s, exec).hasError);
+    assert(s.entries[""] == ["d/", "f", "out->/etc/passwd", "up->../secret/key"]);
+    assert(s.entries["d"] == ["in->../f"]);
+    assert(exec.links == 3 && exec.stats == 0);
+    foreach (n; exec.names)
+        assert(!n.canFind("etc") && !n.canFind("secret") && n != "../f", n);
+    // A link whose verdict needs the executable bit is decided without a stat.
+    RecordingExecutor exe;
+    RecordingScheme!(EntryOrder.narOrder) plain;
+    assert(!resolveScheme(root.value.borrow, sets, sets.executable, plain, exe).hasError);
+    assert(exe.stats == 1 && exe.links == 0, "only the regular file `f` is stat-ed");
+}
+
+/// A fold digesting its members' content, read through each entry's
+/// reference (FSS4); it fails on a file reading `bad` (FSE1), and refuses a
+/// resolution with any incomplete entry unless told to tolerate them (FSE2).
+struct DigestFold
+{
+    import sparkles.build_primitives.fileset.fso : FsoKind;
+
+    enum order = EntryOrder.gitTreeOrder;
+    enum traversal = Traversal.fold;
+    alias Value = ulong;
+    alias Result = ulong;
+
+    bool tolerate;
+    string why;
+
+    bool fold(Entries, Exec)(scope const(char)[] path, Entries es, bool empty, ref Exec exec,
+        out ulong value)
+    {
+        import sparkles.base.vfs.types : OpenMode;
+
+        ulong h = 1_469_598_103_934_665_603;
+        void mix(scope const(char)[] bytes)
+        {
+            foreach (c; bytes)
+                h = (h ^ c) * 1_099_511_628_211;
+        }
+
+        foreach (e; es)
+        {
+            mix(e.name);
+            if (e.node.kind == FsoKind.directory)
+            {
+                h = (h ^ e.value) * 1_099_511_628_211;
+                continue;
+            }
+            auto file = e.ref_.dir.openFile!(OpenMode.read)(e.ref_.name);
+            if (file.hasError)
+                return failWith("a member could not be opened");
+            ubyte[64] buf;
+            auto n = file.value.read(buf[]);
+            if (n.hasError)
+                return failWith("a member could not be read");
+            const text = cast(const(char)[]) buf[0 .. n.value];
+            if (text == "bad")
+                return failWith("a member is corrupt");
+            mix(text);
+        }
+        value = h;
+        return true;
+    }
+
+    bool incomplete(scope const(char)[] path, ErrorKind kind)
+        => tolerate || failWith("the resolution is incomplete");
+
+    string failure() => why;
+
+    ulong finish(ref ulong root) => root;
+
+    private bool failWith(string s)
+    {
+        why = s;
+        return false;
+    }
+}
+
+/// FSE1, FSE2, FSE4: a scheme failing mid-file aborts the resolution; an
+/// incomplete one completes and says so, and a consumer needing
+/// completeness refuses it; each scheme's result is its own type.
+@("fileset.scheme.FSE.failures")
+@system unittest
+{
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+    import sparkles.build_primitives.fileset.scheme : PathScheme, SchemeResult, resolveScheme;
+
+    static assert(is(typeof(SchemeResult!PathScheme.init.value) == PathScheme.Paths));
+    static assert(is(typeof(SchemeResult!DigestFold.init.value) == ulong));
+
+    auto sets = Filesets(CasePolicy.sensitive);
+    const f = sets.everything;
+
+    auto good = openFixture("a = one\nd/b = two\n");
+    auto goodRoot = openRoot!(Rights.readOnly)(&good.value.get().vfs, "", ambientAuthority());
+    RecordingExecutor exec;
+    DigestFold digest;
+    auto ok = resolveScheme(goodRoot.value.borrow, sets, f, digest, exec);
+    assert(!ok.hasError && ok.value != 0);
+    assert(exec.reads.length == 0, "the machine requested no content (FSM4)");
+
+    auto bad = openFixture("a = one\nd/b = bad\n");
+    auto badRoot = openRoot!(Rights.readOnly)(&bad.value.get().vfs, "", ambientAuthority());
+    DigestFold failing;
+    auto aborted = resolveScheme(badRoot.value.borrow, sets, f, failing, exec);
+    assert(aborted.hasError && aborted.error.code == ResolutionErrorCode.schemeFailed);
+    assert(aborted.error.context == "a member is corrupt");
+
+    auto mounted = openFixture("a = one\nm/b = two\n");
+    assert(mounted.value.get().vfs.mount("m"));
+    auto mRoot = openRoot!(Rights.readOnly)(&mounted.value.get().vfs, "", ambientAuthority());
+    PathScheme paths;
+    auto listed = resolveScheme(mRoot.value.borrow, sets, f, paths, exec);
+    assert(!listed.hasError);
+    assert(listed.value.members == ["a"] && listed.value.unreadable == ["m: crossesMount"]);
+    DigestFold strict;
+    auto refused = resolveScheme(mRoot.value.borrow, sets, f, strict, exec);
+    assert(refused.hasError && refused.error.context == "the resolution is incomplete");
+    DigestFold lenient;
+    lenient.tolerate = true;
+    assert(!resolveScheme(mRoot.value.borrow, sets, f, lenient, exec).hasError);
+}
+
+/// FSS8: a scheme can verify an entry against a tree supplied out of band —
+/// here a sibling `.idsig`, located through the entry's reference — without
+/// reading the entry itself.
+@("fileset.scheme.FSS8.suppliedTree")
+@system unittest
+{
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+    import sparkles.base.vfs.types : OpenMode;
+    import sparkles.build_primitives.fileset.scheme : resolveScheme;
+
+    static struct Verifier
+    {
+        enum order = EntryOrder.narOrder;
+        alias Result = string[];
+        string[string] expected; // the root each artifact must have
+        string[] opened, verified;
+
+        bool visit(Entries, Exec)(scope const(char)[] path, Entries es, bool empty, ref Exec exec)
+        {
+            foreach (e; es)
+            {
+                const want = e.name in expected;
+                if (want is null)
+                    continue;
+                const sig = (e.ref_.name ~ ".idsig").idup;
+                opened ~= sig;
+                auto file = e.ref_.dir.openFile!(OpenMode.read)(sig);
+                if (file.hasError)
+                    return false;
+                ubyte[64] buf;
+                auto n = file.value.read(buf[]);
+                if (n.hasError || cast(const(char)[]) buf[0 .. n.value] != *want)
+                    return false;
+                verified ~= e.name.idup;
+            }
+            return true;
+        }
+
+        bool incomplete(scope const(char)[] path, ErrorKind kind) => false;
+
+        string[] finish() => verified;
+    }
+
+    auto tree = openFixture("app.apk = payload\napp.apk.idsig = 7f3a\n");
+    auto root = openRoot!(Rights.readOnly)(&tree.value.get().vfs, "", ambientAuthority());
+    auto sets = Filesets(CasePolicy.sensitive);
+    RecordingExecutor exec;
+    Verifier v;
+    v.expected["app.apk"] = "7f3a";
+    auto r = resolveScheme(root.value.borrow, sets, sets.glob("*.apk").value, v, exec);
+    assert(!r.hasError && r.value == ["app.apk"]);
+    assert(v.opened == ["app.apk.idsig"], "the artifact itself is never opened");
+}
+
+/// FSO3: membership ignores timestamps and every permission bit but the
+/// executable one, on a native file system.
+@("fileset.scheme.FSO3.excludedMetadata")
+@system unittest
+{
+    import std.datetime.systime : SysTime;
+    import std.file : rmdirRecurse, setAttributes, setTimes;
+    import std.path : buildPath;
+
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+    import sparkles.build_primitives.fileset.scheme : PathScheme, resolveScheme;
+    import sparkles.event_horizon.sys : BlockingVfs;
+
+    enum literal = "src/a.d\nsrc/b.d\nbin/run +x\nbin/tool +x\n";
+    string[] resolveWithModes(uint fileMode, uint exeMode, long stamp, Fileset delegate(ref Filesets) make)
+    {
+        const dir = scratchTree("fso3");
+        scope (exit) rmdirRecurse(dir);
+        materialize(literal, dir);
+        foreach (p; ["src/a.d", "src/b.d"])
+        {
+            setAttributes(buildPath(dir, p), fileMode);
+            setTimes(buildPath(dir, p), SysTime(stamp), SysTime(stamp));
+        }
+        foreach (p; ["bin/run", "bin/tool"])
+        {
+            setAttributes(buildPath(dir, p), exeMode);
+            setTimes(buildPath(dir, p), SysTime(stamp), SysTime(stamp));
+        }
+        auto vfs = new BlockingVfs;
+        auto root = openRoot!(Rights.readOnly)(vfs, dir, ambientAuthority());
+        auto sets = Filesets(CasePolicy.sensitive);
+        RecordingExecutor exec;
+        PathScheme paths;
+        auto r = resolveScheme(root.value.borrow, sets, make(sets), paths, exec);
+        assert(!r.hasError);
+        return r.value.members;
+    }
+
+    Fileset delegate(ref Filesets)[] makers = [delegate(ref Filesets s) => s.everything,
+        delegate(ref Filesets s) => s.executable,
+        delegate(ref Filesets s) => s.difference(s.everything, s.executable)];
+    foreach (make; makers)
+    {
+        const a = resolveWithModes(octal!644, octal!755, 0, make);
+        const b = resolveWithModes(octal!600, octal!700, 1_000_000_000_000_000, make);
+        assert(a.length && a == b, a.join(",") ~ " | " ~ b.join(","));
+    }
+}
+
+version (Posix)
+{
+    /**
+    FSS4, FSS6, FSS7 on the event-horizon driver: a stream that reads the
+    two halves of each member concurrently, each through its own handle on
+    the entry's directory. With a budget of one in-flight operation shared
+    with the walk, nothing ever runs two at once, and the result is not
+    returned before every half was read.
+    */
+    @("fileset.scheme.FSS4.schemeOwnedReads")
+    @system unittest
+    {
+        import std.file : rmdirRecurse;
+
+        import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+        import sparkles.base.vfs.types : OpenMode;
+        import sparkles.build_primitives.fileset.driver : filesetRights;
+        import sparkles.build_primitives.fileset.driver_loop : LoopExecutor;
+        import sparkles.build_primitives.fileset.scheme : resolveScheme;
+        import sparkles.event_horizon.admission : Admission;
+        import sparkles.event_horizon.sched : Sched;
+        import sparkles.event_horizon.vfs : RingVfs;
+
+        static struct Halves
+        {
+            import sparkles.build_primitives.fileset.fso : FsoKind;
+
+            enum order = EntryOrder.narOrder;
+            alias Result = size_t;
+            size_t spawned, done, bytes;
+
+            bool visit(Entries, Exec)(scope const(char)[] path, Entries es, bool empty, ref Exec exec)
+            {
+                foreach (e; es)
+                {
+                    if (e.node.kind != FsoKind.regular)
+                        continue;
+                    // Opened now, while the reference is valid; read later.
+                    foreach (half; 0 .. 2)
+                        if (!launch(exec, e.ref_.dir.openFile!(OpenMode.read)(e.ref_.name), half))
+                            return false;
+                }
+                return true;
+            }
+
+            // Spawns the read of one half of `opened`, which the closure owns.
+            bool launch(Exec, F)(ref Exec exec, F opened, size_t half)
+            {
+                import core.lifetime : move;
+
+                if (opened.hasError)
+                    return false;
+                // On the heap: a struct a closure captures is still destroyed
+                // when this frame ends.
+                auto held = new typeof(opened.value)[1];
+                held[0] = move(opened.value);
+                ++spawned;
+                exec.spawn(() {
+                    ubyte[4] buf;
+                    // The second half skips the first.
+                    if (half == 1)
+                        assert(!held[0].read(buf[]).hasError);
+                    auto n = held[0].read(buf[]);
+                    assert(!n.hasError && n.value == 4);
+                    bytes += n.value;
+                    ++done;
+                });
+                return true;
+            }
+
+            bool incomplete(scope const(char)[] path, ErrorKind kind) => false;
+
+            size_t finish()
+            {
+                assert(done == spawned, "the result came before the scheme's work");
+                return bytes;
+            }
+        }
+
+        Sched s;
+        schedOrSkip(s);
+        const dir = scratchTree("halves");
+        scope (exit) rmdirRecurse(dir);
+        materialize("a = 01234567\nd/b = abcdefgh\nd/c = ABCDEFGH\n", dir);
+        auto sets = Filesets(CasePolicy.sensitive);
+        size_t bytes;
+        uint peak;
+        auto r = s.run(() {
+            auto rv = new RingVfs;
+            auto root = openRoot!(Rights.readOnly)(rv, dir, ambientAuthority());
+            auto budget = new Admission(1);
+            auto exec = LoopExecutor!Sched(&s, budget);
+            Halves h;
+            auto got = resolveScheme(root.value.borrow, sets, sets.everything, h, exec);
+            assert(!got.hasError, got.hasError ? got.error.context : "");
+            bytes = got.value;
+            peak = exec.peak;
+        });
+        assert(!r.hasError);
+        assert(bytes == 24);
+        assert(peak == 1);
     }
 }

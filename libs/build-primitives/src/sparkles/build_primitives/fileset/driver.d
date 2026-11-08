@@ -19,10 +19,12 @@ under an admission budget. The in-memory driver is this adapter over
 documentation only, FSD3), and the event-horizon one over `RingVfs`.
 
 A resolution's consumer is a sink: `directory(path, members, empty)` for each
-resolved directory, after its children (FSM5), and `incomplete(path, kind)`
-for each entry that could not be read (FSE2). `PathCollector` is one. A sink
-that also has `ignoreDecision(path, isDir, excluded, source, line, pattern)`
-hears, for each entry a `.gitignore` rule decided, which rule it was (FSI3).
+resolved directory, before its subdirectories' (a stream, FSS3), and
+`incomplete(path, kind)` for each entry that could not be read (FSE2).
+`PathCollector` is one. A sink that also has `ignoreDecision(path, isDir,
+excluded, source, line, pattern)` hears, for each entry a `.gitignore` rule
+decided, which rule it was (FSI3). A scheme is the richer consumer:
+`sparkles.build_primitives.fileset.scheme`.
 
 A `gitignored` fileset makes the machine ask for `readFile`, which needs a
 root opened with read rights.
@@ -45,10 +47,19 @@ import sparkles.build_primitives.fileset.value : Fileset, Filesets;
 /// The rights a fileset root needs: look up, list and stat.
 enum Rights filesetRights = cast(Rights)(Rights.lookup | Rights.list | Rights.stat);
 
+/// The bytes of the longest link target the driver reads.
+enum size_t linkTargetRoom = 4096;
+
 /// The result of a resolution: nothing, or why it failed.
 alias ResolutionResult = Expected!(void, ResolutionError, NoGcHook);
 
-/// Performs a batch's requests one after another.
+/**
+Performs a batch's requests one after another.
+
+Every executor also runs a scheme's own work (FSS4): `spawn(work)` starts
+it under the executor's admission budget (FSS6), and `join` returns once all
+of it has run (FSS7). Here both are immediate.
+*/
 struct InlineExecutor
 {
     /// Calls `perform(i)` for each request `i` of `batch`.
@@ -56,6 +67,17 @@ struct InlineExecutor
     {
         foreach (i; 0 .. batch.length)
             perform(i);
+    }
+
+    /// Runs `work` now.
+    void spawn(Work)(scope Work work)
+    {
+        work();
+    }
+
+    /// Returns: nothing spawned is left running.
+    void join()
+    {
     }
 }
 
@@ -139,8 +161,13 @@ if (isVfs!V && hasRights(R, filesetRights))
                 else
                     return m.failed(index, ErrorKind.unsupported);
             case RequestKind.readlink:
-                // Not yet performed by this driver: M5 adds it.
-                return m.failed(index, ErrorKind.unsupported);
+                // `readlinkAt` on the link's own directory never follows
+                // it (FSO2).
+                char[linkTargetRoom] buffer = void;
+                auto target = handles[req.dir].readlinkAt(req.name, buffer[]);
+                if (target.hasError)
+                    return m.failed(index, target.error.kind);
+                return m.linkRead(index, target.value);
         }
     }
 
@@ -193,6 +220,10 @@ if (isVfs!V && hasRights(R, filesetRights))
             m.fileRead(index, n, whole);
         }
     }
+
+    /// The handle of directory `id`, held until it is retired.
+    DirRef!(V, R) borrowDir(uint id) return
+        => handles[id].borrow;
 
     /// Closes the handle of directory `id`.
     void retire(uint id)
