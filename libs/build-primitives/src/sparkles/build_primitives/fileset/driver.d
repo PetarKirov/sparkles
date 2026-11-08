@@ -282,6 +282,7 @@ ResolutionResult resolveWith(V, Rights R, Sink, Exec)(DirRef!(V, R) root, ref co
                         m.decisionSource, m.decisionLine, m.decisionPattern);
                 break;
             case StepKind.budget:
+            case StepKind.leave: // a sink declares no shape, so never hears one
                 break;
             case StepKind.done:
                 return ok!(ResolutionError, NoGcHook)();

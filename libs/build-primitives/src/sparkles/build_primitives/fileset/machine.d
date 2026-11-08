@@ -142,6 +142,10 @@ enum StepKind : ubyte
     /// `decisionPath`, `decisionIsDir`, `decisionExcluded`, `decisionSource`,
     /// `decisionLine` and `decisionPattern`
     ignoreDecision,
+    /// a stream's directory and everything beneath it are done, its
+    /// handle still alive (only when the scheme declared it): read
+    /// `leftPath`
+    leave,
 }
 
 /// Where a resolution is (FSM6). Valid only for the resolution that made it,
@@ -340,6 +344,13 @@ struct Resolution
     }
 
     // ------------------------------------------------------------ results
+
+    /// The directory a `StepKind.leave` ends, relative to the fileset root.
+    const(char)[] leftPath() const return @safe pure nothrow @nogc
+        => names[][leftPath_.start .. leftPath_.end];
+
+    /// The driver's id of the directory a `StepKind.leave` ends.
+    uint leftDir() const @safe pure nothrow @nogc => leftDir_;
 
     /// The unit's directory, relative to the fileset root (`""` for it).
     const(char)[] unitPath() const return @safe pure nothrow @nogc
@@ -540,7 +551,7 @@ private:
         uint cursor;
         uint memberCount, liveChildren;
         Phase phase;
-        bool acceptAll, failed, throughLink, scopeChecked, emitted;
+        bool acceptAll, failed, throughLink, scopeChecked, emitted, left;
         uint parentEntry = uint.max; // its entry in the parent's listing
         uint tagRequest;             // its readDir's index in the batch
         ErrorKind error = ErrorKind.other;
@@ -607,8 +618,8 @@ private:
     // the order of those it holds.
     HeapBuffer!uint unitOrder;
     uint unitOrderLength, unitFirst, unitCount;
-    Span unitPath_;
-    uint unitDir_ = noDir;
+    Span unitPath_, leftPath_;
+    uint unitDir_ = noDir, leftDir_ = noDir;
     bool unitAnc, unitEmpty_;
 
     // A fold's directories above the start roots (`Anc`), innermost last,
@@ -868,6 +879,27 @@ private:
                     {
                         kind = StepKind.budget;
                         return true;
+                    }
+                    if (!fold && shape.leave)
+                    {
+                        // A stream that hears a directory end sees it
+                        // first, if it has not, and then hears it end, both
+                        // while its handle is alive.
+                        if (!f.emitted)
+                        {
+                            f.emitted = true;
+                            emitFrame(current);
+                            kind = StepKind.unit;
+                            return true;
+                        }
+                        if (!f.left)
+                        {
+                            f.left = true;
+                            leftPath_ = f.path;
+                            leftDir_ = current;
+                            kind = StepKind.leave;
+                            return true;
+                        }
                     }
                     const emit = !f.emitted;
                     if (emit)

@@ -34,7 +34,9 @@ import sparkles.build_primitives.fileset.value : DirVerdict, Fileset, FilesetEva
 /**
 The plan for one fileset: the directories its resolution starts from, each a
 path relative to the fileset root (`""` is the root itself), no one beneath
-another, in byte order.
+another, in path order: by component, each by bytes, so `a/b` comes before
+`a-c` as the directory `a` comes before `a-c`. That keeps each directory's
+descendants together, and is NAR's order of a tree.
 */
 struct Plan
 {
@@ -297,6 +299,32 @@ private struct Lattice
     }
 }
 
+/// Whether the path `a` comes before `b` component by component: bytes,
+/// with the separator below every byte a name can hold.
+bool pathBefore(scope const(char)[] a, scope const(char)[] b) @safe pure nothrow @nogc
+{
+    foreach (i; 0 .. a.length < b.length ? a.length : b.length)
+    {
+        if (a[i] == b[i])
+            continue;
+        const x = a[i] == '/' ? 0 : a[i] + 1, y = b[i] == '/' ? 0 : b[i] + 1;
+        return x < y;
+    }
+    return a.length < b.length;
+}
+
+///
+@("fileset.plan.pathBefore")
+@safe pure nothrow @nogc unittest
+{
+    assert(pathBefore("a/b", "a-c"));
+    assert(!pathBefore("a-c", "a/b"));
+    assert(pathBefore("a", "a/b"));
+    assert(pathBefore("a/z", "a0"));
+    assert(pathBefore("", "a"));
+    assert(!pathBefore("b", "b"));
+}
+
 private void sortRoots(ref Plan p) @safe nothrow @nogc
 {
     // Insertion sort: plans have a handful of roots.
@@ -304,8 +332,8 @@ private void sortRoots(ref Plan p) @safe nothrow @nogc
     {
         auto x = p.roots_[i];
         size_t j = i;
-        while (j > 0 && p.text[][p.roots_[j - 1].start .. p.roots_[j - 1].start + p.roots_[j - 1].length]
-                > p.text[][x.start .. x.start + x.length])
+        while (j > 0 && pathBefore(p.text[][x.start .. x.start + x.length],
+                p.text[][p.roots_[j - 1].start .. p.roots_[j - 1].start + p.roots_[j - 1].length]))
         {
             p.roots_[j] = p.roots_[j - 1];
             --j;
