@@ -1570,12 +1570,82 @@ struct ViewerModel
     private const(ResolvedTheme)* thisCurrent() @trusted
         => &current;
 
-    // The fence renderer: ` ```ansi ` fences decode through the host's
+    // The fence renderer, memoized per fence (`FenceMemo`): a width change
+    // lays the preview out again, and re-highlighting every fence of a large
+    // document was the largest part of building its tree.
+    private TextSpan[][] delegate(const(char)[], const(char)[]) @safe
+        fenceRenderer()
+    {
+        auto render = unmemoizedFenceRenderer();
+        if (render is null)
+            return null;
+        const owner = FenceMemo.Owner(themeIdx, pageFg, cache, decodeAnsi.ptr,
+            cast(const(void)*) decodeAnsi.funcptr, preview.doc.source);
+        if (fenceMemo is null || !fenceMemo.owner.same(owner))
+            fenceMemo = new FenceMemo(owner);
+        auto memo = fenceMemo;
+        return delegate TextSpan[][] (const(char)[] lang, const(char)[] body_) @safe {
+            const key = FenceMemo.Key(lang, body_);
+            if (auto hit = key in memo.lines)
+                return copyLines(*hit);
+            auto lines = render(lang, body_);
+            memo.lines[key] = copyLines(lines);
+            return lines;
+        };
+    }
+
+    // The highlighted lines of each fence, by its language and body, for as
+    // long as nothing they were rendered with changes: the theme and page
+    // colour, the highlighter, the ANSI decoder, and the document (whose
+    // replacement drops the last one's fences).
+    private static final class FenceMemo
+    {
+        static struct Key
+        {
+            const(char)[] lang, body_;
+        }
+
+        static struct Owner
+        {
+            size_t themeIdx;
+            RgbColor pageFg;
+            const(void)* cache;
+            const(void)* decodeCtx, decodeFn;
+            const(char)[] source;
+
+            bool same(in Owner o) const @safe pure nothrow @nogc
+                => themeIdx == o.themeIdx && pageFg == o.pageFg && cache is o.cache
+                    && decodeCtx is o.decodeCtx && decodeFn is o.decodeFn
+                    && source is o.source;
+        }
+
+        Owner owner;
+        TextSpan[][][Key] lines;
+
+        this(Owner owner_) @safe pure nothrow @nogc
+        {
+            owner = owner_;
+        }
+    }
+
+    private FenceMemo fenceMemo;
+
+    // A copy a consumer may anchor in place (`viewCodeFence` rewrites each
+    // span's source offsets) without reaching the memoized lines.
+    private static TextSpan[][] copyLines(const(TextSpan[])[] lines) @safe pure nothrow
+    {
+        auto copy = new TextSpan[][](lines.length);
+        foreach (i, line; lines)
+            copy[i] = line.dup;
+        return copy;
+    }
+
+    // The fence renderer itself: ` ```ansi ` fences decode through the host's
     // off-screen VT (resolved fg + bg + attrs) when it supplied a decoder;
     // every other language goes through the shared injection-aware
     // highlighter; without a cache, plain bodies.
     private TextSpan[][] delegate(const(char)[], const(char)[]) @safe
-        fenceRenderer()
+        unmemoizedFenceRenderer()
     {
         if (decodeAnsi is null)
             return cache !is null
@@ -4267,6 +4337,74 @@ version (unittest)
     assert(md.buildsPreview, "the preview");
     md.cycleView();
     assert(!md.showPreview && !md.buildsPreview, "Tab: the markdown's source");
+}
+
+@("viewer_model.fenceRenderer.aWidthChangeKeepsTheRenderedFences")
+@system unittest
+{
+    import sparkles.doc_view.ansi_model : AnsiSpan;
+    import sparkles.doc_view.preview_model : stripSgr;
+    import sparkles.syntax : extractMarkdown, GrammarRegistry;
+    import sparkles.ui.themes : builtinLight;
+    import sparkles.ui.widget : WidgetKind;
+    import std.algorithm.iteration : splitter;
+
+    // A fence is rendered once per document and theme: a reflow lays the
+    // same lines out again. The decoder stands in for the renderer, so its
+    // calls count the fences rendered.
+    const src = "intro\n\n```ansi\n\x1b[31mred\x1b[0m plain\n```\n";
+    auto reg = GrammarRegistry.fromEnvironment();
+    const labels = LabelSet.standard();
+    auto cache = TsConfigCache.create(&reg, labels);
+    size_t decoded;
+
+    ViewerModel vm;
+    vm.names = ["dark", "light"];
+    vm.themes = [builtinDark, builtinLight];
+    vm.labels = labels;
+    vm.cache = &cache;
+    vm.applyTheme(0);
+    vm.decodeAnsi = (const(char)[] b) {
+        ++decoded;
+        AnsiLine[] ls;
+        foreach (l; stripSgr(b).idup.splitter('\n'))
+            if (l.length)
+                ls ~= AnsiLine([AnsiSpan(l, fgDefault: true, bgDefault: true)]);
+        return ls;
+    };
+    PreviewModel pm;
+    pm.doc = extractMarkdown(reg, src);
+    pm.present = true;
+    vm.setDocument("t.md", "", src,
+        [HighlightEvent.sourceSpan(0, src.length)], pm, TwoslashReturn.init);
+
+    // Each build anchors its own copy: a span's text is still its source
+    // after the memoized lines were laid out again.
+    void checkAnchored()
+    {
+        size_t seen;
+        foreach (ref node; vm.tree.nodes)
+            if (node.kind == WidgetKind.rich)
+                foreach (sp; node.spans)
+                    if (sp.text == "red")
+                    {
+                        assert(src[sp.srcStart .. sp.srcEnd] == "red");
+                        ++seen;
+                    }
+        assert(seen == 1);
+    }
+
+    vm.relayout(40);
+    assert(vm.showPreview && decoded == 1);
+    checkAnchored();
+    foreach (w; [50, 33, 40])
+        vm.relayout(w);
+    assert(decoded == 1, "a reflow renders no fence again");
+    checkAnchored();
+
+    vm.applyTheme(1);
+    assert(decoded == 2, "a new theme renders the fence again");
+    checkAnchored();
 }
 
 @("viewer_model.scrollAnchor.reflowKeepsTheFirstLine")
