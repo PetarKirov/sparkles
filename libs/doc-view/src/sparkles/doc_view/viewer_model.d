@@ -1745,6 +1745,15 @@ struct ViewerModel
         return measureSegments(budget);
     }
 
+    /**
+    Whether a rebuild lays out a window (`windowed`) rather than the whole
+    document: the markdown preview and the raw source view. A host may then
+    relayout on the frame a resize arrives instead of debouncing it, since
+    the cost is the pane's, not the document's.
+    */
+    bool laysOutWindow() const @safe pure nothrow @nogc
+        => windowed && !conflictOpen && !(showPreview && (diff.files.length || tw.code.length));
+
     /// Whether `settleLayout` has work left: a windowed preview with
     /// estimated segments, or a pane scrolled out of its window. A host that
     /// draws only when asked asks for another frame while it does.

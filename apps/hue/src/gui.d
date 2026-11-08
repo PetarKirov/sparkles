@@ -2601,6 +2601,8 @@ int runGui(GuiArgs guiArgs) @system
     enum settleAfterInput = dur!"msecs"(600);
     // What a frame spends measuring a windowed preview's estimated segments.
     enum settleBudget = dur!"msecs"(3);
+    // The frame the last reflow ran on.
+    int reflowedAt;
     MonoTime settleUntil;
 
     bool stepFrame(H)(ref H h, out FrameGeom geom)
@@ -2792,8 +2794,9 @@ int runGui(GuiArgs guiArgs) @system
         // reflow: a vertical drag rebuilt the preview on every frame of it,
         // while scrolling follows the new height at once.
         vm.viewRows = docRows;
-        if (refit.step(docRows, vm.fittedRows) && vm.codeMaxLines < 0
-            && vm.widthCols > 0 && vm.buildsPreview)
+        const refits = vm.laysOutWindow ? docRows != vm.fittedRows
+            : refit.step(docRows, vm.fittedRows);
+        if (refits && vm.codeMaxLines < 0 && vm.widthCols > 0 && vm.buildsPreview)
             vm.rebuild();
         const docY0 = docCells.y * cellH;
         const hdrY = (docCells.y - 1) * cellH;
@@ -2940,16 +2943,25 @@ int runGui(GuiArgs guiArgs) @system
         }
 
 
-        // Reflow (both views wrap) when the window width in columns changes — but
-        // debounced: only once the width has held steady for `settleFrames`
-        // frames, so a drag that sweeps many widths re-wraps once at the end. While
-        // the drag is in flight the (slightly stale) wrapped lines keep painting.
+        // Reflow when the window width in columns changes. A view laid out as
+        // a window (the preview, the source) costs what the pane shows, so it
+        // follows a drag frame by frame. One built whole (a diff, twoslash)
+        // is debounced: only once the width has held steady for
+        // `settleFrames` frames, so a drag that sweeps many widths re-wraps
+        // once at the end, the (slightly stale) wrapped lines painting
+        // meanwhile.
         const wc = widthCols();
-        if (rd.step(wc, vm.widthCols))
+        if (vm.laysOutWindow ? wc != vm.widthCols : rd.step(wc, vm.widthCols))
+        {
             relayout();
+            reflowedAt = frame;
+        }
         // The windowed preview's share of this frame: the window follows the
-        // pane, and estimated segments are measured within the budget.
-        vm.settleLayout(settleBudget);
+        // pane, and estimated segments are measured within the budget — once
+        // the width has held a few frames, since a drag's next width makes
+        // every height an estimate again.
+        vm.settleLayout(frame - reflowedAt > ResizeDebounce.settleFrames
+            ? settleBudget : Duration.zero);
         // The one visual-line space (scroll/selection/search): the active
         // widget tree's rows, whichever view kind built it.
         const total = vm.rows.length;
