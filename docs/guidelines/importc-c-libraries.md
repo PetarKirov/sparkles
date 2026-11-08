@@ -62,13 +62,15 @@ GhosttyMode ghostty_mode_new(uint16_t value, bool ansi);
 - **Header-only `static inline` functions need a shared entry point.** DMD
   cannot emit a call from a D module to a C function with internal linkage.
   Ghostty's `GHOSTTY_MODE_*` macros call `ghostty_mode_new`, so even using
-  `GHOSTTY_MODE_SYNC_OUTPUT` can trigger this error. Rename the upstream helper
+  `GHOSTTY_MODE_SYNCHRONIZED_OUTPUT` can trigger this error. Rename the upstream helper
   during inclusion, then expose an external wrapper under the original name.
   The mode macros expand after the rename is undone and call the wrapper;
   direct D callers use that same entry point. Keep the upstream body rather
   than duplicating its mode encoding or hardcoding individual constants.
 - Keep the shim to the wrapped `#include`(s) and necessary C linkage bridges.
-  Put D-side conveniences (RAII wrappers, helpers) in separate `.d` modules.
+  Put D-side conveniences (RAII wrappers, helpers) in separate `.d` modules —
+  for Ghostty, `sparkles.ghostty.helpers`, which `package.d` re-exports
+  beside the raw declarations.
 
 `libs/ghostty/src/sparkles/ghostty/ghostty_modes.c` supplies the constructor body without making
 the imported declaration module a root source (and changing its module name):
@@ -166,24 +168,32 @@ In `nix/shells/default.nix`, add to the devshell `packages`:
 
 ```nix
 pkgs.pkg-config
-inputs'.ghostty.packages.libghostty-vt        # runtime lib (.so + .pc)
-inputs'.ghostty.packages.libghostty-vt.dev    # headers + dev .pc → PKG_CONFIG_PATH
+inputs'.<input>.packages.<lib>        # runtime lib (.so + .pc)
+inputs'.<input>.packages.<lib>.dev    # headers + dev .pc → PKG_CONFIG_PATH
 ```
 
 - The **`.dev` output** carries the headers and the development `.pc`. Without it,
   pkg-config can't find the package and ImportC can't find the header.
+- Ghostty instead adds `config.packages.libghostty-vt`, a repack of exactly
+  the shared library, the headers and a path-rewritten `.pc`
+  (`nix/packages/libghostty-vt.nix`): upstream's `.dev` output holds a
+  static archive whose debug info names the Zig toolchain, a 1.5 GiB
+  closure. Repack the same way when a `.dev` output drags a toolchain in.
 - If the upstream is itself a flake, add it as an input in `flake.nix` with
   `follows` to dedupe `nixpkgs`/`systems`:
 
   ```nix
   ghostty = {
-    url = "github:ghostty-org/ghostty";
+    url = "github:ghostty-org/ghostty/vt-1.0.0";
     inputs.nixpkgs.follows = "nixpkgs";
     inputs.systems.follows = "systems";
     inputs.flake-compat.follows = "flake-compat";
-    inputs.home-manager.follows = "home-manager";
   };
   ```
+
+  Pin a release tag rather than the default branch where upstream has one:
+  libghostty-vt tags its releases `vt-<version>`, separately from the
+  Ghostty application.
 
   For a plain nixpkgs library, just use `pkgs.<lib>` and `pkgs.<lib>.dev`.
 
@@ -306,11 +316,14 @@ with another module c`). Give each shim a **unique stem** —
   `libs/utf8proc/src/sparkles/utf8proc/utf8proc_c.c` (module `utf8proc_c`), with
   `package.d` doing `public import sparkles.utf8proc.utf8proc_c;`. The canonical
   `c.c` is only safe while a binary pulls in at most one such binding.
-- **Macros.** ImportC exposes simple object-like `#define INT_CONST 5` as manifest
-  constants, but **function-like macros and `static inline` functions are not
-  reliably importable.** Re-declare the value in D (`enum X = 1004;`) or call a
-  wrapper from the `.c`. (We hit this with libghostty's `GHOSTTY_MODE_FOCUS_EVENT`
-  and the device-attribute `#define`s — re-declared as D `enum`s.)
+- **Macros.** ImportC exposes object-like macros as manifest constants —
+  `#define GHOSTTY_DA_FEATURE_ANSI_COLOR 22`, and also cast and shift
+  expressions such as `((GhosttyStyleFlags)(1u << 0))` — so use the header's
+  names. **Function-like macros are not importable**, and a macro that
+  expands to a call of a `static inline` function needs the linkage bridge
+  above (`GHOSTTY_MODE_*`). Re-express a function-like macro in D from its
+  header definition (`sparkles.ghostty.helpers.underline` for
+  `GHOSTTY_STYLE_UNDERLINE`), or call a wrapper defined in the `.c`.
 - **Fortified `<wchar.h>` is unparseable.** A heavy system header that includes
   `<wchar.h>` (e.g. `<notcurses/notcurses.h>`) pulls glibc's `bits/wchar2.h`,
   whose `_FORTIFY_SOURCE` inline wrappers use compiler builtins ImportC doesn't
@@ -337,7 +350,14 @@ with another module c`). Give each shim a **unique stem** —
   non-`const` if the generated decl is non-`const`).
 - **Sized structs.** Many C APIs lead a struct with `size_t size;` as a version
   tag — set it (`s.size = S.sizeof;`) before passing the struct out/in, as the
-  upstream C examples do.
+  upstream C examples do. Set it only on the structs that have one: a header
+  may drop the field from a struct whose layout it freezes.
+- **`void*` options hide type changes.** A by-key getter or setter
+  (`ghostty_terminal_set(t, opt, const void*)`) accepts any pointer, so a
+  value or callback type that changes upstream still compiles and fails at
+  run time. Route such calls through a typed D wrapper that checks the type
+  against the header's typedef at compile time
+  (`sparkles.ghostty.helpers.setEffect`).
 - **Shared system types must use the same attributes.** ImportC merges C structs
   across imported translation units, including function-pointer field types.
   Wrapping system headers in `#pragma attribute(push, nogc, nothrow)` in only one
