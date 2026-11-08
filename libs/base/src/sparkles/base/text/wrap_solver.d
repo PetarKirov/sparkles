@@ -280,9 +280,13 @@ private bool validLeaf(scope const ref WrapPrimitive p, WrapDimension dimension)
     return p.kind != PrimitiveKind.glue || (p.minimum >= 0 && p.minimum <= p.advance
         && p.maximum >= p.advance);
 }
+// `structural`: whether to check the input's own shape (storage, ids,
+// encoding, primitives, endpoints, records) after the options, budgets and
+// scratch, which every caller's input needs checked.
 private WrapResult validate(scope const ref MeasurableInput input,
     scope const(WrapGeometrySequence)[] geometries, scope WrapProvider provider,
-    WrapSolverOptions options, WrapLimits limits, WrapSolverScratch scratch, bool structureOnly = false)
+    WrapSolverOptions options, WrapLimits limits, WrapSolverScratch scratch, bool structureOnly = false,
+    bool structural = true)
 {
     if ((!structureOnly && !geometries.length) || !input.endpoints.length || options.minimumLines == 0
         || options.maximumLines < options.minimumLines || options.stretchTolerance.denominator == 0
@@ -307,6 +311,10 @@ private WrapResult validate(scope const ref MeasurableInput input,
     if (records > limits.inputRecords) return budget(WrapBudgetKind.inputRecords, records, limits.inputRecords);
     if (input.endpoints.length > limits.alternatives)
         return budget(WrapBudgetKind.alternatives, input.endpoints.length, limits.alternatives);
+    const largest = input.primitives.length > input.endpoints.length ? input.primitives.length : input.endpoints.length;
+    const maximumIds = largest > 1 ? largest : 0;
+    if (scratch.ids.length < maximumIds || scratch.temporaryIds.length < maximumIds) return scratchFailure(maximumIds);
+    if (!structural) return WrapResult.init;
     WrapPlan empty;
     WrapPlanStorage noOutput;
     if (!solverStorageDisjoint(scratch, noOutput, empty)
@@ -336,9 +344,6 @@ private WrapResult validate(scope const ref MeasurableInput input,
             foreach (ref const f; line.indent) if (!solverStorageAvoids(scratch, f.bytes)) return invalid();
         }
     }
-    const largest = input.primitives.length > input.endpoints.length ? input.primitives.length : input.endpoints.length;
-    const maximumIds = largest > 1 ? largest : 0;
-    if (scratch.ids.length < maximumIds || scratch.temporaryIds.length < maximumIds) return scratchFailure(maximumIds);
     if (input.primitives.length > 1)
     {
         foreach (i, ref const p; input.primitives) scratch.ids[i] = p.id;
@@ -938,10 +943,16 @@ private WrapResult search(const ref MeasurableInput input,
     scope const(WrapGeometrySequence)[] geometries, scope WrapProvider provider,
     WrapSolverOptions options, WrapLimits limits, WrapSolverScratch scratch,
     size_t resultLimit, bool exhaustive, ref size_t stateCount,
-    ref size_t resultCount, ref size_t available, ref WrapUsage usage, bool singlePlan = false)
+    ref size_t resultCount, ref size_t available, ref WrapUsage usage, bool singlePlan = false,
+    bool built = false)
 {
-    auto r = validate(input, geometries, provider, options, limits, scratch);
+    // An input its own module built (`built`) skips the structural checks,
+    // which cost as much as the search; debug builds still assert them.
+    auto r = validate(input, geometries, provider, options, limits, scratch, false, !built);
     if (!r.succeeded) return r;
+    debug if (built)
+        assert(validate(input, geometries, provider, options, limits, scratch).succeeded,
+            "a built wrap input is well formed");
     usage.sourceBytes = input.source.bytes.length;
     usage.inputRecords = input.primitives.length;
     foreach (ref const p; input.primitives) usage.inputRecords += p.unbroken.length;
@@ -1442,16 +1453,18 @@ WrapResult selectWrapPaths(const ref MeasurableInput supplied,
 }
 
 // Internal single-plan adapter: it does not promise ranked path enumeration.
+// `built`: the caller built `supplied` itself, from a source it decoded, so
+// only its budgets need checking (`search`).
 package WrapResult selectBestWrapPath(const ref MeasurableInput supplied,
     scope const(WrapGeometrySequence)[] geometries, scope WrapProvider provider,
     WrapSolverOptions options, WrapLimits limits, WrapSolverScratch scratch,
-    ref size_t stateCount, ref size_t resultCount, ref WrapUsage usage)
+    ref size_t stateCount, ref size_t resultCount, ref WrapUsage usage, bool built = false)
 {
     if (!solverStorageAvoids(scratch, utfObjectStorage(supplied))) return invalid();
     MeasurableInput input = normalizedInput(supplied);
     size_t available;
     return search(input, geometries, provider, options, limits, scratch,
-        1, false, stateCount, resultCount, available, usage, true);
+        1, false, stateCount, resultCount, available, usage, true, built);
 }
 
 
