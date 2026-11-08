@@ -640,6 +640,7 @@
         "phobos-src": "phobos-src",
         "roboto-src": "roboto-src",
         "simdjson-src": "simdjson-src",
+        "snix-src": "snix-src",
         "systems": "systems",
         "termbench-src": "termbench-src",
         "tree-sitter-d-src": "tree-sitter-d-src",
@@ -684,6 +685,24 @@
         "owner": "simdjson",
         "repo": "simdjson",
         "type": "github"
+      }
+    },
+    "snix-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1794053653,
+        "narHash": "sha256-NJL78Ec/nOqHQF2o8/inD29+TvY9Bz8CYne24rTxojI=",
+        "ref": "refs/heads/canon",
+        "rev": "c27950ab360b92bbb8f2ca246efd0ed895ce1e58",
+        "shallow": true,
+        "type": "git",
+        "url": "https://git.snix.dev/snix/snix"
+      },
+      "original": {
+        "rev": "c27950ab360b92bbb8f2ca246efd0ed895ce1e58",
+        "shallow": true,
+        "type": "git",
+        "url": "https://git.snix.dev/snix/snix"
       }
     },
     "systems": {

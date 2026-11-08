@@ -311,6 +311,13 @@
         export JSON_TEST_SUITE=${config.packages.json-test-suite}
         export NATIVEJSON_TEST_SUITE=${config.packages.nativejson-test-suite}
 
+        ${lib.optionalString (config.packages ? snix-castore) ''
+          # Snix's castore CLI, the oracle of the default content identity
+          # (filesets A19); `dub test :build-primitives` skips it when unset.
+          # CI tier: without it the gate of that identity degrades to a skip.
+          export SPARKLES_SNIX_CASTORE=${lib.getExe' config.packages.snix-castore "snix-castore"}
+        ''}
+
         # The bundled fonts, the corpus for sparkles:font and its HarfBuzz
         # oracle (dub test :font / :font-oracle skip those tests when unset).
         export SPARKLES_FONTS_PATH=${config.packages.sparkles-fonts}/fonts
