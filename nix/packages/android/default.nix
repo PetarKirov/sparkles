@@ -116,11 +116,12 @@ in
         # The engine configuration's tests per ABI, linked against the pinned
         # HarfBuzz built for Android.
         font-engine-android-tests = config.packages.font-engine-android-tests;
-        # The terminal's plain-shell APK; the nix-on-droid variant is the same
-        # closure with a different session.conf, built in that flake.
+        # The terminal's plain-shell APK, on the native arm (sparkles:wsi,
+        # Vulkan); the nix-on-droid variant is the same closure with a
+        # different session.conf, built in that flake.
         terminal-apk = config.packages.terminal-apk;
-        # The same terminal on the native arm (sparkles:wsi, Vulkan).
-        terminal-vulkan-apk = config.packages.terminal-vulkan-apk;
+        # The raylib arm, until the raylib window is retired.
+        terminal-raylib-apk = config.packages.terminal-raylib-apk;
       };
     };
 }
