@@ -44,7 +44,7 @@ import sparkles.ui.canvas : DrawOp, OpKind, PushShift, Scrollbar;
 import sparkles.ui.cmd_buffer : GcCmdBuffer;
 import sparkles.ui.display_list : buildDisplayList, buildDisplayListInto;
 import sparkles.ui.geometry : Constraints, Point, Rect;
-import sparkles.ui.layout : DelegateMeasure, Frame, layout;
+import sparkles.ui.layout : CellMeasure, DelegateMeasure, Frame, layout, LayoutStore;
 import sparkles.ui.components.scroll_view : ScrollView;
 import sparkles.ui.state : ScrollAxis, ScrollbarState, DisclosureState, DocRow, DocRowStore, documentRows, ElementStore,
     HoverTarget, hoverTargets, KeyedRect, keyedRects, selectionRects,
@@ -281,8 +281,16 @@ struct ViewerModel
     // one: the measured wrap search asks the host for every candidate line,
     // minutes on a long document such as the credits, and a document all in
     // the cell font measures the same by its cells.
+    // The frames land in `store`: `frames` in `layoutStore`, a layout read
+    // only while it is made in `scratchLayout`.
     private Frame[] layoutDoc(in WidgetTree t, in Constraints c)
-        => proseRole == FontRole.inherit ? layout(t, c) : layout(t, c, measure);
+        => layoutDoc(t, c, layoutStore);
+
+    // ditto
+    private Frame[] layoutDoc(in WidgetTree t, in Constraints c, ref LayoutStore store)
+        => proseRole == FontRole.inherit ? layout(t, c, CellMeasure.init, store)
+            : layout(t, c, measure, store);
+    private LayoutStore layoutStore, scratchLayout;
 
     // ditto, for its display list: built in the thread's scratch, then copied
     // into `opsStore`, the block every rebuild overwrites.
@@ -680,7 +688,7 @@ struct ViewerModel
         b.nodes[docRoot].scrollsX = true;
         auto pass1 = b.finish(docRoot);
         const rows1 = documentRows(pass1,
-            layoutDoc(pass1, Constraints(maxW: widthCols - chrome)), gutterRowStore);
+            layoutDoc(pass1, Constraints(maxW: widthCols - chrome), scratchLayout), gutterRowStore);
         if (channels.length == 0)
             return pass1;
         fillChannels(channels, rows1);
@@ -1854,7 +1862,7 @@ struct ViewerModel
         const run = MdSegment(segments.segments[first].first, segments.segments[end - 1].end);
         const root = viewMarkdownWindowInto(b, preview.doc, opt, run, 0);
         auto t = b.finish(root);
-        const f = layoutDoc(t, Constraints(maxW: contentWidthCols));
+        const f = layoutDoc(t, Constraints(maxW: contentWidthCols), scratchLayout);
         foreach (i, child; t.nodes[root].children)
             segments.measured(first + i, f[child].rect.height, contentWidthCols);
     }
