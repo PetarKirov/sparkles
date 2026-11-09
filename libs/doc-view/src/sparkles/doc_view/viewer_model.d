@@ -406,6 +406,8 @@ struct ViewerModel
     // What `rows` is built in: one block a rebuild overwrites, sized once to
     // the document (a window's rows included) rather than once per width.
     private DocRowStore rowStore;
+    // ditto, for the rows `gutter` fills its channels from.
+    private DocRowStore gutterRowStore;
 
     /**
     Everything the raw view's widget tree is built from, other than the width.
@@ -678,7 +680,7 @@ struct ViewerModel
         b.nodes[docRoot].scrollsX = true;
         auto pass1 = b.finish(docRoot);
         const rows1 = documentRows(pass1,
-            layoutDoc(pass1, Constraints(maxW: widthCols - chrome)));
+            layoutDoc(pass1, Constraints(maxW: widthCols - chrome)), gutterRowStore);
         if (channels.length == 0)
             return pass1;
         fillChannels(channels, rows1);
