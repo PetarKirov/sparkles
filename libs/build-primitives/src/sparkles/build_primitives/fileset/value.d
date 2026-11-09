@@ -50,6 +50,9 @@ enum FilesetOp : ubyte
     executable,   /// files with the executable bit; needs a `stat` (FSA4)
     ignored,      /// files a root `.gitignore` excludes
     gitignored,   /// files the `.gitignore` scopes found by a resolution exclude (FSI)
+    paths,        /// the files a list names (FSV6)
+    fileName,     /// files whose own name a one-segment pattern matches (FSV7)
+    symlinks,     /// the symbolic links among the files (FSV7)
     union_,       ///
     intersection, ///
     difference,   ///
@@ -84,6 +87,7 @@ struct EntryFacts
 {
     bool statKnown;  /// whether the fields below were read
     bool executable; /// meaningful only when `statKnown`
+    bool symlink;    /// the entry is a symbolic link (known from the listing)
 
     /// Facts read from a `stat`.
     static EntryFacts stat(bool executable) @safe pure nothrow @nogc
@@ -108,6 +112,13 @@ struct FilesetNode
     uint state;   /// a leaf's first word of directory state
 }
 
+/// One path of a `paths` leaf, in the arena's path text.
+struct PathSpan
+{
+    uint start; ///
+    uint length; ///
+}
+
 /// One rule of an `ignored` leaf.
 struct IgnoreRule
 {
@@ -127,6 +138,8 @@ struct Filesets
     package PatternSet patterns;
     package HeapBuffer!FilesetNode nodes;
     package HeapBuffer!IgnoreRule rules;
+    package HeapBuffer!char pathText;      // the `paths` leaves' bytes
+    package HeapBuffer!PathSpan pathSpans; // each leaf's sorted, unique paths
     private UniqueBuffer!(char[], 4) owned_; // translated `.gitignore` patterns
     private uint stateWords_;
     private uint gitignoredNode_ = uint.max;
@@ -199,10 +212,15 @@ struct Filesets
             final switch (n.op)
             {
                 case FilesetOp.nothing, FilesetOp.everything, FilesetOp.executable,
-                        FilesetOp.gitignored:
+                        FilesetOp.gitignored, FilesetOp.symlinks:
                     break;
-                case FilesetOp.glob:
+                case FilesetOp.glob, FilesetOp.fileName:
                     putText(bytes, patterns[n.a].source);
+                    break;
+                case FilesetOp.paths: // kept sorted and unique: a list's order is not its identity
+                    put32(bytes, n.b);
+                    foreach (p; 0 .. n.b)
+                        putText(bytes, pathAt(n.a + p));
                     break;
                 case FilesetOp.ignored:
                     put32(bytes, n.b);
@@ -313,6 +331,68 @@ struct Filesets
         return filesetOk(addLeaf(FilesetNode(FilesetOp.ignored, cast(uint) first,
             cast(uint) count), 1 + count));
     }
+
+    /**
+    Exactly the files `list` names (FSV6): paths relative to the fileset root,
+    `/`-separated, that need not exist. A directory none of them lies beneath
+    is skipped unread. The arena keeps its own copy, sorted by bytes and
+    without duplicates; an empty path or one with an empty, `.` or `..`
+    component is an error.
+
+    Evaluating it costs `O(log n)` per entry: a directory's state is the range
+    of the list beneath it, narrowed by binary search on each step down.
+    */
+    FilesetExpected!Fileset paths(scope const(char[])[] list) @safe nothrow @nogc
+    {
+        import std.algorithm.sorting : sort;
+
+        foreach (i, p; list)
+            if (!validRelativePath(p))
+                return filesetErr!Fileset(FilesetErrorCode.unsupportedPattern, i,
+                    "a listed path is empty, absolute, or has an empty, `.` or `..` component");
+        const first = pathSpans.length;
+        foreach (p; list)
+        {
+            pathSpans ~= PathSpan(cast(uint) pathText.length, cast(uint) p.length);
+            pathText ~= p;
+        }
+        auto mine = pathSpans[][first .. $];
+        const(char)[] textOf(PathSpan s) => pathText[][s.start .. s.start + s.length];
+        sort!((x, y) => textOf(x) < textOf(y))(mine);
+        // Drop duplicates in place.
+        size_t kept;
+        foreach (i, s; mine)
+            if (i == 0 || textOf(s) != textOf(mine[kept - 1]))
+                mine[kept++] = s;
+        pathSpans.length = first + kept;
+        return filesetOk(addLeaf(FilesetNode(FilesetOp.paths, cast(uint) first, cast(uint) kept), 2));
+    }
+
+    /**
+    The files whose own name `pattern` matches (FSV7), at any depth: a
+    one-segment glob, without `/`. Unlike `glob`, a directory it matches
+    selects nothing beneath it, so `fileName("x")` holds `x/x` but not `x/y`:
+    the meaning of `lib.fileset.fileFilter` over `file.name`.
+    */
+    FilesetExpected!Fileset fileName(string pattern) @safe nothrow @nogc
+    {
+        foreach (i, c; pattern)
+            if (c == '/')
+                return filesetErr!Fileset(FilesetErrorCode.unsupportedPattern, i,
+                    "a file name pattern has no `/`");
+        auto p = patterns.add(pattern);
+        if (p.hasError)
+            return filesetErr!Fileset(p.error.code, p.error.offset, p.error.context);
+        return filesetOk(addLeaf(FilesetNode(FilesetOp.fileName, p.value), 1));
+    }
+
+    /// The files that are symbolic links (FSV7): `lib.fileset.fileFilter`'s
+    /// `file.type == "symlink"`.
+    Fileset symlinks() @safe pure nothrow @nogc => add(FilesetNode(FilesetOp.symlinks));
+
+    /// The bytes of path `i` of the arena's `paths` leaves.
+    package const(char)[] pathAt(size_t i) const return @safe pure nothrow @nogc
+        => pathText[][pathSpans[i].start .. pathSpans[i].start + pathSpans[i].length];
 
     // Text the arena owns until it is destroyed; `n` bytes, uninitialized.
     private char[] ownText(size_t n) @safe nothrow @nogc
@@ -493,6 +573,13 @@ struct FilesetEvaluator
                     state[n.state + 1 + r] = sets.patterns.start(sets.rules[n.a + r].pattern);
             else if (n.op == FilesetOp.gitignored)
                 state[n.state] = IgnoreState.init.word;
+            else if (n.op == FilesetOp.paths)
+            {
+                state[n.state] = packRange(n.a, n.a + n.b); // the whole list
+                state[n.state + 1] = 0;                      // no prefix yet
+            }
+            else if (n.op == FilesetOp.fileName)
+                state[n.state] = sets.patterns.start(n.a);   // never stepped
         }
     }
 
@@ -520,6 +607,13 @@ struct FilesetEvaluator
                     // A deeper `.gitignore` may yet exclude what is not
                     // excluded already.
                     t = IgnoreState(state[n.state]).excluded ? Tri.yes : Tri.maybe;
+                    break;
+                case FilesetOp.paths:
+                    const r = unpackRange(state[n.state]);
+                    t = r[0] < r[1] ? Tri.maybe : Tri.no;
+                    break;
+                case FilesetOp.fileName, FilesetOp.symlinks:
+                    t = Tri.maybe; // decided per file, at any depth
                     break;
                 case FilesetOp.union_, FilesetOp.intersection, FilesetOp.difference:
                     t = combine(n, tri[n.a], tri[n.b]);
@@ -573,6 +667,16 @@ struct FilesetEvaluator
                     cast(void) scopes.enter(IgnoreState(parent[n.state]), name, *scratch_, c);
                 child[n.state] = c.word;
             }
+            else if (n.op == FilesetOp.paths)
+            {
+                const r = unpackRange(parent[n.state]);
+                const prefix = cast(size_t) parent[n.state + 1];
+                const sub = pathsBeneath(sets, r[0], r[1], prefix, name);
+                child[n.state] = packRange(sub[0], sub[1]);
+                child[n.state + 1] = prefix + name.length + 1;
+            }
+            else if (n.op == FilesetOp.fileName)
+                child[n.state] = parent[n.state];
         }
         return dirVerdict(sets, child);
     }
@@ -629,6 +733,18 @@ struct FilesetEvaluator
                     const resolved = scopes !is null && scopes.ready;
                     t = st.excluded || (resolved && scopes.excludesFile(st, name, *scratch_)) ? Tri.yes
                         : !resolved && unresolvedMaybe_ ? Tri.maybe : Tri.no;
+                    break;
+                case FilesetOp.paths:
+                    const r = unpackRange(state[n.state]);
+                    t = pathListed(sets, r[0], r[1], cast(size_t) state[n.state + 1], name)
+                        ? Tri.yes : Tri.no;
+                    break;
+                case FilesetOp.fileName:
+                    t = sets.patterns.matchesFile(n.a, state[n.state], name, *scratch_)
+                        ? Tri.yes : Tri.no;
+                    break;
+                case FilesetOp.symlinks:
+                    t = facts.symlink ? Tri.yes : Tri.no;
                     break;
                 case FilesetOp.union_, FilesetOp.intersection, FilesetOp.difference:
                     t = combine(n, tri[n.a], tri[n.b]);
@@ -935,6 +1051,141 @@ struct FilesetEvaluator
     assert(classes.contains(sets, "!.d") && classes.contains(sets, "z.d") && !classes.contains(sets, " .d"));
 }
 
+// A `paths` leaf's state: the range `[lo, hi)` of the arena's path spans
+// beneath a directory, in one word; the prefix length is the next.
+private ulong packRange(size_t lo, size_t hi) @safe pure nothrow @nogc
+    => (ulong(cast(uint) lo) << 32) | cast(uint) hi;
+
+private size_t[2] unpackRange(ulong w) @safe pure nothrow @nogc
+    => [cast(size_t)(w >> 32), cast(size_t)(w & uint.max)];
+
+// How the path's bytes after `prefix` compare with `name ~ "/"`, over the
+// key's length only: 0 for a path beneath the directory `name`.
+private int cmpBeneath(scope const(char)[] tail, scope const(char)[] name) @safe pure nothrow @nogc
+{
+    foreach (i; 0 .. name.length + 1)
+    {
+        if (i == tail.length)
+            return -1;
+        const char k = i < name.length ? name[i] : '/';
+        if (tail[i] != k)
+            return tail[i] < k ? -1 : 1;
+    }
+    return 0;
+}
+
+// The sub-range of `[lo, hi)` beneath the directory `name`, its paths sharing
+// their first `prefix` bytes: contiguous, because the list is sorted.
+private size_t[2] pathsBeneath(ref const Filesets sets, size_t lo, size_t hi, size_t prefix,
+    scope const(char)[] name) @safe pure nothrow @nogc
+{
+    size_t bound(bool upper)
+    {
+        size_t a = lo, b = hi;
+        while (a < b)
+        {
+            const m = a + (b - a) / 2;
+            const c = cmpBeneath(sets.pathAt(m)[prefix .. $], name);
+            if (c < 0 || (upper && c == 0))
+                a = m + 1;
+            else
+                b = m;
+        }
+        return a;
+    }
+
+    return [bound(false), bound(true)];
+}
+
+// Whether `[lo, hi)` holds the file `name` itself, after `prefix`.
+private bool pathListed(ref const Filesets sets, size_t lo, size_t hi, size_t prefix,
+    scope const(char)[] name) @safe pure nothrow @nogc
+{
+    size_t a = lo, b = hi;
+    while (a < b)
+    {
+        const m = a + (b - a) / 2;
+        if (sets.pathAt(m)[prefix .. $] < name)
+            a = m + 1;
+        else
+            b = m;
+    }
+    return a < hi && sets.pathAt(a)[prefix .. $] == name;
+}
+
+// A path a `paths` leaf accepts: relative, `/`-separated, no empty, `.` or
+// `..` component.
+private bool validRelativePath(scope const(char)[] p) @safe pure nothrow @nogc
+{
+    if (p.length == 0)
+        return false;
+    size_t start;
+    foreach (i; 0 .. p.length + 1)
+        if (i == p.length || p[i] == '/')
+        {
+            const c = p[start .. i];
+            if (c.length == 0 || c == "." || c == "..")
+                return false;
+            start = i + 1;
+        }
+    return true;
+}
+
+/// FSV6: a list of paths is a leaf like any other; a directory beneath none
+/// of them is skipped, and a duplicate names one file.
+@("fileset.value.FSV6.paths")
+@safe nothrow @nogc unittest
+{
+    auto sets = Filesets(CasePolicy.sensitive);
+    static immutable string[] list = ["src/b.d", "src/a.d", "README.md", "src/a.d", "src/sub/c.d"];
+    const f = sets.paths(list).value;
+    auto ev = FilesetEvaluator(sets, f);
+    assert(ev.contains(sets, "src/a.d") && ev.contains(sets, "src/b.d"));
+    assert(ev.contains(sets, "src/sub/c.d") && ev.contains(sets, "README.md"));
+    assert(!ev.contains(sets, "src/c.d") && !ev.contains(sets, "src") && !ev.contains(sets, "src/sub"));
+    assert(!ev.contains(sets, "src-x/a.d") && !ev.contains(sets, "README"));
+
+    ulong[8] root, child;
+    ev.rootState(sets, root[0 .. ev.stateWords]);
+    assert(ev.enter(sets, root[0 .. ev.stateWords], "docs", child[0 .. ev.stateWords])
+        == DirVerdict.skip, "a directory beneath none of them is skipped");
+    assert(ev.enter(sets, root[0 .. ev.stateWords], "src", child[0 .. ev.stateWords])
+        == DirVerdict.descend);
+    // With a glob, as the algebra composes any two leaves.
+    const both = sets.intersection(f, sets.glob("*.d").value);
+    auto ev2 = FilesetEvaluator(sets, both);
+    assert(ev2.contains(sets, "src/a.d") && !ev2.contains(sets, "README.md"));
+
+    static immutable string[] bad = ["a//b"];
+    assert(sets.paths(bad).hasError);
+}
+
+/// FSV7: a file-name pattern selects files by their own name, never a
+/// directory's contents; `symlinks` is decided by the entry's kind.
+@("fileset.value.FSV7.fileNameAndSymlinks")
+@safe nothrow @nogc unittest
+{
+    auto sets = Filesets(CasePolicy.sensitive);
+    const x = sets.fileName("x").value;
+    auto ev = FilesetEvaluator(sets, x);
+    assert(ev.contains(sets, "x") && ev.contains(sets, "a/x") && ev.contains(sets, "x/x"));
+    assert(!ev.contains(sets, "x/y"), "a directory named x selects nothing beneath it");
+    assert(sets.fileName("a/x").hasError);
+
+    const ds = sets.fileName("*.d").value;
+    auto evd = FilesetEvaluator(sets, ds);
+    assert(evd.contains(sets, "a/b.d") && evd.contains(sets, ".d") && !evd.contains(sets, "b.di"));
+
+    const links = sets.symlinks;
+    auto evl = FilesetEvaluator(sets, links);
+    ulong[4] st;
+    evl.rootState(sets, st[0 .. evl.stateWords]);
+    EntryFacts link;
+    link.symlink = true;
+    assert(evl.fileVerdict(sets, st[0 .. evl.stateWords], "l", link) == FileVerdict.accept);
+    assert(evl.fileVerdict(sets, st[0 .. evl.stateWords], "f", EntryFacts.init) == FileVerdict.reject);
+}
+
 private Tri combine(in FilesetNode n, Tri a, Tri b) @safe pure nothrow @nogc
 {
     import std.algorithm.comparison : max, min;
@@ -979,6 +1230,13 @@ unittest
     assert(other.digest(other.union_(a, b)) != other.digest(other.intersection(a, b)));
     assert(other.digest(other.ignored("x").value) != other.digest(other.ignored("!x").value));
     assert(other.digest(a) != other.digest(b));
+    // The leaves the query language adds: a path list by its paths, in any
+    // order; a name pattern apart from the glob of the same text.
+    assert(other.digest(other.paths(["b", "a"]).value) == other.digest(other.paths(["a", "b"]).value));
+    assert(other.digest(other.paths(["a"]).value) != other.digest(other.paths(["a", "b"]).value));
+    assert(other.digest(other.fileName("x").value) != other.digest(other.fileName("y").value));
+    assert(other.digest(other.fileName("x").value) != other.digest(other.glob("x").value));
+    assert(other.digest(other.symlinks) != other.digest(other.everything));
     auto insensitive = Filesets(CasePolicy.insensitive);
     assert(insensitive.digest(insensitive.glob("/a").value) != other.digest(a));
     // The same expression built twice in one arena has one digest.
