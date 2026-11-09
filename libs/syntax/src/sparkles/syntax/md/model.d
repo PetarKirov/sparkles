@@ -813,11 +813,42 @@ private struct Extractor
             if (nodeType(cell) == "pipe_table_cell")
             {
                 MdBlock c = {kind: MdBlockKind.tableCell, span: extent(cell)};
-                c.inlines = parseInline(nodeStartByte(cell), nodeEndByte(cell));
+                c.inlines = unescapePipes(parseInline(nodeStartByte(cell), nodeEndByte(cell)));
                 b.children ~= c;
             }
         }
         return b;
+    }
+
+    /*
+    In a table cell `\|` is a pipe, inside a code span too (GFM §4.10): the
+    cell is split on unescaped pipes before its inlines are parsed, and a code
+    span does not process escapes. The spans are source slices, so a code span
+    is cut around each such backslash; the escape outside one is the parser's
+    `backslash_escape`, dropped by `walkInline`.
+    */
+    MdInline[] unescapePipes(MdInline[] inls) @safe nothrow
+    {
+        MdInline[] out_;
+        foreach (inl; inls)
+        {
+            if (inl.kind != MdInlineKind.codeSpan)
+            {
+                inl.children = unescapePipes(inl.children);
+                out_ ~= inl;
+                continue;
+            }
+            size_t from = inl.span.start;
+            foreach (i; inl.span.start .. inl.span.end)
+                if (source[i] == '\\' && i + 1 < inl.span.end && source[i + 1] == '|')
+                {
+                    if (i > from)
+                        out_ ~= MdInline(kind: MdInlineKind.codeSpan, span: Span(from, i));
+                    from = i + 1;
+                }
+            out_ ~= MdInline(kind: MdInlineKind.codeSpan, span: Span(from, inl.span.end));
+        }
+        return out_;
     }
 
     // Parse the source slice `[lo, hi)` with markdown-inline and return the
@@ -911,7 +942,12 @@ private struct Extractor
             case "block_continuation":
                 cur = ce; // a quote/list continuation marker — render nothing
                 break;
-            // html_tag, backslash_escape, unknown → render their bytes literally.
+            case "backslash_escape":
+                // `\*` is a literal `*` (CommonMark §2.4): the backslash goes.
+                cur = cs + 1;
+                gap(ce);
+                break;
+            // html_tag, unknown → render their bytes literally.
             default:
                 gap(ce);
                 break;
@@ -1302,6 +1338,24 @@ unittest
     assert(t.children[0].children.length == 2); // two cells
     import std.string : strip;
     assert(inlineText(d, t.children[0].children[0]).strip == "a");
+}
+
+/// A cell's `\|` is a pipe, in a code span and in text alike; a backslash
+/// escape elsewhere drops its backslash.
+@("md.model.table.escapedPipe")
+@system
+unittest
+{
+    import std.string : strip;
+
+    auto d = extractForTest("| a | b |\n|---|---|\n| `p \\|\\| q` | x \\| y |\n\n\\*not em\\*\n");
+    auto row = d.root.children[0].children[1];
+    assert(inlineText(d, row.children[0]).strip == "p || q", inlineText(d, row.children[0]));
+    foreach (inl; row.children[0].inlines)
+        if (inl.span.end > inl.span.start && d.source[inl.span.start] != ' ')
+            assert(inl.kind == MdInlineKind.codeSpan);
+    assert(inlineText(d, row.children[1]).strip == "x | y", inlineText(d, row.children[1]));
+    assert(inlineText(d, d.root.children[1]) == "*not em*", inlineText(d, d.root.children[1]));
 }
 
 @("md.model.table.alignment")

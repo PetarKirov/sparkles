@@ -11,7 +11,7 @@ An image: 󰥶 alt text → image.png inline with prose.
 A hard break at the end of this line
 continues here.
 
-Escapes: \*not emphasis\*, \`not code\`, a literal backslash \\.
+Escapes: *not emphasis*, `not code`, a literal backslash \.
 
 Unicode: emoji 🎉, CJK 漢字テスト, combining é, box glyphs ─│┼╭╮.
 
