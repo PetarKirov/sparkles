@@ -82,6 +82,19 @@ in
               env = (old.env or { }) // {
                 ANDROID_NDK_HOME = ndk.ndkRoot;
               };
+
+              # Without SIMD the library is built without libc
+              # (GhosttyZig.zig: `link_libc = if (cfg.simd) true else null`),
+              # and pkg/wuffs then exports `calloc`/`free` stubs that return
+              # null — weak, but hidden. In an archive linked into a shared
+              # library a weak definition in an object still beats libc.so's,
+              # and hidden binds every caller in that library to it: druntime's
+              # first `calloc` (`_d_dso_registry`) got null and the APKs died
+              # in `dlopen`. libc is always in our link, so drop the stubs.
+              postPatch = (old.postPatch or "") + ''
+                substituteInPlace pkg/wuffs/src/main.zig \
+                  --replace-fail 'if (!builtin.link_libc) {' 'if (false) {'
+              '';
               doCheck = false;
 
               # Target code: the host's strip/ranlib must not touch it (ndk.nix).
@@ -105,6 +118,16 @@ in
               install -Dm644 ${(vtFor t).dev}/lib/libghostty-vt.a \
                 $out/lib/${t.abi}/libghostty-vt.a
             '') (lib.attrValues ndk.targets)}
+
+            # The archive must not define libc's allocator: a definition here
+            # takes over every caller in the library it is linked into.
+            for a in $out/lib/*/libghostty-vt.a; do
+              if ${ndk.nm} --defined-only "$a" 2>/dev/null \
+                  | grep -E ' [TtWw] (calloc|malloc|realloc|free)$'; then
+                echo "$a defines a libc allocator symbol" >&2
+                exit 1
+              fi
+            done
           '';
     in
     lib.optionalAttrs (androidHost system).supported {
