@@ -264,6 +264,9 @@ struct NativeDebug
     @Description("Resize the window a few pixels every frame, sweeping a band of sizes the way a live drag does, where the client may size its window (X11, AppKit).")
     bool resizeDrag; ///
 
+    @Description("Like resize-drag, but one way: sweep the band outward, then start over from its narrow end, so no width comes back within 120 frames — the cost of a drag that keeps going, which caches cannot answer from widths just left.")
+    bool resizeSweep; ///
+
     @Description("Treat frame N as a lost device, which no software driver produces on demand, so the rebuild can be seen to redraw.")
     uint loseDeviceAt; ///
 
