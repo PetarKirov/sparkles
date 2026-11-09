@@ -337,6 +337,34 @@ tracy-csvexport -u -p /tmp/run.tracy     # every zone and plot point
 `libs/ui-app/scripts/verify-native-tracy.sh` runs exactly this on headless
 Weston and checks the frames, zones and plots.
 
+### Where the GC's bytes go
+
+A collection's pause follows the heap it marks, and how often it runs follows
+what the program allocates. dmd's `-profile=gc` does not build the GUI apps,
+so `sparkles.profiling.gc_sampler` measures both on a normal build: a
+collector, linked into every native-arm app and inert until a run selects it,
+that forwards to druntime's and records a stack every 64 KiB allocated
+(`SPARKLES_GC_SAMPLE_BYTES`), each collection's pause, and which sampled blocks
+survived the last collection and whether the collector scans them.
+
+```bash
+# A drag of 200 frames and one of 1200: their difference is a thousand
+# steady frames, without the start-up.
+for n in 200 1200; do
+  SPARKLES_GC_SAMPLES=/tmp/drag-$n.gcs hue --gui --window-system x11 \
+    --debug resize-sweep,frames=$n SPEC.md --DRT-gcopt=gc:sampler
+done
+ci --gc-report /tmp/drag-1200.gcs --gc-baseline /tmp/drag-200.gcs
+```
+
+The report attributes the bytes to their allocation site (the first frame in
+the repository) and inclusively to every repository function on the stack,
+lists the pauses, and splits what stayed live into scanned and not scanned:
+only the scanned part costs a pause. Measure `-b checked` builds — `debug`
+ones run checks that allocate. `resize-sweep` drags one way and starts over;
+`resize-drag`'s way back revisits the widths it just left, which a cache
+answers, so after its first sweep it measures cache hits.
+
 ## Gotchas
 
 - **Screenshots on a skipped frame are stale.** With dirty-skipping (or any

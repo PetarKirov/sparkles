@@ -69,6 +69,9 @@ import sparkles.profiling : FrameClock, FrameFlags, FrameHistory, FramePhase, Fr
 import sparkles.profiling.tracy : tracyFrameMark, tracyPlot, tracyZone;
 import sparkles.profiling.counters.frame : FrameCounters;
 import sparkles.profiling.zones : cpuZone, FrameZones, ZoneStats;
+import sparkles.profiling.gc_sampler : gcSamplerAvailable;
+static if (gcSamplerAvailable)
+    import sparkles.profiling.gc_sampler : linkGcSampler;
 import sparkles.wsi;
 
 /// The pointer shape over a resize border's edge or corner.
@@ -1678,6 +1681,10 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
     ZoneStats* zoneTimes = new ZoneStats;
     FrameHistory!4096* history;
     const(string)[] traceNames; // the device scopes' names, for the trace
+    // `--DRT-gcopt=gc:sampler`: where the GC's bytes go (`sparkles.profiling.gc_sampler`);
+    // linked into every native-arm app, inert unless a run selects it.
+    static if (gcSamplerAvailable)
+        linkGcSampler();
     const summarizeFrames = cfg.native.debugging.traceFrames
         || cfg.native.debugging.traceFramesOver > 0 || cfg.native.debugging.frames > 0
         || cfg.native.debugging.resizeStress || cfg.native.debugging.resizeDrag
