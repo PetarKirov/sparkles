@@ -299,7 +299,7 @@ struct PathCollector
     string[] unreadable;  /// `path: kind` of each incomplete entry, FSE2
 
     /// Receives a resolved directory.
-    void directory(Members)(scope const(char)[] path, Members names, bool empty)
+    void directory(Members)(scope const(char)[] path, scope Members names, bool empty)
     {
         foreach (name; names)
             members ~= path.length ? (path ~ "/" ~ name).idup : name.idup;
@@ -308,7 +308,7 @@ struct PathCollector
     }
 
     /// Receives an entry that could not be read.
-    void incomplete(scope const(char)[] path, ErrorKind kind)
+    void incomplete(scope const(char)[] path, ErrorKind kind) @safe
     {
         import std.conv : to;
 
@@ -316,7 +316,7 @@ struct PathCollector
     }
 
     /// One text holding everything collected, for byte comparison.
-    string transcript() const
+    string transcript() const @safe
     {
         import std.array : join;
 
