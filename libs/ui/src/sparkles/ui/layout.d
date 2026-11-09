@@ -347,11 +347,44 @@ Frame[] layout(TM = CellMeasure)(
     in WidgetTree tree, in Constraints c = Constraints.init, TM tm = TM.init)
 if (isTextMeasure!TM)
 {
+    LayoutStore store;
+    return layout(tree, c, tm, store);
+}
+
+/**
+Storage `layout` reuses from one call to the next: its per-node scratch and
+the frames it returns. A model that lays its tree out on every relayout
+keeps one, so the frames are allocated once, not once per width.
+
+$(B The frames a call returns are overwritten by the next call) on the same
+store.
+*/
+struct LayoutStore
+{
+    private int[] natW, alloW, natH;
+    private Frame[] frames;
+}
+
+// `a` at length `n`, every element `init`, in the block it already has.
+private void refit(T)(ref T[] a, size_t n)
+{
+    a.length = n;
+    () @trusted { a.assumeSafeAppend(); }();
+    a[] = T.init;
+}
+
+/// ditto, into `store`, reused across calls.
+Frame[] layout(TM = CellMeasure)(in WidgetTree tree, in Constraints c, TM tm,
+    ref LayoutStore store)
+if (isTextMeasure!TM)
+{
     const n = tree.nodes.length;
-    auto natW = new int[](n);   // pass 1: natural widths (bottom-up)
-    auto alloW = new int[](n);  // pass 2: allocated widths (top-down)
-    auto natH = new int[](n);   // pass 3: heights for allocated width (bottom-up)
-    auto frames = new Frame[](n);
+    refit(store.natW, n);  // pass 1: natural widths (bottom-up)
+    refit(store.alloW, n); // pass 2: allocated widths (top-down)
+    refit(store.natH, n);  // pass 3: heights for allocated width (bottom-up)
+    refit(store.frames, n);
+    auto natW = store.natW, alloW = store.alloW, natH = store.natH;
+    auto frames = store.frames;
 
     // -- shared helpers ------------------------------------------------------
 
@@ -1032,6 +1065,30 @@ Rect cullClipOf(in Widget node, in Rect rect, in Rect clip) pure nothrow @nogc
         c.size.height += 1;
     }
     return c;
+}
+
+/// A store keeps one block of frames across calls, and every call lays out
+/// as a fresh one would.
+@("ui.layout.LayoutStore.reusesItsFrames")
+@safe unittest
+{
+    import sparkles.ui.widget : Builder;
+
+    auto a = Builder();
+    const wrapped = a.add(Widget(kind: WidgetKind.text, text: "one two three four", wrap: TextWrap.greedy));
+    const plain = a.add(Widget(kind: WidgetKind.text, text: "five"));
+    auto big = a.finish(a.container(WidgetKind.column, [wrapped, plain]));
+    auto b = Builder();
+    const lone = b.add(Widget(kind: WidgetKind.text, text: "six"));
+    auto small = b.finish(b.container(WidgetKind.column, [lone]));
+
+    LayoutStore store;
+    const first = layout(big, Constraints(maxW: 8), CellMeasure.init, store);
+    assert(first == layout(big, Constraints(maxW: 8)));
+    const block = &first[0];
+    const second = layout(small, Constraints(maxW: 8), CellMeasure.init, store);
+    assert(&second[0] is block, "the same block");
+    assert(second == layout(small, Constraints(maxW: 8)), "nothing left from the first");
 }
 
 @("ui.layout.cullClipOf.keepsTheRowAFractionReveals")
