@@ -37,6 +37,11 @@ its `stat` reports; a file whose size changes while it is read fails the
 resolution rather than give an id for bytes that never existed together.
 Nothing allocates while hashing.
 
+The tree named holds only the directories on the way to a member, and the
+fileset root (C3): a directory the walk entered and found no member
+beneath is left out of its parent, so the id does not depend on how the
+fileset was written. The fileset root is named even when it holds nothing.
+
 Specified in `docs/specs/build-primitives/filesets/decisions.md`, A19.
 */
 module sparkles.build_primitives.content_addressing.merkle;
@@ -72,9 +77,16 @@ template DefaultLeaf(Dir)
         static assert(false, Dir.stringof ~ " names no Leaf: pass one to MerkleFold");
 }
 
+/// A directory's id, and whether a member lies beneath it (C3).
+struct Named(Id)
+{
+    Id id;            ///
+    bool holdsMember; ///
+}
+
 /**
 A fold scheme naming a tree by `Dir`'s encoding over `Leaf`'s file ids. Its
-value and result are `Dir.Id`.
+result is `Dir.Id`, and its value a `Named!(Dir.Id)`.
 */
 struct MerkleFold(Dir, Leaf = DefaultLeaf!Dir)
 if (isLeaf!Leaf && isDirFormat!(Dir, Leaf))
@@ -89,7 +101,7 @@ if (isLeaf!Leaf && isDirFormat!(Dir, Leaf))
     else
         enum metadata = cast(FsoMetadata)(FsoMetadata.executable | FsoMetadata.linkTarget); ///
 
-    alias Value = Dir.Id;  ///
+    alias Value = Named!(Dir.Id); ///
     alias Result = Dir.Id; ///
 
     Dir dir;   /// the encoding's state, reused for every directory
@@ -101,12 +113,15 @@ if (isLeaf!Leaf && isDirFormat!(Dir, Leaf))
         out Value value)
     {
         dir.begin();
+        bool holds;
         foreach (e; entries)
         {
             final switch (e.node.kind)
             {
                 case FsoKind.directory:
-                    dir.directory(e.name, e.value);
+                    if (!e.value.holdsMember)
+                        continue; // not part of the tree named (C3)
+                    dir.directory(e.name, e.value.id);
                     break;
                 case FsoKind.symlink:
                     dir.symlink(e.name, e.node.target);
@@ -119,8 +134,9 @@ if (isLeaf!Leaf && isDirFormat!(Dir, Leaf))
                     dir.file(e.name, e.node.executable, id, size);
                     break;
             }
+            holds = true;
         }
-        value = dir.seal();
+        value = Value(dir.seal(), holds);
         return true;
     }
 
@@ -132,7 +148,7 @@ if (isLeaf!Leaf && isDirFormat!(Dir, Leaf))
     string failure() const => why;
 
     /// The fileset root's id.
-    Result finish(ref Value root) => root;
+    Result finish(ref Value root) => root.id;
 
     // Hashes the file `r` names, streamed at the size its `stat` reports.
     private bool hashFile(Ref)(Ref r, out Leaf.Id id, out ulong size)

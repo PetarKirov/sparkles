@@ -16,7 +16,7 @@ import std.digest.sha : SHA1, SHA256;
 import std.file : rmdirRecurse;
 import std.meta : AliasSeq;
 import std.random : Mt19937;
-import std.string : strip;
+import std.string : lineSplitter, strip;
 
 import sparkles.base.hash.blake3 : Blake3;
 import sparkles.base.vfs.mem : MemVfs;
@@ -94,12 +94,30 @@ auto idOf(S)(string literal)
     return schemeResolve(literal, sets, sets.everything, scheme, exec);
 }
 
-/// Runs `oracle` on `tree` materialized in a scratch directory.
+/**
+The tree a fileset holding every file and link of `literal` names: without
+its directories that hold no member, empty or holding only such
+directories (C3).
+*/
+string membersOf(string literal) @safe pure
+{
+    import std.algorithm.iteration : filter, joiner;
+    import std.algorithm.searching : canFind, endsWith;
+    import std.conv : to;
+
+    const kept = literal.lineSplitter
+        .filter!(l => l.length && !(l.endsWith("/") && !l.canFind(" -> ") && !l.canFind(" = ")))
+        .joiner("\n").to!string;
+    return kept.length ? kept ~ "\n" : "";
+}
+
+/// Runs `oracle` on the members of `tree` (`membersOf`), materialized in
+/// a scratch directory.
 string onDisk(string tree, string label, string delegate(string dir) @system oracle) @system
 {
     const dir = scratchTree(label);
     scope (exit) rmdirRecurse(dir);
-    materialize(tree, dir);
+    materialize(membersOf(tree), dir);
     return oracle(dir);
 }
 
@@ -610,7 +628,7 @@ private struct RootsCase
 private immutable RootsCase[4] rootsCases = [
     RootsCase("a/b/** ∪ a-c/**", "a/b/x = 1\na/b/d/y = 2\na-c/z = 4\n"),
     RootsCase("a/c", "a/c = 3\n"),
-    RootsCase("a/b/d/y ∪ /q", "a/b/d/y = 2\nq = 5\n"),
+    RootsCase("a/b/d/y ∪ q", "a/b/d/y = 2\nq = 5\n"),
     RootsCase("nothing", ""),
 ];
 
@@ -622,7 +640,7 @@ private auto rootsFilesets(ref Filesets sets)
     Fileset[4] fs = [
         sets.unionOf(sets.glob("a/b/**").value, sets.glob("a-c/**").value),
         sets.glob("a/c").value,
-        sets.unionOf(sets.glob("a/b/d/y").value, sets.glob("/q").value),
+        sets.unionOf(sets.glob("a/b/d/y").value, sets.glob("q").value),
         sets.nothing,
     ];
     return fs;
@@ -746,4 +764,59 @@ and one read more that finds the end.
         assert(callsOf!S(OpKind.openAt) == walkOpens + files, S.stringof);
         assert(callsOf!S(OpKind.read) == reads, S.stringof);
     }
+}
+
+// ------------------------------------------------------ members only
+
+/**
+C3: the tree a fileset names holds only the directories on the way to a
+member, and the fileset root. An unanchored pattern, which makes the walk
+enter every directory, names the same tree as its anchored spelling, and
+a tree's empty and hollow directories are not part of it, in every format
+and in the tee. The fileset root is named even when it holds nothing.
+*/
+@("content_addressing.merkle.C3.membersOnly")
+@system unittest
+{
+    import sparkles.build_primitives.fileset.value : Fileset;
+
+    enum tree = "a/b/x = 1\na/b/d/y = 2\na/c = 3\na-c/z = 4\nq = 5\nempty/\nhollow/inner/\n";
+    alias Tee = NarScheme!(SHA256, LiteralRef, CastoreDirectory, GitTree!SHA1);
+    auto sets = Filesets(CasePolicy.sensitive);
+
+    // Each spelling, and the tree of its members alone.
+    static struct Spelling
+    {
+        Fileset f;
+        string members;
+    }
+    const Spelling[5] spellings = [
+        Spelling(sets.glob("q").value, "q = 5\n"),
+        Spelling(sets.glob("/q").value, "q = 5\n"),
+        Spelling(sets.glob("**/y").value, "a/b/d/y = 2\n"),
+        Spelling(sets.everything, "a/b/x = 1\na/b/d/y = 2\na/c = 3\na-c/z = 4\nq = 5\n"),
+        Spelling(sets.glob("/nope").value, ""),
+    ];
+    foreach (i, s; spellings)
+    {
+        RecordingExecutor exec;
+        CastoreScheme castore;
+        GitTreeScheme!SHA1 git;
+        LiteralNar nar;
+        Tee teed;
+        const label = text("spelling ", i);
+        assert(schemeResolve(tree, sets, s.f, castore, exec) == idOf!CastoreScheme(s.members),
+            label);
+        assert(schemeResolve(tree, sets, s.f, git, exec) == idOf!(GitTreeScheme!SHA1)(s.members),
+            label);
+        assert(schemeResolve(tree, sets, s.f, nar, exec) == idOf!LiteralNar(s.members), label);
+        const t = schemeResolve(tree, sets, s.f, teed, exec);
+        assert(t.ids[0] == idOf!CastoreScheme(s.members) && t.ids[1] == idOf!(GitTreeScheme!SHA1)(
+            s.members) && t.nar == idOf!LiteralNar(s.members), label);
+    }
+
+    // A tree of empty directories alone is the empty directory.
+    assert(idOf!CastoreScheme("empty/\nhollow/inner/\n") == idOf!CastoreScheme(""));
+    assert(idOf!LiteralNar("empty/\nhollow/inner/\n") == idOf!LiteralNar(""));
+    assert(membersOf("a/\nb -> c/\nd/e = 1/\nf/g/\n") == "b -> c/\nd/e = 1/\n");
 }

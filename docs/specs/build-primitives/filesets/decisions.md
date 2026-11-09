@@ -207,7 +207,10 @@ so every memberless leaf is reported: `*.md` over a source tree reports each
 directory without Markdown. Whether consumers want that, or want the report
 limited to directories beneath an `acceptAll` verdict or a literal root, is
 the owner's call. The build graph's listings, the first consumer, do not read
-the report.
+the report. For content addressing it is settled: a name holds only the
+directories on the way to a member
+([C3](../content-addressing/decisions.md#c3-memberless-directories-in-an-id-accepted)),
+so the report's extent no longer reaches an id.
 
 ### A14 — The driver opens every directory with `walk`
 

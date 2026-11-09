@@ -74,7 +74,9 @@ computes internally but does not expose.
 expected choice, because publishing to iroh is the consumer that motivates
 it.
 
-## C3: Memberless directories in an id (proposed)
+## C3: Memberless directories in an id (accepted)
+
+_Accepted by the owner on 2026-11-09._
 
 **Question.** The resolution hands a scheme every directory it entered, and
 reports the memberless ones as empty directories
@@ -85,8 +87,9 @@ part of the id. With an unanchored pattern, the walk enters every directory,
 because a match could lie in any of them. On the tree
 `a/b/x a/b/d/y a/c a-c/z q`, `q` and `/q` select the same single file. `/q`
 has the id of the tree holding only `q`. `q` also hands over `a`, `a/b`,
-`a/b/d` and `a-c`, each holding nothing, and its castore id differs. That
-breaks [invariant 1](./SPEC.md#_1-invariants): a name must not depend on how
+`a/b/d` and `a-c`, each holding nothing, and before this record its castore
+id differed. That
+broke [invariant 1](./SPEC.md#_1-invariants): a name must not depend on how
 the fileset was written. git trees are unaffected, since git omits empty
 directories. Which directories belong to the tree a fileset names?
 
@@ -111,10 +114,16 @@ directories. Which directories belong to the tree a fileset names?
   walk. Two equal filesets would then have different ids, which defeats
   caching by id.
 
-**Proposal.** Members only, applied at the seam: the resolution hands a
-content-addressing scheme only the directories on the way to a member, and
-the fileset root. The filesets contract's A13 question is then settled for
-ids, whatever `FSV4`'s report keeps.
+**Choice.** Members only. The seam is unchanged: it still hands a scheme
+every directory the walk entered, as `FSV4`'s report needs. Each scheme
+leaves out what holds no member. The Merkle fold's value carries, beside a
+directory's id, whether a member lies beneath it, and a parent skips a
+subdirectory without one. NAR defers a directory's header until the first
+file or link beneath it is written, so a directory that closes with nothing
+written leaves no trace in the archive or in a tee's ids. The fileset root
+is always written. The filesets contract's A13 question is settled for ids,
+whatever `FSV4`'s report keeps.
 
-**Decision point.** Before the contract is accepted. Until then, `CAM1`'s
-start-root cases use anchored patterns, and the ledger keeps it partial.
+**Revisit** if a consumer must reproduce a tree's empty directories from
+its name alone. It would then need a scheme that declares it keeps them,
+and a name that depends on the fileset's spelling.
