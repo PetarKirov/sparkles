@@ -43,6 +43,13 @@ struct TextSpan
     ulong logicalGroup = ulong.max;
     size_t consumedStart, consumedEnd;
     SyntheticReason syntheticReason;
+    /// A run, on the rows a cell layout reads ($(LREF sharedWrapSpans)): the
+    /// span covers `runClusters` (> 1) whole clusters of one authored span,
+    /// listed in its plan's `runEnds`/`runCells` from `runFirst`; its
+    /// `logicalGroup` is the first one's. 0 is one cluster, as every
+    /// span of a measured or caller-owned row is. $(LREF eachRunCluster) and
+    /// $(LREF explodeRuns) read them.
+    uint runFirst, runClusters;
 }
 enum TextWrap : ubyte { none, greedy, balanced }
 
@@ -68,7 +75,81 @@ struct RetainedPlan
 
     /// The plan with every fragment, record and style.
     WrapPlan whole() const @safe => replan is null ? plan : replan();
+
+    /// The clusters its run spans cover (`TextSpan.runClusters`): each one's
+    /// logical end, and its cells. 5 bytes a cluster, where a span is 208.
+    const(uint)[] runEnds;
+    /// ditto
+    const(ubyte)[] runCells;
 }
+
+/// Calls `fn(logicalStart, logicalEnd, sourceStart, sourceEnd, cells)` for
+/// each cluster of `span`: the run's clusters, or the span itself.
+void eachRunCluster(alias fn)(scope ref const TextSpan span)
+{
+    if (span.runClusters < 2)
+    {
+        fn(span.logicalStart, span.logicalEnd, span.srcStart, span.srcEnd, span.cellAdvance);
+        return;
+    }
+    // A run of original text maps to its source byte for byte (an offset
+    // into the run is one into the source); any other run's clusters each
+    // stand for the authored span's whole source range, as they would alone.
+    const plan = span.wrapPlan;
+    const linear = runIsLinear(span);
+    size_t start = span.logicalStart;
+    foreach (k; 0 .. span.runClusters)
+    {
+        const end = size_t(plan.runEnds[span.runFirst + k]);
+        fn(start, end, linear ? span.srcStart + (start - span.consumedStart) : span.srcStart,
+            linear ? span.srcStart + (end - span.consumedStart) : span.srcEnd,
+            long(plan.runCells[span.runFirst + k]));
+        start = end;
+    }
+}
+
+// Whether a run's source offsets follow its text byte for byte.
+private bool runIsLinear(scope ref const TextSpan span) @safe pure nothrow @nogc
+    => span.sourceRelation == ProvenanceKind.original && span.srcStart != size_t.max;
+
+/// `row` with each run split back into its clusters: the spans a row
+/// holds without runs.
+TextSpan[] explodeRuns(scope const(TextSpan)[] row) @safe
+{
+    size_t n;
+    foreach (ref const span; row)
+        n += span.runClusters > 1 ? span.runClusters : 1;
+    auto result = new TextSpan[](n);
+    size_t at;
+    foreach (ref const span; row)
+    {
+        if (span.runClusters < 2)
+        {
+            result[at++] = span;
+            continue;
+        }
+        size_t k;
+        eachRunCluster!((size_t start, size_t end, size_t srcStart, size_t srcEnd, long cells) {
+            TextSpan c = span;
+            c.runFirst = c.runClusters = 0;
+            c.text = span.text[start - span.consumedStart .. end - span.consumedStart];
+            c.logicalStart = c.consumedStart = start;
+            c.logicalEnd = c.consumedEnd = end;
+            c.srcStart = srcStart;
+            c.srcEnd = srcEnd;
+            c.cellAdvance = cells;
+            c.logicalGroup = span.logicalGroup + k++;
+            c.clusterText = span.wrapPlan.source.bytes[start .. end];
+            result[at++] = c;
+        })(span);
+    }
+    return result;
+}
+
+/// Whether $(LREF sharedWrapSpans) merges a cell layout's simple clusters
+/// into runs (`TextSpan.runClusters`), this thread: a test lays the same
+/// tree out both ways and compares.
+package bool wrapRuns = true;
 
 // What makes a cell plan again from its text: a function of its own, so the
 // closure holds the text and options only, not the frame with the plan.
@@ -265,10 +346,10 @@ TextSpan[][] wrapSpans(F = typeof(null))(const(TextSpan)[] spans, int width, int
     {
         if (!(spans.length && spans[0].wrapPlan !is null))
             return copyRows(cachedWrapSpans(spans, width, hangIndent, algorithm, whitespace,
-                clipToWidth, inheritedStyle));
+                clipToWidth, inheritedStyle, false));
     }
     return wrapSpansUncached(spans, width, hangIndent, algorithm, whitespace, clipToWidth,
-        measure, inheritedStyle, measureMonotone);
+        measure, inheritedStyle, measureMonotone, false);
 }
 
 /**
@@ -286,9 +367,9 @@ const(TextSpan[])[] sharedWrapSpans(const(TextSpan)[] spans, int width, int hang
 {
     if (spans.length && spans[0].wrapPlan !is null)
         return wrapSpansUncached(spans, width, hangIndent, algorithm, whitespace,
-            clipToWidth, null, inheritedStyle, false);
+            clipToWidth, null, inheritedStyle, false, false);
     return cachedWrapSpans(spans, width, hangIndent, algorithm, whitespace,
-        clipToWidth, inheritedStyle);
+        clipToWidth, inheritedStyle, wrapRuns);
 }
 
 // The cell path is a pure function of the authored spans and the wrap
@@ -297,17 +378,18 @@ const(TextSpan[])[] sharedWrapSpans(const(TextSpan)[] spans, int width, int hang
 // more than a lookup. A measurer's results depend on its faces, so a measured
 // wrap is never cached. The rows returned are the cache's.
 private TextSpan[][] cachedWrapSpans(const(TextSpan)[] spans, int width, int hangIndent,
-    TextWrap algorithm, WhitespaceMode whitespace, bool clipToWidth, TextStyle inheritedStyle)
+    TextWrap algorithm, WhitespaceMode whitespace, bool clipToWidth, TextStyle inheritedStyle,
+    bool runs)
 {
     const key = WrapCacheKey(width, hangIndent, algorithm, whitespace, clipToWidth,
-        inheritedStyle);
+        inheritedStyle, runs);
     if (auto hit = wrapCache.find(key, spans))
         return hit;
     // The rows borrow the spans they wrap: wrap the cache's own copy, or a
     // caller reusing its text buffer rewrites the cached rows.
     auto owned = WrapCache.ownedCopy(spans);
     auto lines = wrapSpansUncached(owned, width, hangIndent, algorithm, whitespace,
-        clipToWidth, null, inheritedStyle, false);
+        clipToWidth, null, inheritedStyle, false, runs);
     wrapCache.store(key, owned, lines);
     return lines;
 }
@@ -320,6 +402,7 @@ private struct WrapCacheKey
     WhitespaceMode whitespace;
     bool clipToWidth;
     TextStyle inheritedStyle;
+    bool runs; // the rows merge simple clusters into runs (cell layouts')
 }
 
 // The planned rows for recently wrapped spans, per thread (layout runs on
@@ -553,7 +636,7 @@ private TextSpan[][] copyRows(scope const(TextSpan[])[] lines) @safe nothrow
 
 private TextSpan[][] wrapSpansUncached(F)(const(TextSpan)[] spans, int width, int hangIndent,
     TextWrap algorithm, WhitespaceMode whitespace, bool clipToWidth, scope F measure,
-    TextStyle inheritedStyle, bool measureMonotone)
+    TextStyle inheritedStyle, bool measureMonotone, bool runs)
 {
     import std.exception : enforce;
     if (algorithm == TextWrap.none && spans.length && spans[0].wrapPlan !is null)
@@ -624,8 +707,8 @@ private TextSpan[][] wrapSpansUncached(F)(const(TextSpan)[] spans, int width, in
             ref const WrapPlan plan = *(() @trusted => &lent)();
             rows = clipToWidth
                 ? projectSpanMetadata(projectWrapCells(plan, CellExtent(cast(ulong) width)).visible,
-                    spans, starts, replan)
-                : projectSpanMetadata(plan, spans, starts, replan);
+                    spans, starts, replan, runs)
+                : projectSpanMetadata(plan, spans, starts, replan, runs);
         });
         return rows;
     }
@@ -962,7 +1045,7 @@ private void applySnapshot(ref TextSpan span, scope const ref WrapPlan plan, siz
     enforce(applySnapshotState(span, plan.styles[snapshot]), "unsupported ANSI color snapshot");
 }
 private TextSpan[][] projectSpanMetadata(WrapPlan plan, const(TextSpan)[] authored, const(size_t)[] starts,
-    WrapPlan delegate() @safe replan = null)
+    WrapPlan delegate() @safe replan = null, bool runs = false)
 {
     import std.exception : enforce;
     // The rows keep the lines and the source; what only projection and
@@ -977,8 +1060,36 @@ private TextSpan[][] projectSpanMetadata(WrapPlan plan, const(TextSpan)[] author
         retained.plan.styles = null;
     }
     auto lines = new TextSpan[][](plan.lines.length);
+    // Runs: adjacent whole clusters of one authored span, each a single
+    // original fragment borrowing its bytes, under one style, merge into one
+    // span listing them in `runEnds`/`runCells` — a span per word run
+    // rather than per cluster, which was most of what a wrap allocated.
+    //
+    // The spans and the run table are built in this thread's scratch and
+    // copied out once, exactly sized: rows of a few runs each, appended to,
+    // doubled their blocks as often as they held spans.
+    auto spans = &projectionScratch.spans;
+    auto runEnds = &projectionScratch.runEnds;
+    auto runCells = &projectionScratch.runCells;
+    size_t used, runCount;
+    scope (exit)
+    {
+        // Nothing of this paragraph stays reachable from the scratch.
+        (*spans)[0 .. used] = TextSpan.init;
+    }
+    void push(T)(ref T[] array, ref size_t length, T value)
+    {
+        if (length == array.length)
+            array.length = array.length ? array.length * 2 : 64;
+        array[length++] = value;
+    }
+    auto rowStarts = new size_t[](plan.lines.length + 1);
     foreach (li, ref const line; plan.lines)
     {
+        rowStarts[li] = used;
+        scope (success) rowStarts[li + 1] = used;
+        bool runOpen;    // the row's last span may take the next cluster
+        size_t runFrom;  // its authored span
         size_t cursor = line.fragmentsStart;
         while (cursor < line.fragmentsEnd)
         {
@@ -1030,7 +1141,47 @@ private TextSpan[][] projectSpanMetadata(WrapPlan plan, const(TextSpan)[] author
                     if (!leader && !fragment.formatting)
                     { span.clusterText = payload.bytes; span.clusterTextBorrowed = payload.borrowed; leader = true; }
                     applySnapshot(span, plan, cast(size_t) fragment.styleBefore);
-                    lines[li] ~= span;
+                    const simple = runs && end == cursor + 1 && begin == first && finish == last
+                        && fragment.kind == FragmentKind.bytes && fragment.provenance == ProvenanceKind.original
+                        && !fragment.formatting && !fragment.omitted && fragment.clusterOrdinal != ulong.max
+                        && span.logicalStart == begin && span.logicalEnd == finish && payload.borrowed
+                        && fragment.advance >= 0 && fragment.advance <= ubyte.max && finish <= uint.max;
+                    if (simple && runOpen && runFrom == si)
+                    {
+                        auto prev = &(*spans)[used - 1];
+                        // A linear run continues where the last cluster's
+                        // source ended; any other repeats its span's range.
+                        const sourceFollows = runIsLinear(span)
+                            ? prev.srcEnd == span.srcStart
+                            : prev.srcStart == span.srcStart && prev.srcEnd == span.srcEnd;
+                        if (prev.consumedEnd == begin && prev.ansiSnapshot == span.ansiSnapshot
+                            && prev.sourceRelation == span.sourceRelation && sourceFollows
+                            && prev.logicalGroup + (prev.runClusters ? prev.runClusters : 1) == fragment.clusterOrdinal)
+                        {
+                            if (!prev.runClusters)
+                            {
+                                prev.runFirst = cast(uint) runCount;
+                                size_t cellCount = runCount;
+                                push(*runEnds, runCount, cast(uint) prev.logicalEnd);
+                                push(*runCells, cellCount, cast(ubyte) prev.cellAdvance);
+                                prev.runClusters = 1;
+                            }
+                            size_t cellCount = runCount;
+                            push(*runEnds, runCount, cast(uint) finish);
+                            push(*runCells, cellCount, cast(ubyte) fragment.advance);
+                            ++prev.runClusters;
+                            prev.text = authored[si].text[prev.consumedStart - starts[si] .. finish - starts[si]];
+                            if (runIsLinear(span))
+                                prev.srcEnd = span.srcEnd;
+                            prev.consumedEnd = prev.logicalEnd = finish;
+                            prev.cellAdvance += fragment.advance;
+                            prev.clusterText = plan.source.bytes[prev.logicalStart .. finish];
+                            break; // the whole fragment, in one authored span
+                        }
+                    }
+                    runOpen = simple;
+                    runFrom = si;
+                    push(*spans, used, span);
                     emitted = true;
                     if (fragment.provenance != ProvenanceKind.original || fragment.provenance == ProvenanceKind.synthetic) break;
                     ++si;
@@ -1039,8 +1190,26 @@ private TextSpan[][] projectSpanMetadata(WrapPlan plan, const(TextSpan)[] author
             cursor = end;
         }
     }
+    auto all = (*spans)[0 .. used].dup;
+    foreach (li; 0 .. lines.length)
+        lines[li] = all[rowStarts[li] .. rowStarts[li + 1]];
+    if (runCount)
+    {
+        retained.runEnds = (*runEnds)[0 .. runCount].dup;
+        retained.runCells = (*runCells)[0 .. runCount].dup;
+    }
     return lines;
 }
+
+// `projectSpanMetadata`'s scratch, per thread (projection wraps nothing, so
+// it is never re-entered).
+private struct ProjectionScratch
+{
+    TextSpan[] spans;
+    uint[] runEnds;
+    ubyte[] runCells;
+}
+private ProjectionScratch projectionScratch;
 
 /// Allocation occurs only at layout's commit boundary. Existing immutable plans
 /// are projected, never concatenated, segmented, selected, or measured again.
@@ -1065,6 +1234,13 @@ TextSpan[][] clipSpanLines(TextSpan[][] lines, size_t maximum, int hangIndent = 
         const line = source.lines[lineIndex];
         if (line.endColumn - line.startColumn <= capacity)
         { output[li] = row; continue; }
+        // Clipped by cluster: a run splits back into the clusters it covers.
+        foreach (ref const span; row)
+            if (span.runClusters > 1)
+            {
+                row = explodeRuns(row);
+                break;
+            }
         Clipped clipped;
         auto byCapacity = capacity in cache;
         if (byCapacity !is null)
@@ -1373,10 +1549,11 @@ unittest
     foreach (capacity; 0 .. 15)
         foreach (li, row; rows)
         {
-            auto slim = row.dup, full = row.dup;
+            // (A run splits by the run table its own plan holds: split it first.)
+            auto slim = row.dup, full = explodeRuns(row);
             foreach (ref span; full)
                 span.wrapPlan = wholePlan;
-            auto a = clipSpanLines([slim], capacity)[0], b = clipSpanLines([full], capacity)[0];
+            auto a = explodeRuns(clipSpanLines([slim], capacity)[0]), b = clipSpanLines([full], capacity)[0];
             assert(a.length == b.length);
             foreach (i; 0 .. a.length)
             {
@@ -1400,11 +1577,21 @@ unittest
     static assert(!__traits(compiles, { auto rows = sharedWrapSpans(spans, 10); rows[0] = null; }),
         "a row cannot be reseated");
 
-    // `wrapSpans` still gives the caller rows of its own, equal to the shared ones.
+    // `wrapSpans` still gives the caller rows of its own: a span per cluster,
+    // the shared rows' runs split back into theirs (each planned on its own).
     auto own = wrapSpans(spans, 10);
     assert(own.length == first.length);
     foreach (i; 0 .. own.length)
-        assert(own[i] == first[i] && own[i] !is first[i]);
+    {
+        auto shared_ = explodeRuns(first[i]);
+        assert(own[i] !is first[i] && own[i].length == shared_.length);
+        foreach (j; 0 .. own[i].length)
+        {
+            auto a = own[i][j], b = shared_[j];
+            a.wrapPlan = b.wrapPlan = null;
+            assert(a == b);
+        }
+    }
 }
 
 @("ui.wrap.cachedRowsOutliveTheCallersBuffer")
