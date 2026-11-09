@@ -199,7 +199,7 @@ struct GlyphAtlas
     void prepare(Instance inst, uint face, uint glyph, Ppem ppem,
         const(LightHints)* hints = null) @safe
     {
-        const key = withCoordinates(GlyphKey(face: face, ppemNumerator: ppem.numerator,
+        auto key = withCoordinates(GlyphKey(face: face, ppemNumerator: ppem.numerator,
             ppemDenominator: ppem.denominator, glyph: glyph, hinted: hints !is null), inst);
         if (auto entry = key in entries_)
         {
@@ -259,7 +259,7 @@ struct GlyphAtlas
         return work;
     }
 
-    private bool placePrepared(in GlyphKey key, in RasterTile tile,
+    private bool placePrepared(GlyphKey key, in RasterTile tile,
         bool pin = false, bool evict = false) @safe nothrow
     {
         const m = tile.metrics;
@@ -294,7 +294,7 @@ struct GlyphAtlas
     AtlasOutcome get(in Instance inst, uint face, uint glyph, Ppem ppem, out AtlasGlyph g,
         const(LightHints)* hints = null) @safe
     {
-        const key = withCoordinates(GlyphKey(face: face, ppemNumerator: ppem.numerator, ppemDenominator: ppem.denominator,
+        auto key = withCoordinates(GlyphKey(face: face, ppemNumerator: ppem.numerator, ppemDenominator: ppem.denominator,
             glyph: glyph, hinted: hints !is null), inst);
         if (auto e = key in entries_)
         {
@@ -352,7 +352,7 @@ struct GlyphAtlas
     AtlasOutcome getColour(in Instance inst, uint face, uint glyph, Ppem ppem, Colour foreground,
         out AtlasGlyph g) @safe
     {
-        const key = withCoordinates(GlyphKey(face: face, ppemNumerator: ppem.numerator, ppemDenominator: ppem.denominator,
+        auto key = withCoordinates(GlyphKey(face: face, ppemNumerator: ppem.numerator, ppemDenominator: ppem.denominator,
             glyph: glyph, colour: true, foreground: !inst.face.has(Tag("COLR")) ? 0
                 : (uint(foreground.red) << 24) | (uint(foreground.green) << 16)
                 | (uint(foreground.blue) << 8) | foreground.alpha), inst);
@@ -477,7 +477,7 @@ struct GlyphAtlas
         return true;
     }
 
-    AtlasOutcome remember(in GlyphKey key, AtlasOutcome outcome, out AtlasGlyph g)
+    AtlasOutcome remember(GlyphKey key, AtlasOutcome outcome, out AtlasGlyph g)
         @safe pure nothrow
     {
         const previous = key in entries_;
