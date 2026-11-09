@@ -30,6 +30,9 @@ $(TR $(TD) $(TD `void start(ulong size)`) $(TD required: begins a file of
 $(TR $(TD) $(TD `void put(scope const(ubyte)[])`) $(TD required: the next
     bytes))
 $(TR $(TD) $(TD `Id finish()`) $(TD required: the file's id))
+$(TR $(TD `Supply`) $(TD `Supplied supply(dir, name, out Leaf.Id, out ulong
+    size)`) $(TD optional: a tree supplied out of band for a member
+    (FSS8); a member it answers `taken` for is never opened (CAO1)))
 )
 
 A file is read through its entry's `FsoRef` while `fold` runs, at the size
@@ -77,6 +80,19 @@ template DefaultLeaf(Dir)
         static assert(false, Dir.stringof ~ " names no Leaf: pass one to MerkleFold");
 }
 
+/// What a supply of trees answers for one member (FSS8).
+enum Supplied : ubyte
+{
+    none,    /// no tree is supplied: read the file
+    taken,   /// the id and size come from the supplied tree
+    refused, /// a tree is supplied but does not hold together
+}
+
+/// The supply of a fold given none: every member is read.
+struct NoSupply
+{
+}
+
 /// A directory's id, and whether a member lies beneath it (C3).
 struct Named(Id)
 {
@@ -86,9 +102,10 @@ struct Named(Id)
 
 /**
 A fold scheme naming a tree by `Dir`'s encoding over `Leaf`'s file ids. Its
-result is `Dir.Id`, and its value a `Named!(Dir.Id)`.
+result is `Dir.Id`, and its value a `Named!(Dir.Id)`. `Supply`, when given,
+names members from trees supplied out of band instead of reading them.
 */
-struct MerkleFold(Dir, Leaf = DefaultLeaf!Dir)
+struct MerkleFold(Dir, Leaf = DefaultLeaf!Dir, Supply = NoSupply)
 if (isLeaf!Leaf && isDirFormat!(Dir, Leaf))
 {
     static assert(Dir.order != EntryOrder.none,
@@ -106,6 +123,8 @@ if (isLeaf!Leaf && isDirFormat!(Dir, Leaf))
 
     Dir dir;   /// the encoding's state, reused for every directory
     Leaf leaf; /// the file identity's state, reused for every file
+    static if (!is(Supply == NoSupply))
+        Supply supply; /// the trees supplied out of band
     private string why;
 
     /// Encodes one directory, hashing its files.
@@ -129,6 +148,20 @@ if (isLeaf!Leaf && isDirFormat!(Dir, Leaf))
                 case FsoKind.regular:
                     Leaf.Id id;
                     ulong size;
+                    static if (!is(Supply == NoSupply))
+                    {
+                        final switch (supply.supply(path, e.name, id, size))
+                        {
+                            case Supplied.taken:
+                                dir.file(e.name, e.node.executable, id, size);
+                                holds = true;
+                                continue;
+                            case Supplied.refused:
+                                return fail("a supplied tree does not chain to its root");
+                            case Supplied.none:
+                                break;
+                        }
+                    }
                     if (!hashFile(e.ref_, id, size))
                         return false;
                     dir.file(e.name, e.node.executable, id, size);
