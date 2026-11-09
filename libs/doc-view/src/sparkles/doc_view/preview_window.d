@@ -340,7 +340,7 @@ private bool rewraps(MdBlockKind kind) pure nothrow @nogc
     {
         case paragraph, heading, blockQuote, list, listItem, htmlBlock, document:
             return true;
-        case codeFence, codeGroup, table, tableRow, tableCell, thematicBreak:
+        case codeFence, codeGroup, tryBlock, table, tableRow, tableCell, thematicBreak:
             return false;
     }
 }

@@ -56,6 +56,10 @@ enum MdBlockKind
     tableCell,     /// `inlines` are the cell text
     htmlBlock,     /// raw HTML; `span` covers the verbatim bytes
     codeGroup,     /// `::: code-group` — `children` are `codeFence`s, one shown
+    /// `::: try <runner> {attrs}` (fileset explorer `FXT1`): `infoLang` names
+    /// the runner, `label` holds the raw `{…}` attributes, and `children` are
+    /// the input fence and, when there is one, the expected result's.
+    tryBlock,
 }
 
 /// A table column's text alignment, from the delimiter row (`:---`/`:--:`/`---:`).
@@ -299,9 +303,60 @@ private MdBlock[] foldCodeGroups(MdBlock[] blocks, scope const(char)[] src)
         return strip(src[b.span.start .. b.span.end]) == want;
     }
 
+    // `::: try <runner> {attrs}`: the runner's name and the raw attributes.
+    static bool tryMarker(in MdBlock b, scope const(char)[] src, out const(char)[] runner,
+        out const(char)[] attrs) @trusted nothrow
+    {
+        if (b.kind != MdBlockKind.paragraph || b.span.end > src.length || b.span.start >= b.span.end)
+            return false;
+        auto s = strip(src[b.span.start .. b.span.end]);
+        if (s.length < 6 || s[0 .. 3] != ":::")
+            return false;
+        s = strip(s[3 .. $]);
+        if (s.length < 4 || s[0 .. 3] != "try" || (s[3] != ' ' && s[3] != '\t'))
+            return false;
+        s = strip(s[4 .. $]);
+        size_t n;
+        while (n < s.length && s[n] != ' ' && s[n] != '\t' && s[n] != '{')
+            ++n;
+        if (n == 0 || s.length - n > 0 && strip(s[n .. $]).length && strip(s[n .. $])[0] != '{')
+            return false;
+        runner = s[0 .. n];
+        attrs = strip(s[n .. $]);
+        return true;
+    }
+
     MdBlock[] outv;
     for (size_t i = 0; i < blocks.length; ++i)
     {
+        const(char)[] runner, attrs;
+        if (tryMarker(blocks[i], src, runner, attrs))
+        {
+            // Fences up to the closer: the input, then the expected result.
+            MdBlock tb = {kind: MdBlockKind.tryBlock, infoLang: runner, label: attrs};
+            size_t j = i + 1;
+            bool closed;
+            for (; j < blocks.length; ++j)
+            {
+                if (isMarker(blocks[j], src, ":::"))
+                {
+                    closed = true;
+                    break;
+                }
+                if (blocks[j].kind != MdBlockKind.codeFence)
+                    break;
+                tb.children ~= blocks[j];
+            }
+            if (!closed || !tb.children.length || tb.children.length > 2)
+            {
+                outv ~= blocks[i]; // not a try block: the blocks stay as they were
+                continue;
+            }
+            tb.span = Span(blocks[i].span.start, blocks[j].span.end);
+            outv ~= tb;
+            i = j;
+            continue;
+        }
         if (!isMarker(blocks[i], src, ":::code-group")
             && !isMarker(blocks[i], src, "::: code-group"))
         {
@@ -1149,6 +1204,32 @@ unittest
     // What follows the container is untouched.
     assert(blocks[1].kind == MdBlockKind.paragraph);
     assert(blocks.length == 2, "the markers are consumed, not emitted");
+}
+
+/// FXT1: `::: try <runner> {attrs}` folds its input fence and its expected
+/// result into one block; a malformed one stays the blocks it was made of.
+@("md.model.tryBlock")
+@system
+unittest
+{
+    import std.algorithm.searching : any;
+
+    auto d = extractForTest("intro\n\n::: try fileset {tree=tutorial}\n\n```fileset\nsrc/** # all\n```\n\n"
+        ~ "```tree\nsrc/\n```\n\n:::\n\nafter\n");
+    const blocks = d.root.children;
+    assert(blocks.length == 3, "intro, the block, after");
+    const tb = blocks[1];
+    assert(tb.kind == MdBlockKind.tryBlock && tb.infoLang == "fileset" && tb.label == "{tree=tutorial}");
+    assert(tb.children.length == 2 && tb.children[0].infoLang == "fileset" && tb.children[1].infoLang == "tree");
+    assert(d.source[tb.span.start .. tb.span.start + 3] == ":::");
+
+    auto plain = extractForTest("::: try d\n\n```d\nvoid main() {}\n```\n\n:::\n");
+    assert(plain.root.children.length == 1 && plain.root.children[0].label == "");
+
+    // No runner, prose inside, or no closer: not a try block.
+    foreach (src; ["::: try\n\n```d\nx\n```\n\n:::\n", "::: try d\n\nprose\n\n```d\nx\n```\n\n:::\n",
+        "::: try d\n\n```d\nx\n```\n"])
+        assert(!extractForTest(src).root.children.any!(b => b.kind == MdBlockKind.tryBlock), src);
 }
 
 @("md.model.codeGroup.degradesRatherThanSwallows")

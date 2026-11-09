@@ -81,6 +81,26 @@ struct MdViewOptions
     /// no per-fence counter — identity is source-anchored, like fold keys.
     size_t fenceHitBase = 0;
 
+    /**
+    The runners a host offers for try blocks (fileset explorer `FXT2`): the
+    input fence of a `::: try <runner>` block whose runner is listed gets a
+    ▶ cutout beside its copy cutout, with `hitId = tryHitBase +
+    codeBody.start`. A runner the host does not offer shows no ▶: the block
+    reads as its fences.
+    */
+    const(char[])[] tryRunners;
+    /// ditto
+    size_t tryHitBase = 0;
+    /**
+    What the host shows under a try block whose input fence starts at the
+    given offset: a node it adds to `b`, or `uint.max` for nothing. The
+    runner's result lives in the app; the view stays a pure function of it.
+    */
+    uint delegate(ref Builder b, size_t inputStart) @safe tryResult;
+
+    /// Set by `viewTryBlock` for the input fence it renders (not a caller field).
+    private bool tryInput;
+
     /// The `codeBody.start` of the fence just copied (`size_t.max` = none):
     /// its header shows the copied glyph instead of the copy glyph — the
     /// feedback state lives in the app, the view stays a pure function of it.
@@ -471,6 +491,7 @@ struct MdViewGlyphs
     string cautionIcon = "\U000F0CE6";   /// 󰳦
     string copyIcon = "\U0000F0C5";      ///  (fence header copy affordance)
     string copiedIcon = "\U0000F00C";    ///  (feedback after a copy)
+    string tryIcon = "▶";               /// a try block's run affordance (`FXT2`)
     /// A link's leading icon, by destination (`MDP8`): see $(LREF linkIcon).
     string linkGithubIcon = "\U0000F09B"; ///  github
     string linkGitlabIcon = "\U0000F296"; ///  gitlab
@@ -717,6 +738,34 @@ private uint viewCodeGroup(ref Builder b, ref const MdBlock blk,
         width: SizeSpec.grow()));
 }
 
+/**
+A try block (`FXT1`, `FXT2`): its input fence, with the ▶ cutout when the host
+offers its runner, then the expected result's fence under an `expected` rule,
+then whatever the host's `tryResult` shows for it.
+*/
+private uint viewTryBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
+    MdViewOptions opt)
+{
+    import std.algorithm.searching : canFind;
+
+    MdViewOptions input = opt;
+    input.tryInput = opt.tryHitBase != 0 && opt.tryRunners.canFind(blk.infoLang);
+    uint[] rows = [viewBlock(b, blk.children[0], src, input)];
+    if (blk.children.length > 1)
+    {
+        rows ~= b.add(Widget(kind: WidgetKind.text, text: "expected", slot: Slot.muted,
+            textStyle: proseStyle(opt, title: false)));
+        rows ~= viewBlock(b, blk.children[1], src, opt);
+    }
+    if (opt.tryResult !is null)
+    {
+        const shown = opt.tryResult(b, blk.children[0].codeBody.start);
+        if (shown != uint.max)
+            rows ~= shown;
+    }
+    return b.add(Widget(kind: WidgetKind.column, children: rows, width: SizeSpec.grow()));
+}
+
 /// A fence's tab title: its `[label]` unbracketed (with the language icon in
 /// front when one exists), else its language — which the icon replaces
 /// outright, the glyph being the recognizable form.
@@ -841,7 +890,7 @@ Span[] foldableSpans(const MdDoc doc) @safe
         {
             final switch (blocks[i].kind) with (MdBlockKind)
             {
-                case codeGroup:
+                case codeGroup, tryBlock:
                     walk(blocks[i].children);
                     break;
 
@@ -1072,11 +1121,18 @@ private uint fenceTopBorder(ref Builder b, ref const MdBlock blk,
     }
 
     const hasCopy = opt.fenceHitBase != 0;
-    const tailW = hasCopy ? 5 : 1; // " ⧉ " in the cutout + "─╮", or "╮"
+    // `FXT2`: a try block's input runs from a ▶ cutout before the copy's.
+    const tailW = (hasCopy ? 5 : 1) + (opt.tryInput ? 4 : 0);
     int fill = boxW - used - tailW;
     if (fill < 0)
         fill = 0;
     kids ~= rich([ruleSpan(opt, repGlyph("─", fill))]);
+    if (opt.tryInput)
+    {
+        kids ~= rich([TextSpan(" " ~ opt.glyphs.tryIcon ~ " ", Slot.success, codeStyle(opt),
+            noBreak: true)], opt.tryHitBase + blk.codeBody.start);
+        kids ~= rich([ruleSpan(opt, "─")]);
+    }
     if (hasCopy)
     {
         TextSpan icon = TextSpan(" " ~ (opt.copiedFence == blk.codeBody.start
@@ -1704,6 +1760,9 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
 
         case codeGroup:
             return viewCodeGroup(b, blk, src, opt);
+
+        case tryBlock:
+            return viewTryBlock(b, blk, src, opt);
 
         case heading:
         {
@@ -2652,6 +2711,59 @@ version (unittest)
     assert(title == FontRole.ui && body == FontRole.ui, "prose in the prose face");
     assert(code == FontRole.uiMono, "a code span stays monospace, at the prose's size");
 }
+/// FXT2: a try block's input fence shows ▶ as a hit target when the host
+/// offers its runner, and not otherwise; the host's result goes under it.
+@("md.render_widgets.tryBlock")
+@safe unittest
+{
+    import std.algorithm.searching : canFind;
+
+    // ::: try fileset / ```fileset\na\n``` / ```tree\nb\n``` / :::
+    const src = "```fileset\na\n```\n```tree\nb\n```";
+    const doc = MdDoc(MdBlock(kind: MdBlockKind.document, children: [
+        MdBlock(kind: MdBlockKind.tryBlock, infoLang: "fileset", span: Span(0, src.length), children: [
+            MdBlock(kind: MdBlockKind.codeFence, infoLang: "fileset", span: Span(0, 16), codeBody: Span(11, 13)),
+            MdBlock(kind: MdBlockKind.codeFence, infoLang: "tree", span: Span(17, src.length),
+                codeBody: Span(25, 27)),
+        ]),
+    ]), src);
+
+    bool showsTry(MdViewOptions opt)
+    {
+        auto b = Builder();
+        const tree = b.finish(viewMarkdownInto(b, doc, opt));
+        foreach (ref n; tree.nodes)
+            foreach (ref s; n.spans)
+                if (s.text.canFind("▶"))
+                    return n.hitId == opt.tryHitBase + 11;
+        return false;
+    }
+
+    MdViewOptions opt;
+    opt.tryHitBase = 5000;
+    assert(!showsTry(opt), "no runner offered: no ▶");
+    opt.tryRunners = ["fileset"];
+    assert(showsTry(opt));
+    opt.tryRunners = ["d"];
+    assert(!showsTry(opt), "another runner's block");
+
+    opt.tryRunners = ["fileset"];
+    size_t asked;
+    opt.tryResult = (ref Builder b, size_t at) @safe {
+        asked = at;
+        return b.add(Widget(kind: WidgetKind.text, text: "RESULT"));
+    };
+    auto c = renderDoc(doc, opt);
+    bool result, expected;
+    foreach (ref op; c.ops)
+        if (op.kind == OpKind.textRun)
+        {
+            result |= op.text == "RESULT";
+            expected |= op.text == "expected";
+        }
+    assert(asked == 11 && result && expected);
+}
+
 @("md.render_widgets.codeGroup.tabSwitchKeepsHeight")
 @safe unittest
 {

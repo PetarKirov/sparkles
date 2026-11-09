@@ -109,6 +109,17 @@ private void writeBlock(Writer, Fence)(ref Writer w, scope const(char)[] src,
                 writeBlock(w, src, c, options, fence);
             break;
 
+        case MdBlockKind.tryBlock:
+            // A runnable block (fileset explorer `FXT1`): its fences, in a
+            // container naming the runner, for a page script to attach to.
+            w.put("<div class=\"try\" data-runner=\"");
+            w.writeHtmlEscaped(b.infoLang);
+            w.put("\">\n");
+            foreach (ref const c; b.children)
+                writeBlock(w, src, c, options, fence);
+            w.put("</div>\n");
+            break;
+
         case MdBlockKind.codeGroup:
             // The group is a container, and its fences already carry their
             // own labels; a tabbed rendering here wants the checked-radio
@@ -532,6 +543,18 @@ unittest
 {
     assert(renderBlock("```d\nvoid main() {}\n```\n") ==
         `<pre><code class="language-d">void main() {}` ~ "\n" ~ `</code></pre>`);
+}
+
+/// FXT1: a try block is a container naming its runner, escaped, around its fences.
+@("md.render_html.tryBlock")
+@system
+unittest
+{
+    import std.algorithm.searching : canFind, startsWith;
+
+    const html = renderBlock("::: try fil\"e {tree=t}\n\n```fileset\na\n```\n\n:::\n");
+    assert(html.startsWith(`<div class="try" data-runner="fil&quot;e">`), html);
+    assert(html.canFind(`<code class="language-fileset">a`), html);
 }
 
 @("md.render_html.fenceHook")
