@@ -73,3 +73,48 @@ computes internally but does not expose.
 **Decision point.** Before `CAO1` is implemented. iroh's layout is the
 expected choice, because publishing to iroh is the consumer that motivates
 it.
+
+## C3: Memberless directories in an id (proposed)
+
+**Question.** The resolution hands a scheme every directory it entered, and
+reports the memberless ones as empty directories
+([`FSV4`](../filesets/SPEC.md#4-the-fileset-value-fsv),
+[A13](../filesets/decisions.md#a13-an-empty-directory-is-a-memberless-leaf-of-the-walk)).
+Castore and NAR record an empty directory, so each such directory becomes
+part of the id. With an unanchored pattern, the walk enters every directory,
+because a match could lie in any of them. On the tree
+`a/b/x a/b/d/y a/c a-c/z q`, `q` and `/q` select the same single file. `/q`
+has the id of the tree holding only `q`. `q` also hands over `a`, `a/b`,
+`a/b/d` and `a-c`, each holding nothing, and its castore id differs. That
+breaks [invariant 1](./SPEC.md#_1-invariants): a name must not depend on how
+the fileset was written. git trees are unaffected, since git omits empty
+directories. Which directories belong to the tree a fileset names?
+
+**Alternatives.**
+
+- **Members only.** A directory is part of the tree only on the way to a
+  member; the fileset root is always part of it. Since
+  [`FSV3`](../filesets/SPEC.md#4-the-fileset-value-fsv) makes a fileset a
+  set of files, this is the only reading under which invariant 1 holds for
+  every spelling. A truly empty directory is dropped even under `everything`,
+  as nixpkgs' `lib.fileset.toSource` drops it; `FSV4`'s report still gives a
+  consumer that recreates the shape what it needs. The oracle fixtures would
+  materialize the members' tree, not the literal.
+- **Memberless directories under a whole subtree.** Keep a memberless
+  directory only beneath an `acceptAll` verdict, the alternative A13 names:
+  `everything` and `src/**` keep `empty/`, while a directory searched for an
+  unanchored pattern is dropped. This keeps today's fixtures. But a verdict
+  is a property of the plan, not of the set of files: `src/**` and a
+  spelling that selects the same files without reaching `acceptAll` would
+  still differ. Invariant 1 would have to name the plan.
+- **Keep the walk's directories.** Reword invariant 1 so that an id names the
+  walk. Two equal filesets would then have different ids, which defeats
+  caching by id.
+
+**Proposal.** Members only, applied at the seam: the resolution hands a
+content-addressing scheme only the directories on the way to a member, and
+the fileset root. The filesets contract's A13 question is then settled for
+ids, whatever `FSV4`'s report keeps.
+
+**Decision point.** Before the contract is accepted. Until then, `CAM1`'s
+start-root cases use anchored patterns, and the ledger keeps it partial.
