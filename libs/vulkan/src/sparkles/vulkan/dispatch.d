@@ -179,6 +179,12 @@ private enum CommandSet[] instanceSets = [
         "GetPhysicalDeviceSurfaceFormatsKHR",
         "GetPhysicalDeviceSurfacePresentModesKHR",
     ]),
+    // A surface's capabilities through an extensible query: what it supports
+    // of present ids, present waits, present timing, and which present modes
+    // are compatible with one another (`VK_KHR_get_surface_capabilities2`).
+    CommandSet(khrGetSurfaceCapabilities2, [
+        "GetPhysicalDeviceSurfaceCapabilities2KHR",
+    ]),
     // The validation layer's messages, for a caller that counts them (a
     // readback test) rather than reads them on the console.
     CommandSet(extDebugUtils, [
@@ -324,6 +330,20 @@ private enum CommandSet[] deviceSets = [
     CommandSet(khrPresentWait, [
         "WaitForPresentKHR",
     ]),
+    // Optional: the same, for a swapchain created for `VK_KHR_present_id2`
+    // and `VK_KHR_present_wait2`, where the surface reports support.
+    CommandSet(khrPresentWait2, [
+        "WaitForPresent2KHR",
+    ]),
+    // Optional: when each present reached a chosen stage on its way to the
+    // display, on a clock the swapchain names, and a present aimed at a
+    // time (`VK_EXT_present_timing`).
+    CommandSet(extPresentTiming, [
+        "SetSwapchainPresentTimingQueueSizeEXT",
+        "GetSwapchainTimingPropertiesEXT",
+        "GetSwapchainTimeDomainPropertiesEXT",
+        "GetPastPresentationTimingEXT",
+    ]),
     // Optional: when a present reached the display, and the display's
     // refresh period (`VK_GOOGLE_display_timing`, Android's).
     CommandSet(googleDisplayTiming, [
@@ -395,6 +415,22 @@ enum string khrImageFormatList = "VK_KHR_image_format_list";
 enum string khrPresentId = "VK_KHR_present_id";
 /// ditto — needs `VK_KHR_present_id`
 enum string khrPresentWait = "VK_KHR_present_wait";
+/// ditto — needs `VK_KHR_get_surface_capabilities2` on the instance
+enum string khrPresentId2 = "VK_KHR_present_id2";
+/// ditto — needs `VK_KHR_present_id2`
+enum string khrPresentWait2 = "VK_KHR_present_wait2";
+/// ditto — needs `VK_KHR_present_id2` and calibrated timestamps
+enum string extPresentTiming = "VK_EXT_present_timing";
+/// ditto — an instance extension: the extensible surface query
+enum string khrGetSurfaceCapabilities2 = "VK_KHR_get_surface_capabilities2";
+/// ditto — an instance extension: which present modes are compatible
+enum string khrSurfaceMaintenance1 = "VK_KHR_surface_maintenance1";
+/// ditto — the extension `VK_KHR_surface_maintenance1` was promoted from
+enum string extSurfaceMaintenance1 = "VK_EXT_surface_maintenance1";
+/// ditto — a present mode chosen per present; needs a surface maintenance1
+enum string khrSwapchainMaintenance1 = "VK_KHR_swapchain_maintenance1";
+/// ditto — the extension `VK_KHR_swapchain_maintenance1` was promoted from
+enum string extSwapchainMaintenance1 = "VK_EXT_swapchain_maintenance1";
 /// ditto — when each present reached the display, and the refresh period
 enum string googleDisplayTiming = "VK_GOOGLE_display_timing";
 /// ditto — each heap's budget and usage, through the 1.1 memory query
@@ -545,6 +581,19 @@ struct DeviceCommands
     static assert(matchesHeaderMacro(khrPresentWait, VK_KHR_PRESENT_WAIT_EXTENSION_NAME));
     static assert(matchesHeaderMacro(extMemoryBudget, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME));
     static assert(matchesHeaderMacro(googleDisplayTiming, VK_GOOGLE_DISPLAY_TIMING_EXTENSION_NAME));
+    static assert(matchesHeaderMacro(khrPresentId2, VK_KHR_PRESENT_ID_2_EXTENSION_NAME));
+    static assert(matchesHeaderMacro(khrPresentWait2, VK_KHR_PRESENT_WAIT_2_EXTENSION_NAME));
+    static assert(matchesHeaderMacro(extPresentTiming, VK_EXT_PRESENT_TIMING_EXTENSION_NAME));
+    static assert(matchesHeaderMacro(khrGetSurfaceCapabilities2,
+        VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME));
+    static assert(matchesHeaderMacro(khrSurfaceMaintenance1,
+        VK_KHR_SURFACE_MAINTENANCE_1_EXTENSION_NAME));
+    static assert(matchesHeaderMacro(extSurfaceMaintenance1,
+        VK_EXT_SURFACE_MAINTENANCE_1_EXTENSION_NAME));
+    static assert(matchesHeaderMacro(khrSwapchainMaintenance1,
+        VK_KHR_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME));
+    static assert(matchesHeaderMacro(extSwapchainMaintenance1,
+        VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME));
     version (Android)
         static assert(matchesHeaderMacro(khrAndroidSurface,
             VK_KHR_ANDROID_SURFACE_EXTENSION_NAME));
@@ -597,6 +646,11 @@ struct DeviceCommands
     static assert(is(typeof(DeviceCommands.acquireNextImageKHR) == PFN_vkAcquireNextImageKHR));
     static assert(is(typeof(DeviceCommands.queuePresentKHR) == PFN_vkQueuePresentKHR));
     static assert(is(typeof(DeviceCommands.waitForPresentKHR) == PFN_vkWaitForPresentKHR));
+    static assert(is(typeof(DeviceCommands.waitForPresent2KHR) == PFN_vkWaitForPresent2KHR));
+    static assert(is(typeof(DeviceCommands.getPastPresentationTimingEXT)
+        == PFN_vkGetPastPresentationTimingEXT));
+    static assert(is(typeof(InstanceCommands.getPhysicalDeviceSurfaceCapabilities2KHR)
+        == PFN_vkGetPhysicalDeviceSurfaceCapabilities2KHR));
 
     // The rendering commands are core, so a device that resolves the swapchain
     // extension and not these has a broken loader rather than a narrow one —
