@@ -36,15 +36,17 @@ configuration "library" {
     excludedSourceFiles "src/app.d" "src/sparkles/build_primitives/testing.d" "src/sparkles/build_primitives/task/testing.d" "src/sparkles/build_primitives/fileset/testing.d" "src/sparkles/build_primitives/content_addressing/testing.d"
 }
 
-// The library plus the test helpers (`testing.d`, `task/testing.d`,
-// `fileset/testing.d`), for a consumer whose *tests* want the repository
-// fixtures, the task-DAG fake driver or the fileset oracles. Select it
-// from the consumer's unittest configuration with
+// The library plus the test helpers (`testing.d`, `task/testing.d`), for a
+// consumer whose *tests* want the repository fixtures or the task-DAG fake
+// driver. Select it from the consumer's unittest configuration with
 // `subConfiguration "sparkles:build-primitives" "testing"`; never from a
 // shipped configuration, or the test helpers travel with the binary.
 configuration "testing" {
     targetType "library"
-    excludedSourceFiles "src/app.d"
+    // The fileset and content-addressing oracles are tests, not helpers, and
+    // need the test runner, which a consumer's closure does not give this
+    // package.
+    excludedSourceFiles "src/app.d" "src/sparkles/build_primitives/fileset/testing.d" "src/sparkles/build_primitives/content_addressing/testing.d"
     dependency "sparkles:test-utils" path="../.."
 }
 
