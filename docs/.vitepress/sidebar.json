@@ -1790,6 +1790,28 @@
         ]
       },
       {
+        "text": "Fileset Explorer",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Specification",
+            "link": "/specs/fileset-explorer/SPEC"
+          },
+          {
+            "text": "Delivery Plan",
+            "link": "/specs/fileset-explorer/PLAN"
+          },
+          {
+            "text": "Testing",
+            "link": "/specs/fileset-explorer/testing"
+          },
+          {
+            "text": "Decisions",
+            "link": "/specs/fileset-explorer/decisions"
+          }
+        ]
+      },
+      {
         "text": "Fuzzy",
         "collapsed": true,
         "items": [
