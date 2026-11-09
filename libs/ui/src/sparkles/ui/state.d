@@ -426,17 +426,19 @@ DocRow[] documentRows(in WidgetTree tree, in Frame[] frames)
 }
 
 /**
-Storage `documentRows` reuses from one call to the next: the row array and
-its per-row scratch. A model that rebuilds its rows on every relayout keeps
-one, so a document's rows are allocated once, not once per width.
+Storage `documentRows` reuses from one call to the next: the row array, its
+per-row scratch and the rows' text. A model that rebuilds its rows on every
+relayout keeps one, so a document's rows are allocated once, not once per
+width.
 
-$(B The rows a call returns are overwritten by the next call) on the same
-store. Their text is not: each call's text is a buffer of its own.
+$(B The rows a call returns, and their text, are overwritten by the next
+call) on the same store.
 */
 struct DocRowStore
 {
     private DocRow[] rows;
     private size_t[] textAt, sourceAt, textStart, sourceStart;
+    private char[] text, source;
 }
 
 // `a` at length `n`, every element `init`, in the block it already has.
@@ -550,7 +552,7 @@ DocRow[] documentRows(in WidgetTree tree, in Frame[] frames, ref DocRowStore sto
     }
 
     // Each row's length becomes its start in the channel's buffer.
-    static char[] place(size_t[] at)
+    static char[] place(size_t[] at, ref char[] buf)
     {
         size_t total;
         foreach (ref a; at)
@@ -559,7 +561,10 @@ DocRow[] documentRows(in WidgetTree tree, in Frame[] frames, ref DocRowStore sto
             a = total;
             total += length;
         }
-        return new char[](total);
+        // Every byte is written by the second walk, so the block is not cleared.
+        buf.length = total;
+        () @trusted { buf.assumeSafeAppend(); }();
+        return buf;
     }
 
     // A row nothing reached keeps a null text, as it always had.
@@ -612,8 +617,8 @@ DocRow[] documentRows(in WidgetTree tree, in Frame[] frames, ref DocRowStore sto
     }
 
     walk(tree.root);
-    textBuf = place(textAt);
-    sourceBuf = place(sourceAt);
+    textBuf = place(textAt, store.text);
+    sourceBuf = place(sourceAt, store.source);
     refit(store.textStart, total);
     refit(store.sourceStart, total);
     auto textStart = store.textStart, sourceStart = store.sourceStart;
@@ -1114,7 +1119,7 @@ in (frames.length == tree.nodes.length,
 }
 
 /// A store keeps one block across calls, pads to `minRows`, and blanks what
-/// the last call left behind.
+/// the last call left behind, its text included.
 @("ui.state.documentRows.aStoreIsReusedAndPadded")
 @safe unittest
 {
@@ -1136,11 +1141,13 @@ in (frames.length == tree.nodes.length,
     assert(first.length == 5);
     assert(first[1].text == "cd" && first[4].srcStart == size_t.max);
     const block = &first[0];
+    const text = &first[0].text[0];
 
     const second = documentRows(short_, shortFrames, store, minRows: 4);
     assert(&second[0] is block, "the same block");
     assert(second.length == 4);
     assert(second[0].text == "ef" && second[0].srcStart == 6);
+    assert(&second[0].text[0] is text, "the same text block");
     assert(second[1].text is null && second[1].srcStart == size_t.max, "blanked");
 }
 
