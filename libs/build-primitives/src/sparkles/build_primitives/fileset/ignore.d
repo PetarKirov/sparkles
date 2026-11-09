@@ -607,6 +607,60 @@ version (unittest)
     assert(f.ignores(f.into(root, "c"), "x.log"), "nor a directory entered after it");
 }
 
+/**
+FSI1, on threads: two sibling directories decide their entries at once
+against one shared chain, each thread with its own scratch, and every
+decision equals the one made alone. Deciding only reads the chain; adding
+a scope or entering a directory extends the arena, which a resolution does
+on one thread.
+*/
+@("fileset.ignore.FSI1.concurrentSiblings")
+@system unittest
+{
+    import core.thread : Thread;
+
+    auto f = ScopeFixture.make();
+    const root = f.read(IgnoreState.init, ".gitignore", "*.log\nbuild/\n!keep.log\n");
+    const a = f.read(f.into(root, "a"), "a/.gitignore", "!*.log\n*.tmp\n");
+    const b = f.read(f.into(root, "b"), "b/.gitignore", "keep.log\n/gen/\n");
+
+    static immutable string[] names = ["x.log", "keep.log", "y.tmp", "build", "gen", "main.c",
+        "z.log", "gen.tmp"];
+    // The decisions each sibling makes alone.
+    IgnoreDecisionRef[names.length][2] alone;
+    foreach (i, n; names)
+    {
+        alone[0][i] = f.scopes.decideFile(a, n, *f.scratch);
+        alone[1][i] = f.scopes.decideDir(b, n, *f.scratch);
+    }
+    assert(!alone[0][0].excluded && alone[1][1].excluded && alone[1][4].excluded,
+        "the siblings decide differently");
+
+    const(IgnoreScopes)* chain = &f.scopes;
+    shared bool[2] agreed;
+    void decideMany(size_t which)
+    {
+        auto scratch = makeUnique!MatchScratch();
+        bool same = true;
+        foreach (round; 0 .. 2000)
+            foreach (i, n; names)
+            {
+                const d = which == 0 ? chain.decideFile(a, n, *scratch)
+                    : chain.decideDir(b, n, *scratch);
+                same &= d == alone[which][i];
+            }
+        agreed[which] = same;
+    }
+
+    auto ta = new Thread(() => decideMany(0));
+    auto tb = new Thread(() => decideMany(1));
+    ta.start();
+    tb.start();
+    ta.join();
+    tb.join();
+    assert(agreed[0] && agreed[1]);
+}
+
 /// FSI4: git's precedence, each clause.
 @("fileset.ignore.FSI4.precedence")
 @safe nothrow unittest
