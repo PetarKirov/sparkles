@@ -141,8 +141,9 @@ _Rationale:_ an id over the readable part names a tree that does not exist
 **`CAM5` — Hashing allocates only to grow.** Once its buffers hold the
 largest directory and the deepest path seen, a scheme **must not** allocate
 to encode a directory or read a file. _Detection:_ the allocation
-instrumentation of the filesets contract, run around a second resolution of
-the same tree, counts zero calls.
+instrumentation of the filesets contract, run around the scheme's own calls
+in a second resolution of the same tree by the same scheme, counts zero
+calls, where the first resolution, growing the buffers, counted some.
 
 ## 3. Castore (`CAC`)
 
