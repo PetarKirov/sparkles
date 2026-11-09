@@ -129,10 +129,13 @@ delivered before the frame pass started is past the byte's offset.
 
 ## 2. Ingest
 
-Ingest is owned by `sparkles:ui-app`'s native host. The kernel operation it
-relies on is owned by `sparkles:event-horizon` (OPL10). A component reaches
-the host's ingest by introspection, as it reaches `spawnDaemon`
-([`HST15`](./feature-requirements.md)); a host without it leaves the
+The ingest mechanism, OPL1–OPL11, is owned by `sparkles:event-horizon`: it
+needs nothing but the event loop, and a component that reads a stream names
+its types without depending on a host. The native host of `sparkles:ui-app`
+owns its use: the budget, the turn it starts before each wait of the loop,
+and the frame pass a delivery asks for (OPL12). A component reaches the
+host's stream sources by introspection, as it reaches `spawnDaemon`
+([`HST15`](./feature-requirements.md)); a host without them leaves the
 component on its polled path.
 
 **OPL1: Ingest on arrival.** Bytes that become readable on an open stream
@@ -192,10 +195,16 @@ once, with `0` or the error number. A pty master reports its child's exit
 as `EIO`. After the end callback the source delivers nothing and holds no
 kernel operation.
 
-**OPL9: Close.** `closeStream` **must** cancel the source's operations, reap
-their completions, release its buffers and unregister its buffer group
-before it returns; no sink callback runs after it returns. Closing the host
-**must** close every source. A closed source's pending bytes are dropped.
+**OPL9: Close.** After `closeStream` returns, no sink callback for the source
+**must** run and its pending bytes are dropped. It **must** cancel the
+source's kernel operation; the buffers and the buffer group are released
+when the kernel reports that operation ended, and no later than when the
+host closes. Closing the host **must** close every source and leave no
+kernel operation of theirs in flight.
+
+_Rationale:_ Waiting for the cancellation inside `closeStream` would run
+the event loop from inside the application's own code, dispatching
+unrelated completions there.
 
 **OPL10: Multishot read.** `sparkles:event-horizon` **must** offer an
 operation that reads a descriptor repeatedly into buffers the kernel picks
