@@ -1993,33 +1993,56 @@ struct ViewerModel
         };
     }
 
-    // Document structure resolved once per rebuild: fence bodies (for the
-    // copy affordance) and table cells in document order.
+    // What `collectStructure` found in one parse: a relayout keeps the
+    // document, so it walks the blocks (and copies an omitting fence's body)
+    // once per parse, not once per width.
+    private static struct Structure
+    {
+        const(MdBlock)[] blocks; // the parse walked, by identity
+        const(char)[] source;
+        MdFence[] fences;
+        MdCell[] cells;
+        size_t[] tableSpans;
+        Span[] tableSpanRanges;
+    }
+    private Structure structure;
+
+    // Document structure: fence bodies (for the copy affordance) and table
+    // cells in document order. The fields slice `structure`; a view that
+    // clears them shrinks its slice and leaves the walk intact.
     private void collectStructure()
     {
-        fences.length = 0;
-        cellList.length = 0;
-        tableSpans.length = 0;
-        tableSpanRanges.length = 0;
+        if (structure.blocks !is preview.doc.root.children || structure.source !is preview.doc.source)
+            structure = walkStructure();
+        fences = structure.fences;
+        cellList = structure.cells;
+        tableSpans = structure.tableSpans;
+        tableSpanRanges = structure.tableSpanRanges;
+    }
+
+    private Structure walkStructure() const
+    {
+        Structure s = { blocks: preview.doc.root.children, source: preview.doc.source };
         int tableIdx = -1;
         void collect(in MdBlock blk)
         {
             if (blk.kind == MdBlockKind.codeFence)
-                fences ~= MdFence(blk.codeBody, blk.infoLang == "ansi",
+                s.fences ~= MdFence(blk.codeBody, blk.infoLang == "ansi",
                     fenceBody(blk, preview.doc.source).text);
             if (blk.kind == MdBlockKind.table)
             {
                 ++tableIdx;
-                tableSpans ~= blk.span.start;
-                tableSpanRanges ~= blk.span;
+                s.tableSpans ~= blk.span.start;
+                s.tableSpanRanges ~= blk.span;
                 foreach (ri, ref const row; blk.children)
                     foreach (ci, ref const cell; row.children)
-                        cellList ~= MdCell(tableIdx, ri, ci, cell.span);
+                        s.cells ~= MdCell(tableIdx, ri, ci, cell.span);
             }
             foreach (ref const c; blk.children)
                 collect(c);
         }
         collect(preview.doc.root);
+        return s;
     }
 
     /// A table's grid dimensions from the collected cell list.
