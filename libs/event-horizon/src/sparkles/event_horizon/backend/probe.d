@@ -69,6 +69,7 @@ struct BackendCaps
     bool bufRing;            /// provided buffer rings (5.19)
     bool multishotAccept;    /// multishot accept (5.19)
     bool multishotRecv;      /// multishot recv (6.0)
+    bool multishotRead;      /// multishot read into provided buffers (6.7)
     bool futexOps;           /// in-ring futex ops (6.7)
     bool msgRing;            /// `MSG_RING` (5.18)
     bool extArg;             /// `IORING_FEAT_EXT_ARG` (inline-timespec waits)
@@ -189,6 +190,7 @@ version (EventHorizonLibkqueue) {} else version (Android) {} else version (linux
                 OpKind.msgRing: Operation.MSG_RING,
                 OpKind.waitid: Operation.WAITID,
                 OpKind.pollAdd: Operation.POLL_ADD,
+                OpKind.readMultishot: Operation.READ_MULTISHOT,
             ];
             foreach (kind, lowered; lowering)
                 if (kind != 0 && probe.isSupported(lowered))
@@ -200,6 +202,7 @@ version (EventHorizonLibkqueue) {} else version (Android) {} else version (linux
         caps.multishotAccept = caps.kernel.atLeast(5, 19) && caps.supports(OpKind.accept);
         caps.multishotRecv = caps.kernel.atLeast(6, 0) && caps.supports(OpKind.recv);
         caps.bufRing = caps.kernel.atLeast(5, 19);
+        caps.multishotRead = caps.supports(OpKind.readMultishot) && caps.bufRing;
         caps.registeredBuffers = caps.supports(OpKind.read);  // READ_FIXED since 5.1
         caps.registeredFiles = caps.supports(OpKind.read);    // FIXED_FILE since 5.1
         caps.futexOps = caps.supports(OpKind.futexWait);
@@ -319,5 +322,8 @@ version (EventHorizonLibkqueue) {} else version (Android) {} else version (linux
         assert(caps.multishotAccept);
         assert(caps.multishotRecv);
         assert(caps.bufRing);
+        // `READ_MULTISHOT` arrived in 6.7; the opcode probe must find it there.
+        if (caps.kernel.atLeast(6, 7))
+            assert(caps.multishotRead);
     }
 }
