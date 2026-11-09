@@ -500,6 +500,14 @@ package void beginWrapPass(size_t layoutWidth) @safe nothrow => wrapCache.begin(
 /// ditto
 package void endWrapPass() @safe nothrow @nogc => wrapCache.end();
 
+/// The spans (authored and wrapped) this thread's wrap cache keeps alive: a
+/// diagnostic, and what a test of its bound reads.
+size_t wrapCacheRetainedSpans() @safe nothrow @nogc => wrapCache.retainedSpans;
+
+/// Empties this thread's wrap cache: after a change its keys cannot see, or
+/// before a test that measures it.
+void clearWrapCache() @safe nothrow { wrapCache = WrapCache.init; }
+
 // Fresh rows over the same spans: a caller may adjust a row's spans (a
 // measured layout commits their advances) without touching the cache.
 private TextSpan[][] copyRows(scope const(TextSpan[])[] lines) @safe nothrow
