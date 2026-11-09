@@ -312,6 +312,9 @@ struct WorkspaceTui
         size_t sByte, eByte;
         if (loc.byteRange(viewer.vm.source, viewer.vm.lineStarts, sByte, eByte))
         {
+            // A windowed document's rows past the window are blank: build
+            // the window around the location before looking for its rows.
+            viewer.vm.materializeAt(sByte);
             long targetVisual = -1;
             long endVisual = -1;
             foreach (idx, ref const r; viewer.vm.rows)
@@ -2075,6 +2078,12 @@ struct WorkspaceTui
             dirty = true;
         }
 
+        // The document is laid out around the pane (`ViewerModel.windowed`):
+        // the window follows the scroll, and the segments still estimated are
+        // measured a slice a pass. A pass that moved either redraws.
+        if (viewer.vm.settleLayout(3.msecs))
+            dirty = true;
+
         // Before the frame, and as errands rather than sequences: both of
         // these address the target itself rather than the cell surface, and
         // the host is what knows how this one carries them — OSC 52 and
@@ -2223,6 +2232,9 @@ WorkspaceExit runWorkspace(string target, bool isDir, WorkspaceDoc initial,
     w.viewer.vm.diffLayout = diffLayout;
     // `NAV5`: what a terminal resize re-finds at the top of the pane.
     w.viewer.vm.anchorMode = scrollAnchor;
+    // A large document is laid out around the pane: a terminal resize costs
+    // what the pane shows, and `view` settles the rest over later passes.
+    w.viewer.vm.windowed = true;
     w.viewer.vm.codeOverflow = codeOverflow;
     w.viewer.vm.codeMaxLines = codeMaxLines;
     w.viewer.vm.tableOverflow = tableOverflow;
@@ -2525,6 +2537,10 @@ private Duration waitDeadline(ref WorkspaceTui w, bool eventDriven = false)
         deadline = DiffEdit.settle;
     if (w.viewer.toastVisible && deadline > 50.msecs)
         deadline = 50.msecs;
+    // A windowed document still settling (`settleLayout`) asks for the passes
+    // that measure it.
+    if (w.viewer.vm.layoutPending && deadline > 16.msecs)
+        deadline = 16.msecs;
     return deadline;
 }
 

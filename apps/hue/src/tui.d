@@ -633,7 +633,7 @@ struct PreviewTui
     // the terminal and the window came to disagree about whether `Foo` matches
     // `foo`. Rows are reached through `vm.visualOfMatch`, so wrapping and folds
     // are the view model's problem here exactly as they are in the window.
-    private void jumpMatch(long from, bool forward) @safe
+    private void jumpMatch(long from, bool forward) @system
     {
         const n = lineCount;
         if (n == 0 || vm.matches.length == 0)
@@ -645,7 +645,10 @@ struct PreviewTui
                 if (vm.visualOfMatch(m) == i)
                 {
                     vm.curMatch = idx;
-                    vm.scrollTo(i);
+                    // A windowed document builds the window around the
+                    // match, which makes its row exact.
+                    vm.materializeAt(m.start);
+                    vm.scrollTo(vm.visualOfMatch(m));
                     return;
                 }
         }
@@ -2436,6 +2439,56 @@ unittest
     assert(t.handle(Event(PointerEvent(button: PointerButton.left,
         action: PointerAction.release, pos: Point(30, 3)))));
     assert(!t.vm.hsb.dragging);
+}
+
+@("tui.windowed.aJumpBuildsTheWindowAroundItsMatch")
+@system
+unittest
+{
+    import core.time : Duration;
+    import std.algorithm : canFind;
+    import std.conv : text;
+    import sparkles.syntax : MdBlock, MdBlockKind, MdDoc, MdInline, MdInlineKind, Span, LabelSet;
+
+    // A document laid out around the pane, as the workspace lays its viewer
+    // out: the rows past the window are blank, so a search's jump builds the
+    // window around its match before scrolling to it.
+    string src;
+    MdBlock[] blocks;
+    foreach (i; 0 .. 400)
+    {
+        const start = src.length;
+        src ~= text("paragraph ", i, i == 390 ? " holds the needle" : " is filler",
+            " with enough words to wrap in a narrow pane\n\n");
+        const end = src.length - 2;
+        blocks ~= MdBlock(kind: MdBlockKind.paragraph, span: Span(start, end),
+            inlines: [MdInline(kind: MdInlineKind.text, span: Span(start, end))]);
+    }
+    auto doc = MdDoc(MdBlock(kind: MdBlockKind.document, children: blocks), src);
+
+    static immutable(Theme)[1] themes = [builtinDark];
+    static immutable string[1] names = ["dark"];
+    PreviewTui t;
+    t.labels = LabelSet.standard();
+    t.names = names[];
+    t.themes = themes[];
+    t.width = 40;
+    t.height = 12;
+    t.vm.windowed = true;
+    t.relayout();
+    t.setDocument("long.md", src, null, PreviewModel(present: true, doc: doc), startPreview: true);
+    assert(t.vm.laysOutWindow, "laid out around the pane");
+    assert(t.vm.layoutPending, "the rest still to measure");
+
+    t.vm.search("needle");
+    assert(t.vm.matches.length == 1);
+    t.jumpMatch(0, true);
+    const row = t.vm.visualOfMatch(t.vm.matches[0]);
+    assert(row >= t.vm.top && row < t.vm.top + t.bodyRows, text("row ", row, ", top ", t.vm.top));
+    assert(t.vm.rows[cast(size_t) row].text.canFind("needle"), "the row on screen holds the match");
+
+    while (t.vm.settleLayout(Duration.max)) {}
+    assert(!t.vm.layoutPending, "settled");
 }
 
 @("tui.pointer.tableBarScrollsWideTable")
