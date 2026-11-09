@@ -245,12 +245,18 @@
       # A source tree containing the dub manifests above plus the
       # `.d`/`.c`/`.i` sources of the given repo-relative dirs (`.c`/`.i` for
       # ImportC shims).
-      sourceFor =
-        sourceDirs:
+      sourceFor = sourceDirs: sourceForWith sourceDirs [ ];
+
+      # ditto, plus `extraFiles`: repo-relative files an app string-imports
+      # from outside its source dirs (the fileset explorer's help page, which
+      # is a docs page compiled in).
+      sourceForWith =
+        sourceDirs: extraFiles:
         fs.toSource {
           inherit root;
           fileset = fs.unions (
             [ manifestFileset ]
+            ++ map fromRoot extraFiles
             ++ map (
               path:
               fs.fileFilter (
@@ -293,7 +299,7 @@
         libsClosure = names: lib.concatMap libSrcDirs (grow [ ] names);
         componentNames = shippedComponentNames;
         refsIn = refsOf;
-        inherit sourceFor manifestFileset;
+        inherit sourceFor sourceForWith manifestFileset;
         inherit (config.legacyPackages.uiShaderPlacement)
           needsUiShaders
           uiShaderDirs
