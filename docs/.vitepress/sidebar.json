@@ -269,6 +269,10 @@
         ]
       },
       {
+        "text": "sparkles:fileset-explorer",
+        "link": "/apps/fileset-explorer/"
+      },
+      {
         "text": "sparkles:hue",
         "link": "/apps/hue/",
         "collapsed": true,
