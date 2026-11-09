@@ -193,7 +193,8 @@ if (isDigest!H && allSatisfy!(isMerkleDir, Dirs))
     /// Why the scheme aborted.
     string failure() const => why;
 
-    /// The NAR's digest and length.
+    /// The NAR's digest and length. The scheme is then ready for another
+    /// resolution, its buffers kept (CAM5).
     Result finish()
     {
         if (!started)
@@ -205,9 +206,12 @@ if (isDigest!H && allSatisfy!(isMerkleDir, Dirs))
         while (frames.length)
             close();
         static if (Dirs.length)
-            return Result(rootIds, NarHash!H(h.finish(), size));
+            auto r = Result(rootIds, NarHash!H(h.finish(), size));
         else
-            return Result(h.finish(), size);
+            auto r = Result(h.finish(), size);
+        started = false;
+        size = 0;
+        return r;
     }
 
     private void begin()

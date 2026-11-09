@@ -12,8 +12,9 @@ fixtures it uses.
 module sparkles.build_primitives.content_addressing.testing;
 
 import std.conv : text;
-import std.digest.sha : SHA256;
+import std.digest.sha : SHA1, SHA256;
 import std.file : rmdirRecurse;
+import std.meta : AliasSeq;
 import std.random : Mt19937;
 import std.string : strip;
 
@@ -415,4 +416,181 @@ once, from the same reads that write the NAR.
         " read"));
     assert(teed.ids[0] == idOf!CastoreScheme(tree));
     assert(teed.nar == idOf!LiteralNar(tree));
+}
+
+// ----------------------------------------------------- failing members
+
+// What the resizing leaf rewrites when it hears its first `start`, on this
+// test's thread: after the file was stat-ed, before any byte is read.
+private MemVfs* resizeIn;
+private string resizePath, resizeTo;
+
+// `L`, rewriting the file `resizePath` to `resizeTo` once, as it starts.
+private struct ResizingLeaf(L)
+{
+    alias Id = L.Id;
+    private L inner;
+
+    void start(ulong size)
+    {
+        if (resizeIn !is null)
+        {
+            assert(resizeIn.writeFile(resizePath, cast(const(ubyte)[]) resizeTo));
+            resizeIn = null;
+        }
+        inner.start(size);
+    }
+
+    void put(scope const(ubyte)[] bytes) { inner.put(bytes); }
+
+    Id finish() => inner.finish();
+}
+
+// castore over the resizing leaf, for a tee.
+private struct ResizingCastore
+{
+    CastoreDirectory inner;
+    alias inner this;
+    alias Leaf = ResizingLeaf!(DigestLeaf!Blake3);
+}
+
+/// Resolves `literal` whole with `S`, after `prepare` has had the tree and
+/// the executor, opening the root at `at`.
+auto resolvePrepared(S)(string literal, scope void delegate(MemVfs*, ref RecordingExecutor) @system prepare,
+    string at = "")
+{
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+    import sparkles.build_primitives.fileset.scheme : resolveScheme;
+    import sparkles.build_primitives.fileset.testing : openFixture;
+
+    auto tree = openFixture(literal);
+    auto vfs = &tree.value.get().vfs;
+    RecordingExecutor exec;
+    prepare(vfs, exec);
+    auto root = openRoot!(Rights.readOnly)(vfs, at, ambientAuthority());
+    assert(!root.hasError);
+    auto sets = Filesets(CasePolicy.sensitive);
+    S scheme;
+    return resolveScheme(root.value.borrow, sets, sets.everything, scheme, exec);
+}
+
+/// Asserts that `r` failed with `schemeFailed`, saying `why`.
+void assertSchemeFailed(R)(auto ref R r, string why, string label)
+{
+    import sparkles.build_primitives.fileset.machine : ResolutionErrorCode;
+
+    assert(r.hasError, label ~ ": gave an id");
+    assert(r.error.code == ResolutionErrorCode.schemeFailed && r.error.context == why,
+        text(label, ": ", r.error.code, " ", r.error.context));
+}
+
+/**
+CAM3: a file that grows or shrinks between its `stat` and its last read
+fails the resolution, in a fold and in a tee, whose NAR stream reads the
+file. A file rewritten at the same size is named by the bytes read, as the
+contract says it is not detected.
+*/
+@("content_addressing.merkle.CAM3.resized")
+@system unittest
+{
+    enum tree = "d/x = one\nl -> d\nempty/\n";
+    enum why = "a member changed size while it was read";
+    alias Castore = MerkleFold!(CastoreDirectory, ResizingLeaf!(DigestLeaf!Blake3));
+    alias Git = MerkleFold!(GitTree!SHA1, ResizingLeaf!(GitTree!SHA1.Leaf));
+    alias Tee = NarScheme!(SHA256, LiteralRef, ResizingCastore);
+
+    static auto resizing(S)(string to)
+    {
+        return resolvePrepared!S(tree, (MemVfs* vfs, ref RecordingExecutor) {
+            resizeIn = vfs;
+            resizePath = "d/x";
+            resizeTo = to;
+        });
+    }
+
+    static foreach (S; AliasSeq!(Castore, Git, Tee))
+    {
+        foreach (to; ["one more", "o", ""])
+        {
+            assertSchemeFailed(resizing!S(to), why, text(S.stringof, " to ", to.length));
+            assert(resizeIn is null, "the leaf heard no start");
+        }
+    }
+
+    // The same size: undetected, and named by what was read.
+    enum rewritten = "d/x = two\nl -> d\nempty/\n";
+    const same = resizing!Castore("two");
+    assert(!same.hasError && same.value == idOf!CastoreScheme(rewritten));
+    const teed = resizing!Tee("two");
+    assert(!teed.hasError && teed.value.ids[0] == idOf!CastoreScheme(rewritten)
+        && teed.value.nar == idOf!LiteralNar(rewritten));
+}
+
+/**
+CAM4: an entry the resolution could not read leaves the tree without an id,
+in every scheme: a mount the walk does not cross, and a file gone between
+its directory's listing and its `stat`.
+*/
+@("content_addressing.merkle.CAM4.incomplete")
+@system unittest
+{
+    enum mounted = "r/a = 1\nr/m/b = 2\n";
+    enum vanishing = "d/a = 1\nd/b = 2\n";
+    enum fold = "an entry could not be read, so the tree has no id";
+    enum stream = "an entry could not be read, so the tree has no NAR";
+
+    static void check(S)(string why)
+    {
+        const crossing = resolvePrepared!S(mounted, (MemVfs* vfs, ref RecordingExecutor) {
+            assert(vfs.mount("r/m"));
+        }, "r");
+        assertSchemeFailed(crossing, why, S.stringof ~ " over a mount");
+
+        const gone = resolvePrepared!S(vanishing, (MemVfs* vfs, ref RecordingExecutor exec) {
+            exec.beforeStats = () { assert(vfs.remove("d/a")); };
+        });
+        assertSchemeFailed(gone, why, S.stringof ~ " over a vanished file");
+    }
+
+    check!CastoreScheme(fold);
+    check!(GitTreeScheme!SHA1)(fold);
+    check!LiteralNar(stream);
+    check!(CastoreNar!LiteralRef)(stream);
+
+    // Without the fault, the same trees have ids.
+    assert(!resolvePrepared!CastoreScheme(mounted, (MemVfs*, ref RecordingExecutor) {}, "r")
+        .hasError);
+    assert(!resolvePrepared!CastoreScheme(vanishing, (MemVfs*, ref RecordingExecutor) {})
+        .hasError);
+}
+
+/// `nix hash path` of `dir`: the SRI form of its NAR's SHA-256.
+string nixHashPath(string dir) @system
+{
+    import std.process : Config, execute;
+
+    const r = execute(["nix", "--extra-experimental-features", "nix-command", "hash", "path",
+        dir], null, Config.stderrPassThrough);
+    assert(r.status == 0, text("nix hash path ", dir, ": ", r.output));
+    return r.output.strip;
+}
+
+/**
+CAN4: the text form of a `NarHash` is what `nix hash path` prints for the
+same tree, on the hand-written trees, the fixture set and twenty random
+trees.
+*/
+@("content_addressing.nar.CAN4.sri")
+@system unittest
+{
+    if (!haveNix())
+        return skipTest("nix-store is not installed");
+
+    foreach (t; diskOracleTrees(20))
+    {
+        const ours = idOf!LiteralNar(t.literal);
+        const theirs = onDisk(t.literal, "sri", dir => nixHashPath(dir));
+        assert(toSri(ours.digest)[] == theirs, text(t.label, ": ", toSri(ours.digest)[], " != ",
+            theirs, "\n", t.literal));
+    }
 }
