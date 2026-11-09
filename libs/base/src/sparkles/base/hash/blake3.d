@@ -253,6 +253,9 @@ struct Blake3
     // The lazily merged chaining-value stack holds one entry more than the
     // tree's depth (C reference, `BLAKE3_MAX_DEPTH + 1`).
     private ubyte[32][maxDepth + 1] cvStack_;
+    // The chunk counter the input starts at: nonzero for a subtree of a
+    // larger input (`setInputOffset`).
+    private ulong initialChunk_;
 
     /// A default-mode hasher on a chosen backend, which must be supported.
     static Blake3 withBackend(Blake3Backend backend)
@@ -298,15 +301,31 @@ struct Blake3
     /// The backend this hasher was given (`automatic` unless chosen).
     Blake3Backend backend() const => backend_;
 
-    /// Forgets all input, keeping the mode and key.
+    /// Forgets all input, keeping the mode, the key and the input offset.
     void reset()
     {
-        chunk_ = ChunkState(key_, 0, chunk_.flags);
+        chunk_ = ChunkState(key_, initialChunk_, chunk_.flags);
         cvStackLength_ = 0;
     }
 
     /// `std.digest` spelling of $(LREF reset).
     void start() => reset();
+
+    /**
+    Places the input that follows at byte `offset` of a larger input, so
+    $(LREF finishNonRoot) gives the chaining value of the subtree it fills.
+    `offset` is a multiple of the subtree's length, a power of two
+    chunks; the BLAKE3 tree has no subtree that starts elsewhere. Call it
+    before any input. The root of the larger input comes from
+    $(LREF blake3ParentRoot), never from $(LREF finish) here.
+    */
+    void setInputOffset(ulong offset)
+    in (offset % blake3ChunkLength == 0, "a subtree starts on a chunk")
+    in (cvStackLength_ == 0 && chunk_.length == 0, "input was already put")
+    {
+        initialChunk_ = offset / blake3ChunkLength;
+        chunk_.chunkCounter = initialChunk_;
+    }
 
     /// Absorbs `input`: a slice, or bytes listed one by one.
     void put(scope const(ubyte)[] input...)
@@ -334,7 +353,7 @@ struct Blake3
         while (input.length > blake3ChunkLength)
         {
             ulong subtreeLength = roundDownToPowerOf2(input.length);
-            const countSoFar = chunk_.chunkCounter * blake3ChunkLength;
+            const countSoFar = (chunk_.chunkCounter - initialChunk_) * blake3ChunkLength;
             while (((subtreeLength - 1) & countSoFar) != 0)
                 subtreeLength /= 2;
             const subtreeChunks = subtreeLength / blake3ChunkLength;
@@ -392,6 +411,14 @@ struct Blake3
         rootOutput(backend).rootBytes(backend, seek, output);
     }
 
+    /**
+    The chaining value of everything put so far, as a subtree of a larger
+    input: no ROOT flag, so it can never equal a digest. Bao's outboards
+    and iroh's verified streams are built from these (see
+    $(LREF setInputOffset) and $(LREF blake3ParentCv)).
+    */
+    ubyte[32] finishNonRoot() const => rootOutput(resolve(backend_)).chainingValue(resolve(backend_));
+
     private Output rootOutput(Blake3Backend backend) const
     {
         if (cvStackLength_ == 0)
@@ -425,11 +452,11 @@ struct Blake3
         return output;
     }
 
-    // Merges completed subtrees: after `totalChunks` chunks the stack holds
-    // one entry per set bit of the count (the spec's lazy-merge invariant).
+    // Merges completed subtrees: up to chunk `totalChunks`, the stack holds
+    // one entry per set bit of the count of chunks since the input offset (the spec's lazy-merge invariant).
     private void mergeCvStack(Blake3Backend backend, ulong totalChunks)
     {
-        const postMergeLength = popcnt(totalChunks);
+        const postMergeLength = popcnt(totalChunks - initialChunk_);
         while (cvStackLength_ > postMergeLength)
         {
             ubyte[64] block;
@@ -448,6 +475,68 @@ struct Blake3
         cvStack_[cvStackLength_] = cv[0 .. 32];
         cvStackLength_ += 1;
     }
+}
+
+/**
+The chaining value of the parent of two subtrees, `left` before `right`,
+in the default mode. $(LREF blake3ParentRoot) gives the digest instead, for
+the parent that covers the whole input.
+*/
+ubyte[32] blake3ParentCv(in ubyte[32] left, in ubyte[32] right)
+{
+    ubyte[64] block;
+    block[0 .. 32] = left;
+    block[32 .. 64] = right;
+    const backend = resolve(Blake3Backend.automatic);
+    return parentOutput(block, blake3Iv, 0).chainingValue(backend);
+}
+
+/// The digest of an input whose root's children are `left` and `right`.
+ubyte[32] blake3ParentRoot(in ubyte[32] left, in ubyte[32] right)
+{
+    ubyte[64] block;
+    block[0 .. 32] = left;
+    block[32 .. 64] = right;
+    ubyte[32] digest;
+    const backend = resolve(Blake3Backend.automatic);
+    parentOutput(block, blake3Iv, 0).rootBytes(backend, 0, digest[]);
+    return digest;
+}
+
+/**
+A digest rebuilt from its subtrees: the chaining values of two halves,
+each hashed at its own offset, merge into the digest of the whole. This is
+how bao and iroh verify one piece of a large input.
+*/
+@("blake3.Blake3.subtrees")
+@safe pure nothrow @nogc
+unittest
+{
+    ubyte[3 * blake3ChunkLength + 100] input;
+    foreach (i, ref b; input)
+        b = cast(ubyte) (i % 251);
+
+    // The root splits at the largest power of two chunks below the length.
+    Blake3 left, right;
+    left.put(input[0 .. 2 * blake3ChunkLength]);
+    right.setInputOffset(2 * blake3ChunkLength);
+    right.put(input[2 * blake3ChunkLength .. $]);
+    const l = left.finishNonRoot(), r = right.finishNonRoot();
+    assert(blake3ParentRoot(l, r) == blake3(input[]));
+    assert(blake3ParentCv(l, r) != blake3(input[]), "a chaining value is not a digest");
+
+    // The right half again as two subtrees, merged without ROOT.
+    Blake3 c2, c3;
+    c2.setInputOffset(2 * blake3ChunkLength);
+    c2.put(input[2 * blake3ChunkLength .. 3 * blake3ChunkLength]);
+    c3.setInputOffset(3 * blake3ChunkLength);
+    c3.put(input[3 * blake3ChunkLength .. $]);
+    assert(blake3ParentCv(c2.finishNonRoot(), c3.finishNonRoot()) == r);
+
+    // A reset keeps the offset.
+    right.reset();
+    right.put(input[2 * blake3ChunkLength .. $]);
+    assert(right.finishNonRoot() == r);
 }
 
 ///
