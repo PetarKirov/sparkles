@@ -93,6 +93,7 @@ enum OpKind : ubyte
     msgRing,         /// cross-ring message
     waitid,          /// child-process reap
     pollAdd,         /// foreign-descriptor readiness
+    readMultishot,   /// armed read stream into kernel-selected buffers
 }
 
 /// Which stage of an operation's life produced the failure.

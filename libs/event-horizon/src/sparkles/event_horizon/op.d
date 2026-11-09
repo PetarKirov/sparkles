@@ -160,6 +160,23 @@ struct OpRecvSelect
     uint maxLen;
 }
 
+/**
+Multishot read (Linux 6.7, `IORING_OP_READ_MULTISHOT`): one armed submission
+reads `fd` again each time it turns readable, into a buffer the kernel picks
+from the provided ring `group`, and posts one completion per read: `res` the
+byte count, `bufferId` the buffer, `flags.more` while it stays armed. It ends
+with end of file (`res == 0`), an error, `-ENOBUFS` when the ring has no free
+buffer, or a cancellation; a final completion may also carry bytes. `fd` must
+be pollable and non-blocking. Present where the backend reports the
+`multishotRead` capability.
+*/
+struct OpReadMultishot
+{
+    enum kind = OpKind.readMultishot;
+    int fd;
+    BufGroupId group;
+}
+
 /// Accept one connection; the completion `res` is the new fd. The peer
 /// address is fetched on demand (`getpeername`), not stored per slot.
 struct OpAccept

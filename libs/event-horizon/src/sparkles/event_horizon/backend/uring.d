@@ -37,6 +37,7 @@ import sparkles.event_horizon.sys.uring : AcceptFlags, CQE_BUFFER_SHIFT, CQEFlag
     prepAccept, prepCancel64, prepClose, prepConnect, prepFsync, prepFutexWait, prepFutexWaitv, prepFutexWake,
     prepLinkTimeout, prepMultishotAccept, prepNop,
     prepMkdirat, prepOpenat, prepPollAdd, prepPollMultishot, prepRead, prepReadFixed,
+    prepReadMultishot,
     prepRecv, prepRecvMsg, prepRenameat, prepSend,
     prepSendMsg, prepStatx, prepSymlinkat, prepTimeout, prepUnlinkat, prepWaitid, prepWrite,
     prepWriteFixed,
@@ -50,7 +51,8 @@ import sparkles.event_horizon.op : CompletionFlags, FutexDeadline, FutexWaitvEnt
     KernelTimespec, OpAccept, OpAcceptMultishot, OpClass, OpClose, OpConnect, OpFsync,
     OpFutexWait, OpFutexWaitv, OpFutexWake, OpMkdirAt, OpNop, OpOpenAt, OpOpenAt2, OpPollAdd,
     OpRead,
-    OpRecv, OpRecvFrom, OpRecvSelect, OpRenameAt, OpSend, OpSendTo, OpSlot, OpStatx,
+    OpReadMultishot, OpRecv, OpRecvFrom, OpRecvSelect, OpRenameAt, OpSend, OpSendTo, OpSlot,
+    OpStatx,
     OpSymlinkAt, OpUnlinkAt,
     OpTimeout, OpToken, OpWaitid, OpWrite, SockAddr;
 
@@ -260,6 +262,21 @@ struct UringBackend
             e.prepRecv(fd, gid, maxLen, MsgFlags.NONE);
             e.user_data = ud;
         })(op.fd, op.group.value, op.maxLen, token.raw);
+        return true;
+    }
+
+    /// Lowers a multishot read (`READ_MULTISHOT` + `IOSQE_BUFFER_SELECT`):
+    /// each read fills a buffer the kernel picks from `group`, up to its
+    /// size, at the descriptor's own position (offset 0 means "current" for
+    /// the streams it accepts).
+    bool trySubmit(in OpReadMultishot op, OpToken token, ref OpSlot) @safe nothrow @nogc
+    {
+        if (_io.full)
+            return false;
+        _io.putWith!((ref SubmissionEntry e, int fd, ushort gid, ulong ud) {
+            e.prepReadMultishot(fd, 0, 0, gid);
+            e.user_data = ud;
+        })(op.fd, op.group.value, token.raw);
         return true;
     }
 
@@ -691,6 +708,7 @@ struct UringBackend
         {
             case OpKind.accept, OpKind.acceptMultishot: return _caps.multishotAccept;
             case OpKind.recv, OpKind.recvSelect: return _caps.multishotRecv;
+            case OpKind.readMultishot: return _caps.multishotRead;
             default: return false;
         }
     }

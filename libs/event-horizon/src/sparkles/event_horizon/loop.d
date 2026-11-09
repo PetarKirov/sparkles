@@ -1766,6 +1766,150 @@ unittest
     assert(loop.inFlight == 0);
 }
 
+@("loop.readMultishot.streamsIntoProvidedBuffers")
+@safe nothrow @nogc
+unittest
+{
+    import core.lifetime : move;
+    import core.stdc.errno : ENOBUFS;
+    import core.time : msecs;
+
+    import sparkles.event_horizon.buffer : Buf, BufGroupId, BufRing;
+    import sparkles.event_horizon.op : OpReadMultishot;
+
+    DefaultLoop loop;
+    createOrSkip(loop);
+    if (!loop.caps().multishotRead)
+    {
+        loop.destroy(); // see loop.registeredBuffers.fixedReadPath
+        skipTest("multishot read unsupported (Linux before 6.7)");
+    }
+
+    int[2] fds;
+    if ((() @trusted {
+        import core.sys.posix.fcntl : F_GETFL, F_SETFL, fcntl, O_NONBLOCK;
+        import core.sys.posix.unistd : pipe;
+
+        if (pipe(fds) != 0)
+            return -1;
+        return fcntl(fds[0], F_SETFL, fcntl(fds[0], F_GETFL) | O_NONBLOCK);
+    })() != 0)
+        skipTest("pipe failed (descriptor limit)");
+    bool writerOpen = true;
+    scope (exit) () @trusted {
+        import core.sys.posix.unistd : close;
+
+        close(fds[0]);
+        if (writerOpen)
+            close(fds[1]);
+    }();
+
+    // Four 16-byte buffers, registered as group 9.
+    BufRing!() ring;
+    assert(!BufRing!().create(ring, BufGroupId(9), 4, 16).hasError);
+    assert(!(() @trusted => loop.registerBufRing(ring.group.value,
+        ring.entries, ring.ringAddr))().hasError);
+    scope (exit) cast(void) loop.unregisterBufRing(ring.group.value);
+
+    static struct Reads
+    {
+        BufRing!()* ring;
+        ubyte[128] got;
+        size_t length;
+        uint reads;
+        bool sawMore;
+        bool ended;
+        int endRes;
+        bool hold;      // keep the leases, so the ring runs dry
+        Buf[4] held;
+        uint holding;
+    }
+
+    static void onRead(void* ctx, ref Completion done) nothrow @nogc
+    {
+        auto r = cast(Reads*) ctx;
+        if (done.res > 0)
+        {
+            assert(done.flags & CompletionFlags.bufferSelected, "a read names its buffer");
+            auto b = r.ring.lease(done.bufferId, cast(uint) done.res);
+            r.got[r.length .. r.length + b.length] = b[];
+            r.length += b.length;
+            ++r.reads;
+            if (r.hold)
+                r.held[r.holding++] = move(b);
+            else
+                b.release();
+        }
+        r.sawMore |= !done.isFinal;
+        if (done.isFinal)
+        {
+            r.ended = true;
+            r.endRes = done.res;
+        }
+    }
+
+    Reads r;
+    () @trusted { r.ring = &ring; }(); // both outlive every completion: the loop drains first
+    auto arm() @trusted => loop.submit(OpReadMultishot(fds[0], ring.group), &onRead, &r);
+    bool runUntil(scope bool delegate() nothrow @nogc @safe done)
+    {
+        foreach (_; 0 .. 100)
+        {
+            if (done())
+                return true;
+            cast(void) loop.runOnce(10.msecs);
+        }
+        return done();
+    }
+    size_t write(size_t n) @trusted
+    {
+        import core.sys.posix.unistd : write;
+
+        ubyte[128] bytes;
+        foreach (i, ref b; bytes)
+            b = cast(ubyte) i;
+        return write(fds[1], bytes.ptr, n);
+    }
+
+    // Armed once, it reads each burst into a kernel-chosen buffer and stays
+    // armed.
+    assert(arm().hasValue);
+    assert(write(10) == 10);
+    assert(runUntil(() => r.length == 10));
+    assert(r.sawMore && !r.ended, "a read leaves the stream armed");
+    foreach (i; 0 .. 10)
+        assert(r.got[i] == i);
+
+    // With every buffer leased the stream ends with ENOBUFS, keeping the
+    // bytes it could not read in the pipe; re-armed once the leases return,
+    // it reads them in order.
+    r.hold = true;
+    assert(write(80) == 80);
+    assert(runUntil(() => r.ended));
+    assert(r.endRes == -ENOBUFS, "a dry ring ends the stream");
+    assert(r.length == 10 + 64, "four buffers' worth read");
+    foreach (ref b; r.held[0 .. r.holding])
+        b.release();
+    r.hold = false;
+    r.holding = 0;
+    r.ended = false;
+    assert(arm().hasValue);
+    assert(runUntil(() => r.length == 90));
+    foreach (i; 0 .. 80)
+        assert(r.got[10 + i] == i, "re-armed, the stream resumes in order");
+
+    // The writer closes: end of file ends the stream.
+    () @trusted {
+        import core.sys.posix.unistd : close;
+
+        close(fds[1]);
+    }();
+    writerOpen = false;
+    assert(runUntil(() => r.ended));
+    assert(r.endRes == 0, "end of file is a final zero-byte read");
+    assert(loop.inFlight == 0);
+}
+
 @("loop.multishotAccept.streamsConnections")
 @safe nothrow @nogc
 unittest
