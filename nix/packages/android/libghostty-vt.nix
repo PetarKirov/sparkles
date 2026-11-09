@@ -6,9 +6,13 @@
 # `$ANDROID_NDK_HOME`, which we point at ldc-android's NDK so the sysroot
 # matches everything else in the link.
 #
-# Built with `-Dsimd=false`: the SIMD members (simdutf, highway) are C++ and
-# multiply the cross-compile surface for a throughput win an off-screen fence
-# decoder never notices. Revisit if a profile ever says otherwise.
+# Built with SIMD (simdutf, highway), as on the desktop: the terminal parses
+# everything a shell prints through it. SIMD is also what links it against
+# libc (GhosttyZig.zig: `link_libc = if (cfg.simd) true else null`); without
+# libc, pkg/wuffs exports null-returning `calloc`/`free` stubs, weak but
+# hidden, which take over every allocation in the shared library the archive
+# is linked into (the first 1.0 APKs died in druntime's `_d_dso_registry`).
+# The archive's build rejects any such definition.
 { inputs, lib, ... }:
 let
   # Whether this system can build Android at all (./host.nix).
@@ -68,7 +72,6 @@ in
       vtFor =
         t:
         (vt.override {
-          simd = false;
           optimize = "ReleaseFast";
         }).overrideAttrs
           (
@@ -79,9 +82,21 @@ in
               zigBuildFlags = (unstoreZig old).zigBuildFlags ++ [
                 "-Dtarget=${zigTarget t.abi}"
               ];
-              env = (old.env or { }) // {
-                ANDROID_NDK_HOME = ndk.ndkRoot;
-              };
+              # The SIMD members are C++ compiled against the NDK's libc headers,
+              # and their DWARF names the include directories as given. Hand
+              # pkg/android-ndk, which reads only
+              # `toolchains/llvm/prebuilt/<host>/sysroot`, an NDK in the build
+              # directory whose sysroot links to the store, so those paths name
+              # /build rather than the NDK (TC15, as unstoreZig above).
+              preBuild = (unstoreZig old).preBuild + ''
+                for host in ${ndk.ndkRoot}/toolchains/llvm/prebuilt/*; do
+                  mkdir -p ../ndk/toolchains/llvm/prebuilt/$(basename $host)
+                  ln -s $host/sysroot \
+                    ../ndk/toolchains/llvm/prebuilt/$(basename $host)/sysroot
+                done
+                export ANDROID_NDK_HOME=$(realpath ../ndk)
+              '';
+
               doCheck = false;
 
               # Target code: the host's strip/ranlib must not touch it (ndk.nix).
@@ -105,6 +120,16 @@ in
               install -Dm644 ${(vtFor t).dev}/lib/libghostty-vt.a \
                 $out/lib/${t.abi}/libghostty-vt.a
             '') (lib.attrValues ndk.targets)}
+
+            # The archive must not define libc's allocator: a definition here
+            # takes over every caller in the library it is linked into.
+            for a in $out/lib/*/libghostty-vt.a; do
+              if ${ndk.nm} --defined-only "$a" 2>/dev/null \
+                  | grep -E ' [TtWw] (calloc|malloc|realloc|free)$'; then
+                echo "$a defines a libc allocator symbol" >&2
+                exit 1
+              fi
+            done
           '';
     in
     lib.optionalAttrs (androidHost system).supported {
