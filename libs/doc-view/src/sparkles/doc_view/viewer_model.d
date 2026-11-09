@@ -41,7 +41,8 @@ import sparkles.syntax.ts.injection : TsConfigCache;
 import sparkles.twoslash.protocol : TwoslashReturn;
 import sparkles.twoslash.render_widgets : viewTwoslashDocumentInto;
 import sparkles.ui.canvas : DrawOp, OpKind, PushShift, Scrollbar;
-import sparkles.ui.display_list : buildDisplayList;
+import sparkles.ui.cmd_buffer : GcCmdBuffer;
+import sparkles.ui.display_list : buildDisplayList, buildDisplayListInto;
 import sparkles.ui.geometry : Constraints, Point, Rect;
 import sparkles.ui.layout : DelegateMeasure, Frame, layout;
 import sparkles.ui.components.scroll_view : ScrollView;
@@ -185,6 +186,10 @@ TextStyle attrsToTextStyle(ubyte attrs) pure nothrow @nogc @safe
     return t;
 }
 
+// Where a model builds its display list before copying it out: one buffer per
+// thread, kept across builds, since a build finishes before the next starts.
+private GcCmdBuffer displayScratch;
+
 /**
 The shared document-pipeline Whole. The host configures the theme
 list once, feeds documents through $(LREF setDocument), and drives
@@ -279,11 +284,24 @@ struct ViewerModel
     private Frame[] layoutDoc(in WidgetTree t, in Constraints c)
         => proseRole == FontRole.inherit ? layout(t, c) : layout(t, c, measure);
 
-    // ditto, for its display list.
+    // ditto, for its display list: built in the thread's scratch, then copied
+    // into `opsStore`, the block every rebuild overwrites.
     private DrawOp[] displayListOf(in WidgetTree t, in Frame[] f)
-        => proseRole == FontRole.inherit
-            ? buildDisplayList(t, f, palette, pageFg, pageBg)
-            : buildDisplayList(t, f, palette, pageFg, pageBg, measure);
+    {
+        displayScratch.reset();
+        if (proseRole == FontRole.inherit)
+            buildDisplayListInto(t, f, palette, pageFg, pageBg, displayScratch);
+        else
+            buildDisplayListInto(t, f, palette, pageFg, pageBg, displayScratch, measure);
+        opsStore.length = displayScratch.length;
+        () @trusted { opsStore.assumeSafeAppend(); }();
+        opsStore[] = displayScratch.ops[];
+        return opsStore;
+    }
+
+    // What `ops` is copied into: one block, overwritten by every rebuild,
+    // rather than a fresh list per width.
+    private DrawOp[] opsStore;
     /// `--code-overflow`: long fence lines scroll behind a per-fence
     /// viewport (default) or wrap in-panel.
     OverflowPolicy codeOverflow;
