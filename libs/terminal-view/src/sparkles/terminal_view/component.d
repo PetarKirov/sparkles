@@ -1113,6 +1113,7 @@ struct TerminalView
 
         pump();
         wakeForSynchronizedOutput(h);
+        wakeOnOutput(h);
 
         // The whole surface is the window: it can be seen while focused and
         // not minimized (`TPR9`). An embedder says so per pane instead.
@@ -1592,6 +1593,24 @@ struct TerminalView
         static if (__traits(hasMember, H, "wakeIn"))
             if (s.synchronizedOutput.held)
                 h.wakeIn(s.synchronizedOutput.remaining());
+    }
+
+    /**
+    Asks the host for the next frame as soon as the child writes again, where
+    the pty is drained per frame (no ring pump carries it) and the host can
+    watch a descriptor (`wakeWhenReadable`). Embedded hosts arm this after
+    pumping, every pass, as `frame` does.
+
+    The drain reads until the pty is empty, so a parser faster than the child
+    ends every drain before the child's next write: without this ask the next
+    read waits for whatever else wakes the loop — on the native window, its
+    quarter-second tick — while the child sits blocked on a full pty.
+    */
+    void wakeOnOutput(H)(ref H h)
+    {
+        static if (__traits(compiles, { bool armed = h.wakeWhenReadable(0); }))
+            if (opened && !ringPump && !s.childExited && s.pty_fd >= 0)
+                cast(void) h.wakeWhenReadable(s.pty_fd);
     }
 
     /**

@@ -724,6 +724,7 @@ struct WorkspaceHost
             else if (tv.s.terminal !is null)
             {
                 tv.pump();
+                tv.wakeOnOutput(h); // a hidden tab's shell keeps writing
                 tv.deliverEvents(h);
             }
         }

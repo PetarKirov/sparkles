@@ -1051,6 +1051,7 @@ struct Gallery
             () @trusted {
                 tv.pump();
                 tv.wakeForSynchronizedOutput(h);
+                tv.wakeOnOutput(h);
                 if (tv.takeTitleChanged())
                     s.terms.tabs[i].setLabel(tv.title);
             }();
