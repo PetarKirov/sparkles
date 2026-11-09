@@ -24,7 +24,7 @@ Emitted emitNix(const Query q, in EmitOptions o) @safe
     auto p = NixParts.of(q, o);
     if (!p.ok)
         return p.refusal;
-    return Emitted(true, p.render("fs.toSource { inherit root; fileset = %s; }"));
+    return Emitted(true, p.render("fs.toSource {\n  inherit root;\n  fileset = %s;\n}"));
 }
 
 /**

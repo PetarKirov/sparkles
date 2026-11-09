@@ -29,9 +29,12 @@ import sparkles.ui.editor.field : EditorField;
 import sparkles.ui.geometry : Insets, Rect, SizeSpec;
 import sparkles.ui.style : BorderStyle, Decoration, Slot, TextStyle;
 import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind, WidgetTree;
+import sparkles.ui.wrap : TextWrap;
 
 import evaluate : autoIdBytes, evaluate, humanBytes, Outcome, Root;
 import help : helpSource, namedTrees, runFileset, TryBlock, tryBlocks, TryOutcome;
+import export_tab : exportFor, highlightCode, languageOf, targets;
+import sparkles.build_primitives.fileset.emit : Emitted, NixGlobs, Target, targetName;
 import member_tree : buildTree, Item, syncFolders;
 import sparkles.source_view.markdown : MdViewOptions, OverflowPolicy, viewMarkdownInto, WrapOverflow;
 import sparkles.syntax.md.model : MdDoc;
@@ -95,7 +98,7 @@ struct ExplorerApp
         tv.open = typeof(tv.open).allOpen;
         tv.chromeRows = 0;
         tv.headerRows = 0;
-        dock.layout = initialLayout(tabsNode, helpLeaf);
+        dock.layout = initialLayout(tabsNode, helpLeaf, exportLeaf);
         dock.focused = Pane.tree;
         loadHelp();
         refresh();
@@ -137,7 +140,31 @@ struct ExplorerApp
         => dock.layout.nodes[tabsNode].children[dock.layout.nodes[tabsNode].active]
             == helpLeaf;
 
-    private uint helpLeaf;
+    private uint helpLeaf, exportLeaf;
+
+    // The Export tab (`FXE12`): the target, Nix's glob mode, and the code for
+    // the last query, recomputed when the tab shows a stale one.
+    Target exportTarget = Target.nix; ///
+    NixGlobs nixGlobs;                ///
+    Emitted exported;                 ///
+    private bool exportStale = true;
+
+    /// Whether the Export tab is the one showing.
+    bool exportShown() const @safe
+        => dock.layout.nodes[tabsNode].children[dock.layout.nodes[tabsNode].active] == exportLeaf;
+
+    /// The code for the current query, brought up to date.
+    ref const(Emitted) currentExport()
+    {
+        if (exportStale)
+        {
+            exported = outcome.query.ok && outcome.resolved
+                ? exportFor(exportTarget, nixGlobs, root, outcome.query, outcome)
+                : Emitted(false, null, outcome.query.ok ? outcome.error.message : "the query does not parse");
+            exportStale = false;
+        }
+        return exported;
+    }
 
     /// Shows the help, or goes back to where F1 was pressed (`FXU7`).
     void toggleHelp()
@@ -173,6 +200,7 @@ struct ExplorerApp
     void refresh()
     {
         outcome = evaluate(root, query.text, idsRequested);
+        exportStale = true;
         idsRequested = false;
         if (!outcome.failed)
         {
@@ -255,10 +283,13 @@ struct ExplorerApp
         firstLine = first;
         const caretLine = text_.lineOf(query.state.selection.primary.head);
         uint[] out_;
+        // The error's bytes, or, with the Export tab showing, what the target refused (`FXE12`).
+        Span marked = outcome.failed ? errorSpan() : Span(size_t.max, size_t.max);
+        if (!outcome.failed && exportShown && !currentExport.ok && currentExport.span.end > currentExport.span.start)
+            marked = Span(currentExport.span.start, currentExport.span.end);
         foreach (line; first .. min(lineCount, first + rows))
         {
-            auto spans = highlight(editorLineSpans(query.state, line, o), outcome.query.tokens,
-                outcome.failed ? errorSpan() : Span(size_t.max, size_t.max));
+            auto spans = highlight(editorLineSpans(query.state, line, o), outcome.query.tokens, marked);
             const prompt = b.add(Widget(kind: WidgetKind.text, text: line == 0 ? "❯ " : "  ",
                 slot: Slot.accentPrimary));
             auto w = Widget(kind: WidgetKind.rich, spans: spans, width: SizeSpec.grow());
@@ -321,7 +352,7 @@ struct ExplorerApp
 
     // ---- the dock --------------------------------------------------------
 
-    private static DockLayout initialLayout(out uint tabs, out uint helpLeaf)
+    private static DockLayout initialLayout(out uint tabs, out uint helpLeaf, out uint exportLeaf)
     {
         DockLayout l;
         const t = l.addLeaf(Pane.tree, minExtent: 20);
@@ -331,7 +362,9 @@ struct ExplorerApp
         l.nodes[s].title = "Stats";
         helpLeaf = l.addLeaf(Pane.help);
         l.nodes[helpLeaf].title = "Help";
-        tabs = l.addTabs([s, helpLeaf]);
+        exportLeaf = l.addLeaf(Pane.export_);
+        l.nodes[exportLeaf].title = "Export";
+        tabs = l.addTabs([s, helpLeaf, exportLeaf]);
         l.root = l.addSplit(DockAxis.horizontal, [t, tabs]);
         return l;
     }
@@ -347,7 +380,7 @@ struct ExplorerApp
         const treeNeeds = treeWidth() + 1;
         const fits = width - want >= treeNeeds;
         dock.layout.nodes[tabsNode].extent = max(10, fits ? want : min(want, max(width - treeNeeds, width / 2)));
-        if (helpShown) // the help reads at half the width at least
+        if (helpShown || exportShown) // the help and code read at half the width at least
             dock.layout.nodes[tabsNode].extent = max(dock.layout.nodes[tabsNode].extent, min(width / 2, 90));
         dock.arrange(Rect(0, 0, width, rows));
         foreach (ref f; dock.frames.panes)
@@ -405,7 +438,7 @@ struct ExplorerApp
             case Pane.tree: content = treeView(b); break;
             case Pane.stats: content = statsView(b, stats[0 .. min(stats.length, max(0, r.height))]); break;
             case Pane.help: content = helpView(b, r); break;
-            case Pane.export_: content = b.add(Widget(kind: WidgetKind.column)); break;
+            case Pane.export_: content = exportView(b, r); break;
         }
         // The dock's own geometry, clipped: a long row never spills into a neighbour.
         const body_ = b.add(Widget(kind: WidgetKind.column, children: [content], width: SizeSpec.fixed(max(0, r.width)),
@@ -520,6 +553,42 @@ struct ExplorerApp
             if (auto row = tries[trySel].at in tryRows)
                 helpTop = max(0, *row - 2);
     }
+
+    // ---- export -------------------------------------------------------------
+
+    // The Export tab (`FXE12`): the target and mode, then the code or the refusal.
+    private uint exportView(ref Builder b, Rect r)
+    {
+        const e = currentExport;
+        uint[] rows;
+        TextSpan[] head = [TextSpan(" ◀ ", Slot.muted), TextSpan(targetName(exportTarget), Slot.accentPrimary,
+            TextStyle(bold: true)), TextSpan(" ▶", Slot.muted), TextSpan("  t/T target", Slot.muted)];
+        if (exportTarget == Target.nix)
+            head ~= [TextSpan("   globs: ", Slot.muted), TextSpan(text(nixGlobs), Slot.code),
+                TextSpan(" (g)", Slot.muted)];
+        if (e.ok)
+            head ~= TextSpan("   y copies", Slot.muted);
+        rows ~= b.add(Widget(kind: WidgetKind.rich, spans: head));
+        rows ~= b.add(Widget(kind: WidgetKind.text, text: ""));
+        if (!e.ok)
+        {
+            rows ~= b.add(Widget(kind: WidgetKind.rich, wrap: TextWrap.greedy, width: SizeSpec.fixed(max(10, r.width - 2)),
+                spans: [TextSpan(" ✗ ", Slot.error), TextSpan(e.reason, Slot.error)]));
+            if (e.span.end > e.span.start && outcome.query.ok)
+                rows ~= b.add(Widget(kind: WidgetKind.rich, spans: [TextSpan("   in the query: ", Slot.muted),
+                    TextSpan(query.text[min(e.span.start, $) .. min(e.span.end, $)], Slot.warn)]));
+        }
+        else
+            foreach (line; highlightCode(languageOf(exportTarget), e.code))
+                rows ~= b.add(Widget(kind: WidgetKind.rich, spans: line.length ? line : [TextSpan(" ")]));
+        auto vp = Widget(kind: WidgetKind.column, children: rows, clipX: true, clipY: true,
+            width: SizeSpec.fixed(max(0, r.width)), height: SizeSpec.fixed(max(0, r.height)),
+            padding: Insets(0, 1, 0, 1));
+        vp.childOffset = Point(0, exportTop);
+        return b.add(vp);
+    }
+
+    private int exportTop;
 
     // ---- stats -------------------------------------------------------------
 
@@ -701,7 +770,7 @@ struct ExplorerApp
         {
             case Focus.query: return queryKey(k);
             case Focus.tree: return treeKey(k);
-            case Focus.side: return sideKey(k);
+            case Focus.side: return sideKey(h, k);
         }
     }
 
@@ -721,13 +790,51 @@ struct ExplorerApp
             refresh();
     }
 
-    private void sideKey(in KeyEvent k)
+    // The Export tab's keys: the target, Nix's glob mode, scrolling, copying.
+    private void exportKey(H)(ref H h, in KeyEvent k)
+    {
+        size_t at;
+        foreach (i, t; targets)
+            if (t == exportTarget)
+                at = i;
+        switch (k.key)
+        {
+            case Key.up: exportTop = max(0, exportTop - 1); break;
+            case Key.down: exportTop += 1; break;
+            case Key.char_:
+                if (k.ch == 't' || k.ch == 'T')
+                {
+                    exportTarget = targets[(at + (k.ch == 't' ? 1 : targets.length - 1)) % targets.length];
+                    exportStale = true;
+                    exportTop = 0;
+                }
+                else if (k.ch == 'g' && exportTarget == Target.nix)
+                {
+                    nixGlobs = cast(NixGlobs)((nixGlobs + 1) % (NixGlobs.max + 1));
+                    exportStale = true;
+                }
+                else if (k.ch == 'y' && currentExport.ok)
+                {
+                    static if (__traits(compiles, h.clipboard(currentExport.code)))
+                        h.clipboard(currentExport.code);
+                }
+                break;
+            default: break;
+        }
+    }
+
+    private void sideKey(H)(ref H h, in KeyEvent k)
     {
         if (k.key == Key.left || k.key == Key.right)
         {
-            dock.activateNext(k.key == Key.right ? 1 : -1);
+            // The right group's tabs, whatever pane the dock thinks has focus.
+            auto g = &dock.layout.nodes[tabsNode];
+            const n = cast(uint) g.children.length;
+            g.active = (g.active + (k.key == Key.right ? 1 : n - 1)) % n;
             return;
         }
+        if (exportShown)
+            return exportKey(h, k);
         if (!helpShown)
             return;
         const page = max(1, paneRect(Pane.help).height - 2);
