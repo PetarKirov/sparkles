@@ -229,6 +229,15 @@
         pkgs.capstone
         pkgs.mold
 
+        # The fileset explorer's code generators are checked by the tools
+        # they write for (docs/specs/fileset-explorer/testing.md): rsync's
+        # filters and Cargo's `include`. git, tar, dub and nix are here
+        # already; Bazel is too heavy for the shell, and its oracle skips
+        # without it.
+        pkgs.rsync
+        pkgs.cargo
+        pkgs.rustc
+
       ]
       # The text-conformance harness's oracle libraries
       # (nix/shells/text-oracles.nix).
