@@ -19,8 +19,9 @@ toolkit's [editor](../ui/editor.md), [tree view](../hue/tree-view.md) and
 This contract owns the query language (§2), the explorer's screen (§3), its
 help and the runnable blocks of its tutorial (§4), and the code generators (§5).
 Two obligations belong to libraries it uses and are specified there: the host's
-text cursor ([`HST20`](../ui-app/feature-requirements.md)) and the explicit
-path-list leaf of a fileset ([`FSV6`](../build-primitives/filesets/SPEC.md)).
+text cursor ([`HST20`](../ui-app/feature-requirements.md)), and the fileset
+leaves for a list of paths, a file's own name and its kind
+([`FSV6`, `FSV7`](../build-primitives/filesets/SPEC.md)).
 The choices behind it are recorded in [decisions](./decisions.md), the evidence
 in [testing](./testing.md), and the delivery order in the [plan](./PLAN.md).
 
@@ -98,9 +99,10 @@ and resolves to the same members as the query.
 **`FXL8` — The grammar is the parser's.** The tree-sitter grammar `fileset`
 **must** accept exactly the queries the parser accepts, and give every token
 the same kind (glob, string, keyword, operator, function, predicate, comment,
-punctuation). _Detection:_ over the corpus of `fileset_query.corpus`, valid
-and invalid, the grammar has an error node exactly where the parser fails, and
-the highlight captures equal the parser's token kinds byte for byte.
+punctuation). _Detection:_ over a corpus of valid and invalid queries, the
+grammar's tree has an error exactly when the parser fails, and on every byte of
+every token of a query that parses, its highlight capture is the parser's token
+kind.
 
 ## 3. The screen (`FXU`)
 
@@ -126,16 +128,18 @@ focus the cursor is hidden. _Detection:_ moving the caret left and right in a
 recorded run leaves every glyph of the query line in its cell, and the
 recording's cursor follows it.
 
-**`FXU4` — Highlighting.** The query **must** be drawn with the token kinds of
-`FXL8` in the theme's syntax slots, as the grammar's highlight query assigns
-them, and an error's span in the error slot. _Detection:_ a recorded frame of a
-query with every token kind has each kind's span in its slot.
+**`FXU4` — Highlighting.** The query **must** be drawn with each token in its
+kind's slot — the kinds `FXL8` makes the grammar's and the parser's alike — and
+an error's bytes, or the bytes the Export tab's target refused, in the error
+slot, without moving a character. _Detection:_ the spans of a query's line have
+each token's kind's slot, and join to the line's text.
 
 **`FXU5` — The right column fits its content.** The Stats tab **must** be as
 wide as its widest line, ids included, when the tree's widest row still fits
 beside it; otherwise the tree keeps at least half the width and the stats
-column is clipped. _Detection:_ at 160 columns the full castore id is shown; at
-80 the tree keeps 40.
+column is clipped. A tree row is measured as it is drawn: guides, glyph, name
+and badge. _Detection:_ at 160 columns the full castore id is shown; at 60 the
+tree's rows start in its own half.
 
 **`FXU6` — The tree is the members.** The tree's leaves **must** be the
 resolved members and its inner nodes only the directories on the way to them,
@@ -189,19 +193,22 @@ src/
 The container's first word after `try` names a _runner_; `{…}` holds `key=value`
 attributes for it. Its first fence is the input; an optional second fence is the
 expected result. The markdown model of `sparkles:syntax` **must** parse it into
-one node holding the runner, the attributes and both fences, and a page without
-the container type registered **must** still render it as a plain container.
+one node holding the runner, the attributes and both fences; a malformed one
+(no runner, prose inside, no closer) stays the blocks it was made of. The HTML
+renderer writes it as `<div class="try" data-runner="…">`, and the docs site,
+whose container plugin knows no `try`, turns it into a card.
 
 **`FXT2` — Try beside copy.** The markdown view **must** draw a ▶ affordance in
 the input fence's header beside the copy affordance, when its host registered a
 runner of that name, and none otherwise. Activating it calls the runner.
 
 **`FXT3` — Runners.** A runner is named, and given the input text and the
-attributes; it returns a widget tree that the view draws under the block. A
+attributes; its result is a widget tree the view draws under the block. A
 runner of the host may also act on the host: the explorer's `fileset` runner
-**must** replace the editor's text with the input, resolve it against the tree
-the `tree` attribute names (or the open directory when there is none), and
-return the member tree.
+**must** replace the editor's text with the input and resolve it against the
+tree the `tree` attribute names (or the open directory when there is none), so
+the member tree shows the result; under the block it draws the members as
+`lib.fileset.trace` lists them, checked against the expected fence.
 
 **`FXT4` — Named trees.** A fence whose language is `tree-literal` and whose
 info string carries `{#name}` declares a tree in the
@@ -240,62 +247,77 @@ predicates map to `lib.fileset.fileFilter` over `file.name`, `file.type` and
 `file.hasExt`; `gitTracked` to `lib.fileset.gitTracked`. A glob is translated
 by the _glob mode_:
 
-| Mode             | A glob becomes                                                                                                                        |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `shim` (default) | a call of `glob`, a function the output defines in a `let`, which walks the root with `builtins.readDir` and matches the glob's regex |
-| `expand`         | `lib.fileset.unions` of the paths it matches in the open directory now, marked in a comment as a snapshot                             |
-| `refuse`         | a path or `fileFilter` when the glob is a literal path or a pure name/extension pattern; otherwise a refusal                          |
+| Mode             | A glob becomes                                                                                                                         |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `shim` (default) | a call of `glob`, a function the output defines in a `let`, which walks the root with `builtins.readDir` and matches the glob's regex  |
+| `expand`         | `lib.fileset.unions` of the paths it matches in the open directory now; the header names it as a snapshot                              |
+| `refuse`         | `fs.maybeMissing` of the path when the glob is a literal anchored path; otherwise a refusal (a name pattern also selects directories') |
 
-In the `shim` mode `exec` **must** be refused, because evaluation cannot see
-the executable bit, and `gitignored` **must** be emitted as the files under the
-root minus `gitTracked` only when the open directory is a git work tree with no
-untracked, unignored files; otherwise refused. The case-insensitive policy is
-refused in every mode.
+`exec` **must** be refused in every mode, because evaluation cannot see the
+executable bit. `gitignored` **must** be emitted as the root minus
+`gitTracked` only when the open directory is a git work tree with no untracked,
+unignored file and no tracked, ignored one; otherwise refused.
 
-**`FXE4` — git pathspec.** The `git-pathspec` target emits arguments for
-`git ls-files --cached --others --`, with `:(glob)` and `:(exclude,glob)`
-magic, selecting the members among the files git lists. It accepts a
-normalized query of the form `(g1 | … | gn) - (h1 | … | hm)` of globs, braces
-expanded into separate pathspecs; `gitTracked` alone, or intersected with such a
-form, adds no pathspec and drops `--others`. Anything else is refused.
+**`FXE4` — git pathspec.** The `git-pathspec` target emits a
+`git ls-files --cached --others --` command with `:(glob)` and
+`:(exclude,glob)` pathspecs, braces expanded, selecting the members among the
+files git lists. It accepts a normalized query of the form
+`(g1 | … | gn) - (h1 | … | hm)` of globs; `gitTracked` alone, or intersected
+with such a form, adds no pathspec and drops `--others`. A `fileFilter` by name
+is refused, since a pathspec also matches a directory's contents. Git matches
+an exclude against paths shorn of the includes' common literal directory, so an
+exclude that floats (unanchored, or led by `**`) carries that directory, which
+every included path has.
 
 **`FXE5` — gitignore.** The `gitignore` target emits a `.gitignore` that, in a
 repository holding exactly the root's files, leaves exactly the members
-unignored: `/*` and `!*/` first, then for each rule of a decision list built
-from the query, a `!pattern` to keep or a `pattern` to drop, last match
-winning. It accepts the queries the `rsync` target accepts (`FXE6`).
+unignored: `*` first, then each rule of the query's decision list, a `!pattern`
+to keep or a `pattern` to drop, last match winning, and `!*/` last, so a file
+beneath a dropped directory can still be kept. It accepts what `rsync` accepts
+(`FXE6`).
 
 **`FXE6` — rsync.** The `rsync` target emits a filter file for
-`rsync -r --filter='merge FILE' --prune-empty-dirs`, rules first-match-wins.
-It accepts the decision-list grammar
-`D ::= glob | D | glob | glob | D | D - glob`, where a glob may also be a union
-of globs: a union with a glob prepends an include, and a difference prepends an
-exclude; the list ends with `+ */` and `- *`. Intersections other than those
-`FXE2` folds, and differences whose right side is not a glob, are refused.
+`rsync -r --prune-empty-dirs --filter='merge FILE'`, rules first-match-wins:
+`+ */` first, so every directory is entered, then the decision list, then
+`- *`. The decision list accepts `D ::= g | D | g | g | D | D - g`, where `g`
+is a glob, a `fileFilter` by name, or a union of them: a union with a glob puts
+an include ahead of the rest, a difference an exclude. A glob is written as the
+path and everything beneath it, and, because rsync's `**` needs the slashes
+around it, also without each `**` segment. Intersections `FXE2` does not fold,
+and differences whose right side is no glob, are refused.
 
-**`FXE7` — tar.** The `tar` target emits a GNU `tar -c` command line: members to
-include are named as literal paths, and excluded ones as `--exclude=PATTERN`
-(with `--anchored` and `--wildcards-match-slash` set as each pattern needs).
-It accepts `(p1 | … | pn) - (h1 | … | hm)` where every `p` is a literal path or a
-directory glob `d/**`.
+**`FXE7` — tar.** The `tar` target emits a GNU `tar -c` command line: the paths
+to archive are named literally, and the excluded globs as `--exclude=PATTERN`
+with `--anchored` or `--no-anchored` as each needs and
+`--no-wildcards-match-slash`. It accepts `(p1 | … | pn) - (h1 | … | hm)` where
+every `p` is `all`, a literal anchored path or `d/**`, and every `h` a glob
+without `**` (but a trailing one), not restricted to directories; tar's exclude
+also takes a directory's contents, as a glob does.
 
 **`FXE8` — Cargo.** The `cargo` target emits a `[package]` `include` array of
-gitignore-style patterns. Cargo ignores `exclude` when `include` is present and
-always adds `Cargo.toml`, so it accepts a union of globs, and refuses a query
-that leaves out `Cargo.toml` when the root has one.
+gitignore-style patterns. Cargo ignores `exclude` beside `include`, and
+packages `Cargo.toml` and the `README.md`, `README.txt` or `README` it finds
+whatever `include` says; so it accepts a union of globs, without `fileFilter`
+by name, and refuses one that leaves out such a file the root has.
 
 **`FXE9` — Bazel.** The `bazel` target emits
 `glob(include = […], exclude = […], exclude_directories = 1)`. It accepts the
-form of `FXE4` with braces expanded, refuses globs with character classes, and
-holds only for a root that is one Bazel package (no `BUILD` file beneath it).
+form of `FXE4`, braces expanded, and a `fileFilter` by name (a Bazel pattern
+matches whole file paths); it refuses `?` and character classes, which Bazel's
+glob lacks. It holds for a root that is one Bazel package (no `BUILD` file
+beneath it).
 
-**`FXE10` — dub.** The `dub` target emits SDLang for a package: no
-`sourcePaths` or `importPaths`, `sourceFiles` the included globs and
-`excludedSourceFiles` the excluded ones. It accepts the form of `FXE4`.
+**`FXE10` — dub.** dub's own globs list directories as source files, and its
+`excludedSourceFiles` globs miss, so no dub glob is exact: the `dub` target
+emits the members as `sourceFiles`, a snapshot, with no `sourcePaths` or
+`importPaths`. It refuses when a member is a file dub hands the linker
+instead (`.o`, `.obj`, `.a`, `.lib`, `.so`, `.dylib`, `.dll`, `.res`, `.def`).
 
 **`FXE11` — The command line.** `fileset-explorer --emit <target> --query Q`
-**must** print the code and exit 0, or print the refusal to standard error and
-exit 2. `--nix-globs=shim|expand|refuse` selects `FXE3`'s mode.
+**must** print the code and exit 0, or print the refusal and the refused text
+to standard error and exit 2; a target or mode it does not know, or a query
+that does not resolve, exits 1. `--nix-globs=shim|expand|refuse` selects
+`FXE3`'s mode.
 
 **`FXE12` — The Export tab.** The Export tab **must** show the selected target's
 code for the current query, highlighted when a grammar for the target exists, or
@@ -306,13 +328,13 @@ The target and the Nix glob mode are chosen in the tab.
 
 Non-normative: where the parts live.
 
-| Requirements     | Where                                                                                           |
-| ---------------- | ----------------------------------------------------------------------------------------------- |
-| `FXL1`–`FXL7`    | `sparkles.build_primitives.fileset.query` (`parseQuery`, `QueryNode`, `canonical`, `toFileset`) |
-| `FXL8`           | `nix/packages/tree-sitter-fileset/` (`grammar.js`, `queries/highlights.scm`)                    |
-| `FXU1`–`FXU8`    | `apps/fileset-explorer` (`explorer.d`, `stats.d`, `query_editor.d`)                             |
-| `FXU9`           | `sparkles.ui.components.file_icons` (`fileIcon`, `folderIcon`), shared with hue's explorer      |
-| `FXT1`, `FXT2`   | `sparkles.syntax.md.model` (`MdKind.tryBlock`), `sparkles.source_view.markdown`                 |
-| `FXT3`–`FXT5`    | `apps/fileset-explorer` (`help.d`, `runners.d`)                                                 |
-| `FXE1`–`FXE10`   | `sparkles.build_primitives.fileset.emit` (`emit`, one module per target)                        |
-| `FXE11`, `FXE12` | `apps/fileset-explorer` (`app.d`, `export_tab.d`)                                               |
+| Requirements     | Where                                                                                                    |
+| ---------------- | -------------------------------------------------------------------------------------------------------- |
+| `FXL1`–`FXL7`    | `sparkles.build_primitives.fileset.query` (`parseQuery`, `compileQuery`, `canonical`, `gitTrackedPaths`) |
+| `FXL8`           | `nix/packages/tree-sitter-fileset/` (`grammar.js`, `queries/highlights.scm`)                             |
+| `FXU1`–`FXU8`    | `apps/fileset-explorer` (`explorer.d`, `evaluate.d`, `member_tree.d`, `render.d`)                        |
+| `FXU9`           | `sparkles.ui.components.file_icons` (`fileIcon`, `folderGlyph`), shared with hue's explorer              |
+| `FXT1`, `FXT2`   | `sparkles.syntax.md.model` (`MdBlockKind.tryBlock`), `sparkles.source_view.markdown` (`tryRunners`)      |
+| `FXT3`–`FXT5`    | `apps/fileset-explorer` (`help.d`)                                                                       |
+| `FXE1`–`FXE10`   | `sparkles.build_primitives.fileset.emit` (`emit`; `ir`, `nix`, `lists`)                                  |
+| `FXE11`, `FXE12` | `apps/fileset-explorer` (`app.d`, `export_tab.d`)                                                        |

@@ -150,3 +150,35 @@ mistyped `--dir` would silently select nothing.
 
 **Choice.** hue's explorer table (`XPL6`) moves to `sparkles:ui` and both
 applications use it, so a file looks the same in both.
+
+The records below were made during delivery, from what the oracles showed;
+each keeps to the decisions above.
+
+## X14: `fileFilter` gets leaves of its own
+
+**Question.** `fileFilter(name == "x")` is the files named `x`. A glob `x` is
+also every file beneath a directory named `x`, `x/x` included, and no
+difference of globs takes that back exactly.
+
+**Choice.** The fileset library gains two leaves, `fileName(p)` and
+`symlinks()` (filesets `FSV7`), with `paths(list)` for `gitTracked`
+(`FSV6`). A predicate lowers to them, so `fileFilter` means what Nix's means,
+and the generators can tell it from a glob: Bazel and rsync, which match a
+file's own name, take it; git pathspecs, Cargo and tar, which would take a
+directory's contents too, refuse it.
+
+## X15: dub gets the members
+
+**Question.** Which of a query's forms can dub's `sourceFiles` and
+`excludedSourceFiles` express?
+
+**Evidence.** dub's oracle answered none: a `sourceFiles` glob lists the
+directories it matches as source files, and an `excludedSourceFiles` glob such
+as `**_test.d` excluded nothing.
+
+**Choice.** The `dub` target writes the members out, a snapshot as Nix's
+`expand` mode is, and refuses a member dub would hand the linker, such as a
+`.o`, which its source list leaves out. Exactness on every tree is out of
+reach for dub until its globs behave as globs.
+
+**Revisit** when dub's glob handling changes; the oracle will show it.

@@ -236,7 +236,7 @@ private size_t[2] check(Target t, string[] delegate(string code, string query, s
 
 /// FXE3: `lib.fileset.toList` of the emitted expression is the members, with
 /// the glob shim, and with snapshots.
-@("fileset.emit.oracle.nix")
+@("fileset.emit.oracle.libFileset")
 @system unittest
 {
     const nixpkgs = environment.get("SPARKLES_FLAKE_INPUT_NIXPKGS", "");
