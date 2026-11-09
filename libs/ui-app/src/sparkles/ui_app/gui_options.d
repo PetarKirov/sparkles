@@ -17,6 +17,7 @@ module sparkles.ui_app.gui_options;
 
 import sparkles.core_cli.args : Description, Flatten, Option, Switches;
 import sparkles.metadata.case_style : CaseStyle;
+import sparkles.ui_app.frame_schedule : FrameSchedulePolicy;
 import sparkles.metadata.wire : WireCase;
 import sparkles.ui.theme : Theme;
 
@@ -302,6 +303,10 @@ struct NativeOptions
     @(Option("debug", placeholder: "SWITCH[,SWITCH…]", description:
         "The native window's debug switches, comma-separated or repeated; --debug=? lists them."))
     Switches!NativeDebug debugging; ///
+
+    @(Option("frame-schedule", description:
+        "When the native window starts a frame on Wayland: late (as late as still makes the next refresh it can reach, so it shows the newest output) or asap (as soon as the compositor allows)."))
+    FrameSchedulePolicy frameSchedule; ///
 }
 
 /**

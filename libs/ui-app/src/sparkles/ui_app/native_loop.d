@@ -29,7 +29,7 @@ version (UiAppGuiVulkan):
 import sparkles.ui_app.prepared_specimen : PreparedSpecimenFont;
 import sparkles.ui_app.specimen_font : sameSpecimenRequest, SpecimenFontRequest, SpecimenLatencyStats;
 
-import core.time : dur, Duration, MonoTime, msecs, nsecs, seconds;
+import core.time : dur, Duration, MonoTime, msecs, nsecs, seconds, usecs;
 import std.algorithm.comparison : max, min;
 
 import sparkles.base.prettyprint : prettyPrint, PrettyPrintOptions;
@@ -57,6 +57,7 @@ import sparkles.ui_app.client_frame : ClientFrame, crossCoverage, FrameAction, F
     FrameGeometry, FrameHit, FramePart, FrameShape;
 import sparkles.ui_app.wsi_input : TouchContacts, WsiInput;
 import sparkles.event_horizon.stream_ingest : StreamId, StreamIngest, StreamSink;
+import sparkles.ui_app.frame_schedule : FrameSchedule, FrameSchedulePolicy;
 import sparkles.ui.style : Palette;
 import sparkles.ui_vulkan;
 import sparkles.vulkan;
@@ -2350,6 +2351,30 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
     }
     // The stream position the frame pass in progress started at.
     ulong framePosition;
+    // When a frame starts (output-latency.md §3): at the latch deadline of
+    // the earliest refresh it can reach, on Wayland; elsewhere at once.
+    static if (__traits(compiles, backendKindOf!Wsi))
+        enum onWayland = backendKindOf!Wsi == BackendKind.wayland;
+    else
+        enum onWayland = false;
+    FrameSchedule schedule;
+    schedule.policy = paced && onWayland ? cfg.native.frameSchedule : FrameSchedulePolicy.asap;
+    const lateSchedule = schedule.policy == FrameSchedulePolicy.late;
+    // The presentation each recent frame aimed at, by its record number, for
+    // the margin's adaptation (`OPL16`).
+    static struct Aim
+    {
+        ulong frame = ulong.max;
+        MonoTime target;
+    }
+    Aim[64] aims;
+    MonoTime aimNow;   // what the frame pass in progress (or held) aims at
+    MonoTime latchAt;  // a due frame is held until this latch deadline (`OPL14`)
+    MonoTime aimOf(ulong frame) @safe pure nothrow @nogc
+    {
+        const a = aims[frame % aims.length];
+        return a.frame == frame ? a.target : MonoTime.init;
+    }
     // The platform determines capabilities; gesture recognition is optional.
     // Applications with raw touch capture (such as sliders) still need to
     // distinguish a touchscreen from a hovering mouse.
@@ -2612,6 +2637,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                 note(i"specimen generation $(pending.generation): request-to-visible $(took.total!"usecs") us");
             pending = PendingSpecimen.init;
         }
+        schedule.noteShown(shown, refresh, aimOf(tag), MonoTime.currTime);
         frameTimes.noteRefresh(refresh);
         gpuTimes.noteRefresh(refresh); // the device's hitches by the same display
         if (history is null)
@@ -2989,7 +3015,35 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
             lc.rebuilt(Rebuild.targets);
         }
 
-        if (plan.draw)
+        // A due frame waits for the latch deadline of the earliest refresh it
+        // can reach, the loop reading stream sources meanwhile (`OPL14`); a
+        // frame the window needs — a new surface or size — does not.
+        // A hold, once set, is kept: woken at its deadline, the frame draws
+        // for the refresh it was held for, though asked afresh the scheduler
+        // would by then aim at the next.
+        bool held;
+        if (plan.draw && lateSchedule && !plan.mustDraw && !extentsPending && !scripted)
+        {
+            const nowTime = MonoTime.currTime;
+            if (latchAt == MonoTime.init)
+            {
+                const st = schedule.start(nowTime);
+                latchAt = st.at;
+                aimNow = st.target;
+            }
+            held = latchAt > nowTime + latchSlack;
+            if (held)
+                lc.frameDone(FrameResult.again, now()); // still due
+            else
+                latchAt = MonoTime.init;
+        }
+        else
+        {
+            latchAt = MonoTime.init;
+            aimNow = MonoTime.init;
+        }
+
+        if (plan.draw && !held)
         {
             if (extentsPending)
             {
@@ -3106,13 +3160,16 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                         if (traceFrames)
                             note(i"specimen generation $(generation): request-to-submit $(took.total!"usecs") us");
                     }
+                    // The scheduler learns from every frame (`OPL19`).
+                    aims[recorded % aims.length] = Aim(recorded, aimNow);
+                    const wantTimes = history !is null || changed || lateSchedule;
                     bool feedback;
                     static if (__traits(hasMember, Wsi, "requestPresentationFeedback"))
-                        if ((history !is null || changed) && wsi.canReportPresentation)
+                        if (wantTimes && wsi.canReportPresentation)
                             feedback = !wsi.requestPresentationFeedback(window, recorded).hasError;
                     // Without the window system's feedback, the device's.
                     gpu.presentTag = recorded;
-                    gpu.tagPresents = !feedback && (history !is null || changed);
+                    gpu.tagPresents = !feedback && wantTimes;
                     // Unpaced, every present carries an id: the next pass
                     // waits for it.
                     gpu.waitPresents = gpu.vk.presentWait
@@ -3201,6 +3258,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
             {
                 case FrameOutcome.presented:
                     lc.frameDone(FrameResult.presented, now());
+                    schedule.noteCost(took); // start to the present's return (`OPL15`)
                     ++presented;
                     const done = MonoTime.currTime;
                     frameZone.end();
@@ -3256,8 +3314,13 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                 cast(void) wsi.requestFrame(window);
 
         // Park until the window system has something, or the application's
-        // next deadline.
+        // next deadline: for a frame held for its latch, the latch.
         Duration timeout = plan.park < 1.seconds ? plan.park : 1.seconds;
+        if (latchAt != MonoTime.init)
+        {
+            const left = latchAt - MonoTime.currTime;
+            timeout = left > Duration.zero ? left : Duration.zero;
+        }
         if (host.wakeAsk != Duration.max)
         {
             const since = MonoTime.currTime - lastPass;
@@ -3318,6 +3381,10 @@ private enum size_t maxTitleBytes = 4096;
 
 // How often a gesture in flight is ticked while nothing else arrives.
 private enum gestureTick = 16.msecs;
+
+// A latch deadline closer than this is now: a park that short costs more
+// than it saves.
+private enum latchSlack = 200.usecs;
 
 // How long a surface's release waits for the frames still in flight: under
 // the 2 s Android allows before taking the window back.

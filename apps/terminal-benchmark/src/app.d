@@ -55,6 +55,7 @@ struct Config
     int rows = 30;
     string keepStreams; // if set, write streams here and keep them
     int probeWrites = 300; // the latency probe's writes per run
+    int probeGap = 50;     // the longest gap between them, in ms
 }
 
 // --- Child modes: what runs inside the terminal under test ------------------
@@ -70,7 +71,7 @@ private long nowNs() @safe nothrow @nogc
 // letters to stdout at random 1 to 50 ms intervals, logging each write's
 // stream offset, length and CLOCK_MONOTONIC time. Letters only: the pty
 // translates a newline into two bytes, which would shift every offset after it.
-private int runProbe(string log, int writes)
+private int runProbe(string log, int writes, int maxGap)
 {
     import core.sys.posix.unistd : write;
     import std.array : appender;
@@ -87,7 +88,7 @@ private int runProbe(string log, int writes)
         const n = uniform!"[]"(1, 64, rng);
         foreach (k; 0 .. n)
             buf[k] = cast(char) ('a' + uniform(0, 26, rng));
-        Thread.sleep(dur!"msecs"(uniform!"[]"(1, 50, rng)));
+        Thread.sleep(dur!"msecs"(uniform!"[]"(1, maxGap, rng)));
         const t = nowNs();
         if (write(1, buf.ptr, n) != n)
             return 1;
@@ -140,8 +141,8 @@ private void runLatency(ref const Config cfg, string dir)
 {
     import std.conv : to;
 
-    writefln("# write-to-photon latency: %d writes of 1-64 bytes at 1-50 ms per run",
-        cfg.probeWrites);
+    writefln("# write-to-photon latency: %d writes of 1-64 bytes at 1-%d ms per run",
+        cfg.probeWrites, cfg.probeGap);
     writefln("%-26s %8s %8s %8s %8s %10s %10s", "binary", "p50 ms", "p95 ms", "p99 ms",
         "max ms", "superseded", "unshown");
     foreach (b; cfg.binaries)
@@ -158,7 +159,7 @@ private void runLatency(ref const Config cfg, string dir)
             // started, so a signal loses none the probe's bytes reached.
             runUntilFile([b, "--exit-behavior", "hold", "--debug",
                 "latency-log=" ~ frames, "--", thisExePath, "--probe", writes,
-                cfg.probeWrites.to!string], writes, 120, 3);
+                cfg.probeWrites.to!string, cfg.probeGap.to!string], writes, 120, 3);
             if (!exists(writes) || !exists(frames))
             {
                 writefln("%-26s %s", baseName(b), "FAILED (no logs: is it the native arm?)");
@@ -311,7 +312,8 @@ void main(string[] args)
         import core.stdc.stdlib : exit;
         import std.conv : to;
 
-        exit(runProbe(args[2], args.length >= 4 ? args[3].to!int : 300));
+        exit(runProbe(args[2], args.length >= 4 ? args[3].to!int : 300,
+            args.length >= 5 ? args[4].to!int : 50));
     }
     if (args.length >= 5 && args[1] == "--timed" && args[3] == "--")
     {
@@ -327,6 +329,7 @@ void main(string[] args)
         args,
         "scenario", "Scenario: idle | render | churn | all, or latency | throughput (default: all)", &scenarioOpt,
         "probe-writes", "Writes per latency run (default: 300)", &cfg.probeWrites,
+        "probe-gap", "The longest gap between the latency probe's writes, in ms (default: 50)", &cfg.probeGap,
         "reps", "Repetitions per (binary, scenario) (default: 3)", &cfg.reps,
         "warmup", "Warmup seconds before sampling (default: 3)", &cfg.warmupSecs,
         "window", "Sampling window in seconds (default: 8)", &cfg.windowSecs,
