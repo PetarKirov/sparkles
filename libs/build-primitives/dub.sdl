@@ -51,6 +51,8 @@ configuration "testing" {
     // package.
     excludedSourceFiles "src/app.d" "src/sparkles/build_primitives/fileset/testing.d" "src/sparkles/build_primitives/content_addressing/testing.d"
     dependency "sparkles:test-utils" path="../.."
+    // The helpers skip a test where the host lacks what it needs (`skipTest`).
+    dependency "sparkles:test-harness" path="../.."
 }
 
 configuration "unittest" {
