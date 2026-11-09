@@ -35,13 +35,13 @@ configuration "android" {
 
 configuration "library" {
     targetType "library"
-    libs "wayland-client" "xcb" "xcb-xkb" "xcb-xtest" "xcb-xinput" "xcb-xfixes" "xcb-imdkit" "xkbcommon" "xkbcommon-x11" platform="linux"
+    libs "wayland-client" "xcb" "xcb-xkb" "xcb-xinput" "xcb-xfixes" "xcb-imdkit" "xkbcommon" "xkbcommon-x11" platform="linux"
     sourceFiles "src/xcb_native.c" platform="linux"
     sourceFiles "src/wayland_native.c" platform="linux"
 }
 
 configuration "unittest" {
-    libs "wayland-client" "xcb" "xcb-xkb" "xcb-xtest" "xcb-xinput" "xcb-xfixes" "xcb-imdkit" "xkbcommon" "xkbcommon-x11" platform="linux"
+    libs "wayland-client" "xcb" "xcb-xkb" "xcb-xinput" "xcb-xfixes" "xcb-imdkit" "xkbcommon" "xkbcommon-x11" platform="linux"
     sourceFiles "src/xcb_native.c" platform="linux"
     sourceFiles "src/wayland_native.c" platform="linux"
     dependency "sparkles:test-runner" path="../.."
