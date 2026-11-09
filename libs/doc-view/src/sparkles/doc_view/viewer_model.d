@@ -445,6 +445,12 @@ struct ViewerModel
     // Trees built since the model was made: what a test reads to tell a kept
     // tree from a rebuilt one, which look alike from outside.
     private size_t treeBuilds;
+    private size_t layouts_;
+
+    /// Layouts since the model was made: every rebuild lays the tree out
+    /// again, kept or built. The display list and rows reuse their storage, so
+    /// this, not their address, tells a caller one happened.
+    size_t layouts() const @safe pure nothrow @nogc => layouts_;
 
     WidgetTree tree;
     Frame[] frames;
@@ -1254,6 +1260,7 @@ struct ViewerModel
 
     private void rebuildTree(ScrollAnchor anchor = ScrollAnchor.init)
     {
+        ++layouts_;
         if (keepsRawTree())
         {
             // Laid out again at the new width; nothing in the tree moved.

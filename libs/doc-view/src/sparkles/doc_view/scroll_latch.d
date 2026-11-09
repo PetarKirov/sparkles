@@ -253,10 +253,10 @@ version (unittest)
     ScrollLatch l;
     assert(l.feed(vm, row, 2, 0, precise: true, begins: true));
     const built = vm.ops.length;
-    const before = vm.ops.ptr;
+    const before = vm.layouts;
     // A quarter of a cell further: no rebuild, the painted shift says it.
     assert(l.feed(vm, row, 0.25f, 0, precise: true, begins: false));
-    assert(vm.ops.ptr is before && vm.ops.length == built, "the layout stands");
+    assert(vm.layouts == before && vm.ops.length == built, "the layout stands");
     float dx = 1;
     emitVisibleOps(vm, 50, (ref DrawOp op) {
         op.payload.match!((ref PushShift s) { if (s.key && (s.axes & 1)) dx = s.dx; },
@@ -366,10 +366,10 @@ version (unittest)
     auto vm = wideTable();
     vm.paintsBlockScroll = true;
     vm.rebuild();
-    const before = vm.ops.ptr;
+    const before = vm.layouts;
     ScrollLatch l;
     assert(l.feed(vm, tableRow(vm), 3.5f, 0, precise: true, begins: true));
-    assert(vm.ops.ptr is before, "three and a half cells, no rebuild");
+    assert(vm.layouts == before, "three and a half cells, no rebuild");
     float dx = 0;
     int whole = -1;
     emitVisibleOps(vm, 50, (ref DrawOp op) {
