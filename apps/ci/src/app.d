@@ -36,6 +36,7 @@ nix run .#ci -- --check-credits
 nix run .#ci -- --check-wasm-modules --text-module FILE --table-module FILE --wasi-loader FILE --wasi-shim DIR
 nix run .#ci -- --stage-docs-wasm
 nix run .#ci -- --check-blob-paths [--clone-root DIR] [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]
+nix run .#ci -- --gc-report FILE [--gc-baseline FILE] [--gc-top N]
 nix run .#ci -- [--log-level trace|info|warning|error]
 ---
 
@@ -68,6 +69,7 @@ $(LIST
     $(ITEM `--check-wasm-modules` — run a fixed corpus through the documentation site's WebAssembly modules under `node` and through the same D functions natively, and fail on any difference (docs/specs/toolchain/wasm-modules.md, TCM9; see `wasm_modules_check`))
     $(ITEM `--stage-docs-wasm` — build the documentation site's WebAssembly modules (`nix build .#docs-wasm`) and copy them into `docs/public/` (TCM3; see `docs_wasm`))
     $(ITEM `--check-blob-paths` — verify every SHA-pinned GitHub blob citation names a path that exists at that commit, using local clones under `--clone-root` (default `$REPOS`). Complements `--check-vcs-urls`, which only checks the ref; a wrong path is a 404 no ref check can see. $(B Local only) — a citation whose repository is not cloned is reported as unchecked, never failed, so this is not wired into CI or a pre-commit hook)
+    $(ITEM `--gc-report FILE` — summarize a GC recording (`sparkles.profiling.gc_sampler`; a run with `SPARKLES_GC_SAMPLES=FILE` and `--DRT-gcopt=gc:sampler`): bytes allocated by site and inclusively by function, the collections' pauses, and what stayed live after the last one, scanned or not. `--gc-baseline` subtracts a shorter run of the same scenario, leaving the steady cost)
 )
 
 The script looks for D code blocks starting with:
@@ -378,6 +380,21 @@ struct CliParams
         ~ "never as a failure."))
     bool checkBlobPaths;
 
+    @(Option(`gc-report`,
+        description: "Summarize a GC recording (sparkles.profiling.gc_sampler: a run with "
+        ~ "SPARKLES_GC_SAMPLES=FILE and --DRT-gcopt=gc:sampler): the bytes allocated by site and "
+        ~ "inclusively by function, the pauses, and what stayed live, scanned or not."))
+    string gcReport;
+
+    @(Option(`gc-baseline`,
+        description: "With --gc-report: a shorter recording of the same scenario to subtract, "
+        ~ "leaving the steady cost (a 1200-frame drag minus a 200-frame one)."))
+    string gcBaseline;
+
+    @(Option(`gc-top`,
+        description: "With --gc-report: the rows each table shows (default 25)."))
+    size_t gcTop = 25;
+
     @(Option(`clone-root`,
         description: "Root directory holding the upstream clones --check-blob-paths reads. "
         ~ "Defaults to the REPOS environment variable."))
@@ -564,6 +581,7 @@ enum ProgramMode
     checkCredits,
     checkPinCache,
     checkBlobPaths,
+    gcReport,
     checkWasmModules,
     stageDocsWasm,
     ciStats,
@@ -768,6 +786,12 @@ int ciMain(string[] args)
 
     if (mode == ProgramMode.runSlowTests)
         return runSlowTestsMode(cli.packages, cli.tests, cli.failFast);
+
+    if (mode == ProgramMode.gcReport)
+    {
+        import gc_report : runGcReport;
+        return runGcReport(cli.gcReport, cli.gcBaseline, cli.gcTop);
+    }
 
     if (mode == ProgramMode.ciStats)
         return runCiStatsMode(cli);
@@ -994,6 +1018,9 @@ private ProgramMode resolveProgramMode(in CliParams cli)
     if (cli.auditFences)
         return ProgramMode.auditFences;
 
+    if (cli.gcReport.length)
+        return ProgramMode.gcReport;
+
     if (cli.ciStats)
         return ProgramMode.ciStats;
 
@@ -1102,6 +1129,7 @@ private string programModeName(ProgramMode mode) @safe pure nothrow @nogc
         case ProgramMode.checkCredits:       return "--check-credits";
         case ProgramMode.checkPinCache:      return "--check-pin-cache";
         case ProgramMode.checkBlobPaths:     return "--check-blob-paths";
+        case ProgramMode.gcReport:           return "--gc-report";
         case ProgramMode.checkWasmModules:   return "--check-wasm-modules";
         case ProgramMode.stageDocsWasm:      return "--stage-docs-wasm";
         case ProgramMode.ciStats:            return "--ci-stats";
@@ -1695,6 +1723,7 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
             case ProgramMode.stageDocsWasm:
                 rc = 1;
                 break;
+            case ProgramMode.gcReport:
             case ProgramMode.ciStats:
             case ProgramMode.mirrorChecks:
             case ProgramMode.reportLinkRot:
