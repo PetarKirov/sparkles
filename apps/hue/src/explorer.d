@@ -24,6 +24,7 @@ import lantern : defaultDelay, LanternState, ltnStep = step, ltnTick = tick,
 import git_status : GitBadge, gitBadge, GitStatus, GitStatusCache;
 
 import sparkles.base.term_color : mix;
+import sparkles.build_primitives.fileset.listing : GlobSet;
 import sparkles.syntax : LabelSet, ResolvedTheme, resolveTheme, RgbColor,
     toRgb;
 import sparkles.ui.theme : Theme;
@@ -230,10 +231,14 @@ struct ExplorerTui
     bool showIgnored = true;
 
     // Glob filters (XPF2, snacks precedence: include overrides hidden,
-    // ignored, AND exclude). Matched against the entry name and its
-    // root-relative path; a dir passes when it might contain includes.
+    // ignored, AND exclude). Fileset patterns over the root-relative path,
+    // as the pickers read them (`PKC4`): one without a `/` matches a name at
+    // any depth. A dir passes when an include may match beneath it.
     string[] includeGlobs;
     string[] excludeGlobs;
+    // The globs as compiled, and the arrays they were compiled from.
+    private GlobSet* includeSet_, includeDirSet_, excludeSet_;
+    private const(string)[] includeFor_, includeDirFor_, excludeFor_;
 
     string picked;  // the chosen file (empty = none yet)
     /// Set by the `pickerFiles` command arm (`<leader>ff`); the workspace
@@ -744,15 +749,23 @@ struct ExplorerTui
         return p;
     }
 
-    private static bool globAny(scope const(char)[] name,
-        scope const(char)[] rel, scope const(string)[] globs) @safe
+    // The globs of `globs` (those carrying a `/` when `pathsOnly`), compiled once
+    // per array; a glob that is not a fileset pattern matches nothing (the
+    // pickers refuse it).
+    private static GlobSet* compiled(ref GlobSet* set, ref const(string)[] for_,
+        const(string)[] globs, bool pathsOnly = false) @safe
     {
-        import std.path : globMatch;
+        import std.algorithm.iteration : filter;
+        import std.algorithm.searching : canFind;
+        import std.array : array;
 
-        foreach (g; globs)
-            if (globMatch(name, g) || globMatch(rel, g))
-                return true;
-        return false;
+        if (set is null || for_ !is globs)
+        {
+            auto made = GlobSet.make(pathsOnly ? globs.filter!(g => g.canFind('/')).array : globs);
+            set = made.hasError ? GlobSet.make(null).value : made.value;
+            for_ = globs;
+        }
+        return set;
     }
 
     // The one visibility predicate (XPF2, snacks precedence): `include`
@@ -762,22 +775,22 @@ struct ExplorerTui
     private bool visible(ref const FsEntry e) @safe
     {
         const rel = relOf(e);
-        if (includeGlobs.length && globAny(e.name, rel, includeGlobs))
+        auto inc = compiled(includeSet_, includeFor_, includeGlobs);
+        if (includeGlobs.length && !e.isDir && inc.matches(rel))
             return true;
-        // A dir passes the include gate when a path-carrying include glob
-        // descends into it (`build/*.log` keeps `build/` reachable).
-        if (includeGlobs.length && e.isDir)
-            foreach (g; includeGlobs)
-                if (g.length > rel.length + 1 && g[0 .. rel.length] == rel
-                    && g[rel.length] == '/')
-                    return true;
+        // A dir passes the include gate when an include glob may match
+        // beneath it (`build/*.log` keeps `build/` reachable). Only a glob
+        // carrying a `/` opens a dir: one without may match anywhere.
+        if (includeGlobs.length && e.isDir
+            && compiled(includeDirSet_, includeDirFor_, includeGlobs, pathsOnly: true).reaches(rel))
+            return true;
         if (!showHidden && e.name.length && e.name[0] == '.')
             return false;
         if (!showIgnored && git.map.present
             && git.map.statusOf(e.path, e.isDir) == GitStatus.ignored)
             return false;
         if (excludeGlobs.length && !e.isDir
-            && globAny(e.name, rel, excludeGlobs))
+            && compiled(excludeSet_, excludeFor_, excludeGlobs).matches(rel))
             return false;
         return true;
     }
