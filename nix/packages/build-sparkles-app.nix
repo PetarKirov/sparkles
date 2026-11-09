@@ -34,6 +34,7 @@
         ;
       inherit (config.legacyPackages.sparklesSources)
         sourceFor
+        sourceForWith
         needsUiShaders
         uiShaderDirs
         needsUiVulkanShaders
@@ -66,6 +67,7 @@
             # attributes.
             excludeDrvArgNames = [
               "sourceDirs"
+              "extraSources"
               "appDir"
               "generatesShaders"
               "links"
@@ -178,7 +180,9 @@
                   inherit buildInfoComponents;
                 };
 
-                src = args.src or (sourceFor (srcDirs ++ uiShaderDirs srcDirs));
+                # `extraSources`: repo-relative files the app string-imports from
+                # outside its source dirs.
+                src = args.src or (sourceForWith (srcDirs ++ uiShaderDirs srcDirs) (args.extraSources or [ ]));
                 sourceRoot = args.sourceRoot or "${finalAttrs.src.name}/${appDir}";
 
                 nativeBuildInputs =

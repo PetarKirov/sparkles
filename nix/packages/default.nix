@@ -440,6 +440,38 @@
         };
       });
 
+      # The fileset explorer (docs/specs/fileset-explorer/): a `sparkles:ui-app`
+      # component like the gallery, so raylib comes through `ui-app`'s `full`
+      # configuration and `fc-match` must be reachable at run time. Its help
+      # is the docs page `docs/apps/fileset-explorer/index.md`, string-imported,
+      # hence `extraSources`. The grammar bundle parses that page, highlights
+      # the query's fences and the Export tab's code: defaulted to the one the
+      # flake builds, as the terminal's is.
+      packages.fileset-explorer = config.legacyPackages.buildSparklesApp (finalAttrs: {
+        pname = "fileset-explorer";
+        version = "0.1.0";
+        extraSources = [ "docs/apps/fileset-explorer/index.md" ];
+
+        nativeBuildInputs = [ pkgs.pkg-config ];
+        buildInputs = [
+          pkgs.raylib
+          # `sparkles:syntax` links sparkles:tree-sitter, whose ImportC shim
+          # includes the runtime's header.
+          pkgs.tree-sitter
+        ];
+
+        postFixup = ''
+          wrapProgram $out/bin/${finalAttrs.pname} \
+            --set-default SPARKLES_TS_GRAMMAR_PATH ${config.packages.ts-grammars} \
+            --prefix PATH : ${lib.makeBinPath [ pkgs.fontconfig ]}
+        '';
+
+        meta = {
+          description = "Write a fileset and watch what it selects: a live tree, its numbers, help, and translations into other build systems";
+          mainProgram = finalAttrs.pname;
+        };
+      });
+
       # The Vulkan canvas's text lab (`apps/text-lab`): the native arm only.
       packages.text-lab = config.legacyPackages.buildSparklesApp (finalAttrs: {
         pname = "text-lab";

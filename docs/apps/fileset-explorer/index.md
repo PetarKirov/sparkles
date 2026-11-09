@@ -7,7 +7,7 @@ fileset written for Nix, git, rsync, tar, Cargo, Bazel and dub in the Export
 tab.
 
 ```sh
-fileset-explorer --dir . --query '**/*.d - **/*_test.d'
+nix run github:PetarKirov/sparkles#fileset-explorer -- --dir . --query '**/*.d - **/*_test.d'
 ```
 
 This page is also the explorer's help: `F1` opens it beside the tree.
