@@ -37,7 +37,7 @@ import sparkles.ui.image : cellPixelsOf, imageCells;
 import sparkles.ui.style : BorderStyle, TextStyle;
 import sparkles.ui.widget : Alignment, Visibility, Widget, WidgetKind, WidgetTree;
 import sparkles.ui.wrap : TextSpan, TextWrap, wrapLines, wrapSpans, sharedWrapSpans, spanLineWidth,
-    clipSpanLines, sameSpanBrush, spanPaintAdvance, resolvedSpanStyle;
+    clipSpanLines, sameSpanBrush, spanPaintAdvance, resolvedSpanStyle, beginWrapPass, endWrapPass;
 
 @safe:
 
@@ -378,6 +378,10 @@ Frame[] layout(TM = CellMeasure)(in WidgetTree tree, in Constraints c, TM tm,
     ref LayoutStore store)
 if (isTextMeasure!TM)
 {
+    // The wrap cache keeps rows by the width of the layout that used them: a
+    // pane's rows stay while it keeps its width, a drag's go with each width.
+    beginWrapPass(cast(size_t) cast(uint) c.maxW + 1);
+    scope (exit) endWrapPass();
     const n = tree.nodes.length;
     refit(store.natW, n);  // pass 1: natural widths (bottom-up)
     refit(store.alloW, n); // pass 2: allocated widths (top-down)

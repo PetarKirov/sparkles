@@ -300,8 +300,15 @@ private struct WrapCacheKey
 // Two generations: `recent` takes every store and every hit, and once it is
 // full it becomes `older`, dropping what `older` held. What the current
 // layout used is in one of them, so a document's second pass at a width (the
-// gutter's, then the final one) still finds every row, while rows for widths
-// it left behind go.
+// gutter's, then the final one) still finds every row.
+//
+// Within those bounds, an entry lives as long as the width of the layout that
+// last used it (`beginWrapPass`) is one of the last few laid out: a pane
+// keeps every row it wrapped at its width — its window, and the segments
+// measured since, which a scroll jump reuses — while a drag drops each width
+// it leaves. Each row holds a span per cluster and points back at its plan, a
+// fragment per scalar: rows kept for widths a drag passed through were most
+// of the live heap the collector scanned.
 private struct WrapCache
 {
     private static struct Entry
@@ -309,6 +316,7 @@ private struct WrapCache
         WrapCacheKey key;
         TextSpan[] spans; // the authored spans, texts copied
         TextSpan[][] lines;
+        size_t width; // the layout width that last used it
     }
 
     private static struct Generation
@@ -320,6 +328,14 @@ private struct WrapCache
     private Generation recent, older;
     /// Per generation: entries, and spans (authored and wrapped) kept.
     enum size_t bound = 8_192, spanBound = 1 << 19;
+    /// Layout widths whose rows are kept: a few panes, each with its gutter's
+    /// pass, and the chrome around them.
+    enum size_t widthsKept = 8;
+
+    // The layout widths most recently begun, the latest first; `width` is
+    // the open pass's (0: none yet).
+    private size_t[widthsKept] widths;
+    private size_t widthCount, width, depth;
 
     // The spans an entry keeps alive.
     private static size_t weight(scope const(TextSpan)[] owned, scope const(TextSpan[])[] lines)
@@ -332,16 +348,80 @@ private struct WrapCache
     }
 
     private static TextSpan[][] lookup(ref Generation g, size_t hash, in WrapCacheKey key,
-        scope const(TextSpan)[] spans, out TextSpan[] owned) @safe nothrow
+        scope const(TextSpan)[] spans, size_t width, out TextSpan[] owned) @safe nothrow
     {
         if (auto bucket = hash in g.entries)
             foreach (ref e; *bucket)
                 if (e.key == key && e.spans == spans)
                 {
+                    e.width = width;
                     owned = e.spans;
                     return e.lines;
                 }
         return null;
+    }
+
+    /// Opens a layout pass at `layoutWidth`; a nested pass joins the open one.
+    /// A width that falls out of the last `widthsKept` drops its rows.
+    void begin(size_t layoutWidth) @safe nothrow
+    {
+        if (depth++ > 0)
+            return;
+        width = layoutWidth;
+        size_t at = widthCount;
+        foreach (i; 0 .. widthCount)
+            if (widths[i] == layoutWidth)
+                at = i;
+        if (at == 0 && widthCount > 0)
+            return;
+        const dropped = at == widthCount && widthCount == widthsKept;
+        if (at == widthCount && widthCount < widthsKept)
+            ++widthCount;
+        foreach_reverse (i; 1 .. (at < widthCount ? at + 1 : widthCount))
+            widths[i] = widths[i - 1];
+        widths[0] = layoutWidth;
+        if (dropped)
+        {
+            forget(recent);
+            forget(older);
+        }
+    }
+
+    /// Closes the pass $(LREF begin) opened.
+    void end() @safe nothrow @nogc
+    {
+        assert(depth > 0, "no wrap pass is open");
+        --depth;
+    }
+
+    // Drops `g`'s entries last used at a width no longer kept.
+    private void forget(ref Generation g) @safe nothrow
+    {
+        bool kept(size_t w) @safe nothrow @nogc
+        {
+            foreach (k; widths[0 .. widthCount])
+                if (k == w)
+                    return true;
+            return false;
+        }
+        size_t[] emptied;
+        foreach (hash, ref bucket; g.entries)
+        {
+            size_t live;
+            foreach (ref e; bucket)
+                if (kept(e.width))
+                    bucket[live++] = e;
+                else
+                {
+                    --g.count;
+                    g.spans -= weight(e.spans, e.lines);
+                }
+            bucket = bucket[0 .. live];
+            if (live == 0)
+                emptied ~= hash;
+        }
+        foreach (hash; emptied)
+            g.entries.remove(hash);
     }
 
     private void keep(size_t hash, in WrapCacheKey key, TextSpan[] owned, TextSpan[][] lines)
@@ -353,7 +433,7 @@ private struct WrapCache
             older = recent;
             recent = Generation.init;
         }
-        recent.entries[hash] ~= Entry(key, owned, lines);
+        recent.entries[hash] ~= Entry(key, owned, lines, width);
         ++recent.count;
         recent.spans += w;
     }
@@ -374,9 +454,9 @@ private struct WrapCache
     {
         const hash = hashOfInput(key, spans);
         TextSpan[] owned;
-        if (auto lines = lookup(recent, hash, key, spans, owned))
+        if (auto lines = lookup(recent, hash, key, spans, width, owned))
             return lines;
-        if (auto lines = lookup(older, hash, key, spans, owned))
+        if (auto lines = lookup(older, hash, key, spans, width, owned))
         {
             keep(hash, key, owned, lines);
             return lines;
@@ -386,6 +466,9 @@ private struct WrapCache
 
     /// The spans both generations keep, for the bound's test.
     size_t retainedSpans() const @safe pure nothrow @nogc => recent.spans + older.spans;
+
+    /// The entries both generations keep, for the widths' test.
+    size_t retainedEntries() const @safe pure nothrow @nogc => recent.count + older.count;
 
     /// `spans` with their texts copied: what an entry keeps and wraps.
     static TextSpan[] ownedCopy(scope const(TextSpan)[] spans) @safe nothrow
@@ -405,6 +488,17 @@ private struct WrapCache
 }
 
 private WrapCache wrapCache; // thread-local, as module variables are
+
+/**
+Opens a layout pass at `layoutWidth` over the wrap cache: the rows a pass
+wraps or reuses are kept while their width is one of the last few laid out.
+`layout` opens one per call, at its root's width; a nested call joins the
+open pass. Close it with $(LREF endWrapPass).
+*/
+package void beginWrapPass(size_t layoutWidth) @safe nothrow => wrapCache.begin(layoutWidth);
+
+/// ditto
+package void endWrapPass() @safe nothrow @nogc => wrapCache.end();
 
 // Fresh rows over the same spans: a caller may adjust a row's spans (a
 // measured layout commits their advances) without touching the cache.
@@ -1114,11 +1208,68 @@ unittest
             cast(void) sharedWrapSpans(p, width);
     assert(wrapCache.recent.count <= WrapCache.bound && wrapCache.older.count <= WrapCache.bound);
     assert(wrapCache.retainedSpans <= 2 * WrapCache.spanBound + 64);
+
+    // Laid out a pass a width, as a drag lays a pane out: only the last few
+    // widths' rows stay.
+    foreach (width; 10 .. 40)
+    {
+        beginWrapPass(width);
+        foreach (ref p; paragraphs)
+            cast(void) sharedWrapSpans(p, width);
+        endWrapPass();
+    }
+    assert(wrapCache.retainedEntries <= WrapCache.widthsKept * paragraphs.length,
+        text(wrapCache.retainedEntries));
     foreach (ref p; paragraphs)
     {
-        const kept = sharedWrapSpans(p, 399);
-        assert(kept is sharedWrapSpans(p, 399), "the last width's rows, kept");
+        const kept = sharedWrapSpans(p, 39);
+        assert(kept is sharedWrapSpans(p, 39), "the last width's rows, kept");
     }
+    wrapCache = WrapCache.init;
+}
+
+@("ui.wrap.sharedWrapSpans.keepsTheRowsOfTheWidthsInUse")
+@safe unittest
+{
+    import std.conv : text;
+
+    // A pane laid out at one width keeps every row it wrapped there — a
+    // document's worth, far past what a drag keeps a width — while other
+    // layouts (another pane, the chrome, a gutter's pass) run in between.
+    wrapCache = WrapCache.init;
+    auto paragraphs = new TextSpan[][](256);
+    foreach (i, ref p; paragraphs)
+        p = [TextSpan(text("paragraph ", i, " of a long document, with words enough to wrap"))];
+    auto first = new const(TextSpan[])[][](paragraphs.length);
+    beginWrapPass(40);
+    foreach (i, ref p; paragraphs)
+        first[i] = sharedWrapSpans(p, 40);
+    endWrapPass();
+    foreach (other; 1 .. WrapCache.widthsKept)
+    {
+        beginWrapPass(100 + other);
+        cast(void) sharedWrapSpans(paragraphs[0], cast(int) (100 + other));
+        // A nested layout joins the open pass: it is not another width.
+        beginWrapPass(7);
+        endWrapPass();
+        endWrapPass();
+    }
+    beginWrapPass(40);
+    foreach (i, ref p; paragraphs)
+        assert(sharedWrapSpans(p, 40) is first[i], text("paragraph ", i, " wrapped again"));
+    endWrapPass();
+
+    // Once as many other widths have been laid out since, its rows go.
+    foreach (other; 0 .. WrapCache.widthsKept)
+    {
+        beginWrapPass(200 + other);
+        cast(void) sharedWrapSpans(paragraphs[0], cast(int) (200 + other));
+        endWrapPass();
+    }
+    assert(wrapCache.retainedEntries <= WrapCache.widthsKept, text(wrapCache.retainedEntries));
+    beginWrapPass(40);
+    assert(sharedWrapSpans(paragraphs[1], 40) !is first[1], "dropped with its width");
+    endWrapPass();
     wrapCache = WrapCache.init;
 }
 
