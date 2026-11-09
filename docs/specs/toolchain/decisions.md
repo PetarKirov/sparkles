@@ -210,6 +210,33 @@ as patches, with no LLVM rebuild.
 libc++ (TC18). Fork commits that only the runtimes need are applied to them
 until the next LLVM rebuild takes them in (WTD36).
 
+## TCD12: Dynamic dependency hygiene in default application builds
+
+_State: accepted._
+
+**Question.** Should application profiles link optional or test-only C
+libraries at compile time (`libs` in dub recipes), or rely on dynamic
+loading (`dlopen`) and minimal packaging?
+
+**Evidence.** Linking `libcurl` at compile time in `hue` pulled in OpenSSL,
+Kerberos (GSSAPI), SSH2, HTTP/3 QUIC (nghttp3, ngtcp2), Brotli, and Zstandard
+transitively—accounting for over 20 shared libraries in `ldd`—even though `hue`
+is predominantly a local syntax-highlighting viewer and TUI. Similarly,
+`sparkles:wsi` linked `xcb-xtest` in its core library configuration even though
+`xcb_test_*` is only ever called by external integration test injectors.
+HarfBuzz also bundled GLib 2.0 and PCRE2 transitively despite `sparkles:font`
+using only HarfBuzz's core C ABI (`hb_*`) without GLib wrappers.
+
+**Choice.** TC20a:
+
+1. Strip test-only libraries (`xcb-xtest`) from the production library
+   configurations of `sparkles:wsi`.
+2. Do not declare `libs "curl"` in `hue`'s default and terminal configurations.
+   Phobos' `std.net.curl` loads `libcurl.so.4` via `dlopen` on demand, and Nix
+   wraps `hue` with `pkgs.curlMinimal` in `LD_LIBRARY_PATH` for runtime resolution.
+3. Package `harfbuzz` with GLib, Graphite2 and ICU disabled to prevent leaking
+   transitive dependencies (`libglib-2.0`, `libpcre2-8`) into text-rendering consumers.
+
 ## Open questions
 
 - **Q2: musl.** Whether the static builds of TC20 also target musl, which
