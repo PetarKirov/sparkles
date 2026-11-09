@@ -571,6 +571,35 @@ struct FilesetEvaluator
         return fileVerdict(sets, a, path[from .. $], facts);
     }
 
+    /**
+    The verdict on the directory at `path`, relative to the fileset root
+    (`""` for the root): `skip` when no file beneath it can be a member.
+    Walks the path's directories; never fails (FSV5).
+    */
+    DirVerdict dirVerdictOf(ref const Filesets sets, scope const(char)[] path) @safe nothrow @nogc
+    {
+        auto a = pathState[0 .. words], b = pathState[words .. 2 * words];
+        rootState(sets, a);
+        DirVerdict d = dirVerdict(sets, a);
+        size_t from = 0;
+        foreach (i; 0 .. path.length + 1)
+        {
+            if (i < path.length && path[i] != '/')
+                continue;
+            if (i > from)
+            {
+                d = enter(sets, a, path[from .. i], b);
+                if (d == DirVerdict.skip)
+                    return d;
+                auto t = a;
+                a = b;
+                b = t;
+            }
+            from = i + 1;
+        }
+        return d;
+    }
+
     /// Whether the file at `path` with the executable bit `executable` is a
     /// member (FSV5: a value, never an error).
     bool contains(ref const Filesets sets, scope const(char)[] path, bool executable = false)

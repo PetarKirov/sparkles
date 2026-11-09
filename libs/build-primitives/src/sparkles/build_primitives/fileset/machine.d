@@ -365,16 +365,16 @@ struct Resolution
             private const(char)[] text;
             private size_t at;
 
-            bool empty() const @safe pure nothrow @nogc => at == es.length;
-            const(char)[] front() const return @safe pure nothrow @nogc
+            bool empty() const scope @safe pure nothrow @nogc => at == es.length;
+            const(char)[] front() const return scope @safe pure nothrow @nogc
                 => text[es[at].name.start .. es[at].name.end];
-            void popFront() @safe pure nothrow @nogc
+            void popFront() scope @safe pure nothrow @nogc
             {
                 ++at;
                 skip();
             }
 
-            private void skip() @safe pure nothrow @nogc
+            private void skip() scope @safe pure nothrow @nogc
             {
                 while (at < es.length && !es[at].member)
                     ++at;
