@@ -2173,6 +2173,10 @@
             "link": "/specs/ui-app/resilience"
           },
           {
+            "text": "Output-to-photon latency",
+            "link": "/specs/ui-app/output-latency"
+          },
+          {
             "text": "Open issues",
             "link": "/specs/ui-app/open-issues"
           }
