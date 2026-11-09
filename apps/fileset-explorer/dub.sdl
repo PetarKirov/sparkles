@@ -1,0 +1,42 @@
+name "fileset-explorer"
+description "Write a fileset and watch what it selects: a live tree, its numbers, help, and translations into other build systems"
+authors "Petar Kirov"
+license "BSL-1.0"
+
+targetType "executable"
+targetPath "build"
+
+dflags "-preview=in" "-preview=dip1000"
+
+dependency "sparkles:base" path="../.."
+dependency "sparkles:build-primitives" path="../.."
+dependency "sparkles:core-cli" path="../.."
+dependency "sparkles:event-horizon-sys" path="../.."
+dependency "sparkles:input" path="../.."
+dependency "sparkles:ui" path="../.."
+dependency "sparkles:ui-app" path="../.."
+// `--render-plain` (FXU8) paints one frame into a cell grid with no terminal.
+dependency "sparkles:ui-tui" path="../.."
+dependency "sparkles:tui" path="../.."
+
+configuration "application" {
+    targetType "executable"
+    subConfiguration "sparkles:ui-app" "full"
+}
+
+// The terminal-only build: no GPU stack at all.
+configuration "no-gui" {
+    targetType "executable"
+    subConfiguration "sparkles:ui-app" "tui"
+}
+
+configuration "unittest" {
+    targetType "library"
+    excludedSourceFiles "src/app.d"
+
+    dependency "sparkles:test-runner" path="../.."
+    dependency "sparkles:test-utils" path="../.."
+    subConfiguration "sparkles:ui-app" "tui"
+
+    dflags "-checkaction=context" "-allinst"
+}
