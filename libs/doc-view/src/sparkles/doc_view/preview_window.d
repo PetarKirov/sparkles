@@ -42,6 +42,10 @@ struct SegmentIndex
     // after `measured`, every other change commits itself.
     private long[] tops = [0];
     private bool dirty;
+    // The blocks and fold set `resegment` last split, so that a rebuild that
+    // changes neither keeps the segments it has.
+    private const(MdBlock)[] segmentedBlocks;
+    private size_t[] segmentedFolds;
 
     /// The number of segments.
     size_t length() const pure nothrow @nogc => segments.length;
@@ -51,9 +55,13 @@ struct SegmentIndex
     every segment that survives unchanged; a new one is estimated from its
     source at `width`.
     */
-    void resegment(in MdBlock[] blocks, in size_t[] folded, const(char)[] source,
+    void resegment(const(MdBlock)[] blocks, in size_t[] folded, const(char)[] source,
         int width) pure nothrow
     {
+        if (blocks is segmentedBlocks && folded == segmentedFolds)
+            return;
+        segmentedBlocks = blocks;
+        segmentedFolds = folded.dup;
         auto next = mdSegments(blocks, folded);
         auto h = new int[](next.length);
         auto x = new bool[](next.length);
@@ -88,6 +96,8 @@ struct SegmentIndex
     void clear() pure nothrow
     {
         segments = null;
+        segmentedBlocks = null;
+        segmentedFolds = null;
         height = null;
         exact = null;
         widthOf = null;
@@ -452,6 +462,14 @@ version (unittest)
     assert(ix.segments == [MdSegment(0, 2), MdSegment(2, 3), MdSegment(3, 4)]);
     assert(!ix.exact[0] && ix.height[0] == 1);
     assert(ix.exact[1] && ix.exact[2] && ix.height[1] == 2);
+    // Neither the blocks nor the folds changed: the segments stand as they
+    // were, the same array, not a fresh split.
+    const kept = ix.segments;
+    ix.resegment(blocks, [0UL], src, 40);
+    assert(ix.segments is kept);
+    // Unfolding splits again.
+    ix.resegment(blocks, null, src, 40);
+    assert(ix.segments.length == 4);
 }
 
 @("preview_window.estimateFromSource.wrapsProseAndBoxesFences")
