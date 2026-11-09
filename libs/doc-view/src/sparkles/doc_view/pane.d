@@ -1728,6 +1728,48 @@ version (unittest)
     }
 }
 
+// A windowed preview dragged across forty widths keeps the wrapped rows
+// of its last few, not of every width it passed: the rows (a span per
+// cluster, each pointing back at its plan) were most of the live heap the
+// collector scanned while a drag ran.
+@("pane.relayout.aDragKeepsTheRowsOfItsLastWidths")
+@system unittest
+{
+    import core.time : Duration;
+    import std.conv : text;
+    import std.file : exists;
+    import std.path : buildPath, dirName;
+    import std.process : environment;
+    import sparkles.test_runner.skip : skipTest;
+    import sparkles.ui.wrap : clearWrapCache, wrapCacheRetainedSpans;
+
+    if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
+        skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
+    const root = __FILE_FULL_PATH__.dirName.dirName.dirName.dirName.dirName.dirName;
+    const path = buildPath(root, "docs", "specs", "event-horizon", "SPEC.md");
+    if (!path.exists)
+        skipTest("document not found: " ~ path);
+
+    auto env = DocViewEnv.create(GrammarRegistry.fromEnvironment());
+    auto pane = new DocViewPane;
+    assert(pane.open(env, path, chromeTheme(RgbColor(200, 200, 200), RgbColor(20, 20, 20))));
+    pane.vm.windowed = true;
+    pane.vm.viewRows = 50;
+    clearWrapCache();
+    pane.vm.relayout(60);
+    pane.vm.settleLayout(Duration.zero);
+    const oneWidth = wrapCacheRetainedSpans;
+    assert(oneWidth > 0);
+    foreach (width; 61 .. 85)
+    {
+        pane.vm.relayout(width);
+        pane.vm.settleLayout(Duration.zero);
+    }
+    assert(wrapCacheRetainedSpans < 12 * oneWidth,
+        text(wrapCacheRetainedSpans, " spans kept after a drag; one width keeps ", oneWidth));
+    clearWrapCache();
+}
+
 // The raw code view's reflow with the source laid out as a window around a
 // 50-row pane: what a resize costs on hue's own window module.
 @("pane.relayout.largeCodeFileWindowed")
