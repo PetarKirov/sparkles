@@ -148,3 +148,167 @@ string scenarioName(Scenario s) @safe
     assert(scenarioName(Scenario.render) == "render (forced redraw)");
     assert(scenarioName(Scenario.churn) == "churn (full repaint)");
 }
+
+// --- Write-to-photon latency (output-latency.md OPL26) ----------------------
+
+/// One write the probe made: where it started in the stream, how long it was,
+/// and when it was made (`CLOCK_MONOTONIC` nanoseconds).
+struct WriteRecord
+{
+    ulong offset; ///
+    uint length;  ///
+    long ns;      ///
+}
+
+/// One frame of the terminal's `--debug latency-log`: when it started and was
+/// shown (-1: never), and the stream bytes delivered before it started.
+struct FrameLine
+{
+    ulong number;   ///
+    long startNs;   ///
+    long shownNs;   ///
+    ulong position; ///
+}
+
+/// The latency distribution of a run, in milliseconds.
+struct LatencyStats
+{
+    size_t writes;     /// writes the probe made
+    size_t measured;   /// writes a shown frame included
+    size_t neverShown; /// writes no shown frame included
+    size_t superseded; /// writes whose first frame was not shown, a later one was
+    double p50 = 0, p95 = 0, p99 = 0, max = 0; ///
+}
+
+/// Parses tab-separated lines of `N` integer columns, skipping a header and
+/// blank lines.
+private long[N][] parseColumns(size_t N)(string tsv) @safe
+{
+    import std.algorithm : splitter;
+    import std.conv : ConvException, to;
+    import std.string : lineSplitter, strip;
+
+    long[N][] rows;
+    foreach (line; tsv.lineSplitter)
+    {
+        if (line.strip.length == 0)
+            continue;
+        long[N] row;
+        size_t i;
+        bool ok = true;
+        foreach (field; line.splitter('\t'))
+        {
+            if (i == N)
+                break;
+            try
+                row[i++] = field.strip.to!long;
+            catch (ConvException)
+            {
+                ok = false;
+                break;
+            }
+        }
+        if (ok && i == N)
+            rows ~= row;
+    }
+    return rows;
+}
+
+/// The probe's log: `offset length ns` per line.
+WriteRecord[] parseWrites(string tsv) @safe
+{
+    WriteRecord[] w;
+    foreach (r; parseColumns!3(tsv))
+        w ~= WriteRecord(r[0], cast(uint) r[1], r[2]);
+    return w;
+}
+
+/// The terminal's latency log: `frame start_ns shown_ns stream_position`.
+FrameLine[] parseFrames(string tsv) @safe
+{
+    FrameLine[] f;
+    foreach (r; parseColumns!4(tsv))
+        f ~= FrameLine(r[0], r[1], r[2], r[3]);
+    return f;
+}
+
+/**
+Joins the probe's writes to the frames that showed them. A write is shown by
+the first frame whose stream position covers its last byte; where that frame
+was never shown, by the first later frame that was (the write counts as
+superseded); where none was, it counts as never shown.
+*/
+LatencyStats joinLatency(const(WriteRecord)[] writes, const(FrameLine)[] frames) @safe
+{
+    import std.algorithm : sort;
+
+    LatencyStats s;
+    s.writes = writes.length;
+    double[] ms;
+    size_t f; // frames are in start order, their positions non-decreasing
+    foreach (w; writes)
+    {
+        const end = w.offset + w.length;
+        while (f < frames.length && frames[f].position < end)
+            ++f;
+        size_t g = f;
+        while (g < frames.length && frames[g].shownNs < 0)
+            ++g;
+        if (g == frames.length)
+        {
+            ++s.neverShown;
+            continue;
+        }
+        if (g != f)
+            ++s.superseded;
+        ++s.measured;
+        ms ~= (frames[g].shownNs - w.ns) / 1e6;
+    }
+    if (ms.length)
+    {
+        ms.sort();
+        double at(double q) => ms[cast(size_t) ((ms.length - 1) * q + 0.5)];
+        s.p50 = at(0.50);
+        s.p95 = at(0.95);
+        s.p99 = at(0.99);
+        s.max = ms[$ - 1];
+    }
+    return s;
+}
+
+@("bench.joinLatency.firstCoveringShownFrame")
+@safe unittest
+{
+    // Writes of 10 bytes at 0, 10 and 20 ms; frames shown at 16 and 33 ms
+    // covering 10 and 30 bytes; a third, covering nothing more, never shown.
+    const writes = [WriteRecord(0, 10, 0), WriteRecord(10, 10, 10_000_000),
+        WriteRecord(20, 10, 20_000_000)];
+    const frames = [FrameLine(0, 1_000_000, 16_000_000, 10),
+        FrameLine(1, 18_000_000, 33_000_000, 30), FrameLine(2, 40_000_000, -1, 30)];
+    const s = joinLatency(writes, frames);
+    assert(s.writes == 3 && s.measured == 3 && s.neverShown == 0);
+    // 16 ms (frame 0), 23 and 13 ms (both frame 1, shown at 33 ms).
+    assert(s.p50 == 16.0, "the median of 13, 16 and 23");
+    assert(s.max == 23.0 && s.p99 == 23.0);
+}
+
+@("bench.joinLatency.supersededAndNeverShown")
+@safe unittest
+{
+    const writes = [WriteRecord(0, 4, 0), WriteRecord(4, 4, 0)];
+    // Frame 0 covers the first write but was superseded; frame 1 shows it.
+    // Nothing covers the second write.
+    const frames = [FrameLine(0, 0, -1, 4), FrameLine(1, 0, 20_000_000, 4)];
+    const s = joinLatency(writes, frames);
+    assert(s.measured == 1 && s.superseded == 1 && s.neverShown == 1);
+    assert(s.p50 == 20.0);
+}
+
+@("bench.parse.latencyLogs")
+@safe unittest
+{
+    const f = parseFrames("frame\tstart_ns\tshown_ns\tstream_position\n7\t100\t-1\t42\n");
+    assert(f == [FrameLine(7, 100, -1, 42)]);
+    const w = parseWrites("0\t5\t99\n5\t3\t120\n");
+    assert(w == [WriteRecord(0, 5, 99), WriteRecord(5, 3, 120)]);
+}

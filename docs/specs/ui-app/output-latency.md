@@ -383,15 +383,22 @@ The decision OPLD1 rests on [`ingest-spike.c`](./output-latency/ingest-spike.c),
 run on the reference configuration as its header describes; §6 gives its
 figures.
 
-| Obligation        | Status      | Evidence                                                                                                                                                                                                           |
-| ----------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| OPL10             | verified    | `OpReadMultishot`, `loop.readMultishot.streamsIntoProvidedBuffers` (Linux 6.18)                                                                                                                                    |
-| OPL1–OPL9, OPL11  | verified    | `StreamIngest`; the `stream_ingest.*` tests, each on the multishot path and the fallback (Linux 6.18)                                                                                                              |
-| OPL12             | partial     | `NativeHost.openStream`; the terminal reads its pty through it (`TerminalView.startReading`). No test drives a delivery to a frame pass headless                                                                   |
-| Throughput target | verified    | `seq 1 2000000` on the reference configuration, five runs each, by hand: this arm 907–970 ms, the pre-1.0 build 1028–1200 ms, frame-driven reads woken by readiness 653–3678 ms. `throughput` (OPL27) automates it |
-| OPL25             | partial     | `StreamIngest.position`, `NativeHost.streamPosition`; not in the frame record                                                                                                                                      |
-| OPL13–OPL24       | not started | none                                                                                                                                                                                                               |
-| OPL26, OPL27      | not started | none                                                                                                                                                                                                               |
+| Obligation        | Status      | Evidence                                                                                                                                                             |
+| ----------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| OPL10             | verified    | `OpReadMultishot`, `loop.readMultishot.streamsIntoProvidedBuffers` (Linux 6.18)                                                                                      |
+| OPL1–OPL9, OPL11  | verified    | `StreamIngest`; the `stream_ingest.*` tests, each on the multishot path and the fallback (Linux 6.18)                                                                |
+| OPL12             | partial     | `NativeHost.openStream`; the terminal reads its pty through it (`TerminalView.startReading`). No test drives a delivery to a frame pass headless                     |
+| Throughput target | verified    | `throughput` on the reference configuration, five runs each: this arm 788–959 ms; the pre-1.0 build 1075–2320 ms; frame-driven reads woken by readiness 1971–3230 ms |
+| OPL25             | verified    | `FrameRecord.streamPosition`, written by `--debug latency-log`; on the reference configuration a probe's 9942 bytes ended at stream position 9942                    |
+| OPL26             | verified    | `joinLatency`, `bench.joinLatency.firstCoveringShownFrame`, `bench.joinLatency.supersededAndNeverShown`; the baseline below                                          |
+| OPL27             | verified    | `runThroughput`; the figures above                                                                                                                                   |
+| OPL13–OPL24       | not started | none                                                                                                                                                                 |
+
+The latency baseline, the `asap` behaviour: `latency` on the reference
+configuration, three runs of 300 writes, measured the 50th percentile at
+20.5–22.4 ms, the 95th at 36.9–37.9 ms and the 99th at 40.4–44.7 ms, with
+no write unshown and one superseded. Frames took 20.4 ms on average from the
+start of their pass to their display.
 
 ## 9. Open questions
 

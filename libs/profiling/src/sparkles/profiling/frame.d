@@ -86,6 +86,9 @@ struct FrameRecord
     FrameFlags flags;         ///
     Duration shown;           /// when it reached the display, from the run's origin
     FrameZones zones;         /// its named CPU zones (`PRF22`)
+    /// The bytes stream sources had delivered when the frame started: the
+    /// frame shows every byte before this position (output-latency.md `OPL25`).
+    ulong streamPosition;
 
 @safe pure nothrow @nogc:
 
