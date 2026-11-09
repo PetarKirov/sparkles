@@ -324,7 +324,7 @@ bool runTui(alias present, alias handle, alias draw = noDraw,
         // The grid holds RGB; the depth it goes out at is the target's — the
         // declared one, or a narrowed preview's (`CAP5`).
         session.colorDepth(target.colorDepth);
-        session.present();
+        session.present(host.textCursorAsk); // `HST20`: after the cells
     }
 
     frame(); // an application draws before anything happens to it

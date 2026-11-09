@@ -219,6 +219,31 @@ void presentApp(A, Host)(ref A app, ref Host h, in AppTheme th, ref FrameSnapsho
     auto listZone = cpuZone!"display-list";
     buildDisplayListInto(snap.tree, snap.frames, frame.palette, frame.pageFg,
         frame.pageBg, h.ops(), tm);
+    placeTextCursor(h, snap.tree, snap.frames, frame.palette);
+}
+
+/**
+Asks `h` for its text cursor (`HST20`) where the first node with a
+`caretColumn` puts it, once the tree is laid out: a component knows the caret's
+column in its line, and only layout knows where the line is. A caret outside
+its node's rect (scrolled or clipped away) shows none.
+*/
+void placeTextCursor(Host)(ref Host h, in WidgetTree tree, in Frame[] frames, in Palette palette)
+{
+    import sparkles.base.term_control : CursorShape;
+
+    foreach (i, ref n; tree.nodes)
+    {
+        if (n.caretColumn < 0 || i >= frames.length)
+            continue;
+        const r = frames[i].rect;
+        if (n.caretColumn > r.width || r.height <= 0)
+            return;
+        const caret = palette.fg[Slot.caret];
+        const rgb = caret.kind == Color.Kind.rgb;
+        h.textCursor(r.x + n.caretColumn, r.y, CursorShape.bar, rgb ? caret.rgb : RgbColor.init, rgb);
+        return;
+    }
 }
 
 /**
@@ -414,6 +439,75 @@ unittest
     // The default theme (tokyo-night) pins its page colors, so the fill is
     // not the fallback black.
     assert(ops[0].visual.bg != RgbColor(0, 0, 0));
+}
+
+/// HST20: an editor drawn in host-cursor mode leaves its line's characters
+/// where they are, and the frame's cursor lands on the caret's cell, wherever
+/// layout put the line; a frame with no caret hides it.
+@("ui_app.run_app.textCursorFollowsTheCaret")
+@safe
+unittest
+{
+    import sparkles.input : Key, keyEvent;
+    import sparkles.ui.components.editor : EditorViewOptions, editorView;
+    import sparkles.ui.editor.field : EditorField;
+    import sparkles.ui.geometry : SizeSpec;
+    import sparkles.ui.widget : Builder, Widget, WidgetKind;
+
+    static struct Prompt
+    {
+        EditorField field;
+        bool focused = true;
+
+        WidgetTree view(H)(ref H h)
+        {
+            auto b = Builder();
+            const title = b.add(Widget(kind: WidgetKind.text, text: "title"));
+            const label = b.add(Widget(kind: WidgetKind.text, text: "> "));
+            EditorViewOptions o;
+            o.hostCursor = true;
+            o.caretVisible = focused;
+            const line = b.add(Widget(kind: WidgetKind.row,
+                children: [label, editorView(b, field.state, o)], width: SizeSpec.grow()));
+            return b.finish(b.add(Widget(kind: WidgetKind.column, children: [title, line])));
+        }
+
+        void handle(H)(ref H h, in Event e)
+        {
+            import sparkles.input : KeyEvent, match;
+
+            e.match!((in KeyEvent k) {
+                if (k.key == Key.tab)
+                    focused = false;
+                else
+                    cast(void) field.key(k);
+            }, (in _) {});
+        }
+    }
+
+    Prompt app;
+    app.field = EditorField.singleLine("abcd");
+    auto rec = runAppRecorded(app, RunConfig.init,
+        [keyEvent(Key.left), keyEvent(Key.left), keyEvent(Key.tab)]);
+    assert(rec.frames.length == 4);
+    with (rec.frames[0].cursor)
+        assert(visible && x == 6 && y == 1, "after `> abcd`, on the second line");
+    with (rec.frames[2].cursor)
+        assert(visible && x == 4 && y == 1, "two to the left");
+    assert(!rec.frames[3].cursor.visible, "unfocused, no cursor");
+
+    // The text runs are the same in every frame: nothing moved with the caret.
+    import sparkles.ui_app.record : RecordedFrame;
+
+    string textOf(in RecordedFrame f)
+    {
+        string s;
+        foreach (ref op; f.ops)
+            if (op.kind == OpKind.textRun)
+                s ~= op.text;
+        return s;
+    }
+    assert(textOf(rec.frames[0]) == textOf(rec.frames[2]));
 }
 
 @("ui_app.run_app.skipFrameIsHonouredBeforeLayout")

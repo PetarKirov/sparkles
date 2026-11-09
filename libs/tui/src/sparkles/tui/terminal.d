@@ -32,7 +32,8 @@ import core.sys.posix.unistd : STDIN_FILENO, STDOUT_FILENO, write;
 
 import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.term_color : classifyColorDepth, ColorDepth;
-import sparkles.base.term_control : CtlSeq, DecMode, writeEscapeSeq, writeMouseTracking;
+import sparkles.base.term_control : CtlSeq, DecMode, TextCursor, writeEscapeSeq, writeMouseTracking,
+    writeTextCursor;
 import sparkles.base.term_caps : ImageProtocol, StdStream, terminalSize, TermSize;
 import sparkles.base.term_replies : TerminalReplies;
 
@@ -118,6 +119,8 @@ struct Terminal
         int _inFd = STDIN_FILENO;
         int _outFd = STDOUT_FILENO;
         bool _active;
+        bool _cursorShown;  // the last frame showed the text cursor (`HST20`)
+        bool _cursorShaped; // a frame set its shape: restore the default on close
     }
 
     @disable this(this); // move-only: exactly one owner restores the terminal
@@ -188,6 +191,8 @@ struct Terminal
         if (_opts.mouse)
             writeMouseTracking(s, false, _opts.motion);
         writeEscapeSeq!(DecMode.autowrap, true)(s); // autowrap on
+        if (_cursorShaped)
+            s ~= "\x1b[0 q"; // the user's own cursor shape again
         if (_opts.hideCursor)
             writeEscapeSeq!(CtlSeq.showCursor)(s);
         writeEscapeSeq!(CtlSeq.popKeyboardMode)(s);
@@ -232,7 +237,7 @@ struct Terminal
     /// A hardware scroll moves what the terminal drew, so after one every
     /// image is placed again.
     void draw(in Grid grid, scope const(char)[][] links = null,
-        in ImagePlacement[] images = null) @trusted
+        in ImagePlacement[] images = null, in TextCursor cursor = TextCursor.init) @trusted
     {
         _buf.clear();
         writeEscapeSeq!(CtlSeq.syncBegin)(_buf);
@@ -254,6 +259,12 @@ struct Terminal
             _sixel.emit(_buf, shown, cellPixels(), replace, rewritten);
         else
             _images.update(_buf, shown, replace);
+        // `HST20`: the text cursor goes where the frame asked, after its cells,
+        // and is hidden only when a previous frame showed it.
+        if (cursor.visible || _cursorShown)
+            _buf.writeTextCursor(cursor);
+        _cursorShown = cursor.visible;
+        _cursorShaped |= cursor.visible;
         writeEscapeSeq!(CtlSeq.syncEnd)(_buf);
         writeAll(_outFd, _buf[]);
     }

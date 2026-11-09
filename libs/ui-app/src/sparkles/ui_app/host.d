@@ -287,6 +287,8 @@ mixin template HostState(size_t opCapacity = frameOpCapacity,
     // imports must travel with it rather than rely on this module's.
     private import core.time : Duration;
     private import sparkles.input : Mods;
+    private import sparkles.base.term_control : CursorShape, TextCursor;
+    private import sparkles.base.term_color : RgbColor;
     private import sparkles.ui.tokens : capabilitiesOf, meet, Profile,
         TargetCapabilities;
 
@@ -449,6 +451,36 @@ mixin template HostState(size_t opCapacity = frameOpCapacity,
     private TargetCapabilities _ceiling;
     private bool _narrowed;
 
+    /**
+    Show the platform's text cursor at cell `(x, y)` of this frame, as `shape`
+    (`HST20`): the terminal's own cursor, which blinks as its user set, or a
+    caret the GPU arm paints in `color`. The ask is per frame: one that makes
+    none hides the cursor. `runApp` makes it from a laid-out widget's
+    `caretColumn`, so a component rarely calls this itself.
+    */
+    void textCursor(int x, int y, CursorShape shape = CursorShape.bar,
+        RgbColor color = RgbColor.init, bool hasColor = false) @safe pure nothrow @nogc
+    {
+        _textCursor = TextCursor(true, x, y, shape);
+        _textCursorColor = color;
+        _textCursorHasColor = hasColor;
+    }
+
+    /// Hide the text cursor this frame (the default).
+    void noTextCursor() @safe pure nothrow @nogc { _textCursor = TextCursor.init; }
+
+    /// This frame's text cursor ask.
+    TextCursor textCursorAsk() const @safe pure nothrow @nogc => _textCursor;
+
+    /// The colour asked for a painted caret, when one was (`hasColor`).
+    RgbColor textCursorColor() const @safe pure nothrow @nogc => _textCursorColor;
+    /// ditto
+    bool textCursorHasColor() const @safe pure nothrow @nogc => _textCursorHasColor;
+
+    private TextCursor _textCursor;
+    private RgbColor _textCursorColor;
+    private bool _textCursorHasColor;
+
     /// The per-frame display list, owned and reused by the host (`HST4`). An
     /// application appends; it never sizes or clears one.
     ref HostOps ops() return @safe pure nothrow @nogc => _ops;
@@ -461,6 +493,7 @@ mixin template HostState(size_t opCapacity = frameOpCapacity,
         _skipFrame = false;
         _mustDraw = mustDraw;
         _wakeIn = Duration.max;
+        _textCursor = TextCursor.init;
         // Drops last frame's operations and the bytes they pointed at, keeping
         // both capacities — a host never re-sizes its buffer.
         _ops.reset();

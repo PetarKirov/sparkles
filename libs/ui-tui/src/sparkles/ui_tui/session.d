@@ -40,6 +40,7 @@ import sparkles.base.term_caps : detectTermCaps, ImageProtocol, TermCaps, TermSi
 import sparkles.base.term_replies : applyReplies, available, ModeReply, TerminalReplies;
 import sparkles.ui.geometry : Size;
 import sparkles.base.term_color : ColorDepth;
+import sparkles.base.term_control : TextCursor;
 import sparkles.ui.tokens : TargetCapabilities, terminalCapabilities;
 
 import sparkles.input : Event;
@@ -201,7 +202,9 @@ struct TerminalSession
 
     /// Presents the surface — the retained diff, so only changed cells go out,
     /// and the frame's image placements over them.
-    void present() @system => term.draw(grid, links, placements);
+    /// `cursor` is where the frame shows the text cursor (`HST20`), if anywhere.
+    void present(in TextCursor cursor = TextCursor.init) @system
+        => term.draw(grid, links, placements, cursor);
 
     /// The cell size in pixels, where the terminal reports it; `0`s where it
     /// does not.

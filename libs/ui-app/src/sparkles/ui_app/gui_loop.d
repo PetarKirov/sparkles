@@ -27,7 +27,7 @@ version (UiAppGui):
 
 import core.time : msecs;
 
-import sparkles.base.term_control : PointerShape;
+import sparkles.base.term_control : CursorShape, PointerShape, TextCursor;
 import sparkles.base.buffer : SharedBuffer;
 import sparkles.input : Event, InputCapabilities, Mods, mousePointer, pasteChunks,
     touchPointer;
@@ -233,6 +233,29 @@ struct GuiHost
 }
 
 static assert(isHost!GuiHost);
+
+/**
+Paints the frame's text cursor (`HST20`) over the drawn frame: a window has
+no cursor of its own to place, so the caret is a bar two device pixels wide
+at the cell's left edge (or the whole cell, or a line under it).
+*/
+private void paintTextCursor(in TextCursor c, int cellW, int cellH, float scale, RgbColor color)
+    @system
+{
+    import raylib : Color, DrawRectangle;
+
+    if (!c.visible)
+        return;
+    const x = c.x * cellW, y = c.y * cellH;
+    const thin = scale > 1 ? cast(int)(2 * scale + 0.5f) : 2;
+    const rgba = Color(color.r, color.g, color.b, 255);
+    final switch (c.shape)
+    {
+        case CursorShape.bar: DrawRectangle(x, y, thin, cellH, rgba); break;
+        case CursorShape.block: DrawRectangle(x, y, cellW, cellH, Color(color.r, color.g, color.b, 128)); break;
+        case CursorShape.underline: DrawRectangle(x, y + cellH - thin, cellW, thin, rgba); break;
+    }
+}
 static assert(canReadClipboard!GuiHost);
 
 /**
@@ -366,6 +389,8 @@ bool runGui(alias present, alias handle, alias draw = noDraw,
         auto canvas = host.canvas;
         paint(canvas, host.ops()[]);
         draw(host); // `HST13`: the application's own renderer, inside the bracket
+        paintTextCursor(host.textCursorAsk, session.cellW, session.cellH, session.uiScale,
+            host.textCursorHasColor ? host.textCursorColor : RgbColor(0xc0, 0xca, 0xf5));
         session.window.endFrame();
     }
 

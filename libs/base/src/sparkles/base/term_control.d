@@ -72,6 +72,63 @@ enum PointerShape : string
     neswResize = "nesw-resize", /// diagonal resize: a top-right or bottom-left corner
 }
 
+/// The text cursor's shape. On a terminal each is a DECSCUSR blinking form
+/// ($(LREF textCursorShapeParam)), so the terminal blinks it as its user set.
+enum CursorShape : ubyte
+{
+    bar,       /// a thin vertical bar before the cell: where text is inserted
+    block,     /// the whole cell
+    underline, /// a line under the cell
+}
+
+/// The DECSCUSR parameter of `shape`, blinking: `CSI Ps SP q`.
+int textCursorShapeParam(CursorShape shape) @safe pure nothrow @nogc
+{
+    final switch (shape)
+    {
+        case CursorShape.block: return 1;
+        case CursorShape.underline: return 3;
+        case CursorShape.bar: return 5;
+    }
+}
+
+/**
+Where, and whether, a frame shows the platform's text cursor (`HST20`): a cell
+of the frame, counted from 0, and its shape. `visible` false hides it.
+*/
+struct TextCursor
+{
+    bool visible; ///
+    int x;        /// column
+    int y;        /// row
+    CursorShape shape; ///
+}
+
+/// Writes the sequences that show `c` after a frame's cells were written —
+/// position, shape, show — or hide it, into `w`.
+void writeTextCursor(Writer)(ref Writer w, in TextCursor c)
+{
+    import sparkles.base.text.writers : writeText;
+
+    if (!c.visible)
+    {
+        w.writeText(i"\x1b[?25l");
+        return;
+    }
+    w.writeText(i"\x1b[$(c.y + 1);$(c.x + 1)H\x1b[$(textCursorShapeParam(c.shape)) q\x1b[?25h");
+}
+
+///
+@("term_control.writeTextCursor")
+@safe pure nothrow @nogc unittest
+{
+    import sparkles.base.buffer : checkWriter;
+
+    checkWriter!((ref b) => b.writeTextCursor(TextCursor(true, 4, 0, CursorShape.bar)))(
+        "\x1b[1;5H\x1b[5 q\x1b[?25h");
+    checkWriter!((ref b) => b.writeTextCursor(TextCursor.init))("\x1b[?25l");
+}
+
 // Every writer below emits nothing for a zero argument: CSI treats a missing/0
 // parameter as 1, so "move by 0" must not become "move by 1".
 

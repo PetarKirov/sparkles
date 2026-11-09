@@ -39,6 +39,13 @@ struct EditorViewOptions
     size_t visibleLines;
     /// The first line shown.
     size_t firstLine;
+    /**
+    Leave the caret to the host (ui-app `HST20`): no `▏` is inserted, so no
+    character moves with the caret, and the caret line's node carries the
+    primary caret's column in `caretColumn`. Only the primary caret is shown
+    this way; while composing, the preedit's own caret is drawn as before.
+    */
+    bool hostCursor;
 }
 
 /// The caret glyph.
@@ -60,7 +67,8 @@ TextSpan[] editorLineSpans(in EditorState state, size_t line, in EditorViewOptio
     // Every place the styling can change, sorted and unique.
     size_t[] cuts = [start, end];
     foreach (r; ranges)
-        cuts ~= [r.start, r.end, r.head];
+        if (!(options.hostCursor && r.empty))
+            cuts ~= [r.start, r.end, r.head]; // the host's cursor needs no cut
     foreach (span; state.readOnly[])
         cuts ~= [span.start, span.end];
     size_t[] inLine;
@@ -82,7 +90,7 @@ TextSpan[] editorLineSpans(in EditorState state, size_t line, in EditorViewOptio
                 preeditSpans(state, options, caret, spans);
                 break;
             }
-            else if (!composing && options.caretVisible && r.head == at
+            else if (!composing && options.caretVisible && !options.hostCursor && r.head == at
                 && (several || j == state.selection.primaryIndex))
             {
                 spans ~= TextSpan(text: caretGlyph, slot: Slot.caret);
@@ -455,17 +463,63 @@ uint editorView(ref Builder b, in EditorState state, EditorViewOptions options =
         return b.add(Widget(kind: WidgetKind.rich, spans: spans, width: SizeSpec.grow()));
     }
     const lines = state.text.lineCount;
+    const caretLine = state.text.lineOf(state.selection.primary.head);
+    // The host's cursor (`HST20`) goes on the caret's line, at its column.
+    Widget row(size_t line)
+    {
+        auto w = Widget(kind: WidgetKind.rich, spans: editorLineSpans(state, line, options),
+            width: SizeSpec.grow());
+        if (options.hostCursor && options.caretVisible && !state.composition.active
+            && line == caretLine)
+            w.caretColumn = caretColumnOf(state);
+        return w;
+    }
+
     if (lines == 1)
-        return b.add(Widget(kind: WidgetKind.rich, spans: editorLineSpans(state, 0, options),
-            width: SizeSpec.grow()));
+        return b.add(row(0));
     const first = options.firstLine < lines ? options.firstLine : lines - 1;
     const last = options.visibleLines && first + options.visibleLines < lines
         ? first + options.visibleLines : lines;
     uint[] rows;
     foreach (line; first .. last)
-        rows ~= b.add(Widget(kind: WidgetKind.rich, spans: editorLineSpans(state, line, options),
-            width: SizeSpec.grow()));
+        rows ~= b.add(row(line));
     return b.add(Widget(kind: WidgetKind.column, children: rows, width: SizeSpec.grow()));
+}
+
+/// The primary caret's column in its line, in cells: the display width of
+/// the line's text before it.
+int caretColumnOf(in EditorState state) @safe pure nothrow
+{
+    import sparkles.base.text.grapheme : visibleWidth;
+
+    const head = state.selection.primary.head;
+    const start = state.text.lineStart(state.text.lineOf(head));
+    auto bytes = new char[head - start];
+    state.text.copyTo(start, head, bytes);
+    return cast(int) visibleWidth(bytes);
+}
+
+/// The host-cursor mode inserts nothing and reports the caret's column, so
+/// moving the caret moves no character.
+@("editor.view.hostCursor")
+@safe
+unittest
+{
+    import sparkles.ui.editor.testing : parse;
+
+    EditorViewOptions host;
+    host.hostCursor = true;
+    assert(spansOf("ab|cd", host) == "abcd", "one span: no caret, no cut");
+    assert(spansOf("a|bcd", host) == spansOf("abc|d", host), "the line is the same wherever the caret is");
+    assert(caretColumnOf(parse("日本|語")) == 4, "wide characters count two cells");
+
+    auto b = Builder();
+    const tree = b.finish(editorView(b, parse("one\ntw|o"), host));
+    int columns;
+    foreach (ref n; tree.nodes)
+        if (n.caretColumn >= 0)
+            columns += n.caretColumn + 100;
+    assert(columns == 102, "only the caret's line carries it, at column 2");
 }
 
 /**

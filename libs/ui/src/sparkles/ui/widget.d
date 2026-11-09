@@ -159,6 +159,10 @@ struct Widget
 
     uint[] children;         /// child node indices (empty for leaves)
     size_t hitId;            /// hover/hit id (0 = not hit-testable)
+    /// The column, in cells from the node's left edge, of the text cursor this
+    /// node shows (`EDR1` with the host cursor, ui-app `HST20`); `-1` for none.
+    /// The host places its own cursor there once the tree is laid out.
+    int caretColumn = -1;
     /// Element identity (`WGT5`; 0 = anonymous): the renderer's per-element
     /// state store is addressed by this key, so scroll offsets, focus and
     /// animation phase survive a rebuild. $(B Identity) decides "is this the

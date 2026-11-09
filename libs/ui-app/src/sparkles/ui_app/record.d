@@ -45,6 +45,9 @@ struct RecordedFrame
     /// none. The recorder does not simulate time — the ask is captured as
     /// intent, which is the assertable half of the contract.
     Duration wakeAsk = Duration.max;
+    /// The text cursor it asked for (`HST20`); hidden when it asked none.
+    import sparkles.base.term_control : TextCursor;
+    TextCursor cursor;
 }
 
 /**
@@ -316,6 +319,7 @@ RecordingHost runRecorded(Present, Handle, Shutdown = typeof(null))(
             skipped: h.frameSkipped,
             requested: h.frameRequested,
             wakeAsk: h.wakeAsk,
+            cursor: h.textCursorAsk,
         );
     }
 
