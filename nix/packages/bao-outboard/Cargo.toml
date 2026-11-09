@@ -1,0 +1,13 @@
+[package]
+name = "bao-outboard"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Prints the root and pre-order outboard bao-tree computes for each file, at iroh's chunk-group size"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+bao-tree = { version = "=0.17.0", default-features = false }
+
+[profile.release]
+debug = false

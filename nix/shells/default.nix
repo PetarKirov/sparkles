@@ -318,6 +318,11 @@
           export SPARKLES_SNIX_CASTORE=${lib.getExe' config.packages.snix-castore "snix-castore"}
         ''}
 
+        # bao-tree's outboard of a file, the oracle of the iroh outboard
+        # (content-addressing C2); `dub test :build-primitives` skips it when
+        # unset.
+        export SPARKLES_BAO_OUTBOARD=${lib.getExe config.packages.bao-outboard}
+
         # The bundled fonts, the corpus for sparkles:font and its HarfBuzz
         # oracle (dub test :font / :font-oracle skip those tests when unset).
         export SPARKLES_FONTS_PATH=${config.packages.sparkles-fonts}/fonts
