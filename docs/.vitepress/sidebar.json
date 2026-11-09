@@ -1207,6 +1207,24 @@
             ]
           },
           {
+            "text": "Content addressing",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "SPEC",
+                "link": "/specs/build-primitives/content-addressing/SPEC"
+              },
+              {
+                "text": "Testing",
+                "link": "/specs/build-primitives/content-addressing/testing"
+              },
+              {
+                "text": "Decisions",
+                "link": "/specs/build-primitives/content-addressing/decisions"
+              }
+            ]
+          },
+          {
             "text": "Task DAG",
             "collapsed": true,
             "items": [

@@ -545,10 +545,9 @@ leaf hears: each file once, each byte once.
 
 ### D2 — Whether `NarHash` is stored or recomputed
 
-Provisionally **stored**, beside the Merkle identity, rather than recomputed on
-demand. Snix makes `NarCalculationService` a trait precisely so a remote store
-can answer without re-walking the tree and re-streaming every blob. Confirm
-when the content-addressing contract is written.
+Moved to the content-addressing contract as
+[C1](../content-addressing/decisions.md#c1-narhash-is-stored-beside-the-identity-proposed),
+which proposes storing it.
 
 ### D3 — The collision escape hatch
 

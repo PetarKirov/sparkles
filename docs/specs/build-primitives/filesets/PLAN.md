@@ -181,7 +181,9 @@ declaring the new `leave`; `content_addressing.nar.dump` checks it against
 `nix-store --dump` on the same trees. The tee is `NarScheme!(H, Ref, Dirs)`,
 NAR with Merkle encodings beside it, and `CastoreNar` stores the `NarHash`
 beside the identity; `content_addressing.tee.readsOnce` is the gate's "reads
-each file once". Left: the sibling contract, and `FSS8`'s type.
+each file once". The sibling contract is a draft in
+[content-addressing/](../content-addressing/SPEC.md); left are its acceptance,
+with C1, and `FSS8`'s type, `CAO1` and `CAO2`, whose layout C2 leaves open.
 
 ### M7 — The subtree cache
 
