@@ -60,6 +60,7 @@ import sparkles.ui_app.wsi_input : TouchContacts, WsiInput;
 import sparkles.event_horizon.stream_ingest : StreamId, StreamIngest, StreamSink;
 import sparkles.ui_app.frame_schedule : FrameSchedule, FrameSchedulePolicy;
 import sparkles.ui.style : Palette;
+import sparkles.ui.tokens : capabilitiesOf, Profile, TargetCapabilities;
 import sparkles.ui_vulkan;
 import sparkles.vulkan;
 import sparkles.vulkan_wsi;
@@ -960,6 +961,19 @@ unittest
     // With no canvas, the cells.
     auto m = M(NativeFaces.init, true, 10, 20);
     assert(m.width("abc", TextStyle.init) == 3);
+}
+
+/**
+What a native window paints for (`CAP1`): a terminal's full profile, and a
+viewport scrolled by a fraction of a cell (`subCellScroll`, `LAY7`), which the
+Vulkan painter shifts by. Without it an application that asks
+(`fileset-explorer`'s `FXU10`) scrolls by whole rows.
+*/
+TargetCapabilities nativeTarget() @safe pure nothrow @nogc
+{
+    auto c = capabilitiesOf(Profile.full);
+    c.subCellScroll = true;
+    return c;
 }
 
 /// The host an application sees in a native window.
@@ -2524,6 +2538,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         const a = aims[frame % aims.length];
         return a.frame == frame ? a.target : MonoTime.init;
     }
+    host.declareTarget(nativeTarget);
     // The platform determines capabilities; gesture recognition is optional.
     // Applications with raw touch capture (such as sliders) still need to
     // distinguish a touchscreen from a hovering mouse.
@@ -3739,6 +3754,7 @@ void replayNative(alias present, alias handle, Texts)(ref NativeSession session,
 
     NativeHost host;
     host.session_ = &session;
+    host.declareTarget(nativeTarget);
     host.capabilities.keyRelease = cfg.keyRelease;
     WsiInput input;
     host.input_ = &input;
@@ -4386,6 +4402,36 @@ private void writeCapture(ref Gpu gpu, ref GpuBuffer buffer, VkExtent2D extent,
         });
     assert(frame == rec.frames.length);
     assert(app.seen == recApp.seen && app.seen.length == recorded.length);
+}
+
+/// A native window paints a viewport's fraction of a cell, and says so: an
+/// application reading `h.target` scrolls by the pixel there (`LAY7`).
+@("ui_app.native_loop.declaresSubCellScroll")
+@system unittest
+{
+    import sparkles.wsi.events : TextId;
+    import sparkles.wsi.types : wsiOk;
+
+    NativeSession session;
+    session.pixelW = 800;
+    session.pixelH = 480;
+    session.font = CellFont(null, 18, 10, 20);
+    static struct Texts
+    {
+        auto withText(Fn)(TextId, scope Fn fn)
+        {
+            fn("", false);
+            return wsiOk();
+        }
+    }
+    Texts texts;
+    bool seen, subCell;
+    const WindowEvent[][] none;
+    replayNative!((ref NativeHost h) { seen = true; subCell = h.target.subCellScroll; },
+        (ref NativeHost h, in Event e) {})(session, RunConfig.init, texts, none,
+        (in DrawOp[] ops, bool skipped) {});
+    assert(seen && subCell);
+    assert(nativeTarget.subCellScroll && nativeTarget.unicode);
 }
 
 // The points a size of `px` pixels is at `scale`: `pixelsForPoints`
