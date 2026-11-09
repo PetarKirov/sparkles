@@ -20,6 +20,7 @@ verified and every commit green.
 | M7        | `rsync` and `tar`                                                                                                                       | `FXE6`, `FXE7`                                          |
 | M8        | `cargo`, `bazel` and `dub`                                                                                                              | `FXE8`–`FXE10`                                          |
 | M9        | Touch and momentum scrolling; the Android APK with the repository as its root                                                           | `FXU10`, `FXA1`–`FXA3`                                  |
+| M10       | Pixel scrolling in a native window, overlay scrollbars, the I-beam and click-to-caret, a denser type and tree                           | `FXU10`, `FXU11`, `FXU14`–`FXU16`                       |
 
-Progress: M1–M9 are delivered; every row of the ledger is verified, the Cargo and
+Progress: M1–M10 are delivered; every row of the ledger is verified, the Cargo and
 Bazel oracles when their tools are on `PATH`.

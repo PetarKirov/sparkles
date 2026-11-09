@@ -174,13 +174,16 @@ above the dock it focuses the query and, on a phone, asks for the soft
 keyboard. The tree, the help and the Export code **must** scroll by the
 distance a finger moves them, fraction of a row included, keep coasting on a
 lifted finger's speed until it decays, and ease a wheel notch three rows on,
-where the target can show part of a row; on a terminal every scroll lands on a
-whole row at once. Scrolling **must not** move the tree's cursor, and a key
+where the target can show part of a row — every window, the native one on
+Android included, whose host **must** declare that it paints a fraction of a
+cell (`subCellScroll`); on a terminal every scroll lands on a whole row at
+once. Scrolling **must not** move the tree's cursor, and a key
 that moves the cursor out of view **must** bring the view to it. _Detection:_
 recorded taps switch the tabs and step the Export target; a precise scroll of
 2.5 rows leaves the tree at 2.5 with its cursor on the first row; a notch
 reaches 3 over several frames; the recogniser's fling tail moves the tree as
-far as its events add up to.
+far as its events add up to; the native host's target declares
+`subCellScroll`.
 
 **`FXU11` — A touch layout.** On a target without hover, a touch screen, or with
 `--touch`, the explorer **must** draw its touch layout: an app bar with the
@@ -188,10 +191,12 @@ title and the root; the query as a filled, rounded field with no border or
 caption, its canonical form or error under it; a row of chips that insert the
 operators, `**`, a string and a comment at the caret, and clear the query; the
 right group's tabs as a segmented control; and no key hints. Every tap target
-— a chip, a segment, a tree row, an Export control — **must** be at least
-48 dp tall ([`TOK11`](../design-system/SPEC.md)). _Detection:_ a recorded
-touch frame has no `╭` and no key hint, its tree rows are the touch target's
-height apart, and tapping `|` inserts `|` at the caret.
+— a chip, a segment, an Export control — **must** be at least 48 dp tall
+([`TOK11`](../design-system/SPEC.md)). The tree's rows are a dense list:
+each **must** be at least 32 dp tall, and no taller than the fewest whole
+cells that reach it. _Detection:_ a recorded touch frame has no `╭` and no key
+hint, its tree rows are the dense list's height apart, and tapping `|` inserts
+`|` at the caret.
 
 **`FXU12` — Tablet and phone.** The touch layout **must** put the tree beside
 the right group when the screen is at least as wide as two 48-column panes,
@@ -205,6 +210,29 @@ fileset too large to do it live, and the Export tab **must** choose the Nix glob
 mode with a segmented control. Back **must** leave the help, then a tutorial's
 tree, and only then quit (`INP13`). _Detection:_ recorded taps open and close a
 directory, collapse and expand all, compute the ids and select `expand`.
+
+**`FXU14` — Scrollbars.** The tree, the help and the Export code **must** each
+draw an overlay scrollbar at their right edge when their content is taller than
+their view: the thumb's length is the view's share of the content and its place
+the view's position, a fraction of a cell included. On the touch layout the
+bar fades out once the view stops and back in when it moves. With a pointer, a
+press on the bar's column puts the thumb under the pointer, and dragging moves
+the view with it. _Detection:_ a recorded frame of a long tree has a scrollbar
+leaf whose content and viewport are the tree's and its view's heights in cells;
+a recorded press and drag down the tree's bar scrolls the tree to its end.
+
+**`FXU15` — The pointer over the editor.** With a pointer, the pointer **must**
+be the text I-beam over the query editor, a hand over a tab, a chip or a button,
+and the platform's default elsewhere; a click in the editor puts the caret at
+the character under it. _Detection:_ recorded moves over the query, a tab and
+the tree ask the host for `text`, `pointer` and `default`; a click on the
+query's fifth column, past its two-cell prompt, puts the caret before its
+third character.
+
+**`FXU16` — Density.** The explorer **must** open with a 12-point cell font, a
+third under the toolkit's default, on the desktop and on Android; `--font-size`
+overrides it. _Detection:_ the command line's and the Android entry's options
+carry 12 points.
 
 A border caption drawn over its rule **must** mask the rule under it, on a
 pixel target as on a terminal.
@@ -398,7 +426,7 @@ Non-normative: where the parts live.
 | `FXL8`           | `nix/packages/tree-sitter-fileset/` (`grammar.js`, `queries/highlights.scm`)                             |
 | `FXU1`–`FXU8`    | `apps/fileset-explorer` (`explorer.d`, `evaluate.d`, `member_tree.d`, `render.d`)                        |
 | `FXU9`           | `sparkles.ui.components.file_icons` (`fileIcon`, `folderGlyph`), shared with hue's explorer              |
-| `FXU10`–`FXU13`  | `apps/fileset-explorer` (`explorer.d`, `launch.d`); `sparkles.ui.components.scroll_body` (`ScrollBody`)  |
+| `FXU10`–`FXU16`  | `apps/fileset-explorer` (`explorer.d`, `launch.d`); `sparkles.ui.components.scroll_body` (`ScrollBody`)  |
 | `FXA1`–`FXA3`    | `apps/fileset-explorer/src/android_entry.d`, `nix/packages/android/fileset-explorer.nix`                 |
 | `FXT1`, `FXT2`   | `sparkles.syntax.md.model` (`MdBlockKind.tryBlock`), `sparkles.source_view.markdown` (`tryRunners`)      |
 | `FXT3`–`FXT5`    | `apps/fileset-explorer` (`help.d`)                                                                       |

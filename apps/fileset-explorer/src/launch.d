@@ -18,6 +18,24 @@ import explorer : ExplorerApp;
 /// The query the explorer opens with.
 enum defaultQuery = "**/*.md | **/dub.sdl  # documents and recipes";
 
+/// The cell font's size, in points (`FXU16`): a third under the toolkit's
+/// default, for a denser tree and help, on the desktop and on Android.
+enum int explorerFontPoints = 12;
+
+/// The window options the explorer starts from; flags the user types win.
+enum GuiOptions explorerGui = GuiOptions(fontSize: explorerFontPoints);
+
+/// FXU16: the explorer's cell font is 25–40% under the toolkit's.
+@("fileset_explorer.FXU16.density")
+@safe pure nothrow @nogc unittest
+{
+    import sparkles.ui_app.gui_options : defaultFontSizePoints;
+
+    static assert(explorerGui.fontSize == 12);
+    static assert(explorerGui.fontSize <= defaultFontSizePoints * 3 / 4
+        && explorerGui.fontSize >= defaultFontSizePoints * 6 / 10);
+}
+
 /**
 The grammar queries' root when the parsers load by soname from the
 application's own libraries (Android, `FXA3`); empty: the parsers and queries

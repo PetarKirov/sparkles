@@ -70,7 +70,11 @@ private enum tablet = Size(140, 40);
         if (line.canFind(" lib.d"))
             lib = i;
     }
-    assert(lib - app_ == app.rowCells && app.rowCells >= 2, text(app_, " ", lib, " ", app.rowCells));
+    assert(lib - app_ == app.treeRowCells && app.rowCells >= 2, text(app_, " ", lib, " ", app.treeRowCells));
+    // The tree is a dense list: 32 dp to a row, where a chip takes 48.
+    assert(ExplorerApp.cellsFor(32, 16) == 2 && ExplorerApp.cellsFor(48, 16) == 3);
+    assert(ExplorerApp.cellsFor(32, 20) == 2 && ExplorerApp.cellsFor(48, 20) == 3);
+    assert(ExplorerApp.cellsFor(32, 33) == 1);
 
     // `|` inserts ` | ` at the caret, at the query's end.
     auto chipAt = find(*app, "|", tablet);
@@ -94,6 +98,17 @@ private enum tablet = Size(140, 40);
     const phone = Size(60, 60);
     const below = find(*narrow, "Stats", phone), tree = find(*narrow, "Members", phone);
     assert(below.y > tree.y + 4, text(below, " ", tree));
+
+    // A phone's width crowds the chips, the prompt and the app bar, and
+    // squeezes none of them away.
+    const slim = Size(50, 40);
+    const frame = renderFrame(*narrow, "", slim);
+    foreach (line; frame.split('\n'))
+        if (line.canFind("Clear"))
+            foreach (label; ["|", "&", "−", "( )", "**", "\" \"", "#", "⌫"])
+                assert(line.canFind(label), label ~ " is missing:\n" ~ line);
+    assert(frame.canFind("❯ **"), frame);
+    assert(frame.canFind("  2110 members") || frame.canFind("  6 members"), frame);
 }
 
 /// FXU13: a tap opens or closes a directory; collapse and expand all; the

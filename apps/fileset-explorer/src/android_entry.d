@@ -16,7 +16,7 @@ import sparkles.ui_app.gui_options : GuiOptions;
 import sparkles.wsi.platform.android : AndroidWsiMain, logFailure;
 
 import evaluate : Root;
-import launch : defaultQuery, launch, sonameQueriesRoot;
+import launch : defaultQuery, explorerGui, launch, sonameQueriesRoot;
 
 /*
 The APK carries the sparkles repository, the fonts and the grammar queries
@@ -32,7 +32,7 @@ void androidMain()
     if (!extractAssetBundle(data, ["fonts", "grammars", "repo"], buildPath(data, "assets-ready")))
         logFailure("fileset-explorer: the APK's assets could not be extracted");
     sonameQueriesRoot = buildPath(data, "grammars");
-    GuiOptions gui;
+    GuiOptions gui = explorerGui;
     gui.gui = true;
     gui.fontDir = [buildPath(data, "fonts")];
     cast(void) launch(Root(dir: buildPath(data, "repo")), defaultQuery, gui);
