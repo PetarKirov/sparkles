@@ -181,11 +181,13 @@ declaring the new `leave`; `content_addressing.nar.dump` checks it against
 `nix-store --dump` on the same trees. The tee is `NarScheme!(H, Ref, Dirs)`,
 NAR with Merkle encodings beside it, and `CastoreNar` stores the `NarHash`
 beside the identity; `content_addressing.tee.readsOnce` is the gate's "reads
-each file once". The sibling contract is a draft in
-[content-addressing/](../content-addressing/SPEC.md); C1, storing
-`NarHash`, is accepted, and so is C2, iroh's outboard: `outboard.d` holds
-`FSS8`'s type, which `MerkleFold` takes through a `Supply`, checked against
-`bao-tree` (`CAO1`, `CAO2`). Left is the contract's acceptance.
+each file once". The sibling contract,
+[content-addressing/](../content-addressing/SPEC.md), was accepted by the owner
+on 2026-11-09, with its decisions: C1 stores `NarHash` beside the id, C2
+makes iroh's outboard the supplied tree, and C3 has an id name only the
+members' tree. `outboard.d` holds `FSS8`'s type, which `MerkleFold` takes
+through a `Supply`, checked against `bao-tree` (`CAO1`, `CAO2`). M6 is
+complete.
 
 ### M7 — The subtree cache
 
