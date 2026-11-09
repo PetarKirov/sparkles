@@ -1529,18 +1529,19 @@ struct ViewerModel
             diffBlocks: preview.decorations, // `DVN6`
         };
         fittedRows_ = viewRows;
-        foldable = foldableSpans(preview.doc);
+        foldable = parsed.foldable;
         // The preview shares the file's chrome with every other view: the same
         // line numbers over the same source, and the same icon strip carrying
         // the same fold arrows. `maxWidth` above is the CONTENT width, which is
         // what sizes the per-fence scrollbars — it must match the width the
         // first pass lays out at or the two passes wrap differently.
         opt.maxWidth = contentWidthCols;
-        // Rebuilt with the tree: both the hyperlink table the spans index and
-        // the link ranges the pointer is tested against describe THIS build.
+        // Rebuilt with the tree: the hyperlink table the spans index describes
+        // THIS build. The link ranges the pointer is tested against are the
+        // parse's.
         mdLinkTable = MdLinkTable.init;
         opt.linkTable = &mdLinkTable;
-        mdLinks = mdLinkRanges(preview.doc);
+        mdLinks = parsed.links;
         if (windowed)
             buildWindow(opt, anchor);
         else
@@ -2018,9 +2019,10 @@ struct ViewerModel
         };
     }
 
-    // What `collectStructure` found in one parse: a relayout keeps the
-    // document, so it walks the blocks (and copies an omitting fence's body)
-    // once per parse, not once per width.
+    // What a parse holds that no layout changes: its fences, tables, fold
+    // regions and links. A relayout keeps the document, so the blocks are
+    // walked (and an omitting fence's body copied) once per parse, not once
+    // per width.
     private static struct Structure
     {
         const(MdBlock)[] blocks; // the parse walked, by identity
@@ -2029,16 +2031,25 @@ struct ViewerModel
         MdCell[] cells;
         size_t[] tableSpans;
         Span[] tableSpanRanges;
+        Span[] foldable;
+        MdLinkRange[] links;
     }
     private Structure structure;
+
+    // `structure`, walked again only for a new parse.
+    private ref Structure parsed() return
+    {
+        if (structure.blocks !is preview.doc.root.children || structure.source !is preview.doc.source)
+            structure = walkStructure();
+        return structure;
+    }
 
     // Document structure: fence bodies (for the copy affordance) and table
     // cells in document order. The fields slice `structure`; a view that
     // clears them shrinks its slice and leaves the walk intact.
     private void collectStructure()
     {
-        if (structure.blocks !is preview.doc.root.children || structure.source !is preview.doc.source)
-            structure = walkStructure();
+        parsed();
         fences = structure.fences;
         cellList = structure.cells;
         tableSpans = structure.tableSpans;
@@ -2047,7 +2058,8 @@ struct ViewerModel
 
     private Structure walkStructure() const
     {
-        Structure s = { blocks: preview.doc.root.children, source: preview.doc.source };
+        Structure s = { blocks: preview.doc.root.children, source: preview.doc.source,
+            foldable: foldableSpans(preview.doc), links: mdLinkRanges(preview.doc) };
         int tableIdx = -1;
         void collect(in MdBlock blk)
         {
