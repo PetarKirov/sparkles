@@ -35,7 +35,8 @@ import core.thread : Thread;
 import core.time : dur;
 
 import sparkles.core_cli.process_utils : parseCpuTicksFromStat, CpuTicks;
-import bench : Scenario, fillStream, denseStream, workload, scenarioName;
+import bench : Scenario, fillStream, denseStream, workload, scenarioName,
+    joinLatency, parseFrames, parseWrites;
 
 // _SC_CLK_TCK is 2 on Linux; sysconf returns the scheduler tick rate (~100 Hz),
 // the unit of utime/stime in /proc/<pid>/stat.
@@ -53,6 +54,149 @@ struct Config
     int cols = 100;
     int rows = 30;
     string keepStreams; // if set, write streams here and keep them
+    int probeWrites = 300; // the latency probe's writes per run
+}
+
+// --- Child modes: what runs inside the terminal under test ------------------
+
+private long nowNs() @safe nothrow @nogc
+{
+    import core.time : MonoTime, ticksToNSecs;
+
+    return ticksToNSecs(MonoTime.currTime.ticks);
+}
+
+// `--probe LOG [WRITES]` (output-latency.md OPL26): write records of 1 to 64
+// letters to stdout at random 1 to 50 ms intervals, logging each write's
+// stream offset, length and CLOCK_MONOTONIC time. Letters only: the pty
+// translates a newline into two bytes, which would shift every offset after it.
+private int runProbe(string log, int writes)
+{
+    import core.sys.posix.unistd : write;
+    import std.array : appender;
+    import std.format : formattedWrite;
+    import std.random : Random, uniform;
+
+    Thread.sleep(dur!"msecs"(300)); // the window's first frames settle
+    auto rng = Random(42);
+    auto text = appender!string;
+    ulong offset;
+    char[64] buf;
+    foreach (_; 0 .. writes)
+    {
+        const n = uniform!"[]"(1, 64, rng);
+        foreach (k; 0 .. n)
+            buf[k] = cast(char) ('a' + uniform(0, 26, rng));
+        Thread.sleep(dur!"msecs"(uniform!"[]"(1, 50, rng)));
+        const t = nowNs();
+        if (write(1, buf.ptr, n) != n)
+            return 1;
+        text.formattedWrite("%s\t%s\t%s\n", offset, n, t);
+        offset += n;
+    }
+    Thread.sleep(dur!"msecs"(500)); // the last bytes reach the display
+    std.file.write(log, text[]);
+    return 0;
+}
+
+// `--timed FILE -- CMD...` (OPL27): run CMD on this process's stdout, and
+// write its wall time in nanoseconds to FILE.
+private int runTimed(string file, string[] cmd)
+{
+    const t0 = nowNs();
+    auto pid = spawnProcess(cmd);
+    const rc = wait(pid);
+    std.file.write(file, format("%s\n", nowNs() - t0));
+    return rc;
+}
+
+// Runs `args` until `file` exists, then `settleSecs` more, then stops it;
+// gives up after `limitSecs`.
+private void runUntilFile(string[] args, string file, int limitSecs, int settleSecs)
+{
+    auto devnull = File("/dev/null", "w");
+    Pid pid;
+    try
+        pid = spawnProcess(args, stdin, devnull, devnull);
+    catch (ProcessException e)
+    {
+        stderr.writeln("  ! failed to spawn ", args[0], ": ", e.msg);
+        return;
+    }
+    foreach (_; 0 .. limitSecs * 10)
+    {
+        if (exists(file) || tryWait(pid).terminated)
+            break;
+        Thread.sleep(dur!"msecs"(100));
+    }
+    Thread.sleep(dur!"seconds"(settleSecs));
+    try { kill(pid); wait(pid); } catch (Exception) {}
+}
+
+// The latency scenario: each binary runs the probe `reps` times with its
+// latency log on; the two logs are joined into the write-to-photon
+// distribution.
+private void runLatency(ref const Config cfg, string dir)
+{
+    import std.conv : to;
+
+    writefln("# write-to-photon latency: %d writes of 1-64 bytes at 1-50 ms per run",
+        cfg.probeWrites);
+    writefln("%-26s %8s %8s %8s %8s %10s %10s", "binary", "p50 ms", "p95 ms", "p99 ms",
+        "max ms", "superseded", "unshown");
+    foreach (b; cfg.binaries)
+        foreach (rep; 0 .. cfg.reps)
+        {
+            const writes = buildPath(dir, format("writes-%s.tsv", rep));
+            const frames = buildPath(dir, format("frames-%s.tsv", rep));
+            foreach (f; [writes, frames])
+                if (exists(f))
+                    remove(f);
+            // The terminal holds its pane once the probe exits; it is
+            // stopped once the probe's log is written and its frames have
+            // settled — the latency log streams a frame a second after it
+            // started, so a signal loses none the probe's bytes reached.
+            runUntilFile([b, "--exit-behavior", "hold", "--debug",
+                "latency-log=" ~ frames, "--", thisExePath, "--probe", writes,
+                cfg.probeWrites.to!string], writes, 120, 3);
+            if (!exists(writes) || !exists(frames))
+            {
+                writefln("%-26s %s", baseName(b), "FAILED (no logs: is it the native arm?)");
+                continue;
+            }
+            const s = joinLatency(parseWrites(readText(writes)), parseFrames(readText(frames)));
+            writefln("%-26s %8.1f %8.1f %8.1f %8.1f %10d %10d", baseName(b), s.p50, s.p95,
+                s.p99, s.max, s.superseded, s.neverShown);
+        }
+}
+
+// The throughput scenario: `seq 1 2000000` timed from inside the terminal.
+private void runThroughput(ref const Config cfg, string dir)
+{
+    import std.conv : to;
+    import std.string : strip;
+
+    writefln("# throughput: seq 1 2000000, timed inside the terminal");
+    foreach (b; cfg.binaries)
+    {
+        writef("%-26s", baseName(b));
+        foreach (rep; 0 .. cfg.reps)
+        {
+            const file = buildPath(dir, format("seq-%s.ns", rep));
+            if (exists(file))
+                remove(file);
+            // An explicit command's pane holds after it exits: the run ends
+            // when the timing is written.
+            runUntilFile([b, "--exit-behavior", "hold", "--", thisExePath,
+                "--timed", file, "--", "seq", "1", "2000000"], file, 60, 0);
+            if (exists(file))
+                writef(" %7.0f ms", readText(file).strip.to!long / 1e6);
+            else
+                writef(" %10s", "FAILED");
+            stdout.flush();
+        }
+        writeln();
+    }
 }
 
 // --- Measurement ------------------------------------------------------------
@@ -161,12 +305,28 @@ void main(string[] args)
 {
     import std.getopt;
 
+    // The child modes run inside the terminal under test.
+    if (args.length >= 3 && args[1] == "--probe")
+    {
+        import core.stdc.stdlib : exit;
+        import std.conv : to;
+
+        exit(runProbe(args[2], args.length >= 4 ? args[3].to!int : 300));
+    }
+    if (args.length >= 5 && args[1] == "--timed" && args[3] == "--")
+    {
+        import core.stdc.stdlib : exit;
+
+        exit(runTimed(args[2], args[4 .. $]));
+    }
+
     Config cfg;
     string scenarioOpt = "all";
 
     auto help = getopt(
         args,
-        "scenario", "Scenario: idle | churn | all (default: all)", &scenarioOpt,
+        "scenario", "Scenario: idle | render | churn | all, or latency | throughput (default: all)", &scenarioOpt,
+        "probe-writes", "Writes per latency run (default: 300)", &cfg.probeWrites,
         "reps", "Repetitions per (binary, scenario) (default: 3)", &cfg.reps,
         "warmup", "Warmup seconds before sampling (default: 3)", &cfg.warmupSecs,
         "window", "Sampling window in seconds (default: 8)", &cfg.windowSecs,
@@ -186,6 +346,19 @@ void main(string[] args)
             "deterministic workload. Pass two binaries (e.g. before/after a change) to\n" ~
             "compare. Requires a display (the terminal opens a GL window).",
             help.options);
+        return;
+    }
+
+    if (scenarioOpt == "latency" || scenarioOpt == "throughput")
+    {
+        const dir = cfg.keepStreams.length ? cfg.keepStreams : tempStreamDir();
+        mkdirRecurse(dir);
+        if (scenarioOpt == "latency")
+            runLatency(cfg, dir);
+        else
+            runThroughput(cfg, dir);
+        if (cfg.keepStreams.length == 0)
+            try { rmdirRecurse(dir); } catch (Exception) {}
         return;
     }
 

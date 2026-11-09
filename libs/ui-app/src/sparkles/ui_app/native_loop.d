@@ -1625,7 +1625,8 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
     const summarizeFrames = cfg.native.debugging.traceFrames
         || cfg.native.debugging.traceFramesOver > 0 || cfg.native.debugging.frames > 0
         || cfg.native.debugging.resizeStress || cfg.native.debugging.gpuTiming
-        || cfg.native.debugging.frameTrace.length || cfg.native.debugging.frameCounters;
+        || cfg.native.debugging.frameTrace.length || cfg.native.debugging.frameCounters
+        || cfg.native.debugging.latencyLog.length;
     // `--debug frame-counters`: the frame thread's hardware counters, read at
     // each pass's edges (`PRF23`). Opened here: they count this thread.
     FrameCounters* counters = new FrameCounters;
@@ -2347,6 +2348,8 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         host.ingest_ = null;
         ingest.closeAll();
     }
+    // The stream position the frame pass in progress started at.
+    ulong framePosition;
     // The platform determines capabilities; gesture recognition is optional.
     // Applications with raw touch capture (such as sliders) still need to
     // distinguish a touchscreen from a hovering mouse.
@@ -2502,6 +2505,12 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         || cfg.native.debugging.traceFramesOver > 0;
     const traceOver = dur!"msecs"(cfg.native.debugging.traceFramesOver);
     const opened = MonoTime.currTime;
+    LatencyLog latencyLog;
+    if (cfg.native.debugging.latencyLog.length)
+        latencyLog.open(cfg.native.debugging.latencyLog, opened);
+    scope (exit)
+        if (history !is null)
+            latencyLog.close(*history);
     // The device's time is measured where a switch reports it.
     const timeDevice = traceFrames || cfg.native.debugging.gpuTiming
         || cfg.native.debugging.frameTrace.length || cfg.native.debugging.renderdocCapture > 0;
@@ -2532,6 +2541,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         FrameRecord r;
         r.number = recorded++;
         r.start = started - opened - timing.rebuild;
+        r.streamPosition = framePosition;
         r.flags = flags;
         if (timing.rebuild > Duration.zero)
             r.flags |= FrameFlags.rebuilt;
@@ -2995,6 +3005,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                 cast(void) waitForNewest(gpu.presentWait, gpu.vk, 50.msecs,
                     (ulong id, MonoTime at) { onShown(id - 1, at, Duration.zero); });
             const started = MonoTime.currTime;
+            framePosition = ingest.position; // the bytes this frame shows (`OPL25`)
             lastPass = started;
             // The pass's zones, on this thread, until it ends however it does.
             zones = FrameZones.init;
@@ -3165,7 +3176,10 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                     zoneTimes.note(r.zones);
                 }
                 if (history !is null)
+                {
                     history.add(r);
+                    latencyLog.write(*history, now() - 1.seconds);
+                }
                 recordMade = true;
             }
             // What the device says reached the display, its record now in
@@ -3270,6 +3284,8 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         if (tickNative(wsi, loop, timeout).hasError)
             break;
         drainEvents();
+        if (history !is null)
+            latencyLog.write(*history, now() - 1.seconds);
         if (session.nextTitlePattern.length && session.nextTitleFace.settled)
             lc.exposed(); // the frame takes the new face
         // An interface face the desktop changed to, once found: bound with
@@ -4271,6 +4287,76 @@ private void writeFrameTrace(in FrameHistory!4096 history, scope const(string)[]
     catch (Exception e)
         whyNot(i"native window frame trace: $(path): $(e.msg)");
 }
+/*
+`--debug latency-log=PATH`: one line per recorded frame — its number, its
+start and display time in `CLOCK_MONOTONIC` nanoseconds (display -1 where
+unknown), and the stream bytes delivered before it started
+(output-latency.md `OPL25`, the input `OPL26` joins against).
+
+Written as the run goes, a frame once a second has passed since it started —
+its display time has come back by then, or never will — and the rest when the
+window closes, so a run ended by a signal keeps all but its last second.
+*/
+private struct LatencyLog
+{
+    import std.stdio : File;
+
+    File file;
+    ulong next;   // the first frame number not yet written
+    long origin;  // the run's origin, in CLOCK_MONOTONIC nanoseconds
+    string path;
+
+    void open(string path, MonoTime opened) @system
+    {
+        this.path = path;
+        origin = (opened - MonoTime.zero).total!"nsecs";
+        try
+        {
+            file = File(path, "w");
+            file.write("frame\tstart_ns\tshown_ns\tstream_position\n");
+            file.flush();
+        }
+        catch (Exception e)
+            whyNot(i"native window latency log: $(path): $(e.msg)");
+    }
+
+    // Writes the frames that started before `settled` (from the run's
+    // origin), or every frame when `settled` is `Duration.max`.
+    void write(in FrameHistory!4096 history, Duration settled) @system
+    {
+        if (!file.isOpen)
+            return;
+        try
+        {
+            foreach (ref r; history[])
+            {
+                if (r.number < next)
+                    continue;
+                if (r.start >= settled)
+                    break;
+                file.writef("%s\t%s\t%s\t%s\n", r.number, origin + r.start.total!"nsecs",
+                    r.shownKnown ? origin + r.shown.total!"nsecs" : -1, r.streamPosition);
+                next = r.number + 1;
+            }
+            file.flush();
+        }
+        catch (Exception e)
+        {
+            whyNot(i"native window latency log: $(path): $(e.msg)");
+            file.close();
+        }
+    }
+
+    void close(in FrameHistory!4096 history) @system
+    {
+        if (!file.isOpen)
+            return;
+        write(history, Duration.max);
+        note(i"native window latency log: $(next) frames in $(path)");
+        file.close();
+    }
+}
+
 /// A cell is the line its size names, as on the raylib arm, whatever the
 /// face's rounding at a whole em would make it.
 @("ui_app.native_loop.aCellIsTheLineItsSizeNames")
