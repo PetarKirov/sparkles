@@ -19,7 +19,6 @@ import std.range.primitives : put;
 import sparkles.base.text.case_style : CaseStyle;
 import sparkles.base.text.wire_names : AnyFormat, WireCase;
 import sparkles.base.text.writers : writeEnumMemberName, writeValue;
-import sparkles.build_primitives.gitignore : gitGlobMatch;
 
 import sparkles.build_primitives.task.model : PlanExpected, planErr, planOk;
 import sparkles.build_primitives.workspace.package_graph : longestPrefixOwner, normalizeRepoPath, PackageEdge,
@@ -175,6 +174,90 @@ struct SelectionError
             put(w, detail);
         }
     }
+}
+
+/**
+Whether `text` matches the git-style glob `pattern` as a whole: `*` and `?`
+stop at `/`, `**` crosses it, and `\` escapes the next character. A selector
+names a package, not a file, so this is not a fileset pattern.
+*/
+bool gitGlobMatch(in string pattern, in const(char)[] text) @safe pure nothrow
+    => globMatchAt(pattern, 0, text, 0);
+
+///
+@("build_primitives.workspace.select.gitGlobMatch")
+@safe pure nothrow unittest
+{
+    assert(gitGlobMatch("sparkles:ui-*", "sparkles:ui-tui"));
+    assert(gitGlobMatch("libs/ui*", "libs/ui-sdl3"));
+    assert(!gitGlobMatch("libs/*", "libs/ui/nested"), "`*` stops at `/`");
+    assert(gitGlobMatch("libs/**", "libs/ui/nested"));
+    assert(gitGlobMatch("ba?e", "base"));
+    assert(!gitGlobMatch(`b\*`, "bx"));
+}
+
+private bool globMatchAt(in string pattern, size_t patternIndex, in const(char)[] text,
+    size_t textIndex) @safe pure nothrow
+{
+    while (patternIndex < pattern.length)
+    {
+        const ch = pattern[patternIndex];
+        if (ch == '*')
+        {
+            if (patternIndex + 1 < pattern.length && pattern[patternIndex + 1] == '*')
+            {
+                size_t next = patternIndex + 2;
+                while (next < pattern.length && pattern[next] == '*')
+                    next++;
+
+                if (next < pattern.length && pattern[next] == '/')
+                {
+                    if (globMatchAt(pattern, next + 1, text, textIndex))
+                        return true;
+                }
+
+                foreach (i; textIndex .. text.length + 1)
+                    if (globMatchAt(pattern, next, text, i))
+                        return true;
+
+                return false;
+            }
+
+            const next = patternIndex + 1;
+            if (globMatchAt(pattern, next, text, textIndex))
+                return true;
+
+            size_t i = textIndex;
+            while (i < text.length && text[i] != '/')
+            {
+                i++;
+                if (globMatchAt(pattern, next, text, i))
+                    return true;
+            }
+            return false;
+        }
+
+        if (ch == '?')
+        {
+            if (textIndex >= text.length || text[textIndex] == '/')
+                return false;
+
+            patternIndex++;
+            textIndex++;
+            continue;
+        }
+
+        if (ch == '\\' && patternIndex + 1 < pattern.length)
+            patternIndex++;
+
+        if (textIndex >= text.length || pattern[patternIndex] != text[textIndex])
+            return false;
+
+        patternIndex++;
+        textIndex++;
+    }
+
+    return textIndex == text.length;
 }
 
 /// Whether `selector` is a glob rather than a literal.

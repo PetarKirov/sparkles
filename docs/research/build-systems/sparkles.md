@@ -206,7 +206,7 @@ even when the timing result is favorable.
 [concepts]: ./concepts.md
 [manifest]: ../../../libs/build-primitives/src/sparkles/build_primitives/dub_manifest.d
 [recipe]: ../../../libs/build-primitives/src/sparkles/build_primitives/dub_recipe.d
-[glob]: ../../../libs/build-primitives/src/sparkles/build_primitives/glob_walk.d
+[glob]: https://github.com/PetarKirov/sparkles/blob/e70f9016cc5d6dfaf80468b46d8fe2f95924e58f/libs/build-primitives/src/sparkles/build_primitives/glob_walk.d
 [git-env]: ../../../libs/build-primitives/src/sparkles/build_primitives/git_env.d
 [provenance]: ./provenance.md
 [reproducibility]: ./reproducibility.md

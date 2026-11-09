@@ -9,8 +9,8 @@ dependency cycle — scanning and cataloging sit above `VcsRepo`._
 
 A marker-based walk from one or more roots, honouring `.gitignore`, exclude
 globs, a max depth, and sensible default exclusions, run in parallel on the
-`event-horizon` loop. It reuses the existing gitignore-aware repo walker
-(`walkGitRepository` from the TUI-widgets tree). The marker set is **`.git` _and_
+`event-horizon` loop. It reuses the gitignore-aware fileset listing
+(`sparkles.build_primitives.fileset.listing`). The marker set is **`.git` _and_
 `.jj/`** ([D8](./DECISIONS.md), [Designing for jj](./jj-model.md)): a colocated
 repo (both present) is deduped to **one** jj-authoritative `RepoRef`, and a
 non-colocated jj repo (`.jj/` only, its git store hidden at `.jj/repo/store/git`)
