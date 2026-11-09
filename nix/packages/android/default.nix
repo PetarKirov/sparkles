@@ -26,6 +26,7 @@ in
     ./build-d-android-lib.nix
     ./build-d-android-tests.nix
     ./base-tests.nix
+    ./fileset-explorer.nix
     ./font-tests.nix
     ./hello.nix
     ./hue.nix
@@ -126,6 +127,8 @@ in
         # The text lab's APK: its own closure (the Vulkan canvas, no
         # tree-sitter), otherwise built by nothing in CI.
         text-lab-apk = config.packages.text-lab-apk;
+        # The fileset explorer on the native arm, the repository as its root.
+        fileset-explorer-apk = config.packages.fileset-explorer-apk;
       };
     };
 }

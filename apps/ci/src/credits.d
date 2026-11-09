@@ -87,6 +87,13 @@ immutable CreditedApp[] creditedApps = [
         apkBuilders: [androidAppNativePath],
         nixBuilders: ["nix/packages/android/hue.nix", "nix/packages/hue.nix"],
     ),
+    // dub builds its Android library from the recipes, so its native
+    // libraries are the manifests' and no static archive is listed in Nix.
+    CreditedApp(
+        name: "fileset-explorer",
+        appDir: "apps/fileset-explorer",
+        nixBuilders: ["nix/packages/android/fileset-explorer.nix"],
+    ),
 ];
 
 /// Repo-relative paths the check reads.
@@ -785,6 +792,8 @@ version (unittest)
             "nix/packages/android/terminal.nix": fixtureAssets,
             "nix/packages/android/hue.nix": fixtureAssets,
             "nix/packages/hue.nix": "",
+            "apps/fileset-explorer/dub.sdl": `dependency "sparkles:base" path="../.."`,
+            "nix/packages/android/fileset-explorer.nix": fixtureAssets,
         ];
     }
 
@@ -814,7 +823,7 @@ version (unittest)
 {
     const tree = fixtureTree();
     const report = checkCredits((p) => p in tree ? tree[p] : null, fixtureParts(),
-        ["index": allParts, "terminal": allParts, "hue": allParts]);
+        ["index": allParts, "terminal": allParts, "hue": allParts, "fileset-explorer": allParts]);
     assert(report.ok, report.problems.join("; ") ~ report.pageErrors.join("; "));
 }
 
@@ -825,7 +834,7 @@ version (unittest)
     auto parts = fixtureParts();
     parts.remove("raylib");
     const report = checkCredits((p) => p in tree ? tree[p] : null, parts,
-        ["index": allParts, "terminal": allParts, "hue": allParts]);
+        ["index": allParts, "terminal": allParts, "hue": allParts, "fileset-explorer": allParts]);
     assert(!report.ok);
     assert(report.uncredited.map!(s => s.token[]).array.sort.uniq.array
         == ["-lraylib", "libraylib.a"]);
@@ -842,7 +851,7 @@ version (unittest)
     const report = checkCredits((p) => p in tree ? tree[p] : null, parts,
         [
             "index": allParts ~ "<!-- @include: ./parts/glfw.md -->\n",
-            "terminal": allParts, "hue": allParts,
+            "terminal": allParts, "hue": allParts, "fileset-explorer": allParts,
         ]);
     assert(report.unshipped == ["glfw"]);
 }
@@ -856,7 +865,7 @@ version (unittest)
     const report = checkCredits((p) => p in tree ? tree[p] : null, fixtureParts(),
         [
             "index": allParts, "terminal": "<!-- @include: ./parts/raylib.md -->\n",
-            "hue": allParts,
+            "hue": allParts, "fileset-explorer": allParts,
         ]);
     assert(report.pageErrors.canFind(
         "docs/credits/terminal.md does not include parts/bolts.md"));
@@ -876,7 +885,7 @@ version (unittest)
         ~ "| Home | https://example.org |\n| Ships as | `sparkles:base` |\n\n"
         ~ "<!-- @include: ../licenses/upstream/LICENSE -->\n";
     const page = allParts ~ "<!-- @include: ./parts/upstream.md -->\n";
-    const pages = ["index": page, "terminal": page, "hue": page];
+    const pages = ["index": page, "terminal": page, "hue": page, "fileset-explorer": page];
     const report = checkCredits((p) => p in tree ? tree[p] : null, parts, pages);
     assert(report.ok, report.problems.join("; ") ~ report.pageErrors.join("; "));
 
