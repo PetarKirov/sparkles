@@ -195,6 +195,129 @@ uint chooseImageCount(in VkSurfaceCapabilitiesKHR caps) @safe pure nothrow @nogc
 }
 
 /**
+How many images to ask for when the swapchain may present in any of several
+modes (`VK_KHR_swapchain_maintenance1`): $(LREF chooseImageCount) over the
+largest minimum and the smallest non-zero maximum the surface reports for
+them, so the count is valid whichever mode a present switches to.
+*/
+uint chooseImageCountAcross(scope const VkSurfaceCapabilitiesKHR[] perMode)
+    @safe pure nothrow @nogc
+in (perMode.length > 0, "at least the chosen mode")
+{
+    VkSurfaceCapabilitiesKHR combined = perMode[0];
+    foreach (ref c; perMode[1 .. $])
+    {
+        if (c.minImageCount > combined.minImageCount)
+            combined.minImageCount = c.minImageCount;
+        if (c.maxImageCount && (combined.maxImageCount == 0
+                || c.maxImageCount < combined.maxImageCount))
+            combined.maxImageCount = c.maxImageCount;
+    }
+    return chooseImageCount(combined);
+}
+
+///
+@("vulkan_wsi.swapchain.chooseImageCountAcross.fitsEveryMode")
+@safe pure nothrow @nogc unittest
+{
+    VkSurfaceCapabilitiesKHR fifo, mailbox;
+    fifo.minImageCount = 2;
+    mailbox.minImageCount = 4;
+    assert(chooseImageCountAcross([fifo]) == 3);
+    assert(chooseImageCountAcross([fifo, mailbox]) == 5, "mailbox's minimum, plus one");
+    fifo.maxImageCount = 4;
+    assert(chooseImageCountAcross([mailbox, fifo]) == 4, "the smallest maximum bounds it");
+}
+
+/**
+What a surface supports of the present path, for one present mode
+(`OPL20`, `OPL22`, `OPL23` of the output-latency specification), as
+`vkGetPhysicalDeviceSurfaceCapabilities2KHR` reports it: present ids and
+waits 2, present timing and the stages it can report, and the present modes
+compatible with the one asked about. A device without the extensible query
+reports only `caps`.
+*/
+struct SurfacePresentSupport
+{
+    VkSurfaceCapabilitiesKHR caps; ///
+    bool presentId2;               /// both `presentId2Supported` and `presentWait2Supported`
+    bool presentTiming;            /// `presentTimingSupported`
+    bool presentAtAbsoluteTime;    /// `presentAtAbsoluteTimeSupported`
+    VkPresentStageFlagsEXT presentStages; /// the stages it can report
+    /// The modes compatible with the mode asked about, itself included;
+    /// empty without a surface maintenance1.
+    VkPresentModeKHR[8] compatible;
+    uint compatibleCount; /// ditto
+}
+
+// A swapchain's present path, planned before it is created.
+private struct PresentPath
+{
+    SurfacePresentSupport support;
+    uint imageCount;
+    VkSwapchainCreateFlagsKHR flags;
+    VkPresentModeKHR[8] modes; // created for, to switch between; empty for one
+    uint modeCount;
+}
+
+/**
+Asks the surface of `vk` what it supports in `mode` ($(LREF
+SurfacePresentSupport)): through the extensible query where the instance has
+it, chaining only what the device enabled, else through the plain one.
+*/
+VkResult querySurfaceSupport(Context)(ref Context vk, VkPresentModeKHR mode,
+    out SurfacePresentSupport support) @system nothrow
+{
+    static if (is(typeof(vk.surfaceCapabilities2) : bool))
+    {
+        if (vk.surfaceCapabilities2 && vk.instance.getPhysicalDeviceSurfaceCapabilities2KHR !is null)
+        {
+            const maintenance = vk.surfaceMaintenance1 && mode != anyPresentMode;
+            auto asked = vkInfo(VkSurfacePresentModeKHR(presentMode: mode));
+            auto info = vkInfo(VkPhysicalDeviceSurfaceInfo2KHR(
+                pNext: maintenance ? &asked : null, surface: vk.surface));
+            auto id2 = vkInfo(VkSurfaceCapabilitiesPresentId2KHR());
+            auto wait2 = vkInfo(VkSurfaceCapabilitiesPresentWait2KHR());
+            auto timing = vkInfo(VkPresentTimingSurfaceCapabilitiesEXT());
+            auto compatible = vkInfo(VkSurfacePresentModeCompatibilityKHR(
+                presentModeCount: cast(uint) support.compatible.length,
+                pPresentModes: support.compatible.ptr));
+            auto caps2 = vkInfo(VkSurfaceCapabilities2KHR());
+            void chain(T)(ref T s)
+            {
+                s.pNext = caps2.pNext;
+                caps2.pNext = &s;
+            }
+            if (vk.presentWait2)
+            {
+                chain(id2);
+                chain(wait2);
+            }
+            if (vk.presentTiming)
+                chain(timing);
+            if (maintenance)
+                chain(compatible);
+            const r = vk.instance.getPhysicalDeviceSurfaceCapabilities2KHR(vk.physicalDevice,
+                &info, &caps2);
+            if (r < 0)
+                return r;
+            support.caps = caps2.surfaceCapabilities;
+            support.presentId2 = id2.presentId2Supported == VK_TRUE
+                && wait2.presentWait2Supported == VK_TRUE;
+            support.presentTiming = timing.presentTimingSupported == VK_TRUE;
+            support.presentAtAbsoluteTime = timing.presentAtAbsoluteTimeSupported == VK_TRUE;
+            support.presentStages = timing.presentStageQueries;
+            if (maintenance)
+                support.compatibleCount = compatible.presentModeCount < support.compatible.length
+                    ? compatible.presentModeCount : cast(uint) support.compatible.length;
+            return r;
+        }
+    }
+    return vk.instance.getPhysicalDeviceSurfaceCapabilitiesKHR(vk.physicalDevice, vk.surface,
+        &support.caps);
+}
+
+/**
 What a resize should do with the swapchain we already have.
 
 `wanted` is $(LREF chooseExtent)'s answer, so a minimised window on X11/Win32
@@ -287,7 +410,140 @@ struct Swapchain
     private VkSwapchainKHR[] _retired;
     private ulong[] _retiredAt; // ditto
 
+    /**
+    Whether the swapchain was created for `VK_KHR_present_id2` and
+    `VK_KHR_present_wait2` (`OPL20` of the output-latency specification):
+    its presents carry `VkPresentId2KHR` and are waited on with
+    `vkWaitForPresent2KHR`. Where the device and the surface support both.
+    */
+    bool presentId2;
+
+    /**
+    Whether the swapchain was created for `VK_EXT_present_timing` (`OPL22`),
+    its timing queue sized to $(LREF timingQueueSize): where the device and
+    the surface support it.
+    */
+    bool presentTiming;
+    /// Whether a timed present may carry an absolute target time: the
+    /// device's feature and the surface's support.
+    bool presentAtAbsoluteTime;
+    /// The stages the surface can report a present reaching.
+    VkPresentStageFlagsEXT presentStages;
+    /**
+    How many timed presents the swapchain keeps results for: set by the
+    owner before a swapchain is created, at least the frames in flight plus
+    one (`OPL22`); 0 creates none for present timing.
+    */
+    uint timingQueueSize;
+
+    // The present modes the swapchain was created for (`OPL23`), the chosen
+    // one among them; empty unless it can switch between them.
+    private VkPresentModeKHR[8] _modes;
+    private uint _modeCount;
+    // The images to ask for, across the modes compatible with `_countFor`:
+    // the surface's minima per mode do not change with its size.
+    private uint _countAcross;
+    private VkPresentModeKHR _countFor = anyPresentMode;
+
     @disable this(this);
+
+    /**
+    The present modes this swapchain switches between without a rebuild
+    (`VK_KHR_swapchain_maintenance1`, `OPL23`): every mode the surface
+    reported compatible with the one it was created in. Empty where it
+    cannot switch.
+    */
+    const(VkPresentModeKHR)[] compatiblePresentModes() const return @safe pure nothrow @nogc
+        => _modes[0 .. _modeCount];
+
+    /**
+    Switches the present mode to `mode` from the next present on, without a
+    rebuild, where the swapchain was created compatible with it (`OPL23`).
+    False otherwise: the caller sets $(LREF presentMode) and rebuilds.
+    */
+    bool switchPresentMode(VkPresentModeKHR mode) @safe pure nothrow @nogc
+    {
+        if (mode == presentMode)
+            return true;
+        if (!offersPresentMode(_modes[0 .. _modeCount], mode))
+            return false;
+        presentMode = mode;
+        return true;
+    }
+
+    // The present path of a swapchain about to be created in `presentMode`
+    // on a surface whose plain capabilities are `caps`: what it supports,
+    // the modes and flags to create it with, and how many images.
+    private static PresentPath planPath(Context)(ref Swapchain sc, ref Context vk,
+        in VkSurfaceCapabilitiesKHR caps) @system nothrow
+    {
+        PresentPath p;
+        if (querySurfaceSupport(vk, sc.presentMode, p.support) < 0)
+            p.support = SurfacePresentSupport(caps: caps);
+        p.imageCount = chooseImageCount(p.support.caps);
+        static if (is(typeof(vk.swapchainMaintenance1) : bool))
+        {
+            const listed = p.support.compatible[0 .. p.support.compatibleCount];
+            if (vk.swapchainMaintenance1 && listed.length > 1
+                && offersPresentMode(listed, sc.presentMode))
+            {
+                p.modes = p.support.compatible;
+                p.modeCount = p.support.compatibleCount;
+                if (sc._countFor != sc.presentMode)
+                {
+                    VkSurfaceCapabilitiesKHR[8] perMode;
+                    uint known;
+                    foreach (mode; listed)
+                    {
+                        SurfacePresentSupport each;
+                        if (querySurfaceSupport(vk, mode, each) >= 0)
+                            perMode[known++] = each.caps;
+                    }
+                    sc._countAcross = known ? chooseImageCountAcross(perMode[0 .. known])
+                        : p.imageCount;
+                    sc._countFor = sc.presentMode;
+                }
+                if (sc._countAcross > p.imageCount)
+                    p.imageCount = sc._countAcross;
+            }
+        }
+        with (VkSwapchainCreateFlagBitsKHR)
+        {
+            if (p.support.presentId2)
+                p.flags |= VK_SWAPCHAIN_CREATE_PRESENT_ID_2_BIT_KHR
+                    | VK_SWAPCHAIN_CREATE_PRESENT_WAIT_2_BIT_KHR;
+            if (p.support.presentId2 && p.support.presentTiming && sc.timingQueueSize > 0)
+                p.flags |= VK_SWAPCHAIN_CREATE_PRESENT_TIMING_BIT_EXT;
+        }
+        return p;
+    }
+
+    // What `planPath` decided, once the swapchain it was for exists: the
+    // timing queue sized, or present timing given up without it.
+    private static void adoptPath(Context)(ref Swapchain sc, ref Context vk, in PresentPath p)
+        @system nothrow
+    {
+        with (VkSwapchainCreateFlagBitsKHR)
+        {
+            sc.presentId2 = (p.flags & VK_SWAPCHAIN_CREATE_PRESENT_ID_2_BIT_KHR) != 0;
+            sc.presentTiming = (p.flags & VK_SWAPCHAIN_CREATE_PRESENT_TIMING_BIT_EXT) != 0;
+        }
+        sc._modes = p.modes;
+        sc._modeCount = p.modeCount;
+        sc.presentStages = p.support.presentStages;
+        sc.presentAtAbsoluteTime = false;
+        static if (is(typeof(vk.presentTiming) : bool))
+        {
+            if (sc.presentTiming)
+                sc.presentTiming = vk.device.setSwapchainPresentTimingQueueSizeEXT !is null
+                    && vk.device.setSwapchainPresentTimingQueueSizeEXT(vk.device.device,
+                        sc.handle, sc.timingQueueSize) >= 0;
+            sc.presentAtAbsoluteTime = sc.presentTiming && vk.presentAtAbsoluteTime
+                && p.support.presentAtAbsoluteTime;
+        }
+        else
+            sc.presentTiming = false;
+    }
 
     /**
     Create a swapchain sized for `windowPixels`.
@@ -345,9 +601,16 @@ struct Swapchain
         if (sc.extent.width == 0 || sc.extent.height == 0)
             return err!void("swapchain extent is zero (window minimised?)");
 
+        // A new surface is asked afresh what its modes need.
+        sc._countFor = anyPresentMode;
+        auto path = planPath(sc, vk, caps);
+        auto modesInfo = vkInfo(VkSwapchainPresentModesCreateInfoKHR(
+            presentModeCount: path.modeCount, pPresentModes: path.modes.ptr));
         auto info = vkInfo(VkSwapchainCreateInfoKHR(
+            pNext: path.modeCount ? &modesInfo : null,
+            flags: path.flags,
             surface: vk.surface,
-            minImageCount: chooseImageCount(caps),
+            minImageCount: path.imageCount,
             imageFormat: sc.format,
             imageColorSpace: sc.colorSpace,
             imageExtent: sc.extent,
@@ -373,6 +636,7 @@ struct Swapchain
         if (created.hasError)
             return err!void("vkCreateSwapchainKHR: " ~ describeResult(created.error));
         sc.transform = caps.currentTransform;
+        adoptPath(sc, vk, path);
 
         sc.images = queryVkList!VkImage(
             vk.device.getSwapchainImagesKHR, vk.device.device, sc.handle);
@@ -473,9 +737,16 @@ struct Swapchain
         // Chosen again: a window that comes to want alpha (a client frame
         // after fullscreen) gains it at its next rebuild.
         sc.compositeAlpha = chooseCompositeAlpha(caps.supportedCompositeAlpha, sc.wantsAlpha);
+        // Asked again, in the mode a switch may have changed: what the
+        // surface supports, and the modes compatible with it.
+        auto path = planPath(sc, vk, caps);
+        auto modesInfo = vkInfo(VkSwapchainPresentModesCreateInfoKHR(
+            presentModeCount: path.modeCount, pPresentModes: path.modes.ptr));
         auto info = vkInfo(VkSwapchainCreateInfoKHR(
+            pNext: path.modeCount ? &modesInfo : null,
+            flags: path.flags,
             surface: vk.surface,
-            minImageCount: chooseImageCount(caps),
+            minImageCount: path.imageCount,
             imageFormat: sc.format,
             imageColorSpace: sc.colorSpace,
             imageExtent: extent,
@@ -510,6 +781,7 @@ struct Swapchain
         sc.handle = next;
         sc.extent = extent;
         sc.transform = caps.currentTransform;
+        adoptPath(sc, vk, path);
         sc.images = queryVkList!VkImage(
             vk.device.getSwapchainImagesKHR, vk.device.device, sc.handle);
         if (sc.images.length == 0)
@@ -587,22 +859,45 @@ struct Swapchain
     non-zero `displayTimingId` tags it for `VK_GOOGLE_display_timing`
     (`VulkanDevice.displayTiming`), whose `DisplayTimes` reads back when it
     reached the display.
+
+    On a swapchain created for present ids 2 ($(LREF presentId2)) the id is
+    chained as `VkPresentId2KHR`. A `timing` request, on a swapchain created
+    for present timing and with an id, asks when this present reaches a stage
+    and may aim it at a time (`OPL22`). A swapchain created for several
+    present modes presents in $(LREF presentMode), as $(LREF
+    switchPresentMode) last set it (`OPL23`).
     */
     VkExpected!VkResult present(Context)(ref Context vk, uint imageIndex,
-        VkSemaphore finished, ulong presentId = 0, uint displayTimingId = 0) @system nothrow
+        VkSemaphore finished, ulong presentId = 0, uint displayTimingId = 0,
+        const(VkPresentTimingInfoEXT)* timing = null) @system nothrow
     {
         auto sc = handle;
         auto sem = finished;
         auto tag = vkInfo(VkPresentIdKHR(swapchainCount: 1, pPresentIds: &presentId));
+        auto tag2 = vkInfo(VkPresentId2KHR(swapchainCount: 1, pPresentIds: &presentId));
         auto when = VkPresentTimeGOOGLE(presentID: displayTimingId, desiredPresentTime: 0);
         auto timed = vkInfo(VkPresentTimesInfoGOOGLE(swapchainCount: 1, pTimes: &when));
+        auto timings = vkInfo(VkPresentTimingsInfoEXT(swapchainCount: 1, pTimingInfos: cast(VkPresentTimingInfoEXT*) timing));
+        auto mode = presentMode;
+        auto modeInfo = vkInfo(VkSwapchainPresentModeInfoKHR(swapchainCount: 1,
+            pPresentModes: &mode));
         const(void)* chain = null;
         if (presentId)
-            chain = &tag;
+            chain = presentId2 ? cast(const(void)*) &tag2 : &tag;
         if (displayTimingId)
         {
             timed.pNext = chain;
             chain = &timed;
+        }
+        if (timing !is null && presentTiming && presentId)
+        {
+            timings.pNext = chain;
+            chain = &timings;
+        }
+        if (_modeCount > 1)
+        {
+            modeInfo.pNext = chain;
+            chain = &modeInfo;
         }
         auto info = vkInfo(VkPresentInfoKHR(
             pNext: chain,
@@ -994,4 +1289,191 @@ version (unittest)
         assert(Swapchain.chooseCompositeAlpha(VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR, false)
             == VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR);
     }
+}
+
+version (unittest)
+{
+    // A device and surface with the whole present path: present ids and
+    // waits 2, present timing, and FIFO and MAILBOX compatible, MAILBOX
+    // needing four images where FIFO needs two.
+    private struct PathInstance
+    {
+        extern (C) VkResult function(VkPhysicalDevice, VkSurfaceKHR, VkSurfaceCapabilitiesKHR*)
+            nothrow getPhysicalDeviceSurfaceCapabilitiesKHR = &fakeCaps;
+        extern (C) VkResult function(VkPhysicalDevice, const(VkPhysicalDeviceSurfaceInfo2KHR)*,
+            VkSurfaceCapabilities2KHR*) nothrow getPhysicalDeviceSurfaceCapabilities2KHR = &fakeCaps2;
+        // What only `create` asks, which `recreate` reaches for a first build.
+        extern (C) VkResult function(VkPhysicalDevice, VkSurfaceKHR, uint*, VkSurfaceFormatKHR*)
+            nothrow getPhysicalDeviceSurfaceFormatsKHR;
+        extern (C) VkResult function(VkPhysicalDevice, VkSurfaceKHR, uint*, VkPresentModeKHR*)
+            nothrow getPhysicalDeviceSurfacePresentModesKHR;
+    }
+
+    private struct PathDevice
+    {
+        VkDevice device = cast(VkDevice) cast(void*) 1;
+        extern (C) VkResult function(VkDevice, const(VkSwapchainCreateInfoKHR)*,
+            const(VkAllocationCallbacks)*, VkSwapchainKHR*) nothrow createSwapchainKHR = &fakePathCreate;
+        extern (C) VkResult function(VkDevice, VkSwapchainKHR, uint*, VkImage*) nothrow
+            getSwapchainImagesKHR = &fakeImages;
+        extern (C) void function(VkDevice, VkSwapchainKHR, const(VkAllocationCallbacks)*) nothrow
+            destroySwapchainKHR;
+        extern (C) VkResult function(VkQueue, const(VkPresentInfoKHR)*) nothrow
+            queuePresentKHR = &fakePathPresent;
+        extern (C) VkResult function(VkDevice, VkSwapchainKHR, uint) nothrow
+            setSwapchainPresentTimingQueueSizeEXT = &fakeQueueSize;
+    }
+
+    private struct PathVk
+    {
+        PathInstance instance;
+        PathDevice device;
+        VkPhysicalDevice physicalDevice;
+        VkSurfaceKHR surface;
+        VkQueue queue;
+        bool surfaceCapabilities2 = true, surfaceMaintenance1 = true, swapchainMaintenance1 = true;
+        bool presentWait2 = true, presentTiming = true, presentAtAbsoluteTime = true;
+    }
+
+    private __gshared uint createdModeCount, timingQueue;
+    private __gshared VkPresentModeKHR[8] createdModes;
+    private __gshared VkSwapchainCreateFlagsKHR createdFlags;
+    private __gshared uint createdImages;
+    // What the last present chained.
+    private __gshared ulong presentedId2;
+    private __gshared VkPresentModeKHR presentedMode;
+    private __gshared bool presentedTiming;
+
+    private extern (C) VkResult fakeCaps2(VkPhysicalDevice physical,
+        const(VkPhysicalDeviceSurfaceInfo2KHR)* info, VkSurfaceCapabilities2KHR* caps2) nothrow
+    {
+        fakeCaps(physical, cast(VkSurfaceKHR) info.surface, &caps2.surfaceCapabilities);
+        auto mode = VkPresentModeKHR.VK_PRESENT_MODE_FIFO_KHR;
+        for (auto p = cast(const(VkBaseInStructure)*) info.pNext; p; p = p.pNext)
+            if (p.sType == VkStructureType.VK_STRUCTURE_TYPE_SURFACE_PRESENT_MODE_KHR)
+                mode = (cast(const(VkSurfacePresentModeKHR)*) p).presentMode;
+        caps2.surfaceCapabilities.minImageCount
+            = mode == VkPresentModeKHR.VK_PRESENT_MODE_MAILBOX_KHR ? 4 : 2;
+        caps2.surfaceCapabilities.maxImageCount = 8;
+        for (auto p = cast(VkBaseOutStructure*) caps2.pNext; p; p = p.pNext)
+            with (VkStructureType) switch (p.sType)
+            {
+                case VK_STRUCTURE_TYPE_SURFACE_CAPABILITIES_PRESENT_ID_2_KHR:
+                    (cast(VkSurfaceCapabilitiesPresentId2KHR*) p).presentId2Supported = VK_TRUE;
+                    break;
+                case VK_STRUCTURE_TYPE_SURFACE_CAPABILITIES_PRESENT_WAIT_2_KHR:
+                    (cast(VkSurfaceCapabilitiesPresentWait2KHR*) p).presentWait2Supported = VK_TRUE;
+                    break;
+                case VK_STRUCTURE_TYPE_PRESENT_TIMING_SURFACE_CAPABILITIES_EXT:
+                    auto t = cast(VkPresentTimingSurfaceCapabilitiesEXT*) p;
+                    t.presentTimingSupported = t.presentAtAbsoluteTimeSupported = VK_TRUE;
+                    t.presentStageQueries = VkPresentStageFlagBitsEXT
+                        .VK_PRESENT_STAGE_IMAGE_FIRST_PIXEL_OUT_BIT_EXT;
+                    break;
+                case VK_STRUCTURE_TYPE_SURFACE_PRESENT_MODE_COMPATIBILITY_KHR:
+                    auto c = cast(VkSurfacePresentModeCompatibilityKHR*) p;
+                    const VkPresentModeKHR[2] both = [VkPresentModeKHR.VK_PRESENT_MODE_FIFO_KHR,
+                        VkPresentModeKHR.VK_PRESENT_MODE_MAILBOX_KHR];
+                    c.pPresentModes[0 .. 2] = both;
+                    c.presentModeCount = 2;
+                    break;
+                default:
+                    break;
+            }
+        return VkResult.VK_SUCCESS;
+    }
+
+    private extern (C) VkResult fakePathCreate(VkDevice, const(VkSwapchainCreateInfoKHR)* info,
+        const(VkAllocationCallbacks)*, VkSwapchainKHR* made) nothrow
+    {
+        createdFlags = info.flags;
+        createdImages = info.minImageCount;
+        createdModeCount = 0;
+        for (auto p = cast(const(VkBaseInStructure)*) info.pNext; p; p = p.pNext)
+            if (p.sType == VkStructureType.VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_MODES_CREATE_INFO_KHR)
+            {
+                auto m = cast(const(VkSwapchainPresentModesCreateInfoKHR)*) p;
+                createdModeCount = m.presentModeCount;
+                createdModes[0 .. m.presentModeCount] = m.pPresentModes[0 .. m.presentModeCount];
+            }
+        *made = cast(VkSwapchainKHR) cast(void*) 0x3;
+        return VkResult.VK_SUCCESS;
+    }
+
+    private extern (C) VkResult fakeQueueSize(VkDevice, VkSwapchainKHR, uint size) nothrow
+    {
+        timingQueue = size;
+        return VkResult.VK_SUCCESS;
+    }
+
+    private extern (C) VkResult fakePathPresent(VkQueue, const(VkPresentInfoKHR)* info) nothrow
+    {
+        presentedId2 = 0;
+        presentedMode = anyPresentMode;
+        presentedTiming = false;
+        for (auto p = cast(const(VkBaseInStructure)*) info.pNext; p; p = p.pNext)
+            with (VkStructureType) switch (p.sType)
+            {
+                case VK_STRUCTURE_TYPE_PRESENT_ID_2_KHR:
+                    presentedId2 = (cast(const(VkPresentId2KHR)*) p).pPresentIds[0];
+                    break;
+                case VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_MODE_INFO_KHR:
+                    presentedMode = (cast(const(VkSwapchainPresentModeInfoKHR)*) p).pPresentModes[0];
+                    break;
+                case VK_STRUCTURE_TYPE_PRESENT_TIMINGS_INFO_EXT:
+                    presentedTiming = true;
+                    break;
+                default:
+                    break;
+            }
+        return VkResult.VK_SUCCESS;
+    }
+}
+
+///
+@("vulkan_wsi.swapchain.recreate.createsForThePresentPathTheSurfaceSupports")
+@system nothrow unittest
+{
+    // `OPL20`, `OPL22`, `OPL23`: a surface that supports present ids and
+    // waits 2 and present timing gets a swapchain created for them, its
+    // timing queue sized; one with compatible modes gets them all, and
+    // images enough for the most demanding.
+    import sparkles.wsi : PixelSize = PhysicalSize;
+
+    Swapchain sc;
+    PathVk vk;
+    sc.handle = cast(VkSwapchainKHR) cast(void*) 0x1;
+    sc.extent = VkExtent2D(320, 240);
+    sc.presentMode = VkPresentModeKHR.VK_PRESENT_MODE_FIFO_KHR;
+    sc.timingQueueSize = 3;
+    const r = Swapchain.recreate(sc, vk, PixelSize(640, 480), true);
+    assert(!r.hasError && r.value == SwapchainResize.rebuilt);
+    with (VkSwapchainCreateFlagBitsKHR)
+        assert(createdFlags == (VK_SWAPCHAIN_CREATE_PRESENT_ID_2_BIT_KHR
+            | VK_SWAPCHAIN_CREATE_PRESENT_WAIT_2_BIT_KHR | VK_SWAPCHAIN_CREATE_PRESENT_TIMING_BIT_EXT));
+    assert(sc.presentId2 && sc.presentTiming && sc.presentAtAbsoluteTime && timingQueue == 3);
+    assert(createdModeCount == 2 && sc.compatiblePresentModes.length == 2);
+    assert(createdImages == 5, "mailbox's four, plus one");
+
+    // A switch between compatible modes takes effect on the next present,
+    // the swapchain kept; one to a mode it was not created for is refused.
+    with (VkPresentModeKHR)
+    {
+        assert(sc.switchPresentMode(VK_PRESENT_MODE_MAILBOX_KHR));
+        assert(!sc.switchPresentMode(VK_PRESENT_MODE_IMMEDIATE_KHR));
+        assert(sc.presentMode == VK_PRESENT_MODE_MAILBOX_KHR);
+        const timing = vkInfo(VkPresentTimingInfoEXT());
+        assert(!sc.present(vk, 0, null, 7, 0, &timing).hasError);
+        assert(presentedId2 == 7 && presentedMode == VK_PRESENT_MODE_MAILBOX_KHR && presentedTiming);
+        // Untagged, a present is not timed: its result could not be told apart.
+        assert(!sc.present(vk, 0, null, 0, 0, &timing).hasError);
+        assert(!presentedTiming && presentedMode == VK_PRESENT_MODE_MAILBOX_KHR);
+    }
+
+    // Without the device's support, none of it.
+    vk.presentWait2 = vk.presentTiming = vk.swapchainMaintenance1 = false;
+    assert(!Swapchain.recreate(sc, vk, PixelSize(640, 480), true).hasError);
+    assert(createdFlags == 0 && createdModeCount == 0 && !sc.presentId2 && !sc.presentTiming);
+    assert(sc.compatiblePresentModes.length == 0);
+    assert(!sc.switchPresentMode(VkPresentModeKHR.VK_PRESENT_MODE_FIFO_KHR));
 }

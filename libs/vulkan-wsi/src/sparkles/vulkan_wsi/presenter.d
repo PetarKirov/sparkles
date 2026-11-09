@@ -93,6 +93,7 @@ struct PresentWait
     private ulong[capacity] pending_; // oldest first
     private size_t count_;
     private VkSwapchainKHR swapchain_;
+    private bool wait2_; // the swapchain is waited on with `vkWaitForPresent2KHR`
     ulong lastSubmitted; /// the newest id presented
     ulong completed;     /// the newest id known complete; 0 for none
     MonoTime completedAt; /// when a poll first saw `completed`
@@ -108,14 +109,18 @@ struct PresentWait
         => frame + 1 > lastSubmitted ? frame + 1 : lastSubmitted + 1;
 
     /// Notes that `id` was presented to `swapchain`; a new swapchain drops
-    /// the old one's outstanding ids.
-    void submitted(VkSwapchainKHR swapchain, ulong id)
+    /// the old one's outstanding ids. `wait2` says the swapchain was created
+    /// for `VK_KHR_present_wait2` (`Swapchain.presentId2`, `OPL20` of the
+    /// output-latency specification), whose ids are waited on with
+    /// `vkWaitForPresent2KHR`.
+    void submitted(VkSwapchainKHR swapchain, ulong id, bool wait2 = false)
     {
         if (swapchain !is swapchain_)
         {
             swapchain_ = swapchain;
             count_ = 0;
         }
+        wait2_ = wait2;
         if (count_ == capacity)
             dropOldest();
         pending_[count_++] = id;
@@ -153,10 +158,9 @@ with nothing outstanding, without the commands, on a timeout or an error
 bool waitForNewest(Context, Sink = typeof(null))(ref PresentWait wait, ref Context vk,
     Duration timeout, scope Sink sink = null) @system
 {
-    if (wait.count_ == 0 || wait.swapchain_ is null || vk.device.waitForPresentKHR is null)
+    if (wait.count_ == 0 || wait.swapchain_ is null || !canWait(wait, vk))
         return false;
-    const r = vk.device.waitForPresentKHR(vk.device.device, wait.swapchain_, wait.lastSubmitted,
-        timeout.total!"nsecs");
+    const r = waitOn(wait, vk, wait.lastSubmitted, timeout.total!"nsecs");
     if (r < 0)
     {
         wait.forget();
@@ -182,8 +186,7 @@ size_t pollCompleted(Context, Sink = typeof(null))(ref PresentWait wait, ref Con
     while (wait.count_ > 0 && wait.swapchain_ !is null)
     {
         const id = wait.pending_[0];
-        const r = vk.device.waitForPresentKHR is null ? VkResult.VK_TIMEOUT
-            : vk.device.waitForPresentKHR(vk.device.device, wait.swapchain_, id, 0);
+        const r = !canWait(wait, vk) ? VkResult.VK_TIMEOUT : waitOn(wait, vk, id, 0);
         if (r == VkResult.VK_TIMEOUT || r == VkResult.VK_NOT_READY)
             break;
         if (r < 0)
@@ -200,6 +203,33 @@ size_t pollCompleted(Context, Sink = typeof(null))(ref PresentWait wait, ref Con
             sink(id, at);
     }
     return done;
+}
+
+// Whether `vk` has the command `wait`'s swapchain is waited on with.
+private bool canWait(Context)(ref PresentWait wait, ref Context vk)
+{
+    if (wait.wait2_)
+    {
+        static if (is(typeof(vk.device.waitForPresent2KHR)))
+            return vk.device.waitForPresent2KHR !is null;
+        else
+            return false;
+    }
+    return vk.device.waitForPresentKHR !is null;
+}
+
+// Waits up to `timeout` nanoseconds for present `id` of `wait`'s swapchain,
+// through present wait 2 where the swapchain was created for it.
+private VkResult waitOn(Context)(ref PresentWait wait, ref Context vk, ulong id, ulong timeout)
+    @system
+{
+    static if (is(typeof(vk.device.waitForPresent2KHR)))
+        if (wait.wait2_)
+        {
+            auto info = vkInfo(VkPresentWait2InfoKHR(presentId: id, timeout: timeout));
+            return vk.device.waitForPresent2KHR(vk.device.device, wait.swapchain_, &info);
+        }
+    return vk.device.waitForPresentKHR(vk.device.device, wait.swapchain_, id, timeout);
 }
 
 /// ditto
@@ -411,7 +441,7 @@ PresentationResult!FrameResult presentFrame(alias record, Context, Io = typeof(n
         started = MonoTime.currTime;
         if (auto failed = borrow(io))
             return err!FrameResult(failed);
-        const tagged = canWaitForPresent(vk);
+        const tagged = canWaitForPresent(vk, swapchain.presentId2);
         const presentId = tagged ? presentWait.idFor(frame) : 0;
         swapchain.epoch = ++sync.epoch;
         auto shown = swapchain.present(vk, image, sync.renderFinished(image), presentId);
@@ -424,7 +454,7 @@ PresentationResult!FrameResult presentFrame(alias record, Context, Io = typeof(n
             {
                 if (!shown.hasError)
                 {
-                    presentWait.submitted(swapchain.handle, presentId);
+                    presentWait.submitted(swapchain.handle, presentId, swapchain.presentId2);
                     result.presentId = presentId;
                 }
                 presentWait.pollCompleted(vk);
@@ -464,11 +494,17 @@ PresentationResult!FrameResult presentFrame(alias record, Context, Io = typeof(n
     assert(!none.presented && !none.stale && none.acquired == VkResult.VK_SUCCESS);
 }
 
-// Whether `vk`'s device tags presents and waits on them (`VulkanDevice.presentWait`).
-private bool canWaitForPresent(Context)(ref Context vk)
+// Whether `vk`'s device tags presents and waits on them (`VulkanDevice.presentWait`),
+// or, on a swapchain created for them (`id2`), through present ids and waits 2.
+private bool canWaitForPresent(Context)(ref Context vk, bool id2)
 {
     static if (is(typeof(vk.presentWait) : bool))
+    {
+        static if (is(typeof(vk.device.waitForPresent2KHR)))
+            if (id2)
+                return vk.device.waitForPresent2KHR !is null;
         return vk.presentWait && vk.device.waitForPresentKHR !is null;
+    }
     else
         return false;
 }
@@ -532,7 +568,16 @@ version (unittest)
                 return waitAnswer;
             return id <= shownUpTo ? VkResult.VK_SUCCESS : VkResult.VK_TIMEOUT;
         }
+        // The same through present wait 2, counted apart.
+        VkResult fakeWaitForPresent2(VkDevice, VkSwapchainKHR, const(VkPresentWait2InfoKHR)* info)
+        {
+            ++presentWaits2;
+            if (info.timeout != 0)
+                lastBlockingTimeout = info.timeout;
+            return info.presentId <= shownUpTo ? VkResult.VK_SUCCESS : VkResult.VK_TIMEOUT;
+        }
     }
+    private size_t presentWaits2;
     private ulong presentedId, shownUpTo;
     private size_t presentWaits;
     private ulong lastBlockingTimeout; // nanoseconds; 0 while only polls ran
@@ -552,6 +597,7 @@ version (unittest)
         typeof(&fakeIdle) queueWaitIdle = &fakeIdle;
         typeof(&fakePresent) queuePresentKHR = &fakePresent;
         typeof(&fakeWaitForPresent) waitForPresentKHR = &fakeWaitForPresent;
+        typeof(&fakeWaitForPresent2) waitForPresent2KHR = &fakeWaitForPresent2;
     }
 
     private struct FrameVk
@@ -714,5 +760,33 @@ version (unittest)
     waitAnswer = VkResult.VK_ERROR_SURFACE_LOST_KHR;
     assert(!p.presentWait.waitForNewest(vk, 20.msecs) && p.presentWait.outstanding == 0);
     waitAnswer = VkResult.VK_SUCCESS;
+    lastBlockingTimeout = 0;
+}
+
+@("vulkan_wsi.presenter.aPresentId2SwapchainIsPolledThroughPresentWait2")
+@system unittest
+{
+    import core.time : msecs;
+
+    // `OPL20`, `OPL21`: the ids of a swapchain created for present ids and
+    // waits 2 are polled with `vkWaitForPresent2KHR`, with a zero timeout,
+    // never with the first extension's wait.
+    FrameVk vk;
+    PresentWait wait;
+    const sc = cast(VkSwapchainKHR) cast(void*) 0x50;
+    shownUpTo = presentWaits = presentWaits2 = lastBlockingTimeout = 0;
+    waitAnswer = VkResult.VK_SUCCESS;
+    wait.submitted(sc, 1, true);
+    wait.submitted(sc, 2, true);
+    assert(wait.pollCompleted(vk) == 0 && presentWaits2 == 1 && presentWaits == 0);
+    shownUpTo = 2;
+    assert(wait.pollCompleted(vk) == 2 && wait.completed == 2);
+    assert(presentWaits == 0 && lastBlockingTimeout == 0, "polled, never waited");
+
+    // The X11 pacing wait goes through it too, with its timeout.
+    wait.submitted(sc, 3, true);
+    shownUpTo = 3;
+    assert(wait.waitForNewest(vk, 20.msecs) && lastBlockingTimeout == 20_000_000);
+    assert(presentWaits == 0);
     lastBlockingTimeout = 0;
 }

@@ -3960,7 +3960,7 @@ private FrameOutcome drawFrame(alias draw)(ref Gpu gpu, ref NativeHost host,
     const presented = gpu.swapchain.present(*vk, index, gpu.sync.renderFinished(index), presentId,
         timingId);
     if (!presented.hasError && presentId)
-        gpu.presentWait.submitted(gpu.swapchain.handle, presentId);
+        gpu.presentWait.submitted(gpu.swapchain.handle, presentId, gpu.swapchain.presentId2);
     if (!presented.hasError) gpu.sync.notePresent(index);
     timing.shown = !presented.hasError;
     timing.present = lap();

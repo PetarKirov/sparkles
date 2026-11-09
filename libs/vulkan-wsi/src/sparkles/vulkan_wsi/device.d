@@ -120,6 +120,28 @@ struct VulkanDevice
     /// profiling specification): enabled wherever the device has both
     /// features and presents.
     bool presentWait;
+    /// Whether a swapchain can be created for `VK_KHR_present_id2` and
+    /// `VK_KHR_present_wait2` (`OPL20` of the output-latency specification):
+    /// enabled wherever the device has both features and presents; a
+    /// swapchain uses them where its surface reports support too.
+    bool presentWait2;
+    /// Whether a swapchain can report when each present reached the display
+    /// on a clock it names (`VK_EXT_present_timing`, `OPL22`): enabled
+    /// wherever the device has the feature, present ids 2 and calibrated
+    /// timestamps; a swapchain uses it where its surface reports support.
+    bool presentTiming;
+    /// Whether a present can carry an absolute target time
+    /// (`presentAtAbsoluteTime` of `VK_EXT_present_timing`).
+    bool presentAtAbsoluteTime;
+    /// Whether a swapchain can be created for several present modes and
+    /// switch between them per present (`VK_KHR_swapchain_maintenance1` or
+    /// the EXT, `OPL23`): enabled wherever the device has the feature and
+    /// the instance a surface maintenance1.
+    bool swapchainMaintenance1;
+    /// Whether the instance enabled `VK_KHR_get_surface_capabilities2`.
+    bool surfaceCapabilities2;
+    /// Whether the instance enabled `VK_KHR_surface_maintenance1` or the EXT.
+    bool surfaceMaintenance1;
     /// Whether a present can carry an id and the time it reached the display
     /// be read back, with the display's refresh period
     /// (`VK_GOOGLE_display_timing`, `PRF13`): enabled wherever the device has
@@ -332,6 +354,10 @@ struct VulkanDevice
         timestampValidBits = 0;
         calibratedTimestamps = false;
         presentWait = false;
+        presentWait2 = false;
+        presentTiming = false;
+        presentAtAbsoluteTime = false;
+        swapchainMaintenance1 = false;
         displayTiming = false;
         memoryBudget = false;
         dynamicRendering = false;
@@ -349,6 +375,8 @@ struct VulkanDevice
         instance = InstanceCommands.init;
         global = GlobalCommands.init;
         debugUtils = false;
+        surfaceCapabilities2 = false;
+        surfaceMaintenance1 = false;
     }
 
     // Whether `physical`'s queue `family` can present on the display, asked
@@ -436,7 +464,7 @@ package:
                 VulkanWsiOperation.createInstance, VkResult.VK_ERROR_EXTENSION_NOT_PRESENT,
                 "required native surface extension is unavailable");
 
-        const(char)*[4] names;
+        const(char)*[6] names;
         uint nameCount;
         names[nameCount++] = khrSurface.ptr;
         names[nameCount++] = platform.ptr;
@@ -444,12 +472,27 @@ package:
             && advertised.hasExtension(extDebugUtils);
         if (wantDebugUtils)
             names[nameCount++] = extDebugUtils.ptr;
+        // The extensible surface query, and the present modes compatible
+        // with one another through it (`OPL20`, `OPL22`, `OPL23` of the
+        // output-latency specification): the KHR, else the EXT.
+        const wantCaps2 = advertised.hasExtension(khrGetSurfaceCapabilities2);
+        if (wantCaps2)
+            names[nameCount++] = khrGetSurfaceCapabilities2.ptr;
+        const surfaceMaintenance = !wantCaps2 ? null
+            : advertised.hasExtension(khrSurfaceMaintenance1) ? khrSurfaceMaintenance1
+            : advertised.hasExtension(extSurfaceMaintenance1) ? extSurfaceMaintenance1 : null;
+        if (surfaceMaintenance !is null)
+            names[nameCount++] = surfaceMaintenance.ptr;
         const portability = instancePortability(global, names[0 .. nameCount]);
         if (portability.addExtension)
             names[nameCount++] = khrPortabilityEnumeration.ptr;
         auto made = createInstanceWith(request, names[0 .. nameCount], portability);
         if (!made.hasError)
+        {
             debugUtils = wantDebugUtils && instance.has!extDebugUtils;
+            surfaceCapabilities2 = wantCaps2 && instance.has!khrGetSurfaceCapabilities2;
+            surfaceMaintenance1 = surfaceCapabilities2 && surfaceMaintenance !is null;
+        }
         return made;
     }
 
@@ -543,7 +586,53 @@ package:
 
         const wantDisplayTiming = presents && advertised.hasExtension(googleDisplayTiming);
 
-        const(char)*[12] deviceExtensions;
+        // Present ids and waits 2, present timing and swapchain maintenance1
+        // (`OPL20`, `OPL22`, `OPL23`): each feature asked of a device that
+        // lists its extension, and enabled by `planPresentPath`.
+        PresentPathOffer offer = {
+            surfaceCapabilities2: surfaceCapabilities2,
+            surfaceMaintenance1: surfaceMaintenance1,
+            presentId2: advertised.hasExtension(khrPresentId2),
+            presentWait2: advertised.hasExtension(khrPresentWait2),
+            presentTiming: advertised.hasExtension(extPresentTiming),
+            khrSwapchainMaintenance1: advertised.hasExtension(khrSwapchainMaintenance1),
+            extSwapchainMaintenance1: advertised.hasExtension(extSwapchainMaintenance1),
+            calibrated: calibration != CalibrationPlan.none,
+        };
+        auto presentId2Feature = vkInfo(VkPhysicalDevicePresentId2FeaturesKHR());
+        auto presentWait2Feature = vkInfo(VkPhysicalDevicePresentWait2FeaturesKHR());
+        auto presentTimingFeature = vkInfo(VkPhysicalDevicePresentTimingFeaturesEXT());
+        auto maintenanceFeature = vkInfo(VkPhysicalDeviceSwapchainMaintenance1FeaturesKHR());
+        if (presents && apiVersion >= apiVersion11 && instance.has!vkVersion11)
+        {
+            void* query;
+            void ask(T)(ref T feature, bool listed)
+            {
+                if (!listed)
+                    return;
+                feature.pNext = query;
+                query = &feature;
+            }
+            ask(presentId2Feature, offer.presentId2);
+            ask(presentWait2Feature, offer.presentWait2);
+            ask(presentTimingFeature, offer.presentTiming);
+            ask(maintenanceFeature, offer.khrSwapchainMaintenance1
+                || offer.extSwapchainMaintenance1);
+            if (query !is null)
+            {
+                auto features = vkInfo(VkPhysicalDeviceFeatures2(pNext: query));
+                instance.getPhysicalDeviceFeatures2(physicalDevice, &features);
+            }
+            presentId2Feature.pNext = presentWait2Feature.pNext = null;
+            presentTimingFeature.pNext = maintenanceFeature.pNext = null;
+        }
+        offer.presentId2Feature = presentId2Feature.presentId2 == VK_TRUE;
+        offer.presentWait2Feature = presentWait2Feature.presentWait2 == VK_TRUE;
+        offer.presentTimingFeature = presentTimingFeature.presentTiming == VK_TRUE;
+        offer.swapchainMaintenance1Feature = maintenanceFeature.swapchainMaintenance1 == VK_TRUE;
+        const path = presents ? planPresentPath(offer) : PresentPathPlan.init;
+
+        const(char)*[20] deviceExtensions;
         uint extensionCount;
         if (presents)
             deviceExtensions[extensionCount++] = khrSwapchain.ptr;
@@ -576,6 +665,15 @@ package:
             deviceExtensions[extensionCount++] = extMemoryBudget.ptr;
         if (wantDisplayTiming)
             deviceExtensions[extensionCount++] = googleDisplayTiming.ptr;
+        if (path.presentWait2)
+        {
+            deviceExtensions[extensionCount++] = khrPresentId2.ptr;
+            deviceExtensions[extensionCount++] = khrPresentWait2.ptr;
+        }
+        if (path.presentTiming)
+            deviceExtensions[extensionCount++] = extPresentTiming.ptr;
+        if (path.swapchainMaintenance1 !is null)
+            deviceExtensions[extensionCount++] = path.swapchainMaintenance1.ptr;
 
         auto dynamicFeature = vkInfo(VkPhysicalDeviceDynamicRenderingFeatures(
             dynamicRendering: VK_TRUE,
@@ -600,6 +698,24 @@ package:
             presentIdFeature.pNext = cast(void*) chain;
             chain = &presentWaitFeature;
         }
+        // What the plan enables, each with only the features it uses.
+        void enable(T)(ref T feature)
+        {
+            feature.pNext = cast(void*) chain;
+            chain = &feature;
+        }
+        if (path.presentWait2)
+        {
+            enable(presentId2Feature);
+            enable(presentWait2Feature);
+        }
+        if (path.presentTiming)
+        {
+            presentTimingFeature.presentAtRelativeTime = VK_FALSE;
+            enable(presentTimingFeature);
+        }
+        if (path.swapchainMaintenance1 !is null)
+            enable(maintenanceFeature);
         auto info = vkInfo(VkDeviceCreateInfo(
             pNext: chain,
             queueCreateInfoCount: 1,
@@ -629,6 +745,11 @@ package:
         presentWait = wantPresentWait && device.has!khrPresentWait;
         memoryBudget = wantBudget;
         displayTiming = wantDisplayTiming && device.has!googleDisplayTiming;
+        presentWait2 = path.presentWait2 && device.has!khrPresentWait2;
+        presentTiming = path.presentTiming && presentWait2 && device.has!extPresentTiming;
+        presentAtAbsoluteTime = presentTiming
+            && presentTimingFeature.presentAtAbsoluteTime == VK_TRUE;
+        swapchainMaintenance1 = path.swapchainMaintenance1 !is null;
         device.getDeviceQueue(handle, queueFamily, 0, &queue);
         return vulkanWsiOk();
     }
@@ -908,4 +1029,97 @@ package CalibrationPlan planCalibration(bool khr, bool ext, uint domains)
         assert(planCalibration(true, false, 2) == none);
         assert(planCalibration(false, false, 3) == none);
     }
+}
+
+/// What a device and its instance offer of the present path's extensions
+/// (`OPL20`, `OPL22`, `OPL23` of the output-latency specification).
+package struct PresentPathOffer
+{
+    bool surfaceCapabilities2;     /// the instance enabled `VK_KHR_get_surface_capabilities2`
+    bool surfaceMaintenance1;      /// the instance enabled a surface maintenance1
+    bool presentId2;               /// the device lists `VK_KHR_present_id2`
+    bool presentWait2;             /// ... `VK_KHR_present_wait2`
+    bool presentTiming;            /// ... `VK_EXT_present_timing`
+    bool khrSwapchainMaintenance1; /// ... `VK_KHR_swapchain_maintenance1`
+    bool extSwapchainMaintenance1; /// ... `VK_EXT_swapchain_maintenance1`
+    bool calibrated;               /// calibrated timestamps are enabled
+    bool presentId2Feature;        /// the device reports the `presentId2` feature
+    bool presentWait2Feature;      /// ... `presentWait2`
+    bool presentTimingFeature;     /// ... `presentTiming`
+    bool swapchainMaintenance1Feature; /// ... `swapchainMaintenance1`
+}
+
+/// Which of them a device is created with.
+package struct PresentPathPlan
+{
+    bool presentWait2;  /// `VK_KHR_present_id2` and `VK_KHR_present_wait2`
+    bool presentTiming; /// `VK_EXT_present_timing`
+    /// The swapchain maintenance1 extension enabled, the KHR or the EXT;
+    /// `null` for neither.
+    string swapchainMaintenance1;
+}
+
+/**
+The present path's extensions for a device that offers `o`: present ids and
+waits 2 together, where the instance has the extensible surface query they
+report support through; present timing on top of them, with calibrated
+timestamps, which it requires; and swapchain maintenance1, the KHR where it
+is listed, else the EXT, where the instance has a surface maintenance1 to
+report which present modes are compatible. Each needs its feature too.
+*/
+package PresentPathPlan planPresentPath(in PresentPathOffer o) @safe pure nothrow @nogc
+{
+    PresentPathPlan plan;
+    plan.presentWait2 = o.surfaceCapabilities2 && o.presentId2 && o.presentWait2
+        && o.presentId2Feature && o.presentWait2Feature;
+    plan.presentTiming = plan.presentWait2 && o.presentTiming && o.presentTimingFeature
+        && o.calibrated;
+    if (o.surfaceMaintenance1 && o.swapchainMaintenance1Feature)
+        plan.swapchainMaintenance1 = o.khrSwapchainMaintenance1 ? khrSwapchainMaintenance1
+            : o.extSwapchainMaintenance1 ? extSwapchainMaintenance1 : null;
+    return plan;
+}
+
+///
+@("vulkan_wsi.device.planPresentPath.followsTheOffer")
+@safe pure nothrow @nogc unittest
+{
+    // The reference device: present ids and waits 2, the EXT swapchain
+    // maintenance1, no present timing.
+    PresentPathOffer radv = {
+        surfaceCapabilities2: true, surfaceMaintenance1: true,
+        presentId2: true, presentWait2: true, extSwapchainMaintenance1: true,
+        calibrated: true, presentId2Feature: true, presentWait2Feature: true,
+        swapchainMaintenance1Feature: true,
+    };
+    auto plan = planPresentPath(radv);
+    assert(plan.presentWait2 && !plan.presentTiming);
+    assert(plan.swapchainMaintenance1 == extSwapchainMaintenance1);
+
+    // The KHR is preferred where both are listed.
+    auto both = radv;
+    both.khrSwapchainMaintenance1 = true;
+    assert(planPresentPath(both).swapchainMaintenance1 == khrSwapchainMaintenance1);
+
+    // Present timing rides on present ids 2 and calibrated timestamps.
+    auto timed = radv;
+    timed.presentTiming = timed.presentTimingFeature = true;
+    assert(planPresentPath(timed).presentTiming);
+    timed.calibrated = false;
+    assert(!planPresentPath(timed).presentTiming);
+    timed.calibrated = true;
+    timed.presentWait2Feature = false;
+    plan = planPresentPath(timed);
+    assert(!plan.presentWait2 && !plan.presentTiming);
+
+    // Without the extensible surface query nothing reports support, and
+    // without a surface maintenance1 no compatible modes.
+    auto bare = radv;
+    bare.surfaceCapabilities2 = bare.surfaceMaintenance1 = false;
+    plan = planPresentPath(bare);
+    assert(!plan.presentWait2 && plan.swapchainMaintenance1 is null);
+    // A feature the device lacks enables nothing, its extension listed or not.
+    auto noFeature = radv;
+    noFeature.swapchainMaintenance1Feature = false;
+    assert(planPresentPath(noFeature).swapchainMaintenance1 is null);
 }
