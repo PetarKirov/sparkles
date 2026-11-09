@@ -264,6 +264,9 @@ struct NativeDebug
     @Description("Treat frame N as a lost device, which no software driver produces on demand, so the rebuild can be seen to redraw.")
     uint loseDeviceAt; ///
 
+    @Description("After frame N, switch to the next present mode the swapchain was created compatible with, without a rebuild, and report how many swapchains were built 30 frames on.")
+    uint switchPresentModeAt; ///
+
     @Description("Measure each frame's device time with timestamp queries, and summarize it when the window closes.")
     bool gpuTiming; ///
 

@@ -1531,12 +1531,26 @@ private struct Gpu
     /// `VK_KHR_present_wait` as the time a poll saw the present complete.
     DisplayTimes displayTimes;
     PresentWait presentWait; /// ditto
+    /// When presents reached the display, from the swapchain itself where
+    /// it was created for `VK_EXT_present_timing` (`OPL22`): the first source.
+    PresentTimes presentTimes;
     ulong presentTag;     /// the record number the next present belongs to
     bool tagPresents;     /// a switch or a specimen wants display times
     bool waitPresents;    /// and present wait is the source
+    bool timePresents;    /// the next present asks its time through present timing
+    MonoTime presentAim;  /// the refresh the next present is aimed at; init for none
     bool up;
 
     @disable this(this);
+
+    /// Whether present timing is the source of display times (`OPL13`).
+    bool presentTimed() const @safe pure nothrow @nogc
+        => swapchain.presentTiming && presentTimes.ready;
+
+    /// Whether presents can be waited on: through present ids and waits 2
+    /// where the swapchain was created for them (`OPL20`), else the first.
+    bool presentsWaitable() @system nothrow
+        => swapchain.presentId2 ? vk.device.waitForPresent2KHR !is null : vk.presentWait;
 
     /*
     The swapchain is about to be retired (a rebuild) or destroyed (a surface
@@ -1561,6 +1575,7 @@ private struct Gpu
         profilerTried = false;
         presentWait.forget();
         displayTimes = DisplayTimes.init;
+        presentTimes = PresentTimes.init;
         canvas.destroy();
         commands.destroy(vk);
         sync.destroy(vk);
@@ -1590,6 +1605,46 @@ private struct Gpu
     const next = cast(VkSwapchainKHR) cast(void*) 0x41;
     gpu.presentWait.submitted(next, 9);
     assert(gpu.presentWait.outstanding == 1 && gpu.presentWait.lastSubmitted == 9);
+}
+
+/**
+Where the frame schedule's presentation times come from, in `OPL13`'s order:
+the swapchain's present timing, the window system's presentation feedback,
+Android's display timing, then the completion of a present wait — the second
+extension where the swapchain was created for it.
+*/
+package string presentTimeSource(bool presentTiming, bool windowFeedback, bool displayTiming,
+    bool presentWait2, bool presentWait) @safe pure nothrow @nogc
+    => presentTiming ? "VK_EXT_present_timing"
+        : windowFeedback ? "the window system's presentation feedback"
+        : displayTiming ? "VK_GOOGLE_display_timing"
+        : presentWait2 ? "VK_KHR_present_wait2"
+        : presentWait ? "VK_KHR_present_wait" : "nowhere";
+
+///
+@("ui_app.native_loop.presentTimeSource.followsTheOrder")
+@safe pure nothrow @nogc unittest
+{
+    assert(presentTimeSource(true, true, false, true, true) == "VK_EXT_present_timing");
+    assert(presentTimeSource(false, true, false, true, true)
+        == "the window system's presentation feedback");
+    assert(presentTimeSource(false, false, false, true, true) == "VK_KHR_present_wait2");
+    assert(presentTimeSource(false, false, false, false, true) == "VK_KHR_present_wait");
+    assert(presentTimeSource(false, false, false, false, false) == "nowhere");
+}
+
+/// How a mechanism stands, for `OPL24`'s report: the device enabled it,
+/// and the swapchain uses it, or not.
+package string enabledOn(bool device, bool swapchain) @safe pure nothrow @nogc
+    => !device ? "off (not offered)" : swapchain ? "on" : "off (the surface does not support it)";
+
+///
+@("ui_app.native_loop.enabledOn.namesWhoLacksIt")
+@safe pure nothrow @nogc unittest
+{
+    assert(enabledOn(true, true) == "on");
+    assert(enabledOn(true, false) == "off (the surface does not support it)");
+    assert(enabledOn(false, false) == "off (not offered)");
 }
 
 private bool drive(alias present, alias handle, alias draw, alias setup, alias shutdown,
@@ -2155,6 +2210,29 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
             return false;
     }
 
+    // How many swapchains the run built: a present-mode switch between
+    // compatible modes builds none (`OPL23`).
+    uint swapchainsBuilt;
+
+    // Once a device: which of the present path's mechanisms it enabled, and
+    // where the frame schedule's presentation times come from (`OPL24`).
+    void reportPresentPath()
+    {
+        bool feedback;
+        static if (__traits(hasMember, Wsi, "requestPresentationFeedback"))
+            feedback = wsi.canReportPresentation;
+        const source = presentTimeSource(gpu.presentTimed, feedback, gpu.vk.displayTiming,
+            gpu.swapchain.presentId2 && gpu.presentsWaitable, gpu.vk.presentWait);
+        string modes;
+        foreach (m; gpu.swapchain.compatiblePresentModes)
+            modes ~= (modes.length ? " " : "") ~ presentModeName(m);
+        if (modes.length)
+            modes = " (" ~ presentModeName(gpu.swapchain.presentMode) ~ " among " ~ modes ~ ")";
+        const targets = !gpu.presentTimed ? ""
+            : gpu.swapchain.presentAtAbsoluteTime ? " with absolute targets" : " without targets";
+        trace(i"native arm present path: present ids and waits 2 $(enabledOn(gpu.vk.presentWait2, gpu.swapchain.presentId2)), present timing $(enabledOn(gpu.vk.presentTiming, gpu.presentTimed))$(targets), swapchain maintenance1 $(enabledOn(gpu.vk.swapchainMaintenance1, modes.length > 0))$(modes); presentation times from $(source)");
+    }
+
     bool rebuildSwapchain(bool force)
     {
         const window = metrics.physicalSize;
@@ -2171,6 +2249,9 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         // A frame of the client's casts its shadow and rounds its corners
         // in a transparent margin, which the swapchain's alpha must reach.
         gpu.swapchain.wantsAlpha = session.frame.active;
+        // Results kept for every frame in flight and the one shown (`OPL22`).
+        gpu.swapchain.timingQueueSize = (gpu.sync.framesInFlight ? gpu.sync.framesInFlight
+            : FrameSync.defaultFramesInFlight) + 1;
         auto mark = MonoTime.currTime;
         Duration lap()
         {
@@ -2202,9 +2283,16 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         timing.swapchain += lap();
         // A new handle retired the old one, the rebuild failed or not.
         if (gpu.swapchain.handle !is before)
+        {
             gpu.swapchainGoes();
+            ++swapchainsBuilt;
+        }
         if (!ok)
             return false;
+        if (gpu.swapchain.presentTiming)
+            cast(void) gpu.presentTimes.prepare(gpu.vk, gpu.swapchain.handle,
+                gpu.swapchain.presentStages, gpu.swapchain.presentAtAbsoluteTime,
+                gpu.swapchain.timingQueueSize);
         gpu.views.create(gpu.vk, gpu.swapchain);
         timing.views += lap();
         // Premultiplied in the stored bytes only on a UNORM target: an sRGB
@@ -2256,6 +2344,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         pipelinesSaved = false;
         if (!rebuildSwapchain(true))
             return false;
+        reportPresentPath();
         const pool = CommandPool.create(gpu.commands, gpu.vk, gpu.sync.framesInFlight);
         if (pool.hasError)
         {
@@ -2654,6 +2743,66 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
     {
         if (!p.discarded && p.shownKnown)
             onShown(p.tag, p.shown, p.refresh);
+    }
+    // `--debug switch-present-mode-at=N`: after frame N, the next present
+    // mode the swapchain was created compatible with, from the next present
+    // on and without a rebuild (`OPL23`); 30 frames on, how many swapchains
+    // were built since.
+    uint modeSwitchedAt, builtAtSwitch;
+    void switchPresentMode(uint presented)
+    {
+        const from = gpu.swapchain.presentMode;
+        if (modeSwitchedAt)
+        {
+            note(i"native window present mode: $(presentModeName(from)) for 30 frames, $(swapchainsBuilt - builtAtSwitch) swapchains built since the switch");
+            modeSwitchedAt = 0;
+            return;
+        }
+        const modes = gpu.swapchain.compatiblePresentModes;
+        VkPresentModeKHR to = from;
+        foreach (i, m; modes)
+            if (m == from)
+            {
+                to = modes[(i + 1) % modes.length];
+                break;
+            }
+        if (to == from || !gpu.swapchain.switchPresentMode(to))
+        {
+            note(i"native window present mode: $(presentModeName(from)), the swapchain switches to no other");
+            return;
+        }
+        modeSwitchedAt = presented;
+        builtAtSwitch = swapchainsBuilt;
+        note(i"native window present mode: $(presentModeName(from)) to $(presentModeName(to)) after frame $(presented), without a rebuild ($(swapchainsBuilt) swapchains built so far)");
+    }
+    // What the device says reached the display, never waiting (`OPL21`):
+    // after a frame pass, and after each loop turn while a present is
+    // outstanding. Android's display timing is read after a frame pass only.
+    // Mesa answers both by reading the shared Wayland display for its own
+    // queue, which a read the window system holds prepared would starve:
+    // the reads borrow it, as `nativeIo` does.
+    void pollPresents(bool afterFrame)
+    {
+        if (!gpu.up)
+            return;
+        const timed = gpu.presentTimed && gpu.presentTimes.outstanding;
+        const waited = !gpu.vk.displayTiming && gpu.presentWait.outstanding;
+        if (timed || waited)
+            cast(void) nativeIo(() {
+                if (timed)
+                    gpu.presentTimes.poll(gpu.vk, (ulong id, long ns) {
+                        onShown(id - 1, MonoTime.zero + nsecs(ns), gpu.presentTimes.refresh);
+                    });
+                if (waited)
+                    pollCompleted(gpu.presentWait, gpu.vk, (ulong id, MonoTime at) {
+                        onShown(id - 1, at, Duration.zero);
+                    });
+                return true;
+            });
+        if (gpu.vk.displayTiming && afterFrame)
+            gpu.displayTimes.poll(gpu.vk, gpu.swapchain.handle, (uint id, long ns) {
+                onShown(id - 1, MonoTime.zero + nsecs(ns), gpu.displayTimes.refresh);
+            });
     }
     // Which recorded frame each slot drew last.
     ulong[8] slotFrame = ulong.max;
@@ -3055,7 +3204,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
             // frames mailbox never shows. Wait until the last present is
             // shown, so it draws one a refresh and each is shown, its
             // display time stamped as the wait ends (`PRF13`).
-            if (!paced && gpu.up && gpu.vk.presentWait)
+            if (!paced && gpu.up && gpu.presentsWaitable)
                 cast(void) waitForNewest(gpu.presentWait, gpu.vk, 50.msecs,
                     (ulong id, MonoTime at) { onShown(id - 1, at, Duration.zero); });
             const started = MonoTime.currTime;
@@ -3163,16 +3312,23 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                     // The scheduler learns from every frame (`OPL19`).
                     aims[recorded % aims.length] = Aim(recorded, aimNow);
                     const wantTimes = history !is null || changed || lateSchedule;
+                    // The swapchain's own present timing first, aimed at
+                    // the refresh the frame was scheduled for (`OPL13`,
+                    // `OPL22`); a present the timing queue has no room for
+                    // goes untimed.
+                    const timed = wantTimes && gpu.presentTimed;
+                    gpu.timePresents = timed && gpu.presentTimes.canRequest(MonoTime.currTime);
+                    gpu.presentAim = aimNow;
                     bool feedback;
                     static if (__traits(hasMember, Wsi, "requestPresentationFeedback"))
-                        if (wantTimes && wsi.canReportPresentation)
+                        if (wantTimes && !timed && wsi.canReportPresentation)
                             feedback = !wsi.requestPresentationFeedback(window, recorded).hasError;
                     // Without the window system's feedback, the device's.
                     gpu.presentTag = recorded;
-                    gpu.tagPresents = !feedback && wantTimes;
+                    gpu.tagPresents = !feedback && !timed && wantTimes;
                     // Unpaced, every present carries an id: the next pass
                     // waits for it.
-                    gpu.waitPresents = gpu.vk.presentWait
+                    gpu.waitPresents = gpu.presentsWaitable
                         && (!paced || gpu.tagPresents && !gpu.vk.displayTiming);
                 }
                 if (presented + 1 == cfg.native.debugging.renderdocCapture)
@@ -3241,17 +3397,8 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
             }
             // What the device says reached the display, its record now in
             // the history: never waits.
-            if (timing.submitted && gpu.up)
-            {
-                if (gpu.vk.displayTiming)
-                    gpu.displayTimes.poll(gpu.vk, gpu.swapchain.handle, (uint id, long ns) {
-                        onShown(id - 1, MonoTime.zero + nsecs(ns), gpu.displayTimes.refresh);
-                    });
-                else if (gpu.vk.presentWait)
-                    pollCompleted(gpu.presentWait, gpu.vk, (ulong id, MonoTime at) {
-                        onShown(id - 1, at, Duration.zero);
-                    });
-            }
+            if (timing.submitted)
+                pollPresents(afterFrame: true);
             if (timing.collected && traceNames.length != gpu.profiler.names.length)
                 traceNames = gpu.profiler.names.dup; // a copy: the table goes with the device
             final switch (outcome)
@@ -3260,6 +3407,9 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                     lc.frameDone(FrameResult.presented, now());
                     schedule.noteCost(took); // start to the present's return (`OPL15`)
                     ++presented;
+                    if (presented == cfg.native.debugging.switchPresentModeAt
+                        || (modeSwitchedAt && presented == modeSwitchedAt + 30))
+                        switchPresentMode(presented);
                     const done = MonoTime.currTime;
                     frameZone.end();
                     tracyFrameMark();
@@ -3347,6 +3497,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         if (tickNative(wsi, loop, timeout).hasError)
             break;
         drainEvents();
+        pollPresents(afterFrame: false);
         if (history !is null)
             latencyLog.write(*history, now() - 1.seconds);
         if (session.nextTitlePattern.length && session.nextTitleFace.settled)
@@ -3955,12 +4106,23 @@ private FrameOutcome drawFrame(alias draw)(ref Gpu gpu, ref NativeHost host,
     timing.record = lap();
     zone.next!"present";
     beforePresent();
-    const presentId = gpu.waitPresents ? gpu.presentWait.idFor(gpu.presentTag) : 0;
+    // A present waited on, or timed by the swapchain, carries an id; ids
+    // increase over the swapchain's presents either way.
+    const presentId = gpu.waitPresents || gpu.timePresents
+        ? gpu.presentWait.idFor(gpu.presentTag) : 0;
     const timingId = gpu.tagPresents && vk.displayTiming ? DisplayTimes.idFor(gpu.presentTag) : 0;
+    const timingRequest = gpu.presentTimes.request(gpu.presentAim);
     const presented = gpu.swapchain.present(*vk, index, gpu.sync.renderFinished(index), presentId,
-        timingId);
+        timingId, gpu.timePresents ? &timingRequest : null);
     if (!presented.hasError && presentId)
-        gpu.presentWait.submitted(gpu.swapchain.handle, presentId, gpu.swapchain.presentId2);
+    {
+        if (gpu.waitPresents)
+            gpu.presentWait.submitted(gpu.swapchain.handle, presentId, gpu.swapchain.presentId2);
+        else
+            gpu.presentWait.lastSubmitted = presentId;
+        if (gpu.timePresents)
+            gpu.presentTimes.requested(MonoTime.currTime);
+    }
     if (!presented.hasError) gpu.sync.notePresent(index);
     timing.shown = !presented.hasError;
     timing.present = lap();
