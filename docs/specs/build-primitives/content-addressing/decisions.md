@@ -11,12 +11,12 @@ The founding record is the filesets decision
 content addressing is a family of schemes on the fileset seam, castore with
 BLAKE3 is the default identity, and every instance has an oracle. The records
 below follow from it. Each states its question, the alternatives, the choice
-and when to revisit it; **proposed** records await the owner's decision, and
-**open** ones have no proposal yet.
+and when to revisit it; **accepted** records are the owner's decisions,
+**proposed** ones await them, and **open** ones have no proposal yet.
 
-## C1: `NarHash` is stored beside the identity (proposed)
+## C1: `NarHash` is stored beside the identity (accepted)
 
-_Was open as the filesets record D2._
+_Was open as the filesets record D2. Accepted by the owner on 2026-11-09._
 
 **Question.** A Nix store asks for the `NarHash` and `NarSize` of every path
 it is given. Is that hash computed once, when the fileset is named, and kept

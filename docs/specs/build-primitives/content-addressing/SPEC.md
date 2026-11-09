@@ -271,7 +271,7 @@ leaf in a tee hears one start per file and the tree's total size in bytes.
 return the castore id with the SHA-256 `NarHash` and `NarSize` beside it.
 _Rationale:_ a Nix store asks for `NarHash` of every path it is given, and
 recomputing it would re-read every file; see
-[C1](./decisions.md#c1-narhash-is-stored-beside-the-identity-proposed).
+[C1](./decisions.md#c1-narhash-is-stored-beside-the-identity-accepted).
 
 ## 7. A file's supplied tree (`CAO`)
 
