@@ -3,7 +3,7 @@ module picker_sources;
 
 import std.path : baseName, buildPath;
 
-import sparkles.build_primitives.glob_walk : globWalkGitRepository;
+import sparkles.build_primitives.fileset.listing : listRepository;
 
 import picker_grep : DocHandle;
 import sparkles.fuzzy : CandidateId, CandidateSnapshot, CandidateView,
@@ -186,16 +186,17 @@ ChoiceFinder choiceFinder(Choice[] rows) @safe pure nothrow
 /**
 Walk `root` with nested `.gitignore` rules and freeze a files snapshot.
 
-The walk is `globWalkGitRepository` — the repository's one glob-filtered
-walk (`PKC4`), which the grep source will share. It used to be
+The walk is `listRepository`, a fileset listing — the repository's one
+glob-filtered walk (`PKC4`), which the grep source shares. It used to be
 `walkGitRepository` with a hand-rolled glob layer on top, and the two
 layers did not agree: `.gitignore` was applied FIRST, so an `include` glob
 could only rescue a file from `exclude`, never from being ignored.
 
 The explorer's `XPF2` precedence — snacks' — is that `include` overrides
-hidden, ignored AND exclude, which is what `GitGlobFilter` implements. So a
-gitignored file matching an include glob appeared in the tree and not in
-the picker, and the two panes disagreed about what the project contains.
+hidden, ignored AND exclude, which is what the listing's `withGlobs`
+implements. So a gitignored file matching an include glob appeared in the
+tree and not in the picker, and the two panes disagreed about what the
+project contains. The globs are fileset patterns; one that is not throws.
 */
 FilesFinder collectFilesFinder(string root,
     scope const(string)[] includeGlobs = null,
@@ -203,13 +204,13 @@ FilesFinder collectFilesFinder(string root,
 {
     FilesFinder result;
     result.root = root;
-    auto files = globWalkGitRepository(root, includeGlobs, excludeGlobs);
+    auto listed = listRepository(root, includeGlobs, excludeGlobs);
+    if (listed.hasError)
+        throw new Exception(listed.error);
     ulong corpusHigh = fnv1a(root, 0xcbf29ce484222325UL);
     ulong corpusLow = fnv1a(root, 0x84222325cbf29ce4UL);
-    while (!files.empty)
+    foreach (relative; listed.value.files)
     {
-        const relative = files.front;
-        files.popFront();
 
         result.paths ~= relative;
         CandidateView candidate;
@@ -293,11 +294,15 @@ unittest
             sawDrop = true;
     assert(sawDrop, "an explicit include must override `.gitignore`");
 
-    // And a directory `.gitignore` excludes stays excluded when nothing
-    // includes it — an include re-admits what the walk reaches, it does not
-    // force entry into an ignored directory.
+    // A directory `.gitignore` excludes stays excluded when nothing
+    // includes it; an include glob beneath it reaches into it (filesets
+    // `FSA5`), as the explorer shows it.
     foreach (candidate; rescued.snapshot().candidates)
         assert(candidate.path != "build/out.d");
+    bool sawOut;
+    foreach (candidate; collectFilesFinder(root, ["/build/**"], null).snapshot().candidates)
+        sawOut |= candidate.path == "build/out.d";
+    assert(sawOut, "an include reaches beneath an ignored directory");
 }
 
 @("picker_sources.PickerTarget.filesResolveNamesNoPosition")
