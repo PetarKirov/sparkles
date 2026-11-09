@@ -4798,7 +4798,7 @@ unittest
     import sparkles.ui.geometry : Constraints;
     import sparkles.ui.layout : layout;
     import sparkles.ui.widget : WidgetKind;
-    import explorer : fsIcon;
+    import sparkles.ui.components.file_icons : fileIcon;
 
     WorkspaceTui w;
     auto tmp = fixtureWorkspace(w, "hue-ws-iconpin");
@@ -4834,7 +4834,7 @@ unittest
         return null;
     }
 
-    const icon = fsIcon("distinctive.d").glyph;
+    const icon = fileIcon("distinctive.d").glyph;
     assert(leadSpan(w).startsWith(icon), "the row leads with its file icon");
 
     foreach (_; 0 .. 4)

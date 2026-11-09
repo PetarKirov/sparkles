@@ -15,7 +15,7 @@ import sparkles.ui.widget : Alignment, Builder, TextSpan, Widget, WidgetKind,
     WidgetTree;
 import sparkles.ui.wrap : TextWrap;
 
-import explorer : fsIcon;
+import sparkles.ui.components.file_icons : fileIcon;
 import keymap : Scope_;
 import picker : PickerState;
 
@@ -299,7 +299,7 @@ WidgetTree pickerView(size_t Capacity, size_t PromptCapacity)(
         {
             pinnedSpans = 1;
             const candidate = snapshot.candidates[ranked.corpusIndex];
-            const icon = fsIcon(candidate.path[candidate.filenameOffset .. $]);
+            const icon = fileIcon(candidate.path[candidate.filenameOffset .. $]);
             spans ~= TextSpan(text: icon.glyph, fg: icon.fg, hasFg: true,
                 noBreak: true);
             pathSpans(spans, candidate.path, candidate.filenameOffset,
@@ -563,7 +563,7 @@ private void grepSpans(ref TextSpan[] spans, GrepRowText row) @safe
     // The same file-type icon a files row leads with. A grep row names a
     // document too, and reading a list of them without the type marker the
     // rest of the app uses is a gratuitous difference.
-    const icon = fsIcon(baseNameOf(row.label));
+    const icon = fileIcon(baseNameOf(row.label));
     spans ~= TextSpan(text: icon.glyph, fg: icon.fg, hasFg: true,
         noBreak: true);
 
@@ -647,7 +647,7 @@ private void trimLeading(ref TextSpan[] spans, size_t cells) @safe
     spans = spans[i .. $];
 }
 
-/// The last path segment of `p` — the part `fsIcon` reads an extension from.
+/// The last path segment of `p` — the part `fileIcon` reads an extension from.
 private const(char)[] baseNameOf(return scope const(char)[] p)
     @safe pure nothrow @nogc
 {

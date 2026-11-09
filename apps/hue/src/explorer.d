@@ -33,6 +33,7 @@ import sparkles.input : EndOfInput, Event, isEndOfInput, Key, KeyEvent,
     match, PasteEvent, Point, PointerAction, PointerButton, PointerEvent, ResizeEvent,
     WheelEvent;
 import sparkles.ui.components.chrome : headerBar;
+import sparkles.ui.components.file_icons : fileIcon, folderFg, folderGlyph;
 import sparkles.ui.components.tree_view : filterServe, jumpMatching, measureContent,
     treeActivate = activate, treeCollapseOrUp = collapseOrUp, TreeStep,
     TreeViewState, viewSlice;
@@ -80,8 +81,8 @@ struct FsEntry
     /// empty (`hasChildren` would call it a leaf and "pick" it).
     bool expandable() const @safe pure nothrow @nogc => isDir;
     const(char)[] icon() const @safe pure nothrow @nogc
-        => isDir ? (openDir ? "\U0000F115 " : "\U0000F114 ") //  open /  closed
-            : fsIcon(name).glyph;
+        => isDir ? folderGlyph(openDir)
+            : fileIcon(name).glyph;
 }
 
 /// The last `/` in `p`, or `size_t.max` when it has none — the one path split
@@ -112,61 +113,6 @@ private GitStatus sessionGitStatus(FileChange c) @safe pure nothrow @nogc
 /// state (`XPL6`).
 TreeGlyphs explorerGlyphs(in GlyphSet theme) @safe pure nothrow @nogc
     => TreeGlyphs(guides: theme.guides, closed: "", open: "", leaf: "");
-
-/// A file-type icon: the Nerd glyph + its conventional brand color (`XPL6`,
-/// the vscode-icons / snacks-explorer look). Directories use the folder pair.
-struct FsIcon
-{
-    string glyph;
-    RgbColor fg;
-}
-
-/// ditto — resolved from the file name (extension, with a few special names).
-FsIcon fsIcon(scope const(char)[] name) @safe pure nothrow @nogc
-{
-    // The extension, lower-cased assumption-free (extensions here are ASCII).
-    const(char)[] ext;
-    foreach_reverse (i, ch; name)
-        if (ch == '.')
-        {
-            ext = name[i + 1 .. $];
-            break;
-        }
-
-    switch (ext)
-    {
-        case "d", "di":          return FsIcon("\U0000E7AF ", RgbColor(0xb0, 0x39, 0x31));
-        case "md", "markdown":   return FsIcon("\U0000E609 ", RgbColor(0x51, 0x9a, 0xba));
-        case "json":             return FsIcon("\U0000E60B ", RgbColor(0xcb, 0xcb, 0x41));
-        case "js", "mjs", "jsx": return FsIcon("\U0000E781 ", RgbColor(0xf1, 0xe0, 0x5a));
-        case "ts", "tsx":        return FsIcon("\U0000E628 ", RgbColor(0x31, 0x78, 0xc6));
-        case "sh", "bash", "zsh", "fish":
-            return FsIcon("\U0000E795 ", RgbColor(0x89, 0xe0, 0x51));
-        case "nix":              return FsIcon("\U000F1105 ", RgbColor(0x7e, 0xba, 0xe4));
-        case "py":               return FsIcon("\U0000E606 ", RgbColor(0x35, 0x72, 0xa5));
-        case "rs":               return FsIcon("\U0000E7A8 ", RgbColor(0xde, 0xa5, 0x84));
-        case "c", "h":           return FsIcon("\U0000E61E ", RgbColor(0x65, 0x9b, 0xd3));
-        case "cpp", "cc", "cxx", "hpp":
-            return FsIcon("\U0000E61D ", RgbColor(0x65, 0x9b, 0xd3));
-        case "go":               return FsIcon("\U0000E627 ", RgbColor(0x00, 0xad, 0xd8));
-        case "html", "htm":      return FsIcon("\U0000E736 ", RgbColor(0xe4, 0x4d, 0x26));
-        case "css":              return FsIcon("\U0000E749 ", RgbColor(0x56, 0x3d, 0x7c));
-        case "glsl", "vert", "frag", "geom", "comp", "tesc", "tese":
-            return FsIcon("\U0000E6A2 ", RgbColor(0x56, 0xb6, 0xc2));
-        case "spvasm", "spirv":
-            return FsIcon("\U0000E6A2 ", RgbColor(0x7e, 0xba, 0xe4));
-        case "toml", "yaml", "yml", "ini", "cfg", "conf", "sdl":
-            return FsIcon("\U0000E615 ", RgbColor(0x6d, 0x80, 0x86));
-        case "lock":             return FsIcon("\U0000F023 ", RgbColor(0x6d, 0x80, 0x86));
-        case "png", "jpg", "jpeg", "gif", "svg", "webp", "bmp", "ico":
-            return FsIcon("\U0000F1C5 ", RgbColor(0xa0, 0x74, 0xc4));
-        case "pdf":              return FsIcon("\U0000F1C1 ", RgbColor(0xb3, 0x0b, 0x00));
-        case "zip", "gz", "xz", "zst", "tar", "7z":
-            return FsIcon("\U0000F1C6 ", RgbColor(0xff, 0xb8, 0x6c));
-        case "txt":              return FsIcon("\U0000F15C ", RgbColor(0x89, 0xa8, 0xc8));
-        default:                 return FsIcon("\U0000F016 ", RgbColor(0x6d, 0x80, 0x86));
-    }
-}
 
 /// The explorer session: the arena is rebuilt (cheap, flat) whenever the open
 /// set or the filter changes — the tree IS a function of (fs, open, query).
@@ -352,7 +298,7 @@ struct ExplorerTui
                     continue;
                 auto fe = FsEntry(nm, e.name, e.isDir);
                 // The type's brand color (dirs: the conventional folder amber).
-                fe.iconFg = fe.isDir ? RgbColor(0xdc, 0xb6, 0x7a) : fsIcon(nm).fg;
+                fe.iconFg = fe.isDir ? folderFg : fileIcon(nm).fg;
                 fe.hasIconFg = true;
                 entries ~= fe;
             }
@@ -378,7 +324,7 @@ struct ExplorerTui
                 auto fe = FsEntry(nm, e.name, e.isDir);
                 if (!visible(fe))
                     continue;
-                fe.iconFg = fe.isDir ? RgbColor(0xdc, 0xb6, 0x7a) : fsIcon(nm).fg;
+                fe.iconFg = fe.isDir ? folderFg : fileIcon(nm).fg;
                 fe.hasIconFg = true;
                 return [fe].ptr;
             }
@@ -530,8 +476,8 @@ struct ExplorerTui
                 const ignored = st == GitStatus.ignored
                     && n.value.path != current;
                 n.value.iconFg = ignored ? dimFg
-                    : n.value.isDir ? RgbColor(0xdc, 0xb6, 0x7a)
-                    : fsIcon(n.value.name).fg;
+                    : n.value.isDir ? folderFg
+                    : fileIcon(n.value.name).fg;
                 if (ignored)
                 {
                     n.value.labelFg = dimFg;
@@ -1118,9 +1064,9 @@ unittest
     // Icons (XPL6): a closed dir shows the closed-folder glyph, files their
     // typed glyph + brand color.
     assert(x.data.nodes[x.rows[0].node].value.icon == "\U0000F114 ");
-    assert(x.data.nodes[x.rows[1].node].value.icon == fsIcon("notes.md").glyph);
+    assert(x.data.nodes[x.rows[1].node].value.icon == fileIcon("notes.md").glyph);
     assert(x.data.nodes[x.rows[1].node].value.hasIconFg);
-    assert(x.data.nodes[x.rows[1].node].value.iconFg == fsIcon("x.md").fg);
+    assert(x.data.nodes[x.rows[1].node].value.iconFg == fileIcon("x.md").fg);
 
     // Enter on the dir opens it; the child file appears under it — and the
     // dir's icon flips to the open folder.
@@ -1128,7 +1074,7 @@ unittest
     assert(x.rows.length == 3);
     assert(x.data.nodes[x.rows[0].node].value.icon == "\U0000F115 ");
     assert(x.data.nodes[x.rows[1].node].value.name == "app.d");
-    assert(x.data.nodes[x.rows[1].node].value.iconFg == fsIcon("y.d").fg);
+    assert(x.data.nodes[x.rows[1].node].value.iconFg == fileIcon("y.d").fg);
 
     // Paint: header, guides, labels, status all through the widget pipeline.
     Grid g;
