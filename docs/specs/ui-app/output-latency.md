@@ -261,8 +261,10 @@ at, which is enough to find the latch point from either side.
 time has been reported for 1 s, a dirty frame pass **must** start as soon
 as the window system allows, with no latch delay.
 
-**OPL18: Schedule policy.** `RunConfig` **must** offer the policy `late` (the
-default) and `asap`; `asap` applies OPL17's rule always.
+**OPL18: Schedule policy.** The native options of `RunConfig` **must** offer
+the policy `late` (the default) and `asap` (`--frame-schedule`); `asap`
+applies OPL17's rule always. A window system other than Wayland always
+schedules `asap`.
 
 **OPL19: Feedback when scheduling late.** Under the `late` policy the native
 arm **must** request a presentation time for every presented frame from the
@@ -383,22 +385,41 @@ The decision OPLD1 rests on [`ingest-spike.c`](./output-latency/ingest-spike.c),
 run on the reference configuration as its header describes; §6 gives its
 figures.
 
-| Obligation        | Status      | Evidence                                                                                                                                                             |
-| ----------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| OPL10             | verified    | `OpReadMultishot`, `loop.readMultishot.streamsIntoProvidedBuffers` (Linux 6.18)                                                                                      |
-| OPL1–OPL9, OPL11  | verified    | `StreamIngest`; the `stream_ingest.*` tests, each on the multishot path and the fallback (Linux 6.18)                                                                |
-| OPL12             | partial     | `NativeHost.openStream`; the terminal reads its pty through it (`TerminalView.startReading`). No test drives a delivery to a frame pass headless                     |
-| Throughput target | verified    | `throughput` on the reference configuration, five runs each: this arm 788–959 ms; the pre-1.0 build 1075–2320 ms; frame-driven reads woken by readiness 1971–3230 ms |
-| OPL25             | verified    | `FrameRecord.streamPosition`, written by `--debug latency-log`; on the reference configuration a probe's 9942 bytes ended at stream position 9942                    |
-| OPL26             | verified    | `joinLatency`, `bench.joinLatency.firstCoveringShownFrame`, `bench.joinLatency.supersededAndNeverShown`; the baseline below                                          |
-| OPL27             | verified    | `runThroughput`; the figures above                                                                                                                                   |
-| OPL13–OPL24       | not started | none                                                                                                                                                                 |
+| Obligation        | Status      | Evidence                                                                                                                                                                                                                          |
+| ----------------- | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| OPL10             | verified    | `OpReadMultishot`, `loop.readMultishot.streamsIntoProvidedBuffers` (Linux 6.18)                                                                                                                                                   |
+| OPL1–OPL9, OPL11  | verified    | `StreamIngest`; the `stream_ingest.*` tests, each on the multishot path and the fallback (Linux 6.18)                                                                                                                             |
+| OPL12             | partial     | `NativeHost.openStream`; the terminal reads its pty through it (`TerminalView.startReading`). No test drives a delivery to a frame pass headless                                                                                  |
+| Throughput target | verified    | `throughput` on the reference configuration, five runs each: this arm 788–959 ms; the pre-1.0 build 1075–2320 ms; frame-driven reads woken by readiness 1971–3230 ms                                                              |
+| OPL25             | verified    | `FrameRecord.streamPosition`, written by `--debug latency-log`; on the reference configuration a probe's 9942 bytes ended at stream position 9942                                                                                 |
+| OPL26             | verified    | `joinLatency`, `bench.joinLatency.firstCoveringShownFrame`, `bench.joinLatency.supersededAndNeverShown`; the baseline below                                                                                                       |
+| OPL27             | verified    | `runThroughput`; the figures above                                                                                                                                                                                                |
+| OPL13–OPL17       | verified    | `FrameSchedule`; `frame_schedule.startsAtTheLatchOfTheEarliestReachableRefresh`, `frame_schedule.costIsThe95thPercentile`, `frame_schedule.theMarginFollowsMissesAndRunsOnTime`, `frame_schedule.withoutAFixedRefreshItStartsNow` |
+| OPL18, OPL19      | verified    | `FrameSchedulePolicy`, `NativeOptions.frameSchedule`; under `late` every present asks for its display time. The latency target: below                                                                                             |
+| OPL20–OPL24       | not started | none                                                                                                                                                                                                                              |
 
 The latency baseline, the `asap` behaviour: `latency` on the reference
 configuration, three runs of 300 writes, measured the 50th percentile at
 20.5–22.4 ms, the 95th at 36.9–37.9 ms and the 99th at 40.4–44.7 ms, with
 no write unshown and one superseded. Frames took 20.4 ms on average from the
 start of their pass to their display.
+
+The `late` policy against it, the same build switched with
+`--frame-schedule`, three runs each:
+
+| Writes             | Policy | 50th percentile | 95th percentile | Unshown |
+| ------------------ | ------ | --------------- | --------------- | ------- |
+| 300, 1–50 ms apart | `asap` | 17.9–19.1 ms    | 32.1–36.6 ms    | 0       |
+| 300, 1–50 ms apart | `late` | 16.9–20.4 ms    | 30.3–41.2 ms    | 0       |
+| 1500, 1–4 ms apart | `asap` | 28.5–33.6 ms    | 36.0–42.3 ms    | 0       |
+| 1500, 1–4 ms apart | `late` | 15.4–18.0 ms    | 24.5–27.6 ms    | 0       |
+
+Under continuous output the late latch halves the median: bytes that arrive
+after the compositor's frame opportunity reach the frame it then draws. With
+sparse writes the window is idle when a write arrives, both policies aim at
+the same refresh, and the medians overlap; frames take 9.2 ms from start to
+display under `late`, against 20.4 ms. The target is therefore met under
+continuous output and not shown under sparse output.
 
 ## 9. Open questions
 
