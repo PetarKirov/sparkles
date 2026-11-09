@@ -84,6 +84,8 @@ Event[] keyScript(string keys) @safe
 string renderFrame(ref ExplorerApp app, string keys, Size size, GuiOptions gui = GuiOptions.init)
 {
     auto script = keyScript(keys);
+    // One frame and none after it: every scroll lands at once.
+    app.smoothScroll = false;
     auto rec = runAppRecorded(app, RunConfig(gui: gui), script, (ref RecordingHost h) @safe {
         h.size = size;
         h.frameSeconds = 0;

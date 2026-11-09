@@ -17,7 +17,8 @@ toolkit's [editor](../ui/editor.md), [tree view](../hue/tree-view.md) and
 `sparkles:source-view`.
 
 This contract owns the query language (§2), the explorer's screen (§3), its
-help and the runnable blocks of its tutorial (§4), and the code generators (§5).
+help and the runnable blocks of its tutorial (§4), the code generators (§5),
+and its Android build (§6).
 Two obligations belong to libraries it uses and are specified there: the host's
 text cursor ([`HST20`](../ui-app/feature-requirements.md)), and the fileset
 leaves for a list of paths, a file's own name and its kind
@@ -165,6 +166,48 @@ after F1 shows the tree pane and the help's first heading.
 a terminal, or `--render-plain` is given, the explorer **must** print one frame
 as text after the keys of `--keys`, and exit 0. CI's example and app runs use
 it.
+
+**`FXU10` — Touch, and scrolling with momentum.** A tap **must** do what a click
+does: on a tab of the right group it shows that tab's pane, on the Export
+tab's ◀, ▶, glob mode or copy it does what `T`, `t`, `g` or `y` does, and
+above the dock it focuses the query and, on a phone, asks for the soft
+keyboard. The tree, the help and the Export code **must** scroll by the
+distance a finger moves them, fraction of a row included, keep coasting on a
+lifted finger's speed until it decays, and ease a wheel notch three rows on,
+where the target can show part of a row; on a terminal every scroll lands on a
+whole row at once. Scrolling **must not** move the tree's cursor, and a key
+that moves the cursor out of view **must** bring the view to it. _Detection:_
+recorded taps switch the tabs and step the Export target; a precise scroll of
+2.5 rows leaves the tree at 2.5 with its cursor on the first row; a notch
+reaches 3 over several frames; the recogniser's fling tail moves the tree as
+far as its events add up to.
+
+**`FXU11` — A touch layout.** On a target without hover, a touch screen, or with
+`--touch`, the explorer **must** draw its touch layout: an app bar with the
+title and the root; the query as a filled, rounded field with no border or
+caption, its canonical form or error under it; a row of chips that insert the
+operators, `**`, a string and a comment at the caret, and clear the query; the
+right group's tabs as a segmented control; and no key hints. Every tap target
+— a chip, a segment, a tree row, an Export control — **must** be at least
+48 dp tall ([`TOK11`](../design-system/SPEC.md)). _Detection:_ a recorded
+touch frame has no `╭` and no key hint, its tree rows are the touch target's
+height apart, and tapping `|` inserts `|` at the caret.
+
+**`FXU12` — Tablet and phone.** The touch layout **must** put the tree beside
+the right group when the screen is at least as wide as two 48-column panes,
+and the tree above it otherwise. _Detection:_ at 140×40 cells the tree and the
+segments share their top row; at 60×60 the segments are below the tree.
+
+**`FXU13` — Touch in the panes.** On the touch layout a tap on a directory
+**must** open or close it, the tree's header **must** offer expanding and
+collapsing every directory, the Stats tab **must** offer computing the ids of a
+fileset too large to do it live, and the Export tab **must** choose the Nix glob
+mode with a segmented control. Back **must** leave the help, then a tutorial's
+tree, and only then quit (`INP13`). _Detection:_ recorded taps open and close a
+directory, collapse and expand all, compute the ids and select `expand`.
+
+A border caption drawn over its rule **must** mask the rule under it, on a
+pixel target as on a terminal.
 
 ## 4. Help and runnable blocks (`FXT`)
 
@@ -324,7 +367,28 @@ code for the current query, highlighted when a grammar for the target exists, or
 its refusal with the refused span marked in the editor, and offer copying it.
 The target and the Nix glob mode are chosen in the tab.
 
-## 6. Surface
+## 6. On Android (`FXA`)
+
+**`FXA1` — An APK.** The explorer **must** build as an Android application:
+its `android` dub configuration, a shared library on the native window arm
+(`sparkles:wsi`, drawn by `sparkles:ui-vulkan`), with no terminal stack, packed
+with its grammar parsers into an APK. _Detection:_ `nix build
+.#fileset-explorer-apk` succeeds, and the APK launches on a device.
+
+**`FXA2` — The repository is the root.** The APK **must** carry the sparkles
+repository's tracked files, except dot-entries, which Android's asset packer
+drops, and the explorer **must** open on them as its fileset root, extracted
+into the app's data directory on the first launch and again when they change.
+`gitTracked` fails there, as outside any work tree (`FXL5`). _Detection:_ on a
+device, the default query lists the repository's markdown files and recipes.
+
+**`FXA3` — Highlighting on the device.** The query, the help and the Export
+code **must** be highlighted on Android as on the desktop, from parsers loaded
+by name from the application's libraries and queries extracted with the
+assets. _Detection:_ on a device, the help renders as markdown, not as its
+text.
+
+## 7. Surface
 
 Non-normative: where the parts live.
 
@@ -334,6 +398,8 @@ Non-normative: where the parts live.
 | `FXL8`           | `nix/packages/tree-sitter-fileset/` (`grammar.js`, `queries/highlights.scm`)                             |
 | `FXU1`–`FXU8`    | `apps/fileset-explorer` (`explorer.d`, `evaluate.d`, `member_tree.d`, `render.d`)                        |
 | `FXU9`           | `sparkles.ui.components.file_icons` (`fileIcon`, `folderGlyph`), shared with hue's explorer              |
+| `FXU10`–`FXU13`  | `apps/fileset-explorer` (`explorer.d`, `launch.d`); `sparkles.ui.components.scroll_body` (`ScrollBody`)  |
+| `FXA1`–`FXA3`    | `apps/fileset-explorer/src/android_entry.d`, `nix/packages/android/fileset-explorer.nix`                 |
 | `FXT1`, `FXT2`   | `sparkles.syntax.md.model` (`MdBlockKind.tryBlock`), `sparkles.source_view.markdown` (`tryRunners`)      |
 | `FXT3`–`FXT5`    | `apps/fileset-explorer` (`help.d`)                                                                       |
 | `FXE1`–`FXE10`   | `sparkles.build_primitives.fileset.emit` (`emit`; `ir`, `nix`, `lists`)                                  |

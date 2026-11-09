@@ -12,12 +12,10 @@ import sparkles.base.term_caps : isTerminal, StdStream;
 import sparkles.core_cli.args : Command, failRun, Flatten, Option, ranOk, runCli, RunExpected;
 import sparkles.ui.geometry : Size;
 import sparkles.ui_app.gui_options : GuiOptions;
-import sparkles.ui_app.host : RunConfig;
-import sparkles.ui_app.run : asRunResult;
-import sparkles.ui_app.run_app : runApp;
 
 import evaluate : Root;
 import explorer : ExplorerApp;
+import launch : defaultQuery, launch;
 import render : renderFrame;
 
 int main(string[] args) => runCli!Explorer(args);
@@ -31,7 +29,7 @@ struct Explorer
     string dir = ".";
 
     @(Option("query", description: "The query to start with.", placeholder: "QUERY"))
-    string query = "**/*.md | **/dub.sdl  # documents and recipes";
+    string query = defaultQuery;
 
     @(Option("render-plain", description:
         "Print one frame as text after --keys, and exit. Also what happens without a terminal."))
@@ -52,6 +50,10 @@ struct Explorer
         placeholder: "MODE"))
     string nixGlobs = "shim";
 
+    @(Option("touch", description:
+        "Draw the touch layout, as on a tablet, whatever the pointer."))
+    bool touch;
+
     @Flatten("GUI Options")
     GuiOptions gui;
 
@@ -61,9 +63,11 @@ struct Explorer
     {
         if (emitTarget.length)
             return emitQuery();
-        auto app = new ExplorerApp(Root(dir: dir), query);
         if (renderPlain || !isTerminal(StdStream.stdin) || !isTerminal(StdStream.stdout))
         {
+            auto app = new ExplorerApp(Root(dir: dir), query);
+            if (touch)
+                app.layout = ExplorerApp.Layout.touch;
             import std.stdio : write;
 
             const wh = size.split('x');
@@ -72,8 +76,7 @@ struct Explorer
             write(renderFrame(*app, keys, Size(wh[0].to!int, wh[1].to!int), gui));
             return ranOk();
         }
-        RunConfig cfg = { title: "fileset explorer", gui: gui };
-        return asRunResult(runApp(*app, cfg), "fileset-explorer");
+        return launch(Root(dir: dir), query, gui, touch);
     }
 
     // `FXE11`: the code on standard output, or the refusal on standard error
