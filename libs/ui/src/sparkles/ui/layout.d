@@ -1723,6 +1723,7 @@ version (unittest)
 @safe unittest
 {
     import sparkles.ui.widget : Builder, TextSpan;
+    import sparkles.ui.wrap : explodeRuns;
 
     auto b = Builder();
     const t = b.add(Widget(kind: WidgetKind.rich, wrap: TextWrap.greedy,
@@ -1732,7 +1733,8 @@ version (unittest)
 
     assert(frames[t].rect.width == 7);
     assert(frames[t].paintSpanLines.length == 2);
-    const continuation = frames[t].paintSpanLines[1];
+    // One run of four clusters; split back, a span per cluster.
+    const continuation = explodeRuns(frames[t].paintSpanLines[1]);
     assert(continuation.length == 4);
     foreach (ref const span; continuation)
         assert(span.text == "b" && span.cellAdvance == 1);

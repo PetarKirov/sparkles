@@ -35,7 +35,7 @@ module sparkles.ui.state;
 
 import sparkles.base.term_control : PointerShape;
 import sparkles.base.text.wrap_plan : WrapAffinity, ProvenanceKind;
-import sparkles.ui.wrap : spanPaintAdvance;
+import sparkles.ui.wrap : eachRunCluster, spanPaintAdvance;
 import sparkles.input : cellPointer, InputCapabilities, mousePointer,
     PointerAction, PointerEvent, touchPointer;
 import sparkles.ui.geometry : Point, Rect;
@@ -653,10 +653,42 @@ long sourceOffsetAt(in WidgetTree tree, in Frame[] frames, Point p,
 
         if (p.y < y || p.y - y >= height)
             return;
+        // One cluster's box at `x`, then past it: whether the search ends.
+        bool box(long width, size_t sourceStart, size_t sourceEnd, bool exact) nothrow @nogc
+        {
+            bool stop;
+            if (sourceStart != size_t.max && p.x >= x && p.x <= x + width)
+            {
+                if (!exact)
+                    found = cast(long)(affinity == WrapAffinity.before ? sourceStart : sourceEnd);
+                else if (p.x == x && width > 0)
+                    found = cast(long) sourceStart;
+                else if (p.x == x + width && width > 0)
+                    found = cast(long) sourceEnd;
+                else
+                    found = cast(long)(affinity == WrapAffinity.before ? sourceStart : sourceEnd);
+                stop = p.x < x + width || affinity == WrapAffinity.before;
+            }
+            x += cast(int) width;
+            return stop;
+        }
         size_t i;
         while (i < spans.length)
         {
             ref const s = spans[i];
+            // A run's clusters are boxes of their own, as one-cluster spans.
+            if (s.runClusters > 1)
+            {
+                bool stop;
+                const exact = s.sourceRelation == ProvenanceKind.original;
+                eachRunCluster!((size_t logicalStart, size_t logicalEnd, size_t start, size_t end, long cells) {
+                    stop = stop || box(cells, start, end, exact);
+                })(s);
+                if (stop)
+                    return;
+                ++i;
+                continue;
+            }
             size_t end = i + 1, sourceStart = s.srcStart, sourceEnd = s.srcEnd;
             long width = spanPaintAdvance(s);
             bool exact = s.sourceRelation == ProvenanceKind.original;
@@ -674,20 +706,8 @@ long sourceOffsetAt(in WidgetTree tree, in Frame[] frames, Point p,
                     if (piece.srcEnd > sourceEnd) sourceEnd = piece.srcEnd;
                 }
             }
-            if (sourceStart != size_t.max && p.x >= x && p.x <= x + width)
-            {
-                if (!exact)
-                    found = cast(long)(affinity == WrapAffinity.before ? sourceStart : sourceEnd);
-                else if (p.x == x && width > 0)
-                    found = cast(long) sourceStart;
-                else if (p.x == x + width && width > 0)
-                    found = cast(long) sourceEnd;
-                else
-                    found = cast(long)(affinity == WrapAffinity.before ? sourceStart : sourceEnd);
-                if (p.x < x + width || affinity == WrapAffinity.before)
-                    return;
-            }
-            x += cast(int) width;
+            if (box(width, sourceStart, sourceEnd, exact))
+                return;
             i = end;
         }
     }
@@ -726,22 +746,9 @@ Rect[] selectionRects(in WidgetTree tree, in Frame[] frames,
 
     void checkRow(scope const TextSpan[] spans, int x, int y, int height, Rect clip)
     {
-        size_t i;
-        while (i < spans.length)
+        // One cluster's box at `x`, then past it.
+        void box(long width, bool selected)
         {
-            ref const s = spans[i];
-            size_t end = i + 1;
-            long width = spanPaintAdvance(s);
-            bool selected = s.srcStart != size_t.max && s.srcEnd > lo && s.srcStart < hi;
-            while (end < spans.length && s.wrapPlan !is null
-                && spans[end].wrapPlan is s.wrapPlan && spans[end].wrapLine == s.wrapLine
-                && s.logicalGroup != ulong.max && spans[end].logicalGroup == s.logicalGroup)
-            {
-                ref const piece = spans[end++];
-                width += spanPaintAdvance(piece);
-                selected = selected || (piece.srcStart != size_t.max
-                    && piece.srcEnd > lo && piece.srcStart < hi);
-            }
             if (selected && width > 0)
             {
                 const visible = Rect(x, y, cast(int) width, height).intersection(clip);
@@ -754,6 +761,33 @@ Rect[] selectionRects(in WidgetTree tree, in Frame[] frames,
                 }
             }
             x += cast(int) width;
+        }
+        size_t i;
+        while (i < spans.length)
+        {
+            ref const s = spans[i];
+            // A run's clusters are boxes of their own, as one-cluster spans.
+            if (s.runClusters > 1)
+            {
+                eachRunCluster!((size_t logicalStart, size_t logicalEnd, size_t start, size_t end, long cells) {
+                    box(cells, end > lo && start < hi);
+                })(s);
+                ++i;
+                continue;
+            }
+            size_t end = i + 1;
+            long width = spanPaintAdvance(s);
+            bool selected = s.srcStart != size_t.max && s.srcEnd > lo && s.srcStart < hi;
+            while (end < spans.length && s.wrapPlan !is null
+                && spans[end].wrapPlan is s.wrapPlan && spans[end].wrapLine == s.wrapLine
+                && s.logicalGroup != ulong.max && spans[end].logicalGroup == s.logicalGroup)
+            {
+                ref const piece = spans[end++];
+                width += spanPaintAdvance(piece);
+                selected = selected || (piece.srcStart != size_t.max
+                    && piece.srcEnd > lo && piece.srcStart < hi);
+            }
+            box(width, selected);
             i = end;
         }
     }
@@ -1056,6 +1090,72 @@ in (frames.length == tree.nodes.length,
     assert(sourceOffsetAt(tree, frames, Point(2, 1)) == 56);      // 'b'eta (hang)
     assert(sourceOffsetAt(tree, frames, Point(1, 1)) == -1);      // hang gutter
     assert(sourceOffsetAt(tree, frames, Point(30, 0)) == -1);     // past the text
+}
+
+@("ui.state.runs.answerAsOneClusterSpansDo")
+@safe unittest
+{
+    import std.conv : text;
+    import sparkles.ui.display_list : buildDisplayList;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.style : Palette, TextStyle;
+    import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind;
+    import sparkles.ui.wrap : TextWrap, wrapRuns;
+    import sparkles.base.term_color : RgbColor;
+
+    // Rows a cell layout reads merge simple clusters into runs; hit tests,
+    // selection, the rows' text and the display list answer exactly as the
+    // same rows of one-cluster spans do: a leader with no source, plain and
+    // emphasized text, wide and combining clusters, a tab, and a span whose
+    // source does not map byte for byte.
+    Widget para = Widget(kind: WidgetKind.rich, wrap: TextWrap.greedy, spans: [
+        TextSpan("• ", noBreak: true),
+        TextSpan("plain words 日本語 café and more ", srcStart: 10, srcEnd: 47),
+        TextSpan("emphasized text", srcStart: 47, srcEnd: 62, textStyle: TextStyle(bold: true)),
+        TextSpan(" then\ta tab and the end", srcStart: 62, srcEnd: 85),
+        TextSpan(" replaced", srcStart: 85, srcEnd: 90),
+    ]);
+    para.hangIndent = 2;
+    const pal = Palette.init;
+    // Unwrapped, a row runs past a narrow box and is clipped by cluster.
+    foreach (wrap; [TextWrap.greedy, TextWrap.none])
+    foreach (width; 6 .. 40)
+    {
+        para.wrap = wrap;
+        para.width.max = width;
+        WidgetTree[2] trees;
+        Frame[][2] frameSets;
+        foreach (k, runs; [true, false])
+        {
+            wrapRuns = runs;
+            scope (exit) wrapRuns = true;
+            auto b = Builder();
+            const t = b.add(para);
+            trees[k] = b.finish(b.container(WidgetKind.column, [t]));
+            frameSets[k] = layout(trees[k]);
+        }
+        size_t runSpans;
+        foreach (ref const f; frameSets[0])
+            foreach (line; f.paintSpanLines)
+                foreach (ref const s; line)
+                    runSpans += s.runClusters > 1;
+        assert(runSpans > 0 || wrap == TextWrap.none, text("runs at ", width));
+        foreach (y; 0 .. 12)
+            foreach (x; 0 .. width + 3)
+                foreach (affinity; [WrapAffinity.before, WrapAffinity.after])
+                    assert(sourceOffsetAt(trees[0], frameSets[0], Point(x, y), affinity)
+                        == sourceOffsetAt(trees[1], frameSets[1], Point(x, y), affinity),
+                        text("hit at ", x, ",", y, " width ", width));
+        foreach (lo; 8 .. 92)
+            foreach (hi; lo + 1 .. 93)
+                assert(selectionRects(trees[0], frameSets[0], lo, hi)
+                    == selectionRects(trees[1], frameSets[1], lo, hi),
+                    text("selection ", lo, "..", hi, " width ", width));
+        assert(documentRows(trees[0], frameSets[0]) == documentRows(trees[1], frameSets[1]));
+        assert(buildDisplayList(trees[0], frameSets[0], pal, RgbColor(200, 200, 200), RgbColor(0, 0, 0))
+            == buildDisplayList(trees[1], frameSets[1], pal, RgbColor(200, 200, 200), RgbColor(0, 0, 0)),
+            text("display list at ", width));
+    }
 }
 
 @("ui.state.documentRows.textAndSourceRanges")
