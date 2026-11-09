@@ -56,6 +56,7 @@ import sparkles.ui_app.frame_title : fitTitle, TitleFace, titleCssPx, titleCssPx
 import sparkles.ui_app.client_frame : ClientFrame, crossCoverage, FrameAction, FrameColours,
     FrameGeometry, FrameHit, FramePart, FrameShape;
 import sparkles.ui_app.wsi_input : TouchContacts, WsiInput;
+import sparkles.event_horizon.stream_ingest : StreamId, StreamIngest, StreamSink;
 import sparkles.ui.style : Palette;
 import sparkles.ui_vulkan;
 import sparkles.vulkan;
@@ -1184,6 +1185,35 @@ struct NativeHost
         => readable_ !is null && readable_.want(fd);
 
     private ReadableWakes* readable_;
+
+    /**
+    Reads `fd` as a stream source (output-latency.md `OPL1`–`OPL9`): its
+    bytes reach `sink` as they arrive, between frames, and each delivery
+    makes a frame pass due. `fd` must be non-blocking. `StreamId.init` where
+    this run cannot read it: the component keeps its polled path.
+    */
+    StreamId openStream(int fd, StreamSink sink) @system nothrow @nogc
+        => ingest_ is null ? StreamId.init : ingest_.open(fd, sink);
+
+    /// Closes a stream source: its sink hears nothing after this (`OPL9`).
+    void closeStream(StreamId id) @system nothrow @nogc
+    {
+        if (ingest_ !is null)
+            ingest_.close(id);
+    }
+
+    /// Delivers a source's held bytes now, reading nothing (`OPL7`).
+    void flushStream(StreamId id) @system nothrow @nogc
+    {
+        if (ingest_ !is null)
+            ingest_.flush(id);
+    }
+
+    /// Every byte delivered to stream sinks so far (`OPL25`).
+    ulong streamPosition() const @safe pure nothrow @nogc
+        => ingest_ is null ? 0 : ingest_.position;
+
+    private StreamIngest* ingest_;
 }
 
 /**
@@ -2307,6 +2337,16 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         host.readable_ = null;
         readable.close();
     }
+    // The stream sources the application reads between frames
+    // (`openStream`); closed, and their buffers given back, with this frame.
+    StreamIngest ingest;
+    ingest.loop = &loop;
+    host.ingest_ = &ingest;
+    scope (exit)
+    {
+        host.ingest_ = null;
+        ingest.closeAll();
+    }
     // The platform determines capabilities; gesture recognition is optional.
     // Applications with raw touch capture (such as sliders) still need to
     // distinguish a touchscreen from a hovering mouse.
@@ -3221,6 +3261,11 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         // An answer already in hand (an empty clipboard) goes out now.
         if (clip.ready)
             timeout = Duration.zero;
+        // The turn's ingest budget: bytes a stream source holds go to its
+        // sink first, and while any remain the loop does not wait (`OPL5`).
+        ingest.beginTurn();
+        if (ingest.hasPending)
+            timeout = Duration.zero;
         const parkedAt = MonoTime.currTime;
         if (tickNative(wsi, loop, timeout).hasError)
             break;
@@ -3236,9 +3281,11 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         }
         // A wake with nothing to draw is still a frame pass for an
         // application that asked to be woken (`HST16`), or for an idle
-        // timeout, or for a descriptor it drains turning readable.
-        const readied = readable.fired;
+        // timeout, for a descriptor it drains turning readable, or for bytes
+        // a stream source delivered (`OPL12`).
+        const readied = readable.fired || ingest.delivered;
         readable.fired = false;
+        ingest.delivered = false;
         if (readied
             || (host.wakeAsk != Duration.max && MonoTime.currTime - lastPass >= host.wakeAsk)
             || (cfg.idleTimeoutMs >= 0 && MonoTime.currTime - parkedAt >= cfg.idleTimeoutMs.msecs))
