@@ -203,7 +203,7 @@ private struct Lattice
             case FilesetOp.nothing:
                 break;
             case FilesetOp.everything, FilesetOp.executable, FilesetOp.ignored,
-                FilesetOp.gitignored:
+                FilesetOp.gitignored, FilesetOp.paths, FilesetOp.fileName, FilesetOp.symlinks:
                 prefixes ~= Span(0, 0);
                 break;
             case FilesetOp.glob:

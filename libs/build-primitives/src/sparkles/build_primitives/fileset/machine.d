@@ -1574,8 +1574,9 @@ private:
                 return;
             }
             // A link is never executable (FSO1): no stat can tell more.
-            const v = ev.fileVerdict(sets, ign, stateOf(f.state), name,
-                isLink ? EntryFacts.stat(false) : facts);
+            auto fx = isLink ? EntryFacts.stat(false) : facts;
+            fx.symlink = isLink; // the listing knows the kind (FSV7)
+            const v = ev.fileVerdict(sets, ign, stateOf(f.state), name, fx);
             if (v == FileVerdict.undecided)
                 e.needStat = true;
             else

@@ -102,6 +102,15 @@ bool naiveContains(ref const Filesets sets, Fileset f, string path, bool executa
             case FilesetOp.executable: return executable;
             // The scopes are known only to a resolution; a path alone has none.
             case FilesetOp.gitignored: return false;
+            // A path alone has no kind: the oracle's files are regular.
+            case FilesetOp.symlinks: return false;
+            case FilesetOp.paths:
+                foreach (k; n.a .. n.a + n.b)
+                    if (sets.pathAt(k) == path)
+                        return true;
+                return false;
+            case FilesetOp.fileName:
+                return matchesExactly(sets.patterns[n.a].source, comps[$ - 1 .. $], false, fold);
             case FilesetOp.union_: return eval(n.a) || eval(n.b);
             case FilesetOp.intersection: return eval(n.a) && eval(n.b);
             case FilesetOp.difference: return eval(n.a) && !eval(n.b);
@@ -3402,4 +3411,55 @@ version (Posix)
         assert(!resolve(root.value.borrow, sets, sets.everything, all, lim).hasError, literal);
         assert(all.members.length == (literal is flat ? 17 : 18));
     }
+}
+
+// ---------------------------------------------------------------- FSV6, FSV7
+
+/// FSV6 through a resolution: a list selects the listed files that exist, and
+/// a directory beneath none of them is never opened — here a mount the walk
+/// does not cross, which an opened directory would report as unreadable.
+@("fileset.machine.FSV6.pathsSkipUnlisted")
+@system unittest
+{
+    import std.algorithm.sorting : sort;
+    import std.conv : text;
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+
+    auto tree = openFixture("src/a.d = a\nsrc/b.d = b\nbig/x = 1\nbig/y = 2\nREADME.md = r\n");
+    assert(tree.value.get().vfs.mount("big"));
+    auto root = openRoot!(Rights.readOnly)(&tree.value.get().vfs, "", ambientAuthority());
+    auto sets = Filesets(CasePolicy.sensitive);
+    static immutable string[] list = ["src/a.d", "README.md", "src/missing.d", "gone/x"];
+    auto got = machineResolve(root.value.borrow, sets, sets.paths(list).value);
+    got.members.sort();
+    assert(got.members == ["README.md", "src/a.d"], text(got.members));
+    assert(got.unreadable.length == 0, "the unlisted mount was never opened");
+
+    // The whole tree, for contrast, opens it.
+    const all = machineResolve(root.value.borrow, sets, sets.everything);
+    assert(all.unreadable == ["big: crossesMount"], text(all.unreadable));
+}
+
+/// FSV7 through a resolution: `fileName` holds a file by its own name and not
+/// the contents of a directory of that name; `symlinks` holds the links.
+@("fileset.machine.FSV7.fileNameAndSymlinks")
+@system unittest
+{
+    import std.algorithm.sorting : sort;
+    import std.conv : text;
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+
+    auto tree = openFixture("x = 1\na/x = 2\nx2/x = 3\nkeep/y = 4\nl -> keep\nm -> x\n");
+    auto root = openRoot!(Rights.readOnly)(&tree.value.get().vfs, "", ambientAuthority());
+    auto sets = Filesets(CasePolicy.sensitive);
+    auto named = machineResolve(root.value.borrow, sets, sets.fileName("x").value);
+    named.members.sort();
+    assert(named.members == ["a/x", "x", "x2/x"], text(named.members));
+    const globbed = machineResolve(root.value.borrow, sets, sets.glob("x2").value);
+    assert(globbed.members == ["x2/x"], "a glob matching a directory takes its contents");
+    const viaName = machineResolve(root.value.borrow, sets, sets.fileName("x2").value);
+    assert(viaName.members.length == 0, "a file-name pattern does not");
+    auto links = machineResolve(root.value.borrow, sets, sets.symlinks);
+    links.members.sort();
+    assert(links.members == ["l", "m"], text(links.members));
 }
