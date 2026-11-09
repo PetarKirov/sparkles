@@ -145,6 +145,17 @@ from patterns may fail (a malformed glob, a bound exceeded) and returns
 cannot fail. _Detection:_ evaluation entry points are `nothrow` and return
 non-`Expected` types.
 
+**`FSV6` — A fileset may be a list of paths.** `Filesets.paths(list)` is the
+leaf holding exactly the files named by `list`, relative paths to the fileset
+root that need not exist. A directory none of them lies beneath is skipped
+without being read, as a glob's is; one some lie beneath is descended.
+Duplicate paths name one file. Evaluating it costs `O(log n)` per entry for a
+list of `n` paths. _Rationale:_ `lib.fileset.gitTracked` is the files of git's
+index, a list no pattern spells; the fileset explorer resolves `gitTracked`
+through it. _Detection:_ `paths(["a/b", "c"])` resolves to exactly those of
+them that exist, and a resolution of it beside a large sibling directory reads
+no entry of that directory.
+
 ## 5. Matching (`FSG`)
 
 **`FSG1` — Anchoring.** A pattern containing `/` is anchored to the fileset
@@ -722,7 +733,7 @@ scope chain, and the budget on `RingVfs`.
 | Group                                                     | Covers                                                                                                                  |
 | --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | [`FSO1`–`FSO4`](#3-the-file-system-object-vocabulary-fso) | Node kinds, symlinks, excluded metadata, requested metadata                                                             |
-| [`FSV1`–`FSV5`](#4-the-fileset-value-fsv)                 | Algebra, no complement, directories, empty directories, fallibility                                                     |
+| [`FSV1`–`FSV6`](#4-the-fileset-value-fsv)                 | Algebra, no complement, directories, empty directories, fallibility, path lists                                         |
 | [`FSG1`–`FSG4`](#5-matching-fsg)                          | Anchoring, the `globAny` replacement, case policy, bounds                                                               |
 | [`FSA1`–`FSA6`](#6-analysis-and-planning-fsa)             | Widening, roots, verdicts, forced entry, static emptiness                                                               |
 | [`FSM1`–`FSM7`](#7-the-resolution-machine-fsm)            | Sans-I/O, requests, batching, no content, emission, budget, bounds                                                      |
