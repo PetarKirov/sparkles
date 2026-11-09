@@ -14,6 +14,9 @@ dependency "sparkles:core-cli" path="../.."
 dependency "sparkles:event-horizon-sys" path="../.."
 dependency "sparkles:input" path="../.."
 dependency "sparkles:syntax" path="../.."
+dependency "sparkles:source-view" path="../.."
+// The help page (`FXU7`) is the docs page, compiled in.
+stringImportPaths "../../docs/apps/fileset-explorer"
 dependency "sparkles:ui" path="../.."
 dependency "sparkles:ui-app" path="../.."
 // `--render-plain` (FXU8) paints one frame into a cell grid with no terminal.

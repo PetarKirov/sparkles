@@ -32,13 +32,58 @@ Event keyOf(dchar c) @safe
     }
 }
 
-/// The frame of `app` after `keys`, at `size`, as text: one line per row,
-/// trailing blanks dropped.
+/**
+`keys` as events: each character is typed (tab, newline, escape and backspace
+are those keys), and `<Name>` names a key: `<F1>`, `<Tab>`, `<Enter>`,
+`<Esc>`, `<Up>`, `<Down>`, `<Left>`, `<Right>`, `<PgUp>`, `<PgDn>`,
+`<Home>`, `<End>`, `<Bs>`, `<lt>` for a `<`.
+*/
+Event[] keyScript(string keys) @safe
+{
+    import std.string : indexOf;
+
+    static immutable string[] names = ["F1", "Tab", "Enter", "Esc", "Up", "Down", "Left", "Right", "PgUp",
+        "PgDn", "Home", "End", "Bs", "lt"];
+    static immutable Key[] codes = [Key.f1, Key.tab, Key.enter, Key.escape, Key.up, Key.down, Key.left,
+        Key.right, Key.pageUp, Key.pageDown, Key.home, Key.end, Key.backspace, Key.char_];
+    Event[] script;
+    for (size_t i = 0; i < keys.length;)
+    {
+        if (keys[i] == '<')
+        {
+            const close = keys[i .. $].indexOf('>');
+            if (close > 1)
+                foreach (k, n; names)
+                    if (keys[i + 1 .. i + close] == n)
+                    {
+                        script ~= codes[k] == Key.char_ ? charEvent('<') : keyEvent(codes[k]);
+                        i += close + 1;
+                        goto next;
+                    }
+        }
+        {
+            import std.utf : decode;
+
+            script ~= keyOf(decode(keys, i));
+        }
+    next:
+    }
+    return script;
+}
+
+///
+@("fileset_explorer.render.keyScript")
+@safe unittest
+{
+    assert(keyScript("a<F1>b<lt>") == [charEvent('a'), keyEvent(Key.f1), charEvent('b'), charEvent('<')]);
+    assert(keyScript("<Nope>").length == 6, "an unknown name is typed");
+}
+
+/// The frame of `app` after `keys` (see $(LREF keyScript)), at `size`, as
+/// text: one line per row, trailing blanks dropped.
 string renderFrame(ref ExplorerApp app, string keys, Size size, GuiOptions gui = GuiOptions.init)
 {
-    Event[] script;
-    foreach (dchar c; keys)
-        script ~= keyOf(c);
+    auto script = keyScript(keys);
     auto rec = runAppRecorded(app, RunConfig(gui: gui), script, (ref RecordingHost h) @safe {
         h.size = size;
         h.frameSeconds = 0;

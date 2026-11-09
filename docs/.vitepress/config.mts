@@ -117,6 +117,44 @@ export default withMermaid(
       math: true,
       config(md) {
         md.use(groupIconMdPlugin);
+        // `::: try <runner> {attrs}` (fileset explorer `FXT1`): a runnable
+        // block, which the explorer runs and the site shows as a card. No
+        // container plugin knows `try`, so its opener and closer arrive as
+        // paragraphs; they become the card's wrapper here.
+        md.core.ruler.push('try-blocks', state => {
+          const tokens = state.tokens;
+          let depth = 0;
+          for (let i = 0; i + 2 < tokens.length; i++) {
+            const [open, inline, close] = [
+              tokens[i],
+              tokens[i + 1],
+              tokens[i + 2],
+            ];
+            if (
+              open.type !== 'paragraph_open' ||
+              inline.type !== 'inline' ||
+              close.type !== 'paragraph_close'
+            )
+              continue;
+            const text = inline.content.trim();
+            const m = /^:::\s*try\s+([^\s{]+)/.exec(text);
+            let html: string | null = null;
+            if (m) {
+              const runner = md.utils.escapeHtml(m[1]);
+              html =
+                `<div class="try-block" data-runner="${runner}">` +
+                `<p class="try-title">▶ try it in the ${runner} runner</p>\n`;
+              ++depth;
+            } else if (text === ':::' && depth > 0) {
+              html = '</div>\n';
+              --depth;
+            }
+            if (html === null) continue;
+            const block = new state.Token('html_block', '', 0);
+            block.content = html;
+            tokens.splice(i, 3, block);
+          }
+        });
         // Pushed last so it wins over VitePress's own link handling: rewrite a
         // repository-file link to its pre-rendered listing (see the manifest
         // note at the top of this file).

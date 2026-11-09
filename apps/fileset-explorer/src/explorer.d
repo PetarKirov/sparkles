@@ -31,7 +31,11 @@ import sparkles.ui.style : BorderStyle, Decoration, Slot, TextStyle;
 import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind, WidgetTree;
 
 import evaluate : autoIdBytes, evaluate, humanBytes, Outcome, Root;
+import help : helpSource, namedTrees, runFileset, TryBlock, tryBlocks, TryOutcome;
 import member_tree : buildTree, Item, syncFolders;
+import sparkles.source_view.markdown : MdViewOptions, OverflowPolicy, viewMarkdownInto, WrapOverflow;
+import sparkles.syntax.md.model : MdDoc;
+import sparkles.ui.layout : Frame;
 
 /// The dock's panes.
 enum Pane : PaneId
@@ -66,6 +70,22 @@ struct ExplorerApp
 
     private uint tabsNode;  // the right group's node in the dock
 
+    // The help (`FXU7`, `FXT`): the page, its try blocks and named trees,
+    // where it is scrolled to, which block is selected, and what each run gave.
+    MdDoc helpDoc;                  ///
+    TryBlock[] tries;               ///
+    string[string] trees;           ///
+    int helpTop;                    /// the help's first shown row
+    size_t trySel;                  /// the selected try block
+    TryOutcome[size_t] tryResults;  /// by the block's `at`
+    private size_t lastTab;         // the tab F1 returns to
+    private Focus lastFocus;        // and the focus
+    private TryHit[] tryHits;       // where this frame drew each ▶ (`paint`)
+    private int[size_t] tryRows;    // each try block's row in the help's content
+
+    /// The base of the ▶ hit ids: `tryHitBase + at`.
+    enum size_t tryHitBase = 1 << 24;
+
     /// Starts on `source` beneath `dir`.
     this(Root dir, string source)
     {
@@ -75,9 +95,78 @@ struct ExplorerApp
         tv.open = typeof(tv.open).allOpen;
         tv.chromeRows = 0;
         tv.headerRows = 0;
-        dock.layout = initialLayout(tabsNode);
+        dock.layout = initialLayout(tabsNode, helpLeaf);
         dock.focused = Pane.tree;
+        loadHelp();
         refresh();
+    }
+
+    // Parses the help page; without the markdown grammar it stays its text.
+    private void loadHelp() @system
+    {
+        import sparkles.syntax.md.model : extractMarkdown;
+        import sparkles.syntax.ts.registry : GrammarRegistry;
+
+        auto registry = GrammarRegistry.fromEnvironment();
+        helpDoc = extractMarkdown(registry, helpSource);
+        tries = tryBlocks(helpDoc);
+        trees = namedTrees(helpDoc);
+    }
+
+    /// Runs try block `i` (`FXT3`): its query goes into the editor, resolved
+    /// against its named tree, and its result under the block.
+    void runTry(size_t i)
+    {
+        import std.string : stripRight;
+
+        if (i >= tries.length)
+            return;
+        trySel = i;
+        const t = tries[i];
+        tryResults[t.at] = runFileset(t, trees, dir);
+        query = EditorField.make(t.input.stripRight("\n"));
+        if (t.tree !is null && t.tree in trees)
+            root = Root(literal: trees[t.tree], name: t.tree);
+        else
+            root = dir;
+        refresh();
+    }
+
+    /// Whether the Help tab is the one showing.
+    bool helpShown() const @safe
+        => dock.layout.nodes[tabsNode].children[dock.layout.nodes[tabsNode].active]
+            == helpLeaf;
+
+    private uint helpLeaf;
+
+    /// Shows the help, or goes back to where F1 was pressed (`FXU7`).
+    void toggleHelp()
+    {
+        auto g = &dock.layout.nodes[tabsNode];
+        if (helpShown)
+        {
+            g.active = cast(uint) lastTab;
+            focus = lastFocus;
+            return;
+        }
+        lastTab = g.active;
+        lastFocus = focus;
+        foreach (i, c; g.children)
+            if (c == helpLeaf)
+                g.active = cast(uint) i;
+        focus = Focus.side;
+    }
+
+    /// Records where this frame drew each ▶, for a click to find (`FXT2`).
+    void paint(H)(ref H h, in WidgetTree t, in Frame[] frames)
+    {
+        tryHits.length = 0;
+        foreach (i, ref n; t.nodes)
+            if (n.hitId >= tryHitBase && n.hitId < tryHitBase + helpSource.length && i < frames.length)
+                tryHits ~= TryHit(frames[i].rect, n.hitId - tryHitBase);
+        const r = paneRect(Pane.help);
+        foreach (ref hit; tryHits)
+            tryRows[hit.at] = hit.rect.y - (r.y + dockTop) + helpTop;
     }
 
     /// Re-evaluates the query and rebuilds the tree, keeping what was open.
@@ -128,6 +217,7 @@ struct ExplorerApp
 
         // The dock fills the rest.
         const dockRows = max(4, size.height - 1 - (queryRows + 3) - 1);
+        dockY = 1 + queryRows + 3;
         const stats = statsLines();
         arrangeDock(size.width, dockRows, stats);
         const dockView = b.add(Widget(kind: WidgetKind.column, width: SizeSpec.grow(),
@@ -231,7 +321,7 @@ struct ExplorerApp
 
     // ---- the dock --------------------------------------------------------
 
-    private static DockLayout initialLayout(out uint tabs)
+    private static DockLayout initialLayout(out uint tabs, out uint helpLeaf)
     {
         DockLayout l;
         const t = l.addLeaf(Pane.tree, minExtent: 20);
@@ -239,7 +329,9 @@ struct ExplorerApp
         l.nodes[t].headerExtent = 1;
         const s = l.addLeaf(Pane.stats);
         l.nodes[s].title = "Stats";
-        tabs = l.addTabs([s]);
+        helpLeaf = l.addLeaf(Pane.help);
+        l.nodes[helpLeaf].title = "Help";
+        tabs = l.addTabs([s, helpLeaf]);
         l.root = l.addSplit(DockAxis.horizontal, [t, tabs]);
         return l;
     }
@@ -255,6 +347,8 @@ struct ExplorerApp
         const treeNeeds = treeWidth() + 1;
         const fits = width - want >= treeNeeds;
         dock.layout.nodes[tabsNode].extent = max(10, fits ? want : min(want, max(width - treeNeeds, width / 2)));
+        if (helpShown) // the help reads at half the width at least
+            dock.layout.nodes[tabsNode].extent = max(dock.layout.nodes[tabsNode].extent, min(width / 2, 90));
         dock.arrange(Rect(0, 0, width, rows));
         foreach (ref f; dock.frames.panes)
             if (f.pane == Pane.tree)
@@ -310,7 +404,8 @@ struct ExplorerApp
         {
             case Pane.tree: content = treeView(b); break;
             case Pane.stats: content = statsView(b, stats[0 .. min(stats.length, max(0, r.height))]); break;
-            case Pane.help, Pane.export_: content = b.add(Widget(kind: WidgetKind.column)); break;
+            case Pane.help: content = helpView(b, r); break;
+            case Pane.export_: content = b.add(Widget(kind: WidgetKind.column)); break;
         }
         // The dock's own geometry, clipped: a long row never spills into a neighbour.
         const body_ = b.add(Widget(kind: WidgetKind.column, children: [content], width: SizeSpec.fixed(max(0, r.width)),
@@ -350,6 +445,80 @@ struct ExplorerApp
             widest = max(widest, cast(int)(r.depth * 3 + 3 + 2 + visibleWidth(v.label) + 1 + visibleWidth(v.badge)));
         }
         return widest;
+    }
+
+    // ---- help ---------------------------------------------------------------
+
+    // The help page in a viewport scrolled to `helpTop` (`FXU7`).
+    private uint helpView(ref Builder b, Rect r)
+    {
+        import std.algorithm.iteration : splitter;
+
+        uint content;
+        if (helpDoc.root.children.length == 0)
+        {
+            // No markdown grammar here: the page as its text.
+            uint[] rows;
+            foreach (line; helpSource.splitter('\n'))
+                rows ~= b.add(Widget(kind: WidgetKind.text, text: line, slot: Slot.docs));
+            content = b.add(Widget(kind: WidgetKind.column, children: rows));
+        }
+        else
+        {
+            MdViewOptions o;
+            o.maxWidth = max(10, r.width - 2);
+            o.tableOverflow = OverflowPolicy(WrapOverflow());
+            o.tryRunners = ["fileset"];
+            o.tryHits = HitBlock(tryHitBase, helpSource.length + 1); // by the fence's source offset
+            o.tryResult = (ref Builder bb, size_t at) => resultView(bb, at);
+            content = viewMarkdownInto(b, helpDoc, o);
+        }
+        auto vp = Widget(kind: WidgetKind.column, children: [content], clipX: true, clipY: true,
+            width: SizeSpec.fixed(max(0, r.width)), height: SizeSpec.fixed(max(0, r.height)),
+            padding: Insets(0, 1, 0, 1));
+        vp.childOffset = Point(0, helpTop);
+        return b.add(vp);
+    }
+
+    // What shows under try block `at`: its result, checked against its
+    // expected fence, or, for the selected one, how to run it.
+    private uint resultView(ref Builder b, size_t at) @safe
+    {
+        const sel = trySel < tries.length && tries[trySel].at == at;
+        auto run = at in tryResults;
+        if (run is null)
+            return sel ? b.add(Widget(kind: WidgetKind.text, slot: Slot.accentPrimary,
+                text: "▸ selected: Enter or ▶ runs it")) : uint.max;
+        string expected;
+        foreach (ref t; tries)
+            if (t.at == at)
+                expected = t.expected;
+        uint[] rows;
+        if (!run.ok)
+            rows ~= b.add(Widget(kind: WidgetKind.text, slot: Slot.error, text: "✗ " ~ run.error));
+        else
+        {
+            const verdict = expected is null ? "result" : run.trace == expected ? "✓ result, as expected"
+                : "✗ result, unlike the expected";
+            rows ~= b.add(Widget(kind: WidgetKind.text, text: verdict,
+                slot: expected is null || run.trace == expected ? Slot.success : Slot.error));
+            import std.algorithm.iteration : splitter;
+
+            foreach (line; run.trace.splitter('\n'))
+                if (line.length)
+                    rows ~= b.add(Widget(kind: WidgetKind.text, text: line, slot: Slot.code));
+            if (run.trace.length == 0)
+                rows ~= b.add(Widget(kind: WidgetKind.text, text: "(no members)", slot: Slot.muted));
+        }
+        return b.add(Widget(kind: WidgetKind.column, children: rows));
+    }
+
+    // Scrolls the help so the selected try block shows near the top.
+    private void revealTry()
+    {
+        if (trySel < tries.length)
+            if (auto row = tries[trySel].at in tryRows)
+                helpTop = max(0, *row - 2);
     }
 
     // ---- stats -------------------------------------------------------------
@@ -458,17 +627,21 @@ struct ExplorerApp
     }
 
     // The dock's top edge on screen: the title and the query pane above it.
-    private int dockTop() const @safe
-    {
-        const lines = query.state.text.lineCount;
-        return 1 + cast(int) min(lines, max(1, lastHeight / 3 - 3)) + 3;
-    }
+    private int dockTop() const @safe => dockY;
+
+    private int dockY = 5; // where the last frame put the dock's top row
 
     private int lastHeight = 30;
 
     private void onWheel(in WheelEvent w)
     {
-        if (w.dy)
+        if (!w.dy)
+            return;
+        // The wheel scrolls the pane under the pointer (`DCK7`).
+        const r = paneRect(Pane.help);
+        if (helpShown && w.pos.x >= r.x && w.pos.y >= r.y + dockTop)
+            helpTop = max(0, helpTop + (w.dy > 0 ? 3 : -3));
+        else
             tv.moveSel(w.dy > 0 ? 3 : -3);
     }
 
@@ -476,6 +649,13 @@ struct ExplorerApp
     {
         if (p.action != PointerAction.press || p.button != PointerButton.left)
             return;
+        // A ▶ the last frame drew runs its block (`FXT2`).
+        foreach (ref hit; tryHits)
+            if (p.pos.x >= hit.rect.x && p.pos.x < hit.rect.x + hit.rect.width
+                && p.pos.y >= hit.rect.y && p.pos.y < hit.rect.y + max(1, hit.rect.height))
+                foreach (i, ref t; tries)
+                    if (t.at == hit.at)
+                        return runTry(i);
         PointerEvent q = p;
         q.pos = Point(p.pos.x, p.pos.y - dockTop);
         const r = dock.handle(cast(const) Event(q));
@@ -502,6 +682,8 @@ struct ExplorerApp
     private void onKey(H)(ref H h, in KeyEvent k)
     {
         lastHeight = h.size.height;
+        if (k.key == Key.f1 || (k.key == Key.escape && helpShown && focus == Focus.side))
+            return toggleHelp();
         if (k.key == Key.escape && root.inMemory)
         {
             root = dir; // FXT4: back to the directory
@@ -542,7 +724,31 @@ struct ExplorerApp
     private void sideKey(in KeyEvent k)
     {
         if (k.key == Key.left || k.key == Key.right)
+        {
             dock.activateNext(k.key == Key.right ? 1 : -1);
+            return;
+        }
+        if (!helpShown)
+            return;
+        const page = max(1, paneRect(Pane.help).height - 2);
+        switch (k.key)
+        {
+            case Key.up: helpTop = max(0, helpTop - 1); break;
+            case Key.down: helpTop += 1; break;
+            case Key.pageUp: helpTop = max(0, helpTop - page); break;
+            case Key.pageDown: helpTop += page; break;
+            case Key.home: helpTop = 0; break;
+            case Key.enter: runTry(trySel); break;
+            case Key.char_:
+                if (tries.length && (k.ch == 'n' || k.ch == 'p'))
+                {
+                    trySel = k.ch == 'n' ? (trySel + 1) % tries.length
+                        : (trySel + tries.length - 1) % tries.length;
+                    revealTry();
+                }
+                break;
+            default: break;
+        }
     }
 
     private void treeKey(in KeyEvent k)
@@ -595,6 +801,13 @@ struct ExplorerApp
             default: break;
         }
     }
+}
+
+/// Where a frame drew a try block's ▶, and the block's identity.
+struct TryHit
+{
+    Rect rect; ///
+    size_t at; ///
 }
 
 /// The slot each token kind is drawn in (`FXU4`).
