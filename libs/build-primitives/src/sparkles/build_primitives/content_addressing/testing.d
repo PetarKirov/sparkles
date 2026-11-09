@@ -17,6 +17,7 @@ import std.file : rmdirRecurse;
 import std.random : Mt19937;
 import std.string : strip;
 
+import sparkles.base.hash.blake3 : Blake3;
 import sparkles.base.vfs.mem : MemVfs;
 import sparkles.base.vfs.types : Rights;
 
@@ -309,4 +310,109 @@ the roots, and its NAR equals that of the tree holding only the members.
     const none = schemeResolve(tree, sets, sets.nothing, nothing, exec);
     const empty = onDisk("", "nar-empty", dir => nixDump(dir));
     assert(none.size == empty.length && none.digest == sha256Of(empty));
+}
+
+// --------------------------------------------------------------- tee
+
+/**
+One walk naming a tree by castore and by git, beside its NAR, gives each the
+id it gets alone: castore's and git's entries re-sorted per directory from
+NAR's byte order, git's empty directories dropped, castore's kept.
+*/
+@("content_addressing.tee.parts")
+@system unittest
+{
+    import std.digest.sha : SHA1;
+
+    alias Teed = NarScheme!(SHA256, LiteralRef, CastoreDirectory, GitTree!SHA1);
+    foreach (t; oracleTrees())
+    {
+        const teed = idOf!Teed(t.literal);
+        assert(teed.ids[0] == idOf!CastoreScheme(t.literal),
+            text(t.label, ": castore ", toCastoreText(teed.ids[0].digest)[], "\n", t.literal));
+        assert(teed.ids[1] == idOf!(GitTreeScheme!SHA1)(t.literal), text(t.label, ": git\n",
+            t.literal));
+        assert(teed.nar == idOf!LiteralNar(t.literal), text(t.label, ": nar\n", t.literal));
+    }
+}
+
+/**
+With start roots beneath the fileset root, a root that is a file, or nothing
+at all, the tee's castore id is the fold's and its NAR the stream's.
+*/
+@("content_addressing.tee.startRoots")
+@system unittest
+{
+    import sparkles.build_primitives.fileset.value : Fileset;
+
+    enum tree = "a/b/x = 1\na/b/d/y = 2\na/c = 3\na-c/z = 4\nq = 5\n";
+    auto sets = Filesets(CasePolicy.sensitive);
+    const Fileset[4] filesets = [
+        sets.unionOf(sets.glob("a/b/**").value, sets.glob("a-c/**").value),
+        sets.glob("a/c").value,
+        sets.unionOf(sets.glob("a/b/d/y").value, sets.glob("q").value),
+        sets.nothing,
+    ];
+    foreach (i, f; filesets)
+    {
+        RecordingExecutor exec;
+        CastoreNar!LiteralRef teed;
+        CastoreScheme fold;
+        LiteralNar nar;
+        const both = schemeResolve(tree, sets, f, teed, exec);
+        assert(both.ids[0] == schemeResolve(tree, sets, f, fold, exec), text("fileset ", i,
+            ": castore"));
+        assert(both.nar == schemeResolve(tree, sets, f, nar, exec), text("fileset ", i, ": nar"));
+    }
+}
+
+// What the counting leaf heard, on this test's thread.
+private size_t leafFiles;
+private ulong leafBytes, leafSizes;
+
+// castore's leaf, counting the files it names and the bytes it is fed.
+private struct CountingLeaf
+{
+    alias Id = DigestLeaf!Blake3.Id;
+    private DigestLeaf!Blake3 inner;
+
+    void start(ulong size)
+    {
+        ++leafFiles;
+        leafSizes += size;
+        inner.start(size);
+    }
+
+    void put(scope const(ubyte)[] bytes)
+    {
+        leafBytes += bytes.length;
+        inner.put(bytes);
+    }
+
+    Id finish() => inner.finish();
+}
+
+// castore over the counting leaf.
+private struct CountingCastore
+{
+    CastoreDirectory inner;
+    alias inner this;
+    alias Leaf = CountingLeaf;
+}
+
+/**
+A tee reads each file once: the leaf hears every file once and every byte
+once, from the same reads that write the NAR.
+*/
+@("content_addressing.tee.readsOnce")
+@system unittest
+{
+    enum tree = "a/b/x = one\na/b/d/y = two\na/c = three\nrun +x = go\nl -> a\nempty/\n";
+    leafFiles = leafBytes = leafSizes = 0;
+    const teed = idOf!(NarScheme!(SHA256, LiteralRef, CountingCastore))(tree);
+    assert(leafFiles == 4, text(leafFiles, " files"));
+    assert(leafSizes == 13 && leafBytes == 13, text(leafSizes, " bytes stat-ed, ", leafBytes,
+        " read"));
+    assert(teed.ids[0] == idOf!CastoreScheme(tree));
+    assert(teed.nar == idOf!LiteralNar(tree));
 }

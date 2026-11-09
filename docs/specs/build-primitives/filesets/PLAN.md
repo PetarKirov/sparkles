@@ -172,13 +172,16 @@ sibling contract under `docs/specs/build-primitives/content-addressing/`.
 **Gate.** Each instance matches its oracle on the fixture set, including the
 ordering fixture and a case-collision fixture. A `Tee` reads each file once.
 
-Progress: steps 1 to 4 are delivered. `content_addressing/merkle.d` holds the
+Progress: all five steps are delivered. `content_addressing/merkle.d` holds the
 shell, `git.d` and `castore.d` the instances; `content_addressing.git.writeTree`
 checks SHA-1 and SHA-256 against `git write-tree`, and
 `content_addressing.castore.snix` checks castore against Snix, on the hazard,
 case-collision, fixture and 200 random trees. `nar.d` holds NAR, a stream
 declaring the new `leave`; `content_addressing.nar.dump` checks it against
-`nix-store --dump` on the same trees.
+`nix-store --dump` on the same trees. The tee is `NarScheme!(H, Ref, Dirs)`,
+NAR with Merkle encodings beside it, and `CastoreNar` stores the `NarHash`
+beside the identity; `content_addressing.tee.readsOnce` is the gate's "reads
+each file once". Left: the sibling contract, and `FSS8`'s type.
 
 ### M7 — The subtree cache
 
