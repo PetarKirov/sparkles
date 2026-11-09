@@ -30,3 +30,6 @@ libs/ui/test/data/themes/*.tokens
 # apps/ci/tools/gen-site-css.d, and a drift test compares them byte for byte
 # with a fresh emission (WEB3); a reformat would read as drift.
 docs/.vitepress/theme/spk.css
+
+# The fileset grammar's tree-sitter.json: pretty-format-json's canonical form.
+nix/packages/tree-sitter-fileset/tree-sitter.json
