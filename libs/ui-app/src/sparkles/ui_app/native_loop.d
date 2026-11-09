@@ -1167,6 +1167,217 @@ struct NativeHost
     bool spawnDaemon(void delegate()) @safe pure nothrow @nogc => false;
     /// ditto — the next frame is already coming.
     void wake() @safe pure nothrow @nogc {}
+
+    /**
+    Asks for a frame pass as soon as `fd` turns readable (`HST15`'s polled
+    form): the component that drains a descriptor in its frame — a terminal
+    pane's pty — asks again each pass it is still reading, and the loop parks
+    a readiness poll on it beside the window system's own. Without it such a
+    component reads only when something else wakes the loop, which a reader
+    faster than its writer turns into a stall.
+
+    The ask lasts one pass: a descriptor not asked for again is let go, so a
+    closed one is never watched. `false` where this run cannot watch it (no
+    loop, every slot taken): the component's next wake is then its own.
+    */
+    bool wakeWhenReadable(int fd) @system nothrow @nogc
+        => readable_ !is null && readable_.want(fd);
+
+    private ReadableWakes* readable_;
+}
+
+/**
+The readiness polls behind `NativeHost.wakeWhenReadable`: one one-shot poll
+per descriptor at a time, on the loop the window system's events arrive on, a
+completion marking a frame pass due (`fired`).
+
+A slot is free, armed, or cancelling, and is reused only once its completion —
+readiness or the cancellation — has come back, so a descriptor number a closed
+pane's successor reuses never shares a poll with it. Address-pinned: the polls
+carry pointers to their slots, so it lives in the loop's frame and every armed
+poll is cancelled and reaped (`close`) before that frame ends.
+*/
+private struct ReadableWakes
+{
+    import sparkles.event_horizon.op : Completion, OpHandle, OpPollAdd, PollEvents;
+
+    @disable this(this);
+
+    private enum State : ubyte { free, armed, cancelling }
+
+    private static struct Slot
+    {
+        ReadableWakes* owner;
+        int fd = -1;
+        OpHandle op;
+        State state;
+        bool wanted; // asked for during the current pass
+    }
+
+    DefaultLoop* loop;
+    /// A watched descriptor turned readable: a frame pass is due.
+    bool fired;
+    private Slot[16] slots;
+
+    /// A component's ask, for this pass.
+    bool want(int fd) @system nothrow @nogc
+    {
+        if (loop is null || fd < 0)
+            return false;
+        foreach (ref s; slots)
+            if (s.state == State.armed && s.fd == fd)
+            {
+                s.wanted = true;
+                return true;
+            }
+        foreach (ref s; slots)
+        {
+            if (s.state != State.free)
+                continue;
+            s.owner = &this;
+            auto h = loop.submit(OpPollAdd(fd, PollEvents.readable, false), &onReady, &s);
+            if (h.hasError)
+                return false;
+            s.fd = fd;
+            s.op = h.value;
+            s.state = State.armed;
+            s.wanted = true;
+            return true;
+        }
+        return false;
+    }
+
+    /// A pass begins: every ask must be made again.
+    void beginPass() @safe pure nothrow @nogc
+    {
+        foreach (ref s; slots)
+            s.wanted = false;
+    }
+
+    /// A pass ended: let go of what nobody asked for again.
+    void endPass() @system nothrow @nogc
+    {
+        foreach (ref s; slots)
+            if (s.state == State.armed && !s.wanted)
+                cancel(s);
+    }
+
+    /// Cancels every poll and reaps the cancellations, so no completion
+    /// outlives the slots it points at.
+    void close() @system nothrow
+    {
+        import core.time : Duration;
+
+        if (loop is null)
+            return;
+        foreach (ref s; slots)
+            if (s.state == State.armed)
+                cancel(s);
+        // A cancellation completes in the loop's next turns; a few suffice.
+        foreach (_; 0 .. 64)
+        {
+            bool pending = false;
+            foreach (ref s; slots)
+                pending |= s.state != State.free;
+            if (!pending || loop.runOnce(Duration.zero).hasError)
+                break;
+        }
+        loop = null;
+    }
+
+    private void cancel(ref Slot s) @system nothrow @nogc
+    {
+        // A refused cancel leaves the slot armed and unwanted: the next
+        // pass's `endPass` asks again, and the poll's own completion, if it
+        // comes first, frees it.
+        if (!loop.cancel(s.op).hasError)
+            s.state = State.cancelling;
+    }
+
+    private static void onReady(void* ctx, ref Completion done) nothrow @nogc
+    {
+        auto s = cast(Slot*) ctx;
+        // Readiness (any of readable, hangup, error) is a reason to read;
+        // a cancellation is only the slot coming back.
+        if (s.state == State.armed && done.res >= 0)
+            s.owner.fired = true;
+        s.state = State.free;
+        s.fd = -1;
+    }
+}
+
+@("native_loop.ReadableWakes.wakesOnceReadableAndLetsGoUnasked")
+@system unittest
+{
+    import core.sys.posix.unistd : close, pipe, write;
+    import sparkles.test_runner.skip : skipTest;
+
+    DefaultLoop loop;
+    if (DefaultLoop.create(loop, LoopConfig()).hasError)
+        return skipTest("no event loop here (a sandbox without io_uring)");
+    scope (exit) loop.destroy();
+
+    int[2] fds;
+    assert(pipe(fds) == 0);
+    scope (exit)
+    {
+        close(fds[0]);
+        close(fds[1]);
+    }
+
+    ReadableWakes wakes;
+    wakes.loop = &loop;
+    scope (exit) wakes.close();
+
+    // Asked for during a pass: armed once, however often it is asked.
+    wakes.beginPass();
+    assert(wakes.want(fds[0]));
+    assert(wakes.want(fds[0]));
+    wakes.endPass();
+    size_t armed;
+    foreach (ref s; wakes.slots)
+        armed += s.state == ReadableWakes.State.armed;
+    assert(armed == 1, "one poll per descriptor");
+
+    // Nothing written yet: no wake.
+    cast(void) loop.runOnce(Duration.zero);
+    assert(!wakes.fired);
+
+    // The writer writes: the next turn of the loop marks a pass due, and the
+    // one-shot poll's slot is free again.
+    ubyte one = 1;
+    assert(write(fds[1], &one, 1) == 1);
+    foreach (_; 0 .. 8)
+        if (!wakes.fired)
+            cast(void) loop.runOnce(10.msecs);
+    assert(wakes.fired, "readability wakes the loop");
+    foreach (ref s; wakes.slots)
+        assert(s.state == ReadableWakes.State.free);
+
+    // Asked for, then not asked for again: let go (cancelled and reaped),
+    // with no wake for it.
+    wakes.fired = false;
+    wakes.beginPass();
+    int[2] quiet;
+    assert(pipe(quiet) == 0);
+    scope (exit)
+    {
+        close(quiet[0]);
+        close(quiet[1]);
+    }
+    assert(wakes.want(quiet[0]));
+    wakes.endPass();
+    wakes.beginPass();
+    wakes.endPass(); // the next pass did not ask
+    foreach (_; 0 .. 8)
+        cast(void) loop.runOnce(Duration.zero);
+    foreach (ref s; wakes.slots)
+        assert(s.state == ReadableWakes.State.free, "an unasked poll is let go");
+    assert(!wakes.fired, "a cancellation is not a wake");
+
+    // Without a loop, nothing can be watched.
+    ReadableWakes none;
+    assert(!none.want(fds[0]));
 }
 
 static assert(isHost!NativeHost);
@@ -2086,6 +2297,16 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
     // ── the host ──
     NativeHost host;
     host.session_ = &session;
+    // The descriptors the application drains in its frame wake it when they
+    // turn readable (`wakeWhenReadable`); their polls end with this frame.
+    ReadableWakes readable;
+    readable.loop = &loop;
+    host.readable_ = &readable;
+    scope (exit)
+    {
+        host.readable_ = null;
+        readable.close();
+    }
     // The platform determines capabilities; gesture recognition is optional.
     // Applications with raw touch capture (such as sliders) still need to
     // distinguish a touchscreen from a hovering mouse.
@@ -3015,8 +3236,11 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         }
         // A wake with nothing to draw is still a frame pass for an
         // application that asked to be woken (`HST16`), or for an idle
-        // timeout.
-        if ((host.wakeAsk != Duration.max && MonoTime.currTime - lastPass >= host.wakeAsk)
+        // timeout, or for a descriptor it drains turning readable.
+        const readied = readable.fired;
+        readable.fired = false;
+        if (readied
+            || (host.wakeAsk != Duration.max && MonoTime.currTime - lastPass >= host.wakeAsk)
             || (cfg.idleTimeoutMs >= 0 && MonoTime.currTime - parkedAt >= cfg.idleTimeoutMs.msecs))
         {
             lc.input();
@@ -3260,7 +3484,12 @@ private void buildFrame(alias present)(ref NativeHost host, bool mustDraw)
 {
     host.beginFrameState(mustDraw: mustDraw);
     declareFaces(host);
+    // A pass's readiness asks replace the last pass's (`wakeWhenReadable`).
+    if (host.readable_ !is null)
+        host.readable_.beginPass();
     present(host);
+    if (host.readable_ !is null)
+        host.readable_.endPass();
 }
 
 // The target declares `proportionalText` while the canvas draws the
