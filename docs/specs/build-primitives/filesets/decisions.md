@@ -354,8 +354,9 @@ The old walker's defects are two:
 The 290 anchoring divergences in `docs/` matter to the migration: the site's
 `srcExclude` globs are written for VitePress, whose `**/` matches zero
 directories as the fileset's does. Where the two readings of `**/` disagree, the
-fileset's is the one the site means. M9 reviews each consumer's globs with this
-record; it is closed when the last consumer is migrated.
+fileset's is the one the site means. M9 reviewed each consumer's globs with this
+record and closed it on 2026-11-09, when the last consumer was migrated and
+the old walker, with the gate that ran it, was deleted.
 
 ### A18 — The scheme seam, as built
 

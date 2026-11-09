@@ -126,7 +126,8 @@ divergence is either explained by
 [`FSG2`](./SPEC.md#5-matching-fsg) (the anchoring change) and recorded, or
 fixed. Nothing is deleted until this evidence exists.
 
-Delivered as `fileset.gate.m4.behaviourPreservation`. Two more classes are
+Delivered as `fileset.gate.m4.behaviourPreservation`, deleted with the old walker
+in M9. Two more classes are
 accepted beside `FSG2`: a divergence where git agrees with the machine (the
 old walker's defect) and one `FSA5`'s forced entry explains. The record, over
 this repository and ten others, linux among them, is
@@ -209,6 +210,17 @@ those call sites lose their bespoke glob layer.
 
 **Gate.** M4's divergence record is closed, all consumers are on the new API,
 and the old modules are deleted in the same PR that removes the last consumer.
+
+Progress: delivered. `fileset/listing.d` is the consumers' API: `listRepository`
+resolves a fileset at the enclosing repository's root through `RingVfs`,
+`withGlobs` is the explorer's include/exclude precedence, and `GlobFilter` and
+`GlobSet` replace `passesGlobs` for one path at a time. `source_set.d`, hue's
+pickers, site discovery and explorer, and both examples are on it, and
+`dir_walk.d`, `glob_walk.d` and `gitignore.d` are deleted, with M4's gate;
+`gitGlobMatch`, which selects packages by name, moved to `workspace/select.d`.
+Consumers' globs were reviewed against A17: the repository ships none to
+them, and the site's `srcExclude` keeps VitePress's own matcher, which reads
+`**/` as filesets do.
 
 ## What is deliberately not here
 

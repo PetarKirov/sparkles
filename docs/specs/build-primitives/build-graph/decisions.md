@@ -1184,8 +1184,8 @@ file-system layer.
   which BGK5's cache and BGK7's stat proxies need, before E3.
 
 **Trade-offs.** The E1 resolver moves off `std.file` in E2, and the
-repository's old walkers (`dir_walk`, `glob_walk`) are not used by the graph;
-filesets' M9 retires them. Processes an action starts still read paths: the
+repository's old walkers (`dir_walk`, `glob_walk`) were not used by the graph;
+filesets' M9 deleted them. Processes an action starts still read paths: the
 manifest, BGK8 and the D39 isolation spike cover them, not the VFS.
 
 **Revisit when** a VFS backend cannot answer an operation the graph needs on

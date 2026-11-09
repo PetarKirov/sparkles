@@ -52,9 +52,10 @@ struct SiteConfig
     /// recorded as skipped (`size`).
     @WireOptional() ulong maxFileSize;
 
-    /// `--exclude`-style globs (matched against the repo-relative path and
-    /// the base name) dropping files from the site regardless of how they
-    /// were reached; recorded as skipped (`excluded`).
+    /// `--exclude`-style globs, fileset patterns over the repo-relative path
+    /// (one without a `/` matches a name at any depth), dropping files from
+    /// the site regardless of how they were reached; recorded as skipped
+    /// (`excluded`).
     @WireOptional() string[] excludeGlobs;
 
     /// `this` with every unset field replaced by its default.

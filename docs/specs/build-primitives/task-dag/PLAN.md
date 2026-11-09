@@ -55,7 +55,7 @@ Status: delivered. `libs/build-primitives/src/sparkles/build_primitives/workspac
 through the `sparkles.build_primitives.dub_manifest` schema.
 `libs/build-primitives/src/sparkles/build_primitives/workspace/select.d` holds the selection algebra, `gitChangesSince`
 (through `runGit`), and the test-only planner `planPackages` with
-`writeSelectionPlan`. `--from` globs use `gitGlobMatch`, newly public in
+`writeSelectionPlan`. `--from` globs use `gitGlobMatch`, which moved here from the deleted
 `sparkles.build_primitives.gitignore`. No CLI option exists yet.
 
 ## M4: Event Horizon executor core
