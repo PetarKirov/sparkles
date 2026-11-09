@@ -110,6 +110,30 @@ version (unittest)
     }
     @("text.wrap.realCellDriverStyleClusterAndAtomicEmission") unittest { runOwnedWrappingSmoke(); }
 
+    @("text.wrap.lendCellWrapPlan.lendsWhatCellWrapPlanCopies") @safe unittest
+    {
+        // The lent plan is the copied one, read where the planner made it:
+        // a second lend reads the same arena, so nothing was copied out.
+        const text = "wrap 日本語 café and\ttabs, then more words to wrap";
+        auto options = WrapOptions(width: CellWidth.bounded(12), tabs: TabPolicy.expand);
+        const owned = cellWrapPlan(text, options);
+        const(WrapFragment)* first;
+        lendCellWrapPlan(text, options, (scope ref const WrapPlan lent) @safe {
+            assert(lent.lines == owned.lines && lent.fragments == owned.fragments
+                && lent.sourceRecords == owned.sourceRecords && lent.styles == owned.styles);
+            assert(&lent.fragments[0] !is &owned.fragments[0], "the copy is the caller's");
+            first = (() @trusted => &lent.fragments[0])();
+        });
+        lendCellWrapPlan(text, options, (scope ref const WrapPlan lent) @safe {
+            assert(&lent.fragments[0] is first, "the same arena, lent again");
+            // A wrap inside `use` plans in arenas of its own: the lent plan
+            // stays as it was.
+            const nested = cellWrapPlan("another paragraph entirely, wrapped inside", options);
+            assert(nested.lines.length > 1);
+            assert(lent.fragments == owned.fragments, "untouched by the nested wrap");
+        });
+    }
+
     @("text.wrap.cellsMandatoryZeroProtectionTabsCollapseAndBalanced") unittest
     {
         assert(wrapText("", WrapOptions(width: CellWidth.bounded(0))) == "");

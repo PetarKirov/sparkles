@@ -1890,6 +1890,34 @@ package(sparkles.base.text) const(void)[] cellWrapPoolTokenArena() @safe nothrow
 WrapPlan cellWrapPlan(const(char)[] text, WrapOptions options = WrapOptions.init,
     scope void delegate() @safe measurePending = null) @safe
 {
+    WrapPlan owned;
+    lendCellWrapPlan(text, options, (scope ref const WrapPlan lent) @safe {
+        // The copy's arrays are copied out of the arenas next; every other
+        // slice in a plan points into `text`, `options` or a literal.
+        owned = (() @trusted => cast(WrapPlan) lent)();
+        owned.lines = lent.lines.dup;
+        owned.fragments = lent.fragments.dup;
+        owned.sourceRecords = lent.sourceRecords.dup;
+        owned.styles = lent.styles.dup;
+    }, measurePending);
+    return owned;
+}
+
+/**
+$(LREF cellWrapPlan), lent rather than copied: `use` reads the plan where the
+planner made it, in this thread's arenas, which the next plan reuses. A caller
+that keeps part of it copies that part — a projection that keeps only its own
+output skips copying the plan's fragments (one per scalar), most of what a
+wrap allocates.
+
+The plan's arrays are the arenas'; every slice inside them (a fragment's
+bytes, a style's) points into `text`, `options` or a literal, never into
+the arenas. A wrap inside `use` plans in arenas of its own.
+*/
+void lendCellWrapPlan(const(char)[] text, WrapOptions options,
+    scope void delegate(scope ref const WrapPlan plan) @safe use,
+    scope void delegate() @safe measurePending = null) @safe
+{
     import std.exception : enforce;
     import std.conv : to;
     if (text.length > (size_t.max - 128) / 64) throw new Exception("cell wrapping size exhausted");
@@ -1945,11 +1973,8 @@ WrapPlan cellWrapPlan(const(char)[] text, WrapOptions options = WrapOptions.init
             continue;
         }
         enforce(r.succeeded, "cell wrapping failed: " ~ r.status.to!string);
-        plan.lines = plan.lines.dup;
-        plan.fragments = plan.fragments.dup;
-        plan.sourceRecords = plan.sourceRecords.dup;
-        plan.styles = plan.styles.dup;
-        return plan;
+        use(plan);
+        return;
     }
 }
 
