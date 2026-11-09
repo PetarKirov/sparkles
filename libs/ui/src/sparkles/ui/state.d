@@ -421,8 +421,44 @@ and never reach `DocRow.sourceText`, only `DocRow.text`.
 */
 DocRow[] documentRows(in WidgetTree tree, in Frame[] frames)
 {
-    const total = frames.length ? frames[tree.root].rect.height : 0;
-    auto rows = new DocRow[](total > 0 ? total : 0);
+    DocRowStore store;
+    return documentRows(tree, frames, store);
+}
+
+/**
+Storage `documentRows` reuses from one call to the next: the row array and
+its per-row scratch. A model that rebuilds its rows on every relayout keeps
+one, so a document's rows are allocated once, not once per width.
+
+$(B The rows a call returns are overwritten by the next call) on the same
+store. Their text is not: each call's text is a buffer of its own.
+*/
+struct DocRowStore
+{
+    private DocRow[] rows;
+    private size_t[] textAt, sourceAt, textStart, sourceStart;
+}
+
+// `a` at length `n`, every element `init`, in the block it already has.
+private void refit(T)(ref T[] a, size_t n)
+{
+    a.length = n;
+    () @trusted { a.assumeSafeAppend(); }();
+    a[] = T.init;
+}
+
+/**
+ditto — into `store`, reused across calls, and at least `minRows` rows long:
+the rows past the tree's are blank. A windowed model's tree covers the
+window, its rows the whole document.
+*/
+DocRow[] documentRows(in WidgetTree tree, in Frame[] frames, ref DocRowStore store,
+    size_t minRows = 0)
+{
+    const height = frames.length ? frames[tree.root].rect.height : 0;
+    const total = height > 0 ? cast(size_t) height : 0;
+    refit(store.rows, total > minRows ? total : minRows);
+    auto rows = store.rows[0 .. total];
 
     // The rows a vertical viewport shows: content it scrolls out of view is
     // laid out past its box — over the document's rows above and below —
@@ -435,8 +471,9 @@ DocRow[] documentRows(in WidgetTree tree, in Frame[] frames)
     // span by span grew every row a few bytes at a time — a 5k-line code view
     // is 220k spans, and the appends were most of this function's time.
     bool sizing = true;
-    auto textAt = new size_t[](rows.length);
-    auto sourceAt = new size_t[](rows.length);
+    refit(store.textAt, total);
+    refit(store.sourceAt, total);
+    auto textAt = store.textAt, sourceAt = store.sourceAt;
     char[] textBuf, sourceBuf;
 
     void addText(int y, const(char)[] text, size_t srcStart, size_t srcEnd)
@@ -577,7 +614,11 @@ DocRow[] documentRows(in WidgetTree tree, in Frame[] frames)
     walk(tree.root);
     textBuf = place(textAt);
     sourceBuf = place(sourceAt);
-    const textStart = textAt.dup, sourceStart = sourceAt.dup;
+    refit(store.textStart, total);
+    refit(store.sourceStart, total);
+    auto textStart = store.textStart, sourceStart = store.sourceStart;
+    textStart[] = textAt[];
+    sourceStart[] = sourceAt[];
     sizing = false;
     walk(tree.root);
     foreach (y, ref row; rows)
@@ -585,7 +626,7 @@ DocRow[] documentRows(in WidgetTree tree, in Frame[] frames)
         row.text = slice(textBuf, textStart[y], textAt[y]);
         row.sourceText = slice(sourceBuf, sourceStart[y], sourceAt[y]);
     }
-    return rows;
+    return store.rows;
 }
 
 /**
@@ -1071,7 +1112,39 @@ in (frames.length == tree.nodes.length,
     assert(rows[1].srcStart == size_t.max);
     assert(rows[2].text == "ef" && rows[2].sourceText == "ef");
 }
-// ── Scrollbar (STM2) ─────────────────────────────────────────────────────────
+
+/// A store keeps one block across calls, pads to `minRows`, and blanks what
+/// the last call left behind.
+@("ui.state.documentRows.aStoreIsReusedAndPadded")
+@safe unittest
+{
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind;
+
+    auto b = Builder();
+    const one = b.add(Widget(kind: WidgetKind.rich, spans: [TextSpan("ab", srcStart: 0, srcEnd: 2)]));
+    const two = b.add(Widget(kind: WidgetKind.rich, spans: [TextSpan("cd", srcStart: 3, srcEnd: 5)]));
+    auto tall = b.finish(b.container(WidgetKind.column, [one, two]));
+    const tallFrames = layout(tall);
+    auto c = Builder();
+    const lone = c.add(Widget(kind: WidgetKind.rich, spans: [TextSpan("ef", srcStart: 6, srcEnd: 8)]));
+    auto short_ = c.finish(c.container(WidgetKind.column, [lone]));
+    const shortFrames = layout(short_);
+
+    DocRowStore store;
+    const first = documentRows(tall, tallFrames, store, minRows: 5);
+    assert(first.length == 5);
+    assert(first[1].text == "cd" && first[4].srcStart == size_t.max);
+    const block = &first[0];
+
+    const second = documentRows(short_, shortFrames, store, minRows: 4);
+    assert(&second[0] is block, "the same block");
+    assert(second.length == 4);
+    assert(second[0].text == "ef" && second[0].srcStart == 6);
+    assert(second[1].text is null && second[1].srcStart == size_t.max, "blanked");
+}
+
+// ── Scrollbar (STM2)─────────────────────────────────────────────────────────
 
 /// A scrollbar thumb's resolved geometry on its track, in abstract units.
 struct ThumbGeometry
