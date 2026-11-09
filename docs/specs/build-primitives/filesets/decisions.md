@@ -526,6 +526,21 @@ nothing. `content_addressing.nar.dump` compares its digest and length with
 those of `nix-store --dump` on every oracle tree, and
 `content_addressing.nar.startRoots` with start roots beneath the root.
 
+`Tee!(S...)` is not built as a general product of schemes either, for the
+same reason: the one combination with a consumer is the identity and its
+`NarHash` (D2). The NAR stream takes the Merkle directory encodings as
+parts instead: `NarScheme!(H, Ref, Dirs)` reads each file once, feeding the
+NAR and every `Dir`'s leaf, keeps a file's leaf ids and a subdirectory's ids
+in the entry it already kept, and encodes each directory when it closes,
+re-sorting its entries from NAR's byte order into the `Dir`'s own. A part
+is an encoding, not a fold: `leave` already gives the post-order a fold
+needs. `CastoreNar` is castore with NAR by SHA-256.
+`content_addressing.tee.parts` checks a tee
+of castore and git against each scheme alone on every oracle tree,
+`content_addressing.tee.startRoots` with start roots beneath the root and a
+root that is a file, and `content_addressing.tee.readsOnce` counts what the
+leaf hears: each file once, each byte once.
+
 ## Open
 
 ### D2 — Whether `NarHash` is stored or recomputed

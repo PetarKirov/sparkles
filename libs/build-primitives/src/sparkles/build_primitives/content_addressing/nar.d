@@ -27,15 +27,24 @@ A plan's start roots may lie beneath the fileset root, which a stream never
 sees as a unit: the scheme writes the directories above them itself, as a
 directory holding only the way to its roots. `nix-store --dump` is the
 oracle (`content_addressing.nar.dump`).
+
+The same walk can name the tree by Merkle directory encodings too, the
+`Tee` of A19: `NarScheme!(H, Ref, Dirs)` feeds each file's bytes, read
+once, to the NAR and to every `Dir`'s leaf, and encodes a directory when it
+is closed, its entries put in the `Dir`'s own order. `CastoreNar` is the
+castore identity with its `NarHash` beside it (D2).
 */
 module sparkles.build_primitives.content_addressing.nar;
 
 import std.digest : isDigest;
+import std.digest.sha : SHA256;
+import std.meta : allSatisfy, staticMap;
 
 import sparkles.base.buffer : UniqueBuffer;
 import sparkles.base.io.errors : ErrorKind;
-import sparkles.build_primitives.content_addressing.merkle : streamFile;
-import sparkles.build_primitives.fileset.fso : EntryOrder, FsoKind, FsoMetadata;
+import sparkles.build_primitives.content_addressing.castore : CastoreDirectory;
+import sparkles.build_primitives.content_addressing.merkle : DefaultLeaf, isDirFormat, streamFile;
+import sparkles.build_primitives.fileset.fso : EntryOrder, FsoKind, FsoMetadata, precedes;
 
 /// A NAR's digest by `H`, and its length in bytes.
 struct NarHash(H)
@@ -45,25 +54,74 @@ if (isDigest!H)
     ulong size;                     ///
 }
 
-/**
-The NAR of a fileset, hashed by `H` as it is written. `Ref` is the
-reference type its entries carry, `FsoRef!(V, R)` for the root's VFS `V`
-and rights `R`.
-*/
-struct NarScheme(H, Ref)
+/// The ids `Dirs` give a tree, and its NAR beside them.
+struct WithNar(H, Dirs...)
 if (isDigest!H)
 {
-    enum order = EntryOrder.narOrder; ///
-    enum metadata = cast(FsoMetadata)(FsoMetadata.executable | FsoMetadata.linkTarget); ///
-    alias Result = NarHash!H; ///
+    IdsOf!Dirs ids; /// `ids[i]` is `Dirs[i]`'s
+    NarHash!H nar;  ///
+}
 
-    // An entry not yet written: its strings live in `text`.
+/// The castore id of a fileset, and its NAR by SHA-256: the identity with
+/// the `NarHash` stored beside it (D2).
+alias CastoreNar(Ref) = NarScheme!(SHA256, Ref, CastoreDirectory);
+
+private alias IdOf(Dir) = Dir.Id;
+private alias LeafOf(Dir) = DefaultLeaf!Dir;
+private alias LeafIdOf(Dir) = DefaultLeaf!Dir.Id;
+private alias IdsOf(Dirs...) = staticMap!(IdOf, Dirs);
+private enum bool isMerkleDir(Dir) = isDirFormat!(Dir, DefaultLeaf!Dir);
+
+// The metadata `Dir` needs: what it declares, else `MerkleFold`'s default.
+private template metadataOf(Dir)
+{
+    static if (__traits(hasMember, Dir, "metadata"))
+        enum FsoMetadata metadataOf = Dir.metadata;
+    else
+        enum metadataOf = cast(FsoMetadata)(FsoMetadata.executable | FsoMetadata.linkTarget);
+}
+
+/**
+The NAR of a fileset, hashed by `H` as it is written, and the ids that the
+Merkle directory encodings `Dirs`, each over its own `Leaf`, give the same
+tree. `Ref` is the reference type its entries carry, `FsoRef!(V, R)` for the
+root's VFS `V` and rights `R`.
+
+With no `Dirs` the result is the `NarHash`, and with some a `WithNar`. Each
+file is read once, its bytes going to the NAR and to every leaf (A19's
+`Tee`); the metadata declared is the union of the parts'.
+*/
+struct NarScheme(H, Ref, Dirs...)
+if (isDigest!H && allSatisfy!(isMerkleDir, Dirs))
+{
+    enum order = EntryOrder.narOrder; ///
+    enum metadata = () {
+        auto m = cast(FsoMetadata)(FsoMetadata.executable | FsoMetadata.linkTarget);
+        static foreach (Dir; Dirs)
+            m |= metadataOf!Dir;
+        return m;
+    }(); ///
+    static if (Dirs.length)
+        alias Result = WithNar!(H, Dirs); ///
+    else
+        alias Result = NarHash!H; ///
+
+    // An entry not yet written: its strings live in `text`. With `Dirs`, it
+    // also keeps what its directory's encodings need: a subdirectory's ids,
+    // set when the subdirectory is closed, or a file's leaf ids and size,
+    // set when the file is written.
     private static struct Pending
     {
         size_t name, nameEnd, target, targetEnd;
         FsoKind kind;
         bool executable;
         Ref ref_;
+        static if (Dirs.length)
+        {
+            IdsOf!Dirs ids;
+            staticMap!(LeafIdOf, Dirs) leafIds;
+            ulong size;
+        }
     }
 
     // An open directory: one a unit gave (`listed`), whose unwritten entries
@@ -84,6 +142,13 @@ if (isDigest!H)
     private UniqueBuffer!(char, 256) openPath; // the innermost open directory's path
     private bool started;
     private string why;
+    static if (Dirs.length)
+    {
+        private Dirs dirs;                       // each encoding, reused for every directory
+        private staticMap!(LeafOf, Dirs) leaves; // each file identity, reused for every file
+        private IdsOf!Dirs rootIds;
+        private UniqueBuffer!(uint, 64) sorted;  // one directory's entries, in a `Dir`'s order
+    }
 
     /// Opens `path` and writes its entries up to its first subdirectory.
     bool visit(Entries, Exec)(scope const(char)[] path, Entries entries, bool empty, ref Exec exec)
@@ -139,7 +204,10 @@ if (isDigest!H)
         }
         while (frames.length)
             close();
-        return Result(h.finish(), size);
+        static if (Dirs.length)
+            return Result(rootIds, NarHash!H(h.finish(), size));
+        else
+            return Result(h.finish(), size);
     }
 
     private void begin()
@@ -233,6 +301,13 @@ if (isDigest!H)
                     if (failed.length)
                         return fail(failed);
                     pad(length);
+                    static if (Dirs.length)
+                    {
+                        auto written = &pending[f.next - 1];
+                        static foreach (i; 0 .. Dirs.length)
+                            written.leafIds[i] = leaves[i].finish();
+                        written.size = length;
+                    }
                     token(")");
                     token(")");
                     break;
@@ -241,12 +316,27 @@ if (isDigest!H)
         return true;
     }
 
-    // The bytes of one file's contents: its length, then the bytes.
+    // The bytes of one file's contents: its length, then the bytes; each
+    // leaf hears them too.
     private static struct Contents
     {
         NarScheme* nar;
-        void start(ulong length) { nar.u64(length); }
-        void put(scope const(ubyte)[] bytes) { nar.raw(bytes); }
+
+        void start(ulong length)
+        {
+            nar.u64(length);
+            static if (Dirs.length)
+                static foreach (i; 0 .. Dirs.length)
+                    nar.leaves[i].start(length);
+        }
+
+        void put(scope const(ubyte)[] bytes)
+        {
+            nar.raw(bytes);
+            static if (Dirs.length)
+                static foreach (i; 0 .. Dirs.length)
+                    nar.leaves[i].put(bytes);
+        }
     }
 
     // Opens a directory node, inside an entry named `name` unless it is the
@@ -274,13 +364,90 @@ if (isDigest!H)
     private void close()
     {
         const f = frames.back;
+        static if (Dirs.length)
+        {
+            IdsOf!Dirs ids;
+            static foreach (i; 0 .. Dirs.length)
+                ids[i] = encode!i(f.first, f.end);
+        }
         frames.length = frames.length - 1;
         pending.length = f.first;
         text.length = f.textMark;
         token(")");
         if (frames.length)
             token(")");
-        openPath.length = frames.length ? frames.back.path : 0;
+        const parentPath = frames.length ? frames.back.path : 0;
+        static if (Dirs.length)
+        {
+            if (!frames.length)
+                static foreach (i; 0 .. Dirs.length)
+                    rootIds[i] = ids[i];
+            else if (frames.back.listed)
+            {
+                // Its entry is the one `advance` stopped at.
+                auto entry = &pending[frames.back.next - 1];
+                assert(entry.kind == FsoKind.directory, "a directory closes into its entry");
+                static foreach (i; 0 .. Dirs.length)
+                    entry.ids[i] = ids[i];
+            }
+            else
+            {
+                // A directory above the start roots holds only the ones
+                // beneath it, each recorded as it closes.
+                Pending p;
+                p.name = text.length;
+                text.put(openPath[][parentPath ? parentPath + 1 : 0 .. $]);
+                p.nameEnd = p.target = p.targetEnd = text.length;
+                p.kind = FsoKind.directory;
+                static foreach (i; 0 .. Dirs.length)
+                    p.ids[i] = ids[i];
+                pending ~= p;
+                frames.back.end = pending.length;
+            }
+        }
+        openPath.length = parentPath;
+    }
+
+    static if (Dirs.length)
+    {
+        // `Dirs[i]`'s id of the directory whose entries are
+        // `pending[first .. end]`, each written or closed already.
+        private IdOf!(Dirs[i]) encode(size_t i)(size_t first, size_t end)
+        {
+            enum order = Dirs[i].order;
+            sorted.clear(false);
+            foreach (k; first .. end)
+                sorted ~= cast(uint) k;
+            // `pending` is in byte order, NAR's; another order re-sorts.
+            static if (order != EntryOrder.narOrder)
+            {
+                import std.algorithm.sorting : sort;
+
+                sort!((a, b) => precedes(order, nameOf(a), pending[a].kind, nameOf(b),
+                    pending[b].kind))(sorted[]);
+            }
+            auto dir = &dirs[i];
+            dir.begin();
+            foreach (k; sorted[])
+            {
+                auto e = &pending[k];
+                final switch (e.kind)
+                {
+                    case FsoKind.directory:
+                        dir.directory(nameOf(k), e.ids[i]);
+                        break;
+                    case FsoKind.regular:
+                        dir.file(nameOf(k), e.executable, e.leafIds[i], e.size);
+                        break;
+                    case FsoKind.symlink:
+                        dir.symlink(nameOf(k), text[][e.target .. e.targetEnd]);
+                        break;
+                }
+            }
+            return dir.seal();
+        }
+
+        private const(char)[] nameOf(size_t k) => text[][pending[k].name .. pending[k].nameEnd];
     }
 
     private void token(scope const(char)[] s)
