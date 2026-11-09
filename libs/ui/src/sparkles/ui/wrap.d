@@ -5,7 +5,7 @@ import sparkles.base.term_color : RgbColor, xterm256ToRgb;
 import sparkles.ui.style : Slot, TextStyle;
 import sparkles.base.term_style : TextAttr, UnderlineStyle;
 import sparkles.base.text.wrap : CellWidth, CellGeometry, CellExtent, CellNoBreakSpan,
-    WrapOptions, WhitespaceMode, TabPolicy, cellWrapPlan, projectWrapCells;
+    WrapOptions, WhitespaceMode, TabPolicy, cellWrapPlan, lendCellWrapPlan, projectWrapCells;
 import sparkles.base.text.wrap_plan : WrapPlan, WrapLine, WrapFragment, WrapSolver,
     WrapEmissionOptions, WrapResult, WrapStatus, FragmentKind, ProvenanceKind, SyntheticReason, CellStyleSnapshot, tryMaterializeWrap;
 
@@ -610,13 +610,31 @@ private TextSpan[][] wrapSpansUncached(F)(const(TextSpan)[] spans, int width, in
             : CellWidth.bounded(cast(ulong)(width > hangIndent ? width - hangIndent : 0)))];
     options.geometry = geometry[];
     options.repeatLastGeometry = true;
-    auto plan = uiCellPlan(logical, options, spans, starts, measure, false, inheritedStyle, measureMonotone);
-    if (clipToWidth) plan = projectWrapCells(plan, CellExtent(cast(ulong) width)).visible;
     static if (is(F == typeof(null)))
+    {
+        // Projected from the plan where the planner made it: the rows keep
+        // their own spans and the plan's lines, and the fragments — most of
+        // what a wrap allocates — are never copied out.
         const replan = replanner(logical, options, clipToWidth, width);
+        TextSpan[][] rows;
+        lendCellWrapPlan(logical, options, (scope ref const WrapPlan lent) @safe {
+            // What the projection keeps of the lent plan is copied
+            // (`projectSpanMetadata` copies the lines); a span's bytes point
+            // into `logical`, `options` or literals, not the arenas.
+            ref const WrapPlan plan = *(() @trusted => &lent)();
+            rows = clipToWidth
+                ? projectSpanMetadata(projectWrapCells(plan, CellExtent(cast(ulong) width)).visible,
+                    spans, starts, replan)
+                : projectSpanMetadata(plan, spans, starts, replan);
+        });
+        return rows;
+    }
     else
-        const WrapPlan delegate() @safe replan = null;
-    return projectSpanMetadata(plan, spans, starts, replan);
+    {
+        auto plan = uiCellPlan(logical, options, spans, starts, measure, false, inheritedStyle, measureMonotone);
+        if (clipToWidth) plan = projectWrapCells(plan, CellExtent(cast(ulong) width)).visible;
+        return projectSpanMetadata(plan, spans, starts);
+    }
 }
 
 // Candidate bytes live in preallocated storage. The callback groups exactly
@@ -952,6 +970,8 @@ private TextSpan[][] projectSpanMetadata(WrapPlan plan, const(TextSpan)[] author
     auto retained = new RetainedPlan(plan, replan);
     if (replan !is null)
     {
+        // A lent plan's lines are the planner's arenas: the rows keep a copy.
+        retained.plan.lines = plan.lines.dup;
         retained.plan.fragments = null;
         retained.plan.sourceRecords = null;
         retained.plan.styles = null;
