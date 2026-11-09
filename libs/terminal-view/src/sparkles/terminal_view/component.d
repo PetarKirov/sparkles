@@ -47,6 +47,7 @@ import sparkles.input : EndOfInput, Event, FocusEvent, Key, KeyAction, PasteEven
     KeyEvent, match, Mods, mousePointer, PointerAction, PointerEvent, WheelEvent;
 import sparkles.ui.scroll_motion : ScrollMotion;
 import core.time : MonoTime;
+import sparkles.event_horizon.stream_ingest : StreamId, StreamSink;
 import sparkles.terminal_view.child_env : sanitizeChildEnv;
 import sparkles.terminal_view.core;
 import sparkles.terminal_view.event_map : encodeKeyEvent, ghosttyButtonOf,
@@ -457,6 +458,12 @@ struct TerminalView
     /// the byte stream), and where the ring can also reap, the per-frame
     /// `WNOHANG` poll retires with it.
     private bool ringPump;
+    /// output-latency.md `OPL1`: the host reads the pty as a stream source
+    /// and feeds it here as it arrives, so the frame reads nothing itself;
+    /// a drain before an encode only flushes what the host holds (`OPL7`).
+    private StreamId stream_;
+    private void delegate(StreamId) nothrow @nogc streamFlush_;
+    private void delegate(StreamId) nothrow @nogc streamClose_;
     // Where `paintPanePx` last put the pane, in window pixels.
     private int originX, originY;
     // Rows the content is painted above the pane's top (`liftContent`).
@@ -793,6 +800,7 @@ struct TerminalView
 
         if (!opened || !s.childExited || (s.child > 0 && !s.childReaped))
             return false;
+        stopStream();
         if (s.pty_fd >= 0 && s.pty_fd != opts.adoptMaster)
             close(s.pty_fd);
         s.pty_fd = -1;
@@ -825,7 +833,7 @@ struct TerminalView
         s.childReaped = false;
         s.childStatus = -1;
         ringPump = false;
-        startRingPump(h);
+        startReading(h);
         invalidate();
         return true;
     }
@@ -884,6 +892,7 @@ struct TerminalView
     {
         if (!opened)
             return;
+        stopStream();
         if (s.pty_fd >= 0)
         {
             import core.sys.posix.unistd : close;
@@ -1070,7 +1079,7 @@ struct TerminalView
                 h.skipFrame();
                 return false;
             }
-            startRingPump(h);
+            startReading(h);
         }
 
         // Last frame's bracket ended after our paint ran (HST13), so pending
@@ -1574,7 +1583,10 @@ struct TerminalView
     */
     void pump() @system nothrow @nogc
     {
-        drainPty();
+        // A stream source's bytes arrive between frames; the frame reads
+        // nothing more (output-latency.md `OPL1`).
+        if (!stream_)
+            drainPty();
         drainedThisFrame = false; // next frame's first event re-drains
         reapChild();
         if (s.synchronizedOutput.held)
@@ -1609,7 +1621,7 @@ struct TerminalView
     void wakeOnOutput(H)(ref H h)
     {
         static if (__traits(compiles, { bool armed = h.wakeWhenReadable(0); }))
-            if (opened && !ringPump && !s.childExited && s.pty_fd >= 0)
+            if (opened && !ringPump && !stream_ && !s.childExited && s.pty_fd >= 0)
                 cast(void) h.wakeWhenReadable(s.pty_fd);
     }
 
@@ -2463,7 +2475,63 @@ struct TerminalView
     clears it on an unexpected error — so it is a question per frame, not a
     fact per open.
     */
-    bool ringPumped() const @safe pure nothrow @nogc => ringPump;
+    bool ringPumped() const @safe pure nothrow @nogc => ringPump || stream_;
+
+    /**
+    Starts reading the pty: as the host's stream source where the host reads
+    streams (output-latency.md `OPL1`), else through the ring pump (`TVW8`),
+    else the frame's own drain. Both `this` and `h` must stay address-pinned
+    for the run, as for `startRingPump`.
+    */
+    void startReading(H)(ref H h)
+    {
+        static if (__traits(compiles, { StreamId id = h.openStream(0, StreamSink.init); }))
+        {
+            if (opened && !stream_ && !ringPump && s.pty_fd >= 0 && !s.childExited)
+            {
+                auto self = (() @trusted => &this)();
+                stream_ = h.openStream(s.pty_fd, StreamSink(self, &onPtyBytes, &onPtyEnd));
+                if (stream_)
+                {
+                    streamFlush_ = &h.flushStream;
+                    streamClose_ = &h.closeStream;
+                    return;
+                }
+            }
+        }
+        startRingPump(h);
+    }
+
+    /// Whether the host reads this instance's pty as a stream source.
+    bool streamed() const @safe pure nothrow @nogc => cast(bool) stream_;
+
+    // The stream source's bytes: the same feed the drains make.
+    private static void onPtyBytes(void* ctx, scope const(ubyte)[] bytes) nothrow @nogc
+    {
+        auto tv = cast(TerminalView*) ctx;
+        feedPtyChunk(tv.s, cast(const(char)[]) bytes);
+    }
+
+    // The stream ended (EOF, or EIO once the child's side closed): the child
+    // is gone, and the frame's `reapChild` collects its status.
+    private static void onPtyEnd(void* ctx, int) nothrow @nogc
+    {
+        auto tv = cast(TerminalView*) ctx;
+        tv.s.childExited = true;
+    }
+
+    // Closes the stream source before its descriptor goes: no byte of the
+    // old pty reaches the view after this.
+    private void stopStream() nothrow @nogc
+    {
+        if (!stream_)
+            return;
+        if (streamClose_ !is null)
+            streamClose_(stream_);
+        stream_ = StreamId.init;
+        streamFlush_ = null;
+        streamClose_ = null;
+    }
 
     @("terminal_view.component.pumpBeforeOpenIsNoExit")
     @system unittest
@@ -2964,6 +3032,15 @@ struct TerminalView
         // is in; the drain-before-encode guarantee holds by arrival order.
         if (ringPump)
             return;
+        // The host reads a stream source: what it holds goes in now, ahead
+        // of the encode; what is still in the kernel arrives after it, as it
+        // would have on any other path (output-latency.md `OPL7`).
+        if (stream_)
+        {
+            if (streamFlush_ !is null)
+                streamFlush_(stream_);
+            return;
+        }
         // Not open yet (a key routed to a pane before its first frame): there
         // is no pty, and a failed read must not read as the child's exit.
         if (!opened)

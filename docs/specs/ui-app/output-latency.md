@@ -383,9 +383,15 @@ The decision OPLD1 rests on [`ingest-spike.c`](./output-latency/ingest-spike.c),
 run on the reference configuration as its header describes; §6 gives its
 figures.
 
-| Obligation | Status      | Evidence |
-| ---------- | ----------- | -------- |
-| OPL1–OPL27 | not started | none     |
+| Obligation        | Status      | Evidence                                                                                                                                                                                                           |
+| ----------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| OPL10             | verified    | `OpReadMultishot`, `loop.readMultishot.streamsIntoProvidedBuffers` (Linux 6.18)                                                                                                                                    |
+| OPL1–OPL9, OPL11  | verified    | `StreamIngest`; the `stream_ingest.*` tests, each on the multishot path and the fallback (Linux 6.18)                                                                                                              |
+| OPL12             | partial     | `NativeHost.openStream`; the terminal reads its pty through it (`TerminalView.startReading`). No test drives a delivery to a frame pass headless                                                                   |
+| Throughput target | verified    | `seq 1 2000000` on the reference configuration, five runs each, by hand: this arm 907–970 ms, the pre-1.0 build 1028–1200 ms, frame-driven reads woken by readiness 653–3678 ms. `throughput` (OPL27) automates it |
+| OPL25             | partial     | `StreamIngest.position`, `NativeHost.streamPosition`; not in the frame record                                                                                                                                      |
+| OPL13–OPL24       | not started | none                                                                                                                                                                                                               |
+| OPL26, OPL27      | not started | none                                                                                                                                                                                                               |
 
 ## 9. Open questions
 
