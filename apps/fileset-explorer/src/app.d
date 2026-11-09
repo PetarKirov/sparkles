@@ -15,7 +15,7 @@ import sparkles.ui_app.gui_options : GuiOptions;
 
 import evaluate : Root;
 import explorer : ExplorerApp;
-import launch : defaultQuery, launch;
+import launch : defaultQuery, explorerGui, launch;
 import render : renderFrame;
 
 int main(string[] args) => runCli!Explorer(args);
@@ -55,7 +55,7 @@ struct Explorer
     bool touch;
 
     @Flatten("GUI Options")
-    GuiOptions gui;
+    GuiOptions gui = explorerGui;
 
     /// Runs the explorer, renders one frame of it, or writes the query for
     /// another system.

@@ -19,8 +19,11 @@ import sparkles.build_primitives.fileset.fso : FsoKind;
 import sparkles.build_primitives.fileset.query : Span, Token, TokenKind;
 import sparkles.input : Event, isDismiss, isEndOfInput, Key, KeyEvent, match, Mods, PasteEvent, Point,
     PointerAction, PointerButton, PointerEvent, WheelEvent;
-import sparkles.ui.components.chrome : tabStrip;
+import sparkles.base.term_control : PointerShape;
+import sparkles.ui.components.chrome : scrollbar, ScrollbarSpec, tabStrip;
 import sparkles.ui.hit_ids : HitBlock;
+import sparkles.ui.editor.command : EditCommand;
+import sparkles.ui.state : ScrollAxis, scrollbarThumb;
 import sparkles.ui.components.controls : chip, ControlSize, segmented;
 import sparkles.ui.components.dock : DockAxis, DockContainer, DockKind, DockLayout, PaneId,
     RouteKind;
@@ -111,8 +114,33 @@ struct ExplorerApp
     enum size_t tryHitBase = 1 << 24;
     /// The right group's tabs: `tabHitBase + i`.
     enum size_t tabHitBase = 1 << 22;
+    /// The overlay bars (`FXU14`): `barHitBase + Bar`.
+    enum size_t barHitBase = tabHitBase + 8;
+    /// The query editor's lines (`FXU15`).
+    enum size_t queryHit = tabHitBase + 12;
     /// The Export tab's buttons: previous and next target, glob mode, copy.
     enum size_t exportHitBase = tabHitBase + 16;
+
+    /// The panes that scroll, each with its bar (`FXU14`).
+    enum Bar : ubyte
+    {
+        tree,    ///
+        help,    ///
+        export_, ///
+    }
+
+    private enum noBar = -1;
+    private Rect[Bar.max + 1] barRects; // where this frame drew each bar; empty: none
+    private int barHot = noBar;         // the bar under the pointer
+    private int barGrab = noBar;        // the bar a pointer holds
+    private int grabAt;                 // and where in its thumb, in cells
+    private Rect queryRect;             // the query's lines, as this frame drew them
+    private PointerShape shape = PointerShape.default_; // what the host was last asked for
+
+    /// Where the last frame drew bar `which`; empty when it drew none.
+    Rect barRect(Bar which) const @safe => barRects[which];
+    /// Where the last frame drew the query's lines.
+    Rect queryArea() const @safe => queryRect;
 
     /// Starts on `source` beneath `dir`.
     this(Root dir, string source)
@@ -216,12 +244,18 @@ struct ExplorerApp
     {
         tryHits.length = 0;
         buttons.length = 0;
+        barRects[] = Rect.init;
+        queryRect = Rect.init;
         foreach (i, ref n; t.nodes)
         {
             if (i >= frames.length)
                 break;
             if (n.hitId >= tryHitBase && n.hitId < tryHitBase + helpSource.length)
                 tryHits ~= TryHit(frames[i].rect, n.hitId - tryHitBase);
+            else if (n.hitId >= barHitBase && n.hitId <= barHitBase + Bar.max)
+                barRects[n.hitId - barHitBase] = frames[i].rect;
+            else if (n.hitId == queryHit)
+                queryRect = frames[i].rect;
             else if (n.hitId >= tabHitBase && n.hitId < actionBase + Action.insert + chipTexts.length)
                 buttons ~= TryHit(frames[i].rect, n.hitId);
         }
@@ -271,7 +305,10 @@ struct ExplorerApp
         static if (__traits(hasMember, H, "capabilities"))
             hostTouch = !h.capabilities.hover;
         touch = layout == Layout.touch || (layout == Layout.automatic && hostTouch);
-        rowCells = touch ? touchRowsOf(h) : 1;
+        measureCell(h);
+        rowCells = touch ? cellsFor(48, cellDp) : 1;
+        treeRowCells = touch ? cellsFor(32, cellDp) : 1;
+        treeScroll.touch = helpScroll.touch = exportScroll.touch = touch;
 
         // The query: its lines up to a third of the screen, and the status.
         const lines = query.state.text.lineCount;
@@ -281,7 +318,7 @@ struct ExplorerApp
         int topRows;
         if (touch)
         {
-            top = [appBar(b), queryField(b, queryRows), operatorChips(b)];
+            top = [appBar(b), queryField(b, queryRows), operatorChips(b, size.width)];
             topRows = rowCells + (queryRows + 2) + 1 + rowCells;
         }
         else
@@ -343,28 +380,33 @@ struct ExplorerApp
     Layout layout;
     /// Whether this frame drew the touch layout.
     bool touch;
-    /// The height of a touch target, in cells: a tree row, a chip, a segment.
+    /// The height of a touch target, in cells: a chip, a segment (`TOK11`).
     int rowCells = 1;
+    /// The height of a tree row, in cells: a dense list, 32 dp on the touch
+    /// layout (`FXU11`).
+    int treeRowCells = 1;
 
     /// A cell's height in dp, as the host last reported it (24 when it does not).
     double cellDp = 24;
 
-    // The cells 48 dp takes on the host (`TOK11`): from its cell height and
-    // density where it reports them, else two.
-    private int touchRowsOf(H)(ref H h)
+    /// The whole cells `dp` takes at `cellDp` a cell, at least one.
+    static int cellsFor(double dp, double cellDp) @safe pure nothrow @nogc
+    {
+        import std.math : ceil;
+
+        return cellDp > 0 ? max(1, cast(int) ceil(dp / cellDp)) : 1;
+    }
+
+    // The cell's height in dp, from the host's cell height and density where
+    // it reports them.
+    private void measureCell(H)(ref H h)
     {
         static if (__traits(hasMember, H, "cellHeight") && __traits(hasMember, H, "fontDensity"))
         {
-            import std.math : ceil;
-
             const cell = h.cellHeight, density = h.fontDensity;
             if (cell > 0 && density > 0)
-            {
                 cellDp = cell / density;
-                return max(1, cast(int) ceil(48 / cellDp));
-            }
         }
-        return 2;
     }
 
     // ---- the touch layout's chrome (`FXU11`) --------------------------------
@@ -374,12 +416,14 @@ struct ExplorerApp
     (`TOK11`). Layout places it in whole cells; the half cell an even target
     leaves is taken up by a fractional offset, so a label sits where a pill
     drawn at its target's middle is. `hitId`, when given, makes the whole
-    target the hit area, not just the cell drawn.
+    target the hit area, not just the cell drawn. A crowded row on a phone
+    never squeezes it, unless it is `shrinkable`.
     */
-    private uint centred(ref Builder b, uint child, size_t hitId = 0)
+    private uint centred(ref Builder b, uint child, size_t hitId = 0, bool shrinkable = false)
     {
         auto w = Widget(kind: WidgetKind.column, children: [child], height: SizeSpec.fixed(rowCells),
-            alignY: Alignment.center, clipY: true, hitId: hitId);
+            alignY: Alignment.center, clipY: true, clipX: shrinkable, hitId: hitId,
+            width: shrinkable ? SizeSpec.fit_ : SizeSpec.rigid_);
         if ((rowCells - 1) % 2)
             w.childOffsetFracY = -0.5f;
         return b.add(w);
@@ -442,12 +486,12 @@ struct ExplorerApp
             text: root.inMemory ? "tutorial tree " ~ root.name ~ " · Back returns"
                 : baseName(buildNormalizedPath(absolutePath(dir.dir))),
             slot: root.inMemory ? Slot.warn : Slot.textSecondary,
-            textStyle: TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.caption))));
-        const gap = b.add(Widget(kind: WidgetKind.box, width: SizeSpec.fixed(2)));
+            textStyle: TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.caption))), shrinkable: true);
+        const gap = b.add(Widget(kind: WidgetKind.box, width: SizeSpec(SizeSpec.Kind.fixed, 2, rigid: true)));
         const count = centred(b, b.add(Widget(kind: WidgetKind.text,
             text: text(shown.found.members.length, shown.found.members.length == 1 ? " member" : " members"),
             slot: Slot.accentPrimary, textStyle: TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.label))));
-        const fill = b.add(Widget(kind: WidgetKind.box, width: SizeSpec.grow()));
+        const fill = b.add(Widget(kind: WidgetKind.box, width: SizeSpec(SizeSpec.Kind.grow, 1, min: 2, rigid: true)));
         return b.add(Widget(kind: WidgetKind.row, width: SizeSpec.grow(), padding: Insets(0, 2, 0, 2),
             children: [title, gap, where, fill, count]));
     }
@@ -472,15 +516,21 @@ struct ExplorerApp
             children: [field, statusLine(b)]));
     }
 
-    // The operator chips, then clear and backspace.
-    private uint operatorChips(ref Builder b)
+    // The operator chips, then clear and backspace. A screen too narrow for
+    // the row with a cell between chips sets them side by side: the pills
+    // are drawn inside their cells, so they still stand apart.
+    private uint operatorChips(ref Builder b, int width)
     {
-        const sz = ControlSize(rows: rowCells);
+        // Each chip is its label and a cell each side; then ⌫, Clear and the padding.
+        int need = 2 + 1 + 3 + 1 + 7 + 4;
+        foreach (c; chipTexts)
+            need += cast(int) visibleWidth(c[0]) + 2 + 1;
+        const between = need <= width ? 1 : 0;
         uint[] chips;
         foreach (i, c; chipTexts)
         {
             chips ~= touchChip(b, c[0], actionBase + Action.insert + i);
-            chips ~= b.add(Widget(kind: WidgetKind.box, width: SizeSpec.fixed(1)));
+            chips ~= b.add(Widget(kind: WidgetKind.box, width: SizeSpec.fixed(between)));
         }
         chips ~= b.add(Widget(kind: WidgetKind.box, width: SizeSpec.grow()));
         chips ~= touchChip(b, "⌫", actionBase + Action.backspace);
@@ -565,7 +615,7 @@ struct ExplorerApp
         foreach (line; first .. min(lineCount, first + rows))
         {
             auto spans = highlight(editorLineSpans(query.state, line, o), outcome.query.tokens, marked);
-            const prompt = b.add(Widget(kind: WidgetKind.text, text: line == 0 ? "❯ " : "  ",
+            const prompt = b.add(Widget(kind: WidgetKind.text, text: line == 0 ? "❯ " : "  ", width: SizeSpec.rigid_,
                 slot: Slot.accentPrimary));
             auto w = Widget(kind: WidgetKind.rich, spans: spans, width: SizeSpec.grow());
             if (o.caretVisible && line == caretLine)
@@ -582,7 +632,42 @@ struct ExplorerApp
                 w.caretColumn = 2;
             out_ = [b.add(w)];
         }
-        return out_;
+        // One column, for a pointer to find (`FXU15`).
+        return [b.add(Widget(kind: WidgetKind.column, children: out_, width: SizeSpec.grow(),
+            hitId: queryHit))];
+    }
+
+    /// The byte of the query a click on screen cell `p` puts the caret at
+    /// (`FXU15`): before the character under it, or at its line's end.
+    size_t queryOffsetAt(Point p) const @safe
+    {
+        import std.utf : decode;
+
+        const src = query.text;
+        // The line clicked: the editor's first shown one, plus the row.
+        size_t line = firstLine + max(0, p.y - queryRect.y), at;
+        foreach (_; 0 .. line)
+        {
+            while (at < src.length && src[at] != '\n')
+                ++at;
+            if (at == src.length)
+                return at;
+            ++at;
+        }
+        // The column past the two-cell prompt, character by character.
+        const col = p.x - queryRect.x - 2;
+        int x;
+        while (at < src.length && src[at] != '\n')
+        {
+            size_t next = at;
+            cast(void) decode(src, next);
+            const w = cast(int) visibleWidth(src[at .. next]);
+            if (x + w > col)
+                break;
+            x += w;
+            at = next;
+        }
+        return at;
     }
 
     private size_t firstLine;
@@ -663,7 +748,7 @@ struct ExplorerApp
             foreach (ref kv; stats)
                 widest = max(widest, cast(int)(statsKeyWidth + visibleWidth(kv[1])));
             const want = widest + 2; // a column of padding each side
-            const treeNeeds = treeWidth() + 1;
+            const treeNeeds = treeWidth() + 2; // the rule, and the tree's bar
             const fits = width - want >= treeNeeds;
             l.nodes[tabsNode].extent = max(touch ? 30 : 10,
                 fits ? want : min(want, max(width - treeNeeds, width / 2)));
@@ -671,12 +756,12 @@ struct ExplorerApp
                 l.nodes[tabsNode].extent = max(l.nodes[tabsNode].extent, min(width / 2, 90));
         }
         dock.arrange(Rect(0, 0, width, rows));
-        // In touch rows: `tv` counts rows, each `rowCells` tall.
+        // In tree rows: `tv` counts rows, each `treeRowCells` tall.
         foreach (ref f; dock.frames.panes)
             if (f.pane == Pane.tree)
             {
                 tv.width = f.rect.width;
-                tv.resize(max(1, f.rect.height / rowCells));
+                tv.resize(max(1, f.rect.height / treeRowCells));
             }
     }
 
@@ -802,32 +887,57 @@ struct ExplorerApp
             auto vp = Widget(kind: WidgetKind.column, children: [rows], clipY: true,
                 width: SizeSpec.grow(), height: SizeSpec.fixed(max(0, tv.bodyRows)));
             vp.childOffsetFracY = treeScroll.motion.frac;
-            return b.add(vp);
+            return withBar(b, b.add(vp), max(0, tv.bodyRows), treeScroll, 1, Bar.tree);
         }
-        // Touch (`FXU11`): each row a target `rowCells` tall, its text
-        // centred, the selected one a rounded tint; the motion counts rows,
-        // the paint cells.
+        // Touch (`FXU11`): a dense list, each row `treeRowCells` tall, its
+        // text centred, the selected one a rounded tint; the motion counts
+        // rows, the paint cells.
         uint[] items;
         foreach (i; min(first, last) .. last)
         {
             const selected = tv.rows[i].node == tv.selectedNode;
             const row = treeRows(b, tree, tv.rows[i .. i + 1], isOpen, uint.max, glyphs);
-            // The tint spans the row's whole target; the text sits in its middle.
+            // The tint spans the row's whole height; the text sits in its middle.
             auto item = Widget(kind: WidgetKind.column, children: [row], width: SizeSpec.grow(),
-                height: SizeSpec.fixed(rowCells), alignY: Alignment.center, padding: Insets(0, 1, 0, 1),
+                height: SizeSpec.fixed(treeRowCells), alignY: Alignment.center, padding: Insets(0, 1, 0, 1),
                 clipY: true, slot: Slot.selection, paintBackground: selected,
-                decoration: selected ? Decoration(borderRadius: 10) : Decoration.init);
-            if ((rowCells - 1) % 2)
+                decoration: selected ? Decoration(borderRadius: 8) : Decoration.init);
+            if ((treeRowCells - 1) % 2)
                 item.childOffsetFracY = -0.5f;
             items ~= b.add(item);
         }
         // `tv.top` is the motion's whole row; its fraction is that much of a row.
-        const cells = treeScroll.motion.frac * rowCells;
+        const cells = treeScroll.motion.frac * treeRowCells;
+        const height = max(0, tv.bodyRows * treeRowCells);
         auto vp = Widget(kind: WidgetKind.column, children: items, clipY: true,
-            width: SizeSpec.grow(), height: SizeSpec.fixed(max(0, tv.bodyRows * rowCells)));
+            width: SizeSpec.grow(), height: SizeSpec.fixed(height));
         vp.childOffset = Point(0, cast(int) floor(cells));
         vp.childOffsetFracY = cast(float)(cells - floor(cells));
-        return b.add(vp);
+        return withBar(b, b.add(vp), height, treeScroll, treeRowCells, Bar.tree);
+    }
+
+    /*
+    `port`, `rows` cells tall, beside its overlay bar (`FXU14`): at `body`'s
+    position, `unit` cells to each of its content's units, drawn when the
+    content overflows the view, faded on the touch layout while it rests.
+    */
+    private uint withBar(ref Builder b, uint port, int rows, ref ScrollBody body, int unit, Bar which)
+    {
+        const content = body.content * unit;
+        uint bar;
+        if (content > rows && rows > 0)
+        {
+            const cells = (body.motion.whole + body.motion.frac) * cast(double) unit;
+            const whole = floor(cells);
+            bar = scrollbar(b, ScrollbarSpec(axis: ScrollAxis.vertical, content: content, viewport: rows,
+                offset: cast(long) whole, offsetFrac: cast(float)(cells - whole),
+                expandPercent: barHot == which || barGrab == which ? 100 : 0,
+                fadePercent: touch ? body.bar.anim.fadePercent : 100, hitId: barHitBase + which), rows);
+        }
+        else
+            bar = b.add(Widget(kind: WidgetKind.box, width: SizeSpec.fixed(1)));
+        return b.add(Widget(kind: WidgetKind.row, children: [port, bar], width: SizeSpec.grow(),
+            height: SizeSpec.fixed(max(0, rows))));
     }
 
     // The widest visible row of the tree as drawn: guides, the folder or file
@@ -870,12 +980,13 @@ struct ExplorerApp
             content = viewMarkdownInto(b, helpDoc, o);
         }
         helpContent = content;
+        // A column of margin at the left; the bar takes the right one.
         auto vp = Widget(kind: WidgetKind.column, children: [content], clipX: true, clipY: true,
-            width: SizeSpec.fixed(max(0, r.width)), height: SizeSpec.fixed(max(0, r.height)),
-            padding: Insets(0, 1, 0, 1));
+            width: SizeSpec.grow(), height: SizeSpec.fixed(max(0, r.height)),
+            padding: Insets(0, 0, 0, 1));
         vp.childOffset = Point(0, helpTop);
         vp.childOffsetFracY = helpScroll.motion.frac;
-        return b.add(vp);
+        return withBar(b, b.add(vp), max(0, r.height), helpScroll, 1, Bar.help);
     }
 
     // What shows under try block `at`: its result, checked against its
@@ -980,15 +1091,15 @@ struct ExplorerApp
             foreach (line; highlightCode(languageOf(exportTarget), e.code))
                 rows ~= b.add(Widget(kind: WidgetKind.rich, spans: line.length ? line : [TextSpan(" ")]));
         auto vp = Widget(kind: WidgetKind.column, children: rows, clipX: true, clipY: true,
-            width: SizeSpec.fixed(max(0, r.width)), height: SizeSpec.fixed(max(0, r.height)),
-            padding: Insets(0, 1, 0, 1));
+            width: SizeSpec.grow(), height: SizeSpec.fixed(max(0, r.height)),
+            padding: Insets(0, 0, 0, 1));
         // Rows, in cells: the touch controls are `rowCells` tall.
         exportScroll.content = rows.length
             + (touch ? (exportTarget == Target.nix ? 2 : 1) * (rowCells - 1) : 0);
         exportScroll.viewport = r.height;
         vp.childOffset = Point(0, cast(int) exportScroll.motion.whole);
         vp.childOffsetFracY = exportScroll.motion.frac;
-        return b.add(vp);
+        return withBar(b, b.add(vp), max(0, r.height), exportScroll, 1, Bar.export_);
     }
 
     // ---- stats -------------------------------------------------------------
@@ -1128,17 +1239,107 @@ struct ExplorerApp
         if (!w.precise)
             v.fdy = w.exactY * notchRows;
         else if (s is &treeScroll) // a finger moves cells; the tree counts rows
-            v.fdy = w.exactY / rowCells;
+            v.fdy = w.exactY / treeRowCells;
         s.scroll(v);
     }
 
     private static bool inside(in Rect r, Point p) @safe pure nothrow @nogc
         => p.x >= r.x && p.x < r.x + r.width && p.y >= r.y && p.y < r.y + max(1, r.height);
 
+    // The scroll body behind bar `which`, and the cells to its content unit.
+    private ScrollBody* barBody(Bar which, out int unit) return @safe
+    {
+        unit = which == Bar.tree ? treeRowCells : 1;
+        final switch (which)
+        {
+            case Bar.tree: return &treeScroll;
+            case Bar.help: return &helpScroll;
+            case Bar.export_: return &exportScroll;
+        }
+    }
+
+    // A press on bar `which` at row `y`: on the thumb it takes it where it
+    // is; elsewhere the thumb's middle comes under the pointer (`FXU14`).
+    private void grabBar(Bar which, int y)
+    {
+        int unit;
+        auto body = barBody(which, unit);
+        const r = barRects[which];
+        const at = cast(long) floor((body.motion.whole + body.motion.frac) * unit);
+        const t = scrollbarThumb(body.content * unit, r.height, at, r.height);
+        barGrab = which;
+        body.bar.grabbed = true;
+        if (y >= r.y + t.start && y < r.y + t.start + t.extent)
+            grabAt = y - (r.y + t.start);
+        else
+        {
+            grabAt = t.extent / 2;
+            dragBar(y);
+        }
+    }
+
+    // The held thumb dragged to row `y`: the view goes where it puts it.
+    private void dragBar(int y)
+    {
+        int unit;
+        auto body = barBody(cast(Bar) barGrab, unit);
+        const r = barRects[barGrab];
+        const content = body.content * unit;
+        const t = scrollbarThumb(content, r.height, 0, r.height);
+        const span = r.height - t.extent, most = content - r.height;
+        if (span <= 0 || most <= 0)
+            return;
+        const f = min(1.0, max(0.0, cast(double)(y - grabAt - r.y) / span));
+        body.barTo(f * most / unit);
+    }
+
+    // With a pointer: its shape, and the bar it is over (`FXU15`, `FXU14`).
+    private void hover(H)(ref H h, in PointerEvent p)
+    {
+        barHot = noBar;
+        PointerShape want = PointerShape.default_;
+        if (p.action == PointerAction.move)
+        {
+            foreach (i, r; barRects)
+                if (r.height > 0 && inside(r, p.pos))
+                    barHot = cast(int) i;
+            if (queryRect.height > 0 && inside(queryRect, p.pos))
+                want = PointerShape.text;
+            foreach (ref hit; buttons ~ tryHits)
+                if (inside(hit.rect, p.pos))
+                    want = PointerShape.pointer;
+        }
+        if (want != shape)
+        {
+            shape = want;
+            h.pointerShape(want);
+        }
+    }
+
     private void onPointer(H)(ref H h, in PointerEvent p)
     {
+        // A held bar follows the pointer, and lets go with it (`FXU14`).
+        if (barGrab != noBar)
+        {
+            if (p.action == PointerAction.drag || p.action == PointerAction.move)
+                return dragBar(p.pos.y);
+            if (p.action == PointerAction.release || p.action == PointerAction.leave)
+            {
+                int unit;
+                barBody(cast(Bar) barGrab, unit).bar.grabbed = false;
+                barGrab = noBar;
+            }
+            return;
+        }
+        if (p.action == PointerAction.move || p.action == PointerAction.leave)
+            return hover(h, p);
         if (p.action != PointerAction.press || p.button != PointerButton.left)
             return;
+        // With a pointer, a press on a bar takes its thumb (`FXU14`).
+        if (!touch)
+            foreach (i, r; barRects)
+                if (r.height > 0 && inside(r, p.pos))
+                    return grabBar(cast(Bar) i, p.pos.y);
         // A ▶ the last frame drew runs its block (`FXT2`).
         foreach (ref hit; tryHits)
             if (inside(hit.rect, p.pos))
@@ -1163,11 +1364,17 @@ struct ExplorerApp
                     exportAction(h, hit.at - exportHitBase);
                 return;
             }
-        // Above the dock: the query, and on a phone its keyboard.
+        // Above the dock: the query, and on a phone its keyboard; on its
+        // lines, the caret goes where the click is (`FXU15`).
         if (p.pos.y < dockTop)
         {
             focus = Focus.query;
             keyboardWanted = true;
+            if (queryRect.height > 0 && inside(queryRect, p.pos))
+            {
+                const at = queryOffsetAt(p.pos);
+                cast(void) query.run(EditCommand.setRange(at, at));
+            }
             return;
         }
         PointerEvent q = p;
@@ -1181,9 +1388,9 @@ struct ExplorerApp
             r.event.match!((in PointerEvent pe) {
                 // `pe` is in the pane's body, below its header. The row under
                 // the cell's middle, the rows moved up by the scroll's
-                // fraction, each `rowCells` tall.
+                // fraction, each `treeRowCells` tall.
                 const row = tv.top + cast(long) floor(
-                    (treeScroll.motion.frac * rowCells + pe.pos.y + 0.5) / rowCells);
+                    (treeScroll.motion.frac * treeRowCells + pe.pos.y + 0.5) / treeRowCells);
                 if (row >= 0 && row < cast(long) tv.rows.length)
                 {
                     const wasSel = tv.sel == row;
