@@ -98,11 +98,8 @@ configuration "android" {
 configuration "application" {
     targetType "executable"
 
-    // `DPR1`: the forge client fetches over libcurl (std.net.curl). Declared
-    // per-configuration, not at top level, so the Android and unittest builds
-    // link no curl at all — `forge_client` compiles either way and reports
-    // `unsupported` without it, so nothing above the seam is version-gated.
-    libs "curl"
+    // `DPR1`: the forge client fetches over libcurl (std.net.curl).
+    // Phobos dlopens libcurl at runtime; we do not link it at compile time.
     versions "HueCurl"
 
     // The off-screen VT that decodes ` ```ansi ` fenced blocks (`sparkles.doc_view.ansi_decode`).
@@ -124,7 +121,6 @@ configuration "application" {
 configuration "raylib" {
     targetType "executable"
 
-    libs "curl"
     versions "HueCurl"
 
     // The shared raylib text core; pulls raylib-d + libs "raylib" transitively.
@@ -185,7 +181,6 @@ configuration "android-raylib" {
 configuration "no-gui" {
     targetType "executable"
 
-    libs "curl"
     versions "HueCurl"
 
     // The terminal build keeps the in-process formatter (FPR2): formatting is
