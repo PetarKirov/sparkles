@@ -543,11 +543,11 @@ leaf hears: each file once, each byte once.
 
 ## Open
 
-### D2 — Whether `NarHash` is stored or recomputed
+### D2 — Whether `NarHash` is stored or recomputed (resolved)
 
 Moved to the content-addressing contract as
-[C1](../content-addressing/decisions.md#c1-narhash-is-stored-beside-the-identity-proposed),
-which proposes storing it.
+[C1](../content-addressing/decisions.md#c1-narhash-is-stored-beside-the-identity-accepted),
+which stores it.
 
 ### D3 — The collision escape hatch
 
