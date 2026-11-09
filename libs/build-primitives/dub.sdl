@@ -36,7 +36,7 @@ configuration "library" {
     // driver; `fileset/testing.d` holds the fileset oracles, and
     // `content_addressing/testing.d` the content-addressing ones. Excluding them
     // keeps test helpers out of every consumer's closure.
-    excludedSourceFiles "src/app.d" "src/sparkles/build_primitives/testing.d" "src/sparkles/build_primitives/task/testing.d" "src/sparkles/build_primitives/fileset/testing.d" "src/sparkles/build_primitives/content_addressing/testing.d"
+    excludedSourceFiles "src/app.d" "src/sparkles/build_primitives/testing.d" "src/sparkles/build_primitives/task/testing.d" "src/sparkles/build_primitives/fileset/testing.d" "src/sparkles/build_primitives/content_addressing/testing.d" "src/sparkles/build_primitives/fileset/emit/testing.d"
 }
 
 // The library plus the test helpers (`testing.d`, `task/testing.d`), for a
