@@ -45,7 +45,7 @@ import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.geometry : Constraints, Point, Rect;
 import sparkles.ui.layout : DelegateMeasure, Frame, layout;
 import sparkles.ui.components.scroll_view : ScrollView;
-import sparkles.ui.state : ScrollAxis, ScrollbarState, DisclosureState, DocRow, documentRows, ElementStore,
+import sparkles.ui.state : ScrollAxis, ScrollbarState, DisclosureState, DocRow, DocRowStore, documentRows, ElementStore,
     HoverTarget, hoverTargets, KeyedRect, keyedRects, selectionRects,
     sourceOffsetAt;
 import sparkles.base.term_control : PointerShape;
@@ -384,6 +384,10 @@ struct ViewerModel
     /// anchor has been captured off the outgoing rows and before anything
     /// reads the outgoing tree.
     private Builder arena_;
+
+    // What `rows` is built in: one block a rebuild overwrites, sized once to
+    // the document (a window's rows included) rather than once per width.
+    private DocRowStore rowStore;
 
     /**
     Everything the raw view's widget tree is built from, other than the width.
@@ -1602,14 +1606,13 @@ struct ViewerModel
         segmentWidth = width;
     }
 
-    // A windowed source's rows past the window, and its widest line.
+    // A windowed source's widest line (its rows past the window are blank:
+    // `derive` sized them).
     private void padRawWindow()
     {
         if (!windowLive || !rawWindow)
             return;
-        window.bottom = cast(long) rows.length;
-        if (rows.length < rawRows.length)
-            rows.length = rawRows.length;
+        window.bottom = frames[tree.root].rect.height;
         const reach = frames[rawDocRoot].rect.x + rawWidest;
         if (reach > contentCols)
             contentCols = reach;
@@ -1655,10 +1658,8 @@ struct ViewerModel
         segments.commit();
         window.bottom = window.empty ? 0 : segments.topOf(window.end) - 1;
         windowLive = true;
+        // The rows past the window, blank, stand for the segments not built.
         derive(withTargets: true);
-        // The rows past the window stand for the segments not built.
-        if (rows.length < segments.total())
-            rows.length = cast(size_t) segments.total();
     }
 
     /**
@@ -1875,7 +1876,7 @@ struct ViewerModel
         }
         else if (cast(long) contentCols <= widthCols)
             hsb = hsb.scrolledTo(0);
-        rows = documentRows(tree, frames);
+        rows = documentRows(tree, frames, rowStore, minRows: windowLive ? cast(size_t) windowDocRows() : 0);
         targets = withTargets ? hoverTargets(tree, frames) : null;
         rebuildMatchRects();
         rebuildInspectRects();
