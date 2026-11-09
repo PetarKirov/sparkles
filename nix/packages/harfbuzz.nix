@@ -23,24 +23,35 @@ in
   perSystem =
     { pkgs, ... }:
     {
-      packages.harfbuzz = pkgs.harfbuzz.overrideAttrs (old: {
-        version = "14.6.0";
-        src = inputs.harfbuzz-src;
-        patches = (old.patches or [ ]) ++ sparklesPatches;
-        # The HarfBust test expects CoreText not to apply the font's
-        # whole-word ligature; macOS 27's CoreText applies it
-        # (`[harfbuzz=0+1671]`). Only that case leaves the CoreText run.
-        postPatch =
-          (old.postPatch or "")
-          + pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isDarwin ''
-            substituteInPlace test/shape/data/in-house/tests/harfbust.tests \
-              --replace-fail '@shapers=ot,coretext' '@shapers=ot'
-          '';
-        # The hb-gpu demo (new in 14) needs GLEW and GLFW; the library does not.
-        mesonFlags = old.mesonFlags ++ [ (pkgs.lib.mesonEnable "gpu_demo" false) ];
-        passthru = (old.passthru or { }) // {
-          inherit sparklesPatches;
-        };
-      });
+      packages.harfbuzz =
+        (pkgs.harfbuzz.override {
+          withGraphite2 = false;
+          withIntrospection = false;
+          withIcu = false;
+        }).overrideAttrs
+          (old: {
+            version = "14.6.0";
+            src = inputs.harfbuzz-src;
+            patches = (old.patches or [ ]) ++ sparklesPatches;
+            # The HarfBust test expects CoreText not to apply the font's
+            # whole-word ligature; macOS 27's CoreText applies it
+            # (`[harfbuzz=0+1671]`). Only that case leaves the CoreText run.
+            postPatch =
+              (old.postPatch or "")
+              + pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isDarwin ''
+                substituteInPlace test/shape/data/in-house/tests/harfbust.tests \
+                  --replace-fail '@shapers=ot,coretext' '@shapers=ot'
+              '';
+            # The hb-gpu demo (new in 14) needs GLEW and GLFW; the library does not.
+            # Disable glib to keep HarfBuzz lean (no glib-2.0 or pcre2).
+            mesonFlags = old.mesonFlags ++ [
+              (pkgs.lib.mesonEnable "gpu_demo" false)
+              (pkgs.lib.mesonEnable "glib" false)
+            ];
+            buildInputs = pkgs.lib.filter (p: (p.pname or p.name or "") != "glib") old.buildInputs;
+            passthru = (old.passthru or { }) // {
+              inherit sparklesPatches;
+            };
+          });
     };
 }

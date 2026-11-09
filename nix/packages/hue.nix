@@ -53,15 +53,6 @@
 
           buildInputs = [
             pkgs.tree-sitter
-            # DPR1: the forge client fetches over libcurl (std.net.curl). The
-            # `application`/`no-gui` dub configurations declare `libs "curl"`;
-            # the Android build does not, and links none.
-            #
-            # `lib.getLib`, not a bare `pkgs.curl`: curl's default output is
-            # `bin`, which carries no `lib/` — so the plain spelling links (from
-            # some other input's closure) and then fails at RUN time with
-            # "libcurl.so.4: cannot open shared object file".
-            (lib.getLib pkgs.curl)
             inputs'.ghostty.packages.libghostty-vt
             inputs'.ghostty.packages.libghostty-vt.dev
           ]
@@ -77,18 +68,21 @@
 
           # Wrap so grammars resolve outside the devshell ($SPARKLES_TS_GRAMMAR_PATH
           # is only a *default* — a caller who exports their own still wins), so the
-          # GUI's fontconfig lookups (fc-match) work under `nix run`, and so live D
+          # GUI's fontconfig lookups (fc-match) work under `nix run`, so live D
           # types (LIV1-LIV4) work out of the box: opening a `.d` file spawns
           # `twoslash-extract --dub --serve`, which hue finds via
           # $SPARKLES_TWOSLASH_EXTRACT before falling back to PATH. hue never links
           # the analyzer (PRJ13). Its extractor carries its own druntime/phobos
           # import paths but no toolchain (TC13): `--dub` runs the `dub` and
           # compiler on the user's PATH, and without them says why (PRJ7).
+          # `curlMinimal` provides `libcurl.so.4` for runtime dlopen by Phobos
+          # `std.net.curl` without linking it into DT_NEEDED or pulling full curl.
           postFixup = ''
             wrapProgram $out/bin/${finalAttrs.pname} \
               --set-default SPARKLES_TS_GRAMMAR_PATH ${config.packages.ts-grammars} \
               --set-default SPARKLES_TWOSLASH_EXTRACT ${lib.getExe config.packages.twoslash-extract.oracle} \
-              --prefix PATH : ${lib.makeBinPath [ pkgs.fontconfig ]}
+              --prefix PATH : ${lib.makeBinPath [ pkgs.fontconfig ]} \
+              --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath [ pkgs.curlMinimal ]}
           '';
 
           meta = {
