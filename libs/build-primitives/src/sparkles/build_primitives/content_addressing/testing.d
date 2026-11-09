@@ -594,3 +594,156 @@ trees.
             theirs, "\n", t.literal));
     }
 }
+
+// ------------------------------------------------------- start roots
+
+// A tree, filesets over it whose start roots lie beneath its root, and for
+// each, the tree holding only its members: what the scheme must name (CAM1).
+private enum rootsTree = "a/b/x = 1\na/b/d/y = 2\na/c = 3\na-c/z = 4\nq = 5\n";
+
+private struct RootsCase
+{
+    string label;   ///
+    string members; /// the tree of the members alone
+}
+
+private immutable RootsCase[4] rootsCases = [
+    RootsCase("a/b/** ∪ a-c/**", "a/b/x = 1\na/b/d/y = 2\na-c/z = 4\n"),
+    RootsCase("a/c", "a/c = 3\n"),
+    RootsCase("a/b/d/y ∪ /q", "a/b/d/y = 2\nq = 5\n"),
+    RootsCase("nothing", ""),
+];
+
+// The filesets of `rootsCases`, in order.
+private auto rootsFilesets(ref Filesets sets)
+{
+    import sparkles.build_primitives.fileset.value : Fileset;
+
+    Fileset[4] fs = [
+        sets.unionOf(sets.glob("a/b/**").value, sets.glob("a-c/**").value),
+        sets.glob("a/c").value,
+        sets.unionOf(sets.glob("a/b/d/y").value, sets.glob("/q").value),
+        sets.nothing,
+    ];
+    return fs;
+}
+
+/**
+CAM1 for git: a fileset whose start roots lie beneath its root has the git
+tree id `git write-tree` gives the tree holding only its members, in SHA-1
+and SHA-256 repositories.
+*/
+@("content_addressing.git.startRoots")
+@system unittest
+{
+    import sparkles.build_primitives.git_env : runGit;
+
+    try
+        cast(void) runGit(["--version"]);
+    catch (Exception)
+        return skipTest("git is not installed");
+
+    auto sets = Filesets(CasePolicy.sensitive);
+    const filesets = rootsFilesets(sets);
+    foreach (i, c; rootsCases)
+    {
+        RecordingExecutor exec;
+        GitTreeScheme!SHA1 sha1;
+        GitTreeScheme!SHA256 sha256;
+        const ours1 = schemeResolve(rootsTree, sets, filesets[i], sha1, exec);
+        const ours256 = schemeResolve(rootsTree, sets, filesets[i], sha256, exec);
+        const theirs1 = onDisk(c.members, "git-roots", dir => gitWriteTree(dir, "sha1"));
+        const theirs256 = onDisk(c.members, "git-roots", dir => gitWriteTree(dir, "sha256"));
+        assert(toHex(ours1.digest)[] == theirs1, text(c.label, ": ", toHex(ours1.digest)[], " != ",
+            theirs1));
+        assert(toHex(ours256.digest)[] == theirs256, text(c.label, " (SHA-256): ",
+            toHex(ours256.digest)[], " != ", theirs256));
+    }
+}
+
+/**
+CAM1 for castore: a fileset whose start roots lie beneath its root has the
+id `snix-castore ingest` gives the tree holding only its members.
+*/
+@("content_addressing.castore.startRoots")
+@system unittest
+{
+    import std.file : exists;
+    import std.process : environment;
+
+    const snix = environment.get("SPARKLES_SNIX_CASTORE");
+    if (snix is null)
+        return skipTest("SPARKLES_SNIX_CASTORE is not set");
+    assert(snix.exists, snix);
+
+    auto sets = Filesets(CasePolicy.sensitive);
+    const filesets = rootsFilesets(sets);
+    foreach (i, c; rootsCases)
+    {
+        RecordingExecutor exec;
+        CastoreScheme scheme;
+        const ours = schemeResolve(rootsTree, sets, filesets[i], scheme, exec);
+        const theirs = onDisk(c.members, "castore-roots", dir => snixIngest(snix, dir));
+        assert(toCastoreText(ours.digest)[] == theirs, text(c.label, ": ",
+            toCastoreText(ours.digest)[], " != ", theirs));
+    }
+}
+
+// --------------------------------------------------------- reads once
+
+/**
+CAT2, counted at the backend: over the walk alone, a tee of castore, git and
+NAR opens one more entry per member file, and reads each file as often as
+one scheme alone does: once through to its end, in reads of at most 16 KiB,
+and one read more that finds the end.
+*/
+@("content_addressing.tee.opensOnce")
+@system unittest
+{
+    import sparkles.base.io.errors : OpKind;
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+    import sparkles.build_primitives.fileset.scheme : PathScheme, resolveScheme;
+    import sparkles.build_primitives.fileset.tree_literal : memTree;
+
+    enum literal = "a/b/x = one\na/b/d/y = two\na/c = three\nrun +x = go\nl -> a\nempty/\nnil = \n";
+    auto tree = memTree(literal, spareBytes: 64 * 1024);
+    assert(!tree.hasError);
+    auto vfs = &tree.value.get().vfs;
+    auto big = new ubyte[](40_000);
+    foreach (i, ref b; big)
+        b = cast(ubyte)(i * 7);
+    assert(vfs.writeFile("a/big", big));
+    // x, y, c, run and big take one read of data each, big three; each
+    // file, nil too, one more that finds its end.
+    enum files = 6;
+    enum reads = 4 + 3 + files;
+
+    auto root = openRoot!(Rights.readOnly)(vfs, "", ambientAuthority());
+    assert(!root.hasError);
+    auto sets = Filesets(CasePolicy.sensitive);
+    const f = sets.everything;
+
+    // The backend calls of `op` one resolution by `S` makes.
+    ulong callsOf(S)(OpKind op)
+    {
+        RecordingExecutor exec;
+        S scheme;
+        const before = vfs.count(op);
+        const r = resolveScheme(root.value.borrow, sets, f, scheme, exec);
+        assert(!r.hasError, r.hasError ? r.error.context : "");
+        return vfs.count(op) - before;
+    }
+
+    alias Tee = NarScheme!(SHA256, LiteralRef, CastoreDirectory, GitTree!SHA1);
+    const walkOpens = callsOf!PathScheme(OpKind.openAt);
+    assert(callsOf!PathScheme(OpKind.read) == 0, "the walk alone reads no file");
+
+    assert(callsOf!Tee(OpKind.openAt) == walkOpens + files, text(callsOf!Tee(OpKind.openAt),
+        " opens, ", walkOpens, " of them the walk's"));
+    assert(callsOf!Tee(OpKind.read) == reads, text(callsOf!Tee(OpKind.read), " reads"));
+    static foreach (S; AliasSeq!(CastoreScheme, GitTreeScheme!SHA1, LiteralNar))
+    {
+        assert(callsOf!S(OpKind.openAt) == walkOpens + files, S.stringof);
+        assert(callsOf!S(OpKind.read) == reads, S.stringof);
+    }
+}

@@ -266,7 +266,9 @@ equals castore, git and NAR each computed alone, on every fixture tree.
 
 **`CAT2` — A file is read once.** A tee **must** read each member file once,
 and every part's leaf hears each of its bytes once. _Detection:_ a counting
-leaf in a tee hears one start per file and the tree's total size in bytes.
+leaf in a tee hears one start per file and the tree's total size in bytes,
+and the backend counts one open per member file beyond the walk's, and as
+many reads as one scheme alone makes.
 
 **`CAT3` — The identity carries its `NarHash`.** The default tee **must**
 return the castore id with the SHA-256 `NarHash` and `NarSize` beside it.
