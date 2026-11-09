@@ -1,5 +1,5 @@
 ---
-status: draft
+status: accepted
 owner: sparkles:build-primitives
 reviewed: 2026-11-09
 ---
