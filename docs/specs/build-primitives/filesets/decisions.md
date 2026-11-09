@@ -2,7 +2,7 @@
 
 _Companion to [SPEC.md](./SPEC.md). Records consequential choices, the
 alternatives rejected, and the questions still open. A decision here is
-accepted unless marked **open**._
+accepted unless marked **open**, or **proposed**, which awaits the owner._
 
 ## Accepted
 
@@ -206,7 +206,8 @@ selection must still create to keep the shape.
 so every memberless leaf is reported: `*.md` over a source tree reports each
 directory without Markdown. Whether consumers want that, or want the report
 limited to directories beneath an `acceptAll` verdict or a literal root, is
-the owner's call. The build graph's listings, the first consumer, do not read
+the owner's call, proposed as
+[D5](#d5-the-extent-of-the-empty-directory-report-proposed). The build graph's listings, the first consumer, do not read
 the report. For content addressing it is settled: a name holds only the
 directories on the way to a member
 ([C3](../content-addressing/decisions.md#c3-memberless-directories-in-an-id-accepted)),
@@ -606,3 +607,75 @@ Out of scope for v1, but [`FSM2`](./SPEC.md#7-the-resolution-machine-fsm)
 requires the request vocabulary to be open so that adding
 `listxattr`/`getxattr` is not a breaking change. Whether OSTree-style identity
 is ever a goal is undecided.
+
+### D5 — The extent of the empty-directory report (proposed)
+
+**Question.** [`FSV4`](./SPEC.md#4-the-fileset-value-fsv) reports every
+memberless leaf the walk listed ([A13](#a13-an-empty-directory-is-a-memberless-leaf-of-the-walk)).
+An unanchored pattern makes the walk list every directory, so `*.md` over a
+source tree reports each directory that holds no Markdown. Which directories
+should the report hold?
+
+**Alternatives.**
+
+- **Every memberless leaf, as now.** Nothing is lost, and the report is
+  decided from each listing alone. For an unanchored pattern it is mostly
+  noise, and a consumer that copies the selection creates a skeleton of the
+  whole tree.
+- **Only beneath an `acceptAll` verdict.** A directory is reported when
+  the plan selects everything beneath it, as `src/**` or the literal root
+  `src` do. There the fileset asked for the directory's whole content, so
+  its emptiness is part of what was selected; under `*.md` it is not. The
+  verdict is already known when the directory is listed, so the cost stays
+  one test per directory.
+- **Everything, each marked with its verdict.** The consumer filters. This
+  moves the question to every consumer instead of answering it once.
+
+**Proposal.** Only beneath an `acceptAll` verdict. It is the one reading
+under which "the selection has this empty directory" is true, it matches
+what a copy of `src/**` is expected to keep, and it makes the report
+independent of how the fileset was spelled, as
+[C3](../content-addressing/decisions.md#c3-memberless-directories-in-an-id-accepted)
+made ids. The build graph's listings, the first consumer, do not read the
+report, so nothing depends on the current extent.
+
+**Revisit** if a consumer needs the skeleton of directories a pattern
+searched, which would be a separate report, not this one.
+
+### D6 — A symlink cycle under `symlinks = beneath` (proposed)
+
+**Question.** With [`FSD6`](./SPEC.md#11-drivers-fsd)'s `symlinks = beneath`,
+a link to a directory inside the root is walked as that directory. A link to
+an ancestor, `a/up -> ..`, makes the walk descend until
+[`FSM7`](./SPEC.md#7-the-resolution-machine-fsm)'s depth bound, and the
+whole resolution fails with `depthExceeded`. Should a cycle fail the
+resolution, or be one incomplete entry?
+
+**Alternatives.**
+
+- **Fail at the bound, as now.** No new mechanism, and no cycle can go
+  unnoticed. One link anywhere in the tree fails every fileset over it, after
+  up to 64 levels of work, and the error names the depth, not the link.
+- **Report the link as an incomplete entry.** Before entering a linked
+  directory, compare its identity with the directories on the current path;
+  a match is reported per entry, as an escape from the root already is
+  (`unreadable`, with a `cycle` kind), and the walk goes on. A scheme still
+  fails on it, since an incomplete tree has no id
+  ([`FSE1`](./SPEC.md#10-errors-and-partial-results-fse)), but a listing
+  completes. This needs a file's identity, its inode beside the device that
+  `Stat` already carries: a change to the capability VFS, whose backends
+  all have one to give.
+- **Never walk a linked directory twice.** Treat any directory already
+  visited, not only an ancestor, as a repeat. That also drops a second link
+  to the same directory, which is not a cycle and whose files are members
+  under both names.
+
+**Proposal.** Report the link as an incomplete entry, compared against the
+ancestors only. It matches how the walk already treats a link that escapes
+the root, it names the offending link, and it costs one comparison per
+ancestor when a link is followed, with the depth bound still in place behind
+it. The VFS change is the cost, and it goes through that contract's own
+decisions.
+
+**Revisit** if a consumer wants cycles to be a hard error: it can still
+refuse a resolution with any incomplete entry.
