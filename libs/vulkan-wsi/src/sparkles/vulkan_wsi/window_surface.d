@@ -72,6 +72,12 @@ struct WindowSurface
     uint queueFamily() const pure nothrow @nogc => owner_.queueFamily;
     bool dynamicRendering() const pure nothrow @nogc => owner_.dynamicRendering;
     VkPipelineCache pipelineCache() pure nothrow @nogc => owner_.pipelineCache;
+    bool surfaceCapabilities2() const pure nothrow @nogc => owner_.surfaceCapabilities2;
+    bool surfaceMaintenance1() const pure nothrow @nogc => owner_.surfaceMaintenance1;
+    bool swapchainMaintenance1() const pure nothrow @nogc => owner_.swapchainMaintenance1;
+    bool presentWait2() const pure nothrow @nogc => owner_.presentWait2;
+    bool presentTiming() const pure nothrow @nogc => owner_.presentTiming;
+    bool presentAtAbsoluteTime() const pure nothrow @nogc => owner_.presentAtAbsoluteTime;
 }
 
 @("vulkan_wsi.window_surface.destroyIsIdempotentWithoutHandles")
