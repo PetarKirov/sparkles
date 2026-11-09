@@ -81,10 +81,11 @@ in
       # Grammars that do not come from nixpkgs (or are pinned ahead of it).
       # Only `src` is used here — this builds `src/parser.c` per ABI rather
       # than reusing the host build. Keep in sync with the desktop pins in
-      # nix/packages/tree-sitter-{d,sdl}.nix.
+      # nix/packages/tree-sitter-{d,sdl,fileset}.nix.
       extraGrammars = {
         d = config.packages.tree-sitter-d;
         sdl = config.packages.tree-sitter-sdl;
+        fileset = config.packages.tree-sitter-fileset;
       };
 
       grammarSo =

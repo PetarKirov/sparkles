@@ -311,13 +311,16 @@
           # Reserve the empty `.build_info` section `stampAndroidLib` patches
           # (`TPG2`), as the raw cross build's option of the same name does.
           emptyBuildInfo ? false,
+          # Repo-relative files the app string-imports from outside its
+          # source directories, as `buildSparklesApp` takes them.
+          extraSources ? [ ],
           description ? "${appDir} as an Android shared library, per ABI, built by dub",
         }:
         let
           ndk = config.legacyPackages.androidNdk;
           # The JNI shim sits outside every source path (libs/android/dub.sdl).
           srcDirs = sparklesSrcClosure appDir ++ [ "libs/android/c" ];
-          src = sourceFor (srcDirs ++ uiShaderDirs srcDirs);
+          src = sourceForWith (srcDirs ++ uiShaderDirs srcDirs) extraSources;
           pkgConfig = config.packages.android-pkg-config;
         in
         pkgs.buildDubPackage {

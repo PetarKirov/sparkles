@@ -26,6 +26,10 @@
           {
             "text": "hue",
             "link": "/credits/hue"
+          },
+          {
+            "text": "fileset explorer",
+            "link": "/credits/fileset-explorer"
           }
         ]
       }

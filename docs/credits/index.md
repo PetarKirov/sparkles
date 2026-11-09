@@ -7,7 +7,8 @@ each component's licence text, taken from the component's own source when
 the documentation is built.
 
 Each application has a page of its own with only the components it ships:
-[sparkles:terminal](./terminal.md) and [hue](./hue.md). The same pages are
+[sparkles:terminal](./terminal.md), [hue](./hue.md) and the
+[fileset explorer](./fileset-explorer.md). The same pages are
 bundled with the applications.
 
 `ci check credits` keeps this document honest: it reads the build inputs —
