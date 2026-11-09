@@ -129,12 +129,19 @@ int emitCommand(string dir, string query, string targetName_, string globMode, o
 /// untracked ones: no untracked file is unignored, no tracked one ignored.
 bool gitignoredIsUntracked(string dir) @safe
 {
+    import std.process : ProcessException;
     import sparkles.build_primitives.git_env : runGit;
 
-    const untracked = runGit(["ls-files", "--others", "--exclude-standard"], dir);
-    const ignoredTracked = runGit(["ls-files", "--cached", "--ignored", "--exclude-standard"], dir);
-    return untracked.status == 0 && untracked.output.length == 0 && ignoredTracked.status == 0
-        && ignoredTracked.output.length == 0;
+    // No `git` to ask (a phone): not known to hold, so not assumed.
+    try
+    {
+        const untracked = runGit(["ls-files", "--others", "--exclude-standard"], dir);
+        const ignoredTracked = runGit(["ls-files", "--cached", "--ignored", "--exclude-standard"], dir);
+        return untracked.status == 0 && untracked.output.length == 0 && ignoredTracked.status == 0
+            && ignoredTracked.output.length == 0;
+    }
+    catch (ProcessException)
+        return false;
 }
 
 /// The grammar the code of `t` is highlighted with, when the bundle has one.
@@ -165,6 +172,7 @@ TextSpan[][] highlightCode(string language, string code) @system
     import sparkles.syntax.ts.highlighter : highlightInjected;
     import sparkles.syntax.ts.injection : TsConfigCache;
     import sparkles.syntax.ts.registry : GrammarRegistry;
+    import launch : appGrammars;
 
     static GrammarRegistry registry;
     static bool ready;
@@ -173,7 +181,7 @@ TextSpan[][] highlightCode(string language, string code) @system
     if (!ready)
     {
         labels = LabelSet.standard();
-        registry = GrammarRegistry.fromEnvironment();
+        registry = appGrammars();
         cache = TsConfigCache.create(&registry, labels);
         ready = true;
     }

@@ -19,25 +19,44 @@ dependency "sparkles:source-view" path="../.."
 stringImportPaths "../../docs/apps/fileset-explorer"
 dependency "sparkles:ui" path="../.."
 dependency "sparkles:ui-app" path="../.."
-// `--render-plain` (FXU8) paints one frame into a cell grid with no terminal.
-dependency "sparkles:ui-tui" path="../.."
-dependency "sparkles:tui" path="../.."
 
+// `--render-plain` (FXU8) paints one frame into a cell grid with no terminal:
+// `sparkles:ui-tui` and `sparkles:tui`, named by every configuration but
+// `android`, which has no command line and no terminal (APP3).
 configuration "application" {
     targetType "executable"
     subConfiguration "sparkles:ui-app" "full"
+    dependency "sparkles:ui-tui" path="../.."
+    dependency "sparkles:tui" path="../.."
 }
 
 // The terminal-only build: no GPU stack at all.
 configuration "no-gui" {
     targetType "executable"
     subConfiguration "sparkles:ui-app" "tui"
+    dependency "sparkles:ui-tui" path="../.."
+    dependency "sparkles:tui" path="../.."
+}
+
+// On Android the explorer is the shared library a NativeActivity loads, its
+// entry `AndroidWsiMain`'s, in src/android_entry.d (`FXA1`): the native arm,
+// `sparkles:wsi` windows drawn by `sparkles:ui-vulkan`, the repository
+// embedded as the fileset root. `buildSparklesAndroidLib` selects it.
+configuration "android" {
+    platforms "android"
+    targetType "dynamicLibrary"
+    targetName "filesetexplorer"
+    excludedSourceFiles "src/app.d" "src/render.d" "src/*_test.d"
+    subConfiguration "sparkles:ui-app" "gui-vulkan"
+    dependency "sparkles:ui-vulkan" path="../.."
 }
 
 configuration "unittest" {
     targetType "library"
     excludedSourceFiles "src/app.d"
 
+    dependency "sparkles:ui-tui" path="../.."
+    dependency "sparkles:tui" path="../.."
     dependency "sparkles:test-runner" path="../.."
     dependency "sparkles:test-utils" path="../.."
     subConfiguration "sparkles:ui-app" "tui"

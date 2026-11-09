@@ -56,6 +56,15 @@ start, so `a#b` is a glob.
 | `F1`               | shows the help, or goes back                           |
 | `Esc`              | leaves a tutorial's tree; otherwise quits              |
 
+With a mouse or a finger, a tab shows its pane when tapped, the Export tab's
+◀ ▶, glob mode and copy do what `T` `t`, `g` and `y` do, and a tap on the query
+gives it focus. A finger drags the tree, the help and the code, and a flick
+keeps them coasting.
+
+On Android, `nix build .#fileset-explorer-apk` builds an APK whose fileset root
+is the sparkles repository itself, every tracked file but the dotfiles, which
+Android cannot ship.
+
 ## Tutorial
 
 The blocks below run on this small project, held in memory:

@@ -8,27 +8,31 @@ re-resolves it and redraws everything from the new result (`FXU1`).
 */
 module explorer;
 
+import core.time : MonoTime;
 import std.algorithm.comparison : max, min;
 import std.conv : text;
 import std.format : format;
+import std.math : floor;
 
 import sparkles.base.text.grapheme : visibleWidth;
 import sparkles.build_primitives.fileset.fso : FsoKind;
 import sparkles.build_primitives.fileset.query : Span, Token, TokenKind;
-import sparkles.input : Event, isEndOfInput, Key, KeyEvent, match, Mods, PasteEvent, Point,
+import sparkles.input : Event, isDismiss, isEndOfInput, Key, KeyEvent, match, Mods, PasteEvent, Point,
     PointerAction, PointerButton, PointerEvent, WheelEvent;
 import sparkles.ui.components.chrome : tabStrip;
 import sparkles.ui.hit_ids : HitBlock;
+import sparkles.ui.components.controls : chip, ControlSize, segmented;
 import sparkles.ui.components.dock : DockAxis, DockContainer, DockKind, DockLayout, PaneId,
     RouteKind;
 import sparkles.ui.components.editor : caretColumnOf, editorLineSpans, EditorViewOptions;
 import sparkles.ui.components.tree_view : collapseOrUp, measureContent, TreeStep, TreeViewState,
     treeActivate = activate, viewSlice;
-import sparkles.ui.components.tree_widget : flatten, TreeData, TreeGlyphs;
+import sparkles.ui.components.scroll_body : ScrollBody;
+import sparkles.ui.components.tree_widget : flatten, TreeData, TreeGlyphs, treeRows = treeView;
 import sparkles.ui.editor.field : EditorField;
 import sparkles.ui.geometry : Insets, Rect, SizeSpec;
-import sparkles.ui.style : BorderStyle, Decoration, Slot, TextStyle;
-import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind, WidgetTree;
+import sparkles.ui.style : BorderStyle, Decoration, FontRole, GuideGlyphs, Slot, TextStyle, TypeStep;
+import sparkles.ui.widget : Alignment, Builder, TextSpan, Widget, WidgetKind, WidgetTree;
 import sparkles.ui.wrap : TextWrap;
 
 import evaluate : autoIdBytes, evaluate, humanBytes, Outcome, Root;
@@ -78,7 +82,6 @@ struct ExplorerApp
     MdDoc helpDoc;                  ///
     TryBlock[] tries;               ///
     string[string] trees;           ///
-    int helpTop;                    /// the help's first shown row
     size_t trySel;                  /// the selected try block
     TryOutcome[size_t] tryResults;  /// by the block's `at`
     private size_t lastTab;         // the tab F1 returns to
@@ -86,8 +89,30 @@ struct ExplorerApp
     private TryHit[] tryHits;       // where this frame drew each ▶ (`paint`)
     private int[size_t] tryRows;    // each try block's row in the help's content
 
+    // Scrolling (`FXU10`): each pane's position, in rows, moved 1:1 by a
+    // finger, flung on by a lifted one, eased by a wheel notch or a key.
+    ScrollBody treeScroll;          /// the member tree's
+    ScrollBody helpScroll;          /// the help's
+    ScrollBody exportScroll;        /// the Export tab's
+    /// Ease between positions on a target that can show a fraction of a row;
+    /// off, every move lands at once (`--render-plain`, a terminal).
+    bool smoothScroll = true;
+    private long syncedTop;         // `tv.top` as the tree's motion last left it
+    private MonoTime lastFrame;     // when the previous frame was built
+    private uint helpContent = uint.max; // the help's content node, measured in `paint`
+    private TryHit[] buttons;       // tabs and Export buttons, as this frame drew them
+    private bool keyboardWanted;    // the query was tapped: on a phone, the soft keyboard
+    private bool keyboardShown;     // what the host was last told
+
+    /// The first row of the help that shows.
+    int helpTop() const @safe => cast(int) helpScroll.motion.whole;
+
     /// The base of the ▶ hit ids: `tryHitBase + at`.
     enum size_t tryHitBase = 1 << 24;
+    /// The right group's tabs: `tabHitBase + i`.
+    enum size_t tabHitBase = 1 << 22;
+    /// The Export tab's buttons: previous and next target, glob mode, copy.
+    enum size_t exportHitBase = tabHitBase + 16;
 
     /// Starts on `source` beneath `dir`.
     this(Root dir, string source)
@@ -108,9 +133,9 @@ struct ExplorerApp
     private void loadHelp() @system
     {
         import sparkles.syntax.md.model : extractMarkdown;
-        import sparkles.syntax.ts.registry : GrammarRegistry;
+        import launch : appGrammars;
 
-        auto registry = GrammarRegistry.fromEnvironment();
+        auto registry = appGrammars();
         helpDoc = extractMarkdown(registry, helpSource);
         tries = tryBlocks(helpDoc);
         trees = namedTrees(helpDoc);
@@ -185,15 +210,26 @@ struct ExplorerApp
     }
 
     /// Records where this frame drew each ▶, for a click to find (`FXT2`).
+    /// So do the tabs and the Export tab's buttons (`FXU10`), and the help's
+    /// height, which bounds its scrolling.
     void paint(H)(ref H h, in WidgetTree t, in Frame[] frames)
     {
         tryHits.length = 0;
+        buttons.length = 0;
         foreach (i, ref n; t.nodes)
-            if (n.hitId >= tryHitBase && n.hitId < tryHitBase + helpSource.length && i < frames.length)
+        {
+            if (i >= frames.length)
+                break;
+            if (n.hitId >= tryHitBase && n.hitId < tryHitBase + helpSource.length)
                 tryHits ~= TryHit(frames[i].rect, n.hitId - tryHitBase);
+            else if (n.hitId >= tabHitBase && n.hitId < actionBase + Action.insert + chipTexts.length)
+                buttons ~= TryHit(frames[i].rect, n.hitId);
+        }
         const r = paneRect(Pane.help);
         foreach (ref hit; tryHits)
             tryRows[hit.at] = hit.rect.y - (r.y + dockTop) + helpTop;
+        if (helpContent < frames.length)
+            helpScroll.content = frames[helpContent].rect.height;
     }
 
     /// Re-evaluates the query and rebuilds the tree, keeping what was open.
@@ -230,30 +266,269 @@ struct ExplorerApp
         const size = h.size;
         auto b = Builder();
 
-        const title = b.add(Widget(kind: WidgetKind.rich, width: SizeSpec.grow(), spans: [
-            TextSpan(" fileset explorer ", Slot.chromeAccent, TextStyle(bold: true)),
-            TextSpan(root.inMemory ? "tutorial tree `" ~ root.name ~ "` (Esc returns)" : dir.dir,
-                root.inMemory ? Slot.warn : Slot.muted),
-        ]));
+        // The touch layout (`FXU11`), on a screen without hover unless chosen.
+        bool hostTouch;
+        static if (__traits(hasMember, H, "capabilities"))
+            hostTouch = !h.capabilities.hover;
+        touch = layout == Layout.touch || (layout == Layout.automatic && hostTouch);
+        rowCells = touch ? touchRowsOf(h) : 1;
 
         // The query: its lines up to a third of the screen, and the status.
         const lines = query.state.text.lineCount;
         const room = max(1, size.height / 3 - 3);
         const queryRows = cast(int) min(lines, room);
-        const queryPane = panel(b, "query", queryRows + 1,
-            queryLines(b, queryRows) ~ statusLine(b), focus == Focus.query);
+        uint[] top;
+        int topRows;
+        if (touch)
+        {
+            top = [appBar(b), queryField(b, queryRows), operatorChips(b)];
+            topRows = rowCells + (queryRows + 2) + 1 + rowCells;
+        }
+        else
+        {
+            top = [b.add(Widget(kind: WidgetKind.rich, width: SizeSpec.grow(), spans: [
+                    TextSpan(" fileset explorer ", Slot.chromeAccent, TextStyle(bold: true)),
+                    TextSpan(root.inMemory ? "tutorial tree `" ~ root.name ~ "` (Esc returns)" : dir.dir,
+                        root.inMemory ? Slot.warn : Slot.muted),
+                ])),
+                panel(b, "query", queryRows + 1, queryLines(b, queryRows) ~ statusLine(b),
+                    focus == Focus.query)];
+            topRows = 1 + queryRows + 3;
+        }
 
-        // The dock fills the rest.
-        const dockRows = max(4, size.height - 1 - (queryRows + 3) - 1);
-        dockY = 1 + queryRows + 3;
+        // The dock fills the rest, above the key hints on a keyboard's layout.
+        const footerRows = touch ? 0 : 1;
+        const dockRows = max(4, size.height - topRows - footerRows);
+        dockY = topRows;
         const stats = statsLines();
         arrangeDock(size.width, dockRows, stats);
+        // The time since the last frame: the host's measure where it has
+        // one (a recorded run's is fixed), else the clock's.
+        const now = MonoTime.currTime;
+        double dt = lastFrame == MonoTime.init ? 0 : (now - lastFrame).total!"usecs" / 1e6;
+        lastFrame = now;
+        static if (__traits(hasMember, H, "frameSeconds"))
+            if (h.frameSeconds > 0)
+                dt = h.frameSeconds;
+        if (animate(min(dt, 0.1), smoothScroll && h.target.subCellScroll && !h.target.reducedMotion))
+            h.requestFrame();
+        static if (__traits(compiles, h.textInput(true)))
+        {
+            // A phone's soft keyboard, while the query has a tapped focus.
+            const wanted = keyboardWanted && focus == Focus.query;
+            if (wanted != keyboardShown)
+            {
+                h.textInput(wanted);
+                keyboardShown = wanted;
+            }
+        }
         const dockView = b.add(Widget(kind: WidgetKind.column, width: SizeSpec.grow(),
             height: SizeSpec.fixed(dockRows), children: [renderNode(b, dock.layout.root, stats)]));
 
-        const footer = b.add(Widget(kind: WidgetKind.text, slot: Slot.muted, text: hints()));
-        return b.finish(b.add(Widget(kind: WidgetKind.column, width: SizeSpec.grow(),
-            children: [title, queryPane, dockView, footer])));
+        uint[] all = top ~ dockView;
+        if (!touch)
+            all ~= b.add(Widget(kind: WidgetKind.text, slot: Slot.muted, text: hints()));
+        return b.finish(b.add(Widget(kind: WidgetKind.column, width: SizeSpec.grow(), children: all)));
+    }
+
+    /// Which layout to draw (`FXU11`).
+    enum Layout : ubyte
+    {
+        automatic, /// the touch layout on a screen without hover
+        keyboard,  /// the bordered, key-hinted layout
+        touch,     /// the touch layout
+    }
+
+    /// ditto
+    Layout layout;
+    /// Whether this frame drew the touch layout.
+    bool touch;
+    /// The height of a touch target, in cells: a tree row, a chip, a segment.
+    int rowCells = 1;
+
+    /// A cell's height in dp, as the host last reported it (24 when it does not).
+    double cellDp = 24;
+
+    // The cells 48 dp takes on the host (`TOK11`): from its cell height and
+    // density where it reports them, else two.
+    private int touchRowsOf(H)(ref H h)
+    {
+        static if (__traits(hasMember, H, "cellHeight") && __traits(hasMember, H, "fontDensity"))
+        {
+            import std.math : ceil;
+
+            const cell = h.cellHeight, density = h.fontDensity;
+            if (cell > 0 && density > 0)
+            {
+                cellDp = cell / density;
+                return max(1, cast(int) ceil(48 / cellDp));
+            }
+        }
+        return 2;
+    }
+
+    // ---- the touch layout's chrome (`FXU11`) --------------------------------
+
+    /*
+    `child`, a cell tall, in the middle of a touch target `rowCells` tall
+    (`TOK11`). Layout places it in whole cells; the half cell an even target
+    leaves is taken up by a fractional offset, so a label sits where a pill
+    drawn at its target's middle is. `hitId`, when given, makes the whole
+    target the hit area, not just the cell drawn.
+    */
+    private uint centred(ref Builder b, uint child, size_t hitId = 0)
+    {
+        auto w = Widget(kind: WidgetKind.column, children: [child], height: SizeSpec.fixed(rowCells),
+            alignY: Alignment.center, clipY: true, hitId: hitId);
+        if ((rowCells - 1) % 2)
+            w.childOffsetFracY = -0.5f;
+        return b.add(w);
+    }
+
+    // A chip drawn compact, centred in its touch target.
+    private uint touchChip(ref Builder b, string label, size_t hitId)
+        => centred(b, chip(b, label, hitId, false, ControlSize(rows: 1)), hitId);
+
+    // A segmented control of touch targets: segment `i`'s hit id is `firstHit + i`.
+    private uint touchSegments(ref Builder b, in string[] labels, size_t selected, size_t firstHit)
+    {
+        uint[] segs;
+        foreach (i, l; labels)
+        {
+            const on = i == selected;
+            const t = b.add(Widget(kind: WidgetKind.text, text: l, alignX: Alignment.center,
+                slot: on ? Slot.chromeAccent : Slot.textPrimary, textStyle: TextStyle(bold: on)));
+            const seg = b.add(Widget(kind: WidgetKind.panel, children: [t], padding: Insets(0, 1, 0, 1),
+                hitId: firstHit + i, slot: on ? Slot.chromeAccent : Slot.surfaceRaised, paintBackground: true,
+                decoration: Decoration(borderRadius: 6, drawHeight: 32)));
+            segs ~= centred(b, seg, firstHit + i);
+        }
+        // The group's outline is drawn at the target's middle, around the segments.
+        return b.add(Widget(kind: WidgetKind.row, children: segs, height: SizeSpec.fixed(rowCells),
+            decoration: Decoration(borderStyle: BorderStyle.solid, borderWidth: Insets.all(1),
+                borderSlot: Slot.border, borderRadius: 6, drawHeight: 32)));
+    }
+
+    /// What the touch layout's buttons do: their hit ids are `actionBase + Action`.
+    enum Action : size_t
+    {
+        expandAll,
+        collapseAll,
+        computeIds,
+        globShim,
+        globExpand,
+        globRefuse,
+        clear,
+        backspace,
+        insert, /// `insert + i`: `operatorChips`' `i`th chip
+    }
+
+    /// The base of the touch layout's buttons.
+    enum size_t actionBase = tabHitBase + 32;
+
+    // The chips under the query: label, and what it inserts (`""`: an action).
+    private static immutable string[2][] chipTexts = [
+        ["|", " | "], ["&", " & "], ["−", " - "], ["( )", "()"], ["**", "**/"], ["*", "*"],
+        ["\" \"", "\"\""], ["#", "  # "],
+    ];
+
+    private uint appBar(ref Builder b)
+    {
+        const title = centred(b, b.add(Widget(kind: WidgetKind.text, text: "Fileset explorer", slot: Slot.textPrimary,
+            textStyle: TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.title, bold: true))));
+        import std.path : absolutePath, baseName, buildNormalizedPath;
+
+        const where = centred(b, b.add(Widget(kind: WidgetKind.text,
+            text: root.inMemory ? "tutorial tree " ~ root.name ~ " · Back returns"
+                : baseName(buildNormalizedPath(absolutePath(dir.dir))),
+            slot: root.inMemory ? Slot.warn : Slot.textSecondary,
+            textStyle: TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.caption))));
+        const gap = b.add(Widget(kind: WidgetKind.box, width: SizeSpec.fixed(2)));
+        const count = centred(b, b.add(Widget(kind: WidgetKind.text,
+            text: text(shown.found.members.length, shown.found.members.length == 1 ? " member" : " members"),
+            slot: Slot.accentPrimary, textStyle: TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.label))));
+        const fill = b.add(Widget(kind: WidgetKind.box, width: SizeSpec.grow()));
+        return b.add(Widget(kind: WidgetKind.row, width: SizeSpec.grow(), padding: Insets(0, 2, 0, 2),
+            children: [title, gap, where, fill, count]));
+    }
+
+    // The query as a filled, rounded field, its canonical form or error under it.
+    private uint queryField(ref Builder b, int queryRows)
+    {
+        // A row of space above and below the lines, which stay on whole cells
+        // for the host's cursor; the fill is drawn around the lines with some
+        // of that space, centred, not across all of it.
+        const rows = queryRows + 2;
+        const lines = b.add(Widget(kind: WidgetKind.column, children: queryLines(b, queryRows),
+            width: SizeSpec.grow(), alignY: Alignment.center, height: SizeSpec.fixed(rows)));
+        const field = b.add(Widget(kind: WidgetKind.column, children: [lines], width: SizeSpec.grow(),
+            // Focus raises the fill rather than drawing a border, which a cell
+            // target would take whole rows for.
+            height: SizeSpec.fixed(rows), padding: Insets(0, 2, 0, 2),
+            slot: focus == Focus.query ? Slot.surfaceRaised : Slot.surfaceSunken,
+            paintBackground: true, decoration: Decoration(borderRadius: 16,
+                drawHeight: cast(int)(queryRows * cellDp + 24))));
+        return b.add(Widget(kind: WidgetKind.column, width: SizeSpec.grow(), padding: Insets(0, 2, 0, 2),
+            children: [field, statusLine(b)]));
+    }
+
+    // The operator chips, then clear and backspace.
+    private uint operatorChips(ref Builder b)
+    {
+        const sz = ControlSize(rows: rowCells);
+        uint[] chips;
+        foreach (i, c; chipTexts)
+        {
+            chips ~= touchChip(b, c[0], actionBase + Action.insert + i);
+            chips ~= b.add(Widget(kind: WidgetKind.box, width: SizeSpec.fixed(1)));
+        }
+        chips ~= b.add(Widget(kind: WidgetKind.box, width: SizeSpec.grow()));
+        chips ~= touchChip(b, "⌫", actionBase + Action.backspace);
+        chips ~= b.add(Widget(kind: WidgetKind.box, width: SizeSpec.fixed(1)));
+        chips ~= touchChip(b, "Clear", actionBase + Action.clear);
+        return b.add(Widget(kind: WidgetKind.row, children: chips, width: SizeSpec.grow(),
+            height: SizeSpec.fixed(rowCells), padding: Insets(0, 2, 0, 2)));
+    }
+
+    /**
+    Steps each pane's motion `dt` seconds, and keeps the tree's view where
+    its cursor puts it: a key that moves the cursor out of view scrolls to it
+    (eased, when `smooth`), and a scroll leaves the cursor where it is. True
+    while a motion needs the next frame.
+    */
+    private bool animate(double dt, bool smooth)
+    {
+        treeScroll.motion.instant = helpScroll.motion.instant = exportScroll.motion.instant = !smooth;
+
+        treeScroll.content = tv.rows.length;
+        treeScroll.viewport = tv.bodyRows;
+        helpScroll.viewport = paneRect(Pane.help).height;
+        if (tv.top != syncedTop)
+            treeScroll.motion.scrollTo(tv.top, treeScroll.limit);
+        bool moving = treeScroll.animate(cast(float) dt);
+        moving |= helpScroll.animate(cast(float) dt);
+        moving |= exportScroll.animate(cast(float) dt);
+        tv.top = treeScroll.motion.whole;
+        syncedTop = tv.top;
+        return moving;
+    }
+
+    // The scroll body of the pane under `p` (screen cells), if it scrolls.
+    private ScrollBody* scrollAt(Point p) return @safe
+    {
+        bool under(Pane pane)
+        {
+            const r = paneRect(pane);
+            const y = p.y - dockTop;
+            return p.x >= r.x && p.x < r.x + r.width && y >= r.y - 1 && y < r.y + r.height;
+        }
+        if (under(Pane.tree))
+            return &treeScroll;
+        if (helpShown && under(Pane.help))
+            return &helpScroll;
+        if (exportShown && under(Pane.export_))
+            return &exportScroll;
+        return null;
     }
 
     private string hints() const @safe pure nothrow
@@ -373,21 +648,35 @@ struct ExplorerApp
     /// it, else gives the tree at least half (`FXU5`), and arranges the dock.
     private void arrangeDock(int width, int rows, in string[2][] stats)
     {
-        int widest;
-        foreach (ref kv; stats)
-            widest = max(widest, cast(int)(statsKeyWidth + visibleWidth(kv[1])));
-        const want = widest + 2; // a column of padding each side
-        const treeNeeds = treeWidth() + 1;
-        const fits = width - want >= treeNeeds;
-        dock.layout.nodes[tabsNode].extent = max(10, fits ? want : min(want, max(width - treeNeeds, width / 2)));
-        if (helpShown || exportShown) // the help and code read at half the width at least
-            dock.layout.nodes[tabsNode].extent = max(dock.layout.nodes[tabsNode].extent, min(width / 2, 90));
+        auto l = &dock.layout;
+        // Touch: a segmented control and the tree's header are touch targets;
+        // a screen narrower than two 48-column panes stacks them (`FXU12`).
+        l.tabStripExtent = rowCells;
+        l.nodes[l.nodes[l.root].children[0]].headerExtent = rowCells;
+        const stacked = touch && width < 2 * 48;
+        l.nodes[l.root].axis = stacked ? DockAxis.vertical : DockAxis.horizontal;
+        if (stacked)
+            l.nodes[tabsNode].extent = max(rowCells + 4, rows / 2);
+        else
+        {
+            int widest;
+            foreach (ref kv; stats)
+                widest = max(widest, cast(int)(statsKeyWidth + visibleWidth(kv[1])));
+            const want = widest + 2; // a column of padding each side
+            const treeNeeds = treeWidth() + 1;
+            const fits = width - want >= treeNeeds;
+            l.nodes[tabsNode].extent = max(touch ? 30 : 10,
+                fits ? want : min(want, max(width - treeNeeds, width / 2)));
+            if (helpShown || exportShown) // the help and code read at half the width at least
+                l.nodes[tabsNode].extent = max(l.nodes[tabsNode].extent, min(width / 2, 90));
+        }
         dock.arrange(Rect(0, 0, width, rows));
+        // In touch rows: `tv` counts rows, each `rowCells` tall.
         foreach (ref f; dock.frames.panes)
             if (f.pane == Pane.tree)
             {
                 tv.width = f.rect.width;
-                tv.resize(f.rect.height);
+                tv.resize(max(1, f.rect.height / rowCells));
             }
     }
 
@@ -401,23 +690,41 @@ struct ExplorerApp
             string[] labels;
             foreach (ch; n.children)
                 labels ~= dock.layout.nodes[ch].title;
-            const strip = tabStrip(b, labels, n.active, HitBlock.init);
+            // Tapped or clicked, a tab shows its pane (`FXU10`); on the touch
+            // layout the tabs are a segmented control (`FXU11`).
+            uint strip;
+            if (touch)
+            {
+                strip = b.add(Widget(kind: WidgetKind.row, padding: Insets(0, 1, 0, 1),
+                    height: SizeSpec.fixed(rowCells), width: SizeSpec.grow(),
+                    children: [touchSegments(b, labels, n.active, tabHitBase)]));
+            }
+            else
+                // The explorer's own ids, below the registry's issued slots
+                // (`INP27`): one per tab, from `tabHitBase`.
+                strip = tabStrip(b, labels, n.active,
+                    idx == tabsNode ? HitBlock(tabHitBase, labels.length) : HitBlock.init);
             const shown = n.children[n.active < n.children.length ? n.active : 0];
             const pane = cast(Pane) dock.layout.nodes[shown].pane;
+            const vertical = dock.layout.nodes[dock.layout.root].axis == DockAxis.vertical;
             return b.add(Widget(kind: WidgetKind.column, children: [strip,
                 paneView(b, pane, null, false, 0, stats)],
-                width: n.extent > 0 ? SizeSpec.fixed(n.extent) : SizeSpec.grow()));
+                width: n.extent > 0 && !vertical ? SizeSpec.fixed(n.extent) : SizeSpec.grow(),
+                height: n.extent > 0 && vertical ? SizeSpec.fixed(n.extent) : SizeSpec.grow()));
         }
+        // Panes are divided by a rule; the touch layout's is a gap.
+        const vertical = n.axis == DockAxis.vertical;
         uint[] kids;
         foreach (i, ch; n.children)
         {
             if (i)
-                kids ~= b.add(Widget(kind: WidgetKind.box, slot: Slot.border, paintBackground: true,
-                    width: SizeSpec.fixed(1), height: SizeSpec.grow()));
+                kids ~= b.add(Widget(kind: WidgetKind.box, slot: Slot.border, paintBackground: !touch,
+                    width: vertical ? SizeSpec.grow() : SizeSpec.fixed(1),
+                    height: vertical ? SizeSpec.fixed(1) : SizeSpec.grow()));
             kids ~= renderNode(b, ch, stats);
         }
-        return b.add(Widget(kind: WidgetKind.row, children: kids, width: SizeSpec.grow(),
-            height: SizeSpec.grow()));
+        return b.add(Widget(kind: vertical ? WidgetKind.column : WidgetKind.row, children: kids,
+            width: SizeSpec.grow(), height: SizeSpec.grow()));
     }
 
     private Rect paneRect(Pane p) const @safe
@@ -446,6 +753,22 @@ struct ExplorerApp
         if (!header)
             return body_;
         const focused = (focus == Focus.tree && pane == Pane.tree) || (focus == Focus.side && pane != Pane.tree);
+        if (touch)
+        {
+            // The tree's header: what it holds, and expanding or collapsing it all.
+            const sz = ControlSize(rows: rowCells);
+            const what = centred(b, b.add(Widget(kind: WidgetKind.text, slot: Slot.textSecondary,
+                text: shown.found.members.length ? "Members" : "No members",
+                textStyle: TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.label, bold: true))));
+            const fill = b.add(Widget(kind: WidgetKind.box, width: SizeSpec.grow()));
+            const gap = b.add(Widget(kind: WidgetKind.box, width: SizeSpec.fixed(1)));
+            const head = b.add(Widget(kind: WidgetKind.row, width: SizeSpec.grow(), height: SizeSpec.fixed(rowCells),
+                padding: Insets(0, 2, 0, 1), children: [what, fill,
+                    touchChip(b, "Expand all", actionBase + Action.expandAll), gap,
+                    touchChip(b, "Collapse all", actionBase + Action.collapseAll)]));
+            return b.add(Widget(kind: WidgetKind.column, children: [head, body_],
+                width: SizeSpec.fixed(max(0, r.width)), clipX: true));
+        }
         const head = b.add(Widget(kind: WidgetKind.text, width: SizeSpec.grow(),
             text: text(" ", shown.found.members.length, " ",
                 shown.found.members.length == 1 ? "member" : "members"),
@@ -461,10 +784,50 @@ struct ExplorerApp
             return b.add(Widget(kind: WidgetKind.text, slot: Slot.muted,
                 text: shown.resolved ? " (no members)" : ""));
         // The folder glyph is the disclosure marker (hue `XPL6`).
-        const glyphs = TreeGlyphs(closed: "", open: "", leaf: "");
+        auto glyphs = TreeGlyphs(closed: "", open: "", leaf: "");
+        // Touch rows stand apart, which would break the guides between them:
+        // the depth is indentation alone.
+        if (touch)
+            glyphs.guides = GuideGlyphs(fork: "   ", end: "   ", bar: "   ", space: "   ");
         auto open = tv.open;
         auto data = &tree;
-        return viewSlice(b, tree, tv, (uint n) @safe => open.isOpen(data.nodes[n].value.path), glyphs);
+        // The rows from `tv.top`, one more for the part-row a fraction
+        // uncovers, moved up by that fraction (`FXU10`).
+        const first = cast(size_t) max(0, tv.top);
+        const last = min(tv.rows.length, first + tv.bodyRows + 1);
+        auto isOpen = (uint n) @safe => open.isOpen(data.nodes[n].value.path);
+        if (!touch)
+        {
+            const rows = treeRows(b, tree, tv.rows[min(first, last) .. last], isOpen, tv.selectedNode, glyphs);
+            auto vp = Widget(kind: WidgetKind.column, children: [rows], clipY: true,
+                width: SizeSpec.grow(), height: SizeSpec.fixed(max(0, tv.bodyRows)));
+            vp.childOffsetFracY = treeScroll.motion.frac;
+            return b.add(vp);
+        }
+        // Touch (`FXU11`): each row a target `rowCells` tall, its text
+        // centred, the selected one a rounded tint; the motion counts rows,
+        // the paint cells.
+        uint[] items;
+        foreach (i; min(first, last) .. last)
+        {
+            const selected = tv.rows[i].node == tv.selectedNode;
+            const row = treeRows(b, tree, tv.rows[i .. i + 1], isOpen, uint.max, glyphs);
+            // The tint spans the row's whole target; the text sits in its middle.
+            auto item = Widget(kind: WidgetKind.column, children: [row], width: SizeSpec.grow(),
+                height: SizeSpec.fixed(rowCells), alignY: Alignment.center, padding: Insets(0, 1, 0, 1),
+                clipY: true, slot: Slot.selection, paintBackground: selected,
+                decoration: selected ? Decoration(borderRadius: 10) : Decoration.init);
+            if ((rowCells - 1) % 2)
+                item.childOffsetFracY = -0.5f;
+            items ~= b.add(item);
+        }
+        // `tv.top` is the motion's whole row; its fraction is that much of a row.
+        const cells = treeScroll.motion.frac * rowCells;
+        auto vp = Widget(kind: WidgetKind.column, children: items, clipY: true,
+            width: SizeSpec.grow(), height: SizeSpec.fixed(max(0, tv.bodyRows * rowCells)));
+        vp.childOffset = Point(0, cast(int) floor(cells));
+        vp.childOffsetFracY = cast(float)(cells - floor(cells));
+        return b.add(vp);
     }
 
     // The widest visible row of the tree as drawn: guides, the folder or file
@@ -506,10 +869,12 @@ struct ExplorerApp
             o.tryResult = (ref Builder bb, size_t at) => resultView(bb, at);
             content = viewMarkdownInto(b, helpDoc, o);
         }
+        helpContent = content;
         auto vp = Widget(kind: WidgetKind.column, children: [content], clipX: true, clipY: true,
             width: SizeSpec.fixed(max(0, r.width)), height: SizeSpec.fixed(max(0, r.height)),
             padding: Insets(0, 1, 0, 1));
         vp.childOffset = Point(0, helpTop);
+        vp.childOffsetFracY = helpScroll.motion.frac;
         return b.add(vp);
     }
 
@@ -551,7 +916,7 @@ struct ExplorerApp
     {
         if (trySel < tries.length)
             if (auto row = tries[trySel].at in tryRows)
-                helpTop = max(0, *row - 2);
+                helpScroll.motion.scrollTo(max(0, *row - 2), helpScroll.limit);
     }
 
     // ---- export -------------------------------------------------------------
@@ -561,14 +926,47 @@ struct ExplorerApp
     {
         const e = currentExport;
         uint[] rows;
-        TextSpan[] head = [TextSpan(" ◀ ", Slot.muted), TextSpan(targetName(exportTarget), Slot.accentPrimary,
-            TextStyle(bold: true)), TextSpan(" ▶", Slot.muted), TextSpan("  t/T target", Slot.muted)];
-        if (exportTarget == Target.nix)
-            head ~= [TextSpan("   globs: ", Slot.muted), TextSpan(text(nixGlobs), Slot.code),
-                TextSpan(" (g)", Slot.muted)];
-        if (e.ok)
-            head ~= TextSpan("   y copies", Slot.muted);
-        rows ~= b.add(Widget(kind: WidgetKind.rich, spans: head));
+        // The header's parts are buttons too (`FXU10`): ◀ and ▶ step the
+        // target, the glob mode cycles, and "copy" copies — what t/T, g and y do.
+        uint part(TextSpan[] spans, size_t button = size_t.max)
+        {
+            auto w = Widget(kind: WidgetKind.rich, spans: spans);
+            if (button != size_t.max)
+                w.hitId = exportHitBase + button;
+            return b.add(w);
+        }
+        if (touch)
+        {
+            // Touch (`FXU13`): the target between round buttons, Nix's glob
+            // mode as segments, and copying as a chip, each a touch target.
+            uint gap() => b.add(Widget(kind: WidgetKind.box, width: SizeSpec.fixed(1)));
+            const name = centred(b, b.add(Widget(kind: WidgetKind.text, text: targetName(exportTarget),
+                slot: Slot.accentPrimary, textStyle: TextStyle(bold: true))));
+            uint[] line = [touchChip(b, "◀", exportHitBase + 0), gap(), name, gap(),
+                touchChip(b, "▶", exportHitBase + 1),
+                b.add(Widget(kind: WidgetKind.box, width: SizeSpec.grow()))];
+            if (e.ok)
+                line ~= touchChip(b, "Copy", exportHitBase + 3);
+            rows ~= b.add(Widget(kind: WidgetKind.row, children: line, width: SizeSpec.grow(),
+                height: SizeSpec.fixed(rowCells)));
+            if (exportTarget == Target.nix)
+                rows ~= b.add(Widget(kind: WidgetKind.row, height: SizeSpec.fixed(rowCells),
+                    children: [touchSegments(b, ["glob shim", "expand", "refuse"], nixGlobs,
+                        actionBase + Action.globShim)]));
+        }
+        else
+        {
+            uint[] head = [part([TextSpan(" ◀ ", Slot.muted)], 0),
+                part([TextSpan(targetName(exportTarget), Slot.accentPrimary, TextStyle(bold: true))]),
+                part([TextSpan(" ▶", Slot.muted)], 1), part([TextSpan("  t/T target", Slot.muted)])];
+            if (exportTarget == Target.nix)
+                head ~= part([TextSpan("   globs: ", Slot.muted), TextSpan(text(nixGlobs), Slot.code),
+                    TextSpan(" (g)", Slot.muted)], 2);
+            if (e.ok)
+                head ~= part([TextSpan("   ", Slot.muted), TextSpan("copy", Slot.accentPrimary),
+                    TextSpan(" (y)", Slot.muted)], 3);
+            rows ~= b.add(Widget(kind: WidgetKind.row, children: head));
+        }
         rows ~= b.add(Widget(kind: WidgetKind.text, text: ""));
         if (!e.ok)
         {
@@ -584,11 +982,14 @@ struct ExplorerApp
         auto vp = Widget(kind: WidgetKind.column, children: rows, clipX: true, clipY: true,
             width: SizeSpec.fixed(max(0, r.width)), height: SizeSpec.fixed(max(0, r.height)),
             padding: Insets(0, 1, 0, 1));
-        vp.childOffset = Point(0, exportTop);
+        // Rows, in cells: the touch controls are `rowCells` tall.
+        exportScroll.content = rows.length
+            + (touch ? (exportTarget == Target.nix ? 2 : 1) * (rowCells - 1) : 0);
+        exportScroll.viewport = r.height;
+        vp.childOffset = Point(0, cast(int) exportScroll.motion.whole);
+        vp.childOffsetFracY = exportScroll.motion.frac;
         return b.add(vp);
     }
-
-    private int exportTop;
 
     // ---- stats -------------------------------------------------------------
 
@@ -624,7 +1025,7 @@ struct ExplorerApp
             rows ~= ["NarSize", humanBytes(o.narSize)];
         }
         else
-            rows ~= ["ids", "over " ~ humanBytes(autoIdBytes) ~ ": press i in the tree"];
+            rows ~= ["ids", "over " ~ humanBytes(autoIdBytes) ~ (touch ? "" : ": press i in the tree")];
         rows ~= ["", ""];
         rows ~= ["", "by extension"];
         foreach (e; o.extensions[0 .. min(8, o.extensions.length)])
@@ -655,6 +1056,10 @@ struct ExplorerApp
                 width: SizeSpec.fixed(statsKeyWidth)));
             const val = b.add(Widget(kind: WidgetKind.text, text: kv[1], slot: s));
             out_ ~= b.add(Widget(kind: WidgetKind.row, children: [key, val]));
+            // Touch: the ids are a button away, under their line (`FXU13`).
+            if (touch && kv[0] == "ids")
+                out_ ~= b.add(Widget(kind: WidgetKind.row, padding: Insets(0, 1, 0, 0), children: [
+                    touchChip(b, "Compute ids", actionBase + Action.computeIds)]));
         }
         return b.add(Widget(kind: WidgetKind.column, children: out_, width: SizeSpec.grow()));
     }
@@ -662,8 +1067,11 @@ struct ExplorerApp
     // A bordered pane with a caption; the focused one draws its focus border.
     private uint panel(ref Builder b, string caption, int bodyRows, uint[] body_, bool focused)
     {
-        const cap = b.add(Widget(kind: WidgetKind.text, text: caption,
-            slot: focused ? Slot.accentPrimary : Slot.muted, textStyle: TextStyle(bold: true)));
+        // Opaque, a cell of space each side: the rule stops short of the caption
+        // rather than running under it, on a pixel target as on a terminal.
+        const cap = b.add(Widget(kind: WidgetKind.text, text: " " ~ caption ~ " ",
+            slot: focused ? Slot.accentPrimary : Slot.muted, textStyle: TextStyle(bold: true),
+            paintBackground: true));
         const inner = b.add(Widget(kind: WidgetKind.column, children: body_, width: SizeSpec.grow(),
             height: SizeSpec.fixed(bodyRows)));
         const rows = b.add(Widget(kind: WidgetKind.column, children: [cap, inner], width: SizeSpec.grow()));
@@ -690,7 +1098,7 @@ struct ExplorerApp
                     refresh();
             },
             (in WheelEvent w) => onWheel(w),
-            (in PointerEvent p) => onPointer(p),
+            (in PointerEvent p) => onPointer(h, p),
             (in _) {},
         );
     }
@@ -702,29 +1110,66 @@ struct ExplorerApp
 
     private int lastHeight = 30;
 
+    /// The rows one wheel notch scrolls.
+    enum notchRows = 3;
+
+    // The wheel, and a finger's drag and fling, scroll the pane where they
+    // began (`DCK7`, `FXU10`) and leave the tree's cursor where it is. A
+    // precise distance (a finger, a trackpad) moves the content exactly; a
+    // notch eases it `notchRows` on.
     private void onWheel(in WheelEvent w)
     {
-        if (!w.dy)
+        if (w.exactY == 0)
             return;
-        // The wheel scrolls the pane under the pointer (`DCK7`).
-        const r = paneRect(Pane.help);
-        if (helpShown && w.pos.x >= r.x && w.pos.y >= r.y + dockTop)
-            helpTop = max(0, helpTop + (w.dy > 0 ? 3 : -3));
-        else
-            tv.moveSel(w.dy > 0 ? 3 : -3);
+        auto s = scrollAt(w.pos);
+        if (s is null)
+            return;
+        WheelEvent v = w;
+        if (!w.precise)
+            v.fdy = w.exactY * notchRows;
+        else if (s is &treeScroll) // a finger moves cells; the tree counts rows
+            v.fdy = w.exactY / rowCells;
+        s.scroll(v);
     }
 
-    private void onPointer(in PointerEvent p)
+    private static bool inside(in Rect r, Point p) @safe pure nothrow @nogc
+        => p.x >= r.x && p.x < r.x + r.width && p.y >= r.y && p.y < r.y + max(1, r.height);
+
+    private void onPointer(H)(ref H h, in PointerEvent p)
     {
         if (p.action != PointerAction.press || p.button != PointerButton.left)
             return;
         // A ▶ the last frame drew runs its block (`FXT2`).
         foreach (ref hit; tryHits)
-            if (p.pos.x >= hit.rect.x && p.pos.x < hit.rect.x + hit.rect.width
-                && p.pos.y >= hit.rect.y && p.pos.y < hit.rect.y + max(1, hit.rect.height))
+            if (inside(hit.rect, p.pos))
                 foreach (i, ref t; tries)
                     if (t.at == hit.at)
                         return runTry(i);
+        // A tab shows its pane; an Export button does what its key does
+        // (`FXU10`); the touch layout's buttons do theirs (`FXU11`, `FXU13`).
+        foreach (ref hit; buttons)
+            if (inside(hit.rect, p.pos))
+            {
+                if (hit.at >= actionBase)
+                    return touchAction(cast(size_t)(hit.at - actionBase));
+                focus = Focus.side;
+                if (hit.at < exportHitBase)
+                {
+                    auto g = &dock.layout.nodes[tabsNode];
+                    if (hit.at - tabHitBase < g.children.length)
+                        g.active = cast(uint)(hit.at - tabHitBase);
+                }
+                else
+                    exportAction(h, hit.at - exportHitBase);
+                return;
+            }
+        // Above the dock: the query, and on a phone its keyboard.
+        if (p.pos.y < dockTop)
+        {
+            focus = Focus.query;
+            keyboardWanted = true;
+            return;
+        }
         PointerEvent q = p;
         q.pos = Point(p.pos.x, p.pos.y - dockTop);
         const r = dock.handle(cast(const) Event(q));
@@ -734,12 +1179,18 @@ struct ExplorerApp
         {
             focus = Focus.tree;
             r.event.match!((in PointerEvent pe) {
-                const row = tv.top + pe.pos.y - 1; // under the pane's header
+                // `pe` is in the pane's body, below its header. The row under
+                // the cell's middle, the rows moved up by the scroll's
+                // fraction, each `rowCells` tall.
+                const row = tv.top + cast(long) floor(
+                    (treeScroll.motion.frac * rowCells + pe.pos.y + 0.5) / rowCells);
                 if (row >= 0 && row < cast(long) tv.rows.length)
                 {
                     const wasSel = tv.sel == row;
                     tv.sel = row;
-                    if (wasSel && treeActivate(tv, tree, &keyOf) == TreeStep.rebuild)
+                    // A second click opens or closes; a tap on a directory at once (`FXU13`).
+                    const dirTap = touch && tree.nodes[tv.rows[cast(size_t) row].node].value.isDir;
+                    if ((wasSel || dirTap) && treeActivate(tv, tree, &keyOf) == TreeStep.rebuild)
                         reflatten();
                 }
             }, (in _) {});
@@ -751,15 +1202,18 @@ struct ExplorerApp
     private void onKey(H)(ref H h, in KeyEvent k)
     {
         lastHeight = h.size.height;
-        if (k.key == Key.f1 || (k.key == Key.escape && helpShown && focus == Focus.side))
+        // Escape, or Android's Back (`INP13`): the help, then a tutorial's
+        // tree, then the explorer itself; with no keyboard, from any focus.
+        const back = isDismiss(k);
+        if (k.key == Key.f1 || (back && helpShown && (focus == Focus.side || touch)))
             return toggleHelp();
-        if (k.key == Key.escape && root.inMemory)
+        if (back && root.inMemory)
         {
             root = dir; // FXT4: back to the directory
             refresh();
             return;
         }
-        if (k.key == Key.escape || (k.key == Key.char_ && k.ch == 'c' && k.mods.ctrl))
+        if (back || (k.key == Key.char_ && k.ch == 'c' && k.mods.ctrl))
             return h.quit();
         if (k.key == Key.tab)
         {
@@ -793,33 +1247,93 @@ struct ExplorerApp
     // The Export tab's keys: the target, Nix's glob mode, scrolling, copying.
     private void exportKey(H)(ref H h, in KeyEvent k)
     {
+        const page = max(1, paneRect(Pane.export_).height - 2);
+        switch (k.key)
+        {
+            case Key.up: exportScroll.by(-1); break;
+            case Key.down: exportScroll.by(1); break;
+            case Key.pageUp: exportScroll.by(-page); break;
+            case Key.pageDown: exportScroll.by(page); break;
+            case Key.char_:
+                if (k.ch == 'T' || k.ch == 't' || k.ch == 'g' || k.ch == 'y')
+                    exportAction(h, k.ch == 'T' ? 0 : k.ch == 't' ? 1 : k.ch == 'g' ? 2 : 3);
+                break;
+            default: break;
+        }
+    }
+
+    // A touch layout button (`FXU11`, `FXU13`).
+    private void touchAction(size_t action)
+    {
+        if (action >= Action.insert)
+        {
+            const i = action - Action.insert;
+            if (i >= chipTexts.length)
+                return;
+            focus = Focus.query;
+            const inserted = chipTexts[i][1];
+            bool changed = query.insert(inserted, true).changed;
+            // A pair leaves the caret between its halves.
+            if (inserted == "()" || inserted == "\"\"")
+                changed |= query.key(KeyEvent(Key.left)).changed;
+            if (changed)
+                refresh();
+            return;
+        }
+        final switch (cast(Action) action)
+        {
+            case Action.expandAll, Action.collapseAll:
+                focus = Focus.tree;
+                tv.open = action == Action.expandAll ? typeof(tv.open).allOpen : typeof(tv.open).allClosed;
+                reflatten();
+                break;
+            case Action.computeIds:
+                idsRequested = true;
+                refresh();
+                break;
+            case Action.globShim, Action.globExpand, Action.globRefuse:
+                focus = Focus.side;
+                nixGlobs = cast(NixGlobs)(action - Action.globShim);
+                exportStale = true;
+                break;
+            case Action.clear:
+                focus = Focus.query;
+                query = EditorField.make("");
+                refresh();
+                break;
+            case Action.backspace:
+                focus = Focus.query;
+                if (query.key(KeyEvent(Key.backspace)).changed)
+                    refresh();
+                break;
+            case Action.insert:
+                break;
+        }
+    }
+
+    // The Export tab's four actions, by key or by its button: the previous
+    // target, the next, Nix's next glob mode, and copying the code.
+    private void exportAction(H)(ref H h, size_t action)
+    {
         size_t at;
         foreach (i, t; targets)
             if (t == exportTarget)
                 at = i;
-        switch (k.key)
+        if (action <= 1)
         {
-            case Key.up: exportTop = max(0, exportTop - 1); break;
-            case Key.down: exportTop += 1; break;
-            case Key.char_:
-                if (k.ch == 't' || k.ch == 'T')
-                {
-                    exportTarget = targets[(at + (k.ch == 't' ? 1 : targets.length - 1)) % targets.length];
-                    exportStale = true;
-                    exportTop = 0;
-                }
-                else if (k.ch == 'g' && exportTarget == Target.nix)
-                {
-                    nixGlobs = cast(NixGlobs)((nixGlobs + 1) % (NixGlobs.max + 1));
-                    exportStale = true;
-                }
-                else if (k.ch == 'y' && currentExport.ok)
-                {
-                    static if (__traits(compiles, h.clipboard(currentExport.code)))
-                        h.clipboard(currentExport.code);
-                }
-                break;
-            default: break;
+            exportTarget = targets[(at + (action == 1 ? 1 : targets.length - 1)) % targets.length];
+            exportStale = true;
+            exportScroll.motion.jumpTo(0, 0);
+        }
+        else if (action == 2 && exportTarget == Target.nix)
+        {
+            nixGlobs = cast(NixGlobs)((nixGlobs + 1) % (NixGlobs.max + 1));
+            exportStale = true;
+        }
+        else if (action == 3 && currentExport.ok)
+        {
+            static if (__traits(compiles, h.clipboard(currentExport.code)))
+                h.clipboard(currentExport.code);
         }
     }
 
@@ -840,11 +1354,11 @@ struct ExplorerApp
         const page = max(1, paneRect(Pane.help).height - 2);
         switch (k.key)
         {
-            case Key.up: helpTop = max(0, helpTop - 1); break;
-            case Key.down: helpTop += 1; break;
-            case Key.pageUp: helpTop = max(0, helpTop - page); break;
-            case Key.pageDown: helpTop += page; break;
-            case Key.home: helpTop = 0; break;
+            case Key.up: helpScroll.by(-1); break;
+            case Key.down: helpScroll.by(1); break;
+            case Key.pageUp: helpScroll.by(-page); break;
+            case Key.pageDown: helpScroll.by(page); break;
+            case Key.home: helpScroll.motion.scrollTo(0, helpScroll.limit); break;
             case Key.enter: runTry(trySel); break;
             case Key.char_:
                 if (tries.length && (k.ch == 'n' || k.ch == 'p'))
