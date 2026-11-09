@@ -3630,12 +3630,16 @@ struct ViewerModel
 
     // ── `CFV2`–`CFV4`: the conflict view ────────────────────────────────
 
+    // Plain data, readable from `@safe` code: outside the `@system:` label
+    // the methods around them sit under, which makes a field `@system` too.
+@safe:
     /// The conflicted file being resolved, while `conflictOpen`.
     ConflictSession conflict;
     /// ditto
     bool conflictOpen;
     /// The conflict view's keys, said under its header; the host knows them.
     string conflictHint;
+@system:
 
     /**
     Opens the conflict view on this document's text (`CFV1`): `null`, or why
