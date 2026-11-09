@@ -1193,15 +1193,16 @@ struct Gallery
             return;
         }
 
-        // `TVW8`/`HST15`: hand this tab's pty to a daemon on the loop's own
-        // scope, where the host offers one and the backend can park a read —
-        // the embedder's half of the hookup, which the component's DDoc names
-        // this application for. Its per-frame `pump()` then degrades to a
-        // no-op, and bytes wake the loop instead of a tick finding them.
+        // Hand this tab's pty to the host: as a stream source where the host
+        // reads them (output-latency.md `OPL1`), else to a daemon on the
+        // loop's own scope (`TVW8`/`HST15`) — the embedder's half of the
+        // hookup, which the component's DDoc names this application for. Its
+        // per-frame `pump()` then reads nothing, and bytes wake the loop
+        // instead of a tick finding them.
         // Where any piece is missing (a blocking arm, the recorder) this
         // declines and the sync path stays, which is why nothing branches on
         // the answer here — `ringPumped` is asked per frame instead.
-        (() @trusted => tv.startRingPump(h))();
+        (() @trusted => tv.startReading(h))();
     }
 
     /// Down/up inside whichever half has the keyboard: the page list moves the
