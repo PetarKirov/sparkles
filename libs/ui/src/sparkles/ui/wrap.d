@@ -27,7 +27,7 @@ struct TextSpan
     size_t srcEnd;
     ushort linkId;
     // Rich projections retain their immutable cell plan for hit/selection/copy.
-    const(WrapPlan)* wrapPlan;
+    const(RetainedPlan)* wrapPlan;
     size_t wrapLine, logicalStart, logicalEnd;
     ProvenanceKind sourceRelation = ProvenanceKind.original;
     long cellAdvance;
@@ -45,6 +45,39 @@ struct TextSpan
     SyntheticReason syntheticReason;
 }
 enum TextWrap : ubyte { none, greedy, balanced }
+
+/**
+The plan a wrapped row's spans keep (`TextSpan.wrapPlan`): its lines and its
+source, which hit tests, selection, copy and painting read, as a `WrapPlan`.
+
+A plan the cell planner can make again from its text keeps neither its
+fragments (one per scalar, 176 bytes each), its source records nor its style
+snapshots once its spans are projected: `whole` plans it again for the rare
+row that needs them, one clipped narrower than it was laid out. A cached row
+was most of a document's live heap through those fragments. A measured plan
+depends on the faces that measured it, so it stays whole.
+*/
+struct RetainedPlan
+{
+    /// The plan; `fragments`, `sourceRecords` and `styles` are empty
+    /// when `whole` makes them again.
+    WrapPlan plan;
+    alias plan this;
+
+    private WrapPlan delegate() @safe replan;
+
+    /// The plan with every fragment, record and style.
+    WrapPlan whole() const @safe => replan is null ? plan : replan();
+}
+
+// What makes a cell plan again from its text: a function of its own, so the
+// closure holds the text and options only, not the frame with the plan.
+private WrapPlan delegate() @safe replanner(const(char)[] logical, WrapOptions options,
+    bool clipToWidth, int width) @safe
+    => () @safe {
+        auto plan = cellWrapPlan(logical, options);
+        return clipToWidth ? projectWrapCells(plan, CellExtent(cast(ulong) width)).visible : plan;
+    };
 
 /// Painting, hits and selection share committed target geometry.
 long spanPaintAdvance(scope const ref TextSpan span) pure nothrow @nogc
@@ -579,7 +612,11 @@ private TextSpan[][] wrapSpansUncached(F)(const(TextSpan)[] spans, int width, in
     options.repeatLastGeometry = true;
     auto plan = uiCellPlan(logical, options, spans, starts, measure, false, inheritedStyle, measureMonotone);
     if (clipToWidth) plan = projectWrapCells(plan, CellExtent(cast(ulong) width)).visible;
-    return projectSpanMetadata(plan, spans, starts);
+    static if (is(F == typeof(null)))
+        const replan = replanner(logical, options, clipToWidth, width);
+    else
+        const WrapPlan delegate() @safe replan = null;
+    return projectSpanMetadata(plan, spans, starts, replan);
 }
 
 // Candidate bytes live in preallocated storage. The callback groups exactly
@@ -906,11 +943,19 @@ private void applySnapshot(ref TextSpan span, scope const ref WrapPlan plan, siz
     span.ansiSnapshot = snapshot;
     enforce(applySnapshotState(span, plan.styles[snapshot]), "unsupported ANSI color snapshot");
 }
-private TextSpan[][] projectSpanMetadata(WrapPlan plan, const(TextSpan)[] authored, const(size_t)[] starts)
+private TextSpan[][] projectSpanMetadata(WrapPlan plan, const(TextSpan)[] authored, const(size_t)[] starts,
+    WrapPlan delegate() @safe replan = null)
 {
     import std.exception : enforce;
-    auto retained = new WrapPlan;
-    *retained = plan;
+    // The rows keep the lines and the source; what only projection and
+    // clipping read goes when it can be planned again.
+    auto retained = new RetainedPlan(plan, replan);
+    if (replan !is null)
+    {
+        retained.plan.fragments = null;
+        retained.plan.sourceRecords = null;
+        retained.plan.styles = null;
+    }
     auto lines = new TextSpan[][](plan.lines.length);
     foreach (li, ref const line; plan.lines)
     {
@@ -984,7 +1029,10 @@ TextSpan[][] clipSpanLines(TextSpan[][] lines, size_t maximum, int hangIndent = 
     import std.exception : enforce;
     enforce(hangIndent >= 0, "negative hanging indent");
     auto output = new TextSpan[][](lines.length);
-    const(WrapPlan)*[const(WrapPlan)*][size_t] cache;
+    // The visible projection per capacity and plan: retained for the rows,
+    // and whole for this call's walk.
+    static struct Clipped { const(RetainedPlan)* retained; WrapPlan whole; }
+    Clipped[const(RetainedPlan)*][size_t] cache;
     foreach (li, row; lines)
     {
         size_t capacity = li && cast(size_t) hangIndent < maximum ? maximum - hangIndent
@@ -997,21 +1045,23 @@ TextSpan[][] clipSpanLines(TextSpan[][] lines, size_t maximum, int hangIndent = 
         const line = source.lines[lineIndex];
         if (line.endColumn - line.startColumn <= capacity)
         { output[li] = row; continue; }
-        const(WrapPlan)* visible;
+        Clipped clipped;
         auto byCapacity = capacity in cache;
         if (byCapacity !is null)
         {
             auto found = source in *byCapacity;
-            if (found !is null) visible = *found;
+            if (found !is null) clipped = *found;
         }
-        if (visible is null)
+        if (clipped.retained is null)
         {
-            auto projection = projectWrapCells(*source, CellExtent(capacity));
-            auto projectedPlan = new WrapPlan;
-            *projectedPlan = projection.visible;
-            visible = projectedPlan;
-            cache[capacity][source] = visible;
+            // Rare (a row wider than its box): the clipped plan stays whole.
+            const sourceWhole = source.whole;
+            auto projection = projectWrapCells(sourceWhole, CellExtent(capacity));
+            clipped = Clipped(new RetainedPlan(projection.visible), projection.visible);
+            cache[capacity][source] = clipped;
         }
+        const visible = clipped.retained;
+        const whole = &clipped.whole;
         auto projected = new TextSpan[](row.length);
         foreach (i, ref const original; row)
         {
@@ -1020,25 +1070,25 @@ TextSpan[][] clipSpanLines(TextSpan[][] lines, size_t maximum, int hangIndent = 
             span.cellAdvance = 0;
             bool retained = original.formatting;
             ClusterPayload payload;
-            const visibleLine = visible.lines[lineIndex];
+            const visibleLine = whole.lines[lineIndex];
             size_t cursor = visibleLine.fragmentsStart;
             while (cursor < visibleLine.fragmentsEnd)
             {
-                const end = groupEnd(*visible, cursor, visibleLine.fragmentsEnd);
-                const f = visible.fragments[cursor];
+                const end = groupEnd(*whole, cursor, visibleLine.fragmentsEnd);
+                const f = whole.fragments[cursor];
                 const matches = original.logicalGroup != ulong.max && f.clusterOrdinal == original.logicalGroup;
                 if (matches)
                 {
                     span.projectionRelation = f.clusterProvenance;
                     bool any;
-                    foreach (ref const fragment; visible.fragments[cursor .. end])
+                    foreach (ref const fragment; whole.fragments[cursor .. end])
                     {
                         any |= !fragment.omitted && !fragment.formatting && fragment.kind != FragmentKind.anchor;
                         if (fragment.consumedStart == original.consumedStart && fragment.consumedEnd == original.consumedEnd
                             && !fragment.formatting && !fragment.omitted) span.cellAdvance = original.cellAdvance ? fragment.advance : 0;
                     }
                     retained |= any;
-                    if (original.clusterText.length) payload = clusterPayload(*visible, cursor, end);
+                    if (original.clusterText.length) payload = clusterPayload(*whole, cursor, end);
                     break;
                 }
                 cursor = end;
@@ -1279,6 +1329,41 @@ unittest
     assert(sharedWrapSpans(paragraphs[1], 40) !is first[1], "dropped with its width");
     endWrapPass();
     wrapCache = WrapCache.init;
+}
+
+@("ui.wrap.RetainedPlan.aCachedRowKeepsNoFragments")
+@safe unittest
+{
+    // A cached row's plan keeps its lines and source, not its fragments.
+    // Clipping it narrower plans the fragments again, and clips it as the
+    // whole plan would: wide clusters, a combining mark, a tab, a no-break span.
+    const spans = [TextSpan("wrap 日本語 café and\ttabs ", srcStart: 0),
+        TextSpan("kept-together", noBreak: true), TextSpan(" — and more words")];
+    const rows = sharedWrapSpans(spans, 14);
+    assert(rows.length > 1);
+    const plan = rows[0][0].wrapPlan;
+    assert(plan.fragments.length == 0 && plan.sourceRecords.length == 0
+        && plan.styles.length == 0, "the cached plan dropped its fragments");
+    const whole = plan.whole;
+    assert(whole.fragments.length > 0 && whole.lines == plan.lines
+        && whole.source.bytes == plan.source.bytes, "planned again, the same");
+
+    // The same rows over the whole plan: the oracle for clipping.
+    auto wholePlan = new RetainedPlan(whole);
+    foreach (capacity; 0 .. 15)
+        foreach (li, row; rows)
+        {
+            auto slim = row.dup, full = row.dup;
+            foreach (ref span; full)
+                span.wrapPlan = wholePlan;
+            auto a = clipSpanLines([slim], capacity)[0], b = clipSpanLines([full], capacity)[0];
+            assert(a.length == b.length);
+            foreach (i; 0 .. a.length)
+            {
+                a[i].wrapPlan = b[i].wrapPlan = null;
+                assert(a[i] == b[i], "clipped as the whole plan clips it");
+            }
+        }
 }
 
 @("ui.wrap.sharedWrapSpans.servesTheCachedRows")
