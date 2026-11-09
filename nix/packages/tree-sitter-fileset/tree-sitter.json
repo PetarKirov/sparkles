@@ -1,0 +1,22 @@
+{
+  "grammars": [
+    {
+      "camelcase": "Fileset",
+      "file-types": [
+        "fileset"
+      ],
+      "highlights": "queries/highlights.scm",
+      "name": "fileset",
+      "path": ".",
+      "scope": "source.fileset"
+    }
+  ],
+  "metadata": {
+    "description": "The fileset explorer's query language",
+    "license": "BSL-1.0",
+    "links": {
+      "repository": "https://github.com/PetarKirov/sparkles"
+    },
+    "version": "0.1.0"
+  }
+}

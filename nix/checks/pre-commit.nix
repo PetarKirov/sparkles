@@ -166,6 +166,10 @@ in
             # must survive unchanged, including whitespace, BOMs and EOFs.
             # gen_unicode_tables authenticates every input before parsing.
             "^libs/base/tools/unicode/"
+            # `tree-sitter generate` owns the fileset grammar's parser:
+            # `parser.c`, its headers and the JSON beside them are regenerated
+            # from `grammar.js`, never edited.
+            "^nix/packages/tree-sitter-fileset/src/"
           ];
 
           hooks =

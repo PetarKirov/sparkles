@@ -209,6 +209,11 @@
               name = "sdl";
               grammar = inHouse.sdl;
             };
+            # Ours too, in this repository: the fileset explorer's query language.
+            fileset = entry {
+              name = "fileset";
+              grammar = inHouse.fileset;
+            };
             # Upstream queries use neovim's `#lua-match?` for builtin variables
             # (`gl_...`), which our engine disables as an unsupported predicate.
             # Rewrite to standard `#match?`.
@@ -283,6 +288,7 @@
         inHouse = {
           d = config.packages.tree-sitter-d;
           sdl = config.packages.tree-sitter-sdl;
+          fileset = config.packages.tree-sitter-fileset;
         };
       };
     in

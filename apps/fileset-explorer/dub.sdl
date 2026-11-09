@@ -13,6 +13,7 @@ dependency "sparkles:build-primitives" path="../.."
 dependency "sparkles:core-cli" path="../.."
 dependency "sparkles:event-horizon-sys" path="../.."
 dependency "sparkles:input" path="../.."
+dependency "sparkles:syntax" path="../.."
 dependency "sparkles:ui" path="../.."
 dependency "sparkles:ui-app" path="../.."
 // `--render-plain` (FXU8) paints one frame into a cell grid with no terminal.

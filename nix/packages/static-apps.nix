@@ -363,6 +363,7 @@ in
           inHouse = {
             d = buildGrammar config.packages.tree-sitter-d.grammarArgs;
             sdl = buildGrammar config.packages.tree-sitter-sdl.grammarArgs;
+            fileset = buildGrammar config.packages.tree-sitter-fileset.grammarArgs;
           };
         };
 
