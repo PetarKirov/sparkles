@@ -11,6 +11,11 @@ subdirectory, keeps the rest, and resumes them when that subdirectory's
 `leave` comes, reading their files through references that stay valid until
 the directory's own `leave`.
 
+A directory's header waits for the first file or link beneath it, so a
+directory with no member beneath it is never written, and the archive names
+the members' tree whatever directories the walk entered (C3). The archive's
+root is always written.
+
 The grammar, from Nix's `protocols/nix-archive`: each token is a string,
 its length as a little-endian `u64` and its bytes padded with zeros to a
 multiple of 8.
@@ -121,17 +126,21 @@ if (isDigest!H && allSatisfy!(isMerkleDir, Dirs))
             IdsOf!Dirs ids;
             staticMap!(LeafIdOf, Dirs) leafIds;
             ulong size;
+            bool held; // a directory with a member beneath it (C3)
         }
     }
 
     // An open directory: one a unit gave (`listed`), whose unwritten entries
     // are `pending[next .. end]`, or one above the start roots. Its entries
     // begin at `first`, its strings at `textMark`, and `path` is the length
-    // of its path in `openPath`. Every open directory has a frame.
+    // of its path in `openPath`. Every open directory has a frame. A
+    // directory's header is `deferred` until something beneath it is
+    // written: one that closes still deferred holds no member, and is not
+    // part of the tree named (C3). The archive's root is never deferred.
     private static struct Frame
     {
         size_t path, first, next, end, textMark;
-        bool listed;
+        bool listed, deferred;
     }
 
     private H h;
@@ -156,7 +165,7 @@ if (isDigest!H && allSatisfy!(isMerkleDir, Dirs))
         if (!openTo(path))
             return false;
         Frame f = { path: path.length, first: pending.length, next: pending.length,
-            textMark: text.length, listed: true };
+            textMark: text.length, listed: true, deferred: frames.length != 0 };
         foreach (e; entries)
         {
             Pending p;
@@ -251,14 +260,13 @@ if (isDigest!H && allSatisfy!(isMerkleDir, Dirs))
                 ++end;
             if (deeper && end != path.length)
                 return fail("a unit skipped a directory");
-            openDirectory(path[start .. end]);
             if (openPath.length)
                 openPath.put('/');
             openPath.put(path[start .. end]);
             if (end == path.length)
                 return true;
             Frame f = { path: openPath.length, first: pending.length, next: pending.length,
-                end: pending.length, textMark: text.length };
+                end: pending.length, textMark: text.length, deferred: true };
             frames ~= f;
         }
     }
@@ -279,6 +287,7 @@ if (isDigest!H && allSatisfy!(isMerkleDir, Dirs))
                 case FsoKind.directory:
                     return true; // opened by its own unit
                 case FsoKind.symlink:
+                    writeDeferred();
                     openEntry(name);
                     token("(");
                     token("type");
@@ -289,6 +298,7 @@ if (isDigest!H && allSatisfy!(isMerkleDir, Dirs))
                     token(")");
                     break;
                 case FsoKind.regular:
+                    writeDeferred();
                     openEntry(name);
                     token("(");
                     token("type");
@@ -343,6 +353,23 @@ if (isDigest!H && allSatisfy!(isMerkleDir, Dirs))
         }
     }
 
+    // Writes the headers of the open directories still deferred, outermost
+    // first: something beneath them is about to be written.
+    private void writeDeferred()
+    {
+        size_t k = frames.length;
+        while (k > 1 && frames[k - 1].deferred)
+            --k;
+        for (; k < frames.length; ++k)
+        {
+            if (!frames[k].deferred)
+                continue;
+            const parent = frames[k - 1].path;
+            openDirectory(openPath[][parent ? parent + 1 : 0 .. frames[k].path]);
+            frames[k].deferred = false;
+        }
+    }
+
     // Opens a directory node, inside an entry named `name` unless it is the
     // archive's root.
     private void openDirectory(scope const(char)[] name)
@@ -364,22 +391,27 @@ if (isDigest!H && allSatisfy!(isMerkleDir, Dirs))
     }
 
     // Closes the innermost open directory, and its entry unless it is the
-    // archive's root.
+    // archive's root. One still deferred was never written, and is left out.
     private void close()
     {
         const f = frames.back;
+        const holds = !f.deferred;
         static if (Dirs.length)
         {
             IdsOf!Dirs ids;
-            static foreach (i; 0 .. Dirs.length)
-                ids[i] = encode!i(f.first, f.end);
+            if (holds)
+                static foreach (i; 0 .. Dirs.length)
+                    ids[i] = encode!i(f.first, f.end);
         }
         frames.length = frames.length - 1;
         pending.length = f.first;
         text.length = f.textMark;
-        token(")");
-        if (frames.length)
+        if (holds)
+        {
             token(")");
+            if (frames.length)
+                token(")");
+        }
         const parentPath = frames.length ? frames.back.path : 0;
         static if (Dirs.length)
         {
@@ -391,10 +423,11 @@ if (isDigest!H && allSatisfy!(isMerkleDir, Dirs))
                 // Its entry is the one `advance` stopped at.
                 auto entry = &pending[frames.back.next - 1];
                 assert(entry.kind == FsoKind.directory, "a directory closes into its entry");
+                entry.held = holds;
                 static foreach (i; 0 .. Dirs.length)
                     entry.ids[i] = ids[i];
             }
-            else
+            else if (holds)
             {
                 // A directory above the start roots holds only the ones
                 // beneath it, each recorded as it closes.
@@ -403,6 +436,7 @@ if (isDigest!H && allSatisfy!(isMerkleDir, Dirs))
                 text.put(openPath[][parentPath ? parentPath + 1 : 0 .. $]);
                 p.nameEnd = p.target = p.targetEnd = text.length;
                 p.kind = FsoKind.directory;
+                p.held = true;
                 static foreach (i; 0 .. Dirs.length)
                     p.ids[i] = ids[i];
                 pending ~= p;
@@ -438,6 +472,8 @@ if (isDigest!H && allSatisfy!(isMerkleDir, Dirs))
                 final switch (e.kind)
                 {
                     case FsoKind.directory:
+                        if (!e.held)
+                            continue; // not part of the tree named (C3)
                         dir.directory(nameOf(k), e.ids[i]);
                         break;
                     case FsoKind.regular:

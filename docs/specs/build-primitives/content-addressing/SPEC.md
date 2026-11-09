@@ -15,9 +15,10 @@ contents, and over nothing else. The default name is the one Snix, a
 reimplementation of Nix, gives a directory in its content-addressed store,
 castore. It is BLAKE3 over a canonical directory encoding, and it names
 each file by the same digest the iroh transfer library uses for a blob. The
-same walk can also produce the SHA-256 of Nix's archive, or git's tree id,
-which omits the empty directories git cannot hold. Each name equals the one
-Snix, Nix or git computes for the same tree, and a walk reads each file
+same walk can also produce the SHA-256 of Nix's archive, or git's tree id.
+The tree named holds the fileset's members and the directories on the way
+to them, so no name depends on how the fileset was written. Each name equals
+the one Snix, Nix or git computes for that tree, and a walk reads each file
 once, however many names it computes.
 
 ## Introduction
@@ -35,7 +36,8 @@ Every tree format answers the question differently, and the differences are
 where implementations go wrong. git sorts a directory as if its name ended
 in `/`, so `a` comes after `a.b`. Nix's archive format, NAR, sorts by bytes,
 while castore keeps directories, files and links in three separate lists.
-git cannot represent an empty directory, and castore keeps one. A digest
+git cannot represent an empty directory, while castore and NAR keep one,
+so which directories a name covers has to be settled before any format. A digest
 computed in the order a directory happens to list differs between hosts.
 None of these differences shows up until two implementations disagree on a
 tree that exercises it.
@@ -85,8 +87,11 @@ Normative, and every later requirement is read against them.
    names, kinds, executable bits, link targets and file contents, and on
    nothing else: not listing order, timestamps, ownership, permission bits
    beyond the executable one, the host, or how the fileset was written. The
-   root's own name is not part of it. A format that cannot represent part
-   of the tree names what it can: git omits empty directories (`CAG2`).
+   root's own name is not part of it. The tree is the fileset's: its
+   members, the directories on the way to them, and its root
+   ([C3](./decisions.md#c3-memberless-directories-in-an-id-accepted)). A
+   directory with no member beneath it is in no name, so every format
+   represents the whole tree.
 2. **Names are bytes.** No encoding folds case or normalizes Unicode. Two
    entries whose names differ in any byte are distinct entries.
 3. **Every format has an oracle.** An encoding is accepted only when it
@@ -107,13 +112,18 @@ entries, each naming a file by its _leaf_ id and a subdirectory by the id
 its own encoding produced. They share one shell, a fold scheme in the sense
 of [`FSS3`](../filesets/SPEC.md#_8-the-scheme-seam-fss).
 
-**`CAM1` — The tree named is the tree handed over.** A scheme's result names
-the tree the resolution hands it: the directories, members and links of
-[§8 of the filesets contract](../filesets/SPEC.md#_8-the-scheme-seam-fss),
-including the directories above the start roots, each holding only the way
-to them, and the fileset root, which is always handed over. _Detection:_ a
-fileset whose start roots lie beneath its root has the id of the tree
-holding only its members.
+**`CAM1` — The tree named is the members' tree.** A scheme's result names
+the members the resolution hands it
+([§8 of the filesets contract](../filesets/SPEC.md#_8-the-scheme-seam-fss)),
+the directories on the way to them, the directories above the start roots
+included, and the fileset root, even when it holds nothing. A directory the
+resolution handed over with no member beneath it is left out of its parent
+([C3](./decisions.md#c3-memberless-directories-in-an-id-accepted)).
+_Rationale:_ an unanchored pattern makes the walk enter every directory, so
+the directories handed over depend on how the fileset was written; its
+members do not. _Detection:_ a fileset whose start roots lie beneath its
+root, and an unanchored pattern and its anchored spelling, have the id of
+the tree holding only the members.
 
 **`CAM2` — Order is the format's.** Each encoding declares its entry order,
 and its id is computed over its entries in that order and no other. An
@@ -183,9 +193,10 @@ size **must** be the sum over its entries of one, plus, for each
 subdirectory, that subdirectory's size. A directory with no entries has size
 zero.
 
-**`CAC4` — Empty directories are kept.** A directory with no entries has an
-id, the digest of the empty message, and its parent lists it. A fileset
-handing over nothing at all names the empty directory.
+**`CAC4` — Only the root can be empty.** Every directory in a name holds a
+member beneath it (`CAM1`), so the one directory with no entries is the
+root of a fileset with no members. Its id is the digest of the empty
+message.
 
 **`CAC5` — The text form is Snix's.** The textual id **must** be `blake3-`
 followed by the digest in standard base64 with padding, 51 characters in
