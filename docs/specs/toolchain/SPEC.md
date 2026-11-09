@@ -272,6 +272,15 @@ platform loads at run time (graphics drivers and their loaders, the window
 system), and **must** pass their test suites. Their size and start-up time
 **must** be recorded beside the default profile's.
 
+**TC20a: Dynamic dependency hygiene.** Programs in the default profile **must
+not** declare direct compile-time dynamic dependencies (`NEEDED`) for
+libraries that are either test-only (such as `libxcb-xtest`) or optional
+runtime features that can be dynamically loaded on demand (such as `libcurl`,
+which Phobos loads via `dlopen` when network requests are made). Shared utility
+libraries such as HarfBuzz **must** have unused subsystem dependencies (such as
+GLib, Graphite2 and ICU) disabled so that they do not leak transitive dynamic
+dependencies into application closures.
+
 ## 8. Platforms, tests and caches
 
 **TC21: Supported hosts.** The toolchain **must** build and pass its tests on
