@@ -148,7 +148,7 @@ fold the directories above its start roots
 ([A18](./decisions.md#a18-the-scheme-seam-as-built)). The three gate
 conditions are `fileset.scheme.FSS2.metadata`,
 `fileset.scheme.FSS1.orders` and `fileset.scheme.FSS5.foldNeedsOrder`.
-`FSS8` stays partial until M6 gives the supplied tree a type.
+`FSS8` was partial until M6 gave the supplied tree a type.
 
 ### M6 — Content-addressing schemes
 
@@ -183,8 +183,9 @@ NAR with Merkle encodings beside it, and `CastoreNar` stores the `NarHash`
 beside the identity; `content_addressing.tee.readsOnce` is the gate's "reads
 each file once". The sibling contract is a draft in
 [content-addressing/](../content-addressing/SPEC.md); C1, storing
-`NarHash`, is accepted; left are the contract's acceptance and `FSS8`'s type,
-`CAO1` and `CAO2`, whose layout C2 leaves open.
+`NarHash`, is accepted, and so is C2, iroh's outboard: `outboard.d` holds
+`FSS8`'s type, which `MerkleFold` takes through a `Supply`, checked against
+`bao-tree` (`CAO1`, `CAO2`). Left is the contract's acceptance.
 
 ### M7 — The subtree cache
 

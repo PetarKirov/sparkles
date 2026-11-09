@@ -452,9 +452,9 @@ style:
 
 | Part                     | Is                                   | Required                       | Optional hooks (and what their absence means)                                                          |
 | ------------------------ | ------------------------------------ | ------------------------------ | ------------------------------------------------------------------------------------------------------ |
-| `MerkleFold!(Dir, Leaf)` | a fold scheme                        | a `Dir` and a `Leaf`           | —                                                                                                      |
+| `MerkleFold!(Dir, Leaf)` | a fold scheme                        | a `Dir` and a `Leaf`           | `Supply`, trees supplied out of band (no `FSS8`; content-addressing C2)                                |
 | `Dir`                    | the directory encoding               | `order`, `Id`, `entry`, `seal` | `keepEmpty` (dropped), `metadata` (none), `embed` (raw digest bytes), `shard` (one object)             |
-| `Leaf`                   | a file's identity, as a byte sink    | `start(size)`, `put`, `finish` | `blockSize` and `hashBlock` (serial), `verify(outboard)` (no `FSS8`)                                   |
+| `Leaf`                   | a file's identity, as a byte sink    | `start(size)`, `put`, `finish` | `blockSize` and `hashBlock` (serial)                                                                   |
 | `BlockTree!(H, P)`       | a binary tree over fixed blocks      | `blockSize`                    | `leafPrefix`/`nodePrefix` (no domain separation), `pad` (RFC 6962's split), `finalize` (the bare root) |
 | `Serial!(Format, H)`     | a stream scheme over one byte stream | the format's framing           | —                                                                                                      |
 | `Tee!(S...)`             | several schemes on one walk          | —                              | —                                                                                                      |

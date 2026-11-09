@@ -26,6 +26,7 @@ import sparkles.build_primitives.content_addressing.castore;
 import sparkles.build_primitives.content_addressing.git;
 import sparkles.build_primitives.content_addressing.merkle;
 import sparkles.build_primitives.content_addressing.nar;
+import sparkles.build_primitives.content_addressing.outboard;
 import sparkles.build_primitives.fileset.fso : EntryOrder;
 import sparkles.build_primitives.fileset.pattern : CasePolicy;
 import sparkles.build_primitives.fileset.scheme : FsoRef;
@@ -819,4 +820,181 @@ and in the tee. The fileset root is named even when it holds nothing.
     assert(idOf!CastoreScheme("empty/\nhollow/inner/\n") == idOf!CastoreScheme(""));
     assert(idOf!LiteralNar("empty/\nhollow/inner/\n") == idOf!LiteralNar(""));
     assert(membersOf("a/\nb -> c/\nd/e = 1/\nf/g/\n") == "b -> c/\nd/e = 1/\n");
+}
+
+// ---------------------------------------------------------- outboards
+
+/// `bao-outboard` on each of `paths`: one root and outboard per file, in hex.
+string[2][] baoOutboards(string bao, string[] paths) @system
+{
+    import std.array : split;
+    import std.process : Config, execute;
+
+    const r = execute([bao] ~ paths, null, Config.stderrPassThrough);
+    assert(r.status == 0, text("bao-outboard: ", r.output));
+    string[2][] lines;
+    foreach (line; r.output.lineSplitter)
+    {
+        auto parts = line.split(' ');
+        lines ~= [parts[0], parts.length > 1 ? parts[1] : ""];
+    }
+    assert(lines.length == paths.length, r.output);
+    return lines;
+}
+
+/// Lowercase hex of `bytes`.
+string hexOf(scope const(ubyte)[] bytes) @safe pure
+{
+    import std.format : format;
+
+    return format!"%(%02x%)"(bytes);
+}
+
+/**
+C2: the outboard is iroh's. For files of every size around the chunk-group
+boundaries, and of seeded random sizes up to 40 groups, the root and the
+pre-order outboard equal the ones n0's `bao-tree` computes at iroh's
+16 KiB groups. `$SPARKLES_BAO_OUTBOARD` names the oracle; without it the
+test is skipped.
+*/
+@("content_addressing.outboard.baoTree")
+@system unittest
+{
+    import std.file : exists, write;
+    import std.path : buildPath;
+    import std.process : environment;
+    import std.random : uniform;
+
+    const bao = environment.get("SPARKLES_BAO_OUTBOARD");
+    if (bao is null)
+        return skipTest("SPARKLES_BAO_OUTBOARD is not set");
+    assert(bao.exists, bao);
+
+    ulong[] sizes = [0, 1, 1023, 1024, 1025, chunkGroupSize - 1, chunkGroupSize,
+        chunkGroupSize + 1, 2 * chunkGroupSize, 3 * chunkGroupSize - 5, 4 * chunkGroupSize,
+        5 * chunkGroupSize + 1, 8 * chunkGroupSize, 8 * chunkGroupSize + 1, 13 * chunkGroupSize];
+    auto rng = Mt19937(2026_11_09);
+    foreach (_; 0 .. 40)
+        sizes ~= uniform(0, 40 * chunkGroupSize, rng);
+
+    const dir = scratchTree("bao");
+    scope (exit) rmdirRecurse(dir);
+    string[] paths;
+    ubyte[][] contents;
+    foreach (i, size; sizes)
+    {
+        auto bytes = new ubyte[](cast(size_t) size);
+        foreach (ref b; bytes)
+            b = cast(ubyte) uniform(0, 256, rng);
+        paths ~= buildPath(dir, text(i));
+        write(paths[$ - 1], bytes);
+        contents ~= bytes;
+    }
+
+    const theirs = baoOutboards(bao, paths);
+    OutboardLeaf leaf;
+    foreach (i, bytes; contents)
+    {
+        leaf.start(bytes.length);
+        leaf.put(bytes);
+        const root = leaf.finish();
+        assert(hexOf(root) == theirs[i][0], text("size ", bytes.length, ": root"));
+        assert(hexOf(leaf.outboard) == theirs[i][1], text("size ", bytes.length, ": outboard\n",
+            hexOf(leaf.outboard), "\n", theirs[i][1]));
+    }
+}
+
+/// A store of supplied trees, by path from the fileset root.
+private struct TreeStore
+{
+    SuppliedTree[string] trees;
+    string[] asked;
+
+    bool find(scope const(char)[] dir, scope const(char)[] name, out SuppliedTree tree) @safe
+    {
+        const path = dir.length ? text(dir, "/", name) : name.idup;
+        asked ~= path;
+        if (auto t = path in trees)
+        {
+            tree = *t;
+            return true;
+        }
+        return false;
+    }
+}
+
+/**
+CAO1: a castore fold given supplied trees names those files without opening
+them. Counted at the backend, it opens exactly the supplied files fewer
+than the plain castore scheme, and gives the same id. A supplied tree whose
+top record does not chain to its root fails the resolution before the file
+is read.
+*/
+@("content_addressing.outboard.CAO1.supplied")
+@system unittest
+{
+    import sparkles.base.io.errors : OpKind;
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+    import sparkles.build_primitives.fileset.scheme : resolveScheme;
+    import sparkles.build_primitives.fileset.tree_literal : memTree;
+
+    enum literal = "a/b/x = one\na/c = three\nq = five\nempty/\n";
+    auto mem = memTree(literal, spareBytes: 256 * 1024);
+    assert(!mem.hasError);
+    auto vfs = &mem.value.get().vfs;
+
+    // Two large files, whose trees are supplied, and q, of a single group.
+    ubyte[][string] bytes;
+    foreach (path, size; ["a/big": 40_000, "a/b/huge": 9 * chunkGroupSize + 3, "q": 5])
+    {
+        auto b = new ubyte[](size);
+        foreach (i, ref x; b)
+            x = cast(ubyte)(i * 13 + size);
+        assert(vfs.writeFile(path, b));
+        bytes[path] = b;
+    }
+    TreeStore store;
+    foreach (path, b; bytes)
+    {
+        OutboardLeaf leaf;
+        leaf.start(b.length);
+        leaf.put(b);
+        const root = leaf.finish();
+        store.trees[path] = SuppliedTree(root, b.length, leaf.outboard.dup);
+    }
+
+    auto root = openRoot!(Rights.readOnly)(vfs, "", ambientAuthority());
+    assert(!root.hasError);
+    auto sets = Filesets(CasePolicy.sensitive);
+    const f = sets.everything;
+    alias Supplied = MerkleFold!(CastoreDirectory, CastoreDirectory.Leaf, OutboardSupply!TreeStore);
+
+    RecordingExecutor exec;
+    CastoreScheme plain;
+    auto opens = vfs.count(OpKind.openAt);
+    const want = resolveScheme(root.value.borrow, sets, f, plain, exec);
+    assert(!want.hasError);
+    const plainOpens = vfs.count(OpKind.openAt) - opens;
+
+    Supplied supplied;
+    supplied.supply.store = store;
+    opens = vfs.count(OpKind.openAt);
+    const reads = vfs.count(OpKind.read);
+    const got = resolveScheme(root.value.borrow, sets, f, supplied, exec);
+    assert(!got.hasError, got.hasError ? got.error.context : "");
+    assert(got.value == want.value, "the id is the one reading gives");
+    assert(vfs.count(OpKind.openAt) - opens == plainOpens - 3, text(vfs.count(OpKind.openAt) - opens,
+        " opens, ", plainOpens, " without supplied trees"));
+    // x and c are read, each once with data and once at its end.
+    assert(vfs.count(OpKind.read) - reads == 4, text(vfs.count(OpKind.read) - reads, " reads"));
+    assert(supplied.supply.store.asked.length == 5, text(supplied.supply.store.asked));
+
+    // A flipped top record is refused, and nothing beneath it is read.
+    Supplied broken;
+    broken.supply.store = store;
+    auto bad = broken.supply.store.trees["a/b/huge"].outboard.dup;
+    bad[0] ^= 1;
+    broken.supply.store.trees["a/b/huge"].outboard = bad;
+    assertSchemeFailed(resolveScheme(root.value.borrow, sets, f, broken, exec),
+        "a supplied tree does not chain to its root", "a flipped top record");
 }

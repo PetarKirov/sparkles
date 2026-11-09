@@ -49,7 +49,9 @@ pays nothing for NAR. Where the pair is kept is the store's.
 then has to recompute, as Snix's trait allows, and the contract would need a
 NAR rendered from stored blobs rather than from a walk.
 
-## C2: The outboard's layout (open)
+## C2: The outboard's layout (accepted)
+
+_Accepted by the owner on 2026-11-09._
 
 **Question.** [`CAO1` and `CAO2`](./SPEC.md#_7-a-file-s-supplied-tree-cao)
 need a supplied tree to have one layout. Which one, at which chunk-group
@@ -68,11 +70,33 @@ size?
 **Constraints.** The oracle must be independent: `bao-tree`'s own encoder,
 or `sendme`, both from nixpkgs. Producing either layout needs BLAKE3's
 chaining values for whole subtrees, which `sparkles.base.hash.blake3`
-computes internally but does not expose.
+computed internally but did not expose before this record.
 
-**Decision point.** Before `CAO1` is implemented. iroh's layout is the
-expected choice, because publishing to iroh is the consumer that motivates
-it.
+**Choice.** iroh's layout: 16 KiB chunk groups, one record per parent node
+of BLAKE3's tree over the groups, in pre-order, with no size prefix. The
+root and the size travel beside it, in `SuppliedTree`. Publishing to iroh
+is the consumer that motivates a supplied tree, and with this layout a
+blob's outboard is the file iroh keeps, byte for byte, so nothing is
+converted on the way in or out.
+
+`sparkles.base.hash.blake3` now exposes what the layout needs: a hasher
+placed at an offset of a larger input (`setInputOffset`), its chaining
+value (`finishNonRoot`), and the merge of two (`blake3ParentCv`,
+`blake3ParentRoot`). The oracle is `bao-tree`'s own encoder, version
+0.17.0, built by `packages.bao-outboard`: `sendme` keeps the
+same files, but only inside a store it serves to the network.
+
+A supplied tree is checked as far as it can be without the file: its
+outboard must be as long as its size implies, and its top record must
+merge into its root. A tree that fails either check fails the resolution;
+it is not silently replaced by reading the file. Whether the rest of the
+outboard, and the file, match the root is learned only when the file is
+read, which is what `CAO2` guards.
+
+**Revisit** if iroh changes its block size, or a second consumer of
+supplied trees needs another layout, such as APK v4's
+`.apk.idsig`, whose tree is SHA-256 over 4 KiB blocks: that would be another
+`Supply` for the same fold, not a change to this one.
 
 ## C3: Memberless directories in an id (accepted)
 

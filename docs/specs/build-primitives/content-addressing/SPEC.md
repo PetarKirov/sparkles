@@ -297,14 +297,21 @@ type of the out-of-band tree that
 [`FSS8`](../filesets/SPEC.md#_8-the-scheme-seam-fss) lets a scheme receive.
 
 A supplied tree is three values: the file's root digest, its size, and its
-outboard. iroh's outboard carries neither of the first two, so they travel
-beside it.
+outboard. The outboard is iroh's
+([C2](./decisions.md#c2-the-outboard-s-layout-accepted)): BLAKE3's tree is
+kept down to groups of 16 chunks, 16 KiB, as one 64-byte record per parent
+node, the left child's chaining value and then the right's, in pre-order
+and with no header. A file of `n` groups has `n - 1` records, and a file of
+one group none. The outboard carries neither the root nor the size, so they
+travel beside it.
 
 **`CAO1` — A supplied tree names a file without reading it.** A castore
 scheme given a supplied tree for a member file **must** take the file's id
-and size from it, without reading the file's contents. _Detection:_ a file
-whose tree is supplied is never opened, and the fileset's id equals the one
-computed by reading it.
+and size from it, without reading the file's contents. A supplied tree whose outboard is
+not the length its size implies, or whose top record does not merge into
+its root, **must** fail the resolution. _Detection:_ a file whose tree is
+supplied is never opened, the fileset's id equals the one computed by
+reading it, and a flipped top record fails the resolution.
 
 **`CAO2` — A range read later is verified.** Bytes of such a file that are
 later read **must** be checked against the outboard before they are
@@ -312,21 +319,19 @@ surfaced; a chunk group that does not chain to the root is rejected.
 _Detection:_ flipping one byte of a file with a supplied outboard makes a
 read of its range fail, and no byte of the corrupt group is returned.
 
-The outboard's layout and chunk-group size are open; see
-[C2](./decisions.md#c2-the-outboard-s-layout-open).
-
 ## 8. Surface
 
 Non-normative: the names in code of the parts above, all in
 `sparkles.build_primitives.content_addressing`.
 
-| Requirements  | Symbols                                                            |
-| ------------- | ------------------------------------------------------------------ |
-| `CAM1`–`CAM5` | `MerkleFold!(Dir, Leaf)`, `DigestLeaf`, `FramedLeaf`, `streamFile` |
-| `CAC1`–`CAC5` | `CastoreScheme`, `CastoreDirectory`, `toCastoreText`               |
-| `CAN1`–`CAN4` | `NarScheme!(H, Ref)`, `NarHash`, `toSri`                           |
-| `CAG1`–`CAG2` | `GitTreeScheme!H`, `GitTree!H`, `toHex`                            |
-| `CAT1`–`CAT3` | `NarScheme!(H, Ref, Dirs)`, `WithNar`, `CastoreNar`                |
+| Requirements   | Symbols                                                                                                                      |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `CAM1`–`CAM5`  | `MerkleFold!(Dir, Leaf)`, `DigestLeaf`, `FramedLeaf`, `streamFile`                                                           |
+| `CAC1`–`CAC5`  | `CastoreScheme`, `CastoreDirectory`, `toCastoreText`                                                                         |
+| `CAN1`–`CAN4`  | `NarScheme!(H, Ref)`, `NarHash`, `toSri`                                                                                     |
+| `CAG1`–`CAG2`  | `GitTreeScheme!H`, `GitTree!H`, `toHex`                                                                                      |
+| `CAT1`–`CAT3`  | `NarScheme!(H, Ref, Dirs)`, `WithNar`, `CastoreNar`                                                                          |
+| `CAO1`, `CAO2` | `MerkleFold!(Dir, Leaf, Supply)`, `OutboardSupply`, `SuppliedTree`, `check`, `OutboardLeaf`, `verifyGroup`, `VerifiedReader` |
 
 A directory encoding is a struct with `enum order`, `alias Id`, `begin`,
 `directory`, `file`, `symlink` and `seal`, and optionally `enum metadata`
