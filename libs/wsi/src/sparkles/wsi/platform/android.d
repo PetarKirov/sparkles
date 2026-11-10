@@ -59,7 +59,8 @@ import jni_c : JNIEnv;
 import sparkles.android.main_thread : postToMainThread, wireMainThread;
 import sparkles.android.window_metrics : displayDensity, layOutEdgeToEdge,
     windowInsets;
-import sparkles.android.text_input : imeBackspace, imeEnter, keyCharacter,
+import sparkles.android.text_input : imeBackspace, imeEnd, imeEnter, imeHome, imeLeft, imeRight,
+    imeSelectAll, imeSelectLeft, imeSelectRight, isImeKey, keyCharacter,
     onTyped, popTypedChar;
 import sparkles.base.buffer : UniqueBuffer;
 import sparkles.input.pointer : PointerShape;
@@ -1459,7 +1460,8 @@ struct AndroidWsi
         emitTextOf(typed[], at);
     }
 
-    // The soft keyboard's edits: text, and backspace and Enter as keys.
+    // The soft keyboard's edits: text, and as keys its backspace, its Enter,
+    // and the moves it made by selecting in its field.
     private bool drainTyped()
     {
         if (!textInput_)
@@ -1471,7 +1473,7 @@ struct AndroidWsi
         for (dchar c = popTypedChar(); c != 0; c = popTypedChar())
         {
             work = true;
-            if (c != imeBackspace && c != imeEnter)
+            if (!isImeKey(c))
             {
                 if (n < run.length)
                     run[n++] = c;
@@ -1481,7 +1483,7 @@ struct AndroidWsi
             {
                 emitTextOf(run[0 .. n], MonoTime.currTime);
                 n = 0;
-                tapKey(id, c == imeBackspace ? keycodeDel : keycodeEnter);
+                tapImeKey(id, c);
             }
         }
         if (id.valid)
@@ -1489,10 +1491,34 @@ struct AndroidWsi
         return work;
     }
 
-    private void tapKey(WindowId id, int keyCode)
+    // One of the typed queue's keys (`text_input.isImeKey`), as the key a
+    // hardware keyboard would send for it.
+    private void tapImeKey(WindowId id, dchar c)
+    {
+        switch (c)
+        {
+            case imeBackspace: return tapKey(id, keycodeDel);
+            case imeEnter: return tapKey(id, keycodeEnter);
+            case imeLeft: return tapKey(id, keycodeDpadLeft);
+            case imeRight: return tapKey(id, keycodeDpadRight);
+            case imeHome: return tapKey(id, keycodeMoveHome);
+            case imeEnd: return tapKey(id, keycodeMoveEnd);
+            case imeSelectLeft: return tapKey(id, keycodeDpadLeft, Mods(shift: true));
+            case imeSelectRight: return tapKey(id, keycodeDpadRight, Mods(shift: true));
+            case imeSelectAll:
+                return tapKey(id, keycodeA, Mods(ctrl: true),
+                    LogicalKey(LogicalKeyKind.character, 'a', keycodeA));
+            default: return;
+        }
+    }
+
+    private void tapKey(WindowId id, int keyCode, Mods mods = Mods.init,
+        LogicalKey logical = LogicalKey.init)
     {
         KeyboardEvent e;
-        e.logical = LogicalKey(LogicalKeyKind.named, dchar.init, keyCode);
+        e.logical = logical == LogicalKey.init
+            ? LogicalKey(LogicalKeyKind.named, dchar.init, keyCode) : logical;
+        e.modifiers = mods;
         e.action = KeyAction.press;
         emit(id, e);
         e.action = KeyAction.release;
@@ -1966,6 +1992,11 @@ private enum : int
     metaMetaOn = 0x10000,
     keycodeEnter = 66,
     keycodeDel = 67,
+    keycodeA = 29,
+    keycodeDpadLeft = 21,
+    keycodeDpadRight = 22,
+    keycodeMoveHome = 122,
+    keycodeMoveEnd = 123,
     /// `KeyCharacterMap.COMBINING_ACCENT`: the result is a dead key's accent.
     combiningAccent = int.min,
 }

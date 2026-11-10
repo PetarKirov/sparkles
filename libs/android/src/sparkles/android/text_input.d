@@ -40,6 +40,25 @@ import sparkles.base.sync.mutex : Mutex;
 enum dchar imeBackspace = cast(dchar) 0x11_0001;
 /// ditto — Enter (a committed newline).
 enum dchar imeEnter = cast(dchar) 0x11_0002;
+/// ditto — the moves an input method makes by selecting in its field
+/// (`sparkles.android.ime_diff.FieldMoveKind`): Left, Right, Home, End,
+/// Ctrl+A, Shift+Left and Shift+Right.
+enum dchar imeLeft = cast(dchar) 0x11_0003;
+/// ditto
+enum dchar imeRight = cast(dchar) 0x11_0004;
+/// ditto
+enum dchar imeHome = cast(dchar) 0x11_0005;
+/// ditto
+enum dchar imeEnd = cast(dchar) 0x11_0006;
+/// ditto
+enum dchar imeSelectAll = cast(dchar) 0x11_0007;
+/// ditto
+enum dchar imeSelectLeft = cast(dchar) 0x11_0008;
+/// ditto
+enum dchar imeSelectRight = cast(dchar) 0x11_0009;
+
+/// `true` for the queue's keys: every entry above Unicode's range.
+bool isImeKey(dchar c) @safe pure nothrow @nogc => c > cast(dchar) 0x10_FFFF;
 
 // <android/input.h> — the calls and constants the hook needs.
 private extern (C) nothrow @nogc

@@ -11,12 +11,15 @@ on the main thread ($(MREF sparkles,android,main_thread)), one pixel in size
 and invisible, holding focus.
 
 $(B The field is a diff, not a document.) It always holds a run of
-$(LREF sentinel) characters with the cursor at the end, so a backspace always
-has something to delete. Each frame the glue thread asks the main thread to
-compare the field with that run: characters deleted become backspaces,
-characters inserted become text, a committed newline becomes Enter — all in
-the order $(MREF sparkles,android,text_input) delivers typed text — and the run
-is restored. Nothing is diffed while the IME holds a composing region
+$(LREF sentinel) characters with the cursor in its middle, so a backspace
+always has something to delete and an input method's cursor keys always have
+somewhere to go. Each frame the glue thread asks the main thread to compare
+the field with that run: characters deleted become backspaces, characters
+inserted become text, a committed newline becomes Enter — all in the order
+$(MREF sparkles,android,text_input) delivers typed text — and the run is
+restored. A field left untouched but with its cursor moved or its text
+selected (an input method's Select All, or a jump to the start) becomes the
+keys that move or select so (`ime_diff.moveOf`). Nothing is diffed while the IME holds a composing region
 (suggestions are switched off, as Termux does, so a keyboard normally commits
 at once).
 
@@ -32,10 +35,11 @@ import core.atomic : atomicLoad, atomicStore, cas;
 
 import jni_c;
 import sparkles.android.autofill : autofillOwnsField;
-import sparkles.android.ime_diff : diff, FieldEdit, isSentinelRun,
-    sentinel, sentinelLength;
+import sparkles.android.ime_diff : diff, FieldEdit, FieldMove, FieldMoveKind, isSentinelRun, moveOf,
+    sentinel, sentinelCaret, sentinelLength;
 import sparkles.android.main_thread : mainThreadReady, postToMainThread;
-import sparkles.android.text_input : imeBackspace, imeEnter, pushTypedRun;
+import sparkles.android.text_input : imeBackspace, imeEnd, imeEnter, imeHome, imeLeft, imeRight,
+    imeSelectAll, imeSelectLeft, imeSelectRight, pushTypedRun;
 
 // android.text.InputType / EditorInfo
 package enum int inputTypeText = 0x1 // TYPE_CLASS_TEXT
@@ -225,7 +229,17 @@ private void pollJob(JNIEnv* env, void*) nothrow @nogc
 
     const text = (cast(const(wchar)*) units)[0 .. len];
     if (isSentinelRun(text))
-        return; // nothing typed
+    {
+        // Nothing typed; a cursor the IME moved, or text it selected, is
+        // a move to make in the application's own text.
+        const move = moveOf(callIntGetter(env, field, "getSelectionStart"),
+            callIntGetter(env, field, "getSelectionEnd"));
+        if (move.kind == FieldMoveKind.none)
+            return;
+        feedMove(move);
+        resetField(env);
+        return;
+    }
 
     feed(diff(text));
     resetField(env);
@@ -269,7 +283,7 @@ private void hideJob(JNIEnv* env, void*) nothrow @nogc
 
 // ── helpers (main thread) ───────────────────────────────────────────────────
 
-/// Put the sentinel run back, cursor at its end — through the `Editable`, so
+/// Put the sentinel run back, cursor in its middle — through the `Editable`, so
 /// the IME sees an edit, not a new field (`setText` would restart input).
 package void resetField(JNIEnv* env) nothrow @nogc
 {
@@ -290,7 +304,7 @@ package void resetField(JNIEnv* env) nothrow @nogc
     r[1].i = n;
     r[2].l = s;
     cast(void) (*env).CallObjectMethodA(env, editable, replace, r.ptr);
-    callInt(env, field, "setSelection", sentinelLength);
+    callInt(env, field, "setSelection", sentinelCaret);
 }
 
 private jobject inputMethodManager(JNIEnv* env) nothrow @nogc
@@ -334,6 +348,42 @@ private void callFloat(JNIEnv* env, jobject o, const(char)* name, float v) nothr
     jvalue[1] a;
     a[0].f = v;
     (*env).CallVoidMethodA(env, o, m, a.ptr);
+}
+
+/// Deliver a move as its keys, `count` of them.
+private void feedMove(FieldMove m) nothrow @nogc
+{
+    dchar key;
+    final switch (m.kind)
+    {
+        case FieldMoveKind.none: return;
+        case FieldMoveKind.left: key = imeLeft; break;
+        case FieldMoveKind.right: key = imeRight; break;
+        case FieldMoveKind.home: key = imeHome; break;
+        case FieldMoveKind.end: key = imeEnd; break;
+        case FieldMoveKind.selectAll: key = imeSelectAll; break;
+        case FieldMoveKind.selectLeft: key = imeSelectLeft; break;
+        case FieldMoveKind.selectRight: key = imeSelectRight; break;
+    }
+    dchar[sentinelLength] run = key;
+    pushTypedRun(run[0 .. m.count < 1 ? 1 : m.count > run.length ? run.length : m.count]);
+}
+
+private int callIntGetter(JNIEnv* env, jobject o, const(char)* name) nothrow @nogc
+{
+    auto m = (*env).GetMethodID(env, (*env).GetObjectClass(env, o), name, "()I");
+    if (m is null)
+    {
+        (*env).ExceptionClear(env);
+        return -1;
+    }
+    const v = (*env).CallIntMethodA(env, o, m, null);
+    if ((*env).ExceptionCheck(env))
+    {
+        (*env).ExceptionClear(env);
+        return -1;
+    }
+    return v;
 }
 
 /// Deliver an edit in the order it happened: backspaces, then the text.
