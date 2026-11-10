@@ -615,6 +615,10 @@ the following choices open.
   rewrite whose modification time was put back would be a false
   "unchanged", which is
   [`ccache`'s class of hole](../../../research/content-addressing/build-input-caches.md).
+  On Windows a caller can set `ChangeTime` as well, so the NT backend
+  reports it as `ctimeSettable`. The machine then gives such a file no
+  fingerprint, so on Windows the cache is correct but reads every file
+  again.
 - **The stamp rule is racy-git's, against a caller's stamp.** `begin` takes
   a stamp no later than the run's first `stat`, and the next run trusts a
   file only if its recorded change time is more than `marginNs` older than

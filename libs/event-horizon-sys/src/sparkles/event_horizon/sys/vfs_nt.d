@@ -226,6 +226,7 @@ struct BlockingVfs
             if (!ntSuccess(b))
                 return ioErr!Stat(ntError(b, OpKind.statAt));
             st.hasCtime = true;
+            st.ctimeSettable = true; // `FileBasicInformation` sets it too
             st.ctimeNs = (basic.ChangeTime - 116_444_736_000_000_000L) * 100;
         }
         return ioOk(st);

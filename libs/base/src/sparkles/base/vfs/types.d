@@ -300,9 +300,14 @@ struct Stat
     bool hasCtime;    /// whether `ctimeNs` was requested and filled
     /// The status-change time, in nanoseconds since the Unix epoch: `st_ctime`
     /// on POSIX, `ChangeTime` on Windows. A change to the file's content or
-    /// metadata sets it to the current time, and no call sets it to any other
-    /// value. Unlike the modification time, it cannot be put back.
+    /// metadata sets it to the current time. On POSIX no call sets it to any
+    /// other value, so unlike the modification time it cannot be put back.
     long ctimeNs;
+    /// Whether a caller can set `ctimeNs` to a value of its choosing: on
+    /// Windows, any handle with write-attributes access can set `ChangeTime`
+    /// through `SetFileInformationByHandle`. A cache that relies on the change
+    /// time not being put back must not trust one that is settable.
+    bool ctimeSettable;
     version (Posix)
         uint permissions; /// the mode's permission bits
 }

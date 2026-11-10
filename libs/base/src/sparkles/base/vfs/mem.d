@@ -77,6 +77,10 @@ struct MemVfs
     */
     long clockNs;
 
+    /// Reports every change time as settable, as Windows's are
+    /// (`Stat.ctimeSettable`), for a test of a caller that must not trust it.
+    bool ctimeSettable;
+
     /// Runs before every backend call when set.
     Hook hook;
 
@@ -1015,6 +1019,7 @@ private:
         {
             s.hasCtime = true;
             s.ctimeNs = node.ctimeNs;
+            s.ctimeSettable = ctimeSettable;
         }
         version (Posix)
             s.permissions = node.kind == EntryKind.symlink ? 511

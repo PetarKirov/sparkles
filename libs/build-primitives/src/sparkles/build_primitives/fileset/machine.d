@@ -317,7 +317,9 @@ struct Resolution
         e.statted = true;
         e.hasMtime = st.hasMtime;
         e.mtimeNs = st.mtimeNs;
-        e.hasFingerprint = st.hasMtime && st.hasIdentity && st.hasCtime;
+        // A change time a caller can set proves nothing about the content
+        // (FSC3), so such a file has no fingerprint and is always read.
+        e.hasFingerprint = st.hasMtime && st.hasIdentity && st.hasCtime && !st.ctimeSettable;
         e.fingerprint = FsoFingerprint(st.size, st.device, st.inode, st.mtimeNs, st.ctimeNs);
     }
 
