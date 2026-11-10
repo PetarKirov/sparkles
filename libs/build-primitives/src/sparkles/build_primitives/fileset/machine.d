@@ -36,8 +36,8 @@ import sparkles.base.io.errors : ErrorKind;
 import sparkles.base.vfs.types : EntryKind, Stat, StatMask;
 
 import sparkles.base.unique : Unique;
-import sparkles.build_primitives.fileset.fso : EntryOrder, FsoKind, FsoMetadata, FsoNode, SchemeShape,
-    Traversal, precedes;
+import sparkles.build_primitives.fileset.fso : EntryOrder, FsoFingerprint, FsoKind, FsoMetadata, FsoNode,
+    SchemeShape, Traversal, precedes;
 import sparkles.build_primitives.fileset.ignore : IgnoreLimits, IgnoreScopes, IgnoreState, ScopeError;
 import sparkles.build_primitives.fileset.pattern : MatchScratch;
 import sparkles.build_primitives.fileset.plan : Plan, plan, rootState;
@@ -86,6 +86,10 @@ struct UnitEntry
     FsoNode node;
     bool hasMtime; /// whether `mtimeNs` was filled: `FsoMetadata.mtime`, on a file or link
     long mtimeNs;  ///
+    /// Whether `fingerprint` was filled: `FsoMetadata.fingerprint`, on a file
+    /// whose backend reports both times and its identity.
+    bool hasFingerprint;
+    FsoFingerprint fingerprint; /// FSC2
     /// A subdirectory's rank among the unit's subdirectories in the order
     /// their own units arrived; `noChild` for a file or link. A fold's
     /// children's values are found by it.
@@ -197,7 +201,9 @@ struct Resolution
         follow = followLinks;
         this.shape = shape;
         fold = shape.traversal == Traversal.fold;
-        statMask = shape.metadata & FsoMetadata.mtime ? StatMask.mtime : StatMask.basic;
+        statMask = shape.metadata & FsoMetadata.fingerprint
+            ? cast(StatMask)(StatMask.mtime | StatMask.identity | StatMask.change)
+            : shape.metadata & FsoMetadata.mtime ? StatMask.mtime : StatMask.basic;
         ev = FilesetEvaluator(sets, f);
         words = cast(uint) ev.stateWords;
         id = atomicOp!"+="(nextId, 1);
@@ -311,6 +317,8 @@ struct Resolution
         e.statted = true;
         e.hasMtime = st.hasMtime;
         e.mtimeNs = st.mtimeNs;
+        e.hasFingerprint = st.hasMtime && st.hasIdentity && st.hasCtime;
+        e.fingerprint = FsoFingerprint(st.size, st.device, st.inode, st.mtimeNs, st.ctimeNs);
     }
 
     /// Answers `readlink` request `req` with the link's target, which is
@@ -436,6 +444,12 @@ struct Resolution
                     u.hasMtime = true;
                     u.mtimeNs = e.mtimeNs;
                 }
+                if (meta & FsoMetadata.fingerprint && e.hasFingerprint && e.child == noChild
+                    && e.kind == EntryKind.regular)
+                {
+                    u.hasFingerprint = true;
+                    u.fingerprint = e.fingerprint;
+                }
                 return u;
             }
         }
@@ -528,10 +542,11 @@ private:
         uint state = uint.max; // a subdirectory's evaluation state
         uint child = noChild;  // an entered subdirectory's rank (UnitEntry.child)
         long mtimeNs;
+        FsoFingerprint fingerprint;
         DirVerdict verdict;
         ErrorKind error = ErrorKind.other;
         bool executable, statted, member, needStat, needKind, failed, linkDir;
-        bool needLink, hasTarget, hasMtime, reported;
+        bool needLink, hasTarget, hasMtime, hasFingerprint, reported;
         bool whole;        // its whole content is selected (D5)
     }
 
@@ -1526,7 +1541,8 @@ private:
         // What the scheme declared, and only that, is requested (FSO4).
         const m = shape.metadata;
         if (e.kind == EntryKind.regular)
-            e.needStat |= !e.statted && (m & (FsoMetadata.executable | FsoMetadata.mtime)) != 0;
+            e.needStat |= !e.statted
+                && (m & (FsoMetadata.executable | FsoMetadata.mtime | FsoMetadata.fingerprint)) != 0;
         else if (e.kind == EntryKind.symlink)
         {
             e.needStat |= !e.statted && (m & FsoMetadata.mtime) != 0;

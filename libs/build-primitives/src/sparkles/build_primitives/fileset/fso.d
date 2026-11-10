@@ -82,6 +82,24 @@ enum FsoMetadata : ubyte
     executable = 1 << 0, /// a member file's executable bit
     mtime = 1 << 1,     /// a member file's or link's modification time
     linkTarget = 1 << 2, /// a member link's target
+    /// A member file's `FsoFingerprint`: what a cache compares to decide
+    /// whether the file is unchanged (FSC2).
+    fingerprint = 1 << 3,
+}
+
+/**
+What one `stat` says about a member file beyond its node: its size, both
+times and its identity on its device (FSC2). It is not part of the node
+(FSO3) and names nothing. A cache compares two of them, taken in different
+runs, to decide whether it can skip reading the file again.
+*/
+struct FsoFingerprint
+{
+    ulong size;    ///
+    ulong device;  ///
+    ulong inode;   ///
+    long mtimeNs;  ///
+    long ctimeNs;  /// the status-change time, which no call can put back
 }
 
 /// The entry ordering a scheme declares (FSS1).
