@@ -593,7 +593,12 @@ private int translateInput(void* event) nothrow @nogc
             return 0;
     }
     postInputs(records[0 .. n]);
-    return 1;
+    // A hover goes on to the window's views unhandled as well: the view
+    // hierarchy is where Android resolves the pointer icon `setCursor` set
+    // on the decor view, and an event the queue reports handled never gets
+    // there, leaving the arrow whatever was asked for.
+    return action == motionHoverMove || action == motionHoverEnter || action == motionHoverExit
+        ? 0 : 1;
 }
 
 extern (C) private nothrow
