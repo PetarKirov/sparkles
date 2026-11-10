@@ -25,5 +25,5 @@ verified and every commit green.
 | M12       | The caret painted on the native host, the clipboard read there and on Android, a soft keyboard's editing keys, segments inside their outline, the Export tab scrolling across and Nix written a path a line                             | `FXU3`, `FXU17`, `FXU21`, `FXU22`                       |
 | M13       | Paths relative to the root, calls for the keywords, literal quotes and joined pieces, `\|` and `-` grouped, bare `fileFilter` arguments and `!=`; glob metacharacters highlighted; Export's controls beside the tabs; even fence frames | `FXL1`–`FXL9`, `FXU23`, `FXU24`                         |
 
-Progress: M1–M12 are delivered, M11 and M12 checked on the tablet too; M13 is delivered on Linux and seen on the Android emulator, its tablet checks pending; every row of the ledger is verified, the Cargo and
+Progress: M1–M12 are delivered, M11 and M12 checked on the tablet too; M13 is delivered on Linux and seen on the Android emulator and the tablet; every row of the ledger is verified, the Cargo and
 Bazel oracles when their tools are on `PATH`.
