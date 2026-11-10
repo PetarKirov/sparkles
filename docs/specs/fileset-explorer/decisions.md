@@ -182,3 +182,24 @@ as `**_test.d` excluded nothing.
 reach for dub until its globs behave as globs.
 
 **Revisit** when dub's glob handling changes; the oracle will show it.
+
+## X16: Paths, not `.gitignore` patterns
+
+**Question.** A query's leaves were `.gitignore` patterns and keywords: `all`
+read like a file named `all`, `*.md` matched at every depth so `**/*.md` was
+the same query, a quoted string was still a glob, and `a | b - c` meant
+`(a | b) - c` without saying so.
+
+**Choice.** A leaf is a path relative to the root, as a Nix path is, or a call:
+`all()`, `none()`, `exec()`, `gitignored()`, `gitTracked()` (`FXL1`). Quotes
+make a piece literal, and a path joins bare and quoted pieces as a shell word
+does — `"my notes"/*.md` — so a backslash need escape only a metacharacter. A
+leading `/` is refused, since it reads as the file system's root; `./` is
+allowed. `|` and `-` mixed need parentheses (`FXL3`). `fileFilter`'s arguments
+may be bare, a bare one a glob over the name, and `!=` joins `==` (`FXL4`).
+The fileset library is unchanged: the parser anchors each path with a `/` and
+escapes each quoted piece, so the library still sees `.gitignore` patterns.
+
+**Rejected.** Root-relative paths with `.gitignore`'s depth rule kept for a
+slash-free glob, which leaves `README.md` meaning two things; a bare keyword
+as an error, which forbids a file named `all`.

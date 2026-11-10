@@ -43,67 +43,92 @@ in [testing](./testing.md), and the delivery order in the [plan](./PLAN.md).
 A query is text. Whitespace, including newlines, separates tokens and is
 otherwise insignificant.
 
-**`FXL1` — Leaves.** A query's leaves **must** be:
+**`FXL1` — Leaves.** A query's leaves **must** be paths and calls. A _path_ is
+a run of _pieces_ written with no whitespace between them:
 
-- a _glob_, with the fileset library's syntax and meaning
-  ([`FSG1`](../build-primitives/filesets/SPEC.md#5-matching-fsg)): `*`, `**`, `?`,
-  `[…]`, `{a,b}`, `\` escapes, `.gitignore`'s anchoring, and a matched directory
-  selecting every file beneath it;
-- a _string_, `"…"`, which is a glob whose text may contain any character;
-  inside it `\"` is a quote and `\\` a backslash, and every other byte is
-  itself;
-- a keyword: `all`, `none`, `exec` (executable regular files), `gitignored`
-  (the files git's ignore rules exclude) or `gitTracked` (the files in git's
-  index).
+- a _bare piece_, a glob with the fileset library's syntax
+  ([`FSG1`](../build-primitives/filesets/SPEC.md#5-matching-fsg)): `*`, `**`,
+  `?`, `[…]` and `{a,b}`, a `\` escaping only a glob metacharacter (`*`, `?`,
+  `[`, `]`, `{`, `}`, `,`, `!` or `\`); it holds no whitespace, `(`, `)` or `"`,
+  and a `,` only inside braces;
+- a _quoted piece_, `"…"`, which is literal: no byte in it is a
+  metacharacter; inside it `\"` is a quote and `\\` a backslash, and every
+  other byte is itself.
 
-A bare glob is a run of bytes containing no whitespace, no `(`, `)`, `,` or
-`"`, that is not a keyword. _Detection:_ `a-b/*.d`, `"#foo#"`, `"a b"` and
-`"say \"hi\""` each parse to one glob of the expected text.
+A path is relative to the fileset root, as a Nix path is: `src` is the root's
+`src`, at no other depth, and `**/README.md` is every `README.md`. A leading
+`./` is allowed and means nothing; a leading `/` is an error. A path that names
+a directory selects every file beneath it. A path does not begin with `#` (a
+comment) or `!`.
+
+A _call_ is a name and its arguments in parentheses. `all()`, `none()`,
+`exec()` (executable regular files), `gitignored()` (the files git's ignore
+rules exclude) and `gitTracked()` (the files in git's index) take none; a
+name not followed by `(` is a path. _Detection:_ `a-b/*.d`, `"#foo#"`,
+`"my notes"/*.md` and `"say \"hi\""` each parse to one path of the expected
+text; `"[draft].md"` matches only a file of that name; `README.md` matches the
+root's and not `docs/README.md`; `/src` fails; `all` is the path `all`.
 
 **`FXL2` — Comments.** A `#` where a token could begin **must** start a comment
-that runs to the end of its line. A `#` inside a bare glob or a string is part
-of it. _Detection:_ `a#b` is one glob; `a #b` is the glob `a`; `"#b"` is a glob;
-a query whose every line is a comment selects nothing.
+that runs to the end of its line. A `#` inside a path is part of it.
+_Detection:_ `a#b` is one path; `a #b` is the path `a`; `"#b"` is a path; a
+query whose every line is a comment selects nothing.
 
-**`FXL3` — Operators.** `|` is union, `&` intersection and `-` difference;
-`&` binds tighter than `|` and `-`, which are equal and left-associative, and
-parentheses group. An operator is a token on its own, so it must be separated
-from a bare glob by whitespace or a parenthesis. _Detection:_ `a | b & c - d`
-groups as `(a | (b & c)) - d`; `a-b` is one glob.
+**`FXL3` — Operators.** `|` is union, `&` intersection and `-` difference; `&`
+binds tighter than `|` and `-`. A run of `|` or a run of `-` reads left to
+right, but `|` and `-` side by side **must** be grouped by parentheses: a query
+mixing them without is an error at the second operator. An operator is a token
+on its own, so it must be separated from a bare piece by whitespace or a
+parenthesis. _Detection:_ `a | b & c` groups as `a | (b & c)`; `a - b - c` as
+`(a - b) - c`; `a | b - c` fails at the `-`; `a-b` is one path.
 
 **`FXL4` — Function forms.** The parser **must** accept `unions(e, …)` with at
 least one argument, `intersection(e, e)` and `difference(e, e)`, meaning the
 same as the operators, and `fileFilter(p)`, the files whose predicate `p`
-holds. A predicate is `hasExt("x")`, `name == "n"`, `type == "regular"` or
-`type == "symlink"`, or `p && p`, `p || p`, `!p` and parentheses over these.
-_Detection:_ `difference(unions(a, b), c)` and `(a | b) - c` resolve to the
-same members on every fixture tree; `fileFilter(hasExt("d") && !name == "x.d")`
-selects the `.d` files but `x.d` at every depth.
+holds. A predicate is `hasExt(x)`, `name == n`, `name != n`, `type == t` or
+`type != t`, with `t` `regular` or `symlink`, or `p && p`, `p || p`, `!p` and
+parentheses over these. An argument is a path's text: bare, a glob over the
+file's name or extension; quoted, literal. _Detection:_
+`difference(unions(a, b), c)` and `(a | b) - c` resolve to the same members on
+every fixture tree; `fileFilter(hasExt(d) && name != x.d)` selects the `.d`
+files but `x.d` at every depth; `name == *_test.d` selects the tests, and
+`name == "*_test.d"` only a file of that name.
 
-**`FXL5` — `gitTracked` needs a work tree.** A query containing `gitTracked`
+**`FXL5` — `gitTracked()` needs a work tree.** A query calling `gitTracked()`
 whose root is not inside a git work tree **must** fail with
 `not a git work tree`, and select nothing, as `lib.fileset.gitTracked` throws.
 _Detection:_ the same query succeeds in a fresh repository and fails in a plain
 directory.
 
 **`FXL6` — Errors have a place.** A query that does not parse **must** report
-one error with a message and the byte offset it is about, including errors
-inside a glob, whose offset is the glob's own plus the library's. _Detection:_
-`(a | b` reports at its end; `a | [b` at the `[`; `unions()` at the `)`.
+one error with a message and the byte offset it is about, including a glob's
+own syntax errors: an unclosed `[` or `{`, an empty class or alternative, an
+unmatched `}`, and an escape of a byte that is no metacharacter. _Detection:_
+`(a | b` reports at its end; `a | [b` at the `[`; `unions()` at the `)`;
+`a\ b` at the `\`.
 
 **`FXL7` — A query has a canonical form.** Every query that parses has one
 rendering, with comments dropped, function forms written as operators where an
-operator exists, and parentheses only where precedence needs them; it parses to
-the same fileset. _Detection:_ the canonical form of every corpus query parses,
+operator exists, parentheses only where precedence needs them, and each path
+written bare, quoting only the runs a bare piece cannot hold; it parses to the
+same fileset. _Detection:_ the canonical form of every corpus query parses,
 and resolves to the same members as the query.
 
 **`FXL8` — The grammar is the parser's.** The tree-sitter grammar `fileset`
 **must** accept exactly the queries the parser accepts, and give every token
-the same kind (glob, string, keyword, operator, function, predicate, comment,
-punctuation). _Detection:_ over a corpus of valid and invalid queries, the
-grammar's tree has an error exactly when the parser fails, and on every byte of
-every token of a query that parses, its highlight capture is the parser's token
-kind.
+the same kind: a path's literal text, bare or quoted; a glob metacharacter; an
+escape; an operator; a function; a predicate; a comment; punctuation. Glob
+metacharacters are `*`, `**`, `?`, a whole `[…]` class, and a brace group's
+`{`, `,` and `}` — the alternatives between them are literal text.
+_Detection:_ over a corpus of valid and invalid queries, the grammar's tree has
+an error exactly when the parser fails, and on every byte of every token of a
+query that parses, its highlight capture is the parser's token kind.
+
+**`FXL9` — A bare call name hints.** A path whose whole text is the name of a
+call without arguments (`all`, `none`, `exec`, `gitignored`, `gitTracked`) and
+that matches nothing **must** say, where the result is shown, that the call is
+written with parentheses. _Detection:_ the query `all` on a tree with no file
+named `all` resolves to no members and its result line suggests `all()`.
 
 ## 3. The screen (`FXU`)
 
@@ -289,6 +314,24 @@ stop at the border's lines.
 A border caption drawn over its rule **must** mask the rule under it, on a
 pixel target as on a terminal.
 
+**`FXU23` — Export's controls beside the tabs.** On the touch layout, the
+Export tab's target buttons, Nix's glob mode and Copy **must** share the row of
+the Stats, Help and Export segments when that row has room for them, the right
+pane widening to make it while the tree keeps 40 columns; on a screen too
+narrow for that, they stay at the head of the pane. _Detection:_ at 140×40
+with Export showing, ◀, the target, ▶, the three glob modes and Copy are on the
+segments' row, and a tap on `expand` there selects it; at 60×60 the glob modes
+are below the segments.
+
+**`FXU24` — A code fence's frame is even.** On a pixel target a code fence's
+border **must** be drawn as wide on its sides as on its top and bottom, its
+background **must** fill its rounded corners up to the border with no gap, and
+its language label and its ▶ **must** sit together in a rounded outline on the
+top rule. _Detection:_ the fence painted offscreen has a border of one width on
+all four sides, no background-coloured pixel outside its border, and none of
+the page's under its top corners inside it; the label and ▶ are inside one
+rounded rectangle.
+
 ## 4. Help and runnable blocks (`FXT`)
 
 The help is one markdown page, `docs/apps/fileset-explorer/index.md`, published
@@ -459,7 +502,7 @@ with its grammar parsers into an APK. _Detection:_ `nix build
 repository's tracked files, except dot-entries, which Android's asset packer
 drops, and the explorer **must** open on them as its fileset root, extracted
 into the app's data directory on the first launch and again when they change.
-`gitTracked` fails there, as outside any work tree (`FXL5`). _Detection:_ on a
+`gitTracked()` fails there, as outside any work tree (`FXL5`). _Detection:_ on a
 device, the default query lists the repository's markdown files and recipes.
 
 **`FXA3` — Highlighting on the device.** The query, the help and the Export
@@ -472,15 +515,15 @@ text.
 
 Non-normative: where the parts live.
 
-| Requirements     | Where                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `FXL1`–`FXL7`    | `sparkles.build_primitives.fileset.query` (`parseQuery`, `compileQuery`, `canonical`, `gitTrackedPaths`)                                                                                                                                                                                                                                                                                                                                                               |
-| `FXL8`           | `nix/packages/tree-sitter-fileset/` (`grammar.js`, `queries/highlights.scm`)                                                                                                                                                                                                                                                                                                                                                                                           |
-| `FXU1`–`FXU8`    | `apps/fileset-explorer` (`explorer.d`, `evaluate.d`, `member_tree.d`, `render.d`)                                                                                                                                                                                                                                                                                                                                                                                      |
-| `FXU9`           | `sparkles.ui.components.file_icons` (`fileIcon`, `folderGlyph`), shared with hue's explorer                                                                                                                                                                                                                                                                                                                                                                            |
-| `FXU10`–`FXU22`  | `apps/fileset-explorer` (`explorer.d`, `launch.d`); `sparkles.ui.components.scroll_body` (`ScrollBody`); `sparkles.source_view.markdown` (`MdViewOptions.codeActionGlyph`); `sparkles.ui.pixel_geometry` (`fillInsideBorder`, `insideGlyphFrame`, `insetSpan`); `sparkles.wsi.platform.android`; `sparkles.ui_app.native_loop` (`ClipboardReads`, `paintTextCursor`); `sparkles.android.ime_diff` (`moveOf`); `sparkles.build_primitives.fileset.emit.nix` (`nixCall`) |
-| `FXA1`–`FXA3`    | `apps/fileset-explorer/src/android_entry.d`, `nix/packages/android/fileset-explorer.nix`                                                                                                                                                                                                                                                                                                                                                                               |
-| `FXT1`, `FXT2`   | `sparkles.syntax.md.model` (`MdBlockKind.tryBlock`), `sparkles.source_view.markdown` (`tryRunners`)                                                                                                                                                                                                                                                                                                                                                                    |
-| `FXT3`–`FXT5`    | `apps/fileset-explorer` (`help.d`)                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| `FXE1`–`FXE10`   | `sparkles.build_primitives.fileset.emit` (`emit`; `ir`, `nix`, `lists`)                                                                                                                                                                                                                                                                                                                                                                                                |
-| `FXE11`, `FXE12` | `apps/fileset-explorer` (`app.d`, `export_tab.d`)                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| Requirements          | Where                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `FXL1`–`FXL7`, `FXL9` | `sparkles.build_primitives.fileset.query` (`parseQuery`, `compileQuery`, `canonical`, `gitTrackedPaths`)                                                                                                                                                                                                                                                                                                                                                               |
+| `FXL8`                | `nix/packages/tree-sitter-fileset/` (`grammar.js`, `queries/highlights.scm`)                                                                                                                                                                                                                                                                                                                                                                                           |
+| `FXU1`–`FXU8`         | `apps/fileset-explorer` (`explorer.d`, `evaluate.d`, `member_tree.d`, `render.d`)                                                                                                                                                                                                                                                                                                                                                                                      |
+| `FXU9`                | `sparkles.ui.components.file_icons` (`fileIcon`, `folderGlyph`), shared with hue's explorer                                                                                                                                                                                                                                                                                                                                                                            |
+| `FXU10`–`FXU24`       | `apps/fileset-explorer` (`explorer.d`, `launch.d`); `sparkles.ui.components.scroll_body` (`ScrollBody`); `sparkles.source_view.markdown` (`MdViewOptions.codeActionGlyph`); `sparkles.ui.pixel_geometry` (`fillInsideBorder`, `insideGlyphFrame`, `insetSpan`); `sparkles.wsi.platform.android`; `sparkles.ui_app.native_loop` (`ClipboardReads`, `paintTextCursor`); `sparkles.android.ime_diff` (`moveOf`); `sparkles.build_primitives.fileset.emit.nix` (`nixCall`) |
+| `FXA1`–`FXA3`         | `apps/fileset-explorer/src/android_entry.d`, `nix/packages/android/fileset-explorer.nix`                                                                                                                                                                                                                                                                                                                                                                               |
+| `FXT1`, `FXT2`        | `sparkles.syntax.md.model` (`MdBlockKind.tryBlock`), `sparkles.source_view.markdown` (`tryRunners`)                                                                                                                                                                                                                                                                                                                                                                    |
+| `FXT3`–`FXT5`         | `apps/fileset-explorer` (`help.d`)                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `FXE1`–`FXE10`        | `sparkles.build_primitives.fileset.emit` (`emit`; `ir`, `nix`, `lists`)                                                                                                                                                                                                                                                                                                                                                                                                |
+| `FXE11`, `FXE12`      | `apps/fileset-explorer` (`app.d`, `export_tab.d`)                                                                                                                                                                                                                                                                                                                                                                                                                      |
