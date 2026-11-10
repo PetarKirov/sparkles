@@ -1451,3 +1451,20 @@ everything and still gives the right id.
         assert(!v.unchanged(fp, other, 10_000));
     }
 }
+
+/// FSC3: a change time a caller can set, as Windows's can be, proves
+/// nothing, so a backend reporting one gives no fingerprint and the cache
+/// reads every file again: correct, only slower.
+@("content_addressing.cache.FSC3.settableChangeTime")
+@system unittest
+{
+    auto made = openFixture("a/x = 1\nb = 2\n");
+    auto vfs = &made.value.get().vfs;
+    vfs.ctimeSettable = true;
+    vfs.clockNs = 10_000_000_000;
+    const first = cachedRun(*vfs, null);
+    vfs.clockNs += 3_000_000_000;
+    const warm = cachedRun(*vfs, first.record);
+    assert(warm.id == coldId(*vfs));
+    assert(warm.filesRead == 2 && warm.filesReused == 0 && warm.dirsReused == 0, text(warm));
+}

@@ -456,10 +456,14 @@ from [`VFO6`](./SPEC.md#vfo6-stat) the next thing to deliver.
   macOS), `stx_ctime` from `statx`, and on Windows the `ChangeTime` of
   `FILE_BASIC_INFORMATION`. `GetFileInformationByHandle` has no change time,
   so that request costs one more query.
-- **It is the time that cannot be put back.** `touch -r`, `rsync -t` and an
-  archive extractor all set the modification time. Every change sets the
-  change time to the current time instead, so a cache that compares it
-  notices a rewrite whose size and modification time were put back.
+- **On POSIX, it is the time that cannot be put back.** `touch -r`,
+  `rsync -t` and an archive extractor all set the modification time. Every
+  change sets the change time to the current time instead, so a cache that
+  compares it notices a rewrite whose size and modification time were put
+  back. Windows is the exception: `SetFileInformationByHandle` with
+  `FileBasicInfo` sets `ChangeTime` as readily as the other times. So a
+  `Stat` reports `ctimeSettable`, true on the NT backend, and a cache must
+  not trust a change time that is settable.
 - **`MemVfs` stamps changes with a clock its caller moves.** `clockNs` starts
   at zero and moves only when the caller sets it. Creating an entry, a write,
   a truncation, `writeFile`, `rename` and `setMtime` each record its value.
