@@ -543,6 +543,7 @@ struct Visual
     int arrowOffset;      /// arrow horizontal offset from the left, in cells
     int drawHeight;       /// drawn box height in CSS px, centred; 0 = the whole rect
     int drawWidth;        /// drawn box width in CSS px, centred; 0 = the whole rect
+    int drawInset;        /// CSS px the drawn box is inset by on every side
     /// drawn inside a frame of box-drawing glyphs around the rect
     /// (`Decoration.insideGlyphFrame`)
     bool insideGlyphFrame;
@@ -586,6 +587,11 @@ struct Decoration
     /// the rect. With `drawHeight` and a radius of half of it, a circle: a
     /// switch's knob (`TOK11`).
     int drawWidth;
+    /// CSS px the drawn box is inset by on every side, after `drawHeight` and
+    /// `drawWidth`: a segment's selection inside its group's outline, as far
+    /// from the outline's sides as from its top and bottom. A cell target
+    /// draws the whole rect.
+    int drawInset;
     /// Fill the box with the slot's ink (its foreground), not its background:
     /// a mark drawn as a shape — a switch's knob, the ink a glyph `●` had —
     /// keeps the colour the glyph would have had. Needs `paintBackground`.
@@ -1066,6 +1072,7 @@ Visual resolveVisual(in Palette pal, Slot slot, in Decoration deco, in TextStyle
     v.arrowOffset = deco.arrowOffset;
     v.drawHeight = deco.drawHeight;
     v.drawWidth = deco.drawWidth;
+    v.drawInset = deco.drawInset;
     v.insideGlyphFrame = deco.insideGlyphFrame;
     if (deco.inkFill)
     {

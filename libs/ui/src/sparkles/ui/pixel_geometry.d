@@ -81,6 +81,33 @@ void centredSpan(ref int start, ref int extent, int drawn) @safe pure nothrow @n
     extent = drawn;
 }
 
+/**
+Insets the span `[start, start + extent)` by `by` pixels at each end
+(`Decoration.drawInset`); a span too short to keep any keeps none.
+*/
+void insetSpan(ref int start, ref int extent, int by) @safe pure nothrow @nogc
+{
+    if (by <= 0)
+        return;
+    const kept = extent > 2 * by ? extent - 2 * by : 0;
+    start += by;
+    extent = kept;
+}
+
+///
+@("pixelGeometry.insetSpan")
+@safe pure nothrow @nogc
+unittest
+{
+    int x = 10, w = 100;
+    insetSpan(x, w, 8);
+    assert(x == 18 && w == 84);
+    insetSpan(x, w, 0);
+    assert(x == 18 && w == 84, "0: unchanged");
+    insetSpan(x, w, 50);
+    assert(w == 0, "nothing left");
+}
+
 ///
 @("pixelGeometry.centredSpan")
 @safe pure nothrow @nogc

@@ -32,7 +32,7 @@ import sparkles.ui.interp.immediate : paintImagePlaceholder;
 import sparkles.ui.effect : EffectId;
 import sparkles.ui_raylib.effect_gpu : EffectGpu, scissorInTarget;
 import sparkles.ui_raylib.image_textures : ImageTextures;
-import sparkles.ui.pixel_geometry : arrowTriangle, borderRects, centredSpan, ClipEntry, fillInsideBorder, insideGlyphFrame,
+import sparkles.ui.pixel_geometry : arrowTriangle, borderRects, centredSpan, ClipEntry, fillInsideBorder, insetSpan, insideGlyphFrame,
     cornerRadiusPx, densityPx, lineRects, railExpandedPx, railIdlePx, roundedBorderPx,
     ruleRect, ScissorBox, scissorBoxOfStack, scrollbarMinExtentPx, ScrollbarRail,
     scrollbarRail, scrollbarRailPx, shadowRect, shiftPx;
@@ -406,6 +406,8 @@ struct RaylibCanvas
         centredSpan(x, w, v.drawWidth);
         int y = cast(int) py(r.y), h = r.height * cellH;
         centredSpan(y, h, v.drawHeight);
+        insetSpan(x, w, v.drawInset);
+        insetSpan(y, h, v.drawInset);
         // Inside a glyph frame: inset to the glyphs' lines.
         const box = v.insideGlyphFrame ? insideGlyphFrame(Rect(x, y, w, h), cellW, cellH)
             : Rect(x, y, w, h);
@@ -560,6 +562,7 @@ struct RaylibCanvas
         s.shadow.blur = densityPx(v.shadow.blur, density);
         s.drawHeight = densityPx(v.drawHeight, density);
         s.drawWidth = densityPx(v.drawWidth, density);
+        s.drawInset = densityPx(v.drawInset, density);
         return s;
     }
 
