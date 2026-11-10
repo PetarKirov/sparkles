@@ -59,7 +59,8 @@ import sparkles.base.vfs.handles : DirRef;
 import sparkles.base.vfs.types : Rights;
 
 import sparkles.build_primitives.fileset.driver : FilesetDriver;
-import sparkles.build_primitives.fileset.fso : EntryOrder, FsoMetadata, FsoNode, SchemeShape, Traversal;
+import sparkles.build_primitives.fileset.fso : EntryOrder, FsoFingerprint, FsoMetadata, FsoNode, SchemeShape,
+    Traversal;
 import sparkles.build_primitives.fileset.machine : Resolution, ResolutionError, ResolutionErrorCode,
     ResolutionLimits, StepKind, UnitEntry, noChild, noDir;
 import sparkles.build_primitives.fileset.value : Fileset, Filesets;
@@ -116,6 +117,8 @@ struct SchemeEntry(V, Rights R, Value = void)
     FsoNode node;        /// FSO1
     bool hasMtime;       /// FSS2
     long mtimeNs;        /// ditto
+    bool hasFingerprint; /// FSC2: a member file's, when declared
+    FsoFingerprint fingerprint; /// ditto
     FsoRef!(V, R) ref_;  /// FSS4
 
     static if (!is(Value == void))
@@ -154,6 +157,8 @@ struct SchemeEntries(V, Rights R, Value, Units)
         e.node = u.node;
         e.hasMtime = u.hasMtime;
         e.mtimeNs = u.mtimeNs;
+        e.hasFingerprint = u.hasFingerprint;
+        e.fingerprint = u.fingerprint;
         e.ref_ = FsoRef!(V, R)(dir, u.name);
         static if (!is(Value == void))
         {

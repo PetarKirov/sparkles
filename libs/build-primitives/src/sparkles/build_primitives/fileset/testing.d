@@ -1787,7 +1787,7 @@ version (Posix)
 /// directories in.
 struct RecordingScheme(EntryOrder o, FsoMetadata m = FsoMetadata.none)
 {
-    import sparkles.build_primitives.fileset.fso : FsoKind;
+    import sparkles.build_primitives.fileset.fso : FsoFingerprint, FsoKind;
 
     enum order = o;
     enum metadata = m;
@@ -1797,6 +1797,7 @@ struct RecordingScheme(EntryOrder o, FsoMetadata m = FsoMetadata.none)
     string[][string] entries; /// each directory's entries
     long[string] mtimes;      /// the mtime of each member that has one
     bool[string] executable;  /// each member file's executable bit
+    FsoFingerprint[string] fingerprints; /// each member file's, when declared
 
     bool visit(Entries, Exec)(scope const(char)[] path, Entries es, bool empty, ref Exec exec)
     {
@@ -1818,6 +1819,8 @@ struct RecordingScheme(EntryOrder o, FsoMetadata m = FsoMetadata.none)
                     got ~= e.name.idup ~ "->" ~ e.node.target.idup;
                     break;
             }
+            if (e.hasFingerprint)
+                fingerprints[full] = e.fingerprint;
             if (e.hasMtime)
                 mtimes[full] = e.mtimeNs;
         }
@@ -2047,6 +2050,35 @@ auto schemeResolve(S)(string literal, ref const Filesets sets, Fileset f, ref S 
     assert(timed.stats == 3, "a declared mtime stats links too, in the same batch");
     assert(times.mtimes["bin/notes"] == 1_234_567_890 && times.mtimes["link"] == 42);
     assert("bin" !in times.mtimes, "a directory carries no mtime");
+}
+
+/// FSC2: a declared fingerprint arrives for each member file, from the one
+/// stat that brings its size, both times and its identity; a link, which
+/// a cache compares by its target, causes no stat on its account.
+@("fileset.scheme.FSC2.fingerprint")
+@system unittest
+{
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+    import sparkles.build_primitives.fileset.scheme : resolveScheme;
+
+    auto sets = Filesets(CasePolicy.sensitive);
+    const f = sets.everything;
+    auto tree = openFixture("bin/run +x\nbin/notes\nlink -> bin/run\n");
+    auto vfs = &tree.value.get().vfs;
+    vfs.clockNs = 70;
+    assert(vfs.writeFile("bin/notes", cast(const(ubyte)[]) "twelve bytes"));
+    assert(vfs.setMtime("bin/notes", 5));
+    auto root = openRoot!(Rights.readOnly)(vfs, "", ambientAuthority());
+
+    RecordingExecutor exec;
+    RecordingScheme!(EntryOrder.narOrder, FsoMetadata.fingerprint) s;
+    assert(!resolveScheme(root.value.borrow, sets, f, s, exec).hasError);
+    assert(exec.stats == 2, "one stat per member file, none for the link");
+    assert(s.fingerprints.length == 2 && "link" !in s.fingerprints);
+    const notes = s.fingerprints["bin/notes"], run = s.fingerprints["bin/run"];
+    assert(notes.size == 12 && notes.mtimeNs == 5 && notes.ctimeNs == 70);
+    assert(run.ctimeNs == 0 && run.device == notes.device && run.inode != notes.inode);
+    assert(s.mtimes.length == 0, "a fingerprint is not a declared mtime");
 }
 
 /// FSO2: a link's target is data. Reading it names only the link; nothing
