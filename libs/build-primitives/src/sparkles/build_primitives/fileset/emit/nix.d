@@ -43,6 +43,7 @@ struct NixParts
     /// The whole file, with `body` (a `%s` for the fileset) as its result.
     string render(string body) const @safe
     {
+        import std.array : replace;
         import std.format : format;
 
         string s = header;
@@ -51,7 +52,8 @@ struct NixParts
         s ~= "{ lib }:\nlet\n  fs = lib.fileset;\n  root = ./.;\n";
         if (usesGlob)
             s ~= globShim;
-        return s ~ "in\n" ~ format(body, fileset) ~ "\n";
+        // A fileset written over several lines continues at its binding's depth.
+        return s ~ "in\n" ~ format(body, fileset.replace("\n", "\n  ")) ~ "\n";
     }
 
     /// Translates `q` under `o`.
@@ -101,7 +103,7 @@ struct NixParts
                     foreach (path; o.expand(text))
                         paths ~= nixPath(path);
                     p.snapshots ~= text;
-                    return "(fs.unions [ " ~ paths.join(" ") ~ " ])";
+                    return nixCall("fs.unions", paths, true);
                 case NixGlobs.refuse:
                     const g = parseGlob(text);
                     if (g.anchored && !g.dirOnly && isLiteral(g.body))
@@ -141,10 +143,10 @@ struct NixParts
                     string[] parts;
                     foreach (a; node.args)
                         parts ~= walk(a);
-                    return "(fs.unions [ " ~ parts.join(" ") ~ " ])";
+                    return nixCall("fs.unions", parts, true);
                 case NodeKind.intersection, NodeKind.difference:
                     const f = node.kind == NodeKind.intersection ? "fs.intersection" : "fs.difference";
-                    return "(" ~ f ~ " " ~ walk(node.args[0]) ~ " " ~ walk(node.args[1]) ~ ")";
+                    return nixCall(f, [walk(node.args[0]), walk(node.args[1])], false);
                 case NodeKind.glob:
                     return globExpr(node.text, node.span);
             }
@@ -194,6 +196,59 @@ string nixString(scope const(char)[] s) @safe pure
         r ~= c;
     }
     return r ~ "\"";
+}
+
+/// The widest a call is written on one line; a wider one, or one whose
+/// arguments span lines, is written an argument a line.
+enum size_t nixLineWidth = 72;
+
+/**
+`(f a b)`, or with `list`, `(f [ a b ])`: on one line while it fits in
+$(LREF nixLineWidth), else an argument a line, each indented two spaces past
+the call, so a snapshot of hundreds of paths reads, and diffs, a path a line.
+*/
+string nixCall(string f, in string[] args, bool list) @safe pure
+{
+    import std.algorithm.searching : canFind;
+
+    const one = list ? "(" ~ f ~ " [ " ~ args.join(" ") ~ " ])" : "(" ~ f ~ " " ~ args.join(" ") ~ ")";
+    if (one.length <= nixLineWidth && !one.canFind('\n'))
+        return one;
+    string s = "(" ~ f ~ (list ? " [\n" : "\n");
+    foreach (a; args)
+        s ~= indentNix(a) ~ "\n";
+    return s ~ (list ? "])" : ")");
+}
+
+///
+@("emit.nix.nixCall")
+@safe pure unittest
+{
+    assert(nixCall("fs.unions", ["a", "b"], true) == "(fs.unions [ a b ])");
+    assert(nixCall("fs.difference", ["a", "b"], false) == "(fs.difference a b)");
+    string[] many;
+    foreach (i; 0 .. 8)
+        many ~= nixPath("src/file.d");
+    assert(nixCall("fs.unions", many, true) == "(fs.unions [\n" ~ "  (root + \"/src/file.d\")\n".replicate(8) ~ "])");
+    assert(nixCall("fs.difference", [nixCall("fs.unions", many, true), "root"], false)
+        == "(fs.difference\n  (fs.unions [\n" ~ "    (root + \"/src/file.d\")\n".replicate(8) ~ "  ])\n  root\n)",
+        "nested calls indent further");
+}
+
+private string replicate(string s, size_t n) @safe pure
+{
+    string r;
+    foreach (_; 0 .. n)
+        r ~= s;
+    return r;
+}
+
+// `s` with every line indented two spaces.
+private string indentNix(string s) @safe pure
+{
+    import std.array : replace;
+
+    return "  " ~ s.replace("\n", "\n  ");
 }
 
 /// A path beneath `root`: `root + "/a/b"`, which holds any characters.
