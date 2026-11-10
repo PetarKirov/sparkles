@@ -37,6 +37,7 @@ import sparkles.ui.style : BorderStyle, Decoration, FontRole, Slot, TextStyle;
 import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind, WidgetTree;
 import sparkles.ui.wrap : TextWrap;
 
+import std.string : strip;
 import std.sumtype : match, SumType;
 
 @safe:
@@ -207,6 +208,17 @@ struct MdViewOptions
     /// interactive backend resolves back to the document's cell structure
     /// (2-D table selection, per-cell copy) via the cells' frames.
     size_t tableKeyBase = 0;
+
+    /**
+    A button after each code span in one column of a table: non-empty, every
+    body cell under a header reading `codeActionHeader` follows each of its
+    code spans with `codeActionGlyph`. The glyph carries the code span's
+    source range, so `sourceOffsetAt` maps a click on it, or on the code, to
+    the span — a host's "try it" or "copy".
+    */
+    string codeActionGlyph;
+    /// ditto
+    string codeActionHeader;
 
     /// Tables draw inner ROW separators (`├─┼─┤` between body rows) by
     /// default; the header keeps its heavy rule either way.
@@ -1547,11 +1559,60 @@ private uint viewCodeFence(ref Builder b, ref const MdBlock blk,
         panel.hasBorderOverride = true;
     }
 
-    return b.add(Widget(kind: WidgetKind.column, children: [
+    // On a pixel target the panel's surface is one rounded box inside the
+    // frame the border rows and sides draw, from rule to rule, rather than
+    // whole cells under the body alone; a cell target draws none of it.
+    Widget fence = Widget(kind: WidgetKind.column, children: [
             fenceTopBorder(b, blk, opt, boxW), b.add(panel),
             fenceBottomBorder(b, opt, blk, boxW, widest, innerW,
                 fs.x, hOver)],
-        width: SizeSpec.fixed(boxW)));
+        slot: Slot.surface, paintBackground: true,
+        width: SizeSpec.fixed(boxW),
+        decoration: Decoration(borderRadius: fenceRadiusPx, insideGlyphFrame: true));
+    fence.bgOverride = panel.bgOverride;
+    fence.hasBgOverride = panel.hasBgOverride;
+    return b.add(fence);
+}
+
+/// The corner radius a fence's surface is drawn with on a pixel target, in
+/// CSS px: about the arc a `╭` glyph draws.
+enum int fenceRadiusPx = 6;
+
+/*
+`spans` with `glyph` after each code span (`MdViewOptions.codeActionGlyph`),
+carrying its source range. A code span a `\|` cut in pieces is one run of
+pieces a backslash apart, and gets one.
+*/
+private TextSpan[] withCodeActions(TextSpan[] spans, string glyph) @safe pure nothrow
+{
+    static bool code(in TextSpan s) => s.slot == Slot.chip && s.srcStart != size_t.max;
+    TextSpan[] out_;
+    foreach (i, s; spans)
+    {
+        out_ ~= s;
+        if (!code(s))
+            continue;
+        if (i + 1 < spans.length && code(spans[i + 1]) && spans[i + 1].srcStart <= s.srcEnd + 1)
+            continue; // the run goes on
+        size_t start = s.srcStart;
+        for (size_t j = i; j > 0 && code(spans[j - 1]) && s.srcStart != size_t.max
+            && spans[j].srcStart <= spans[j - 1].srcEnd + 1; --j)
+            start = spans[j - 1].srcStart;
+        out_ ~= TextSpan(glyph, Slot.accentPrimary, noBreak: true, srcStart: start, srcEnd: s.srcEnd);
+    }
+    return out_;
+}
+
+@("md.view.codeActions")
+@safe pure nothrow unittest
+{
+    // `a`, `b \| c`: the second is one span in two pieces, a backslash apart.
+    auto spans = [TextSpan("a", Slot.chip, srcStart: 0, srcEnd: 3), TextSpan(", "),
+        TextSpan("b ", Slot.chip, srcStart: 5, srcEnd: 8), TextSpan("| c", Slot.chip, srcStart: 9, srcEnd: 13)];
+    const got = withCodeActions(spans, " ▶");
+    assert(got.length == 6);
+    assert(got[1].text == " ▶" && got[1].srcStart == 0 && got[1].srcEnd == 3);
+    assert(got[5].text == " ▶" && got[5].srcStart == 5 && got[5].srcEnd == 13);
 }
 
 // A table, out of `viewBlock` for the same reason as `viewCodeFence`.
@@ -1576,6 +1637,14 @@ private uint viewTable(ref Builder b, ref const MdBlock blk,
     if (cols == 0)
         return b.container(WidgetKind.column, null);
 
+    // The column whose code spans get a button, by its header.
+    size_t actionCol = size_t.max;
+    if (opt.codeActionGlyph.length && blk.children.length)
+        foreach (ci, ref const cell; blk.children[0].children)
+            if (cell.span.end <= src.length
+                && src[cell.span.start .. cell.span.end].strip == opt.codeActionHeader)
+                actionCol = ci;
+
     auto cells = new SpanCell[][](blk.children.length);
     foreach (ri, ref const row; blk.children)
     {
@@ -1599,6 +1668,8 @@ private uint viewTable(ref Builder b, ref const MdBlock blk,
                 cellOpt.emph, opt.linkTable, &opt.glyphs);
             fillDiffTints(spans); // the cell path is not a prose row
             trimCellEdges(spans); // measured text sizes the track
+            if (ri > 0 && ci == actionCol)
+                spans = withCodeActions(spans, opt.codeActionGlyph);
             // The sort-rank badge (`DSS1`): chrome, not content —
             // no srcStart, so it neither selects nor copies.
             if (ri == 0 && ci < opt.tableExtras.headerBadges.length
