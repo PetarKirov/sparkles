@@ -153,12 +153,13 @@ struct BoxChrome
     int arrowOffset;    /// arrow offset from the left, in cells
     int drawHeight;     /// drawn height in CSS px, centred; 0 = the whole rect
     int drawWidth;      /// drawn width in CSS px, centred; 0 = the whole rect
+    bool insideGlyphFrame; /// inside a glyph frame (`Decoration.insideGlyphFrame`)
 
     /// Whether any of it would actually paint — the test the display list
     /// makes before spending an arena slot.
     bool any() const @safe pure nothrow @nogc
         => border.any || shadow.any || arrow || borderRadius > 0 || drawHeight > 0
-            || drawWidth > 0;
+            || drawWidth > 0 || insideGlyphFrame;
 }
 
 // ---------------------------------------------------------------------------
@@ -648,7 +649,8 @@ Ink inkOf(in Visual v) @safe pure nothrow @nogc
 BoxChrome boxChromeOf(in Visual v) @safe pure nothrow @nogc
     => BoxChrome(border: v.border, borderRadius: v.borderRadius,
         shadow: v.shadow, arrow: v.arrow, arrowOffset: v.arrowOffset,
-        drawHeight: v.drawHeight, drawWidth: v.drawWidth);
+        drawHeight: v.drawHeight, drawWidth: v.drawWidth,
+        insideGlyphFrame: v.insideGlyphFrame);
 
 /// `ink` back as a `Visual`, for the canvas primitives that take one.
 Visual visualOf(in Ink ink) @safe pure nothrow @nogc
@@ -688,6 +690,7 @@ Visual visualOf(in FillRect f) @safe pure nothrow @nogc
         v.arrowOffset = f.chrome.arrowOffset;
         v.drawHeight = f.chrome.drawHeight;
         v.drawWidth = f.chrome.drawWidth;
+        v.insideGlyphFrame = f.chrome.insideGlyphFrame;
     }
     return v;
 }

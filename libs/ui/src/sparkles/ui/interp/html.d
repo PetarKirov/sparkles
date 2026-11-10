@@ -371,7 +371,7 @@ private void boxStyle(Writer)(ref Writer w, in Widget node, in Visual vis)
 {
     put(w, "box-sizing:border-box");
     visibilityCss(w, node);
-    if (vis.hasBg)
+    if (vis.hasBg && !vis.insideGlyphFrame) // its glyphs are the frame here
     {
         put(w, ";background:");
         rgba(w, vis.bg, vis.bgAlpha);

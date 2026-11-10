@@ -38,7 +38,7 @@ import sparkles.ui.effect : EffectId;
 import sparkles.ui.geometry : Point, Rect, Size;
 import sparkles.ui.image : fitRect, ImageFit, ImageHandle;
 import sparkles.ui.interp.immediate : paintImagePlaceholder;
-import sparkles.ui.pixel_geometry : arrowTriangle, borderRects, centredSpan, ClipEntry,
+import sparkles.ui.pixel_geometry : arrowTriangle, borderRects, centredSpan, ClipEntry, fillInsideBorder, insideGlyphFrame,
     cornerRadiusPx, densityPx, lineRects, roundedBorderPx, ruleRect, ScissorBox,
     scissorBoxOfStack, scrollbarMinExtentPx, scrollbarRail, shadowRect, shiftPx;
 import sparkles.ui.style : FontRole, Visual;
@@ -461,7 +461,11 @@ if (isImageSource!Images)
         centredSpan(x, w, v.drawWidth);
         int y = py(r.y), h = r.height * m_.cellH;
         centredSpan(y, h, v.drawHeight);
-        const box = Rect(x, y, w, h);
+        // Inside a glyph frame: inset to the glyphs' lines.
+        const box = v.insideGlyphFrame ? insideGlyphFrame(Rect(x, y, w, h), m_.cellW, m_.cellH)
+            : Rect(x, y, w, h);
+        w = box.width;
+        h = box.height;
 
         if (v.shadow.any)
         {
@@ -486,8 +490,9 @@ if (isImageSource!Images)
         }
         else
         {
-            if (v.hasBg)
-                solid(box, fill);
+            if (v.hasBg) // stopping at a glyph-like border's lines
+                solid(v.border.any ? fillInsideBorder(box, v.border.width, v.border.style,
+                    m_.cellW, m_.cellH) : box, fill);
             if (v.border.any)
                 borderRects(box, v.border.width, v.border.style, m_.cellW, m_.cellH,
                     (Rect e) { solid(e, edge); });

@@ -32,7 +32,7 @@ import sparkles.ui.interp.immediate : paintImagePlaceholder;
 import sparkles.ui.effect : EffectId;
 import sparkles.ui_raylib.effect_gpu : EffectGpu, scissorInTarget;
 import sparkles.ui_raylib.image_textures : ImageTextures;
-import sparkles.ui.pixel_geometry : arrowTriangle, borderRects, centredSpan, ClipEntry,
+import sparkles.ui.pixel_geometry : arrowTriangle, borderRects, centredSpan, ClipEntry, fillInsideBorder, insideGlyphFrame,
     cornerRadiusPx, densityPx, lineRects, railExpandedPx, railIdlePx, roundedBorderPx,
     ruleRect, ScissorBox, scissorBoxOfStack, scrollbarMinExtentPx, ScrollbarRail,
     scrollbarRail, scrollbarRailPx, shadowRect, shiftPx;
@@ -406,7 +406,11 @@ struct RaylibCanvas
         centredSpan(x, w, v.drawWidth);
         int y = cast(int) py(r.y), h = r.height * cellH;
         centredSpan(y, h, v.drawHeight);
-        const box = Rect(x, y, w, h);
+        // Inside a glyph frame: inset to the glyphs' lines.
+        const box = v.insideGlyphFrame ? insideGlyphFrame(Rect(x, y, w, h), cellW, cellH)
+            : Rect(x, y, w, h);
+        w = box.width;
+        h = box.height;
 
         // Drop shadow first, behind the surface: an offset translucent rect.
         if (v.shadow.any)
@@ -427,8 +431,9 @@ struct RaylibCanvas
             if (v.borderRadius > 0)
                 DrawRectangleRounded(rectangleOf(box), roundnessOf(v.borderRadius, w, h), 8,
                     rlBg(v));
-            else
-                fillExact(box, rlBg(v));
+            else // stopping at a glyph-like border's lines
+                fillExact(v.border.any ? fillInsideBorder(box, v.border.width, v.border.style,
+                    cellW, cellH) : box, rlBg(v));
         }
 
         // Border and popup arrow.

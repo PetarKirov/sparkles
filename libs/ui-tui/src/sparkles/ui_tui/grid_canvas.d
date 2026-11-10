@@ -582,7 +582,7 @@ struct GridCanvas
     /// or box-drawing glyphs on the rect perimeter (a full box — the popup).
     void fillRect(in Rect r, in Visual v) scope
     {
-        if (v.hasBg)
+        if (v.hasBg && !v.insideGlyphFrame) // the glyphs are its frame here
         {
             // An opaque fill is a *surface*: it hides what it covers, so the
             // cell's glyph AND its decoration go with its background. A

@@ -138,6 +138,64 @@ unittest
     assert(cellsCeil(5, 0) == 0);
 }
 
+/**
+The part of `box` (device pixels) a background fills under a border of
+`width` and `style`. A solid or double border is drawn down the middle of its
+cells, as box-drawing glyphs are (`borderRects`), so the fill stops at those
+lines rather than spilling half a cell past them; its horizontals sit in the
+middle of their rows only where a side meets them. Any other style, and a side
+without a border, leaves the box whole.
+*/
+Rect fillInsideBorder(in Rect box, in Insets width, BorderStyle style, int cellW, int cellH)
+    @safe pure nothrow @nogc
+{
+    if (style != BorderStyle.solid && style != BorderStyle.double_)
+        return box;
+    const sides = width.left > 0 || width.right > 0;
+    const x0 = box.x + (width.left > 0 ? cellW / 2 : 0);
+    const x1 = box.x + box.width - (width.right > 0 ? cellW / 2 : 0);
+    const y0 = box.y + (sides && width.top > 0 ? cellH / 2 : 0);
+    const y1 = box.y + box.height - (sides && width.bottom > 0 ? cellH / 2 : 0);
+    return Rect(x0, y0, x1 > x0 ? x1 - x0 : 0, y1 > y0 ? y1 - y0 : 0);
+}
+
+///
+@("pixelGeometry.fillInsideBorder")
+@safe pure nothrow @nogc
+unittest
+{
+    const box = Rect(100, 40, 260, 132); // 10 × 3 cells of 26 × 44
+    // The fence's body: sides only, so its fill stops at the side rules.
+    assert(fillInsideBorder(box, Insets(0, 1, 0, 1), BorderStyle.solid, 26, 44)
+        == Rect(113, 40, 234, 132));
+    // A whole box: inside all four lines.
+    assert(fillInsideBorder(box, Insets.all(1), BorderStyle.solid, 26, 44)
+        == Rect(113, 62, 234, 88));
+    // A rule under a header is drawn at the edge, and so is its fill.
+    assert(fillInsideBorder(box, Insets(0, 0, 1, 0), BorderStyle.solid, 26, 44) == box);
+    assert(fillInsideBorder(box, Insets.all(1), BorderStyle.dashed, 26, 44) == box);
+}
+
+/**
+`box` (device pixels) drawn inside a frame of box-drawing glyphs around it
+(`Decoration.insideGlyphFrame`): inset half a cell on every side, to the
+lines the glyphs draw down the middle of their cells.
+*/
+Rect insideGlyphFrame(in Rect box, int cellW, int cellH) @safe pure nothrow @nogc
+    => Rect(box.x + cellW / 2, box.y + cellH / 2,
+        box.width > cellW ? box.width - cellW / 2 * 2 : 0,
+        box.height > cellH ? box.height - cellH / 2 * 2 : 0);
+
+///
+@("pixelGeometry.insideGlyphFrame")
+@safe pure nothrow @nogc
+unittest
+{
+    // A fence of three rows: the rounded top rule, a line of code, the bottom rule.
+    assert(insideGlyphFrame(Rect(100, 40, 260, 132), 26, 44) == Rect(113, 62, 234, 88));
+    assert(insideGlyphFrame(Rect(0, 0, 26, 44), 26, 44).width == 0, "one cell: nothing inside");
+}
+
 // ---------------------------------------------------------------------------
 // Rules and lines
 // ---------------------------------------------------------------------------

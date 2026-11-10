@@ -266,7 +266,7 @@ struct CellGrid
     */
     void fillRect(in Rect r, in Visual v)
     {
-        if (v.hasBg)
+        if (v.hasBg && !v.insideGlyphFrame) // the glyphs are its frame here
             foreach (y; r.y .. r.y + r.height)
                 foreach (x; r.x .. r.x + r.width)
                     if (inBounds(x, y))

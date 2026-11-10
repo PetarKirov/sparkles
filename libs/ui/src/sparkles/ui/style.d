@@ -543,6 +543,9 @@ struct Visual
     int arrowOffset;      /// arrow horizontal offset from the left, in cells
     int drawHeight;       /// drawn box height in CSS px, centred; 0 = the whole rect
     int drawWidth;        /// drawn box width in CSS px, centred; 0 = the whole rect
+    /// drawn inside a frame of box-drawing glyphs around the rect
+    /// (`Decoration.insideGlyphFrame`)
+    bool insideGlyphFrame;
 
     // --- text chrome (resolved from a widget's TextStyle) ---
     FontRole fontRole;      /// which font family the run wants
@@ -587,6 +590,14 @@ struct Decoration
     /// a mark drawn as a shape — a switch's knob, the ink a glyph `●` had —
     /// keeps the colour the glyph would have had. Needs `paintBackground`.
     bool inkFill;
+    /**
+    The box sits inside a frame of box-drawing glyphs drawn around its rect
+    (`╭─╮` rows above and below, `│` sides), whose lines run down the middle
+    of their cells. A pixel target draws the box inset half a cell on every
+    side, to those lines, with `borderRadius` rounding it as `╭` does; a
+    cell target, where the glyphs are the frame, draws none of it.
+    */
+    bool insideGlyphFrame;
 }
 
 /// A widget's declared text style — font role, relative size, weight/italic/
@@ -1055,6 +1066,7 @@ Visual resolveVisual(in Palette pal, Slot slot, in Decoration deco, in TextStyle
     v.arrowOffset = deco.arrowOffset;
     v.drawHeight = deco.drawHeight;
     v.drawWidth = deco.drawWidth;
+    v.insideGlyphFrame = deco.insideGlyphFrame;
     if (deco.inkFill)
     {
         v.bg = v.fg;
