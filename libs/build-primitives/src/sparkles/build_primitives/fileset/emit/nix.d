@@ -75,9 +75,16 @@ struct NixParts
             const pr = q.preds[i];
             final switch (pr.kind)
             {
-                case PredKind.hasExt: return "file.hasExt " ~ nixString(pr.value);
-                case PredKind.name: return "file.name == " ~ nixString(pr.value);
-                case PredKind.type: return "file.type == " ~ nixString(pr.value);
+                // A literal argument is Nix's own test; a glob is a match on the name.
+                case PredKind.hasExt:
+                    return isLiteral(pr.value) ? "file.hasExt " ~ nixString(pr.value)
+                        : nameMatch("*." ~ pr.value, false);
+                case PredKind.name:
+                    return isLiteral(pr.value)
+                        ? "file.name " ~ (pr.negated ? "!=" : "==") ~ " " ~ nixString(pr.value)
+                        : nameMatch(pr.value, pr.negated);
+                case PredKind.type:
+                    return "file.type " ~ (pr.negated ? "!=" : "==") ~ " " ~ nixString(pr.value);
                 case PredKind.not: return "!(" ~ predText(pr.a) ~ ")";
                 case PredKind.and: return "(" ~ predText(pr.a) ~ " && " ~ predText(pr.b) ~ ")";
                 case PredKind.or: return "(" ~ predText(pr.a) ~ " || " ~ predText(pr.b) ~ ")";
@@ -131,7 +138,7 @@ struct NixParts
                 case NodeKind.gitignored:
                     if (!o.gitignoredIsUntracked)
                     {
-                        err = "lib.fileset has no `gitignored`; it is the root minus `gitTracked` only in a "
+                        err = "lib.fileset has no `gitignored()`; it is the root minus `gitTracked()` only in a "
                             ~ "work tree with no untracked files and no ignored tracked ones";
                         at = node.span;
                         return null;
@@ -252,6 +259,10 @@ private string indentNix(string s) @safe pure
 }
 
 /// A path beneath `root`: `root + "/a/b"`, which holds any characters.
+/// `file.name` tested against the glob `pattern`, a name with no `/` (`FXL4`).
+string nameMatch(string pattern, bool negated) @safe pure
+    => "builtins.match " ~ nixString(globRegex(pattern)) ~ " file.name " ~ (negated ? "==" : "!=") ~ " null";
+
 string nixPath(scope const(char)[] rel) @safe pure => "(root + " ~ nixString("/" ~ rel) ~ ")";
 
 /**

@@ -133,10 +133,28 @@ private ExplorerApp* make(string query)
     assert(app.query.text == "src/*.d", "nothing is pasted before the answer");
 
     PasteEvent answer;
-    cast(void) answer.text.tryWrite((ref s) { put(s, " | *.md"); });
+    cast(void) answer.text.tryWrite((ref s) { put(s, " | **/*.md"); });
     answer.last = true;
     answer.request = asked.clipboardReads[0];
     cast(void) runAppRecorded(*app, RunConfig.init, [Event(answer)], gui);
-    assert(app.query.text == "src/*.d | *.md", app.query.text);
+    assert(app.query.text == "src/*.d | **/*.md", app.query.text);
     assert(app.shown.found.members.length == 5, text(app.shown.found.members.length));
+}
+
+/// FXL9: a bare call name that names no file suggests the call; one that
+/// names a file does not.
+@("fileset_explorer.FXL9.bareCallNameHints")
+@system unittest
+{
+    import evaluate : evaluate;
+
+    const tree = Root(literal: "src/a.d = a\nnone = n\n", name: "t");
+    auto o = evaluate(tree, "all | none");
+    assert(o.resolved && o.found.members.length == 1, text(o.found.members.length));
+    assert(o.hints == ["`all` names no file: the call is `all()`"], text(o.hints));
+    assert(evaluate(tree, "all()").hints.length == 0);
+
+    auto app = new ExplorerApp(tree, "all");
+    const frame = renderFrame(*app, "", Size(100, 24));
+    assert(frame.canFind("the call is `all()`"), frame);
 }

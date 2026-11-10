@@ -5,7 +5,7 @@ globs taken apart into what each target's pattern syntax needs.
 */
 module sparkles.build_primitives.fileset.emit.ir;
 
-import sparkles.build_primitives.fileset.query : NodeKind, noNode, PredKind, Query, Span;
+import sparkles.build_primitives.fileset.query : NodeKind, noNode, Pred, PredKind, Query, Span;
 
 /// A node of the lowered expression.
 enum E : ubyte
@@ -40,20 +40,22 @@ bool isLeaf(in Expr e) @safe pure nothrow @nogc => e.kind < E.union_;
 Expr lower(const Query q) @safe pure
 in (q.ok)
 {
-    import sparkles.build_primitives.fileset.query : escapeGlob;
-
     if (q.root == noNode)
         return Expr(E.none);
+
+    // `!=`: the files the `==` does not hold for.
+    Expr ne(in Pred pr, Expr e) => pr.negated ? Expr(E.difference, null, pr.span, [Expr(E.all), e]) : e;
 
     Expr pred(uint p)
     {
         const pr = q.preds[p];
         final switch (pr.kind)
         {
-            case PredKind.hasExt: return Expr(E.fileName, "*." ~ escapeGlob(pr.value), pr.span);
-            case PredKind.name: return Expr(E.fileName, escapeGlob(pr.value), pr.span);
+            // A predicate's argument is already a pattern: quoted pieces escaped (`FXL4`).
+            case PredKind.hasExt: return Expr(E.fileName, "*." ~ pr.value, pr.span);
+            case PredKind.name: return ne(pr, Expr(E.fileName, pr.value, pr.span));
             case PredKind.type:
-                return pr.value == "symlink" ? Expr(E.symlinks, null, pr.span)
+                return (pr.value == "symlink") != pr.negated ? Expr(E.symlinks, null, pr.span)
                     : Expr(E.difference, null, pr.span, [Expr(E.all), Expr(E.symlinks)]);
             case PredKind.not: return Expr(E.difference, null, pr.span, [Expr(E.all), pred(pr.a)]);
             case PredKind.and: return Expr(E.intersection, null, pr.span, [pred(pr.a), pred(pr.b)]);
@@ -92,7 +94,7 @@ in (q.ok)
 `e`, normalized by rules that keep its meaning (`FXE2`): unions and
 intersections flattened; `none` and `all` simplified away where they are
 units or zeros; `a - (b | c)` into `(a - b) - c`; an intersection of a literal
-anchored directory glob `d/**` and an unanchored glob `g` into `d/**` `/g`.
+anchored directory glob `d/**` and a glob at any depth into one glob beneath `d`.
 */
 Expr normalize(Expr e) @safe pure
 {
@@ -134,22 +136,34 @@ Expr normalize(Expr e) @safe pure
             }
             if (flat.length == 0)
                 return Expr(E.all, null, e.span);
-            // A literal directory and an unanchored glob: one glob beneath it.
+            // A literal directory and a glob at any depth — unanchored, or
+            // anchored under a leading `**/`: one glob beneath it.
             foreach (i, d; flat)
             {
                 const dir = literalDirGlob(d);
                 if (dir is null)
                     continue;
                 foreach (j, g; flat)
-                    if (j != i && g.kind == E.glob && !parseGlob(g.text).anchored && !parseGlob(g.text).dirOnly)
-                    {
-                        auto merged = Expr(E.glob, dir ~ "/**/" ~ g.text, e.span);
-                        Expr[] rest;
-                        foreach (k, x; flat)
-                            if (k != i && k != j)
-                                rest ~= x;
-                        return normalize(rest.length ? Expr(E.intersection, null, e.span, merged ~ rest) : merged);
-                    }
+                {
+                    if (j == i || g.kind != E.glob)
+                        continue;
+                    const parts = parseGlob(g.text);
+                    if (parts.dirOnly)
+                        continue;
+                    string tail;
+                    if (!parts.anchored)
+                        tail = "**/" ~ g.text;
+                    else if (parts.body.length > 3 && parts.body[0 .. 3] == "**/")
+                        tail = parts.body;
+                    else
+                        continue;
+                    auto merged = Expr(E.glob, "/" ~ dir ~ "/" ~ tail, e.span);
+                    Expr[] rest;
+                    foreach (k, x; flat)
+                        if (k != i && k != j)
+                            rest ~= x;
+                    return normalize(rest.length ? Expr(E.intersection, null, e.span, merged ~ rest) : merged);
+                }
             }
             if (flat.length == 1)
                 return flat[0];
@@ -339,10 +353,10 @@ bool isLiteral(string glob) @safe pure nothrow @nogc
         return show(normalize(lower(parseQuery(q))));
     }
 
-    assert(shape("a | (b | c) | none") == "(a | b | c)");
-    assert(shape("a - (b | c)") == "((a - b) - c)");
-    assert(shape("a & all & (b & c)") == "(a & b & c)");
-    assert(shape("src/** & *.d") == "src/**/*.d");
-    assert(shape("none - a | all & b") == "b");
-    assert(shape("fileFilter(hasExt(\"d\") && !name == \"x.d\")") == "(name(*.d) & (all - name(x.d)))");
+    assert(shape("a | (b | c) | none()") == "(/a | /b | /c)");
+    assert(shape("a - (b | c)") == "((/a - /b) - /c)");
+    assert(shape("a & all() & (b & c)") == "(/a & /b & /c)");
+    assert(shape("src/** & **/*.d") == "/src/**/*.d");
+    assert(shape("(none() - a) | all() & b") == "/b");
+    assert(shape("fileFilter(hasExt(d) && name != x.d)") == "(name(*.d) & (all - name(x.d)))");
 }

@@ -63,7 +63,7 @@ Emitted exportFor(Target t, NixGlobs mode, in Root root, const Query q, const Ou
         return paths;
     };
     if (t == Target.cargo)
-        foreach (ref m; evaluate(root, "/Cargo.toml | /README.md | /README.txt | /README").found.members)
+        foreach (ref m; evaluate(root, "Cargo.toml | README.md | README.txt | README").found.members)
             opt.cargoAlways ~= m.path;
     if (t == Target.nix && !root.inMemory)
         opt.gitignoredIsUntracked = gitignoredIsUntracked(root.dir);

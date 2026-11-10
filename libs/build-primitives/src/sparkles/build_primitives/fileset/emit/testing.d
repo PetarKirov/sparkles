@@ -22,7 +22,7 @@ import std.process : Config, environment, execute;
 import sparkles.build_primitives.fileset.emit : emit, EmitOptions, Emitted, NixGlobs, Target;
 import sparkles.build_primitives.fileset.emit.nix : NixParts;
 import sparkles.build_primitives.fileset.pattern : CasePolicy;
-import sparkles.build_primitives.fileset.query : compileQuery, parseQuery, Query;
+import sparkles.build_primitives.fileset.query : compileQuery, globText, parseQuery, Query;
 import sparkles.build_primitives.fileset.testing : machineResolve, materialize, openFixture, scratchTree;
 import sparkles.build_primitives.fileset.value : Filesets;
 import sparkles.build_primitives.git_env : gitChildEnvironment, runGit;
@@ -41,28 +41,33 @@ immutable string[] corpus = [
     "*.d",
     "src/*.d",
     "src/**",
-    "/README.md",
+    "README.md",
     "x",
+    "**/x",
     "x/",
     "x2",
     "*.{d,md}",
+    "**/*.{d,md}",
     "src/**/*.d - **/*_test.d",
-    "all - build/** - bin/**",
-    "*.md | dub.sdl",
-    "(src/** - *_test.d) | docs/** - docs/sub/**",
-    "docs/** | README.md - *.md",
-    "src/** & *.d",
+    "all() - build/** - bin/**",
+    "**/*.md | **/dub.sdl",
+    "(src/** - **/*_test.d) | (docs/** - docs/sub/**)",
+    "(docs/** | README.md) - **/*.md",
+    "src/** & **/*.d",
     "src/** & docs/**",
-    "fileFilter(hasExt(\"d\"))",
-    "fileFilter(name == \"x\")",
-    "fileFilter(hasExt(\"d\") && !name == \"app.d\")",
-    "all",
-    "none",
-    "exec",
+    "fileFilter(hasExt(d))",
+    "fileFilter(name == x)",
+    "fileFilter(hasExt(d) && name != app.d)",
+    "fileFilter(name == *_test.d)",
+    "fileFilter(name == \"*_test.d\")",
+    "all()",
+    "none()",
+    "exec()",
     "a - (b - c)",
     "src/[al]*.d",
     "src/?pp.d",
     "\"weird name.txt\"",
+    "\"weird \"*.txt",
     "**/x - x2/**",
     "src - src/x.d",
 ];
@@ -246,7 +251,7 @@ private size_t[2] check(Target t, string[] delegate(string code, string query, s
     {
         EmitOptions o;
         o.nixGlobs = mode;
-        o.expand = (string glob) @trusted => membersOf(oracleTree, "\"" ~ glob.replace("\"", "\\\"") ~ "\"");
+        o.expand = (string glob) @trusted => membersOf(oracleTree, globText(glob));
         size_t accepted;
         foreach (query; corpus)
         {
@@ -294,7 +299,7 @@ private size_t[2] check(Target t, string[] delegate(string code, string query, s
     EmitOptions o;
     o.cargoAlways = ["Cargo.toml", "README.md"];
     size_t accepted, refused;
-    foreach (query; corpus.map!(q => q ~ " | Cargo.toml | README.md | src/lib.rs").array ~ ["*.d"])
+    foreach (query; corpus.map!(q => "(" ~ q ~ ") | Cargo.toml | README.md | src/lib.rs").array ~ ["*.d"])
     {
         const q = parseQuery(query);
         auto want = membersOf(crate, query);

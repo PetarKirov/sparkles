@@ -217,7 +217,7 @@ private enum tablet = Size(140, 40);
     foreach (i; 0 .. 150)
     {
         files ~= text("f", i, ".d = x\n");
-        query ~= text(i ? " | " : "", "/f", i, ".d");
+        query ~= text(i ? " | " : "", "f", i, ".d");
     }
     auto app = new ExplorerApp(Root(literal: files[], name: "t"), query[]);
     app.layout = ExplorerApp.Layout.touch;
@@ -261,7 +261,7 @@ private enum tablet = Size(140, 40);
     import sparkles.input : WheelEvent;
 
     const name = "a".replicate(200) ~ ".d";
-    auto app = new ExplorerApp(Root(literal: name ~ " = x\n", name: "t"), "/" ~ name);
+    auto app = new ExplorerApp(Root(literal: name ~ " = x\n", name: "t"), name);
     app.layout = ExplorerApp.Layout.touch;
     app.exportTarget = Target.gitignore;
     tap(*app, find(*app, "Export", tablet), tablet);
@@ -279,7 +279,7 @@ private enum tablet = Size(140, 40);
     assert(app.exportScroll.motion.whole == 0, "more across than down: across only");
     const frame = renderFrame(*app, "", tablet);
     assert(frame.canFind("Copy") && frame.canFind("gitignore"), "the header stays:\n" ~ frame);
-    assert(!frame.canFind("# Generated") && frame.canFind("r from: /aaaa"), "the lines start 30 columns in:\n" ~ frame);
+    assert(!frame.canFind("# Generated") && frame.canFind("r from: aaaa"), "the lines start 30 columns in:\n" ~ frame);
 }
 
 /// FXU23: Export's target, Nix's glob mode and Copy share the tabs' row when

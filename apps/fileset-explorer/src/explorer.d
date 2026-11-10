@@ -827,9 +827,11 @@ struct ExplorerApp
                 TextSpan(outcome.query.ok ? "" : "  (showing the last result)", Slot.muted),
             ]));
         }
-        return b.add(Widget(kind: WidgetKind.rich, width: SizeSpec.grow(), spans: [
-            TextSpan("  = ", Slot.muted), TextSpan(canonical(outcome.query), Slot.code),
-        ]));
+        TextSpan[] spans = [TextSpan("  = ", Slot.muted), TextSpan(canonical(outcome.query), Slot.code)];
+        // A bare call name that names no file (`FXL9`).
+        foreach (h; outcome.hints)
+            spans ~= [TextSpan("   ", Slot.muted), TextSpan(h, Slot.warn)];
+        return b.add(Widget(kind: WidgetKind.rich, width: SizeSpec.grow(), spans: spans));
     }
 
     // ---- the dock --------------------------------------------------------
@@ -1935,7 +1937,7 @@ Cheat[] cheatSnippets(in MdDoc doc, string src) @safe
         return; // no markdown grammar: the help is its text
     const qs = app.cheats.map!(c => c.query).array;
     assert(qs.canFind("*.d") && qs.canFind("src/**") && qs.canFind("a | b"), qs.text);
-    assert(qs.canFind("p || q") && qs.canFind("fileFilter(hasExt(\"d\"))"), qs.text);
+    assert(qs.canFind("p || q") && qs.canFind("fileFilter(hasExt(d))"), qs.text);
     assert(!qs.canFind("Tab"), "the keys table has no Write column");
 }
 
@@ -1951,12 +1953,13 @@ Slot slotOf(TokenKind k) @safe pure nothrow @nogc
 {
     final switch (k)
     {
-        case TokenKind.glob: return Slot.code;
-        case TokenKind.string_: return Slot.success;
-        case TokenKind.keyword: return Slot.accentPrimary;
+        // A path reads as a string, bare or quoted; its metacharacters apart (`FXL8`).
+        case TokenKind.path: return Slot.success;
+        case TokenKind.globMeta: return Slot.accentSecondary;
+        case TokenKind.escape: return Slot.link;
         case TokenKind.operator: return Slot.warn;
         case TokenKind.function_: return Slot.info;
-        case TokenKind.predicate: return Slot.accentSecondary;
+        case TokenKind.predicate: return Slot.accentPrimary;
         case TokenKind.comment: return Slot.muted;
         case TokenKind.punctuation: return Slot.textSecondary;
     }
@@ -2039,7 +2042,7 @@ TextSpan[] highlight(TextSpan[] spans, in Token[] tokens, Span error) @safe pure
         slots ~= s.slot;
     }
     assert(joined == src);
-    assert(slots == [Slot.code, Slot.inherit, Slot.warn, Slot.inherit, Slot.success, Slot.inherit,
+    assert(slots == [Slot.success, Slot.inherit, Slot.warn, Slot.inherit, Slot.success, Slot.inherit,
         Slot.muted], text(slots));
 
     auto marked = highlight(editorLineSpans(EditorState.create(src), 0, o), q.tokens, Span(4, 7));
