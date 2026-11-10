@@ -38,8 +38,6 @@ application.
 
 <!-- @include: ./parts/tree-sitter-grammars.md -->
 
-<!-- @include: ./parts/curl.md -->
-
 ## Fonts
 
 <!-- @include: ./parts/maple-mono.md -->
