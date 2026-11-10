@@ -518,6 +518,7 @@ private:
         ErrorKind error = ErrorKind.other;
         bool executable, statted, member, needStat, needKind, failed, linkDir;
         bool needLink, hasTarget, hasMtime, reported;
+        bool whole;        // its whole content is selected (D5)
     }
 
     // A directory above the start roots (a fold's): its path, a prefix of a
@@ -552,6 +553,7 @@ private:
         uint memberCount, liveChildren;
         Phase phase;
         bool acceptAll, failed, throughLink, scopeChecked, emitted, left;
+        bool whole; // its whole content is selected, so emptiness is reported (D5)
         uint parentEntry = uint.max; // its entry in the parent's listing
         uint tagRequest;             // its readDir's index in the batch
         ErrorKind error = ErrorKind.other;
@@ -993,7 +995,8 @@ private:
             unitCount = count;
             unitPath_ = a.path;
             unitDir_ = noDir;
-            unitEmpty_ = count == 0;
+            // Never whole: a plan starts beneath a directory only when it is not.
+            unitEmpty_ = false;
             sortUnit();
             ancPop = true;
             return true;
@@ -1065,7 +1068,7 @@ private:
         unitCount = f.entryCount;
         unitPath_ = f.path;
         unitDir_ = fi;
-        unitEmpty_ = f.memberCount == 0 && f.liveChildren == 0;
+        unitEmpty_ = f.whole && f.memberCount == 0 && f.liveChildren == 0;
         sortUnit();
     }
 
@@ -1160,6 +1163,7 @@ private:
             f.depth = depth;
             f.state = st;
             f.acceptAll = verdict == DirVerdict.acceptAll;
+            f.whole = f.acceptAll || ev.wholeContent;
             frames[0] = f;
             framesTop = 1;
             if (!request(Request(RequestKind.readDir, noDir, root, 0)))
@@ -1442,6 +1446,7 @@ private:
                 if (st == uint.max)
                     return;
                 v = ev.enter(sets, ign, stateOf(f.state), name, stateOf(st));
+                e.whole = f.whole || ev.wholeContent;
                 if (v == DirVerdict.skip)
                     statesTop -= words;
             }
@@ -1574,6 +1579,7 @@ private:
             c.depth = f.depth + 1;
             c.state = e.state;
             c.acceptAll = f.acceptAll || e.verdict == DirVerdict.acceptAll;
+            c.whole = c.acceptAll || e.whole;
             c.throughLink = e.kind == EntryKind.symlink;
             c.parentEntry = at;
             c.tagRequest = pending;

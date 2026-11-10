@@ -340,6 +340,7 @@ struct FilesetEvaluator
 
     private Unique!MatchScratch scratch_;
     private HeapBuffer!Tri tri;
+    private HeapBuffer!Tri inc; // `tri` with every difference's exclusions set aside
     private HeapBuffer!bool reachable;
     private HeapBuffer!ulong pathState;
     private Fileset root_;
@@ -354,6 +355,7 @@ struct FilesetEvaluator
         words = sets.stateWords;
         scratch_ = makeUnique!MatchScratch();
         tri.length = root.node + 1;
+        inc.length = root.node + 1;
         reachable.length = root.node + 1;
         pathState.length = 2 * words;
         reachable[root.node] = true;
@@ -439,9 +441,20 @@ struct FilesetEvaluator
                     break;
             }
             tri[i] = t;
+            inc[i] = n.op == FilesetOp.difference ? inc[n.a]
+                : n.op >= FilesetOp.union_ ? combine(n, inc[n.a], inc[n.b]) : t;
         }
         return toDirVerdict(tri[root_.node]);
     }
+
+    /**
+    Whether the fileset selects the whole content of the directory last given
+    a verdict by `dirVerdict` or `enter`, once every difference's excluded
+    side is set aside: the reading of "the selection holds this empty
+    directory" FSV4 reports by (D5). `src/**` and `everything - gitignored`
+    select a directory's whole content; `*.md` does not.
+    */
+    bool wholeContent() const @safe pure nothrow @nogc => inc[root_.node] == Tri.yes;
 
     /**
     Computes into `child` the state of the directory `name` in a directory

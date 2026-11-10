@@ -1196,6 +1196,25 @@ struct RecordingExecutor
     assert(got.emptyDirs == ["src/deep/er", "src/empty"]);
 }
 
+/// FSV4, D5: only a directory whose whole content the fileset selects, once
+/// exclusions are set aside, is reported; a pattern's search is not.
+@("fileset.machine.FSV4.wholeContentOnly")
+@system unittest
+{
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+
+    auto tree = openFixture("src/a.d\nsrc/empty/\ndocs/x.md\ndocs/none/\n");
+    auto root = openRoot!(Rights.readOnly)(&tree.value.get().vfs, "", ambientAuthority());
+    auto sets = Filesets(CasePolicy.sensitive);
+    auto md = machineResolve(root.value.borrow, sets, sets.glob("*.md").value);
+    assert(md.members == ["docs/x.md"]);
+    assert(md.emptyDirs == []);
+    const both = sets.union_(sets.glob("src/**").value, sets.glob("*.md").value);
+    assert(machineResolve(root.value.borrow, sets, both).emptyDirs == ["src/empty"]);
+    const minus = sets.difference(sets.everything, sets.glob("*.d").value);
+    assert(machineResolve(root.value.borrow, sets, minus).emptyDirs == ["docs/none", "src/empty"]);
+}
+
 /// FSM6: a cursor is valid only for its resolution and its step.
 @("fileset.machine.FSM6.staleCursor")
 @system unittest

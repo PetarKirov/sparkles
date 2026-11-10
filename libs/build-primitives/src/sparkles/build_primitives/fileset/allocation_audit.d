@@ -100,9 +100,10 @@ version (linux)
 
         assert(m.error.code == m.error.code.init, m.error.context);
         assert(members == 4); // src/a.d, src/b/c.d, bin/tool, vendor/v/w
-        // `e`, and `docs` and `src/gen`: entered because the unanchored
-        // `vendor/` and `e/` could still match beneath them, and memberless.
-        assert(empties == 3);
+        // `e` only: `e/` selects its whole content (D5). `docs` and `src/gen`
+        // were entered because `vendor/` and `e/` could match beneath them,
+        // and are memberless, but no plan selected them whole.
+        assert(empties == 1);
         assert(units > 5);
         assert(allocationCalls == 0, "a resolution step called the libc allocator");
         assert(gcAfter == gcBefore, "a resolution step allocated on the GC heap");
