@@ -203,13 +203,13 @@ finds no normative text duplicating this one.
 
 ## Progress
 
-| Milestone | State                                                                                                    | Pull request |
-| --------- | -------------------------------------------------------------------------------------------------------- | ------------ |
-| M0        | delivered; reshaped for readers and for creation sharing                                                 | #535, #594   |
-| M1        | delivered                                                                                                | #626         |
-| M2        | delivered                                                                                                | #627         |
-| M3        | delivered                                                                                                | #629         |
-| M4        | delivered                                                                                                | #628         |
-| M5        | delivered                                                                                                | #628         |
-| Mapping   | `VFO11`, `VFB7`, `VFM6`, delivered with font M7                                                          | —            |
-| Identity  | `VFO6`'s file identity delivered for the filesets' D6; the change time planned, for the build graph's E3 | —            |
+| Milestone | State                                                                                                                                 | Pull request |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
+| M0        | delivered; reshaped for readers and for creation sharing                                                                              | #535, #594   |
+| M1        | delivered                                                                                                                             | #626         |
+| M2        | delivered                                                                                                                             | #627         |
+| M3        | delivered                                                                                                                             | #629         |
+| M4        | delivered                                                                                                                             | #628         |
+| M5        | delivered                                                                                                                             | #628         |
+| Mapping   | `VFO11`, `VFB7`, `VFM6`, delivered with font M7                                                                                       | —            |
+| Identity  | `VFO6`'s file identity delivered for the filesets' D6, and its change time for their M7 ([DV32](./decisions.md#dv32-the-change-time)) | —            |

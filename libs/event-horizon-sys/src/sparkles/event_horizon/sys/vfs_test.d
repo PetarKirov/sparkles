@@ -339,7 +339,8 @@ version (linux)
         Statx sx;
         assert(fstatat(AT_FDCWD, path.toStringz, &st, AT_SYMLINK_NOFOLLOW) == 0);
         assert(statx(AT_FDCWD, path.toStringz, AT_SYMLINK_NOFOLLOW, STATX_BASIC_STATS, &sx) == 0);
-        foreach (mask; [StatMask.basic, StatMask.mtime, StatMask.identity])
+        foreach (mask; [StatMask.basic, StatMask.mtime, StatMask.identity, StatMask.change,
+                cast(StatMask)(StatMask.mtime | StatMask.identity | StatMask.change)])
             assert(statxToStat(sx, mask) == toStat(st, mask), path);
     }
 }
@@ -366,6 +367,47 @@ version (linux)
     assert(own.device == linked.device && own.inode == linked.inode);
     assert(own.inode != root.value.statAt("b", StatMask.identity).value.inode);
     assert(!a.value.stat().value.hasIdentity);
+}
+
+/// VFO6: a rewrite moves the change time even when the size and the
+/// modification time are put back, as `touch -r` puts them back.
+@("vfs.blocking.VFO6.change")
+@system unittest
+{
+    import core.thread : Thread;
+    import core.time : msecs;
+    import std.datetime.systime : SysTime;
+    import std.file : getTimes, setTimes;
+
+    auto dir = scratchDir("change");
+    scope (exit) rmdirRecurse(dir);
+    const path = buildPath(dir, "f");
+    write(path, "same size");
+    SysTime accessed, modified;
+    getTimes(path, accessed, modified);
+    // Whole seconds, which `setTimes` puts back exactly.
+    modified = SysTime.fromUnixTime(modified.toUnixTime);
+    setTimes(path, accessed, modified);
+    auto v = new BlockingVfs;
+    auto root = openRoot!(Rights.readOnly)(v, dir, ambientAuthority());
+    const mask = cast(StatMask)(StatMask.mtime | StatMask.change);
+    const before = root.value.statAt("f", mask).value;
+    assert(before.hasCtime && before.ctimeNs > 0);
+    assert(!root.value.statAt("f").value.hasCtime);
+
+    // A coarse clock can put the rewrite in the same tick; try until it moves.
+    Stat after;
+    foreach (attempt; 0 .. 200)
+    {
+        Thread.sleep(10.msecs);
+        write(path, "same SIZE");
+        setTimes(path, accessed, modified);
+        after = root.value.statAt("f", mask).value;
+        if (after.ctimeNs != before.ctimeNs)
+            break;
+    }
+    assert(after.size == before.size && after.mtimeNs == before.mtimeNs);
+    assert(after.ctimeNs > before.ctimeNs, "the change time cannot be put back");
 }
 
 @("vfs.blocking.VFB7.mapping")
