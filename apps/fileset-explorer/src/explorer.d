@@ -217,6 +217,8 @@ struct ExplorerApp
     NixGlobs nixGlobs;                ///
     Emitted exported;                 ///
     private bool exportStale = true;
+    // Export's controls are on the tabs' row this frame (`FXU23`).
+    private bool exportControlsInStrip;
 
     /// Whether the Export tab is the one showing.
     bool exportShown() const @safe
@@ -515,6 +517,60 @@ struct ExplorerApp
         return b.add(Widget(kind: WidgetKind.row, children: segs, height: SizeSpec.fixed(rowCells),
             decoration: Decoration(borderStyle: BorderStyle.solid, borderWidth: Insets.all(1),
                 borderSlot: Slot.border, borderRadius: 6, drawHeight: 32)));
+    }
+
+    // The cells `touchSegments` takes for `labels`: each label and a cell either side.
+    private static int segmentsWidth(in string[] labels) @safe
+    {
+        int w;
+        foreach (l; labels)
+            w += cast(int) visibleWidth(l) + 2;
+        return w;
+    }
+
+    private static immutable string[] nixModes = ["glob shim", "expand", "refuse"];
+
+    // Export's target between round buttons: ◀, its name, ▶.
+    private uint[] exportTargetControls(ref Builder b)
+    {
+        const name = centred(b, b.add(Widget(kind: WidgetKind.text, text: targetName(exportTarget),
+            slot: Slot.accentPrimary, textStyle: TextStyle(bold: true))));
+        return [touchChip(b, "◀", exportHitBase + 0), gapCells(b, 1), name, gapCells(b, 1),
+            touchChip(b, "▶", exportHitBase + 1)];
+    }
+
+    // Nix's glob mode, as segments.
+    private uint nixModeSegments(ref Builder b)
+        => touchSegments(b, nixModes, nixGlobs, actionBase + Action.globShim);
+
+    private static uint gapCells(ref Builder b, int n)
+        => b.add(Widget(kind: WidgetKind.box, width: SizeSpec.fixed(n)));
+
+    /*
+    Export's controls on the tabs' row (`FXU23`): the target, Nix's glob mode
+    when it is Nix, and copying when there is something to copy, as wide as
+    `exportControlsWidth` says.
+    */
+    private uint[] exportControls(ref Builder b)
+    {
+        uint[] parts = exportTargetControls(b);
+        if (exportTarget == Target.nix)
+            parts ~= [gapCells(b, 1), nixModeSegments(b)];
+        parts ~= b.add(Widget(kind: WidgetKind.box, width: SizeSpec.grow()));
+        if (currentExport.ok)
+            parts ~= touchChip(b, "Copy", exportHitBase + 3);
+        return parts;
+    }
+
+    // ditto: the cells it needs, chips and segments a cell wider each side than their labels.
+    private int exportControlsWidth()
+    {
+        int w = 3 + 1 + cast(int) visibleWidth(targetName(exportTarget)) + 1 + 3;
+        if (exportTarget == Target.nix)
+            w += 1 + segmentsWidth(nixModes);
+        if (currentExport.ok)
+            w += 1 + 6;
+        return w;
     }
 
     /// What the touch layout's buttons do: their hit ids are `actionBase + Action`.
@@ -820,6 +876,16 @@ struct ExplorerApp
                 fits ? want : min(want, max(width - treeNeeds, width / 2)));
             if (helpShown || exportShown) // the help and code read at half the width at least
                 l.nodes[tabsNode].extent = max(l.nodes[tabsNode].extent, min(width / 2, 90));
+            if (touch && exportShown)
+            {
+                // Room for Export's controls on the tabs' row, the tree keeping
+                // 40 columns (`FXU23`).
+                string[] labels;
+                foreach (ch; l.nodes[tabsNode].children)
+                    labels ~= l.nodes[ch].title;
+                const controls = 2 + segmentsWidth(labels) + 1 + exportControlsWidth + 1;
+                l.nodes[tabsNode].extent = max(l.nodes[tabsNode].extent, min(controls, width - 40));
+            }
         }
         dock.arrange(Rect(0, 0, width, rows));
         // In tree rows: `tv` counts rows, each `treeRowCells` tall.
@@ -843,20 +909,29 @@ struct ExplorerApp
                 labels ~= dock.layout.nodes[ch].title;
             // Tapped or clicked, a tab shows its pane (`FXU10`); on the touch
             // layout the tabs are a segmented control (`FXU11`).
+            const shown = n.children[n.active < n.children.length ? n.active : 0];
+            const pane = cast(Pane) dock.layout.nodes[shown].pane;
+            // Export's controls share the tabs' row when it has room (`FXU23`).
+            exportControlsInStrip = false;
             uint strip;
             if (touch)
             {
+                uint[] parts = [touchSegments(b, labels, n.active, tabHitBase)];
+                if (pane == Pane.export_
+                    && paneRect(pane).width - 2 >= segmentsWidth(labels) + 1 + exportControlsWidth)
+                {
+                    parts ~= b.add(Widget(kind: WidgetKind.box, width: SizeSpec.fixed(1)));
+                    parts ~= exportControls(b);
+                    exportControlsInStrip = true;
+                }
                 strip = b.add(Widget(kind: WidgetKind.row, padding: Insets(0, 1, 0, 1),
-                    height: SizeSpec.fixed(rowCells), width: SizeSpec.grow(),
-                    children: [touchSegments(b, labels, n.active, tabHitBase)]));
+                    height: SizeSpec.fixed(rowCells), width: SizeSpec.grow(), children: parts));
             }
             else
                 // The explorer's own ids, below the registry's issued slots
                 // (`INP27`): one per tab, from `tabHitBase`.
                 strip = tabStrip(b, labels, n.active,
                     idx == tabsNode ? HitBlock(tabHitBase, labels.length) : HitBlock.init);
-            const shown = n.children[n.active < n.children.length ? n.active : 0];
-            const pane = cast(Pane) dock.layout.nodes[shown].pane;
             const vertical = dock.layout.nodes[dock.layout.root].axis == DockAxis.vertical;
             return b.add(Widget(kind: WidgetKind.column, children: [strip,
                 paneView(b, pane, null, false, 0, stats)],
@@ -1115,24 +1190,29 @@ struct ExplorerApp
                 w.hitId = exportHitBase + button;
             return b.add(w);
         }
+        int touchRows; // header rows `rowCells` tall
         if (touch)
         {
-            // Touch (`FXU13`): the target between round buttons, Nix's glob
-            // mode as segments, and copying as a chip, each a touch target.
-            uint gap() => b.add(Widget(kind: WidgetKind.box, width: SizeSpec.fixed(1)));
-            const name = centred(b, b.add(Widget(kind: WidgetKind.text, text: targetName(exportTarget),
-                slot: Slot.accentPrimary, textStyle: TextStyle(bold: true))));
-            uint[] line = [touchChip(b, "◀", exportHitBase + 0), gap(), name, gap(),
-                touchChip(b, "▶", exportHitBase + 1),
-                b.add(Widget(kind: WidgetKind.box, width: SizeSpec.grow()))];
-            if (e.ok)
-                line ~= touchChip(b, "Copy", exportHitBase + 3);
-            rows ~= b.add(Widget(kind: WidgetKind.row, children: line, width: SizeSpec.grow(),
-                height: SizeSpec.fixed(rowCells)));
-            if (exportTarget == Target.nix)
-                rows ~= b.add(Widget(kind: WidgetKind.row, height: SizeSpec.fixed(rowCells),
-                    children: [touchSegments(b, ["glob shim", "expand", "refuse"], nixGlobs,
-                        actionBase + Action.globShim)]));
+            // Touch (`FXU13`): the controls are on the tabs' row when it has
+            // room (`FXU23`); here, on a narrow screen, the target and
+            // copying on one row and Nix's glob mode on the next.
+            if (!exportControlsInStrip)
+            {
+                uint[] line = exportTargetControls(b);
+                line ~= b.add(Widget(kind: WidgetKind.box, width: SizeSpec.grow()));
+                if (e.ok)
+                    line ~= touchChip(b, "Copy", exportHitBase + 3);
+                rows ~= b.add(Widget(kind: WidgetKind.row, children: line, width: SizeSpec.grow(),
+                    height: SizeSpec.fixed(rowCells)));
+                ++touchRows;
+                if (exportTarget == Target.nix)
+                {
+                    rows ~= b.add(Widget(kind: WidgetKind.row, height: SizeSpec.fixed(rowCells),
+                        children: [nixModeSegments(b)]));
+                    ++touchRows;
+                }
+                rows ~= b.add(Widget(kind: WidgetKind.text, text: ""));
+            }
         }
         else
         {
@@ -1146,12 +1226,11 @@ struct ExplorerApp
                 head ~= part([TextSpan("   ", Slot.muted), TextSpan("copy", Slot.accentPrimary),
                     TextSpan(" (y)", Slot.muted)], 3);
             rows ~= b.add(Widget(kind: WidgetKind.row, children: head));
+            rows ~= b.add(Widget(kind: WidgetKind.text, text: ""));
         }
-        rows ~= b.add(Widget(kind: WidgetKind.text, text: ""));
         // The header's cells: the touch controls are `rowCells` tall.
         const headRows = cast(long) rows.length;
-        const headCells = headRows
-            + (touch ? (exportTarget == Target.nix ? 2 : 1) * (rowCells - 1) : 0);
+        const headCells = headRows + touchRows * (rowCells - 1);
         long bodyCells = 0;
         if (!e.ok)
         {
