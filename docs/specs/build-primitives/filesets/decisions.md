@@ -202,16 +202,15 @@ The rejected reading, "physically empty", is narrower. It would not report a
 directory that holds only non-members, which a consumer copying the
 selection must still create to keep the shape.
 
-**Open:** with an unanchored pattern in the fileset, every directory is live,
-so every memberless leaf is reported: `*.md` over a source tree reports each
-directory without Markdown. Whether consumers want that, or want the report
-limited to directories beneath an `acceptAll` verdict or a literal root, is
-the owner's call, proposed as
-[D5](#d5-the-extent-of-the-empty-directory-report-proposed). The build graph's listings, the first consumer, do not read
-the report. For content addressing it is settled: a name holds only the
-directories on the way to a member
+With an unanchored pattern in the fileset, every directory is live, so this
+reading alone reports every memberless leaf: `*.md` over a source tree would
+report each directory without Markdown.
+[D5](#d5-the-extent-of-the-empty-directory-report-accepted) limits the
+report to directories whose whole content the fileset selects. For content
+addressing the extent does not matter: a name holds only the directories on
+the way to a member
 ([C3](../content-addressing/decisions.md#c3-memberless-directories-in-an-id-accepted)),
-so the report's extent no longer reaches an id.
+so the report never reaches an id.
 
 ### A14 — The driver opens every directory with `walk`
 
@@ -546,6 +545,54 @@ of castore and git against each scheme alone on every oracle tree,
 root that is a file, and `content_addressing.tee.readsOnce` counts what the
 leaf hears: each file once, each byte once.
 
+### D5 — The extent of the empty-directory report (accepted)
+
+**Question.** [`FSV4`](./SPEC.md#4-the-fileset-value-fsv) reports every
+memberless leaf the walk listed ([A13](#a13-an-empty-directory-is-a-memberless-leaf-of-the-walk)).
+An unanchored pattern makes the walk list every directory, so `*.md` over a
+source tree reports each directory that holds no Markdown. Which directories
+should the report hold?
+
+**Alternatives.**
+
+- **Every memberless leaf, as now.** Nothing is lost, and the report is
+  decided from each listing alone. For an unanchored pattern it is mostly
+  noise, and a consumer that copies the selection creates a skeleton of the
+  whole tree.
+- **Only beneath an `acceptAll` verdict.** A directory is reported when
+  the plan selects everything beneath it, as `src/**` or the literal root
+  `src` do. There the fileset asked for the directory's whole content, so
+  its emptiness is part of what was selected; under `*.md` it is not. The
+  verdict is already known when the directory is listed, so the cost stays
+  one test per directory.
+- **Everything, each marked with its verdict.** The consumer filters. This
+  moves the question to every consumer instead of answering it once.
+
+**Decision.** Only beneath an `acceptAll` verdict, accepted 2026-11-10. It is
+the one reading under which "the selection has this empty directory" is
+true, it matches what a copy of `src/**` is expected to keep, and it makes
+the report independent of how the fileset was spelled, as
+[C3](../content-addressing/decisions.md#c3-memberless-directories-in-an-id-accepted)
+made ids. The build graph's listings, the first consumer, do not read the
+report, so nothing depended on the earlier extent.
+
+**As built.** The verdict is judged with each difference's excluded side set
+aside: a directory is reported when its listing holds no member and no
+entered subdirectory, and the fileset with every difference replaced by its
+left operand gives it `acceptAll`. Read literally, the work tree,
+`everything - gitignored - /.git`, would report nothing, because a deeper
+`.gitignore` may still exclude a file and so no directory of it is ever
+`acceptAll`. An exclusion narrows what was selected; it does not turn the
+selection into a search the way `*.md` is one, so a directory holding only
+ignored files is reported, as `tree --gitignore` shows it. The evaluator
+computes the second verdict in the pass that computes the first
+(`FilesetEvaluator.wholeContent`), and a directory inherits it from its
+parent. A directory above the start roots is never reported: a plan starts
+beneath one only when the fileset does not select it whole.
+
+**Revisit** if a consumer needs the skeleton of directories a pattern
+searched, which would be a separate report, not this one.
+
 ## Open
 
 ### D2 — Whether `NarHash` is stored or recomputed (resolved)
@@ -608,40 +655,6 @@ Out of scope for v1, but [`FSM2`](./SPEC.md#7-the-resolution-machine-fsm)
 requires the request vocabulary to be open so that adding
 `listxattr`/`getxattr` is not a breaking change. Whether OSTree-style identity
 is ever a goal is undecided.
-
-### D5 — The extent of the empty-directory report (proposed)
-
-**Question.** [`FSV4`](./SPEC.md#4-the-fileset-value-fsv) reports every
-memberless leaf the walk listed ([A13](#a13-an-empty-directory-is-a-memberless-leaf-of-the-walk)).
-An unanchored pattern makes the walk list every directory, so `*.md` over a
-source tree reports each directory that holds no Markdown. Which directories
-should the report hold?
-
-**Alternatives.**
-
-- **Every memberless leaf, as now.** Nothing is lost, and the report is
-  decided from each listing alone. For an unanchored pattern it is mostly
-  noise, and a consumer that copies the selection creates a skeleton of the
-  whole tree.
-- **Only beneath an `acceptAll` verdict.** A directory is reported when
-  the plan selects everything beneath it, as `src/**` or the literal root
-  `src` do. There the fileset asked for the directory's whole content, so
-  its emptiness is part of what was selected; under `*.md` it is not. The
-  verdict is already known when the directory is listed, so the cost stays
-  one test per directory.
-- **Everything, each marked with its verdict.** The consumer filters. This
-  moves the question to every consumer instead of answering it once.
-
-**Proposal.** Only beneath an `acceptAll` verdict. It is the one reading
-under which "the selection has this empty directory" is true, it matches
-what a copy of `src/**` is expected to keep, and it makes the report
-independent of how the fileset was spelled, as
-[C3](../content-addressing/decisions.md#c3-memberless-directories-in-an-id-accepted)
-made ids. The build graph's listings, the first consumer, do not read the
-report, so nothing depends on the current extent.
-
-**Revisit** if a consumer needs the skeleton of directories a pattern
-searched, which would be a separate report, not this one.
 
 ### D6 — A symlink cycle under `symlinks = beneath` (proposed)
 

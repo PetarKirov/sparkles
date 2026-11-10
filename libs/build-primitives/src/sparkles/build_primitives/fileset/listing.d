@@ -46,7 +46,7 @@ entries it could not read (FSE2), each `path: kind`.
 struct Listing
 {
     string[] files;      ///
-    string[] emptyDirs;  ///
+    string[] emptyDirs;  /// selected whole, yet holding nothing selected (FSV4, D5)
     string[] unreadable; ///
 }
 
