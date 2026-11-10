@@ -24,5 +24,5 @@ verified and every commit green.
 | M11       | Pills with room around their labels, taps that reach their pane, the cheat sheet's ▶, a long export at frame rate, rounded fences, the I-beam on Android                                                    | `FXU15`, `FXU17`–`FXU20`                                |
 | M12       | The caret painted on the native host, the clipboard read there and on Android, a soft keyboard's editing keys, segments inside their outline, the Export tab scrolling across and Nix written a path a line | `FXU3`, `FXU17`, `FXU21`, `FXU22`                       |
 
-Progress: M1–M12 are delivered (M11 and M12 on Linux; their tablet checks are pending); every row of the ledger is verified, the Cargo and
+Progress: M1–M12 are delivered, M11 and M12 checked on the tablet too; every row of the ledger is verified, the Cargo and
 Bazel oracles when their tools are on `PATH`.
