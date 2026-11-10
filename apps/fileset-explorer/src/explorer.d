@@ -218,6 +218,8 @@ struct ExplorerApp
             == helpLeaf;
 
     private uint helpLeaf, exportLeaf;
+    // The help's fences, highlighted: by language and body.
+    private TextSpan[][][string] fenceLines;
 
     // The Export tab (`FXE12`): the target, Nix's glob mode, and the code for
     // the last query, recomputed when the tab shows a stale one.
@@ -1131,6 +1133,16 @@ struct ExplorerApp
             // The cheat sheet's queries, each with a ▶ that tries it (`FXU19`).
             o.codeActionGlyph = " ▶";
             o.codeActionHeader = "Write";
+            // The fences highlighted as the Export code is, a query's paths
+            // and metacharacters as the editor draws them (`FXA3`, `FXL8`).
+            // Highlighted once each: the help is built every frame.
+            auto cache = &fenceLines;
+            o.fenceRenderer = (const(char)[] lang, const(char)[] body_) @trusted {
+                const key = text(lang, "\0", body_);
+                if (auto hit = key in *cache)
+                    return *hit;
+                return (*cache)[key] = highlightCode(lang.idup, body_.idup);
+            };
             content = viewMarkdownInto(b, helpDoc, o);
         }
         helpContent = content;

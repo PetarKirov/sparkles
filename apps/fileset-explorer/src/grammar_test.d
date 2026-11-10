@@ -143,3 +143,27 @@ private TokenKind kindOfLabel(const(char)[] name)
                     byteKind[i] < 0 ? "nothing" : text(cast(TokenKind) byteKind[i])));
     }
 }
+
+/// FXL8 on the screen: a `fileset` fence in the help or the Export tab draws
+/// a path's text as a string and its glob metacharacters apart, as the
+/// query editor does.
+@("fileset_explorer.FXL8.fencesHighlightPaths")
+@system unittest
+{
+    import std.process : environment;
+    import sparkles.test_runner.skip : skipTest;
+    import sparkles.ui.style : Slot;
+    import export_tab : highlightCode;
+
+    if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
+        return skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
+
+    const lines = highlightCode("fileset", "src/*.{d,di} | \"a b\"\\*");
+    Slot[string] slotOf;
+    foreach (s; lines[0])
+        slotOf[s.text] = s.slot;
+    assert(slotOf.get("src/", Slot.code) == Slot.success, text(lines));
+    assert(slotOf.get("*", Slot.code) == Slot.accentSecondary, text(lines));
+    assert(slotOf.get("\"a b\"", Slot.code) == Slot.success, text(lines));
+    assert(slotOf.get("\\*", Slot.code) == Slot.link, text(lines));
+}
