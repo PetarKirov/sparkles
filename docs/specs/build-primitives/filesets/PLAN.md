@@ -4,8 +4,8 @@ _The reviewable implementation sequence for [SPEC.md](./SPEC.md). Each
 milestone lands code, tests and the evidence its gate names. Decisions and open
 questions live in [decisions.md](./decisions.md)._
 
-**Status (November 8, 2026):** M0 is delivered (PR #507), with its
-`git check-ignore -v` parity gate. M1–M5, with E0, are delivered
+**Status (November 10, 2026):** M0 is delivered (PR #507), with its
+`git check-ignore -v` parity gate. M1–M7 and M9, with E0, are delivered
 with their gates;
 the state of each requirement is in the SPEC's
 [evidence ledger](./SPEC.md#evidence-ledger).
@@ -199,6 +199,18 @@ under [A9](./decisions.md#a9-incremental-invalidation-stops-at-level-2).
 and only slower. A fault-injection case in which the heuristic reports
 "unchanged" for changed content must fail the suite — the oracle is tested, not
 only the implementation.
+
+Progress: delivered, as
+[`FSC1`–`FSC6`](./SPEC.md#12-the-subtree-cache-fsc) and
+[A20](./decisions.md#a20-the-subtree-cache-as-built). The cache lives in
+`content_addressing/cache.d`, where `SubtreeCache` is the cache and
+`CachedFold` the fold that keeps one. Its staleness check needed a file's
+change time, which the VFS gained for it
+([DV32](../../base/vfs/decisions.md#dv32-the-change-time)). Its oracle,
+`cacheDivergence`, runs the fold over a script of changes, and after each
+change compares the cached id with a cold run's. With the cache deleted, the
+ids are the same and every file is read again. Three lying validators each
+make the oracle fail, and the real one passes the same scripts.
 
 ### M9 — Migration and deletion
 

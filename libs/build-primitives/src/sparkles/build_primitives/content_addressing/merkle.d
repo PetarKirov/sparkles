@@ -33,6 +33,10 @@ $(TR $(TD) $(TD `Id finish()`) $(TD required: the file's id))
 $(TR $(TD `Supply`) $(TD `Supplied supply(dir, name, out Leaf.Id, out ulong
     size)`) $(TD optional: a tree supplied out of band for a member
     (FSS8); a member it answers `taken` for is never opened (CAO1)))
+$(TR $(TD `Cache`) $(TD a `SubtreeCache!(Dir, Leaf)`) $(TD optional: what
+    the previous run learned, and the record of this one (FSC1–FSC6); a
+    file it accepts is never opened, and a directory it accepts is never
+    encoded))
 )
 
 A file is read through its entry's `FsoRef` while `fold` runs, at the size
@@ -100,23 +104,34 @@ struct Named(Id)
     bool holdsMember; ///
 }
 
+/// The cache of a fold given none: every run starts cold.
+struct NoCache
+{
+}
+
 /**
 A fold scheme naming a tree by `Dir`'s encoding over `Leaf`'s file ids. Its
 result is `Dir.Id`, and its value a `Named!(Dir.Id)`. `Supply`, when given,
 names members from trees supplied out of band instead of reading them.
+`Cache`, when given, reuses what the previous run learned (FSC1–FSC6).
 */
-struct MerkleFold(Dir, Leaf = DefaultLeaf!Dir, Supply = NoSupply)
+struct MerkleFold(Dir, Leaf = DefaultLeaf!Dir, Supply = NoSupply, Cache = NoCache)
 if (isLeaf!Leaf && isDirFormat!(Dir, Leaf))
 {
     static assert(Dir.order != EntryOrder.none,
         Dir.stringof ~ " sorts by EntryOrder.none: its ids would differ between hosts (FSS5)");
 
+    private enum hasCache = !is(Cache == NoCache);
+    static if (__traits(hasMember, Dir, "metadata"))
+        private enum FsoMetadata encoded = Dir.metadata;
+    else
+        private enum encoded = cast(FsoMetadata)(FsoMetadata.executable | FsoMetadata.linkTarget);
+
     enum order = Dir.order;              ///
     enum traversal = Traversal.fold;     ///
-    static if (__traits(hasMember, Dir, "metadata"))
-        enum FsoMetadata metadata = Dir.metadata; ///
-    else
-        enum metadata = cast(FsoMetadata)(FsoMetadata.executable | FsoMetadata.linkTarget); ///
+    /// What the encoding needs, and with a cache each file's fingerprint
+    /// (FSC2).
+    enum metadata = hasCache ? cast(FsoMetadata)(encoded | FsoMetadata.fingerprint) : encoded;
 
     alias Value = Named!(Dir.Id); ///
     alias Result = Dir.Id; ///
@@ -125,12 +140,29 @@ if (isLeaf!Leaf && isDirFormat!(Dir, Leaf))
     Leaf leaf; /// the file identity's state, reused for every file
     static if (!is(Supply == NoSupply))
         Supply supply; /// the trees supplied out of band
+    static if (hasCache)
+        Cache cache; /// the previous run's record, and this run's
     private string why;
 
     /// Encodes one directory, hashing its files.
     bool fold(Entries, Exec)(scope const(char)[] path, Entries entries, bool empty, ref Exec exec,
         out Value value)
     {
+        static if (hasCache)
+        {
+            const rec = cache.recorded(path);
+            {
+                Dir.Id id;
+                bool held;
+                if (cache.reuseDirectory(rec, path, entries, id, held))
+                {
+                    value = Value(id, held);
+                    return true;
+                }
+            }
+            cache.open(path);
+            uint cursor;
+        }
         dir.begin();
         bool holds;
         foreach (e; entries)
@@ -138,38 +170,50 @@ if (isLeaf!Leaf && isDirFormat!(Dir, Leaf))
             final switch (e.node.kind)
             {
                 case FsoKind.directory:
+                    static if (hasCache)
+                        cache.directory(e.name, e.value.id, e.value.holdsMember);
                     if (!e.value.holdsMember)
                         continue; // not part of the tree named (C3)
                     dir.directory(e.name, e.value.id);
                     break;
                 case FsoKind.symlink:
+                    static if (hasCache)
+                        cache.symlink(e.name, e.node.target);
                     dir.symlink(e.name, e.node.target);
                     break;
                 case FsoKind.regular:
                     Leaf.Id id;
                     ulong size;
+                    bool reused;
+                    static if (hasCache)
+                        reused = cache.reuseFile(rec, cursor, e, id, size);
                     static if (!is(Supply == NoSupply))
                     {
-                        final switch (supply.supply(path, e.name, id, size))
-                        {
-                            case Supplied.taken:
-                                dir.file(e.name, e.node.executable, id, size);
-                                holds = true;
-                                continue;
-                            case Supplied.refused:
-                                return fail("a supplied tree does not chain to its root");
-                            case Supplied.none:
-                                break;
-                        }
+                        if (!reused)
+                            final switch (supply.supply(path, e.name, id, size))
+                            {
+                                case Supplied.taken:
+                                    reused = true;
+                                    break;
+                                case Supplied.refused:
+                                    return fail("a supplied tree does not chain to its root");
+                                case Supplied.none:
+                                    break;
+                            }
                     }
-                    if (!hashFile(e.ref_, id, size))
+                    if (!reused && !hashFile(e.ref_, id, size))
                         return false;
+                    static if (hasCache)
+                        cache.file(e.name, e.node.executable, e.hasFingerprint, e.fingerprint, id, size,
+                            reused);
                     dir.file(e.name, e.node.executable, id, size);
                     break;
             }
             holds = true;
         }
         value = Value(dir.seal(), holds);
+        static if (hasCache)
+            cache.close(value.id, holds);
         return true;
     }
 
@@ -181,7 +225,12 @@ if (isLeaf!Leaf && isDirFormat!(Dir, Leaf))
     string failure() const => why;
 
     /// The fileset root's id.
-    Result finish(ref Value root) => root.id;
+    Result finish(ref Value root)
+    {
+        static if (hasCache)
+            cache.seal();
+        return root.id;
+    }
 
     // Hashes the file `r` names, streamed at the size its `stat` reports.
     private bool hashFile(Ref)(Ref r, out Leaf.Id id, out ulong size)

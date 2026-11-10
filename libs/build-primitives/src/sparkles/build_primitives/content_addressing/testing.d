@@ -15,22 +15,23 @@ import std.conv : text;
 import std.digest.sha : SHA1, SHA256;
 import std.file : rmdirRecurse;
 import std.meta : AliasSeq;
-import std.random : Mt19937;
-import std.string : lineSplitter, strip;
+import std.random : Mt19937, uniform;
+import std.string : indexOf, lineSplitter, strip;
 
 import sparkles.base.hash.blake3 : Blake3;
 import sparkles.base.vfs.mem : MemVfs;
 import sparkles.base.vfs.types : Rights;
 
+import sparkles.build_primitives.content_addressing.cache;
 import sparkles.build_primitives.content_addressing.castore;
 import sparkles.build_primitives.content_addressing.git;
 import sparkles.build_primitives.content_addressing.merkle;
 import sparkles.build_primitives.content_addressing.nar;
 import sparkles.build_primitives.content_addressing.outboard;
-import sparkles.build_primitives.fileset.fso : EntryOrder;
+import sparkles.build_primitives.fileset.fso : EntryOrder, FsoFingerprint;
 import sparkles.build_primitives.fileset.pattern : CasePolicy;
 import sparkles.build_primitives.fileset.scheme : FsoRef;
-import sparkles.build_primitives.fileset.testing : RecordingExecutor, fixtureSet, materialize,
+import sparkles.build_primitives.fileset.testing : RecordingExecutor, fixtureSet, materialize, openFixture,
     randomTree, schemeResolve, scratchFoldsCase, scratchTree;
 import sparkles.build_primitives.fileset.value : Filesets;
 import sparkles.test_runner.skip : skipTest;
@@ -997,4 +998,456 @@ is read.
     broken.supply.store.trees["a/b/huge"].outboard = bad;
     assertSchemeFailed(resolveScheme(root.value.borrow, sets, f, broken, exec),
         "a supplied tree does not chain to its root", "a flipped top record");
+}
+
+// ── M7: the subtree cache ────────────────────────────────────────────────
+
+/// A validator that lies: every recorded file is unchanged.
+struct TrustingValidator
+{
+    bool unchanged(in FsoFingerprint recorded, in FsoFingerprint now, long stampNs) const
+        @safe pure nothrow @nogc => true;
+}
+
+/// A validator that compares the fingerprint but not the change time, as a
+/// cache that keeps only modification times does.
+struct MtimeValidator
+{
+    bool unchanged(in FsoFingerprint recorded, in FsoFingerprint now, long stampNs) const
+        @safe pure nothrow @nogc
+        => recorded.size == now.size && recorded.mtimeNs == now.mtimeNs
+        && recorded.device == now.device && recorded.inode == now.inode;
+}
+
+/// A validator that trusts a matching fingerprint however close to the
+/// recording it was taken: racy-git's bug.
+struct RacyValidator
+{
+    bool unchanged(in FsoFingerprint recorded, in FsoFingerprint now, long stampNs) const
+        @safe pure nothrow @nogc => recorded == now;
+}
+
+/// One run's outcome: its id, and the record it leaves for the next.
+struct CachedRun
+{
+    string id;      /// `toCastoreText` of the root, or why the run failed
+    ubyte[] record; /// the encoded cache
+    size_t filesRead, filesReused, dirsReused, dirsEncoded; ///
+}
+
+/**
+Resolves the tree in `vfs` with the castore fold and a cache loaded from
+`previous` (none when empty), stamped with the backend's clock.
+*/
+CachedRun cachedRun(V = StatValidator)(ref MemVfs vfs, const(ubyte)[] previous, V validator = V.init)
+    @system
+{
+    import std.array : Appender;
+
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+    import sparkles.build_primitives.fileset.scheme : resolveScheme;
+
+    auto sets = Filesets(CasePolicy.sensitive);
+    auto root = openRoot!(Rights.readOnly)(&vfs, "", ambientAuthority());
+    assert(!root.hasError);
+    RecordingExecutor exec;
+    CachedFold!(CastoreDirectory, CastoreDirectory.Leaf, V) fold;
+    fold.cache.validator = validator;
+    if (previous.length)
+        assert(!fold.cache.load(previous).hasError, "a cache this module wrote loads");
+    fold.cache.begin(vfs.clockNs);
+    const got = resolveScheme(root.value.borrow, sets, sets.everything, fold, exec);
+    CachedRun run;
+    if (got.hasError)
+    {
+        run.id = got.error.context.idup;
+        return run;
+    }
+    run.id = toCastoreText(got.value.digest).idup;
+    Appender!(ubyte[]) bytes;
+    assert(fold.cache.encode(bytes));
+    run.record = bytes[];
+    run.filesRead = fold.cache.filesRead;
+    run.filesReused = fold.cache.filesReused;
+    run.dirsReused = fold.cache.dirsReused;
+    run.dirsEncoded = fold.cache.dirsEncoded;
+    return run;
+}
+
+/// The id of the tree in `vfs` with no cache at all.
+string coldId(ref MemVfs vfs) @system
+{
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+    import sparkles.build_primitives.fileset.scheme : resolveScheme;
+
+    auto sets = Filesets(CasePolicy.sensitive);
+    auto root = openRoot!(Rights.readOnly)(&vfs, "", ambientAuthority());
+    RecordingExecutor exec;
+    CastoreScheme plain;
+    const got = resolveScheme(root.value.borrow, sets, sets.everything, plain, exec);
+    return got.hasError ? got.error.context.idup : toCastoreText(got.value.digest).idup;
+}
+
+/// What a script does to the tree between two runs.
+enum Change : ubyte
+{
+    sameSizeRestoredTimes, /// rewrite at the same size, mtime put back (`touch -r`)
+    resize,                /// rewrite at another size
+    add,                   /// a new file
+    remove,                /// a file removed
+    recreate,              /// removed and written again: same size, mtime, often inode
+    chmod,                 /// the executable bit flipped
+    relink,                /// a link's target changed
+    rename,                /// a file moved to a new name
+}
+
+/**
+M7's oracle. Runs the cached fold over `literal` and then after each change
+of `script`, each run loading the record the one before left, and compares
+every id with a cold run's. Returns the first divergence, or `null`.
+
+The backend's clock moves by `tickNs` before each change, and each run is
+stamped with it. A tick of zero places a change in the same timestamp tick
+as the run before it.
+*/
+string cacheDivergence(V = StatValidator)(string literal, const(Change)[] script, long tickNs,
+    ulong seed = 1, V validator = V.init) @system
+{
+    import std.algorithm.searching : canFind, endsWith;
+
+    auto made = openFixture(literal);
+    auto vfs = &made.value.get().vfs;
+    vfs.clockNs = 10_000_000_000;
+    string[] files, links;
+    foreach (line; literal.lineSplitter)
+    {
+        const l = line.strip;
+        if (!l.length || l.endsWith("/"))
+            continue;
+        if (l.canFind(" -> "))
+            links ~= l[0 .. l.indexOf(" -> ")];
+        else
+        {
+            const name = l.canFind(" = ") ? l[0 .. l.indexOf(" = ")] : l;
+            files ~= name.endsWith(" +x") ? name[0 .. $ - 3] : name;
+        }
+    }
+    auto rng = Mt19937(cast(uint) seed);
+    const(ubyte)[] record;
+    foreach (step; 0 .. script.length + 1)
+    {
+        if (step)
+        {
+            vfs.clockNs += tickNs;
+            const what = text(change(*vfs, script[step - 1], files, links, rng));
+            const cold = coldId(*vfs);
+            const warm = cachedRun!V(*vfs, record, validator);
+            if (warm.id != cold)
+                return text("after change ", step, " (", script[step - 1], what, "): the cache gives ",
+                    warm.id, ", a cold run ", cold);
+            record = warm.record;
+        }
+        else
+        {
+            const first = cachedRun!V(*vfs, null, validator);
+            if (first.id != coldId(*vfs))
+                return "the first run differs from a cold one";
+            record = first.record;
+        }
+    }
+    return null;
+}
+
+// Applies `c` to a random file or link; returns what it changed.
+private string change(ref MemVfs vfs, Change c, ref string[] files, ref string[] links,
+    ref Mt19937 rng) @system
+{
+
+    const ns = vfs.clockNs;
+    if (!files.length && c != Change.add && c != Change.relink)
+        c = Change.add;
+    if (c == Change.relink && !links.length)
+        c = Change.add;
+    const pick = files.length ? uniform(0, files.length, rng) : 0;
+    final switch (c)
+    {
+        case Change.sameSizeRestoredTimes:
+        {
+            const path = files[pick];
+            auto bytes = vfs.contents(path).dup;
+            if (!bytes.length)
+                bytes = cast(ubyte[]) "".dup;
+            foreach (ref b; bytes)
+                b = cast(ubyte)(b == 'Q' ? 'R' : 'Q');
+            const exec = isExecutable(vfs, path);
+            assert(vfs.writeFile(path, bytes, exec));
+            // `touch -r`: the mtime the file had, which the fixtures leave at 0.
+            assert(vfs.setMtime(path, 0));
+            return " " ~ path;
+        }
+        case Change.resize:
+        {
+            const path = files[pick];
+            auto bytes = vfs.contents(path).dup ~ cast(ubyte) '+';
+            assert(vfs.writeFile(path, bytes, isExecutable(vfs, path)));
+            assert(vfs.setMtime(path, ns));
+            return " " ~ path;
+        }
+        case Change.add:
+        {
+            const path = text("added", uniform(0, 1_000_000, rng));
+            assert(vfs.writeFile(path, cast(const(ubyte)[]) path));
+            files ~= path;
+            return " " ~ path;
+        }
+        case Change.remove:
+        {
+            const path = files[pick];
+            assert(vfs.remove(path));
+            files = files[0 .. pick] ~ files[pick + 1 .. $];
+            return " " ~ path;
+        }
+        case Change.recreate:
+        {
+            const path = files[pick];
+            auto bytes = vfs.contents(path).dup;
+            foreach (ref b; bytes)
+                b = cast(ubyte)(b == 'Q' ? 'R' : 'Q');
+            const exec = isExecutable(vfs, path);
+            assert(vfs.remove(path));
+            assert(vfs.writeFile(path, bytes, exec));
+            assert(vfs.setMtime(path, 0));
+            return " " ~ path;
+        }
+        case Change.chmod:
+        {
+            const path = files[pick];
+            assert(vfs.writeFile(path, vfs.contents(path).dup, !isExecutable(vfs, path)));
+            return " " ~ path;
+        }
+        case Change.relink:
+        {
+            const path = links[uniform(0, links.length, rng)];
+            assert(vfs.remove(path));
+            assert(vfs.symlink(path, text("elsewhere", uniform(0, 1_000_000, rng))));
+            return " " ~ path;
+        }
+        case Change.rename:
+        {
+            const path = files[pick];
+            const to = text("moved", uniform(0, 1_000_000, rng));
+            assert(vfs.rename(path, to));
+            files[pick] = to;
+            return " " ~ path ~ " to " ~ to;
+        }
+    }
+}
+
+private bool isExecutable(ref MemVfs vfs, string path) @system
+{
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+
+    import std.string : lastIndexOf;
+
+    auto root = openRoot!(Rights.readOnly)(&vfs, "", ambientAuthority());
+    const slash = path.lastIndexOf('/');
+    if (slash < 0)
+        return root.value.statAt(path).value.executable;
+    auto dir = root.value.walk(path[0 .. slash]);
+    return dir.value.statAt(path[slash + 1 .. $]).value.executable;
+}
+
+/**
+FSC1, M7's gate: the cache is advisory. A run with a cache recorded on the
+same tree gives the id a cold run gives, on every oracle tree, and reads no
+file and encodes no directory; with the cache deleted it gives that id too,
+reading every file.
+*/
+@("content_addressing.cache.FSC1.advisory")
+@system unittest
+{
+    size_t trees, reused;
+    foreach (t; oracleTrees(50))
+    {
+        auto made = openFixture(t.literal);
+        auto vfs = &made.value.get().vfs;
+        vfs.clockNs = 10_000_000_000;
+        const cold = coldId(*vfs);
+        const first = cachedRun(*vfs, null);
+        assert(first.id == cold, t.label);
+        assert(first.filesReused == 0 && first.dirsReused == 0, t.label);
+
+        vfs.clockNs += 3_000_000_000;
+        const warm = cachedRun(*vfs, first.record);
+        assert(warm.id == cold, t.label);
+        assert(warm.filesRead == 0 && warm.dirsEncoded == 0,
+            text(t.label, ": ", warm.filesRead, " files read, ", warm.dirsEncoded, " directories encoded"));
+        assert(warm.dirsReused == first.dirsEncoded, t.label);
+        const third = cachedRun(*vfs, warm.record);
+        assert(third.id == cold && third.dirsEncoded == 0, text(t.label, ": a reused run records what it reused"));
+
+        const deleted = cachedRun(*vfs, null);
+        assert(deleted.id == cold && deleted.filesRead == first.filesRead, t.label);
+        ++trees;
+        reused += warm.filesReused;
+    }
+    assert(trees > 50 && reused > 500, text(trees, " trees, ", reused, " files reused"));
+}
+
+/// FSC1 through changes: the cached id equals a cold run's after every
+/// change of every kind, on random trees, with changes in the same tick
+/// as the run before them and in later ones.
+@("content_addressing.cache.FSC1.throughChanges")
+@system unittest
+{
+    import std.traits : EnumMembers;
+
+    static immutable Change[] every = [EnumMembers!Change];
+    size_t scripts;
+    foreach (t; oracleTrees(40)[5 .. $])
+        foreach (tick; [0L, 1_000_000_000L, 3_000_000_000L])
+        {
+            auto rng = Mt19937(cast(uint)(scripts + 7));
+            Change[] script;
+            foreach (_; 0 .. 12)
+                script ~= every[uniform(0, every.length, rng)];
+            const why = cacheDivergence(t.literal, script, tick, scripts);
+            assert(why is null, text(t.label, ", tick ", tick, ": ", why));
+            ++scripts;
+        }
+    assert(scripts > 100);
+}
+
+/**
+M7's fault injection: the oracle is tested, not only the cache. A validator
+that reports a changed file unchanged must make `cacheDivergence` fail,
+for each way a `stat` comparison can be fooled; the real one passes the same
+scripts.
+*/
+@("content_addressing.cache.M7.faultInjection")
+@system unittest
+{
+    enum literal = "a/x = abcd\na/y = efgh\nb/z = ijkl\nl -> a/x\n";
+    enum tick = 3_000_000_000L;
+    // Wait a tick so the first record is trusted, then rewrite in place.
+    static immutable Change[] rewrite = [Change.add, Change.sameSizeRestoredTimes,
+        Change.sameSizeRestoredTimes, Change.sameSizeRestoredTimes];
+    assert(cacheDivergence!TrustingValidator(literal, rewrite, tick) !is null,
+        "a validator that trusts everything is caught");
+    assert(cacheDivergence!MtimeValidator(literal, rewrite, tick) !is null,
+        "a rewrite whose modification time was put back is caught");
+    assert(cacheDivergence(literal, rewrite, tick) is null);
+
+    // A change in the same tick as the run that recorded the file: the
+    // fingerprint is identical, and only the stamp rule notices.
+    static immutable Change[] racy = [Change.recreate, Change.recreate, Change.recreate,
+        Change.sameSizeRestoredTimes, Change.sameSizeRestoredTimes];
+    assert(cacheDivergence!RacyValidator(literal, racy, 0) !is null,
+        "a validator without the stamp rule is caught");
+    assert(cacheDivergence(literal, racy, 0) is null);
+}
+
+/// FSC4: a change deep in the tree re-encodes the directories on its path
+/// and reuses every other; only the changed file is read.
+@("content_addressing.cache.FSC4.pathUpward")
+@system unittest
+{
+    auto made = openFixture("a/b/c/deep = 1\na/b/side = 2\na/other/o = 3\ntop = 4\n");
+    auto vfs = &made.value.get().vfs;
+    vfs.clockNs = 10_000_000_000;
+    const first = cachedRun(*vfs, null);
+    assert(first.dirsEncoded == 5);
+    vfs.clockNs += 3_000_000_000;
+    assert(vfs.writeFile("a/b/c/deep", cast(const(ubyte)[]) "22"));
+    vfs.clockNs += 3_000_000_000;
+    const after = cachedRun(*vfs, first.record);
+    assert(after.id == coldId(*vfs));
+    // a/b/c, a/b, a and the root are re-encoded; a/other is reused.
+    assert(after.dirsEncoded == 4 && after.dirsReused == 1, text(after));
+    assert(after.filesRead == 1 && after.filesReused == 3, text(after));
+}
+
+/**
+FSC5, FSC6: `load` rejects a cache whole when it is truncated, damaged, of
+another format or of another scheme, and a run after a rejection reads
+everything and still gives the right id.
+*/
+@("content_addressing.cache.FSC5.rejections")
+@system unittest
+{
+    import std.array : Appender;
+
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+    import sparkles.build_primitives.fileset.scheme : resolveScheme;
+
+    auto made = openFixture("a/x = 1\nb = 2\nl -> b\n");
+    auto vfs = &made.value.get().vfs;
+    vfs.clockNs = 10_000_000_000;
+    const good = cachedRun(*vfs, null).record;
+
+    SubtreeCache!(CastoreDirectory, CastoreDirectory.Leaf) c;
+    assert(c.load(good).value == 2 && c.loadedDirs == 2);
+    assert(c.load(good[0 .. 10]).error == CacheRejection.truncated);
+    assert(c.loadedDirs == 0, "a rejected cache leaves nothing loaded");
+    assert(c.load(good[0 .. $ - 1]).error == CacheRejection.truncated);
+    auto flipped = good.dup;
+    flipped[$ / 2] ^= 1;
+    assert(c.load(flipped).error == CacheRejection.damaged);
+    auto versioned = good.dup;
+    versioned[8] ^= 0xff;
+    assert(c.load(versioned).error == CacheRejection.otherFormat);
+
+    // A cache of another file identity.
+    auto root = openRoot!(Rights.readOnly)(vfs, "", ambientAuthority());
+    auto sets = Filesets(CasePolicy.sensitive);
+    RecordingExecutor exec;
+    // The same layout as castore's, with git's framed blobs: another file identity.
+    CachedFold!(CastoreDirectory, FramedLeaf!(Blake3, "blob")) framed;
+    framed.cache.begin(vfs.clockNs);
+    assert(!resolveScheme(root.value.borrow, sets, sets.everything, framed, exec).hasError);
+    Appender!(ubyte[]) framedBytes;
+    assert(framed.cache.encode(framedBytes));
+    assert(c.load(framedBytes[]).error == CacheRejection.otherScheme);
+    // Every rejected cache leaves a run cold, and right.
+    vfs.clockNs += 3_000_000_000;
+    foreach (bad; [flipped, versioned, framedBytes[], good[0 .. 10]])
+    {
+        CachedFold!CastoreDirectory fold;
+        assert(fold.cache.load(bad).hasError);
+        fold.cache.begin(vfs.clockNs);
+        const id = resolveScheme(root.value.borrow, sets, sets.everything, fold, exec);
+        assert(toCastoreText(id.value.digest) == coldId(*vfs));
+        assert(fold.cache.filesRead == 2 && fold.cache.filesReused == 0);
+    }
+
+    // A run that did not complete records nothing.
+    CachedFold!CastoreDirectory unfinished;
+    unfinished.cache.begin(0);
+    Appender!(ubyte[]) none;
+    assert(!unfinished.cache.encode(none) && none[].length == 0);
+}
+
+/// FSC3: `StatValidator` accepts an equal fingerprint only when it was
+/// recorded at least the margin before its run's stamp.
+@("content_addressing.cache.FSC3.statValidator")
+@safe pure nothrow @nogc unittest
+{
+    const fp = FsoFingerprint(5, 1, 9, 100, 1_000);
+    StatValidator v;
+    v.marginNs = 10;
+    assert(v.unchanged(fp, fp, 1_011));
+    assert(!v.unchanged(fp, fp, 1_010), "a change time within the margin is racy");
+    foreach (i; 0 .. 5)
+    {
+        FsoFingerprint other = fp;
+        final switch (i)
+        {
+            case 0: other.size++; break;
+            case 1: other.device++; break;
+            case 2: other.inode++; break;
+            case 3: other.mtimeNs++; break;
+            case 4: other.ctimeNs++; break;
+        }
+        assert(!v.unchanged(fp, other, 10_000));
+    }
 }
