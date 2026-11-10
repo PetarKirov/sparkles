@@ -545,6 +545,65 @@ of castore and git against each scheme alone on every oracle tree,
 root that is a file, and `content_addressing.tee.readsOnce` counts what the
 leaf hears: each file once, each byte once.
 
+### A20 — The subtree cache, as built
+
+M7 delivers [`FSC1`–`FSC6`](./SPEC.md#12-the-subtree-cache-fsc) under
+[A9](#a9-incremental-invalidation-stops-at-level-2). The requirements leave
+the following choices open.
+
+- **The cache is a fold's part, not the machine's.** `MerkleFold` takes a
+  fourth parameter, `Cache`, as it takes `Supply`, and `CachedFold` names
+  the result. The machine is unchanged apart from the fingerprint it
+  forwards. It still lists every directory and stats every member, because
+  without a watcher nothing else can tell it that a directory is unchanged.
+  The cache saves file reads and directory encodings. A serial scheme such
+  as NAR has no subtree ids to cache, as the research found for git's
+  `cache-tree`.
+- **One record per directory, keyed by its path.** A record holds the
+  directory's id and each entry the fold encoded: a file's id, size,
+  executable bit and fingerprint, a link's target, and a subdirectory's id.
+  A directory whose entries all match is reused without being encoded. The
+  match compares a subdirectory by its id, so a change deep in the tree
+  invalidates exactly its path, as git's `cache-tree` invalidates every
+  parent of a changed path. A directory that does not match still reuses
+  each file its validator accepts. An entry's record is found by walking
+  the recorded entries in the scheme's order alongside the listing.
+- **The fingerprint adds the change time to the cache's key.**
+  `FsoFingerprint` is the size, both times, the device and the inode, all
+  from the one `stat` the fold already needed for the executable bit. The
+  change time came from the VFS for this use
+  ([DV32](../../base/vfs/decisions.md#dv32-the-change-time)). Without it, a
+  rewrite whose modification time was put back would be a false
+  "unchanged", which is
+  [`ccache`'s class of hole](../../../research/content-addressing/build-input-caches.md).
+- **The stamp rule is racy-git's, against a caller's stamp.** `begin` takes
+  a stamp no later than the run's first `stat`, and the next run trusts a
+  file only if its recorded change time is more than `marginNs` older than
+  that stamp. The margin defaults to two seconds, which covers the coarse
+  clock's lag and FAT's two-second modification times. The library cannot
+  read a clock (invariant 1), so the caller supplies the stamp. On a local
+  file system the current time serves. On a remote one whose clock may
+  differ, a file just written there supplies its change time, which is how
+  git dates its index file.
+- **The validator is a parameter.** `StatValidator` is the default. The
+  oracle substitutes validators that lie, and M7's gate requires that each
+  makes the oracle fail: trusting everything, ignoring the change time, and
+  dropping the stamp rule.
+- **The stored form is the records' bytes, checksummed.** A header holds
+  the format version, the record sizes, a digest of the encoding's and the
+  identity's type names, and a canary. The directories follow in path
+  order, so `load` can bisect, then the entries and the names, then a BLAKE3
+  digest of everything before it. Any mismatch rejects the whole cache.
+  The canary is the ids that the scheme gives a fixed small tree. A cache
+  recorded under an encoding that has since changed, with its type names
+  unchanged, fails the canary rather than reusing ids the new encoding
+  would not give. The records are host-endian, since a cache belongs to
+  one checkout on one machine.
+- **Nothing consumes it yet.** The build graph's planning reads
+  ([D44](../build-graph/decisions.md#d44-the-build-graph-reaches-files-through-the-vfs-accepted))
+  are the intended consumer. Where the cache's bytes live, such as one file
+  per checkout under the build directory, is that consumer's decision.
+
 ### D5 — The extent of the empty-directory report (accepted)
 
 **Question.** [`FSV4`](./SPEC.md#4-the-fileset-value-fsv) reports every
