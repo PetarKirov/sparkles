@@ -725,6 +725,11 @@ package(sparkles.event_horizon) Stat toStat(ref const stat_t st, StatMask mask)
     s.size = st.st_size;
     s.device = st.st_dev;
     s.permissions = st.st_mode & octal7777;
+    if (mask & StatMask.identity)
+    {
+        s.hasIdentity = true;
+        s.inode = st.st_ino;
+    }
     if (mask & StatMask.mtime)
     {
         s.hasMtime = true;
@@ -751,6 +756,7 @@ version (linux)
         stat_t st;
         st.st_mode = sx.stx_mode;
         st.st_size = sx.stx_size;
+        st.st_ino = sx.stx_ino;
         const ulong major = sx.stx_dev_major, minor = sx.stx_dev_minor;
         st.st_dev = cast(typeof(st.st_dev))((minor & 0xff) | (major << 8) | ((minor & ~0xffUL) << 12));
         static if (__traits(compiles, st.st_mtim))

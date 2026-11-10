@@ -349,6 +349,7 @@ optional argument of [`VFO5`](#vfo5-sharing-of-created-entries); passing
 | `openFile!mode(name, sharing)`          | `read` and/or `write`; `create` for a creating mode | a `File`                                                     |
 | `mkdirAt(name, sharing)`                | `create`                                            | nothing; `exists` if present                                 |
 | `statAt(name, mask)`                    | `stat`                                              | a `Stat` of the entry itself                                 |
+| `stat(mask)`                            | `stat`                                              | a `Stat` of the directory the handle holds                   |
 | `readlinkAt(name, buffer)`              | `stat`                                              | the target bytes, as a slice of `buffer`                     |
 | `symlinkAt(name, target)`               | `create`                                            | nothing; see [`VFO10`](#vfo10-symbolic-link-targets)         |
 | `unlinkAt(name)`                        | `remove`                                            | nothing; `isADirectory` for a directory                      |

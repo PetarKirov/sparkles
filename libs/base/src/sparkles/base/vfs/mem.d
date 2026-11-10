@@ -983,6 +983,11 @@ private:
         s.executable = node.executable;
         s.size = node.kind == EntryKind.directory ? 0 : node.dataLength;
         s.device = deviceOf(n);
+        if (mask & StatMask.identity)
+        {
+            s.hasIdentity = true;
+            s.inode = n + 1; // a node's index is fixed for its lifetime
+        }
         if (mask & StatMask.mtime)
         {
             s.hasMtime = true;

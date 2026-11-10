@@ -339,9 +339,33 @@ version (linux)
         Statx sx;
         assert(fstatat(AT_FDCWD, path.toStringz, &st, AT_SYMLINK_NOFOLLOW) == 0);
         assert(statx(AT_FDCWD, path.toStringz, AT_SYMLINK_NOFOLLOW, STATX_BASIC_STATS, &sx) == 0);
-        foreach (mask; [StatMask.basic, StatMask.mtime])
+        foreach (mask; [StatMask.basic, StatMask.mtime, StatMask.identity])
             assert(statxToStat(sx, mask) == toStat(st, mask), path);
     }
+}
+
+/// VFO6: a directory reached through a followed link has the identity of the
+/// directory itself, and a sibling's differs.
+@("vfs.blocking.VFO6.identity")
+@system unittest
+{
+    auto dir = scratchDir("identity");
+    scope (exit) rmdirRecurse(dir);
+    mkdirRecurse(buildPath(dir, "a/inner"));
+    mkdirRecurse(buildPath(dir, "b"));
+    symlink(".", buildPath(dir, "a/self"));
+    auto v = new BlockingVfs;
+    ResolvePolicy follow;
+    follow.symlinks = SymlinkPolicy.beneath;
+    auto root = openRoot!(Rights.readOnly)(v, dir, ambientAuthority(), follow);
+    auto a = root.value.walk("a");
+    auto self = a.value.walk("self");
+    const own = a.value.stat(StatMask.identity).value;
+    const linked = self.value.stat(StatMask.identity).value;
+    assert(own.hasIdentity && linked.hasIdentity);
+    assert(own.device == linked.device && own.inode == linked.inode);
+    assert(own.inode != root.value.statAt("b", StatMask.identity).value.inode);
+    assert(!a.value.stat().value.hasIdentity);
 }
 
 @("vfs.blocking.VFB7.mapping")
