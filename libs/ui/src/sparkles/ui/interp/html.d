@@ -376,7 +376,8 @@ private void boxStyle(Writer)(ref Writer w, in Widget node, in Visual vis)
         put(w, ";background:");
         rgba(w, vis.bg, vis.bgAlpha);
     }
-    borderStyle(w, vis);
+    if (!vis.insideGlyphFrame && !vis.pixelsOnly) // its glyphs are the frame here
+        borderStyle(w, vis);
     if (vis.borderRadius > 0)
     {
         put(w, ";border-radius:");

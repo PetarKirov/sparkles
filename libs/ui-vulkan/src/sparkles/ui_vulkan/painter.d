@@ -456,6 +456,8 @@ if (isImageSource!Images)
     */
     void fillRect(in Rect r, in Visual visual)
     {
+        if (visual.cellsOnly) // a glyph frame this target draws as a shape
+            return;
         const v = densityScaled(visual);
         int x = px(r.x), w = r.width * m_.cellW;
         centredSpan(x, w, v.drawWidth);
@@ -482,7 +484,9 @@ if (isImageSource!Images)
 
         const fill = v.hasBg ? rgba(v.bg, v.bgAlpha) : v4(0);
         const edge = v.border.any ? rgba(v.border.color, v.border.alpha) : v4(0);
-        if (v.borderRadius > 0)
+        // A glyph frame's border, drawn here in its glyphs' place, is one
+        // ring at their lines, square or rounded.
+        if (v.borderRadius > 0 || (v.insideGlyphFrame && v.border.any))
         {
             // Background and outline in one record: the ring lies outside
             // the box, so drawing it over the fill is all the order there is.
@@ -518,6 +522,8 @@ if (isImageSource!Images)
     */
     void textRun(in Point at, scope const(char)[] text, in Visual v)
     {
+        if (v.cellsOnly)
+            return;
         cellText(px(at.x), py(at.y), text, v);
     }
 
@@ -536,6 +542,8 @@ if (isImageSource!Images)
     */
     void textRunIn(in Rect r, scope const(char)[] text, in Visual v)
     {
+        if (v.cellsOnly)
+            return;
         static if (drawsText && hasInterfaceFace!GlyphSource)
             if (interfaceRunIn(r, text, v))
                 return;
@@ -549,6 +557,8 @@ if (isImageSource!Images)
     /// One glyph at cell `at`, in the cell font.
     void glyph(in Point at, dchar g, in Visual v)
     {
+        if (v.cellsOnly)
+            return;
         static if (drawsText)
         {
             if (!textReady)
@@ -981,6 +991,8 @@ if (isImageSource!Images)
     /// A line's pixels, from `lineRects`.
     void line(in Point from, in Point to, in Visual v, LineStyle style)
     {
+        if (v.cellsOnly)
+            return;
         const c = rgba(v.fg, v.fgAlpha);
         lineRects(px(from.x), py(from.y), px(to.x), style == LineStyle.wavy, m_.cellH,
             (Rect r) { solid(r, c); });
@@ -989,6 +1001,8 @@ if (isImageSource!Images)
     /// A one-pixel rule along `edge` of `rect` (`UIA2`).
     void rule(in Rect rect, RuleEdge edge, in Visual v)
     {
+        if (v.cellsOnly)
+            return;
         solid(ruleRect(pixelsOf(rect), edge), rgba(v.fg, v.fgAlpha));
     }
 
@@ -1604,6 +1618,32 @@ unittest
     assert(boxIs(shadow, 7, 24, 66, 63) && shadow.shape.array[0] == QuadKind.roundedBox);
     assert(boxIs(box, 10, 20, 60, 60));
     assert(box.shape.array == [QuadKind.roundedBox, 12, 2, 3], "radius 12, a 2 px ring");
+}
+
+@("ui_vulkan.painter.aGlyphFrameIsOneRing")
+@safe pure nothrow @nogc
+unittest
+{
+    // A box inside a glyph frame with a border draws that frame: one record,
+    // its fill and ring at the glyphs' lines, square too; what carries
+    // `cellsOnly` — the glyphs, the fills behind them — draws nothing.
+    Painter!NoImages p;
+    p.begin(Size(400, 300), FrameMetrics(cellW: 10, cellH: 20, density: 2));
+    const ring = BoxBorder(width: Insets.all(1), style: BorderStyle.solid);
+    p.fillRect(Rect(1, 1, 6, 3), Visual(bg: RgbColor(9, 9, 9), hasBg: true, border: ring,
+        insideGlyphFrame: true));
+    assert(p.instances.length == 1);
+    assert(boxIs(p.instances[0], 15, 30, 50, 40), "inset half a cell to the glyphs' lines");
+    assert(p.instances[0].shape.array == [QuadKind.roundedBox, 0, 2, 3], "square, a 2 px ring");
+
+    p.fillRect(Rect(1, 1, 6, 1), Visual(bg: RgbColor(9, 9, 9), hasBg: true, cellsOnly: true));
+    p.textRun(Point(1, 1), "╭──╮", Visual(cellsOnly: true));
+    p.textRunIn(Rect(1, 1, 4, 1), "╭──╮", Visual(cellsOnly: true));
+    p.glyph(Point(1, 1), '│', Visual(cellsOnly: true));
+    p.rule(Rect(1, 1, 4, 1), RuleEdge.top, Visual(cellsOnly: true));
+    p.line(Point(1, 1), Point(4, 1), Visual(cellsOnly: true), LineStyle.solid);
+    assert(p.instances.length == 1 && p.report[Degradation.glyphMiss] == 0,
+        "the glyph frame is a cell target's");
 }
 
 @("ui_vulkan.painter.textAndEffectsDegradeVisibly")

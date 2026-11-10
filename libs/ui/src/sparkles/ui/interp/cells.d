@@ -276,7 +276,7 @@ struct CellGrid
                         c.hasBg = true;
                     }
 
-        if (v.border.any)
+        if (v.border.any && !v.insideGlyphFrame && !v.pixelsOnly) // a pixel target's frame
         {
             const bw = v.border.width;
             const bottomOnly = bw.bottom > 0 && bw.top == 0 && bw.left == 0
@@ -839,6 +839,30 @@ static assert(isCanvas!CellGrid);
         borderRadius: 4));
     assert(d.at(0, 0).glyph == '╔' && d.at(3, 2).glyph == '╝');
     assert(d.at(1, 0).glyph == '═' && d.at(0, 1).glyph == '║');
+}
+
+@("ui.cells.aPixelTargetsFrameIsNotDrawnInCells")
+@safe unittest
+{
+    import sparkles.base.term_color : RgbColor;
+    import sparkles.ui.style : BorderStyle, BoxBorder, Visual;
+    import sparkles.ui.geometry : Insets;
+
+    // A glyph frame's ring and a label's outline are a pixel target's: in
+    // cells the frame is its glyphs, and the outline's row is the label's own.
+    const border = BoxBorder(width: Insets.all(1), style: BorderStyle.solid,
+        color: RgbColor(255, 255, 255));
+    auto g = CellGrid(4, 3, RgbColor(0xcc, 0xcc, 0xcc), RgbColor(0, 0, 0));
+    g.fillRect(Rect(0, 0, 4, 3), Visual(border: border, insideGlyphFrame: true,
+        bg: RgbColor(9, 9, 9), hasBg: true));
+    assert(g.at(0, 0).glyph == ' ' && g.at(1, 0).glyph == ' ' && !g.at(1, 1).hasBg,
+        "no border glyphs, no fill");
+    g.fillRect(Rect(0, 1, 4, 1), Visual(border: border, pixelsOnly: true,
+        bg: RgbColor(9, 9, 9), hasBg: true));
+    assert(g.at(0, 1).glyph == ' ' && g.at(1, 1).hasBg && g.at(1, 1).bg == RgbColor(9, 9, 9),
+        "the outline's fill, as whole cells, and no border");
+    g.fillRect(Rect(0, 2, 4, 1), Visual(cellsOnly: true, bg: RgbColor(7, 7, 7), hasBg: true));
+    assert(g.at(1, 2).bg == RgbColor(7, 7, 7), "a cell target's own: drawn");
 }
 
 @("ui.cells.aSingleSideAccentSurvivesIntoTheTerminal")

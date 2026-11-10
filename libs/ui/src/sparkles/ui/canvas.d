@@ -134,6 +134,9 @@ struct Ink
     /// table, `0` for none. A cell backend turns a run of equal ids into one
     /// terminal hyperlink; a GPU backend ignores it.
     ushort linkId;
+    /// Painted on a cell target only (`Decoration.cellsOnly`): a glyph frame a
+    /// pixel target draws as a shape instead.
+    bool cellsOnly;
 }
 
 /**
@@ -155,12 +158,14 @@ struct BoxChrome
     int drawWidth;      /// drawn width in CSS px, centred; 0 = the whole rect
     int drawInset;      /// CSS px the drawn box is inset by on every side
     bool insideGlyphFrame; /// inside a glyph frame (`Decoration.insideGlyphFrame`)
+    bool cellsOnly;  /// painted on a cell target only (`Decoration.cellsOnly`)
+    bool pixelsOnly; /// its border a pixel target's only (`Decoration.pixelsOnly`)
 
     /// Whether any of it would actually paint — the test the display list
     /// makes before spending an arena slot.
     bool any() const @safe pure nothrow @nogc
         => border.any || shadow.any || arrow || borderRadius > 0 || drawHeight > 0
-            || drawWidth > 0 || drawInset > 0 || insideGlyphFrame;
+            || drawWidth > 0 || drawInset > 0 || insideGlyphFrame || cellsOnly || pixelsOnly;
 }
 
 // ---------------------------------------------------------------------------
@@ -644,14 +649,14 @@ Ink inkOf(in Visual v) @safe pure nothrow @nogc
         hasBg: v.hasBg, underline: v.underline,
         underlineAlpha: v.underlineAlpha, fontRole: v.fontRole,
         typeStep: v.typeStep, textAlign: v.textAlign, styleBits: v.styleBits,
-        fontScale: v.fontScale, linkId: v.linkId);
+        fontScale: v.fontScale, linkId: v.linkId, cellsOnly: v.cellsOnly);
 
 /// The box half of `v`.
 BoxChrome boxChromeOf(in Visual v) @safe pure nothrow @nogc
     => BoxChrome(border: v.border, borderRadius: v.borderRadius,
         shadow: v.shadow, arrow: v.arrow, arrowOffset: v.arrowOffset,
         drawHeight: v.drawHeight, drawWidth: v.drawWidth, drawInset: v.drawInset,
-        insideGlyphFrame: v.insideGlyphFrame);
+        insideGlyphFrame: v.insideGlyphFrame, cellsOnly: v.cellsOnly, pixelsOnly: v.pixelsOnly);
 
 /// `ink` back as a `Visual`, for the canvas primitives that take one.
 Visual visualOf(in Ink ink) @safe pure nothrow @nogc
@@ -670,6 +675,7 @@ Visual visualOf(in Ink ink) @safe pure nothrow @nogc
     v.styleBits = ink.styleBits;
     v.fontScale = ink.fontScale;
     v.linkId = ink.linkId;
+    v.cellsOnly = ink.cellsOnly;
     return v;
 }
 
@@ -693,6 +699,8 @@ Visual visualOf(in FillRect f) @safe pure nothrow @nogc
         v.drawWidth = f.chrome.drawWidth;
         v.drawInset = f.chrome.drawInset;
         v.insideGlyphFrame = f.chrome.insideGlyphFrame;
+        v.cellsOnly = f.chrome.cellsOnly;
+        v.pixelsOnly = f.chrome.pixelsOnly;
     }
     return v;
 }

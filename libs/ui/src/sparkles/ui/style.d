@@ -547,6 +547,8 @@ struct Visual
     /// drawn inside a frame of box-drawing glyphs around the rect
     /// (`Decoration.insideGlyphFrame`)
     bool insideGlyphFrame;
+    bool cellsOnly;  /// painted on a cell target only (`Decoration.cellsOnly`)
+    bool pixelsOnly; /// its border a pixel target's only (`Decoration.pixelsOnly`)
 
     // --- text chrome (resolved from a widget's TextStyle) ---
     FontRole fontRole;      /// which font family the run wants
@@ -602,8 +604,27 @@ struct Decoration
     of their cells. A pixel target draws the box inset half a cell on every
     side, to those lines, with `borderRadius` rounding it as `╭` does; a
     cell target, where the glyphs are the frame, draws none of it.
+
+    With a border it is the frame itself on a pixel target: one stroke at
+    the glyphs' lines, rounded by `borderRadius`, in place of the glyphs, which
+    then carry `cellsOnly`. A cell target draws none of the border either.
     */
     bool insideGlyphFrame;
+    /**
+    Painted on a cell target only: a pixel target paints none of this widget
+    — its fill, its border, its text. Box-drawing glyphs that a pixel target
+    draws as one shape instead (an enclosing box's `insideGlyphFrame` border)
+    carry it, so the shape's stroke is even and continuous where glyphs fitted
+    to a font's cell would not be.
+    */
+    bool cellsOnly;
+    /**
+    The border is a pixel target's only: a cell target paints the fill, as
+    whole cells, and no border. A rounded outline around a label on a glyph
+    frame's rule, which on a cell target would be glyphs over the label's own
+    row.
+    */
+    bool pixelsOnly;
 }
 
 /// A widget's declared text style — font role, relative size, weight/italic/
@@ -1074,6 +1095,8 @@ Visual resolveVisual(in Palette pal, Slot slot, in Decoration deco, in TextStyle
     v.drawWidth = deco.drawWidth;
     v.drawInset = deco.drawInset;
     v.insideGlyphFrame = deco.insideGlyphFrame;
+    v.cellsOnly = deco.cellsOnly;
+    v.pixelsOnly = deco.pixelsOnly;
     if (deco.inkFill)
     {
         v.bg = v.fg;

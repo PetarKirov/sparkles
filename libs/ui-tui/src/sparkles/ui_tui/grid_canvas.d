@@ -618,7 +618,7 @@ struct GridCanvas
             }
         }
 
-        if (v.border.any)
+        if (v.border.any && !v.insideGlyphFrame && !v.pixelsOnly) // a pixel target's frame
         {
             const bw = v.border.width;
             const bottomOnly = bw.bottom > 0 && bw.top == 0 && bw.left == 0 && bw.right == 0;

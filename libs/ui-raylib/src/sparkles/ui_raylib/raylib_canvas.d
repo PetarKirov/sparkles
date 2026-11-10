@@ -398,6 +398,8 @@ struct RaylibCanvas
     /// fast path (no chrome ⇒ one `DrawRectangle`).
     void fillRect(in Rect r, in Visual visual) @system
     {
+        if (visual.cellsOnly) // a glyph frame this target draws as a shape
+            return;
         const v = densityScaled(narrowed(visual));
         // A box drawn smaller than its rect (`TOK11`) is centred in it: the
         // control keeps its whole touch target and draws a compact chip —
@@ -520,6 +522,8 @@ struct RaylibCanvas
     /// from the resolved `Visual`.
     void textRun(in Point at, scope const(char)[] text, in Visual visual) @system
     {
+        if (visual.cellsOnly)
+            return;
         const v = narrowed(visual);
         drawText(*fonts, cstr(projected(text)), px(at.x), py(at.y), rlTextStyle(v), rlFg(v));
     }
@@ -532,6 +536,8 @@ struct RaylibCanvas
     */
     void textRunIn(in Rect r, scope const(char)[] text, in Visual visual) @system
     {
+        if (visual.cellsOnly)
+            return;
         if (!drawsUiFace(visual) || !uiFonts.covers(projected(text),
                 mono: visual.fontRole == FontRole.uiMono))
             return textRun(r.origin, text, visual);
@@ -574,6 +580,8 @@ struct RaylibCanvas
     /// Draws a single glyph `g` at `at` in `v.fg` (with its face).
     void glyph(in Point at, dchar glyph, in Visual visual) @system
     {
+        if (visual.cellsOnly)
+            return;
         import sparkles.base.text.utf : encodeScalar, UtfStatus;
 
         const v = narrowed(visual);
@@ -599,6 +607,8 @@ struct RaylibCanvas
     */
     void rule(in Rect rect, RuleEdge edge, in Visual visual) @system
     {
+        if (visual.cellsOnly)
+            return;
         const v = narrowed(visual);
         fillExact(ruleRect(pixelsOf(rect), edge), rlFg(v));
     }
@@ -673,6 +683,8 @@ struct RaylibCanvas
 
     void line(in Point from, in Point to, in Visual visual, LineStyle style) @system
     {
+        if (visual.cellsOnly)
+            return;
         const v = narrowed(visual);
         const c = rlFg(v);
         lineRects(cast(int) px(from.x), cast(int) py(from.y), cast(int) px(to.x),
@@ -698,7 +710,7 @@ struct RaylibCanvas
     {
         const b = v.border;
         const c = rlBorder(v);
-        if (v.borderRadius > 0)
+        if (v.borderRadius > 0 || v.insideGlyphFrame) // a glyph frame: one ring at its lines
         {
             DrawRectangleRoundedLinesEx(rectangleOf(box),
                 roundnessOf(v.borderRadius, box.width, box.height), 8,
