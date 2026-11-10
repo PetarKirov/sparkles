@@ -280,6 +280,7 @@ enum StatMask : ubyte
 {
     basic = 0,     /// kind, executable bit, size, device
     mtime = 1 << 0, /// also the modification time
+    identity = 1 << 1, /// also the file's identity on its device
 }
 
 /// The metadata of one entry, never of a link's target (VFO6).
@@ -291,6 +292,10 @@ struct Stat
     ulong device;     /// the file system holding the entry
     bool hasMtime;    /// whether `mtimeNs` was requested and filled
     long mtimeNs;     /// nanoseconds since the Unix epoch
+    bool hasIdentity; /// whether `inode` was requested and filled
+    /// The file's identity on `device`: the inode on POSIX, the file index
+    /// on Windows. With `device`, it tells whether two handles name one file.
+    ulong inode;
     version (Posix)
         uint permissions; /// the mode's permission bits
 }

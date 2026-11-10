@@ -424,6 +424,26 @@ Writing `RingVfs` and moving event-horizon onto the VFS changed six things.
 - **`AmbientAuthority` is readable.** `granted()` lets an API outside base, such
   as event-horizon's `Watcher.addWatch`, check the token in its contract.
 
+### DV31: A file's identity, and a directory's own `stat`
+
+[`VFO6`](./SPEC.md#vfo6-stat) specified a file's identity on its device
+behind the stat mask, and the plan left it for the build graph's digest
+cache. The filesets' cycle check
+([D6](../../build-primitives/filesets/decisions.md#d6-a-symlink-cycle-under-symlinks-beneath-proposed))
+needed it first, for directories, so two things were added.
+
+- **`StatMask.identity` fills `Stat.inode`**, with `hasIdentity` saying it
+  was asked for, as `hasMtime` does: `st_ino` from `fstatat`, `stx_ino`
+  from `statx`, the file index from `GetFileInformationByHandle`, and on
+  `MemVfs` a node's index, which is fixed for the node's lifetime. With the
+  device it tells whether two handles name one file. The change time stays
+  planned.
+- **A `Dir` has `stat(mask)`**, the `fstat` a `File` already had, under the
+  `stat` right ([`VFO3`](./SPEC.md#vfo3-the-operation-set)). A directory
+  opened through a followed link can then say which directory it is, which
+  `statAt` on its parent cannot: that stats the link, never its target
+  ([`VFO2`](./SPEC.md#vfo2-the-named-entry-is-never-followed)).
+
 ## Open
 
 ### O3: Where `O_NOFOLLOW_ANY` is available

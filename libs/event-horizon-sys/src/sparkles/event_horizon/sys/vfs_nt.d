@@ -203,6 +203,11 @@ struct BlockingVfs
         st.size = st.kind == EntryKind.directory ? 0
             : (cast(ulong) info.nFileSizeHigh << 32) | info.nFileSizeLow;
         st.device = info.dwVolumeSerialNumber;
+        if (mask & StatMask.identity)
+        {
+            st.hasIdentity = true;
+            st.inode = (cast(ulong) info.nFileIndexHigh << 32) | info.nFileIndexLow;
+        }
         if (mask & StatMask.mtime)
         {
             st.hasMtime = true;

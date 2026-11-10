@@ -179,6 +179,26 @@ auto rootOf(Rights R = Rights.all)(MemVfs* v, string path = "r",
     assert(!basic.hasMtime);
     auto timed = root.value.statAt("f", StatMask.mtime).value;
     assert(timed.hasMtime && timed.mtimeNs == 42);
+    assert(!timed.hasIdentity);
+}
+
+/// VFO6: a directory's identity is the same through its own handle and
+/// through its parent, and differs from its sibling's.
+@("vfs.check.VFO6.identity")
+@safe unittest
+{
+    auto v = testVfs();
+    v.mkdirs("r/a");
+    v.mkdirs("r/b");
+    auto root = rootOf(v);
+    auto a = root.value.openDir("a");
+    auto own = a.value.stat(StatMask.identity).value;
+    auto viaParent = root.value.statAt("a", StatMask.identity).value;
+    auto sibling = root.value.statAt("b", StatMask.identity).value;
+    assert(own.hasIdentity && viaParent.hasIdentity);
+    assert(own.device == viaParent.device && own.inode == viaParent.inode);
+    assert(own.inode != sibling.inode);
+    assert(!a.value.stat().value.hasIdentity);
 }
 
 @("vfs.check.VFO7.listing")
