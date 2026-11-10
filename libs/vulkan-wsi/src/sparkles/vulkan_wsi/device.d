@@ -49,6 +49,13 @@ struct ContextRequest
     /// profiler's scopes are also labels RenderDoc, Nsight and RGP show
     /// (`PRF12`). Validation asks for it too.
     bool debugLabels;
+    /// Opt in to the present path of the output-latency specification
+    /// (`OPL20`, `OPL22`, `OPL23`): the extensible surface query and surface
+    /// maintenance1 on the instance; present ids and waits 2, present timing
+    /// and swapchain maintenance1 on the device, each where it is offered.
+    /// Off, the instance and device are created without them, and a
+    /// swapchain presents as it did before them.
+    bool presentPath;
 }
 
 /**
@@ -474,8 +481,10 @@ package:
             names[nameCount++] = extDebugUtils.ptr;
         // The extensible surface query, and the present modes compatible
         // with one another through it (`OPL20`, `OPL22`, `OPL23` of the
-        // output-latency specification): the KHR, else the EXT.
-        const wantCaps2 = advertised.hasExtension(khrGetSurfaceCapabilities2);
+        // output-latency specification): the KHR, else the EXT; only for a
+        // request that opts in to the present path.
+        const wantCaps2 = request.presentPath
+            && advertised.hasExtension(khrGetSurfaceCapabilities2);
         if (wantCaps2)
             names[nameCount++] = khrGetSurfaceCapabilities2.ptr;
         const surfaceMaintenance = !wantCaps2 ? null
@@ -587,8 +596,10 @@ package:
         const wantDisplayTiming = presents && advertised.hasExtension(googleDisplayTiming);
 
         // Present ids and waits 2, present timing and swapchain maintenance1
-        // (`OPL20`, `OPL22`, `OPL23`): each feature asked of a device that
-        // lists its extension, and enabled by `planPresentPath`.
+        // (`OPL20`, `OPL22`, `OPL23`), for a request that opts in: each
+        // feature asked of a device that lists its extension, and enabled by
+        // `planPresentPath`.
+        const wantPresentPath = presents && request.presentPath;
         PresentPathOffer offer = {
             surfaceCapabilities2: surfaceCapabilities2,
             surfaceMaintenance1: surfaceMaintenance1,
@@ -603,7 +614,7 @@ package:
         auto presentWait2Feature = vkInfo(VkPhysicalDevicePresentWait2FeaturesKHR());
         auto presentTimingFeature = vkInfo(VkPhysicalDevicePresentTimingFeaturesEXT());
         auto maintenanceFeature = vkInfo(VkPhysicalDeviceSwapchainMaintenance1FeaturesKHR());
-        if (presents && apiVersion >= apiVersion11 && instance.has!vkVersion11)
+        if (wantPresentPath && apiVersion >= apiVersion11 && instance.has!vkVersion11)
         {
             void* query;
             void ask(T)(ref T feature, bool listed)
@@ -630,7 +641,7 @@ package:
         offer.presentWait2Feature = presentWait2Feature.presentWait2 == VK_TRUE;
         offer.presentTimingFeature = presentTimingFeature.presentTiming == VK_TRUE;
         offer.swapchainMaintenance1Feature = maintenanceFeature.swapchainMaintenance1 == VK_TRUE;
-        const path = presents ? planPresentPath(offer) : PresentPathPlan.init;
+        const path = wantPresentPath ? planPresentPath(offer) : PresentPathPlan.init;
 
         const(char)*[20] deviceExtensions;
         uint extensionCount;
