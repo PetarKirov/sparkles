@@ -2230,6 +2230,8 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
             modes = " (" ~ presentModeName(gpu.swapchain.presentMode) ~ " among " ~ modes ~ ")";
         const targets = !gpu.presentTimed ? ""
             : gpu.swapchain.presentAtAbsoluteTime ? " with absolute targets" : " without targets";
+        if (!cfg.native.debugging.presentPath)
+            return trace(i"native arm present path: off (--debug present-path asks for it); presentation times from $(source)");
         trace(i"native arm present path: present ids and waits 2 $(enabledOn(gpu.vk.presentWait2, gpu.swapchain.presentId2)), present timing $(enabledOn(gpu.vk.presentTiming, gpu.presentTimed))$(targets), swapchain maintenance1 $(enabledOn(gpu.vk.swapchainMaintenance1, modes.length > 0))$(modes); presentation times from $(source)");
     }
 
@@ -2329,7 +2331,9 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                 validation: cfg.native.debugging.vulkanValidation,
                 // Scopes as debug labels too, for RenderDoc and Nsight.
                 debugLabels: cfg.native.debugging.gpuTiming
-                    || cfg.native.debugging.renderdocCapture > 0));
+                    || cfg.native.debugging.renderdocCapture > 0,
+                // Opt-in until it measurably lowers latency (`OPLD4`).
+                presentPath: cfg.native.debugging.presentPath));
             made = !context.hasError;
             if (!made)
                 whyNot(i"the native arm found no Vulkan device for the window: $(context.error.diagnostic[])");

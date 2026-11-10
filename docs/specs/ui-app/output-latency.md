@@ -276,7 +276,10 @@ The device and swapchain obligations are owned by `sparkles:vulkan-wsi`;
 their use in the frame loop by `sparkles:ui-app`. An extension listed here
 is enabled only where the device, and for surface-dependent ones the
 surface, reports support; its absence selects the next mechanism, never an
-error.
+error. OPL20's second-generation ids, OPL22 and OPL23 apply to a device
+created with `ContextRequest.presentPath`, which the native arm sets under
+`--debug present-path` (OPLD4); without it the instance and device are
+created without their extensions.
 
 **OPL20: Present identification.** Where the device and surface support
 `VK_KHR_present_id2` and `VK_KHR_present_wait2`, the swapchain **must** be
@@ -370,6 +373,19 @@ commit starts a refresh, so the lowest latency comes from presenting as
 soon as a frame is ready. Wayland's presentation feedback reports
 `refresh = 0` when the interval is unknown, which OPL17 treats as variable.
 
+**OPLD4: The present path is opt-in (accepted).** On the reference
+configuration present ids 2, present timing and present-mode switching left
+write-to-photon latency where `wp_presentation` feedback and the late latch
+put it (§8): Mesa derives present timing's first pixel out from the same
+compositor event, and no policy switches present modes yet. Present timing
+also makes Mesa read the shared Wayland display, which the native loop must
+hand over for each poll. They stay in `sparkles:vulkan-wsi` and
+`sparkles:ui-app`, where any Vulkan application can opt in through
+`ContextRequest.presentPath`, and the native arm enables them only under
+`--debug present-path`. Revisit when they measurably lower latency or
+power: a compositor that holds a present to its target time, X11 timing
+without presentation feedback, or a policy that switches present modes.
+
 ## 7. Delivery
 
 Each slice is one or more commits, each green on its own.
@@ -404,7 +420,7 @@ figures.
 | OPL21             | partial  | `pollCompleted`, `PresentTimes.poll`; `vulkan_wsi.presenter.presentsCarryIdsAndCompleteWithoutWaiting`. The native loop polls after a frame pass and after each loop turn; no test drives a loop turn headless                                                                                                                                                                                                           |
 | OPL22             | verified | `PresentTimes`, `presentTimingInfo`, `chooseStage`, `shownNanos`, `findTimingDomain`; `vulkan_wsi.present_timing.pollReportsMonotonicTimesAndFreesTheQueue`, `vulkan_wsi.present_timing.aStageLocalDomainIsCalibratedToTheMonotonicClock`, `vulkan_wsi.present_timing.presentTimingInfo.aimsOnlyWhereAbsoluteTimesAre`. On the reference configuration with Mesa 26.2.5 RADV: below                                      |
 | OPL23             | verified | `Swapchain.switchPresentMode`, `chooseImageCountAcross`; `vulkan_wsi.swapchain.recreate.createsForThePresentPathTheSurfaceSupports`. On the reference configuration, `switch-present-mode-at=40` switched mailbox to FIFO with no swapchain built in the 30 frames after                                                                                                                                                 |
-| OPL24             | verified | `presentTimeSource`, `enabledOn`; `ui_app.native_loop.presentTimeSource.followsTheOrder`. The reference configuration reports present ids and waits 2 on, present timing not offered, swapchain maintenance1 on, times from presentation feedback                                                                                                                                                                        |
+| OPL24             | verified | `presentTimeSource`, `enabledOn`; `ui_app.native_loop.presentTimeSource.followsTheOrder`. Without `--debug present-path` it reports the path off; with it, the reference configuration reports present ids and waits 2 on, present timing not offered, swapchain maintenance1 on, times from presentation feedback                                                                                                       |
 
 The latency baseline, the `asap` behaviour: `latency` on the reference
 configuration, three runs of 300 writes, measured the 50th percentile at
