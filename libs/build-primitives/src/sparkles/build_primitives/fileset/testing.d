@@ -21,7 +21,7 @@ module sparkles.build_primitives.fileset.testing;
 import std.algorithm.searching : canFind;
 import std.array : join, split;
 import std.ascii : toLower;
-import std.conv : octal, to;
+import std.conv : octal, text, to;
 import std.random : Mt19937, uniform;
 
 import sparkles.base.io.errors : ErrorKind;
@@ -1633,6 +1633,117 @@ version (Posix)
     });
     assert(!r.hasError);
     assert(native == expected && ring == expected, "BlockingVfs:\n" ~ native ~ "RingVfs:\n" ~ ring);
+}
+
+version (Posix)
+{
+    // The transcripts of `f` beneath `dir` on `BlockingVfs` and on
+    // `RingVfs`, the root opened with `policy`.
+    private string[2] nativeTranscripts(string dir, imported!"sparkles.base.vfs.types".ResolvePolicy policy,
+        ref const Filesets sets, Fileset f) @system
+    {
+        import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+        import sparkles.build_primitives.fileset.driver_loop : LoopExecutor;
+        import sparkles.event_horizon.admission : Admission;
+        import sparkles.event_horizon.sched : Sched;
+        import sparkles.event_horizon.sys : BlockingVfs;
+        import sparkles.event_horizon.vfs : RingVfs;
+
+        Sched s;
+        schedOrSkip(s);
+        auto blocking = new BlockingVfs;
+        auto blockingRoot = openRoot!(Rights.readOnly)(blocking, dir, ambientAuthority(), policy);
+        assert(!blockingRoot.hasError, dir);
+        const native = machineResolve(blockingRoot.value.borrow, sets, f).transcript;
+        string ring;
+        auto r = s.run(() {
+            auto rv = new RingVfs;
+            auto ringRoot = openRoot!(Rights.readOnly)(rv, dir, ambientAuthority(), policy);
+            auto exec = LoopExecutor!Sched(&s, new Admission(4));
+            PathCollector sink;
+            assert(!resolveWith(ringRoot.value.borrow, sets, f, sink, exec).hasError);
+            ring = sink.transcript;
+        });
+        assert(!r.hasError);
+        return [native, ring];
+    }
+}
+
+/// FSD6 on the native backends: the confinement fixture resolves as it does
+/// on `MemVfs`, under either policy, on `BlockingVfs` and `RingVfs`.
+version (Posix)
+@("fileset.driver.FSD6.confinementNative")
+@system unittest
+{
+    import std.file : rmdirRecurse;
+    import std.path : buildPath;
+
+    import sparkles.base.vfs.types : ResolvePolicy, SymlinkPolicy;
+
+    // The absolute link names a path that exists on no test host.
+    enum literal = "outside/secret\nr/real/x.d\nr/alias -> real\n"
+        ~ "r/etc -> /sparkles-fsd6-outside\nr/up -> ../outside\n";
+    auto sets = Filesets(CasePolicy.sensitive);
+    const f = sets.everything;
+    const dir = scratchTree("confinement");
+    scope (exit) rmdirRecurse(dir);
+    materialize(literal, dir);
+    const root = buildPath(dir, "r");
+
+    enum byDefault = "members:\nalias\netc\nup\nreal/x.d\nempty:\n\nincomplete:\n\n";
+    foreach (i, t; nativeTranscripts(root, ResolvePolicy.init, sets, f))
+        assert(t == byDefault, text(i ? "RingVfs" : "BlockingVfs", ":\n", t));
+
+    ResolvePolicy beneath;
+    beneath.symlinks = SymlinkPolicy.beneath;
+    enum followed = "members:\nalias/x.d\nreal/x.d\nempty:\n\n"
+        ~ "incomplete:\netc: escapesRoot\nup: escapesRoot\n";
+    foreach (i, t; nativeTranscripts(root, beneath, sets, f))
+        assert(t == followed, text(i ? "RingVfs" : "BlockingVfs", ":\n", t));
+}
+
+/// FSD7 on a real mount: `/dev/shm` is its own file system beneath `/dev`
+/// on Linux. A root at `/dev` does not cross into it by default, and reports
+/// the boundary; with `crossMounts` it reads a file written there.
+version (linux)
+@("fileset.driver.FSD7.realMount")
+@system unittest
+{
+    import std.file : exists, getAttributes, mkdirRecurse, rmdirRecurse, write;
+    import std.path : buildPath;
+    import std.process : thisProcessID;
+
+    import sparkles.base.vfs.types : ResolvePolicy;
+    import sparkles.test_runner.skip : skipTest;
+
+    import core.sys.posix.sys.stat : stat, stat_t;
+    import std.string : toStringz;
+
+    stat_t dev, shm;
+    if (stat("/dev".toStringz, &dev) != 0 || stat("/dev/shm".toStringz, &shm) != 0
+        || dev.st_dev == shm.st_dev)
+        return skipTest("/dev/shm is not a separate mount on this host");
+    const name = text("sparkles-fsd7-", thisProcessID);
+    const dir = buildPath("/dev/shm", name);
+    try
+        mkdirRecurse(dir);
+    catch (Exception e)
+        return skipTest("/dev/shm is not writable: " ~ e.msg);
+    scope (exit) rmdirRecurse(dir);
+    write(buildPath(dir, "f"), "x");
+
+    auto sets = Filesets(CasePolicy.sensitive);
+    const f = sets.glob(text("shm/", name, "/**")).value;
+    foreach (i, t; nativeTranscripts("/dev", ResolvePolicy.init, sets, f))
+    {
+        assert(t == text("members:\n\nempty:\n\nincomplete:\nshm/", name, ": crossesMount\n"),
+            text(i ? "RingVfs" : "BlockingVfs", ":\n", t));
+    }
+    ResolvePolicy crossing;
+    crossing.crossMounts = true;
+    foreach (i, t; nativeTranscripts("/dev", crossing, sets, f))
+        assert(t == text("members:\nshm/", name, "/f\nempty:\n\nincomplete:\n\n"),
+            text(i ? "RingVfs" : "BlockingVfs", ":\n", t));
 }
 
 /// A sink that records which rule decided each entry (FSI3).
