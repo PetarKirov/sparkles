@@ -95,6 +95,14 @@ struct ExplorerApp
     private TryHit[] tryHits;       // where this frame drew each ▶ (`paint`)
     private int[size_t] tryRows;    // each try block's row in the help's content
 
+    /// The help's row of the try block at `at`, as last drawn; -1 when not drawn.
+    int tryRowOf(size_t at) const @safe
+    {
+        if (auto r = at in tryRows)
+            return *r;
+        return -1;
+    }
+
     // Scrolling (`FXU10`): each pane's position, in rows, moved 1:1 by a
     // finger, flung on by a lifted one, eased by a wheel notch or a key.
     ScrollBody treeScroll;          /// the member tree's
