@@ -1,27 +1,34 @@
 /++
 The fileset query language: a fileset written as text (fileset explorer
-`FXL1`–`FXL7`).
+`FXL1`–`FXL9`).
 
 ```
 src/**/*.d - **/*_test.d          # sources, not tests
-unions("README.md", docs/**) & gitTracked
-fileFilter(hasExt("d") && !name == "package.d")
+unions(README.md, docs) & gitTracked()
+fileFilter(hasExt(d) && name != package.d)
+"my notes"/*.md
 ```
 
-A query's leaves are globs (the fileset library's, `FSG1`), double-quoted
-strings, which are globs whose text may hold any character, and the keywords
-`all`, `none`, `exec`, `gitignored` and `gitTracked`. `|` is union, `&`
-intersection and `-` difference, `&` binding tighter; Nix's names are
-accepted in call syntax too: `unions(…)`, `intersection(a, b)`,
-`difference(a, b)`, and `fileFilter(p)` over the predicates `hasExt("x")`,
-`name == "n"` and `type == "regular" | "symlink"`, combined with `&&`, `||`,
-`!` and parentheses. A `#` where a token could begin starts a comment that
-runs to the end of its line.
+A query's leaves are paths and calls. A path is relative to the fileset root,
+as a Nix path is, and is a run of pieces written together: bare pieces, which
+are globs (the fileset library's syntax, `FSG1`, a `\` escaping only a
+metacharacter), and quoted pieces, which are literal. `all()`, `none()`,
+`exec()`, `gitignored()` and `gitTracked()` are calls. `|` is union, `&`
+intersection and `-` difference, `&` binding tighter, and `|` and `-` mixed
+need parentheses; Nix's names are accepted in call syntax too: `unions(…)`,
+`intersection(a, b)`, `difference(a, b)`, and `fileFilter(p)` over the
+predicates `hasExt(x)`, `name == n`, `name != n`, `type == t` and
+`type != t`, combined with `&&`, `||`, `!` and parentheses. A `#` where a
+token could begin starts a comment that runs to the end of its line.
 
 $(LREF parseQuery) never fails outright: it returns every token it saw, with
-its kind, for highlighting, and either the query's tree or the first error
-and its byte offset. $(LREF compileQuery) builds the tree into a fileset
-arena; $(LREF canonical) renders it back as text.
+its kind, for highlighting — a path's text, its glob metacharacters and its
+escapes apart — and either the query's tree or the first error and its byte
+offset. $(LREF compileQuery) builds the tree into a fileset arena;
+$(LREF canonical) renders it back as text.
+
+The library underneath still takes `.gitignore` patterns: a path reaches it
+anchored with a leading `/`, its quoted pieces escaped.
 
 Specified in `docs/specs/fileset-explorer/SPEC.md` §2.
 +/
@@ -39,11 +46,11 @@ struct Span
 /// What a token is, for highlighting (`FXL8`).
 enum TokenKind : ubyte
 {
-    glob,        /// a bare glob
-    string_,     /// a double-quoted glob
-    keyword,     /// `all`, `none`, `exec`, `gitignored`, `gitTracked`
-    operator,    /// `|`, `&`, `-`, `&&`, `||`, `!`, `==`
-    function_,   /// `unions`, `intersection`, `difference`, `fileFilter`, `hasExt`
+    path,        /// a path's literal text: a bare piece's, or a quoted piece with its quotes
+    globMeta,    /// `*`, `**`, `?`, a whole `[…]` class, a brace's `{`, `,` and `}`
+    escape,      /// a `\` and the metacharacter it escapes
+    operator,    /// `|`, `&`, `-`, `&&`, `||`, `!`, `==`, `!=`
+    function_,   /// a call's name: `all` … `gitTracked`, `unions` … `fileFilter`, `hasExt`
     predicate,   /// `name`, `type`
     comment,     /// `#` to the end of the line
     punctuation, /// `(`, `)`, `,`
@@ -59,7 +66,7 @@ struct Token
 /// A node of a query's tree.
 enum NodeKind : ubyte
 {
-    glob,         /// `text` is the glob
+    glob,         /// `text` is the path, as the library's anchored pattern
     all,          ///
     none,         ///
     exec,         ///
@@ -74,8 +81,8 @@ enum NodeKind : ubyte
 /// A node of a `fileFilter` predicate.
 enum PredKind : ubyte
 {
-    hasExt, /// `value` is the extension, without its dot
-    name,   /// `value` is the whole name
+    hasExt, /// `value` is the extension's pattern, without its dot
+    name,   /// `value` is the name's pattern
     type,   /// `value` is `regular` or `symlink`
     and,    /// `a && b`
     or,     /// `a || b`
@@ -89,8 +96,8 @@ enum uint noNode = uint.max;
 struct QueryNode
 {
     NodeKind kind;  ///
-    string text;    /// a glob's text, unescaped
-    bool quoted;    /// the glob was a string
+    string text;    /// a path's pattern: `/`-anchored, quoted pieces escaped
+    uint[] origin;  /// for each byte of `text`, the query byte it came from
     uint[] args;    /// operands, in order
     uint pred = noNode; /// a `fileFilter`'s predicate
     Span span;      /// the source it was parsed from
@@ -100,10 +107,11 @@ struct QueryNode
 struct Pred
 {
     PredKind kind; ///
-    string value;  ///
+    string value;  /// a pattern for `hasExt` and `name`, a word for `type`
     uint a = noNode; ///
     uint b = noNode; ///
     Span span;     ///
+    bool negated;  /// written `!=`
 }
 
 /// Why a query does not parse or compile, and where (`FXL6`).
@@ -120,11 +128,11 @@ struct Query
     Token[] tokens;    /// every token, comments included, in order
     QueryNode[] nodes; ///
     Pred[] preds;      ///
-    uint root = noNode; /// `noNode` for a query with no expression: `none`
+    uint root = noNode; /// `noNode` for a query with no expression: `none()`
     bool ok;           /// it parsed
     QueryError error;  /// when not `ok`
 
-    /// Whether the query names `gitTracked`.
+    /// Whether the query calls `gitTracked()`.
     bool usesGitTracked() const @safe pure nothrow
     {
         foreach (ref n; nodes)
@@ -132,9 +140,46 @@ struct Query
                 return true;
         return false;
     }
+
+    /**
+    The names of the calls without arguments written as bare paths, `all`
+    for `all()` (`FXL9`): each path whose whole text is such a name, once.
+    */
+    string[] bareCallNames() const @safe pure
+    {
+        string[] names;
+        foreach (ref n; nodes)
+            if (n.kind == NodeKind.glob && n.span.end <= source.length)
+            {
+                const t = source[n.span.start .. n.span.end];
+                foreach (c; nullaryCalls)
+                    if (t == c)
+                    {
+                        bool seen;
+                        foreach (m; names)
+                            seen |= m == c;
+                        if (!seen)
+                            names ~= c;
+                    }
+            }
+        return names;
+    }
 }
 
-private immutable string[] keywords = ["all", "none", "exec", "gitignored", "gitTracked"];
+/// The calls that take no arguments, and the node each is.
+private immutable string[] nullaryCalls = ["all", "none", "exec", "gitignored", "gitTracked"];
+private immutable NodeKind[] nullaryKinds = [NodeKind.all, NodeKind.none, NodeKind.exec,
+    NodeKind.gitignored, NodeKind.gitTracked];
+
+/// The operators, as a bare word spells them.
+private immutable string[] operators = ["|", "&", "-", "&&", "||", "==", "!="];
+
+/// Whether `c` is a glob metacharacter a `\` may escape (`FXL1`).
+bool isGlobMeta(char c) @safe pure nothrow @nogc
+    => c == '*' || c == '?' || c == '[' || c == ']' || c == '{' || c == '}' || c == ','
+        || c == '!' || c == '\\';
+
+private bool isSpace(char c) @safe pure nothrow @nogc => c == ' ' || c == '\t' || c == '\r' || c == '\n';
 
 /// Parses `source` (`FXL1`–`FXL6`).
 Query parseQuery(string source) @safe pure
@@ -145,12 +190,34 @@ Query parseQuery(string source) @safe pure
     return p.q;
 }
 
+private enum LexKind : ubyte
+{
+    leaf,
+    operator,
+    punctuation,
+}
+
+// What the parser reads: a path whole, an operator or punctuation.
+private struct Lexeme
+{
+    LexKind kind;
+    Span span;
+    size_t tok;       // its first token in `q.tokens`
+    string pattern;   // a path's, unanchored: bare pieces as written, quoted ones escaped
+    uint[] origin;    // for each byte of `pattern`, the query byte it came from
+    bool bareWord;    // a single bare piece with no metacharacter or escape
+    bool hasMeta;     // a metacharacter outside an escape or quotes
+    string literal;   // the text it matches, when it has no metacharacter
+}
+
 private struct Parser
 {
     Query q;
-    size_t[] sig; // indices of the non-comment tokens
-    size_t at;    // into `sig`
+    Lexeme[] lx;
+    size_t at; // into `lx`
     bool failed;
+    QueryError lexError;
+    bool lexFailed;
 
     this(string source) @safe pure nothrow
     {
@@ -159,6 +226,19 @@ private struct Parser
 
     // ---- lexing -------------------------------------------------------
 
+    void lexFail(string message, size_t offset) @safe pure nothrow
+    {
+        if (lexFailed)
+            return;
+        lexFailed = true;
+        lexError = QueryError(message, offset);
+    }
+
+    void token(TokenKind kind, size_t start, size_t end) @safe pure nothrow
+    {
+        q.tokens ~= Token(kind, Span(start, end));
+    }
+
     void lex() @safe pure
     {
         const s = q.source;
@@ -166,7 +246,7 @@ private struct Parser
         while (i < s.length)
         {
             const c = s[i];
-            if (c == ' ' || c == '\t' || c == '\r' || c == '\n')
+            if (isSpace(c))
             {
                 ++i;
                 continue;
@@ -176,87 +256,221 @@ private struct Parser
             {
                 while (i < s.length && s[i] != '\n')
                     ++i;
-                q.tokens ~= Token(TokenKind.comment, Span(start, i));
+                token(TokenKind.comment, start, i);
                 continue;
             }
             if (c == '(' || c == ')' || c == ',')
             {
-                q.tokens ~= Token(TokenKind.punctuation, Span(start, ++i));
+                lx ~= Lexeme(LexKind.punctuation, Span(start, i + 1), q.tokens.length);
+                token(TokenKind.punctuation, start, ++i);
                 continue;
             }
-            if (c == '"')
+            if (c == '!')
             {
-                ++i;
-                while (i < s.length && s[i] != '"')
-                    i += s[i] == '\\' && i + 1 < s.length ? 2 : 1;
-                if (i < s.length)
-                    ++i; // the closing quote; an unclosed one is the parser's error
-                q.tokens ~= Token(TokenKind.string_, Span(start, i));
+                i += i + 1 < s.length && s[i + 1] == '=' ? 2 : 1;
+                lx ~= Lexeme(LexKind.operator, Span(start, i), q.tokens.length);
+                token(TokenKind.operator, start, i);
                 continue;
             }
-            if (c == '!' && !(i + 1 < s.length && s[i + 1] == '='))
-            {
-                q.tokens ~= Token(TokenKind.operator, Span(start, ++i));
-                continue;
-            }
-            int braces;
-            while (i < s.length)
-            {
-                const d = s[i];
-                if (d == '\\' && i + 1 < s.length)
-                {
-                    i += 2;
-                    continue;
-                }
-                if (d == ' ' || d == '\t' || d == '\r' || d == '\n' || d == '(' || d == ')'
-                    || d == '"' || (d == ',' && braces == 0))
-                    break;
-                if (d == '{')
-                    ++braces;
-                else if (d == '}' && braces > 0)
-                    --braces;
-                ++i;
-            }
-            const word = s[start .. i];
-            TokenKind kind = TokenKind.glob;
-            switch (word)
-            {
-                case "|", "&", "-", "&&", "||", "==":
-                    kind = TokenKind.operator;
-                    break;
-                default:
-                    foreach (k; keywords)
-                        if (word == k)
-                            kind = TokenKind.keyword;
-            }
-            q.tokens ~= Token(kind, Span(start, i));
+            i = leaf(i);
         }
-        foreach (k, ref t; q.tokens)
-            if (t.kind != TokenKind.comment)
-                sig ~= k;
     }
 
-    // ---- token access -------------------------------------------------
+    // Lexes the path at `i`, a run of pieces; returns where it ends.
+    size_t leaf(size_t i) @safe pure
+    {
+        const s = q.source;
+        const start = i, firstTok = q.tokens.length;
+        Lexeme l = Lexeme(LexKind.leaf, Span(start, start), firstTok);
+        char[] pattern;
+        uint[] origin;
+        char[] literal;
+        size_t[] braces; // the open braces' offsets
+        bool quoted, escaped;
 
-    bool atEnd() const @safe pure nothrow => at >= sig.length;
+        void put(size_t from, size_t to) // the source bytes, as written
+        {
+            pattern ~= s[from .. to];
+            foreach (k; from .. to)
+                origin ~= cast(uint) k;
+        }
 
-    ref Token tok() return @safe pure nothrow => q.tokens[sig[at]];
+        // A brace or its comma must be followed by an alternative.
+        void needAlternative(size_t after)
+        {
+            if (after >= s.length || s[after] == ',' || s[after] == '}' || isSpace(s[after])
+                || s[after] == '(' || s[after] == ')' || s[after] == '"')
+                lexFail("empty brace alternative", after);
+        }
 
-    string text() @safe pure nothrow => q.source[tok.span.start .. tok.span.end];
+        while (i < s.length)
+        {
+            const d = s[i];
+            if (isSpace(d) || d == '(' || d == ')' || (d == ',' && braces.length == 0))
+                break;
+            const at = i;
+            if (d == '"')
+            {
+                if (braces.length)
+                    lexFail("a quoted piece cannot be inside braces", at);
+                ++i;
+                char[] value;
+                while (i < s.length && s[i] != '"')
+                {
+                    if (s[i] == '\\' && i + 1 < s.length && (s[i + 1] == '"' || s[i + 1] == '\\'))
+                        ++i;
+                    value ~= s[i];
+                    ++i;
+                }
+                if (i >= s.length)
+                {
+                    lexFail("a string is not closed", at);
+                    token(TokenKind.path, at, i);
+                    break;
+                }
+                ++i; // the closing quote
+                token(TokenKind.path, at, i);
+                quoted = true;
+                // Literal: each byte escaped as the library needs, mapped to its quote.
+                const escapedValue = escapeGlob(value);
+                pattern ~= escapedValue;
+                foreach (_; 0 .. escapedValue.length)
+                    origin ~= cast(uint)(at + 1);
+                literal ~= value;
+                continue;
+            }
+            if (d == '\\')
+            {
+                if (i + 1 < s.length && isGlobMeta(s[i + 1]))
+                {
+                    token(TokenKind.escape, at, i + 2);
+                    put(at, i + 2);
+                    literal ~= s[i + 1];
+                    i += 2;
+                    escaped = true;
+                    continue;
+                }
+                lexFail("`\\` escapes only a glob metacharacter: * ? [ ] { } , ! \\", at);
+                token(TokenKind.escape, at, i + 1);
+                ++i;
+                escaped = true;
+                continue;
+            }
+            if (d == '*' || d == '?')
+            {
+                i += d == '*' && i + 1 < s.length && s[i + 1] == '*' ? 2 : 1;
+                token(TokenKind.globMeta, at, i);
+                put(at, i);
+                l.hasMeta = true;
+                continue;
+            }
+            if (d == '[')
+            {
+                size_t j = i + 1;
+                if (j < s.length && (s[j] == '!' || s[j] == '^'))
+                    ++j;
+                const body = j;
+                while (j < s.length && s[j] != ']' && !isSpace(s[j]) && s[j] != '(' && s[j] != ')'
+                    && s[j] != '"' && s[j] != ',')
+                    j += s[j] == '\\' && j + 1 < s.length && !isSpace(s[j + 1]) ? 2 : 1;
+                if (j >= s.length || s[j] != ']')
+                {
+                    lexFail("unclosed character class", at);
+                    token(TokenKind.globMeta, at, j);
+                    i = j;
+                    l.hasMeta = true;
+                    continue;
+                }
+                if (j == body)
+                    lexFail("empty character class", at);
+                i = j + 1;
+                token(TokenKind.globMeta, at, i);
+                put(at, i);
+                l.hasMeta = true;
+                continue;
+            }
+            if (d == '{')
+            {
+                braces ~= at;
+                token(TokenKind.globMeta, at, ++i);
+                put(at, i);
+                needAlternative(i);
+                l.hasMeta = true;
+                continue;
+            }
+            if (d == ',') // inside braces
+            {
+                token(TokenKind.globMeta, at, ++i);
+                put(at, i);
+                needAlternative(i);
+                continue;
+            }
+            if (d == '}')
+            {
+                if (braces.length == 0)
+                    lexFail("unmatched `}`", at);
+                else
+                    braces = braces[0 .. $ - 1];
+                token(TokenKind.globMeta, at, ++i);
+                put(at, i);
+                l.hasMeta = true;
+                continue;
+            }
+            // Literal text, to the next byte that is anything else.
+            while (i < s.length && !isSpace(s[i]) && s[i] != '(' && s[i] != ')' && s[i] != '"'
+                && s[i] != '\\' && s[i] != '*' && s[i] != '?' && s[i] != '[' && s[i] != '{'
+                && s[i] != '}' && s[i] != ',')
+                ++i;
+            token(TokenKind.path, at, i);
+            put(at, i);
+            literal ~= s[at .. i];
+        }
+        if (braces.length)
+            lexFail("unclosed brace", braces[0]);
+        l.span.end = i;
+        l.pattern = pattern.idup;
+        l.origin = origin;
+        l.literal = literal.idup;
+        l.bareWord = !quoted && !escaped && !l.hasMeta && q.tokens.length == firstTok + 1;
+        if (l.bareWord)
+            foreach (op; operators)
+                if (s[start .. i] == op)
+                {
+                    l.kind = LexKind.operator;
+                    q.tokens[firstTok].kind = TokenKind.operator;
+                }
+        lx ~= l;
+        return i;
+    }
+
+    // ---- lexeme access ------------------------------------------------
+
+    bool atEnd() const @safe pure nothrow => at >= lx.length;
+
+    ref Lexeme cur() return @safe pure nothrow => lx[at];
+
+    string text() @safe pure nothrow => q.source[cur.span.start .. cur.span.end];
 
     bool isPunct(string p) @safe pure nothrow
-        => !atEnd && tok.kind == TokenKind.punctuation && text == p;
+        => !atEnd && cur.kind == LexKind.punctuation && text == p;
 
     bool isOp(string p) @safe pure nothrow
-        => !atEnd && tok.kind == TokenKind.operator && text == p;
+        => !atEnd && cur.kind == LexKind.operator && text == p;
 
-    size_t here() @safe pure nothrow => atEnd ? q.source.length : tok.span.start;
+    size_t here() @safe pure nothrow => atEnd ? q.source.length : cur.span.start;
 
-    // A call: a word followed by `(`.
+    size_t endOfPrevious() @safe pure nothrow => lx[at - 1].span.end;
+
+    // A call: a bare word followed by `(`.
     bool isCall(string name) @safe pure nothrow
-        => !atEnd && tok.kind == TokenKind.glob && text == name && at + 1 < sig.length
-            && q.tokens[sig[at + 1]].kind == TokenKind.punctuation
-            && q.source[q.tokens[sig[at + 1]].span.start] == '(';
+        => !atEnd && cur.kind == LexKind.leaf && cur.bareWord && text == name && at + 1 < lx.length
+            && lx[at + 1].kind == LexKind.punctuation && q.source[lx[at + 1].span.start] == '(';
+
+    // Marks the current lexeme, a bare word, as `kind` for highlighting.
+    void mark(TokenKind kind) @safe pure nothrow
+    {
+        q.tokens[cur.tok].kind = kind;
+    }
 
     void fail(string message, size_t offset) @safe pure nothrow
     {
@@ -295,21 +509,36 @@ private struct Parser
     void parse() @safe pure
     {
         q.ok = true;
-        if (sig.length == 0)
-            return; // only comments, or nothing: `none`
-        const r = expr();
-        if (!failed && !atEnd)
-            fail("unexpected `" ~ text ~ "`", here);
-        if (!failed)
-            q.root = r;
+        if (lx.length)
+        {
+            const r = expr();
+            if (!failed && !atEnd)
+                fail("unexpected `" ~ text ~ "`", here);
+            if (!failed)
+                q.root = r;
+        }
+        // A glob's own error comes first when it is earlier than the parser's.
+        if (lexFailed && (!failed || lexError.offset <= q.error.offset))
+        {
+            q.ok = false;
+            q.error = lexError;
+            q.root = noNode;
+        }
     }
 
     uint expr() @safe pure
     {
         auto left = term();
+        string first;
         while (!failed && (isOp("|") || isOp("-")))
         {
             const op = text;
+            if (first.length && op != first)
+            {
+                fail("`|` and `-` together need parentheses", here);
+                return noNode;
+            }
+            first = op;
             const start = q.nodes[left].span.start;
             ++at;
             const right = term();
@@ -343,7 +572,7 @@ private struct Parser
             return noNode;
         if (atEnd)
         {
-            fail("expected a glob, a keyword, a function or `(`", here);
+            fail("expected a path, a call or `(`", here);
             return noNode;
         }
         const start = here;
@@ -353,57 +582,61 @@ private struct Parser
             const inner = expr();
             if (failed || !expect(")", "expected `)`"))
                 return noNode;
-            q.nodes[inner].span = Span(start, q.tokens[sig[at - 1]].span.end);
+            q.nodes[inner].span = Span(start, endOfPrevious);
             return inner;
         }
         foreach (fn; ["unions", "intersection", "difference", "fileFilter"])
             if (isCall(fn))
                 return call(fn);
-        auto t = tok;
-        final switch (t.kind)
-        {
-            case TokenKind.keyword:
-                ++at;
-                NodeKind k;
-                switch (q.source[t.span.start .. t.span.end])
-                {
-                    case "all": k = NodeKind.all; break;
-                    case "none": k = NodeKind.none; break;
-                    case "exec": k = NodeKind.exec; break;
-                    case "gitignored": k = NodeKind.gitignored; break;
-                    default: k = NodeKind.gitTracked; break;
-                }
-                return node(QueryNode(kind: k, span: t.span));
-            case TokenKind.glob:
-                ++at;
-                return node(QueryNode(kind: NodeKind.glob, text: q.source[t.span.start .. t.span.end],
-                    span: t.span));
-            case TokenKind.string_:
-                string value;
-                if (!unquote(t.span, value))
+        foreach (k, fn; nullaryCalls)
+            if (isCall(fn))
+            {
+                mark(TokenKind.function_);
+                at += 2; // the name and `(`
+                if (!expect(")", "`" ~ fn ~ "()` takes no arguments"))
                     return noNode;
-                ++at;
-                return node(QueryNode(kind: NodeKind.glob, text: value, quoted: true, span: t.span));
-            case TokenKind.operator, TokenKind.punctuation, TokenKind.function_,
-                TokenKind.predicate, TokenKind.comment:
-                fail("expected a glob, a keyword, a function or `(` before `"
-                    ~ q.source[t.span.start .. t.span.end] ~ "`", t.span.start);
-                return noNode;
+                return node(QueryNode(kind: nullaryKinds[k], span: Span(start, endOfPrevious)));
+            }
+        if (cur.kind != LexKind.leaf)
+        {
+            fail("expected a path, a call or `(` before `" ~ text ~ "`", start);
+            return noNode;
         }
+        return path();
+    }
+
+    // The current path, anchored at the root (`FXL1`).
+    uint path() @safe pure
+    {
+        auto l = cur;
+        string p = l.pattern;
+        const(uint)[] o = l.origin;
+        if (p.length >= 2 && p[0 .. 2] == "./")
+        {
+            p = p[2 .. $];
+            o = o[2 .. $];
+        }
+        if (p.length && p[0] == '/')
+        {
+            fail("a path is relative to the root: drop the leading `/`", o[0]);
+            return noNode;
+        }
+        ++at;
+        return node(QueryNode(kind: NodeKind.glob, text: "/" ~ p, origin: [cast(uint) l.span.start] ~ o.dup,
+            span: l.span));
     }
 
     uint call(string fn) @safe pure
     {
         const start = here;
-        tok.kind = TokenKind.function_;
+        mark(TokenKind.function_);
         at += 2; // the name and `(`
         if (fn == "fileFilter")
         {
             const p = predicate();
             if (failed || !expect(")", "expected `)` after the predicate"))
                 return noNode;
-            return node(QueryNode(kind: NodeKind.fileFilter, pred: p,
-                span: Span(start, q.tokens[sig[at - 1]].span.end)));
+            return node(QueryNode(kind: NodeKind.fileFilter, pred: p, span: Span(start, endOfPrevious)));
         }
         uint[] args;
         if (isPunct(")"))
@@ -425,7 +658,7 @@ private struct Parser
                 return noNode;
             break;
         }
-        const span = Span(start, q.tokens[sig[at - 1]].span.end);
+        const span = Span(start, endOfPrevious);
         if (fn == "unions")
             return args.length == 1 ? args[0] : node(QueryNode(kind: NodeKind.union_, args: args, span: span));
         if (args.length != 2)
@@ -496,128 +729,157 @@ private struct Parser
         }
         if (isCall("hasExt"))
         {
-            tok.kind = TokenKind.function_;
+            mark(TokenKind.function_);
             at += 2;
             string ext;
-            if (!stringArg(ext))
+            if (!argument(ext))
                 return noNode;
             if (!expect(")", "expected `)`"))
                 return noNode;
-            return pred(Pred(PredKind.hasExt, ext, noNode, noNode, Span(start, q.tokens[sig[at - 1]].span.end)));
+            return pred(Pred(PredKind.hasExt, ext, noNode, noNode, Span(start, endOfPrevious)));
         }
-        if (!atEnd && tok.kind == TokenKind.glob && (text == "name" || text == "type"))
+        if (!atEnd && cur.kind == LexKind.leaf && cur.bareWord && (text == "name" || text == "type"))
         {
             const isName = text == "name";
-            tok.kind = TokenKind.predicate;
+            mark(TokenKind.predicate);
             ++at;
-            if (!isOp("=="))
+            const negated = isOp("!=");
+            if (!negated && !isOp("=="))
             {
-                fail("expected `==`", here);
+                fail("expected `==` or `!=`", here);
                 return noNode;
             }
             ++at;
             string value;
-            if (!stringArg(value))
-                return noNode;
-            if (!isName && value != "regular" && value != "symlink")
+            if (isName)
             {
-                fail("a type is \"regular\" or \"symlink\"", q.tokens[sig[at - 1]].span.start);
-                return noNode;
+                if (!argument(value))
+                    return noNode;
+            }
+            else
+            {
+                if (atEnd || cur.kind != LexKind.leaf)
+                {
+                    fail("expected `regular` or `symlink`", here);
+                    return noNode;
+                }
+                // One word, bare or quoted: the grammar's `type_is` takes no joined pieces.
+                const t = text;
+                if (t != "regular" && t != "symlink" && t != `"regular"` && t != `"symlink"`)
+                {
+                    fail("a type is `regular` or `symlink`", here);
+                    return noNode;
+                }
+                value = cur.literal;
+                ++at;
             }
             return pred(Pred(isName ? PredKind.name : PredKind.type, value, noNode, noNode,
-                Span(start, q.tokens[sig[at - 1]].span.end)));
+                Span(start, endOfPrevious), negated));
         }
-        fail("expected `hasExt(\"…\")`, `name == \"…\"`, `type == \"…\"`, `!` or `(`", here);
+        fail("expected `hasExt(…)`, `name == …`, `type == …`, `!` or `(`", here);
         return noNode;
     }
 
-    bool stringArg(out string value) @safe pure
+    // A predicate's argument: a path's pattern, a bare piece a glob, a quoted one literal.
+    bool argument(out string pattern) @safe pure
     {
-        if (atEnd || tok.kind != TokenKind.string_)
+        if (atEnd || cur.kind != LexKind.leaf)
         {
-            fail("expected a string", here);
+            fail("expected a name or a pattern", here);
             return false;
         }
-        if (!unquote(tok.span, value))
-            return false;
+        pattern = cur.pattern;
         ++at;
         return true;
     }
-
-    // The value of the string token at `span`: `\"` and `\\` unescaped.
-    bool unquote(Span span, out string value) @safe pure
-    {
-        const s = q.source[span.start .. span.end];
-        if (s.length < 2 || s[$ - 1] != '"' || (s.length >= 3 && s[$ - 2] == '\\' && !evenBackslashes(s[1 .. $ - 1])))
-        {
-            fail("a string is not closed", span.start);
-            return false;
-        }
-        char[] v;
-        const body = s[1 .. $ - 1];
-        for (size_t i; i < body.length; ++i)
-        {
-            if (body[i] == '\\' && i + 1 < body.length && (body[i + 1] == '"' || body[i + 1] == '\\'))
-                ++i;
-            v ~= body[i];
-        }
-        value = v.idup;
-        return true;
-    }
 }
 
-// Whether `s` ends in an even run of backslashes: its last quote is not escaped.
-private bool evenBackslashes(scope const(char)[] s) @safe pure nothrow @nogc
-{
-    size_t n;
-    while (n < s.length && s[$ - 1 - n] == '\\')
-        ++n;
-    return n % 2 == 0;
-}
-
-/// FXL1–FXL3: leaves, strings, comments and operators.
+/// FXL1–FXL3: paths, pieces, comments and operators.
 @("fileset.query.lexAndParse")
 @safe pure unittest
 {
-    auto q = parseQuery("a-b/*.d | \"#foo#\" & \"a b\" # tail\n- \"say \\\"hi\\\"\"");
+    auto q = parseQuery("a-b/*.d | \"#foo#\" & \"a b\" # tail\n| \"say \\\"hi\\\"\" | \"my notes\"/*.md");
     assert(q.ok, q.error.message);
-    assert(q.nodes[q.root].kind == NodeKind.difference);
+    assert(q.nodes[q.root].kind == NodeKind.union_);
     string[] globs;
     foreach (ref n; q.nodes)
         if (n.kind == NodeKind.glob)
             globs ~= n.text;
-    assert(globs == ["a-b/*.d", "#foo#", "a b", "say \"hi\""]);
-    assert(q.tokens[$ - 3].kind == TokenKind.comment);
+    assert(globs == ["/a-b/*.d", "/#foo#", "/a b", "/say \"hi\"", "/my notes/*.md"], globs[0]);
 
-    assert(parseQuery("a#b").nodes[0].text == "a#b", "a # inside a glob is the glob's");
+    assert(parseQuery("a#b").nodes[0].text == "/a#b", "a # inside a path is the path's");
     auto c = parseQuery("a #b");
-    assert(c.ok && c.nodes.length == 1 && c.nodes[0].text == "a");
+    assert(c.ok && c.nodes.length == 1 && c.nodes[0].text == "/a");
     auto blank = parseQuery("# nothing\n  # at all");
     assert(blank.ok && blank.root == noNode);
-    assert(parseQuery("*.{d,di}").nodes[0].text == "*.{d,di}", "a brace's comma is the glob's");
+    assert(parseQuery("*.{d,di}").nodes[0].text == "/*.{d,di}", "a brace's comma is the path's");
+    assert(parseQuery("\"[draft].md\"").nodes[0].text == "/\\[draft\\].md", "quotes are literal");
+    assert(parseQuery("./src").nodes[0].text == "/src");
+    assert(parseQuery("src\\*x").nodes[0].text == "/src\\*x");
+    assert(!parseQuery("/src").ok && parseQuery("/src").error.offset == 0);
+    auto bare = parseQuery("all");
+    assert(bare.ok && bare.nodes[0].kind == NodeKind.glob && bare.nodes[0].text == "/all",
+        "a bare call name is a path");
+    assert(bare.bareCallNames == ["all"]);
+    auto call = parseQuery("all() - gitTracked()");
+    assert(call.ok && call.nodes[0].kind == NodeKind.all && call.usesGitTracked);
+    assert(!parseQuery("all(x)").ok);
 }
 
-/// FXL3: `&` binds tighter; `|` and `-` are left-associative.
+/// FXL8: a path's text, its metacharacters and its escapes are tokens of their own.
+@("fileset.query.tokens")
+@safe pure unittest
+{
+    static string kinds(string s)
+    {
+        auto q = parseQuery(s);
+        string r;
+        foreach (ref t; q.tokens)
+            r ~= (r.length ? " " : "") ~ s[t.span.start .. t.span.end] ~ ":"
+                ~ ["p", "m", "e", "o", "f", "r", "c", "u"][t.kind];
+        return r;
+    }
+
+    assert(kinds("src/*.{d,di}") == "src/:p *:m .:p {:m d:p ,:m di:p }:m", kinds("src/*.{d,di}"));
+    assert(kinds("\"a b\"/**/[ab]?") == "\"a b\":p /:p **:m /:p [ab]:m ?:m");
+    assert(kinds("x\\*y") == "x:p \\*:e y:p");
+    assert(kinds("all() | a - b") != "", "mixing fails, still tokenized");
+    assert(kinds("fileFilter(name != *.d)") == "fileFilter:f (:u name:r !=:o *:m .d:p ):u");
+}
+
+/// FXL3: `&` binds tighter; `|` and `-` each read left to right, and mixed need parentheses.
 @("fileset.query.precedence")
 @safe pure unittest
 {
-    assert(canonical(parseQuery("a | b & c - d")) == "a | b & c - d");
+    assert(canonical(parseQuery("a | b & c")) == "a | b & c");
     assert(canonical(parseQuery("(a | b) & c")) == "(a | b) & c");
     assert(canonical(parseQuery("a - (b - c)")) == "a - (b - c)");
     assert(canonical(parseQuery("(a - b) - c")) == "a - b - c");
+    assert(canonical(parseQuery("a - b - c")) == "a - b - c");
+    auto mixed = parseQuery("a | b - c");
+    assert(!mixed.ok && mixed.error.offset == 6, mixed.error.message);
+    assert(!parseQuery("a - b | c").ok);
+    assert(canonical(parseQuery("(a | b) - c")) == "(a | b) - c");
+    assert(canonical(parseQuery("a | (b - c)")) == "a | (b - c)");
 }
 
-/// FXL4: function forms mean what the operators mean.
+/// FXL4: function forms mean what the operators mean; predicates take bare arguments.
 @("fileset.query.functions")
 @safe pure unittest
 {
-    assert(canonical(parseQuery("difference(unions(a, b, c), intersection(d, e))")) == "a | b | c - d & e", "left-associative: no parentheses needed");
+    assert(canonical(parseQuery("difference(unions(a, b, c), intersection(d, e))")) == "(a | b | c) - d & e");
     assert(canonical(parseQuery("unions(a)")) == "a");
     assert(canonical(parseQuery("fileFilter(hasExt(\"d\") && !name == \"x.d\")"))
-        == "fileFilter(hasExt(\"d\") && !name == \"x.d\")");
-    assert(canonical(parseQuery("fileFilter((type == \"symlink\" || name == \"a\") && hasExt(\"d\"))"))
-        == "fileFilter((type == \"symlink\" || name == \"a\") && hasExt(\"d\"))");
-    assert(!parseQuery("fileFilter(type == \"dir\")").ok);
+        == "fileFilter(hasExt(d) && !name == x.d)");
+    assert(canonical(parseQuery("fileFilter(hasExt(d) && name != x.d)"))
+        == "fileFilter(hasExt(d) && name != x.d)");
+    assert(canonical(parseQuery("fileFilter((type == symlink || name == a) && hasExt(d))"))
+        == "fileFilter((type == symlink || name == a) && hasExt(d))");
+    assert(canonical(parseQuery("fileFilter(type != \"regular\")")) == "fileFilter(type != regular)");
+    assert(!parseQuery("fileFilter(type == dir)").ok);
+    auto glob = parseQuery("fileFilter(name == *_test.d)");
+    assert(glob.ok && glob.preds[0].value == "*_test.d");
+    assert(parseQuery("fileFilter(name == \"*_test.d\")").preds[0].value == "\\*_test.d", "quoted: literal");
 }
 
 /// FXL6: an error has one message and the byte it is about.
@@ -631,52 +893,75 @@ private bool evenBackslashes(scope const(char)[] s) @safe pure nothrow @nogc
     assert(parseQuery("\"open").error.offset == 0);
     assert(parseQuery("difference(a)").error.message == "`difference` takes two arguments");
     assert(parseQuery("| a").error.offset == 0);
+    assert(parseQuery("a | [b").error.offset == 4);
+    assert(parseQuery("a\\ b").error.offset == 1);
+    assert(parseQuery("a{b").error.offset == 1);
+    assert(parseQuery("a}").error.offset == 1);
+    assert(parseQuery("a{b,}").error.offset == 4);
+    assert(parseQuery("x[]").error.offset == 1);
+    assert(parseQuery("{\"a\"}").error.offset == 1);
 }
 
 // ---- the canonical form (FXL7) ------------------------------------------
 
 /// The query's canonical text: comments dropped, operators for the function
-/// forms that have one, n-ary unions and intersections flattened, and
-/// parentheses only where precedence needs them. `none` for an empty query.
+/// forms that have one, n-ary unions and intersections flattened, parentheses
+/// only where precedence needs them, and paths bare where they can be.
+/// `none()` for an empty query.
 string canonical(in Query q) @safe pure
 {
     if (!q.ok)
         return null;
     if (q.root == noNode)
-        return "none";
+        return "none()";
     return render(q, q.root, 0);
 }
 
-private int precedence(NodeKind k) @safe pure nothrow @nogc
-    => k == NodeKind.union_ || k == NodeKind.difference ? 1 : k == NodeKind.intersection ? 2 : 3;
+// 1: `|`; 2: `-`; 3: `&`; 4: a leaf.
+private int level(NodeKind k) @safe pure nothrow @nogc
+    => k == NodeKind.union_ ? 1 : k == NodeKind.difference ? 2 : k == NodeKind.intersection ? 3 : 4;
 
-private string render(in Query q, uint n, int outer) @safe pure
+// `outer`: the operator around it, whose operand needs parentheses unless it
+// binds tighter, or is the same left-associative run on the left.
+private string render(in Query q, uint n, int outer, bool leftOfSame = false) @safe pure
 {
     const node = q.nodes[n];
-    const prec = precedence(node.kind);
+    const lv = level(node.kind);
     string s;
     final switch (node.kind)
     {
         case NodeKind.glob: s = globText(node.text); break;
-        case NodeKind.all: s = "all"; break;
-        case NodeKind.none: s = "none"; break;
-        case NodeKind.exec: s = "exec"; break;
-        case NodeKind.gitignored: s = "gitignored"; break;
-        case NodeKind.gitTracked: s = "gitTracked"; break;
+        case NodeKind.all: s = "all()"; break;
+        case NodeKind.none: s = "none()"; break;
+        case NodeKind.exec: s = "exec()"; break;
+        case NodeKind.gitignored: s = "gitignored()"; break;
+        case NodeKind.gitTracked: s = "gitTracked()"; break;
         case NodeKind.union_, NodeKind.intersection:
             const op = node.kind == NodeKind.union_ ? " | " : " & ";
             foreach (i, a; flatten(q, n, node.kind))
-                s ~= (i ? op : "") ~ render(q, a, node.kind == NodeKind.union_ ? 1 : 2);
+                s ~= (i ? op : "") ~ render(q, a, lv);
             break;
         case NodeKind.difference:
-            // Left-associative: a difference on the right needs parentheses.
-            s = render(q, node.args[0], 1) ~ " - " ~ render(q, node.args[1], 2);
+            // Left-associative: a difference on the left reads without parentheses.
+            s = render(q, node.args[0], lv, true) ~ " - " ~ render(q, node.args[1], lv);
             break;
         case NodeKind.fileFilter:
             s = "fileFilter(" ~ renderPred(q, node.pred, 0) ~ ")";
             break;
     }
-    return prec < outer ? "(" ~ s ~ ")" : s;
+    // An intersection or a leaf binds tightest; a union or a difference inside
+    // an intersection needs parentheses, and so do `|` and `-` side by side,
+    // but for a difference's left operand that is a difference.
+    bool bare;
+    if (outer == 0 || lv >= 3)
+        bare = true;
+    else if (outer == 3)
+        bare = false;
+    else if (lv == outer)
+        bare = lv == 1 || leftOfSame;
+    else
+        bare = false;
+    return bare ? s : "(" ~ s ~ ")";
 }
 
 // The operands of a run of one associative operator.
@@ -696,11 +981,12 @@ private string renderPred(in Query q, uint p, int outer) @safe pure
     const pr = q.preds[p];
     int prec;
     string s;
+    const eq = pr.negated ? " != " : " == ";
     final switch (pr.kind)
     {
-        case PredKind.hasExt: prec = 3; s = "hasExt(" ~ quote(pr.value) ~ ")"; break;
-        case PredKind.name: prec = 3; s = "name == " ~ quote(pr.value); break;
-        case PredKind.type: prec = 3; s = "type == " ~ quote(pr.value); break;
+        case PredKind.hasExt: prec = 3; s = "hasExt(" ~ pathText(pr.value) ~ ")"; break;
+        case PredKind.name: prec = 3; s = "name" ~ eq ~ pathText(pr.value); break;
+        case PredKind.type: prec = 3; s = "type" ~ eq ~ pr.value; break;
         case PredKind.not: prec = 3; s = "!" ~ renderPred(q, pr.a, 3); break;
         case PredKind.and: prec = 2; s = renderPred(q, pr.a, 2) ~ " && " ~ renderPred(q, pr.b, 2); break;
         case PredKind.or: prec = 1; s = renderPred(q, pr.a, 1) ~ " || " ~ renderPred(q, pr.b, 1); break;
@@ -708,7 +994,7 @@ private string renderPred(in Query q, uint p, int outer) @safe pure
     return prec < outer ? "(" ~ s ~ ")" : s;
 }
 
-/// `s` as a string literal: quoted, with `"` and `\` escaped.
+/// `s` as a quoted piece: quoted, with `"` and `\` escaped.
 string quote(scope const(char)[] s) @safe pure
 {
     string r = "\"";
@@ -721,15 +1007,99 @@ string quote(scope const(char)[] s) @safe pure
     return r ~ "\"";
 }
 
-/// A glob as the query writes it: bare when the lexer reads it back as one
-/// glob, else as a string.
-string globText(string g) @safe pure
+/**
+A path's pattern, anchored as $(LREF QueryNode)`.text` is, as the query
+writes it: without the anchor, bare where a bare piece can hold it, a run of
+literal text quoted where one cannot.
+*/
+string globText(string pattern) @safe pure
+    => pathText(pattern.length && pattern[0] == '/' ? pattern[1 .. $] : pattern);
+
+/// ditto, for an unanchored pattern: a predicate's argument.
+string pathText(string p) @safe pure
 {
-    auto back = parseQuery(g);
-    if (back.ok && back.nodes.length == 1 && back.nodes[0].kind == NodeKind.glob && !back.nodes[0].quoted
-        && back.tokens.length == 1)
-        return g;
-    return quote(g);
+    string out_;
+    char[] run; // literal bytes, unescaped
+    int depth;
+
+    void flush()
+    {
+        if (run.length == 0)
+            return;
+        bool needsQuotes = out_.length == 0 && run[0] == '#';
+        foreach (c; run)
+            needsQuotes |= isSpace(c) || c == '(' || c == ')' || c == '"';
+        if (needsQuotes)
+            out_ ~= quote(run);
+        else
+            foreach (i, c; run)
+            {
+                if (isGlobMeta(c) && (c != '!' || (out_.length == 0 && i == 0)))
+                    out_ ~= '\\';
+                out_ ~= c;
+            }
+        run = null;
+    }
+
+    for (size_t i; i < p.length;)
+    {
+        const c = p[i];
+        if (c == '\\' && i + 1 < p.length)
+        {
+            run ~= p[i + 1];
+            i += 2;
+            continue;
+        }
+        if (c == '[')
+        {
+            flush();
+            size_t j = i + 1;
+            if (j < p.length && (p[j] == '!' || p[j] == '^'))
+                ++j;
+            while (j < p.length && p[j] != ']')
+                j += p[j] == '\\' && j + 1 < p.length ? 2 : 1;
+            j = j < p.length ? j + 1 : j;
+            out_ ~= p[i .. j];
+            i = j;
+            continue;
+        }
+        if (c == '*' || c == '?' || c == '{' || (depth > 0 && (c == ',' || c == '}')))
+        {
+            flush();
+            depth += c == '{' ? 1 : c == '}' ? -1 : 0;
+            out_ ~= c;
+            ++i;
+            continue;
+        }
+        run ~= c;
+        ++i;
+    }
+    flush();
+    if (out_.length == 0)
+        return "./";
+    foreach (op; operators)
+        if (out_ == op)
+            return quote(out_);
+    return out_;
+}
+
+/// FXL7: the canonical form parses to the same tree's text again.
+@("fileset.query.canonicalRoundTrips")
+@safe pure unittest
+{
+    foreach (s; ["a | b & c", "(a | b) & c", "a - (b - c)", "\"a b\" | \"#x\" | \"|\"",
+        "fileFilter(!(hasExt(d) || type == symlink))", "all() - gitignored()", "*.{d,di}",
+        "\"my notes\"/*.md", "\"[x]\" | a\\*b", "(a | b) - c & d", "a | (b - c)", "./x"])
+    {
+        const once = canonical(parseQuery(s));
+        assert(once.length, s);
+        assert(canonical(parseQuery(once)) == once, once);
+    }
+    assert(globText("/|") == "\"|\"" && globText("/all") == "all" && globText("/a b") == "\"a b\"");
+    assert(globText("/src/**") == "src/**");
+    assert(globText("/my notes/*.md") == "\"my notes/\"*.md");
+    assert(globText("/\\[x\\]") == "\\[x\\]");
+    assert(canonical(parseQuery("")) == "none()");
 }
 
 // ---- compilation --------------------------------------------------------
@@ -744,9 +1114,9 @@ struct Compiled
 
 /**
 Builds the parsed `q` into `sets`. `tracked` lists the files of git's index
-beneath the fileset root for `gitTracked`, or returns `null` when the root is
-not in a git work tree, which fails the query (`FXL5`); it is called at most
-once, and only when `q` uses `gitTracked`.
+beneath the fileset root for `gitTracked()`, or returns `null` when the root
+is not in a git work tree, which fails the query (`FXL5`); it is called at
+most once, and only when `q` uses `gitTracked()`.
 */
 Compiled compileQuery(const Query q, ref Filesets sets, scope string[] delegate() @safe tracked)
     @safe
@@ -765,17 +1135,18 @@ Compiled compileQuery(const Query q, ref Filesets sets, scope string[] delegate(
         final switch (pr.kind)
         {
             case PredKind.hasExt, PredKind.name:
-                const pattern = pr.kind == PredKind.hasExt ? "*." ~ escapeGlob(pr.value) : escapeGlob(pr.value);
+                const pattern = pr.kind == PredKind.hasExt ? "*." ~ pr.value : pr.value;
                 auto g = sets.fileName(pattern);
                 if (g.hasError)
                 {
                     err = QueryError(g.error.context, pr.span.start);
                     return false;
                 }
-                f = g.value;
+                f = pr.negated ? sets.difference(sets.everything, g.value) : g.value;
                 return true;
             case PredKind.type:
-                f = pr.value == "symlink" ? sets.symlinks : sets.difference(sets.everything, sets.symlinks);
+                const symlink = pr.value == "symlink";
+                f = symlink != pr.negated ? sets.symlinks : sets.difference(sets.everything, sets.symlinks);
                 return true;
             case PredKind.not:
                 Fileset a;
@@ -801,7 +1172,9 @@ Compiled compileQuery(const Query q, ref Filesets sets, scope string[] delegate(
                 auto g = sets.glob(node.text);
                 if (g.hasError)
                 {
-                    err = QueryError(g.error.context, node.span.start + (node.quoted ? 1 : 0) + g.error.offset);
+                    const at = g.error.offset < node.origin.length ? node.origin[g.error.offset]
+                        : node.span.end;
+                    err = QueryError(g.error.context, at);
                     return false;
                 }
                 f = g.value;
@@ -858,10 +1231,9 @@ Compiled compileQuery(const Query q, ref Filesets sets, scope string[] delegate(
 string escapeGlob(scope const(char)[] s) @safe pure
 {
     string r;
-    foreach (i, c; s)
+    foreach (c; s)
     {
-        if (c == '*' || c == '?' || c == '[' || c == ']' || c == '{' || c == '}' || c == '\\'
-            || (i == 0 && c == '!'))
+        if (isGlobMeta(c))
             r ~= '\\';
         r ~= c;
     }
@@ -891,7 +1263,7 @@ string[] gitTrackedPaths(string dir) @safe
     return list.length ? list : [];
 }
 
-/// FXL5: `gitTracked` is the index beneath the root, and a plain directory
+/// FXL5: `gitTracked()` is the index beneath the root, and a plain directory
 /// has none.
 @("fileset.query.FXL5.gitTracked")
 @system unittest
@@ -944,29 +1316,21 @@ version (unittest)
     }
 
     assert(has("src/**/*.d - **/*_test.d", "src/a.d") && !has("src/**/*.d - **/*_test.d", "src/a_test.d"));
-    assert(has("fileFilter(hasExt(\"d\") && !name == \"x.d\")", "q/y.d"));
-    assert(!has("fileFilter(hasExt(\"d\") && !name == \"x.d\")", "q/x.d"));
+    assert(has("README.md", "README.md") && !has("README.md", "docs/README.md"), "relative to the root");
+    assert(has("**/README.md", "docs/README.md"));
+    assert(has("src", "src/a/b.d"), "a directory selects what is beneath it");
+    assert(has("fileFilter(hasExt(d) && name != x.d)", "q/y.d"));
+    assert(!has("fileFilter(hasExt(d) && name != x.d)", "q/x.d"));
+    assert(has("fileFilter(name == *_test.d)", "q/a_test.d"), "a bare name is a glob");
     assert(has("fileFilter(name == \"a*b\")", "a*b") && !has("fileFilter(name == \"a*b\")", "aXb"),
-        "a name is literal");
-    assert(has("gitTracked & *.d", "src/t.d") && !has("gitTracked", "b.d"));
+        "a quoted name is literal");
+    assert(has("\"[x].md\"", "[x].md") && !has("\"[x].md\"", "x.md"), "a quoted piece is literal");
+    assert(has("\"my notes\"/*.md", "my notes/a.md"));
+    assert(has("gitTracked() & **/*.d", "src/t.d") && !has("gitTracked()", "b.d"));
+    assert(has("fileFilter(type != symlink)", "a.d"));
 
-    auto none = compileQuery(parseQuery("gitTracked"), sets, () => cast(string[]) null);
+    auto none = compileQuery(parseQuery("gitTracked()"), sets, () => cast(string[]) null);
     assert(!none.ok && none.error.message == "not a git work tree");
-    auto bad = compileQuery(parseQuery("a | \"[b\""), sets, null);
-    assert(!bad.ok && bad.error.offset >= 5, bad.error.message);
-}
-
-/// FXL7: the canonical form parses to the same tree's text again.
-@("fileset.query.canonicalRoundTrips")
-@safe pure unittest
-{
-    foreach (s; ["a | b & c - d", "(a | b) & c", "a - (b - c)", "\"a b\" | \"#x\" | \"|\"",
-        "fileFilter(!(hasExt(\"d\") || type == \"symlink\"))", "all - gitignored", "*.{d,di}"])
-    {
-        const once = canonical(parseQuery(s));
-        assert(once.length, s);
-        assert(canonical(parseQuery(once)) == once, once);
-    }
-    assert(globText("|") == "\"|\"" && globText("all") == "\"all\"" && globText("a b") == "\"a b\"");
-    assert(globText("src/**") == "src/**");
+    auto bad = compileQuery(parseQuery("a | x/{b/c,d}"), sets, null);
+    assert(!bad.ok && bad.error.offset >= 4, bad.error.message);
 }

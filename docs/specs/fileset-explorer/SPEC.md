@@ -421,14 +421,14 @@ by the _glob mode_:
 
 `exec` **must** be refused in every mode, because evaluation cannot see the
 executable bit. `gitignored` **must** be emitted as the root minus
-`gitTracked` only when the open directory is a git work tree with no untracked,
+`gitTracked()` only when the open directory is a git work tree with no untracked,
 unignored file and no tracked, ignored one; otherwise refused.
 
 **`FXE4` — git pathspec.** The `git-pathspec` target emits a
 `git ls-files --cached --others --` command with `:(glob)` and
 `:(exclude,glob)` pathspecs, braces expanded, selecting the members among the
 files git lists. It accepts a normalized query of the form
-`(g1 | … | gn) - (h1 | … | hm)` of globs; `gitTracked` alone, or intersected
+`(g1 | … | gn) - (h1 | … | hm)` of globs; `gitTracked()` alone, or intersected
 with such a form, adds no pathspec and drops `--others`. A `fileFilter` by name
 is refused, since a pathspec also matches a directory's contents. Git matches
 an exclude against paths shorn of the includes' common literal directory, so an

@@ -111,6 +111,7 @@ struct Outcome
     string narHash;         /// the SRI `NarHash`
     ulong narSize;          ///
     string[2][] extensions; /// the commonest extensions, `[ext, count]`, most first
+    string[] hints;         /// what a bare call name meant (`FXL9`)
 
     /// Whether the query did not parse or did not resolve.
     bool failed() const @safe pure nothrow @nogc => !query.ok || !resolved;
@@ -179,6 +180,18 @@ private void resolveInto(V, Rights R)(DirRef!(V, R) dir, in Root root, ref Outco
     }
     o.resolved = true;
     o.found = r.value;
+
+    // A bare call name that names no file meant the call (`FXL9`).
+    foreach (name; o.query.bareCallNames)
+    {
+        auto alone = compileQuery(parseQuery(name), sets, null);
+        if (!alone.ok)
+            continue;
+        Collect c;
+        auto got = resolveScheme(dir, sets, alone.set, c, exec);
+        if (!got.hasError && got.value.members.length == 0)
+            o.hints ~= text("`", name, "` names no file: the call is `", name, "()`");
+    }
 
     size_t[string] byExt;
     foreach (ref m; o.found.members)
@@ -261,7 +274,7 @@ string humanBytes(ulong n) @safe
 {
     const root = Root(literal: "src/a.d = 12345\nsrc/a_test.d = x\nbin/run +x = #!\nREADME.md = hi\nl -> src\n",
         name: "t");
-    auto o = evaluate(root, "src/** - **/*_test.d | bin/* | l");
+    auto o = evaluate(root, "(src/** - **/*_test.d) | bin/* | l");
     assert(o.resolved, o.error.message);
     string[] paths;
     foreach (m; o.found.members)
@@ -272,6 +285,6 @@ string humanBytes(ulong n) @safe
 
     const bad = evaluate(root, "(a");
     assert(bad.failed && bad.error.offset == 2);
-    const untracked = evaluate(root, "gitTracked");
+    const untracked = evaluate(root, "gitTracked()");
     assert(untracked.failed && untracked.error.message == "not a git work tree");
 }

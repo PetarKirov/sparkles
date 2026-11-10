@@ -31,7 +31,7 @@ private enum literal = "src/app.d = a\nsrc/lib_test.d = t\nREADME.md = r\nbin/ru
     assert(app.exportTarget == Target.gitPathspec && git.canFind("git ls-files"), git);
 
     // A query rsync cannot hold: the reason, and the bytes, in the tab.
-    auto refused = new ExplorerApp(Root(literal: literal, name: "t"), "src/** & exec");
+    auto refused = new ExplorerApp(Root(literal: literal, name: "t"), "src/** & exec()");
     const r = renderFrame(*refused, "<Tab><Tab><Right><Right>ttt", Size(150, 44));
     assert(refused.exportTarget == Target.rsync && !refused.currentExport.ok);
     assert(r.canFind("✗ rsync's first-match filter list cannot express an intersection"), r);

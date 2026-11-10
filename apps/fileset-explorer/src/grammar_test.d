@@ -23,20 +23,31 @@ import sparkles.syntax.ts.registry : GrammarRegistry;
 immutable string[] corpus = [
     "a",
     "src/**/*.d - **/*_test.d",
-    "a | b & c - d",
+    "a | b & c",
+    "a - b - c & d",
     "(a | b) & (c - d)",
+    "(a | b) - c",
     "a-b/*.d | -x",
     "*.{d,di} | {a,{b,c}}/x",
+    "src/[ab]*.? | [!x]y",
     "\"#foo#\" | \"a b\" | \"say \\\"hi\\\"\"",
+    "\"my notes\"/*.md | a\"b\"c | \"x\"{y,z}",
+    "a\\*b | \\!x | a\\,b",
+    "./src | ./*.md",
     "a#b # comment\n| c",
+    "a*#b",
     "# only a comment",
     "",
-    "all - gitignored | exec & none | gitTracked",
-    "unions(a, b, c) & intersection(d, e) - difference(f, g)",
+    "(all() - gitignored()) | exec() & none() | gitTracked()",
+    "all | none | all* | allx | unions | fileFilter", // bare call names are paths
+    "unions(a, b, c) & intersection(d, e) | difference(f, g)",
     "unions(unions(a), (b | c))",
     "fileFilter(hasExt(\"d\") && !name == \"x.d\" || type == \"symlink\")",
-    "fileFilter(!(hasExt(\"d\") || name == \"README.md\"))",
-    "name | type | hasExt", // outside fileFilter these are globs
+    "fileFilter(!(hasExt(d) || name == README.md))",
+    "fileFilter(name != *_test.d && type != regular)",
+    "fileFilter(name == \"a b\"*.d || hasExt({d,di}))",
+    "fileFilter(name == name || hasExt(all))",
+    "name | type | hasExt", // outside fileFilter these are paths
     // invalid
     "(a | b",
     "a |",
@@ -45,18 +56,31 @@ immutable string[] corpus = [
     "unions()",
     "fileFilter(a)",
     "fileFilter(name \"x\")",
+    "fileFilter(type == dir)",
     "\"open",
+    "a | b - c",
+    "a - b | c",
+    "all(x)",
+    "a\\ b",
+    "a\\q",
+    "[b",
+    "x[]",
+    "a{b",
+    "a}",
+    "a{b,}",
+    "{\"a\",b}",
+    "!a",
     "a)",
 ];
 
 private TokenKind kindOfLabel(const(char)[] name)
 {
-    if (name.startsWith("string.special"))
-        return TokenKind.glob;
+    if (name.startsWith("string.escape"))
+        return TokenKind.escape;
     if (name.startsWith("string"))
-        return TokenKind.string_;
-    if (name.startsWith("constant"))
-        return TokenKind.keyword;
+        return TokenKind.path;
+    if (name.startsWith("punctuation.special"))
+        return TokenKind.globMeta;
     if (name.startsWith("function"))
         return TokenKind.function_;
     if (name.startsWith("property") || name.startsWith("variable"))

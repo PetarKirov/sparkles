@@ -27,7 +27,7 @@ private bool haveGrammars()
 
     if (!haveGrammars)
         return skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
-    auto app = new ExplorerApp(Root(dir: "."), "none");
+    auto app = new ExplorerApp(Root(dir: "."), "none()");
     assert(app.trees.length == 1 && "tutorial" in app.trees, text(app.trees.keys));
     size_t checked;
     foreach (ref t; app.tries)
@@ -69,7 +69,7 @@ private bool haveGrammars()
 
     if (!haveGrammars)
         return skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
-    auto app = new ExplorerApp(Root(dir: "."), "none");
+    auto app = new ExplorerApp(Root(dir: "."), "none()");
     app.runTry(1);
     assert(app.query.text == app.tries[1].input[0 .. $ - 1], app.query.text);
     assert(app.root.inMemory && app.root.name == "tutorial");
@@ -81,7 +81,7 @@ private bool haveGrammars()
     const frame = renderFrame(*app, "np", Size(140, 40));
     assert(app.trySel == 1 && frame.canFind("✓ result, as expected"), frame);
     // Esc leaves the tutorial tree for the directory.
-    auto again = new ExplorerApp(Root(dir: "."), "none");
+    auto again = new ExplorerApp(Root(dir: "."), "none()");
     again.runTry(0);
     cast(void) renderFrame(*again, "<Tab><Tab><Esc>", Size(100, 30));
     assert(!again.root.inMemory);

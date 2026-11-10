@@ -39,6 +39,33 @@
     }
   },
   {
+    "type": "brace",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "brace",
+          "named": true
+        },
+        {
+          "type": "escape",
+          "named": true
+        },
+        {
+          "type": "meta",
+          "named": true
+        },
+        {
+          "type": "text",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "call",
     "named": true,
     "fields": {
@@ -70,15 +97,11 @@
           "named": true
         },
         {
-          "type": "glob",
-          "named": true
-        },
-        {
           "type": "intersection",
           "named": true
         },
         {
-          "type": "keyword",
+          "type": "nullary",
           "named": true
         },
         {
@@ -86,7 +109,7 @@
           "named": true
         },
         {
-          "type": "string",
+          "type": "path",
           "named": true
         },
         {
@@ -117,15 +140,11 @@
             "named": true
           },
           {
-            "type": "glob",
-            "named": true
-          },
-          {
             "type": "intersection",
             "named": true
           },
           {
-            "type": "keyword",
+            "type": "nullary",
             "named": true
           },
           {
@@ -133,11 +152,7 @@
             "named": true
           },
           {
-            "type": "string",
-            "named": true
-          },
-          {
-            "type": "union",
+            "type": "path",
             "named": true
           }
         ]
@@ -151,15 +166,7 @@
             "named": true
           },
           {
-            "type": "difference",
-            "named": true
-          },
-          {
             "type": "file_filter",
-            "named": true
-          },
-          {
-            "type": "glob",
             "named": true
           },
           {
@@ -167,7 +174,7 @@
             "named": true
           },
           {
-            "type": "keyword",
+            "type": "nullary",
             "named": true
           },
           {
@@ -175,11 +182,7 @@
             "named": true
           },
           {
-            "type": "string",
-            "named": true
-          },
-          {
-            "type": "union",
+            "type": "path",
             "named": true
           }
         ]
@@ -249,7 +252,7 @@
           "named": true
         },
         {
-          "type": "string",
+          "type": "path",
           "named": true
         }
       ]
@@ -268,15 +271,7 @@
             "named": true
           },
           {
-            "type": "difference",
-            "named": true
-          },
-          {
             "type": "file_filter",
-            "named": true
-          },
-          {
-            "type": "glob",
             "named": true
           },
           {
@@ -284,7 +279,7 @@
             "named": true
           },
           {
-            "type": "keyword",
+            "type": "nullary",
             "named": true
           },
           {
@@ -292,11 +287,7 @@
             "named": true
           },
           {
-            "type": "string",
-            "named": true
-          },
-          {
-            "type": "union",
+            "type": "path",
             "named": true
           }
         ]
@@ -310,23 +301,11 @@
             "named": true
           },
           {
-            "type": "difference",
-            "named": true
-          },
-          {
             "type": "file_filter",
             "named": true
           },
           {
-            "type": "glob",
-            "named": true
-          },
-          {
-            "type": "intersection",
-            "named": true
-          },
-          {
-            "type": "keyword",
+            "type": "nullary",
             "named": true
           },
           {
@@ -334,21 +313,12 @@
             "named": true
           },
           {
-            "type": "string",
-            "named": true
-          },
-          {
-            "type": "union",
+            "type": "path",
             "named": true
           }
         ]
       }
     }
-  },
-  {
-    "type": "keyword",
-    "named": true,
-    "fields": {}
   },
   {
     "type": "name_is",
@@ -359,11 +329,11 @@
       "required": true,
       "types": [
         {
-          "type": "predicate",
+          "type": "path",
           "named": true
         },
         {
-          "type": "string",
+          "type": "predicate",
           "named": true
         }
       ]
@@ -406,6 +376,22 @@
           "named": true
         }
       ]
+    }
+  },
+  {
+    "type": "nullary",
+    "named": true,
+    "fields": {
+      "function": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "function",
+            "named": true
+          }
+        ]
+      }
     }
   },
   {
@@ -468,15 +454,11 @@
           "named": true
         },
         {
-          "type": "glob",
-          "named": true
-        },
-        {
           "type": "intersection",
           "named": true
         },
         {
-          "type": "keyword",
+          "type": "nullary",
           "named": true
         },
         {
@@ -484,11 +466,42 @@
           "named": true
         },
         {
-          "type": "string",
+          "type": "path",
           "named": true
         },
         {
           "type": "union",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "path",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "brace",
+          "named": true
+        },
+        {
+          "type": "escape",
+          "named": true
+        },
+        {
+          "type": "meta",
+          "named": true
+        },
+        {
+          "type": "string",
+          "named": true
+        },
+        {
+          "type": "text",
           "named": true
         }
       ]
@@ -555,15 +568,11 @@
           "named": true
         },
         {
-          "type": "glob",
-          "named": true
-        },
-        {
           "type": "intersection",
           "named": true
         },
         {
-          "type": "keyword",
+          "type": "nullary",
           "named": true
         },
         {
@@ -571,7 +580,7 @@
           "named": true
         },
         {
-          "type": "string",
+          "type": "path",
           "named": true
         },
         {
@@ -596,6 +605,10 @@
         {
           "type": "string",
           "named": true
+        },
+        {
+          "type": "text",
+          "named": true
         }
       ]
     }
@@ -613,15 +626,7 @@
             "named": true
           },
           {
-            "type": "difference",
-            "named": true
-          },
-          {
             "type": "file_filter",
-            "named": true
-          },
-          {
-            "type": "glob",
             "named": true
           },
           {
@@ -629,7 +634,7 @@
             "named": true
           },
           {
-            "type": "keyword",
+            "type": "nullary",
             "named": true
           },
           {
@@ -637,7 +642,7 @@
             "named": true
           },
           {
-            "type": "string",
+            "type": "path",
             "named": true
           },
           {
@@ -655,15 +660,7 @@
             "named": true
           },
           {
-            "type": "difference",
-            "named": true
-          },
-          {
             "type": "file_filter",
-            "named": true
-          },
-          {
-            "type": "glob",
             "named": true
           },
           {
@@ -671,7 +668,7 @@
             "named": true
           },
           {
-            "type": "keyword",
+            "type": "nullary",
             "named": true
           },
           {
@@ -679,11 +676,7 @@
             "named": true
           },
           {
-            "type": "string",
-            "named": true
-          },
-          {
-            "type": "union",
+            "type": "path",
             "named": true
           }
         ]
@@ -692,6 +685,10 @@
   },
   {
     "type": "!",
+    "named": false
+  },
+  {
+    "type": "!=",
     "named": false
   },
   {
@@ -723,37 +720,21 @@
     "named": false
   },
   {
-    "type": "all",
-    "named": false
-  },
-  {
     "type": "comment",
     "named": true,
     "extra": true
   },
   {
-    "type": "exec",
-    "named": false
+    "type": "escape",
+    "named": true
   },
   {
     "type": "function",
     "named": true
   },
   {
-    "type": "gitTracked",
-    "named": false
-  },
-  {
-    "type": "gitignored",
-    "named": false
-  },
-  {
-    "type": "glob",
+    "type": "meta",
     "named": true
-  },
-  {
-    "type": "none",
-    "named": false
   },
   {
     "type": "predicate",
@@ -761,6 +742,10 @@
   },
   {
     "type": "string",
+    "named": true
+  },
+  {
+    "type": "text",
     "named": true
   },
   {
