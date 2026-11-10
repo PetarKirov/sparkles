@@ -1,4 +1,4 @@
-/// The touch layout, recorded (`FXU11`–`FXU13`, `FXU17`–`FXU20`, `FXU22`).
+/// The touch layout, recorded (`FXU11`–`FXU13`, `FXU17`–`FXU20`, `FXU22`, `FXU23`).
 module touch_layout_test;
 
 import std.algorithm.searching : canFind, countUntil;
@@ -280,4 +280,29 @@ private enum tablet = Size(140, 40);
     const frame = renderFrame(*app, "", tablet);
     assert(frame.canFind("Copy") && frame.canFind("gitignore"), "the header stays:\n" ~ frame);
     assert(!frame.canFind("# Generated") && frame.canFind("r from: /aaaa"), "the lines start 30 columns in:\n" ~ frame);
+}
+
+/// FXU23: Export's target, Nix's glob mode and Copy share the tabs' row when
+/// it has room, and still work there; a phone keeps them in the pane.
+@("fileset_explorer.FXU23.exportControlsBesideTheTabs")
+@system unittest
+{
+    auto app = make("src/*.d");
+    tap(*app, find(*app, "Export", tablet), tablet);
+    assert(app.exportShown && app.exportTarget == Target.nix);
+    const tabs = find(*app, "Stats", tablet);
+    foreach (label; ["◀", "nix", "▶", "glob shim", "expand", "refuse", "Copy"])
+        assert(find(*app, label, tablet).y == tabs.y, label ~ " is not on the tabs' row:\n"
+            ~ renderFrame(*app, "", tablet));
+    tap(*app, find(*app, "expand", tablet), tablet);
+    assert(app.nixGlobs == NixGlobs.expand, text(app.nixGlobs));
+    tap(*app, find(*app, "▶", tablet), tablet);
+    assert(app.exportTarget != Target.nix && find(*app, "Copy", tablet).y == tabs.y);
+
+    const phone = Size(60, 60);
+    auto narrow = make("src/*.d");
+    tap(*narrow, find(*narrow, "Export", phone), phone);
+    assert(narrow.exportShown);
+    assert(find(*narrow, "glob shim", phone).y > find(*narrow, "Stats", phone).y,
+        "a phone's tabs row has no room:\n" ~ renderFrame(*narrow, "", phone));
 }
