@@ -1,4 +1,4 @@
-/// The touch layout, recorded (`FXU11`–`FXU13`, `FXU17`–`FXU20`).
+/// The touch layout, recorded (`FXU11`–`FXU13`, `FXU17`–`FXU20`, `FXU22`).
 module touch_layout_test;
 
 import std.algorithm.searching : canFind, countUntil;
@@ -249,4 +249,35 @@ private enum tablet = Size(140, 40);
         }
     assert(built > 10 && built <= tablet.height, text(built, " of ", app.exportLines.length, " lines built"));
     assert(app.exportScroll.content >= 150, "the scroll still spans every line");
+}
+
+/// FXU22: a line wider than the Export tab scrolls across, under a header
+/// that stays.
+@("fileset_explorer.FXU22.exportScrollsAcross")
+@system unittest
+{
+    import std.array : replicate;
+
+    import sparkles.input : WheelEvent;
+
+    const name = "a".replicate(200) ~ ".d";
+    auto app = new ExplorerApp(Root(literal: name ~ " = x\n", name: "t"), "/" ~ name);
+    app.layout = ExplorerApp.Layout.touch;
+    app.exportTarget = Target.gitignore;
+    tap(*app, find(*app, "Export", tablet), tablet);
+    assert(app.exportShown && app.exportWidth > 200, text(app.exportWidth));
+
+    // A finger moving across, over the export's lines.
+    const copy = find(*app, "Copy", tablet);
+    WheelEvent across;
+    across.pos = Point(copy.x - 10, copy.y + 4);
+    across.precise = true;
+    across.fdx = 30;
+    across.fdy = 2;
+    runAppRecorded(*app, RunConfig.init, [Event(across)], (ref RecordingHost h) @safe { h.size = tablet; });
+    assert(app.exportScrollX.motion.whole == 30, text(app.exportScrollX.motion.whole));
+    assert(app.exportScroll.motion.whole == 0, "more across than down: across only");
+    const frame = renderFrame(*app, "", tablet);
+    assert(frame.canFind("Copy") && frame.canFind("gitignore"), "the header stays:\n" ~ frame);
+    assert(!frame.canFind("# Generated") && frame.canFind("r from: /aaaa"), "the lines start 30 columns in:\n" ~ frame);
 }

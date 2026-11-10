@@ -12,7 +12,7 @@ import core.time : MonoTime;
 import std.algorithm.comparison : max, min;
 import std.conv : text;
 import std.format : format;
-import std.math : floor;
+import std.math : abs, floor;
 
 import sparkles.base.text.grapheme : visibleWidth;
 import sparkles.build_primitives.fileset.fso : FsoKind;
@@ -100,6 +100,7 @@ struct ExplorerApp
     ScrollBody treeScroll;          /// the member tree's
     ScrollBody helpScroll;          /// the help's
     ScrollBody exportScroll;        /// the Export tab's
+    ScrollBody exportScrollX;       /// ... across, in columns, for its long lines
     /// Ease between positions on a target that can show a fraction of a row;
     /// off, every move lands at once (`--render-plain`, a terminal).
     bool smoothScroll = true;
@@ -232,12 +233,22 @@ struct ExplorerApp
             exportStale = false;
             // Highlighted once per export, not once a frame (`FXU20`).
             exportLines = exported.ok ? highlightCode(languageOf(exportTarget), exported.code) : null;
+            exportWidth = 0;
+            foreach (line; exportLines)
+            {
+                long w;
+                foreach (ref s; line)
+                    w += visibleWidth(s.text);
+                exportWidth = max(exportWidth, w);
+            }
         }
         return exported;
     }
 
     /// The export's lines, highlighted, as `currentExport` last made them.
     TextSpan[][] exportLines;
+    /// The widest of them, in cells: how far the Export tab scrolls across.
+    long exportWidth;
 
     /// Shows the help, or goes back to where F1 was pressed (`FXU7`).
     void toggleHelp()
@@ -341,7 +352,7 @@ struct ExplorerApp
         measureCell(h);
         rowCells = touch ? cellsFor(48, cellDp) : 1;
         treeRowCells = touch ? cellsFor(32, cellDp) : 1;
-        treeScroll.touch = helpScroll.touch = exportScroll.touch = touch;
+        treeScroll.touch = helpScroll.touch = exportScroll.touch = exportScrollX.touch = touch;
 
         // The query: its lines up to a third of the screen, and the status.
         const lines = query.state.text.lineCount;
@@ -494,10 +505,11 @@ struct ExplorerApp
             const on = i == selected;
             const t = b.add(Widget(kind: WidgetKind.text, text: l, alignX: Alignment.center,
                 slot: on ? Slot.chromeAccent : Slot.textPrimary, textStyle: TextStyle(bold: on)));
-            // Inset within the group's 32 dp outline, as a segment is.
+            // Inset within the group's 32 dp outline by 3 dp on every side, as a
+            // segment is: the outline's sides as far off as its top and bottom.
             segs ~= pill(b, b.add(Widget(kind: WidgetKind.panel, children: [t], padding: Insets(0, 1, 0, 1),
                 hitId: firstHit + i, slot: on ? Slot.chromeAccent : Slot.surfaceRaised, paintBackground: on,
-                decoration: Decoration(borderRadius: 6, drawHeight: 26))));
+                decoration: Decoration(borderRadius: 3, drawHeight: 32, drawInset: 3))));
         }
         // The group's outline is drawn at the target's middle, around the segments.
         return b.add(Widget(kind: WidgetKind.row, children: segs, height: SizeSpec.fixed(rowCells),
@@ -600,7 +612,8 @@ struct ExplorerApp
     */
     private bool animate(double dt, bool smooth)
     {
-        treeScroll.motion.instant = helpScroll.motion.instant = exportScroll.motion.instant = !smooth;
+        treeScroll.motion.instant = helpScroll.motion.instant = exportScroll.motion.instant
+            = exportScrollX.motion.instant = !smooth;
 
         treeScroll.content = tv.rows.length;
         treeScroll.viewport = tv.bodyRows;
@@ -610,6 +623,7 @@ struct ExplorerApp
         bool moving = treeScroll.animate(cast(float) dt);
         moving |= helpScroll.animate(cast(float) dt);
         moving |= exportScroll.animate(cast(float) dt);
+        moving |= exportScrollX.animate(cast(float) dt);
         tv.top = treeScroll.motion.whole;
         syncedTop = tv.top;
         return moving;
@@ -1158,8 +1172,21 @@ struct ExplorerApp
             const last = cast(size_t) min(lines.length, max(0, top + r.height + 1));
             if (first > 0)
                 rows ~= b.add(Widget(kind: WidgetKind.box, height: SizeSpec.fixed(cast(int) first)));
+            // The lines scroll across as a block, under a header that stays
+            // (`FXU22`): a snapshot's paths, or a long command, can be wider
+            // than any pane.
+            uint[] body_;
             foreach (line; lines[first .. last])
-                rows ~= b.add(Widget(kind: WidgetKind.rich, spans: line.length ? cast(TextSpan[]) line : [TextSpan(" ")]));
+                body_ ~= b.add(Widget(kind: WidgetKind.rich, width: SizeSpec.rigid_,
+                    spans: line.length ? cast(TextSpan[]) line : [TextSpan(" ")]));
+            const across = max(0, r.width - 2);
+            exportScrollX.content = exportWidth;
+            exportScrollX.viewport = across;
+            auto block = Widget(kind: WidgetKind.column, children: body_, clipX: true,
+                width: SizeSpec.fixed(across));
+            block.childOffset = Point(cast(int) exportScrollX.motion.whole, 0);
+            block.childOffsetFracX = exportScrollX.motion.frac;
+            rows ~= b.add(block);
             bodyCells = lines.length;
         }
         auto vp = Widget(kind: WidgetKind.column, children: rows, clipX: true, clipY: true,
@@ -1274,15 +1301,31 @@ struct ExplorerApp
             return h.quit();
         e.match!(
             (in KeyEvent k) => onKey(h, k),
-            (in PasteEvent p) {
-                if (focus == Focus.query && query.insert(p.text[], true).changed)
-                    refresh();
-            },
+            (in PasteEvent p) => onPaste(p),
             (in WheelEvent w) => onWheel(w),
             (in PointerEvent p) => onPointer(h, p),
             (in _) {},
         );
     }
+
+    // A paste goes into the query, whole (`EDI4`): the user's own, or the
+    // answer to the query's clipboard read (`EDY5`).
+    private void onPaste(in PasteEvent p)
+    {
+        if (focus != Focus.query && !p.request)
+        {
+            pasteBuf = null;
+            return;
+        }
+        pasteBuf ~= p.text[];
+        if (!p.last)
+            return;
+        if (query.paste(pasteBuf, p.request).changed)
+            refresh();
+        pasteBuf = null;
+    }
+
+    private char[] pasteBuf; // a paste's chunks, until its last
 
     // The dock's top edge on screen: the title and the query pane above it.
     private int dockTop() const @safe => dockY;
@@ -1300,10 +1343,18 @@ struct ExplorerApp
     // notch eases it `notchRows` on.
     private void onWheel(in WheelEvent w)
     {
-        if (w.exactY == 0)
-            return;
         auto s = scrollAt(w.pos);
-        if (s is null)
+        // Across, in the Export tab (`FXU22`): a finger or a trackpad moving
+        // more across than down, or a wheel turned with Shift.
+        const acrossBy = w.exactX != 0 ? w.exactX : !w.precise && w.mods.shift ? w.exactY : 0;
+        if (s is &exportScroll && acrossBy != 0 && (w.mods.shift || abs(w.exactX) > abs(w.exactY)))
+        {
+            WheelEvent x = w;
+            x.fdy = w.precise ? acrossBy : acrossBy * notchRows * 2;
+            exportScrollX.scroll(x);
+            return;
+        }
+        if (w.exactY == 0 || s is null)
             return;
         WheelEvent v = w;
         if (!w.precise)
@@ -1511,13 +1562,34 @@ struct ExplorerApp
         }
         final switch (focus)
         {
-            case Focus.query: return queryKey(k);
+            case Focus.query: return queryKey(h, k);
             case Focus.tree: return treeKey(k);
             case Focus.side: return sideKey(h, k);
         }
     }
 
-    private void queryKey(in KeyEvent k)
+    // The query's keys are the backend's (`EDK1`): a window's copy, cut and
+    // paste chords, with the clipboard the host has (`EDY5`); a read is
+    // answered later by a paste carrying its request.
+    private void queryKey(H)(ref H h, in KeyEvent k)
+    {
+        import sparkles.ui.editor.field : forwardClipboard, FieldSetup;
+        import sparkles.ui.editor.keys : EditorTarget, windowTarget;
+        import sparkles.ui_app.backend : Backend;
+        import sparkles.ui_app.host : canReadClipboard;
+
+        FieldSetup setup;
+        setup.target = h.backend == Backend.gui ? windowTarget : EditorTarget.terminal;
+        setup.clipboardWrite = __traits(compiles, h.clipboard(""));
+        static if (canReadClipboard!H)
+            setup.clipboardRead = h.capabilities.clipboardRead;
+        setup.applyTo(query);
+        scope (exit)
+            forwardClipboard(query, h);
+        queryKeyIn(k);
+    }
+
+    private void queryKeyIn(in KeyEvent k)
     {
         if (k.key == Key.enter && k.mods.ctrl)
         {
@@ -1613,6 +1685,7 @@ struct ExplorerApp
             exportTarget = targets[(at + (action == 1 ? 1 : targets.length - 1)) % targets.length];
             exportStale = true;
             exportScroll.motion.jumpTo(0, 0);
+            exportScrollX.motion.jumpTo(0, 0);
         }
         else if (action == 2 && exportTarget == Target.nix)
         {
