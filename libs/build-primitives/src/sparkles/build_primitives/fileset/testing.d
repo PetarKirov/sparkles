@@ -1583,6 +1583,58 @@ version (Posix)
         ~ "RingVfs:\n" ~ ring);
 }
 
+/// FSD6, D6: under `symlinks = beneath`, a link back to a directory the walk
+/// is inside is one incomplete entry and the resolution completes, on every
+/// backend; a second link to a directory that is not an ancestor is walked.
+version (Posix)
+@("fileset.driver.FSD6.cycle")
+@system unittest
+{
+    import std.file : rmdirRecurse;
+
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+    import sparkles.base.vfs.types : ResolvePolicy, SymlinkPolicy;
+    import sparkles.build_primitives.fileset.driver_loop : LoopExecutor;
+    import sparkles.event_horizon.admission : Admission;
+    import sparkles.event_horizon.sched : Sched;
+    import sparkles.event_horizon.sys : BlockingVfs;
+    import sparkles.event_horizon.vfs : RingVfs;
+
+    enum literal = "a/x.d\na/self -> .\na/b/y.d\ntwin -> a\n";
+    enum expected = "members:\na/x.d\na/b/y.d\ntwin/x.d\ntwin/b/y.d\nempty:\n\n"
+        ~ "incomplete:\na/self: symlinkLoop\ntwin/self: symlinkLoop\n";
+    ResolvePolicy beneath;
+    beneath.symlinks = SymlinkPolicy.beneath;
+    auto sets = Filesets(CasePolicy.sensitive);
+    const f = sets.everything;
+
+    auto tree = openFixture(literal);
+    auto memRoot = openRoot!(Rights.readOnly)(&tree.value.get().vfs, "", ambientAuthority(), beneath);
+    const mem = machineResolve(memRoot.value.borrow, sets, f).transcript;
+    assert(mem == expected, mem);
+
+    Sched s;
+    schedOrSkip(s);
+    const dir = scratchTree("cycle");
+    scope (exit) rmdirRecurse(dir);
+    materialize(literal, dir);
+    auto blocking = new BlockingVfs;
+    auto blockingRoot = openRoot!(Rights.readOnly)(blocking, dir, ambientAuthority(), beneath);
+    const native = machineResolve(blockingRoot.value.borrow, sets, f).transcript;
+
+    string ring;
+    auto r = s.run(() {
+        auto rv = new RingVfs;
+        auto ringRoot = openRoot!(Rights.readOnly)(rv, dir, ambientAuthority(), beneath);
+        auto exec = LoopExecutor!Sched(&s, new Admission(4));
+        PathCollector sink;
+        assert(!resolveWith(ringRoot.value.borrow, sets, f, sink, exec).hasError);
+        ring = sink.transcript;
+    });
+    assert(!r.hasError);
+    assert(native == expected && ring == expected, "BlockingVfs:\n" ~ native ~ "RingVfs:\n" ~ ring);
+}
+
 /// A sink that records which rule decided each entry (FSI3).
 struct DecisionCollector
 {

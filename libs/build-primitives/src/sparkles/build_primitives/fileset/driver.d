@@ -38,7 +38,7 @@ import sparkles.base.io.errors : ErrorKind;
 import sparkles.base.text.errors : NoGcHook;
 import sparkles.base.vfs.concept : isVfs;
 import sparkles.base.vfs.handles : Dir, DirRef;
-import sparkles.base.vfs.types : EntryKind, Rights, hasRights;
+import sparkles.base.vfs.types : EntryKind, Rights, StatMask, hasRights;
 
 import sparkles.build_primitives.fileset.machine : Cursor, Request, RequestKind, Resolution, ResolutionError,
     ResolutionErrorCode, ResolutionLimits, StepKind, noDir;
@@ -133,6 +133,15 @@ if (isVfs!V && hasRights(R, filesetRights))
                     : handles[req.dir].walk(req.name);
                 if (opened.hasError)
                     return m.failed(index, opened.error.kind);
+                if (req.mask & StatMask.identity)
+                {
+                    // Under `symlinks = beneath`: what tells a link back to
+                    // an ancestor (D6).
+                    auto st = opened.value.stat(StatMask.identity);
+                    if (st.hasError)
+                        return m.failed(index, st.error.kind);
+                    m.identified(index, st.value.device, st.value.inode);
+                }
                 auto listing = opened.value.list();
                 if (listing.hasError)
                     return m.failed(index, listing.error.kind);
