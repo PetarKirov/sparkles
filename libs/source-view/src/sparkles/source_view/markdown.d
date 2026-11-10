@@ -1118,48 +1118,78 @@ private uint fenceTopBorder(ref Builder b, ref const MdBlock blk,
                 tabStripTopBorder(b, opt.groupTabs.titles, caps), tabsRow],
             width: SizeSpec.fixed(boxW)));
     }
-    else
+
+    // `FXU24`: the language, the try block's ▶ (`FXT2`) and the copy
+    // affordance (`COD3`) together, after the corner: `╭─ 󰌠 python ▶ ⧉ ───╮`.
+    // On a pixel target they sit in one rounded outline on the rule the
+    // fence's own ring draws, and the rule's glyphs are a cell target's only.
+    const(char)[] lbl = langTitle(blk.infoLang);
+    if (blk.label.length && opt.fenceLabelInHeader)
+        lbl = lbl ~ " " ~ blk.label;
+    uint frameRule(string glyphs)
     {
-        const(char)[] lbl = langTitle(blk.infoLang);
-        if (blk.label.length && opt.fenceLabelInHeader)
-            lbl = lbl ~ " " ~ blk.label;
-        kids ~= rich([
-            ruleSpan(opt, "╭─ "),
-            TextSpan(lbl, Slot.code, codeStyle(opt),
-                fg: opt.theme.codeFg, hasFg: opt.theme.present,
-                srcStart: blk.span.start, srcEnd: blk.codeBody.start),
-            ruleSpan(opt, " ")]);
-        used = 4 + cast(int) visibleWidth(lbl);
+        const w = rich([ruleSpan(opt, glyphs)]);
+        b.nodes[w].decoration.cellsOnly = true;
+        return w;
     }
 
-    const hasCopy = opt.fenceHitBase != 0;
-    // `FXT2`: a try block's input runs from a ▶ cutout before the copy's.
-    const tailW = (hasCopy ? 5 : 1) + (opt.tryInput ? 4 : 0);
-    int fill = boxW - used - tailW;
-    if (fill < 0)
-        fill = 0;
-    kids ~= rich([ruleSpan(opt, repGlyph("─", fill))]);
+    kids ~= frameRule("╭─");
+    uint[] group = [rich([TextSpan(" ", Slot.code, codeStyle(opt), noBreak: true),
+        TextSpan(lbl, Slot.code, codeStyle(opt),
+            fg: opt.theme.codeFg, hasFg: opt.theme.present,
+            srcStart: blk.span.start, srcEnd: blk.codeBody.start),
+        TextSpan(" ", Slot.code, codeStyle(opt), noBreak: true)], 0, false)];
+    used = 2 + 1 + cast(int) visibleWidth(lbl) + 1;
     if (opt.tryInput)
     {
-        kids ~= rich([TextSpan(" " ~ opt.glyphs.tryIcon ~ " ", Slot.success, codeStyle(opt),
-            noBreak: true)], opt.tryHitBase + blk.codeBody.start);
-        kids ~= rich([ruleSpan(opt, "─")]);
+        const run = opt.glyphs.tryIcon ~ " ";
+        group ~= rich([TextSpan(run, Slot.success, codeStyle(opt), noBreak: true)],
+            opt.tryHitBase + blk.codeBody.start, false);
+        used += cast(int) visibleWidth(run);
     }
+    const hasCopy = opt.fenceHitBase != 0;
     if (hasCopy)
     {
-        TextSpan icon = TextSpan(" " ~ (opt.copiedFence == blk.codeBody.start
-            ? opt.glyphs.copiedIcon : opt.glyphs.copyIcon) ~ " ",
-            Slot.code, codeStyle(opt), noBreak: true,
-            fg: opt.theme.codeFg, hasFg: opt.theme.present);
-        kids ~= rich([icon], hit);
-        kids ~= rich([ruleSpan(opt, "─╮")]);
+        const run = (opt.copiedFence == blk.codeBody.start
+            ? opt.glyphs.copiedIcon : opt.glyphs.copyIcon) ~ " ";
+        group ~= rich([TextSpan(run, Slot.code, codeStyle(opt), noBreak: true,
+            fg: opt.theme.codeFg, hasFg: opt.theme.present)], hit, false);
+        used += cast(int) visibleWidth(run);
     }
-    else
-        kids ~= rich([ruleSpan(opt, "╮")]);
+    // The outline's fill is the fence's surface — on a pixel target it masks
+    // the ring under the label, on a cell target it bands the label's cells —
+    // and its border is a pixel target's alone.
+    Widget outline = Widget(kind: WidgetKind.row, children: group,
+        slot: Slot.surface, paintBackground: true,
+        decoration: Decoration(borderStyle: BorderStyle.solid, borderWidth: Insets.all(1),
+            borderSlot: Slot.border, borderRadius: fenceLabelRadiusPx,
+            drawInset: fenceLabelInsetPx, pixelsOnly: true));
+    if (opt.theme.present)
+    {
+        outline.bgOverride = opt.theme.codePanelBg;
+        outline.hasBgOverride = true;
+        outline.borderOverride = opt.theme.ruleFg;
+        outline.hasBorderOverride = true;
+    }
+    kids ~= b.add(outline);
+
+    int fill = boxW - used - 1;
+    if (fill < 0)
+        fill = 0;
+    kids ~= frameRule(repGlyph("─", fill));
+    kids ~= frameRule("╮");
 
     return b.add(Widget(kind: WidgetKind.row, children: kids,
         width: SizeSpec.fixed(boxW)));
 }
+
+/// The corner radius of the outline around a fence's label on a pixel
+/// target, in CSS px (`FXU24`).
+enum int fenceLabelRadiusPx = 6;
+
+/// How far inside its row the label's outline is drawn, in CSS px: clear of
+/// the line of code below it.
+enum int fenceLabelInsetPx = 3;
 
 // The fence's BOTTOM border row: `╰──╯` — and, when the body overflows
 // horizontally, the horizontal SCROLLBAR (`COD6`). The ordinary border line
@@ -1171,8 +1201,18 @@ private uint fenceRuleRun(ref Builder b, MdViewOptions opt, string text)
 {
     return b.add(Widget(kind: WidgetKind.rich,
         spans: [ruleSpan(opt, text)], slot: Slot.border,
-        wrap: TextWrap.none, textStyle: codeStyle(opt)));
+        wrap: TextWrap.none, textStyle: codeStyle(opt),
+        decoration: Decoration(cellsOnly: fenceRinged(opt))));
 }
+
+/**
+Whether a fence's frame is one ring on a pixel target (`FXU24`): its
+surface's rounded border, at the lines its glyphs draw on a cell target,
+which are then a cell target's only. A code group's fence keeps its glyphs:
+its tabs rise above the frame's top line, which a ring would cross.
+*/
+private bool fenceRinged(in MdViewOptions opt) @safe pure nothrow @nogc
+    => opt.groupTabs.titles.length == 0;
 
 private uint fenceBottomBorder(ref Builder b, MdViewOptions opt,
     ref const MdBlock blk, int boxW, int widest, int innerW, int offsetX,
@@ -1212,7 +1252,8 @@ private uint fenceBottomBorder(ref Builder b, MdViewOptions opt,
 
     Widget w = Widget(kind: WidgetKind.row, children: parts,
         slot: Slot.border, paintBackground: true,
-        textStyle: opt.baseStyle, width: SizeSpec.fixed(boxW));
+        textStyle: opt.baseStyle, width: SizeSpec.fixed(boxW),
+        decoration: Decoration(cellsOnly: fenceRinged(opt)));
     if (opt.theme.present)
     {
         w.bgOverride = opt.theme.codePanelBg;
@@ -1550,7 +1591,8 @@ private uint viewCodeFence(ref Builder b, ref const MdBlock blk,
             borderWidth: vOver ? Insets(0, 0, 0, 1)
                 : Insets(0, 1, 0, 1),
             borderStyle: BorderStyle.solid,
-            borderSlot: Slot.border));
+            borderSlot: Slot.border,
+            cellsOnly: fenceRinged(opt)));
     if (opt.theme.present)
     {
         panel.bgOverride = opt.theme.codePanelBg;
@@ -1562,15 +1604,22 @@ private uint viewCodeFence(ref Builder b, ref const MdBlock blk,
     // On a pixel target the panel's surface is one rounded box inside the
     // frame the border rows and sides draw, from rule to rule, rather than
     // whole cells under the body alone; a cell target draws none of it.
+    // Ringed (`FXU24`), the frame is that box's border: one stroke, as wide on
+    // the sides as on the top and bottom, the surface filling its corners.
+    const ringed = fenceRinged(opt);
     Widget fence = Widget(kind: WidgetKind.column, children: [
             fenceTopBorder(b, blk, opt, boxW), b.add(panel),
             fenceBottomBorder(b, opt, blk, boxW, widest, innerW,
                 fs.x, hOver)],
         slot: Slot.surface, paintBackground: true,
         width: SizeSpec.fixed(boxW),
-        decoration: Decoration(borderRadius: fenceRadiusPx, insideGlyphFrame: true));
+        decoration: Decoration(borderRadius: fenceRadiusPx, insideGlyphFrame: true,
+            borderStyle: ringed ? BorderStyle.solid : BorderStyle.none,
+            borderWidth: ringed ? Insets.all(1) : Insets.init, borderSlot: Slot.border));
     fence.bgOverride = panel.bgOverride;
     fence.hasBgOverride = panel.hasBgOverride;
+    fence.borderOverride = panel.borderOverride;
+    fence.hasBorderOverride = panel.hasBorderOverride;
     return b.add(fence);
 }
 
