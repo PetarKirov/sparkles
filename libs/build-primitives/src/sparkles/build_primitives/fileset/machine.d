@@ -61,7 +61,9 @@ struct Request
     uint dir;              /// the directory it is relative to; `noDir` for the fileset root
     const(char)[] name;    /// one entry name, or a path beneath the fileset root when `dir` is `noDir`
     uint target;           /// `readDir`: the id the opened directory takes
-    StatMask mask;         /// `stat`: what to fill
+    /// `stat`: what to fill; `readDir`: `StatMask.identity` asks for the
+    /// opened directory's identity too, answered with `identified` (D6)
+    StatMask mask;
     bool throughLink;      /// `readDir`: `name` is a link the root's policy may follow
 }
 
@@ -281,6 +283,18 @@ struct Resolution
     {
         if (req < pending)
             answers[req] = Answer(true, ErrorKind.other);
+    }
+
+    /// Gives the identity of the directory `readDir` request `req` opened,
+    /// when the request's mask asked for it (D6).
+    void identified(uint req, ulong device, ulong inode) @safe nothrow @nogc
+    {
+        if (req >= pending)
+            return;
+        auto f = &frames[requests[req].target];
+        f.device = device;
+        f.inode = inode;
+        f.identified = true;
     }
 
     /// Answers `stat` request `req`.
@@ -554,6 +568,8 @@ private:
         Phase phase;
         bool acceptAll, failed, throughLink, scopeChecked, emitted, left;
         bool whole; // its whole content is selected, so emptiness is reported (D5)
+        bool viaLink, identified; // reached through a followed link; `device`/`inode` set
+        ulong device, inode;      // its identity, asked for when links are followed (D6)
         uint parentEntry = uint.max; // its entry in the parent's listing
         uint tagRequest;             // its readDir's index in the batch
         ErrorKind error = ErrorKind.other;
@@ -1166,7 +1182,7 @@ private:
             f.whole = f.acceptAll || ev.wholeContent;
             frames[0] = f;
             framesTop = 1;
-            if (!request(Request(RequestKind.readDir, noDir, root, 0)))
+            if (!request(Request(RequestKind.readDir, noDir, root, 0, identityMask)))
                 return false;
             batchKind = BatchKind.root;
             batchFrame = 0;
@@ -1302,7 +1318,14 @@ private:
                 {
                     auto child = &frames[requests[i].target];
                     auto e = &entryOfChild(*f, requests[i].target);
-                    if (answers[i].error != ErrorKind.other)
+                    if (answers[i].error == ErrorKind.other && repeatsAncestor(*child))
+                    {
+                        // A link back to a directory the walk is inside: one
+                        // incomplete entry, not a descent to the depth bound.
+                        child.failed = true;
+                        child.error = ErrorKind.symlinkLoop;
+                    }
+                    else if (answers[i].error != ErrorKind.other)
                     {
                         child.failed = true;
                         child.error = answers[i].error;
@@ -1394,6 +1417,24 @@ private:
             f.phase = Phase.evaluate;
             f.cursor = 0;
         }
+    }
+
+    // What a `readDir` asks for beyond the listing: the opened directory's
+    // identity, when links are followed (D6).
+    StatMask identityMask() const @safe pure nothrow @nogc
+        => follow ? StatMask.identity : StatMask.basic;
+
+    // Whether `c`, reached through a followed link, is one of the directories
+    // above it: a cycle (D6). Without a link no directory can be.
+    bool repeatsAncestor(ref const Frame c) const @safe pure nothrow @nogc
+    {
+        if (!c.viaLink || !c.identified)
+            return false;
+        for (uint p = c.parent; p != uint.max; p = frames[p].parent)
+            if (frames[p].identified && frames[p].device == c.device
+                && frames[p].inode == c.inode)
+                return true;
+        return false;
     }
 
     ref Entry entryOfChild(ref Frame parent, uint child) return @safe nothrow @nogc
@@ -1581,13 +1622,14 @@ private:
             c.acceptAll = f.acceptAll || e.verdict == DirVerdict.acceptAll;
             c.whole = c.acceptAll || e.whole;
             c.throughLink = e.kind == EntryKind.symlink;
+            c.viaLink = f.viaLink || c.throughLink;
             c.parentEntry = at;
             c.tagRequest = pending;
             c.entryMark = entriesTop;
             const target = framesTop++;
             frames[target] = c;
             ++f.childCount;
-            if (!request(Request(RequestKind.readDir, self, name, target, StatMask.basic,
+            if (!request(Request(RequestKind.readDir, self, name, target, identityMask,
                     c.throughLink)))
                 return false;
         }

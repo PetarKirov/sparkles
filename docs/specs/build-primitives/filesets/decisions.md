@@ -593,6 +593,63 @@ beneath one only when the fileset does not select it whole.
 **Revisit** if a consumer needs the skeleton of directories a pattern
 searched, which would be a separate report, not this one.
 
+### D6 — A symlink cycle under `symlinks = beneath` (accepted)
+
+**Question.** With [`FSD6`](./SPEC.md#11-drivers-fsd)'s `symlinks = beneath`,
+a link to a directory inside the root is walked as that directory. A link to
+an ancestor, `a/up -> ..`, makes the walk descend until
+[`FSM7`](./SPEC.md#7-the-resolution-machine-fsm)'s depth bound, and the
+whole resolution fails with `depthExceeded`. Should a cycle fail the
+resolution, or be one incomplete entry?
+
+**Alternatives.**
+
+- **Fail at the bound, as now.** No new mechanism, and no cycle can go
+  unnoticed. One link anywhere in the tree fails every fileset over it, after
+  up to 64 levels of work, and the error names the depth, not the link.
+- **Report the link as an incomplete entry.** Before entering a linked
+  directory, compare its identity with the directories on the current path;
+  a match is reported per entry, as an escape from the root already is
+  (`unreadable`, with a `cycle` kind), and the walk goes on. A scheme still
+  fails on it, since an incomplete tree has no id
+  ([`FSE1`](./SPEC.md#10-errors-and-partial-results-fse)), but a listing
+  completes. This needs a file's identity, its inode beside the device that
+  `Stat` already carries: a change to the capability VFS, whose backends
+  all have one to give.
+- **Never walk a linked directory twice.** Treat any directory already
+  visited, not only an ancestor, as a repeat. That also drops a second link
+  to the same directory, which is not a cycle and whose files are members
+  under both names.
+
+**Decision.** Report the link as an incomplete entry, compared against the
+ancestors only, accepted 2026-11-10. It matches how the walk already treats
+a link that escapes the root, it names the offending link, and it costs one
+comparison per ancestor when a link is followed, with the depth bound still
+in place behind it. The VFS change is the cost, and it went through that
+contract's own decisions
+([DV31](../../base/vfs/decisions.md#dv31-a-file-s-identity-and-a-directory-s-own-stat)).
+
+**As built.** The capability VFS gained what
+[`VFO6`](../../base/vfs/SPEC.md#vfo6-stat) already specified and its plan
+had left for later: `StatMask.identity` fills `Stat.inode` (the inode on
+POSIX, the file index on Windows, a node's index on `MemVfs`), and a `Dir`
+gained `stat` of the directory it holds. Under `symlinks = beneath` each
+`readDir` asks for the opened directory's identity, one `fstat` per
+directory; without links followed nothing is asked, since no directory can
+then repeat. A directory reached through a link, directly or below one, is
+compared with the directories above it, and a match fails it with the
+existing `symlinkLoop` kind rather than a new one: `ErrorKind` is the I/O
+vocabulary every backend shares, and the kind already names a loop of links.
+
+The question's example was wrong. The driver opens each directory with a
+`walk` of one name from its parent's handle, so a `..` in a target leaves that
+handle and fails with `escapesRoot`: `a/up -> ..` never cycles. The cycle
+the walk can meet is a link that resolves to its own directory, `self -> .`,
+reached directly or through another link to that directory.
+
+**Revisit** if a consumer wants cycles to be a hard error: it can still
+refuse a resolution with any incomplete entry.
+
 ## Open
 
 ### D2 — Whether `NarHash` is stored or recomputed (resolved)
@@ -655,41 +712,3 @@ Out of scope for v1, but [`FSM2`](./SPEC.md#7-the-resolution-machine-fsm)
 requires the request vocabulary to be open so that adding
 `listxattr`/`getxattr` is not a breaking change. Whether OSTree-style identity
 is ever a goal is undecided.
-
-### D6 — A symlink cycle under `symlinks = beneath` (proposed)
-
-**Question.** With [`FSD6`](./SPEC.md#11-drivers-fsd)'s `symlinks = beneath`,
-a link to a directory inside the root is walked as that directory. A link to
-an ancestor, `a/up -> ..`, makes the walk descend until
-[`FSM7`](./SPEC.md#7-the-resolution-machine-fsm)'s depth bound, and the
-whole resolution fails with `depthExceeded`. Should a cycle fail the
-resolution, or be one incomplete entry?
-
-**Alternatives.**
-
-- **Fail at the bound, as now.** No new mechanism, and no cycle can go
-  unnoticed. One link anywhere in the tree fails every fileset over it, after
-  up to 64 levels of work, and the error names the depth, not the link.
-- **Report the link as an incomplete entry.** Before entering a linked
-  directory, compare its identity with the directories on the current path;
-  a match is reported per entry, as an escape from the root already is
-  (`unreadable`, with a `cycle` kind), and the walk goes on. A scheme still
-  fails on it, since an incomplete tree has no id
-  ([`FSE1`](./SPEC.md#10-errors-and-partial-results-fse)), but a listing
-  completes. This needs a file's identity, its inode beside the device that
-  `Stat` already carries: a change to the capability VFS, whose backends
-  all have one to give.
-- **Never walk a linked directory twice.** Treat any directory already
-  visited, not only an ancestor, as a repeat. That also drops a second link
-  to the same directory, which is not a cycle and whose files are members
-  under both names.
-
-**Proposal.** Report the link as an incomplete entry, compared against the
-ancestors only. It matches how the walk already treats a link that escapes
-the root, it names the offending link, and it costs one comparison per
-ancestor when a link is followed, with the depth bound still in place behind
-it. The VFS change is the cost, and it goes through that contract's own
-decisions.
-
-**Revisit** if a consumer wants cycles to be a hard error: it can still
-refuse a resolution with any incomplete entry.

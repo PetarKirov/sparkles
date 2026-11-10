@@ -429,7 +429,7 @@ Writing `RingVfs` and moving event-horizon onto the VFS changed six things.
 [`VFO6`](./SPEC.md#vfo6-stat) specified a file's identity on its device
 behind the stat mask, and the plan left it for the build graph's digest
 cache. The filesets' cycle check
-([D6](../../build-primitives/filesets/decisions.md#d6-a-symlink-cycle-under-symlinks-beneath-proposed))
+([D6](../../build-primitives/filesets/decisions.md#d6-a-symlink-cycle-under-symlinks-beneath-accepted))
 needed it first, for directories, so two things were added.
 
 - **`StatMask.identity` fills `Stat.inode`**, with `hasIdentity` saying it
