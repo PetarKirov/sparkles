@@ -233,8 +233,15 @@ Slot slotOfCapture(scope const(char)[] name) @safe pure nothrow @nogc
 {
     import std.algorithm.searching : startsWith;
 
+    // The query editor's slots for the fileset language's kinds (`FXU4`, `FXL8`).
     if (name.startsWith("comment"))
         return Slot.muted;
+    if (name.startsWith("string.escape"))
+        return Slot.link;
+    if (name.startsWith("punctuation.special"))
+        return Slot.accentSecondary;
+    if (name.startsWith("property"))
+        return Slot.accentPrimary;
     if (name.startsWith("string"))
         return Slot.success;
     if (name.startsWith("keyword"))
