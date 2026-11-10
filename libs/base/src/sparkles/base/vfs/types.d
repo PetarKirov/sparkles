@@ -281,6 +281,7 @@ enum StatMask : ubyte
     basic = 0,     /// kind, executable bit, size, device
     mtime = 1 << 0, /// also the modification time
     identity = 1 << 1, /// also the file's identity on its device
+    change = 1 << 2, /// also the status-change time
 }
 
 /// The metadata of one entry, never of a link's target (VFO6).
@@ -296,6 +297,12 @@ struct Stat
     /// The file's identity on `device`: the inode on POSIX, the file index
     /// on Windows. With `device`, it tells whether two handles name one file.
     ulong inode;
+    bool hasCtime;    /// whether `ctimeNs` was requested and filled
+    /// The status-change time, in nanoseconds since the Unix epoch: `st_ctime`
+    /// on POSIX, `ChangeTime` on Windows. A change to the file's content or
+    /// metadata sets it to the current time, and no call sets it to any other
+    /// value. Unlike the modification time, it cannot be put back.
+    long ctimeNs;
     version (Posix)
         uint permissions; /// the mode's permission bits
 }

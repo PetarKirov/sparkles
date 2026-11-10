@@ -40,6 +40,7 @@ private:
     bool touched;                   // reached by a backend call since `clearTouched`
     uint openCount;
     long mtimeNs;
+    long ctimeNs;                   // the clock at its last change
     Sharing sharing;
     size_t dataOffset, dataLength, dataCapacity; // contents, or a link's target
 }
@@ -66,6 +67,15 @@ struct MemVfs
 
     /// The hook of VFM3: runs before backend call number `callIndex`.
     alias Hook = void delegate(size_t callIndex, ref MemVfs vfs) @safe nothrow @nogc;
+
+    /**
+    The time a change is stamped with, in nanoseconds: an entry's status-change
+    time is the clock's value at its last change (creation, a write or
+    truncation, `writeFile`, `rename`, `setMtime`). The clock moves only when
+    the caller moves it, so two changes at one value fall in one tick, as on
+    a file system whose timestamps are coarse.
+    */
+    long clockNs;
 
     /// Runs before every backend call when set.
     Hook hook;
@@ -192,7 +202,10 @@ struct MemVfs
             if (mode.disposition == Disposition.createNew)
                 return ioErr!Handle(ErrorKind.exists, OpKind.openAt);
             if (mode.disposition == Disposition.createOrTruncate)
+            {
                 nodes[n].dataLength = 0;
+                nodes[n].ctimeNs = clockNs;
+            }
         }
         return newHandle(n, false, mode.access, OpKind.openAt);
     }
@@ -497,6 +510,7 @@ struct MemVfs
         bytes[n.dataOffset + cast(size_t) slot.offset .. n.dataOffset + end] = data[];
         if (end > n.dataLength)
             n.dataLength = end;
+        n.ctimeNs = clockNs;
         slot.offset = end;
         return ioOk(data.length);
     }
@@ -568,6 +582,7 @@ struct MemVfs
         }
         auto node = &nodes[n];
         node.executable = executable;
+        node.ctimeNs = clockNs;
         node.dataOffset = region.value;
         node.dataLength = node.dataCapacity = content.length;
         bytes[region.value .. region.value + content.length] = content[];
@@ -614,6 +629,7 @@ struct MemVfs
             removeSubtree(existing);
         unlink(src);
         setName(src, leaf);
+        nodes[src].ctimeNs = clockNs;
         link(parent, src);
         return true;
     }
@@ -646,6 +662,7 @@ struct MemVfs
         if (n == none)
             return false;
         nodes[n].mtimeNs = ns;
+        nodes[n].ctimeNs = clockNs;
         return true;
     }
 
@@ -868,6 +885,7 @@ private:
         nodes[n].kind = kind;
         nodes[n].sharing = sharing;
         nodes[n].touched = true;
+        nodes[n].ctimeNs = clockNs;
         setName(n, name);
         link(dir, n);
         return ioOk(n);
@@ -992,6 +1010,11 @@ private:
         {
             s.hasMtime = true;
             s.mtimeNs = node.mtimeNs;
+        }
+        if (mask & StatMask.change)
+        {
+            s.hasCtime = true;
+            s.ctimeNs = node.ctimeNs;
         }
         version (Posix)
             s.permissions = node.kind == EntryKind.symlink ? 511

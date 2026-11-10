@@ -215,6 +215,19 @@ struct BlockingVfs
                 | info.ftLastWriteTime.dwLowDateTime;
             st.mtimeNs = (ticks - 116_444_736_000_000_000L) * 100;
         }
+        if (mask & StatMask.change)
+        {
+            // `GetFileInformationByHandle` has no change time; the basic
+            // information has, in the same 100 ns ticks.
+            FILE_BASIC_INFORMATION basic;
+            IO_STATUS_BLOCK basicIo;
+            const b = (() @trusted => NtQueryInformationFile(cast(HANDLE) handle.raw, &basicIo,
+                &basic, basic.sizeof, FileBasicInformation))();
+            if (!ntSuccess(b))
+                return ioErr!Stat(ntError(b, OpKind.statAt));
+            st.hasCtime = true;
+            st.ctimeNs = (basic.ChangeTime - 116_444_736_000_000_000L) * 100;
+        }
         return ioOk(st);
     }
 

@@ -444,6 +444,28 @@ needed it first, for directories, so two things were added.
   `statAt` on its parent cannot: that stats the link, never its target
   ([`VFO2`](./SPEC.md#vfo2-the-named-entry-is-never-followed)).
 
+### DV32: The change time
+
+The filesets' subtree cache
+([M7](../../build-primitives/filesets/PLAN.md#m7-the-subtree-cache)) reuses
+a file's digest only when its `stat` still matches, which made the change time
+from [`VFO6`](./SPEC.md#vfo6-stat) the next thing to deliver.
+
+- **`StatMask.change` fills `Stat.ctimeNs`**, and `hasCtime` says that it was
+  requested. It comes from `st_ctim` from `fstatat` (`st_ctimespec` on
+  macOS), `stx_ctime` from `statx`, and on Windows the `ChangeTime` of
+  `FILE_BASIC_INFORMATION`. `GetFileInformationByHandle` has no change time,
+  so that request costs one more query.
+- **It is the time that cannot be put back.** `touch -r`, `rsync -t` and an
+  archive extractor all set the modification time. Every change sets the
+  change time to the current time instead, so a cache that compares it
+  notices a rewrite whose size and modification time were put back.
+- **`MemVfs` stamps changes with a clock its caller moves.** `clockNs` starts
+  at zero and moves only when the caller sets it. Creating an entry, a write,
+  a truncation, `writeFile`, `rename` and `setMtime` each record its value.
+  Two changes at one value fall in one tick, which is how a test reproduces a
+  file system with coarse timestamps.
+
 ## Open
 
 ### O3: Where `O_NOFOLLOW_ANY` is available

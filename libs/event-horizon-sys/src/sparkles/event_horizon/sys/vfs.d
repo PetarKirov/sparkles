@@ -740,6 +740,16 @@ package(sparkles.event_horizon) Stat toStat(ref const stat_t st, StatMask mask)
         else
             s.mtimeNs = st.st_mtime * 1_000_000_000L;
     }
+    if (mask & StatMask.change)
+    {
+        s.hasCtime = true;
+        static if (__traits(compiles, st.st_ctim))
+            s.ctimeNs = st.st_ctim.tv_sec * 1_000_000_000L + st.st_ctim.tv_nsec;
+        else static if (__traits(compiles, st.st_ctimespec))
+            s.ctimeNs = st.st_ctimespec.tv_sec * 1_000_000_000L + st.st_ctimespec.tv_nsec;
+        else
+            s.ctimeNs = st.st_ctime * 1_000_000_000L;
+    }
     return s;
 }
 
@@ -766,6 +776,13 @@ version (linux)
         }
         else
             st.st_mtime = sx.stx_mtime.tv_sec;
+        static if (__traits(compiles, st.st_ctim))
+        {
+            st.st_ctim.tv_sec = sx.stx_ctime.tv_sec;
+            st.st_ctim.tv_nsec = sx.stx_ctime.tv_nsec;
+        }
+        else
+            st.st_ctime = sx.stx_ctime.tv_sec;
         return toStat(st, mask);
     }
 }
