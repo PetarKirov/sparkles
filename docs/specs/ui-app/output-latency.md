@@ -290,13 +290,17 @@ with a zero timeout, after a frame pass and after each loop turn. The
 blocking wait that paces X11 is outside this page.
 
 **OPL22: Present timing.** Where the device and surface support
-`VK_EXT_present_timing` with a time domain on `CLOCK_MONOTONIC`, the
-presenter **must** size the swapchain's timing queue to at least the frames
-in flight plus one, request the first-pixel-visible stage for every present
-(first-pixel-out where visible is not offered), and read the results
-without blocking. A present aimed at a predicted refresh **must** carry it
-as an absolute target time where `presentAtAbsoluteTime` is supported.
-Results in another time domain are not used.
+`VK_EXT_present_timing`, the presenter **must** size the swapchain's timing
+queue to at least the frames in flight plus one, request the
+first-pixel-visible stage for every present (first-pixel-out where visible
+is not offered), and read the results without blocking. Results are read on
+the swapchain's `CLOCK_MONOTONIC` domain where it lists one; else on its
+present-stage-local or swapchain-local domain, calibrated against
+`CLOCK_MONOTONIC` through `vkGetCalibratedTimestampsKHR` when set up and at
+least once a second. A swapchain that offers neither is not timed. A present
+aimed at a predicted refresh **must** carry it as an absolute target time,
+on the domain its results are read on, where `presentAtAbsoluteTime` is
+supported.
 
 **OPL23: Present-mode switching.** Where `VK_EXT_swapchain_maintenance1`
 (or `VK_KHR_swapchain_maintenance1`) and `VK_EXT_surface_maintenance1` (or
@@ -385,22 +389,22 @@ The decision OPLD1 rests on [`ingest-spike.c`](./output-latency/ingest-spike.c),
 run on the reference configuration as its header describes; §6 gives its
 figures.
 
-| Obligation        | Status     | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| ----------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| OPL10             | verified   | `OpReadMultishot`, `loop.readMultishot.streamsIntoProvidedBuffers` (Linux 6.18)                                                                                                                                                                                                                                                                                                                                          |
-| OPL1–OPL9, OPL11  | verified   | `StreamIngest`; the `stream_ingest.*` tests, each on the multishot path and the fallback (Linux 6.18)                                                                                                                                                                                                                                                                                                                    |
-| OPL12             | partial    | `NativeHost.openStream`; the terminal reads its pty through it (`TerminalView.startReading`). No test drives a delivery to a frame pass headless                                                                                                                                                                                                                                                                         |
-| Throughput target | verified   | `throughput` on the reference configuration, five runs each: this arm 788–959 ms; the pre-1.0 build 1075–2320 ms; frame-driven reads woken by readiness 1971–3230 ms                                                                                                                                                                                                                                                     |
-| OPL25             | verified   | `FrameRecord.streamPosition`, written by `--debug latency-log`; on the reference configuration a probe's 9942 bytes ended at stream position 9942                                                                                                                                                                                                                                                                        |
-| OPL26             | verified   | `joinLatency`, `bench.joinLatency.firstCoveringShownFrame`, `bench.joinLatency.supersededAndNeverShown`; the baseline below                                                                                                                                                                                                                                                                                              |
-| OPL27             | verified   | `runThroughput`; the figures above                                                                                                                                                                                                                                                                                                                                                                                       |
-| OPL13–OPL17       | verified   | `FrameSchedule`; `frame_schedule.startsAtTheLatchOfTheEarliestReachableRefresh`, `frame_schedule.costIsThe95thPercentile`, `frame_schedule.theMarginFollowsMissesAndRunsOnTime`, `frame_schedule.withoutAFixedRefreshItStartsNow`                                                                                                                                                                                        |
-| OPL18, OPL19      | verified   | `FrameSchedulePolicy`, `NativeOptions.frameSchedule`; under `late` every present asks for its display time. The latency target: below                                                                                                                                                                                                                                                                                    |
-| OPL20             | verified   | `planPresentPath`, `Swapchain.presentId2`, `PresentWait.submitted`; `vulkan_wsi.device.planPresentPath.followsTheOffer`, `vulkan_wsi.swapchain.recreate.createsForThePresentPathTheSurfaceSupports`, `vulkan_wsi.presenter.aPresentId2SwapchainIsPolledThroughPresentWait2`. On the reference configuration the swapchain is created for both, and on its X11 a window paced by present wait 2 showed each of 120 frames |
-| OPL21             | partial    | `pollCompleted`, `PresentTimes.poll`; `vulkan_wsi.presenter.presentsCarryIdsAndCompleteWithoutWaiting`. The native loop polls after a frame pass and after each loop turn; no test drives a loop turn headless                                                                                                                                                                                                           |
-| OPL22             | unverified | `PresentTimes`, `presentTimingInfo`, `chooseStage`, `shownNanos`; `vulkan_wsi.present_timing.pollReportsMonotonicTimesAndFreesTheQueue`, `vulkan_wsi.present_timing.presentTimingInfo.aimsOnlyWhereAbsoluteTimesAre`. Mesa 25.2.6 RADV does not offer `VK_EXT_present_timing` (Q1), so no present was timed                                                                                                              |
-| OPL23             | verified   | `Swapchain.switchPresentMode`, `chooseImageCountAcross`; `vulkan_wsi.swapchain.recreate.createsForThePresentPathTheSurfaceSupports`. On the reference configuration, `switch-present-mode-at=40` switched mailbox to FIFO with no swapchain built in the 30 frames after                                                                                                                                                 |
-| OPL24             | verified   | `presentTimeSource`, `enabledOn`; `ui_app.native_loop.presentTimeSource.followsTheOrder`. The reference configuration reports present ids and waits 2 on, present timing not offered, swapchain maintenance1 on, times from presentation feedback                                                                                                                                                                        |
+| Obligation        | Status   | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ----------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| OPL10             | verified | `OpReadMultishot`, `loop.readMultishot.streamsIntoProvidedBuffers` (Linux 6.18)                                                                                                                                                                                                                                                                                                                                          |
+| OPL1–OPL9, OPL11  | verified | `StreamIngest`; the `stream_ingest.*` tests, each on the multishot path and the fallback (Linux 6.18)                                                                                                                                                                                                                                                                                                                    |
+| OPL12             | partial  | `NativeHost.openStream`; the terminal reads its pty through it (`TerminalView.startReading`). No test drives a delivery to a frame pass headless                                                                                                                                                                                                                                                                         |
+| Throughput target | verified | `throughput` on the reference configuration, five runs each: this arm 788–959 ms; the pre-1.0 build 1075–2320 ms; frame-driven reads woken by readiness 1971–3230 ms                                                                                                                                                                                                                                                     |
+| OPL25             | verified | `FrameRecord.streamPosition`, written by `--debug latency-log`; on the reference configuration a probe's 9942 bytes ended at stream position 9942                                                                                                                                                                                                                                                                        |
+| OPL26             | verified | `joinLatency`, `bench.joinLatency.firstCoveringShownFrame`, `bench.joinLatency.supersededAndNeverShown`; the baseline below                                                                                                                                                                                                                                                                                              |
+| OPL27             | verified | `runThroughput`; the figures above                                                                                                                                                                                                                                                                                                                                                                                       |
+| OPL13–OPL17       | verified | `FrameSchedule`; `frame_schedule.startsAtTheLatchOfTheEarliestReachableRefresh`, `frame_schedule.costIsThe95thPercentile`, `frame_schedule.theMarginFollowsMissesAndRunsOnTime`, `frame_schedule.withoutAFixedRefreshItStartsNow`                                                                                                                                                                                        |
+| OPL18, OPL19      | verified | `FrameSchedulePolicy`, `NativeOptions.frameSchedule`; under `late` every present asks for its display time. The latency target: below                                                                                                                                                                                                                                                                                    |
+| OPL20             | verified | `planPresentPath`, `Swapchain.presentId2`, `PresentWait.submitted`; `vulkan_wsi.device.planPresentPath.followsTheOffer`, `vulkan_wsi.swapchain.recreate.createsForThePresentPathTheSurfaceSupports`, `vulkan_wsi.presenter.aPresentId2SwapchainIsPolledThroughPresentWait2`. On the reference configuration the swapchain is created for both, and on its X11 a window paced by present wait 2 showed each of 120 frames |
+| OPL21             | partial  | `pollCompleted`, `PresentTimes.poll`; `vulkan_wsi.presenter.presentsCarryIdsAndCompleteWithoutWaiting`. The native loop polls after a frame pass and after each loop turn; no test drives a loop turn headless                                                                                                                                                                                                           |
+| OPL22             | verified | `PresentTimes`, `presentTimingInfo`, `chooseStage`, `shownNanos`, `findTimingDomain`; `vulkan_wsi.present_timing.pollReportsMonotonicTimesAndFreesTheQueue`, `vulkan_wsi.present_timing.aStageLocalDomainIsCalibratedToTheMonotonicClock`, `vulkan_wsi.present_timing.presentTimingInfo.aimsOnlyWhereAbsoluteTimesAre`. On the reference configuration with Mesa 26.2.5 RADV: below                                      |
+| OPL23             | verified | `Swapchain.switchPresentMode`, `chooseImageCountAcross`; `vulkan_wsi.swapchain.recreate.createsForThePresentPathTheSurfaceSupports`. On the reference configuration, `switch-present-mode-at=40` switched mailbox to FIFO with no swapchain built in the 30 frames after                                                                                                                                                 |
+| OPL24             | verified | `presentTimeSource`, `enabledOn`; `ui_app.native_loop.presentTimeSource.followsTheOrder`. The reference configuration reports present ids and waits 2 on, present timing not offered, swapchain maintenance1 on, times from presentation feedback                                                                                                                                                                        |
 
 The latency baseline, the `asap` behaviour: `latency` on the reference
 configuration, three runs of 300 writes, measured the 50th percentile at
@@ -431,12 +435,35 @@ a 50th percentile of 17.6–20.0 ms in three runs of 300 writes 1–50 ms apart,
 and of 15.9–17.8 ms in five of six runs of 1500 writes 1–4 ms apart, the
 sixth at 28.6 ms, with no write unshown.
 
+Present timing was verified on the reference configuration with its driver
+replaced by Mesa 26.2.5 RADV (`VK_ICD_FILENAMES`); Mesa 25.2.6 does not
+offer `VK_EXT_present_timing`. On Wayland Mesa 26.2.5 offers the
+queue-operations-end and first-pixel-out stages, absolute but not relative
+targets, and lists a single present-stage-local domain, which calibrates to
+within 20 ns of `CLOCK_MONOTONIC`: Mesa's first pixel out is the
+compositor's `wp_presentation` time on its own clock. A present aimed 10 ms
+ahead was reported shown 3.6 µs after its target, at a refresh of 16.667 ms.
+Each present asked its time and every one reported it; with no write
+unshown, `late` measured, in runs of 1500 writes 1–4 ms apart:
+
+| Presentation times from         | Driver | Runs | 50th percentile | 95th percentile |
+| ------------------------------- | ------ | ---- | --------------- | --------------- |
+| `wp_presentation` feedback      | 25.2.6 | 4    | 17.4–17.7 ms    | 25.3–26.0 ms    |
+| `wp_presentation` feedback      | 26.2.5 | 4    | 17.8–23.0 ms    | 26.7–40.8 ms    |
+| present timing, without targets | 26.2.5 | 4    | 17.5–20.0 ms    | 25.7–51.8 ms    |
+| present timing, with targets    | 26.2.5 | 8    | 16.3–22.1 ms    | 24.1–53.3 ms    |
+
+Since Mesa derives first pixel out from the same compositor event, present
+timing does not move the latency on Wayland. Roughly one run in four on
+26.2.5 is slower, its 95th percentile at 40–54 ms, whichever source the
+times come from; 25.2.6 showed none. Mesa answers present timing and present
+wait by reading the shared Wayland display for its private queue, so the
+native loop reads both with the window system's prepared read suspended:
+without that, the first timed present left the window waiting for a frame
+callback that never came.
+
 ## 9. Open questions
 
-- **Q1: Present timing on the reference driver.** Mesa 25.2.6 RADV does not
-  offer `VK_EXT_present_timing`, so OPL22 cannot be verified on the
-  reference configuration. It blocks OPL22's verification, not L6's other
-  obligations.
 - **Q2: The compositor's latch point.** OPL16 assumes a compositor latches
   commits a roughly constant time before each refresh. Mutter adjusts its
   own deadline to its measured render time. If L5's traces show `M`
