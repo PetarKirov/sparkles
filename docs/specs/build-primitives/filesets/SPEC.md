@@ -1,8 +1,9 @@
 # `sparkles:build-primitives` filesets — Specification
 
-_**Status:** proposed; M0 to M3 delivered (see the
-[evidence ledger](#evidence-ledger)); resumed on November 7, 2026 as the build
-graph's file-system layer · **Date:** September 21, 2026 ·
+_**Status:** proposed; every milestone delivered, M0 to M7 and M9 (see the
+[evidence ledger](#evidence-ledger)), and awaiting the owner's acceptance;
+resumed on November 7, 2026 as the build graph's file-system layer ·
+**Date:** September 21, 2026 ·
 **Owner:** `sparkles:build-primitives`_
 
 _Normative at the contract level. Delivery order and gates live in
