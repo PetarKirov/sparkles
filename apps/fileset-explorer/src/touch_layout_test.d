@@ -1,4 +1,4 @@
-/// The touch layout, recorded (`FXU11`–`FXU13`).
+/// The touch layout, recorded (`FXU11`–`FXU13`, `FXU17`–`FXU20`).
 module touch_layout_test;
 
 import std.algorithm.searching : canFind, countUntil;
@@ -6,7 +6,7 @@ import std.array : split;
 import std.conv : text;
 import std.string : indexOf;
 
-import sparkles.build_primitives.fileset.emit : NixGlobs;
+import sparkles.build_primitives.fileset.emit : NixGlobs, Target;
 import sparkles.input : Event, Key, keyEvent, PointerAction, PointerButton, PointerEvent, Point;
 import sparkles.ui.geometry : Size;
 import sparkles.ui_app.host : RunConfig;
@@ -145,4 +145,108 @@ private enum tablet = Size(140, 40);
     auto rec = runAppRecorded(*app, RunConfig.init, [keyEvent(Key.f1), keyEvent(Key.back)],
         (ref RecordingHost h) @safe { h.size = tablet; });
     assert(!app.helpShown && !rec.quitRequested, "Back left the help, and only that");
+}
+
+/// FXU17: a pill's box is its whole touch target, so the 32 dp it is drawn
+/// at has room around its label.
+@("fileset_explorer.FXU17.pillsFillTheirTargets")
+@system unittest
+{
+    import sparkles.ui.widget : WidgetKind;
+
+    auto app = make("**");
+    RecordingHost h;
+    h.size = tablet;
+    const t = app.view(h);
+    size_t pills;
+    foreach (ref n; t.nodes)
+        if (n.kind == WidgetKind.panel && n.hitId >= ExplorerApp.actionBase
+            && n.hitId <= ExplorerApp.actionBase + ExplorerApp.Action.insert + 8)
+        {
+            assert(n.height.value == app.rowCells, text(n.hitId, ": ", n.height));
+            assert(n.decoration.drawHeight == 32);
+            ++pills;
+        }
+    assert(pills >= 10, text(pills, " pills"));
+}
+
+/// FXU18: each tap goes to the pane under it, whichever pane was tapped first.
+@("fileset_explorer.FXU18.tapsFindTheirPane")
+@system unittest
+{
+    auto app = make("**");
+    const before = app.tv.rows.length;
+    // The Stats pane first: it used to keep every later tap.
+    const stats = find(*app, "symlinks", tablet);
+    tap(*app, stats, tablet);
+    assert(app.focus == Focus.side);
+    tap(*app, find(*app, " src", tablet), tablet);
+    assert(app.focus == Focus.tree);
+    assert(app.tv.rows.length == before - 3, "the tap closed src");
+    // And back: the tree first, then Stats.
+    tap(*app, stats, tablet);
+    assert(app.focus == Focus.side, "the tree kept the tap");
+    assert(app.tv.rows.length == before - 3);
+}
+
+/// FXU19: a cheat sheet snippet's ▶ tries it against the directory.
+@("fileset_explorer.FXU19.cheatSheetTries")
+@system unittest
+{
+    auto app = make("**");
+    if (app.helpDoc.root.children.length == 0)
+        return; // no markdown grammar: no table to find
+    runAppRecorded(*app, RunConfig.init, [keyEvent(Key.f1)], (ref RecordingHost h) @safe { h.size = tablet; });
+    const at = find(*app, "src/*.d ▶", tablet);
+    tap(*app, Point(at.x + 8, at.y), tablet);
+    assert(app.query.text == "src/*.d", app.query.text);
+    assert(app.helpShown, "the help stays");
+    assert(app.shown.found.members.length == 3, text(app.shown.found.members.length));
+}
+
+/// FXU20: the Export tab builds the lines that show, not every line.
+@("fileset_explorer.FXU20.exportBuildsWhatShows")
+@system unittest
+{
+    import std.array : appender;
+
+    import sparkles.ui.widget : WidgetKind;
+
+    // A hundred and fifty literal paths: the gitignore has two lines for each.
+    auto files = appender!string, query = appender!string;
+    foreach (i; 0 .. 150)
+    {
+        files ~= text("f", i, ".d = x\n");
+        query ~= text(i ? " | " : "", "/f", i, ".d");
+    }
+    auto app = new ExplorerApp(Root(literal: files[], name: "t"), query[]);
+    app.layout = ExplorerApp.Layout.touch;
+    app.exportTarget = Target.gitignore;
+    tap(*app, find(*app, "Export", tablet), tablet);
+    assert(app.exportShown && app.exportLines.length >= 150, text(app.exportLines.length, "\n",
+        app.exported.code, app.exported.reason));
+
+    // The rows the frame built for the export's lines: those that show.
+    bool[string] lines;
+    foreach (l; app.exportLines)
+    {
+        string s;
+        foreach (sp; l)
+            s ~= sp.text;
+        lines[s] = true;
+    }
+    RecordingHost h;
+    h.size = tablet;
+    const t = app.view(h);
+    size_t built;
+    foreach (ref n; t.nodes)
+        if (n.kind == WidgetKind.rich)
+        {
+            string s;
+            foreach (sp; n.spans)
+                s ~= sp.text;
+            built += (s in lines) !is null;
+        }
+    assert(built > 10 && built <= tablet.height, text(built, " of ", app.exportLines.length, " lines built"));
+    assert(app.exportScroll.content >= 150, "the scroll still spans every line");
 }

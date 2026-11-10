@@ -59,6 +59,11 @@ configuration "unittest" {
     dependency "sparkles:tui" path="../.."
     dependency "sparkles:test-runner" path="../.."
     dependency "sparkles:test-utils" path="../.."
+    // The touch layout through the Vulkan canvas on a real driver
+    // (`vulkan_shot_test.d`), and its frames as PNGs.
+    dependency "sparkles:ui-vulkan" path="../.."
+    dependency "sparkles:vulkan-wsi" path="../.."
+    dependency "sparkles:image" path="../.."
     subConfiguration "sparkles:ui-app" "tui"
 
     dflags "-checkaction=context" "-allinst"

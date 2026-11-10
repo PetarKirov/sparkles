@@ -23,10 +23,9 @@ import sparkles.base.term_control : PointerShape;
 import sparkles.ui.components.chrome : scrollbar, ScrollbarSpec, tabStrip;
 import sparkles.ui.hit_ids : HitBlock;
 import sparkles.ui.editor.command : EditCommand;
-import sparkles.ui.state : ScrollAxis, scrollbarThumb;
+import sparkles.ui.state : ScrollAxis, scrollbarThumb, sourceOffsetAt;
 import sparkles.ui.components.controls : chip, ControlSize, segmented;
-import sparkles.ui.components.dock : DockAxis, DockContainer, DockKind, DockLayout, PaneId,
-    RouteKind;
+import sparkles.ui.components.dock : DockAxis, DockContainer, DockKind, DockLayout, PaneId;
 import sparkles.ui.components.editor : caretColumnOf, editorLineSpans, EditorViewOptions;
 import sparkles.ui.components.tree_view : collapseOrUp, measureContent, TreeStep, TreeViewState,
     treeActivate = activate, viewSlice;
@@ -87,6 +86,10 @@ struct ExplorerApp
     string[string] trees;           ///
     size_t trySel;                  /// the selected try block
     TryOutcome[size_t] tryResults;  /// by the block's `at`
+    /// The cheat sheet's snippets, each a query a ▶ tries (`FXU19`).
+    Cheat[] cheats;
+    private Point cheatAt;          // a press on the help, for `paint` to resolve
+    private bool cheatPending;
     private size_t lastTab;         // the tab F1 returns to
     private Focus lastFocus;        // and the focus
     private TryHit[] tryHits;       // where this frame drew each ▶ (`paint`)
@@ -167,6 +170,18 @@ struct ExplorerApp
         helpDoc = extractMarkdown(registry, helpSource);
         tries = tryBlocks(helpDoc);
         trees = namedTrees(helpDoc);
+        cheats = cheatSnippets(helpDoc, helpSource);
+    }
+
+    /// Tries cheat sheet snippet `i` (`FXU19`): its query goes into the
+    /// editor, resolved against the directory; the help stays.
+    void tryCheat(size_t i)
+    {
+        if (i >= cheats.length)
+            return;
+        query = EditorField.make(cheats[i].query);
+        root = dir;
+        refresh();
     }
 
     /// Runs try block `i` (`FXT3`): its query goes into the editor, resolved
@@ -215,9 +230,14 @@ struct ExplorerApp
                 ? exportFor(exportTarget, nixGlobs, root, outcome.query, outcome)
                 : Emitted(false, null, outcome.query.ok ? outcome.error.message : "the query does not parse");
             exportStale = false;
+            // Highlighted once per export, not once a frame (`FXU20`).
+            exportLines = exported.ok ? highlightCode(languageOf(exportTarget), exported.code) : null;
         }
         return exported;
     }
+
+    /// The export's lines, highlighted, as `currentExport` last made them.
+    TextSpan[][] exportLines;
 
     /// Shows the help, or goes back to where F1 was pressed (`FXU7`).
     void toggleHelp()
@@ -264,6 +284,19 @@ struct ExplorerApp
             tryRows[hit.at] = hit.rect.y - (r.y + dockTop) + helpTop;
         if (helpContent < frames.length)
             helpScroll.content = frames[helpContent].rect.height;
+        // A press on the help: a cheat sheet snippet, or its ▶, tries it (`FXU19`).
+        if (cheatPending)
+        {
+            cheatPending = false;
+            const at = sourceOffsetAt(t, frames, cheatAt);
+            foreach (i, ref c; cheats)
+                if (at >= 0 && at >= c.start && at <= c.end)
+                {
+                    tryCheat(i);
+                    h.requestFrame();
+                    break;
+                }
+        }
     }
 
     /// Re-evaluates the query and rebuilds the tree, keeping what was open.
@@ -429,9 +462,28 @@ struct ExplorerApp
         return b.add(w);
     }
 
+    /*
+    A pill over the whole touch target (`FXU17`): its box is the target, so
+    the 32 dp it is drawn at is centred in the target's height with room
+    above and below its label — a box a cell tall would be drawn a cell tall,
+    hugging the label. The label is centred in the target as `centred` does.
+    Rigid: a crowded row never squeezes it.
+    */
+    private uint pill(ref Builder b, uint box)
+    {
+        auto w = &b.nodes[box];
+        w.height = SizeSpec.fixed(rowCells);
+        w.width = SizeSpec.rigid_;
+        w.alignY = Alignment.center;
+        w.clipY = true;
+        if ((rowCells - 1) % 2)
+            w.childOffsetFracY = -0.5f;
+        return box;
+    }
+
     // A chip drawn compact, centred in its touch target.
     private uint touchChip(ref Builder b, string label, size_t hitId)
-        => centred(b, chip(b, label, hitId, false, ControlSize(rows: 1)), hitId);
+        => pill(b, chip(b, label, hitId, false, ControlSize(rows: rowCells)));
 
     // A segmented control of touch targets: segment `i`'s hit id is `firstHit + i`.
     private uint touchSegments(ref Builder b, in string[] labels, size_t selected, size_t firstHit)
@@ -442,10 +494,10 @@ struct ExplorerApp
             const on = i == selected;
             const t = b.add(Widget(kind: WidgetKind.text, text: l, alignX: Alignment.center,
                 slot: on ? Slot.chromeAccent : Slot.textPrimary, textStyle: TextStyle(bold: on)));
-            const seg = b.add(Widget(kind: WidgetKind.panel, children: [t], padding: Insets(0, 1, 0, 1),
-                hitId: firstHit + i, slot: on ? Slot.chromeAccent : Slot.surfaceRaised, paintBackground: true,
-                decoration: Decoration(borderRadius: 6, drawHeight: 32)));
-            segs ~= centred(b, seg, firstHit + i);
+            // Inset within the group's 32 dp outline, as a segment is.
+            segs ~= pill(b, b.add(Widget(kind: WidgetKind.panel, children: [t], padding: Insets(0, 1, 0, 1),
+                hitId: firstHit + i, slot: on ? Slot.chromeAccent : Slot.surfaceRaised, paintBackground: on,
+                decoration: Decoration(borderRadius: 6, drawHeight: 26))));
         }
         // The group's outline is drawn at the target's middle, around the segments.
         return b.add(Widget(kind: WidgetKind.row, children: segs, height: SizeSpec.fixed(rowCells),
@@ -977,6 +1029,9 @@ struct ExplorerApp
             o.tryRunners = ["fileset"];
             o.tryHits = HitBlock(tryHitBase, helpSource.length + 1); // by the fence's source offset
             o.tryResult = (ref Builder bb, size_t at) => resultView(bb, at);
+            // The cheat sheet's queries, each with a ▶ that tries it (`FXU19`).
+            o.codeActionGlyph = " ▶";
+            o.codeActionHeader = "Write";
             content = viewMarkdownInto(b, helpDoc, o);
         }
         helpContent = content;
@@ -1079,6 +1134,11 @@ struct ExplorerApp
             rows ~= b.add(Widget(kind: WidgetKind.row, children: head));
         }
         rows ~= b.add(Widget(kind: WidgetKind.text, text: ""));
+        // The header's cells: the touch controls are `rowCells` tall.
+        const headRows = cast(long) rows.length;
+        const headCells = headRows
+            + (touch ? (exportTarget == Target.nix ? 2 : 1) * (rowCells - 1) : 0);
+        long bodyCells = 0;
         if (!e.ok)
         {
             rows ~= b.add(Widget(kind: WidgetKind.rich, wrap: TextWrap.greedy, width: SizeSpec.fixed(max(10, r.width - 2)),
@@ -1086,16 +1146,26 @@ struct ExplorerApp
             if (e.span.end > e.span.start && outcome.query.ok)
                 rows ~= b.add(Widget(kind: WidgetKind.rich, spans: [TextSpan("   in the query: ", Slot.muted),
                     TextSpan(query.text[min(e.span.start, $) .. min(e.span.end, $)], Slot.warn)]));
+            bodyCells = cast(long) rows.length - headRows;
         }
         else
-            foreach (line; highlightCode(languageOf(exportTarget), e.code))
-                rows ~= b.add(Widget(kind: WidgetKind.rich, spans: line.length ? line : [TextSpan(" ")]));
+        {
+            // Only the lines that show, and the one a fraction uncovers
+            // (`FXU20`): the rows above them are a gap of their height.
+            const lines = exportLines;
+            const top = cast(long) exportScroll.motion.whole - headCells;
+            const first = cast(size_t) min(lines.length, max(0, top));
+            const last = cast(size_t) min(lines.length, max(0, top + r.height + 1));
+            if (first > 0)
+                rows ~= b.add(Widget(kind: WidgetKind.box, height: SizeSpec.fixed(cast(int) first)));
+            foreach (line; lines[first .. last])
+                rows ~= b.add(Widget(kind: WidgetKind.rich, spans: line.length ? cast(TextSpan[]) line : [TextSpan(" ")]));
+            bodyCells = lines.length;
+        }
         auto vp = Widget(kind: WidgetKind.column, children: rows, clipX: true, clipY: true,
             width: SizeSpec.grow(), height: SizeSpec.fixed(max(0, r.height)),
             padding: Insets(0, 0, 0, 1));
-        // Rows, in cells: the touch controls are `rowCells` tall.
-        exportScroll.content = rows.length
-            + (touch ? (exportTarget == Target.nix ? 2 : 1) * (rowCells - 1) : 0);
+        exportScroll.content = headCells + bodyCells;
         exportScroll.viewport = r.height;
         vp.childOffset = Point(0, cast(int) exportScroll.motion.whole);
         vp.childOffsetFracY = exportScroll.motion.frac;
@@ -1377,33 +1447,45 @@ struct ExplorerApp
             }
             return;
         }
-        PointerEvent q = p;
-        q.pos = Point(p.pos.x, p.pos.y - dockTop);
-        const r = dock.handle(cast(const) Event(q));
-        if (r.kind != RouteKind.pane)
-            return;
-        if (r.pane == Pane.tree)
+        // The pane under the press, by this frame's arrangement (`FXU18`).
+        // Not the dock's router: it keeps a press's pane until the release,
+        // which a tap here ends without, so every later press went to the
+        // first pane pressed.
+        const local = Point(p.pos.x, p.pos.y - dockTop);
+        foreach (ref f; dock.frames.panes)
         {
-            focus = Focus.tree;
-            r.event.match!((in PointerEvent pe) {
-                // `pe` is in the pane's body, below its header. The row under
-                // the cell's middle, the rows moved up by the scroll's
-                // fraction, each `treeRowCells` tall.
-                const row = tv.top + cast(long) floor(
-                    (treeScroll.motion.frac * treeRowCells + pe.pos.y + 0.5) / treeRowCells);
-                if (row >= 0 && row < cast(long) tv.rows.length)
+            if (!inside(f.rect, local))
+                continue;
+            if (f.pane != Pane.tree)
+            {
+                focus = Focus.side;
+                // A cheat sheet snippet or its ▶ (`FXU19`): which one is the
+                // laid-out text's to say, so the next `paint` resolves it.
+                if (helpShown)
                 {
-                    const wasSel = tv.sel == row;
-                    tv.sel = row;
-                    // A second click opens or closes; a tap on a directory at once (`FXU13`).
-                    const dirTap = touch && tree.nodes[tv.rows[cast(size_t) row].node].value.isDir;
-                    if ((wasSel || dirTap) && treeActivate(tv, tree, &keyOf) == TreeStep.rebuild)
-                        reflatten();
+                    cheatAt = p.pos;
+                    cheatPending = true;
+                    h.requestFrame();
                 }
-            }, (in _) {});
+                return;
+            }
+            focus = Focus.tree;
+            // The row under the cell's middle in the pane's body, the rows
+            // moved up by the scroll's fraction, each `treeRowCells` tall.
+            const y = local.y - f.rect.y;
+            const row = tv.top + cast(long) floor(
+                (treeScroll.motion.frac * treeRowCells + y + 0.5) / treeRowCells);
+            if (row >= 0 && row < cast(long) tv.rows.length)
+            {
+                const wasSel = tv.sel == row;
+                tv.sel = row;
+                // A second click opens or closes; a tap on a directory at once (`FXU13`).
+                const dirTap = touch && tree.nodes[tv.rows[cast(size_t) row].node].value.isDir;
+                if ((wasSel || dirTap) && treeActivate(tv, tree, &keyOf) == TreeStep.rebuild)
+                    reflatten();
+            }
+            return;
         }
-        else
-            focus = Focus.side;
     }
 
     private void onKey(H)(ref H h, in KeyEvent k)
@@ -1629,6 +1711,80 @@ struct ExplorerApp
             default: break;
         }
     }
+}
+
+/// A cheat sheet snippet (`FXU19`): its query, and the bytes its code span
+/// (pieces and all) covers in the help's source.
+struct Cheat
+{
+    string query; ///
+    size_t start; ///
+    size_t end;   ///
+}
+
+/**
+The snippets of every table whose header reads "Write", the cheat sheet's:
+each code span of a body cell in that column is a query, a `\|` in it a pipe.
+*/
+Cheat[] cheatSnippets(in MdDoc doc, string src) @safe
+{
+    import std.array : replace;
+    import std.string : strip;
+    import sparkles.syntax.md.model : MdBlock, MdBlockKind, MdInlineKind;
+
+    Cheat[] out_;
+    void walk(in MdBlock blk)
+    {
+        foreach (ref c; blk.children)
+            walk(c);
+        if (blk.kind != MdBlockKind.table || blk.children.length < 2)
+            return;
+        size_t col = size_t.max;
+        foreach (ci, ref cell; blk.children[0].children)
+            if (src[cell.span.start .. cell.span.end].strip == "Write")
+                col = ci;
+        if (col == size_t.max)
+            return;
+        foreach (ref row; blk.children[1 .. $])
+        {
+            if (col >= row.children.length)
+                continue;
+            const inls = row.children[col].inlines;
+            for (size_t i = 0; i < inls.length; ++i)
+            {
+                if (inls[i].kind != MdInlineKind.codeSpan)
+                    continue;
+                // The run of pieces a `\|` cut it into, a backslash apart.
+                size_t j = i;
+                while (j + 1 < inls.length && inls[j + 1].kind == MdInlineKind.codeSpan
+                    && inls[j + 1].span.start <= inls[j].span.end + 1)
+                    ++j;
+                const a = inls[i].span.start, z = inls[j].span.end;
+                out_ ~= Cheat(src[a .. z].replace(`\|`, "|").strip, a, z);
+                i = j;
+            }
+        }
+    }
+    walk(doc.root);
+    return out_;
+}
+
+/// FXU19: the cheat sheet's snippets, one per code span of its Write column,
+/// `\|` a pipe.
+@("fileset_explorer.FXU19.cheatSnippets")
+@system unittest
+{
+    import std.algorithm.searching : canFind;
+    import std.algorithm.iteration : map;
+    import std.array : array;
+
+    auto app = new ExplorerApp(Root(literal: "a.d = x\n", name: "t"), "**");
+    if (app.helpDoc.root.children.length == 0)
+        return; // no markdown grammar: the help is its text
+    const qs = app.cheats.map!(c => c.query).array;
+    assert(qs.canFind("*.d") && qs.canFind("src/**") && qs.canFind("a | b"), qs.text);
+    assert(qs.canFind("p || q") && qs.canFind("fileFilter(hasExt(\"d\"))"), qs.text);
+    assert(!qs.canFind("Tab"), "the keys table has no Write column");
 }
 
 /// Where a frame drew a try block's ▶, and the block's identity.

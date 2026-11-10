@@ -224,15 +224,47 @@ a recorded press and drag down the tree's bar scrolls the tree to its end.
 **`FXU15` — The pointer over the editor.** With a pointer, the pointer **must**
 be the text I-beam over the query editor, a hand over a tab, a chip or a button,
 and the platform's default elsewhere; a click in the editor puts the caret at
-the character under it. _Detection:_ recorded moves over the query, a tab and
-the tree ask the host for `text`, `pointer` and `default`; a click on the
-query's fifth column, past its two-cell prompt, puts the caret before its
-third character.
+the character under it. That holds for a mouse or touchpad on Android too,
+where the pointer icon is resolved by the window's views: a hover **must**
+reach them as well as the application. _Detection:_ recorded moves over the
+query, a tab and the tree ask the host for `text`, `pointer` and `default`; a
+click on the query's fifth column, past its two-cell prompt, puts the caret
+before its third character.
 
 **`FXU16` — Density.** The explorer **must** open with a 12-point cell font, a
 third under the toolkit's default, on the desktop and on Android; `--font-size`
 overrides it. _Detection:_ the command line's and the Android entry's options
 carry 12 points.
+
+**`FXU17` — Pills.** A chip and a segment on the touch layout **must** be drawn
+32 dp tall in the middle of their 48 dp target, their label centred in them,
+with room above and below it as well as beside it. _Detection:_ every chip's
+box in a recorded touch frame is its target's height and asks to be drawn at
+32 dp.
+
+**`FXU18` — Taps reach their pane.** A tap in the dock **must** go to the pane
+under it, whichever pane an earlier tap went to. _Detection:_ recorded taps on
+Stats, then on a directory, close the directory, and a tap on Stats after one
+on the tree leaves the tree as it was.
+
+**`FXU19` — The cheat sheet tries its snippets.** Each snippet in the cheat
+sheet's Write column **must** be followed by a ▶; a tap on it, or on the
+snippet, **must** put the snippet into the editor, a `\|` in it as `|`, and
+resolve it against the directory, the help staying where it is. _Detection:_
+the cheat sheet's snippets include `*.d`, `a | b` and `p || q` and none of
+the keys table; a recorded tap on the ▶ after `src/*.d` makes it the query.
+
+**`FXU20` — A long export scrolls as the rest do.** The Export code **must**
+be highlighted once for each export, not each frame, and a frame **must**
+build only the lines in view, so a fling over a long export runs at the frame
+rate the tree's and the help's do. _Detection:_ a frame of a 300-line export
+builds rows for no more lines than the view is tall, and its scroll still
+spans every line.
+
+A code fence on a pixel target **must** be one surface from its top rule to
+its bottom rule, rounded at its corners and stopping at its side rules, rather
+than whole cells under its body; a background under a solid border **must**
+stop at the border's lines.
 
 A border caption drawn over its rule **must** mask the rule under it, on a
 pixel target as on a terminal.
@@ -420,15 +452,15 @@ text.
 
 Non-normative: where the parts live.
 
-| Requirements     | Where                                                                                                    |
-| ---------------- | -------------------------------------------------------------------------------------------------------- |
-| `FXL1`–`FXL7`    | `sparkles.build_primitives.fileset.query` (`parseQuery`, `compileQuery`, `canonical`, `gitTrackedPaths`) |
-| `FXL8`           | `nix/packages/tree-sitter-fileset/` (`grammar.js`, `queries/highlights.scm`)                             |
-| `FXU1`–`FXU8`    | `apps/fileset-explorer` (`explorer.d`, `evaluate.d`, `member_tree.d`, `render.d`)                        |
-| `FXU9`           | `sparkles.ui.components.file_icons` (`fileIcon`, `folderGlyph`), shared with hue's explorer              |
-| `FXU10`–`FXU16`  | `apps/fileset-explorer` (`explorer.d`, `launch.d`); `sparkles.ui.components.scroll_body` (`ScrollBody`)  |
-| `FXA1`–`FXA3`    | `apps/fileset-explorer/src/android_entry.d`, `nix/packages/android/fileset-explorer.nix`                 |
-| `FXT1`, `FXT2`   | `sparkles.syntax.md.model` (`MdBlockKind.tryBlock`), `sparkles.source_view.markdown` (`tryRunners`)      |
-| `FXT3`–`FXT5`    | `apps/fileset-explorer` (`help.d`)                                                                       |
-| `FXE1`–`FXE10`   | `sparkles.build_primitives.fileset.emit` (`emit`; `ir`, `nix`, `lists`)                                  |
-| `FXE11`, `FXE12` | `apps/fileset-explorer` (`app.d`, `export_tab.d`)                                                        |
+| Requirements     | Where                                                                                                                                                                                                                                                                              |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `FXL1`–`FXL7`    | `sparkles.build_primitives.fileset.query` (`parseQuery`, `compileQuery`, `canonical`, `gitTrackedPaths`)                                                                                                                                                                           |
+| `FXL8`           | `nix/packages/tree-sitter-fileset/` (`grammar.js`, `queries/highlights.scm`)                                                                                                                                                                                                       |
+| `FXU1`–`FXU8`    | `apps/fileset-explorer` (`explorer.d`, `evaluate.d`, `member_tree.d`, `render.d`)                                                                                                                                                                                                  |
+| `FXU9`           | `sparkles.ui.components.file_icons` (`fileIcon`, `folderGlyph`), shared with hue's explorer                                                                                                                                                                                        |
+| `FXU10`–`FXU20`  | `apps/fileset-explorer` (`explorer.d`, `launch.d`); `sparkles.ui.components.scroll_body` (`ScrollBody`); `sparkles.source_view.markdown` (`MdViewOptions.codeActionGlyph`); `sparkles.ui.pixel_geometry` (`fillInsideBorder`, `insideGlyphFrame`); `sparkles.wsi.platform.android` |
+| `FXA1`–`FXA3`    | `apps/fileset-explorer/src/android_entry.d`, `nix/packages/android/fileset-explorer.nix`                                                                                                                                                                                           |
+| `FXT1`, `FXT2`   | `sparkles.syntax.md.model` (`MdBlockKind.tryBlock`), `sparkles.source_view.markdown` (`tryRunners`)                                                                                                                                                                                |
+| `FXT3`–`FXT5`    | `apps/fileset-explorer` (`help.d`)                                                                                                                                                                                                                                                 |
+| `FXE1`–`FXE10`   | `sparkles.build_primitives.fileset.emit` (`emit`; `ir`, `nix`, `lists`)                                                                                                                                                                                                            |
+| `FXE11`, `FXE12` | `apps/fileset-explorer` (`app.d`, `export_tab.d`)                                                                                                                                                                                                                                  |
