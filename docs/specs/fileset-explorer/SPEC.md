@@ -124,7 +124,9 @@ screen, and scrolls to keep the caret in view.
 **`FXU3` — The caret is the terminal's.** While the editor has focus, the
 caret **must** be drawn with the host's text cursor
 ([`HST20`](../ui-app/feature-requirements.md)) at the caret's cell, as a bar,
-and no character of the query moves when the caret does. When the editor loses
+and no character of the query moves when the caret does: a terminal's cursor,
+or on a window — raylib's and the native Vulkan host's alike, Android's
+among them — a bar the host paints over the frame. When the editor loses
 focus the cursor is hidden. _Detection:_ moving the caret left and right in a
 recorded run leaves every glyph of the query line in its cell, and the
 recording's cursor follows it.
@@ -238,9 +240,10 @@ carry 12 points.
 
 **`FXU17` — Pills.** A chip and a segment on the touch layout **must** be drawn
 32 dp tall in the middle of their 48 dp target, their label centred in them,
-with room above and below it as well as beside it. _Detection:_ every chip's
-box in a recorded touch frame is its target's height and asks to be drawn at
-32 dp.
+with room above and below it as well as beside it. A selected segment is drawn
+inside its group's outline, as far from the outline's sides as from its top
+and bottom. _Detection:_ every chip's box in a recorded touch frame is its
+target's height and asks to be drawn at 32 dp.
 
 **`FXU18` — Taps reach their pane.** A tap in the dock **must** go to the pane
 under it, whichever pane an earlier tap went to. _Detection:_ recorded taps on
@@ -260,6 +263,23 @@ build only the lines in view, so a fling over a long export runs at the frame
 rate the tree's and the help's do. _Detection:_ a frame of a 300-line export
 builds rows for no more lines than the view is tall, and its scroll still
 spans every line.
+
+**`FXU21` — The editor's clipboard.** In a window, the editor **must** take a
+window's copy, cut and paste chords, and a paste **must** read the system
+clipboard through the host ([`INP25`](../ui/input.md)),
+the answer going in at the caret; on Android a soft keyboard's cursor keys,
+its jumps to either end and its Select All **must** move and select in the
+query as a hardware keyboard's keys do. _Detection:_ a recorded Ctrl+V in a
+window asks the host for one clipboard read, and that read's answer is
+inserted at the caret.
+
+**`FXU22` — A wide export scrolls across.** A line of the Export code wider
+than the pane **must** scroll across by a finger's or a trackpad's horizontal
+motion, or a wheel's with Shift, under a header that stays; a snapshot's
+paths and a long call **must** be written one to a line in the Nix
+target. _Detection:_ a recorded horizontal pan over a 200-column export
+moves its lines 30 columns and leaves the header; a union of eight paths is
+written a path a line.
 
 A code fence on a pixel target **must** be one surface from its top rule to
 its bottom rule, rounded at its corners and stopping at its side rules, rather
@@ -452,15 +472,15 @@ text.
 
 Non-normative: where the parts live.
 
-| Requirements     | Where                                                                                                                                                                                                                                                                              |
-| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `FXL1`–`FXL7`    | `sparkles.build_primitives.fileset.query` (`parseQuery`, `compileQuery`, `canonical`, `gitTrackedPaths`)                                                                                                                                                                           |
-| `FXL8`           | `nix/packages/tree-sitter-fileset/` (`grammar.js`, `queries/highlights.scm`)                                                                                                                                                                                                       |
-| `FXU1`–`FXU8`    | `apps/fileset-explorer` (`explorer.d`, `evaluate.d`, `member_tree.d`, `render.d`)                                                                                                                                                                                                  |
-| `FXU9`           | `sparkles.ui.components.file_icons` (`fileIcon`, `folderGlyph`), shared with hue's explorer                                                                                                                                                                                        |
-| `FXU10`–`FXU20`  | `apps/fileset-explorer` (`explorer.d`, `launch.d`); `sparkles.ui.components.scroll_body` (`ScrollBody`); `sparkles.source_view.markdown` (`MdViewOptions.codeActionGlyph`); `sparkles.ui.pixel_geometry` (`fillInsideBorder`, `insideGlyphFrame`); `sparkles.wsi.platform.android` |
-| `FXA1`–`FXA3`    | `apps/fileset-explorer/src/android_entry.d`, `nix/packages/android/fileset-explorer.nix`                                                                                                                                                                                           |
-| `FXT1`, `FXT2`   | `sparkles.syntax.md.model` (`MdBlockKind.tryBlock`), `sparkles.source_view.markdown` (`tryRunners`)                                                                                                                                                                                |
-| `FXT3`–`FXT5`    | `apps/fileset-explorer` (`help.d`)                                                                                                                                                                                                                                                 |
-| `FXE1`–`FXE10`   | `sparkles.build_primitives.fileset.emit` (`emit`; `ir`, `nix`, `lists`)                                                                                                                                                                                                            |
-| `FXE11`, `FXE12` | `apps/fileset-explorer` (`app.d`, `export_tab.d`)                                                                                                                                                                                                                                  |
+| Requirements     | Where                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `FXL1`–`FXL7`    | `sparkles.build_primitives.fileset.query` (`parseQuery`, `compileQuery`, `canonical`, `gitTrackedPaths`)                                                                                                                                                                                                                                                                                                                                                               |
+| `FXL8`           | `nix/packages/tree-sitter-fileset/` (`grammar.js`, `queries/highlights.scm`)                                                                                                                                                                                                                                                                                                                                                                                           |
+| `FXU1`–`FXU8`    | `apps/fileset-explorer` (`explorer.d`, `evaluate.d`, `member_tree.d`, `render.d`)                                                                                                                                                                                                                                                                                                                                                                                      |
+| `FXU9`           | `sparkles.ui.components.file_icons` (`fileIcon`, `folderGlyph`), shared with hue's explorer                                                                                                                                                                                                                                                                                                                                                                            |
+| `FXU10`–`FXU22`  | `apps/fileset-explorer` (`explorer.d`, `launch.d`); `sparkles.ui.components.scroll_body` (`ScrollBody`); `sparkles.source_view.markdown` (`MdViewOptions.codeActionGlyph`); `sparkles.ui.pixel_geometry` (`fillInsideBorder`, `insideGlyphFrame`, `insetSpan`); `sparkles.wsi.platform.android`; `sparkles.ui_app.native_loop` (`ClipboardReads`, `paintTextCursor`); `sparkles.android.ime_diff` (`moveOf`); `sparkles.build_primitives.fileset.emit.nix` (`nixCall`) |
+| `FXA1`–`FXA3`    | `apps/fileset-explorer/src/android_entry.d`, `nix/packages/android/fileset-explorer.nix`                                                                                                                                                                                                                                                                                                                                                                               |
+| `FXT1`, `FXT2`   | `sparkles.syntax.md.model` (`MdBlockKind.tryBlock`), `sparkles.source_view.markdown` (`tryRunners`)                                                                                                                                                                                                                                                                                                                                                                    |
+| `FXT3`–`FXT5`    | `apps/fileset-explorer` (`help.d`)                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `FXE1`–`FXE10`   | `sparkles.build_primitives.fileset.emit` (`emit`; `ir`, `nix`, `lists`)                                                                                                                                                                                                                                                                                                                                                                                                |
+| `FXE11`, `FXE12` | `apps/fileset-explorer` (`app.d`, `export_tab.d`)                                                                                                                                                                                                                                                                                                                                                                                                                      |

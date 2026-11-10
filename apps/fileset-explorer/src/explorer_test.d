@@ -111,3 +111,32 @@ private ExplorerApp* make(string query)
         text(frame.canFind("❯ bin/*"), " ", frame.canFind("run ("), " ", frame.split('\n')[6 .. 9]));
     assert(lines[$ - 2].canFind("Tab"), lines[$ - 2]);
 }
+
+/// FXU21: in a window, Ctrl+V asks the host for the clipboard, and its answer
+/// lands in the query at the caret.
+@("fileset_explorer.FXU21.pasteReadsTheClipboard")
+@system unittest
+{
+    import std.range.primitives : put;
+    import sparkles.input : Mods, PasteEvent;
+    import sparkles.ui_app.backend : Backend;
+
+    auto app = make("src/*.d");
+    auto gui = delegate(ref RecordingHost h) @safe {
+        h.size = Size(100, 24);
+        h.backend = Backend.gui;
+        h.capabilities.clipboardRead = true;
+    };
+
+    auto asked = runAppRecorded(*app, RunConfig.init, [charEvent('v', Mods(ctrl: true))], gui);
+    assert(asked.clipboardReads.length == 1, text(asked.clipboardReads));
+    assert(app.query.text == "src/*.d", "nothing is pasted before the answer");
+
+    PasteEvent answer;
+    cast(void) answer.text.tryWrite((ref s) { put(s, " | *.md"); });
+    answer.last = true;
+    answer.request = asked.clipboardReads[0];
+    cast(void) runAppRecorded(*app, RunConfig.init, [Event(answer)], gui);
+    assert(app.query.text == "src/*.d | *.md", app.query.text);
+    assert(app.shown.found.members.length == 5, text(app.shown.found.members.length));
+}
