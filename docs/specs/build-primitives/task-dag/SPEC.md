@@ -211,7 +211,9 @@ in-process action names a typed handler.
 the child and **must never** appear in an event or a dry run. Every occurrence
 of it in a line the child prints is masked as `<redacted>` before the line
 reaches an event or a spool. A multiline value is also masked line by line,
-because the child's output is framed into lines before masking (T11).
+because the child's output is framed into lines before masking (T11): each of
+its lines of at least 8 bytes, as a shorter one would mask unrelated output
+and hides too little to matter (T14).
 
 ### 3.2 Edges
 
