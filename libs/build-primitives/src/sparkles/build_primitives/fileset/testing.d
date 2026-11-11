@@ -3132,3 +3132,57 @@ version (Posix)
         assert(peak == 1);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Review fixes: the machine, the fold and the loop executor, kept in one block
+
+/// FSS3: a fold over a fileset that evaluates to nothing at the fileset
+/// root, the plan's one start root, still ends with the fileset root's
+/// value, as a statically empty fileset does; so does one whose root cannot
+/// be listed.
+@("fileset.scheme.FSS3.foldOverNothing")
+@system unittest
+{
+    import sparkles.build_primitives.fileset.fso : SchemeShape;
+    import sparkles.build_primitives.fileset.machine : Resolution, StepKind;
+
+    enum literal = "a\nd/b\n";
+    auto sets = Filesets(CasePolicy.sensitive);
+    RecordingExecutor exec;
+    const Fileset[4] empties = [sets.difference(sets.everything, sets.everything),
+        sets.difference(sets.gitignored, sets.everything),
+        sets.difference(sets.difference(sets.everything, sets.gitignored), sets.everything),
+        sets.intersection(sets.gitignored, sets.nothing)];
+    foreach (f; empties)
+    {
+        RenderingFold!(EntryOrder.narOrder) fold;
+        assert(schemeResolve(literal, sets, f, fold, exec) == "[]");
+        assert(fold.seen == [""], fold.seen.join(" "));
+    }
+    // The fileset root as the start root is still folded once.
+    RenderingFold!(EntryOrder.narOrder) all;
+    assert(schemeResolve(literal, sets, sets.everything, all, exec) == "[a,d[b]]");
+    assert(all.seen == ["d", ""], all.seen.join(" "));
+
+    // A fileset root whose listing fails is reported, then folded empty.
+    SchemeShape shape;
+    shape.order = EntryOrder.narOrder;
+    shape.traversal = Traversal.fold;
+    auto m = Resolution(sets, sets.everything, ResolutionLimits.init, false, false, shape);
+    auto c = m.start();
+    StepKind kind;
+    assert(m.step(sets, c, 64, kind) && kind == StepKind.needIO);
+    m.failed(0, ErrorKind.permission);
+    string[] seen;
+    for (;;)
+    {
+        assert(m.step(sets, c, 64, kind));
+        if (kind == StepKind.incomplete)
+            seen ~= text("incomplete ", m.incompletePath, ": ", m.incompleteKind);
+        else if (kind == StepKind.unit)
+            seen ~= text("unit '", m.unitPath, "' ", m.unitEntries.length);
+        else if (kind == StepKind.done)
+            break;
+    }
+    assert(seen == ["incomplete : permission", "unit '' 0"], text(seen));
+}
