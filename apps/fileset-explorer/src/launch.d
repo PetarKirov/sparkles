@@ -7,7 +7,7 @@ module launch;
 
 import sparkles.core_cli.args : RunExpected;
 import sparkles.syntax.ts.registry : GrammarRegistry;
-import sparkles.ui_app.gui_options : GuiOptions;
+import sparkles.ui_app.gui_options : GuiOptions, NativeOptions;
 import sparkles.ui_app.host : RunConfig, TouchGestures;
 import sparkles.ui_app.run : asRunResult;
 import sparkles.ui_app.run_app : runApp;
@@ -55,7 +55,8 @@ Touch resolves through the gesture recogniser (`FXU10`): a tap is a click, a
 drag scrolls the pane under it by its exact distance, and a lifted finger
 flings it on.
 */
-RunExpected!void launch(Root dir, string query, GuiOptions gui, bool touch = false)
+RunExpected!void launch(Root dir, string query, GuiOptions gui, bool touch = false,
+    NativeOptions native = NativeOptions.init)
 {
     auto app = new ExplorerApp(dir, query);
     if (touch)
@@ -63,6 +64,7 @@ RunExpected!void launch(Root dir, string query, GuiOptions gui, bool touch = fal
     RunConfig cfg = {
         title: "fileset explorer",
         gui: gui,
+        native: native,
         fractionalScroll: true,
         touchGestures: TouchGestures.all,
     };

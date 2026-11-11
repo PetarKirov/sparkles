@@ -11,7 +11,7 @@ import std.conv : to;
 import sparkles.base.term_caps : isTerminal, StdStream;
 import sparkles.core_cli.args : Command, failRun, Flatten, Option, ranOk, runCli, RunExpected;
 import sparkles.ui.geometry : Size;
-import sparkles.ui_app.gui_options : GuiOptions;
+import sparkles.ui_app.gui_options : GuiOptions, NativeOptions;
 
 import evaluate : Root;
 import explorer : ExplorerApp;
@@ -57,13 +57,17 @@ struct Explorer
     @Flatten("GUI Options")
     GuiOptions gui = explorerGui;
 
+    @Flatten("Native Window Options")
+    NativeOptions native;
+
     /// Runs the explorer, renders one frame of it, or writes the query for
     /// another system.
     RunExpected!void run()
     {
         if (emitTarget.length)
             return emitQuery();
-        if (renderPlain || !isTerminal(StdStream.stdin) || !isTerminal(StdStream.stdout))
+        // Without a terminal, a frame as text, unless a window was asked for.
+        if (renderPlain || (!gui.gui && (!isTerminal(StdStream.stdin) || !isTerminal(StdStream.stdout))))
         {
             auto app = new ExplorerApp(Root(dir: dir), query);
             if (touch)
@@ -76,7 +80,7 @@ struct Explorer
             write(renderFrame(*app, keys, Size(wh[0].to!int, wh[1].to!int), gui));
             return ranOk();
         }
-        return launch(Root(dir: dir), query, gui, touch);
+        return launch(Root(dir: dir), query, gui, touch, native);
     }
 
     // `FXE11`: the code on standard output, or the refusal on standard error
