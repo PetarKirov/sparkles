@@ -12,7 +12,7 @@
 #include <ft2build.h>
 #include FT_FREETYPE_H
 #include <hb.h>
-#include <hb-ft.h>
+#include <hb-ot.h>
 #include "shaping_api.h"
 
 struct STLibrary { FT_Library ft; };
@@ -88,14 +88,32 @@ STFace *st_face_open(STLibrary *library, const char *path, int faceIndex, int pi
         else face->scale = (float)pixels * 64.0f / (float)ppem;
     } else error = 1;
     if (error) { st_face_close(face); return NULL; }
-    face->font = hb_ft_font_create_referenced(face->ft);
-    face->buffer = hb_buffer_create();
-    if (!face->font || face->font == hb_font_get_empty() ||
-        !face->buffer || !hb_buffer_allocation_successful(face->buffer)) {
+    hb_face_t *hb_face = hb_face_create_from_file_or_fail(path, (unsigned)faceIndex);
+    if (!hb_face) {
         st_face_close(face);
         return NULL;
     }
-    hb_ft_font_set_load_flags(face->font, FT_LOAD_DEFAULT | FT_LOAD_COLOR);
+    face->font = hb_font_create(hb_face);
+    hb_face_destroy(hb_face);
+    if (!face->font || face->font == hb_font_get_empty()) {
+        st_face_close(face);
+        return NULL;
+    }
+    hb_ot_font_set_funcs(face->font);
+    int x_scale, y_scale;
+    if (face->ft->units_per_EM) {
+        x_scale = (int)(((uint64_t)face->ft->size->metrics.x_scale * (uint64_t)face->ft->units_per_EM + (1u << 15)) >> 16);
+        y_scale = (int)(((uint64_t)face->ft->size->metrics.y_scale * (uint64_t)face->ft->units_per_EM + (1u << 15)) >> 16);
+    } else {
+        x_scale = (int)face->ft->size->metrics.x_ppem << 6;
+        y_scale = (int)face->ft->size->metrics.y_ppem << 6;
+    }
+    hb_font_set_scale(face->font, x_scale, y_scale);
+    face->buffer = hb_buffer_create();
+    if (!face->buffer || !hb_buffer_allocation_successful(face->buffer)) {
+        st_face_close(face);
+        return NULL;
+    }
     return face;
 }
 

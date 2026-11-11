@@ -224,8 +224,9 @@ transitively—accounting for over 20 shared libraries in `ldd`—even though `h
 is predominantly a local syntax-highlighting viewer and TUI. Similarly,
 `sparkles:wsi` linked `xcb-xtest` in its core library configuration even though
 `xcb_test_*` is only ever called by external integration test injectors.
-HarfBuzz also bundled GLib 2.0 and PCRE2 transitively despite `sparkles:font`
-using only HarfBuzz's core C ABI (`hb_*`) without GLib wrappers.
+HarfBuzz also bundled GLib 2.0, PCRE2, FreeType, and libpng transitively despite `sparkles:font`
+using only HarfBuzz's core C ABI (`hb_*`) for cluster shaping and implementing
+font parsing, outline decoding, rasterization, and PNG strike decoding in pure D (`FTX3`, `FTX4`).
 
 **Choice.** TC20a:
 
@@ -234,8 +235,8 @@ using only HarfBuzz's core C ABI (`hb_*`) without GLib wrappers.
 2. Do not declare `libs "curl"` in `hue`'s default and terminal configurations.
    Phobos' `std.net.curl` loads `libcurl.so.4` via `dlopen` on demand, and Nix
    wraps `hue` with `pkgs.curlMinimal` in `LD_LIBRARY_PATH` for runtime resolution.
-3. Package `harfbuzz` with GLib, Graphite2 and ICU disabled to prevent leaking
-   transitive dependencies (`libglib-2.0`, `libpcre2-8`) into text-rendering consumers.
+3. Package `harfbuzz` with GLib, Graphite2, ICU, FreeType, and PNG disabled to prevent leaking
+   transitive dependencies (`libglib-2.0`, `libpcre2-8`, `libfreetype`, `libpng16`, `libbrotli`, `libbz2`) into text-rendering consumers.
 
 ## Open questions
 
