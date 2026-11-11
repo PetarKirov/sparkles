@@ -52,6 +52,33 @@ private void tap(ref ExplorerApp app, Point at, Size size)
 
 private enum tablet = Size(140, 40);
 
+/// FXU9: the touch tree draws hue's connectors, and its `│` runs on through
+/// the cells between one row's text and the next.
+@("fileset_explorer.FXU9.touchConnectors")
+@system unittest
+{
+    import std.utf : toUTF32;
+
+    auto app = make("src/*.d");
+    const lines = frameOf(*app, tablet);
+    const a = find(*app, "app.d", tablet), l = find(*app, "lib.d", tablet);
+    assert(l.y - a.y >= 2, "the rows are taller than a line");
+    // The connector's column: the `├` before the first child's name.
+    const row = lines[a.y].toUTF32;
+    long fork = -1;
+    foreach_reverse (x; 0 .. a.x)
+        if (row[x] == '├')
+        {
+            fork = x;
+            break;
+        }
+    assert(fork >= 0, "no ├ before app.d:\n" ~ renderFrame(*app, "", tablet));
+    foreach (y; a.y + 1 .. l.y)
+        assert(lines[y].toUTF32[fork] == '│', text("no │ between the rows at line ", y, ":\n",
+            renderFrame(*app, "", tablet)));
+    assert(lines[l.y].toUTF32[fork] == '├', "lib.d has a later sibling");
+}
+
 /// FXU11: no borders, no key hints, rows a touch target apart, and the
 /// operator chips insert at the caret.
 @("fileset_explorer.FXU11.touchFrame")
