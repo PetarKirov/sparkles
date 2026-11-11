@@ -1218,3 +1218,36 @@ not, nothing changes.
 
 **Revisit when** dub keeps the operand, or a preprocessor rejects the joined
 form.
+
+## D46: An optional dependency follows the locks (proposed)
+
+**Question.** The resolver skipped an `optional` dependency unless it was also
+`default`, reasoning that the locks select nothing. So a locked optional
+dependency was dropped, and an unlocked `optional default` one was a
+resolution error ("in neither DUB lock"). What does dub do?
+
+**Alternatives.**
+
+- Keep the rule: `default` decides.
+- Copy dub's rule. `Project.collectDependenciesRec` (`source/dub/project.d`)
+  wants a dependency when
+  `!optional || selections.hasSelectedVersion(base) || (default && selections.bare)`,
+  where `bare` means there is no selections file; and `Dub.upgrade` keeps a
+  selected optional dependency and drops an unselected optional-default one
+  whenever a selections file exists.
+
+**Choice.** dub's rule, with the lockfiles as the selections file, so never
+`bare`: an optional dependency is used exactly when the locks pin its
+package, whether or not it is `default`. A sub-package of the root or of the
+dependent's own package is used too, as dub takes those without consulting
+the selections. Each range of a used dependency is checked against the lock
+(BGR4). Edges are looked up by name, so an optional edge to a package that
+another dependent loads is followed, as in dub.
+
+**Trade-offs.** dub also loads an unselected optional dependency that names a
+repository, fetching it; the resolver fetches nothing, so it skips one. No
+recipe in scope declares an optional dependency, so only the resolver's
+tests exercise the rule.
+
+**Revisit when** a recipe in scope adopts `optional`, or resolution runs
+without lockfiles.

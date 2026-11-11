@@ -179,7 +179,10 @@ A dependency missing from the lockfiles is a resolution error, and so is a
 locked source that a version range or repository pin naming it does not
 admit: every one, from every package depending on it, at the top level or in
 any configuration, whichever configuration the request builds. The resolver
-never resolves a version against a registry.
+never resolves a version against a registry. An `optional` dependency is used
+exactly when the lockfiles pin it, or when it is a sub-package of its
+dependent's own package, whether or not it is `default`
+([D46](./decisions.md#d46-an-optional-dependency-follows-the-locks-proposed)).
 
 **BGR5: Library resolution.** `libs` entries **must** resolve through
 `pkg-config` at planning time, with dub's rules: the `lib<name>` fallback, the

@@ -425,10 +425,7 @@ private void collectDependencies(Project project, Package p) @safe
         DependencySpec[] specs;
         foreach (ref c; [p.settings] ~ configurationSettings(p))
             if (auto s = name in c.dependencies)
-                // dub uses an optional dependency only when it is selected;
-                // the locks select none, so only an optional-by-default one
-                // is used.
-                if (!s.optional || s.default_)
+                if (!s.optional || optionalSelected(project, p, name))
                     specs ~= *s;
         if (specs.length == 0)
             continue;
@@ -444,6 +441,19 @@ private void collectDependencies(Project project, Package p) @safe
         if (dependency.name !in project.byName)
             collectDependencies(project, dependency);
     }
+}
+
+// Whether dub uses the optional dependency `name` of `from`. dub's
+// `collectDependenciesRec` wants one only when the selections pick its
+// package: `default` counts only when there is no selections file at all
+// (`bare`), and the locks are one. So an optional dependency is used when
+// the locks pin it, or when it is one of the package's own (the root's,
+// or `from`'s), which dub takes without asking the selections.
+private bool optionalSelected(Project project, Package from, string name) @safe pure nothrow
+{
+    const rootName = rootNameOf(name);
+    return rootName == project.root.base.name || rootName == from.base.name
+        || (rootName in project.registry) !is null;
 }
 
 private SettingsTemplate[] configurationSettings(Package p) @safe pure nothrow
