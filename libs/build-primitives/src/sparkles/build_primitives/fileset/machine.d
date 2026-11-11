@@ -247,9 +247,13 @@ struct Resolution
 
         const ancCap = cast(uint) rootSpans.length + lim.maxDepth + 2;
         unitOrder.length = lim.maxEntries + ancCap;
-        if (fold && !(rootSpans.length == 1 && rootSpans[0].length == 0))
+        if (fold)
         {
             // The directories above the start roots, the fileset root first.
+            // When the one start root is the fileset root, its own unit
+            // replaces this one, which is handed over only if the root's
+            // never is: the fileset evaluates to nothing there, or the root
+            // could not be listed (FSS3).
             anc.length = lim.maxDepth + 2;
             ancEntries.length = ancCap;
             anc[0] = Anc(Span(0, 0), 0);
@@ -966,8 +970,13 @@ private:
                         namesTop = rootsEnd;
                         if (ign.ready)
                             ign.release(rootIgnMark);
-                        if (fold && ancTop && !addAncestorEntry(frames[0].path))
-                            return false;
+                        if (fold && ancTop)
+                        {
+                            if (frames[0].path.length == 0)
+                                ancTop = 0; // the fileset root was its own unit
+                            else if (!addAncestorEntry(frames[0].path))
+                                return false;
+                        }
                     }
                     if (emit)
                     {
