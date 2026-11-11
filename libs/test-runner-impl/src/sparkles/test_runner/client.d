@@ -91,13 +91,19 @@ final class Worker
     */
     this(string binary, string[] druntimeOptions, StrayHandler onStray)
     {
-        import std.process : pipeProcess, Redirect;
+        import std.process : Config, pipeProcess, Redirect;
 
         this.onStray = onStray;
         mutex = new Mutex;
         changed = new Condition(mutex);
         session = WorkerSession(binary);
-        pipes = pipeProcess(workerArguments(binary, druntimeOptions), Redirect.all);
+        Config config;
+        version (Posix)
+        {
+            ignoreBrokenPipes();
+            config.preExecFunction = &restoreBrokenPipes;
+        }
+        pipes = pipeProcess(workerArguments(binary, druntimeOptions), Redirect.all, null, config);
         auto frames = new Thread(&readFrames);
         frames.isDaemon = true;
         frames.start();
@@ -118,9 +124,8 @@ final class Worker
         synchronized (mutex)
             if (!session.over)
                 bytes = session.request(command, last);
-        if (!bytes.length)
+        if (!bytes.length || !send(bytes))
             endedBetweenCommands();
-        send(bytes);
         JSONValue[] frames;
         foreach (ref e; await((ref RunnerEvent e) => e.kind == EventKind.commandFinished))
             if (e.kind == EventKind.commandFrame)
@@ -130,22 +135,27 @@ final class Worker
 
     /// Runs test `id` (TRP16) and returns its result, with its output. A
     /// worker that dies during the test yields a failed result (TRP26), and
-    /// this worker is then dead. One that ended since its last command throws
-    /// `WorkerDied` with `outsideCommand` set (TRP27).
+    /// this worker is then dead. One that ended since its last command, or
+    /// before the test started, throws `WorkerDied` with `outsideCommand` set
+    /// (TRP27).
     TestResult run(size_t id, bool mainThread)
     {
         string bytes;
         synchronized (mutex)
             if (!session.over)
                 bytes = session.run(id, mainThread);
-        if (!bytes.length)
+        if (!bytes.length || !send(bytes))
             endedBetweenCommands();
-        send(bytes);
         TestResult result;
-        foreach (ref e; await((ref RunnerEvent e) => e.kind == EventKind.testFinished,
-                diesAfterResult: true))
-            if (e.kind == EventKind.testFinished)
-                result = e.result;
+        try
+            foreach (ref e; await((ref RunnerEvent e) => e.kind == EventKind.testFinished,
+                    diesAfterResult: true))
+                if (e.kind == EventKind.testFinished)
+                    result = e.result;
+        catch (WorkerDied e)
+            // The session blames a test only once it has started: an end
+            // before that raced the command, and no test is to blame.
+            throw e.outsideCommand ? e : WorkerDied.outside(e.ending, "between tests");
         return result;
     }
 
@@ -173,10 +183,10 @@ final class Worker
                 bytes = session.exit(coverageMerge);
         try
         {
-            // Writing to a worker known to be gone raises SIGPIPE; end of
-            // file alone ends one that is still there (TRP22).
+            // A worker known to be gone is not written to; end of file alone
+            // ends one that is still there (TRP22).
             if (bytes.length)
-                send(bytes);
+                cast(void) send(bytes);
             pipes.stdin.close();
         }
         catch (Exception)
@@ -211,10 +221,18 @@ final class Worker
         }
     }
 
-    private void send(string bytes)
+    /// Writes `bytes` to the worker's commands; `false` when nothing reads
+    /// them any more, the worker having ended or closed its end (TRP27).
+    private bool send(string bytes)
     {
-        pipes.stdin.write(bytes);
-        pipes.stdin.flush();
+        try
+        {
+            pipes.stdin.write(bytes);
+            pipes.stdin.flush();
+            return true;
+        }
+        catch (Exception)
+            return false; // EPIPE, which SIGPIPE no longer pre-empts
     }
 
     /// The session ended, or gave up on the worker, with no command in flight
@@ -408,6 +426,28 @@ version (Windows)
 
 version (Posix)
 {
+    /// Makes a write to a worker that has gone fail with `EPIPE` instead of
+    /// ending this process with `SIGPIPE`, so the run can report the end
+    /// (TRP27). Process-wide, and idempotent.
+    private void ignoreBrokenPipes() @trusted nothrow @nogc
+    {
+        import core.stdc.signal : signal, SIG_IGN;
+        import core.sys.posix.signal : SIGPIPE;
+
+        signal(SIGPIPE, SIG_IGN);
+    }
+
+    /// Run in the worker before it starts: an ignored signal stays ignored
+    /// across `exec`, and the tests must get the default action they would
+    /// get anywhere else.
+    private bool restoreBrokenPipes() @trusted nothrow @nogc
+    {
+        import core.stdc.signal : signal, SIG_DFL, SIG_ERR;
+        import core.sys.posix.signal : SIGPIPE;
+
+        return signal(SIGPIPE, SIG_DFL) != SIG_ERR;
+    }
+
     /// Whether `fd` has bytes, or its end, to read within `timeoutMs`.
     private bool readable(int fd, int timeoutMs) @trusted
     {
@@ -526,6 +566,57 @@ unittest
         }
         assert(w.dead);
         assert(strays.canFind("on the way out"), "its unattributed output is shown: " ~ strays);
+    }
+}
+
+@("client.run.commandsClosedBetweenCommandsFailsTheRun")
+@system
+unittest
+{
+    version (Posix)
+    {
+        import core.time : seconds;
+        import std.algorithm.searching : canFind;
+
+        // The worker closes its commands channel after serving one test and
+        // lingers: the next command meets a pipe nobody reads. The write
+        // must fail and the run report the end (TRP27), not die of SIGPIPE.
+        string strays;
+        auto w = startScripted(scriptedWorker("closedCommands",
+            "read -r command\nexec 0<&-\ncat \"$D/ran\"\ncat \"$D/sentinel\" >&2\nsleep 1\nexit 0"),
+            strays);
+        assert(w.run(0, mainThread: false).succeeded);
+        try
+        {
+            cast(void) w.run(0, mainThread: false);
+            assert(0, "a worker that reads no commands runs no test");
+        }
+        catch (WorkerDied e)
+            assert(e.outsideCommand && e.msg.canFind("exited with status 0 between tests"), e.msg);
+        assert(w.dead);
+    }
+}
+
+@("client.run.endBeforeTheTestStartsFailsTheRun")
+@system
+unittest
+{
+    version (Posix)
+    {
+        import std.algorithm.searching : canFind;
+
+        // The worker ends as the command arrives, before its `started`: the
+        // end raced the command, and no test is to blame (TRP27).
+        string strays;
+        auto w = startScripted(scriptedWorker("endBeforeStarted", "read -r command\nexit 3"),
+            strays);
+        try
+        {
+            cast(void) w.run(0, mainThread: false);
+            assert(0, "no test ran, so none has a result");
+        }
+        catch (WorkerDied e)
+            assert(e.outsideCommand && e.msg.canFind("exited with status 3 between tests"), e.msg);
     }
 }
 

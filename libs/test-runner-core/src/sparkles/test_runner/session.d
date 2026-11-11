@@ -107,7 +107,7 @@ struct WorkerSession
     private string terminal;          // the frame type that ends `command`
     private size_t running = noTest;  // the test a `run` runs
     private TestResult runResult;
-    private bool haveResult, haveSentinel;
+    private bool haveStarted, haveResult, haveSentinel;
 
     private bool processEnded;
     private string ending;
@@ -150,7 +150,7 @@ struct WorkerSession
         command = Command.run;
         terminal = "result";
         running = id;
-        haveResult = haveSentinel = false;
+        haveStarted = haveResult = haveSentinel = false;
         state = State.busy;
         return frameText(frameOf("run", [
             "id": JSONValue(id),
@@ -339,6 +339,7 @@ struct WorkerSession
         {
             if (type == "started")
             {
+                haveStarted = true;
                 events ~= RunnerEvent(kind: EventKind.testStarted, test: running);
                 return;
             }
@@ -438,16 +439,27 @@ struct WorkerSession
                 events ~= RunnerEvent(kind: EventKind.workerEnded, text: ending, expected: true);
                 return;
             case State.busy:
-                if (command == Command.run)
+                // A crash during a test fails that test, with its output
+                // (TRP25, TRP26). An end before its `started` raced the
+                // command: the test never ran, and the worker ended between
+                // commands (TRP27).
+                if (command == Command.run && haveStarted)
                 {
-                    // A crash during a test fails that test, with its output
-                    // (TRP25, TRP26).
                     auto result = TestResult(test: listing[running]);
                     result.thrown = [Thrown(type: "worker crashed",
                         message: "the test binary " ~ ending ~ " while running this test")];
                     result.output = takePending();
                     events ~= RunnerEvent(kind: EventKind.testFinished, test: running,
                         result: result);
+                    running = noTest;
+                }
+                else if (command == Command.run)
+                {
+                    import std.string : lineSplitter;
+
+                    // What it wrote belongs to the worker, not to the test.
+                    foreach (line; takePending().lineSplitter)
+                        emitOutput(noTest, line);
                     running = noTest;
                 }
                 break;
@@ -672,6 +684,29 @@ unittest
         assert(result.thrown[0].message.canFind("signal 6 (SIGABRT)"), result.thrown[0].message);
     }
     assert(!events[1].expected && s.over);
+}
+
+@("session.run.endBeforeStarted")
+@system
+unittest
+{
+    // The worker ends as a `run` arrives, before its `started`: no test ran,
+    // so none fails; the end is one between commands (TRP27), and what the
+    // worker wrote is its own.
+    import std.conv : to;
+
+    auto s = WorkerSession("bin");
+    s.feedFrames(opening("T", "a"));
+    cast(void) s.takeEvents();
+    cast(void) s.run(0, mainThread: false);
+    s.feedOutput("leaving\n");
+    s.feedEnd(describeEnding(3));
+    s.feedOutputClosed();
+    auto events = s.takeEvents();
+    assert(kinds(events) == [EventKind.testOutput, EventKind.testOutput, EventKind.workerEnded],
+        kinds(events).to!string);
+    assert(events[1].test == noTest && events[1].text == "leaving");
+    assert(!events[2].expected && s.over);
 }
 
 @("session.run.unattributedBetweenTests")
