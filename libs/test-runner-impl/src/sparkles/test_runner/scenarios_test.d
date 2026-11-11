@@ -262,6 +262,28 @@ unittest
         assert(r.output.canFind("SIGABRT"), r.output);
 }
 
+@("scenarios.aCrashIsSeenWhileAChildHoldsThePipes")
+@system
+unittest
+{
+    import core.time : seconds;
+
+    // A test forks a child that sleeps for 20 s holding every channel, then
+    // aborts: the crash is reported when it happens, not when the child
+    // lets go of the frames pipe (TRP28).
+    version (Posix)
+    {
+        const r = runWithin([built.runner, "--test-binary=" ~ built.fixture, "-t", "1",
+            "--no-colors"], ["FIXTURE_FORK_AND_CRASH": "1"], 60.seconds);
+        assert(!r.timedOut, r.output);
+        assert(r.took < 10.seconds, "the crash waited for the child: " ~ r.output);
+        assert(r.status == 1, r.output);
+        assert(r.output.canFind("fixture.forksAndCrashes") && r.output.canFind("SIGABRT"),
+            r.output);
+        assert(r.output.canFind(" passed, 1 failed"), "the other tests still run: " ~ r.output);
+    }
+}
+
 @("scenarios.aMalformedFrameFailsTheRun")
 @system
 unittest
