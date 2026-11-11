@@ -24,6 +24,7 @@ int serveWorker(Test[] tests, string rangeText)
     const chosen = parsed ? selectVersion(runnerRange, ours) : 0;
 
     auto channel = FrameChannel.open();
+    auto commands = openCommandChannel();
     channel.writeRaw("\n"); // a stray line from a module constructor ends here (TRP7)
 
     if (!chosen)
@@ -50,9 +51,7 @@ int serveWorker(Test[] tests, string rangeText)
     scope (exit)
         server.close();
 
-    import std.stdio : stdin;
-
-    foreach (line; stdin.byLineCopy)
+    foreach (line; commands.byLineCopy)
     {
         string stray;
         JSONValue command;
@@ -405,6 +404,45 @@ private struct FrameChannel
     {
         writeAll(fd, text);
     }
+}
+
+/// The commands channel: a duplicate of the standard input the worker started
+/// with, close-on-exec, while descriptor 0 reads the null device (TRP6). A
+/// test, or a child it starts, that reads its standard input then reads end
+/// of file, never the runner's commands.
+private imported!"std.stdio".File openCommandChannel()
+{
+    import std.stdio : File;
+
+    version (Posix)
+        enum nullDevice = "/dev/null";
+    else version (Windows)
+        enum nullDevice = "NUL";
+    auto nul = File(nullDevice, "r");
+    File commands;
+    version (Posix)
+    {
+        import core.sys.posix.fcntl : fcntl, FD_CLOEXEC, F_SETFD;
+        import core.sys.posix.unistd : dup, dup2;
+
+        const fd = dup(0);
+        fcntl(fd, F_SETFD, FD_CLOEXEC);
+        dup2(nul.fileno, 0);
+    }
+    else version (Windows)
+    {
+        import core.sys.windows.winbase : SetHandleInformation, SetStdHandle,
+            STD_INPUT_HANDLE;
+        import core.sys.windows.winnt : HANDLE;
+
+        enum HANDLE_FLAG_INHERIT = 1;
+        const fd = _dup(0);
+        SetHandleInformation(cast(HANDLE) _get_osfhandle(fd), HANDLE_FLAG_INHERIT, 0);
+        _dup2(nul.fileno, 0);
+        SetStdHandle(STD_INPUT_HANDLE, cast(HANDLE) _get_osfhandle(0));
+    }
+    commands.fdopen(fd, "r");
+    return commands;
 }
 
 /// Writes `text` to the output channel, descriptor 2.

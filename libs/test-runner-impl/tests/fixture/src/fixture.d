@@ -59,6 +59,28 @@ unittest
         }
 }
 
+// A test that reads its standard input, and starts a child that reads the
+// one it inherits: both read end of file, never the runner's commands (TRP6).
+@("fixture.readsStdin")
+unittest
+{
+    import std.process : environment;
+
+    if (environment.get("FIXTURE_READS_STDIN"))
+    {
+        import std.stdio : stdin;
+
+        assert(stdin.readln() is null, "standard input holds bytes");
+        version (Posix)
+        {
+            import std.process : execute;
+
+            const cat = execute(["cat"]);
+            assert(cat.status == 0 && cat.output == "", cat.output);
+        }
+    }
+}
+
 // A test that forks a child holding every channel open, then crashes: the
 // runner must see the crash when it happens (TRP28).
 @("fixture.forksAndCrashes")
