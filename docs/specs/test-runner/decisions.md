@@ -253,3 +253,29 @@ is not run.
 
 **Revisit when** a binary needs a worker restarted after an ending that is
 not a crash, such as a test that ends the process on purpose.
+
+## TRD11: A dead worker's channels are read for one second after its end (proposed)
+
+**Question.** A test can fork a child that holds the worker's pipes open
+after the worker dies, quiet or writing. When does the runner learn of the
+end, and when does it stop reading (TRP28)?
+
+**Alternatives.**
+
+- Wait for the frames' end of file, then for the process; stop reading the
+  output once no byte has arrived for a second.
+- Watch the process itself; stop reading both channels at end of file or one
+  second after the end, whichever comes first.
+
+**Choice.** The second. With the first, a child that sleeps holds the end
+back for as long as it sleeps, and one that keeps writing holds it back for
+as long as it writes. Everything the worker wrote before it ended is already
+in the pipes when it ends, so a second is ample for it; what arrives later
+is the child's.
+
+**Trade-offs.** A child that writes in that second has its bytes taken as
+the worker's. The client looks for the end every tenth of a second while it
+waits for frames, so an end is seen up to that late.
+
+**Revisit when** a platform offers a wait that wakes on both a process's end
+and a pipe's bytes, or a test's child needs its output kept.

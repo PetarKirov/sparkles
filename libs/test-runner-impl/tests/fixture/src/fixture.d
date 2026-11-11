@@ -59,6 +59,28 @@ unittest
         }
 }
 
+// A test that forks a child holding every channel open, then crashes: the
+// runner must see the crash when it happens (TRP28).
+@("fixture.forksAndCrashes")
+unittest
+{
+    import std.process : environment;
+
+    version (Posix)
+        if (environment.get("FIXTURE_FORK_AND_CRASH"))
+        {
+            import core.stdc.stdlib : abort;
+            import core.sys.posix.unistd : _exit, fork, sleep;
+
+            if (fork() == 0)
+            {
+                sleep(20);
+                _exit(0);
+            }
+            abort();
+        }
+}
+
 // A worker that is asked to exit and aborts on the way out: its tests pass,
 // and the run must fail all the same (TRP22).
 shared static ~this()

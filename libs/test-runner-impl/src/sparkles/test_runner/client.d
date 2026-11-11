@@ -322,13 +322,44 @@ final class Worker
 
     private void readFrames()
     {
-        import core.time : MonoTime, msecs, seconds;
+        import core.time : MonoTime, msecs;
         import std.process : wait;
 
+        const fd = pipes.stdout.fileno;
         ubyte[4096] buffer;
+        int status;
+        bool exited;
+        MonoTime exitedAt;
         for (;;)
         {
-            const n = readSome(pipes.stdout.fileno, buffer[]);
+            version (Posix)
+            {
+                // A child the test forked may hold this pipe open after the
+                // worker died, so end of file cannot be what says it died
+                // (TRP28): look for its end every tenth of a second, and once
+                // it has ended read only the frames it left in the pipe.
+                if (!exited)
+                {
+                    import std.process : tryWait;
+
+                    const r = tryWait(pipes.pid);
+                    if (r.terminated)
+                    {
+                        exited = true;
+                        status = r.status;
+                        exitedAt = MonoTime.currTime;
+                    }
+                }
+                if (!readable(fd, exited ? 0 : 100))
+                {
+                    if (exited)
+                        break;
+                    continue;
+                }
+                if (exited && MonoTime.currTime - exitedAt >= deadCutoff)
+                    break; // a descendant writing on: no longer this worker's frames
+            }
+            const n = readSome(fd, buffer[]);
             if (n <= 0)
                 break;
             synchronized (mutex)
@@ -337,16 +368,21 @@ final class Worker
                 publish();
             }
         }
-        const status = wait(pipes.pid);
+        if (!exited)
+        {
+            status = wait(pipes.pid);
+            exitedAt = MonoTime.currTime;
+        }
+        // A descendant still holding the pipe gets EPIPE on its next write.
+        pipes.stdout.close();
         synchronized (mutex)
         {
             session.feedEnd(describeEnding(status));
             publish();
-            // A child the test started may hold the output pipe open after
-            // the worker died: stop at end of file or after a second of
-            // quiet (TRP28). The output reader sees the cutoff, publishes
-            // nothing more, and closes our end of the pipe.
-            const deadline = MonoTime.currTime + 1.seconds;
+            // Likewise for the output pipe: stop at end of file or at the
+            // cutoff after the worker's end (TRP28). The output reader sees
+            // the cutoff, publishes nothing more, and closes our end.
+            const deadline = exitedAt + deadCutoff;
             while (!outputClosed && MonoTime.currTime < deadline)
                 changed.wait(100.msecs);
             if (!outputClosed)
@@ -399,6 +435,10 @@ final class Worker
         pipes.stderr.close();
     }
 }
+
+/// How long after a worker's end its channels are still read: a descendant
+/// may hold them open (TRP28).
+private enum deadCutoff = imported!"core.time".seconds(1);
 
 /// Reads what has arrived on `fd`, at most `buffer.length` bytes; `0` at end
 /// of file, negative on an error. `File.rawRead` is `fread`, which blocks
@@ -672,6 +712,31 @@ unittest
         auto clean = startScripted(scriptedWorker("cleanExit", "read -r command\nexit 0"), strays);
         clean.exit(coverageMerge: false);
         assert(clean.dead);
+    }
+}
+
+@("client.frames.deathSeenWhileADescendantHoldsThePipe")
+@system
+unittest
+{
+    version (Posix)
+    {
+        import core.time : seconds;
+        import std.algorithm.searching : canFind;
+
+        // The worker dies leaving a descendant that holds both the frames and
+        // the output pipe open for five seconds: its end is seen when it
+        // happens, not at the frames' end of file (TRP28).
+        string strays;
+        auto w = startScripted(scriptedWorker("framesHeld", "sleep 5 &\nexit 7"), strays);
+        assert(awaitOver(w, 3.seconds), "the end waited for the descendant");
+        try
+        {
+            cast(void) w.run(0, mainThread: false);
+            assert(0, "a dead worker runs no test");
+        }
+        catch (WorkerDied e)
+            assert(e.outsideCommand && e.msg.canFind("exited with status 7"), e.msg);
     }
 }
 

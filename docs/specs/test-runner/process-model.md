@@ -389,13 +389,16 @@ sent but before its `started` frame, or whose commands channel no longer
 reads when the runner writes one, has ended between commands: no test ran,
 so none fails.
 
-**TRP28: Reading a dead worker.** The runner **must** stop reading a dead
-worker's output at end of file, or once the worker has exited and no byte has
-arrived for one second, whichever comes first. Having stopped, it **must**
-report no more of that output and **must** close its end of the pipe.
+**TRP28: Reading a dead worker.** The runner **must** notice a worker's end
+when its process ends, whether or not its channels have reached end of file.
+It **must** stop reading a dead worker's frames and output at end of file, or
+one second after the worker exited, whichever comes first; it reads frames
+only while bytes are waiting. Having stopped, it **must** report no more of
+that worker's frames or output and **must** close its ends of the pipes
+(TRD11).
 
-_Rationale:_ a child process the test started may hold the pipe open after
-the worker has died.
+_Rationale:_ a child process the test started may hold the pipes open after
+the worker has died, and may write to them for as long as it lives.
 
 ## 5. Scheduling and coverage
 
