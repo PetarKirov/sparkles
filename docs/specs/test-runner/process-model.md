@@ -384,7 +384,10 @@ that registration order.
 
 **TRP27: A crash between commands.** When a worker exits between commands
 without being asked to, the runner **must** fail the run with the exit status
-and the worker's unattributed output.
+and the worker's unattributed output. A worker that ends after a `run` was
+sent but before its `started` frame, or whose commands channel no longer
+reads when the runner writes one, has ended between commands: no test ran,
+so none fails.
 
 **TRP28: Reading a dead worker.** The runner **must** stop reading a dead
 worker's output at end of file, or once the worker has exited and no byte has
