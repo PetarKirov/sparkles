@@ -210,7 +210,8 @@ in-process action names a typed handler.
 **TDM4: Redaction.** An environment value marked redacted **must** be passed to
 the child and **must never** appear in an event or a dry run. Every occurrence
 of it in a line the child prints is masked as `<redacted>` before the line
-reaches an event or a spool.
+reaches an event or a spool. A multiline value is also masked line by line,
+because the child's output is framed into lines before masking (T11).
 
 ### 3.2 Edges
 
@@ -281,7 +282,8 @@ struct ResourceClaim
 **TDM7: Weighted admission.** The executor **must** own `--jobs N` weighted tokens.
 A node starts only when all its exclusive keys are free and `jobsWeight` tokens
 are available. A claim larger than total capacity is clamped to total capacity,
-so it runs alone rather than deadlocking.
+so it runs alone rather than deadlocking. A node whose fiber cannot be spawned
+fails at once as `Failed(spawnFailed)`, releasing what it claimed (T12).
 
 **TDM8: Admission order.** Ready nodes **must** be admitted in presentation order.
 A node that waits only for an exclusive key does not hold back later nodes. A
@@ -367,7 +369,8 @@ alias TaskEvent = SumType!(
 
 **TDM12: Event sequence.** Every event **must** carry a run-local monotonic
 sequence number and a monotonic timestamp. Task output also carries task-local
-stream and chunk sequence numbers.
+stream and chunk sequence numbers. Events reach the sink in sequence order:
+a number is drawn only by the producer about to deliver its event.
 
 **TDM13: Event producers.** The executor **must** be the sole producer of
 lifecycle events. Process and CPU adapters send observations back to it through
@@ -378,9 +381,11 @@ scheduling.
 **TDM14: Owned output.** Events **must not** borrow child buffers. Event payloads
 hold no pointers. An output line travels in the event envelope's `text` field,
 beside the payload. Output is line-assembled at the boundary, with an explicit
-final unterminated line event. Per-task output is bounded in memory and spills
-to its task directory when necessary. A failed task's diagnostic tail and spill
-path remain available until final reporting.
+final unterminated line event. Per-task output is bounded in memory, each line
+counted with its terminator so that empty lines count too, and spills to its
+task directory when necessary. Distinct task ids have distinct task
+directories, all under the run's root (T10). A failed task's diagnostic tail
+and spill path remain available until final reporting.
 
 ## 4. Event Horizon-only execution
 

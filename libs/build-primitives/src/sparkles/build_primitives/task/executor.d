@@ -24,7 +24,8 @@ starts when its exclusive keys are free and its weight, clamped to the
 capacity, fits. A ready task that waits for $(I capacity) stops admission of
 every later task until it starts — no backfilling past it — so a heavy task
 cannot be starved by a stream of light ones. A task that waits only for a
-key does not hold back the rest.
+key does not hold back the rest. A task whose fiber cannot be spawned (the
+fiber slab is full) fails at once as `Failed(spawnFailed, ENOBUFS)`.
 
 Fail-fast ([SPEC TDC2]): the first authoritative failure — the lowest index
 among those that complete in the same turn — emits `CancellationRequested`
@@ -41,10 +42,11 @@ no failure of its own.
 module sparkles.build_primitives.task.executor;
 
 import core.lifetime : move;
-import core.stdc.errno : ECANCELED;
+import core.stdc.errno : ECANCELED, ENOBUFS;
 import core.time : Duration, MonoTime;
 import std.sumtype : match;
 
+import sparkles.event_horizon.admission : Admission;
 import sparkles.event_horizon.cause : FiberContext, Interrupt, InterruptKind, interruptFiber,
     interruptRequested;
 import sparkles.event_horizon.channel : Channel;
@@ -185,7 +187,7 @@ struct TaskExecutor(X, C, D, S)
                 if (externalRequested && !cancelling)
                     requestCancellation(externalCause, TaskIndex.init);
                 resolve();
-                admit((TaskIndex t) { cast(void) sc.spawn(() { runTask(t); }); });
+                admit((TaskIndex t) { spawnTask(sc, t); });
                 if (running == 0)
                     break;
                 // One completion parks; the rest of this turn's are drained
@@ -199,7 +201,7 @@ struct TaskExecutor(X, C, D, S)
                     if (!cancelling)
                         requestCancellation(CancelCause.terminate, TaskIndex.init);
                     protect!(() {
-                        drainProtected((TaskIndex t) { cast(void) sc.spawn(() { runTask(t); }); });
+                        drainProtected((TaskIndex t) { spawnTask(sc, t); });
                     })(*exec);
                     break;
                 }
@@ -268,6 +270,9 @@ private:
     size_t running;
     ulong sequence;
     bool sinkGone;
+    // The sink's one producer turn: the holder numbers its event and puts
+    // it, parking on backpressure while it holds the turn.
+    Admission emitTurn = Admission(1);
 
     bool cancelling;
     CancelCause cancelCause;
@@ -277,13 +282,42 @@ private:
 
     void emit(TaskEventPayload payload, string text = null)
     {
+        deliver(() => payload, text);
+    }
+
+    // Numbers and delivers one event (TDM12). Producers — the scheduler
+    // fiber and every task fiber — take turns: a put parks while the sink is
+    // full, and a producer that found room meanwhile would otherwise
+    // overtake it with a later number. So the number (and the payload's
+    // task-local numbers, from `make`) is drawn only once the turn is held,
+    // and delivery order is numbering order.
+    void deliver(scope TaskEventPayload delegate() make, string text)
+    {
         if (sinkGone)
             return;
-        auto event = TaskEvent(sequence++, clock.now(), payload, text);
+        // Waiting for the turn is not a cancellation checkpoint: the holder
+        // is bounded by its own put, which is one.
+        const turn = protect!(() => emitTurn.acquire(*exec))(*exec);
+        assert(!turn.hasError, "the emit turn is never closed");
+        scope (exit)
+            emitTurn.release();
+        if (sinkGone)
+            return;
+        auto event = TaskEvent(sequence++, clock.now(), make(), text);
         // A sink that is closed or whose put was interrupted stops
         // receiving; the run itself carries on.
         if (sink.put(*exec, move(event)).hasError)
             sinkGone = true;
+    }
+
+    // Spawns task `t`'s fiber. A rejected spawn — the executor's fiber slab
+    // is full — settles the task at once as a failure to start, through the
+    // ordinary completion path, so its weight and keys are released and
+    // fail-fast sees it.
+    void spawnTask(Sc)(ref Sc sc, TaskIndex t)
+    {
+        if (!sc.spawn(() { runTask(t); }))
+            finishBatch([Completion(t, TaskOutcome(Failed(FailureReason.spawnFailed, ENOBUFS)))]);
     }
 
     void finish(TaskIndex t, TaskOutcome outcome, Duration elapsed = Duration.zero)
@@ -399,7 +433,7 @@ private:
     void onOutput(TaskIndex t, OutputStream stream, scope const(char)[] line, bool unterminated)
     {
         auto seq = &streamSeq[2 * t.value + stream];
-        emit(TaskEventPayload(TaskOutput(t, stream, (*seq)++, chunkSeq[t.value]++, unterminated)),
+        deliver(() => TaskEventPayload(TaskOutput(t, stream, (*seq)++, chunkSeq[t.value]++, unterminated)),
             line.idup);
     }
 
@@ -430,10 +464,14 @@ private:
                 && (!firstFailure.valid || c.task < firstFailure))
                 firstFailure = c.task;
         }
-        if (firstFailure.valid && !primaryCause.valid)
-            primaryCause = firstFailure;
+        // Only fail-fast's trigger is a primary cause by completion; without
+        // it, `run` takes the lowest-index failure (TDD1), whatever finished
+        // first.
         if (options.failFast && firstFailure.valid && !cancelling)
+        {
+            primaryCause = firstFailure;
             requestCancellation(CancelCause.failFast, firstFailure);
+        }
     }
 
     void requestCancellation(CancelCause cause, TaskIndex causal)
@@ -817,4 +855,120 @@ unittest
         assert(g[run.result.primaryFailure].id.text == "b");
     }
     assert(reference == ["succeeded", "failed", "succeeded", "blocked", "succeeded"]);
+}
+
+@("build_primitives.task.executor.run.primaryFailureIsTheLowestIndexWithoutFailFast")
+@system
+unittest
+{
+    // TDD1: without fail-fast, the primary cause is the lowest-index
+    // failure, whichever of two independent failures completes first.
+    const g = graphOf([tnode("a"), tnode("b")], null);
+    foreach (aFirst; [true, false])
+    {
+        auto run = runFake(g, ["a": Script((aFirst ? 1 : 5).msecs, TaskOutcome(Failed(FailureReason.exitStatus, 1))),
+            "b": Script((aFirst ? 5 : 1).msecs, TaskOutcome(Failed(FailureReason.exitStatus, 2)))],
+            ExecutorOptions(capacity: 2));
+        assert(run.result.exitCode == 1);
+        assert(g[run.result.primaryFailure].id.text == "a", "completion order chose the primary cause");
+    }
+}
+
+@("build_primitives.task.executor.run.sequenceNumbersFollowDeliveryOrder")
+@system
+unittest
+{
+    // TDM12: twenty tasks emit output at once through the four-slot sink,
+    // so producers park on backpressure; a producer that resumes must not
+    // be overtaken by one numbered after it.
+    TaskNode[] nodes;
+    Script[string] scripts;
+    foreach (i; 0 .. 20)
+    {
+        import std.conv : text;
+
+        const name = text("t", i < 10 ? "0" : "", i);
+        nodes ~= tnode(name);
+        scripts[name] = Script(1.msecs, lines: ["l0", "l1", "l2", "l3", "l4", "l5"]);
+    }
+    const g = graphOf(nodes, null);
+    auto run = runFake(g, scripts, ExecutorOptions(capacity: 20));
+    assert(run.result.exitCode == 0);
+    assert(run.events.length == 1 + 20 * (1 + 1 + 6 + 1) + 1);
+    foreach (i, e; run.events)
+    {
+        assert(e.sequence == i, "events arrive in sequence order");
+        if (i)
+            assert(e.at >= run.events[i - 1].at, "timestamps are monotonic");
+    }
+}
+
+@("build_primitives.task.executor.admission.aRejectedSpawnFailsTheTask")
+@system
+unittest
+{
+    import core.stdc.errno : ENOBUFS;
+
+    import sparkles.event_horizon.capability : SpawnOptions;
+    import sparkles.event_horizon.cause : CancelContext;
+    import sparkles.event_horizon.channel : Channel;
+    import sparkles.event_horizon.testing : advanceAndSettle, TestSched;
+
+    // An executor whose fiber slab holds `budget` more fibers: spawning a
+    // task past it fails, as `Sched.spawn` does when its slab is exhausted.
+    static struct SlabLimited
+    {
+        TestSched* inner;
+        uint budget;
+
+        FiberContext* currentContext() @safe nothrow @nogc => inner.currentContext();
+        void park() @safe nothrow => inner.park();
+        void wake(FiberContext* f) @safe nothrow @nogc => inner.wake(f);
+        FiberContext* spawnFiber(scope CancelContext* node, in SpawnOptions opts, void delegate() body_) @safe nothrow
+        {
+            if (budget == 0)
+                return null;
+            --budget;
+            return inner.spawnFiber(node, opts, body_);
+        }
+    }
+
+    const g = graphOf([tnode("a"), tnode("b"), tnode("c")], [tedge("b", "c")]);
+    foreach (failFast; [false, true])
+    {
+        TestSched sched;
+        auto clock = Clock(sched.waker());
+        auto driver = FakeDriver(&clock, ["a": Script(5.msecs)]);
+        Channel!(TaskEvent, 4) sink;
+        TaskEvent[] events;
+        RunResult result;
+        bool returned;
+        sched.run(() {
+            cast(void) withScope!((ref sc) {
+                sc.spawn(() {
+                    for (auto e = sink.take(sched); !e.hasError; e = sink.take(sched))
+                        events ~= e.value;
+                });
+                auto limited = SlabLimited(&sched, 1); // room for `a` only
+                result = runGraph(limited, clock, g, driver, sink, ExecutorOptions(capacity: 4, failFast: failFast));
+                returned = true;
+                sink.close();
+            })(sched);
+        });
+        advanceAndSettle(sched, clock);
+        assert(returned, "the run hung on a task that never started");
+        assert(sched.liveFibers == 0);
+        assert(result.outcomes[g.indexOf(tid("b")).value] == TaskOutcome(Failed(FailureReason.spawnFailed, ENOBUFS)));
+        assert(kindOf(result.outcomes[g.indexOf(tid("c")).value]) == OutcomeKind.blocked);
+        assert(g[result.primaryFailure].id.text == "b");
+        assert(result.exitCode == 1);
+        assert(countOf!((TaskFinished f) => g[f.task].id.text == "b")(events) == 1);
+        if (failFast)
+        {
+            assert(kindOf(result.outcomes[g.indexOf(tid("a")).value]) == OutcomeKind.cancelled);
+            assert(countOf!((CancellationRequested c) => g[c.causalTask].id.text == "b")(events) == 1);
+        }
+        else
+            assert(kindOf(result.outcomes[g.indexOf(tid("a")).value]) == OutcomeKind.succeeded);
+    }
 }

@@ -31,8 +31,10 @@ struct OutputSpool
 
     /**
     Params:
-        memoryBudget = bytes of line text kept in memory; the tail stays
-            within it once the spool spills.
+        memoryBudget = bytes of output kept in memory, each line counted as
+            its text plus one byte for its terminator, so a stream of empty
+            lines is bounded too; the tail stays within it once the spool
+            spills.
         spillPath = where the transcript continues past the budget; created
             (with its directory) only when needed. Null drops the oldest
             lines instead, counting them in $(LREF droppedLines).
@@ -50,7 +52,7 @@ struct OutputSpool
         if (spilled_)
             writeSpilled(stream, text, unterminated);
         memory ~= SpooledLine(stream, text.idup, unterminated);
-        memoryBytes += text.length;
+        memoryBytes += charge(text);
         if (memoryBytes <= memoryBudget)
             return;
         if (!spilled_ && spillPath_.length && startSpill())
@@ -61,7 +63,7 @@ struct OutputSpool
         // Keep the newest lines within the budget (always the last one).
         size_t drop;
         while (memory.length - drop > 1 && memoryBytes > memoryBudget)
-            memoryBytes -= memory[drop++].text.length;
+            memoryBytes -= charge(memory[drop++].text);
         if (!spilled_)
             droppedLines_ += drop;
         memory = memory[drop .. $].dup;
@@ -121,6 +123,10 @@ private:
     size_t droppedLines_;
     bool spilled_;
     File file;
+
+    // What a line costs the memory budget: its text and its terminator, so
+    // an empty line is not free.
+    static size_t charge(scope const(char)[] text) @safe pure nothrow @nogc => text.length + 1;
 
     bool startSpill() @trusted
     {
@@ -198,7 +204,7 @@ unittest
 @safe
 unittest
 {
-    auto spool = OutputSpool(8, null);
+    auto spool = OutputSpool(10, null); // two 4-byte lines and their terminators
     foreach (line; ["aaaa", "bbbb", "cccc"])
         spool.append(OutputStream.stdout, line);
     assert(spool.droppedLines == 1);
@@ -218,7 +224,7 @@ unittest
     auto spool = OutputSpool(10, path);
     spool.append(OutputStream.stdout, "first");
     spool.append(OutputStream.stderr, "second");
-    assert(spool.spilled, "11 bytes exceed the budget");
+    assert(spool.spilled, "13 bytes, terminators included, exceed the budget");
     spool.append(OutputStream.stdout, "third");
     spool.append(OutputStream.stdout, "tail", unterminated: true);
     assert(spool.droppedLines == 0);
@@ -254,4 +260,18 @@ unittest
     spool.replay((const ref SpooledLine l) { back ~= l.text; });
     assert(back == tricky);
     assert(readText(path) == "o progress\\r50%\no two\\nlines\no C:\\\\path\\\\n\no \no \\\\\n");
+}
+
+@("build_primitives.task.output.OutputSpool.emptyLinesCountAgainstTheBudget")
+@safe
+unittest
+{
+    // TDM14: a stream of empty lines is still output; each line is charged
+    // its terminator, so memory stays bounded however many arrive.
+    auto spool = OutputSpool(100, null);
+    foreach (_; 0 .. 10_000)
+        spool.append(OutputStream.stdout, "");
+    assert(spool.lines == 10_000);
+    assert(spool.tail.length == 100, "100 bytes hold 100 empty lines");
+    assert(spool.droppedLines == 10_000 - 100);
 }
