@@ -70,6 +70,13 @@ immutable string[] corpus = [
     "\"weird \"*.txt",
     "**/x - x2/**",
     "src - src/x.d",
+    // Names at any depth, which Nix writes as a `fileFilter` where no
+    // directory matches them (`**/*.d` is not one: `src/x.d/`).
+    "**/*.md",
+    "**/*.{md,sdl,o}",
+    "docs/**/*.md",
+    "**/{*.md,run,*.o}",
+    "build/**/*.o - **/b.*",
 ];
 
 /// The members of `query` over `tree`, sorted.
@@ -252,7 +259,7 @@ private size_t[2] check(Target t, string[] delegate(string code, string query, s
         EmitOptions o;
         o.nixGlobs = mode;
         o.expand = (string glob) @trusted => membersOf(oracleTree, globText(glob));
-        size_t accepted;
+        size_t accepted, named; // named: globs written as a `fileFilter`
         foreach (query; corpus)
         {
             const q = parseQuery(query);
@@ -260,6 +267,7 @@ private size_t[2] check(Target t, string[] delegate(string code, string query, s
             if (!p.ok)
                 continue;
             ++accepted;
+            named += !query.canFind("fileFilter") && p.fileset.canFind("fs.fileFilter");
             const dir = scratchTree("emit-nix");
             scope (exit) rmdirRecurse(dir);
             materialize(oracleTree, dir);
@@ -284,7 +292,7 @@ private size_t[2] check(Target t, string[] delegate(string code, string query, s
             assert(got == want, text(mode, " `", query, "`:\n  nix lists ", got, "\n  the fileset holds ",
                 want, "\n--- code ---\n", p.render("%s")));
         }
-        assert(accepted >= 25, text(mode, ": ", accepted));
+        assert(accepted >= 25 && named >= 5, text(mode, ": ", accepted, " accepted, ", named, " named"));
     }
 }
 
