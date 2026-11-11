@@ -504,6 +504,7 @@ struct MdViewGlyphs
     string copyIcon = "\U0000F0C5";      ///  (fence header copy affordance)
     string copiedIcon = "\U0000F00C";    ///  (feedback after a copy)
     string tryIcon = "▶";               /// a try block's run affordance (`FXT2`)
+    string tryLabel = "try it";         /// the words beside it, widening its target
     /// A link's leading icon, by destination (`MDP8`): see $(LREF linkIcon).
     string linkGithubIcon = "\U0000F09B"; ///  github
     string linkGitlabIcon = "\U0000F296"; ///  gitlab
@@ -1119,10 +1120,14 @@ private uint fenceTopBorder(ref Builder b, ref const MdBlock blk,
             width: SizeSpec.fixed(boxW)));
     }
 
-    // `FXU24`: the language, the try block's ▶ (`FXT2`) and the copy
-    // affordance (`COD3`) together, after the corner: `╭─ 󰌠 python ▶ ⧉ ───╮`.
-    // On a pixel target they sit in one rounded outline on the rule the
-    // fence's own ring draws, and the rule's glyphs are a cell target's only.
+    // `FXU24`: the language after the corner, the try block's ▶ (`FXT2`) and
+    // the copy affordance (`COD3`) before the other:
+    // `╭─ 󰌠 python ──────── ▶ try it  ⧉ ─╮`. On a pixel target the fence's
+    // ring runs through the row's middle and the language and the ▶ are
+    // badges on it, rounded, centred on its line and filled with the page's
+    // colour, which hides the ring behind them; the copy icon is a cutout in
+    // it. The rule's glyphs are a cell target's only, and on a cell target
+    // the row is the code panel's band throughout.
     const(char)[] lbl = langTitle(blk.infoLang);
     if (blk.label.length && opt.fenceLabelInHeader)
         lbl = lbl ~ " " ~ blk.label;
@@ -1132,64 +1137,103 @@ private uint fenceTopBorder(ref Builder b, ref const MdBlock blk,
         b.nodes[w].decoration.cellsOnly = true;
         return w;
     }
+    // `spans` on the ring: on a pixel target the page's colour behind them
+    // (a badge's rounded and outlined in `outline`, a cutout's square), on a
+    // cell target the band.
+    uint onRing(TextSpan[] spans, size_t hitId, bool badge, RgbColor outline = RgbColor.init,
+        bool hasOutline = false, Slot outlineSlot = Slot.border)
+    {
+        Widget band = Widget(kind: WidgetKind.row, children: [rich(spans, hitId, false)],
+            slot: Slot.code, paintBackground: true, decoration: Decoration(cellsOnly: true));
+        if (opt.theme.present)
+        {
+            band.bgOverride = opt.theme.codePanelBg;
+            band.hasBgOverride = true;
+        }
+        Widget w = Widget(kind: WidgetKind.row, children: [b.add(band)],
+            slot: Slot.surfaceBase, paintBackground: true,
+            decoration: badge
+                ? Decoration(borderStyle: BorderStyle.solid, borderWidth: Insets.all(1),
+                    borderSlot: outlineSlot, borderRadius: fenceBadgeRadiusPx,
+                    drawInset: fenceBadgeInsetPx, pixelsOnly: true)
+                : Decoration(drawHeight: fenceCutoutHeightPx, pixelsOnly: true));
+        if (opt.theme.present)
+        {
+            w.bgOverride = opt.theme.pageBg;
+            w.hasBgOverride = true;
+            w.borderOverride = opt.theme.ruleFg;
+            w.hasBorderOverride = true;
+        }
+        if (hasOutline)
+        {
+            w.borderOverride = outline;
+            w.hasBorderOverride = true;
+        }
+        return b.add(w);
+    }
+    TextSpan pad(string s) => TextSpan(s, Slot.code, codeStyle(opt), noBreak: true);
 
     kids ~= frameRule("╭─");
-    uint[] group = [rich([TextSpan(" ", Slot.code, codeStyle(opt), noBreak: true),
+    kids ~= onRing([pad(" "),
         TextSpan(lbl, Slot.code, codeStyle(opt),
             fg: opt.theme.codeFg, hasFg: opt.theme.present,
             srcStart: blk.span.start, srcEnd: blk.codeBody.start),
-        TextSpan(" ", Slot.code, codeStyle(opt), noBreak: true)], 0, false)];
+        pad(" ")], 0, true);
     used = 2 + 1 + cast(int) visibleWidth(lbl) + 1;
+
+    // The right end, laid out first so the rule between knows its length.
+    uint[] tail;
+    int tailW;
     if (opt.tryInput)
     {
-        const run = opt.glyphs.tryIcon ~ " ";
-        group ~= rich([TextSpan(run, Slot.success, codeStyle(opt), noBreak: true)],
-            opt.tryHitBase + blk.codeBody.start, false);
-        used += cast(int) visibleWidth(run);
+        // A button, not a label: its glyph and words in the success colour,
+        // outlined in it, bold, and a cell wider each side than the label.
+        const run = opt.glyphs.tryIcon ~ " " ~ opt.glyphs.tryLabel;
+        auto codeBold = codeStyle(opt);
+        codeBold.bold = true;
+        TextSpan words = TextSpan(run, Slot.success, codeBold, noBreak: true,
+            fg: opt.theme.accentGreen, hasFg: opt.theme.present);
+        tail ~= onRing([pad("  "), words, pad("  ")], opt.tryHitBase + blk.codeBody.start, true,
+            opt.theme.accentGreen, opt.theme.present, Slot.success);
+        tailW += 4 + cast(int) visibleWidth(run);
     }
     const hasCopy = opt.fenceHitBase != 0;
     if (hasCopy)
     {
-        const run = (opt.copiedFence == blk.codeBody.start
-            ? opt.glyphs.copiedIcon : opt.glyphs.copyIcon) ~ " ";
-        group ~= rich([TextSpan(run, Slot.code, codeStyle(opt), noBreak: true,
-            fg: opt.theme.codeFg, hasFg: opt.theme.present)], hit, false);
-        used += cast(int) visibleWidth(run);
+        if (tail.length)
+        {
+            tail ~= frameRule("─");
+            tailW += 1;
+        }
+        const run = opt.copiedFence == blk.codeBody.start
+            ? opt.glyphs.copiedIcon : opt.glyphs.copyIcon;
+        tail ~= onRing([pad(" "), TextSpan(run, Slot.code, codeStyle(opt), noBreak: true,
+            fg: opt.theme.codeFg, hasFg: opt.theme.present), pad(" ")], hit, false);
+        tailW += 2 + cast(int) visibleWidth(run);
     }
-    // The outline's fill is the fence's surface — on a pixel target it masks
-    // the ring under the label, on a cell target it bands the label's cells —
-    // and its border is a pixel target's alone.
-    Widget outline = Widget(kind: WidgetKind.row, children: group,
-        slot: Slot.surface, paintBackground: true,
-        decoration: Decoration(borderStyle: BorderStyle.solid, borderWidth: Insets.all(1),
-            borderSlot: Slot.border, borderRadius: fenceLabelRadiusPx,
-            drawInset: fenceLabelInsetPx, pixelsOnly: true));
-    if (opt.theme.present)
-    {
-        outline.bgOverride = opt.theme.codePanelBg;
-        outline.hasBgOverride = true;
-        outline.borderOverride = opt.theme.ruleFg;
-        outline.hasBorderOverride = true;
-    }
-    kids ~= b.add(outline);
 
-    int fill = boxW - used - 1;
+    int fill = boxW - used - tailW - 2;
     if (fill < 0)
         fill = 0;
     kids ~= frameRule(repGlyph("─", fill));
-    kids ~= frameRule("╮");
+    kids ~= tail;
+    kids ~= frameRule("─╮");
 
     return b.add(Widget(kind: WidgetKind.row, children: kids,
         width: SizeSpec.fixed(boxW)));
 }
 
-/// The corner radius of the outline around a fence's label on a pixel
-/// target, in CSS px (`FXU24`).
-enum int fenceLabelRadiusPx = 6;
+/// The corner radius of a badge on a fence's ring (its language, its ▶) on
+/// a pixel target, in CSS px (`FXU24`).
+enum int fenceBadgeRadiusPx = 6;
 
-/// How far inside its row the label's outline is drawn, in CSS px: clear of
-/// the line of code below it.
-enum int fenceLabelInsetPx = 3;
+/// How far inside its row a fence's badge is drawn, in CSS px: nearly the
+/// row's height, centred on the ring's line.
+enum int fenceBadgeInsetPx = 1;
+
+/// The height of the copy icon's cutout in a fence's ring, in CSS px: the
+/// ring's line and a little either side.
+enum int fenceCutoutHeightPx = 4;
 
 // The fence's BOTTOM border row: `╰──╯` — and, when the body overflows
 // horizontally, the horizontal SCROLLBAR (`COD6`). The ordinary border line
@@ -1606,11 +1650,12 @@ private uint viewCodeFence(ref Builder b, ref const MdBlock blk,
     // whole cells under the body alone; a cell target draws none of it.
     // Ringed (`FXU24`), the frame is that box's border: one stroke, as wide on
     // the sides as on the top and bottom, the surface filling its corners.
+    // Its top runs through the top row's middle, under the badges there, and
+    // the body's first line is the next row's, as on a cell target.
     const ringed = fenceRinged(opt);
     Widget fence = Widget(kind: WidgetKind.column, children: [
             fenceTopBorder(b, blk, opt, boxW), b.add(panel),
-            fenceBottomBorder(b, opt, blk, boxW, widest, innerW,
-                fs.x, hOver)],
+            fenceBottomBorder(b, opt, blk, boxW, widest, innerW, fs.x, hOver)],
         slot: Slot.surface, paintBackground: true,
         width: SizeSpec.fixed(boxW),
         decoration: Decoration(borderRadius: fenceRadiusPx, insideGlyphFrame: true,
