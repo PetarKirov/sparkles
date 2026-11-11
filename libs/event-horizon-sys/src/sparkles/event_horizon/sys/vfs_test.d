@@ -345,6 +345,32 @@ version (linux)
     }
 }
 
+/// A field `statx` did not fill (its `stx_mask` bit clear) is absent from
+/// the `Stat`, never a present zero a fingerprint would trust (FSC3).
+version (linux)
+@("vfs.blocking.statxMaskIsHonoured")
+@safe pure nothrow @nogc unittest
+{
+    import sparkles.event_horizon.sys.posix : STATX_BASIC_STATS, STATX_CTIME, STATX_INO, STATX_MTIME, Statx;
+    import sparkles.event_horizon.sys.vfs : statxToStat;
+
+    enum all = cast(StatMask)(StatMask.mtime | StatMask.identity | StatMask.change);
+    Statx sx;
+    sx.stx_mode = 0x8000 | 420; // S_IFREG, 0644
+    sx.stx_ino = 7;
+    sx.stx_mtime.tv_sec = 1;
+    sx.stx_ctime.tv_sec = 2;
+    sx.stx_mask = STATX_BASIC_STATS;
+    const full = statxToStat(sx, all);
+    assert(full.hasMtime && full.hasIdentity && full.hasCtime && full.inode == 7);
+
+    sx.stx_mask = STATX_BASIC_STATS & ~(STATX_CTIME | STATX_INO);
+    const partial = statxToStat(sx, all);
+    assert(partial.hasMtime && !partial.hasIdentity && !partial.hasCtime);
+    sx.stx_mask = STATX_BASIC_STATS & ~STATX_MTIME;
+    assert(!statxToStat(sx, all).hasMtime);
+}
+
 /// VFO6: a directory reached through a followed link has the identity of the
 /// directory itself, and a sibling's differs.
 @("vfs.blocking.VFO6.identity")

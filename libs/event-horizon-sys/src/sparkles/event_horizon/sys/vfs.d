@@ -758,11 +758,21 @@ version (linux)
     /**
     The `Stat` `toStat` makes from `fstatat`, made from `statx` instead. The
     device is encoded as 64-bit Linux's `stat` encodes it (`new_encode_dev`), so a
-    device compared across the two paths compares equal.
+    device compared across the two paths compares equal. A time or the identity
+    the file system did not fill (its bit clear in `stx_mask`) is reported as
+    absent, not as a zero that a fingerprint would trust (FSC3).
     */
     package(sparkles.event_horizon)
     Stat statxToStat(ref const Statx sx, StatMask mask) @safe pure nothrow @nogc
     {
+        import sparkles.event_horizon.sys.posix : STATX_CTIME, STATX_INO, STATX_MTIME;
+
+        if (!(sx.stx_mask & STATX_MTIME))
+            mask &= ~StatMask.mtime;
+        if (!(sx.stx_mask & STATX_INO))
+            mask &= ~StatMask.identity;
+        if (!(sx.stx_mask & STATX_CTIME))
+            mask &= ~StatMask.change;
         stat_t st;
         st.st_mode = sx.stx_mode;
         st.st_size = sx.stx_size;

@@ -121,6 +121,11 @@ version (linux)
 
     /// `STATX_BASIC_STATS`: every field `fstatat` fills.
     enum uint STATX_BASIC_STATS = 0x7FF;
+    /// The `stx_mask` bits of the fields a `Stat` may claim: a file system
+    /// that cannot supply one leaves its bit clear.
+    enum uint STATX_MTIME = 0x40;
+    enum uint STATX_CTIME = 0x80; /// ditto
+    enum uint STATX_INO = 0x100;  /// ditto
     /// `statx` of the descriptor itself rather than a name under it.
     enum int AT_EMPTY_PATH = 0x1000;
 }

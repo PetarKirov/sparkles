@@ -546,17 +546,26 @@ declared metadata (`FSS2`). _Detection:_ a scheme declaring the fingerprint
 receives it for each member file from one `stat` each, and receives none for
 a link.
 
-**`FSC3` — A false "unchanged" is forbidden.** A recorded id **must** be
-reused only when the file's fingerprint is unchanged and its recorded
-status-change time precedes the recording run's stamp by more than a margin
-that covers timestamp granularity. A false "changed" is permitted
-([A9](./decisions.md#a9-incremental-invalidation-stops-at-level-2)).
+**`FSC3` — No false "unchanged" for a change `stat` can see.** A recorded
+id **must** be reused only when the file's fingerprint is unchanged and its
+recorded status-change time precedes the recording run's stamp by more than
+a margin that covers timestamp granularity. A file whose `stat` lacks any
+part of the fingerprint, or whose change time a caller can set, has none,
+and is read. A false "changed" is permitted
+([A9](./decisions.md#a9-incremental-invalidation-stops-at-level-2)). The
+guarantee is the one `stat` gives, as git's racy-git
+([A24](./decisions.md#a24-what-the-fingerprint-can-promise)) is: a change
+that moves none of size, both times, device and inode, such as a write
+through a shared mapping to a page already dirty, or a file system that
+lets a caller set the change time on a backend that cannot tell, is outside
+it.
 _Rationale:_ a file's size and modification time can be put back, as
-`touch -r` puts them back, but on POSIX its change time cannot. On Windows a
-caller can set it too, so there a backend reports it as settable and the
-file has no fingerprint: it is read on every run. A change in the same
-timestamp tick as the `stat` that recorded the file leaves an identical
-fingerprint, git's racy-git problem, and only the stamp rule catches it.
+`touch -r` puts them back, but on a POSIX file system that keeps its own
+change time, it cannot. On Windows a caller can set it too, so there a
+backend reports it as settable and the file has no fingerprint: it is read
+on every run. A change in the same timestamp tick as the `stat` that
+recorded the file leaves an identical fingerprint, git's racy-git problem,
+and only the stamp rule catches it.
 _Detection:_ the validator rejects a change in any field and a change time
 within the margin. Under fault injection, a validator that trusts every
 file, one that ignores the change time and one that drops the stamp rule
