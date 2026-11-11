@@ -327,24 +327,31 @@ with Export showing, ◀, the target, ▶, the three glob modes and Copy are on 
 segments' row, and a tap on `expand` there selects it; at 60×60 the glob modes
 are below the segments.
 
-**`FXU24` — A code fence's frame is even.** On a pixel target a code fence's
-border **must** be drawn as wide on its sides as on its top and bottom, its
-background **must** fill its rounded corners up to the border with no gap, and
-its language label and its ▶ **must** each sit in a rounded outline of their
-own, unfilled, inside the border on its top row, the code's first line a
-quarter row lower, clear of them. _Detection:_ the fence painted offscreen has a
-border of one width on all four sides, its top along the top row's upper edge,
-no background-coloured pixel outside its border, and none of the page's under
-its top corners inside it; the ▶ is inside an unfilled rounded rectangle of its
-own.
+**`FXU24` — A code fence's frame is even, its badges on it.** On a pixel
+target a code fence's border **must** be drawn as wide on its sides as on its
+top and bottom, through the middle of its top and bottom rows as its glyphs
+are, and its background **must** fill its rounded corners up to the border
+with no gap. Its language label and a try block's ▶ **must** each be a rounded
+badge centred on the top line, filled with the page's colour, so the line stops
+at their outlines; the ▶ **must** be at the right end, read "▶ try it", and be
+outlined in the success colour, unlike the label. _Detection:_ the fence painted
+offscreen has a border of one width on all four sides, no background-coloured
+pixel outside its border, and none of the page's under its top corners inside
+it; the label and the ▶ are each in a rounded rectangle of the top row, left
+and right, the ▶'s outlined in another colour; inside the ▶'s, on the line and
+below it, is the page's colour.
 
 **`FXU25` — A help fence scrolls across.** A fence in the help whose lines
 are wider than its box **must** scroll them across under a finger or trackpad
-moving more across than down, or a wheel turned with Shift, over it, the
-page staying where it is. _Detection:_ at 140×40 the help's first fence shows
-`nix run github` and not the line's end; after a finger moves 40 columns
-across over it, it shows the end and not the start, and the help has not
-scrolled.
+moving more across than down, or a wheel turned with Shift, over it, its
+frame and badges included, the page staying where it is. The axis is the
+gesture's, chosen as it begins and kept to its end: a swipe begun across does
+not hand itself to the page where the finger wavers. _Detection:_ at 140×40
+the help's first fence shows `nix run github` and not the line's end; after a
+finger moves 40 columns across over it, it shows the end and not the start,
+and the help has not scrolled; a swipe begun across on the fence's top row,
+whose later moves are more down than across, moves the fence and not the
+page.
 
 ## 4. Help and runnable blocks (`FXT`)
 

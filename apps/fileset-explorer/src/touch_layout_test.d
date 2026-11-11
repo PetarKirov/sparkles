@@ -330,3 +330,35 @@ private enum tablet = Size(140, 40);
     assert(!frame.canFind("nix run github") && frame.canFind("_test.d'"), "the fence's lines moved across:\n" ~ frame);
     assert(app.helpTop == 0, "the page did not move");
 }
+
+/// FXU25: the axis is the gesture's, chosen as it begins: a swipe that
+/// starts across on a fence's top row and then wavers more down than across
+/// still moves the fence and not the page.
+@("fileset_explorer.FXU25.gestureKeepsItsAxis")
+@system unittest
+{
+    import sparkles.input : WheelEvent;
+
+    auto app = make("src/*.d");
+    tap(*app, find(*app, "Help", tablet), tablet);
+    const at = find(*app, "nix run github", tablet);
+    WheelEvent first;
+    first.pos = Point(at.x + 4, at.y - 1); // the badges' row, on the frame
+    first.precise = true;
+    first.begins = true;
+    first.fdx = 6;
+    first.fdy = 1;
+    Event[] swipe = [Event(first)];
+    foreach (_; 0 .. 8)
+    {
+        WheelEvent more = first;
+        more.begins = false;
+        more.fdx = 4;
+        more.fdy = 5;
+        swipe ~= Event(more);
+    }
+    runAppRecorded(*app, RunConfig.init, swipe, (ref RecordingHost h) @safe { h.size = tablet; });
+    const frame = renderFrame(*app, "", tablet);
+    assert(!frame.canFind("nix run github"), "the fence's lines moved across:\n" ~ frame);
+    assert(app.helpTop == 0, "the page did not move");
+}

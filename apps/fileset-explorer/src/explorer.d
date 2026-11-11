@@ -97,6 +97,10 @@ struct ExplorerApp
     // cells by its body's start, and where this frame drew each viewport.
     private double[size_t] fenceX;
     private FenceView[] fenceViews;
+    // The scroll gesture under way: whether its axis is chosen, whether it
+    // is across, and the fence it moves (`size_t.max`: none).
+    private bool gestureAxisSet, gestureAcross;
+    private size_t gestureFence = size_t.max;
     private int[size_t] tryRows;    // each try block's row in the help's content
 
     /// The help's row of the try block at `at`, as last drawn; -1 when not drawn.
@@ -294,6 +298,7 @@ struct ExplorerApp
         tryHits.length = 0;
         buttons.length = 0;
         fenceViews.length = 0;
+        Rect[] frameBoxes;
         barRects[] = Rect.init;
         queryRect = Rect.init;
         foreach (i, ref n; t.nodes)
@@ -308,8 +313,10 @@ struct ExplorerApp
                 foreach (c; n.children)
                     if (c < frames.length)
                         widest = max(widest, frames[c].rect.width);
-                fenceViews ~= FenceView(frames[i].rect, n.key & ~shiftKeyMask, widest);
+                fenceViews ~= FenceView(frames[i].rect, n.key & ~shiftKeyMask, widest, frames[i].rect);
             }
+            if (n.decoration.insideGlyphFrame)
+                frameBoxes ~= frames[i].rect;
             if (n.hitId >= tryHitBase && n.hitId < tryHitBase + helpSource.length)
                 tryHits ~= TryHit(frames[i].rect, n.hitId - tryHitBase);
             else if (n.hitId >= barHitBase && n.hitId <= barHitBase + Bar.max)
@@ -319,6 +326,14 @@ struct ExplorerApp
             else if (n.hitId >= tabHitBase && n.hitId < actionBase + Action.insert + chipTexts.length)
                 buttons ~= TryHit(frames[i].rect, n.hitId);
         }
+        // A fence's box: the smallest glyph frame around its viewport, the
+        // badges' row and the bottom rule included.
+        foreach (ref f; fenceViews)
+            foreach (box; frameBoxes)
+                if (box.x <= f.rect.x && box.y <= f.rect.y && box.x + box.width >= f.rect.x + f.rect.width
+                    && box.y + box.height >= f.rect.y + f.rect.height
+                    && (f.box == f.rect || box.width * box.height < f.box.width * f.box.height))
+                    f.box = box;
         const r = paneRect(Pane.help);
         foreach (ref hit; tryHits)
             tryRows[hit.at] = hit.rect.y - (r.y + dockTop) + helpTop;
@@ -1464,17 +1479,34 @@ struct ExplorerApp
         // Across, in the Export tab (`FXU22`): a finger or a trackpad moving
         // more across than down, or a wheel turned with Shift.
         const acrossBy = w.exactX != 0 ? w.exactX : !w.precise && w.mods.shift ? w.exactY : 0;
-        // ... and over a help fence wider than its box, that fence (`FXU25`).
-        if (s is &helpScroll && acrossBy != 0 && (w.mods.shift || abs(w.exactX) > abs(w.exactY)))
+        // The axis is the gesture's, chosen as it begins and kept to its end
+        // (its fling's too, `SCV12`): a finger's path is never quite straight,
+        // and an event at a time would hand a swipe across to the page each
+        // time it dipped (`FXU25`).
+        if (w.begins || !gestureAxisSet)
+        {
+            gestureAxisSet = acrossBy != 0 || w.exactY != 0;
+            gestureAcross = acrossBy != 0 && (w.mods.shift || abs(w.exactX) > abs(w.exactY));
+            gestureFence = size_t.max;
+            if (gestureAcross && s is &helpScroll)
+                foreach (ref f; fenceViews)
+                    if (inside(f.box, w.pos))
+                        gestureFence = f.at;
+        }
+        // ... over a help fence wider than its box, its frame included, that
+        // fence (`FXU25`).
+        if (gestureAcross && gestureFence != size_t.max)
+        {
             foreach (ref f; fenceViews)
-                if (inside(f.rect, w.pos))
+                if (f.at == gestureFence)
                 {
                     const most = max(0, f.content - f.rect.width);
                     const by = w.precise ? acrossBy : acrossBy * notchRows * 2;
                     fenceX[f.at] = min(cast(double) most, max(0.0, fenceX.get(f.at, 0) + by));
-                    return;
                 }
-        if (s is &exportScroll && acrossBy != 0 && (w.mods.shift || abs(w.exactX) > abs(w.exactY)))
+            return;
+        }
+        if (s is &exportScroll && gestureAcross)
         {
             WheelEvent x = w;
             x.fdy = w.precise ? acrossBy : acrossBy * notchRows * 2;
@@ -1994,6 +2026,7 @@ struct FenceView
     Rect rect;   ///
     size_t at;   ///
     int content; ///
+    Rect box;    /// the whole fence, its frame included: where a gesture takes it
 }
 
 /// Where a frame drew a try block's ▶, and the block's identity.
