@@ -420,8 +420,6 @@ private void collectDependencies(Project project, Package p) @safe
     project.byName[p.name] = p;
     foreach (name; p.allDependencyNames)
     {
-        if (name in project.byName)
-            continue;
         DependencySpec spec;
         foreach (ref c; [p.settings] ~ configurationSettings(p))
             if (auto s = name in c.dependencies)
@@ -433,6 +431,14 @@ private void collectDependencies(Project project, Package p) @safe
         // locks select none, so only an optional-by-default one is used.
         if (spec.optional && !spec.default_)
             continue;
+        // Every dependent's range must admit the locked version, not only
+        // the first one's, which loaded the package.
+        if (name in project.byName)
+        {
+            if (auto source = lockedSource(project, p, name, spec))
+                checkLocked(p, name, spec, *source);
+            continue;
+        }
         auto dependency = loadDependency(project, p, name, spec);
         if (dependency.name !in project.byName)
             collectDependencies(project, dependency);
@@ -447,13 +453,39 @@ private SettingsTemplate[] configurationSettings(Package p) @safe pure nothrow
     return result;
 }
 
+// The root package name of a dependency name (`a` of `a:sub`).
+private string rootNameOf(string name) @safe pure nothrow @nogc
+{
+    import std.string : indexOf;
+
+    const colon = name.indexOf(':');
+    return colon < 0 ? name : name[0 .. colon];
+}
+
+// The locked source the dependency `name` of `from` resolves through, or null
+// when it resolves otherwise: the root package, `from`'s own package (the
+// same package, at its version: dub checks no range for it), a path
+// dependency, or an in-tree package.
+private const(RegistrySource)* lockedSource(Project project, Package from, string name,
+    const DependencySpec spec) @safe
+{
+    const rootName = rootNameOf(name);
+    if (rootName == project.root.base.name || rootName == from.base.name)
+        return null;
+    if (spec.path.length && spec.repository.length == 0)
+        return null;
+    if (rootName in project.inTree)
+        return null;
+    return rootName in project.registry;
+}
+
 // The package a dependency names, loading its recipe.
 private Package loadDependency(Project project, Package from, string name, const DependencySpec spec) @safe
 {
     import std.string : indexOf;
 
     const colon = name.indexOf(':');
-    const rootName = colon < 0 ? name : name[0 .. colon];
+    const rootName = rootNameOf(name);
     const sub = colon < 0 ? null : name[colon + 1 .. $];
 
     Package base;
@@ -469,7 +501,7 @@ private Package loadDependency(Project project, Package from, string name, const
         base = loadRecipe(project, buildNormalizedPath(*tree), rootName);
     // A repository dependency is pinned by the locks like a registry one,
     // and the locks must pin what the recipe asks for.
-    else if (auto source = rootName in project.registry)
+    else if (auto source = lockedSource(project, from, name, spec))
     {
         checkLocked(from, name, spec, *source);
         base = loadRecipe(project, buildNormalizedPath(source.directory), rootName);

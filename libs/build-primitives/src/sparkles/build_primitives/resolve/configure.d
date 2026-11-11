@@ -1173,6 +1173,35 @@ importPaths "$LIB_PACKAGE_DIR/extra"
     assert(commit.value.target("dmd:parser").settings.sourceFiles == ["/store/dmd/parser/p.d"]);
 }
 
+@("build_primitives.resolve.configure.resolve.locksSatisfyEveryDependent")
+@safe unittest
+{
+    import sparkles.build_primitives.resolve.project : RegistrySource;
+
+    // `a` is loaded through the root's range, which the lock satisfies; `b`
+    // asks for a range the same lock does not, and is checked too.
+    auto driver = new MemoryDriver([
+        "/r/dub.sdl": "name \"r\"\ndependency \"a\" version=\"~>1.0\"\ndependency \"b\" version=\"*\"\n",
+        "/r/source/r.d": "",
+        "/store/a/dub.sdl": "name \"a\"\nversion \"1.0.0\"\n",
+        "/store/a/source/a.d": "",
+        "/store/b/dub.sdl": "name \"b\"\nversion \"1.0.0\"\ndependency \"a\" version=\">=2.0.0\"\n",
+        "/store/b/source/b.d": "",
+    ]);
+    auto request = ResolveRequest(directory: "/r", platform: linuxLdc);
+    request.registry["a"] = RegistrySource("/store/a", "1.0.0");
+    request.registry["b"] = RegistrySource("/store/b", "1.0.0");
+    auto r = resolve(request, driver);
+    assert(r.hasError, "the locks pin a version `b` does not admit");
+    assert(r.error.message.canFind("/store/b/dub.sdl: `a` asks for >=2.0.0; the locks pin 1.0.0"),
+        r.error.message);
+
+    // A lock every dependent admits resolves.
+    driver.files["/store/b/dub.sdl"] = "name \"b\"\nversion \"1.0.0\"\ndependency \"a\" version=\">=1.0.0\"\n";
+    auto ok = resolve(request, driver);
+    assert(ok.hasValue, ok.hasError ? ok.error.message : null);
+}
+
 @("build_primitives.resolve.configure.resolve.hiddenEdgesAndEnvironment")
 @safe unittest
 {
