@@ -307,3 +307,26 @@ private enum tablet = Size(140, 40);
     assert(find(*narrow, "glob shim", phone).y > find(*narrow, "Stats", phone).y,
         "a phone's tabs row has no room:\n" ~ renderFrame(*narrow, "", phone));
 }
+
+/// FXU25: a finger moving across a help fence wider than its box scrolls
+/// that fence's lines across, the page staying where it is.
+@("fileset_explorer.FXU25.helpFenceScrollsAcross")
+@system unittest
+{
+    import sparkles.input : WheelEvent;
+
+    auto app = make("src/*.d");
+    tap(*app, find(*app, "Help", tablet), tablet);
+    assert(app.helpShown);
+    const at = find(*app, "nix run github", tablet);
+    assert(!renderFrame(*app, "", tablet).canFind("_test.d'"), "the line is wider than its box");
+    WheelEvent across;
+    across.pos = Point(at.x + 4, at.y);
+    across.precise = true;
+    across.fdx = 40;
+    across.fdy = 1;
+    runAppRecorded(*app, RunConfig.init, [Event(across)], (ref RecordingHost h) @safe { h.size = tablet; });
+    const frame = renderFrame(*app, "", tablet);
+    assert(!frame.canFind("nix run github") && frame.canFind("_test.d'"), "the fence's lines moved across:\n" ~ frame);
+    assert(app.helpTop == 0, "the page did not move");
+}

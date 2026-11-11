@@ -330,11 +330,21 @@ are below the segments.
 **`FXU24` — A code fence's frame is even.** On a pixel target a code fence's
 border **must** be drawn as wide on its sides as on its top and bottom, its
 background **must** fill its rounded corners up to the border with no gap, and
-its language label and its ▶ **must** sit together in a rounded outline on the
-top rule. _Detection:_ the fence painted offscreen has a border of one width on
-all four sides, no background-coloured pixel outside its border, and none of
-the page's under its top corners inside it; the label and ▶ are inside one
-rounded rectangle.
+its language label and its ▶ **must** each sit in a rounded outline of their
+own, unfilled, inside the border on its top row, the code's first line a
+quarter row lower, clear of them. _Detection:_ the fence painted offscreen has a
+border of one width on all four sides, its top along the top row's upper edge,
+no background-coloured pixel outside its border, and none of the page's under
+its top corners inside it; the ▶ is inside an unfilled rounded rectangle of its
+own.
+
+**`FXU25` — A help fence scrolls across.** A fence in the help whose lines
+are wider than its box **must** scroll them across under a finger or trackpad
+moving more across than down, or a wheel turned with Shift, over it, the
+page staying where it is. _Detection:_ at 140×40 the help's first fence shows
+`nix run github` and not the line's end; after a finger moves 40 columns
+across over it, it shows the end and not the start, and the help has not
+scrolled.
 
 ## 4. Help and runnable blocks (`FXT`)
 
