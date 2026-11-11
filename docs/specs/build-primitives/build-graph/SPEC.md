@@ -190,6 +190,11 @@ preprocessor flags.
   `libs` for their compiles. dub gives them none, and the divergence is
   recorded in
   [decisions.md](./decisions.md#d17-library-targets-see-their-own-c-headers).
+- **Separated operands:** a preprocessor option written apart from its
+  operand (`-isystem /x`) keeps it, joined into one flag (`-P-isystem/x`).
+  dub keeps the option and drops the operand, and the divergence is recorded
+  in
+  [decisions.md](./decisions.md#d45-a-preprocessor-option-keeps-its-separate-operand-proposed).
 
 The resolved flags, the digests of the `.pc` files consulted, and the libraries
 the link flags resolve to are inputs of the actions that use them. A library

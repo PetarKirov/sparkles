@@ -559,7 +559,7 @@ there is shared:
   `filterABICriticalFlags`, the build types (`addBuildTypeSettings`), and
   `addTestRunnerConfiguration`;
 - `processVars`, `getVariable` and `expandVars`;
-- `resolveLibs` and `applyPkgConfigCFlags`;
+- `resolveLibs` and `applyPkgConfigCFlags` (but see D45);
 - `matchesSpecification`, `VersionRange.fromString` and its version bumps,
   and `checkPlatform`.
 
@@ -1190,3 +1190,30 @@ manifest, BGK8 and the D39 isolation spike cover them, not the VFS.
 
 **Revisit when** a VFS backend cannot answer an operation the graph needs on
 a supported platform.
+
+## D45: A preprocessor option keeps its separate operand (proposed)
+
+**Question.** dub's `applyPkgConfigCFlags` splits `pkg-config --cflags` on
+whitespace and keeps the words that start with a preprocessor option, so
+`-isystem /sdk/include -include config.h` becomes `-P-isystem -P-include`: the
+operands are dropped, and the preprocessor reads the next flag as the
+operand. Copy that (D23), or keep the operand?
+
+**Alternatives.**
+
+- Copy dub, defect included.
+- Keep the option and its operand as two flags (`-P-isystem -P/sdk/include`).
+- Join them into one flag (`-P-isystem/sdk/include`).
+
+**Choice.** Join them. Each of the options kept (`-I`, `-D`, `-U`,
+`-include`, `-isystem`, `-idirafter`) takes a joined operand in GCC and
+Clang, so the joined flag means what the separated one does, and one flag
+cannot be split or deduplicated apart by a later merge. Options dub does not
+keep (`-iquote`) stay dropped, with their operands.
+
+**Trade-offs.** For a `.pc` file that separates an operand, the resolver's
+dflags differ from dub's, a difference oracle 1 must accept; for one that does
+not, nothing changes.
+
+**Revisit when** dub keeps the operand, or a preprocessor rejects the joined
+form.

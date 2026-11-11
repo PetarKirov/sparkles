@@ -144,16 +144,43 @@ LibraryResolution resolveLibraries(ref BuildSettings settings, const BuildPlatfo
         }
     }
     if (driver.cflags(packages, output))
-        foreach (flag; output.split)
-            if (flag.startsWith("-I") || flag.startsWith("-D") || flag.startsWith("-U")
-                || flag.startsWith("-include") || flag.startsWith("-isystem")
-                || flag.startsWith("-idirafter"))
-                result.dflags ~= "-P" ~ flag;
+        result.dflags ~= preprocessorFlags(output);
 
     if (!isLibrary)
         settings.libs = result.libs;
     settings.addLFlags(result.lflags);
     settings.addDFlags(result.dflags);
+    return result;
+}
+
+// The preprocessor options dub keeps from `--cflags`. Each takes an operand,
+// joined (`-I/x`) or as the next word (`-I /x`).
+private immutable preprocessorOptions = ["-I", "-D", "-U", "-include", "-isystem", "-idirafter"];
+
+/*
+The preprocessor flags of a `--cflags` output, `-P`-prefixed, as dub's
+`applyPkgConfigCFlags`, except that an option written apart from its operand
+(`-isystem /x`) keeps it: the two are joined into one flag (`-P-isystem/x`),
+which GCC and Clang read as the separated form. dub keeps the option alone
+and drops the operand (decision D45).
+*/
+private string[] preprocessorFlags(string output) @safe pure
+{
+    import std.algorithm.searching : any, canFind;
+
+    string[] result;
+    auto words = output.split;
+    for (size_t i = 0; i < words.length; ++i)
+    {
+        const flag = words[i];
+        if (!preprocessorOptions.any!(o => flag.startsWith(o)))
+            continue;
+        // A bare option takes the next word as its operand.
+        if (preprocessorOptions.canFind(flag) && i + 1 < words.length)
+            result ~= "-P" ~ flag ~ words[++i];
+        else
+            result ~= "-P" ~ flag;
+    }
     return result;
 }
 
@@ -251,8 +278,8 @@ final class MemoryPkgConfig : PkgConfigDriver
     assert(r.packages.length == 2 && r.pcFiles.length == 2);
     assert(r.lflags == ["-L/r/lib", "-lraylib", "-lpthread", "-rpath", "/f", "-lfoo"]
         || r.lflags == ["-rpath", "/f", "-lfoo", "-L/r/lib", "-lraylib", "-lpthread"]);
-    assert(r.dflags == ["-P-I/r/include", "-P-DRAY", "-P-isystem"]
-        || r.dflags == ["-P-isystem", "-P-I/r/include", "-P-DRAY"]);
+    assert(r.dflags == ["-P-I/r/include", "-P-DRAY", "-P-isystem/f/i"]
+        || r.dflags == ["-P-isystem/f/i", "-P-I/r/include", "-P-DRAY"]);
 }
 
 @("build_primitives.resolve.libraries.resolveLibraries.libraryTargetsGetTheirCFlags")
@@ -266,4 +293,23 @@ final class MemoryPkgConfig : PkgConfigDriver
     // dub drops the libraries; D17 keeps the headers.
     assert(s.libs.length == 0 && s.lflags.length == 0);
     assert(r.dflags == ["-P-I/r/include"] && s.dflags == ["-P-I/r/include"]);
+}
+
+@("build_primitives.resolve.libraries.resolveLibraries.separatedOperands")
+@safe unittest
+{
+    import std.conv : to;
+
+    // An option written apart from its operand keeps it.
+    auto pc = new MemoryPkgConfig(["sdk": "-lsdk"],
+        ["sdk": "-isystem /sdk/include -include config.h -I /sdk/a -D FOO=1 -U BAR "
+            ~ "-idirafter /sdk/late -I/sdk/b -O2 -iquote /sdk/q"]);
+    BuildSettings s;
+    s.targetType = TargetType.executable;
+    s.libs = ["sdk"];
+    const r = resolveLibraries(s, BuildPlatform(["linux", "posix"], ["x86_64"], "ldc"), pc);
+    // `-iquote` is not a flag dub keeps; neither is its operand.
+    const expected = ["-P-isystem/sdk/include", "-P-includeconfig.h", "-P-I/sdk/a", "-P-DFOO=1",
+        "-P-UBAR", "-P-idirafter/sdk/late", "-P-I/sdk/b"];
+    assert(r.dflags == expected && s.dflags == expected, r.dflags.to!string);
 }
