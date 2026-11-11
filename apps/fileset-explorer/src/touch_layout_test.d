@@ -52,6 +52,32 @@ private void tap(ref ExplorerApp app, Point at, Size size)
 
 private enum tablet = Size(140, 40);
 
+/// FXT2, FXU24: a tap on a try block's "try it" runs the block.
+@("fileset_explorer.FXT2.tapTryIt")
+@system unittest
+{
+    // FXT2, FXU24: a tap on a try block's "try it", on its words as on its
+    // ▶, runs the block.
+    // At 140×40, and at the tablet's own 120×44 cells of 16 dp.
+    foreach (dense; [false, true])
+        foreach (word; ["▶", "it"])
+        {
+            const size = dense ? Size(120, 44) : tablet;
+            auto app = make("src/*.d");
+            if (dense)
+                app.cellDp = 16;
+            tap(*app, find(*app, "Help", size), size);
+            frameOf(*app, size);
+            assert(app.tries.length > 1);
+            const row = app.tryRowOf(app.tries[1].at);
+            app.helpScroll.motion.scrollTo(row > 2 ? row - 2 : 0, app.helpScroll.limit);
+            const at = find(*app, "▶ try it", size);
+            tap(*app, word == "it" ? Point(at.x + 7, at.y) : at, size);
+            assert(app.tryResults.length == 1, text("a tap on ", word, " ran no block:\n",
+                renderFrame(*app, "", size)));
+        }
+}
+
 /// FXU9: the touch tree draws hue's connectors, and its `│` runs on through
 /// the cells between one row's text and the next.
 @("fileset_explorer.FXU9.touchConnectors")
