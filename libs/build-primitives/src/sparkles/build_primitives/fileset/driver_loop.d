@@ -3,7 +3,9 @@ The `sparkles:event-horizon` executor of the fileset driver (FSD1, FSS6).
 
 `LoopExecutor` runs each batch's requests on fibers of the calling
 scheduler, every one admitted by one shared `Admission` budget of in-flight
-operations, and returns when the whole batch is answered. Over `RingVfs`
+operations, and returns when the whole batch is answered. A batch is shared
+by as many workers as can run at once, so a batch larger than the budget or
+the scheduler's free fibers still proceeds at the budget. Over `RingVfs`
 each request's blocking call moves to the blocking pool and parks only its
 own fiber, so a directory's stats, or its subdirectories' listings, proceed
 together while the loop keeps running. The machine stays deterministic:
@@ -38,8 +40,10 @@ if (isFiberExecutor!X)
     private uint outstanding;    // spawned work not yet finished
     private FiberContext* joiner; // the fiber parked in `join`
 
-    /// Calls `perform(i)` for each request `i` of `batch` on a fiber of
-    /// its own, at most `budget` at once, and returns when all are done.
+    /// Calls `perform(i)` for each request `i` of `batch`, at most `budget`
+    /// at once, and returns when all are done. The requests are shared by
+    /// as many workers, each a fiber, as can run at once: no more than the
+    /// batch holds, the budget admits, or the scheduler has fibers free.
     void run(Perform)(scope const(Request)[] batch, scope Perform perform)
     {
         const n = batch.length;
@@ -49,9 +53,19 @@ if (isFiberExecutor!X)
         // and an interrupt does not end the wait, since they use `perform`
         // and the resolution behind it until they finish.
         auto work = (() @trusted => cast(Perform*) &perform)();
-        size_t left = n;
+        size_t next; // the first request no worker has taken
+        // Fibers switch only where one parks, so taking `next` needs no lock.
+        void drain()
+        {
+            while (next < n)
+            {
+                const i = next++;
+                admitted(() { (*work)(i); });
+            }
+        }
+        size_t left = workersFor(n);
         FiberContext* waiter;
-        // Annotated: inference does not reach it through `spawnOne`'s closure.
+        // Annotated: inference does not reach it through the workers' closure.
         void finishOne() @safe
         {
             if (--left == 0 && waiter !is null)
@@ -61,27 +75,41 @@ if (isFiberExecutor!X)
                 exec.wake(w);
             }
         }
-        // One call per request, so each fiber's closure holds its own `i`.
-        void spawnOne(size_t i)
+        foreach (_; 0 .. left)
         {
             const spawned = exec.spawnFiber(null, SpawnOptions.init, () {
-                admitted(() { (*work)(i); });
+                drain();
                 finishOne();
             });
             if (spawned is null)
             {
-                // No fiber left: perform it here, still within the budget.
-                admitted(() { (*work)(i); });
+                // No fiber after all: this one works, still within the budget.
+                drain();
                 finishOne();
             }
         }
-        foreach (i; 0 .. n)
-            spawnOne(i);
         while (left)
         {
             waiter = exec.currentContext();
             exec.park();
         }
+    }
+
+    // The workers a batch of `n` requests gets. More than the budget admits
+    // would only wait for it, and a fiber the scheduler has no room for
+    // would not start; at least one, which may be the calling fiber.
+    private size_t workersFor(size_t n) const
+    {
+        size_t w = n;
+        if (budget.capacity < w)
+            w = budget.capacity;
+        static if (__traits(compiles, exec.maxFibers - exec.liveFibers))
+        {
+            const free = exec.maxFibers - exec.liveFibers;
+            if (free < w)
+                w = free;
+        }
+        return w ? w : 1;
     }
 
     /// Runs `work` on a fiber of its own once the budget admits it; `join`

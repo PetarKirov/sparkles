@@ -29,6 +29,7 @@ import sparkles.build_primitives.content_addressing.merkle;
 import sparkles.build_primitives.content_addressing.nar;
 import sparkles.build_primitives.content_addressing.outboard;
 import sparkles.build_primitives.fileset.fso : EntryOrder, FsoFingerprint;
+import sparkles.build_primitives.fileset.machine : ResolutionLimits;
 import sparkles.build_primitives.fileset.pattern : CasePolicy;
 import sparkles.build_primitives.fileset.scheme : FsoRef;
 import sparkles.build_primitives.fileset.testing : RecordingExecutor, fixtureSet, materialize, openFixture,
@@ -88,12 +89,12 @@ OracleTree[] diskOracleTrees(size_t rounds = 200) @system
 }
 
 /// The id scheme `S` gives the tree of `literal`, over the in-memory driver.
-auto idOf(S)(string literal)
+auto idOf(S)(string literal, ResolutionLimits limits = ResolutionLimits.init)
 {
     auto sets = Filesets(CasePolicy.sensitive);
     RecordingExecutor exec;
     S scheme;
-    return schemeResolve(literal, sets, sets.everything, scheme, exec);
+    return schemeResolve(literal, sets, sets.everything, scheme, exec, limits);
 }
 
 /**
@@ -121,6 +122,27 @@ string onDisk(string tree, string label, string delegate(string dir) @system ora
     scope (exit) rmdirRecurse(dir);
     materialize(membersOf(tree), dir);
     return oracle(dir);
+}
+
+/// FSM3 under a fold: a directory's subdirectories listed in batches of
+/// `maxPending` give each tree the id one batch gives it.
+@("content_addressing.merkle.FSM3.splitBatches")
+@system unittest
+{
+    size_t compared;
+    foreach (t; oracleTrees(50))
+    {
+        const whole = idOf!(GitTreeScheme!SHA1)(t.literal);
+        foreach (pending; [1u, 2u, 3u])
+        {
+            ResolutionLimits lim;
+            lim.maxPending = pending;
+            assert(idOf!(GitTreeScheme!SHA1)(t.literal, lim).digest == whole.digest,
+                text(t.label, ": batches of ", pending, "\n", t.literal));
+        }
+        ++compared;
+    }
+    assert(compared > 50);
 }
 
 // --------------------------------------------------------------- git

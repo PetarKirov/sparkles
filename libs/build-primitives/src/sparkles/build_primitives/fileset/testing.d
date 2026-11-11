@@ -919,8 +919,18 @@ produces the same transcript as with an unbounded one (FSM6).
         assert(members == brute, text(label, ":\n machine ", members, "\n brute   ", brute));
         assert(members == plannedWalk(root.value.borrow, sets, f).members, label);
         if (tiny)
+        {
             assert(machineResolve(root.value.borrow, sets, f, ResolutionLimits.init, 1).transcript
                 == got.transcript, label ~ ": a budget of one changed the result");
+            // Batches split at `maxPending` give the same result (FSM3).
+            foreach (pending; [1u, 2u])
+            {
+                ResolutionLimits lim;
+                lim.maxPending = pending;
+                assert(machineResolve(root.value.borrow, sets, f, lim).transcript == got.transcript,
+                    text(label, ": batches of ", pending, " changed the result"));
+            }
+        }
         ++checked;
     }
 
@@ -1161,6 +1171,52 @@ struct RecordingExecutor
     assert(exec.sizes == [1, 1, 5, 3, 1]);
     assert(exec.stats == 6);
     assert(sink.members == ["d/a", "d/c"]);
+}
+
+/// FSM3: a directory needing more than `maxPending` requests has them in as
+/// few batches as that allows, its stats and its subdirectories' listings
+/// alike, with the same result.
+@("fileset.machine.FSM3.splitBatches")
+@system unittest
+{
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+
+    auto tree = openFixture("d/a +x\nd/b\nd/c +x\nd/e\nd/f\nd/s1/\nd/s2/x\nd/s3/\n");
+    auto root = openRoot!(Rights.readOnly)(&tree.value.get().vfs, "", ambientAuthority());
+    auto sets = Filesets(CasePolicy.sensitive);
+    const f = sets.executable;
+    ResolutionLimits lim;
+    lim.maxPending = 2;
+    PathCollector sink;
+    RecordingExecutor exec;
+    assert(!resolveWith(root.value.borrow, sets, f, sink, exec, lim).hasError);
+    // `d`'s 5 stats as 2 + 2 + 1, its 3 subdirectories as 2 + 1.
+    assert(exec.sizes == [1, 1, 2, 2, 1, 2, 1, 1]);
+    assert(exec.stats == 6);
+    assert(sink.members == ["d/a", "d/c"]);
+}
+
+/// FSM3, at the default limit: a directory of more files than `maxPending`
+/// resolves, its stats in two batches.
+@("fileset.machine.FSM3.directoryPastTheLimit")
+@system unittest
+{
+    import std.array : appender;
+
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+
+    const n = ResolutionLimits.init.maxPending + 10;
+    auto literal = appender!string;
+    foreach (i; 0 .. n)
+        literal ~= text("f", i, i % 2 ? " +x\n" : "\n");
+    auto tree = openFixture(literal[]);
+    auto root = openRoot!(Rights.readOnly)(&tree.value.get().vfs, "", ambientAuthority());
+    auto sets = Filesets(CasePolicy.sensitive);
+    PathCollector sink;
+    RecordingExecutor exec;
+    assert(!resolveWith(root.value.borrow, sets, sets.executable, sink, exec).hasError);
+    assert(exec.sizes == [1, ResolutionLimits.init.maxPending, 10]);
+    assert(sink.members.length == n / 2);
 }
 
 /// FSO4's machine half: a fileset whose verdicts need no metadata issues no
@@ -1950,6 +2006,82 @@ struct StarvedSched
     assert(peakLive == 1, text(peakLive, " requests in flight under a budget of one"));
 }
 
+/// A batch's requests are shared by as many workers as can run at once: the
+/// smaller of the budget and the scheduler's free fibers, however many
+/// requests the batch holds, each performed once.
+@("fileset.driver_loop.workersFitTheBatch")
+@system unittest
+{
+    import sparkles.event_horizon.admission : Admission;
+    import sparkles.event_horizon.capability : SpawnOptions;
+    import sparkles.event_horizon.cause : CancelContext, FiberContext;
+    import sparkles.event_horizon.testing : TestSched;
+    import sparkles.build_primitives.fileset.driver_loop : LoopExecutor;
+    import sparkles.build_primitives.fileset.machine : Request;
+
+    // A scheduler with a fiber slab of `maxFibers`, counting its spawns.
+    static struct SlabSched
+    {
+        TestSched* sched;
+        uint maxFibers, liveFibers, spawns;
+        FiberContext* currentContext() @safe nothrow @nogc => sched.currentContext();
+        FiberContext* spawnFiber(scope CancelContext* cc, in SpawnOptions o, void delegate() fn) @trusted nothrow
+        {
+            if (liveFibers == maxFibers)
+                return null;
+            ++liveFibers;
+            ++spawns;
+            return sched.spawnFiber(cc, o, () { fn(); --liveFibers; });
+        }
+        void park() @trusted nothrow { sched.park(); }
+        void wake(FiberContext* f) @trusted nothrow @nogc { sched.wake(f); }
+    }
+
+    void check(uint capacity, uint slab, uint expected)
+    {
+        enum n = 100;
+        TestSched sched;
+        auto budget = new Admission(capacity);
+        uint[n] times;
+        uint live, peakLive, started, spawns;
+        FiberContext*[] parked;
+        sched.run(() {
+            cast(void) sched.spawnFiber(null, SpawnOptions.init, () {
+                auto slabbed = SlabSched(&sched, slab);
+                auto exec = LoopExecutor!SlabSched(&slabbed, budget);
+                Request[n] batch;
+                exec.run(batch[], (size_t i) {
+                    ++times[i];
+                    ++started;
+                    if (++live > peakLive)
+                        peakLive = live;
+                    // Wait until every worker is inside one, or none can come.
+                    if (live == expected || started == n)
+                    {
+                        foreach (p; parked)
+                            sched.wake(p);
+                        parked = null;
+                    }
+                    else
+                    {
+                        parked ~= sched.currentContext();
+                        sched.park();
+                    }
+                    --live;
+                });
+                spawns = slabbed.spawns;
+            });
+        });
+        foreach (i, t; times)
+            assert(t == 1, text("request ", i, " performed ", t, " times"));
+        assert(spawns == expected, text(spawns, " workers for budget ", capacity, ", slab ", slab));
+        assert(peakLive == expected, text(peakLive, " in flight, not ", expected));
+    }
+
+    check(capacity: 3, slab: 5, expected: 3);
+    check(capacity: 8, slab: 5, expected: 5);
+}
+
 /// Work a scheme spawns runs after the call that spawned it has returned,
 /// so `LoopExecutor.spawn` keeps its context on the heap: a closure over
 /// `visit`'s frame, run once `visit` is gone, reads what it captured. The
@@ -2303,14 +2435,14 @@ struct RenderingFold(EntryOrder o)
 
 /// Resolves `f` on a fresh in-memory tree with `scheme`, recording requests.
 auto schemeResolve(S)(string literal, ref const Filesets sets, Fileset f, ref S scheme,
-    out RecordingExecutor exec)
+    out RecordingExecutor exec, ResolutionLimits limits = ResolutionLimits.init)
 {
     import sparkles.base.vfs.handles : ambientAuthority, openRoot;
     import sparkles.build_primitives.fileset.scheme : resolveScheme;
 
     auto tree = openFixture(literal);
     auto root = openRoot!(Rights.readOnly)(&tree.value.get().vfs, "", ambientAuthority());
-    auto r = resolveScheme(root.value.borrow, sets, f, scheme, exec);
+    auto r = resolveScheme(root.value.borrow, sets, f, scheme, exec, limits);
     assert(!r.hasError, r.hasError ? r.error.context : "");
     return r.value;
 }

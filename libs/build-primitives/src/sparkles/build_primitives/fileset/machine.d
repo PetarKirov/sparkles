@@ -105,7 +105,9 @@ struct ResolutionLimits
 {
     uint maxDepth = 64;          /// directory nesting beneath the fileset root
     uint maxNameLength = 255;    /// bytes of one entry name
-    uint maxPending = 4096;      /// requests in one batch
+    /// Requests in one batch: a directory needing more is split into as
+    /// few batches as this allows (FSM3). At least one.
+    uint maxPending = 4096;
     uint maxEntries = 1 << 16;   /// entries held at once
     uint maxFrames = 1 << 12;    /// directories held at once
     uint maxNameBytes = 1 << 22; /// bytes of names and paths held at once
@@ -120,7 +122,6 @@ enum ResolutionErrorCode : ubyte
     none,               ///
     depthExceeded,      /// `maxDepth` (FSM7)
     nameTooLong,        /// `maxNameLength` (FSM7)
-    tooManyPending,     /// `maxPending` (FSM7)
     capacityExceeded,   /// the storage `ResolutionLimits` sized
     unsupportedRequest, /// a driver cannot perform `kind` (FSM2)
     unanswered,         /// a driver stepped without answering a request
@@ -224,8 +225,8 @@ struct Resolution
         frames.length = lim.maxFrames;
         names.length = lim.maxNameBytes;
         states.length = (lim.maxEntries + lim.maxFrames + 2) * (words ? words : 1);
-        requests.length = lim.maxPending;
-        answers.length = lim.maxPending;
+        requests.length = lim.maxPending ? lim.maxPending : 1;
+        answers.length = requests.length;
         scratch.length = words ? words : 1;
         pathBuf.length = (lim.maxNameLength + 1) * (lim.maxDepth + 1) + gitignoreName.length + 1;
 
@@ -284,7 +285,9 @@ struct Resolution
         Entry e;
         e.name = Span(at, cast(uint) name.length);
         e.kind = kind;
-        e.tag = req;
+        // A subdirectory's listing is tagged with its rank, which does not
+        // restart with each batch, as its request's index does.
+        e.tag = batchKind == BatchKind.children ? frames[requests[req].target].tagRequest : req;
         entries[entriesTop++] = e;
     }
 
@@ -592,7 +595,8 @@ private:
         bool viaLink, identified; // reached through a followed link; `device`/`inode` set
         ulong device, inode;      // its identity, asked for when links are followed (D6)
         uint parentEntry = uint.max; // its entry in the parent's listing
-        uint tagRequest;             // its readDir's index in the batch
+        uint tagRequest;             // its rank among its parent's subdirectories
+        uint childIssued;            // its subdirectories whose readDir was issued
         ErrorKind error = ErrorKind.other;
         uint entryMark, nameMark, stateMark;
         IgnoreScopes.Mark ignMark;
@@ -714,13 +718,15 @@ private:
 
     ulong[] stateOf(uint at) return @safe nothrow @nogc => states[][at .. at + words];
 
+    // Whether the batch holds `maxPending` requests: what would follow goes
+    // in the next one (FSM3).
+    bool batchFull() const @safe pure nothrow @nogc => pending == requests.length;
+
+    // Adds `r` to the batch, which has room: a batch of one request starts
+    // empty, and a directory's stats and listings check `batchFull`.
     bool request(Request r) @safe nothrow @nogc
+    in (!batchFull, "a request past maxPending")
     {
-        if (pending == requests.length)
-        {
-            latch(ResolutionErrorCode.tooManyPending, "a batch exceeds maxPending");
-            return false;
-        }
         requests[pending] = r;
         answers[pending] = Answer.init;
         ++pending;
@@ -796,8 +802,12 @@ private:
             final switch (f.phase)
             {
                 case Phase.listing:
-                    // Answered by `absorb`; a failed root reports here.
-                    assert(0, "a listed frame is never current");
+                    // Its subdirectories are listed in batches of at most
+                    // `maxPending` (FSM3), and `absorb` answered one.
+                    assert(f.childIssued < f.childCount, "a listed frame is never current");
+                    issueMoreChildren(*f);
+                    kind = StepKind.needIO;
+                    return true;
                 case Phase.scopeRead:
                     assert(0, "a frame reading its .gitignore is answered by absorb");
                 case Phase.evaluate:
@@ -1367,6 +1377,9 @@ private:
                         --f.memberCount;
                     }
                 }
+                // More of them to list: the frame stays in `listing`.
+                if (f.childIssued < f.childCount)
+                    break;
                 // Each subdirectory that opened is entered, in this order,
                 // and is a unit's entry (UnitEntry.child).
                 uint live;
@@ -1576,8 +1589,12 @@ private:
             const at = f.entries + i;
             auto e = &entries[at];
             const name = names[][e.name.start .. e.name.end];
+            // A full batch leaves the rest to the next, which the report
+            // phase issues (FSM3).
             if (e.needStat)
             {
+                if (batchFull)
+                    break;
                 e.needStat = false;
                 // A declared mtime rides on every stat (FSS2).
                 if (!request(Request(RequestKind.stat, frameIndex(f), name, at, statMask)))
@@ -1585,6 +1602,8 @@ private:
             }
             if (e.needLink && e.kind == EntryKind.symlink)
             {
+                if (batchFull)
+                    break;
                 e.needLink = false;
                 // On the link's own directory: its target is never
                 // resolved (FSO2).
@@ -1650,14 +1669,10 @@ private:
             c.throughLink = e.kind == EntryKind.symlink;
             c.viaLink = f.viaLink || c.throughLink;
             c.parentEntry = at;
-            c.tagRequest = pending;
+            c.tagRequest = f.childCount;
             c.entryMark = entriesTop;
-            const target = framesTop++;
-            frames[target] = c;
+            frames[framesTop++] = c;
             ++f.childCount;
-            if (!request(Request(RequestKind.readDir, self, name, target, identityMask,
-                    c.throughLink, c.throughLink ? names[][c.path.start .. c.path.end] : null)))
-                return false;
         }
         // The staged listings start after the marks; their names too.
         foreach (k; 0 .. f.childCount)
@@ -1668,10 +1683,27 @@ private:
             return false;
         }
         f.nextChild = 0;
+        f.childIssued = 0;
+        issueMoreChildren(f);
+        return true;
+    }
+
+    // Lists the next of `f`'s subdirectories, as many as a batch holds.
+    void issueMoreChildren(ref Frame f) @safe nothrow @nogc
+    {
+        const self = frameIndex(f);
+        while (f.childIssued < f.childCount && !batchFull)
+        {
+            const target = f.children + f.childIssued++;
+            const c = &frames[target];
+            const e = &entries[c.parentEntry];
+            cast(void) request(Request(RequestKind.readDir, self, names[][e.name.start .. e.name.end],
+                target, identityMask, c.throughLink,
+                c.throughLink ? names[][c.path.start .. c.path.end] : null));
+        }
         batchKind = BatchKind.children;
         batchFrame = self;
         f.phase = Phase.listing;
-        return true;
     }
 
     void reportIncomplete(ref Frame f, Span name) @safe nothrow @nogc

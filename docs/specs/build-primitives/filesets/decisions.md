@@ -669,6 +669,55 @@ pending requests, which already bound it. Making absorption resumable would
 bound a step by the budget alone, at the cost of a cursor inside the sort.
 No consumer steps with a budget small enough to need that.
 
+### A22 — A batch is split at its size, and shared by the workers that can run
+
+[`FSM3`](./SPEC.md#7-the-resolution-machine-fsm) asked for one batch per
+directory, and `ResolutionLimits.maxPending` (4096) bounded a batch. A
+directory needing more stats than that failed the whole resolution with
+`tooManyPending`. Every file needs a stat when `executable` is asked for, or
+when the subtree cache ([A20](#a20-the-subtree-cache-as-built)) is on, so a
+directory of more than 4096 files could not be resolved at all. The
+amendment splits such a directory's stats, and its subdirectories'
+listings, into consecutive batches of `maxPending`, and removes the error.
+A batch's size now bounds only the storage its requests take. A
+subdirectory's listing is tagged with its rank among its parent's
+subdirectories, not with its request's index, so the listings of several
+batches sort together.
+
+`LoopExecutor` ran a batch on one fiber per request. The scheduler's fiber
+slab holds 256 by default, so beyond that every request ran on the resolving
+fiber, one at a time, while the budget still had room. The executor now asks
+the budget for its capacity, and the scheduler for its free fibers when it
+can tell, and starts as many workers as the smaller of the two and the
+batch. Each worker takes the next request until none is left.
+
+The default batch size stays 4096, because no larger one measured faster. A
+resolution of `executable`, which stats every file, was timed with a warm
+cache on Linux x86_64 (a 32-thread host, tmpfs and ZFS), as the median of
+31 interleaved runs:
+
+| Tree                    | Executor                  | 2048     | 4096     | 8192     | 16384    |
+| ----------------------- | ------------------------- | -------- | -------- | -------- | -------- |
+| 20,000 files, one dir   | inline, `BlockingVfs`     | 41.1 ms  | 40.3 ms  | 40.1 ms  | 39.9 ms  |
+| 20,000 files, one dir   | `LoopExecutor`, budget 32 | 192.2 ms | 192.7 ms | 193.7 ms | 192.6 ms |
+| this repository (5,251) | inline, `BlockingVfs`     | 34.2 ms  | 34.5 ms  | 34.1 ms  | 34.1 ms  |
+| this repository (5,251) | `LoopExecutor`, budget 32 | 79.9 ms  | 80.4 ms  | 80.5 ms  | 80.5 ms  |
+
+The differences are within the runs' spread. Below 1024 a batch costs more:
+64 took 88 ms inline on the flat tree. 65,536 cost 49 ms there, a larger
+working set for no fewer round trips. A request costs 51 bytes of storage,
+so 4096 takes about 200 KiB per resolution. The workers made the flat tree
+at budget 32 faster: 189 ms, where one fiber per request took 303 ms.
+
+The event loop is slower than the inline executor on a warm cache, by 2.3×
+on the repository and 4.8× on the flat tree. Only about 2 ms of that is the
+loop's setup. The rest is each stat's trip through the blocking pool, which
+pays off only where a stat waits on the device. Choosing the executor by
+how warm the cache is lies outside this decision.
+
+**Revisit when** a backend submits a batch as one `io_uring_enter`, which
+would make a batch's size matter.
+
 ### D5 — The extent of the empty-directory report (accepted)
 
 **Question.** [`FSV4`](./SPEC.md#4-the-fileset-value-fsv) reports every
