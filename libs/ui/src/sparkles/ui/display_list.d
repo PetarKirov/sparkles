@@ -202,6 +202,14 @@ private void emit(Sink, TM)(in WidgetTree tree, uint idx, in Frame[] frames,
     Visual vis = resolveVisual(pal, node.slot, node.decoration, node.textStyle, pageFg,
         pageBg, node.states);
     applyOverrides(vis, node);
+    // The page itself, asked for and left unset by the palette, is the page's
+    // colour: what shows through elsewhere, painted here to cover what is
+    // under it (a label on a border line).
+    if (node.paintBackground && node.slot == Slot.surfaceBase && !vis.hasBg)
+    {
+        vis.bg = pageBg;
+        vis.hasBg = true;
+    }
 
     // The background fill is gated by `paintBackground`; a border/shadow/arrow rides
     // the decoration independently (a box can have a border but no fill — the
@@ -576,6 +584,27 @@ private void emit(Sink, TM)(in WidgetTree tree, uint idx, in Frame[] frames,
     const lit = buildDisplayList(tree, frames, pal, fg, bg);
     assert(lit[0].visual.fg == plain[0].visual.fg, "the rest node is untouched");
     assert(lit[1].visual.fg == RgbColor(0x00, 0xcc, 0xff), "the hovered node took the overlay");
+}
+
+@("ui.display_list.surfaceBaseAskedForPaintsThePage")
+@safe unittest
+{
+    import sparkles.base.term_color : RgbColor;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.style : defaultTwoslashPalette;
+    import sparkles.ui.widget : Builder, Widget, WidgetKind;
+
+    // The page itself, unset by the palette: a widget that asks for its
+    // background gets the page's colour (a label covering a border line);
+    // one that does not paints nothing.
+    const fg = RgbColor(0xee, 0xee, 0xee), bg = RgbColor(0x11, 0x22, 0x33);
+    const pal = defaultTwoslashPalette();
+    auto b = Builder();
+    const asked = b.add(Widget(kind: WidgetKind.column, slot: Slot.surfaceBase, paintBackground: true));
+    const not = b.add(Widget(kind: WidgetKind.column, slot: Slot.surfaceBase));
+    const tree = b.finish(b.add(Widget(kind: WidgetKind.column, children: [asked, not])));
+    const ops = buildDisplayList(tree, layout(tree), pal, fg, bg);
+    assert(ops.length == 1 && ops[0].visual.hasBg && ops[0].visual.bg == bg);
 }
 
 @("ui.display_list.errorWavyUnderlineAndMessage")

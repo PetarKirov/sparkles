@@ -74,7 +74,8 @@ enum Slot : ubyte
     @WireName("twoslash.highlight.border") highlightBorder,
     /// popup / panel background (opaque)
     @WireName("surface.overlay") surface,
-    /// the page itself (`TOK3`; unset ⇒ no fill, the page shows through)
+    /// the page itself (`TOK3`; unset ⇒ the page's colour, painted only by a
+    /// widget that asks for its background: a label covering a border line)
     @WireName("surface.base") surfaceBase,
     /// a card or panel one step above the page
     @WireName("surface.raised") surfaceRaised,
