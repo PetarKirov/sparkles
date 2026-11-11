@@ -28,6 +28,7 @@ in
           withGraphite2 = false;
           withIntrospection = false;
           withIcu = false;
+          freetype = null;
         }).overrideAttrs
           (old: {
             version = "14.6.0";
@@ -43,12 +44,21 @@ in
                   --replace-fail '@shapers=ot,coretext' '@shapers=ot'
               '';
             # The hb-gpu demo (new in 14) needs GLEW and GLFW; the library does not.
-            # Disable glib to keep HarfBuzz lean (no glib-2.0 or pcre2).
+            # Disable glib, freetype and png to keep HarfBuzz lean (no glib-2.0, pcre2, or freetype/png).
             mesonFlags = old.mesonFlags ++ [
               (pkgs.lib.mesonEnable "gpu_demo" false)
               (pkgs.lib.mesonEnable "glib" false)
+              (pkgs.lib.mesonEnable "gobject" false)
+              (pkgs.lib.mesonEnable "freetype" false)
+              (pkgs.lib.mesonEnable "png" false)
             ];
-            buildInputs = pkgs.lib.filter (p: (p.pname or p.name or "") != "glib") old.buildInputs;
+            buildInputs = pkgs.lib.filter (
+              p:
+              let
+                name = p.pname or p.name or "";
+              in
+              name != "glib" && name != "freetype"
+            ) old.buildInputs;
             passthru = (old.passthru or { }) // {
               inherit sparklesPatches;
             };

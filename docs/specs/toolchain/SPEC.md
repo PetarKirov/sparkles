@@ -278,7 +278,7 @@ libraries that are either test-only (such as `libxcb-xtest`) or optional
 runtime features that can be dynamically loaded on demand (such as `libcurl`,
 which Phobos loads via `dlopen` when network requests are made). Shared utility
 libraries such as HarfBuzz **must** have unused subsystem dependencies (such as
-GLib, Graphite2 and ICU) disabled so that they do not leak transitive dynamic
+GLib, Graphite2, ICU, and FreeType) disabled so that they do not leak transitive dynamic
 dependencies into application closures.
 
 ## 8. Platforms, tests and caches
