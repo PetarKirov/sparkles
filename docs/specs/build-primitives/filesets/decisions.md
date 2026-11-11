@@ -339,7 +339,13 @@ is not an error, because a stray line in a vendored `.gitignore` must not
 fail a resolution. Git never matches a `.` or `..` component against a
 listed name, so skipping such a line changes no verdict. A rule over
 [`FSG4`](./SPEC.md#5-matching-fsg)'s bounds is the one case where skipping
-can change a verdict, and it is counted like the rest.
+can change a verdict, and it is counted like the rest. Such a rule is
+usually a glob with a long literal part, like `*-<sixty bytes>.json`. A
+count nobody reads would hide that a listing holds a file git ignores, so a
+sink with `ignoreRulesSkipped` receives it once the resolution is done.
+`Listing.skippedIgnoreRules` carries it to applications, and
+`Listing.caveat` words it for the user
+([A23](#a23-a-listing-is-the-view-git-has-of-the-directory-it-names)).
 
 ### A16 — The resolution finds the scopes, and reads only `.gitignore` files
 
@@ -752,6 +758,43 @@ how warm the cache is lies outside this decision.
 
 **Revisit when** a backend submits a batch as one `io_uring_enter`, which
 would make a batch's size matter.
+
+### A23 — A listing is the view git has of the directory it names
+
+`listRepository` serves applications that show a user the files of a
+directory, and the old walker it replaced listed what git lists. A review
+found four ways the listing fell short of that.
+
+- **The directory is taken by its real path.** The repository root was found
+  from the lexical path, so a link to a directory inside a repository named
+  an entry the walk would not follow (`FSD6`), and the listing came back
+  empty with only an `unreadable` line, which no consumer read. The path is
+  now resolved first (`realpath`). A link lists the directory it names,
+  beneath the `.gitignore` files above that directory, wherever the link
+  lies (`fileset.listing.listRepository.linkedDirectory`). On Windows the
+  path stays lexical.
+- **A directory that cannot be read is an error.** When the start root
+  itself is incomplete ([`FSE2`](./SPEC.md#10-errors-and-partial-results-fse)),
+  the listing fails, because an empty listing would look like an empty
+  directory (`fileset.listing.listRepository.unreadableDirectory`).
+- **No `.git` is listed, at any depth.** `workTree` excluded only the
+  repository's own `/.git`, so a nested repository's `.git/*` was listed. Git
+  never lists a `.git` entry or anything beneath one, so `workTree` and
+  `withGlobs` exclude `.git` wherever it is. Git lists a nested repository as
+  one entry, `sub/`. A listing of files has no such entry, so it lists the
+  nested work tree's files, read under the outer repository's
+  `.gitignore` files (`fileset.listing.nestedRepository`).
+- **What did not apply is said.** `Listing.skippedIgnoreRules` counts the
+  `.gitignore` lines no fileset pattern expresses
+  ([A15](#a15-a-gitignore-line-is-read-as-git-reads-it)). `Listing.caveat`
+  words that count, and the unreadable entries, for a user, and hue's
+  pickers, its site, and the docs source set log it as a warning.
+
+The listing's own loop can also fail after the resolution began. The inline
+fallback then appended to the sink the loop had half filled. Now a
+resolution the loop finished is kept even if the loop fails afterwards; one
+it never began is made again, inline, into a fresh sink; and one it began
+and did not finish is an error (`fileset.listing.settle`).
 
 ### D5 — The extent of the empty-directory report (accepted)
 

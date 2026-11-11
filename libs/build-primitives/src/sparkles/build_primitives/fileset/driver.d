@@ -23,7 +23,9 @@ resolved directory, before its subdirectories' (a stream, FSS3), and
 `incomplete(path, kind)` for each entry that could not be read (FSE2).
 `PathCollector` is one. A sink that also has `ignoreDecision(path, isDir,
 excluded, source, line, pattern)` hears, for each entry a `.gitignore` rule
-decided, which rule it was (FSI3). A scheme is the richer consumer:
+decided, which rule it was (FSI3); one with `ignoreRulesSkipped(count)`
+hears, once the resolution is done, how many `.gitignore` rule lines no
+fileset pattern expresses, so that they did not apply (A15). A scheme is the richer consumer:
 `sparkles.build_primitives.fileset.scheme`.
 
 A `gitignored` fileset makes the machine ask for `readFile`, which needs a
@@ -301,6 +303,8 @@ ResolutionResult resolveWith(V, Rights R, Sink, Exec)(DirRef!(V, R) root, ref co
             case StepKind.leave: // a sink declares no shape, so never hears one
                 break;
             case StepKind.done:
+                static if (__traits(hasMember, Sink, "ignoreRulesSkipped"))
+                    sink.ignoreRulesSkipped(m.ignoreSkippedRules);
                 return ok!(ResolutionError, NoGcHook)();
         }
     }
@@ -313,6 +317,7 @@ struct PathCollector
     string[] members;     /// relative to the fileset root
     string[] emptyDirs;   /// FSV4
     string[] unreadable;  /// `path: kind` of each incomplete entry, FSE2
+    uint skippedIgnoreRules; /// `.gitignore` rule lines that did not apply (A15)
 
     /// Receives a resolved directory.
     void directory(Members)(scope const(char)[] path, scope Members names, bool empty)
@@ -329,6 +334,12 @@ struct PathCollector
         import std.conv : to;
 
         unreadable ~= (path ~ ": " ~ kind.to!string).idup;
+    }
+
+    /// Receives the count of `.gitignore` rule lines that did not apply.
+    void ignoreRulesSkipped(uint count) @safe pure nothrow @nogc
+    {
+        skippedIgnoreRules = count;
     }
 
     /// One text holding everything collected, for byte comparison.

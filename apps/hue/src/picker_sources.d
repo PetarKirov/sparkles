@@ -3,6 +3,7 @@ module picker_sources;
 
 import std.path : baseName, buildPath;
 
+import sparkles.base.logger : warning;
 import sparkles.build_primitives.fileset.listing : listRepository;
 
 import picker_grep : DocHandle;
@@ -207,6 +208,8 @@ FilesFinder collectFilesFinder(string root,
     auto listed = listRepository(root, includeGlobs, excludeGlobs);
     if (listed.hasError)
         throw new Exception(listed.error);
+    if (const note = listed.value.caveat)
+        warning(i"files picker, $(root): $(note)");
     ulong corpusHigh = fnv1a(root, 0xcbf29ce484222325UL);
     ulong corpusLow = fnv1a(root, 0x84222325cbf29ce4UL);
     foreach (relative; listed.value.files)
