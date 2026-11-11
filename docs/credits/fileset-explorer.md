@@ -6,15 +6,23 @@ it. The [project credits](./index.md) cover every application.
 
 ## Native libraries
 
-<!-- @include: ./parts/raylib.md -->
-
-<!-- @include: ./parts/freetype.md -->
-
 <!-- @include: ./parts/harfbuzz.md -->
 
 <!-- @include: ./parts/libkqueue.md -->
 
 <!-- @include: ./parts/android-system-libraries.md -->
+
+<!-- @include: ./parts/vulkan-loader.md -->
+
+<!-- @include: ./parts/wayland.md -->
+
+<!-- @include: ./parts/libxcb.md -->
+
+<!-- @include: ./parts/xcb-imdkit.md -->
+
+<!-- @include: ./parts/libxkbcommon.md -->
+
+<!-- @include: ./parts/windows-imm32.md -->
 
 <!-- @include: ./parts/tree-sitter.md -->
 
@@ -33,7 +41,5 @@ it. The [project credits](./index.md) cover every application.
 <!-- @include: ./parts/expected.md -->
 
 <!-- @include: ./parts/optional.md -->
-
-<!-- @include: ./parts/raylib-d.md -->
 
 <!-- @include: ./parts/during.md -->

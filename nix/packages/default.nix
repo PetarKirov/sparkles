@@ -441,8 +441,10 @@
       });
 
       # The fileset explorer (docs/specs/fileset-explorer/): a `sparkles:ui-app`
-      # component like the gallery, so raylib comes through `ui-app`'s `full`
-      # configuration and `fc-match` must be reachable at run time. Its help
+      # component whose window is the native arm (`ui-app`'s `full-vulkan`),
+      # whose cell font still resolves through sparkles:raylib-text's
+      # raylib-free `discovery` half, which shells out to `fc-match`, so it
+      # must be reachable at run time. Its help
       # is the docs page `docs/apps/fileset-explorer/index.md`, string-imported,
       # hence `extraSources`. The grammar bundle parses that page, highlights
       # the query's fences and the Export tab's code: defaulted to the one the
@@ -454,7 +456,6 @@
 
         nativeBuildInputs = [ pkgs.pkg-config ];
         buildInputs = [
-          pkgs.raylib
           # `sparkles:syntax` links sparkles:tree-sitter, whose ImportC shim
           # includes the runtime's header.
           pkgs.tree-sitter

@@ -179,13 +179,19 @@ queries. _Detection:_ the tree's leaf paths equal the resolution's members,
 `src/…` before `README.md`; a directory closed by the user stays closed after
 an edit that keeps it.
 
-**`FXU9` — File-type icons.** Each tree row **must** show hue's file-type icon
+**`FXU9` — Hue's tree: icons and connectors.** Each tree row **must** show
+hue's file-type icon
 ([`XPL6`](../hue/tree-view.md#explorer-workspace-integration-xpl)): the Nerd
 glyph and brand colour of its name's type, the open or closed folder glyph for
 a directory in place of the disclosure marker, and the generic file glyph
-otherwise. The table is one, in the toolkit, shared with hue. _Detection:_ a
-recorded tree row of `x.md`, `dub.sdl` and a closed directory carries the same
-glyph and colour as hue's explorer gives it.
+otherwise. The table is one, in the toolkit, shared with hue. Its depth
+**must** be drawn with hue's connectors, `├─`, `└─` and `│`, in every layout:
+in the touch layout, whose rows are taller than a line, the `│` lines **must**
+run on through the cells above and below each row's text, so they join from
+row to row. _Detection:_ a recorded tree row of `x.md`, `dub.sdl` and a closed
+directory carries the same glyph and colour as hue's explorer gives it; a
+recorded touch frame's tree has `├─` before a row with later siblings and `│`
+in the cells between two of them.
 
 **`FXU7` — The help keeps the tree in view.** F1 **must** make the Help tab the
 active tab of the right group, and F1 or Escape in it go back to the tab that
@@ -193,9 +199,17 @@ was active; the member tree is not hidden by it. _Detection:_ a recorded frame
 after F1 shows the tree pane and the help's first heading.
 
 **`FXU8` — Without a terminal, one frame.** When standard input or output is not
-a terminal, or `--render-plain` is given, the explorer **must** print one frame
-as text after the keys of `--keys`, and exit 0. CI's example and app runs use
-it.
+a terminal and `--gui` is not given, or `--render-plain` is, the explorer
+**must** print one frame as text after the keys of `--keys`, and exit 0. CI's
+example and app runs use it.
+
+**`FXU26` — One window arm.** The explorer's window **must** be the native arm
+on the desktop as on Android (`FXA1`): `sparkles:wsi` windows drawn by
+`sparkles:ui-vulkan`, its command line taking the toolkit's window and font
+options and the native window's own (`--window-system`, `--appearance`,
+`--debug`) as flat flags. _Detection:_ `--help` lists `--window-system` and
+`--debug`; `fileset-explorer --gui --debug frames=60` opens a native window,
+presents 60 frames and exits 0.
 
 **`FXU10` — Touch, and scrolling with momentum.** A tap **must** do what a click
 does: on a tab of the right group it shows that tab's pane, on the Export
@@ -553,6 +567,7 @@ Non-normative: where the parts live.
 | `FXU1`–`FXU8`         | `apps/fileset-explorer` (`explorer.d`, `evaluate.d`, `member_tree.d`, `render.d`)                                                                                                                                                                                                                                                                                                                                                                                      |
 | `FXU9`                | `sparkles.ui.components.file_icons` (`fileIcon`, `folderGlyph`), shared with hue's explorer                                                                                                                                                                                                                                                                                                                                                                            |
 | `FXU10`–`FXU24`       | `apps/fileset-explorer` (`explorer.d`, `launch.d`); `sparkles.ui.components.scroll_body` (`ScrollBody`); `sparkles.source_view.markdown` (`MdViewOptions.codeActionGlyph`); `sparkles.ui.pixel_geometry` (`fillInsideBorder`, `insideGlyphFrame`, `insetSpan`); `sparkles.wsi.platform.android`; `sparkles.ui_app.native_loop` (`ClipboardReads`, `paintTextCursor`); `sparkles.android.ime_diff` (`moveOf`); `sparkles.build_primitives.fileset.emit.nix` (`nixCall`) |
+| `FXU26`               | `apps/fileset-explorer` (`dub.sdl`, `app.d`, `launch.d`); `sparkles.ui_app.gui_options` (`GuiOptions`, `NativeOptions`)                                                                                                                                                                                                                                                                                                                                                |
 | `FXA1`–`FXA3`         | `apps/fileset-explorer/src/android_entry.d`, `nix/packages/android/fileset-explorer.nix`                                                                                                                                                                                                                                                                                                                                                                               |
 | `FXT1`, `FXT2`        | `sparkles.syntax.md.model` (`MdBlockKind.tryBlock`), `sparkles.source_view.markdown` (`tryRunners`)                                                                                                                                                                                                                                                                                                                                                                    |
 | `FXT3`–`FXT5`         | `apps/fileset-explorer` (`help.d`)                                                                                                                                                                                                                                                                                                                                                                                                                                     |

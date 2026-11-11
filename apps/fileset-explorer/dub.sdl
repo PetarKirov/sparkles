@@ -23,9 +23,13 @@ dependency "sparkles:ui-app" path="../.."
 // `--render-plain` (FXU8) paints one frame into a cell grid with no terminal:
 // `sparkles:ui-tui` and `sparkles:tui`, named by every configuration but
 // `android`, which has no command line and no terminal (APP3).
+//
+// The window is the native arm on the desktop as on Android (`FXA4`):
+// `sparkles:wsi` windows drawn by `sparkles:ui-vulkan`, `full-vulkan` being
+// `gui-vulkan` with the terminal beside it.
 configuration "application" {
     targetType "executable"
-    subConfiguration "sparkles:ui-app" "full"
+    subConfiguration "sparkles:ui-app" "full-vulkan"
     dependency "sparkles:ui-tui" path="../.."
     dependency "sparkles:tui" path="../.."
 }
