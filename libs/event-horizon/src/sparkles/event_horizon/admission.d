@@ -117,11 +117,19 @@ struct Admission
     if (isFiberExecutor!X)
     in (n <= _capacity - _reserved, "a request no release can ever satisfy")
     {
-        for (;;)
+        for (bool parked = false;; parked = true)
         {
             if (interruptRequested(*exec.currentContext()))
+            {
+                // A release may have woken this fiber for units it now
+                // leaves: waking charges nothing, so they are still free,
+                // and the waiters behind it (or behind its larger request)
+                // would park until some later release. Pass the wake-up on.
+                if (parked)
+                    wakeFitting();
                 return ioErr!void(ECANCELED, OpKind.none, IoErrorStage.submit,
                     "admission interrupted");
+            }
             if (tryAcquire(n))
                 return ioOk();
             if (_closed)
@@ -261,6 +269,7 @@ private:
 version (unittest)
 {
     import sparkles.event_horizon.capability : SpawnOptions;
+    import sparkles.event_horizon.cause : InterruptKind, interruptFiber;
     import sparkles.event_horizon.testing : TestSched;
 }
 
@@ -335,4 +344,29 @@ version (unittest)
     assert(code == EPIPE);
     a.release();
     assert(a.tryAcquire(), "a closed budget still hands out free units");
+}
+
+@("admission.acquire.cancelledWakeePassesUnitOn")
+@safe unittest
+{
+    TestSched sched;
+    auto a = Admission(1, inUse: 1);
+    int firstCode = -1;
+    bool secondAcquired;
+    sched.run(() {
+        auto first = sched.spawnFiber(null, SpawnOptions.init, () {
+            firstCode = a.acquire(sched).error.code;
+        });
+        cast(void) sched.spawnFiber(null, SpawnOptions.init, () {
+            secondAcquired = !a.acquire(sched).hasError;
+        });
+        cast(void) sched.spawnFiber(null, SpawnOptions.init, () {
+            assert(a.parked == 2);
+            a.release(); // wakes the first, which has not run yet
+            (() @trusted => interruptFiber(first, Interrupt(InterruptKind.cancelled)))();
+        });
+    });
+    assert(firstCode == ECANCELED, "the interrupt check comes first");
+    assert(secondAcquired, "the unit the cancelled fiber left goes to the next waiter");
+    assert(a.inUse == 1 && a.parked == 0);
 }
