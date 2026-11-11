@@ -162,19 +162,22 @@ an error's bytes, or the bytes the Export tab's target refused, in the error
 slot, without moving a character. _Detection:_ the spans of a query's line have
 each token's kind's slot, and join to the line's text.
 
-**`FXU5` — The right column fits its content.** The Stats tab **must** be as
-wide as its widest line, ids included, when the tree's widest row still fits
-beside it; otherwise the tree keeps at least half the width and the stats
-column is clipped. A tree row is measured as it is drawn: guides, glyph, name
-and badge. _Detection:_ at 160 columns the full castore id is shown; at 60 the
-tree's rows start in its own half.
+**`FXU5` — The two columns are alike.** Side by side, the tree and the
+right tab group **must** each take half the width, the rule between them
+aside, whichever tab shows: switching between Stats, Help and Export moves
+nothing. A line wider than its half is clipped, or, in the Export tab,
+scrolls across (`FXU22`). _Detection:_ at 100 and at 160 columns, the tree's
+pane and the right group's are within a column of each other in width, the
+same with each tab showing.
 
 **`FXU6` — The tree is the members.** The tree's leaves **must** be the
 resolved members and its inner nodes only the directories on the way to them,
 each file showing its kind and size and each directory its member count and
-total size. Disclosure is kept by path across queries. _Detection:_ the tree's
-leaf paths equal the resolution's members; a directory closed by the user stays
-closed after an edit that keeps it.
+total size, right-aligned at the row's end. Each directory lists its
+directories, then its files, each by name. Disclosure is kept by path across
+queries. _Detection:_ the tree's leaf paths equal the resolution's members,
+`src/…` before `README.md`; a directory closed by the user stays closed after
+an edit that keeps it.
 
 **`FXU9` — File-type icons.** Each tree row **must** show hue's file-type icon
 ([`XPL6`](../hue/tree-view.md#explorer-workspace-integration-xpl)): the Nerd
@@ -316,9 +319,10 @@ pixel target as on a terminal.
 
 **`FXU23` — Export's controls beside the tabs.** On the touch layout, the
 Export tab's target buttons, Nix's glob mode and Copy **must** share the row of
-the Stats, Help and Export segments when that row has room for them, the right
-pane widening to make it while the tree keeps 40 columns; on a screen too
-narrow for that, they stay at the head of the pane. _Detection:_ at 140×40
+the Stats, Help and Export segments when that row has room for them in its half
+(`FXU5`), the glob modes labelled `shim`, `expand`, `refuse` where `glob shim`
+alone would not fit; on a screen too narrow for that, they stay at the head of
+the pane. _Detection:_ at 140×40
 with Export showing, ◀, the target, ▶, the three glob modes and Copy are on the
 segments' row, and a tap on `expand` there selects it; at 60×60 the glob modes
 are below the segments.
