@@ -3286,3 +3286,35 @@ version (Posix)
     assert(workerDoneAtCatch, "run unwound before its worker finished");
     assert(budget.inUse == 0, "a throwing request gave its unit back");
 }
+
+/// FSM7: `maxEntries` bounds one directory's listing and, since siblings
+/// are listed together, the listings of a directory's subdirectories
+/// between them; past it the resolution fails, and with it raised it
+/// resolves.
+@("fileset.machine.FSM7.storageBounds")
+@system unittest
+{
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+
+    string siblings, flat;
+    foreach (d; 0 .. 3)
+        foreach (i; 0 .. 6)
+            siblings ~= text("d", d, "/f", i, "\n"); // 3 + 18 entries held at once
+    foreach (i; 0 .. 17)
+        flat ~= text("f", i, "\n");
+    auto sets = Filesets(CasePolicy.sensitive);
+    foreach (literal; [siblings, flat])
+    {
+        auto tree = openFixture(literal);
+        auto root = openRoot!(Rights.readOnly)(&tree.value.get().vfs, "", ambientAuthority());
+        ResolutionLimits lim;
+        lim.maxEntries = 16;
+        PathCollector sink;
+        auto r = resolve(root.value.borrow, sets, sets.everything, sink, lim);
+        assert(r.hasError && r.error.code == ResolutionErrorCode.capacityExceeded, literal);
+        lim.maxEntries = 21;
+        PathCollector all;
+        assert(!resolve(root.value.borrow, sets, sets.everything, all, lim).hasError, literal);
+        assert(all.members.length == (literal is flat ? 17 : 18));
+    }
+}

@@ -832,6 +832,44 @@ runs without a cache, which `FSC1` makes always correct.
 **Revisit when** a consumer runs over FUSE or network mounts, which would
 justify marking their change times settable by file-system type.
 
+### A25 — The storage bounds stay fixed
+
+[`FSM7`](./SPEC.md#7-the-resolution-machine-fsm) named only the nesting,
+name and batch limits, and
+[`FSM3`](./SPEC.md#7-the-resolution-machine-fsm) said the batch size bounds
+"not the directories a resolution can hold", which read as no bound at all.
+An external review resolved 260 directories of 260 files each, 67,600
+entries, and got `capacityExceeded` at the default limits: a directory's
+subdirectories are all listed before the first is entered, so their
+listings are held together. [A22](#a22-a-batch-is-split-at-its-size-and-shared-by-the-workers-that-can-run)
+removed the 4,096-file ceiling on one directory and left one at
+`maxEntries`. The amendment states `maxEntries`, `maxFrames` and
+`maxNameBytes` and what each counts.
+
+Whether to raise the defaults was measured. One `Resolution` of
+`everything − gitignored`, made with `maxNameBytes` at 64 bytes an entry,
+as the default's ratio is, on Linux x86_64 (`-b checked`, median of 7):
+
+| `maxEntries` | resident when made | time to make |
+| ------------ | ------------------ | ------------ |
+| 65,536       | 22 MiB             | 8.0 ms       |
+| 131,072      | 32 MiB             | 12.8 ms      |
+| 262,144      | 54 MiB             | 21.5 ms      |
+| 524,288      | 80 MiB             | 34.9 ms      |
+| 1,048,576    | 160 MiB            | 67.7 ms      |
+
+The storage is committed whatever the tree, because an entry's initial
+state is not zero, and a picker or a docs build makes one resolution per
+query. Raising the default fourfold would cost every small resolution
+32 MiB and 13 ms more to admit trees that this repository and its consumers
+do not have. The defaults stay; a caller that walks such a tree passes
+larger limits and gets the error, never a wrong result, if it does not.
+
+**Revisit when** a consumer meets the bound, or when listing a directory's
+subdirectories lazily, one sibling at a time, replaces the batch of all of
+them: the bound would then be the largest directory, not a level's sum, at
+the cost of FSM3's single listing batch per directory.
+
 ### D5 — The extent of the empty-directory report (accepted)
 
 **Question.** [`FSV4`](./SPEC.md#4-the-fileset-value-fsv) reports every

@@ -253,8 +253,8 @@ the configured batch size, as consecutive full batches and one holding the
 rest. A directory's stats and its subdirectories' listings are batched alike.
 _Rationale:_ a request-at-a-time coroutine serializes the fan-out the design
 exists for, and a driver can submit a batch as one `io_uring_enter`. The batch
-size bounds the storage requests take, not the directories a resolution can
-hold. _Detection:_ resolving a directory of `n` entries needing metadata emits
+size bounds only the storage requests take; what a resolution can hold is
+bounded by `FSM7`'s storage limits. _Detection:_ resolving a directory of `n` entries needing metadata emits
 one batch, not `n` batches; with a batch size of 2, its 5 stats arrive as 2, 2
 and 1 and its 3 subdirectories as 2 and 1, with the result one batch gives.
 
@@ -278,14 +278,33 @@ for the resolution that produced it. _Detection:_ a fixture resolved in one
 step and in many steps with a small budget yields identical results; a cursor
 from one resolution is rejected by another.
 
-**`FSM7` — Bounds.** Directory nesting, entry-name length and the batch size
-are bounded by configured limits. Exceeding the nesting or name limit is a
-returned error; a directory needing more requests than a batch holds is
-batched as `FSM3` says.
+**`FSM7` — Bounds.** Directory nesting, entry-name length, the batch size
+and the storage a resolution holds are bounded by configured limits.
+Exceeding the nesting or name limit is a returned error; a directory needing
+more requests than a batch holds is batched as `FSM3` says. The storage is
+allocated when the resolution is made, and running out of it is the error
+`capacityExceeded`, never growth:
+
+- **entries held at once** (`maxEntries`): the listing of each directory on
+  the path from the start root down to the one being resolved, together
+  with the listings of all its siblings, since a directory's subdirectories
+  are all listed before the first is entered;
+- **directories held at once** (`maxFrames`): each directory on that path
+  and its siblings;
+- **bytes of names held at once** (`maxNameBytes`): the names of those
+  entries, and the plan's start roots.
+
 Defaults: depth 64, name 255 bytes — the values NAR and Snix independently
-chose, the former explicitly to bound stack use on a coroutine stack.
+chose, the former explicitly to bound stack use on a coroutine stack — and
+65,536 entries, 4,096 directories and 4 MiB of names, which commit about
+22 MiB when a resolution is made
+([A25](./decisions.md#a25-the-storage-bounds-stay-fixed)). A directory of
+more than 65,536 entries, or sibling directories holding more than that
+between them, needs larger limits.
 _Detection:_ fixtures at depth 65 and with a 256-byte name return the
-respective errors.
+respective errors; one directory of `maxEntries + 1` entries, and sibling
+directories whose entries exceed `maxEntries` together, return
+`capacityExceeded`, and each resolves with the limit raised.
 
 ## 8. The scheme seam (`FSS`)
 
@@ -641,7 +660,7 @@ not list is **unverified**.
 | `FSM4`                 | verified (Linux x86_64) | the machine constructs no `readlink` request, and a `readFile` request only for a `.gitignore` of a fileset with a `gitignored` leaf (`fileset.machine.FSI4.nestedScopes`, `fileset.machine.FSI.prefixScopes`); the gates read no content byte                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | —                                                                                                                                    |
 | `FSM5`                 | verified (Linux x86_64) | `Resolution.unitEntries` hands over one directory's members and entered subdirectories in the declared order (`fileset.scheme.FSS1.orders`); a fold receives each directory once, after its children (`fileset.scheme.FSS3.traversal`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | —                                                                                                                                    |
 | `FSM6`                 | verified (Linux x86_64) | a budget of one yields the same transcript as an unbounded one on every hand-written fixture and 200 random ones (`fileset.gate.m3.machineAgreesWithOracles`); a `Cursor` from another resolution, or an old one, fails with `staleCursor` (`fileset.machine.FSM6.staleCursor`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | —                                                                                                                                    |
-| `FSM7`                 | verified (Linux x86_64) | 65 nested directories fail with `depthExceeded`, 64 do not; a name over `ResolutionLimits.maxNameLength` fails with `nameTooLong` (`fileset.machine.FSM7.bounds`, with the limit lowered to 15, since `MemVfs` stores at most 255 bytes)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | a 256-byte name on a native backend                                                                                                  |
+| `FSM7`                 | verified (Linux x86_64) | 65 nested directories fail with `depthExceeded`, 64 do not; a name over `ResolutionLimits.maxNameLength` fails with `nameTooLong` (`fileset.machine.FSM7.bounds`, with the limit lowered to 15, since `MemVfs` stores at most 255 bytes); with `maxEntries` at 16, a directory of 17 files and three of 6 each fail with `capacityExceeded`, and both resolve at 21 (`fileset.machine.FSM7.storageBounds`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | a 256-byte name on a native backend                                                                                                  |
 | `FSV4`                 | verified (Linux x86_64) | `Resolution.unitEmpty`; a fixture with `src/empty/` and `src/deep/er/` reports exactly those two (`fileset.machine.FSV4.emptyDirectories`); `*.md` reports none, `src/**` united with `*.md` only `src/empty`, `everything - *.d` every empty leaf (`fileset.machine.FSV4.wholeContentOnly`); `FilesetEvaluator.wholeContent`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | —                                                                                                                                    |
 | `FSE1`, `FSE2`         | verified (Linux x86_64) | an unreadable entry is `StepKind.incomplete` and the resolution continues; a scheme hears it through `incomplete`, and `PathScheme`'s result lists it with its reason; a scheme failing mid-file fails the resolution with `schemeFailed`, and a digest refusing incompleteness refuses a resolution with a mount it did not cross (`fileset.scheme.FSE.failures`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | —                                                                                                                                    |
 | `FSE4`                 | verified (Linux x86_64) | `resolveScheme` returns `SchemeResult`, the scheme's own `Result`: `PathScheme.Paths` for a path collector, a `ulong` for a digest (`fileset.scheme.FSE.failures`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | —                                                                                                                                    |
