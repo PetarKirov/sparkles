@@ -108,8 +108,11 @@ struct ResolutionLimits
     /// Requests in one batch: a directory needing more is split into as
     /// few batches as this allows (FSM3). At least one.
     uint maxPending = 4096;
-    uint maxEntries = 1 << 16;   /// entries held at once
-    uint maxFrames = 1 << 12;    /// directories held at once
+    /// Entries held at once: the listings of each directory on the path
+    /// being resolved and of all its siblings, which are listed together.
+    /// So a directory's subdirectories may hold this many between them.
+    uint maxEntries = 1 << 16;
+    uint maxFrames = 1 << 12;    /// directories held at once: those on the path and their siblings
     uint maxNameBytes = 1 << 22; /// bytes of names and paths held at once
     /// The `.gitignore` scope arena (FSI2), made only for a fileset with a
     /// `gitignored` leaf.
