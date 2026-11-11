@@ -217,7 +217,7 @@ private:
         }
 
         auto got = supervise(*ctx.exec, action.argv, cfg, null, &onEvent);
-        rec.output.flush();
+        rec.output.close(); // the output is complete; `replay` reopens it by path
         if (got.hasError)
         {
             rec.spawnError = got.error;
