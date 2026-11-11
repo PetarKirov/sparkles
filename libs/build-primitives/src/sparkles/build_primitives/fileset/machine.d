@@ -127,6 +127,9 @@ enum ResolutionErrorCode : ubyte
     unanswered,         /// a driver stepped without answering a request
     staleCursor,        /// a cursor from another resolution, or an old one (FSM6)
     schemeFailed,       /// the consuming scheme failed, and the resolution is wrong (FSE1)
+    /// the executor's admission budget refused work: the fiber asking was
+    /// interrupted, or the budget closed (FSS6)
+    notAdmitted,
 }
 
 /// A resolution failure.

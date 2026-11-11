@@ -58,7 +58,7 @@ import sparkles.base.text.errors : NoGcHook;
 import sparkles.base.vfs.handles : DirRef;
 import sparkles.base.vfs.types : Rights;
 
-import sparkles.build_primitives.fileset.driver : FilesetDriver;
+import sparkles.build_primitives.fileset.driver : FilesetDriver, notAdmittedError, refusedWork;
 import sparkles.build_primitives.fileset.fso : EntryOrder, FsoFingerprint, FsoMetadata, FsoNode, SchemeShape,
     Traversal;
 import sparkles.build_primitives.fileset.machine : Resolution, ResolutionError, ResolutionErrorCode,
@@ -228,6 +228,8 @@ SchemeResult!S resolveScheme(V, Rights R, S, Exec)(DirRef!(V, R) root, ref const
         {
             case StepKind.needIO:
                 exec.run(m.batch, (size_t i) { driver.perform(m, root, i); });
+                if (refusedWork(exec))
+                    return fail(notAdmittedError);
                 break;
             case StepKind.unit:
                 const dirId = m.unitDir;
@@ -276,6 +278,9 @@ SchemeResult!S resolveScheme(V, Rights R, S, Exec)(DirRef!(V, R) root, ref const
                 break;
             case StepKind.done:
                 exec.join();
+                // Work the budget refused never ran: the result would be wrong.
+                if (refusedWork(exec))
+                    return err!(S.Result, NoGcHook)(notAdmittedError);
                 static if (isFold)
                 {
                     assert(values.length == 1, "a fold ends with the fileset root's value");

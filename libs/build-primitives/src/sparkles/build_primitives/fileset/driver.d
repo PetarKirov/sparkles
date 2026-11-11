@@ -61,6 +61,11 @@ Performs a batch's requests one after another.
 Every executor also runs a scheme's own work (FSS4): `spawn(work)` starts
 it under the executor's admission budget (FSS6), and `join` returns once all
 of it has run (FSS7). Here both are immediate.
+
+An executor whose budget can refuse work (an `acquire` interrupted, or a
+budget closed) says so through an optional `bool refused()`: the resolution
+then ends with `notAdmitted`, never with a request left unanswered or a
+scheme's work silently dropped.
 */
 struct InlineExecutor
 {
@@ -82,6 +87,20 @@ struct InlineExecutor
     {
     }
 }
+
+/// Whether `exec` refused work its budget did not admit: its optional
+/// `refused` primitive, `false` for an executor without one.
+bool refusedWork(Exec)(ref Exec exec)
+{
+    static if (__traits(hasMember, Exec, "refused"))
+        return exec.refused;
+    else
+        return false;
+}
+
+/// The error a resolution whose executor refused work ends with.
+enum ResolutionError notAdmittedError = ResolutionError(ResolutionErrorCode.notAdmitted,
+    RequestKind.init, "the executor's budget refused work: interrupted, or the budget closed");
 
 /**
 Answers one resolution's requests on the directory handles beneath one root.
@@ -287,6 +306,8 @@ ResolutionResult resolveWith(V, Rights R, Sink, Exec)(DirRef!(V, R) root, ref co
         {
             case StepKind.needIO:
                 exec.run(m.batch, (size_t i) { driver.perform(m, root, i); });
+                if (refusedWork(exec))
+                    return err!(void, NoGcHook)(notAdmittedError);
                 break;
             case StepKind.unit:
                 sink.directory(m.unitPath, m.unitMembers, m.unitEmpty);

@@ -3186,3 +3186,103 @@ version (Posix)
     }
     assert(seen == ["incomplete : permission", "unit '' 0"], text(seen));
 }
+
+/// FSS6: work the shared budget refuses fails the resolution with
+/// `notAdmitted`: a batch's requests (not `unanswered`), and a scheme's
+/// spawned work, which would otherwise never run while `join` returned.
+@("fileset.driver_loop.FSS6.refusedWork")
+@system unittest
+{
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+    import sparkles.event_horizon.admission : Admission;
+    import sparkles.event_horizon.capability : SpawnOptions;
+    import sparkles.event_horizon.testing : TestSched;
+    import sparkles.build_primitives.fileset.driver_loop : LoopExecutor;
+    import sparkles.build_primitives.fileset.scheme : resolveScheme;
+
+    static struct Spawning
+    {
+        alias Result = bool;
+        Admission* budget;
+        bool ran;
+        bool visit(Entries, Exec)(scope const(char)[] path, Entries es, bool empty, ref Exec exec)
+        {
+            // Every unit taken and the budget closed: the work is refused.
+            assert(budget.tryAcquire(budget.available));
+            budget.close();
+            exec.spawn(() { ran = true; });
+            return true;
+        }
+        bool incomplete(scope const(char)[] path, ErrorKind kind) => true;
+        bool finish() => true;
+    }
+
+    auto sets = Filesets(CasePolicy.sensitive);
+    auto tree = openFixture("a\nb\n");
+    auto root = openRoot!(Rights.readOnly)(&tree.value.get().vfs, "", ambientAuthority());
+    TestSched sched;
+    ResolutionErrorCode batchCode, spawnCode;
+    bool ran = true;
+    sched.run(() {
+        cast(void) sched.spawnFiber(null, SpawnOptions.init, () {
+            auto closed = new Admission(1, inUse: 1);
+            closed.close();
+            auto exec = LoopExecutor!TestSched(&sched, closed);
+            PathCollector sink;
+            auto r = resolveWith(root.value.borrow, sets, sets.everything, sink, exec);
+            batchCode = r.hasError ? r.error.code : ResolutionErrorCode.none;
+        });
+        cast(void) sched.spawnFiber(null, SpawnOptions.init, () {
+            auto budget = new Admission(2);
+            auto exec = LoopExecutor!TestSched(&sched, budget);
+            auto s = Spawning(budget);
+            auto r = resolveScheme(root.value.borrow, sets, sets.everything, s, exec);
+            spawnCode = r.hasError ? r.error.code : ResolutionErrorCode.none;
+            ran = s.ran;
+        });
+    });
+    assert(batchCode == ResolutionErrorCode.notAdmitted, text(batchCode));
+    assert(spawnCode == ResolutionErrorCode.notAdmitted, text(spawnCode));
+    assert(!ran);
+}
+
+/// `LoopExecutor.run` waits for the workers it started however it ends:
+/// a `perform` that throws on the calling fiber does not unwind past
+/// workers still using its frame, and the units it held are given back.
+@("fileset.driver_loop.runWaitsWhenPerformThrows")
+@system unittest
+{
+    import sparkles.event_horizon.admission : Admission;
+    import sparkles.event_horizon.capability : SpawnOptions;
+    import sparkles.event_horizon.testing : TestSched;
+    import sparkles.build_primitives.fileset.driver_loop : LoopExecutor;
+    import sparkles.build_primitives.fileset.machine : Request;
+
+    TestSched sched;
+    auto budget = new Admission(2);
+    bool caught, workerDoneAtCatch;
+    bool workerDone;
+    sched.run(() {
+        cast(void) sched.spawnFiber(null, SpawnOptions.init, () {
+            // One worker fiber; the second worker is this fiber, which
+            // takes request 0 first, before the fiber has run.
+            auto starved = StarvedSched(&sched, 1);
+            auto exec = LoopExecutor!StarvedSched(&starved, budget);
+            Request[2] batch;
+            try
+                exec.run(batch[], (size_t i) {
+                    if (i == 0)
+                        throw new Exception("perform failed");
+                    workerDone = true;
+                });
+            catch (Exception e)
+            {
+                caught = true;
+                workerDoneAtCatch = workerDone;
+            }
+        });
+    });
+    assert(caught);
+    assert(workerDoneAtCatch, "run unwound before its worker finished");
+    assert(budget.inUse == 0, "a throwing request gave its unit back");
+}
