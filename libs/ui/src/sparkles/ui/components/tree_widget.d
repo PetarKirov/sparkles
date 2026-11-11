@@ -27,6 +27,7 @@ module sparkles.ui.components.tree_widget;
 import sparkles.ui.state : DisclosureState;
 import sparkles.base.term_color : RgbColor;
 import sparkles.ui.style : GuideGlyphs, InteractionState, Slot, StateSet, TextStyle;
+import sparkles.ui.geometry : SizeSpec;
 import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind;
 
 @safe:
@@ -283,6 +284,11 @@ uint treeView(T)(ref Builder b, in TreeData!T data, in FlatTreeRow[] rows,
             }
         spans ~= lbl;
 
+        // Optional right-aligned badge (VMD6): with `T.badgeRight`, the badge
+        // is a cell of its own at the row's right edge, so a column of
+        // sizes or counts lines up; the label takes the rest, clipped.
+        enum badgeRight = __traits(compiles, { enum bool r = T.badgeRight; }) && T.badgeRight;
+        uint badgeCell = uint.max;
         // Optional trailing status badge (VMD6, the case study's `hasStatus`
         // capability) — e.g. a git-status letter with its own color.
         static if (__traits(compiles, { const(char)[] bt = v.badge; }))
@@ -299,8 +305,14 @@ uint treeView(T)(ref Builder b, in TreeData!T data, in FlatTreeRow[] rows,
                         bsp.fg = v.badgeFg;
                         bsp.hasFg = true;
                     }
-                spans ~= TextSpan(" ", labelSlot, labelStyle);
-                spans ~= bsp;
+                static if (badgeRight)
+                    badgeCell = b.add(Widget(kind: WidgetKind.rich, width: SizeSpec.rigid_,
+                        spans: [TextSpan("  ", labelSlot, labelStyle), bsp]));
+                else
+                {
+                    spans ~= TextSpan(" ", labelSlot, labelStyle);
+                    spans ~= bsp;
+                }
             }
 
         Widget w = Widget(kind: WidgetKind.rich, spans: spans,
@@ -324,9 +336,31 @@ uint treeView(T)(ref Builder b, in TreeData!T data, in FlatTreeRow[] rows,
                 w.paintBackground = true;
                 w.stretch = true;
             }
-        rowIds[i] = b.add(w);
+        static if (badgeRight)
+        {
+            // The row: the label growing and clipped, then the badge. The
+            // row carries the hit identity and the tint the label had.
+            Widget line = w;
+            line.kind = WidgetKind.row;
+            line.spans = null;
+            line.width = SizeSpec.grow();
+            w.hitId = 0;
+            w.paintBackground = false;
+            w.hasBgOverride = false;
+            w.states = StateSet.init;
+            w.width = SizeSpec.grow();
+            w.clipX = true;
+            line.children = badgeCell == uint.max ? [b.add(w)] : [b.add(w), badgeCell];
+            rowIds[i] = b.add(line);
+        }
+        else
+            rowIds[i] = b.add(w);
     }
-    return b.container(WidgetKind.column, rowIds);
+    const column = b.container(WidgetKind.column, rowIds);
+    // Right-aligned badges are at the edge of the width given, not the content's.
+    static if (__traits(compiles, { enum bool r = T.badgeRight; }) && T.badgeRight)
+        b.nodes[column].width = SizeSpec.grow();
+    return column;
 }
 
 // dmd separate-compilation hole: a consumer's `-unittest -allinst` root build
@@ -525,6 +559,39 @@ version (unittest)
         && spans[$ - 3].textStyle.bold);
     assert(spans[$ - 1].text == "2 panes" && spans[$ - 1].slot == Slot.muted
         && spans[$ - 1].textStyle.fontRole == FontRole.ui, "the badge in its own slot");
+}
+
+@("ui.tree_widget.badgeRight")
+@safe unittest
+{
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.geometry : Constraints;
+
+    // With `badgeRight`, a row is the label, grown and clipped, and the
+    // badge at the right edge: the badges of rows line up at the end.
+    static struct SizedNode
+    {
+        string label;
+        string badge;
+        enum badgeRight = true;
+    }
+
+    TreeData!SizedNode t;
+    t.add(SizedNode("a", "1 B"));
+    t.add(SizedNode("longer", "10 KiB"));
+
+    auto b = Builder();
+    const tree = treeView(b, t, flatten(t, (uint) => true), (uint) => true, 1);
+    auto wt = b.finish(tree);
+    const frames = layout(wt, Constraints(maxW: 30, maxH: 2));
+    foreach (r; wt.nodes[tree].children)
+    {
+        const row = wt.nodes[r];
+        assert(row.kind == WidgetKind.row && row.children.length == 2);
+        const badge = frames[row.children[1]].rect;
+        assert(badge.x + badge.width == 30, "the badge ends at the row's right edge");
+    }
+    assert(wt.nodes[wt.nodes[tree].children[1]].stretch, "the selected row is tinted whole");
 }
 
 @("ui.tree_widget.nodeExpandableIsTheSharedProjection")
