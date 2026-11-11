@@ -63,7 +63,8 @@ if (isFiberExecutor!X)
                 admitted(() { (*work)(i); });
             }
         }
-        size_t left = workersFor(n);
+        const workers = workersFor(n);
+        size_t left; // workers started and not yet finished
         FiberContext* waiter;
         // Annotated: inference does not reach it through the workers' closure.
         void finishOne() @safe
@@ -75,25 +76,38 @@ if (isFiberExecutor!X)
                 exec.wake(w);
             }
         }
-        foreach (_; 0 .. left)
+        // However this frame ends, even by a `perform` throwing on this
+        // fiber, it waits for the workers started, which still use it.
+        scope (exit)
+            while (left)
+            {
+                waiter = exec.currentContext();
+                exec.park();
+            }
+        foreach (_; 0 .. workers)
         {
+            ++left;
             const spawned = exec.spawnFiber(null, SpawnOptions.init, () {
+                scope (exit) finishOne();
                 drain();
-                finishOne();
             });
             if (spawned is null)
             {
                 // No fiber after all: this one works, still within the budget.
+                scope (exit) finishOne();
                 drain();
-                finishOne();
             }
         }
-        while (left)
-        {
-            waiter = exec.currentContext();
-            exec.park();
-        }
     }
+
+    /// Whether the budget refused work: an `acquire` failed, because the
+    /// fiber asking was interrupted or the budget closed, so a request went
+    /// unanswered or spawned work never ran. A resolution then fails with
+    /// `ResolutionErrorCode.notAdmitted` (FSS6).
+    bool refused() const @safe pure nothrow @nogc => refusal != 0;
+
+    /// The error code of the first refusal, `0` for none.
+    int refusal;
 
     // The workers a batch of `n` requests gets. More than the budget admits
     // would only wait for it, and a fiber the scheduler has no room for
@@ -124,13 +138,13 @@ if (isFiberExecutor!X)
         held[0] = work;
         ++outstanding;
         const spawned = exec.spawnFiber(null, SpawnOptions.init, () {
+            scope (exit) finished();
             admitted(held[0]);
-            finished();
         });
         if (spawned is null)
         {
+            scope (exit) finished();
             admitted(work);
-            finished();
         }
     }
 
@@ -147,13 +161,22 @@ if (isFiberExecutor!X)
     // A template, so a `@safe` caller's work keeps it `@safe`.
     private void admitted(Work)(scope Work work)
     {
-        if (budget.acquire(*exec).hasError)
+        if (refusal)
+            return; // the resolution fails anyway: start nothing more
+        auto got = budget.acquire(*exec);
+        if (got.hasError)
+        {
+            refusal = got.error.code;
             return;
+        }
         if (++running > peak)
             peak = running;
+        scope (exit)
+        {
+            --running;
+            budget.release();
+        }
         work();
-        --running;
-        budget.release();
     }
 
     private void finished()
