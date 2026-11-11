@@ -44,7 +44,7 @@ Specified in `docs/specs/build-primitives/filesets/SPEC.md`, FSC.
 */
 module sparkles.build_primitives.content_addressing.cache;
 
-import std.traits : fullyQualifiedName, hasIndirections;
+import std.traits : fullyQualifiedName;
 
 import sparkles.base.buffer : HeapBuffer, Storage;
 import sparkles.base.expected : Expected, err, ok;
@@ -75,6 +75,48 @@ struct StatValidator
         => recorded == now && recorded.ctimeNs < stampNs - marginNs;
 }
 
+/**
+Whether every bit pattern of `T.sizeof` bytes is a value of `T`: integers,
+characters and floating-point numbers, and static arrays and structs of
+them. A `bool`, an enum or a pointer is not, so bytes read from a file may
+not be blitted into one (`SubtreeCache.load`).
+*/
+template anyBytesValid(T)
+{
+    import std.traits : isFloatingPoint, isIntegral, isSomeChar, isStaticArray;
+
+    static if (is(T == enum) || is(immutable T == immutable bool))
+        enum anyBytesValid = false;
+    else static if (isIntegral!T || isSomeChar!T || isFloatingPoint!T)
+        enum anyBytesValid = true;
+    else static if (isStaticArray!T)
+        enum anyBytesValid = anyBytesValid!(typeof(T.init[0]));
+    else static if (is(T == struct) && !is(T == union))
+    {
+        enum anyBytesValid = () {
+            bool all = true;
+            static foreach (F; typeof(T.tupleof))
+                all = all && anyBytesValid!F;
+            return all;
+        }();
+    }
+    else
+        enum anyBytesValid = false;
+}
+
+///
+@("content_addressing.cache.anyBytesValid")
+@safe pure nothrow @nogc unittest
+{
+    static struct Ok { uint a; ubyte[3] b; char c; double d; }
+    static struct WithBool { uint a; bool b; }
+    static struct WithEnum { FsoKind k; }
+    static struct WithPointer { int* p; }
+    static assert(anyBytesValid!Ok && anyBytesValid!(ubyte[32]) && anyBytesValid!FsoFingerprint);
+    static assert(!anyBytesValid!bool && !anyBytesValid!WithBool && !anyBytesValid!(bool[2]));
+    static assert(!anyBytesValid!WithEnum && !anyBytesValid!FsoKind && !anyBytesValid!WithPointer);
+}
+
 /// Why `load` rejected a cache. Each rejection is whole: none of it is used.
 enum CacheRejection : ubyte
 {
@@ -99,8 +141,8 @@ order.
 */
 struct SubtreeCache(Dir, Leaf, Validator = StatValidator)
 {
-    static assert(!hasIndirections!(Dir.Id) && !hasIndirections!(Leaf.Id),
-        "a cached id is stored as its bytes, so it may hold no pointer");
+    static assert(anyBytesValid!(Dir.Id) && anyBytesValid!(Leaf.Id),
+        "a cached id is stored as its bytes, so it may hold only integers: no pointer, `bool` or enum");
 
     alias DirId = Dir.Id;   ///
     alias LeafId = Leaf.Id; ///
@@ -414,12 +456,14 @@ private:
     // the canary.
     static ubyte[32] schemeTag() => blake3(fullyQualifiedName!Dir ~ "|" ~ fullyQualifiedName!Leaf);
 
-    // Fills `to` with `from`, which holds exactly its bytes. Every record is
-    // checked (`wellFormed`) before it is used, and none holds a pointer.
+    // Fills `to` with `from`, which holds exactly its bytes. Sound for any
+    // bytes, which is what `@trusted` rests on: `T` holds only integers
+    // (`anyBytesValid`), so no field can take a value its type forbids, and
+    // every record is checked (`wellFormed`) before an offset in it is used.
     static void copyBytes(T)(T[] to, scope const(ubyte)[] from)
     in (from.length == to.length * T.sizeof)
     {
-        static assert(!hasIndirections!T);
+        static assert(anyBytesValid!T, T.stringof ~ " has a field some bytes are not a value of");
         (() @trusted => (cast(ubyte[]) to)[] = from[])();
     }
 

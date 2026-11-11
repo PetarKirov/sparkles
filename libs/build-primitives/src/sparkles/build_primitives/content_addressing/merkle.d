@@ -129,9 +129,12 @@ if (isLeaf!Leaf && isDirFormat!(Dir, Leaf))
 
     enum order = Dir.order;              ///
     enum traversal = Traversal.fold;     ///
-    /// What the encoding needs, and with a cache each file's fingerprint
-    /// (FSC2).
-    enum metadata = hasCache ? cast(FsoMetadata)(encoded | FsoMetadata.fingerprint) : encoded;
+    private enum hasSupply = !is(Supply == NoSupply);
+    /// What the encoding needs; with a cache each file's fingerprint
+    /// (FSC2), and with a supply each file's size, which a supplied tree's
+    /// must equal (FSS8).
+    enum metadata = cast(FsoMetadata)(encoded | (hasCache ? FsoMetadata.fingerprint : FsoMetadata.none)
+        | (hasSupply ? FsoMetadata.size : FsoMetadata.none));
 
     alias Value = Named!(Dir.Id); ///
     alias Result = Dir.Id; ///
@@ -193,6 +196,10 @@ if (isLeaf!Leaf && isDirFormat!(Dir, Leaf))
                             final switch (supply.supply(path, e.name, id, size))
                             {
                                 case Supplied.taken:
+                                    // A tree of another size names another
+                                    // file: a stale one, never this one's.
+                                    if (e.hasSize && size != e.size)
+                                        return fail("a supplied tree's size is not its file's");
                                     reused = true;
                                     break;
                                 case Supplied.refused:
