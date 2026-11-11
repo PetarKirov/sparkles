@@ -279,3 +279,30 @@ waits for frames, so an end is seen up to that late.
 
 **Revisit when** a platform offers a wait that wakes on both a process's end
 and a pipe's bytes, or a test's child needs its output kept.
+
+## TRD12: Tests read the null device, not the commands (proposed)
+
+**Question.** A worker reads its commands on its standard input (TRP6). A
+test that reads standard input, or starts a child that inherits it, as
+`std.process.execute` does, reads the runner's pipe: it waits for ever, or
+takes a command meant for the worker. What does a test's standard input
+hold?
+
+**Alternatives.**
+
+- Leave standard input as the commands channel, and tell tests not to read
+  it.
+- Read the commands through a private duplicate, as the frames are written
+  through one, and give descriptor 0 the null device.
+- Have the runner pass the commands on a further pipe.
+
+**Choice.** The second. A test then reads end of file, as it would under a
+build tool that closes standard input, and a runner needs no change: it
+still writes the worker's standard input, so binaries and runners of either
+side of the change work together. The third would need inherited handles
+beyond the three standard ones, which TRW1 rules out on Windows.
+
+**Trade-offs.** A test cannot be fed input through the runner; `--no-runner`
+leaves standard input as it was, for a test run by hand.
+
+**Revisit when** a test needs its standard input under the runner.

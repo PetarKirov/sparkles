@@ -341,6 +341,22 @@ unittest
     }
 }
 
+@("scenarios.testsReadNoCommands")
+@system
+unittest
+{
+    import core.time : seconds;
+
+    // A test reads its standard input, and runs `cat` on the one it passes
+    // on: both see end of file at once, where they used to wait on the
+    // runner's commands pipe for ever.
+    const r = runWithin([built.runner, "--test-binary=" ~ built.fixture, "-t", "1",
+        "--no-colors"], ["FIXTURE_READS_STDIN": "1"], 60.seconds);
+    assert(!r.timedOut, "a test waited on the commands: " ~ r.output);
+    assert(r.status == 0, r.output);
+    assert(r.output.canFind("fixture.readsStdin"), r.output);
+}
+
 @("scenarios.aThrowInAWorkerThreadEndsALiveRun")
 @system
 unittest

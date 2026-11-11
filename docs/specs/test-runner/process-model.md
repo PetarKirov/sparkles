@@ -198,7 +198,11 @@ debugger started. A worker can also be started by hand with
 
 **TRP6: Channels.** A worker has three channels:
 
-- **commands:** its standard input, written by the runner;
+- **commands:** written by the runner to its standard input, and read
+  through a duplicate of that standard input, made before any test runs,
+  close-on-exec on POSIX and not inheritable on Windows. The worker then
+  points file descriptor 0 at the null device, and on Windows the Win32
+  standard input handle too (TRD12);
 - **frames:** a duplicate of the standard output it started with, made
   before any test runs, close-on-exec on POSIX and not inheritable on
   Windows;
