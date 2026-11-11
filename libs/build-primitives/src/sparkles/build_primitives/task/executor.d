@@ -222,14 +222,18 @@ struct TaskExecutor(X, C, D, S)
         result.cancelled = cancelling;
         result.cancelCause = cancelCause;
         result.primaryFailure = primaryCause;
-        if (!result.primaryFailure.valid)
+        // TDC3: the lowest-index authoritative failure, never a task blocked
+        // by one (a dependent can sort before its prerequisite); a block
+        // that fails the command stands in only if no failure does.
+        foreach (blocks; [false, true])
             foreach (i, ref outcome; result.outcomes)
-                if (failsCommand(outcome)
-                    && graph.nodes[i].failurePolicy == FailurePolicy.authoritative)
-                {
-                    result.primaryFailure = TaskIndex(cast(uint) i);
+            {
+                if (result.primaryFailure.valid)
                     break;
-                }
+                if (failsCommand(outcome) && (blocks || kindOf(outcome) == OutcomeKind.failed)
+                    && graph.nodes[i].failurePolicy == FailurePolicy.authoritative)
+                    result.primaryFailure = TaskIndex(cast(uint) i);
+            }
         if (cancelling && cancelCause == CancelCause.interrupt)
             result.exitCode = 130;
         else if (cancelling && cancelCause == CancelCause.terminate)
@@ -1050,6 +1054,15 @@ unittest
         assert(run.result.exitCode == 1);
         assert(g[run.result.primaryFailure].id.text == "a", "completion order chose the primary cause");
     }
+
+    // A dependent that sorts before its failed prerequisite is blocked, and
+    // fails the command, but the failure is the primary cause (TDC3).
+    const blocked = graphOf([tnode("a"), tnode("z")], [tedge("z", "a")]);
+    auto run = runFake(blocked, ["z": Script(1.msecs, TaskOutcome(Failed(FailureReason.exitStatus, 1)))],
+        ExecutorOptions(capacity: 2));
+    assert(run.outcomeOf(blocked, "a") == "blocked");
+    assert(run.result.exitCode == 1);
+    assert(blocked[run.result.primaryFailure].id.text == "z", "a blocked task became the primary cause");
 }
 
 @("build_primitives.task.executor.run.sequenceNumbersFollowDeliveryOrder")
