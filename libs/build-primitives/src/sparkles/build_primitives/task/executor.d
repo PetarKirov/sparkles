@@ -42,7 +42,7 @@ no failure of its own.
 module sparkles.build_primitives.task.executor;
 
 import core.lifetime : move;
-import core.stdc.errno : ECANCELED, ENOBUFS;
+import core.stdc.errno : ENOBUFS, EPIPE;
 import core.time : Duration, MonoTime;
 import std.sumtype : match;
 
@@ -198,9 +198,9 @@ struct TaskExecutor(X, C, D, S)
                     // The scheduler fiber itself was interrupted (an outer
                     // shutdown): cancel the run, then keep collecting under
                     // protection so every child is accounted for.
-                    if (!cancelling)
-                        requestCancellation(CancelCause.terminate, TaskIndex.init);
                     protect!(() {
+                        if (!cancelling)
+                            requestCancellation(CancelCause.terminate, TaskIndex.init);
                         drainProtected((TaskIndex t) { spawnTask(sc, t); });
                     })(*exec);
                     break;
@@ -291,23 +291,31 @@ private:
     // overtake it with a later number. So the number (and the payload's
     // task-local numbers, from `make`) is drawn only once the turn is held,
     // and delivery order is numbering order.
+    //
+    // Delivery is not a cancellation checkpoint. The producers are the
+    // fibers the run interrupts — a task on fail-fast or `cancel`, the
+    // scheduler on an outer shutdown — and the events they still owe
+    // (`TaskFinished`, `CancellationRequested`, `RunFinished`) are the ones
+    // a reporter needs most. So the turn and the put run under `protect`,
+    // and only a closed sink (`EPIPE`) ends delivery: a reporter that stops
+    // early closes its source (`consumeEvents`), which wakes a parked put.
     void deliver(scope TaskEventPayload delegate() make, string text)
     {
         if (sinkGone)
             return;
-        // Waiting for the turn is not a cancellation checkpoint: the holder
-        // is bounded by its own put, which is one.
-        const turn = protect!(() => emitTurn.acquire(*exec))(*exec);
-        assert(!turn.hasError, "the emit turn is never closed");
-        scope (exit)
-            emitTurn.release();
-        if (sinkGone)
-            return;
-        auto event = TaskEvent(sequence++, clock.now(), make(), text);
-        // A sink that is closed or whose put was interrupted stops
-        // receiving; the run itself carries on.
-        if (sink.put(*exec, move(event)).hasError)
-            sinkGone = true;
+        protect!(() {
+            const turn = emitTurn.acquire(*exec);
+            assert(!turn.hasError, "the emit turn is never closed");
+            scope (exit)
+                emitTurn.release();
+            if (sinkGone)
+                return;
+            auto event = TaskEvent(sequence++, clock.now(), make(), text);
+            // A closed sink stops receiving; the run itself carries on.
+            const put = sink.put(*exec, move(event));
+            if (put.hasError && put.error.code == EPIPE)
+                sinkGone = true;
+        })(*exec);
     }
 
     // Spawns task `t`'s fiber. A rejected spawn — the executor's fiber slab
@@ -769,6 +777,85 @@ unittest
     assert(kindOf(result.outcomes[g.indexOf(tid("z")).value]) == OutcomeKind.succeeded,
         "a ready cleanup node runs after the scheduler is interrupted");
     assert(driver.startOrder == ["a", "z"]);
+}
+
+@("build_primitives.task.executor.cancel.interruptedProducersStillDeliver")
+@system
+unittest
+{
+    import sparkles.event_horizon.cause : Interrupt, InterruptKind;
+    import sparkles.event_horizon.channel : Channel;
+    import sparkles.event_horizon.scope_ : withScope;
+    import sparkles.event_horizon.testing : advanceAndSettle, TestSched;
+
+    // Talkers print a line a millisecond into a reporter that takes an event
+    // a millisecond, so they are parked delivering when fail-fast (`afail`
+    // at 5 ms) or an outer shutdown (at 5 ms) interrupts them. Their puts,
+    // and the scheduler's, must still land: every task's `TaskFinished`, the
+    // one `CancellationRequested`, and `RunFinished`.
+    static struct Talkers
+    {
+        Clock* clock;
+        Script[string] scripts;
+
+        TaskOutcome run(X)(ref TaskContext!X ctx)
+        {
+            const id = ctx.node.id.text;
+            if (id[0] != 't')
+            {
+                const script = scripts.get(id, Script.init);
+                cast(void) clock.sleep(script.duration);
+                return script.outcome;
+            }
+            foreach (_; 0 .. 100)
+            {
+                if (clock.sleep(1.msecs).hasError || ctx.cancelRequested)
+                    return TaskOutcome(Cancelled(CancelReason.interrupted));
+                ctx.output(OutputStream.stdout, "line");
+            }
+            return TaskOutcome(Succeeded());
+        }
+    }
+
+    foreach (shutdown; [false, true])
+    {
+        const g = graphOf([tnode("afail"), tnode("t1"), tnode("t2")], null);
+        TestSched sched;
+        auto clock = Clock(sched.waker());
+        auto driver = Talkers(&clock, ["afail": shutdown ? Script(50.msecs)
+            : Script(5.msecs, TaskOutcome(Failed(FailureReason.exitStatus, 1)))]);
+        Channel!(TaskEvent, 4) sink;
+        TaskEvent[] events;
+        RunResult result;
+        sched.run(() {
+            cast(void) withScope!((ref outer) {
+                outer.spawn(() {
+                    for (auto e = sink.take(sched); !e.hasError; e = sink.take(sched))
+                    {
+                        events ~= e.value;
+                        cast(void) clock.sleep(1.msecs);
+                    }
+                });
+                cast(void) withScope!((ref inner) {
+                    if (shutdown)
+                        inner.spawn(() {
+                            cast(void) clock.sleep(5.msecs);
+                            inner.cancel(Interrupt(InterruptKind.shutdown));
+                        });
+                    result = runGraph(sched, clock, g, driver, sink, ExecutorOptions(capacity: 3, failFast: true));
+                })(sched);
+                sink.close();
+            })(sched);
+        });
+        advanceAndSettle(sched, clock);
+        assert(sched.liveFibers == 0);
+        assert(result.exitCode == (shutdown ? 143 : 1));
+        assert(countOf!((TaskFinished _) => true)(events) == 3, "a task's end was dropped");
+        assert(countOf!((CancellationRequested _) => true)(events) == 1);
+        assert(countOf!((RunFinished f) => f.exitCode == result.exitCode)(events) == 1);
+        foreach (i, e; events)
+            assert(e.sequence == i, "events arrive in sequence order");
+    }
 }
 
 @("build_primitives.task.executor.failFast.unneededFallbackStaysUnneeded")
