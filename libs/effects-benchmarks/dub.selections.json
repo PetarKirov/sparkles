@@ -1,0 +1,12 @@
+{
+	"fileVersion": 1,
+	"versions": {
+		"bolts": "1.3.1",
+		"effects-direct": {"path":"../effects-direct"},
+		"effects-ts": {"path":"../effects-ts"},
+		"expected": "0.4.1",
+		"optional": "1.3.1",
+		"silly": "1.1.1",
+		"sparkles": {"path":"../../"}
+	}
+}
