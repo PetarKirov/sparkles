@@ -60,9 +60,17 @@ Git's reading: a trailing `\r` is dropped; a line starting with `#` is a
 comment; trailing spaces are removed unless escaped by `\` (a trailing tab
 is kept); a leading `!` negates, and `\!` and `\#` escape those characters.
 Git's globs have no brace alternatives, so `{` and `}` are escaped to stay
-literal. Everything else (`*`, `?`, `[…]`, `**`, escapes, a leading or
-middle `/` anchoring, a trailing `/` for directories) means the same in both
-syntaxes. `into` must hold `ignoreLineRoom(line.length)` bytes.
+literal. A trailing `/**` matches what is inside a directory but not the
+directory, so a `*` component is appended to it. Git anchors a pattern holding any `/` but a
+trailing one, inside a bracket expression too, where it never matches: the
+translation escapes it there and anchors the pattern with a leading `/`.
+`\/` matches a `/` to git, so it becomes one. Everything else (`*`, `?`,
+`**`, escapes, a leading or middle `/` anchoring, a trailing `/` for
+directories) means the same in both syntaxes. `into` must hold
+`ignoreLineRoom(line.length)` bytes.
+
+A byte order mark before a file's first line is the caller's to skip
+(`skipUtf8Bom`), as git skips it.
 */
 IgnoreLine readIgnoreLine(scope const(char)[] line, scope char[] into) @safe pure nothrow @nogc
 in (into.length >= ignoreLineRoom(line.length), "the output buffer is too small")
@@ -111,12 +119,29 @@ in (into.length >= ignoreLineRoom(line.length), "the output buffer is too small"
     if (line.length == 0)
         return IgnoreLine(IgnoreLineKind.blank);
 
+    // Git anchors a pattern holding any `/` but a trailing one, looking at
+    // the bytes alone: one inside a bracket expression, or escaped, counts.
+    bool gitAnchored;
+    foreach (c; line[0 .. $ - 1])
+        gitAnchored |= c == '/';
+
     size_t n;
     for (size_t i = 0; i < line.length; ++i)
     {
         const c = line[i];
         if (c == '\\' && i + 1 < line.length)
         {
+            if (line[i + 1] == '/')
+            {
+                // `\/` matches a `/` to git, so it separates components.
+                // Last, it is the trailing `/` of a pattern ending in a lone
+                // `\`, which matches nothing.
+                if (i + 2 == line.length)
+                    return IgnoreLine(IgnoreLineKind.blank);
+                into[n++] = '/';
+                ++i;
+                continue;
+            }
             into[n++] = c;
             into[n++] = line[++i];
             continue;
@@ -134,9 +159,60 @@ in (into.length >= ignoreLineRoom(line.length), "the output buffer is too small"
             into[n++] = '\\';
         into[n++] = c;
     }
+
+    // A trailing `/**` matches everything inside a directory, never the
+    // directory itself, so a later rule can still re-include beneath it:
+    // `/**/*` says so in fileset syntax, where `**` also matches no
+    // component. Before a trailing `/`, it selects the directories inside.
+    const dirOnly = n && into[n - 1] == '/' && !escapedAt(into[0 .. n], n - 1);
+    const body = dirOnly ? n - 1 : n;
+    if (body >= 3 && into[body - 3 .. body] == "/**" && !escapedAt(into[0 .. body], body - 3))
+    {
+        into[body .. body + 2] = "/*";
+        n += 2;
+        if (dirOnly)
+            into[n - 1] = '/';
+    }
+
+    // A `/` a bracket expression held is escaped in the translation, which
+    // anchors only through an unescaped one: give it a leading `/`.
+    if (gitAnchored && !anchors(into[0 .. n]))
+    {
+        foreach_reverse (k; 0 .. n)
+            into[k + 1] = into[k];
+        into[0] = '/';
+        ++n;
+    }
     result.length = n;
     return result;
 }
+
+// Whether the fileset pattern `p` is anchored: it holds an unescaped `/`
+// before its last byte.
+private bool anchors(scope const(char)[] p) @safe pure nothrow @nogc
+{
+    for (size_t i = 0; i + 1 < p.length; ++i)
+    {
+        if (p[i] == '\\')
+            ++i;
+        else if (p[i] == '/')
+            return true;
+    }
+    return false;
+}
+
+// Whether the byte at `i` is escaped by an odd run of backslashes before it.
+private bool escapedAt(scope const(char)[] s, size_t i) @safe pure nothrow @nogc
+{
+    size_t run;
+    while (run < i && s[i - 1 - run] == '\\')
+        ++run;
+    return (run & 1) != 0;
+}
+
+/// The bytes of a `.gitignore` after the UTF-8 byte order mark git skips.
+const(char)[] skipUtf8Bom(return scope const(char)[] text) @safe pure nothrow @nogc
+    => text.length >= 3 && text[0 .. 3] == "\xEF\xBB\xBF" ? text[3 .. $] : text;
 
 /*
 Writes the bracket expression at `line[i]`, a `[`, in the syntax of
@@ -161,10 +237,12 @@ private bool readBracket(scope const(char)[] line, ref size_t i, scope char[] in
         ++j;
     }
     bool first = true;
-    // A literal that would read as negation must not come first.
+    // A literal that would read as negation must not come first, and a `/`
+    // is escaped so that no splitter takes it for a separator: a name never
+    // holds one, so it matches nothing either way.
     void put(char c)
     {
-        if (first && (c == '!' || c == '^'))
+        if ((first && (c == '!' || c == '^')) || c == '/')
             into[n++] = '\\';
         into[n++] = c;
         first = false;
@@ -273,6 +351,30 @@ private string posixClass(scope const(char)[] name) @safe pure nothrow @nogc
     assert(reads("[^a]", "[!a]"), "`^` negates as `!` does");
     assert(reads("[a-c{]", "[a-c{]"), "a brace in a class is literal already");
     assert(blank("[abc") && blank("x[[:nope:]]"), "an expression git cannot read matches nothing");
+    // A trailing `/**` matches inside a directory, not the directory.
+    assert(reads("foo/**", "foo/**/*") && reads("foo/**/", "foo/**/*/") && reads("/**", "/**/*"));
+    assert(reads("a/**/b", "a/**/b") && reads(`a/\**`, `a/\**`));
+    // A `/` in a bracket is escaped, and anchors as any `/` does to git.
+    assert(reads("[[:punct:]]1", "[\\!-\\/:-@[-`{-~]1"), "a class holding `/` stays one component");
+    assert(reads("x[a/b]y", `/x[a\/b]y`) && reads("[!-/]1", `/[!-\/]1`));
+    assert(reads("a/[/]", `a/[\/]`), "anchored already");
+    // `\/` is a separator; last, it ends a pattern in a lone `\`.
+    assert(reads(`a\/b`, "a/b") && blank(`a\/`));
+}
+
+/// The translation of any line fits `ignoreLineRoom`: the lines below grow
+/// the most, each in an exactly sized buffer.
+@("fileset.ignore.readIgnoreLine.room")
+@safe pure nothrow @nogc unittest
+{
+    static immutable string[] widest = ["/**", "/**/", "{/**", "{{/**/", "[/]", "{[/]", "[!/]",
+        "[]/]", "[//]", "{{[//]", "[[:punct:]]", "!{[/]/**", "[/]/**/", "{}{}", "!!"];
+    char[64] buf;
+    foreach (line; widest)
+    {
+        const r = readIgnoreLine(line, buf[0 .. ignoreLineRoom(line.length)]);
+        assert(r.length <= ignoreLineRoom(line.length));
+    }
 }
 
 // ---------------------------------------------------------------- the arena
@@ -491,8 +593,9 @@ struct IgnoreScopes
         const self = scopesTop;
 
         uint line;
-        size_t start = raw;
-        foreach (i; raw .. raw + length + 1)
+        // Git skips a leading byte order mark, and so the first rule is read.
+        size_t start = raw + (length - skipUtf8Bom(text[][raw .. raw + length]).length);
+        foreach (i; start .. raw + length + 1)
         {
             if (i < raw + length && text[i] != '\n')
                 continue;

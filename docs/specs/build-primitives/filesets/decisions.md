@@ -290,9 +290,44 @@ git's `wildmatch` reads it. A `]` that comes first is literal, `^` negates as
 they name. An expression git cannot read, either unclosed or naming an
 unknown class, makes the pattern match nothing, so the line is no rule. An
 external review found that classes and a leading `]` had been passed
-through unchanged. The rest of the syntax means the same in both: `*`, `?`,
-`**`, escapes, anchoring by a leading or middle `/`, and a trailing `/` for
+through unchanged.
+
+Three more readings differ between the syntaxes, and a second review found
+each. A trailing `/**` matches everything inside a directory but not the
+directory itself, so `foo/**` then `!foo/keep.txt` keeps `foo/keep.txt`;
+the fileset's `**` also matches no component, so the translation appends a
+`*` component (`foo/**/*`, and `foo/**/*/` for `foo/**/`). Git decides
+anchoring by looking for a `/` in the bytes of the pattern, so one inside a
+bracket expression anchors it, and one there never matches, since wildmatch
+keeps a bracket from matching `/`. The translation escapes such a `/`, so
+the segment splitter no longer cuts the expression in two, and gives the
+pattern a leading `/` to keep git's anchoring; the `/` in the `[:punct:]`
+expansion is escaped too. `\/` matches `/` to git, so it becomes a
+separator. Last, git skips a UTF-8 byte order mark before a file's first
+line (`skipUtf8Bom`), which had made the first rule unmatchable. The review
+noted that the tests for the earlier fix compared translations with
+hand-written strings and matched no name. Every reading here is now checked
+against git itself (`fileset.listing.FSI4.linesMatchGit`), which lists each
+case's work tree with `git ls-files --others --exclude-standard`.
+
+The rest of the syntax means the same in both: `*`, `?`, `**` elsewhere,
+escapes, anchoring by a leading or middle `/`, and a trailing `/` for
 directories.
+
+**Matching is by NFC and code point, and git's by byte.** A rule is a fileset
+pattern, and fileset patterns match names normalized to NFC, by code point
+([A11](#a11-patterns-compile-one-component-at-a-time),
+[`FSG3`](./SPEC.md#5-matching-fsg)). Git compares bytes, so two readings
+differ. A literal rule written in NFC matches a name spelled in NFD, where
+git's does not, and `?` or a bracket expression matches one non-ASCII code
+point where git's matches one byte. Both differences need a non-ASCII name,
+and the first also needs a `.gitignore` and a tree that spell the name in
+two normalizations. That is what git's own `core.precomposeUnicode` exists to
+paper over on macOS. Matching bytes would take a second matching mode in the
+glob engine (`sparkles:fuzzy`), and a byte-matched pattern beside every
+normalized one in the arena. The cost is out of proportion to the cases it
+serves, so the difference is accepted and recorded here. **Revisit** if a
+consumer meets it in a real tree.
 
 The root `.gitignore` leaf of M1 had read lines with its own rules. It trimmed
 trailing tabs, dropped the backslash of `\!`, which made the rule fail to
