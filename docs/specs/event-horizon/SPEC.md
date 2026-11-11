@@ -2611,11 +2611,19 @@ struct Admission
   and a reserved acquisition takes only reserved units, so whoever holds the
   reserve never finds the budget exhausted by others: the loop's held op
   slots (fiber-parker.md EFP22).
-- **Order.** Parked fibers are woken first come, first served: a release
-  wakes waiters from the head while the free units cover them, and a smaller
-  request behind the head does not overtake it. `tryAcquire` does not queue,
-  and may take units a parked fiber is waiting for; a woken fiber re-checks
-  and parks again.
+- **Order.** First come, first served. A release hands its units to
+  waiters from the head while they cover them, and a smaller request behind
+  the head does not overtake it. A woken fiber's units are charged to it
+  before it runs, so nothing taken in between leaves it short and it never
+  parks again. A fresh `acquire` parks behind the fibers already parked,
+  even when the units it asks for are free. A reserve that shrinks hands on
+  the units it frees, as a release does. `tryAcquire` does not queue: it
+  takes only units no waiter was handed, which may be units a large request
+  at the head is still waiting to accumulate.
+- **Leaving the queue.** An interrupted waiter gives back any units it was
+  handed, which go on to the next waiters; one that leaves the head without
+  them lets the requests behind it be considered. Either way no waiter stays
+  parked while units it fits are free and nobody ahead of it waits.
 - **Closing.** `close` is idempotent and wakes every parked fiber. An
   acquisition that finds enough free units still succeeds, so a channel's
   buffered items drain; one that would have to wait fails with `EPIPE`.

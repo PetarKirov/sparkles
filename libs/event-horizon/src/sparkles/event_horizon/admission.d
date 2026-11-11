@@ -70,12 +70,17 @@ struct Admission
     uint parked() const @safe pure nothrow @nogc => _parked;
 
     /// Holds `n` units back for reserved acquisitions. Only while no
-    /// reserved unit is taken, and only from units nobody holds.
-    void reserve(uint n) @safe pure nothrow @nogc
+    /// reserved unit is taken, and only from units nobody holds. Units a
+    /// smaller reserve gives back go to the parked fibers they satisfy, as
+    /// a release's do.
+    void reserve(uint n) @safe nothrow @nogc
     in (_reservedInUse == 0, "reserve while reserved units are taken")
     in (n <= _capacity - _inUse, "reserve more than the free units")
     {
+        const shrinks = n < _reserved;
         _reserved = n;
+        if (shrinks)
+            wakeFitting();
     }
 
     /// Takes `n` units if they are free; never waits. A `reserved`
@@ -95,8 +100,8 @@ struct Admission
         return true;
     }
 
-    /// Gives back `n` units and wakes the parked fibers they satisfy, in
-    /// the order they parked.
+    /// Gives back `n` units and hands them to the parked fibers they
+    /// satisfy, in the order they parked.
     void release(uint n = 1, bool reserved = false) @safe nothrow @nogc
     in (reserved ? n <= _reservedInUse : n <= _inUse, "release of units never taken")
     {
@@ -112,30 +117,23 @@ struct Admission
     cancellation checkpoint: `ECANCELED` when the fiber is interrupted, and
     `EPIPE` when the budget is closed with too few units free. Ordinary
     units only; reserved ones are for callers that cannot wait.
+
+    First come, first served: a request parks behind those already parked,
+    even when the units it asks for are free, and a parked fiber is handed
+    its units when it is woken, so nothing taken in between can leave it
+    short.
     */
     IoResult!void acquire(X)(ref X exec, uint n = 1)
     if (isFiberExecutor!X)
     in (n <= _capacity - _reserved, "a request no release can ever satisfy")
     {
-        for (bool parked = false;; parked = true)
-        {
-            if (interruptRequested(*exec.currentContext()))
-            {
-                // A release may have woken this fiber for units it now
-                // leaves: waking charges nothing, so they are still free,
-                // and the waiters behind it (or behind its larger request)
-                // would park until some later release. Pass the wake-up on.
-                if (parked)
-                    wakeFitting();
-                return ioErr!void(ECANCELED, OpKind.none, IoErrorStage.submit,
-                    "admission interrupted");
-            }
-            if (tryAcquire(n))
-                return ioOk();
-            if (_closed)
-                return ioErr!void(EPIPE, OpKind.none, IoErrorStage.submit, "admission closed");
-            parkOn(exec, n);
-        }
+        if (interruptRequested(*exec.currentContext()))
+            return interrupted();
+        if (_waiters is null && tryAcquire(n))
+            return ioOk();
+        if (_closed)
+            return ioErr!void(EPIPE, OpKind.none, IoErrorStage.submit, "admission closed");
+        return parkOn(exec, n);
     }
 
     /// Closes the budget (idempotent) and wakes every parked fiber.
@@ -158,9 +156,15 @@ private:
         uint units;
         Waiter* next;
         bool queued;
+        bool granted; // popped with its units charged to it
     }
 
-    void parkOn(X)(ref X exec, uint n)
+    IoResult!void interrupted() @safe pure nothrow @nogc
+        => ioErr!void(ECANCELED, OpKind.none, IoErrorStage.submit, "admission interrupted");
+
+    // Parks the calling fiber at the tail until it is handed its `n` units,
+    // the budget is closed, or it is interrupted.
+    IoResult!void parkOn(X)(ref X exec, uint n)
     {
         Waiter w;
         w.fiber = exec.currentContext();
@@ -187,11 +191,32 @@ private:
         };
         ctx.cancelCtx = (() @trusted => cast(void*) &w)();
 
-        exec.park();
+        // Only a hand-over, `close` or the interrupt ends the park; any
+        // other wake-up leaves the fiber queued where it was.
+        do
+            exec.park();
+        while (w.queued && !interruptRequested(*ctx));
 
         ctx.cancelFn = null;
         ctx.cancelCtx = null;
+        const wasHead = _waiters is (() @trusted => &w)();
         unlink(w);
+        if (interruptRequested(*ctx))
+        {
+            // The interrupt comes first. Units handed over are given back,
+            // and a head that leaves may unblock those behind it: either
+            // way the wake-up passes on.
+            if (w.granted)
+                release(n);
+            else if (wasHead)
+                wakeFitting();
+            return interrupted();
+        }
+        if (w.granted)
+            return ioOk();
+        // Woken by `close`: units already free are still taken.
+        return tryAcquire(n) ? ioOk()
+            : ioErr!void(EPIPE, OpKind.none, IoErrorStage.submit, "admission closed");
     }
 
     // Removes a waiter still queued (a cancel-woken one); a woken one was
@@ -219,14 +244,15 @@ private:
         w.wakeFn(w.execPtr, w.fiber);
     }
 
-    // Wakes waiters from the head while the free units cover them. A woken
-    // fiber re-checks when it runs, so waking one too many only re-parks it.
+    // Hands the free units to waiters from the head while they cover them,
+    // charging each its units before it is woken, so neither a `tryAcquire`
+    // nor a fresh `acquire` can take them before it runs.
     void wakeFitting() @trusted nothrow @nogc
     {
-        uint budget = available;
-        while (_waiters !is null && _waiters.units <= budget)
+        while (_waiters !is null && _waiters.units <= available)
         {
-            budget -= _waiters.units;
+            _inUse += _waiters.units;
+            _waiters.granted = true;
             wakeHead();
         }
     }
@@ -369,4 +395,121 @@ version (unittest)
     assert(firstCode == ECANCELED, "the interrupt check comes first");
     assert(secondAcquired, "the unit the cancelled fiber left goes to the next waiter");
     assert(a.inUse == 1 && a.parked == 0);
+}
+
+/// A woken fiber is handed its units: a caller that does not queue cannot
+/// take them before it runs, so it never parks again and strands the
+/// waiters behind it.
+@("admission.acquire.wokenWaiterKeepsItsUnits")
+@safe unittest
+{
+    TestSched sched;
+    auto a = Admission(4, inUse: 4);
+    bool got3, got1, stolen = true;
+    sched.run(() {
+        cast(void) sched.spawnFiber(null, SpawnOptions.init, () {
+            got3 = !a.acquire(sched, 3).hasError;
+        });
+        cast(void) sched.spawnFiber(null, SpawnOptions.init, () {
+            got1 = !a.acquire(sched, 1).hasError;
+        });
+        cast(void) sched.spawnFiber(null, SpawnOptions.init, () {
+            a.release(3); // the head's three units are now its own
+            stolen = a.tryAcquire();
+            a.release(); // and the last one is the second waiter's
+        });
+    });
+    assert(!stolen, "units handed to a woken fiber are not free");
+    assert(got3 && got1 && a.parked == 0 && a.inUse == 4);
+}
+
+/// SPEC §14.2 Order: a fresh `acquire` parks behind the fibers already
+/// parked, even when its units are free, so a large request at the head is
+/// not starved by small ones arriving later.
+@("admission.acquire.freshRequestQueues")
+@safe unittest
+{
+    TestSched sched;
+    auto a = Admission(4, inUse: 4);
+    string[] order;
+    sched.run(() {
+        cast(void) sched.spawnFiber(null, SpawnOptions.init, () {
+            assert(!a.acquire(sched, 3).hasError);
+            order ~= "big";
+            a.release(3);
+        });
+        cast(void) sched.spawnFiber(null, SpawnOptions.init, () {
+            a.release(2); // the head wants 3
+            cast(void) sched.spawnFiber(null, SpawnOptions.init, () {
+                assert(!a.acquire(sched, 1).hasError);
+                order ~= "small";
+            });
+            cast(void) sched.spawnFiber(null, SpawnOptions.init, () {
+                assert(a.parked == 2, "the small request queued behind the head");
+                a.release(); // now the head fits
+            });
+        });
+    });
+    assert(order == ["big", "small"], order[0]);
+    assert(a.parked == 0 && a.inUse == 2);
+}
+
+/// SPEC §14.2 Order: a cancelled waiter leaves the queue without
+/// reordering it; the others are served in the order they parked.
+@("admission.acquire.cancelKeepsOrder")
+@safe unittest
+{
+    TestSched sched;
+    auto a = Admission(1, inUse: 1);
+    uint[] order;
+    FiberContext*[4] f;
+    // Runs `dg` after `hops` fibers have run in turn.
+    void later(uint hops, void delegate() @safe dg) @safe
+    {
+        if (hops == 0)
+            return dg();
+        cast(void) sched.spawnFiber(null, SpawnOptions.init, () { later(hops - 1, dg); });
+    }
+    // A function per waiter, so each closure has an `id` of its own.
+    void waiter(uint id) @safe
+    {
+        f[id] = sched.spawnFiber(null, SpawnOptions.init, () {
+            if (!a.acquire(sched).hasError)
+                order ~= id;
+        });
+    }
+    sched.run(() {
+        foreach (uint i; 0 .. 4)
+            waiter(i);
+        cast(void) sched.spawnFiber(null, SpawnOptions.init, () {
+            (() @trusted => interruptFiber(f[1], Interrupt(InterruptKind.cancelled)))();
+            a.release(); // the head's
+            later(2, () {
+                a.release();
+                later(2, () { a.release(); });
+            });
+        });
+    });
+    assert(order == [0, 2, 3]);
+    assert(a.parked == 0);
+}
+
+/// A reserve that shrinks gives its units to the fibers parked for them.
+@("admission.reserve.shrinkWakes")
+@safe unittest
+{
+    TestSched sched;
+    auto a = Admission(3, inUse: 1);
+    a.reserve(2); // nothing left for an ordinary acquisition
+    bool acquired;
+    sched.run(() {
+        cast(void) sched.spawnFiber(null, SpawnOptions.init, () {
+            acquired = !a.acquire(sched).hasError;
+        });
+        cast(void) sched.spawnFiber(null, SpawnOptions.init, () {
+            assert(a.parked == 1);
+            a.reserve(0);
+        });
+    });
+    assert(acquired && a.parked == 0 && a.inUse == 2);
 }

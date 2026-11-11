@@ -640,7 +640,7 @@ struct OpSlab(Allocator = Mallocator)
     /// Holds `n` of the slots back for `acquire(…, held: true)`: other
     /// acquisitions leave them free, so a holder's acquisition never finds
     /// the slab exhausted (the fiber parker's parks, fiber-parker.md EFP22).
-    void hold(uint n) @safe pure nothrow @nogc
+    void hold(uint n) @safe nothrow @nogc
     in (n <= _capacity && _budget.reservedInUse == 0)
     {
         _budget.reserve(n);
