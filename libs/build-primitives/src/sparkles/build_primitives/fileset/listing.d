@@ -168,8 +168,7 @@ ListingResult listRepository(string dir, scope const(string)[] include = null,
     import std.path : absolutePath, buildNormalizedPath;
 
     const abs = dir.absolutePath.buildNormalizedPath;
-    const top = repositoryRoot(abs);
-    const base = top is null || top == abs ? "" : abs[top.length + 1 .. $];
+    const base = repositoryBase(abs, repositoryRoot(abs));
     auto inc = rebased(include, base), exc = rebased(exclude, base);
 
     string refusal;
@@ -195,19 +194,29 @@ ListingResult listRepository(string dir, scope Fileset delegate(ref Filesets) @s
 
     const abs = dir.absolutePath.buildNormalizedPath;
     const top = repositoryRoot(abs);
-    const base = top is null || top == abs ? "" : abs[top.length + 1 .. $];
+    const base = repositoryBase(abs, top);
     auto listed = listFiles(top is null ? abs : top, (ref Filesets s) @safe {
         Fileset f = make(s);
         return base.length ? s.intersection(s.glob("/" ~ escapeGlob(base) ~ "/**").value, f) : f;
     });
     if (listed.hasError || !base.length)
         return listed;
+    // The restriction is a pattern, and patterns match names under NFC, so
+    // it may also admit a sibling whose name differs from `base` only in
+    // its encoding (`Keep` beside `\u212Aeep`, an NFD spelling beside an NFC
+    // one). Identity is byte-exact (invariant 5): keep only what lies
+    // beneath `base` byte for byte.
+    import std.algorithm.iteration : filter, map;
+    import std.algorithm.searching : startsWith;
+    import std.array : array;
+
+    const prefix = base ~ "/";
     auto l = listed.value;
-    foreach (ref p; l.files)
-        p = p[base.length + 1 .. $];
+    l.files = l.files.filter!(p => p.startsWith(prefix)).map!(p => p[prefix.length .. $]).array;
     // The directory listed is reported as `""`, as the fileset root is.
-    foreach (ref p; l.emptyDirs)
-        p = p.length > base.length ? p[base.length + 1 .. $] : "";
+    l.emptyDirs = l.emptyDirs.filter!(p => p == base || p.startsWith(prefix))
+        .map!(p => p == base ? "" : p[prefix.length .. $]).array;
+    l.unreadable = l.unreadable.filter!(p => p.startsWith(prefix) || p.startsWith(base ~ ":")).array;
     return ok!(string, NoGcHook)(l);
 }
 
@@ -223,6 +232,37 @@ string escapeGlob(scope const(char)[] path) @safe pure nothrow
         out_ ~= c;
     }
     return out_;
+}
+
+// `abs`, an absolute normalized path beneath the repository root `top`, as
+// a path relative to `top` whose separator is `/`, the one fileset paths
+// use; `""` when there is no repository or `abs` is its root. On Windows a
+// native path separates with `\`, which in a pattern is an escape. A root
+// that ends in a separator (`/`, `C:\`) contributes none of its own.
+private string repositoryBase(string abs, string top) @safe
+{
+    import std.array : join;
+    import std.path : isDirSeparator, pathSplitter;
+
+    if (top is null || top == abs)
+        return "";
+    const skip = top.length + (isDirSeparator(top[$ - 1]) ? 0 : 1);
+    return abs[skip .. $].pathSplitter.join("/");
+}
+
+///
+@("fileset.listing.repositoryBase")
+@safe unittest
+{
+    assert(repositoryBase("/r/a/b", "/r") == "a/b");
+    assert(repositoryBase("/r", "/r") == "");
+    assert(repositoryBase("/a", "/") == "a");
+    assert(repositoryBase("/a", null) == "");
+    version (Windows)
+    {
+        assert(repositoryBase(`C:\repo\libs\base`, `C:\repo`) == "libs/base");
+        assert(repositoryBase(`C:\x`, `C:\`) == "x");
+    }
 }
 
 /**
@@ -485,6 +525,35 @@ version (unittest)
     tmp.writeFileAt("odd1/y.d", "x");
     assert(listRepository(buildPath(tmp.dir, "odd[1]")).value.files == ["x.d"]);
     assert(escapeGlob("a*b[c]!") == `a\*b\[c\]\!`);
+
+    // A directory two levels down: its base has a separator inside.
+    assert(listRepository(buildPath(tmp.dir, "sub", "deep")).value.files == ["more.md"]);
+}
+
+/// A listing is byte-exact (invariant 5): a sibling whose name equals the
+/// directory's only under NFC, `Keep` (KELVIN SIGN) beside `Keep`, or
+/// an NFD `café` beside an NFC one, is not listed with it.
+@("fileset.listing.listRepository.byteExact")
+@system unittest
+{
+    import std.file : exists;
+    import std.path : buildPath;
+
+    import sparkles.test_runner.skip : skipTest;
+
+    auto tmp = workTreeFixture();
+    tmp.writeFileAt("Keep/a", "x");
+    tmp.writeFileAt("Keep/x", "x");
+    tmp.writeFileAt("café/n", "x");
+    tmp.writeFileAt("café/d", "x");
+    // A filesystem that folds case or normalization (macOS's APFS) holds
+    // each pair as one directory, so there is nothing to tell apart.
+    if (exists(buildPath(tmp.dir, "Keep", "x")) || exists(buildPath(tmp.dir, "café", "d")))
+        skipTest("the filesystem folds case or normalization");
+    assert(listRepository(buildPath(tmp.dir, "Keep")).value.files == ["a"]);
+    assert(listRepository(buildPath(tmp.dir, "Keep")).value.files == ["x"]);
+    assert(listRepository(buildPath(tmp.dir, "café")).value.files == ["n"]);
+    assert(listRepository(buildPath(tmp.dir, "café")).value.files == ["d"]);
 }
 
 /// The directories a listing found nothing selected in, relative to the
