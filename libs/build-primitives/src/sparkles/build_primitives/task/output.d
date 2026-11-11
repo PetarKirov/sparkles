@@ -57,23 +57,29 @@ struct OutputSpool
             return;
         if (!spilled_ && spillPath_.length && startSpill())
         {
-            foreach (ref line; memory)
+            foreach (ref line; memory[head .. $])
                 writeSpilled(line.stream, line.text, line.unterminated);
         }
         // Keep the newest lines within the budget (always the last one).
-        size_t drop;
-        while (memory.length - drop > 1 && memoryBytes > memoryBudget)
-            memoryBytes -= charge(memory[drop++].text);
+        const before = head;
+        while (memory.length - head > 1 && memoryBytes > memoryBudget)
+            memoryBytes -= charge(memory[head++].text);
         if (!spilled_)
-            droppedLines_ += drop;
-        memory = memory[drop .. $].dup;
+            droppedLines_ += head - before;
+        // Copy the tail down only once the dropped lines outnumber it, so a
+        // line is copied a bounded number of times, not once per append.
+        if (head > memory.length - head)
+        {
+            memory = memory[head .. $].dup;
+            head = 0;
+        }
     }
 
     /// Lines appended so far.
     size_t lines() const @safe pure nothrow @nogc => lineCount;
 
     /// The in-memory lines: everything when not spilled, else the tail.
-    const(SpooledLine)[] tail() const return @safe pure nothrow @nogc => memory;
+    const(SpooledLine)[] tail() const return @safe pure nothrow @nogc => memory[head .. $];
 
     /// Whether the transcript continues in the spill file.
     bool spilled() const @safe pure nothrow @nogc => spilled_;
@@ -98,7 +104,7 @@ struct OutputSpool
     {
         if (!spilled_)
         {
-            foreach (ref line; memory)
+            foreach (ref line; memory[head .. $])
                 sink(line);
             return;
         }
@@ -117,7 +123,8 @@ struct OutputSpool
 private:
     size_t memoryBudget;
     string spillPath_;
-    SpooledLine[] memory;
+    SpooledLine[] memory; // the tail is `memory[head .. $]`
+    size_t head;
     size_t memoryBytes;
     size_t lineCount;
     size_t droppedLines_;
@@ -274,4 +281,26 @@ unittest
     assert(spool.lines == 10_000);
     assert(spool.tail.length == 100, "100 bytes hold 100 empty lines");
     assert(spool.droppedLines == 10_000 - 100);
+}
+
+@("build_primitives.task.output.OutputSpool.appendPastTheBudgetIsAmortizedConstant")
+@system
+unittest
+{
+    import core.memory : GC;
+
+    // Once over budget, every append drops the oldest line. That must not
+    // copy the whole tail each time: 4096 appends over a 4096-line tail
+    // copied 512 MiB when it did.
+    enum line = "012345678901234"; // 15 bytes and a terminator
+    auto spool = OutputSpool(64 * 1024, null);
+    foreach (_; 0 .. 4096)
+        spool.append(OutputStream.stdout, line);
+    assert(spool.droppedLines == 0);
+    const before = GC.allocatedInCurrentThread;
+    foreach (_; 0 .. 4096)
+        spool.append(OutputStream.stdout, line);
+    const allocated = GC.allocatedInCurrentThread - before;
+    assert(spool.droppedLines == 4096 && spool.tail.length == 4096);
+    assert(allocated < 4 * 1024 * 1024, "past the budget, each append copied the tail");
 }
