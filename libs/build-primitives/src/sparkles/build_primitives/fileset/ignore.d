@@ -121,6 +121,14 @@ in (into.length >= ignoreLineRoom(line.length), "the output buffer is too small"
             into[n++] = line[++i];
             continue;
         }
+        if (c == '[')
+        {
+            // A bracket expression git cannot close matches nothing, so the
+            // line is no rule at all.
+            if (!readBracket(line, i, into, n))
+                return IgnoreLine(IgnoreLineKind.blank);
+            continue;
+        }
         // Braces are literal to git; so is a `!` left first after negation.
         if (c == '{' || c == '}' || (i == 0 && c == '!'))
             into[n++] = '\\';
@@ -128,6 +136,108 @@ in (into.length >= ignoreLineRoom(line.length), "the output buffer is too small"
     }
     result.length = n;
     return result;
+}
+
+/*
+Writes the bracket expression at `line[i]`, a `[`, in the syntax of
+`sparkles.fuzzy.glob`, and leaves `i` on its closing `]`. Returns `false`
+when git's `wildmatch` would make the whole pattern match nothing: the
+expression is not closed, or it names a class git does not know.
+
+The two syntaxes differ in three ways. Git takes a `]` that comes first,
+after any negation, as a literal and not as the end of the expression. Git
+also reads `^` as negation where the glob engine reads only `!`. And git
+has POSIX classes, `[:digit:]` and the like, which are expanded here into
+the ASCII ranges they name. Escapes and ranges mean the same in both.
+*/
+private bool readBracket(scope const(char)[] line, ref size_t i, scope char[] into, ref size_t n)
+    @safe pure nothrow @nogc
+{
+    size_t j = i + 1;
+    into[n++] = '[';
+    if (j < line.length && (line[j] == '!' || line[j] == '^'))
+    {
+        into[n++] = '!';
+        ++j;
+    }
+    bool first = true;
+    // A literal that would read as negation must not come first.
+    void put(char c)
+    {
+        if (first && (c == '!' || c == '^'))
+            into[n++] = '\\';
+        into[n++] = c;
+        first = false;
+    }
+    while (j < line.length)
+    {
+        const c = line[j];
+        if (c == ']' && !first)
+        {
+            into[n++] = ']';
+            i = j;
+            return true;
+        }
+        if (c == '[' && j + 1 < line.length && line[j + 1] == ':')
+        {
+            size_t k = j + 2;
+            while (k + 1 < line.length && !(line[k] == ':' && line[k + 1] == ']'))
+                ++k;
+            if (k + 1 < line.length)
+            {
+                const ranges = posixClass(line[j + 2 .. k]);
+                if (ranges is null)
+                    return false;
+                foreach (r; ranges)
+                    put(r);
+                j = k + 2;
+                continue;
+            }
+        }
+        if (c == '\\')
+        {
+            if (j + 1 == line.length)
+                return false;
+            if (first)
+                first = false;
+            into[n++] = '\\';
+            into[n++] = line[j + 1];
+            j += 2;
+            continue;
+        }
+        if (c == ']')
+        {
+            into[n++] = '\\';
+            into[n++] = ']';
+            first = false;
+            ++j;
+            continue;
+        }
+        put(c);
+        ++j;
+    }
+    return false;
+}
+
+// The ASCII ranges of a POSIX class git's `wildmatch` knows, or `null`.
+private string posixClass(scope const(char)[] name) @safe pure nothrow @nogc
+{
+    switch (name)
+    {
+        case "alnum": return "0-9A-Za-z";
+        case "alpha": return "A-Za-z";
+        case "blank": return " \t";
+        case "cntrl": return "\x01-\x1f\x7f";
+        case "digit": return "0-9";
+        case "graph": return "!-~";
+        case "lower": return "a-z";
+        case "print": return " -~";
+        case "punct": return "!-/:-@[-`{-~";
+        case "space": return "\t-\r ";
+        case "upper": return "A-Z";
+        case "xdigit": return "0-9A-Fa-f";
+        default: return null;
+    }
 }
 
 ///
@@ -155,6 +265,14 @@ in (into.length >= ignoreLineRoom(line.length), "the output buffer is too small"
     assert(reads("*.{c,h}", `*.\{c,h\}`), "git has no brace alternatives");
     assert(reads(`odd\`, `odd\`));
     assert(reads("!!x", `\!x`, true), "one `!` negates; the next is literal");
+    // Bracket expressions, as git's `wildmatch` reads them.
+    assert(reads("[[:digit:]].o", "[0-9].o"), "a POSIX class is expanded");
+    assert(reads("[[:graph:]]", `[\!-~]`), "a leading `!` from a class is not negation");
+    assert(reads("[]a].o", `[\]a].o`), "a `]` that comes first is literal");
+    assert(reads("[!]a]", `[!\]a]`));
+    assert(reads("[^a]", "[!a]"), "`^` negates as `!` does");
+    assert(reads("[a-c{]", "[a-c{]"), "a brace in a class is literal already");
+    assert(blank("[abc") && blank("x[[:nope:]]"), "an expression git cannot read matches nothing");
 }
 
 // ---------------------------------------------------------------- the arena

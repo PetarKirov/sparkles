@@ -325,8 +325,10 @@ struct Filesets
 {
     auto sets = Filesets(CasePolicy.sensitive);
     assert(sets.glob("a/[b").error.code == FilesetErrorCode.malformedPattern);
-    assert(sets.ignored("ok\n[bad\n").error.code == FilesetErrorCode.malformedPattern);
+    assert(sets.ignored("ok\n[z-a]\n").error.code == FilesetErrorCode.malformedPattern);
     assert(sets.rules.length == 0, "a failed leaf leaves no rule behind");
+    // An unclosed `[` is no error to git: the line matches nothing.
+    assert(!sets.ignored("ok\n[bad\n").hasError);
 }
 
 /**
@@ -731,6 +733,14 @@ struct FilesetEvaluator
     assert(ev.contains(sets, "keep ") && !ev.contains(sets, "keep"));
     assert(ev.contains(sets, "spaced"));
     assert(ev.contains(sets, "tab\t") && !ev.contains(sets, "tab"));
+
+    // Bracket expressions as `git check-ignore` reads them.
+    const cls = sets.ignored("[[:digit:]].o\n[]a].b\n[^x].c\n[[:graph:]].d\n").value;
+    auto classes = FilesetEvaluator(sets, cls);
+    assert(classes.contains(sets, "1.o") && !classes.contains(sets, "a.o"));
+    assert(classes.contains(sets, "a.b") && classes.contains(sets, "].b") && !classes.contains(sets, "c.b"));
+    assert(classes.contains(sets, "y.c") && !classes.contains(sets, "x.c"));
+    assert(classes.contains(sets, "!.d") && classes.contains(sets, "z.d") && !classes.contains(sets, " .d"));
 }
 
 private Tri combine(in FilesetNode n, Tri a, Tri b) @safe pure nothrow @nogc
