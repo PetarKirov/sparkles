@@ -83,11 +83,18 @@ unittest
 
 // A worker that is asked to exit and aborts on the way out: its tests pass,
 // and the run must fail all the same (TRP22).
+// With `late`, it first takes longer than a runner might wait.
 shared static ~this()
 {
     import core.stdc.stdlib : abort;
+    import core.thread : Thread;
+    import core.time : seconds;
     import std.process : environment;
 
-    if (environment.get("FIXTURE_ABORT_AT_EXIT"))
+    if (const how = environment.get("FIXTURE_ABORT_AT_EXIT"))
+    {
+        if (how == "late")
+            Thread.sleep(6.seconds);
         abort();
+    }
 }

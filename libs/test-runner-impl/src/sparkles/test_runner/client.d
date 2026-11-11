@@ -193,14 +193,11 @@ final class Worker
         {
             // Already gone: its status is all that is left.
         }
+        // However long it takes: a worker that is still exiting may yet fail
+        // the run, as a module destructor that aborts late does (TRP22).
         synchronized (mutex)
-        {
-            import core.time : seconds;
-
             while (!session.over)
-                if (!changed.wait(5.seconds))
-                    break;
-        }
+                changed.wait();
         dead = true;
         RunnerEvent[] batch;
         synchronized (mutex)
@@ -712,6 +709,29 @@ unittest
         auto clean = startScripted(scriptedWorker("cleanExit", "read -r command\nexit 0"), strays);
         clean.exit(coverageMerge: false);
         assert(clean.dead);
+    }
+}
+
+@("client.exit.aLateAbortFailsTheRun")
+@system
+unittest
+{
+    version (Posix)
+    {
+        import std.algorithm.searching : canFind;
+
+        // Asked to exit, the worker takes six seconds and then aborts: the
+        // runner waits for that end rather than giving up and passing.
+        string strays;
+        auto w = startScripted(scriptedWorker("lateAbortOnExit",
+            "read -r command\nsleep 6\nkill -ABRT $$"), strays);
+        try
+        {
+            w.exit(coverageMerge: false);
+            assert(0, "an abort while exiting is reported, however late");
+        }
+        catch (WorkerDied e)
+            assert(e.outsideCommand && e.msg.canFind("signal 6 (SIGABRT)"), e.msg);
     }
 }
 
