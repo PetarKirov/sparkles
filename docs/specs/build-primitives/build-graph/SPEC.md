@@ -176,8 +176,10 @@ of every variant key.
   computes itself.
 
 A dependency missing from the lockfiles is a resolution error, and so is a
-locked source that the version range or repository pin of any package depending
-on it does not admit. The resolver never resolves a version against a registry.
+locked source that a version range or repository pin naming it does not
+admit: every one, from every package depending on it, at the top level or in
+any configuration, whichever configuration the request builds. The resolver
+never resolves a version against a registry.
 
 **BGR5: Library resolution.** `libs` entries **must** resolve through
 `pkg-config` at planning time, with dub's rules: the `lib<name>` fallback, the

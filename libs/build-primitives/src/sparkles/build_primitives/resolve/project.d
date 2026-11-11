@@ -420,26 +420,27 @@ private void collectDependencies(Project project, Package p) @safe
     project.byName[p.name] = p;
     foreach (name; p.allDependencyNames)
     {
-        DependencySpec spec;
+        // Every range `p` gives `name`: the top level's and each
+        // configuration's.
+        DependencySpec[] specs;
         foreach (ref c; [p.settings] ~ configurationSettings(p))
             if (auto s = name in c.dependencies)
-            {
-                spec = *s;
-                break;
-            }
-        // dub uses an optional dependency only when it is selected; the
-        // locks select none, so only an optional-by-default one is used.
-        if (spec.optional && !spec.default_)
+                // dub uses an optional dependency only when it is selected;
+                // the locks select none, so only an optional-by-default one
+                // is used.
+                if (!s.optional || s.default_)
+                    specs ~= *s;
+        if (specs.length == 0)
             continue;
-        // Every dependent's range must admit the locked version, not only
-        // the first one's, which loaded the package.
-        if (name in project.byName)
-        {
+        // Every range must admit the locked version: each of this
+        // dependent's, and each later dependent's, not only the one that
+        // loaded the package.
+        foreach (ref spec; specs)
             if (auto source = lockedSource(project, p, name, spec))
                 checkLocked(p, name, spec, *source);
+        if (name in project.byName)
             continue;
-        }
-        auto dependency = loadDependency(project, p, name, spec);
+        auto dependency = loadDependency(project, p, name, specs[0]);
         if (dependency.name !in project.byName)
             collectDependencies(project, dependency);
     }

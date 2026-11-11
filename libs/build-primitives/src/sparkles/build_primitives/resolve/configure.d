@@ -1200,6 +1200,22 @@ importPaths "$LIB_PACKAGE_DIR/extra"
     driver.files["/store/b/dub.sdl"] = "name \"b\"\nversion \"1.0.0\"\ndependency \"a\" version=\">=1.0.0\"\n";
     auto ok = resolve(request, driver);
     assert(ok.hasValue, ok.hasError ? ok.error.message : null);
+
+    // One dependent naming `a` twice: each range is checked, the
+    // configuration's as well as the top level's, whichever configuration
+    // the request builds.
+    driver.files["/r/dub.sdl"] = "name \"r\"\ndependency \"a\" version=\"~>1.0\"\n"
+        ~ "configuration \"lib\" {\n    targetType \"library\"\n}\n"
+        ~ "configuration \"x\" {\n    targetType \"library\"\n    dependency \"a\" version=\">=2.0.0\"\n}\n";
+    request.registry.remove("b");
+    foreach (configuration; ["x", "lib"])
+    {
+        request.configuration = configuration;
+        auto twice = resolve(request, driver);
+        assert(twice.hasError, "configuration `x` asks for a version the lock does not pin");
+        assert(twice.error.message.canFind("/r/dub.sdl: `a` asks for >=2.0.0; the locks pin 1.0.0"),
+            twice.error.message);
+    }
 }
 
 @("build_primitives.resolve.configure.resolve.hiddenEdgesAndEnvironment")
