@@ -175,8 +175,9 @@ of every variant key.
   flat SHA-256, and a git checkout against its NAR hash, which the build graph
   computes itself.
 
-A dependency missing from the lockfiles is a resolution error. The resolver
-never resolves a version against a registry.
+A dependency missing from the lockfiles is a resolution error, and so is a
+locked source that the version range or repository pin of any package depending
+on it does not admit. The resolver never resolves a version against a registry.
 
 **BGR5: Library resolution.** `libs` entries **must** resolve through
 `pkg-config` at planning time, with dub's rules: the `lib<name>` fallback, the
