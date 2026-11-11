@@ -93,6 +93,9 @@ struct NixParts
 
         string globExpr(string text, Span span)
         {
+            // A name at any depth needs no glob: Nix's own `fileFilter`.
+            if (const f = nameFilterOf(text, o.expand))
+                return f;
             final switch (o.nixGlobs)
             {
                 case NixGlobs.shim:
@@ -168,6 +171,85 @@ struct NixParts
         p.ok = true;
         return p;
     }
+}
+
+/**
+`glob` (anchored, as a query's are) as `fs.fileFilter`, when it is a name
+at any depth beneath the root or beneath a literal directory (a `**`
+segment, then the name): `*.d` is `file.hasExt "d"`, `*.{md,txt}` is
+`builtins.any file.hasExt [ "md" "txt" ]`, a literal name is `file.name ==`
+and any other a match on the name. Null when it is not one.
+
+A glob also takes in the files of a directory it names, and `fileFilter`
+sees only files, so the two agree only on a tree where no directory matches
+the name. `expand` lists a glob's matches in the open directory; the rewrite
+is made when it shows no such directory there (and the directory a
+`fileFilter` walks exists). Without it, the glob stays a glob.
+*/
+string nameFilterOf(string glob, scope string[] delegate(string) @safe expand) @safe
+{
+    import std.algorithm.searching : canFind, startsWith;
+    import std.string : indexOf;
+
+    if (expand is null)
+        return null;
+    const g = parseGlob(glob);
+    if (g.dirOnly)
+        return null;
+    string dir, name;
+    if (g.body.startsWith("**/"))
+        name = g.body[3 .. $];
+    else
+    {
+        const cut = g.body.indexOf("/**/");
+        if (cut <= 0 || !isLiteral(g.body[0 .. cut]))
+            return null;
+        dir = g.body[0 .. cut];
+        name = g.body[cut + 4 .. $];
+    }
+    if (name.length == 0 || name.canFind('/') || name.canFind("**"))
+        return null;
+
+    string[] exts, tests;
+    foreach (alt; expandBraces(name))
+    {
+        if (alt.length > 2 && alt.startsWith("*.") && isLiteral(alt[2 .. $]))
+            exts ~= alt[2 .. $];
+        else
+            tests ~= isLiteral(alt) ? "file.name == " ~ nixString(alt) : nameMatch(alt, false);
+    }
+    string[] quoted;
+    foreach (e; exts)
+        quoted ~= nixString(e);
+    if (exts.length == 1)
+        tests = "file.hasExt " ~ quoted[0] ~ tests;
+    else if (exts.length > 1)
+        tests = "builtins.any file.hasExt [ " ~ quoted.join(" ") ~ " ]" ~ tests;
+
+    // Exact here only: no directory matches, and the one walked exists.
+    if (expand(glob ~ "/").length || (dir.length && expand(glob).length == 0))
+        return null;
+    const pred = tests.length == 1 ? tests[0] : "(" ~ tests.join(" || ") ~ ")";
+    return "(fs.fileFilter (file: " ~ pred ~ ") " ~ (dir.length ? nixPath(dir) : "root") ~ ")";
+}
+
+///
+@("fileset.emit.nix.nameFilterOf")
+@safe unittest
+{
+    string[] delegate(string) @safe none = (string g) => g == "/src/**/*.d" ? ["src/a.d"] : null;
+    assert(nameFilterOf("/**/*.d", none) == `(fs.fileFilter (file: file.hasExt "d") root)`);
+    assert(nameFilterOf("/**/*.{md,txt,tar.gz,json}", none)
+        == `(fs.fileFilter (file: builtins.any file.hasExt [ "md" "txt" "tar.gz" "json" ]) root)`);
+    assert(nameFilterOf("/src/**/*.d", none) == `(fs.fileFilter (file: file.hasExt "d") (root + "/src"))`);
+    assert(nameFilterOf("/**/{*.d,dub.sdl,*_test.d}", none) == `(fs.fileFilter (file: (file.hasExt "d" || `
+        ~ `file.name == "dub.sdl" || builtins.match "[^/]*_test\\.d" file.name != null)) root)`);
+    // Not a name at any depth; a directory that does not exist; no tree to ask.
+    assert(nameFilterOf("/*.d", none) is null && nameFilterOf("/**/a/*.d", none) is null);
+    assert(nameFilterOf("/s*/**/*.d", none) is null && nameFilterOf("/docs/**/*.md", none) is null);
+    assert(nameFilterOf("/**/*.d", null) is null);
+    // A directory named like the files: the glob takes in its files, so it stays one.
+    assert(nameFilterOf("/**/*.d", (string g) => g == "/**/*.d/" ? ["src/x.d/inner.txt"] : null) is null);
 }
 
 /// The `glob` function the output defines (`FXE3`'s shim): the files beneath
@@ -258,11 +340,25 @@ private string indentNix(string s) @safe pure
     return "  " ~ s.replace("\n", "\n  ");
 }
 
-/// A path beneath `root`: `root + "/a/b"`, which holds any characters.
 /// `file.name` tested against the glob `pattern`, a name with no `/` (`FXL4`).
 string nameMatch(string pattern, bool negated) @safe pure
-    => "builtins.match " ~ nixString(globRegex(pattern)) ~ " file.name " ~ (negated ? "==" : "!=") ~ " null";
+{
+    string[] alts;
+    foreach (one; expandBraces(pattern))
+        alts ~= segmentRegex(one);
+    const re = alts.length == 1 ? alts[0] : "(" ~ alts.join("|") ~ ")";
+    return "builtins.match " ~ nixString(re) ~ " file.name " ~ (negated ? "==" : "!=") ~ " null";
+}
 
+///
+@("fileset.emit.nix.nameMatch")
+@safe pure unittest
+{
+    assert(nameMatch("*_test.d", false) == `builtins.match "[^/]*_test\\.d" file.name != null`);
+    assert(nameMatch("a{b,c}", true) == `builtins.match "(ab|ac)" file.name == null`);
+}
+
+/// A path beneath `root`: `root + "/a/b"`, which holds any characters.
 string nixPath(scope const(char)[] rel) @safe pure => "(root + " ~ nixString("/" ~ rel) ~ ")";
 
 /**

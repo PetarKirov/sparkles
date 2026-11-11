@@ -203,3 +203,20 @@ escapes each quoted piece, so the library still sees `.gitignore` patterns.
 **Rejected.** Root-relative paths with `.gitignore`'s depth rule kept for a
 slash-free glob, which leaves `README.md` meaning two things; a bare keyword
 as an error, which forbids a file named `all`.
+
+## X17: A name at any depth is `fileFilter` in Nix
+
+**Question.** `**/*.md` went through the `glob` shim, a `readDir` walk in the
+output, though `lib.fileset.fileFilter` with `file.hasExt` says the same in
+Nix's own terms and is what a person writes.
+
+**Choice.** A glob of a name at any depth, beneath the root or a literal
+directory, is a `fileFilter` (`FXE3`), when no directory in the open
+directory matches it. That condition is the cost: a directory named `x.d`
+puts its files in `**/*.d`, and `fileFilter` sees only files. It holds in
+almost every tree, and the export is made from the open one already, as
+`gitignored`'s rewrite is.
+
+**Rejected.** The rewrite always, which is wrong on such a tree (the
+oracle's `src/x.d/` is one); the shim always, which writes a walk where one
+call does.

@@ -419,6 +419,16 @@ by the _glob mode_:
 | `expand`         | `lib.fileset.unions` of the paths it matches in the open directory now; the header names it as a snapshot                              |
 | `refuse`         | `fs.maybeMissing` of the path when the glob is a literal anchored path; otherwise a refusal (a name pattern also selects directories') |
 
+Before its mode, a glob that names files at any depth, `**/` then a name with
+no `/` (`**/*.md`, `**/*.{md,json}`, `**/*_test.d`), or the same beneath an
+anchored literal directory (`src/**/*.d`), **must** be emitted as
+`lib.fileset.fileFilter` over the root or that directory: `*.ext` as
+`file.hasExt`, several as `builtins.any file.hasExt [ … ]`, a literal name as
+`file.name ==` and any other name as `builtins.match` on it. A glob also
+selects the files of a directory it matches, which `fileFilter` never sees,
+so the rewrite is made only when no directory in the open directory matches
+the glob, and the directory filtered exists there (decision X17).
+
 `exec` **must** be refused in every mode, because evaluation cannot see the
 executable bit. `gitignored` **must** be emitted as the root minus
 `gitTracked()` only when the open directory is a git work tree with no untracked,
