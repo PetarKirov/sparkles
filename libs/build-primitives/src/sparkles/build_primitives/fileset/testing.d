@@ -2350,6 +2350,92 @@ version (Posix)
     }
 }
 
+// ------------------------------------------- .gitignore lines against git
+
+version (Posix)
+{
+    /// A work tree for the git oracle: `.gitignore` files and their text,
+    /// and the other files, each holding `x`.
+    struct GitIgnoreCase
+    {
+        string name;          ///
+        string[2][] ignores;  /// `[path, text]`
+        string[] files;       ///
+    }
+
+    /**
+    Lines whose reading once differed from git's: a trailing `/**`, which
+    matches what is inside a directory and not the directory; a bracket
+    expression holding `/`, literally or through a POSIX class, which git
+    counts as anchoring and never matches against a `/`; `\/`; and a byte
+    order mark before the first rule.
+    */
+    static immutable GitIgnoreCase[] gitIgnoreCases = [
+        GitIgnoreCase("trailingGlobstar", [[".gitignore", "foo/**\n!foo/keep.txt\n"]],
+            ["foo/x.txt", "foo/sub/y", "foo/keep.txt", "a"]),
+        GitIgnoreCase("trailingGlobstarDir", [[".gitignore", "foo/**/\n/bar/**\n!bar/z/k\n"]],
+            ["foo/x.txt", "foo/sub/y", "foo/sub/deep/z", "a", "bar/a", "bar/z/k", "bar/z/j"]),
+        GitIgnoreCase("trailingGlobstarNested", [["d/.gitignore", "e/**\n!e/k\n**\n!**/\n!*.keep\n"]],
+            ["d/e/a", "d/e/k", "d/x", "d/y.keep", "e/a"]),
+        GitIgnoreCase("punctClass", [[".gitignore", "[[:punct:]]1\n"]],
+            ["{1", "!1", "]1", "91", "[1", "@1", "_1", "a1", "~1", "d/;1", "d/b1", "d/-1"]),
+        GitIgnoreCase("slashInRange", [[".gitignore", "[!-/]1\n[\\[-`]2\n[{-~]3\n[:-@]4\n[x[-`]5\n"]],
+            ["a4", ";4", "a3", "a1", "x5", "#1", "a2", "|3", "_2", "d/a1", "d/x5", "d/a2"]),
+        GitIgnoreCase("slashInBracket", [[".gitignore", "x[a/b]y\nq[!a]r\n[/]z\n[!/]w\n"],
+                ["d/.gitignore", "[!-/]1\n"]],
+            ["xay", "xby", "d/xay", "qbr", "q/r", "az", "aw", "d/aw", "d/a1", "d/e/a1"]),
+        GitIgnoreCase("escapedSlash", [[".gitignore", "d\\/e\nf\\/\n"]],
+            ["d/e", "x/d/e", "d/f", "f/g"]),
+        GitIgnoreCase("classes", [[".gitignore", "[[:cntrl:]]c\n[[:print:]]p\n[[:space:]]s\n"]],
+            ["\ts", "\tp", " p", "c", "s", "ac", "a\x01c"]),
+        GitIgnoreCase("byteOrderMark", [[".gitignore", "\xEF\xBB\xBF*.o\nb.x\n"],
+                ["d/.gitignore", "\xEF\xBB\xBF/e\n"]],
+            ["a.o", "b.x", "c", "d/e.o", "d/e", "d/f"]),
+    ];
+
+    // The files `git ls-files --others --exclude-standard` lists, sorted.
+    private string[] gitListed(ref TmpGitRepo repo) @safe
+    {
+        import std.algorithm.iteration : filter, splitter;
+        import std.algorithm.sorting : sort;
+        import std.array : array;
+
+        const listed = gitOracle(repo, ["ls-files", "-z", "--others", "--exclude-standard"]);
+        assert(listed.status == 0, listed.output);
+        return listed.output.splitter('\0').filter!(p => p.length).array.sort.release;
+    }
+
+    /// FSI4's detection on each line `gitIgnoreCases` reads: the work tree a
+    /// listing finds is the one git lists.
+    @("fileset.listing.FSI4.linesMatchGit")
+    @system unittest
+    {
+        import std.array : join;
+
+        import sparkles.build_primitives.fileset.listing : listRepository;
+        import sparkles.test_runner.skip : skipTest;
+
+        if (!gitAvailable)
+            return skipTest("git is not on PATH");
+        string[] failures;
+        foreach (c; gitIgnoreCases)
+        {
+            auto repo = TmpGitRepo.create("fileset-" ~ c.name);
+            foreach (ignore; c.ignores)
+                repo.writeFile(ignore[0], ignore[1]);
+            foreach (f; c.files)
+                repo.writeFile(f, "x");
+            const want = gitListed(repo);
+            auto got = listRepository(repo.dir);
+            assert(!got.hasError, got.hasError ? got.error : "");
+            if (got.value.files != want)
+                failures ~= c.name ~ ":\n  listing: " ~ got.value.files.to!string
+                    ~ "\n  git:     " ~ want.to!string;
+        }
+        assert(failures.length == 0, failures.join("\n"));
+    }
+}
+
 // ------------------------------------------------------------------ M5: schemes
 
 /// A stream recording each directory's entries as `name` (a file),

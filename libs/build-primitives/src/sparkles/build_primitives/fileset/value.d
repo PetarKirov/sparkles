@@ -210,13 +210,14 @@ struct Filesets
     FilesetExpected!Fileset ignored(string source) @safe nothrow @nogc
     {
         import sparkles.build_primitives.fileset.ignore : IgnoreLineKind, ignoreLineRoom,
-            readIgnoreLine;
+            readIgnoreLine, skipUtf8Bom;
 
         const first = rules.length;
         auto text = ownText(ignoreLineRoom(source.length));
         size_t used;
         uint line;
-        size_t start;
+        // Git skips a leading byte order mark.
+        size_t start = source.length - skipUtf8Bom(source).length;
         foreach (i; 0 .. source.length + 1)
         {
             if (i < source.length && source[i] != '\n')
