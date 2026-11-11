@@ -345,7 +345,8 @@ standard input between commands, a worker **must** exit with status 0. With
 that its counts add to the listing files already written. On end of file
 while a command runs, it **must** finish the command first. When a worker
 asked to exit ends any other way, the runner **must** fail the run with the
-exit status, signal or exception code.
+exit status, signal or exception code. The runner **must** wait for that end
+however long it takes: it sets no limit of its own.
 
 _Rationale:_ every test may have passed and still the process aborted on the
 way out, in a module destructor, say, and a run that hides that passes over
