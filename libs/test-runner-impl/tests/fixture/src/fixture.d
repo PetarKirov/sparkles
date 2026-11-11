@@ -39,3 +39,14 @@ unittest
 unittest
 {
 }
+
+// A worker that is asked to exit and aborts on the way out: its tests pass,
+// and the run must fail all the same (TRP22).
+shared static ~this()
+{
+    import core.stdc.stdlib : abort;
+    import std.process : environment;
+
+    if (environment.get("FIXTURE_ABORT_AT_EXIT"))
+        abort();
+}

@@ -341,7 +341,13 @@ events the run counts. `--list-metrics` and the bench header render them.
 standard input between commands, a worker **must** exit with status 0. With
 `coverageMerge` true it **must** first set druntime's coverage merge mode, so
 that its counts add to the listing files already written. On end of file
-while a command runs, it **must** finish the command first.
+while a command runs, it **must** finish the command first. When a worker
+asked to exit ends any other way, the runner **must** fail the run with the
+exit status, signal or exception code.
+
+_Rationale:_ every test may have passed and still the process aborted on the
+way out, in a module destructor, say, and a run that hides that passes over
+a defect (TRD10).
 
 The runner sorts, groups, filters by dataset, lists datasets and label keys,
 renders tables, and writes `--bench-json` from these frames alone.
@@ -380,7 +386,8 @@ and the worker's unattributed output.
 
 **TRP28: Reading a dead worker.** The runner **must** stop reading a dead
 worker's output at end of file, or once the worker has exited and no byte has
-arrived for one second, whichever comes first.
+arrived for one second, whichever comes first. Having stopped, it **must**
+report no more of that output and **must** close its end of the pipe.
 
 _Rationale:_ a child process the test started may hold the pipe open after
 the worker has died.
@@ -638,6 +645,8 @@ Each scenario names the requirements it falsifies and its oracle.
 | A test writes to `stdout`, `stderr`, `printf` and `write(2, …)`: all four appear in that test's output, in order                                                                                    | TRP6, TRP23, TRP24 | The test's reported output against the order it wrote                                |
 | A test prints a line, then calls `abort()`: it fails with the signal and the line; the tests after it run and pass                                                                                  | TRP25, TRP26       | The report against the listing                                                       |
 | A test starts a child that keeps descriptor 2 open, then crashes: the run ends within a few seconds                                                                                                 | TRP28              | Wall time and exit status                                                            |
+| A worker exits on its own after its last test, before `exit`: the run fails with its status and its unattributed output                                                                             | TRP27              | The runner's output and exit status                                                  |
+| Every test passes, then the worker aborts in a module destructor once asked to exit: the run fails with the signal                                                                                  | TRP22              | The runner's output and exit status                                                  |
 | Every `-t` from 1 to 8 runs the same tests with the same results                                                                                                                                    | TRS1, TRS2, TRP17  | The per-test statuses, compared across `-t`                                          |
 | A `@serial` test asserts no other test is running                                                                                                                                                   | TRS2               | A process-shared count of running tests, in a fixture directory                      |
 | `--bench --group-by=list`, `--list-datasets` and `--datasets=X` give the output the in-process runner gave for the same tests                                                                       | TRP18, TRS3        | Outputs recorded from the in-process runner on the same sources                      |
@@ -659,19 +668,19 @@ delivered P1. A requirement is `partial` where its scenario of §10 has been
 run by hand but is not yet an automated test, or where a platform is
 unverified.
 
-| ID         | Status     | Evidence                                                                                                                                          |
-| ---------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| TRP1–TRP3  | partial    | A scan of every `dub.sdl` and of the harness's imports finds no edge; not yet a `ci` check                                                        |
-| TRP4       | verified   | `dub test :test-harness` runs its 154 tests through `sparkles.test_runner.self_host`                                                              |
-| TRP5       | partial    | `sparkles.test_runner.entry.installHarnessHandlers`; the macOS handler unverified                                                                 |
-| TRP6–TRP28 | partial    | `sparkles.test_runner.session` transcript tests; `sparkles.test_runner.scenarios_test` (mismatch, output, crash); TRP16's `usage` is not sent yet |
-| TRL1–TRL5  | partial    | `sparkles.test_runner.scenarios_test` (a bad `SPARKLES_TEST_RUNNER`, the launcher)                                                                |
-| TRS1–TRS4  | partial    | `sparkles.test_runner.pool.startTestWorkers`; `-t 1` and `-t N` legs of `ci --test`                                                               |
-| TRS5       | partial    | `sparkles.test_runner.pool.retire`; `ci --test` coverage listings; the covered-line comparison not run                                            |
-| TRX1–TRX4  | partial    | `sparkles.test_runner.driver.DriverOptions`; the `PATH`-without-dub scenario not run                                                              |
-| TRF1–TRF4  | partial    | `sparkles.test_runner.scenarios_test` (`--no-runner` filters, `--bench` refused)                                                                  |
-| TRW1–TRW4  | unverified | The Windows code paths type-check for `x86_64-windows-msvc`; the Windows leg has not run them                                                     |
-| TRM1–TRM3  | partial    | `sparkles.test_runner.session.WorkerSession`; its transcript tests; the import scan not automated                                                 |
-| TRM4       | partial    | `sparkles.test_runner.plan.selectTests`, `sparkles.test_runner.options.parseRunnerOptions`; no ci client yet                                      |
-| TRM5–TRM8  | unverified | The ci client is the task DAG's M7                                                                                                                |
-| TRN1–TRN3  | partial    | `nix/packages/test-runner.nix` builds the bootstrap; no revision is pinned yet                                                                    |
+| ID         | Status     | Evidence                                                                                                                                                                                                                                    |
+| ---------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| TRP1–TRP3  | partial    | A scan of every `dub.sdl` and of the harness's imports finds no edge; not yet a `ci` check                                                                                                                                                  |
+| TRP4       | verified   | `dub test :test-harness` runs its 154 tests through `sparkles.test_runner.self_host`                                                                                                                                                        |
+| TRP5       | partial    | `sparkles.test_runner.entry.installHarnessHandlers`; the macOS handler unverified                                                                                                                                                           |
+| TRP6–TRP28 | partial    | `sparkles.test_runner.session` transcript tests; `sparkles.test_runner.client` scripted-worker tests (TRP22, TRP27, TRP28); `sparkles.test_runner.scenarios_test` (mismatch, output, crash, abort on exit); TRP16's `usage` is not sent yet |
+| TRL1–TRL5  | partial    | `sparkles.test_runner.scenarios_test` (a bad `SPARKLES_TEST_RUNNER`, the launcher)                                                                                                                                                          |
+| TRS1–TRS4  | partial    | `sparkles.test_runner.pool.startTestWorkers`; `-t 1` and `-t N` legs of `ci --test`                                                                                                                                                         |
+| TRS5       | partial    | `sparkles.test_runner.pool.retire`; `ci --test` coverage listings; the covered-line comparison not run                                                                                                                                      |
+| TRX1–TRX4  | partial    | `sparkles.test_runner.driver.DriverOptions`; the `PATH`-without-dub scenario not run                                                                                                                                                        |
+| TRF1–TRF4  | partial    | `sparkles.test_runner.scenarios_test` (`--no-runner` filters, `--bench` refused)                                                                                                                                                            |
+| TRW1–TRW4  | unverified | The Windows code paths type-check for `x86_64-windows-msvc`; the Windows leg has not run them                                                                                                                                               |
+| TRM1–TRM3  | partial    | `sparkles.test_runner.session.WorkerSession`; its transcript tests; the import scan not automated                                                                                                                                           |
+| TRM4       | partial    | `sparkles.test_runner.plan.selectTests`, `sparkles.test_runner.options.parseRunnerOptions`; no ci client yet                                                                                                                                |
+| TRM5–TRM8  | unverified | The ci client is the task DAG's M7                                                                                                                                                                                                          |
+| TRN1–TRN3  | partial    | `nix/packages/test-runner.nix` builds the bootstrap; no revision is pinned yet                                                                                                                                                              |

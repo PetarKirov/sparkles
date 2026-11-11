@@ -177,3 +177,17 @@ unittest
     assert(r.status == 0, r.output);
     assert(r.output.canFind("1 passed"), r.output);
 }
+
+@("scenarios.anAbortWhileExitingFailsTheRun")
+@system
+unittest
+{
+    // Every test passes; the worker's module destructor aborts once it is
+    // asked to exit.
+    const r = run([built.runner, "--test-binary=" ~ built.fixture, "-t", "1", "--no-colors"],
+        ["FIXTURE_ABORT_AT_EXIT": "1"]);
+    assert(r.status != 0, r.output);
+    assert(r.output.canFind("asked to exit"), r.output);
+    version (Posix)
+        assert(r.output.canFind("SIGABRT"), r.output);
+}

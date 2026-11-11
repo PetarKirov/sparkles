@@ -22,7 +22,7 @@ import core.time : Duration, MonoTime;
 
 import sparkles.test_runner.bench : BenchConfig, BenchStats;
 import sparkles.profiling.counters.capability : Capability, capabilityName, CapabilityReport;
-import sparkles.test_runner.client : Hello, ProtocolError, Worker;
+import sparkles.test_runner.client : Hello, ProtocolError, Worker, WorkerDied;
 import sparkles.test_runner.driver : detectCompiler, DriverOptions, ModeReport, runCtfeTests;
 import sparkles.test_runner.pool : joinTestWorkers, startTestWorkers;
 import sparkles.test_runner.options : ParsedArgs, parseRunnerOptions, RunnerOptions;
@@ -72,18 +72,28 @@ int runnerMain(string binary, string[] druntimeOptions, string[] args)
         return 2;
     }
     hello = firstWorker.hello;
-    scope (exit)
-        retireSpare();
 
-    UnitTestResult result;
+    int status;
     try
-        result = runSelected(firstWorker.listing, [binary] ~ args);
+    {
+        scope (exit)
+            retireSpare();
+        const result = runSelected(firstWorker.listing, [binary] ~ args);
+        status = verdict(result.executed, result.passed);
+    }
     catch (ProtocolError e)
     {
         stderr.writeln("error: ", e.msg);
         return 2;
     }
-    return verdict(result.executed, result.passed);
+    catch (WorkerDied e)
+    {
+        // A worker ended outside any test, and no test is to blame (TRP22,
+        // TRP27); a crash inside one is that test's failed result instead.
+        stderr.writeln("error: ", e.msg);
+        return 1;
+    }
+    return status;
 }
 
 /// Infers dub's `:subpackage` selector from its generated unittest executable
@@ -935,6 +945,8 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
                 row = measure(worker, s.c.id, s.config, thrown);
             catch (WorkerDied e)
             {
+                if (e.outsideCommand)
+                    throw e; // no case to blame: the run fails (TRP27)
                 // The case crashed its worker: an error row, and a new worker
                 // with every case registered again, in the same order, so
                 // the case ids still hold (TRP26).
@@ -1003,6 +1015,8 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
                 outcome = workload(worker, test, notes);
             catch (WorkerDied e)
             {
+                if (e.outsideCommand)
+                    throw e; // no case to blame: the run fails (TRP27)
                 outcome.result = Worker.crashed(test, e);
                 worker = restartBenchWorker();
             }
