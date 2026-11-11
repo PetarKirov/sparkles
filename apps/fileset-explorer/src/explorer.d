@@ -93,6 +93,10 @@ struct ExplorerApp
     private size_t lastTab;         // the tab F1 returns to
     private Focus lastFocus;        // and the focus
     private TryHit[] tryHits;       // where this frame drew each ▶ (`paint`)
+    // The help's fences scrolled across (`FXU25`): each one's offset in
+    // cells by its body's start, and where this frame drew each viewport.
+    private double[size_t] fenceX;
+    private FenceView[] fenceViews;
     private int[size_t] tryRows;    // each try block's row in the help's content
 
     /// The help's row of the try block at `at`, as last drawn; -1 when not drawn.
@@ -285,14 +289,27 @@ struct ExplorerApp
     /// height, which bounds its scrolling.
     void paint(H)(ref H h, in WidgetTree t, in Frame[] frames)
     {
+        import sparkles.source_view.markdown : fenceShiftKeyBase, shiftKeyMask;
+
         tryHits.length = 0;
         buttons.length = 0;
+        fenceViews.length = 0;
         barRects[] = Rect.init;
         queryRect = Rect.init;
         foreach (i, ref n; t.nodes)
         {
             if (i >= frames.length)
                 break;
+            // A fence body's viewport (not its number gutter): its lines'
+            // widest is how far it scrolls across.
+            if ((n.key & shiftKeyMask) == fenceShiftKeyBase && n.clipX)
+            {
+                int widest;
+                foreach (c; n.children)
+                    if (c < frames.length)
+                        widest = max(widest, frames[c].rect.width);
+                fenceViews ~= FenceView(frames[i].rect, n.key & ~shiftKeyMask, widest);
+            }
             if (n.hitId >= tryHitBase && n.hitId < tryHitBase + helpSource.length)
                 tryHits ~= TryHit(frames[i].rect, n.hitId - tryHitBase);
             else if (n.hitId >= barHitBase && n.hitId <= barHitBase + Bar.max)
@@ -1120,6 +1137,16 @@ struct ExplorerApp
             o.tryHits = HitBlock(tryHitBase, helpSource.length + 1); // by the fence's source offset
             o.tryResult = (ref Builder bb, size_t at) => resultView(bb, at);
             // The cheat sheet's queries, each with a ▶ that tries it (`FXU19`).
+            // Each fence where it was scrolled across to (`FXU25`).
+            import sparkles.source_view.markdown : FenceScroll;
+
+            FenceScroll[] scrolls;
+            foreach (at, x; fenceX)
+            {
+                const whole = floor(x);
+                scrolls ~= FenceScroll(at, cast(int) whole, 0, fx: smoothScroll ? cast(float)(x - whole) : 0);
+            }
+            o.fenceScrolls = scrolls;
             o.codeActionGlyph = " ▶";
             o.codeActionHeader = "Write";
             // The fences highlighted as the Export code is, a query's paths
@@ -1437,6 +1464,16 @@ struct ExplorerApp
         // Across, in the Export tab (`FXU22`): a finger or a trackpad moving
         // more across than down, or a wheel turned with Shift.
         const acrossBy = w.exactX != 0 ? w.exactX : !w.precise && w.mods.shift ? w.exactY : 0;
+        // ... and over a help fence wider than its box, that fence (`FXU25`).
+        if (s is &helpScroll && acrossBy != 0 && (w.mods.shift || abs(w.exactX) > abs(w.exactY)))
+            foreach (ref f; fenceViews)
+                if (inside(f.rect, w.pos))
+                {
+                    const most = max(0, f.content - f.rect.width);
+                    const by = w.precise ? acrossBy : acrossBy * notchRows * 2;
+                    fenceX[f.at] = min(cast(double) most, max(0.0, fenceX.get(f.at, 0) + by));
+                    return;
+                }
         if (s is &exportScroll && acrossBy != 0 && (w.mods.shift || abs(w.exactX) > abs(w.exactY)))
         {
             WheelEvent x = w;
@@ -1948,6 +1985,15 @@ Cheat[] cheatSnippets(in MdDoc doc, string src) @safe
     assert(qs.canFind("*.d") && qs.canFind("src/**") && qs.canFind("a | b"), qs.text);
     assert(qs.canFind("p || q") && qs.canFind("fileFilter(hasExt(d))"), qs.text);
     assert(!qs.canFind("Tab"), "the keys table has no Write column");
+}
+
+/// Where a frame drew a fence's body viewport, the fence (its body's start)
+/// and its lines' widest, in cells (`FXU25`).
+struct FenceView
+{
+    Rect rect;   ///
+    size_t at;   ///
+    int content; ///
 }
 
 /// Where a frame drew a try block's ▶, and the block's identity.
