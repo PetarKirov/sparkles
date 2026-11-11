@@ -23,6 +23,7 @@ import std.path : absolutePath, baseName, buildNormalizedPath, buildPath,
     dirName, extension, relativePath;
 import std.string : endsWith, startsWith;
 
+import sparkles.base.logger : warning;
 import sparkles.build_primitives.fileset.listing : GlobFilter, listRepository;
 import sparkles.docs.sidebar : isSrcExcluded;
 import sparkles.docs.site : extensionAllowed, extractMarkdownLinks,
@@ -73,6 +74,8 @@ SiteDiscovery discoverSite(string repoRoot, in SiteConfig cfg,
         auto pages = listRepository(rootAbs);
         if (pages.hasError)
             throw new Exception(pages.error);
+        if (const note = pages.value.caveat)
+            warning(i"$(rootAbs): $(note)");
         foreach (pageRel; pages.value.files)
         {
             if (!pageRel.endsWith(".md") || isSrcExcluded(pageRel, srcExclude))

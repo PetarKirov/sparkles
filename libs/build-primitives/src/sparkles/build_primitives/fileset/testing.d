@@ -2406,7 +2406,7 @@ version (Posix)
     }
 
     /// FSI4's detection on each line `gitIgnoreCases` reads: the work tree a
-    /// listing finds is the one git lists.
+    /// listing finds is the one git lists, and no rule is skipped.
     @("fileset.listing.FSI4.linesMatchGit")
     @system unittest
     {
@@ -2428,11 +2428,63 @@ version (Posix)
             const want = gitListed(repo);
             auto got = listRepository(repo.dir);
             assert(!got.hasError, got.hasError ? got.error : "");
-            if (got.value.files != want)
-                failures ~= c.name ~ ":\n  listing: " ~ got.value.files.to!string
-                    ~ "\n  git:     " ~ want.to!string;
+            if (got.value.files != want || got.value.skippedIgnoreRules != 0)
+                failures ~= c.name ~ ":\n  listing: " ~ got.value.files.to!string ~ " ("
+                    ~ got.value.skippedIgnoreRules.to!string ~ " rules skipped)\n  git:     "
+                    ~ want.to!string;
         }
         assert(failures.length == 0, failures.join("\n"));
+    }
+
+    /// A rule over the pattern bounds (FSG4) is one git applies and a
+    /// listing cannot: the listing counts it, so its consumer can say that
+    /// the file git ignores is listed.
+    @("fileset.listing.skippedRulesAreReported")
+    @system unittest
+    {
+        import sparkles.build_primitives.fileset.listing : listRepository;
+        import sparkles.test_runner.skip : skipTest;
+
+        if (!gitAvailable)
+            return skipTest("git is not on PATH");
+        enum long_ = "a-generated-file-name-whose-literal-part-is-longer-than-a-segment-may-be";
+        auto repo = TmpGitRepo.create();
+        repo.writeFile(".gitignore", "*" ~ long_ ~ ".json\n*.o\n");
+        repo.writeFile("x" ~ long_ ~ ".json", "x");
+        repo.writeFile("keep", "x");
+        repo.writeFile("a.o", "x");
+        auto got = listRepository(repo.dir);
+        assert(gitListed(repo) == [".gitignore", "keep"]);
+        assert(got.value.files == [".gitignore", "keep", "x" ~ long_ ~ ".json"],
+            got.value.files.to!string);
+        assert(got.value.skippedIgnoreRules == 1);
+    }
+
+    /// Git never lists a `.git`, nor what is beneath one: a nested
+    /// repository's is not listed either. Git lists the nested repository
+    /// as one entry, `sub/`; a listing of files lists its work tree.
+    @("fileset.listing.nestedRepository")
+    @system unittest
+    {
+        import std.algorithm.searching : any, canFind, startsWith;
+
+        import sparkles.build_primitives.fileset.listing : listRepository;
+        import sparkles.test_runner.skip : skipTest;
+
+        if (!gitAvailable)
+            return skipTest("git is not on PATH");
+        auto repo = TmpGitRepo.create();
+        repo.writeFile("top", "x");
+        repo.writeFile("sub/a", "x");
+        const nested = repo.git(["init", "-q", "sub"]);
+        assert(nested.status == 0, nested.output);
+        const want = gitListed(repo);
+        assert(want == ["sub/", "top"], want.to!string);
+
+        auto got = listRepository(repo.dir).value.files;
+        assert(!got.any!(p => p == ".git" || p.startsWith(".git/") || p.canFind("/.git/")
+            || p.startsWith("sub/.git")), got.to!string);
+        assert(got == ["sub/a", "top"], got.to!string);
     }
 }
 

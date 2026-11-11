@@ -33,6 +33,7 @@ import std.conv : text, to;
 import std.path : baseName, extension;
 import std.string : chompPrefix, endsWith;
 
+import sparkles.base.logger : warning;
 import sparkles.build_primitives.fileset.listing : GlobFilter, listRepository;
 import sparkles.syntax : canonicalLanguage, canonicalLanguageOfPath;
 import sparkles.twoslash : Node, NodeType;
@@ -331,6 +332,8 @@ SourceSet collectSources(string dir, bool twoslash, bool recursive = false,
         auto listed = listRepository(dir, include, exclude);
         if (listed.hasError)
             throw new Exception(listed.error);
+        if (const note = listed.value.caveat)
+            warning(i"$(dir): $(note)");
         foreach (rel; listed.value.files)
             if (isRenderable(rel, twoslash))
                 take(buildPath(dir, rel), rel);

@@ -2082,6 +2082,7 @@ struct GrepFinder
         scope const(string)[] excludeGlobs = null,
         SessionDocs session = SessionDocs.init) @safe
     {
+        import sparkles.base.logger : warning;
         import sparkles.build_primitives.fileset.listing : listRepository;
 
         root_ = root;
@@ -2095,6 +2096,8 @@ struct GrepFinder
         auto listed = listRepository(root, includeGlobs, excludeGlobs);
         if (listed.hasError)
             throw new Exception(listed.error);
+        if (const note = listed.value.caveat)
+            warning(i"grep picker, $(root): $(note)");
         paths_ = listed.value.files;
         corpus_.rebuild(session, RepoDocs(root: root, paths: paths_));
 

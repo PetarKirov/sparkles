@@ -40,14 +40,43 @@ import sparkles.build_primitives.fileset.value : Fileset, FilesetEvaluator, File
 
 /**
 The files a listing found, relative to the directory listed and sorted; the
-directories it listed and found nothing selected in (FSV4), sorted; and the
-entries it could not read (FSE2), each `path: kind`.
+directories it listed and found nothing selected in (FSV4), sorted; the
+entries it could not read (FSE2), each `path: kind`; and how many
+`.gitignore` rule lines it read that no fileset pattern expresses (A15).
+Git applies such a line and the listing does not, so when the count is not
+zero a file git ignores may be listed: a consumer should say so.
 */
 struct Listing
 {
     string[] files;      ///
     string[] emptyDirs;  /// selected whole, yet holding nothing selected (FSV4, D5)
     string[] unreadable; ///
+    uint skippedIgnoreRules; /// `.gitignore` rule lines that did not apply
+
+    /// What a consumer should tell its user the listing may lack or hold
+    /// beyond git's view, or `null` when nothing.
+    string caveat() const @safe pure
+    {
+        string note;
+        if (skippedIgnoreRules)
+            note = text(skippedIgnoreRules, " .gitignore rule", skippedIgnoreRules == 1 ? "" : "s",
+                " too complex to apply, so files git ignores may be listed");
+        if (unreadable.length)
+            note ~= text(note.length ? "; " : "", unreadable.length, " entr",
+                unreadable.length == 1 ? "y" : "ies", " could not be read, the first ",
+                unreadable[0]);
+        return note;
+    }
+}
+
+///
+@("fileset.listing.Listing.caveat")
+@safe pure unittest
+{
+    assert(Listing(["a"]).caveat is null);
+    assert(Listing(null, null, ["x: permission"], 2).caveat == "2 .gitignore rules too complex "
+        ~ "to apply, so files git ignores may be listed; 1 entry could not be read, the first "
+        ~ "x: permission");
 }
 
 /// What a listing returns: the listing, or why it failed. A resolution
@@ -58,12 +87,13 @@ alias ListingResult = Expected!(Listing, string, NoGcHook);
 alias GlobsResult = Expected!(Fileset, string, NoGcHook);
 
 /**
-git's view of a work tree: every file except the repository's `.git` and
-those its `.gitignore` files exclude. Resolve it at the repository's root,
-where the `.gitignore` files are (A16).
+git's view of a work tree: every file except those its `.gitignore` files
+exclude and any named `.git` or beneath one, the repository's own or a
+nested repository's, which git never lists. Resolve it at the repository's
+root, where the `.gitignore` files are (A16, A23).
 */
 Fileset workTree(ref Filesets s) @safe nothrow @nogc =>
-    s.difference(s.difference(s.everything, s.gitignored), s.glob("/.git").value);
+    s.difference(s.difference(s.everything, s.gitignored), s.glob(".git").value);
 
 /**
 `base` under the explorer's glob precedence (`XPF2`): a file an `include`
@@ -81,7 +111,7 @@ GlobsResult withGlobs(ref Filesets s, Fileset base,
     if (exc.hasError)
         return exc;
     return ok!(string, NoGcHook)(s.union_(s.difference(base, exc.value),
-        s.difference(inc.value, s.glob("/.git").value)));
+        s.difference(inc.value, s.glob(".git").value)));
 }
 
 /// The union of `globs`, each a fileset pattern.
@@ -109,8 +139,6 @@ loop, one request after another.
 ListingResult listFiles(string root, scope Fileset delegate(ref Filesets) @safe make,
     CasePolicy policy = CasePolicy.sensitive) @safe
 {
-    import std.algorithm.sorting : sort;
-
     import sparkles.base.vfs.handles : ambientAuthority, openRoot;
     import sparkles.base.vfs.types : Rights;
     import sparkles.build_primitives.fileset.driver : PathCollector, resolve, resolveWith;
@@ -127,34 +155,99 @@ ListingResult listFiles(string root, scope Fileset delegate(ref Filesets) @safe 
     if (opened.hasError)
         return err!(Listing, NoGcHook)("the directory to list could not be opened: " ~ root);
 
-    PathCollector sink;
-    import sparkles.build_primitives.fileset.driver : ResolutionResult;
-
-    ResolutionResult result = ResolutionResult.init;
-    bool ran;
+    ListingRun run;
     // On a scheduler already, as a UI loop is: resolve on its fibers.
     // Otherwise on a loop of our own, for as long as the listing takes.
     if (onScheduler())
     {
         auto exec = LoopExecutor!Sched(&currentScheduler(), new Admission(32));
-        result = resolveWith(opened.value.borrow, sets, f, sink, exec);
-        ran = true;
+        run.began = true;
+        run.result = resolveWith(opened.value.borrow, sets, f, run.sink, exec);
+        run.finished = true;
     }
     else
     {
         Sched s;
         if (!Sched.create(s).hasError)
-            ran = !s.run(() {
+            cast(void) s.run(() {
                 auto exec = LoopExecutor!Sched(&s, new Admission(32));
-                result = resolveWith(opened.value.borrow, sets, f, sink, exec);
-            }).hasError;
+                run.began = true;
+                run.result = resolveWith(opened.value.borrow, sets, f, run.sink, exec);
+                run.finished = true;
+            });
     }
-    if (!ran)
-        result = resolve(opened.value.borrow, sets, f, sink);
-    if (result.hasError)
-        return err!(Listing, NoGcHook)(result.error.context);
-    return ok!(string, NoGcHook)(Listing(sink.members.sort.release, sink.emptyDirs.sort.release,
-        sink.unreadable));
+    return settle(run, (ref PathCollector sink) => resolve(opened.value.borrow, sets, f, sink));
+}
+
+// One attempt at a listing on an event loop: whether its resolution began
+// and finished, and what it collected.
+private struct ListingRun
+{
+    import sparkles.build_primitives.fileset.driver : PathCollector, ResolutionResult;
+
+    PathCollector sink;
+    ResolutionResult result = ResolutionResult.init;
+    bool began, finished;
+}
+
+/*
+The listing `run` made, whether or not the loop that ran it then failed. A
+resolution the loop never began is made again by `inline`, into a sink of
+its own; one it began and did not finish is an error, since what it
+collected is a part of the listing.
+*/
+private ListingResult settle(Inline)(ref ListingRun run, scope Inline inline)
+{
+    import std.algorithm.sorting : sort;
+
+    import sparkles.build_primitives.fileset.driver : PathCollector;
+
+    if (!run.finished)
+    {
+        if (run.began)
+            return err!(Listing, NoGcHook)("the listing's event loop stopped before it finished");
+        run.sink = PathCollector.init;
+        run.result = inline(run.sink);
+    }
+    if (run.result.hasError)
+        return err!(Listing, NoGcHook)(run.result.error.context);
+    // The directory listed is `""` in what the resolution reports.
+    foreach (u; run.sink.unreadable)
+        if (u.length >= 2 && u[0 .. 2] == ": ")
+            return err!(Listing, NoGcHook)("the directory to list could not be read" ~ u[1 .. $]);
+    return ok!(string, NoGcHook)(Listing(run.sink.members.sort.release,
+        run.sink.emptyDirs.sort.release, run.sink.unreadable, run.sink.skippedIgnoreRules));
+}
+
+/// A listing the loop ran is taken as it is, even when the loop then fails:
+/// nothing is collected twice. One it never began is made inline.
+@("fileset.listing.settle")
+@safe unittest
+{
+    import sparkles.build_primitives.fileset.driver : PathCollector, ResolutionResult;
+
+    ResolutionResult again(ref PathCollector sink)
+    {
+        sink.members ~= "a";
+        return ResolutionResult.init;
+    }
+
+    // Finished on the loop, which then failed: what it collected, once.
+    ListingRun done;
+    done.began = done.finished = true;
+    done.sink.members = ["a"];
+    assert(settle(done, &again).value.files == ["a"]);
+
+    // Begun and cut off: a part of the listing is no listing.
+    ListingRun cut;
+    cut.began = true;
+    cut.sink.members = ["a"];
+    assert(settle(cut, &again).hasError);
+
+    // Never begun: made inline, into a sink of its own.
+    ListingRun never;
+    never.sink.members = ["stale"];
+    assert(settle(never, &again).value.files == ["a"]);
 }
 
 /**
@@ -165,9 +258,7 @@ The files of the work tree beneath `dir` that pass `include` and `exclude`
 ListingResult listRepository(string dir, scope const(string)[] include = null,
     scope const(string)[] exclude = null) @safe
 {
-    import std.path : absolutePath, buildNormalizedPath;
-
-    const abs = dir.absolutePath.buildNormalizedPath;
+    const abs = canonicalDir(dir);
     const base = repositoryBase(abs, repositoryRoot(abs));
     auto inc = rebased(include, base), exc = rebased(exclude, base);
 
@@ -187,12 +278,14 @@ and sorted. When `dir` lies in a git repository, the fileset is written
 and resolved relative to the repository's root, so every `.gitignore` on the
 way down to `dir` applies, and the plan starts at `dir`, listing nothing
 beside it (FSA2). Outside a repository, it is resolved at `dir`.
+
+`dir` is taken by its real path, links resolved, so a link to a directory
+lists the directory it names, beneath the `.gitignore` files above that
+one. A directory that cannot be read is an error, not an empty listing.
 */
 ListingResult listRepository(string dir, scope Fileset delegate(ref Filesets) @safe make) @safe
 {
-    import std.path : absolutePath, buildNormalizedPath;
-
-    const abs = dir.absolutePath.buildNormalizedPath;
+    const abs = canonicalDir(dir);
     const top = repositoryRoot(abs);
     const base = repositoryBase(abs, top);
     auto listed = listFiles(top is null ? abs : top, (ref Filesets s) @safe {
@@ -201,13 +294,19 @@ ListingResult listRepository(string dir, scope Fileset delegate(ref Filesets) @s
     });
     if (listed.hasError || !base.length)
         return listed;
+    import std.algorithm.searching : find, startsWith;
+
+    // The directory listed is the plan's start root; one it could not read
+    // is reported as `base: kind`.
+    auto unread = listed.value.unreadable.find!(p => p.startsWith(base ~ ": "));
+    if (unread.length)
+        return err!(Listing, NoGcHook)("the directory to list could not be read: " ~ unread[0]);
     // The restriction is a pattern, and patterns match names under NFC, so
     // it may also admit a sibling whose name differs from `base` only in
     // its encoding (`Keep` beside `\u212Aeep`, an NFD spelling beside an NFC
     // one). Identity is byte-exact (invariant 5): keep only what lies
     // beneath `base` byte for byte.
     import std.algorithm.iteration : filter, map;
-    import std.algorithm.searching : startsWith;
     import std.array : array;
 
     const prefix = base ~ "/";
@@ -218,6 +317,33 @@ ListingResult listRepository(string dir, scope Fileset delegate(ref Filesets) @s
         .map!(p => p == base ? "" : p[prefix.length .. $]).array;
     l.unreadable = l.unreadable.filter!(p => p.startsWith(prefix) || p.startsWith(base ~ ":")).array;
     return ok!(string, NoGcHook)(l);
+}
+
+// `dir` as an absolute, normalized path, with every link on it resolved
+// where it exists: a lexical path through a link names a repository, and an
+// entry, the walk would not follow.
+private string canonicalDir(string dir) @safe
+{
+    import std.path : absolutePath, buildNormalizedPath;
+
+    const abs = dir.absolutePath.buildNormalizedPath;
+    version (Posix)
+    {
+        import core.stdc.stdlib : free;
+        import core.sys.posix.stdlib : realpath;
+        import std.string : fromStringz, toStringz;
+
+        return () @trusted {
+            auto resolved = realpath(abs.toStringz, null);
+            if (resolved is null)
+                return abs;
+            scope (exit)
+                free(resolved);
+            return resolved.fromStringz.idup;
+        }();
+    }
+    else
+        return abs;
 }
 
 /// `path` as a pattern that matches it literally: each glob character escaped.
@@ -569,4 +695,55 @@ version (unittest)
     mkdirRecurse(buildPath(tmp.dir, "sub/hollow/inner"));
     auto l = listRepository(buildPath(tmp.dir, "sub"));
     assert(l.value.emptyDirs == ["empty", "hollow/inner"], l.value.emptyDirs.text);
+}
+
+/// A link to a directory lists the directory it names, beneath the
+/// `.gitignore` files above that one, whether the link lies inside the
+/// repository or outside any.
+@("fileset.listing.listRepository.linkedDirectory")
+@system unittest
+{
+    import std.path : buildPath;
+    import sparkles.test_utils.tmpfs : TmpFS;
+
+    version (Posix)
+    {
+        import std.file : symlink;
+
+        auto tmp = workTreeFixture();
+        symlink(buildPath(tmp.dir, "sub"), buildPath(tmp.dir, "link"));
+        auto inside = listRepository(buildPath(tmp.dir, "link"));
+        assert(!inside.hasError, inside.hasError ? inside.error : "");
+        assert(inside.value.files == [".gitignore", "app.d", "deep/more.md", "notes.md"],
+            inside.value.files.text);
+
+        auto outside = TmpFS.create();
+        symlink(buildPath(tmp.dir, "sub", "deep"), buildPath(outside.dir, "deep"));
+        assert(listRepository(buildPath(outside.dir, "deep")).value.files == ["more.md"]);
+    }
+}
+
+/// A directory the listing cannot read is an error, not an empty listing.
+@("fileset.listing.listRepository.unreadableDirectory")
+@system unittest
+{
+    import std.file : getAttributes, setAttributes;
+    import std.path : buildPath;
+    import sparkles.test_runner.skip : skipTest;
+
+    version (Posix)
+    {
+        import core.sys.posix.unistd : geteuid;
+
+        if (geteuid() == 0)
+            return skipTest("root reads a directory whatever its mode");
+        auto tmp = workTreeFixture();
+        const sub = buildPath(tmp.dir, "sub");
+        const mode = getAttributes(sub);
+        setAttributes(sub, 0);
+        scope (exit)
+            setAttributes(sub, mode);
+        auto listed = listRepository(sub);
+        assert(listed.hasError, listed.hasError ? "" : listed.value.text);
+    }
 }
