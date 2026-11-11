@@ -436,6 +436,42 @@ version (linux)
     assert(after.ctimeNs > before.ctimeNs, "the change time cannot be put back");
 }
 
+/// VFO6: a hard link names the same file, so both names report one identity,
+/// and making it moves the file's change time (its link count changed).
+@("vfs.blocking.VFO6.hardLink")
+@system unittest
+{
+    import core.sys.posix.unistd : link, unlink;
+    import core.thread : Thread;
+    import core.time : msecs;
+
+    auto dir = scratchDir("hardlink");
+    scope (exit) rmdirRecurse(dir);
+    write(buildPath(dir, "f"), "linked");
+    write(buildPath(dir, "other"), "linked");
+    auto v = new BlockingVfs;
+    auto root = openRoot!(Rights.readOnly)(v, dir, ambientAuthority());
+    const mask = cast(StatMask)(StatMask.identity | StatMask.change);
+    const before = root.value.statAt("f", mask).value;
+    // A coarse clock (whole seconds on some filesystems) can put the link in
+    // the same tick; link again until the change time moves.
+    Stat f;
+    foreach (attempt; 0 .. 200)
+    {
+        Thread.sleep(10.msecs);
+        assert(link(buildPath(dir, "f").toStringz, buildPath(dir, "g").toStringz) == 0);
+        f = root.value.statAt("f", mask).value;
+        if (f.ctimeNs != before.ctimeNs || attempt == 199)
+            break;
+        assert(unlink(buildPath(dir, "g").toStringz) == 0);
+    }
+    const g = root.value.statAt("g", mask).value;
+    const other = root.value.statAt("other", mask).value;
+    assert(f.hasIdentity && g.hasIdentity && f.device == g.device && f.inode == g.inode);
+    assert(other.inode != f.inode, "equal content is not one identity");
+    assert(f.ctimeNs == g.ctimeNs && f.ctimeNs > before.ctimeNs, "the link changed the file");
+}
+
 @("vfs.blocking.VFB7.mapping")
 @system unittest
 {
