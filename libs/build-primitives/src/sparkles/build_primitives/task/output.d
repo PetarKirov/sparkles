@@ -98,6 +98,19 @@ struct OutputSpool
             file.flush();
     }
 
+    /// Closes the spill file once the task's output is complete, so a run of
+    /// many spilling tasks does not hold a descriptor per task until the GC
+    /// collects the spools. $(LREF replay) reads the file back by path, and
+    /// a later $(LREF append) reopens it.
+    void close() @trusted
+    {
+        if (file.isOpen)
+            file.close();
+    }
+
+    /// Whether the spill file is open: spilled and not $(LREF close)d.
+    bool spillOpen() const @trusted => file.isOpen;
+
     /// Calls `sink(line)` for every line kept, in order: the spill file's
     /// when spilled, else memory's.
     void replay(Sink)(scope Sink sink)
@@ -153,6 +166,8 @@ private:
 
     void writeSpilled(OutputStream stream, scope const(char)[] text, bool unterminated) @trusted
     {
+        if (!file.isOpen)
+            file = File(spillPath_, "a"); // after `close`
         char tag = stream == OutputStream.stderr ? 'e' : 'o';
         if (unterminated)
             tag -= 'a' - 'A';
@@ -243,6 +258,31 @@ unittest
         SpooledLine(OutputStream.stdout, "third"), SpooledLine(OutputStream.stdout, "tail", true)]);
     spool.flush();
     assert(readText(path) == "o first\ne second\no third\nO tail\n");
+}
+
+@("build_primitives.task.output.OutputSpool.closeReleasesTheSpillFile")
+@system
+unittest
+{
+    import std.file : readText;
+    import std.path : buildPath;
+    import sparkles.test_utils.tmpfs : TmpFS;
+
+    // A closed spool holds no descriptor, still replays, and reopens its
+    // file to append.
+    auto tmp = TmpFS.create();
+    const path = tmp.dir.buildPath("output.log");
+    auto spool = OutputSpool(4, path);
+    spool.append(OutputStream.stdout, "first");
+    assert(spool.spilled && spool.spillOpen);
+    spool.close();
+    assert(!spool.spillOpen);
+    string[] back;
+    spool.replay((const ref SpooledLine l) { back ~= l.text; });
+    assert(back == ["first"]);
+    spool.append(OutputStream.stderr, "second");
+    spool.close();
+    assert(readText(path) == "o first\ne second\n");
 }
 
 @("build_primitives.task.output.OutputSpool.spillEscapesLineBreaks")

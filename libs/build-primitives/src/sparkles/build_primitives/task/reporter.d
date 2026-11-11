@@ -102,9 +102,11 @@ struct OrderedBlocks
     void output(TaskIndex t, OutputStream stream, scope const(char)[] text, bool unterminated) @safe
         => spools[t.value].append(stream, text, unterminated);
 
-    /// Records a terminal outcome.
-    void finished(TaskIndex t, TaskOutcome outcome, Duration took) @safe pure nothrow @nogc
+    /// Records a terminal outcome. The task's output is complete, so its
+    /// spill file is closed (replay reopens it).
+    void finished(TaskIndex t, TaskOutcome outcome, Duration took) @safe
     {
+        spools[t.value].close();
         outcomes[t.value] = outcome;
         elapsed[t.value] = took;
         done[t.value] = true;
@@ -161,6 +163,26 @@ unittest
     blocks.finished(TaskIndex(1), TaskOutcome(Succeeded()), Duration.zero);
     blocks.release(&emit);
     assert(released == [0, 1, 2]);
+}
+
+@("build_primitives.task.reporter.OrderedBlocks.aFinishedTaskClosesItsSpill")
+@system
+unittest
+{
+    import sparkles.test_utils.tmpfs : TmpFS;
+
+    // Each spilling task's file is closed once the task is terminal, not
+    // held open for the rest of the run.
+    auto tmp = TmpFS.create();
+    auto blocks = OrderedBlocks(2, 4, tmp.dir);
+    foreach (i; 0 .. 2)
+        blocks.output(TaskIndex(i), OutputStream.stdout, "spilled", false);
+    assert(blocks.spool(TaskIndex(0)).spillOpen && blocks.spool(TaskIndex(1)).spillOpen);
+    blocks.finished(TaskIndex(0), TaskOutcome(Succeeded()), Duration.zero);
+    assert(!blocks.spool(TaskIndex(0)).spillOpen && blocks.spool(TaskIndex(1)).spillOpen);
+    string[] back;
+    blocks.spool(TaskIndex(0)).replay((const ref SpooledLine l) { back ~= l.text; });
+    assert(back == ["spilled"]);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
