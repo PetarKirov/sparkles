@@ -217,8 +217,10 @@ bytes as the worker's unattributed output, and **must not** treat them as an
 error.
 
 **TRP9: Malformed frames.** A frame that is not a JSON object with a known
-`"t"` for the negotiated version is a protocol error. Within one protocol
-version, unknown members of a known frame **must** be ignored. On a protocol
+`"t"` for the negotiated version is a protocol error, and so is a frame of a
+known type that lacks a member its type requires or holds one of the wrong
+type. Within one protocol version, unknown members of a known frame **must**
+be ignored. On a protocol
 error the runner **must** stop that worker, report
 `protocol error from <binary>: <detail>`, and fail the run. A worker that
 reads a malformed command, or one it cannot run, **must** write an `error`

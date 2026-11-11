@@ -252,8 +252,16 @@ struct WorkerSession
             return fail("protocol error from " ~ binary ~ ": " ~ e.msg);
         if (stray.length)
             emitOutput(noTest, stray);
-        if (isFrame)
+        if (!isFrame)
+            return;
+        // A well-formed frame can still lack a member its type needs, or
+        // hold one of the wrong type: that is a protocol error too (TRP9),
+        // never an exception that would end the client's reader.
+        try
             takeFrame(frame);
+        catch (Exception e)
+            fail("protocol error from " ~ binary ~ ": a malformed frame " ~ frame.toString
+                ~ ": " ~ e.msg);
     }
 
     private void takeFrame(JSONValue frame)
@@ -688,6 +696,36 @@ unittest
     s.feedFrames(resultBytes(0, "passed"));
     auto events = s.takeEvents();
     assert(kinds(events) == [EventKind.protocolError] && s.over);
+}
+
+@("session.protocol.frameMissingMembers")
+@system
+unittest
+{
+    import std.algorithm.searching : canFind;
+
+    // Well-framed, but a `result` with none of its members, or one of the
+    // wrong type, while a test runs: a protocol error (TRP9), not an
+    // exception out of `feedFrames` that ends the client's reader.
+    foreach (bad; [`{"t":"result"}`, `{"t":"result","id":0,"status":3}`])
+    {
+        auto s = WorkerSession("bin");
+        s.feedFrames(opening("T", "a"));
+        cast(void) s.takeEvents();
+        cast(void) s.run(0, mainThread: false);
+        s.feedFrames(frameText(frameOf("started", ["id": JSONValue(0)])));
+        s.feedFrames("\x1e" ~ bad ~ "\n");
+        auto events = s.takeEvents();
+        assert(kinds(events) == [EventKind.testStarted, EventKind.protocolError], bad);
+        assert(events[1].text.canFind("protocol error from bin: a malformed frame"),
+            events[1].text);
+        assert(s.over, bad);
+    }
+
+    // And a `hello` that names a version but nothing else.
+    auto s = WorkerSession("bin");
+    s.feedFrames("\n\x1e{\"t\":\"hello\",\"version\":1}\n");
+    assert(kinds(s.takeEvents()) == [EventKind.protocolError] && s.over);
 }
 
 @("session.exit.expected")

@@ -40,6 +40,25 @@ unittest
 {
 }
 
+// A frame well framed but missing every member of its type, written to the
+// frames channel as if the worker had: a protocol error (TRP9).
+@("fixture.badFrame")
+unittest
+{
+    import std.process : environment;
+
+    version (Posix)
+        if (environment.get("FIXTURE_BAD_FRAME"))
+        {
+            import core.sys.posix.unistd : write;
+
+            // The frames channel is the first descriptor the worker opens
+            // (TRP6): 3.
+            enum frame = "\x1e{\"t\":\"result\"}\n";
+            write(3, frame.ptr, frame.length);
+        }
+}
+
 // A worker that is asked to exit and aborts on the way out: its tests pass,
 // and the run must fail all the same (TRP22).
 shared static ~this()
