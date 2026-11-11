@@ -131,6 +131,13 @@ if (isVfs!V && hasRights(R, filesetRights))
                 auto opened = req.dir == noDir
                     ? root.walk(req.name)
                     : handles[req.dir].walk(req.name);
+                // A link whose target climbs out of its own directory, as
+                // `a/link -> ../b` does, escapes the walk from that directory
+                // and may still stay beneath the root: walking its whole
+                // path from the root decides (FSD6).
+                if (opened.hasError && opened.error.kind == ErrorKind.escapesRoot
+                    && req.throughLink && req.path.length)
+                    opened = root.walk(req.path);
                 if (opened.hasError)
                     return m.failed(index, opened.error.kind);
                 if (req.mask & StatMask.identity)
