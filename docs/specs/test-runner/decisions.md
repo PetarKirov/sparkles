@@ -227,7 +227,7 @@ standalone runner reruns none of them.
 **Revisit when** the dev shell can build the runner from the tree without
 rebuilding on unrelated changes.
 
-## TRD10: A worker's end outside a test fails the run (proposed)
+## TRD10: A worker's end outside a test fails the run (accepted)
 
 **Question.** A worker can end with no test running: on its own between
 commands (TRP27), or, asked to exit, with a status other than 0 (TRP22), for
@@ -241,10 +241,11 @@ to blame. Does the run still fail, and does the runner start another worker?
 - Fail the run with the ending and the worker's unattributed output, and
   start no other worker.
 
-**Choice.** The second (TRP22, TRP27). The ending is a defect of the binary
-under test, as real as a failing test; a runner that passed it would report
-what a plain druntime run reports as a failure as a success. Restarting
-would hide a worker that dies after every test the same way.
+**Choice.** The second (TRP22, TRP27), accepted by the owner on 2026-11-11.
+The ending is a defect of the binary under test, as real as a failing test;
+a runner that passed it would report what a plain druntime run reports as a
+failure as a success. Restarting would hide a worker that dies after every
+test the same way.
 
 **Trade-offs.** No test result names the defect; the run's error line and
 exit status do, and the tests that ran keep their results. Work that remained
