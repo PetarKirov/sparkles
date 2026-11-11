@@ -163,3 +163,32 @@ primary cause and trigger fail-fast, and reporters need no new reason.
 
 **Revisit when** a driver needs to report a cancellation it initiated itself
 for a reason the run should accept.
+
+## T14: A secret's short lines are not masked on their own
+
+**Question.** T11 masks each non-empty line of a multiline redacted value,
+accepting that unrelated output containing such a line is masked too. For a
+JSON credential that means every `{` and `}` the child prints, and for a PEM
+key every occurrence of the short last line of its body: the over-masking is
+not occasional but structural, and it wrecks the diagnostic output TDM14
+keeps.
+
+**Alternatives.**
+
+- Keep every non-empty line.
+- Match the value's lines as one contiguous block across output lines. A
+  line is already emitted and spooled before the next one shows whether the
+  block continues, so this needs output held back, and a block interleaved
+  with stderr or cut short still leaks.
+- Mask only lines of at least a minimum length.
+
+**Choice.** A minimum of 8 bytes for a line needle; the whole value is still
+a needle at any length. A line shorter than that holds at most seven bytes
+of the secret, structural text in practice (`}`, `-----`, a base64 tail),
+and masking it everywhere costs more than it hides.
+
+**Trade-offs.** A secret made of short lines is masked only where it appears
+whole on one line.
+
+**Revisit when** output is held back per task anyway, so block matching
+costs nothing more.

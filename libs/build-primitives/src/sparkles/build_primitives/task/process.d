@@ -351,11 +351,15 @@ string redact(scope const(char)[] line, scope const(string)[] secrets) @safe pur
 /**
 What a redacted `value` is searched for in the child's output: the value,
 and — since the child's output is framed into lines, so a multiline value
-(a PEM key) never appears whole in one — each of its non-empty lines, a
-trailing `\r` stripped.
+(a PEM key) never appears whole in one — each of its lines, a trailing `\r`
+stripped, of at least `minLineNeedle` bytes. A shorter line (`}`, `{`, the
+last few characters of a base64 body) holds too little of the secret to
+hide, and as a needle it would mask that text in all of the child's output
+(T14).
 */
 private string[] redactionNeedles(string value) @safe pure nothrow
 {
+    enum minLineNeedle = 8;
     if (value.length == 0)
         return null;
     auto needles = [value];
@@ -369,7 +373,7 @@ private string[] redactionNeedles(string value) @safe pure nothrow
         auto line = value[start .. i];
         if (line.length && line[$ - 1] == '\r')
             line = line[0 .. $ - 1];
-        if (multiline && line.length)
+        if (multiline && line.length >= minLineNeedle)
             needles ~= line;
         start = i + 1;
     }
@@ -392,11 +396,19 @@ unittest
 {
     assert(redactionNeedles("hunter2") == ["hunter2"]);
     assert(redactionNeedles("") is null);
-    const pem = "-----BEGIN-----\r\nbody\r\n\r\n-----END-----\n";
-    assert(redactionNeedles(pem) == [pem, "-----BEGIN-----", "body", "-----END-----"]);
+    const pem = "-----BEGIN-----\r\nc2VjcmV0Ym9keQ\r\n\r\n-----END-----\n";
+    assert(redactionNeedles(pem) == [pem, "-----BEGIN-----", "c2VjcmV0Ym9keQ", "-----END-----"]);
     auto secrets = longestFirst(redactionNeedles(pem));
     assert(redact("x " ~ pem ~ " y", secrets) == "x <redacted> y", "the whole value before its lines");
-    assert(redact("body", secrets) == "<redacted>");
+    assert(redact("c2VjcmV0Ym9keQ", secrets) == "<redacted>");
+
+    // A JSON key: its short lines are no needles, or every `}` the child
+    // printed would be masked.
+    const json = "{\n  \"private_key\": \"c2VjcmV0\"\n}\n";
+    assert(redactionNeedles(json) == [json, `  "private_key": "c2VjcmV0"`]);
+    const jsonSecrets = longestFirst(redactionNeedles(json));
+    assert(redact("}", jsonSecrets) == "}");
+    assert(redact(`  "private_key": "c2VjcmV0"`, jsonSecrets) == "<redacted>");
 }
 
 ///
