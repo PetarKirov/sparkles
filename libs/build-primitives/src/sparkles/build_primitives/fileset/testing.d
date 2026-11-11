@@ -1285,6 +1285,75 @@ struct RecordingExecutor
     assert(m.error.kind == RequestKind.stat);
 }
 
+/// FSE2: a request that fails with the unclassified kind, as `EIO` does, is
+/// a failure, not an answer: the entry is reported incomplete.
+@("fileset.machine.FSE2.unclassifiedFailure")
+@system unittest
+{
+    import sparkles.base.io.errors : ErrorKind;
+    import sparkles.build_primitives.fileset.machine : RequestKind, Resolution, StepKind;
+
+    auto sets = Filesets(CasePolicy.sensitive);
+    const f = sets.executable;
+    auto m = Resolution(sets, f);
+    auto c = m.start();
+    StepKind kind;
+    assert(m.step(sets, c, 64, kind) && kind == StepKind.needIO);
+    m.entry(0, "tool", EntryKind.regular);
+    m.listed(0);
+    assert(m.step(sets, c, 64, kind) && kind == StepKind.needIO);
+    assert(m.batch.length == 1 && m.batch[0].kind == RequestKind.stat);
+    m.failed(0, ErrorKind.other);
+    string[] incomplete;
+    for (;;)
+    {
+        assert(m.step(sets, c, 64, kind));
+        if (kind == StepKind.incomplete)
+            incomplete ~= text(m.incompletePath, ": ", m.incompleteKind);
+        if (kind == StepKind.done)
+            break;
+        assert(kind != StepKind.needIO, "a failed stat is not asked again");
+    }
+    assert(incomplete == ["tool: other"], text(incomplete));
+}
+
+/// A start root whose listing fails part-way leaves nothing behind: the
+/// entries it listed before failing are not the next root's.
+@("fileset.machine.FSE1.failedRootListing")
+@system unittest
+{
+    import sparkles.base.io.errors : ErrorKind;
+    import sparkles.build_primitives.fileset.machine : Resolution, StepKind;
+
+    auto sets = Filesets(CasePolicy.sensitive);
+    const f = sets.union_(sets.glob("a/**").value, sets.glob("b/**").value);
+    auto m = Resolution(sets, f);
+    auto c = m.start();
+    StepKind kind;
+    assert(m.step(sets, c, 64, kind) && kind == StepKind.needIO);
+    m.entry(0, "x", EntryKind.regular);
+    m.failed(0, ErrorKind.permission);
+    string[] incomplete, members;
+    for (;;)
+    {
+        assert(m.step(sets, c, 64, kind));
+        if (kind == StepKind.incomplete)
+            incomplete ~= text(m.incompletePath, ": ", m.incompleteKind);
+        else if (kind == StepKind.needIO)
+        {
+            m.entry(0, "y", EntryKind.regular);
+            m.listed(0);
+        }
+        else if (kind == StepKind.unit)
+            foreach (u; m.unitEntries)
+                members ~= text(m.unitPath, "/", u.name);
+        else if (kind == StepKind.done)
+            break;
+    }
+    assert(incomplete == ["a: permission"], text(incomplete));
+    assert(members == ["b/y"], text(members));
+}
+
 /// FSE3: an entry gone between `readDir` and `stat` is recorded as
 /// incomplete, and the resolution completes.
 @("fileset.machine.FSE3.vanishingEntry")
@@ -1702,6 +1771,41 @@ version (Posix)
         assert(t == followed, text(i ? "RingVfs" : "BlockingVfs", ":\n", t));
 }
 
+/// FSD6: under `symlinks = beneath`, a link whose target climbs out of its
+/// own directory but stays beneath the root resolves; one that leaves the
+/// root still fails with `escapesRoot`. On every backend.
+version (Posix)
+@("fileset.driver.FSD6.climbingLinkInsideRoot")
+@system unittest
+{
+    import std.file : rmdirRecurse;
+    import std.path : buildPath;
+
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+    import sparkles.base.vfs.types : ResolvePolicy, SymlinkPolicy;
+
+    enum literal = "outside/secret\nr/a/link -> ../b\nr/a/deep/up -> ../../b\n"
+        ~ "r/a/out -> ../../outside\nr/a/up -> ..\nr/b/x\n";
+    // `a/up` names the root itself: a cycle, reported once (D6).
+    enum expected = "members:\na/deep/up/x\na/link/x\nb/x\nempty:\n\n"
+        ~ "incomplete:\na/out: escapesRoot\na/up: symlinkLoop\n";
+    ResolvePolicy beneath;
+    beneath.symlinks = SymlinkPolicy.beneath;
+    auto sets = Filesets(CasePolicy.sensitive);
+    const f = sets.everything;
+
+    auto tree = openFixture(literal);
+    auto memRoot = openRoot!(Rights.readOnly)(&tree.value.get().vfs, "r", ambientAuthority(), beneath);
+    const mem = machineResolve(memRoot.value.borrow, sets, f).transcript;
+    assert(mem == expected, mem);
+
+    const dir = scratchTree("climbing");
+    scope (exit) rmdirRecurse(dir);
+    materialize(literal, dir);
+    foreach (i, t; nativeTranscripts(buildPath(dir, "r"), beneath, sets, f))
+        assert(t == expected, text(i ? "RingVfs" : "BlockingVfs", ":\n", t));
+}
+
 /// FSD7 on a real mount: `/dev/shm` is its own file system beneath `/dev`
 /// on Linux. A root at `/dev` does not cross into it by default, and reports
 /// the boundary; with `crossMounts` it reads a file written there.
@@ -1744,6 +1848,229 @@ version (linux)
     foreach (i, t; nativeTranscripts("/dev", crossing, sets, f))
         assert(t == text("members:\nshm/", name, "/f\nempty:\n\nincomplete:\n\n"),
             text(i ? "RingVfs" : "BlockingVfs", ":\n", t));
+}
+
+/// A `TestSched` that runs out of fibers after `allowed` spawns, as a
+/// scheduler whose fiber slab is exhausted does.
+struct StarvedSched
+{
+    import sparkles.event_horizon.capability : SpawnOptions;
+    import sparkles.event_horizon.cause : CancelContext, FiberContext;
+    import sparkles.event_horizon.testing : TestSched;
+
+    TestSched* sched; ///
+    uint allowed;     ///
+
+    ///
+    FiberContext* currentContext() @safe nothrow @nogc => sched.currentContext();
+    ///
+    FiberContext* spawnFiber(scope CancelContext* cc, in SpawnOptions o, void delegate() fn) @trusted nothrow
+    {
+        if (!allowed)
+            return null;
+        --allowed;
+        return sched.spawnFiber(cc, o, fn);
+    }
+    ///
+    void park() @trusted nothrow { sched.park(); }
+    ///
+    void wake(FiberContext* f) @trusted nothrow @nogc { sched.wake(f); }
+}
+
+/// An interrupted resolving fiber still waits in `LoopExecutor.run` until
+/// every request of the batch has finished, since each uses its frame.
+@("fileset.driver_loop.runOutlivesNoRequest")
+@system unittest
+{
+    import sparkles.event_horizon.admission : Admission;
+    import sparkles.event_horizon.capability : SpawnOptions;
+    import sparkles.event_horizon.cause : FiberContext, Interrupt, InterruptKind, interruptFiber;
+    import sparkles.event_horizon.testing : TestSched;
+    import sparkles.build_primitives.fileset.driver_loop : LoopExecutor;
+    import sparkles.build_primitives.fileset.machine : Request;
+
+    TestSched sched;
+    auto budget = new Admission(4);
+    auto gate = Admission(1, inUse: 1); // closed until the interrupter opens it
+    uint finished, atReturn = uint.max;
+    FiberContext* runner;
+    sched.run(() {
+        cast(void) sched.spawnFiber(null, SpawnOptions.init, () {
+            runner = sched.currentContext();
+            auto exec = LoopExecutor!TestSched(&sched, budget);
+            Request[2] batch;
+            exec.run(batch[], (size_t i) {
+                assert(!gate.acquire(sched).hasError);
+                gate.release();
+                ++finished;
+            });
+            atReturn = finished;
+        });
+        cast(void) sched.spawnFiber(null, SpawnOptions.init, () {
+            interruptFiber(runner, Interrupt(InterruptKind.cancelled));
+            // Opened only after the woken runner has had its turn.
+            cast(void) sched.spawnFiber(null, SpawnOptions.init, () { gate.release(); });
+        });
+    });
+    assert(atReturn == 2, "run returned before its requests finished");
+}
+
+/// FSS6: a request performed on the resolving fiber because no fiber was
+/// left is admitted by the shared budget like any other.
+@("fileset.driver_loop.FSS6.fallbackIsAdmitted")
+@system unittest
+{
+    import sparkles.event_horizon.admission : Admission;
+    import sparkles.event_horizon.capability : SpawnOptions;
+    import sparkles.event_horizon.testing : TestSched;
+    import sparkles.build_primitives.fileset.driver_loop : LoopExecutor;
+    import sparkles.build_primitives.fileset.machine : Request;
+
+    TestSched sched;
+    auto budget = new Admission(1);
+    auto gate = Admission(1, inUse: 1);
+    uint live, peakLive, finished;
+    sched.run(() {
+        cast(void) sched.spawnFiber(null, SpawnOptions.init, () {
+            auto starved = StarvedSched(&sched, 1);
+            auto exec = LoopExecutor!StarvedSched(&starved, budget);
+            Request[3] batch;
+            exec.run(batch[], (size_t i) {
+                if (++live > peakLive)
+                    peakLive = live;
+                assert(!gate.acquire(sched).hasError);
+                gate.release();
+                --live;
+                ++finished;
+            });
+        });
+        cast(void) sched.spawnFiber(null, SpawnOptions.init, () { gate.release(); });
+    });
+    assert(finished == 3);
+    assert(peakLive == 1, text(peakLive, " requests in flight under a budget of one"));
+}
+
+/// Work a scheme spawns runs after the call that spawned it has returned,
+/// so `LoopExecutor.spawn` keeps its context on the heap: a closure over
+/// `visit`'s frame, run once `visit` is gone, reads what it captured. The
+/// scheme aborts, so the work also runs on the failure path.
+version (Posix)
+@("fileset.driver_loop.spawnedWorkOutlivesItsCreator")
+@system unittest
+{
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+    import sparkles.event_horizon.admission : Admission;
+    import sparkles.event_horizon.sched : Sched;
+    import sparkles.build_primitives.fileset.driver_loop : LoopExecutor;
+    import sparkles.build_primitives.fileset.machine : ResolutionErrorCode;
+    import sparkles.build_primitives.fileset.scheme : resolveScheme;
+
+    static struct Aborting
+    {
+        alias Result = bool;
+        uint* spawned, done;
+        bool visit(Entries, Exec)(scope const(char)[] path, Entries es, bool empty, ref Exec exec)
+        {
+            foreach (_; 0 .. 3)
+            {
+                ++*spawned;
+                auto d = done;
+                exec.spawn(() { ++*d; });
+            }
+            return false;
+        }
+        bool incomplete(scope const(char)[] path, ErrorKind kind) => true;
+        bool finish() => true;
+    }
+
+    import std.file : rmdirRecurse;
+    import sparkles.event_horizon.vfs : RingVfs;
+
+    const dir = scratchTree("fss7");
+    scope (exit) rmdirRecurse(dir);
+    materialize("a\nb\n", dir);
+    auto sets = Filesets(CasePolicy.sensitive);
+    Sched sched;
+    schedOrSkip(sched);
+    uint spawned, done, doneAtReturn = uint.max;
+    bool schemeFailed;
+    auto ran = sched.run(() {
+        auto root = openRoot!(Rights.readOnly)(new RingVfs, dir, ambientAuthority());
+        auto exec = LoopExecutor!Sched(&sched, new Admission(1));
+        auto s = Aborting(&spawned, &done);
+        const r = resolveScheme(root.value.borrow, sets, sets.everything, s, exec);
+        schemeFailed = r.hasError && r.error.code == ResolutionErrorCode.schemeFailed;
+        doneAtReturn = done;
+    });
+    assert(!ran.hasError);
+    assert(schemeFailed);
+    assert(spawned == 3 && doneAtReturn == 3, text(doneAtReturn, " of ", spawned, " spawned jobs ran"));
+}
+
+/// An executor that runs a batch inline but holds a scheme's spawned work
+/// until `join`, so a resolution that does not join leaves it unrun.
+struct DeferringExecutor
+{
+    import sparkles.build_primitives.fileset.machine : Request;
+
+    void delegate()[] deferred; ///
+
+    /// Runs `batch` inline.
+    void run(Perform)(scope const(Request)[] batch, scope Perform perform)
+    {
+        foreach (i; 0 .. batch.length)
+            perform(i);
+    }
+
+    /// Holds `work` until `join`.
+    void spawn(void delegate() work)
+    {
+        deferred ~= work;
+    }
+
+    /// Runs everything spawned.
+    void join()
+    {
+        foreach (w; deferred)
+            w();
+        deferred = null;
+    }
+}
+
+/// FSS7 on the failure path: a scheme that spawns work and then aborts
+/// fails the resolution only once that work has run.
+@("fileset.scheme.FSS7.failureJoins")
+@system unittest
+{
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+    import sparkles.build_primitives.fileset.machine : ResolutionErrorCode;
+    import sparkles.build_primitives.fileset.scheme : resolveScheme;
+
+    static struct Aborting
+    {
+        alias Result = bool;
+        uint spawned, done;
+        bool visit(Entries, Exec)(scope const(char)[] path, Entries es, bool empty, ref Exec exec)
+        {
+            foreach (_; 0 .. 3)
+            {
+                ++spawned;
+                exec.spawn(() { ++done; });
+            }
+            return false;
+        }
+        bool incomplete(scope const(char)[] path, ErrorKind kind) => true;
+        bool finish() => true;
+    }
+
+    auto tree = openFixture("a\nb\n");
+    auto root = openRoot!(Rights.readOnly)(&tree.value.get().vfs, "", ambientAuthority());
+    auto sets = Filesets(CasePolicy.sensitive);
+    DeferringExecutor exec;
+    Aborting s;
+    const r = resolveScheme(root.value.borrow, sets, sets.everything, s, exec);
+    assert(r.hasError && r.error.code == ResolutionErrorCode.schemeFailed);
+    assert(s.spawned == 3 && s.done == 3, text(s.done, " of ", s.spawned, " spawned jobs ran"));
 }
 
 /// A sink that records which rule decided each entry (FSI3).

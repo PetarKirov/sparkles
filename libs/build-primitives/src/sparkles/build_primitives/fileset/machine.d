@@ -65,6 +65,10 @@ struct Request
     /// opened directory's identity too, answered with `identified` (D6)
     StatMask mask;
     bool throughLink;      /// `readDir`: `name` is a link the root's policy may follow
+    /// `readDir` through a link: the link's path beneath the fileset root.
+    /// A target that climbs out of the link's directory but stays beneath
+    /// the root is reached by walking this path from the root (FSD6).
+    const(char)[] path;
 }
 
 /// `Request.dir` of a root's `readDir`: relative to the fileset root.
@@ -364,7 +368,7 @@ struct Resolution
             unsupportedKind = requests[req].kind;
             return latch(ResolutionErrorCode.unsupportedRequest, "a driver cannot perform a request");
         }
-        answers[req] = Answer(true, kind);
+        answers[req] = Answer(true, kind, true);
     }
 
     // ------------------------------------------------------------ results
@@ -598,6 +602,7 @@ private:
     {
         bool given;
         ErrorKind error;
+        bool failed; // `error` is the failure's kind; `ErrorKind.other` is a kind too
     }
 
     static shared ulong nextId;
@@ -1283,7 +1288,7 @@ private:
             case BatchKind.root:
                 auto f = &frames[0];
                 const a = answers[0];
-                if (a.error != ErrorKind.other)
+                if (a.failed)
                 {
                     // An absent root holds no member; any other failure is
                     // reported, and the root is skipped.
@@ -1298,6 +1303,9 @@ private:
                     }
                     framesTop = 0;
                     statesTop = 0;
+                    // Entries listed before the failure belong to no root.
+                    entriesTop = 0;
+                    namesTop = rootsEnd;
                     if (ign.ready)
                         ign.release(rootIgnMark);
                     current = uint.max;
@@ -1312,7 +1320,7 @@ private:
                 foreach (i; 0 .. pending)
                 {
                     auto e = &entries[requests[i].target];
-                    if (answers[i].error != ErrorKind.other)
+                    if (answers[i].failed)
                     {
                         if (e.failed)
                             continue; // its stat and its readlink both failed
@@ -1335,14 +1343,14 @@ private:
                 {
                     auto child = &frames[requests[i].target];
                     auto e = &entryOfChild(*f, requests[i].target);
-                    if (answers[i].error == ErrorKind.other && repeatsAncestor(*child))
+                    if (!answers[i].failed && repeatsAncestor(*child))
                     {
                         // A link back to a directory the walk is inside: one
                         // incomplete entry, not a descent to the depth bound.
                         child.failed = true;
                         child.error = ErrorKind.symlinkLoop;
                     }
-                    else if (answers[i].error != ErrorKind.other)
+                    else if (answers[i].failed)
                     {
                         child.failed = true;
                         child.error = answers[i].error;
@@ -1373,7 +1381,7 @@ private:
                 auto f = &frames[batchFrame];
                 f.phase = Phase.evaluate;
                 const a = answers[0];
-                if (a.error == ErrorKind.other)
+                if (!a.failed)
                 {
                     if (!addScope(names[][f.path.start .. f.path.end], stateOf(f.state)[ignWord]))
                         return false;
@@ -1389,7 +1397,7 @@ private:
             case BatchKind.prefix:
                 const a = answers[0];
                 const root = names[][prefixRoot.start .. prefixRoot.end];
-                if (a.error == ErrorKind.other)
+                if (!a.failed)
                 {
                     if (!addScope(root[0 .. prefixPos ? prefixPos - 1 : 0], prefixWord))
                         return false;
@@ -1648,7 +1656,7 @@ private:
             frames[target] = c;
             ++f.childCount;
             if (!request(Request(RequestKind.readDir, self, name, target, identityMask,
-                    c.throughLink)))
+                    c.throughLink, c.throughLink ? names[][c.path.start .. c.path.end] : null)))
                 return false;
         }
         // The staged listings start after the marks; their names too.

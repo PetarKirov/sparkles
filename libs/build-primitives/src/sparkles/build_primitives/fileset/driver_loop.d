@@ -45,35 +45,58 @@ if (isFiberExecutor!X)
         const n = batch.length;
         if (n == 0)
             return;
-        auto done = new Admission(cast(uint) n, cast(uint) n);
-        // The fibers outlive no frame of this call: it waits for them all.
+        // The fibers outlive no frame of this call: it waits for them all,
+        // and an interrupt does not end the wait, since they use `perform`
+        // and the resolution behind it until they finish.
         auto work = (() @trusted => cast(Perform*) &perform)();
+        size_t left = n;
+        FiberContext* waiter;
+        // Annotated: inference does not reach it through `spawnOne`'s closure.
+        void finishOne() @safe
+        {
+            if (--left == 0 && waiter !is null)
+            {
+                auto w = waiter;
+                waiter = null;
+                exec.wake(w);
+            }
+        }
         // One call per request, so each fiber's closure holds its own `i`.
         void spawnOne(size_t i)
         {
             const spawned = exec.spawnFiber(null, SpawnOptions.init, () {
                 admitted(() { (*work)(i); });
-                done.release();
+                finishOne();
             });
             if (spawned is null)
             {
-                // No fiber left: perform it here.
-                (*work)(i);
-                done.release();
+                // No fiber left: perform it here, still within the budget.
+                admitted(() { (*work)(i); });
+                finishOne();
             }
         }
         foreach (i; 0 .. n)
             spawnOne(i);
-        cast(void) done.acquire(*exec, cast(uint) n);
+        while (left)
+        {
+            waiter = exec.currentContext();
+            exec.park();
+        }
     }
 
     /// Runs `work` on a fiber of its own once the budget admits it; `join`
     /// waits for it (FSS7).
     void spawn(void delegate() work)
     {
+        // `work` runs after its creator returns, so its context must live on
+        // the heap. Capturing it in a closure is no escape to dip1000's
+        // inference, which would make the parameter `scope` and let a caller
+        // pass a closure allocated on its own stack; storing it is one.
+        auto held = new void delegate()[1];
+        held[0] = work;
         ++outstanding;
         const spawned = exec.spawnFiber(null, SpawnOptions.init, () {
-            admitted(work);
+            admitted(held[0]);
             finished();
         });
         if (spawned is null)
@@ -93,7 +116,8 @@ if (isFiberExecutor!X)
         }
     }
 
-    private void admitted(scope void delegate() work)
+    // A template, so a `@safe` caller's work keeps it `@safe`.
+    private void admitted(Work)(scope Work work)
     {
         if (budget.acquire(*exec).hasError)
             return;

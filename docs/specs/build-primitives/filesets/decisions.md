@@ -268,6 +268,9 @@ its target is a directory beneath the root, and stays a member as a link value
 if its target is a file or is missing. A link the policy refuses is reported
 as incomplete and is not a member, so a consumer that, like the build graph
 (BGF3), must reject an escaping link finds it in the report.
+A link whose one-name walk escapes its own directory is walked again by its
+whole path from the fileset root, so `..` in its target is judged against
+the root, not its parent ([D6](#d6-a-symlink-cycle-under-symlinks-beneath-accepted)).
 
 The executable bit is read only from a regular file (`FSO1`). On Linux a link's
 mode is always 0777, so `executable` would otherwise select every link on
@@ -647,6 +650,19 @@ the following choices open.
   are the intended consumer. Where the cache's bytes live, such as one file
   per checkout under the build directory, is that consumer's decision.
 
+### A21 — What a step's budget counts
+
+[`FSM6`](./SPEC.md#7-the-resolution-machine-fsm) said that a step performs
+work bounded by its budget. As built, the budget counts entries evaluated
+against the fileset. A step also begins by absorbing the batch it was given:
+it sorts a listing and issues the next requests, and that work is
+proportional to the directory, not to the budget. An external review found
+the mismatch. The amendment states what is counted, and leaves absorption to
+[`FSM7`](./SPEC.md#7-the-resolution-machine-fsm)'s limits on entries and
+pending requests, which already bound it. Making absorption resumable would
+bound a step by the budget alone, at the cost of a cursor inside the sort.
+No consumer steps with a budget small enough to need that.
+
 ### D5 — The extent of the empty-directory report (accepted)
 
 **Question.** [`FSV4`](./SPEC.md#4-the-fileset-value-fsv) reports every
@@ -743,11 +759,18 @@ compared with the directories above it, and a match fails it with the
 existing `symlinkLoop` kind rather than a new one: `ErrorKind` is the I/O
 vocabulary every backend shares, and the kind already names a loop of links.
 
-The question's example was wrong. The driver opens each directory with a
-`walk` of one name from its parent's handle, so a `..` in a target leaves that
-handle and fails with `escapesRoot`: `a/up -> ..` never cycles. The cycle
-the walk can meet is a link that resolves to its own directory, `self -> .`,
-reached directly or through another link to that directory.
+The question's example was right after all, once links that climb are
+handled. The driver opens each directory with a `walk` of one name from its
+parent's handle, so a `..` in a target leaves that handle and fails with
+`escapesRoot`. For a link, the driver then walks the link's whole path from
+the fileset root, so a target that climbs out of its own directory but stays
+beneath the root resolves (`FSD6`). `a/up -> ..` then reaches the root
+itself and is the cycle reported, as is `self -> .`, a link to its own
+directory, reached directly or through another link to that directory
+(`fileset.driver.FSD6.climbingLinkInsideRoot`, `fileset.driver.FSD6.cycle`).
+An external review found that the first version refused every climbing
+link, which `FSD6` and the build graph's committed relative links do not
+allow.
 
 **Revisit** if a consumer wants cycles to be a hard error: it can still
 refuse a resolution with any incomplete entry.
