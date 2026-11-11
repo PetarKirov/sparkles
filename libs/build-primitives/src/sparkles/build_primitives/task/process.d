@@ -16,7 +16,8 @@ returns `ProcessEnd.cancelled`.
 
 Redaction: a redacted environment value is passed to the child but never
 leaves `ci` — it is masked as `<redacted>` in every output line the child
-prints, before the line reaches an event or the spool.
+prints, before the line reaches an event or the spool. A multiline value (a
+PEM key) is printed a line at a time, so each of its lines is masked too.
 
 POSIX only for now: everything below exists where Event Horizon exports
 `supervise` (`processActionsAvailable`).
@@ -83,7 +84,8 @@ struct ProcessDriverOptions
     /// else under a sandbox; anything more a task writes there is the
     /// planner's, through the action's arguments and environment.
     string delegate(const ref TaskNode node) spillPath;
-    /// Bytes of output text a task keeps in memory.
+    /// Bytes of output a task keeps in memory: each line's text plus one
+    /// for its terminator (`OutputSpool`).
     size_t outputMemoryBudget = 1024 * 1024;
     /// SIGTERM-to-SIGKILL grace for a timed-out or cancelled process group.
     Duration terminateGrace = 5.seconds;
@@ -187,9 +189,10 @@ private:
         foreach (entry; action.envDelta)
         {
             overlay ~= EnvironmentChange(entry.name, entry.value);
-            if (entry.redacted && entry.value.length)
-                secrets ~= entry.value;
+            if (entry.redacted)
+                secrets ~= redactionNeedles(entry.value);
         }
+        secrets = longestFirst(secrets);
         cfg.process.envOverlay = overlay;
 
         void onEvent(in ProcessEvent ev)
@@ -246,27 +249,39 @@ private:
 }
 
 /**
-A task's sandbox directory relative to the run's root: its id's segments as
-directories (`test:sparkles.base:unittest` → `test/sparkles.base/unittest`).
-A segment that is itself a path keeps its `/`s, but no component may climb:
-`.` and `..` become `_`, so a sandbox never leaves its root.
+A task's sandbox directory relative to the run's root: each of its id's
+segments as one directory (`test:sparkles.base:unittest` →
+`test/sparkles.base/unittest`).
+
+Within a segment, the characters that would change the path's shape are
+percent-escaped: a separator (`/` → `%2F`, `\` → `%5C`), the escape itself
+(`%` → `%25`), and a segment's final `.` (`%2E`), which Windows strips and
+which would otherwise let `.` or `..` climb. So no component is empty, `.`
+or `..`, none holds a separator on any platform, and a sandbox never leaves
+its root. The map is injective — distinct ids never share a sandbox, and so
+never truncate each other's spill file — and an ordinary id reads as itself.
+(A case-insensitive file system still folds ids that differ only in case.)
 */
 string sandboxPath(const TaskId id) @safe pure nothrow
 {
-    string path;
-    size_t start;
+    static immutable hexDigits = "0123456789ABCDEF";
     const text = id.text;
-    foreach (i; 0 .. text.length + 1)
+    auto path = new char[](0);
+    path.reserve(text.length);
+    foreach (i, c; text)
     {
-        if (i < text.length && text[i] != ':' && text[i] != '/')
-            continue;
-        const component = text[start .. i];
-        if (path.length)
+        if (c == ':')
+        {
             path ~= '/';
-        path ~= component.length == 0 || component == "." || component == ".." ? "_" : component;
-        start = i + 1;
+            continue;
+        }
+        const endsSegment = i + 1 == text.length || text[i + 1] == ':';
+        if (c == '/' || c == '\\' || c == '%' || (c == '.' && endsSegment))
+            path ~= ['%', hexDigits[c >> 4], hexDigits[c & 0xF]];
+        else
+            path ~= c;
     }
-    return path;
+    return (() @trusted => cast(string) path)();
 }
 
 ///
@@ -275,8 +290,50 @@ string sandboxPath(const TaskId id) @safe pure nothrow
 unittest
 {
     assert(sandboxPath(taskId("test", "sparkles.base", "unittest").value) == "test/sparkles.base/unittest");
-    assert(sandboxPath(taskId("docs", "verify", "docs/../x.md").value) == "docs/verify/docs/_/x.md");
-    assert(sandboxPath(taskId("a", "/abs").value) == "a/_/abs");
+    assert(sandboxPath(taskId("docs", "verify", "README.md", "readme_versions").value)
+        == "docs/verify/README.md/readme_versions");
+    assert(sandboxPath(taskId("docs", "verify", "docs/../x.md").value) == "docs/verify/docs%2F..%2Fx.md");
+    assert(sandboxPath(taskId("a", "/abs").value) == "a/%2Fabs");
+}
+
+@("build_primitives.task.process.sandboxPath.noComponentClimbsUnderEitherSeparator")
+@safe pure nothrow
+unittest
+{
+    // A backslash is a separator on Windows, and a trailing dot vanishes
+    // there: neither may produce a `.`/`..` component or an absolute path.
+    foreach (segment; [`..\..\x`, `..`, `.`, `...`, `a\..`, `\\server\share`, `..\`])
+    {
+        const path = sandboxPath(taskId("docs", "verify", segment).value);
+        size_t start;
+        foreach (i; 0 .. path.length + 1)
+        {
+            if (i < path.length && path[i] != '/')
+            {
+                assert(path[i] != '\\', path);
+                continue;
+            }
+            const component = path[start .. i];
+            assert(component.length && component != "." && component != "..", path);
+            start = i + 1;
+        }
+    }
+    assert(sandboxPath(taskId("a", `..\..\x`).value) == "a/..%5C..%5Cx");
+    assert(sandboxPath(taskId("a", "..").value) == "a/.%2E");
+}
+
+@("build_primitives.task.process.sandboxPath.distinctIdsGetDistinctDirectories")
+@safe pure nothrow
+unittest
+{
+    // A segment boundary and an in-segment separator must not meet in one
+    // directory, or two tasks' spill files truncate each other.
+    const string[][] ids = [["docs", "verify", "a/b"], ["docs", "verify", "a", "b"],
+        ["docs", "verify", `a\b`], ["docs", "verify", "a%2Fb"], ["docs", "verify", "a%252Fb"],
+        ["a", ".."], ["a", "."], ["a", "_"], ["a", "%2E"], ["a", "x."], ["a", "x"]];
+    foreach (i, x; ids)
+        foreach (y; ids[i + 1 .. $])
+            assert(sandboxPath(taskId(x).value) != sandboxPath(taskId(y).value), sandboxPath(taskId(x).value));
 }
 
 /// `line` with every non-empty `secrets` value replaced by `<redacted>`.
@@ -289,6 +346,57 @@ string redact(scope const(char)[] line, scope const(string)[] secrets) @safe pur
         if (secret.length)
             result = result.replace(secret, "<redacted>");
     return result;
+}
+
+/**
+What a redacted `value` is searched for in the child's output: the value,
+and — since the child's output is framed into lines, so a multiline value
+(a PEM key) never appears whole in one — each of its non-empty lines, a
+trailing `\r` stripped.
+*/
+private string[] redactionNeedles(string value) @safe pure nothrow
+{
+    if (value.length == 0)
+        return null;
+    auto needles = [value];
+    size_t start;
+    bool multiline;
+    foreach (i; 0 .. value.length + 1)
+    {
+        if (i < value.length && value[i] != '\n')
+            continue;
+        multiline |= i < value.length;
+        auto line = value[start .. i];
+        if (line.length && line[$ - 1] == '\r')
+            line = line[0 .. $ - 1];
+        if (multiline && line.length)
+            needles ~= line;
+        start = i + 1;
+    }
+    return needles;
+}
+
+/// `secrets` ordered longest first, so `redact` replaces a whole value
+/// before the lines it contains.
+private string[] longestFirst(string[] secrets) @safe pure nothrow
+{
+    import std.algorithm.sorting : sort;
+
+    secrets.sort!((a, b) => a.length > b.length);
+    return secrets;
+}
+
+@("build_primitives.task.process.redactionNeedles.everyLineOfAMultilineValue")
+@safe pure nothrow
+unittest
+{
+    assert(redactionNeedles("hunter2") == ["hunter2"]);
+    assert(redactionNeedles("") is null);
+    const pem = "-----BEGIN-----\r\nbody\r\n\r\n-----END-----\n";
+    assert(redactionNeedles(pem) == [pem, "-----BEGIN-----", "body", "-----END-----"]);
+    auto secrets = longestFirst(redactionNeedles(pem));
+    assert(redact("x " ~ pem ~ " y", secrets) == "x <redacted> y", "the whole value before its lines");
+    assert(redact("body", secrets) == "<redacted>");
 }
 
 ///
@@ -320,6 +428,7 @@ version (unittest)
     import sparkles.build_primitives.task.action : EnvEntry;
     import sparkles.build_primitives.task.executor : ExecutorOptions, RunResult, runGraph;
     import sparkles.build_primitives.task.graph : TaskGraph, TaskGraphBuilder;
+    import sparkles.build_primitives.task.output : SpooledLine;
 
     private struct LiveRun
     {
@@ -330,6 +439,7 @@ version (unittest)
         ProcessEnd[] ends;
         bool[] spilled;
         size_t[] spooledLines;
+        string[][] spooledText; // by task index, replayed from the spool
     }
 
     private TaskNode processNode(string name, string[] argv, Duration timeout = Duration.zero,
@@ -389,6 +499,9 @@ version (unittest)
             run.ends ~= driver.record(t).end;
             run.spilled ~= driver.record(t).output.spilled;
             run.spooledLines ~= driver.record(t).output.lines;
+            string[] spooled;
+            driver.record(t).output.replay((const ref SpooledLine l) { spooled ~= l.text; });
+            run.spooledText ~= spooled;
         }
         return run;
     }
@@ -452,6 +565,29 @@ unittest
     assert(run.linesOf[1] == ["token=<redacted>"], "the child got the value; ci never shows it");
     foreach (ref e; run.events)
         assert(!e.text.canFind("hunter2"));
+}
+
+@("build_primitives.task.process.run.multilineRedactedValueNeverAppears")
+@serial
+@system
+unittest
+{
+    import std.conv : text;
+
+    // A PEM-like value printed line by line: no single line holds the whole
+    // value, so each of its lines must be masked on its own (TDM4).
+    const key = "-----BEGIN TEST KEY-----\nc2VjcmV0LWJvZHktbGluZQ\r\n-----END TEST KEY-----";
+    auto run = runLive([
+        processNode("pem", ["sh", "-c", `printf '%s\n' "$KEY"; echo done`], Duration.zero,
+            [EnvEntry("KEY", key, redacted: true)]),
+    ], null, ExecutorOptions(capacity: 1));
+    assert(kindOf(run.result.outcomes[0]) == OutcomeKind.succeeded);
+    // The framing drops the CR of a CRLF line; the needle dropped it too.
+    assert(run.linesOf[0] == ["<redacted>", "<redacted>", "<redacted>", "done"], text(run.linesOf[0]));
+    assert(run.spooledText[0] == run.linesOf[0]);
+    foreach (piece; ["-----BEGIN TEST KEY-----", "c2VjcmV0LWJvZHktbGluZQ", "-----END TEST KEY-----"])
+        foreach (ref e; run.events)
+            assert(!e.text.canFind(piece), e.text);
 }
 
 @("build_primitives.task.process.run.failFastTearsDownTheTree")

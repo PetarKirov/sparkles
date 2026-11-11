@@ -357,7 +357,7 @@ enum FailureReason
     exitStatus,  /// the process exited nonzero
     signal,      /// the process was killed by a signal
     timeout,     /// the action exceeded its timeout
-    spawnFailed, /// the process could not start
+    spawnFailed, /// the process, or the task's fiber (`ENOBUFS`), could not start
     planning,    /// a planning node found an error (a missing selected file)
     contract,    /// an in-process action's contract does not hold
 }

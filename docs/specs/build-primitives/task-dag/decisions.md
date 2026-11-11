@@ -8,7 +8,8 @@ reviewed: 2026-11-01
 
 The owner accepted T1–T4 and T8 on 2026-11-01, in a design interview held to
 rework the `apps/ci` task DAG. T5–T7 and T9 were settled while delivering and
-reviewing M4–M6, and are recorded in the SPEC.
+reviewing M4–M6, and are recorded in the SPEC. T10–T12 were settled while
+fixing defects an external review found in the executor.
 
 ## T1: Package edges are not ordering edges for tests
 
@@ -105,3 +106,34 @@ failures can become provider annotations.
 `Blocked(conditionUnmet)`. It never fails the command, and summaries count it
 apart from blocks caused by failures. Without this, every green coverage run
 would report one blocked plain retry per package.
+
+## T10: A task directory is its id, percent-escaped
+
+**Question.** A task directory was the id's segments as directories, with the
+`/`s inside a segment kept and `.`/`..` components replaced by `_`. Then
+`docs:verify:a/b` and `docs:verify:a:b` shared a directory, and the second
+spill truncated the first; and a `\` in a segment climbed out of the root on
+Windows.
+
+**Choice.** Each id segment is one directory. Within it, `/`, `\`, `%` and a
+final `.` are percent-escaped (`%2F`, `%5C`, `%25`, `%2E`). The map is
+injective, no component is empty, `.` or `..`, and an ordinary id reads as
+itself. A path inside a segment no longer nests (`docs%2Fguide.md`).
+
+**Revisit when** a case-insensitive file system hosts runs whose ids differ
+only in case.
+
+## T11: Each line of a multiline secret is masked
+
+**Choice.** Output is masked after it is framed into lines, so a multiline
+redacted value (a PEM key) never appears whole in one line. Each of its
+non-empty lines, without a trailing `\r`, is masked too, after the whole
+value: needles are tried longest first. Unrelated output that happens to
+contain such a line is masked as well; masking too much is the safe error.
+
+## T12: A task that cannot get a fiber fails to start
+
+**Choice.** When the scheduler's fiber slab rejects a task's fiber, the task
+is settled at once as `Failed(spawnFailed, ENOBUFS)` through the ordinary
+completion path: its weight and keys are released, it can trigger fail-fast,
+and the run ends. Left running, it held its claim forever and the run hung.
