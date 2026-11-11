@@ -23,6 +23,7 @@ times are set with `MemTree.vfs.setMtime` when a fixture needs them.
 */
 module sparkles.build_primitives.fileset.tree_literal;
 
+import core.checkedint : addu, mulu;
 import core.lifetime : move;
 import core.memory : pureFree, pureMalloc;
 
@@ -74,14 +75,20 @@ FilesetExpected!(Unique!MemTree) memTree(scope const(char)[] literal, size_t spa
         ++entries;
         contentBytes += line.length;
     }
-    entries += spareNodes;
-    contentBytes += spareBytes;
+    // The spare room is the caller's: a sum or product that wraps would
+    // allocate less than the slices below claim.
+    bool overflow;
+    entries = addu(entries, spareNodes, overflow);
+    contentBytes = addu(contentBytes, spareBytes, overflow);
+    const nodeBytes = mulu(entries, MemNode.sizeof, overflow);
+    if (overflow)
+        return filesetErr!R(FilesetErrorCode.treeLiteralTooLarge, 0, "the tree's size overflows");
 
     auto tree = makeUnique!MemTree();
     if (tree.empty)
         return filesetErr!R(FilesetErrorCode.treeLiteralTooLarge, 0, "no memory for the tree");
     const ok = () @trusted {
-        auto n = cast(MemNode*) pureMalloc(entries * MemNode.sizeof);
+        auto n = cast(MemNode*) pureMalloc(nodeBytes);
         auto b = cast(ubyte*) pureMalloc(contentBytes);
         if (n is null || b is null)
         {
@@ -265,4 +272,14 @@ private size_t find(scope const(char)[] s, scope const(char)[] needle) @safe pur
         if (s[i .. i + needle.length] == needle)
             return i;
     return size_t.max;
+}
+
+/// Spare room whose size overflows is refused, not allocated short.
+@("fileset.treeLiteral.sizeOverflow")
+@safe nothrow @nogc unittest
+{
+    auto nodes = memTree("", size_t.max / MemNode.sizeof);
+    assert(nodes.hasError && nodes.error.code == FilesetErrorCode.treeLiteralTooLarge);
+    auto bytes = memTree("a = x\n", 0, size_t.max);
+    assert(bytes.hasError && bytes.error.code == FilesetErrorCode.treeLiteralTooLarge);
 }
