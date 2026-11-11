@@ -443,7 +443,10 @@ executor **must**:
 authoritative failure among the completions the executor collects in one turn.
 A node the executor interrupted that then reports `Failed` is recorded as
 `Cancelled(interrupted)`, because the interrupt, not the node, caused the
-failure.
+failure. Conversely, a node that reports `Cancelled` while neither the run nor
+the executor's enclosing scope was cancelled is recorded as
+`Failed(contract)`: no cause stands behind its cancellation to control the
+exit status (T13).
 
 **TDC4: Provisional failures.** A failure of a node with a provisional failure
 policy, and a provisional block descending from one, **must not** initiate

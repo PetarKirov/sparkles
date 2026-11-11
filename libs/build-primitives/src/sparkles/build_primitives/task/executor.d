@@ -493,6 +493,13 @@ private:
             auto outcome = c.outcome;
             if (interrupted[i] && kindOf(outcome) == OutcomeKind.failed)
                 outcome = TaskOutcome(Cancelled(CancelReason.interrupted));
+            // A cancellation nothing asked for — neither the run nor an outer
+            // shutdown of the scheduler — has no cause to control the exit
+            // status (SPEC §3.4, TDC3), so the command would pass over work that
+            // never finished: it is the action's failure.
+            else if (kindOf(outcome) == OutcomeKind.cancelled && !interrupted[i] && !cancelling
+                && !interruptRequested(*exec.currentContext()))
+                outcome = TaskOutcome(Failed(FailureReason.contract));
             const claim = (*graph)[c.task].resources;
             free += claim.admittedWeight(options.capacity);
             foreach (key; claim.exclusiveKeys)
@@ -986,6 +993,28 @@ unittest
         ExecutorOptions(capacity: 2, failFast: true));
     assert(run.result.outcomes[g.indexOf(tid("b")).value] == TaskOutcome(Cancelled(CancelReason.interrupted)));
     assert(g[run.result.primaryFailure].id.text == "a");
+}
+
+@("build_primitives.task.executor.run.anUnaskedCancellationIsAFailure")
+@system
+unittest
+{
+    // `a` reports `Cancelled` though nothing cancelled the run (a driver
+    // that lost its child, say): no cause stands behind it, so it is a
+    // failure, its dependent is blocked by it, and the command fails.
+    const g = graphOf([tnode("a"), tnode("b")], [tedge("a", "b")]);
+    auto run = runFake(g, ["a": Script(1.msecs, TaskOutcome(Cancelled(CancelReason.interrupted)),
+        ignoresCancel: true)], ExecutorOptions(capacity: 2));
+    assert(!run.result.cancelled);
+    assert(run.result.outcomes[g.indexOf(tid("a")).value] == TaskOutcome(Failed(FailureReason.contract)));
+    assert(run.outcomeOf(g, "b") == "blocked");
+    assert(run.result.exitCode == 1);
+    assert(g[run.result.primaryFailure].id.text == "a");
+
+    // A run that was cancelled keeps its tasks' cancellations.
+    auto cancelled = runFake(g, ["a": Script(10.msecs)], ExecutorOptions(capacity: 2), 5.msecs,
+        CancelCause.interrupt);
+    assert(cancelled.outcomeOf(g, "a") == "cancelled" && cancelled.result.exitCode == 130);
 }
 
 @("build_primitives.task.executor.run.outputSequenceNumbersAreMonotonic")
