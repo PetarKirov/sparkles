@@ -46,7 +46,6 @@ import core.stdc.errno : ENOBUFS, EPIPE;
 import core.time : Duration, MonoTime;
 import std.sumtype : match;
 
-import sparkles.event_horizon.admission : Admission;
 import sparkles.event_horizon.cause : FiberContext, Interrupt, InterruptKind, interruptFiber,
     interruptRequested;
 import sparkles.event_horizon.channel : Channel;
@@ -271,8 +270,38 @@ private:
     ulong sequence;
     bool sinkGone;
     // The sink's one producer turn: the holder numbers its event and puts
-    // it, parking on backpressure while it holds the turn.
-    Admission emitTurn = Admission(1);
+    // it, parking on backpressure while it holds the turn. The turn is
+    // handed over in arrival order — a ticket per delivery, served one at a
+    // time — so a producer that delivers again without parking queues
+    // behind the ones already waiting, rather than taking the turn back
+    // before they run (an `Admission` wakes a waiter without handing it the
+    // unit). A task printing a long burst would otherwise hold the
+    // scheduler off, and with it every completion, fail-fast and `cancel`.
+    ulong nextTicket, servingTicket;
+    // The parked holders of tickets `servingTicket + 1 .. nextTicket`, in
+    // ticket order.
+    FiberContext*[] turnQueue;
+
+    void takeTurn()
+    {
+        const ticket = nextTicket++;
+        if (ticket == servingTicket)
+            return;
+        turnQueue ~= exec.currentContext();
+        // Parked with no cancel hook, so only `passTurn` wakes it.
+        while (servingTicket != ticket)
+            exec.park();
+    }
+
+    void passTurn()
+    {
+        ++servingTicket;
+        if (turnQueue.length == 0)
+            return;
+        auto next = turnQueue[0];
+        turnQueue = turnQueue[1 .. $];
+        exec.wake(next);
+    }
 
     bool cancelling;
     CancelCause cancelCause;
@@ -304,10 +333,9 @@ private:
         if (sinkGone)
             return;
         protect!(() {
-            const turn = emitTurn.acquire(*exec);
-            assert(!turn.hasError, "the emit turn is never closed");
+            takeTurn();
             scope (exit)
-                emitTurn.release();
+                passTurn();
             if (sinkGone)
                 return;
             auto event = TaskEvent(sequence++, clock.now(), make(), text);
@@ -856,6 +884,69 @@ unittest
         foreach (i, e; events)
             assert(e.sequence == i, "events arrive in sequence order");
     }
+}
+
+@("build_primitives.task.executor.failFast.aChattyTaskDoesNotStarveTheScheduler")
+@system
+unittest
+{
+    import sparkles.event_horizon.channel : Channel;
+    import sparkles.event_horizon.scope_ : withScope;
+    import sparkles.event_horizon.testing : advanceAndSettle, TestSched;
+
+    // `chatty` prints 200 lines and parks only on the sink's backpressure;
+    // the reporter takes an event a millisecond. `afail` fails at 5 ms. The
+    // scheduler must get the emit turn between chatty's lines, record the
+    // failure and interrupt chatty, rather than wait out its 200 lines.
+    static struct Chatty
+    {
+        Clock* clock;
+
+        TaskOutcome run(X)(ref TaskContext!X ctx)
+        {
+            if (ctx.node.id.text != "chatty")
+            {
+                cast(void) clock.sleep(5.msecs);
+                return TaskOutcome(Failed(FailureReason.exitStatus, 1));
+            }
+            foreach (_; 0 .. 200)
+            {
+                if (ctx.cancelRequested)
+                    return TaskOutcome(Cancelled(CancelReason.interrupted));
+                ctx.output(OutputStream.stdout, "line");
+            }
+            return TaskOutcome(Succeeded());
+        }
+    }
+
+    const g = graphOf([tnode("afail"), tnode("chatty")], null);
+    TestSched sched;
+    auto clock = Clock(sched.waker());
+    auto driver = Chatty(&clock);
+    Channel!(TaskEvent, 4) sink;
+    TaskEvent[] events;
+    RunResult result;
+    sched.run(() {
+        cast(void) withScope!((ref sc) {
+            sc.spawn(() {
+                for (auto e = sink.take(sched); !e.hasError; e = sink.take(sched))
+                {
+                    events ~= e.value;
+                    cast(void) clock.sleep(1.msecs);
+                }
+            });
+            result = runGraph(sched, clock, g, driver, sink, ExecutorOptions(capacity: 2, failFast: true));
+            sink.close();
+        })(sched);
+    });
+    advanceAndSettle(sched, clock);
+    assert(sched.liveFibers == 0);
+    assert(result.exitCode == 1);
+    assert(result.outcomes[g.indexOf(tid("chatty")).value] == TaskOutcome(Cancelled(CancelReason.interrupted)),
+        "chatty ran to the end: the scheduler never got the turn");
+    assert(countOf!((TaskOutput _) => true)(events) < 20);
+    foreach (i, e; events)
+        assert(e.sequence == i, "events arrive in sequence order");
 }
 
 @("build_primitives.task.executor.failFast.unneededFallbackStaysUnneeded")
