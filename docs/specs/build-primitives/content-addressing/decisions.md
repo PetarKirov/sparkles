@@ -151,3 +151,18 @@ whatever `FSV4`'s report keeps.
 **Revisit** if a consumer must reproduce a tree's empty directories from
 its name alone. It would then need a scheme that declares it keeps them,
 and a name that depends on the fileset's spelling.
+
+## C4: A supplied tree is checked against its file's size
+
+[`CAO1`](./SPEC.md#_7-a-file-s-supplied-tree-cao) checked that a supplied
+tree holds together, its outboard the length its size implies and its top
+record merging into its root, but never that the size is the file's. A
+sidecar left from an earlier version of the file passes both checks and
+names that version. An external review found the gap.
+
+The fold now declares `FsoMetadata.size` when it is given a supply, and a
+tree whose size differs from the one the member's `stat` reports fails the
+resolution, as a tree that does not chain does. The size costs nothing
+extra: it comes from the `stat` the fold already issues for the executable
+bit. A tree of the right size but stale content is still beyond this check,
+and is caught by `CAO2` when a range is read.

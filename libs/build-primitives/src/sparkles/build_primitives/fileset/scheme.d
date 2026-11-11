@@ -119,6 +119,8 @@ struct SchemeEntry(V, Rights R, Value = void)
     long mtimeNs;        /// ditto
     bool hasFingerprint; /// FSC2: a member file's, when declared
     FsoFingerprint fingerprint; /// ditto
+    bool hasSize;        /// FSS8: a member file's size, when declared
+    ulong size;          /// ditto
     FsoRef!(V, R) ref_;  /// FSS4
 
     static if (!is(Value == void))
@@ -159,6 +161,8 @@ struct SchemeEntries(V, Rights R, Value, Units)
         e.mtimeNs = u.mtimeNs;
         e.hasFingerprint = u.hasFingerprint;
         e.fingerprint = u.fingerprint;
+        e.hasSize = u.hasSize;
+        e.size = u.size;
         e.ref_ = FsoRef!(V, R)(dir, u.name);
         static if (!is(Value == void))
         {

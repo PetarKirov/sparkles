@@ -85,6 +85,9 @@ enum FsoMetadata : ubyte
     /// A member file's `FsoFingerprint`: what a cache compares to decide
     /// whether the file is unchanged (FSC2).
     fingerprint = 1 << 3,
+    /// A member file's size, from its `stat`: what a scheme checks a tree
+    /// supplied out of band against (FSS8).
+    size = 1 << 4,
 }
 
 /**

@@ -42,8 +42,9 @@ enum size_t chunkGroupSize = 16 * 1024;
 enum size_t recordSize = 64;
 
 /// The chunk groups of a file of `size` bytes; an empty file has one.
+/// Rounded up without adding to `size`, so it holds up to `ulong.max`.
 ulong chunkGroups(ulong size) @safe pure nothrow @nogc =>
-    size == 0 ? 1 : (size + chunkGroupSize - 1) / chunkGroupSize;
+    size == 0 ? 1 : size / chunkGroupSize + (size % chunkGroupSize != 0);
 
 /// The bytes in the outboard of a file of `size` bytes.
 ulong outboardSize(ulong size) @safe pure nothrow @nogc =>
@@ -67,6 +68,10 @@ in (group < chunkGroups(size))
     assert(chunkGroups(chunkGroupSize + 1) == 2 && outboardSize(chunkGroupSize + 1) == 64);
     assert(outboardSize(40_000) == 128);
     assert(groupLength(40_000, 2) == 40_000 - 2 * chunkGroupSize);
+    // Near 2^64 the count does not wrap to zero.
+    assert(chunkGroups(ulong.max) == ulong.max / chunkGroupSize + 1);
+    assert(chunkGroups(ulong.max - chunkGroupSize + 2) == ulong.max / chunkGroupSize + 1);
+    assert(groupLength(ulong.max, chunkGroups(ulong.max) - 1) == ulong.max % chunkGroupSize);
 }
 
 // The groups in the left subtree of a node over `groups` groups: the largest

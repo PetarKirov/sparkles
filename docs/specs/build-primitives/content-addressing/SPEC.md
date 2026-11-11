@@ -308,10 +308,12 @@ travel beside it.
 **`CAO1` — A supplied tree names a file without reading it.** A castore
 scheme given a supplied tree for a member file **must** take the file's id
 and size from it, without reading the file's contents. A supplied tree whose outboard is
-not the length its size implies, or whose top record does not merge into
-its root, **must** fail the resolution. _Detection:_ a file whose tree is
-supplied is never opened, the fileset's id equals the one computed by
-reading it, and a flipped top record fails the resolution.
+not the length its size implies, whose top record does not merge into
+its root, or whose size is not the one the file's `stat` reports (a tree
+left from an earlier version of the file), **must** fail the resolution.
+_Detection:_ a file whose tree is supplied is never opened, the fileset's id
+equals the one computed by reading it, a flipped top record fails the
+resolution, and so does a tree whose file has grown by one byte.
 
 **`CAO2` — A range read later is verified.** Bytes of such a file that are
 later read **must** be checked against the outboard before they are

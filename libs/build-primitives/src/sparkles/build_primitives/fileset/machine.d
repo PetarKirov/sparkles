@@ -94,6 +94,9 @@ struct UnitEntry
     /// whose backend reports both times and its identity.
     bool hasFingerprint;
     FsoFingerprint fingerprint; /// FSC2
+    /// Whether `size` was filled: `FsoMetadata.size`, on a file.
+    bool hasSize;
+    ulong size; /// FSS8
     /// A subdirectory's rank among the unit's subdirectories in the order
     /// their own units arrived; `noChild` for a file or link. A fold's
     /// children's values are found by it.
@@ -468,6 +471,12 @@ struct Resolution
                 {
                     u.hasFingerprint = true;
                     u.fingerprint = e.fingerprint;
+                }
+                if (meta & FsoMetadata.size && e.statted && e.child == noChild
+                    && e.kind == EntryKind.regular)
+                {
+                    u.hasSize = true;
+                    u.size = e.fingerprint.size; // filled by every stat
                 }
                 return u;
             }
@@ -1580,7 +1589,8 @@ private:
         const m = shape.metadata;
         if (e.kind == EntryKind.regular)
             e.needStat |= !e.statted
-                && (m & (FsoMetadata.executable | FsoMetadata.mtime | FsoMetadata.fingerprint)) != 0;
+                && (m & (FsoMetadata.executable | FsoMetadata.mtime | FsoMetadata.fingerprint
+                    | FsoMetadata.size)) != 0;
         else if (e.kind == EntryKind.symlink)
         {
             e.needStat |= !e.statted && (m & FsoMetadata.mtime) != 0;

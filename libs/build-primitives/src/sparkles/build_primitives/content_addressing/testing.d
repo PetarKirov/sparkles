@@ -1015,11 +1015,22 @@ is read.
     // A flipped top record is refused, and nothing beneath it is read.
     Supplied broken;
     broken.supply.store = store;
-    auto bad = broken.supply.store.trees["a/b/huge"].outboard.dup;
+    const good = store.trees["a/b/huge"].outboard;
+    auto bad = good.dup;
     bad[0] ^= 1;
     broken.supply.store.trees["a/b/huge"].outboard = bad;
     assertSchemeFailed(resolveScheme(root.value.borrow, sets, f, broken, exec),
         "a supplied tree does not chain to its root", "a flipped top record");
+
+    // A tree that holds together but is not the size its file now has is
+    // stale: it names another file, and is refused rather than trusted.
+    assert(vfs.writeFile("q", bytes["q"] ~ cast(ubyte) 0));
+    Supplied stale;
+    stale.supply.store = store;
+    // The trees are shared with `broken`'s store: put the top record back.
+    stale.supply.store.trees["a/b/huge"].outboard = good.dup;
+    assertSchemeFailed(resolveScheme(root.value.borrow, sets, f, stale, exec),
+        "a supplied tree's size is not its file's", "a stale tree");
 }
 
 // ── M7: the subtree cache ────────────────────────────────────────────────
