@@ -45,6 +45,18 @@ struct EscapeAssembler
     bool pending() const @safe pure nothrow @nogc
         => _state != State.idle && _state != State.paste; // a paste is not ambiguous
 
+    /**
+    `true` while what is buffered could still be a key on its own: a bare
+    `ESC` (the escape key), an introducer after it (`ESC [` is Alt+[) or a
+    control string's introducer with nothing after it. Only then does the
+    escape-disambiguation deadline apply. A sequence past its introducer
+    (`ESC [<65;20`) is a terminal's, and its remaining bytes are on the
+    way: flushed at a deadline, a busy frame's delay would turn the rest
+    of a wheel report into typed text.
+    */
+    bool ambiguous() const @safe pure nothrow @nogc
+        => (_state == State.escape && _len <= 1) || (_state == State.controlString && !_inString);
+
     /// Resolves buffered state at a deadline: a bare `ESC` becomes the
     /// escape key; a partial sequence decodes best-effort; a truncated
     /// UTF-8 code point is dropped (there is nothing sound to emit).
@@ -220,9 +232,10 @@ alias EventChannel = Channel!(Event, 64);
 
 /**
 The input pump (spawned as a daemon fiber): ring-reads `fd` in chunks,
-assembles, and puts events. A pending partial sequence bounds the next
-read with `escapeTimeoutMs`; expiry flushes it (a bare `ESC` becomes the
-escape key). On EOF or a read error, one `EndOfInput` and the pump ends.
+assembles, and puts events. An ambiguous partial sequence (`ambiguous`)
+bounds the next read with `escapeTimeoutMs`; expiry flushes it (a bare
+`ESC` becomes the escape key). A sequence past its introducer waits for
+its final byte. On EOF or a read error, one `EndOfInput` and the pump ends.
 */
 void pumpTerminalInput(ref Sched sched, ref EventChannel events, int fd,
     scope const(ubyte)[] typedAhead = null, int escapeTimeoutMs = 40)
@@ -252,7 +265,7 @@ void pumpTerminalInput(ref Sched sched, ref EventChannel events, int fd,
 
         uint got;
         bool ended;
-        if (assembler.pending)
+        if (assembler.ambiguous)
         {
             // Deadline-bounded continuation read: the Esc-vs-sequence
             // disambiguation window. The deadline cancels the read
@@ -385,6 +398,26 @@ unittest
     assert(got.length == 1);
     assert(got[0] == keyEvent(Key.escape));
     assert(!a.pending);
+}
+
+@("ui_app.assembler.aStartedSequenceIsNotAmbiguous")
+@safe
+unittest
+{
+    // Only a bare ESC or an introducer could be a key, so only those take
+    // the deadline; a wheel report cut off mid-parameters waits for the
+    // rest, however late a busy frame lets it be read, and never becomes
+    // typed text.
+    EscapeAssembler a;
+    Event[] got;
+    a.feed(cast(const(ubyte)[]) "\x1b", (Event e) { got ~= e; });
+    assert(a.ambiguous);
+    a.feed(cast(const(ubyte)[]) "[", (Event e) { got ~= e; });
+    assert(a.ambiguous, "ESC [ alone is Alt+[");
+    a.feed(cast(const(ubyte)[]) "<65;20", (Event e) { got ~= e; });
+    assert(a.pending && !a.ambiguous && got.length == 0);
+    a.feed(cast(const(ubyte)[]) ";20M", (Event e) { got ~= e; });
+    assert(got == feedChunks("\x1b[<65;20;20M") && !a.pending);
 }
 
 @("ui_app.assembler.altKeyAndUtf8Split")
