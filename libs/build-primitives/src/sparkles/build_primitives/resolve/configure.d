@@ -1218,6 +1218,35 @@ importPaths "$LIB_PACKAGE_DIR/extra"
     }
 }
 
+@("build_primitives.resolve.configure.resolve.optionalDependenciesFollowTheLocks")
+@safe unittest
+{
+    import sparkles.build_primitives.resolve.project : RegistrySource;
+
+    // dub uses an optional dependency when the selections pick it, and
+    // `default=true` matters only without a selections file; the locks are
+    // one. So a locked optional dependency is used, `default` or not, and an
+    // unlocked one is skipped, `default` or not.
+    foreach (attributes; [" optional=true", " optional=true default=true"])
+    {
+        auto driver = new MemoryDriver([
+            "/r/dub.sdl": "name \"r\"\ndependency \"a\" version=\"*\"" ~ attributes ~ "\n",
+            "/r/source/r.d": "",
+            "/store/a/dub.sdl": "name \"a\"\nversion \"1.0.0\"\n",
+            "/store/a/source/a.d": "",
+        ]);
+        auto request = ResolveRequest(directory: "/r", platform: linuxLdc);
+        auto unlocked = resolve(request, driver);
+        assert(unlocked.hasValue, unlocked.hasError ? unlocked.error.message : null);
+        assert(("a" in unlocked.value.configurations) is null, "an unselected optional dependency is skipped");
+
+        request.registry["a"] = RegistrySource("/store/a", "1.0.0");
+        auto locked = resolve(request, driver);
+        assert(locked.hasValue, locked.hasError ? locked.error.message : null);
+        assert(("a" in locked.value.configurations) !is null, "a selected optional dependency is used");
+    }
+}
+
 @("build_primitives.resolve.configure.resolve.hiddenEdgesAndEnvironment")
 @safe unittest
 {
