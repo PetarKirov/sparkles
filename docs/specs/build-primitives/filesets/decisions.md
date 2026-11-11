@@ -284,9 +284,15 @@ read by git's rules and then translated into fileset pattern syntax
 (`readIgnoreLine`). A trailing `\r` is dropped. Only unescaped trailing
 spaces are trimmed, never tabs. One leading `!` negates, and a second is
 literal. `\!` and `\#` stay escapes. Git's globs have no brace alternatives, so
-`{` and `}` are escaped and stay literal. The rest of the syntax means the
-same in both: `*`, `?`, classes, `**`, escapes, anchoring by a leading or
-middle `/`, and a trailing `/` for directories.
+`{` and `}` are escaped and stay literal. A bracket expression is read as
+git's `wildmatch` reads it. A `]` that comes first is literal, `^` negates as
+`!` does, and POSIX classes such as `[:digit:]` expand into the ASCII ranges
+they name. An expression git cannot read, either unclosed or naming an
+unknown class, makes the pattern match nothing, so the line is no rule. An
+external review found that classes and a leading `]` had been passed
+through unchanged. The rest of the syntax means the same in both: `*`, `?`,
+`**`, escapes, anchoring by a leading or middle `/`, and a trailing `/` for
+directories.
 
 The root `.gitignore` leaf of M1 had read lines with its own rules. It trimmed
 trailing tabs, dropped the backslash of `\!`, which made the rule fail to
