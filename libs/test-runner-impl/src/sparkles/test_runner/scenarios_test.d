@@ -23,9 +23,24 @@ private string here()
         .buildNormalizedPath("..", "..", "..");
 }
 
+// The directory holding this process's copies of the built executables.
+private __gshared string ownCopies;
+
+shared static ~this()
+{
+    import std.file : rmdirRecurse;
+
+    if (ownCopies.length)
+        try
+            rmdirRecurse(ownCopies);
+        catch (Exception)
+        {
+        }
+}
+
 /// The runner executable and the fixture's test binary, built once per
 /// worker process; a lock file keeps the workers' dub builds of the same
-/// trees from racing each other.
+/// trees from racing each other, and each process runs copies of its own.
 private struct Built
 {
     string runner;
@@ -79,9 +94,23 @@ private Built built()
         r = execute(["dub", "build", "-q", "--root=" ~ fixtureDir, "--config=unittest",
             "--build=unittest"]);
         assert(r.status == 0, r.output);
-        return Built(
-            runner: runner,
-            fixture: buildPath(fixtureDir, "build", "runner-fixture-test-unittest" ~ exe));
+        // Each worker process of this suite builds once, and dub relinks
+        // both targets every time, so another worker would rewrite them
+        // while this one's tests run them. Copies of this process's own,
+        // made under the lock, are never rewritten.
+        import std.conv : text;
+        import std.file : PreserveAttributes, copy;
+        import std.path : baseName;
+        import std.process : thisProcessID;
+
+        const own = here.buildPath("build", text("scenarios-", thisProcessID));
+        own.mkdirRecurse;
+        ownCopies = own;
+        const fixture = buildPath(fixtureDir, "build", "runner-fixture-test-unittest" ~ exe);
+        foreach (from; [runner, fixture])
+            copy(from, buildPath(own, from.baseName), PreserveAttributes.yes);
+        return Built(runner: buildPath(own, runner.baseName),
+            fixture: buildPath(own, fixture.baseName));
     }
 
     static shared Built paths;
