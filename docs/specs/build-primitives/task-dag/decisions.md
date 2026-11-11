@@ -137,3 +137,29 @@ contain such a line is masked as well; masking too much is the safe error.
 is settled at once as `Failed(spawnFailed, ENOBUFS)` through the ordinary
 completion path: its weight and keys are released, it can trigger fail-fast,
 and the run ends. Left running, it held its claim forever and the run hung.
+
+## T13: An unasked cancellation is a failure
+
+**Question.** A `Cancelled` outcome adds no failure, because the cause that
+cancelled the run controls the exit status. A driver can still report one
+when nothing cancelled the run: the process driver maps
+`ProcessEnd.cancelled` to `Cancelled(interrupted)` whatever ended the child,
+and an in-process action may give up on its own. Its dependents then became
+`Cancelled(notAdmitted)` and the command exited 0 over work that never
+finished.
+
+**Alternatives.**
+
+- Keep the outcome and fail the command anyway, with no failing task to
+  name.
+- Record it as `Failed(contract)`.
+- A new failure reason for it.
+
+**Choice.** `Failed(contract)`, mirroring T6: the executor knows whether it
+interrupted a task, or whether its own fiber was interrupted by an enclosing
+shutdown, and a cancellation with neither is the action breaking its
+contract. Dependents are then blocked by a failure, the task can be the
+primary cause and trigger fail-fast, and reporters need no new reason.
+
+**Revisit when** a driver needs to report a cancellation it initiated itself
+for a reason the run should accept.
