@@ -30,10 +30,10 @@ import sparkles.ui.components.editor : caretColumnOf, editorLineSpans, EditorVie
 import sparkles.ui.components.tree_view : collapseOrUp, measureContent, TreeStep, TreeViewState,
     treeActivate = activate, viewSlice;
 import sparkles.ui.components.scroll_body : ScrollBody;
-import sparkles.ui.components.tree_widget : flatten, TreeData, TreeGlyphs, treeRows = treeView;
+import sparkles.ui.components.tree_widget : flatten, Guide, TreeData, TreeGlyphs, treeRows = treeView;
 import sparkles.ui.editor.field : EditorField;
 import sparkles.ui.geometry : Insets, Rect, SizeSpec;
-import sparkles.ui.style : BorderStyle, Decoration, FontRole, GuideGlyphs, Slot, TextStyle, TypeStep;
+import sparkles.ui.style : BorderStyle, Decoration, FontRole, Slot, TextStyle, TypeStep;
 import sparkles.ui.widget : Alignment, Builder, TextSpan, Widget, WidgetKind, WidgetTree;
 import sparkles.ui.wrap : TextWrap;
 
@@ -1043,11 +1043,8 @@ struct ExplorerApp
             return b.add(Widget(kind: WidgetKind.text, slot: Slot.muted,
                 text: shown.resolved ? " (no members)" : ""));
         // The folder glyph is the disclosure marker (hue `XPL6`).
-        auto glyphs = TreeGlyphs(closed: "", open: "", leaf: "");
-        // Touch rows stand apart, which would break the guides between them:
-        // the depth is indentation alone.
-        if (touch)
-            glyphs.guides = GuideGlyphs(fork: "   ", end: "   ", bar: "   ", space: "   ");
+        // The connectors are hue's (`FXU9`), in both layouts.
+        const glyphs = TreeGlyphs(closed: "", open: "", leaf: "");
         auto open = tv.open;
         auto data = &tree;
         // The rows from `tv.top`, one more for the part-row a fraction
@@ -1065,19 +1062,44 @@ struct ExplorerApp
         }
         // Touch (`FXU11`): a dense list, each row `treeRowCells` tall, its
         // text centred, the selected one a rounded tint; the motion counts
-        // rows, the paint cells.
+        // rows, the paint cells. The connectors run on through the rows
+        // above and below the text, so the lines join from item to item.
+        uint guideRun(in Guide[] guides, bool below, bool topmost)
+        {
+            string line;
+            foreach (d, g; guides)
+            {
+                const own = d + 1 == guides.length;
+                if (own)
+                    line ~= below ? (g == Guide.fork ? glyphs.guides.bar : glyphs.guides.space)
+                        : topmost ? glyphs.guides.space : glyphs.guides.bar;
+                else
+                    line ~= g == Guide.continueBar ? glyphs.guides.bar : glyphs.guides.space;
+            }
+            return b.add(Widget(kind: WidgetKind.rich, spans: [TextSpan(line, Slot.gutter)],
+                wrap: TextWrap.none));
+        }
+        // An even height centres the text on a cell's edge: a row more, the
+        // whole moved half a row up.
+        const even = (treeRowCells - 1) % 2 != 0;
+        const around = even ? treeRowCells / 2 : (treeRowCells - 1) / 2;
         uint[] items;
         foreach (i; min(first, last) .. last)
         {
             const selected = tv.rows[i].node == tv.selectedNode;
-            const row = treeRows(b, tree, tv.rows[i .. i + 1], isOpen, uint.max, glyphs);
+            uint[] lines;
+            foreach (_; 0 .. around)
+                lines ~= guideRun(tv.rows[i].guides, false, i == 0);
+            lines ~= treeRows(b, tree, tv.rows[i .. i + 1], isOpen, uint.max, glyphs);
+            foreach (_; 0 .. around)
+                lines ~= guideRun(tv.rows[i].guides, true, false);
             // The tint spans the row's whole height; the text sits in its middle.
-            auto item = Widget(kind: WidgetKind.column, children: [row], width: SizeSpec.grow(),
-                height: SizeSpec.fixed(treeRowCells), alignY: Alignment.center, padding: Insets(0, 1, 0, 1),
+            auto item = Widget(kind: WidgetKind.column, children: lines, width: SizeSpec.grow(),
+                height: SizeSpec.fixed(treeRowCells), padding: Insets(0, 1, 0, 1),
                 clipY: true, slot: Slot.selection, paintBackground: selected,
                 decoration: selected ? Decoration(borderRadius: 8) : Decoration.init);
-            if ((treeRowCells - 1) % 2)
-                item.childOffsetFracY = -0.5f;
+            if (even)
+                item.childOffsetFracY = 0.5f;
             items ~= b.add(item);
         }
         // `tv.top` is the motion's whole row; its fraction is that much of a row.
