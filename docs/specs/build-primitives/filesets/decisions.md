@@ -132,6 +132,8 @@ Make the full rescan fast first.
 
 Normative rule for any staleness heuristic: a false **"changed"** is permitted
 (it costs work); a false **"unchanged"** is forbidden (it costs correctness).
+A heuristic built on `stat` can promise this only for changes `stat` sees;
+[A24](#a24-what-the-fingerprint-can-promise) states that boundary.
 The evidence that this is not a stylistic preference is
 [`ccache`'s direct-mode hole](../../../research/content-addressing/build-input-caches.md) —
 headers that "would have been used if they existed" are unrecorded, so a newly
@@ -668,7 +670,8 @@ the following choices open.
   On Windows a caller can set `ChangeTime` as well, so the NT backend
   reports it as `ctimeSettable`. The machine then gives such a file no
   fingerprint, so on Windows the cache is correct but reads every file
-  again.
+  again. What the fingerprint cannot see is
+  [A24](#a24-what-the-fingerprint-can-promise)'s.
 - **The stamp rule is racy-git's, against a caller's stamp.** `begin` takes
   a stamp no later than the run's first `stat`, and the next run trusts a
   file only if its recorded change time is more than `marginNs` older than
@@ -795,6 +798,39 @@ fallback then appended to the sink the loop had half filled. Now a
 resolution the loop finished is kept even if the loop fails afterwards; one
 it never began is made again, inline, into a fresh sink; and one it began
 and did not finish is an error (`fileset.listing.settle`).
+
+### A24 — What the fingerprint can promise
+
+[`FSC3`](./SPEC.md#12-the-subtree-cache-fsc) said that a false "unchanged"
+never happens. An external review showed that this is stronger than `stat`
+can deliver, and the requirement now promises it only for changes that move
+the fingerprint. Three gaps were found.
+
+- **A write through a shared mapping.** Linux updates a mapped file's times
+  when a clean page is first written, not on every store. A store to a page
+  that is already dirty changes the content while the size, both times, the
+  device and the inode stay equal (shown on ZFS). POSIX allows this: a
+  mapped write's times need only be updated by the next `msync`.
+- **A change time a caller can set.** `ctimeSettable` is decided per
+  backend, so only the NT backend sets it. A POSIX backend serving a FUSE,
+  CIFS, vfat or exFAT mount reports a change time the file system
+  synthesizes or lets a caller influence, and nothing tells the backend.
+- **A field the file system did not fill.** `statx` reports in `stx_mask`
+  which fields it filled, and the conversion ignored it, so an absent
+  change time or inode read as a present zero. That one is a defect, not a
+  limit: a field whose bit is clear is now absent, and the file gets no
+  fingerprint.
+
+git documents the same boundary for its index ("racy git"): `stat` data can
+show that a file changed, never prove that it did not, and git accepts the
+cases `stat` cannot see. The alternatives were to read every file (the
+cache's purpose gone) or to trust the change time per file-system type,
+which needs an `fstatfs` per directory and a table of file systems that
+would age. Neither is taken now. A consumer that cannot accept the gaps
+runs without a cache, which `FSC1` makes always correct.
+
+**Revisit when** a consumer runs over FUSE or network mounts, which would
+justify marking their change times settable by file-system type.
 
 ### D5 — The extent of the empty-directory report (accepted)
 

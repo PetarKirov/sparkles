@@ -28,7 +28,10 @@ the `stat` that recorded it keeps an identical fingerprint, so a file
 recorded that close to its last change is read again next time. Its id is
 still recorded, and the run after that one trusts it. A validator may
 report a file as changed when it is not, because that only costs a read.
-It may never report a changed file as unchanged (A9).
+It may never report a changed file as unchanged when the change moved its
+fingerprint (A9). A change that moves no part of it, such as a store
+through a shared mapping to a page already dirty, is beyond what `stat`
+can see, as it is for git (A24).
 
 The stored form is `encode`'s bytes, which `load` reads back (FSC5). A
 cache from another scheme, another layout or a damaged file is rejected

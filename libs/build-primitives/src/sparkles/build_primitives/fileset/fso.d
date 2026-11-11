@@ -99,7 +99,10 @@ struct FsoFingerprint
     ulong device;  ///
     ulong inode;   ///
     long mtimeNs;  ///
-    long ctimeNs;  /// the status-change time, which no call can put back
+    /// The status-change time. On a POSIX file system that keeps its own,
+    /// no call can put it back; a backend that cannot promise that reports
+    /// it as settable, and the entry gets no fingerprint (FSC3).
+    long ctimeNs;
 }
 
 /// The entry ordering a scheme declares (FSS1).
