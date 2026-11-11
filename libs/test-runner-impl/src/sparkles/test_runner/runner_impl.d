@@ -24,7 +24,7 @@ import sparkles.test_runner.bench : BenchConfig, BenchStats;
 import sparkles.profiling.counters.capability : Capability, capabilityName, CapabilityReport;
 import sparkles.test_runner.client : Hello, ProtocolError, Worker, WorkerDied;
 import sparkles.test_runner.driver : detectCompiler, DriverOptions, ModeReport, runCtfeTests;
-import sparkles.test_runner.pool : joinTestWorkers, startTestWorkers;
+import sparkles.test_runner.pool : joinTestWorkers, startTestWorkers, testWorkersFinished;
 import sparkles.test_runner.options : ParsedArgs, parseRunnerOptions, RunnerOptions;
 import sparkles.test_runner.plan : selectTests, testPhases, verdict;
 import sparkles.test_runner.model : Test, TestResult;
@@ -1251,7 +1251,9 @@ private void runParallelLive(
         ProgressLine(frame: spin, done: done, total: runnable.length,
             colored: colored, elapsed: MonoTime.currTime - started).toString(bar);
         region.update([bar[]]);
-        if (done == runnable.length)
+        // A worker thread that threw leaves tests with no result: the loop
+        // ends when the threads have, and the join rethrows what one threw.
+        if (done == runnable.length || testWorkersFinished(workers))
             break;
         spin++;
         Thread.sleep(50.msecs);

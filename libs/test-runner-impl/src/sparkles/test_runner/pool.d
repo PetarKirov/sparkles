@@ -90,12 +90,14 @@ void retireSpare()
 Runs `tests` on up to `nThreads` workers, calling `onResult` once per test,
 from the thread that ran it. With `nThreads <= 1` and `onCaller`, the one
 worker runs each test on its main thread (TRP17). Join the returned threads
-with $(LREF joinTestWorkers).
+with $(LREF joinTestWorkers). When one thread throws, the others take no
+further test, so every thread finishes and $(LREF testWorkersFinished) says
+so although some tests have no result.
 */
 Thread[] startTestWorkers(Test[] tests, size_t nThreads,
     void delegate(TestResult) onResult, bool onCaller = true)
 {
-    import core.atomic : atomicOp;
+    import core.atomic : atomicLoad, atomicOp, atomicStore;
 
     if (!tests.length)
         return null;
@@ -106,6 +108,7 @@ Thread[] startTestWorkers(Test[] tests, size_t nThreads,
         nThreads = tests.length;
 
     shared size_t next;
+    shared bool aborted;
     auto threads = new Thread[](nThreads);
     foreach (ref thread; threads)
     {
@@ -113,19 +116,39 @@ Thread[] startTestWorkers(Test[] tests, size_t nThreads,
             Worker w;
             scope (exit)
                 retire(w);
-            for (;;)
+            try
+                for (;;)
+                {
+                    if (atomicLoad(aborted))
+                        break;
+                    const i = atomicOp!"+="(next, 1) - 1;
+                    if (i >= tests.length)
+                        break;
+                    if (w is null || w.dead)
+                        w = takeWorker();
+                    onResult(w.run(tests[i].id, mainThread));
+                }
+            catch (Throwable t)
             {
-                const i = atomicOp!"+="(next, 1) - 1;
-                if (i >= tests.length)
-                    break;
-                if (w is null || w.dead)
-                    w = takeWorker();
-                onResult(w.run(tests[i].id, mainThread));
+                atomicStore(aborted, true);
+                throw t; // `joinTestWorkers` rethrows it
             }
         });
         thread.start();
     }
     return threads;
+}
+
+/// Whether every thread from $(LREF startTestWorkers) has finished, by
+/// running out of tests or by a throw that stopped them all. A caller that
+/// counts results to know when the run is over must also ask this: a throw
+/// leaves tests without one.
+bool testWorkersFinished(Thread[] threads)
+{
+    foreach (thread; threads)
+        if (thread.isRunning)
+            return false;
+    return true;
 }
 
 /// Blocks until every thread from $(LREF startTestWorkers) has finished,

@@ -171,6 +171,82 @@ private Bounded runWithin(string[] args, string[string] env,
     return outcome;
 }
 
+/// Runs `args` like $(LREF runWithin), with a pseudo-terminal for its
+/// standard output and error, as a developer's run has: the runner then
+/// draws its live progress line.
+version (Posix)
+private Bounded runOnTerminal(string[] args, string[string] env,
+    imported!"core.time".Duration limit)
+{
+    import core.sys.posix.fcntl : O_NOCTTY, O_RDWR, open;
+    import core.sys.posix.poll : poll, pollfd, POLLIN;
+    import core.sys.posix.stdlib : grantpt, posix_openpt, ptsname, unlockpt;
+    import core.sys.posix.unistd : close, read;
+    import core.thread : Thread;
+    import core.time : MonoTime, msecs;
+    import std.process : Config, kill, spawnProcess, tryWait, wait;
+    import std.stdio : File;
+
+    const master = posix_openpt(O_RDWR | O_NOCTTY);
+    assert(master >= 0 && grantpt(master) == 0 && unlockpt(master) == 0, "no pseudo-terminal");
+    scope (exit)
+        close(master);
+    Bounded outcome;
+    const started = MonoTime.currTime;
+    imported!"std.process".Pid pid;
+    {
+        File terminal;
+        terminal.fdopen(open(ptsname(master), O_RDWR | O_NOCTTY), "r+");
+        pid = spawnProcess(args, File("/dev/null", "r"), terminal, terminal,
+            scenarioEnvironment(env), Config.newEnv);
+    } // only the child holds the terminal now: its end reads as EIO here
+
+    ubyte[4096] buffer;
+    bool hungUp;
+    // Takes what the terminal holds; `false` once nothing is waiting.
+    bool take(int timeoutMs)
+    {
+        auto p = pollfd(master, POLLIN);
+        if (hungUp || poll(&p, 1, timeoutMs) <= 0)
+            return false;
+        const n = read(master, buffer.ptr, buffer.length);
+        if (n <= 0)
+        {
+            hungUp = true;
+            return false;
+        }
+        outcome.output ~= cast(const(char)[]) buffer[0 .. n];
+        return true;
+    }
+
+    for (;;)
+    {
+        // The terminal must be read as it fills, or the runner blocks on it.
+        if (take(20))
+            continue;
+        const r = tryWait(pid);
+        if (r.terminated)
+        {
+            outcome.status = r.status;
+            while (take(0))
+            {
+            }
+            break;
+        }
+        if (MonoTime.currTime - started > limit)
+        {
+            outcome.timedOut = true;
+            kill(pid);
+            outcome.status = wait(pid);
+            break;
+        }
+        if (hungUp)
+            Thread.sleep(20.msecs);
+    }
+    outcome.took = MonoTime.currTime - started;
+    return outcome;
+}
+
 @("scenarios.versionMismatchExitsThree")
 @system
 unittest
@@ -262,6 +338,25 @@ unittest
         assert(r.output.canFind("asked to exit"), how ~ ": " ~ r.output);
         version (Posix)
             assert(r.output.canFind("SIGABRT"), how ~ ": " ~ r.output);
+    }
+}
+
+@("scenarios.aThrowInAWorkerThreadEndsALiveRun")
+@system
+unittest
+{
+    import core.time : seconds;
+
+    // On a terminal the runner draws a progress line until every test has a
+    // result. A protocol error thrown in a worker thread leaves tests with
+    // none: the run must still end, and fail, as it does when piped.
+    version (Posix)
+    {
+        const r = runOnTerminal([built.runner, "--test-binary=" ~ built.fixture, "-t", "2"],
+            ["FIXTURE_BAD_FRAME": "1", "TERM": "xterm-256color", "NO_COLOR": ""], 60.seconds);
+        assert(!r.timedOut, "the progress line spun on: " ~ r.output);
+        assert(r.status == 2, r.output);
+        assert(r.output.canFind("protocol error from"), r.output);
     }
 }
 
