@@ -60,19 +60,30 @@ private ExplorerApp* make(string query)
     assert(!rec.frames[3].cursor.visible, "the tree has focus: no cursor");
 }
 
-/// FXU5: the stats column is as wide as its widest line when the tree fits,
-/// so the full ids show; on a narrow screen the tree keeps half.
-@("fileset_explorer.FXU5.statsWidth")
+/// FXU5: the tree and the right group each take half the width, whichever
+/// tab shows.
+@("fileset_explorer.FXU5.equalHalves")
 @system unittest
 {
-    auto wide = make("**");
-    const w = renderFrame(*wide, "", Size(160, 30));
-    assert(w.canFind(wide.shown.castore), w);
-    auto narrow = make("**");
-    const n = renderFrame(*narrow, "", Size(60, 30));
-    foreach (line; n.split('\n'))
-        if (line.canFind("README.md"))
-            assert(line.countUntil("README.md") < 30);
+    import std.math : abs;
+    import explorer : Pane;
+
+    foreach (width; [100, 160])
+    {
+        auto app = make("**");
+        int sideWidth = -1;
+        foreach (tab; 0 .. 3)
+        {
+            app.dock.layout.nodes[app.dock.layout.nodes[app.dock.layout.root].children[1]].active = tab;
+            renderFrame(*app, "", Size(width, 30));
+            int tree, side;
+            foreach (ref f; app.dock.frames.panes)
+                (f.pane == Pane.tree ? tree : side) = f.rect.width;
+            assert(abs(tree - side) <= 1, text(width, " tab ", tab, ": ", tree, " and ", side));
+            assert(sideWidth < 0 || side == sideWidth, text(width, " tab ", tab, " moved the split"));
+            sideWidth = side;
+        }
+    }
 }
 
 /// FXU6 and FXU9: the tree is the members, with hue's icons; a directory
@@ -85,7 +96,7 @@ private ExplorerApp* make(string query)
     foreach (ref n; app.tree.nodes)
         if (!n.value.isDir)
             leaves ~= n.value.path;
-    assert(leaves == ["README.md", "dub.sdl", "src/app.d", "src/lib.d", "src/lib_test.d"], text(leaves));
+    assert(leaves == ["src/app.d", "src/lib.d", "src/lib_test.d", "README.md", "dub.sdl"], text(leaves));
     const frame = renderFrame(*app, "", Size(100, 24));
     assert(frame.canFind(fileIcon("README.md").glyph ~ "README.md"), frame);
     assert(frame.canFind(fileIcon("dub.sdl").glyph ~ "dub.sdl"), frame);
@@ -107,8 +118,8 @@ private ExplorerApp* make(string query)
     const frame = renderFrame(*app, "", Size(80, 16));
     const lines = frame.split('\n');
     assert(lines[0].canFind("tutorial tree `t`"), lines[0]);
-    assert(frame.canFind("❯ bin/*") && frame.canFind("run (executable, 2 B)"),
-        text(frame.canFind("❯ bin/*"), " ", frame.canFind("run ("), " ", frame.split('\n')[6 .. 9]));
+    assert(frame.canFind("❯ bin/*") && frame.canFind("run") && frame.canFind("(executable, 2 B)"),
+        text(frame.canFind("❯ bin/*"), " ", frame.split('\n')[6 .. 9]));
     assert(lines[$ - 2].canFind("Tab"), lines[$ - 2]);
 }
 

@@ -291,7 +291,8 @@ private enum tablet = Size(140, 40);
     tap(*app, find(*app, "Export", tablet), tablet);
     assert(app.exportShown && app.exportTarget == Target.nix);
     const tabs = find(*app, "Stats", tablet);
-    foreach (label; ["◀", "nix", "▶", "glob shim", "expand", "refuse", "Copy"])
+    // At 140 columns a half is a few cells short of "glob shim": "shim".
+    foreach (label; ["◀", "nix", "▶", "shim", "expand", "refuse", "Copy"])
         assert(find(*app, label, tablet).y == tabs.y, label ~ " is not on the tabs' row:\n"
             ~ renderFrame(*app, "", tablet));
     tap(*app, find(*app, "expand", tablet), tablet);

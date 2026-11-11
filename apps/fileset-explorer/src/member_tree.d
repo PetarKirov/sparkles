@@ -30,14 +30,59 @@ struct Item
 
     /// A directory toggles even when its children are hidden.
     bool expandable() const @safe pure nothrow @nogc => isDir;
+
+    /// The badges line up at the row's right edge.
+    enum badgeRight = true;
+}
+
+/**
+Whether `a` comes before `b` in the tree: by name within a directory, its
+directories before its files.
+*/
+bool dirsFirst(scope const(char)[] a, scope const(char)[] b) @safe pure nothrow @nogc
+{
+    static ptrdiff_t slash(scope const(char)[] s)
+    {
+        foreach (i, c; s)
+            if (c == '/')
+                return i;
+        return -1;
+    }
+
+    for (;;)
+    {
+        const ca = slash(a), cb = slash(b);
+        const aDir = ca >= 0, bDir = cb >= 0;
+        const na = aDir ? a[0 .. ca] : a, nb = bDir ? b[0 .. cb] : b;
+        if (aDir != bDir)
+            return aDir;
+        if (na != nb || !aDir)
+            return na < nb;
+        a = a[ca + 1 .. $];
+        b = b[cb + 1 .. $];
+    }
+}
+
+///
+@("fileset_explorer.memberTree.dirsFirst")
+@safe pure nothrow @nogc unittest
+{
+    assert(dirsFirst("src/a.d", "README.md") && !dirsFirst("README.md", "src/a.d"));
+    assert(dirsFirst("src/app/x.d", "src/run") && dirsFirst("a.d", "b.d") && !dirsFirst("b/x", "a/y"));
+    assert(!dirsFirst("a", "a"));
 }
 
 /**
 The members as a tree. Directories come into being as a member beneath them
-does, so only the directories on the way to one appear (`FXU6`).
+does, so only the directories on the way to one appear (`FXU6`); each
+directory lists its directories, then its files.
 */
-TreeData!Item buildTree(in Member[] members) @safe
+TreeData!Item buildTree(in Member[] members_) @safe
 {
+    import std.algorithm.sorting : sort;
+
+    auto members = members_.dup;
+    members.sort!((x, y) => dirsFirst(x.path, y.path));
     TreeData!Item data;
     uint[string] dirs;
     size_t[uint] files;
@@ -129,7 +174,7 @@ void syncFolders(ref TreeData!Item data, scope bool delegate(string) @safe isOpe
     string[] leaves, dirs;
     foreach (ref n; t.nodes)
         (n.value.isDir ? dirs : leaves) ~= n.value.path;
-    assert(leaves == ["README.md", "src/app/x.d", "src/run", "l"]);
+    assert(leaves == ["src/app/x.d", "src/run", "README.md", "l"], "directories first");
     assert(dirs == ["src", "src/app"]);
     foreach (ref n; t.nodes)
         if (n.value.path == "README.md")

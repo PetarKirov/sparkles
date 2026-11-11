@@ -539,6 +539,10 @@ struct ExplorerApp
     }
 
     private static immutable string[] nixModes = ["glob shim", "expand", "refuse"];
+    // ditto, where a half's tabs row is short of a few cells for them.
+    private static immutable string[] nixModesShort = ["shim", "expand", "refuse"];
+    // The glob modes' segments are drawn with the short labels this frame.
+    private bool shortModes;
 
     // Export's target between round buttons: ◀, its name, ▶.
     private uint[] exportTargetControls(ref Builder b)
@@ -551,7 +555,7 @@ struct ExplorerApp
 
     // Nix's glob mode, as segments.
     private uint nixModeSegments(ref Builder b)
-        => touchSegments(b, nixModes, nixGlobs, actionBase + Action.globShim);
+        => touchSegments(b, shortModes ? nixModesShort : nixModes, nixGlobs, actionBase + Action.globShim);
 
     private static uint gapCells(ref Builder b, int n)
         => b.add(Widget(kind: WidgetKind.box, width: SizeSpec.fixed(n)));
@@ -572,12 +576,13 @@ struct ExplorerApp
         return parts;
     }
 
-    // ditto: the cells it needs, chips and segments a cell wider each side than their labels.
-    private int exportControlsWidth()
+    // ditto: the cells it needs, chips and segments a cell wider each side
+    // than their labels, with the glob modes' short labels or not.
+    private int exportControlsWidth(bool short_)
     {
         int w = 3 + 1 + cast(int) visibleWidth(targetName(exportTarget)) + 1 + 3;
         if (exportTarget == Target.nix)
-            w += 1 + segmentsWidth(nixModes);
+            w += 1 + segmentsWidth(short_ ? nixModesShort : nixModes);
         if (currentExport.ok)
             w += 1 + 6;
         return w;
@@ -863,8 +868,8 @@ struct ExplorerApp
         return l;
     }
 
-    /// Sizes the right group to its content when the tree still fits beside
-    /// it, else gives the tree at least half (`FXU5`), and arranges the dock.
+    /// Halves the width between the tree and the right group (`FXU5`), or
+    /// stacks them on a narrow touch screen (`FXU12`), and arranges the dock.
     private void arrangeDock(int width, int rows, in string[2][] stats)
     {
         auto l = &dock.layout;
@@ -876,29 +881,8 @@ struct ExplorerApp
         l.nodes[l.root].axis = stacked ? DockAxis.vertical : DockAxis.horizontal;
         if (stacked)
             l.nodes[tabsNode].extent = max(rowCells + 4, rows / 2);
-        else
-        {
-            int widest;
-            foreach (ref kv; stats)
-                widest = max(widest, cast(int)(statsKeyWidth + visibleWidth(kv[1])));
-            const want = widest + 2; // a column of padding each side
-            const treeNeeds = treeWidth() + 2; // the rule, and the tree's bar
-            const fits = width - want >= treeNeeds;
-            l.nodes[tabsNode].extent = max(touch ? 30 : 10,
-                fits ? want : min(want, max(width - treeNeeds, width / 2)));
-            if (helpShown || exportShown) // the help and code read at half the width at least
-                l.nodes[tabsNode].extent = max(l.nodes[tabsNode].extent, min(width / 2, 90));
-            if (touch && exportShown)
-            {
-                // Room for Export's controls on the tabs' row, the tree keeping
-                // 40 columns (`FXU23`).
-                string[] labels;
-                foreach (ch; l.nodes[tabsNode].children)
-                    labels ~= l.nodes[ch].title;
-                const controls = 2 + segmentsWidth(labels) + 1 + exportControlsWidth + 1;
-                l.nodes[tabsNode].extent = max(l.nodes[tabsNode].extent, min(controls, width - 40));
-            }
-        }
+        else // side by side, the two halves alike whatever the tab (`FXU5`)
+            l.nodes[tabsNode].extent = max(1, (width - 1) / 2);
         dock.arrange(Rect(0, 0, width, rows));
         // In tree rows: `tv` counts rows, each `treeRowCells` tall.
         foreach (ref f; dock.frames.panes)
@@ -925,17 +909,22 @@ struct ExplorerApp
             const pane = cast(Pane) dock.layout.nodes[shown].pane;
             // Export's controls share the tabs' row when it has room (`FXU23`).
             exportControlsInStrip = false;
+            shortModes = false;
             uint strip;
             if (touch)
             {
                 uint[] parts = [touchSegments(b, labels, n.active, tabHitBase)];
-                if (pane == Pane.export_
-                    && paneRect(pane).width - 2 >= segmentsWidth(labels) + 1 + exportControlsWidth)
+                // The glob modes' short labels, if only they make it fit.
+                const room = paneRect(pane).width - 2 - (segmentsWidth(labels) + 1);
+                shortModes = room < exportControlsWidth(false);
+                if (pane == Pane.export_ && room >= exportControlsWidth(shortModes))
                 {
                     parts ~= b.add(Widget(kind: WidgetKind.box, width: SizeSpec.fixed(1)));
                     parts ~= exportControls(b);
                     exportControlsInStrip = true;
                 }
+                else // a row of their own in the pane: room for the long labels
+                    shortModes = false;
                 strip = b.add(Widget(kind: WidgetKind.row, padding: Insets(0, 1, 0, 1),
                     height: SizeSpec.fixed(rowCells), width: SizeSpec.grow(), children: parts));
             }
@@ -1094,14 +1083,14 @@ struct ExplorerApp
     }
 
     // The widest visible row of the tree as drawn: guides, the folder or file
-    // glyph, the name, and the badge after a space.
+    // glyph, the name, and the badge after two spaces.
     private int treeWidth() const @safe
     {
         int widest;
         foreach (ref r; tv.rows)
         {
             const v = tree.nodes[r.node].value;
-            widest = max(widest, cast(int)(r.depth * 3 + 3 + 2 + visibleWidth(v.label) + 1 + visibleWidth(v.badge)));
+            widest = max(widest, cast(int)(r.depth * 3 + 3 + 2 + visibleWidth(v.label) + 2 + visibleWidth(v.badge)));
         }
         return widest;
     }
