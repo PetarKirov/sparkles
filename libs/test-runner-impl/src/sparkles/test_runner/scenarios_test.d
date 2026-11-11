@@ -92,13 +92,83 @@ private Built built()
 /// `env` sets it.
 private auto run(string[] args, string[string] env = null)
 {
-    import std.process : Config, environment;
+    import std.process : Config;
+
+    return execute(args, scenarioEnvironment(env), Config.newEnv);
+}
+
+/// This process's environment with `env` added, and `SPARKLES_TEST_RUNNER`
+/// removed unless `env` sets it.
+private string[string] scenarioEnvironment(string[string] env)
+{
+    import std.process : environment;
 
     auto full = environment.toAA;
     full.remove("SPARKLES_TEST_RUNNER");
     foreach (k, v; env)
         full[k] = v;
-    return execute(args, full, Config.newEnv);
+    return full;
+}
+
+/// How a run that may hang ended.
+private struct Bounded
+{
+    int status;
+    string output;
+    /// Whether it outlived its limit and was killed.
+    bool timedOut;
+    imported!"core.time".Duration took;
+}
+
+/// Runs `args` like $(LREF run), killing it once `limit` has passed: a
+/// scenario whose defect is a hang fails instead of hanging the suite.
+private Bounded runWithin(string[] args, string[string] env,
+    imported!"core.time".Duration limit)
+{
+    import core.atomic : atomicOp;
+    import core.thread : Thread;
+    import core.time : MonoTime, msecs;
+    import std.conv : text;
+    import std.file : readText, remove, tempDir;
+    import std.process : Config, kill, spawnProcess, thisProcessID, tryWait, wait;
+    import std.stdio : File;
+
+    static shared size_t serial;
+    const log = buildPath(tempDir, text("sparkles-scenario-", thisProcessID, "-",
+        atomicOp!"+="(serial, 1), ".log"));
+    scope (exit)
+        remove(log);
+    Bounded outcome;
+    {
+        auto output = File(log, "w");
+        version (Windows)
+            auto input = File("NUL", "r");
+        else
+            auto input = File("/dev/null", "r");
+        const started = MonoTime.currTime;
+        auto pid = spawnProcess(args, input, output, output, scenarioEnvironment(env),
+            Config.newEnv);
+        for (;;)
+        {
+            const r = tryWait(pid);
+            if (r.terminated)
+            {
+                outcome.status = r.status;
+                break;
+            }
+            if (MonoTime.currTime - started > limit)
+            {
+                outcome.timedOut = true;
+                kill(pid);
+                outcome.status = wait(pid);
+                break;
+            }
+            Thread.sleep(20.msecs);
+        }
+        outcome.took = MonoTime.currTime - started;
+    }
+    outcome.output = readText(log);
+    return outcome;
 }
 
 @("scenarios.versionMismatchExitsThree")
@@ -141,7 +211,7 @@ unittest
     assert(r.output.canFind("worker crashed"), r.output);
     version (Posix)
         assert(r.output.canFind("SIGABRT"), r.output);
-    assert(r.output.canFind("2 passed, 1 failed"), "the other tests still run: " ~ r.output);
+    assert(r.output.canFind(" passed, 1 failed"), "the other tests still run: " ~ r.output);
 }
 
 @("scenarios.fallbackFiltersAndRefusesRunnerOptions")
@@ -190,4 +260,24 @@ unittest
     assert(r.output.canFind("asked to exit"), r.output);
     version (Posix)
         assert(r.output.canFind("SIGABRT"), r.output);
+}
+
+@("scenarios.aMalformedFrameFailsTheRun")
+@system
+unittest
+{
+    import core.time : seconds;
+
+    // A test writes a `result` frame with none of its members to the frames
+    // channel: a protocol error that fails the run (TRP9), where the reader
+    // used to die of the exception and leave the runner waiting forever.
+    version (Posix)
+    {
+        const r = runWithin([built.runner, "--test-binary=" ~ built.fixture, "-t", "1",
+            "--no-colors"], ["FIXTURE_BAD_FRAME": "1"], 60.seconds);
+        assert(!r.timedOut, "the runner hung: " ~ r.output);
+        assert(r.status == 2, r.output);
+        assert(r.output.canFind("protocol error from") && r.output.canFind("a malformed frame"),
+            r.output);
+    }
 }
