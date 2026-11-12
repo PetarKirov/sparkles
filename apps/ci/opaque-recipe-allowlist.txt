@@ -1,0 +1,8 @@
+# Reviewed exceptions to `ci --check-opaque-recipes`: recipe entries no input
+# set can hold (fileset-native workspace design, BGW3 and BGW4). Each makes
+# every request that builds it selected by any change, so prefer removing it
+# or stating it as a directive or a typed generator. One per line:
+# `recipe | entry | reason`, the entry as the check reports it. An entry that
+# matches nothing fails the check, so delete it when its recipe changes.
+libs/profiling/dub.sdl | cImportPaths "$SPARKLES_TRACY_PREFIX/include/tracy" | the Tracy client's headers come from the dev shell's Tracy build, outside the repository; only the opt-in `tracy` configurations read them, and no request `ci` makes builds those
+libs/profiling/dub.sdl | lflags "-L$SPARKLES_TRACY_PREFIX/lib" | the Tracy client library, from the same prefix and in the same opt-in configurations as its headers

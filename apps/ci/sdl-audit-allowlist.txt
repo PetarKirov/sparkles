@@ -10,3 +10,4 @@ apps/twoslash-extract/src/app.d | dflags | the unit of a count in the `--dub` st
 apps/ci/tools/scan-recipe-vocabulary.d | subPackage | the vocabulary scanner classifies a directive name already taken from a parsed node, and maps `dub.json` keys onto those names; it compares names, never recipe text
 apps/ci/tools/scan-recipe-vocabulary.d | buildType | as `subPackage`: a parsed directive name or a `dub.json` key, compared as a name
 libs/build-primitives/src/sparkles/build_primitives/resolve/recipe.d | listSettings | a compile-time list of the schema's field names, joined for `__traits(getMember)`; no SDL text is built
+libs/build-primitives/src/sparkles/build_primitives/workspace/input_sets.d | /dub.sdl: | `writeOpaqueDiagnostic` names the recipe file a diagnostic is about, after its directory; no SDL is read, matched or built

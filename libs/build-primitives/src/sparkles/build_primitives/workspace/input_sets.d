@@ -144,6 +144,69 @@ struct OpaqueDirective
 }
 
 /**
+Writes, on one line, where an opaque entry is, why no input set can hold it,
+what that costs and what to write instead: the diagnostic that tells a
+recipe's author to avoid it. Every request that builds the entry's
+configuration (or, for one at a recipe's top level, any configuration of its
+package) is uncertain, so `--since` selects it on every change and a watch
+reruns it on every event (BGW4).
+
+---
+libs/ui/dub.sdl: configuration `gpu`: `preBuildCommands "make shaders"` runs a command, which reads and writes what it likes; declare what it generates as a typed generator, or remove it. Any change selects every request that builds it.
+---
+*/
+void writeOpaqueDiagnostic(Writer)(ref Writer w, const ref PackageGraph graph, const ref OpaqueDirective o)
+{
+    import std.range.primitives : put;
+
+    if (o.package_ < graph.packages.length)
+    {
+        put(w, graph.packages[o.package_].path);
+        put(w, "/dub.sdl: ");
+        if (o.configuration.length)
+        {
+            put(w, "configuration `");
+            put(w, o.configuration);
+            put(w, "`: ");
+        }
+    }
+    else
+        put(w, "workspace inputs: ");
+    put(w, '`');
+    put(w, o.directive);
+    put(w, " \"");
+    put(w, o.value);
+    put(w, "\"` ");
+    final switch (o.reason)
+    {
+    case OpaqueReason.variable:
+        put(w, "names a variable other than `$PACKAGE_DIR`, so what it reads is known only when the build runs; "
+            ~ "write the path relative to the package");
+        break;
+    case OpaqueReason.outsideRepository:
+        put(w, "reaches outside the repository, where no input set can follow; depend on a package that "
+            ~ "holds the files, or take them from a flake input");
+        break;
+    case OpaqueReason.notAPattern:
+        put(w, "is no fileset pattern; write a path or a glob");
+        break;
+    case OpaqueReason.noRecipe:
+        put(w, "has no recipe among those read; list the package's directory correctly in the root recipe");
+        break;
+    case OpaqueReason.pathFlag:
+        put(w, "carries a path in a flag, hidden from the directives that state paths; state the directory "
+            ~ "with `importPaths`, `stringImportPaths`, `cImportPaths` or `libs`");
+        break;
+    case OpaqueReason.command:
+        put(w, "runs a command, which reads and writes what it likes; declare what it generates as a typed "
+            ~ "generator (`shader-compile` run through `$DUB run` is one), or remove it");
+        break;
+    }
+    put(w, o.package_ < graph.packages.length
+        ? ". Any change selects every request that builds it." : ". It is a workspace input of no plan.");
+}
+
+/**
 What every plan depends on besides the packages' own inputs (BGW12): a change
 to any of it affects every request.
 */
@@ -1827,4 +1890,38 @@ postRunCommands "f"`),
     ], sets.opaque.text);
     assert(sets.isOpaque(sets.indexOf(ConfiguredPackage(cast(uint) graph.indexOf(PackageId("sparkles:tool")), ""))));
     assert(!sets.isOpaque(sets.indexOf(ConfiguredPackage(cast(uint) graph.indexOf(PackageId("sparkles:plain")), ""))));
+}
+
+/// The diagnostic names the recipe, the configuration, the entry and what
+/// to write instead.
+@("build_primitives.workspace.input_sets.writeOpaqueDiagnostic")
+@safe
+unittest
+{
+    import std.array : appender;
+
+    const recipes = [recipe("libs/ui", `name "ui"
+lflags "-L/opt/lib"
+configuration "gpu" {
+    preBuildCommands "make shaders"
+}`)];
+    const graph = buildPackageGraph("sparkles", recipes, RecipeRole.build, linux).value;
+    auto sets = inputSets(graph, recipes, linux, WorkspaceInputs(patterns: ["[bad"]));
+    string[] lines;
+    foreach (ref o; sets.opaque)
+    {
+        auto w = appender!string;
+        writeOpaqueDiagnostic(w, graph, o);
+        lines ~= w[];
+    }
+    assert(lines == [
+        "libs/ui/dub.sdl: `lflags \"-L/opt/lib\"` carries a path in a flag, hidden from the directives that "
+            ~ "state paths; state the directory with `importPaths`, `stringImportPaths`, `cImportPaths` or "
+            ~ "`libs`. Any change selects every request that builds it.",
+        "libs/ui/dub.sdl: configuration `gpu`: `preBuildCommands \"make shaders\"` runs a command, which reads "
+            ~ "and writes what it likes; declare what it generates as a typed generator (`shader-compile` run "
+            ~ "through `$DUB run` is one), or remove it. Any change selects every request that builds it.",
+        "workspace inputs: `workspace \"[bad\"` is no fileset pattern; write a path or a glob. It is a "
+            ~ "workspace input of no plan.",
+    ], lines.text);
 }
