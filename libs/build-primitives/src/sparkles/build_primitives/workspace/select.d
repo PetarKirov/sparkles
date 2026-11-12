@@ -742,10 +742,24 @@ InputSets workspaceInputSets(string repoRoot, const ref PackageGraph graph,
     return inputSets(graph, workspace.recipes, hostTokens, stated);
 }
 
-// One request per package, by graph index (BGW12, D47).
+// One request per package, by graph index (BGW12, D47), each holding what
+// the generators it runs read (D53). A generator's request is resolved once
+// for all of them.
 private Request[] packageRequests(string repoRoot, const ref PackageGraph graph, ref InputSets inputs,
     RecipeRole role, const ref FocusOptions options, scope const(string)[] hostTokens) @safe
 {
+    import sparkles.build_primitives.workspace.input_sets : addGenerators;
+
+    Request[ConfiguredPackage] generated;
+    Request generatorRequest(uint package_, string configuration)
+    {
+        const key = ConfiguredPackage(package_, configuration);
+        if (auto found = key in generated)
+            return *found;
+        return generated[key] = resolveRequest(repoRoot, graph, package_, testRoot: false, options,
+            configuration);
+    }
+
     Request[] requests;
     foreach (i, ref p; graph.packages)
     {
@@ -758,18 +772,22 @@ private Request[] packageRequests(string repoRoot, const ref PackageGraph graph,
             r.root = i;
         }
         if (r.closure.length == 0)
+        {
             foreach (k; 0 .. inputs.length)
                 if (inputs.key(k).package_ == i)
                     r.closure ~= inputs.key(k);
+        }
+        else
+            addGenerators(r, inputs, &generatorRequest);
         requests ~= r;
     }
     return requests;
 }
 
-// The request for package `index` of `graph`; unresolved, with an empty
-// closure, when resolution fails.
+// The request for package `index` of `graph`, in `configuration` (null for
+// its default); unresolved, with an empty closure, when resolution fails.
 private Request resolveRequest(string repoRoot, const ref PackageGraph graph, uint index, bool testRoot,
-    const ref FocusOptions options) @safe
+    const ref FocusOptions options, string configuration = null) @safe
 {
     import sparkles.build_primitives.resolve.configure : resolve, ResolveRequest;
     import sparkles.build_primitives.resolve.driver : SystemDriver;
@@ -780,8 +798,8 @@ private Request resolveRequest(string repoRoot, const ref PackageGraph graph, ui
     const o = &options.platform;
     auto platform = BuildPlatform(o.platform.dup, o.architecture.dup, o.compiler, o.compilerBinary,
         o.frontendVersion, o.compilerVersion);
-    auto request = ResolveRequest(directory: repoRoot, subPackage: p.shortName, platform: platform,
-        testRoot: testRoot);
+    auto request = ResolveRequest(directory: repoRoot, subPackage: p.shortName, configuration: configuration,
+        platform: platform, testRoot: testRoot);
     foreach (name, source; options.registry)
         request.registry[name] = source;
     const resolved = resolve(request, new SystemDriver);
