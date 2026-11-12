@@ -31,6 +31,7 @@ in
     ./hello.nix
     ./hue.nix
     ./icon.nix
+    ./iroh-send.nix
     ./libghostty-vt.nix
     ./libkqueue.nix
     ./ndk.nix

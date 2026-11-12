@@ -122,6 +122,9 @@ in
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
               package="${applicationIdOf shared}">
               <uses-feature android:name="android.hardware.vulkan.version" android:version="0x400003" android:required="true" />
+              <!-- Send (FXS9): iroh's connections, and the network state it watches. -->
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
               <application
                   android:label="fileset explorer${lib.optionalString shared " (debug)"}"
                   android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
@@ -152,11 +155,14 @@ in
           manifest = manifest shared;
           assetsDir = assets;
           # The library, and each grammar's parser, dlopen'd by bare soname
-          # from the app's linker namespace (ts-grammars.nix).
+          # from the app's linker namespace (ts-grammars.nix); so is the iroh
+          # bridge, Send's (`FXS9`).
           libs = lib.mapAttrs' (_: t: {
             name = t.abi;
             value = {
               "libfilesetexplorer.so" = "${library}/lib/${t.abi}/libfilesetexplorer.so";
+              "libsparkles_iroh_send.so" =
+                "${config.legacyPackages.irohSendAndroid}/lib/${t.abi}/libsparkles_iroh_send.so";
             }
             // lib.listToAttrs (
               map (
