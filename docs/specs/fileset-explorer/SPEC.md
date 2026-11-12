@@ -18,8 +18,8 @@ toolkit's [editor](../ui/editor.md), [tree view](../hue/tree-view.md) and
 
 This contract owns the query language (§2), the explorer's screen (§3), its
 help and the runnable blocks of its tutorial (§4), the code generators (§5),
-its Android build (§6), and the names it gives a fileset and sending it to
-another machine (§7).
+its Android build (§6), the names it gives a fileset and sending it to
+another machine (§7), and its command line (§8).
 Three obligations belong to libraries it uses and are specified there: the host's
 text cursor ([`HST20`](../ui-app/feature-requirements.md)), the fileset
 leaves for a list of paths, a file's own name and its kind
@@ -201,7 +201,7 @@ was active; the member tree is not hidden by it. _Detection:_ a recorded frame
 after F1 shows the tree pane and the help's first heading.
 
 **`FXU8` — Without a terminal, one frame.** When standard input or output is not
-a terminal and `--gui` is not given, or `--render-plain` is, the explorer
+a terminal and `--gui` is not given, or `--render-plain` is, `view` (`FXC1`)
 **must** print one frame as text after the keys of `--keys`, and exit 0. CI's
 example and app runs use it.
 
@@ -526,11 +526,11 @@ emits the members as `sourceFiles`, a snapshot, with no `sourcePaths` or
 `importPaths`. It refuses when a member is a file dub hands the linker
 instead (`.o`, `.obj`, `.a`, `.lib`, `.so`, `.dylib`, `.dll`, `.res`, `.def`).
 
-**`FXE11` — The command line.** `fileset-explorer --emit <target> --query Q`
-**must** print the code and exit 0, or print the refusal and the refused text
-to standard error and exit 2; a target or mode it does not know, or a query
-that does not resolve, exits 1. `--nix-globs=shim|expand|refuse` selects
-`FXE3`'s mode.
+**`FXE11` — The command line.** `fileset-explorer emit <target> --query Q`
+(`FXC4`) **must** print the code and exit 0, or print the refusal and the
+refused text to standard error and exit 2; a target or mode it does not
+know, or a query that does not resolve, exits 1. `--nix-globs=shim|expand|refuse`
+selects `FXE3`'s mode.
 
 **`FXE12` — The Export tab.** The Export tab **must** show the selected target's
 code for the current query, highlighted when a grammar for the target exists, or
@@ -650,7 +650,54 @@ built for its ABI, and Send **must** work on a device as on the desktop.
 _Detection:_ a fileset sent from the tablet is received on the desktop by
 `sendme receive`.
 
-## 8. Surface
+## 8. The command line (`FXC`)
+
+The explorer is one program with four subcommands, as `git` and `docker`
+are ([X19](./decisions.md#x19-subcommands-view-the-default-accepted)):
+`view` opens the explorer, `stats` prints what its Stats tab shows, `send`
+does what its Send button does, and `emit` writes the query for another
+build system. The fileset is named once for all of them.
+
+**`FXC1` — Subcommands, `view` the default.** The command line **must** take
+the subcommands `view`, `stats`, `send` and `emit`, and run `view` when none
+is named, so `fileset-explorer --query Q` opens the explorer as before.
+`--dir` (the root, `.` by default) and `--query` (the default query when
+absent) **must** be accepted before or after the subcommand. The window,
+font, layout and `--render-plain` options are `view`'s. _Detection:_ the
+command line with no subcommand parses to `view` with its options; `--dir D
+stats` and `stats --dir D` name the same root; `--help` lists the four.
+
+**`FXC2` — `stats` prints the Stats tab.** `stats` **must** print the lines
+the Stats tab shows for the same root and query (`FXS1`), one a line, each
+key padded to a column and each heading on its own, without the Send
+section; the ids are computed as the tab computes them, and always with
+`--ids`. A query that does not parse or resolve **must** be printed to
+standard error with its reason, and exit 1. _Detection:_ for a root on disk,
+`stats` prints exactly the Stats tab's lines without the Send section, the
+names among them; `--ids` adds the names to a fileset over the live limit;
+a query that does not parse exits 1.
+
+**`FXC3` — `send` is the Send button.** `send` **must** do what Send does
+(`FXS3`–`FXS6`, `FXS8`): compute the names, print what would be sent (the
+files, their size, the links left out, the collection and that anyone with
+the ticket can fetch them) and ask to go on. On a terminal it asks yes or
+no; `--yes` skips the question, and without a terminal and without `--yes`
+it **must** refuse, exiting 1, rather than send unasked. Once confirmed it
+**must** print each phase to standard error, the command a receiver runs,
+`sendme receive <ticket>`, alone on standard output once serving, and the
+peers and bytes sent as they change, and serve until it is interrupted;
+an interrupt **must** stop the provider and exit 0. A send that fails, a
+bridge that cannot be loaded and a collection the provider names otherwise
+**must** each be reported, exiting 1. `--no-relay` gives a ticket of direct
+addresses only. _Detection:_ with a scripted provider, `--yes` starts it
+once with the members, prints the receive command alone on standard output
+and stops it when interrupted; without `--yes` and without a terminal
+nothing starts and it exits 1; a failing provider exits 1 with its reason.
+
+**`FXC4` — `emit` writes the query elsewhere.** `emit <target>` **must** be
+`FXE11`.
+
+## 9. Surface
 
 Non-normative: where the parts live.
 
@@ -669,3 +716,4 @@ Non-normative: where the parts live.
 | `FXE11`, `FXE12`      | `apps/fileset-explorer` (`app.d`, `export_tab.d`)                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `FXS1`–`FXS6`, `FXS8` | `apps/fileset-explorer` (`evaluate.d`, `explorer.d`; `send.d`: `BlobProvider`, `IrohProvider`, `Sending`); `sparkles.build_primitives.content_addressing` (`collectionOf`, `nixStorePath`, `toSwhid`, `toGitSri`)                                                                                                                                                                                                                                    |
 | `FXS7`, `FXS9`        | `sparkles.iroh_send` (`IrohSend`, `loadIrohSend`); `libs/iroh-send/rust`; `nix/packages/sparkles-iroh-send.nix`; `nix/packages/android/fileset-explorer.nix`                                                                                                                                                                                                                                                                                         |
+| `FXC1`–`FXC4`         | `apps/fileset-explorer` (`cli.d`: `Explorer`, `View`, `StatsCommand`, `SendCommand`, `Emit`; `stats.d`: `statsRows`, `formatStats`)                                                                                                                                                                                                                                                                                                                  |
