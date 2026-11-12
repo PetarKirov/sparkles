@@ -268,7 +268,9 @@ fileset); `send` serves it as `sendme send` serves a directory, asking first
 unless given `--yes`; `emit` writes it for another build system; and `cp`
 copies its members to a directory, each at its path, executable bits and
 links kept, nothing copied over a file that is there unless given
-`--force`, and only listed with `--dry-run`:
+`--force`, and only listed with `--dry-run`. A link pointing to an absolute
+path is copied only into a place granted with `--link-root`, such as
+`/nix/store`; without one, `cp` names it and copies nothing:
 
 ```sh
 fileset-explorer --dir . --query 'src/**' stats

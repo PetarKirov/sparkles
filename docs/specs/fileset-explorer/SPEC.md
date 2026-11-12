@@ -708,11 +708,20 @@ so the copy, resolved whole, has the fileset's castore, NAR and git ids
 and when any exists, copy nothing and exit 1 naming them, unless `--force`
 asks to replace them. `--dry-run` **must** print each destination path and
 the totals, and copy nothing. A member that cannot be read or written
-**must** stop the copy, exiting 1 with its path and the reason. _Detection:_
+**must** stop the copy, exiting 1 with its path and the reason. A link
+holding an absolute target **must** be copied only when that target falls
+lexically beneath a directory given with `--link-root`, which the command
+opens read-only, and **must** be made through that directory with
+`symlinkTo`, so it holds the directory's real path
+([VFO10](../base/vfs/SPEC.md#vfo10-symbolic-link-targets)); when any such link falls beneath none,
+`cp` **must**, before copying anything, name each and exit 1, with
+`--dry-run` too. _Detection:_
 a fileset with an executable file, a link and a file left out is copied, and
 the copy's ids equal the fileset's; a second `cp` refuses, naming the paths,
 and copies nothing; `--force` replaces them; `--dry-run` lists the paths and
-leaves the destination absent.
+leaves the destination absent; a link to an absolute target is refused
+before the destination is made, and copied, holding the root's real path,
+beneath a `--link-root` reached through a link.
 
 ## 9. Surface
 
@@ -733,4 +742,4 @@ Non-normative: where the parts live.
 | `FXE11`, `FXE12`      | `apps/fileset-explorer` (`app.d`, `export_tab.d`)                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `FXS1`–`FXS6`, `FXS8` | `apps/fileset-explorer` (`evaluate.d`, `explorer.d`; `send.d`: `BlobProvider`, `IrohProvider`, `Sending`); `sparkles.build_primitives.content_addressing` (`collectionOf`, `nixStorePath`, `toSwhid`, `toGitSri`)                                                                                                                                                                                                                                    |
 | `FXS7`, `FXS9`        | `sparkles.iroh_send` (`IrohSend`, `loadIrohSend`); `libs/iroh-send/rust`; `nix/packages/sparkles-iroh-send.nix`; `nix/packages/android/fileset-explorer.nix`                                                                                                                                                                                                                                                                                         |
-| `FXC1`–`FXC5`         | `apps/fileset-explorer` (`cli.d`: `Explorer`, `View`, `StatsCommand`, `SendCommand`, `Emit`, `Cp`, `cpCommand`; `stats.d`: `statsRows`, `formatStats`)                                                                                                                                                                                                                                                                                               |
+| `FXC1`–`FXC5`         | `apps/fileset-explorer` (`cli.d`: `Explorer`, `View`, `StatsCommand`, `SendCommand`, `Emit`, `Cp`, `cpCommand`; `copy.d`: `copyMembers`, `grantLinkRoots`, `coverOf`; `stats.d`: `statsRows`, `formatStats`)                                                                                                                                                                                                                                         |

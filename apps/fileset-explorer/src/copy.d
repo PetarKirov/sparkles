@@ -9,6 +9,12 @@ the rights to create, write and replace entries and nothing more.
 Directories are made first, one after another; then each member is copied
 on work the executor runs: `InlineExecutor` runs it at once,
 `LoopExecutor` on a fiber once its budget admits it.
+
+A link holding an absolute target is made only beneath a root the command
+line granted (`--link-root`, `VFO10`): the root is opened read-only, the
+target must fall lexically beneath it, and the link is made with
+`symlinkTo`, so its absolute part is the root's own path as the backend
+reports it, never text from the source tree.
 */
 module copy;
 
@@ -39,6 +45,98 @@ struct CopyReport
     string failure;    /// the first member that failed, and why; empty when none
 }
 
+/**
+The places absolute links may point into (`--link-root`): each root as
+given, and the texts that name it, its normalized absolute path and the
+path the backend reports for it, its links resolved.
+*/
+struct LinkRoots
+{
+    string[] paths;   /// as given
+    string[][] names; /// per root: the texts a target may begin with
+}
+
+/**
+Opens each of `paths` read-only, as the command line grants it, and reads
+the names it goes by; `failure` names the first that cannot be opened.
+*/
+LinkRoots grantLinkRoots(string[] paths, out string failure)
+{
+    import std.conv : text;
+    import std.path : absolutePath, buildNormalizedPath;
+    import sparkles.event_horizon.sys : BlockingVfs;
+
+    LinkRoots roots;
+    auto vfs = new BlockingVfs;
+    foreach (p; paths)
+    {
+        auto dir = openRoot!(Rights.readOnly)(vfs, p, ambientAuthority());
+        if (dir.hasError)
+        {
+            failure = p ~ ": " ~ text(dir.error);
+            return LinkRoots.init;
+        }
+        char[4096] buffer;
+        auto n = vfs.pathOf(dir.value.backendHandle, buffer[]);
+        if (n.hasError)
+        {
+            failure = p ~ ": " ~ text(n.error);
+            return LinkRoots.init;
+        }
+        const given = buildNormalizedPath(absolutePath(p)), real_ = buffer[0 .. n.value].idup;
+        roots.paths ~= p;
+        roots.names ~= given == real_ ? [given] : [given, real_];
+    }
+    return roots;
+}
+
+/// Which granted root an absolute link target falls beneath, and the rest of
+/// the target below it; `root` is -1 when none covers it.
+struct Cover
+{
+    ptrdiff_t root = -1; ///
+    string rest;         /// empty for the root itself
+}
+
+/**
+The first root of `names` (`LinkRoots.names`) that `target` falls beneath,
+lexically: it equals one of the root's names, or continues one past a
+separator with a path `symlinkTo` accepts, no empty, `.` or `..` component.
+*/
+Cover coverOf(string target, const(string[])[] names) @safe pure nothrow
+{
+    import sparkles.base.vfs.names : checkBeneathPath;
+
+    foreach (i, forms; names)
+        foreach (r; forms)
+        {
+            if (target == r)
+                return Cover(i, "");
+            const prefixLength = r.length && r[$ - 1] == '/' ? r.length : r.length + 1;
+            if (target.length <= prefixLength || target[0 .. r.length] != r
+                || target[prefixLength - 1] != '/')
+                continue;
+            const rest = target[prefixLength .. $];
+            if (checkBeneathPath(rest) == ErrorKind.other)
+                return Cover(i, rest);
+        }
+    return Cover.init;
+}
+
+///
+@("fileset_explorer.copy.coverOf")
+@safe pure nothrow unittest
+{
+    const names = [["/nix/store"], ["/home/u/via", "/home/u/real"], ["/"]];
+    assert(coverOf("/nix/store/abc-x/bin", names) == Cover(0, "abc-x/bin"));
+    assert(coverOf("/nix/store", names) == Cover(0, ""));
+    assert(coverOf("/home/u/real/a", names) == Cover(1, "a"));
+    assert(coverOf("/nix/storeroom/a", names) == Cover(2, "nix/storeroom/a"), "a name, not a prefix");
+    assert(coverOf("/nix/store/../etc", names[0 .. 1]).root == -1, "never above the root");
+    assert(coverOf("/nix/store//a", names[0 .. 1]).root == -1);
+    assert(coverOf("/etc/passwd", names[0 .. 2]).root == -1);
+}
+
 /// The rights the destination is opened with: make, write and replace.
 enum Rights destRights = cast(Rights)(Rights.lookup | Rights.stat | Rights.write | Rights.create
     | Rights.createShared | Rights.remove);
@@ -49,7 +147,8 @@ the backend `vfs`; `jobs` bounds the files in flight on `RingVfs`. The
 destination's parent must exist; `to` itself is made if it does not. With
 `force`, an entry in a member's way is removed first.
 */
-CopyReport copyMembers(string from, string to, const(Member)[] members, bool force, CopyVfs vfs, uint jobs = 16)
+CopyReport copyMembers(string from, string to, const(Member)[] members, bool force, CopyVfs vfs, uint jobs = 16,
+    LinkRoots linkRoots = LinkRoots.init)
 {
     import sparkles.build_primitives.fileset.driver : InlineExecutor;
     import sparkles.event_horizon.sys : BlockingVfs;
@@ -61,7 +160,7 @@ CopyReport copyMembers(string from, string to, const(Member)[] members, bool for
         case CopyVfs.blocking:
             auto blocking = new BlockingVfs;
             InlineExecutor exec;
-            copyOver(blocking, from, to, members, force, exec, report);
+            copyOver(blocking, from, to, members, force, linkRoots, exec, report);
             report.peak = report.files + report.links ? 1 : 0;
             break;
         case CopyVfs.ring:
@@ -79,7 +178,7 @@ CopyReport copyMembers(string from, string to, const(Member)[] members, bool for
             auto ran = s.run(() {
                 auto rv = new RingVfs;
                 auto exec = LoopExecutor!Sched(&s, new Admission(jobs ? jobs : 1));
-                copyOver(rv, from, to, members, force, exec, report);
+                copyOver(rv, from, to, members, force, linkRoots, exec, report);
                 report.peak = exec.peak;
             });
             if (ran.hasError && !report.failure.length)
@@ -119,15 +218,32 @@ bool[] inTheWay(string to, const(Member)[] members)
 // ---------------------------------------------------------------------------
 
 // The copy over the backend `vfs`, its work run by `exec`.
-private void copyOver(V, Exec)(V* vfs, string from, string to, const(Member)[] members, bool force, ref Exec exec,
-    ref CopyReport report)
+private void copyOver(V, Exec)(V* vfs, string from, string to, const(Member)[] members, bool force,
+    LinkRoots linkRoots, ref Exec exec, ref CopyReport report)
 {
+    import core.lifetime : move;
     import std.conv : text;
     import std.path : absolutePath, baseName, buildNormalizedPath, dirName;
 
     auto src = openRoot!(Rights.readOnly)(vfs, from, ambientAuthority());
     if (src.hasError)
         return fail(report, from, text(src.error));
+    // The roots absolute links may point into, on this backend.
+    alias Granted = typeof(src.value);
+    auto granted = new Granted[linkRoots.paths.length];
+    scope (exit)
+        foreach (ref g; granted)
+            destroy(g);
+    foreach (i, p; linkRoots.paths)
+    {
+        auto g = openRoot!(Rights.readOnly)(vfs, p, ambientAuthority());
+        if (g.hasError)
+            return fail(report, p, text(g.error));
+        granted[i] = move(g.value);
+    }
+    auto grantedRefs = new typeof(granted[0].borrow())[granted.length];
+    foreach (i, ref g; granted)
+        grantedRefs[i] = g.borrow;
     const dest = buildNormalizedPath(absolutePath(to));
     auto parent = openRoot!destRights(vfs, dirName(dest), ambientAuthority());
     if (parent.hasError)
@@ -159,7 +275,7 @@ private void copyOver(V, Exec)(V* vfs, string from, string to, const(Member)[] m
         return () {
             if (report.failure.length)
                 return; // one failure ends the copy: start nothing more
-            const why = copyOne(from_, dst, members[i], force, report);
+            const why = copyOne(from_, dst, members[i], force, grantedRefs, linkRoots.names, report);
             if (why.length)
                 fail(report, members[i].path, why);
         };
@@ -171,10 +287,12 @@ private void copyOver(V, Exec)(V* vfs, string from, string to, const(Member)[] m
 }
 
 // Copies one member; returns why it could not, or null.
-private string copyOne(D, S)(ref S src, ref D dst, ref const Member m, bool force, ref CopyReport report)
+private string copyOne(D, S, G)(ref S src, ref D dst, ref const Member m, bool force, G[] granted,
+    const(string[])[] grantedNames, ref CopyReport report)
 {
     import std.conv : text;
     import std.path : baseName, dirName;
+    import sparkles.base.vfs.names : isAbsolutePath;
 
     const parent = dirName(m.path), name = baseName(m.path);
     auto into = parent == "." ? dst.walk("") : dst.walk(parent);
@@ -188,6 +306,17 @@ private string copyOne(D, S)(ref S src, ref D dst, ref const Member m, bool forc
     }
     if (m.kind == FsoKind.symlink)
     {
+        if (isAbsolutePath(m.target))
+        {
+            const cover = coverOf(m.target, grantedNames);
+            if (cover.root < 0)
+                return "its target, " ~ m.target ~ ", is beneath no --link-root";
+            const made = into.value.symlinkTo(name, granted[cover.root], cover.rest);
+            if (made.hasError)
+                return text(made.error);
+            ++report.links;
+            return null;
+        }
         const made = into.value.symlinkAt(name, m.target);
         if (made.hasError)
             return text(made.error);

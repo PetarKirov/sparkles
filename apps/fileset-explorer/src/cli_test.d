@@ -321,3 +321,51 @@ naming the paths; `--force` replaces them; `--dry-run` copies nothing.
     assert(output.split('\n').length == 5 && output.canFind(buildPath(fresh, "src/run")), output);
     assert(error.canFind("would copy 3 files") && !exists(fresh), error);
 }
+
+/**
+FXC5, `VFO10`: a link with an absolute target stops `cp` before it copies
+anything, naming it, unless the target falls beneath a `--link-root`; then
+it is made through that root, holding the root's real path, over each
+backend. A root that cannot be opened stops it too.
+*/
+@("fileset_explorer.FXC5.cpLinkRoot")
+@system unittest
+{
+    import std.algorithm.searching : endsWith;
+    import std.file : exists, isSymlink, mkdirRecurse, readLink, readText, symlink, write;
+    import std.path : buildPath, dirName;
+
+    auto f = Fixture.make("cp-link-root", ["a.d": "module a;"]);
+    scope (exit) f.remove();
+    const store = buildPath(dirName(f.dir), "store-real");
+    mkdirRecurse(buildPath(store, "pkg"));
+    write(buildPath(store, "pkg", "x"), "x");
+    const via = buildPath(dirName(f.dir), "store");
+    symlink(store, via);
+    symlink(buildPath(via, "pkg/x"), buildPath(f.dir, "abs"));
+    symlink("/etc/hostname", buildPath(f.dir, "etc"));
+
+    string output, error;
+    const refused = buildPath(dirName(f.dir), "out-refused");
+    assert(cpCommand(Root(dir: f.dir), "all()", refused, false, false, output, error) == 1);
+    assert(error.canFind("copied nothing: 2 links point outside") && error.canFind("abs -> " ~ via), error);
+    assert(!exists(refused), "nothing copied, not even the directory");
+    assert(cpCommand(Root(dir: f.dir), "all()", refused, false, true, output, error, CopyVfs.blocking, 16,
+        [via]) == 1, "a dry run refuses as the copy would");
+    assert(error.canFind("1 link points") && error.canFind("etc -> /etc/hostname"), error);
+    assert(cpCommand(Root(dir: f.dir), "all()", refused, false, false, output, error, CopyVfs.blocking, 16,
+        [buildPath(dirName(f.dir), "absent")]) == 1);
+    assert(error.startsWith("cp: --link-root "), error);
+
+    foreach (vfs; [CopyVfs.blocking, CopyVfs.ring])
+    {
+        const dest = buildPath(dirName(f.dir), text("out-root-", vfs));
+        assert(cpCommand(Root(dir: f.dir), "a.d | abs", dest, false, false, output, error, vfs, 16, [via]) == 0,
+            error);
+        assert(error.canFind("1 file (9 B) and 1 link"), error);
+        assert(isSymlink(buildPath(dest, "abs")));
+        const held = readLink(buildPath(dest, "abs"));
+        assert(held.endsWith("/store-real/pkg/x"), "the root's real path, not the text in the tree: " ~ held);
+        assert(readText(buildPath(dest, "abs")) == "x");
+    }
+}

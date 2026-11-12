@@ -297,6 +297,11 @@ struct Cp
     @(Option("jobs", description: "The most files in flight with --vfs ring.", placeholder: "N"))
     uint jobs = 16;
 
+    @(Option("link-root", description: "A directory links with absolute targets may point into, such as "
+        ~ "/nix/store; repeatable. A link pointing anywhere else stops the copy before it starts.",
+        placeholder: "PATH"))
+    string[] linkRoots;
+
     ///
     int run(Program)(in Program program)
     {
@@ -304,7 +309,7 @@ struct Cp
 
         string output, error;
         const status = cpCommand(Root(dir: program.value.dir), program.value.query, dest, force, dryRun,
-            output, error, vfs == "ring" ? CopyVfs.ring : CopyVfs.blocking, jobs);
+            output, error, vfs == "ring" ? CopyVfs.ring : CopyVfs.blocking, jobs, linkRoots);
         write(output);
         stderr.write(error);
         return status;
@@ -316,18 +321,23 @@ struct Cp
 `dest/<path>`, a file with its contents and executable bit, a link as a link,
 through the capability VFS's backend `vfs` (`copyMembers`). Every
 destination is checked first: when one exists, nothing is copied and 1
-returned, naming them, unless `force`. With `dryRun` the destinations are
-listed on `output` and nothing is copied. The totals, the backend and the
+returned, naming them, unless `force`. A link holding an absolute target
+is copied only when the target falls beneath one of `linkRoots`, each
+opened read-only here, at the boundary where ambient authority belongs
+(`VFO10`); when any does not, they are named, nothing is copied and 1
+returned, with `dryRun` too. With `dryRun` the destinations are listed on
+`output` and nothing is copied. The totals, the backend and the
 time, and any failure, go on `error`.
 */
 int cpCommand(in Root root, string query, string dest, bool force, bool dryRun, out string output,
-    out string error, CopyVfs vfs = CopyVfs.blocking, uint jobs = 16)
+    out string error, CopyVfs vfs = CopyVfs.blocking, uint jobs = 16, string[] linkRoots = null)
 {
     import std.conv : text;
     import std.format : format;
     import std.path : absolutePath, buildNormalizedPath, buildPath;
     import sparkles.build_primitives.fileset.fso : FsoKind;
-    import copy : copyMembers, inTheWay;
+    import sparkles.base.vfs.names : isAbsolutePath;
+    import copy : copyMembers, coverOf, grantLinkRoots, inTheWay;
 
     if (root.inMemory)
     {
@@ -341,6 +351,27 @@ int cpCommand(in Root root, string query, string dest, bool force, bool dryRun, 
         return 1;
     }
     const base = buildNormalizedPath(absolutePath(root.dir));
+    string refused;
+    auto granted = grantLinkRoots(linkRoots, refused);
+    if (refused.length)
+    {
+        error = "cp: --link-root " ~ refused ~ "\n";
+        return 1;
+    }
+    string[] outside;
+    foreach (ref m; o.found.members)
+        if (m.kind == FsoKind.symlink && isAbsolutePath(m.target) && coverOf(m.target, granted.names).root < 0)
+            outside ~= m.path ~ " -> " ~ m.target;
+    if (outside.length)
+    {
+        error = text("cp: copied nothing: ", outside.length, outside.length == 1 ? " link points" : " links point",
+            " outside the fileset and beneath no --link-root:\n");
+        foreach (l; outside[0 .. outside.length < 20 ? $ : 20])
+            error ~= "  " ~ l ~ "\n";
+        if (outside.length > 20)
+            error ~= text("  and ", outside.length - 20, " more\n");
+        return 1;
+    }
     size_t files, links;
     string[] clashes;
     const there = dryRun ? null : inTheWay(dest, o.found.members);
@@ -371,7 +402,7 @@ int cpCommand(in Root root, string query, string dest, bool force, bool dryRun, 
             error ~= text("  and ", clashes.length - 20, " more\n");
         return 1;
     }
-    const report = copyMembers(base, dest, o.found.members, force, vfs, jobs);
+    const report = copyMembers(base, dest, o.found.members, force, vfs, jobs, granted);
     if (report.failure.length)
     {
         error = text("cp: ", report.failure, "\n");
