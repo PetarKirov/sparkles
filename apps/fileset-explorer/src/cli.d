@@ -8,7 +8,7 @@ module cli;
 
 import core.time : Duration, msecs;
 import std.array : split;
-import std.conv : to;
+import std.conv : octal, to;
 import std.sumtype : SumType;
 
 import sparkles.base.term_caps : isTerminal, StdStream;
@@ -21,6 +21,7 @@ import evaluate : evaluate, humanBytes, Root;
 import explorer : ExplorerApp;
 import launch : defaultQuery, explorerGui, launch;
 import render : renderFrame;
+import copy : CopyVfs;
 import send : BlobProvider, IrohProvider, openIrohProvider, SendStage, Sending;
 import stats : formatStats, statsRows;
 
@@ -37,7 +38,7 @@ struct Explorer
     string query = defaultQuery;
 
     @Subcommands
-    SumType!(View, StatsCommand, SendCommand, Emit) command;
+    SumType!(View, StatsCommand, SendCommand, Emit, Cp) command;
 }
 
 /// `view`: the explorer, in a window, the terminal, or one frame as text.
@@ -274,6 +275,111 @@ struct Emit
         stderr.write(error);
         return status;
     }
+}
+
+/// `cp`: the members, copied out of the root (`FXC5`, `X20`).
+@(Command("cp", shortDescription: "Copy the fileset's members to DEST, each at its path from the root."))
+struct Cp
+{
+    @(Argument("dest"))
+    string dest;
+
+    @(Option("force", description: "Replace destination paths that exist; without it, nothing is copied over them."))
+    bool force;
+
+    @(Option("dry-run", description: "Print each destination path and the totals, and copy nothing."))
+    bool dryRun;
+
+    @(Option("vfs", description: "The VFS backend to copy over: blocking, one file at a time, or ring, "
+        ~ "--jobs files in flight on fibers.", placeholder: "BACKEND", allowedValues: ["blocking", "ring"]))
+    string vfs = "blocking";
+
+    @(Option("jobs", description: "The most files in flight with --vfs ring.", placeholder: "N"))
+    uint jobs = 16;
+
+    ///
+    int run(Program)(in Program program)
+    {
+        import std.stdio : stderr, write;
+
+        string output, error;
+        const status = cpCommand(Root(dir: program.value.dir), program.value.query, dest, force, dryRun,
+            output, error, vfs == "ring" ? CopyVfs.ring : CopyVfs.blocking, jobs);
+        write(output);
+        stderr.write(error);
+        return status;
+    }
+}
+
+/**
+`cp` (`FXC5`): each member of `query` beneath `root` copied to
+`dest/<path>`, a file with its contents and executable bit, a link as a link,
+through the capability VFS's backend `vfs` (`copyMembers`). Every
+destination is checked first: when one exists, nothing is copied and 1
+returned, naming them, unless `force`. With `dryRun` the destinations are
+listed on `output` and nothing is copied. The totals, the backend and the
+time, and any failure, go on `error`.
+*/
+int cpCommand(in Root root, string query, string dest, bool force, bool dryRun, out string output,
+    out string error, CopyVfs vfs = CopyVfs.blocking, uint jobs = 16)
+{
+    import std.conv : text;
+    import std.format : format;
+    import std.path : absolutePath, buildNormalizedPath, buildPath;
+    import sparkles.build_primitives.fileset.fso : FsoKind;
+    import copy : copyMembers, inTheWay;
+
+    if (root.inMemory)
+    {
+        error = "cp: a tree held in memory has no files to copy\n";
+        return 1;
+    }
+    const o = evaluate(root, query);
+    if (o.failed)
+    {
+        error = "fileset-explorer: " ~ o.error.message ~ "\n";
+        return 1;
+    }
+    const base = buildNormalizedPath(absolutePath(root.dir));
+    size_t files, links;
+    string[] clashes;
+    const there = dryRun ? null : inTheWay(dest, o.found.members);
+    foreach (i, ref m; o.found.members)
+    {
+        files += m.kind == FsoKind.regular;
+        links += m.kind == FsoKind.symlink;
+        const to = buildPath(dest, m.path);
+        if (dryRun)
+            output ~= to ~ "\n";
+        else if (there[i])
+            clashes ~= to;
+    }
+    const totals = text(files, files == 1 ? " file" : " files", " (", humanBytes(o.bytes), ")",
+        links ? text(" and ", links, links == 1 ? " link" : " links") : "");
+    if (dryRun)
+    {
+        error = text("cp: would copy ", totals, " to ", dest, "\n");
+        return 0;
+    }
+    if (clashes.length && !force)
+    {
+        error = text("cp: copied nothing: ", clashes.length, clashes.length == 1 ? " path exists" : " paths exist",
+            " (--force replaces them):\n");
+        foreach (c; clashes[0 .. clashes.length < 20 ? $ : 20])
+            error ~= "  " ~ c ~ "\n";
+        if (clashes.length > 20)
+            error ~= text("  and ", clashes.length - 20, " more\n");
+        return 1;
+    }
+    const report = copyMembers(base, dest, o.found.members, force, vfs, jobs);
+    if (report.failure.length)
+    {
+        error = text("cp: ", report.failure, "\n");
+        return 1;
+    }
+    error = text("cp: copied ", totals, " to ", dest, format!" in %.2f ms"(report.took.total!"usecs" / 1000.0),
+        " (", vfs == CopyVfs.ring ? text("RingVfs, ", report.peak, " in flight at most") : "BlockingVfs", ")\n");
+    return 0;
 }
 
 // ---------------------------------------------------------------------------

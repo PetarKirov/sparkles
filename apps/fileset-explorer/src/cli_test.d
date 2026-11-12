@@ -10,7 +10,8 @@ import std.sumtype : match;
 import sparkles.core_cli.args : parseCli;
 import sparkles.iroh_send : SendFile, SendPhase, SendState;
 
-import cli : Emit, Explorer, SendCommand, sendCommand, SendIo, StatsCommand, statsCommand, View;
+import copy : CopyVfs;
+import cli : Cp, cpCommand, Emit, Explorer, SendCommand, sendCommand, SendIo, StatsCommand, statsCommand, View;
 import evaluate : Root;
 import explorer : ExplorerApp;
 import send : BlobProvider;
@@ -42,7 +43,11 @@ import stats : formatStats;
 
     auto help = parseCli!Explorer(["fileset-explorer", "--help"]);
     assert(!help && help.error.isHelp);
-    foreach (sub; ["view", "stats", "send", "emit"])
+    auto cp = parseCli!Explorer(["fileset-explorer", "cp", "out", "--force", "--dry-run"]);
+    assert(cp, cp.error.message);
+    assert(cp.value.command.match!((ref Cp c) => c.dest == "out" && c.force && c.dryRun, (ref _) => false));
+
+    foreach (sub; ["view", "stats", "send", "emit", "cp"])
         assert(help.error.help.canFind(sub), sub);
 }
 
@@ -251,4 +256,68 @@ private SendState serving(string collection, string ticket)
     auto io3 = memory.io(interactive: false);
     assert(sendCommand(Root(literal: "a = 1\n", name: "t"), "all()", true, make, io3) == 1);
     assert(memory.err.join.canFind("held in memory"), memory.err.join);
+}
+
+// ------------------------------------------------------------------- cp
+
+/**
+FXC5: `cp` copies an executable file and a link as they are, and leaves out
+what the query does not select, so the copy, resolved whole, has the
+fileset's castore, NAR and git ids; a second `cp` copies nothing over it,
+naming the paths; `--force` replaces them; `--dry-run` copies nothing.
+*/
+@("fileset_explorer.FXC5.cp")
+@system unittest
+{
+    import std.conv : octal;
+    import std.file : exists, getAttributes, isSymlink, readLink, readText, setAttributes, symlink, write;
+    import std.path : buildPath, dirName;
+
+    import evaluate : evaluate;
+
+    enum query = "src/** | l";
+    auto f = Fixture.make("cp", ["src/a.d": "module a;", "src/deep/b.d": "module b;", "src/run": "#!/bin/sh",
+        "skip.txt": "left out"]);
+    scope (exit) f.remove();
+    setAttributes(buildPath(f.dir, "src/run"), octal!755);
+    symlink("src/a.d", buildPath(f.dir, "l"));
+    const theirs = evaluate(Root(dir: f.dir), query, withIds: true);
+
+    // Over each backend of the capability VFS, the same copy.
+    foreach (vfs; [CopyVfs.blocking, CopyVfs.ring])
+    {
+        const dest = buildPath(dirName(f.dir), text("out-", vfs));
+        string output, error;
+        assert(cpCommand(Root(dir: f.dir), query, dest, false, false, output, error, vfs) == 0, error);
+        assert(error.startsWith("cp: copied 3 files (27 B) and 1 link to " ~ dest ~ " in "), error);
+        assert(error.canFind(vfs == CopyVfs.ring ? "(RingVfs, " : "(BlockingVfs)"), error);
+        if (vfs == CopyVfs.ring) // the files overlap: their calls park fibers, not the thread
+            assert(!error.canFind("(RingVfs, 0 ") && !error.canFind("(RingVfs, 1 "), error);
+        assert(readText(buildPath(dest, "src/deep/b.d")) == "module b;");
+        assert(getAttributes(buildPath(dest, "src/run")) & octal!100, "the executable bit");
+        assert(!(getAttributes(buildPath(dest, "src/a.d")) & octal!100));
+        assert(isSymlink(buildPath(dest, "l")) && readLink(buildPath(dest, "l")) == "src/a.d");
+        assert(!exists(buildPath(dest, "skip.txt")), "a file the query leaves out is not copied");
+
+        // The copy is the tree the ids name.
+        const copied = evaluate(Root(dir: dest), "all()", withIds: true);
+        assert(copied.castore == theirs.castore && copied.narHash == theirs.narHash
+            && copied.gitTree == theirs.gitTree, text(vfs, ": ", copied.castore, " ", theirs.castore));
+
+        // Again: every path exists, and nothing is copied over them.
+        write(buildPath(dest, "src/a.d"), "changed");
+        assert(cpCommand(Root(dir: f.dir), query, dest, false, false, output, error, vfs) == 1);
+        assert(error.canFind("copied nothing: 4 paths exist") && error.canFind(buildPath(dest, "l")), error);
+        assert(readText(buildPath(dest, "src/a.d")) == "changed");
+        assert(cpCommand(Root(dir: f.dir), query, dest, true, false, output, error, vfs) == 0, error);
+        assert(readText(buildPath(dest, "src/a.d")) == "module a;", "--force replaces it");
+        assert(isSymlink(buildPath(dest, "l")), "and the link stays a link");
+    }
+    string output, error;
+
+    // A dry run lists the paths, and copies nothing.
+    const fresh = buildPath(dirName(f.dir), "fresh");
+    assert(cpCommand(Root(dir: f.dir), query, fresh, false, true, output, error) == 0, error);
+    assert(output.split('\n').length == 5 && output.canFind(buildPath(fresh, "src/run")), output);
+    assert(error.canFind("would copy 3 files") && !exists(fresh), error);
 }

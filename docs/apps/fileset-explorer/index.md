@@ -10,17 +10,6 @@ tab.
 nix run github:PetarKirov/sparkles#fileset-explorer -- --dir . --query '**/*.d - **/*_test.d'
 ```
 
-The same fileset can be used without the screen. `stats` prints what the
-Stats tab shows, its names among them (`--ids` computes them for a large
-fileset), `send` serves it as `sendme send` serves a directory, asking first
-unless given `--yes`, and `emit` writes it for another build system:
-
-```sh
-fileset-explorer --dir . --query 'src/**' stats
-fileset-explorer --dir . --query 'src/**' send --yes
-fileset-explorer --dir . --query 'src/**' emit nix
-```
-
 This page is also the explorer's help: `F1` opens it beside the tree.
 Each tutorial block has a ▶ button that loads its query into the editor and
 shows the result.
@@ -270,3 +259,20 @@ in one of three ways, chosen in the tab: a small `glob` function the output
 defines, which walks the tree with `builtins.readDir` when Nix evaluates it (the
 default); the paths the glob matches now, marked as a snapshot; or a refusal,
 for anything but a literal path or a name pattern.
+
+## From the command line
+
+The same fileset can be used without the screen. `stats` prints what the
+Stats tab shows, its names among them (`--ids` computes them for a large
+fileset); `send` serves it as `sendme send` serves a directory, asking first
+unless given `--yes`; `emit` writes it for another build system; and `cp`
+copies its members to a directory, each at its path, executable bits and
+links kept, nothing copied over a file that is there unless given
+`--force`, and only listed with `--dry-run`:
+
+```sh
+fileset-explorer --dir . --query 'src/**' stats
+fileset-explorer --dir . --query 'src/**' send --yes
+fileset-explorer --dir . --query 'src/**' emit nix
+fileset-explorer --dir . --query 'src/**' cp ../snapshot
+```
