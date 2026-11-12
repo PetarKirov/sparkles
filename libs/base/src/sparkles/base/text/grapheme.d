@@ -625,7 +625,8 @@ private size_t printableAsciiBlocks(size_t lanes)(scope const(char)[] s)
     return i;
 }
 
-private size_t printableAsciiPrefix(scope const(char)[] s)
+/// Internal cell fast path; a following scalar can still extend the last starter.
+package(sparkles) size_t printableAsciiPrefix(scope const(char)[] s)
 {
     // Reject an exceptional head before paying for a vector call. CTFE and
     // non-LDC/non-x86 builds use the same bounded scalar classification.

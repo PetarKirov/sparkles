@@ -1,0 +1,4 @@
+workload,edits,acks,max_edit_us,max_observe_us,max_oldest_unacked_ms,overdue_samples,final_revision
+1MiB-80-columns,248,8,100,18,276,0,249
+10MiB-80-columns,247,8,30,1604,323,0,248
+1MiB-single-line,227,8,1044,3523,274,0,228

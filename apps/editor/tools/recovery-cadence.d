@@ -24,13 +24,14 @@ import core.sys.posix.sys.resource : getrusage, RUSAGE_SELF, rusage;
 import editor_document : Document;
 import session_runtime : RecoverySession;
 import std.file : mkdir, rmdirRecurse, tempDir;
+import std.getopt : getopt;
 import std.path : buildPath;
 import std.process : execute;
 import std.stdio : writefln, writeln;
 import std.string : strip;
 import std.uuid : randomUUID;
 
-void measure(string label, size_t bytes, bool longLine) @system
+void measure(string label, size_t bytes, bool longLine, uint editBudgetMicros) @system
 {
     const root = buildPath(tempDir, "editor-cadence-" ~ randomUUID().toString());
     mkdir(root);
@@ -96,22 +97,27 @@ void measure(string label, size_t bytes, bool longLine) @system
     assert(!recovery.pending, "The latest recovery revision was not acknowledged.");
     assert(!overdueSamples && worstBatch < 1.seconds,
         "The one-second recovery bound was exceeded on this workload/host.");
+    if (editBudgetMicros)
+        assert(worstEdit.total!"usecs" <= editBudgetMicros,
+            "The requested per-edit CPU budget was exceeded on this workload/host.");
 }
 
 int main(string[] args) @system
 {
-    const singleOnly = args.length == 2 && args[1] == "--single-line";
-    assert(args.length == 1 || singleOnly, "Optional argument: --single-line");
+    bool singleOnly;
+    uint editBudgetMicros;
+    getopt(args, "single-line", &singleOnly, "edit-budget-us", &editBudgetMicros);
+    assert(args.length == 1, "Options: --single-line --edit-budget-us=8000");
     const filesystem = execute(["stat", "-f", "-c", "%T", tempDir]);
     assert(filesystem.status == 0);
     writeln("filesystem,", filesystem.output.strip);
     writeln("workload,edits,acks,max_edit_us,max_observe_us,max_oldest_unacked_ms,overdue_samples,final_revision");
     if (!singleOnly)
     {
-        measure("1MiB-80-columns", 1 * 1024 * 1024, false);
-        measure("10MiB-80-columns", 10 * 1024 * 1024, false);
+        measure("1MiB-80-columns", 1 * 1024 * 1024, false, editBudgetMicros);
+        measure("10MiB-80-columns", 10 * 1024 * 1024, false, editBudgetMicros);
     }
-    measure("1MiB-single-line", 1 * 1024 * 1024, true);
+    measure("1MiB-single-line", 1 * 1024 * 1024, true, editBudgetMicros);
     rusage usage;
     assert(getrusage(RUSAGE_SELF, &usage) == 0);
     writeln("process_peak_rss_kib,", usage.ru_maxrss);

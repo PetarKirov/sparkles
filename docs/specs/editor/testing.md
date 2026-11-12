@@ -673,3 +673,28 @@ does not draw frames or establish Android or archive-count resource bounds.
 `editor --version` emits stamped JSON identifying `sparkles:editor`, version
 0.1.0, build type `checked`, commit `addd8d7`, and `dirty: false`, together
 with dependency component versions.
+
+### Complete cluster widths and bulk caret-column queries — 2026-11-13
+
+The profile led to two shared editor fixes. Width measurement now reads the
+complete borrowed cluster rather than copying at most 32 bytes: a variation
+selector after forty combining marks still determines the cluster's width.
+Logical column/position queries iterate text chunks and reuse the base
+library's printable-ASCII classifier, including its guarded AVX2/SSE2 paths
+on x86. They finalize safe ASCII runs in bulk while leaving the last starter
+for the owned Unicode grapheme and presentation rules. Other targets retain
+the classifier's scalar fallback. Literal escape bytes retain editor-text
+semantics, and an ASCII keycap starter remains joined to its selectors.
+
+The same host/filesystem's [after results](./results/2026-11-13-recovery-cadence-after.csv)
+show the 1 MiB single-line maximum edit time falling from 121,065 to 1,044 µs;
+227 edits completed instead of 16. Maximum observed ages of unacknowledged
+state were 276, 323 and 274 ms across the three workloads, with zero overdue
+samples. Cumulative process peak RSS was 255,880 KiB. The optional
+`--edit-budget-us=8000` guard fails before this change and passes afterward.
+It is an explicit local CPU budget, not a timing test imposed on every CI host.
+
+All 826 UI tests, 50 editor tests and 21 selected base grapheme tests pass;
+the checked Vulkan build succeeds. These measurements cover editing and
+checkpoint modules; full app drawing, bidi/wrapped layout, device acceptance
+and recovery archive-count bounds remain required.

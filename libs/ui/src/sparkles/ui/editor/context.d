@@ -13,11 +13,13 @@ module sparkles.ui.editor.context;
 import core.time : MonoTime;
 
 import sparkles.base.text.seek : nextGraphemeBoundary;
+import sparkles.base.text.grapheme : printableAsciiPrefix;
 import sparkles.base.text.utf : UtfMode, decodeToken;
 import sparkles.base.text.width : ClusterWidthState;
 import sparkles.text_buffer.summary : Affinity;
 import sparkles.text_buffer.text : Text;
 import sparkles.ui.geometry : Rect;
+import std.algorithm.comparison : min;
 
 /// One line of the laid-out text: `[start, end)`, `end` before any line break.
 struct VisualLine
@@ -96,11 +98,27 @@ struct LogicalContext
     size_t columnOf(in Text text, VisualLine line, size_t position) const scope
     {
         size_t column;
-        for (size_t at = line.start; at < position && at < line.end;)
+        size_t at = line.start;
+        foreach (chunk; text.chunks(line.start))
         {
-            const next = nextGraphemeBoundary(text, at);
-            column += clusterCells(text, at, next);
-            at = next;
+            if (at >= position || at >= line.end) break;
+            if (at >= chunk.start + chunk.bytes.length) continue;
+            const stop = min(position, line.end, chunk.start + chunk.bytes.length);
+            while (at < stop)
+            {
+                const plain = printableAsciiPrefix(chunk.bytes[at - chunk.start .. stop - chunk.start]);
+                if (plain > 1)
+                {
+                    // Leave the final starter for grapheme/presentation rules,
+                    // including selectors or combining marks in the next chunk.
+                    at += plain - 1;
+                    column += plain - 1;
+                    continue;
+                }
+                const next = nextGraphemeBoundary(text, at);
+                column += clusterCells(text, at, next);
+                at = next;
+            }
         }
         return column;
     }
@@ -109,15 +127,30 @@ struct LogicalContext
     {
         size_t at = line.start;
         size_t reached;
-        while (at < line.end)
+        foreach (chunk; text.chunks(line.start))
         {
-            const next = nextGraphemeBoundary(text, at);
-            const cells = clusterCells(text, at, next);
-            // Nearest boundary: past the cluster's middle counts as after it.
-            if (reached + cells > column)
-                return 2 * (column - reached) >= cells && cells ? next : at;
-            reached += cells;
-            at = next;
+            if (at >= line.end) break;
+            if (at >= chunk.start + chunk.bytes.length) continue;
+            const stop = min(line.end, chunk.start + chunk.bytes.length);
+            while (at < stop)
+            {
+                const plain = printableAsciiPrefix(chunk.bytes[at - chunk.start .. stop - chunk.start]);
+                if (plain > 1)
+                {
+                    const count = plain - 1;
+                    if (column - reached < count) return at + column - reached;
+                    at += count;
+                    reached += count;
+                    continue;
+                }
+                const next = nextGraphemeBoundary(text, at);
+                const cells = clusterCells(text, at, next);
+                // Nearest boundary: past the cluster's middle counts as after it.
+                if (reached + cells > column)
+                    return 2 * (column - reached) >= cells && cells ? next : at;
+                reached += cells;
+                at = next;
+            }
         }
         return line.end;
     }
@@ -163,6 +196,21 @@ static assert(isEditContext!LogicalContext);
     const line = VisualLine(0, text.length);
     assert(context.columnOf(text, line, text.length) == 10);
     assert(context.positionAt(text, line, 5) == 6);
+}
+
+/// An ASCII keycap starter is finalized only after its presentation continuation.
+@("editor.context.asciiStarterPresentation")
+@safe pure nothrow @nogc unittest
+{
+    import std.array : replicate;
+    enum prefix = "x".replicate(4095);
+    const text = Text(prefix ~ "1\uFE0F\u20E3z");
+    const line = VisualLine(0, text.length);
+    LogicalContext context;
+    assert(context.columnOf(text, line, text.length) == 4098);
+    assert(context.positionAt(text, line, 4095) == 4095);
+    assert(context.positionAt(text, line, 4096) == 4102);
+    assert(context.positionAt(text, line, 4097) == 4102);
 }
 
 /// Terminal cells of the grapheme `[from, to)`, under the default width profile.
