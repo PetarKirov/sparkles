@@ -137,22 +137,52 @@ struct LogicalContext
 
 static assert(isEditContext!LogicalContext);
 
+/// A late selector in a long cluster still controls its width and nearest caret boundary.
+@("editor.context.longClusterPresentation")
+@safe pure nothrow @nogc unittest
+{
+    import std.array : replicate;
+    enum prefix = "x".replicate(4096);
+    enum cluster = "\u2764" ~ "\u0301".replicate(40) ~ "\uFE0F";
+    const text = Text(prefix ~ cluster ~ "z");
+    const line = VisualLine(0, text.length);
+    LogicalContext context;
+    assert(clusterCells(text, prefix.length, prefix.length + cluster.length) == 2);
+    assert(context.columnOf(text, line, text.length) == 4099);
+    assert(context.positionAt(text, line, 4096) == prefix.length);
+    assert(context.positionAt(text, line, 4097) == prefix.length + cluster.length);
+    assert(context.positionAt(text, line, 4098) == prefix.length + cluster.length);
+}
+
+/// Literal escape bytes are editor text rather than a request to strip ANSI formatting.
+@("editor.context.literalControls")
+@safe pure nothrow @nogc unittest
+{
+    const text = Text("hello\x1B[31mX");
+    LogicalContext context;
+    const line = VisualLine(0, text.length);
+    assert(context.columnOf(text, line, text.length) == 10);
+    assert(context.positionAt(text, line, 5) == 6);
+}
+
 /// Terminal cells of the grapheme `[from, to)`, under the default width profile.
 size_t clusterCells(in Text text, size_t from, size_t to) @safe pure nothrow @nogc
 {
-    // A cluster's width is its leading scalar's, adjusted by a following
-    // variation selector, so its first bytes decide it.
-    char[32] bytes;
-    const n = to - from < bytes.length ? to - from : bytes.length;
-    text.copyTo(from, from + n, bytes[0 .. n]);
+    // Presentation selectors can follow arbitrarily many extending scalars.
+    // Borrow whole text chunks instead of imposing a copied-prefix limit.
     ClusterWidthState state;
-    for (size_t i; i < n;)
+    foreach (chunk; text.chunks(from))
     {
-        const decoded = decodeToken(bytes[i .. n], UtfMode.replacement);
-        if (decoded.result.consumed == 0)
-            break;
-        state.push(decoded.token.scalar, false);
-        i += decoded.result.consumed;
+        if (chunk.start >= to) break;
+        const first = from > chunk.start ? from - chunk.start : 0;
+        const last = to - chunk.start < chunk.bytes.length ? to - chunk.start : chunk.bytes.length;
+        for (size_t i = first; i < last;)
+        {
+            const decoded = decodeToken(chunk.bytes[i .. last], UtfMode.replacement);
+            if (decoded.result.consumed == 0) break;
+            state.push(decoded.token.scalar, false);
+            i += decoded.result.consumed;
+        }
     }
     return state.width < 0 ? 0 : state.width;
 }
