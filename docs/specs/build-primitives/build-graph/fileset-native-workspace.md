@@ -554,10 +554,15 @@ The workspace inputs shrink the hand-written invalidator list to what cannot
 be derived. Four kinds of entry make them up:
 
 - **Planning's read set** (BGP1): the root recipe, the lockfiles and whatever
-  else planning read. Derived, so it cannot name a path that does not exist.
-- **The planning command's own closure:** the command that plans and runs the
-  work is itself a package, and a change claimed by its dependency closure
-  affects every package. Derived from the package graph.
+  else planning read, less what a package's set claims, such as a
+  sub-package's recipe. Derived, so it cannot name a path that does not
+  exist.
+- **The planner's inputs:** the command that plans and runs the work is
+  itself a package, and a change to what it plans with affects every package.
+  They are the closure of the library it plans with and its own package's
+  sets, each derived from a resolution, not the command's whole closure,
+  which in this repository reaches 30 of the 73 packages
+  ([D54](./decisions.md#d54-the-planner-s-inputs-are-its-planning-library-s-closure-and-its-own-sources-accepted)).
 - **The toolchain's definition:** the files that pin the compiler and the
   shell. No plan reads them, so they stay a fileset the consumer declares.
 - **What the compiler's working-directory lookup could find** (BGW7): every D
@@ -599,9 +604,12 @@ struct ChangeSet
 A consumer given a lossy change set **must** materialize every input set it
 depends on again. Git reports no ignored file. An input set that holds
 ignored files, such as generated sources, is therefore compared by input
-state, whatever git reports. With git as the source, a removed path is claimed by the
-current input sets and by those built from the base revision's recipes. No
-existence probe is needed, because membership is decided without the file.
+state, whatever git reports. With git as the source, a removed path is judged
+by the current input sets like any other. No existence probe is needed,
+because membership is decided without the file. Nor are sets built from the
+base revision's recipes: a set that held the path then and does not now
+changed because its recipe or the root recipe did, and that recipe is itself
+a changed path, claimed by its package or a workspace input.
 
 **BGW14: The watch list is what the resolution listed.** A watch of a set of
 packages **must** cover exactly the directories that materializing their
@@ -974,16 +982,17 @@ is uncertain, and a sound watch of it would rerun on every change.
 The prototype is evidence for the seam, on one host, in an unoptimized build.
 It is not acceptance of any requirement.
 
-| Requirement | Status                                                                                                                           | Evidence                                                                                                                                                                                                                                                                |
-| ----------- | -------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| BGW1        | partial: the recipes are read once, through the VFS, into one value with its read set; `ci` and `dub_recipe` do not yet take it  | `readWorkspace` in `libs/build-primitives/src/sparkles/build_primitives/workspace/discovery.d` and its tests over tree literals                                                                                                                                         |
-| BGW2        | planned                                                                                                                          | —                                                                                                                                                                                                                                                                       |
-| BGW3, BGW4  | partial: one set per package and configuration, with path-carrying flags and commands reported as opaque; no dub oracle yet      | `inputSets` in `libs/build-primitives/src/sparkles/build_primitives/workspace/input_sets.d` and its tests, which find exactly this repository's opaque entries: the shader generators of `ui`, `ui-vulkan` and `vulkan-wsi`, and the Tracy prefix of `profiling` (§3.1) |
-| BGW5        | planned                                                                                                                          | —                                                                                                                                                                                                                                                                       |
-| BGW6        | partial: no link targets (BGW11)                                                                                                 | `eachClaimant` in `libs/build-primitives/src/sparkles/build_primitives/workspace/input_sets.d`; `judge` and `selects` in `libs/build-primitives/src/sparkles/build_primitives/fileset/value.d`                                                                          |
-| BGW7–BGW11  | planned                                                                                                                          | —                                                                                                                                                                                                                                                                       |
-| BGW12       | partial: requests come from resolutions and the workspace inputs are modelled; `ci` does not yet build its list of requests (W2) | `requestOf` and `affectedBy` in `libs/build-primitives/src/sparkles/build_primitives/workspace/input_sets.d`, over fixtures, a resolution of a tree literal, and three resolutions of this repository                                                                   |
-| BGW13–BGW19 | planned                                                                                                                          | —                                                                                                                                                                                                                                                                       |
+| Requirement | Status                                                                                                                                                                                                  | Evidence                                                                                                                                                                                                                                                                                                        |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| BGW1        | partial: the recipes are read once, through the VFS, into one value with its read set; `ci` and `dub_recipe` do not yet take it                                                                         | `readWorkspace` in `libs/build-primitives/src/sparkles/build_primitives/workspace/discovery.d` and its tests over tree literals                                                                                                                                                                                 |
+| BGW2        | delivered                                                                                                                                                                                               | `longestPrefixOwner` in `libs/build-primitives/src/sparkles/build_primitives/workspace/package_graph.d`, which `hiddenEdges` in `libs/build-primitives/src/sparkles/build_primitives/resolve/hidden_edges.d` and `reportedUnder` in `apps/ci/src/coverage.d` attribute by                                       |
+| BGW3, BGW4  | partial: one set per package and configuration, with path-carrying flags and commands reported as opaque; no dub oracle yet                                                                             | `inputSets` in `libs/build-primitives/src/sparkles/build_primitives/workspace/input_sets.d` and its tests, which find exactly this repository's opaque entries: the shader generators of `ui`, `ui-vulkan` and `vulkan-wsi`, and the Tracy prefix of `profiling` (§3.1)                                         |
+| BGW5        | planned                                                                                                                                                                                                 | —                                                                                                                                                                                                                                                                                                               |
+| BGW6        | partial: no link targets (BGW11)                                                                                                                                                                        | `eachClaimant` in `libs/build-primitives/src/sparkles/build_primitives/workspace/input_sets.d`; `judge` and `selects` in `libs/build-primitives/src/sparkles/build_primitives/fileset/value.d`                                                                                                                  |
+| BGW7        | partial: the hidden-edge lint is a comparison of reaches with dependencies; the declared read set and BGK8's membership test come with W4                                                               | `reaches` and `hiddenReaches` in `libs/build-primitives/src/sparkles/build_primitives/workspace/input_sets.d`, whose test over this repository finds the hidden edges the resolver's lint finds                                                                                                                 |
+| BGW8–BGW11  | planned                                                                                                                                                                                                 | —                                                                                                                                                                                                                                                                                                               |
+| BGW12       | partial: `--since` selects by claims over one resolved request per package, with workspace inputs derived from the read set and the planner (D54); `ci test` does not yet take `--since` (task-DAG M6b) | `seedsByClaims`, `planPackages` and `workspaceInputSets` in `libs/build-primitives/src/sparkles/build_primitives/workspace/select.d`, over fixtures of this repository's three reaches and a fixture repository; `repositoryFocus` in `apps/ci/src/repository_inputs.d`, checked against this repository (CIC5) |
+| BGW13–BGW19 | planned                                                                                                                                                                                                 | —                                                                                                                                                                                                                                                                                                               |
 
 The oracles the delivered requirements need:
 

@@ -56,7 +56,11 @@ through the `sparkles.build_primitives.dub_manifest` schema.
 `libs/build-primitives/src/sparkles/build_primitives/workspace/select.d` holds the selection algebra, `gitChangesSince`
 (through `runGit`), and the test-only planner `planPackages` with
 `writeSelectionPlan`. `--from` globs use `gitGlobMatch`, which moved here from the deleted
-`sparkles.build_primitives.gitignore`. No CLI option exists yet.
+`sparkles.build_primitives.gitignore`. No CLI option exists yet. Milestone W2 of the
+[fileset-native workspace](../build-graph/fileset-native-workspace.md#_11-delivery-plan)
+replaced changed-path ownership, the base revision's package map and the
+invalidator list with selection by input-set claims over resolved requests
+(TDS6 as amended).
 
 ## M4: Event Horizon executor core
 

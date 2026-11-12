@@ -78,6 +78,14 @@ struct Request
     string name;                  /// what a report calls it: `text-lab`, `ui (test root)`
     ConfiguredPackage[] closure;  /// sorted, each pair once
     string[] outside;             /// reached, not in the graph; sorted
+    /// The root package's index in the graph; -1 when it is not in it.
+    ptrdiff_t root = -1;
+    /**
+    Why the request could not be resolved, or null. Such a request's
+    closure is what is known without a resolution, the root's own pairs,
+    and it is uncertain: what it reads is not all known.
+    */
+    string unresolved;
 }
 
 /**
@@ -106,6 +114,7 @@ Request requestOf(string name, const ref Resolution resolution, const ref Packag
     }
     r.closure.sort();
     r.outside.sort();
+    r.root = graph.indexOf(PackageId(resolution.rootPackage));
     return r;
 }
 
@@ -858,9 +867,10 @@ struct AffectedRequests
     /// workspace input holds one.
     bool[] affected;
     /**
-    By request: its closure holds a pair the sets do not know, or an opaque
-    one, so what it reads is not all stated. A command that needs soundness
-    treats such a request as affected by every change (BGW4).
+    By request: it is unresolved, or its closure holds a pair the sets do
+    not know, or an opaque one, so what it reads is not all stated. A
+    command that needs soundness treats such a request as affected by every
+    change (BGW4).
     */
     bool[] uncertain;
     /// The changed paths a workspace input holds: each affects every request.
@@ -901,6 +911,7 @@ AffectedRequests affectedBy(ref InputSets inputs, scope const(Request)[] request
     foreach (r, ref request; requests)
     {
         result.affected[r] = everything;
+        result.uncertain[r] = request.unresolved.length > 0;
         foreach (pair; request.closure)
         {
             const k = inputs.indexOf(pair);
