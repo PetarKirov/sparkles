@@ -38,6 +38,7 @@ import sparkles.ui.widget : Alignment, Builder, TextSpan, Widget, WidgetKind, Wi
 import sparkles.ui.wrap : TextWrap;
 
 import evaluate : autoIdBytes, evaluate, humanBytes, Outcome, Root;
+import send : SendStage, Sending;
 import help : helpSource, namedTrees, runFileset, TryBlock, tryBlocks, TryOutcome;
 import export_tab : exportFor, highlightCode, languageOf, targets;
 import sparkles.build_primitives.fileset.emit : Emitted, NixGlobs, Target, targetName;
@@ -323,7 +324,8 @@ struct ExplorerApp
                 barRects[n.hitId - barHitBase] = frames[i].rect;
             else if (n.hitId == queryHit)
                 queryRect = frames[i].rect;
-            else if (n.hitId >= tabHitBase && n.hitId < actionBase + Action.insert + chipTexts.length)
+            else if ((n.hitId >= tabHitBase && n.hitId < actionBase + Action.insert + chipTexts.length)
+                    || (n.hitId >= statsHitBase && n.hitId <= sendHitBase + SendButton.max))
                 buttons ~= TryHit(frames[i].rect, n.hitId);
         }
         // A fence's box: the smallest glyph frame around its viewport, the
@@ -359,6 +361,7 @@ struct ExplorerApp
     {
         outcome = evaluate(root, query.text, idsRequested);
         exportStale = true;
+        copiedName = size_t.max; // a copied mark belongs to the names it copied
         idsRequested = false;
         if (!outcome.failed)
         {
@@ -387,6 +390,8 @@ struct ExplorerApp
     {
         const size = h.size;
         auto b = Builder();
+        // A send runs on its own threads: read where it is before drawing it.
+        sending.tick();
 
         // The touch layout (`FXU11`), on a screen without hover unless chosen.
         bool hostTouch;
@@ -437,6 +442,14 @@ struct ExplorerApp
                 dt = h.frameSeconds;
         if (animate(min(dt, 0.1), smoothScroll && h.target.subCellScroll && !h.target.reducedMotion))
             h.requestFrame();
+        // A running send is read again with no input arriving (`FXS4`).
+        if (sending.running)
+        {
+            import core.time : msecs;
+
+            static if (__traits(compiles, h.wakeIn(250.msecs)))
+                h.wakeIn(250.msecs);
+        }
         static if (__traits(compiles, h.textInput(true)))
         {
             // A phone's soft keyboard, while the query has a tapped focus.
@@ -750,7 +763,7 @@ struct ExplorerApp
         return null;
     }
 
-    private string hints() const @safe pure nothrow
+    private string hints() const @safe
     {
         final switch (focus)
         {
@@ -759,7 +772,8 @@ struct ExplorerApp
             case Focus.tree:
                 return " ↑↓ move · ←→ close/open · ⏎ toggle · o/c all · i ids · Tab side · F1 help · Esc quit";
             case Focus.side:
-                return " ←→ tabs · ↑↓ scroll · Tab query · F1 help · Esc quit";
+                return statsShown ? " ←→ tabs · ↑↓ choose · y copy · s send · Tab query · F1 help · Esc quit"
+                    : " ←→ tabs · ↑↓ scroll · Tab query · F1 help · Esc quit";
         }
     }
 
@@ -1002,7 +1016,7 @@ struct ExplorerApp
         final switch (pane)
         {
             case Pane.tree: content = treeView(b); break;
-            case Pane.stats: content = statsView(b, stats[0 .. min(stats.length, max(0, r.height))]); break;
+            case Pane.stats: content = statsView(b, stats, r.width, max(0, r.height)); break;
             case Pane.help: content = helpView(b, r); break;
             case Pane.export_: content = exportView(b, r); break;
         }
@@ -1382,12 +1396,19 @@ struct ExplorerApp
         rows ~= ["", ""];
         if (o.hasIds)
         {
-            rows ~= ["castore", o.castore];
-            rows ~= ["NarHash", o.narHash];
-            rows ~= ["NarSize", humanBytes(o.narSize)];
+            // Every name, each copied by choosing it (`FXS1`, `FXS2`).
+            foreach (i, key; nameKeys)
+            {
+                rows ~= [key, nameValue(i)];
+                if (key == "NarHash")
+                    rows ~= ["NarSize", humanBytes(o.narSize)];
+            }
+            if (o.collectionLinks)
+                rows ~= ["iroh skips", text(o.collectionLinks, o.collectionLinks == 1 ? " link" : " links")];
         }
         else
             rows ~= ["ids", "over " ~ humanBytes(autoIdBytes) ~ (touch ? "" : ": press i in the tree")];
+        rows ~= sendLines();
         rows ~= ["", ""];
         rows ~= ["", "by extension"];
         foreach (e; o.extensions[0 .. min(8, o.extensions.length)])
@@ -1395,36 +1416,251 @@ struct ExplorerApp
         return rows;
     }
 
-    private uint statsView(ref Builder b, in string[2][] rows)
+    /// The names a Stats line shows and copies (`FXS1`), in order.
+    static immutable string[] nameKeys = ["castore", "NarHash", "store path", "git tree", "git (Nix)", "SWHID",
+        "iroh"];
+
+    /// The value of name `i`, as shown and copied.
+    string nameValue(size_t i) const @safe
+    {
+        const o = shown;
+        final switch (i)
+        {
+            case 0: return o.castore;
+            case 1: return o.narHash;
+            case 2: return o.storePath;
+            case 3: return o.gitTree;
+            case 4: return o.gitSri;
+            case 5: return o.swhid;
+            case 6: return o.collectionError.length ? o.collectionError : o.collection;
+        }
+    }
+
+    /// The Send section's lines (`FXS3`–`FXS5`, `FXS8`); a key of `sendControls`
+    /// marks where the touch layout's buttons go.
+    private string[2][] sendLines() const @safe
+    {
+        string[2][] rows = [["", ""], ["", "send"]];
+        final switch (sending.stage)
+        {
+            case SendStage.idle:
+                rows ~= ["send", touch ? "these files with iroh" : "s sends these files with iroh"];
+                break;
+            case SendStage.asking:
+                rows ~= ["files", text(sending.sent.files.length, " (", humanBytes(sending.sent.bytes), ")")];
+                if (sending.sent.links)
+                    rows ~= ["left out", text(sending.sent.links, sending.sent.links == 1 ? " link" : " links")];
+                rows ~= ["iroh", sending.sent.collection];
+                rows ~= ["ask", touch ? "anyone with the ticket can fetch them"
+                    : "anyone with the ticket can fetch them · ⏎ send · Esc cancel"];
+                break;
+            case SendStage.running:
+                rows ~= ["state", sending.phaseText];
+                if (const cmd = sending.receiveCommand)
+                {
+                    rows ~= ["receive", cmd];
+                    rows ~= ["peers", text(sending.state.peers, " connected · ", sending.state.requests,
+                        " requests · ", humanBytes(sending.state.bytesSent), " sent")];
+                }
+                if (query.text != sending.sent.query)
+                    rows ~= ["sent query", sending.sent.query];
+                if (!touch)
+                    rows ~= ["keys", sending.receiveCommand.length ? "y copy · x stop" : "x stop"];
+                break;
+            case SendStage.unavailable:
+                rows ~= ["state", sending.note];
+                break;
+        }
+        rows ~= [sendControls, ""];
+        return rows;
+    }
+
+    private enum string sendControls = "\x01";
+
+    /// The Stats tab's name lines (`FXS2`): `statsHitBase + i`.
+    enum size_t statsHitBase = tabHitBase + 256;
+    /// Send's buttons on the touch layout: `sendHitBase + SendButton`.
+    enum size_t sendHitBase = statsHitBase + 32;
+
+    /// Send's buttons.
+    enum SendButton : ubyte
+    {
+        send,    /// ask, or confirm
+        cancel,  ///
+        copy,    /// the receive command
+        stop,    ///
+    }
+
+    private uint statsView(ref Builder b, in string[2][] rows, int width, int height)
     {
         uint[] out_;
+        const room = max(8, width - statsKeyWidth - 1);
+        // The cells drawn so far: a line is one, a row of touch buttons its
+        // target's height. What would not fit is not drawn, nor hit: a
+        // column taller than its pane squeezes its lines over each other.
+        int used;
+        bool fits(int cells) => used + cells <= height;
+        void put(uint row, int cells)
+        {
+            out_ ~= row;
+            used += cells;
+        }
+
         foreach (ref kv; rows)
         {
+            if (!fits(1))
+                break;
+            if (kv[0] == sendControls)
+            {
+                if (touch && fits(rowCells))
+                    if (auto chips = sendChips(b))
+                        put(b.add(Widget(kind: WidgetKind.row, padding: Insets(0, 1, 0, 0), children: chips)),
+                            rowCells);
+                continue;
+            }
             if (kv[0].length == 0)
             {
-                out_ ~= b.add(Widget(kind: WidgetKind.text, text: " " ~ kv[1], slot: Slot.chromeAccent));
+                put(b.add(Widget(kind: WidgetKind.text, text: " " ~ kv[1], slot: Slot.chromeAccent)), 1);
                 continue;
             }
             Slot s = Slot.code;
             if (kv[0] == "members")
                 s = Slot.accentPrimary;
             else if ((kv[0] == "unreadable" || kv[0] == "state") && kv[1] != "0")
-                s = Slot.error;
-            else if (kv[0] == "empty dirs" && kv[1] != "0")
+                s = kv[0] == "state" && sending.stage == SendStage.running ? Slot.success : Slot.error;
+            else if ((kv[0] == "empty dirs" && kv[1] != "0") || kv[0] == "sent query" || kv[0] == "iroh skips"
+                    || kv[0] == "left out" || kv[0] == "ask")
                 s = Slot.warn;
-            else if (kv[0] == "ids")
+            else if (kv[0] == "ids" || kv[0] == "send" || kv[0] == "keys")
                 s = Slot.muted;
-            const key = b.add(Widget(kind: WidgetKind.text, text: " " ~ kv[0], slot: Slot.muted,
-                width: SizeSpec.fixed(statsKeyWidth)));
-            const val = b.add(Widget(kind: WidgetKind.text, text: kv[1], slot: s));
-            out_ ~= b.add(Widget(kind: WidgetKind.row, children: [key, val]));
+            // A name's line is chosen, copied and marked (`FXS2`).
+            size_t name = size_t.max;
+            foreach (i, k; nameKeys)
+                if (k == kv[0] && sending.stage != SendStage.asking)
+                    name = i;
+            const chosen = name != size_t.max && focus == Focus.side && name == nameSel;
+            string value = kv[1];
+            if (name != size_t.max && name == copiedName)
+                value ~= "  ✓ copied";
+            // A long value wraps across lines, whole, rather than being cut.
+            foreach (k, piece; wrapCells(value, room))
+            {
+                if (!fits(1))
+                    break;
+                const key = b.add(Widget(kind: WidgetKind.text, text: k ? "" : " " ~ kv[0],
+                    slot: chosen ? Slot.accentPrimary : Slot.muted, width: SizeSpec.fixed(statsKeyWidth)));
+                const val = b.add(Widget(kind: WidgetKind.text, text: piece, slot: s,
+                    textStyle: TextStyle(bold: chosen)));
+                put(b.add(Widget(kind: WidgetKind.row, children: [key, val],
+                    hitId: name != size_t.max ? statsHitBase + name : 0)), 1);
+            }
             // Touch: the ids are a button away, under their line (`FXU13`).
-            if (touch && kv[0] == "ids")
-                out_ ~= b.add(Widget(kind: WidgetKind.row, padding: Insets(0, 1, 0, 0), children: [
-                    touchChip(b, "Compute ids", actionBase + Action.computeIds)]));
+            if (touch && kv[0] == "ids" && fits(rowCells))
+                put(b.add(Widget(kind: WidgetKind.row, padding: Insets(0, 1, 0, 0), children: [
+                    touchChip(b, "Compute ids", actionBase + Action.computeIds)])), rowCells);
         }
         return b.add(Widget(kind: WidgetKind.column, children: out_, width: SizeSpec.grow()));
     }
+
+    // Send's buttons for its stage, on the touch layout (`FXS3`, `FXS4`).
+    private uint[] sendChips(ref Builder b)
+    {
+        final switch (sending.stage)
+        {
+            case SendStage.idle, SendStage.unavailable:
+                return [touchChip(b, "Send", sendHitBase + SendButton.send)];
+            case SendStage.asking:
+                return [touchChip(b, "Send", sendHitBase + SendButton.send), gapCells(b, 1),
+                    touchChip(b, "Cancel", sendHitBase + SendButton.cancel)];
+            case SendStage.running:
+                uint[] chips;
+                if (sending.receiveCommand.length)
+                    chips ~= [touchChip(b, "Copy", sendHitBase + SendButton.copy), gapCells(b, 1)];
+                return chips ~ touchChip(b, "Stop", sendHitBase + SendButton.stop);
+        }
+    }
+
+    /// The name chosen with Up and Down (`FXS2`), and the one last copied.
+    size_t nameSel;
+    /// ditto
+    size_t copiedName = size_t.max;
+    /// Send's state (`FXS3`–`FXS8`).
+    Sending sending;
+
+    /// Copies name `i` to the clipboard, and marks its line (`FXS2`).
+    void copyName(H)(ref H h, size_t i)
+    {
+        if (!shown.hasIds || i >= nameKeys.length)
+            return;
+        static if (__traits(compiles, h.clipboard("")))
+            h.clipboard(nameValue(i));
+        copiedName = i;
+        nameSel = i;
+    }
+
+    /// Send's button or key `button` (`FXS3`, `FXS4`).
+    void sendAction(H)(ref H h, SendButton button)
+    {
+        final switch (button)
+        {
+            case SendButton.send:
+                if (sending.stage == SendStage.asking)
+                    return sending.confirm();
+                if (sending.stage == SendStage.running)
+                    return;
+                if (!shown.hasIds && !root.inMemory)
+                {
+                    idsRequested = true;
+                    refresh();
+                }
+                sending.ask(shown, root, query.text);
+                break;
+            case SendButton.cancel:
+                sending.cancel();
+                break;
+            case SendButton.copy:
+                if (const cmd = sending.receiveCommand)
+                    static if (__traits(compiles, h.clipboard("")))
+                        h.clipboard(cmd);
+                break;
+            case SendButton.stop:
+                sending.stop();
+                break;
+        }
+    }
+
+    // The Stats tab's keys: Up and Down choose a name, `y` copies it or the
+    // receive command, `s` sends, Enter confirms, Escape cancels, `x` stops.
+    private void statsKey(H)(ref H h, in KeyEvent k)
+    {
+        switch (k.key)
+        {
+            case Key.up: nameSel = nameSel ? nameSel - 1 : 0; break;
+            case Key.down: nameSel = min(nameSel + 1, nameKeys.length - 1); break;
+            case Key.enter:
+                if (sending.stage == SendStage.asking)
+                    sendAction(h, SendButton.send);
+                break;
+            case Key.char_:
+                switch (k.ch)
+                {
+                    case 'y':
+                        if (sending.receiveCommand.length)
+                            sendAction(h, SendButton.copy);
+                        else
+                            copyName(h, nameSel);
+                        break;
+                    case 's': sendAction(h, SendButton.send); break;
+                    case 'x': sendAction(h, SendButton.stop); break;
+                    default: break;
+                }
+                break;
+            default: break;
+        }
+    }
+
+    /// Whether the Stats tab is the one showing.
+    bool statsShown() const @safe => !helpShown && !exportShown;
 
     // A bordered pane with a caption; the focused one draws its focus border.
     private uint panel(ref Builder b, string caption, int bodyRows, uint[] body_, bool focused)
@@ -1653,6 +1889,17 @@ struct ExplorerApp
         foreach (ref hit; buttons)
             if (inside(hit.rect, p.pos))
             {
+                // A name's line copies it; Send's buttons (`FXS2`–`FXS4`).
+                if (hit.at >= sendHitBase && hit.at <= sendHitBase + SendButton.max)
+                {
+                    focus = Focus.side;
+                    return sendAction(h, cast(SendButton)(hit.at - sendHitBase));
+                }
+                if (hit.at >= statsHitBase && hit.at < statsHitBase + nameKeys.length)
+                {
+                    focus = Focus.side;
+                    return copyName(h, hit.at - statsHitBase);
+                }
                 if (hit.at >= actionBase)
                     return touchAction(cast(size_t)(hit.at - actionBase));
                 focus = Focus.side;
@@ -1728,6 +1975,9 @@ struct ExplorerApp
         const back = isDismiss(k);
         if (k.key == Key.f1 || (back && helpShown && (focus == Focus.side || touch)))
             return toggleHelp();
+        // Asked to send: Escape says no (`FXS3`).
+        if (back && sending.stage == SendStage.asking)
+            return sending.cancel();
         if (back && root.inMemory)
         {
             root = dir; // FXT4: back to the directory
@@ -1735,7 +1985,10 @@ struct ExplorerApp
             return;
         }
         if (back || (k.key == Key.char_ && k.ch == 'c' && k.mods.ctrl))
+        {
+            sending.stop(); // a send ends with the explorer, its store removed
             return h.quit();
+        }
         if (k.key == Key.tab)
         {
             focus = cast(Focus)((focus + (k.mods.shift ? 2 : 1)) % 3);
@@ -1892,8 +2145,8 @@ struct ExplorerApp
         }
         if (exportShown)
             return exportKey(h, k);
-        if (!helpShown)
-            return;
+        if (statsShown)
+            return statsKey(h, k);
         const page = max(1, paneRect(Pane.help).height - 2);
         switch (k.key)
         {
@@ -1965,6 +2218,41 @@ struct ExplorerApp
             default: break;
         }
     }
+}
+
+/// `s` in pieces of at most `cells` cells each, split between code points:
+/// a value wraps whole rather than being cut (`FXS4`). Never empty.
+string[] wrapCells(string s, int cells) @safe
+{
+    import std.utf : stride;
+
+    string[] pieces;
+    size_t start, at;
+    long width;
+    while (at < s.length)
+    {
+        const n = stride(s, at);
+        const w = visibleWidth(s[at .. at + n]);
+        if (width + w > cells && at > start)
+        {
+            pieces ~= s[start .. at];
+            start = at;
+            width = 0;
+        }
+        width += w;
+        at += n;
+    }
+    pieces ~= s[start .. $];
+    return pieces;
+}
+
+///
+@("fileset_explorer.wrapCells")
+@safe unittest
+{
+    assert(wrapCells("", 4) == [""]);
+    assert(wrapCells("abcdefghij", 4) == ["abcd", "efgh", "ij"]);
+    assert(wrapCells("éé✓é", 2) == ["éé", "✓é"]);
 }
 
 /// A cheat sheet snippet (`FXU19`): its query, and the bytes its code span

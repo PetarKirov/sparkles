@@ -28,6 +28,8 @@ it. The [project credits](./index.md) cover every application.
 
 <!-- @include: ./parts/tree-sitter-grammars.md -->
 
+<!-- @include: ./parts/sendme.md -->
+
 ## Fonts
 
 <!-- @include: ./parts/fira-code-nerd-font.md -->
