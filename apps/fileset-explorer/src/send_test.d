@@ -260,6 +260,43 @@ private ExplorerApp* sender(ref Fixture f, Scripted provider)
     assert(provider.stopped && app.sending.stage == SendStage.idle);
 }
 
+/// FXS4: after Send, the keyboard's layout has the buttons too: a click on
+/// Copy copies the receive command and marks it copied, and Stop stops.
+@("fileset_explorer.FXS4.copyButton")
+@system unittest
+{
+    auto f = Fixture.make("copy");
+    scope (exit) f.remove();
+    auto provider = new Scripted;
+    auto app = sender(f, provider);
+    provider.script = [state(SendPhase.serving, app.shown.collection, "blobCOPY")];
+
+    RecordingHost clickOn(string label)
+    {
+        Point at;
+        foreach (y, line; renderFrame(*app, "", wide).split('\n'))
+            if (const x = line.indexOfText(label))
+            {
+                at = Point(cast(int) x + 1, cast(int) y);
+                break;
+            }
+        assert(at.y > 0, label ~ " is not on the frame:\n" ~ renderFrame(*app, "", wide));
+        return runAppRecorded(*app, RunConfig.init, [Event(PointerEvent(PointerAction.press, PointerButton.left, at)),
+            Event(PointerEvent(PointerAction.release, PointerButton.left, at))],
+            (ref RecordingHost h) @safe { h.size = wide; });
+    }
+
+    clickOn("Send");
+    assert(app.sending.stage == SendStage.asking, text(app.sending.stage));
+    clickOn("Send");
+    assert(provider.starts == 1);
+    const copied = clickOn("Copy");
+    assert(copied.clipboardWrites == ["sendme receive blobCOPY"], text(copied.clipboardWrites));
+    assert(renderFrame(*app, "", wide).canFind("sendme receive blobCOPY  ✓ copied"));
+    clickOn("Stop");
+    assert(provider.stopped && app.sending.stage == SendStage.idle);
+}
+
 /// FXS5: an edit while sending changes nothing sent, and names the sent query.
 @("fileset_explorer.FXS5.snapshot")
 @system unittest

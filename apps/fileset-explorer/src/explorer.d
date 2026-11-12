@@ -1458,7 +1458,7 @@ struct ExplorerApp
                 rows ~= ["state", sending.phaseText];
                 if (const cmd = sending.receiveCommand)
                 {
-                    rows ~= ["receive", cmd];
+                    rows ~= ["receive", commandCopied ? cmd ~ "  ✓ copied" : cmd];
                     rows ~= ["peers", text(sending.state.peers, " connected · ", sending.state.requests,
                         " requests · ", humanBytes(sending.state.bytesSent), " sent")];
                 }
@@ -1512,7 +1512,9 @@ struct ExplorerApp
                 break;
             if (kv[0] == sendControls)
             {
-                if (touch && fits(rowCells))
+                // Every layout has the buttons: a pointer clicks what a
+                // finger taps, and the keys stay beside them (`FXS4`).
+                if (fits(rowCells))
                     if (auto chips = sendChips(b))
                         put(b.add(Widget(kind: WidgetKind.row, padding: Insets(0, 1, 0, 0), children: chips)),
                             rowCells);
@@ -1586,6 +1588,8 @@ struct ExplorerApp
     size_t copiedName = size_t.max;
     /// Send's state (`FXS3`–`FXS8`).
     Sending sending;
+    /// The receive command of the send running was copied (`FXS4`).
+    bool commandCopied;
 
     /// Copies name `i` to the clipboard, and marks its line (`FXS2`).
     void copyName(H)(ref H h, size_t i)
@@ -1605,7 +1609,10 @@ struct ExplorerApp
         {
             case SendButton.send:
                 if (sending.stage == SendStage.asking)
+                {
+                    commandCopied = false; // a new send, a new ticket
                     return sending.confirm();
+                }
                 if (sending.stage == SendStage.running)
                     return;
                 if (!shown.hasIds && !root.inMemory)
@@ -1620,8 +1627,11 @@ struct ExplorerApp
                 break;
             case SendButton.copy:
                 if (const cmd = sending.receiveCommand)
+                {
                     static if (__traits(compiles, h.clipboard("")))
                         h.clipboard(cmd);
+                    commandCopied = true;
+                }
                 break;
             case SendButton.stop:
                 sending.stop();
