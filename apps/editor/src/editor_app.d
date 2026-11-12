@@ -45,6 +45,7 @@ import sparkles.ui.editor.selection : SelectionSet;
 import document_io : DocumentIo, FileOperation;
 import document_files : SaveAuthorization;
 import std.path : absolutePath, baseName;
+import session_runtime : RecoverySession;
 
 private class DisplayedFrame
 {
@@ -58,6 +59,43 @@ private class DisplayedFrame
     }
 }
 
+/// Deliberate exit waits for the latest session to become durable and retains saved tabs.
+@("editor.app.exitFlushesSession")
+@safe unittest
+{
+    version (linux) {}
+    else
+    {
+        import sparkles.test_runner.skip : skipTest;
+        skipTest("Recovery directory leases currently require Linux.");
+    }
+    import core.thread : Thread;
+    import core.time : seconds;
+    import session_archive : readSessionGeneration;
+    import sparkles.test_utils.tmpfs : TmpFS;
+    import sparkles.ui_app.record : RecordingHost;
+    import sparkles.ui.geometry : Size;
+    import std.path : buildPath;
+    auto fixture = TmpFS.create();
+    EditorApp app;
+    scope (exit) app.dispose();
+    app.enableRecovery(buildPath(fixture.dir, "sessions"), fixture.dir);
+    assert(app.openBytes("saved", "saved contents"));
+    app.execute(CommandId(Command.quit));
+    assert(!app.quitRequested);
+    RecordingHost host;
+    host.size = Size(80, 28);
+    const deadline = MonoTime.currTime + 3.seconds;
+    while (!app.quitRequested && MonoTime.currTime < deadline)
+    {
+        cast(void) app.view(host);
+        (() @trusted => Thread.yield())();
+    }
+    assert(app.quitRequested && host.quitRequested);
+    const record = readSessionGeneration(app.recovery.directoryPath, app.recovery.durableGeneration);
+    assert(record.hasValue && record.value.tabs[$ - 1].content == "saved contents");
+}
+
 private class SaveIntent
 {
     ulong document;
@@ -66,7 +104,53 @@ private class SaveIntent
     bool bom;
 }
 
-private enum Dialog : ubyte { none, openPath, savePath, dirtyClose }
+/// Recovery failures keep exit cancellable; an explicit failure decision alone permits bypass.
+@("editor.app.failedRecoveryExitIsCancellable")
+@safe unittest
+{
+    version (linux) {}
+    else
+    {
+        import sparkles.test_runner.skip : skipTest;
+        skipTest("Recovery directory leases currently require Linux.");
+    }
+    import core.thread : Thread;
+    import core.time : seconds;
+    import sparkles.test_utils.tmpfs : TmpFS;
+    import sparkles.ui_app.record : RecordingHost;
+    import sparkles.ui.geometry : Size;
+    import std.path : buildPath;
+    auto fixture = TmpFS.create();
+    EditorApp app;
+    scope (exit) app.dispose();
+    // A path outside the supplied platform namespace is a genuine bootstrap failure.
+    app.enableRecovery(buildPath(fixture.dir, "outside"), buildPath(fixture.dir, "root"));
+    assert(app.openBytes("saved", "retained contents"));
+    app.execute(CommandId(Command.quit));
+    app.execute(CommandId(Command.discard));
+    assert(!app.quitRequested, "A pending checkpoint cannot be silently bypassed.");
+    RecordingHost host;
+    host.size = Size(80, 28);
+    const deadline = MonoTime.currTime + 3.seconds;
+    while (!app.recovery.error.length && MonoTime.currTime < deadline)
+    {
+        cast(void) app.view(host);
+        (() @trusted => Thread.yield())();
+    }
+    assert(app.recovery.error.length && !app.quitRequested);
+    app.execute(CommandId(Command.cancel));
+    assert(!app.quitRequested && app.document.field.text == "retained contents");
+    app.execute(CommandId(Command.quit));
+    cast(void) app.view(host);
+    app.execute(CommandId(Command.confirm));
+    app.execute(CommandId(Command.discard));
+    assert(!app.quitRequested, "A queued action cannot reuse the failure decision after Retry.");
+    cast(void) app.view(host);
+    app.execute(CommandId(Command.discard));
+    assert(app.quitRequested);
+}
+
+private enum Dialog : ubyte { none, openPath, savePath, dirtyClose, recoveryClose }
 
 /// Thin shared-widget component, instantiated by recording, TUI and Vulkan hosts.
 struct EditorApp
@@ -110,7 +194,16 @@ struct EditorApp
     private ulong pasteDialog;
     private ulong closingDocument;
     private bool exiting;
+    private RecoverySession recovery;
+    private bool recoveryExit;
+    private bool recoveryFailureShown;
     Command startupCommand;
+
+    /// Enable recovery only with an explicitly supplied platform state namespace.
+    void enableRecovery(string base, string durableRoot) @safe nothrow
+    {
+        if (recovery is null) recovery = new RecoverySession(base, durableRoot);
+    }
 
     bool filesBusy() const scope @safe pure nothrow @nogc => files !is null && files.busy;
 
@@ -223,7 +316,17 @@ struct EditorApp
                 showDirtyClose(tab.id);
                 return;
             }
-        quitRequested = true;
+        if (recovery is null) quitRequested = true;
+        else
+        {
+            selecting = false;
+            recoveryExit = true;
+            recoveryFailureShown = false;
+            dialog = Dialog.recoveryClose;
+            ++dialogEpoch;
+            observeRecovery();
+            recovery.flush();
+        }
     }
 
     private void requestClose(bool all) @safe
@@ -253,10 +356,10 @@ struct EditorApp
         if (quitRequested) host.quit();
     }
 
-    private void finishClose(ulong id) @safe
+    private void finishClose(ulong id, bool discarded = true) @safe
     {
         if (closingDocument != id) return;
-        removeDocument(id);
+        if (!exiting || discarded) removeDocument(id);
         closingDocument = 0;
         dialog = Dialog.none;
         ++dialogEpoch;
@@ -351,7 +454,7 @@ struct EditorApp
                         bool ready;
                         foreach (tab; tabs) if (tab.id == intent.document)
                             ready = !tab.dirty && !tab.durabilityWarning.length;
-                        if (ready) finishClose(intent.document);
+                        if (ready) finishClose(intent.document, false);
                         else showDirtyClose(intent.document);
                     }
                 }
@@ -407,6 +510,7 @@ struct EditorApp
     {
         if (files !is null) files.shutdown();
         if (highlighting !is null) highlighting.shutdown();
+        if (recovery !is null) recovery.shutdown();
     }
 
     /// The selected theme is a reversible preview until the palette emits acceptance.
@@ -475,6 +579,7 @@ struct EditorApp
             return;
         }
         if (pointer.action != PointerAction.press && pointer.action != PointerAction.drag) return;
+        if (recoveryExit && pointer.action != PointerAction.press) return;
         if (pointer.action == PointerAction.drag && selectingDocument != document.id)
         {
             selecting = false;
@@ -567,7 +672,15 @@ struct EditorApp
     private bool pathDialog() const scope @safe pure nothrow @nogc
         => dialog == Dialog.openPath || dialog == Dialog.savePath;
 
-    CommandContext context() @safe => CommandContext(document.id, bindings, modal, dialog == Dialog.dirtyClose);
+    CommandContext context() @safe => CommandContext(recoveryExit ? 0 : document.id,
+        bindings, modal, dialog == Dialog.dirtyClose || dialog == Dialog.recoveryClose);
+
+    private void observeRecovery() @safe nothrow
+    {
+        if (recovery is null) return;
+        recovery.observe(tabs, tabs.length ? tabs[activeTab].id : 0,
+            choosingTheme ? themeBeforePreview : themeName);
+    }
 
     /// Admit bytes before replacing any active state; unsupported UTF-8 leaves every tab intact.
     bool openBytes(string name, string bytes) @safe
@@ -617,8 +730,8 @@ struct EditorApp
     /// One dispatcher receives keyboard, palette and future menu/touch commands.
     void execute(CommandId id, MonoTime now = MonoTime.currTime) @safe
     {
-        ensureInitialized();
-        if (!context.available(id, document.id)) return;
+        if (!recoveryExit) ensureInitialized();
+        if (!context.available(id, recoveryExit ? 0 : document.id)) return;
         final switch (id.operation)
         {
         case Command.none: break;
@@ -629,7 +742,13 @@ struct EditorApp
             else beginPath(Dialog.savePath);
             break;
         case Command.confirm:
-            if (replacement !is null) resolveOverwrite(true);
+            if (dialog == Dialog.recoveryClose)
+            {
+                recoveryFailureShown = false;
+                ++dialogEpoch;
+                recovery.flush(now);
+            }
+            else if (replacement !is null) resolveOverwrite(true);
             else if (dialog == Dialog.dirtyClose)
             {
                 dialog = Dialog.none;
@@ -652,6 +771,11 @@ struct EditorApp
             }
             break;
         case Command.cancel:
+            if (recoveryExit)
+            {
+                recoveryExit = false;
+                recovery.resume();
+            }
             if (replacement !is null) resolveOverwrite(false);
             dialog = Dialog.none;
             closingDocument = 0;
@@ -660,7 +784,13 @@ struct EditorApp
             pathInput.run(EditCommand.of(EditKind.blur), now);
             break;
         case Command.closeTab: requestClose(false); break;
-        case Command.discard: finishClose(closingDocument); break;
+        case Command.discard:
+            if (dialog == Dialog.recoveryClose)
+            {
+                if (recoveryFailureShown && recovery.error.length) quitRequested = true;
+            }
+            else finishClose(closingDocument);
+            break;
         case Command.palette:
             endPicker(false);
             commands.open(PaletteInvocation(document.id, document.id), context);
@@ -758,7 +888,7 @@ struct EditorApp
     /// Route modal query input first, then the shared key guide, then text insertion.
     void handleKey(in KeyEvent key, MonoTime now = MonoTime.currTime) @safe
     {
-        ensureInitialized();
+        if (!recoveryExit) ensureInitialized();
         if (key.action == KeyAction.release) return;
         if (pathDialog && pathInput.state.composition.active)
         {
@@ -771,7 +901,7 @@ struct EditorApp
             previewPicker();
             return;
         }
-        document.followCaret = true;
+        if (!recoveryExit) document.followCaret = true;
         const resolved = step(lantern, bindings, key, context);
         if (resolved.kind == StepKind.execute)
         {
@@ -788,6 +918,13 @@ struct EditorApp
     /// The same event vocabulary reaches every rendering host.
     void handle(H)(ref H host, in Event event)
     {
+        if (recoveryExit)
+        {
+            event.match!((in KeyEvent key) { handleKey(key); },
+                (in PointerEvent pointer) { this.pointer(pointer); }, (in _) {});
+            if (quitRequested) host.quit();
+            return;
+        }
         ensureInitialized();
         document.field.context.clipboardRead = canReadClipboard!H;
         document.field.context.clipboardWrite = __traits(compiles, host.clipboard(""));
@@ -823,12 +960,38 @@ struct EditorApp
     /// One tree renders the tab strip, active field, command frontends and inspector.
     WidgetTree view(H)(ref H host)
     {
-        ensureInitialized();
+        if (!recoveryExit) ensureInitialized();
         pollDocuments();
+        if (recovery !is null)
+        {
+            recovery.poll();
+            if (recoveryExit && recovery.ready && recovery.durableGeneration
+                && !recovery.pending && !recovery.error.length) quitRequested = true;
+            const delay = recovery.nextPoll(MonoTime.currTime);
+            if (delay != typeof(delay).max) host.wakeIn(delay);
+        }
         if (quitRequested)
         {
             host.quit();
             return WidgetTree.init;
+        }
+        if (recoveryExit)
+        {
+            recoveryFailureShown = recovery.error.length != 0;
+            Builder closing;
+            uint[] rows;
+            rows ~= closing.add(Widget(kind: WidgetKind.text, text: recovery.error.length
+                ? "Recovery failed: " ~ recovery.error : "Finishing the recovery checkpoint…", slot: Slot.warn,
+                wrap: TextWrap.greedy));
+            uint[] actions;
+            if (recovery.error.length)
+            {
+                actions ~= chip(closing, "Retry", dialogConfirmHit + 2 * dialogEpoch, false, ControlSize(rows: 3));
+                actions ~= chip(closing, "Exit without recovery", dialogDiscardHit + dialogEpoch, false, ControlSize(rows: 3));
+            }
+            actions ~= chip(closing, "Esc: cancel exit", dialogCancelHit + 2 * dialogEpoch, false, ControlSize(rows: 3));
+            rows ~= closing.add(Widget(kind: WidgetKind.row, children: actions));
+            return closing.finish(closing.add(Widget(kind: WidgetKind.column, children: rows)));
         }
         if (filesBusy) host.wakeIn(8.msecs);
         if (!filesBusy && startupCommand != Command.none)
@@ -962,6 +1125,17 @@ struct EditorApp
         if (status.length) children ~= b.add(Widget(kind: WidgetKind.text, text: status, slot: Slot.warn));
         if (document.durabilityWarning.length)
             children ~= b.add(Widget(kind: WidgetKind.text, text: "Durability warning: " ~ document.durabilityWarning, slot: Slot.warn));
+        if (recovery !is null)
+        {
+            observeRecovery();
+            const delay = recovery.nextPoll(MonoTime.currTime);
+            if (delay != typeof(delay).max) host.wakeIn(delay);
+            children ~= b.add(Widget(kind: WidgetKind.text, slot: Slot.muted,
+                text: text("Recovery revision ", recovery.durableRevision, " / ", recovery.currentRevision)));
+            if (recovery.error.length || recovery.overdue(MonoTime.currTime))
+                children ~= b.add(Widget(kind: WidgetKind.text, slot: Slot.warn,
+                    text: "Recovery warning: " ~ (recovery.error.length ? recovery.error : "checkpoint exceeds one second")));
+        }
         children ~= b.add(Widget(kind: WidgetKind.text, text: "UTF-8  •  "
             ~ (document.dirty ? "Modified" : document.durabilityWarning.length ? "Written" : "Saved")
             ~ (document.durabilityWarning.length ? " • durability unconfirmed" : ""),
@@ -1528,6 +1702,8 @@ struct EditorApp
     cast(void) app.view(host);
     assert(app.quitRequested && host.quitRequested);
     assert((() @trusted => readText(path))() == "new disk");
+    assert(app.tabCount == 1 && app.document.path == path && !app.document.dirty,
+        "Saving during whole-application exit retains the saved tab for the session.");
 }
 
 /// A failed close-time save retains dirty text and returns to a cancellable decision.

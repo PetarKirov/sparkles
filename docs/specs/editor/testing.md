@@ -532,3 +532,28 @@ unrelated entries and integer overflow. Deletion is best effort: reappearing
 older files after interruption cannot invalidate the newer durable records.
 Cleanup requires an owned directory lease; scheduling it away from the
 rendering thread remains part of application integration.
+
+### Application recovery service and exit flushing — 2026-11-13
+
+The editor suite passes 42 tests. `RecoverySession` initializes its private
+archive on a maintenance worker, retains edits observed during initialization
+and submits the newest captured state to `CheckpointWriter`. Retention runs
+on the maintenance worker independently of serialization. Shutdown joins
+maintenance before closing the checkpoint writer's archive lease.
+
+An explicitly configured `EditorApp` displays current and durable recovery
+revisions and a persistent failure/overdue warning. Deliberate exit waits
+for the captured session's durable receipt. A real initialization failure
+leaves exit cancellable and offers Retry or Exit without recovery; bypass is
+unavailable until the failure decision has been presented. Tests verify
+successful exit flush, failure cancellation and explicit bypass. Saving a
+dirty file during whole-application exit now retains its saved tab for the
+session, while explicit Discard still removes the chosen document.
+An Argon Medium review prompted explicit successful-initialization/error
+guards on exit and invalidation of the displayed failure decision after
+Retry; a queued Discard cannot reuse that decision before another frame.
+
+This is recording-host and native-filesystem evidence. CLI startup does not
+yet enable user-state writes: startup discovery/restore offers must be wired
+first. Abrupt rendering-host teardown, Android lifecycle behavior and the
+one-second latency bound on actual devices remain acceptance gates.
