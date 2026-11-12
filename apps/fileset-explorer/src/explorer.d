@@ -39,6 +39,7 @@ import sparkles.ui.wrap : TextWrap;
 
 import evaluate : autoIdBytes, evaluate, humanBytes, Outcome, Root;
 import send : SendStage, Sending, shareText;
+import stats : nameKeys, nameValueOf, statsKeyWidth, statsRows;
 import help : helpSource, namedTrees, runFileset, TryBlock, tryBlocks, TryOutcome;
 import export_tab : exportFor, highlightCode, languageOf, targets;
 import sparkles.build_primitives.fileset.emit : Emitted, NixGlobs, Target, targetName;
@@ -1369,72 +1370,17 @@ struct ExplorerApp
 
     // ---- stats -------------------------------------------------------------
 
-    private enum int statsKeyWidth = 13;
-
-    /// The Stats tab's lines, `[key, value]`; an empty key is a heading.
+    /// The Stats tab's lines, `[key, value]`; an empty key is a heading
+    /// (`statsRows`, shared with `stats`, `FXC2`).
     string[2][] statsLines() const @safe
-    {
-        string[2][] rows;
-        const o = shown;
-        if (!o.resolved)
-            return [["state", outcome.failed ? outcome.error.message : "no result yet"]];
-        size_t files, links, exes;
-        foreach (ref m; o.found.members)
-        {
-            files += m.kind == FsoKind.regular;
-            links += m.kind == FsoKind.symlink;
-            exes += m.executable;
-        }
-        rows ~= ["members", text(o.found.members.length)];
-        rows ~= ["files", text(files, exes ? text(" (", exes, " executable)") : "")];
-        rows ~= ["symlinks", text(links)];
-        rows ~= ["size", humanBytes(o.bytes)];
-        rows ~= ["dirs walked", text(o.found.directories)];
-        rows ~= ["empty dirs", text(o.found.empty.length)];
-        rows ~= ["unreadable", text(o.found.unreadable.length)];
-        rows ~= ["resolved in", format!"%.2f ms"(o.millis)];
-        rows ~= ["", ""];
-        if (o.hasIds)
-        {
-            // Every name, each copied by choosing it (`FXS1`, `FXS2`).
-            foreach (i, key; nameKeys)
-            {
-                rows ~= [key, nameValue(i)];
-                if (key == "NarHash")
-                    rows ~= ["NarSize", humanBytes(o.narSize)];
-            }
-            if (o.collectionLinks)
-                rows ~= ["iroh skips", text(o.collectionLinks, o.collectionLinks == 1 ? " link" : " links")];
-        }
-        else
-            rows ~= ["ids", "over " ~ humanBytes(autoIdBytes) ~ (touch ? "" : ": press i in the tree")];
-        rows ~= sendLines();
-        rows ~= ["", ""];
-        rows ~= ["", "by extension"];
-        foreach (e; o.extensions[0 .. min(8, o.extensions.length)])
-            rows ~= ["  " ~ e[0], e[1]];
-        return rows;
-    }
+        => statsRows(shown, outcome, touch ? "" : ": press i in the tree", sendLines());
 
-    /// The names a Stats line shows and copies (`FXS1`), in order.
-    static immutable string[] nameKeys = ["castore", "NarHash", "store path", "git tree", "git (Nix)", "SWHID",
-        "iroh"];
+    /// The Stats tab's lines without the Send section: what `stats` prints.
+    string[2][] statsLinesAlone() const @safe
+        => statsRows(shown, outcome, touch ? "" : ": press i in the tree");
 
     /// The value of name `i`, as shown and copied.
-    string nameValue(size_t i) const @safe
-    {
-        const o = shown;
-        final switch (i)
-        {
-            case 0: return o.castore;
-            case 1: return o.narHash;
-            case 2: return o.storePath;
-            case 3: return o.gitTree;
-            case 4: return o.gitSri;
-            case 5: return o.swhid;
-            case 6: return o.collectionError.length ? o.collectionError : o.collection;
-        }
-    }
+    string nameValue(size_t i) const @safe => nameValueOf(shown, i);
 
     /// The Send section's lines (`FXS3`–`FXS5`, `FXS8`); a key of `sendControls`
     /// marks where the touch layout's buttons go.
