@@ -85,6 +85,14 @@ enum hasMap(V) = is(V.Mapping) && __traits(compiles, (ref V v, V.Handle h) {
     const(ubyte)[] b = m.value.bytes;
 });
 
+/**
+Whether `V` reports the absolute path of a directory it holds (VFB9):
+`pathOf(dir, buffer)`, its length written into `buffer`. `symlinkTo` needs it.
+*/
+enum hasPathOf(V) = __traits(compiles, (ref V v, V.Handle h, scope char[] buffer) {
+    IoResult!size_t n = v.pathOf(h, buffer);
+});
+
 /// Whether `V` offers a whole-path resolver (VFB3).
 enum hasWholePathResolver(V) = __traits(compiles, (ref V v, V.Handle h,
         scope const(char)[] path, ResolvePolicy p) {

@@ -199,6 +199,62 @@ struct BlockingVfs
         return ioOk(cast(size_t) n);
     }
 
+    version (linux)
+    {
+        /**
+        The absolute path of the directory `dir` holds, as the kernel holds it
+        (VFB9): the target of `/proc/self/fd/<fd>`, its links resolved.
+        */
+        IoResult!size_t pathOf(Handle dir, scope char[] buffer) @safe nothrow @nogc
+        {
+            import core.sys.posix.unistd : readlink;
+
+            // `/proc/self/fd/` and the descriptor's digits, terminated.
+            char[32] link = 0;
+            enum prefix = "/proc/self/fd/";
+            link[0 .. prefix.length] = prefix;
+            char[12] digits;
+            size_t k = digits.length;
+            uint fd = cast(uint) dir.fd;
+            do
+            {
+                digits[--k] = cast(char)('0' + fd % 10);
+                fd /= 10;
+            }
+            while (fd);
+            link[prefix.length .. prefix.length + (digits.length - k)] = digits[k .. $];
+            const n = (() @trusted => readlink(link.ptr, buffer.ptr, buffer.length))();
+            if (n < 0)
+                return ioErr!size_t(failure(OpKind.statAt, errno));
+            if (cast(size_t) n == buffer.length)
+                return ioErr!size_t(ErrorKind.nameTooLong, OpKind.statAt);
+            return ioOk(cast(size_t) n);
+        }
+    }
+    else version (OSX)
+    {
+        /**
+        The absolute path of the directory `dir` holds, as the kernel holds it
+        (VFB9): `fcntl` with `F_GETPATH`.
+        */
+        IoResult!size_t pathOf(Handle dir, scope char[] buffer) @safe nothrow @nogc
+        {
+            import core.sys.posix.fcntl : fcntl;
+
+            enum F_GETPATH = 50;
+            char[1024] path = 0; // MAXPATHLEN, which F_GETPATH writes into
+            if ((() @trusted => fcntl(dir.fd, F_GETPATH, path.ptr))() == -1)
+                return ioErr!size_t(failure(OpKind.statAt, errno));
+            size_t n;
+            while (n < path.length && path[n])
+                ++n;
+            if (n > buffer.length)
+                return ioErr!size_t(ErrorKind.nameTooLong, OpKind.statAt);
+            buffer[0 .. n] = path[0 .. n];
+            return ioOk(n);
+        }
+    }
+
     /// Creates the link `name` in `dir` with `target` stored verbatim.
     IoResult!void symlinkAt(Handle dir, scope const(char)[] name, scope const(char)[] target)
         @safe nothrow @nogc

@@ -20,7 +20,7 @@ import core.lifetime : move, moveEmplace;
 import sparkles.base.expected : Expected;
 
 import sparkles.base.io.errors : ErrorKind, IoError, IoResult, NoGcHook, ioErr, ioOk;
-import sparkles.base.vfs.concept : isVfs, openDirAtFor, openRootDirFor, reopenFor, resolveWholeFor;
+import sparkles.base.vfs.concept : hasPathOf, isVfs, openDirAtFor, openRootDirFor, reopenFor, resolveWholeFor;
 import sparkles.base.vfs.types : EntryKind, MountCheck, OpenMode, ResolvePolicy, Rights, Sharing,
     Stat, StatMask;
 import sparkles.base.io.errors : OpKind;
@@ -220,6 +220,13 @@ struct RingVfs
     /// See `BlockingVfs.map`; called inline, as a mapping has no ring
     /// operation and `mmap` does not wait on the file's contents.
     IoResult!Mapping map(Handle h) => inner.map(h);
+
+    static if (hasPathOf!BlockingVfs)
+    {
+        /// See `BlockingVfs.pathOf` (VFB9); called inline, as it reads only
+        /// the kernel's name for an open descriptor.
+        IoResult!size_t pathOf(Handle dir, scope char[] buffer) => inner.pathOf(dir, buffer);
+    }
     /// See `BlockingVfs.write`.
     IoResult!size_t write(Handle h, scope const(ubyte)[] data)
         => offload(() => inner.write(h, data));
