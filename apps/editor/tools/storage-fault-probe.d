@@ -7,7 +7,7 @@
     dependency "sparkles:event-horizon-sys" path="../../.."
     dependency "sparkles:test-utils" path="../../.."
     dflags "-preview=in" "-preview=dip1000" "-I$PACKAGE_DIR/../src" "-i=document_files"
-    dflags "-i=session_record" "-i=session_archive"
+    dflags "-i=session_record" "-i=session_archive" "-i=session_directory"
     buildType "checked" {
         buildOptions "optimize" "inline" "debugInfo"
     }

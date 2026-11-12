@@ -520,3 +520,15 @@ snapshot scope.
 Application wiring, archive retention, startup recovery offers, exit flushing
 and actual one-second/device acceptance remain open. The app does not yet
 enable checkpoint writes to user state directories.
+
+### Acknowledged-generation retention — 2026-11-13
+
+The editor suite passes 39 tests. Archive cleanup retains the two newest valid
+generations at or below a supplied durable cutoff. It preserves corrupt,
+unsupported, symlinked and newer unacknowledged entries. A fixture with five
+generations and a damaged second generation verifies that only the oldest
+valid acknowledged record is removed. Canonical filename tests reject
+unrelated entries and integer overflow. Deletion is best effort: reappearing
+older files after interruption cannot invalidate the newer durable records.
+Cleanup requires an owned directory lease; scheduling it away from the
+rendering thread remains part of application integration.

@@ -7,9 +7,94 @@ import sparkles.base.buffer : UniqueBuffer;
 import sparkles.base.expected : Expected, err, ok;
 import sparkles.base.text.cstring : hasInteriorNul;
 import sparkles.base.text.writers : writeIntegerPadded;
-import std.path : buildPath;
+import sparkles.base.text.readers : readInteger;
+import session_directory : SessionDirectory;
+import std.algorithm.sorting : sort;
+import std.file : dirEntries, remove, SpanMode;
+import std.path : baseName, buildPath;
 
 private enum size_t maximumGenerationBytes = 512 * 1024 * 1024;
+
+/// Recognize a canonical positive generation filename; zero means an unrelated entry.
+ulong sessionGenerationOfName(scope const(char)[] name) @safe pure nothrow @nogc
+{
+    if (name.length != 28 || name[20 .. $] != ".session") return 0;
+    const(char)[] digits = name[0 .. 20];
+    const parsed = readInteger!ulong(digits);
+    return parsed.hasValue && digits.length == 0 ? parsed.value : 0;
+}
+
+/// Cleanup considers only canonical positive names, including the full uint64 range.
+@("editor.sessionArchive.generationNames")
+@safe pure nothrow @nogc unittest
+{
+    assert(sessionGenerationOfName("00000000000000000001.session") == 1);
+    assert(sessionGenerationOfName("18446744073709551615.session") == ulong.max);
+    foreach (name; ["00000000000000000000.session", "18446744073709551616.session",
+        "00000000000000000001.session.bak", "0000000000000000000x.session",
+        "+0000000000000000001.session", "notes.txt"])
+        assert(sessionGenerationOfName(name) == 0);
+}
+
+/// Best-effort retirement results; failures preserve files and do not revoke a newer acknowledgment.
+struct ArchiveCleanup
+{
+    ulong[] removed;
+    string[] issues;
+}
+
+/**
+Keep the two newest valid generations at or below the acknowledged cutoff.
+Corrupt, unsupported, symlinked and newer entries remain untouched. The
+caller keeps the exclusive directory lease throughout this worker operation.
+Removal is best effort: a deletion may reappear after interruption without
+affecting the newer durable records.
+*/
+ArchiveCleanup pruneSessionArchive(SessionDirectory directory, ulong durableThrough) @safe nothrow
+{
+    ArchiveCleanup report;
+    if (directory is null || !directory.owned)
+    {
+        report.issues ~= "Recovery cleanup requires an owned archive.";
+        return report;
+    }
+    if (!durableThrough) return report;
+    ulong[] generations;
+    try
+    {
+        foreach (entry; dirEntries(directory.path, SpanMode.shallow, false))
+        {
+            const generation = sessionGenerationOfName(baseName(entry.name));
+            if (!generation || generation > durableThrough) continue;
+            if (entry.isSymlink)
+            {
+                report.issues ~= "A symbolic recovery entry was preserved.";
+                continue;
+            }
+            generations ~= generation;
+        }
+    }
+    catch (Exception)
+    {
+        report.issues ~= "Recovery generations could not be listed for cleanup.";
+        return report;
+    }
+    generations.sort!"a > b";
+    size_t kept;
+    foreach (generation; generations)
+    {
+        auto record = readSessionGeneration(directory.path, generation);
+        if (record.hasError) { report.issues ~= record.error; continue; }
+        if (kept < 2) { ++kept; continue; }
+        try
+        {
+            (() @trusted { remove(generationPath(directory.path, generation)); })();
+            report.removed ~= generation;
+        }
+        catch (Exception) { report.issues ~= "An older recovery generation could not be removed."; }
+    }
+    return report;
+}
 
 private string generationPath(string directory, ulong generation) @safe pure nothrow
 {
@@ -86,4 +171,42 @@ Expected!SessionRecord readSessionGeneration(string directory, ulong generation)
     assert(old.hasValue && old.value.tabs[0].content == "dirty\r\n");
     assert(latest.hasValue && latest.value.tabs[0].content == "newer\r\n");
     assert((() @trusted => readText(source))() == "disk");
+}
+
+/// Retention preserves damaged and future generations while bounding older valid files.
+@("editor.sessionArchive.retentionPreservesUnconfirmedAndCorrupt")
+@safe unittest
+{
+    version (linux) {}
+    else
+    {
+        import sparkles.test_runner.skip : skipTest;
+        skipTest("The native recovery archive currently requires Linux.");
+    }
+    import session_directory : SessionDirectory;
+    import sparkles.test_utils.tmpfs : TmpFS;
+    import std.conv : text;
+    import std.file : write;
+    auto fixture = TmpFS.create();
+    auto directory = SessionDirectory.create(buildPath(fixture.dir, "archives"), fixture.dir);
+    assert(directory.hasValue);
+    scope (exit) directory.value.close();
+    SessionRecord record;
+    record.active = 7;
+    record.tabs = [SessionTab(id: 7, name: "draft", selections: [SessionSelection(0, 0)])];
+    foreach (generation; 1UL .. 6UL)
+    {
+        record.generation = generation;
+        record.tabs[0].content = text(generation);
+        assert(appendSessionGeneration(directory.value.path, record).hasValue);
+    }
+    (() @trusted { write(buildPath(directory.value.path, "00000000000000000002.session"), "damaged"); })();
+    const report = pruneSessionArchive(directory.value, 4);
+    assert(report.removed.length == 1 && report.removed[0] == 1 && report.issues.length == 1);
+    assert(readSessionGeneration(directory.value.path, 1).hasError);
+    assert(readSessionGeneration(directory.value.path, 3).hasValue);
+    assert(readSessionGeneration(directory.value.path, 4).hasValue);
+    assert(readSessionGeneration(directory.value.path, 5).hasValue);
+    import std.file : readText;
+    assert((() @trusted => readText(buildPath(directory.value.path, "00000000000000000002.session")))() == "damaged");
 }
