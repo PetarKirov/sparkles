@@ -12,6 +12,11 @@ import document_text : DocumentBytes, encodeDocument;
 import sparkles.text_buffer.text : Text;
 import sparkles.ui.editor.selection : EditRange, SelectionSet;
 import sparkles.ui.editor.state : ReadOnlySpan;
+import document_files : readRegularBytes, saveAtomic, SaveAuthorization, SaveReceipt;
+import sparkles.base.buffer : UniqueBuffer;
+import sparkles.base.expected : Expected, err;
+import sparkles.base.text.writers : writeIntegerPadded;
+import std.path : buildPath;
 
 /// An immutable record plus the exclusive lease held while its restore offer is outstanding.
 final class RecoveryOffer
@@ -55,6 +60,45 @@ final class RecoveryOffer
     Document document(size_t index) @safe pure nothrow @nogc
         in (index < documents.length) => documents[index];
     void close() @safe nothrow @nogc { directory.close(); }
+
+    /**
+    Worker-only retirement after a new archive durably includes this offer.
+    The marker names this exact source generation; source records remain
+    intact. Retrying a valid marker re-syncs its replacement before acknowledgment.
+    Invalid existing markers are preserved rather than overwritten.
+    */
+    Expected!SaveReceipt retire() @safe nothrow
+    {
+        if (!directory.owned) return err!SaveReceipt("The restored archive lease is unavailable.");
+        const marker = markerBytes(record_.generation);
+        const path = markerPath(directory.path, record_.generation);
+        const existing = readRegularBytes(path, 256);
+        if (existing.hasValue && existing.value != marker)
+            return err!SaveReceipt("A damaged recovery adoption marker was preserved.");
+        try
+        {
+            return saveAtomic(path, marker, existing.hasValue
+                ? SaveAuthorization.replaceConfirmed : SaveAuthorization.createOnly);
+        }
+        catch (Exception) { return err!SaveReceipt("The restored archive could not be retired."); }
+    }
+}
+
+private string markerBytes(ulong generation) @safe pure nothrow
+{
+    UniqueBuffer!(char, 64) token;
+    token ~= "SPARKLES-EDITOR-ADOPTED/1\n";
+    writeIntegerPadded!10(token, generation, 20);
+    token ~= '\n';
+    return token[].idup;
+}
+
+private string markerPath(string directory, ulong generation) @safe pure nothrow
+{
+    UniqueBuffer!(char, 64) name;
+    name ~= "adopted-";
+    writeIntegerPadded!10(name, generation, 20);
+    return buildPath(directory, name[].idup);
 }
 
 /// Prepared restore tabs preserve the saved-byte baseline, selections and protected intervals.
@@ -143,6 +187,10 @@ RecoveryCatalog discoverSessions(string base) @safe nothrow
             {
                 auto found = readSessionGeneration(entry.name, generation);
                 if (found.hasError) { catalog.issues ~= found.error; continue; }
+                const marker = readRegularBytes(markerPath(entry.name, generation), 256);
+                if (marker.hasValue && marker.value == markerBytes(generation)) break;
+                if (marker.hasValue)
+                    catalog.issues ~= "A damaged recovery adoption marker was preserved.";
                 // A valid empty session is a deliberate empty state, not a reason
                 // to resurrect tabs from an older generation.
                 if (found.value.tabs.length)

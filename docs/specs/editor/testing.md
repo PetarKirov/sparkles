@@ -573,3 +573,21 @@ baselines, BOM/line-ending conventions, selection affinity and goal columns,
 scroll positions, protected intervals, language and durability warnings.
 Tests verify these independently specified values. Application offer controls
 and adoption ordering remain open; CLI user-state writes remain disabled.
+
+### Recovery adoption ordering — 2026-11-13
+
+The editor suite passes 46 tests. Accepted offers remain leased until a new
+archive durably acknowledges the captured restored state. Only then does a
+maintenance job install an exact-generation adoption marker. The marker is
+itself synced before retirement is acknowledged; retry re-syncs an existing
+valid marker. Damaged markers and every original generation remain intact.
+Unknown or damaged markers cannot silently suppress an offer.
+
+A before-deadline interruption leaves the source archive offer available on
+restart. After a successful new checkpoint and adoption, discovery offers
+only the destination archive, with the restored bytes; the source generation
+is still readable. Adoption failures remain visible and retryable. Application
+Restore controls and CLI startup wiring remain open.
+The requested additional Argon Medium adoption review could not run because
+`agy` returned `RESOURCE_EXHAUSTED` (individual quota). It remains outstanding;
+the earlier runtime review does not cover adoption markers.

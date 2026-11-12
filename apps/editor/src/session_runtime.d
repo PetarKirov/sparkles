@@ -10,7 +10,14 @@ import session_snapshot : SessionSnapshot;
 import session_discovery : discoverSessions, RecoveryCatalog, RecoveryOffer;
 import sparkles.event_horizon.raw_pool : CpuJob, RawCompletion, RawCpuPool, RawPoolResult;
 
-private enum Maintenance : ubyte { initialize, cleanup, discover }
+private enum Maintenance : ubyte { initialize, cleanup, discover, adopt }
+
+private final class Adoption
+{
+    RecoveryOffer offer;
+    ulong revision;
+    bool done;
+}
 
 private final class MaintenanceJob
 {
@@ -19,8 +26,84 @@ private final class MaintenanceJob
     SessionDirectory directory;
     ArchiveCleanup cleanup;
     RecoveryCatalog catalog;
+    Adoption[] adoptions;
     ulong through;
     bool done;
+}
+
+/// Restoring an offer retires it only after the new archive acknowledges its captured contents.
+@("editor.recovery.adoptionFollowsAcknowledgement")
+@safe unittest
+{
+    version (linux) {}
+    else
+    {
+        import sparkles.test_runner.skip : skipTest;
+        skipTest("Recovery directory leases currently require Linux.");
+    }
+    import core.thread : Thread;
+    import session_archive : appendSessionGeneration, readSessionGeneration;
+    import session_record : SessionRecord, SessionTab, SessionSelection;
+    import sparkles.test_utils.tmpfs : TmpFS;
+    import std.path : buildPath;
+    auto fixture = TmpFS.create();
+    const base = buildPath(fixture.dir, "sessions");
+    auto old = SessionDirectory.create(base, fixture.dir);
+    assert(old.hasValue);
+    const originalArchive = old.value.path;
+    SessionRecord record;
+    record.generation = 1;
+    record.active = 7;
+    record.tabs = [SessionTab(id: 7, name: "draft", content: "recovered bytes",
+        selections: [SessionSelection(0, 0)])];
+    assert(appendSessionGeneration(old.value.path, record).hasValue);
+    old.value.close();
+    auto recovery = new RecoverySession(base, fixture.dir);
+    scope (exit) recovery.shutdown();
+    const start = MonoTime.currTime;
+    const deadline = start + 3.seconds;
+    while (!recovery.discoveryComplete && MonoTime.currTime < deadline)
+    {
+        recovery.poll(start);
+        (() @trusted => Thread.yield())();
+    }
+    assert(recovery.offerCount == 1);
+    Document[] restored = [recovery.offer(0).document(0)];
+    recovery.observe(restored, 7, "github-dark", start);
+    recovery.consumeOffer(0);
+    recovery.poll(start);
+    assert(recovery.offerCount == 0 && recovery.durableRevision == 0 && recovery.pending);
+    assert(readSessionGeneration(originalArchive, 1).hasValue);
+    recovery.shutdown(); // Interrupt before the initial checkpoint deadline.
+    auto interrupted = discoverSessions(base);
+    assert(interrupted.offers.length == 1 && interrupted.offers[0].path == originalArchive,
+        "An unacknowledged adoption must leave the original restart offer available.");
+    foreach (offered; interrupted.offers) offered.close();
+    recovery = new RecoverySession(base, fixture.dir);
+    while (!recovery.discoveryComplete && MonoTime.currTime < deadline)
+    {
+        recovery.poll(start);
+        (() @trusted => Thread.yield())();
+    }
+    assert(recovery.offerCount == 1);
+    restored = [recovery.offer(0).document(0)];
+    recovery.observe(restored, 7, "github-dark", start);
+    recovery.consumeOffer(0);
+    recovery.flush(start);
+    while (recovery.pending && MonoTime.currTime < deadline)
+    {
+        recovery.poll(start);
+        (() @trusted => Thread.yield())();
+    }
+    assert(!recovery.pending && !recovery.error.length);
+    recovery.shutdown();
+    auto catalog = discoverSessions(base);
+    scope (exit) foreach (offer; catalog.offers) offer.close();
+    assert(catalog.offers.length == 1, "The adopted source must not become a duplicate restart offer.");
+    assert(catalog.offers[0].record.tabs[0].content == "recovered bytes");
+    assert(catalog.offers[0].path != originalArchive);
+    assert(readSessionGeneration(originalArchive, 1).hasValue,
+        "Adoption preserves the source record instead of deleting its bytes.");
 }
 
 /// Startup offers are prepared in the background while another instance keeps its lease.
@@ -85,9 +168,10 @@ final class RecoverySession
     private CheckpointWriter writer;
     private SessionSnapshot latest;
     private RecoveryOffer[] offers;
-    private string base, root, initializationError, cleanupNotice;
+    private Adoption[] adoptions;
+    private string base, root, initializationError, retirementError, cleanupNotice;
     private ulong revision, cleanedThrough, flushedRevision;
-    private MonoTime firstObserved, retryAt;
+    private MonoTime firstObserved, retryAt, retirementRetryAt;
     private bool started, stopped, flushing, haveFirstObserved;
     private bool discovered;
 
@@ -103,15 +187,26 @@ final class RecoverySession
     ulong durableRevision() const @safe pure nothrow @nogc => writer is null ? 0 : writer.durableRevision;
     ulong durableGeneration() const @safe pure nothrow @nogc => writer is null ? 0 : writer.durableGeneration;
     string directoryPath() const @safe pure nothrow @nogc => directory is null ? null : directory.path;
-    bool pending() const @safe pure nothrow @nogc => revision > durableRevision;
+    bool pending() const @safe pure nothrow @nogc => revision > durableRevision || adoptions.length != 0;
     bool ready() const @safe pure nothrow @nogc => writer !is null;
     bool maintenanceBusy() const @safe pure nothrow @nogc => job !is null;
     bool discoveryComplete() const @safe pure nothrow @nogc => discovered;
     size_t offerCount() const @safe pure nothrow @nogc => offers.length;
     RecoveryOffer offer(size_t index) @safe pure nothrow @nogc
         in (index < offers.length) => offers[index];
+    /// Call only after observe has captured the accepted offer in the application's current state.
+    void consumeOffer(size_t index) @safe nothrow
+    in (index < offers.length && revision != 0)
+    {
+        auto adopted = new Adoption;
+        adopted.offer = offers[index];
+        adopted.revision = revision;
+        adoptions ~= adopted;
+        offers = offers[0 .. index] ~ offers[index + 1 .. $];
+    }
     string error() const @safe pure nothrow @nogc
-        => initializationError.length ? initializationError : writer is null ? null : writer.error;
+        => initializationError.length ? initializationError
+            : writer !is null && writer.error.length ? writer.error : retirementError;
     string notice() const @safe pure nothrow @nogc
         => cleanupNotice.length ? cleanupNotice : writer is null ? null : writer.notice;
 
@@ -162,6 +257,18 @@ final class RecoverySession
                 discovered = true;
                 if (finished.catalog.issues.length) cleanupNotice = finished.catalog.issues[0];
             }
+            else if (finished.kind == Maintenance.adopt)
+            {
+                retirementError = finished.error;
+                retirementRetryAt = now + 1.seconds;
+                Adoption[] retained;
+                foreach (adopted; adoptions)
+                {
+                    if (adopted.done) adopted.offer.close();
+                    else retained ~= adopted;
+                }
+                adoptions = retained;
+            }
             else if (finished.cleanup.issues.length) cleanupNotice = finished.cleanup.issues[0];
         }
         if (writer is null)
@@ -188,7 +295,15 @@ final class RecoverySession
             requested.base = base;
             submit(requested);
         }
-        else if (job is null && writer.durableGeneration > cleanedThrough)
+        else if (job is null && adoptions.length && now >= retirementRetryAt)
+        {
+            auto requested = new MaintenanceJob;
+            requested.kind = Maintenance.adopt;
+            foreach (adopted; adoptions)
+                if (adopted.revision <= writer.durableRevision) requested.adoptions ~= adopted;
+            if (requested.adoptions.length) submit(requested);
+        }
+        if (job is null && writer.durableGeneration > cleanedThrough)
         {
             auto requested = new MaintenanceJob;
             requested.kind = Maintenance.cleanup;
@@ -203,6 +318,7 @@ final class RecoverySession
     {
         flushing = true;
         flushedRevision = 0;
+        retryAt = retirementRetryAt = now;
         poll(now);
     }
 
@@ -216,7 +332,13 @@ final class RecoverySession
     Duration nextPoll(MonoTime now) const @safe pure nothrow @nogc
     {
         if (job !is null) return 8.msecs;
-        if (writer !is null) return writer.nextPoll(now);
+        if (writer !is null)
+        {
+            const checkpoint = writer.nextPoll(now);
+            if (!adoptions.length) return checkpoint;
+            const retry = retirementRetryAt > now ? retirementRetryAt - now : 8.msecs;
+            return retry < checkpoint ? retry : checkpoint;
+        }
         return retryAt > now ? retryAt - now : 0.msecs;
     }
 
@@ -229,6 +351,7 @@ final class RecoverySession
         RawCompletion completion;
         while (pool.pollCompletion(completion) == RawPoolResult.accepted) completion.dispatch();
         foreach (offered; offers) offered.close();
+        foreach (adopted; adoptions) adopted.offer.close();
         if (job !is null) foreach (offered; job.catalog.offers) offered.close();
         if (writer !is null) writer.shutdown();
         else if (job !is null && job.directory !is null) job.directory.close();
@@ -260,6 +383,16 @@ final class RecoverySession
             else requested.directory = created.value;
         }
         else if (requested.kind == Maintenance.discover) requested.catalog = discoverSessions(requested.base);
+        else if (requested.kind == Maintenance.adopt)
+        {
+            foreach (adopted; requested.adoptions)
+            {
+                const retired = adopted.offer.retire();
+                adopted.done = retired.hasValue && retired.value.durable;
+                if (!adopted.done) requested.error = retired.hasError ? retired.error
+                    : "Recovery adoption durability could not be acknowledged.";
+            }
+        }
         else requested.cleanup = pruneSessionArchive(requested.directory, requested.through);
     }
 
