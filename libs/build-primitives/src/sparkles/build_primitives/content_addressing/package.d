@@ -3,9 +3,11 @@ Content addressing: names for a fileset's tree and its files, computed by
 schemes on the fileset seam (FSS1–FSS8).
 
 `MerkleFold` is the shell; `castore` is the default identity, and `git`
-names trees as git does; `outboard` is iroh's supplied tree of a file, and
-`cache` the subtree cache that lets a run reuse the previous one's work,
-stamped by `clock`, the file system's own time.
+names trees as git does; `collection` is the list iroh's `sendme` sends,
+and `store_path` the Nix store path a tree's NAR would be copied to;
+`outboard` is iroh's supplied tree of a file, and `cache` the subtree cache
+that lets a run reuse the previous one's work, stamped by `clock`, the file
+system's own time.
 Decided in
 `docs/specs/build-primitives/filesets/decisions.md`, A19.
 */
@@ -14,7 +16,9 @@ module sparkles.build_primitives.content_addressing;
 public import sparkles.build_primitives.content_addressing.cache;
 public import sparkles.build_primitives.content_addressing.castore;
 public import sparkles.build_primitives.content_addressing.clock;
+public import sparkles.build_primitives.content_addressing.collection;
 public import sparkles.build_primitives.content_addressing.git;
 public import sparkles.build_primitives.content_addressing.merkle;
 public import sparkles.build_primitives.content_addressing.nar;
 public import sparkles.build_primitives.content_addressing.outboard;
+public import sparkles.build_primitives.content_addressing.store_path;

@@ -1607,3 +1607,161 @@ everything and still gives the right id.
     assert(warm.id == coldId(*vfs));
     assert(warm.filesRead == 2 && warm.filesReused == 0 && warm.dirsReused == 0, text(warm));
 }
+
+// ------------------------------------------------- the SHA-1 id's forms
+
+/// `nix hash path --mode git --algo sha1` of `dir`: Nix's git hashing.
+string nixGitHash(string dir) @system
+{
+    import std.process : Config, execute;
+
+    const r = execute(["nix", "hash", "path", "--extra-experimental-features", "git-hashing", "--mode", "git",
+        "--algo", "sha1", dir], null, Config.stderrPassThrough);
+    assert(r.status == 0, text("nix hash path --mode git ", dir, ": ", r.output));
+    return r.output.strip;
+}
+
+/**
+CAG3: the SHA-1 tree id's SRI form is Nix's git hashing of the same tree,
+and its SWHID is `swh:1:dir:` and the id `git write-tree` checks.
+*/
+@("content_addressing.git.CAG3.nixGitHash")
+@system unittest
+{
+    if (!haveNix())
+        return skipTest("nix-store is not installed");
+
+    foreach (t; oracleTrees(60))
+    {
+        const ours = idOf!(GitTreeScheme!SHA1)(t.literal);
+        const theirs = onDisk(t.literal, "git-sri", dir => nixGitHash(dir));
+        assert(toGitSri(ours.digest)[] == theirs, text(t.label, ": ", toGitSri(ours.digest)[], " != ",
+            theirs, "\n", t.literal));
+        assert(toSwhid(ours.digest)[] == "swh:1:dir:" ~ toHex(ours.digest)[]);
+    }
+}
+
+// ------------------------------------------------------------- the tee
+
+// The collection over the counting leaf, for a tee beside castore's.
+private struct CountingCollection
+{
+    import sparkles.build_primitives.content_addressing.collection : IrohCollection;
+
+    IrohCollection inner;
+    alias inner this;
+    alias Leaf = CountingLeaf;
+}
+
+/**
+CAT4: castore and the collection share a file identity, so a tee of both
+hashes each file once, and each part's id is its own.
+*/
+@("content_addressing.tee.CAT4.sharedLeaf")
+@system unittest
+{
+    import sparkles.build_primitives.content_addressing.collection : collectionOf, IrohCollectionScheme;
+
+    enum tree = "a/b/x = one\na/b/d/y = two\na/c = three\nrun +x = go\nl -> a\nempty/\n";
+    leafFiles = leafBytes = leafSizes = 0;
+    const teed = idOf!(NarScheme!(SHA256, LiteralRef, CountingCastore, CountingCollection))(tree);
+    assert(leafFiles == 4, text(leafFiles, " files"));
+    assert(leafSizes == 13 && leafBytes == 13, text(leafSizes, " bytes stat-ed, ", leafBytes, " read"));
+    assert(teed.ids[0] == idOf!CastoreScheme(tree));
+    const alone = idOf!IrohCollectionScheme(tree);
+    assert(collectionOf(teed.ids[1], "t").value.root == collectionOf(alone, "t").value.root);
+    assert(teed.nar == idOf!LiteralNar(tree));
+}
+
+// ------------------------------------------------------- iroh's collection
+
+/// `iroh-collection <dir>`: the name iroh-blobs gives `sendme`'s import of
+/// `dir`, in lowercase hex.
+string irohCollection(string tool, string dir) @system
+{
+    import std.process : Config, execute;
+
+    const r = execute([tool, dir], null, Config.stderrPassThrough);
+    assert(r.status == 0, text(tool, " ", dir, ": ", r.output));
+    return r.output.strip;
+}
+
+/**
+CAI1, CAI2: the collection's name equals the one iroh-blobs' own
+`Collection` gives `sendme`'s import of the members, laid out under a
+directory named as the label. `$SPARKLES_IROH_COLLECTION` names the oracle;
+without it the test is skipped.
+*/
+@("content_addressing.collection.irohBlobs")
+@system unittest
+{
+    import std.file : exists, mkdirRecurse;
+    import std.path : buildPath;
+    import std.process : environment;
+
+    import sparkles.build_primitives.content_addressing.collection : collectionOf, IrohCollectionScheme;
+
+    const tool = environment.get("SPARKLES_IROH_COLLECTION");
+    if (tool is null)
+        return skipTest("SPARKLES_IROH_COLLECTION is not set");
+    assert(tool.exists, tool);
+
+    enum label = "fileset";
+    size_t withLinks;
+    foreach (t; oracleTrees())
+    {
+        const id = idOf!IrohCollectionScheme(t.literal);
+        const ours = collectionOf(id, label);
+        assert(ours.hasValue, ours.error);
+        withLinks += ours.value.links != 0;
+        const theirs = onDisk(t.literal, "collection", (dir) {
+            const top = buildPath(dir, label);
+            mkdirRecurse(top);
+            materialize(membersOf(t.literal), top);
+            return irohCollection(tool, top);
+        });
+        assert(toHex(ours.value.root)[] == theirs, text(t.label, ": ", toHex(ours.value.root)[], " != ",
+            theirs, "\n", t.literal));
+    }
+    assert(withLinks > 0, "some trees hold links, which the collection leaves out");
+    const kinds = collectionOf(idOf!IrohCollectionScheme(oracleTrees(0)[1].literal), label);
+    assert(kinds.value.links == 2, text(kinds.value.links));
+}
+
+// ------------------------------------------------------- the store path
+
+/// `nix-store --print-fixed-path --recursive sha256 <hash> <name>`.
+string printFixedPath(scope const(char)[] hash, scope const(char)[] name) @system
+{
+    import std.process : execute;
+
+    const r = execute(["nix-store", "--print-fixed-path", "--recursive", "sha256", hash.idup, name.idup]);
+    return r.status == 0 ? r.output.strip : null;
+}
+
+/**
+CAP1, CAP2: every fixture tree's store path, from its `NarHash` and under
+two names, is the one Nix prints; a name Nix refuses is refused.
+*/
+@("content_addressing.store_path.printFixedPath")
+@system unittest
+{
+    import sparkles.build_primitives.content_addressing.store_path : nixStorePath;
+
+    if (!haveNix())
+        return skipTest("nix-store is not installed");
+
+    foreach (t; oracleTrees(40))
+    {
+        const nar = idOf!LiteralNar(t.literal).digest;
+        foreach (name; ["source", "a+-._?="])
+        {
+            const ours = nixStorePath(nar, name);
+            assert(ours.hasValue, ours.error);
+            assert(ours.value == printFixedPath(toHex(nar)[], name), text(t.label, " ", name, ": ", ours.value));
+        }
+    }
+    ubyte[32] zero;
+    foreach (name; ["", ".", "..", "a b", "a/b", "é", ".a", "x+y"])
+        assert(nixStorePath(zero, name).hasError == (printFixedPath(toHex(zero)[], name) is null), name);
+}

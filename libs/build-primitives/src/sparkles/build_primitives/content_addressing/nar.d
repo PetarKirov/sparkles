@@ -35,15 +35,16 @@ oracle (`content_addressing.nar.dump`).
 
 The same walk can name the tree by Merkle directory encodings too, the
 `Tee` of A19: `NarScheme!(H, Ref, Dirs)` feeds each file's bytes, read
-once, to the NAR and to every `Dir`'s leaf, and encodes a directory when it
-is closed, its entries put in the `Dir`'s own order. `CastoreNar` is the
+once, to the NAR and to each distinct leaf the `Dirs` name, once however
+many share it (CAT4), and encodes a directory when it is closed, its entries
+put in the `Dir`'s own order. `CastoreNar` is the
 castore identity with its `NarHash` beside it (D2).
 */
 module sparkles.build_primitives.content_addressing.nar;
 
 import std.digest : isDigest;
 import std.digest.sha : SHA256;
-import std.meta : allSatisfy, staticMap;
+import std.meta : allSatisfy, NoDuplicates, staticIndexOf, staticMap;
 
 import sparkles.base.buffer : UniqueBuffer;
 import sparkles.base.io.errors : ErrorKind;
@@ -75,6 +76,7 @@ private alias IdOf(Dir) = Dir.Id;
 private alias LeafOf(Dir) = DefaultLeaf!Dir;
 private alias LeafIdOf(Dir) = DefaultLeaf!Dir.Id;
 private alias IdsOf(Dirs...) = staticMap!(IdOf, Dirs);
+private alias LeafIdOfLeaf(Leaf) = Leaf.Id;
 private enum bool isMerkleDir(Dir) = isDirFormat!(Dir, DefaultLeaf!Dir);
 
 // The metadata `Dir` needs: what it declares, else `MerkleFold`'s default.
@@ -93,7 +95,7 @@ tree. `Ref` is the reference type its entries carry, `FsoRef!(V, R)` for the
 root's VFS `V` and rights `R`.
 
 With no `Dirs` the result is the `NarHash`, and with some a `WithNar`. Each
-file is read once, its bytes going to the NAR and to every leaf (A19's
+file is read once, its bytes going to the NAR and to each distinct leaf (A19's
 `Tee`); the metadata declared is the union of the parts'.
 */
 struct NarScheme(H, Ref, Dirs...)
@@ -153,8 +155,12 @@ if (isDigest!H && allSatisfy!(isMerkleDir, Dirs))
     private string why;
     static if (Dirs.length)
     {
-        private Dirs dirs;                       // each encoding, reused for every directory
-        private staticMap!(LeafOf, Dirs) leaves; // each file identity, reused for every file
+        private Dirs dirs; // each encoding, reused for every directory
+        // Each file identity once, however many encodings share it (CAT4),
+        // reused for every file; `Dirs[i]`'s is `leaves[leafOf!i]`.
+        private alias Leaves = NoDuplicates!(staticMap!(LeafOf, Dirs));
+        private enum leafOf(size_t i) = staticIndexOf!(LeafOf!(Dirs[i]), Leaves);
+        private Leaves leaves;
         private IdsOf!Dirs rootIds;
         private UniqueBuffer!(uint, 64) sorted;  // one directory's entries, in a `Dir`'s order
     }
@@ -318,8 +324,11 @@ if (isDigest!H && allSatisfy!(isMerkleDir, Dirs))
                     static if (Dirs.length)
                     {
                         auto written = &pending[f.next - 1];
+                        staticMap!(LeafIdOfLeaf, Leaves) got;
+                        static foreach (j; 0 .. Leaves.length)
+                            got[j] = leaves[j].finish();
                         static foreach (i; 0 .. Dirs.length)
-                            written.leafIds[i] = leaves[i].finish();
+                            written.leafIds[i] = got[leafOf!i];
                         written.size = length;
                     }
                     token(")");
@@ -340,16 +349,16 @@ if (isDigest!H && allSatisfy!(isMerkleDir, Dirs))
         {
             nar.u64(length);
             static if (Dirs.length)
-                static foreach (i; 0 .. Dirs.length)
-                    nar.leaves[i].start(length);
+                static foreach (j; 0 .. nar.Leaves.length)
+                    nar.leaves[j].start(length);
         }
 
         void put(scope const(ubyte)[] bytes)
         {
             nar.raw(bytes);
             static if (Dirs.length)
-                static foreach (i; 0 .. Dirs.length)
-                    nar.leaves[i].put(bytes);
+                static foreach (j; 0 .. nar.Leaves.length)
+                    nar.leaves[j].put(bytes);
         }
     }
 

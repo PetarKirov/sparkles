@@ -86,6 +86,40 @@ auto toHex(size_t n)(in ubyte[n] digest)
     return toHexString!(LetterCase.lower)(digest);
 }
 
+/// A SHA-1 tree id as Nix's git hashing prints it, in SRI form: `sha1-` and
+/// standard, padded base64 (CAG3).
+char[33] toGitSri(in ubyte[20] digest) @safe pure nothrow @nogc
+{
+    import std.base64 : Base64;
+
+    char[33] text = "sha1-                            ";
+    Base64.encode(digest[], text[5 .. $]);
+    return text;
+}
+
+/// A SHA-1 tree id as Software Heritage's identifier of a directory, its
+/// SWHID: `swh:1:dir:` and the id in lowercase hex (CAG3).
+char[50] toSwhid(in ubyte[20] digest) @safe pure nothrow @nogc
+{
+    char[50] text = "swh:1:dir:";
+    text[10 .. $] = toHex(digest)[];
+    return text;
+}
+
+/// The empty tree's id in both forms.
+@("content_addressing.git.CAG3.forms")
+@safe pure nothrow @nogc unittest
+{
+    import std.digest.sha : SHA1;
+
+    GitTree!SHA1 git;
+    git.begin();
+    const id = git.seal().digest;
+    assert(toSwhid(id)[] == "swh:1:dir:4b825dc642cb6eb9a060e54bf8d69288fbee4904");
+    // As `nix hash path --mode git --algo sha1` prints an empty directory.
+    assert(toGitSri(id)[] == "sha1-S4JdxkLLbrmgYOVL+NaSiPvuSQQ=");
+}
+
 /// The tree holding nothing has git's well-known empty-tree id.
 @("content_addressing.git.emptyTree")
 @safe pure nothrow @nogc unittest
