@@ -155,6 +155,7 @@ final class Project
     Package[string] byName;  /// every package reached, by full name
     private Package[string] byRecipe; // root packages by recipe directory
     private Package[string] subPackages; // subpackages by full name, once read
+    private RecipeRead[string] recipesRead; // by directory: each recipe read and parsed once
     private ResolveDriver driver;
     private RegistrySources registry;
     private InTreeSources inTree;
@@ -177,16 +178,9 @@ final class Project
                 string name = s.name;
                 if (!s.isInline)
                 {
-                    const directory = normalizedPath(base.directory, s.path);
-                    string source;
-                    foreach (file; ["dub.sdl", "dub.json", "package.json"])
-                        if (driver.readText(directory.joinedPath(file), source))
-                        {
-                            auto parsed = parseDubRecipeText(source, directory.joinedPath(file));
-                            if (parsed.hasValue)
-                                name = parsed.value.name;
-                            break;
-                        }
+                    const read = recipeIn(this, normalizedPath(base.directory, s.path));
+                    if (read.path !is null && read.error is null)
+                        name = read.manifest.name;
                 }
                 if (name.length)
                     result ~= resolveSubPackage(this, base, name);
@@ -305,24 +299,55 @@ Project loadSingleFileProject(string file, ResolveDriver driver, RegistrySources
     return project;
 }
 
+// A recipe as read: its path (null when the directory has none), and its
+// manifest or why it does not parse.
+private struct RecipeRead
+{
+    string path;
+    DubManifest manifest;
+    string error;
+}
+
+// The recipe in `directory`, read and parsed once per project. Finding a
+// subpackage by name reads the recipes its base lists until one has that
+// name, and hidden-edge detection reads them all, so without this a request
+// parsed each recipe once per subpackage it reached.
+private RecipeRead recipeIn(Project project, string directory) @safe
+{
+    if (auto found = directory in project.recipesRead)
+        return *found;
+    RecipeRead read;
+    string source;
+    foreach (file; ["dub.sdl", "dub.json", "package.json"])
+        if (project.driver.readText(directory.joinedPath(file), source))
+        {
+            read.path = directory.joinedPath(file);
+            break;
+        }
+    if (read.path !is null)
+    {
+        auto parsed = parseDubRecipeText(source, read.path);
+        if (parsed.hasError)
+            read.error = parsed.error.text;
+        else
+            read.manifest = parsed.value;
+    }
+    project.recipesRead[directory] = read;
+    return read;
+}
+
 // Reads the root recipe in `directory`, once per directory.
 private Package loadRecipe(Project project, string directory, string expectedName) @safe
 {
     if (auto loaded = directory in project.byRecipe)
         return *loaded;
-    string recipe, source;
-    foreach (file; ["dub.sdl", "dub.json", "package.json"])
-        if (project.driver.readText(directory.joinedPath(file), source))
-        {
-            recipe = directory.joinedPath(file);
-            break;
-        }
+    const read = recipeIn(project, directory);
+    const recipe = read.path;
     if (recipe is null)
         fail(text("no DUB recipe in ", directory));
-    auto parsed = parseDubRecipeText(source, recipe);
-    if (parsed.hasError)
-        fail(parsed.error.text);
-    const manifest = parsed.value;
+    if (read.error !is null)
+        fail(read.error);
+    const manifest = read.manifest;
     if (manifest.name.length == 0)
         fail(text(recipe, ": the package has no name"));
     if (expectedName.length && manifest.name != expectedName)
@@ -389,21 +414,15 @@ private Package resolveSubPackage(Project project, Package base, string sub) @sa
         else
         {
             const directory = normalizedPath(base.directory, s.path);
-            string recipe, source;
-            foreach (file; ["dub.sdl", "dub.json", "package.json"])
-                if (project.driver.readText(directory.joinedPath(file), source))
-                {
-                    recipe = directory.joinedPath(file);
-                    break;
-                }
+            const read = recipeIn(project, directory);
+            const recipe = read.path;
             if (recipe is null)
                 fail(text(base.recipe, ": no DUB recipe for the subpackage in ", directory));
-            auto parsed = parseDubRecipeText(source, recipe);
-            if (parsed.hasError)
-                fail(parsed.error.text);
-            if (parsed.value.name != sub)
+            if (read.error !is null)
+                fail(read.error);
+            if (read.manifest.name != sub)
                 continue;
-            const manifest = parsed.value;
+            const manifest = read.manifest;
             if (manifest.subPackages.length)
                 fail(text(recipe, ": a subpackage cannot declare subpackages"));
             p = makePackage(project, manifest, fullName, directory, recipe);
