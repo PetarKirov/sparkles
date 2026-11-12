@@ -601,6 +601,12 @@ Hooks run on commit and may modify or block it; each bypasses with
   `not started`, `researched`, `deferred`, `planned`, `proposed` or `open`
   names code it will be, not code that exists. So fix a backlog row by citing what
   satisfies it, or, if it was never delivered, by giving it that status.
+- **check-opaque-recipes** — whenever a `dub.sdl` is staged, reports every recipe
+  entry no input set can hold: a `preBuildCommands`-style command (other than
+  `shader-compile` run through `$DUB run`), a flag carrying a path, or a path
+  through a variable or outside the repository. Each makes every request that
+  builds it selected by any change, so the check says what to write instead.
+  One not in `apps/ci/opaque-recipe-allowlist.txt` with a reason fails.
 
 ## Pitfalls Checklist
 

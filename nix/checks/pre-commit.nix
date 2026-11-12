@@ -438,6 +438,24 @@ in
                 pass_filenames = false;
                 require_serial = true;
               };
+
+              # No recipe entry that no input set can hold, unless reviewed
+              # (apps/ci --check-opaque-recipes; fileset-native workspace
+              # BGW3/BGW4): a command, a flag carrying a path, or a path through
+              # a variable or outside the repository makes every request that
+              # builds it selected by any change. The check says what to write
+              # instead; the reviewed exceptions sit in
+              # apps/ci/opaque-recipe-allowlist.txt.
+              check-opaque-recipes = {
+                enable = true;
+                name = "check-opaque-recipes";
+                files = "(dub\\.sdl$|^apps/ci/opaque-recipe-allowlist\\.txt$)";
+                entry = lib.getExe config.packages.ci;
+                args = [ "--check-opaque-recipes" ];
+                language = "system";
+                pass_filenames = false;
+                require_serial = true;
+              };
             };
 
           # Prek built-in hooks:

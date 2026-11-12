@@ -32,6 +32,7 @@ nix run .#ci -- --check-vcs-urls [--include-files GLOB|FILE...] [--exclude-files
 nix run .#ci -- --check-docs-sidebar
 nix run .#ci -- --check-glossary
 nix run .#ci -- --check-adhoc-sdl
+nix run .#ci -- --check-opaque-recipes
 nix run .#ci -- --check-credits
 nix run .#ci -- --check-wasm-modules --text-module FILE --table-module FILE --wasi-loader FILE --wasi-shim DIR
 nix run .#ci -- --stage-docs-wasm
@@ -64,6 +65,7 @@ $(LIST
     $(ITEM `--check-vcs-urls` — check tracked markdown files for github.com/raw.githubusercontent.com URLs, ensuring they reference a specific commit SHA)
     $(ITEM `--check-docs-sidebar` — verify the VitePress sidebar in `docs/.vitepress/sidebar.json` is consistent with published `docs/**/*.md` pages: every page is linked, and every sidebar link resolves to a page (respects `srcExclude`; home page is implicit))
     $(ITEM `--check-glossary` — verify `docs/.vitepress/glossary.json` (ids, owners, plain-text summaries, cross-references) and that every docs link into the glossary names an existing entry; entries no page links to are reported, not failed)
+    $(ITEM `--check-opaque-recipes` — report every recipe entry no input set can hold (a command, a flag carrying a path, a path through a variable or outside the repository), with what to write instead: each makes the requests that build it selected by every change. One that `apps/ci/opaque-recipe-allowlist.txt` does not list with a reason fails (see the `opaque_recipes` module))
     $(ITEM `--check-adhoc-sdl` — verify no D source reads, edits or detects SDL by matching text: a text-matching call whose arguments hold an SDL marker fails unless `apps/ci/sdl-audit-allowlist.txt` lists it with a reason (lossless editing SDE9; see the `sdl_audit` module))
     $(ITEM `--check-credits` — verify the credits document (`docs/credits/`) against the build inputs: every dub package, native library, static archive, bundled font and grammar bundle the applications link or ship has a part, every part names something shipped, and each application page includes exactly its own parts (see the `credits` module))
     $(ITEM `--check-wasm-modules` — run a fixed corpus through the documentation site's WebAssembly modules under `node` and through the same D functions natively, and fail on any difference (docs/specs/toolchain/wasm-modules.md, TCM9; see `wasm_modules_check`))
@@ -359,6 +361,11 @@ struct CliParams
         ~ "a canFind/indexOf/regex/… call whose arguments hold an SDL marker fails unless "
         ~ "apps/ci/sdl-audit-allowlist.txt lists it with a reason; so does a stale entry."))
     bool checkAdHocSdl;
+    @(Option(`check-opaque-recipes`,
+        description: "Report every recipe entry no input set can hold (commands, flags carrying paths, "
+        ~ "paths through variables or outside the repository) with what to write instead; an entry "
+        ~ "apps/ci/opaque-recipe-allowlist.txt does not list with a reason fails, and so does a stale one."))
+    bool checkOpaqueRecipes;
 
     @(Option(`check-credits`,
         description: "Verify the credits document (docs/credits/) against the build inputs: "
@@ -578,6 +585,7 @@ enum ProgramMode
     checkSpecEvidence,
     checkGlossary,
     checkAdHocSdl,
+    checkOpaqueRecipes,
     checkCredits,
     checkPinCache,
     checkBlobPaths,
@@ -739,6 +747,8 @@ int ciMain(string[] args)
         return runCheckGlossary();
     if (mode == ProgramMode.checkAdHocSdl)
         return runCheckAdHocSdl();
+    if (mode == ProgramMode.checkOpaqueRecipes)
+        return runCheckOpaqueRecipes();
     if (mode == ProgramMode.checkCredits)
         return runCheckCredits();
     if (mode == ProgramMode.checkPinCache)
@@ -860,7 +870,7 @@ private string validateCliMode(
             || cli.testExtracted || cli.testSanitize || cli.buildEachCommit || cli.auditFences
             || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkCommitScope
             || cli.checkVcsUrls || cli.checkDocsSidebar || cli.checkSpecEvidence || cli.checkGlossary
-            || cli.checkPinCache || cli.checkAdHocSdl || cli.checkBlobPaths || cli.ciStats || cli.mirrorChecks || cli.reportLinkRot || cli.gcR2 || cli.linuxHostProbe
+            || cli.checkPinCache || cli.checkAdHocSdl || cli.checkOpaqueRecipes || cli.checkBlobPaths || cli.ciStats || cli.mirrorChecks || cli.reportLinkRot || cli.gcR2 || cli.linuxHostProbe
             || cli.hostSystem.length || cli.files.length || cli.exclude.length))
         return "--seed-dub-cache cannot be combined with other modes or file selection";
 
@@ -1085,6 +1095,8 @@ private ProgramMode resolveProgramMode(in CliParams cli)
         return ProgramMode.checkGlossary;
     if (cli.checkAdHocSdl)
         return ProgramMode.checkAdHocSdl;
+    if (cli.checkOpaqueRecipes)
+        return ProgramMode.checkOpaqueRecipes;
     if (cli.checkCredits)
         return ProgramMode.checkCredits;
     if (cli.checkPinCache)
@@ -1126,6 +1138,7 @@ private string programModeName(ProgramMode mode) @safe pure nothrow @nogc
         case ProgramMode.checkSpecEvidence:  return "--check-spec-evidence";
         case ProgramMode.checkGlossary:      return "--check-glossary";
         case ProgramMode.checkAdHocSdl:      return "--check-adhoc-sdl";
+        case ProgramMode.checkOpaqueRecipes: return "--check-opaque-recipes";
         case ProgramMode.checkCredits:       return "--check-credits";
         case ProgramMode.checkPinCache:      return "--check-pin-cache";
         case ProgramMode.checkBlobPaths:     return "--check-blob-paths";
@@ -1716,6 +1729,7 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
             case ProgramMode.checkSpecEvidence:
             case ProgramMode.checkGlossary:
             case ProgramMode.checkAdHocSdl:
+            case ProgramMode.checkOpaqueRecipes:
             case ProgramMode.checkCredits:
             case ProgramMode.checkPinCache:
             case ProgramMode.checkBlobPaths:
@@ -2400,6 +2414,72 @@ private int runCheckAdHocSdl()
     if (unlisted.length || stale)
         return 1;
     info(i"✓ No ad-hoc SDL: $(files) D sources checked, $(allowed.length) allowlisted matches reviewed.");
+    return 0;
+}
+
+/++
+`--check-opaque-recipes`: the recipe entries no input set can hold
+(`opaque_recipes`), on every host the repository builds on.
+
+Each is reported with what to write instead. One the allowlist does not name
+fails, and so does an allowlist entry that names none any more, so a new
+opaque entry is a reviewed decision and the list only shrinks.
++/
+private int runCheckOpaqueRecipes()
+{
+    import std.file : exists, readText;
+    import std.path : buildPath;
+    import opaque_recipes : opaqueEntries, repositoryHosts;
+    import sdl_audit : parseAllowlist;
+    import sparkles.build_primitives.workspace.discovery : readWorkspaceAt;
+
+    const repoRoot = detectRepoRoot();
+    auto workspace = readWorkspaceAt(repoRoot);
+    if (workspace.hasError)
+    {
+        const detail = workspace.error.detail;
+        error(i"cannot read the workspace: $(detail)");
+        return 1;
+    }
+
+    const allowlistPath = buildPath(repoRoot, "apps", "ci", "opaque-recipe-allowlist.txt");
+    size_t badLine;
+    const allowed = allowlistPath.exists ? parseAllowlist(allowlistPath.readText, badLine) : null;
+    if (badLine)
+    {
+        error(i"$(allowlistPath):$(badLine): expected `recipe | entry | reason`");
+        return 1;
+    }
+    auto used = new bool[allowed.length];
+
+    const entries = opaqueEntries(workspace.value.rootName, workspace.value.recipes, repositoryHosts);
+    size_t unlisted;
+    foreach (ref e; entries)
+    {
+        bool found;
+        foreach (i, a; allowed)
+            if (a.path == e.recipe && a.literal == e.entry)
+                found = used[i] = true;
+        const line = e.diagnostic;
+        if (found)
+            info(i"$(line) (allowlisted)");
+        else
+        {
+            error(i"$(line) Allowlist it with a reason only if it cannot go.");
+            unlisted++;
+        }
+    }
+    size_t stale;
+    foreach (i, a; allowed)
+        if (!used[i])
+        {
+            const recipe = a.path, entry = a.literal;
+            error(i"$(allowlistPath): `$(recipe) | $(entry)` matches nothing; delete it");
+            stale++;
+        }
+    if (unlisted || stale)
+        return 1;
+    info(i"✓ Opaque recipe entries: $(entries.length) found, each allowlisted with a reason.");
     return 0;
 }
 
