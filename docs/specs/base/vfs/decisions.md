@@ -319,8 +319,9 @@ tree.
 
 **Choice.** (b), for simplicity
 ([`VFO10`](./SPEC.md#vfo10-symbolic-link-targets)). It is one lexical check,
-identical on every platform, and it closes the case cap-std closes. Code that
-needs an absolute link creates it outside this interface.
+identical on every platform, and it closes the case cap-std closes. An
+absolute link is made only by `symlinkTo`, with a capability to its target
+([DV33](#dv33-an-absolute-link-needs-a-capability-to-its-target)).
 
 **Revisit if** a consumer extracts archives through this interface and needs
 protection against relative escaping links, the symlink variant of
@@ -483,6 +484,46 @@ from [`VFO6`](./SPEC.md#vfo6-stat) the next thing to deliver.
   a truncation, `writeFile`, `rename` and `setMtime` each record its value.
   Two changes at one value fall in one tick, which is how a test reproduces a
   file system with coarse timestamps.
+
+### DV33: An absolute link needs a capability to its target
+
+_Chosen by the owner on 2026-11-13; amends [DV23](#dv23-symbolic-link-targets)._
+
+**Question.** The fileset explorer's `cp` copies a fileset through this
+interface, and a fileset may hold absolute links: a Nix checkout's
+`.pre-commit-config.yaml` and `result`, a `.direnv` input, each into
+`/nix/store`. `symlinkAt` refuses them (`VFO10`). Which absolute links may be
+made, and on what grounds that do not name `/nix/store`?
+
+**Alternatives.** (a) A right, say `absoluteLink`, held by the handle the
+link is made in: every target or none. (b) Only a target read through this
+interface may be stored, an opaque value `readlinkAt` makes: a copy carries
+the links it found and never invents one, but carries a hostile tree's
+`/etc/shadow` link into a trusted place as readily. (c) A property of the
+target, such as its being on a read-only mount: checkable, but racy, per
+platform, and not true of every store. (d) A capability to the target: the
+call takes a directory handle with `lookup`, and the link names a path
+beneath the directory it holds.
+
+**Evidence.** An absolute link reads and writes nothing outside the root
+when it is made; it aims whoever later follows it, with their authority.
+The question is therefore whether the caller has the standing to name the
+place. In an object-capability system a reference can be passed only by
+someone who holds it: only connectivity begets connectivity. A handle with
+`lookup` is that standing, and `openRoot` is already the one place ambient
+authority is spent (`VFH7`).
+
+**Choice.** (d): `symlinkTo(name, target, path)` (`VFO10`), the link's
+absolute part the path the backend reports for `target`'s directory
+(`VFB9`), never text the caller writes, and `path` lexically beneath it. A
+link into the store is allowed because the caller was handed a capability
+to the store, a link to `/etc` refused because it was not; a narrower handle,
+one store path, grants exactly that subtree. (a) is (d) with a capability to
+`/` granted implicitly, so it is not needed.
+
+**Revisit if** a backend cannot report a directory's path (Windows, until
+`GetFinalPathNameByHandleW` is wired), or a consumer needs to recreate a
+link to a target that no longer exists, which no handle can name.
 
 ## Open
 

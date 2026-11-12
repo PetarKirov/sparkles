@@ -352,6 +352,7 @@ optional argument of [`VFO5`](#vfo5-sharing-of-created-entries); passing
 | `stat(mask)`                                 | `stat`                                                  | a `Stat` of the directory the handle holds                                                                |
 | `readlinkAt(name, buffer)`                   | `stat`                                                  | the target bytes, as a slice of `buffer`                                                                  |
 | `symlinkAt(name, target)`                    | `create`                                                | nothing; see [`VFO10`](#vfo10-symbolic-link-targets)                                                      |
+| `symlinkTo(name, target, path)`               | `create`; `lookup` on `target`                          | nothing; an absolute link, see [`VFO10`](#vfo10-symbolic-link-targets) |
 | `unlinkAt(name)`                             | `remove`                                                | nothing; `isADirectory` for a directory                                                                   |
 | `rmdirAt(name)`                              | `remove`                                                | nothing; `notEmpty` if it has entries                                                                     |
 | `renameAt(name, dst, dstName)`               | `rename` on both                                        | nothing; replaces a non-directory target                                                                  |
@@ -491,11 +492,29 @@ drive letter, a UNC prefix or an NT prefix. It **must** fail with
 `invalidName` if `target` is empty or contains NUL. Any other target is stored
 verbatim, including one whose `..` components climb above the root.
 
+An absolute target **must** be stored only by `symlinkTo(name, target,
+path)`, which takes, beside the link's name, a directory handle `target`
+with the `lookup` right and a `path` relative to it. It **must** fail with
+`escapesRoot`, before any backend call, if `path` is absolute or has an
+empty, `.` or `..` component, and with `invalidName` if it contains NUL; an
+empty `path` names `target` itself. It stores the absolute path the backend
+reports for the directory `target` holds
+([`VFB9`](./backends.md#vfb9-directory-paths)), joined with `path`, and
+nothing else: the caller never writes the absolute part. It needs `create`
+on the handle the link is made in, and a backend without directory paths
+does not compile it.
+
 _Rationale:_ No walk through this interface can follow an absolute target
 ([`VFP5`](#vfp5-beneath)), so such a link only ever misleads other tools, as
 cap-std also judges. A relative target's escape depends on where the link
 ends up, which renames can change, so it is not checked
-([DV23](./decisions.md#dv23-symbolic-link-targets)).
+([DV23](./decisions.md#dv23-symbolic-link-targets)). An absolute link is a
+reference out of the root, and only connectivity begets connectivity: a
+caller may make one only to a place it already holds a capability for, so
+which absolute links can exist is decided by which roots were opened, where
+ambient authority is spent ([`VFH7`](#vfh7-the-ambient-constructor)), and
+not by a list of allowed prefixes
+([DV33](./decisions.md#dv33-an-absolute-link-needs-a-capability-to-its-target)).
 
 <a id="vfo11-mapping"></a>
 **VFO11: Mapping.** On a backend that offers mapping
