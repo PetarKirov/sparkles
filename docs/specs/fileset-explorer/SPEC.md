@@ -607,12 +607,16 @@ online; serving), and once serving, the command a receiver runs,
 `sendme receive <ticket>`, whole, wrapped across lines rather than cut; the
 peers connected and the bytes sent so far; and, on every layout, a Copy
 button that copies the command and marks it copied, and a Stop button, with
-`y` and `x` doing the same. Stopping **must** end the provider and return the
-tab to the names. The explorer **must** refresh the tab while the provider
-runs without any input arriving. _Detection:_ a stand-in stepped through its
-phases shows each, `y` copies the receive command, and `x` stops it; on the
-keyboard's layout a click on Copy copies it and marks it, and Stop stops;
-frames are drawn with no event while it serves.
+`y` and `x` doing the same. Where the platform has a share sheet, as Android
+has, a Share button beside Copy **must** hand the command to it, and say why
+when the sheet cannot open; where it has none, there is no Share button.
+Stopping **must** end the provider and return the tab to the names. The
+explorer **must** refresh the tab while the provider runs without any input
+arriving. _Detection:_ a stand-in stepped through its phases shows each, `y`
+copies the receive command, and `x` stops it; on the keyboard's layout a
+click on Copy copies it and marks it, Share is absent until a share sheet is
+given, then hands it the command or shows its reason, and Stop stops; frames
+are drawn with no event while it serves.
 
 **`FXS5` — The sent set is a snapshot.** What is being sent **must not**
 change when the query does. While the provider runs and the query no longer

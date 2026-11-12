@@ -67,6 +67,13 @@ context (`FXS9`).
 */
 string function(ref IrohSend) prepareIrohSend;
 
+/**
+Hands text to the platform's share sheet, saying why it could not, or
+returning null; `null` itself where the platform has none, as a desktop
+has not. Android's is `ACTION_SEND` (`FXS4`).
+*/
+string function(string text) shareText;
+
 /// Opens the iroh bridge; `null` and the reason when it cannot be loaded.
 BlobProvider openIrohProvider(out string why)
 {

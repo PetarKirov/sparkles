@@ -38,7 +38,7 @@ import sparkles.ui.widget : Alignment, Builder, TextSpan, Widget, WidgetKind, Wi
 import sparkles.ui.wrap : TextWrap;
 
 import evaluate : autoIdBytes, evaluate, humanBytes, Outcome, Root;
-import send : SendStage, Sending;
+import send : SendStage, Sending, shareText;
 import help : helpSource, namedTrees, runFileset, TryBlock, tryBlocks, TryOutcome;
 import export_tab : exportFor, highlightCode, languageOf, targets;
 import sparkles.build_primitives.fileset.emit : Emitted, NixGlobs, Target, targetName;
@@ -1461,6 +1461,8 @@ struct ExplorerApp
                     rows ~= ["receive", commandCopied ? cmd ~ "  ✓ copied" : cmd];
                     rows ~= ["peers", text(sending.state.peers, " connected · ", sending.state.requests,
                         " requests · ", humanBytes(sending.state.bytesSent), " sent")];
+                    if (shareProblem.length)
+                        rows ~= ["share", shareProblem];
                 }
                 if (query.text != sending.sent.query)
                     rows ~= ["sent query", sending.sent.query];
@@ -1489,6 +1491,7 @@ struct ExplorerApp
         cancel,  ///
         copy,    /// the receive command
         stop,    ///
+        share,   /// the receive command, to the platform's share sheet
     }
 
     private uint statsView(ref Builder b, in string[2][] rows, int width, int height)
@@ -1577,7 +1580,12 @@ struct ExplorerApp
             case SendStage.running:
                 uint[] chips;
                 if (sending.receiveCommand.length)
+                {
                     chips ~= [touchChip(b, "Copy", sendHitBase + SendButton.copy), gapCells(b, 1)];
+                    // Where the platform has a share sheet (Android's).
+                    if (shareText !is null)
+                        chips ~= [touchChip(b, "Share", sendHitBase + SendButton.share), gapCells(b, 1)];
+                }
                 return chips ~ touchChip(b, "Stop", sendHitBase + SendButton.stop);
         }
     }
@@ -1590,6 +1598,8 @@ struct ExplorerApp
     Sending sending;
     /// The receive command of the send running was copied (`FXS4`).
     bool commandCopied;
+    /// Why the share sheet could not take the command, when it could not.
+    string shareProblem;
 
     /// Copies name `i` to the clipboard, and marks its line (`FXS2`).
     void copyName(H)(ref H h, size_t i)
@@ -1611,6 +1621,7 @@ struct ExplorerApp
                 if (sending.stage == SendStage.asking)
                 {
                     commandCopied = false; // a new send, a new ticket
+                    shareProblem = null;
                     return sending.confirm();
                 }
                 if (sending.stage == SendStage.running)
@@ -1635,6 +1646,11 @@ struct ExplorerApp
                 break;
             case SendButton.stop:
                 sending.stop();
+                break;
+            case SendButton.share:
+                if (const cmd = sending.receiveCommand)
+                    if (shareText !is null)
+                        shareProblem = shareText(cmd);
                 break;
         }
     }
