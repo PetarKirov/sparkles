@@ -71,6 +71,18 @@ session stops. `stop` ends the session, removes its store and frees it.
 With `noRelay`, the ticket carries direct addresses only, which is how the
 tests send and receive on one machine without a network.
 
+## On Android
+
+`nix/packages/android/iroh-send.nix` builds the same library for each ABI
+an APK ships. Before its first `start`, an Android app calls
+`installAndroidContext` with its `JavaVM` and a global reference to its
+application `Context`. iroh reads the system's DNS servers through JNI, and
+without them its fallback relies on unwinding, which the build's
+`panic = "abort"` turns into an abort of the whole app. The fileset
+explorer does this in `installJniContext` (`android_entry.d`). The app also
+needs the `INTERNET` permission, and `ACCESS_NETWORK_STATE` for the
+network watcher.
+
 ## Testing
 
 `dub test :iroh-send` runs against the library and `sendme` the dev shell
