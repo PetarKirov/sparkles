@@ -648,3 +648,28 @@ host return and live terminal interrupts; they cannot run a shutdown hook
 after SIGKILL or prove Android activity destruction or power-loss durability.
 Recovery resource bounds, device latency and the quota-blocked Argon review
 remain open.
+
+### Desktop checkpoint cadence and Nix artifact — 2026-11-13
+
+The checked [cadence probe](../../../apps/editor/tools/recovery-cadence.d)
+attempts edits every 8 ms for two seconds, then flushes the latest revision.
+On an AMD Ryzen 9 7940HX / x86-64 host with a ZFS temporary filesystem,
+the [captured results](./results/2026-11-13-recovery-cadence-before.csv) show
+maximum observed ages of the oldest unacknowledged state of 276 ms (1 MiB,
+80-column lines), 319 ms (10 MiB, 80-column lines) and 500 ms (1 MiB single
+line), with zero overdue samples. The process's cumulative peak RSS across
+all three sequential fixtures was 255,672 KiB. Reproduce with
+`dub run --single apps/editor/tools/recovery-cadence.d -b checked`.
+
+The long line permitted only 16 edits in two seconds: maximum insertion time
+was 121 ms, compared with below 0.1 ms on the regular-line fixtures. A 499 Hz
+user-space perf profile of `--single-line` identifies per-grapheme text-tree
+lookups/copies and width/boundary scans in `LogicalContext.columnOf`, called
+for the IME caret rectangle after edits. This is an unresolved editor latency
+finding, not checkpoint-write latency or renderer/FPS evidence. The probe
+does not draw frames or establish Android or archive-count resource bounds.
+
+`nix build .#editor --no-link` succeeds at `addd8d7a9`. The installed
+`editor --version` emits stamped JSON identifying `sparkles:editor`, version
+0.1.0, build type `checked`, commit `addd8d7`, and `dirty: false`, together
+with dependency component versions.
