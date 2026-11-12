@@ -90,6 +90,7 @@ struct Editor
         if (shot.length) config.gui.gui = true;
         auto outcome = runApp(app, config);
         if (app.captureError.length) return failRun(app.captureError);
+        if (app.recoveryShutdownError.length) return failRun("Recovery checkpoint failed during shutdown: " ~ app.recoveryShutdownError);
         return asRunResult(outcome, "editor");
     }
 }

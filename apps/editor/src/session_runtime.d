@@ -190,6 +190,8 @@ final class RecoverySession
     bool pending() const @safe pure nothrow @nogc => revision > durableRevision || adoptions.length != 0;
     bool ready() const @safe pure nothrow @nogc => writer !is null;
     bool maintenanceBusy() const @safe pure nothrow @nogc => job !is null;
+    bool busy() const @safe pure nothrow @nogc => job !is null || (writer !is null && writer.busy);
+    bool closed() const @safe pure nothrow @nogc => stopped;
     bool discoveryComplete() const @safe pure nothrow @nogc => discovered;
     size_t offerCount() const @safe pure nothrow @nogc => offers.length;
     RecoveryOffer offer(size_t index) @safe pure nothrow @nogc

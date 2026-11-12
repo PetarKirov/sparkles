@@ -623,3 +623,28 @@ tests and all 823 UI tests pass, and the live round trip succeeds afterward.
 Argon Medium's adoption/full-flow review remains blocked by its quota.
 TUI EOF, nonvetoable host teardown, Android lifecycle, recovery resource
 bounds and actual one-second/device latency remain open.
+
+### Terminal close policy and host teardown — 2026-11-13
+
+The editor suite passes 50 tests. Its shutdown hook captures edits that have
+not reached another view pass, attempts a final checkpoint, and returns
+unrecoverable checkpoint failure to the CLI when no interactive surface is
+available. An explicit Exit without recovery decision is retained through
+shutdown and does not become a later CLI failure. Tests cover both success
+and initialization failure without changing the source text.
+
+Ungrabbed terminal Ctrl+C now uses the same optional application close hook
+as native closure. The real [PTY probe](../../../apps/editor/tools/tui-close-probe.d)
+verifies dirty-close deferral, Escape cancellation and Ctrl+Q/Discard with a
+clean exit. This probe first exposed terminal software flow control swallowing
+Ctrl+Q and Ctrl+S. A private-PTY regression also caught CR translation and
+high-byte stripping. Raw terminal setup now preserves those input bytes and
+restores original termios flags on closure. All 49 TUI tests, including the
+new byte/restore test and existing PTY integrations, pass.
+
+All 148 host tests pass. The checked Vulkan build and native SIGKILL/Restore/
+dirty-close probe pass with the new shutdown path. These tests cover orderly
+host return and live terminal interrupts; they cannot run a shutdown hook
+after SIGKILL or prove Android activity destruction or power-loss durability.
+Recovery resource bounds, device latency and the quota-blocked Argon review
+remain open.

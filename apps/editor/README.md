@@ -35,6 +35,8 @@ The command palette also lists editing operations and their effective keys.
 Ctrl+O opens a file, Ctrl+S saves and Ctrl+Shift+S chooses a destination.
 Ctrl+W closes a native tab; the TUI uses Ctrl+Shift+W to preserve kill-word.
 Ctrl+Q requests exit. Dirty documents offer Save, Discard or Cancel.
+Terminal Ctrl+C uses the same close policy; input loss attempts a final
+recovery checkpoint and reports failure when an interactive decision is impossible.
 
 Recovery archives default to `$XDG_STATE_HOME/sparkles/editor`, falling back
 to `$HOME/.local/state/sparkles/editor`. `--state-dir` selects a registry and
@@ -68,4 +70,5 @@ new process, continues editing, and exercises native dirty-close decisions:
 
 ```bash
 dub run --single apps/editor/tools/native-close-probe.d -b checked --compiler=ldc2
+dub run --single apps/editor/tools/tui-close-probe.d -b checked --compiler=ldc2
 ```

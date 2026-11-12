@@ -104,6 +104,56 @@ private class SaveIntent
     bool bom;
 }
 
+/// Without an interactive surface, a failed final checkpoint is returned to the CLI.
+@("editor.app.hostTeardownReportsRecoveryFailure")
+@safe unittest
+{
+    version (linux) {}
+    else
+    {
+        import sparkles.test_runner.skip : skipTest;
+        skipTest("Recovery directory leases currently require Linux.");
+    }
+    import sparkles.test_utils.tmpfs : TmpFS;
+    import sparkles.ui_app.record : RecordingHost;
+    import std.path : buildPath;
+    auto fixture = TmpFS.create();
+    EditorApp app;
+    scope (exit) app.dispose();
+    app.enableRecovery(buildPath(fixture.dir, "outside"), buildPath(fixture.dir, "root"));
+    app.document.field.insert("retained contents");
+    RecordingHost host;
+    app.shutdown(host);
+    assert(app.recoveryShutdownError.length && app.document.field.text == "retained contents");
+}
+
+/// Nonvetoable host teardown checkpoints edits that have not reached another view pass.
+@("editor.app.hostTeardownFlushesLatestEdits")
+@safe unittest
+{
+    version (linux) {}
+    else
+    {
+        import sparkles.test_runner.skip : skipTest;
+        skipTest("Recovery directory leases currently require Linux.");
+    }
+    import session_discovery : discoverSessions;
+    import sparkles.test_utils.tmpfs : TmpFS;
+    import sparkles.ui_app.record : RecordingHost;
+    import std.path : buildPath;
+    auto fixture = TmpFS.create();
+    const base = buildPath(fixture.dir, "sessions");
+    EditorApp app;
+    scope (exit) app.dispose();
+    app.enableRecovery(base, fixture.dir);
+    app.document.field.insert("last moment");
+    RecordingHost host;
+    app.shutdown(host);
+    auto catalog = discoverSessions(base);
+    scope (exit) foreach (offer; catalog.offers) offer.close();
+    assert(catalog.offers.length == 1 && catalog.offers[0].record.tabs[0].content == "last moment");
+}
+
 /// A restored duplicate becomes an unsaved copy and cannot overwrite another open tab.
 @("editor.app.restoreDuplicatePathIsCopy")
 @safe unittest
@@ -261,6 +311,9 @@ private class SaveIntent
     cast(void) app.view(host);
     app.execute(CommandId(Command.discard));
     assert(app.quitRequested);
+    app.shutdown(host);
+    assert(!app.recoveryShutdownError.length,
+        "An explicit Exit without recovery decision must not become a CLI failure afterward.");
 }
 
 private enum Dialog : ubyte { none, openPath, savePath, dirtyClose, recoveryClose, restoreOffer }
@@ -275,6 +328,7 @@ struct EditorApp
     string status;
     string shotPath;
     string captureError;
+    string recoveryShutdownError;
     string lastOpenError;
     private int shotCountdown = 3;
     private Document[] tabs;
@@ -310,6 +364,7 @@ struct EditorApp
     private RecoverySession recovery;
     private bool recoveryExit;
     private bool recoveryFailureShown;
+    private bool skipRecoveryFlush;
     Command startupCommand;
 
     /// Enable recovery only with an explicitly supplied platform state namespace.
@@ -712,7 +767,21 @@ struct EditorApp
     /// The host shuts workers down before releasing document snapshots.
     void shutdown(H)(ref H host)
     {
-        dispose();
+        scope (exit) dispose();
+        if (recovery is null || recovery.closed || skipRecoveryFlush) return;
+        observeRecovery();
+        recovery.flush();
+        while (recovery.pending)
+        {
+            recovery.poll();
+            if (recovery.error.length && !recovery.busy) break;
+            if (recovery.pending)
+            {
+                import core.thread : Thread;
+                (() @trusted { Thread.sleep(1.msecs); })();
+            }
+        }
+        recoveryShutdownError = recovery.error;
     }
     private DisplayedFrame displayed;
     private HoverTarget[] hits;
@@ -956,7 +1025,11 @@ struct EditorApp
         case Command.discard:
             if (dialog == Dialog.recoveryClose)
             {
-                if (recoveryFailureShown && recovery.error.length) quitRequested = true;
+                if (recoveryFailureShown && recovery.error.length)
+                {
+                    skipRecoveryFlush = true;
+                    quitRequested = true;
+                }
             }
             else finishClose(closingDocument);
             break;
