@@ -35,7 +35,7 @@ import std.algorithm.comparison : max, min;
 
 import sparkles.base.prettyprint : prettyPrint, PrettyPrintOptions;
 import sparkles.base.term_color : RgbColor;
-import sparkles.base.term_control : PointerShape;
+import sparkles.base.term_control : CursorShape, PointerShape, TextCursor;
 import sparkles.event_horizon : DefaultLoop, LoopConfig;
 import sparkles.appearance : ContrastLevel, overriddenBy, SystemAppearance;
 version (Android) {} else version (linux)
@@ -3792,6 +3792,27 @@ private enum FrameOutcome
     failed,    ///
 }
 
+/**
+Paints the frame's text cursor (`HST20`) over the drawn frame, in pixels from
+the content's origin: a window has no cursor of its own to place, so the caret
+is a bar two density-independent pixels wide at the cell's left edge (or the
+whole cell, or a line under it). The raylib arm paints the same in `gui_loop`.
+*/
+package void paintTextCursor(C)(ref C canvas, in TextCursor c, int cellW, int cellH, float density,
+    RgbColor color)
+{
+    if (!c.visible)
+        return;
+    const x = c.x * cellW, y = c.y * cellH;
+    const thin = density > 1 ? cast(int)(2 * density + 0.5f) : 2;
+    final switch (c.shape)
+    {
+        case CursorShape.bar: canvas.fillPx(x, y, thin, cellH, rgba(color, 255)); break;
+        case CursorShape.block: canvas.fillPx(x, y, cellW, cellH, rgba(color, 128)); break;
+        case CursorShape.underline: canvas.fillPx(x, y + cellH - thin, cellW, thin, rgba(color, 255)); break;
+    }
+}
+
 // The window's ground, inside the frame's margin, in device pixels from the
 // surface's corner.
 private void fillWindowGround(C)(ref C canvas, ref NativeSession session, RgbColor ground) @system
@@ -4001,6 +4022,9 @@ private FrameOutcome drawFrame(alias draw)(ref Gpu gpu, ref NativeHost host,
         auto drawZone = cpuZone!"app-draw";
         draw(host);
     }
+    paintTextCursor(gpu.canvas, host.textCursorAsk, session.font.cellW, session.font.cellH,
+        cast(float) session.scale,
+        host.textCursorHasColor ? host.textCursorColor : RgbColor(0xc0, 0xca, 0xf5));
     // The client frame last, over everything, in the bar's rows above the
     // cells (`F13`).
     if (session.frame.active)
