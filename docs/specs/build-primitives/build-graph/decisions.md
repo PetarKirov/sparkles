@@ -1397,3 +1397,27 @@ not reused outside the Nix sandbox.
 
 **Revisit when** file claims in the task model (W5) are delivered, or a
 test suite's reruns cost enough to matter.
+
+## D53: Typed generators come before watching (accepted)
+
+**Question.** Three recipes run the shader compiler through
+`preGenerateCommands`, and a command's reads are not declared, so every
+request that builds `ui` in `gpu-effects`, `ui-vulkan` or `vulkan-wsi`, which
+includes `text-lab`'s, is uncertain (BGW4). A sound `ci build --watch
+:text-lab` would rerun on every change. Deliver typed generators (BGG1) before
+watching, or accept the uncertainty until later?
+
+**Choice.** Before watching, decided by the owner on 2026-11-12: milestone WG
+of the [fileset-native workspace](./fileset-native-workspace.md#_11-delivery-plan)
+comes after W2 and before W6. For selection it needs only the declaration:
+the resolver recognizes the shader compiler's command and states its tool,
+its inputs, a request for the package's device configuration, and its output
+directory. The action graph's `generate` actions (BGG2–BGG6) keep their own
+milestone in the build graph's plan.
+
+**Trade-offs.** Recognition is by the command's shape, which a recipe could
+write differently; an entry not recognized stays opaque rather than guessed
+at.
+
+**Revisit when** a recipe declares a generator that is not the shader
+compiler.
