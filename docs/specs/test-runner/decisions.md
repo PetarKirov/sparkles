@@ -306,3 +306,41 @@ beyond the three standard ones, which TRW1 rules out on Windows.
 leaves standard input as it was, for a test run by hand.
 
 **Revisit when** a test needs its standard input under the runner.
+
+## TRD13: The counters are a package of their own (accepted)
+
+**Question.** `main` moved the hardware and OS counters (perf groups,
+rdpmc, raw events, syscall tracepoints, pressure stalls, the capability
+seam) into `sparkles:profiling`, so a frame loop reads what a benchmark does.
+The harness's measurement layer reads them too, and the harness may depend
+on no package that closes a cycle (TRP1); `sparkles:profiling` depends on
+`sparkles:base`. Where do the counters live, and how do both reach them?
+
+**Alternatives.**
+
+- The harness compiles the counters from `sparkles:profiling`'s directory.
+  LDC builds each library as one object, so a binary linking both libraries,
+  as `sparkles:ui-app`'s tests do, gets every counter twice and fails to
+  link.
+- `sparkles:profiling` depends on the harness for them. A frame-profiling
+  library would depend on the test harness.
+- The harness owns them again, and `sparkles:profiling` depends on it: the
+  same edge, and it undoes `main`'s ownership.
+- A package of their own, `sparkles:profiling-counters`, which depends on no
+  repository package but the attributes, with the harness and `sparkles:profiling` depending on
+  it.
+
+**Choice.** The last, accepted by the owner on 2026-11-12. The counters keep
+their modules (`sparkles.profiling.counters.*`) and are compiled once. Their
+two uses of `sparkles:base`, a C path and an interpolated message, became
+druntime and Phobos code. `counters/frame.d`, which reads them for a frame
+loop and uses `sparkles:base`, stays in `sparkles:profiling`.
+
+**Trade-offs.** The counters' tests use the harness, which depends on them,
+so their unittest configuration self-hosts with the harness's sources, and
+the harness's own tests run there a second time. The sources moved to
+`libs/profiling-counters/src`, because the Nix source closure finds a
+package's sources at `libs/<name>/src`.
+
+**Revisit when** the counters need `sparkles:base` again: they would then
+have to leave the harness's closure, or `sparkles:base` would.

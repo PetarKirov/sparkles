@@ -132,7 +132,8 @@ The runner spans four dub packages and two processes;
 - **`sparkles:test-harness`** (`libs/test-harness`) — the code that runs
   inside a test binary: the test model, discovery, execution with the stack
   budget, the fallback, the protocol's binary side, and the measurement
-  layer. It depends on no repository package but the attributes.
+  layer. It depends on no repository package but the attributes and
+  `sparkles:profiling-counters` (TRD13).
 - **`sparkles:test-runner`** (`libs/test-runner`) — a `sourceLibrary` shim,
   the registration hook compiled into each test root.
 - **`sparkles:test-runner-impl`** (`libs/test-runner-impl`) — the runner
@@ -142,29 +143,29 @@ The runner spans four dub packages and two processes;
 
 Measurement modules, under `src/sparkles/test_runner/` of the package named,
 except the counters, which `sparkles:profiling` owns as
-`sparkles.profiling.counters.*` (`libs/profiling/src/sparkles/profiling/counters/`)
-so a frame loop reads the same counters a benchmark does. The harness
-compiles them from that directory, so it still depends on no repository
-package:
+`sparkles.profiling.counters.*` so a frame loop reads the same counters a
+benchmark does. They are built as `sparkles:profiling-counters`
+(`libs/profiling-counters/`), which depends only on the attributes, so the
+harness and `sparkles:profiling` both depend on it (TRD13):
 
-| Module           | Package            | Role                                                                   |
-| ---------------- | ------------------ | ---------------------------------------------------------------------- |
-| `bench.d`        | `test-harness`     | protocol driver, `benchIter`/`benchCase`/`blackBox`, `BenchStats`      |
-| `perf.d`         | `profiling`        | hardware-counter tier (`perf_event` group)                             |
-| `perf_group.d`   | `profiling`        | shared counting bracket + multiplex-delta scaling                      |
-| `tier0.d`        | `test-harness`     | no-privilege tier (`getrusage` + `/proc/self/io`)                      |
-| `syscalls.d`     | `profiling`        | syscall-tracepoint tier                                                |
-| `metrics.d`      | `test-harness`     | the metric catalog seam (§5)                                           |
-| `capability.d`   | `profiling`        | the capability seam: flags, reports, backend trait, host probes (§6.2) |
-| `raw.d`          | `profiling`        | raw hardware-event tier (`raw:r<hex>` selectors)                       |
-| `event_naming.d` | `test-harness`     | symbolic event names via soft libpfm4 (`pfm:<name>`)                   |
-| `rdpmc.d`        | `profiling`        | user-space counter reads (the `selfMonitoring` primitive)              |
-| `workload.d`     | `test-harness`     | the `@workload` window model: wall source, decomposition, driver       |
-| `psi.d`          | `profiling`        | PSI stall integrals (`/proc/pressure` parser + diagnostic source)      |
-| `cache_regime.d` | `test-harness`     | page-cache regime control: fs probes, residency, the stamp policy      |
-| `skip.d`         | `test-harness`     | `skipTest`                                                             |
-| `bench_json.d`   | `test-runner-impl` | the `--bench-json` emitter (§8.3)                                      |
-| `reporting.d`    | `test-runner-impl` | tables, live displays, progress                                        |
+| Module           | Package              | Role                                                                   |
+| ---------------- | -------------------- | ---------------------------------------------------------------------- |
+| `bench.d`        | `test-harness`       | protocol driver, `benchIter`/`benchCase`/`blackBox`, `BenchStats`      |
+| `perf.d`         | `profiling-counters` | hardware-counter tier (`perf_event` group)                             |
+| `perf_group.d`   | `profiling-counters` | shared counting bracket + multiplex-delta scaling                      |
+| `tier0.d`        | `test-harness`       | no-privilege tier (`getrusage` + `/proc/self/io`)                      |
+| `syscalls.d`     | `profiling-counters` | syscall-tracepoint tier                                                |
+| `metrics.d`      | `test-harness`       | the metric catalog seam (§5)                                           |
+| `capability.d`   | `profiling-counters` | the capability seam: flags, reports, backend trait, host probes (§6.2) |
+| `raw.d`          | `profiling-counters` | raw hardware-event tier (`raw:r<hex>` selectors)                       |
+| `event_naming.d` | `test-harness`       | symbolic event names via soft libpfm4 (`pfm:<name>`)                   |
+| `rdpmc.d`        | `profiling-counters` | user-space counter reads (the `selfMonitoring` primitive)              |
+| `workload.d`     | `test-harness`       | the `@workload` window model: wall source, decomposition, driver       |
+| `psi.d`          | `profiling-counters` | PSI stall integrals (`/proc/pressure` parser + diagnostic source)      |
+| `cache_regime.d` | `test-harness`       | page-cache regime control: fs probes, residency, the stamp policy      |
+| `skip.d`         | `test-harness`       | `skipTest`                                                             |
+| `bench_json.d`   | `test-runner-impl`   | the `--bench-json` emitter (§8.3)                                      |
+| `reporting.d`    | `test-runner-impl`   | tables, live displays, progress                                        |
 
 The harness also holds `execution.d` and `stack_budget.d`, which run one test
 on a budgeted thread, and `macos_trace.d`, the in-process trace handler.
