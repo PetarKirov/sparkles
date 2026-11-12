@@ -161,9 +161,13 @@ records as open.
 
 Three reaches exist in the repository's recipes, all in test configurations:
 `ui` into `libs/dql/src`, `profiling-counters` into `libs/test-harness/src`,
-and `font-oracle` into `libs/font/test`. No recipe path is opaque (BGW4).
-Three recipes state a command (`libs/ui`, `libs/ui-vulkan` and
-`libs/vulkan-wsi`, each to generate shaders), and none a path-carrying flag.
+and `font-oracle` into `libs/font/test`. Three recipes state a command
+(`libs/ui`, `libs/ui-vulkan` and `libs/vulkan-wsi`, each to generate
+shaders). One path and one flag are opaque (BGW4), both in
+`sparkles:profiling`'s `tracy` and `unittest-tracy` configurations: an import
+root and a library directory beneath `$SPARKLES_TRACY_PREFIX`, outside the
+repository. The draft found none, because its prototype read only the
+configuration the workspace's rule activates.
 
 ### 3.2 `resolve/`
 
@@ -311,19 +315,22 @@ An excluded source file stays in the input set because an import path still
 reaches it: a module that is not compiled can be imported.
 
 ```d
-// Prototype: `packageInputSets` in workspace/input_sets.d.
+// Prototype: `inputSets` in workspace/input_sets.d. One set per package and
+// configuration the host allows, keyed in `ConfiguredPackage` order.
 struct InputSets
 {
-    ref const(Filesets) sets() const;         // one arena, patterns relative to the root
-    Fileset inputs(size_t package_) const;
-    Fileset sources(size_t package_) const;   // a subset of `inputs`
-    Fileset workspaceInputs() const;
-    const(string)[] rootsOf(size_t package_) const;
+    ref const(Filesets) sets() const;              // one arena, patterns relative to the root
+    ptrdiff_t indexOf(ConfiguredPackage pair) const;
+    Fileset inputs(size_t set) const;
+    Fileset sources(size_t set) const;             // a subset of `inputs`
+    bool isOpaque(size_t set) const;               // an opaque entry concerns it (BGW4)
+    Fileset workspace() const;                     // the workspace inputs (BGW12)
+    const(string)[] rootsOf(size_t set) const;
     OpaqueDirective[] opaque;
 }
 
-InputSets inputSets(const ref Workspace workspace, const ref PackageGraph graph,
-    RecipeRole role, scope const(string)[] hostTokens) @safe pure nothrow;
+InputSets inputSets(const ref PackageGraph graph, scope const(SubPackageRecipe)[] recipes,
+    scope const(string)[] hostTokens, in WorkspaceInputs workspace) @safe nothrow;
 ```
 
 _Detection:_ for every request the agreement oracle runs, the members of
@@ -367,7 +374,7 @@ order, without reading the file system. The path need not exist, so a deleted
 file is answered like any other.
 
 ```d
-// Prototype: `PackageInputSets.eachClaimant`.
+// Prototype: `InputSets.eachClaimant`; the sink hears each claiming set.
 void eachClaimant(Sink)(scope const(char)[] path, scope Sink sink);
 ```
 
@@ -393,7 +400,7 @@ inputs (BGW12) hold the paths such a lookup could find, so selection
 accounts for them too ([D49](./decisions.md#d49-the-names-at-the-worktree-root-are-a-workspace-input-accepted)).
 
 ```d
-Fileset declaredReads(ref InputSets inputs, scope const(uint)[] dependencyClosure);
+Fileset declaredReads(ref InputSets inputs, const ref Request request);  // its closure's sets, and the workspace inputs
 ```
 
 A reach (§2) whose owner is not among the package's dependencies is a hidden
@@ -962,16 +969,16 @@ earlier if `ci`'s rewriting tasks need it. W6 depends on W4.
 The prototype is evidence for the seam, on one host, in an unoptimized build.
 It is not acceptance of any requirement.
 
-| Requirement | Status                                                                                                                                           | Evidence                                                                                                                                                                                       |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| BGW1        | partial: the recipes are read once into one value; not through the VFS, and with no read set                                                     | `readWorkspaceRecipes` in `libs/build-primitives/src/sparkles/build_primitives/workspace/package_graph.d`                                                                                      |
-| BGW2        | planned                                                                                                                                          | —                                                                                                                                                                                              |
-| BGW3, BGW4  | partial: the active configuration is the workspace's, not dub's per-request choice; flags and commands are not reported as opaque; no dub oracle | `packageInputSets` in `libs/build-primitives/src/sparkles/build_primitives/workspace/input_sets.d` and its tests, which find no opaque directive in this repository's recipes                  |
-| BGW5        | planned                                                                                                                                          | —                                                                                                                                                                                              |
-| BGW6        | partial: no link targets (BGW11)                                                                                                                 | `eachClaimant` in `libs/build-primitives/src/sparkles/build_primitives/workspace/input_sets.d`; `judge` and `selects` in `libs/build-primitives/src/sparkles/build_primitives/fileset/value.d` |
-| BGW7–BGW11  | planned                                                                                                                                          | —                                                                                                                                                                                              |
-| BGW12       | partial: workspace inputs are not modelled                                                                                                       | `affectedBy` in `libs/build-primitives/src/sparkles/build_primitives/workspace/input_sets.d`, over fixtures and over this repository                                                           |
-| BGW13–BGW19 | planned                                                                                                                                          | —                                                                                                                                                                                              |
+| Requirement | Status                                                                                                                           | Evidence                                                                                                                                                                                                                                                                |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| BGW1        | partial: the recipes are read once into one value; not through the VFS, and with no read set                                     | `readWorkspaceRecipes` in `libs/build-primitives/src/sparkles/build_primitives/workspace/package_graph.d`                                                                                                                                                               |
+| BGW2        | planned                                                                                                                          | —                                                                                                                                                                                                                                                                       |
+| BGW3, BGW4  | partial: one set per package and configuration, with path-carrying flags and commands reported as opaque; no dub oracle yet      | `inputSets` in `libs/build-primitives/src/sparkles/build_primitives/workspace/input_sets.d` and its tests, which find exactly this repository's opaque entries: the shader generators of `ui`, `ui-vulkan` and `vulkan-wsi`, and the Tracy prefix of `profiling` (§3.1) |
+| BGW5        | planned                                                                                                                          | —                                                                                                                                                                                                                                                                       |
+| BGW6        | partial: no link targets (BGW11)                                                                                                 | `eachClaimant` in `libs/build-primitives/src/sparkles/build_primitives/workspace/input_sets.d`; `judge` and `selects` in `libs/build-primitives/src/sparkles/build_primitives/fileset/value.d`                                                                          |
+| BGW7–BGW11  | planned                                                                                                                          | —                                                                                                                                                                                                                                                                       |
+| BGW12       | partial: requests come from resolutions and the workspace inputs are modelled; `ci` does not yet build its list of requests (W2) | `requestOf` and `affectedBy` in `libs/build-primitives/src/sparkles/build_primitives/workspace/input_sets.d`, over fixtures, a resolution of a tree literal, and three resolutions of this repository                                                                   |
+| BGW13–BGW19 | planned                                                                                                                          | —                                                                                                                                                                                                                                                                       |
 
 The oracles the delivered requirements need:
 
