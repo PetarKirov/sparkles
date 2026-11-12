@@ -1265,6 +1265,10 @@
               {
                 "text": "Decisions",
                 "link": "/specs/build-primitives/build-graph/decisions"
+              },
+              {
+                "text": "Fileset-native workspace",
+                "link": "/specs/build-primitives/build-graph/fileset-native-workspace"
               }
             ]
           },
