@@ -220,3 +220,35 @@ almost every tree, and the export is made from the open one already, as
 **Rejected.** The rewrite always, which is wrong on such a tree (the
 oracle's `src/x.d/` is one); the shim always, which writes a walk where one
 call does.
+
+## X18: Send rides `sendme`'s own stack, loaded at run time (accepted)
+
+_The transport was chosen by the owner on 2026-11-12; how the library is
+built and loaded was decided with it._
+
+**Question.** A receiver runs `sendme receive <ticket>`, so the explorer has
+to speak iroh: QUIC with raw-public-key TLS, relays, hole-punching and the
+blobs protocol. None of it exists in D here. How does the explorer send?
+
+**Alternatives.**
+
+- **A native D iroh.** The port the
+  [iroh survey](../../research/iroh/d-architecture-migration.md) plans,
+  whose QUIC core alone is about 38 000 lines of Rust to re-house. Months of
+  work before the first file leaves.
+- **Run `sendme send` as a child process.** Lay the members out as links in a
+  temporary directory and read the ticket from its output. Days, but on the
+  desktop only, with the session outside the explorer's control.
+- **A Rust bridge.** A small library with a C interface over iroh and
+  iroh-blobs, called from D.
+
+**Choice.** The Rust bridge, `sparkles:iroh-send`. Its Rust half is built
+inside `sendme` 0.37's own source tree, against its `Cargo.lock`, so it
+links the iroh `sendme` ships and the flake fetches no other crate. It
+imports the files as `sendme` does, so the two collections can be compared
+on every send (`FXS6`). The explorer loads it with `dlopen` instead of
+linking it: `dub` builds and tests need no Rust toolchain, the explorer runs
+without it (`FXS8`), and the APK carries it as one more library (`FXS9`).
+
+**Revisit** when the native port reaches the blobs protocol: the provider
+seam (`isBlobProvider`) is what a D provider would fill.

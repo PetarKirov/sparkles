@@ -15,11 +15,13 @@ contents, and over nothing else. The default name is the one Snix, a
 reimplementation of Nix, gives a directory in its content-addressed store,
 castore. It is BLAKE3 over a canonical directory encoding, and it names
 each file by the same digest the iroh transfer library uses for a blob. The
-same walk can also produce the SHA-256 of Nix's archive, or git's tree id.
+same walk can also produce the SHA-256 of Nix's archive, git's tree id, and
+the collection iroh's `sendme` sends; from them follow the Nix store path the
+tree would be copied to and the tree's Software Heritage identifier.
 The tree named holds the fileset's members and the directories on the way
 to them, so no name depends on how the fileset was written. Each name equals
-the one Snix, Nix or git computes for that tree, and a walk reads each file
-once, however many names it computes.
+the one Snix, Nix, git or iroh computes for that tree, and a walk reads each
+file once, and hashes it once per digest, however many names it computes.
 
 ## Introduction
 
@@ -57,14 +59,17 @@ Every encoding is checked against an independent implementation of the
 same format, on trees chosen to exercise the differences above: a format
 with no such oracle is not implemented.
 
-The contract covers castore with BLAKE3, the default; NAR; and git's tree
-with SHA-1 and SHA-256. It also covers a _tee_, which computes several of
+The contract covers castore with BLAKE3, the default; NAR; git's tree
+with SHA-1 and SHA-256, and the two other forms its SHA-1 id is printed in;
+and iroh's collection. It also covers a _tee_, which computes several of
 these names in one walk, and a _supplied tree_: a file's BLAKE3 hash tree,
 computed elsewhere and handed to a scheme so that the file can be named
-without reading it. It does not cover storing blobs or directories,
-parsing any of these formats, restoring a tree from a name, Nix store
-paths, signatures, or publishing to iroh. Those belong to stores and
-transports built on these names. Nor does it take a consistent snapshot of
+without reading it. Two names are _labelled_: the collection and the Nix
+store path also depend on a name the caller gives the tree, as `sendme` and
+Nix name what they are given. It does not cover storing blobs or
+directories, parsing any of these formats, restoring a tree from a name,
+store-path references, signatures, or publishing to iroh. Those belong to
+stores and transports built on these names. Nor does it take a consistent snapshot of
 a tree that is being written while it is named: holding the tree still, or
 naming a snapshot of it, is the caller's job. Formats that nothing built on this
 library needs, among them REAPI, OSTree, IPFS unixfs and casync, are out of
@@ -72,7 +77,8 @@ scope until something does.
 
 Section 1 states the invariants. §§2–6 define the Merkle shell that
 castore and git share, then castore, NAR, git and the tee. §7
-defines the supplied tree, and §8 the surface in code. The oracles,
+defines the supplied tree, §8 iroh's collection, §9 the Nix store path, and
+§10 the surface in code. The oracles,
 fixtures and evidence ledger are in [testing.md](./testing.md). The choices
 behind the design are in [decisions.md](./decisions.md) and in the
 [founding record](../filesets/decisions.md#a19-content-addressing-is-a-family-of-schemes-with-snix-castore-as-the-default)
@@ -91,7 +97,9 @@ Normative, and every later requirement is read against them.
    members, the directories on the way to them, and its root
    ([C3](./decisions.md#c3-memberless-directories-in-an-id-accepted)). A
    directory with no member beneath it is in no name, so every format
-   represents the whole tree.
+   represents the whole tree. A labelled name (§8, §9) is a function of the
+   tree and of its label, and of nothing else
+   ([C5](./decisions.md#c5-labelled-names-proposed)).
 2. **Names are bytes.** No encoding folds case or normalizes Unicode. Two
    entries whose names differ in any byte are distinct entries.
 3. **Every format has an oracle.** An encoding is accepted only when it
@@ -263,6 +271,18 @@ git's header, `<kind> <length>\0`, by the repository's hash.
 and no link, directly or beneath it, is omitted from its parent, as git's
 index cannot hold one. A fileset with no members names the empty tree.
 
+**`CAG3` — The SHA-1 id's other names.** Two systems name a directory by its
+SHA-1 tree id, and print it differently; both **must** be computed from the
+id of `CAG1` and nothing else. Nix's git hashing prints it in SRI form,
+`sha1-` and the digest in standard, padded base64. Software Heritage's
+identifier for a directory, its SWHID, is `swh:1:dir:` and the id in
+lowercase hex. _Detection:_ on every fixture tree, the SRI form equals the
+output of `nix hash path --mode git --algo sha1`, and the SWHID is
+`swh:1:dir:` before the id `git write-tree` prints in a SHA-1 repository,
+which is how the
+[SWHID specification](../../../research/content-addressing/software-heritage.md)
+defines it.
+
 ## 6. The tee (`CAT`)
 
 A _tee_ computes several names in one walk. The contract defines one tee:
@@ -286,6 +306,13 @@ return the castore id with the SHA-256 `NarHash` and `NarSize` beside it.
 _Rationale:_ a Nix store asks for `NarHash` of every path it is given, and
 recomputing it would re-read every file; see
 [C1](./decisions.md#c1-narhash-is-stored-beside-the-identity-accepted).
+
+**`CAT4` — A file identity shared is computed once.** When two parts of a
+tee name files by the same file identity, as castore and iroh's collection
+both name a file by BLAKE3 over its bytes, the tee **must** feed each file's
+bytes to that identity once and give both parts its id. _Detection:_ in a tee
+of two parts sharing a counting leaf, the leaf hears one start per file and
+each byte once, and each part's id equals the one it computes alone.
 
 ## 7. A file's supplied tree (`CAO`)
 
@@ -321,7 +348,84 @@ surfaced; a chunk group that does not chain to the root is rejected.
 _Detection:_ flipping one byte of a file with a supplied outboard makes a
 read of its range fail, and no byte of the corrupt group is returned.
 
-## 8. Surface
+## 8. iroh's collection (`CAI`)
+
+iroh's transfer protocol moves _blobs_, each named by the BLAKE3 digest of
+its bytes, and a _hash sequence_: a blob whose bytes are the 32-byte
+digests of other blobs, one after another. A _collection_ is the convention
+that `sendme`, iroh's file-sending tool, layers on a hash sequence to send a
+directory ([blobs](../../../research/iroh/blobs.md#hashseq-collections-and-the-hash-newtype)).
+The sequence's first digest names a _metadata blob_, which lists a name for
+each digest after it. The collection's name is the hash sequence's digest:
+the hash a `sendme` ticket carries.
+
+A collection has no directories. Each file is listed by its path, so the
+tree's shape is in the names, and `sendme` prefixes every path with the
+name of the directory it was asked to send. That name is the collection's
+label ([C5](./decisions.md#c5-labelled-names-proposed)), so the collection a
+fileset names with label `L` is the one `sendme send L` sends from a
+directory `L` holding exactly the fileset's members.
+
+**`CAI1` — The collection is `sendme`'s.** For a fileset and a label `L`, the
+collection **must** list each member regular file under the name `L/p`,
+where `p` is the file's path from the fileset root with `/` between its
+components, ordered by the names' bytes, each with the BLAKE3 digest of its
+contents. The metadata blob **must** be the 13 bytes `CollectionV0.`
+followed by the names as a postcard sequence of strings: the count, then
+each name's length and its UTF-8 bytes, every number an unsigned LEB128
+varint. The hash sequence is the metadata blob's digest followed by the
+files' digests in the names' order, and the collection's name is its BLAKE3
+digest, printed as `sendme` prints it, in lowercase hex. _Detection:_ on
+every fixture tree, the name equals the one iroh-blobs' own `Collection`
+computes over `sendme`'s import of the tree materialized under a directory
+named `L`, and a hand-encoded metadata blob of three names is byte-equal.
+
+**`CAI2` — What a collection cannot carry.** A collection holds regular
+files only. A link **must** be left out of it, as `sendme` leaves links out,
+and counted, so that a caller can say what was not sent; an executable bit
+is not recorded, and a directory exists only as part of its files' names.
+A fileset with no regular file is a collection with no names. _Detection:_
+on the kinds fixture the collection equals the oracle's and reports two
+links left out, and the empty fileset's collection lists nothing.
+
+**`CAI3` — A name `sendme` refuses is refused.** A label **must** be a
+single path component: not empty, not `.` or `..`, and holding no `/` or
+`\`. A member whose path is not UTF-8, or one of whose components holds a
+`\`, cannot be named as `sendme` names it; the collection **must** then fail
+with an error naming the first such member, rather than name a collection
+`sendme` could not produce or a receiver could not write out. _Detection:_
+labels `""`, `.`, `a/b` and `a\b` are refused; a tree with a member
+`x\y` and one with a member whose name is the byte `0xff` fail, naming it.
+
+## 9. The Nix store path (`CAP`)
+
+Nix copies a directory into its store at a path computed from the
+directory's NAR and a name: `builtins.path`, `nix-store --add` and the
+`lib.fileset.toSource` that the fileset explorer emits all give a filtered
+tree that path, its name `source` unless the caller chose one. The path is
+the second labelled name.
+
+**`CAP1` — The path Nix would copy the tree to.** For a tree's SHA-256
+`NarHash` `h`, a name `N` and a store directory `S`, the store path **must**
+be `S/` followed by the 32-character Nix base-32 encoding of a 20-byte
+digest, `-`, and `N`. The digest is SHA-256 over the text
+`source:sha256:` + `h` in lowercase hex + `:` + `S` + `:` + `N`, folded to
+20 bytes by XOR-ing byte `i` into byte `i mod 20`. Nix's base-32 alphabet is
+`0123456789abcdfghijklmnpqrsvwxyz`, and it emits the digest's bits from the
+most significant 5-bit group of the whole number, read with byte 0 as the
+least significant. This is the path of a tree with no references, which
+every fileset is. _Detection:_ for every fixture tree's `NarHash`, with the
+names `source` and `a+-._?=`, the path equals the output of
+`nix-store --print-fixed-path --recursive sha256 <h> <N>`.
+
+**`CAP2` — Names Nix refuses are refused.** A name **must** be 1 to 211
+bytes, each a letter, a digit or one of `+-._?=`, and neither `.` nor `..`;
+any other name **must** be refused with the reason, as Nix refuses it.
+_Detection:_ the names `""`, `.`, `..`, `a b`, `a/b`, `é` and one of 212
+bytes are refused, and `.a` and one of 211 bytes are accepted, as
+`nix-store --print-fixed-path` accepts and refuses them.
+
+## 10. Surface
 
 Non-normative: the names in code of the parts above, all in
 `sparkles.build_primitives.content_addressing`.
@@ -332,8 +436,11 @@ Non-normative: the names in code of the parts above, all in
 | `CAC1`–`CAC5`  | `CastoreScheme`, `CastoreDirectory`, `toCastoreText`                                                                         |
 | `CAN1`–`CAN4`  | `NarScheme!(H, Ref)`, `NarHash`, `toSri`                                                                                     |
 | `CAG1`–`CAG2`  | `GitTreeScheme!H`, `GitTree!H`, `toHex`                                                                                      |
-| `CAT1`–`CAT3`  | `NarScheme!(H, Ref, Dirs)`, `WithNar`, `CastoreNar`                                                                          |
+| `CAG3`         | `toGitSri`, `toSwhid`                                                                                                        |
+| `CAT1`–`CAT4`  | `NarScheme!(H, Ref, Dirs)`, `WithNar`, `CastoreNar`                                                                          |
 | `CAO1`, `CAO2` | `MerkleFold!(Dir, Leaf, Supply)`, `OutboardSupply`, `SuppliedTree`, `check`, `OutboardLeaf`, `verifyGroup`, `VerifiedReader` |
+| `CAI1`–`CAI3`  | `IrohCollection`, `IrohCollectionScheme`, `collectionOf`, `CollectionName`, `collectionMeta`                                 |
+| `CAP1`, `CAP2` | `nixStorePath`, `toNix32`                                                                                                    |
 
 A directory encoding is a struct with `enum order`, `alias Id`, `begin`,
 `directory`, `file`, `symlink` and `seal`, and optionally `enum metadata`

@@ -18,11 +18,13 @@ toolkit's [editor](../ui/editor.md), [tree view](../hue/tree-view.md) and
 
 This contract owns the query language (§2), the explorer's screen (§3), its
 help and the runnable blocks of its tutorial (§4), the code generators (§5),
-and its Android build (§6).
-Two obligations belong to libraries it uses and are specified there: the host's
-text cursor ([`HST20`](../ui-app/feature-requirements.md)), and the fileset
+its Android build (§6), and the names it gives a fileset and sending it to
+another machine (§7).
+Three obligations belong to libraries it uses and are specified there: the host's
+text cursor ([`HST20`](../ui-app/feature-requirements.md)), the fileset
 leaves for a list of paths, a file's own name and its kind
-([`FSV6`, `FSV7`](../build-primitives/filesets/SPEC.md)).
+([`FSV6`, `FSV7`](../build-primitives/filesets/SPEC.md)), and the names
+themselves ([content addressing](../build-primitives/content-addressing/SPEC.md)).
 The choices behind it are recorded in [decisions](./decisions.md), the evidence
 in [testing](./testing.md), and the delivery order in the [plan](./PLAN.md).
 
@@ -556,7 +558,93 @@ by name from the application's libraries and queries extracted with the
 assets. _Detection:_ on a device, the help renders as markdown, not as its
 text.
 
-## 7. Surface
+## 7. Names and sending (`FXS`)
+
+A fileset's members can be named the way other systems name a tree, and sent
+to another machine the way iroh's `sendme` sends a directory. The names are
+computed by the content-addressing library, in one read of the members
+([`CAT2`](../build-primitives/content-addressing/SPEC.md#_6-the-tee-cat)).
+Sending goes through a _provider_: the iroh bridge, `sparkles:iroh-send`, a
+library built from `sendme`'s own Rust code and loaded when the explorer
+starts ([X18](./decisions.md#x18-send-rides-sendme-s-own-stack-loaded-at-run-time-accepted)),
+or a scripted stand-in in tests.
+
+**`FXS1` — Every name in Stats.** When the ids are computed (`FXU13`), the
+Stats tab **must** show, beside `castore`, `NarHash` and `NarSize`: the Nix
+store path the fileset would be copied to, named `source` as
+`lib.fileset.toSource` names it
+([`CAP1`](../build-primitives/content-addressing/SPEC.md#_9-the-nix-store-path-cap));
+git's SHA-1 tree id, its Nix SRI form and its SWHID
+([`CAG3`](../build-primitives/content-addressing/SPEC.md#_5-git-trees-cag));
+and iroh's collection labelled with the root directory's name
+([`CAI1`](../build-primitives/content-addressing/SPEC.md#_8-iroh-s-collection-cai)),
+with the number of links a collection leaves out when there are any. A
+name that cannot be computed **must** say why in its place. _Detection:_ on
+an in-memory tree, the Stats lines hold each name as the library computes it
+alone, and a tree with a link reports it left out of the collection.
+
+**`FXS2` — A name is copied by choosing it.** A click or a tap on a name's
+line in the Stats tab **must** copy the name to the clipboard and say so on
+that line, and with the keyboard Up and Down **must** move between the
+names and `y` copy the one chosen. _Detection:_ a recorded click on the store
+path's line leaves the host's clipboard holding the path; `y` after one Down
+copies the line below.
+
+**`FXS3` — Sending asks first.** `s` in the Stats tab, or its Send button on
+the touch layout, **must** first show what would be sent: the number of
+files, their size, the links left out, and the collection's name, computing
+the ids if they are not computed yet. Nothing **must** leave the machine
+until the user confirms with Enter or the Send button; Escape or Cancel
+**must** return without starting the provider. _Rationale:_ anyone who holds
+the ticket can fetch every file, and a query can select files the user did
+not mean to share. _Detection:_ a recorded `s` and Escape never start the
+stand-in; `s` and Enter start it once, with each member file's labelled name
+and its path.
+
+**`FXS4` — While sending.** While the provider runs, the Stats tab **must**
+show its phase (importing, with files and bytes done of their totals; going
+online; serving), and once serving, the command a receiver runs,
+`sendme receive <ticket>`, whole, wrapped across lines rather than cut; the
+peers connected and the bytes sent so far; and a way to copy the command
+(`y`, or Copy) and to stop (`x`, or Stop). Stopping **must** end the provider
+and return the tab to the names. The explorer **must** refresh the tab while
+the provider runs without any input arriving. _Detection:_ a stand-in
+stepped through its phases shows each, `y` copies the receive command, and
+`x` stops it; frames are drawn with no event while it serves.
+
+**`FXS5` — The sent set is a snapshot.** What is being sent **must not**
+change when the query does. While the provider runs and the query no longer
+selects the sent files, the tab **must** say which query was sent. _Detection:_
+an edit while serving leaves the stand-in's files as they were, and the tab
+names the sent query.
+
+**`FXS6` — The two collections agree.** When the provider reports the
+collection it imported, its name **must** equal the collection the explorer
+computed; if it does not, the explorer **must** stop the provider and show
+both names as an error. _Rationale:_ the two are computed by independent
+implementations, so agreement checks each on every send. _Detection:_ a
+stand-in that reports another name is stopped, and the error shows both.
+
+**`FXS7` — A receiver gets exactly the members.** The iroh bridge **must**
+serve the collection over iroh's blobs protocol so that `sendme receive`
+from `sendme` 0.37 writes out each member regular file, byte for byte, under
+the label directory, and nothing else. _Detection:_ on loopback, with relays
+disabled, the bridge sends a fixture tree and `sendme receive <ticket>`
+writes a tree equal to its members, under a ticket whose hash is the
+collection's name.
+
+**`FXS8` — Without the bridge.** When the iroh bridge cannot be loaded, the
+explorer **must** run as before, its names included, and Send **must** say
+that sending is unavailable and why. _Detection:_ with
+`SPARKLES_IROH_SEND_LIB` naming a missing file, `s` shows the reason and
+starts nothing.
+
+**`FXS9` — Sending from Android.** The APK **must** carry the iroh bridge
+built for its ABI, and Send **must** work on a device as on the desktop.
+_Detection:_ a fileset sent from the tablet is received on the desktop by
+`sendme receive`.
+
+## 8. Surface
 
 Non-normative: where the parts live.
 
@@ -573,3 +661,5 @@ Non-normative: where the parts live.
 | `FXT3`–`FXT5`         | `apps/fileset-explorer` (`help.d`)                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `FXE1`–`FXE10`        | `sparkles.build_primitives.fileset.emit` (`emit`; `ir`, `nix`, `lists`)                                                                                                                                                                                                                                                                                                                                                                              |
 | `FXE11`, `FXE12`      | `apps/fileset-explorer` (`app.d`, `export_tab.d`)                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `FXS1`–`FXS6`, `FXS8` | `apps/fileset-explorer` (`evaluate.d`, `send.d`, `explorer.d`); `sparkles.build_primitives.content_addressing` (`collectionOf`, `nixStorePath`, `toSwhid`, `toGitSri`)                                                                                                                                                                                                                                                                               |
+| `FXS7`, `FXS9`        | `sparkles.iroh_send` (`IrohSend`, `loadIrohSend`); `libs/iroh-send/rust`; `nix/packages/sparkles-iroh-send.nix`; `nix/packages/android/fileset-explorer.nix`                                                                                                                                                                                                                                                                                         |

@@ -166,3 +166,64 @@ resolution, as a tree that does not chain does. The size costs nothing
 extra: it comes from the `stat` the fold already issues for the executable
 bit. A tree of the right size but stale content is still beyond this check,
 and is caught by `CAO2` when a range is read.
+
+## C5: Labelled names (proposed)
+
+_Proposed on 2026-11-12, with the owner's request to add iroh's
+collection and the Nix store path._
+
+**Question.** [Invariant 1](./SPEC.md#_1-invariants) makes a name a function
+of the tree alone, and leaves the root's own name out. iroh's collection and
+the Nix store path cannot be computed without a name for the tree: `sendme`
+prefixes every path with the directory it sends, and Nix hashes the store
+name into the path. Are they names in this contract, and if so, where does
+that name come from?
+
+**Alternatives.**
+
+- **Leave them out.** Keep invariant 1 as it is, and let the transport or the
+  store compute them. Each consumer then re-implements the collection's
+  metadata encoding and the store-path fingerprint, without the oracles this
+  contract holds them to.
+- **Use the root's own name.** Take the label from the fileset root's
+  directory name. A name would then change when the checkout is renamed,
+  which invariant 1 exists to prevent, and an in-memory tree has no name.
+- **A label the caller gives.** The caller passes the label as an argument;
+  the name is a function of the tree and of the label, and of nothing else.
+
+**Evidence.** `sendme` 0.37 names each file relative to the parent of the
+path it sends (`import` in its `main.rs`), so `sendme send repo` lists
+`repo/a`, never `a`. Nix's store path hashes the store name into the
+fingerprint, and `lib.fileset.toSource` passes `source`. Both are a choice
+the caller makes, not a property of the tree.
+
+**Choice.** A label the caller gives. The collection
+([`CAI1`](./SPEC.md#_8-iroh-s-collection-cai)) and the store path
+([`CAP1`](./SPEC.md#_9-the-nix-store-path-cap)) are _labelled names_, with
+invariant 1 extended to them; each label is checked against the rules of the
+system it is for (`CAI3`, `CAP2`). The fileset explorer passes the root
+directory's name as the collection's label, as `sendme` would, and `source`
+as the store name, as `lib.fileset.toSource` does.
+
+**Revisit** if iroh standardizes a collection without a top-level directory,
+or a consumer needs the store path of a tree with references.
+
+## C6: The collection is a directory encoding of the tee
+
+_Recorded on 2026-11-12._
+
+The collection is flat, not a Merkle tree: its name is over every file's
+full path at once. It could have been a separate pass over the members, but
+that would read each file a second time, against
+[`CAT2`](./SPEC.md#_6-the-tee-cat). It is instead a directory encoding like
+castore's: a directory's id is the list of the files beneath it, with paths
+relative to that directory, and `collectionOf` prefixes, sorts and hashes the
+root's list. Because it names a file by BLAKE3 over its bytes, as castore
+does, it shares castore's file identity, and the tee hashes each file once
+for both ([`CAT4`](./SPEC.md#_6-the-tee-cat)).
+
+The cost is that a directory's id grows with the files beneath it, so the
+collection, unlike castore, git and NAR, allocates while it hashes
+([`CAM5`](./SPEC.md#_2-the-merkle-shell-cam) lists the schemes that do not).
+A collection is a list of every member file by construction, and the list
+has to exist for a transport to send it.
