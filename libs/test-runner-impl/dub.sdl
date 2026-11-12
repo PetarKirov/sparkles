@@ -24,8 +24,8 @@ dependency "sparkles:ui" path="../.."
 
 // The counters a benchmark reads (perf groups, rdpmc, syscalls, pressure
 // stalls) are `sparkles.profiling.counters`, shared with frame profiling. They
-// arrive with `sparkles:test-harness`, which compiles them from source; a
-// dependency on `sparkles:profiling` as well would link them twice.
+// arrive with `sparkles:test-harness`, which depends on their package,
+// `sparkles:profiling-counters` (TRD13).
 
 configuration "application" {
     targetType "executable"

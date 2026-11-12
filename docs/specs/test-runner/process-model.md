@@ -95,21 +95,24 @@ keys test actions run through the core is
 **TRP1: The in-binary packages depend on no other repository package.** The
 recipes of `sparkles:test-attributes`, `sparkles:test-harness` and
 `sparkles:test-runner` **must not** declare a dependency on any `sparkles:`
-package outside these three and the two leaves `sparkles:metadata` and
-`sparkles:metrics`, in any configuration, and their sources **must not**
-import a module of one. A leaf is admitted only while it depends on no
-repository package but the other leaf (`sparkles:metrics` on
-`sparkles:metadata`, which depends on nothing) and tests itself without the
-shim.
+package outside these three and the leaves `sparkles:metadata`,
+`sparkles:metrics` and `sparkles:profiling-counters`, in any configuration,
+and their sources **must not** import a module of one. A leaf is admitted
+only while it depends on no repository package but another leaf or the
+attributes
+(`sparkles:metrics` on `sparkles:metadata`; `sparkles:profiling-counters` on
+the attributes alone; `sparkles:metadata` on nothing)
+and tests itself without the shim.
 
 _Rationale:_ every package's tests depend on these three. Any edge from them
 to another repository package is a cycle for that package. The leaves close
 none: dub rejects a cycle through any configuration, and a leaf whose tests
-used the shim would close one through its unittest configuration. They are
-admitted for the observability spec (`docs/specs/build-primitives/observability/`,
+used the shim would close one through its unittest configuration. The
+first two are admitted for the observability spec (`docs/specs/build-primitives/observability/`,
 OBV1–OBV2), which declares the bench catalog's metric types in
 `sparkles:metrics`; until its milestone O4 moves them there, the harness keeps
-them and depends on neither leaf.
+them and depends on neither. The third holds the hardware and OS counters
+that the harness's measurement layer and `sparkles:profiling` share (TRD13).
 
 **TRP2: Tests depend on the shim the ordinary way.** A package's unittest
 configuration **must** reach the runner through `dependency

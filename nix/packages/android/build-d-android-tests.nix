@@ -31,6 +31,7 @@ in
         "libs/test-harness/src"
         "libs/test-attributes/src"
         "libs/profiling/src"
+        "libs/profiling-counters/src"
       ];
     in
     lib.optionalAttrs (androidHost system).supported {
