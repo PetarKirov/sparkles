@@ -415,6 +415,14 @@
         # (libs/wired/bench/runtime; its --data-dir flag overrides this).
         export WIRED_BENCH_DATA=${config.packages.wired-bench-data}
 
+        # The iroh bridge and its oracles (fileset explorer FXS7, content
+        # addressing CAI1): the library the explorer loads, the collection
+        # oracle, and `sendme` itself as the receiver. Dev tier, not CI: the
+        # bridge compiles iroh, and the tests that need them skip when unset.
+        export SPARKLES_IROH_SEND_LIB=${config.packages.sparkles-iroh-send}/lib/libsparkles_iroh_send.so
+        export SPARKLES_IROH_COLLECTION=${lib.getExe config.packages.sparkles-iroh-send}
+        export SPARKLES_SENDME=${lib.getExe pkgs.sendme}
+
         # Tracy's prefix, for `sparkles:profiling`'s `tracy` configuration
         # (PRF20): Tracy ships CMake files but no pkg-config file, so the
         # dub.sdl takes its headers and client library from here.
