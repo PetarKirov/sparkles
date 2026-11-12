@@ -191,15 +191,43 @@ struct PackageGraph
         => longestPrefixOwner(packages_, path);
 }
 
-/// The index of the entry of `packages` whose `path` is the longest
-/// directory prefix of `path`, or -1.
-ptrdiff_t longestPrefixOwner(P)(scope const(P)[] packages, scope const(char)[] path)
+/**
+The index of the entry of `packages` whose directory, as `directoryOf` reads
+it, is the longest prefix of `path` at a `/` boundary, or -1: the owner of a
+path, for attribution (design BGW2). This is the one implementation of the
+rule; the package graph, the hidden-edge lint and `ci`'s coverage report
+attribute by it. Ownership says which package a file is reported under, never
+what a change to it affects: that is what the input sets claim.
+*/
+ptrdiff_t longestPrefixOwner(alias directoryOf = p => p.path, P)(scope const(P)[] packages,
+    scope const(char)[] path)
 {
     ptrdiff_t best = -1;
+    size_t longest;
     foreach (i, ref p; packages)
-        if (isUnder(path, p.path) && (best < 0 || p.path.length > packages[best].path.length))
+    {
+        const dir = directoryOf(p);
+        if (isUnder(path, dir) && (best < 0 || dir.length > longest))
+        {
             best = i;
+            longest = dir.length;
+        }
+    }
     return best;
+}
+
+///
+@("build_primitives.workspace.package_graph.longestPrefixOwner")
+@safe pure nothrow @nogc
+unittest
+{
+    static immutable string[3] dirs = ["libs/base", "libs/base/text-wasm", "libs/ui"];
+    alias owner = path => longestPrefixOwner!(d => d)(dirs[], path);
+    assert(owner("libs/base/src/a.d") == 0);
+    assert(owner("libs/base/text-wasm/src/a.d") == 1, "the longest prefix wins");
+    assert(owner("libs/ui") == 2, "a directory owns itself");
+    assert(owner("libs/ui-tui/src/a.d") == -1, "a prefix ends at a `/`");
+    assert(owner("README.md") == -1);
 }
 
 // Whether `path` is `dir` or lies under it.
