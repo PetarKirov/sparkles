@@ -359,7 +359,7 @@ PlanExpected!(PackageGraph, DiscoveryError) discoverPackages(string repoRoot, Re
 
 /// The recipes of a repository, read once: what the package graph and the
 /// packages' input sets
-/// ($(REF packageInputSets, sparkles,build_primitives,workspace,input_sets))
+/// ($(REF inputSets, sparkles,build_primitives,workspace,input_sets))
 /// are both derived from.
 struct WorkspaceRecipes
 {
