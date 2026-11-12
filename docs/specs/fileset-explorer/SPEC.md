@@ -652,20 +652,21 @@ _Detection:_ a fileset sent from the tablet is received on the desktop by
 
 ## 8. The command line (`FXC`)
 
-The explorer is one program with four subcommands, as `git` and `docker`
+The explorer is one program with five subcommands, as `git` and `docker`
 are ([X19](./decisions.md#x19-subcommands-view-the-default-accepted)):
 `view` opens the explorer, `stats` prints what its Stats tab shows, `send`
-does what its Send button does, and `emit` writes the query for another
-build system. The fileset is named once for all of them.
+does what its Send button does, `emit` writes the query for another build
+system, and `cp` copies the fileset's members. The fileset is named once for
+all of them.
 
 **`FXC1` — Subcommands, `view` the default.** The command line **must** take
-the subcommands `view`, `stats`, `send` and `emit`, and run `view` when none
-is named, so `fileset-explorer --query Q` opens the explorer as before.
+the subcommands `view`, `stats`, `send`, `emit` and `cp`, and run `view` when
+none is named, so `fileset-explorer --query Q` opens the explorer as before.
 `--dir` (the root, `.` by default) and `--query` (the default query when
 absent) **must** be accepted before or after the subcommand. The window,
 font, layout and `--render-plain` options are `view`'s. _Detection:_ the
 command line with no subcommand parses to `view` with its options; `--dir D
-stats` and `stats --dir D` name the same root; `--help` lists the four.
+stats` and `stats --dir D` name the same root; `--help` lists the five.
 
 **`FXC2` — `stats` prints the Stats tab.** `stats` **must** print the lines
 the Stats tab shows for the same root and query (`FXS1`), one a line, each
@@ -697,6 +698,22 @@ nothing starts and it exits 1; a failing provider exits 1 with its reason.
 **`FXC4` — `emit` writes the query elsewhere.** `emit <target>` **must** be
 `FXE11`.
 
+**`FXC5` — `cp` copies the members.** `cp <dest>` **must** copy each member
+to `<dest>/<path>`, its path from the fileset root, creating the directories
+on the way, and nothing else: a file with its contents and its executable
+bit, a link as a link to the target it holds, as the fileset sees them
+([C3](../build-primitives/content-addressing/decisions.md#c3-memberless-directories-in-an-id-accepted)),
+so the copy, resolved whole, has the fileset's castore, NAR and git ids
+(`FXS1`). Before copying anything it **must** check every destination path,
+and when any exists, copy nothing and exit 1 naming them, unless `--force`
+asks to replace them. `--dry-run` **must** print each destination path and
+the totals, and copy nothing. A member that cannot be read or written
+**must** stop the copy, exiting 1 with its path and the reason. _Detection:_
+a fileset with an executable file, a link and a file left out is copied, and
+the copy's ids equal the fileset's; a second `cp` refuses, naming the paths,
+and copies nothing; `--force` replaces them; `--dry-run` lists the paths and
+leaves the destination absent.
+
 ## 9. Surface
 
 Non-normative: where the parts live.
@@ -716,4 +733,4 @@ Non-normative: where the parts live.
 | `FXE11`, `FXE12`      | `apps/fileset-explorer` (`app.d`, `export_tab.d`)                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `FXS1`–`FXS6`, `FXS8` | `apps/fileset-explorer` (`evaluate.d`, `explorer.d`; `send.d`: `BlobProvider`, `IrohProvider`, `Sending`); `sparkles.build_primitives.content_addressing` (`collectionOf`, `nixStorePath`, `toSwhid`, `toGitSri`)                                                                                                                                                                                                                                    |
 | `FXS7`, `FXS9`        | `sparkles.iroh_send` (`IrohSend`, `loadIrohSend`); `libs/iroh-send/rust`; `nix/packages/sparkles-iroh-send.nix`; `nix/packages/android/fileset-explorer.nix`                                                                                                                                                                                                                                                                                         |
-| `FXC1`–`FXC4`         | `apps/fileset-explorer` (`cli.d`: `Explorer`, `View`, `StatsCommand`, `SendCommand`, `Emit`; `stats.d`: `statsRows`, `formatStats`)                                                                                                                                                                                                                                                                                                                  |
+| `FXC1`–`FXC5`         | `apps/fileset-explorer` (`cli.d`: `Explorer`, `View`, `StatsCommand`, `SendCommand`, `Emit`, `Cp`, `cpCommand`; `stats.d`: `statsRows`, `formatStats`)                                                                                                                                                                                                                                                                                               |

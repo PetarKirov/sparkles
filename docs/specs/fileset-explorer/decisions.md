@@ -282,3 +282,29 @@ for it; `--emit` became `emit`.
 `stats` and `send`, which gives the same thing two spellings; keeping
 
 `--emit` beside the subcommands; a `send` that never asks.
+
+## X20: `cp` copies the tree the ids name (accepted)
+
+_Chosen by the owner on 2026-11-13._
+
+**Question.** `cp` copies a fileset's members out of the root. Under which
+
+path, over what is already there, and as what?
+
+**Choice.** Each member at `<dest>/<path>`, its path from the fileset root,
+
+as `lib.fileset.toSource` lays a fileset out (`FXC5`); nothing is copied
+
+when any destination path exists, unless `--force`; files keep their
+
+contents and executable bit and links stay links, so the copy is the tree
+
+whose ids Stats shows; and `--dry-run` lists what would be copied.
+
+**Rejected.** Under a directory named like the root, as `cp -r` and
+
+`sendme receive` lay it out; overwriting, as plain `cp` does; requiring an
+
+empty destination; following links, as `cp -L`, which would give the copy
+
+other ids.
