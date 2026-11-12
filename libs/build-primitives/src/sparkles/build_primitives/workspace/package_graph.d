@@ -351,31 +351,55 @@ synchronous planning read ([SPEC TDE3]).
 PlanExpected!(PackageGraph, DiscoveryError) discoverPackages(string repoRoot, RecipeRole role,
     scope const(string)[] hostTokens) @safe
 {
+    auto read = readWorkspaceRecipes(repoRoot);
+    if (read.hasError)
+        return planErr!PackageGraph(read.error);
+    return buildPackageGraph(read.value.rootName, read.value.recipes, role, hostTokens);
+}
+
+/// The recipes of a repository, read once: what the package graph and the
+/// packages' input sets
+/// ($(REF packageInputSets, sparkles,build_primitives,workspace,input_sets))
+/// are both derived from.
+struct WorkspaceRecipes
+{
+    string rootName;            /// the root package's name: `sparkles`
+    SubPackageRecipe[] recipes; /// in the order the root recipe lists them
+}
+
+/**
+Reads the root `dub.sdl` under `repoRoot` and every sub-package recipe it
+lists. The only part of discovery that reads files; a bounded, synchronous
+planning read ([SPEC TDE3]).
+*/
+PlanExpected!(WorkspaceRecipes, DiscoveryError) readWorkspaceRecipes(string repoRoot) @safe
+{
     import std.conv : text;
     import std.path : buildPath;
     import sparkles.build_primitives.dub_manifest : readDubManifest;
 
-    alias unreadable = (path, reason) => planErr!PackageGraph(
-        DiscoveryError(DiscoveryErrorKind.unreadableRecipe, path ~ ": " ~ reason));
+    alias fail = (kind, detail) => planErr!WorkspaceRecipes(DiscoveryError(kind, detail));
+    alias unreadable = (path, reason) => fail(DiscoveryErrorKind.unreadableRecipe, path ~ ": " ~ reason);
 
     auto root = readDubManifest(repoRoot.buildPath("dub.sdl"));
     if (root.hasError)
         return unreadable("dub.sdl", text(root.error));
     if (root.value.name.length == 0)
-        return planErr!PackageGraph(DiscoveryError(DiscoveryErrorKind.unnamedPackage, "dub.sdl"));
+        return fail(DiscoveryErrorKind.unnamedPackage, "dub.sdl");
 
-    SubPackageRecipe[] recipes;
+    WorkspaceRecipes read;
+    read.rootName = root.value.name;
     foreach (ref sub; root.value.subPackages)
     {
         if (sub.path.length == 0)
-            return planErr!PackageGraph(DiscoveryError(DiscoveryErrorKind.inlineSubPackage, sub.name));
+            return fail(DiscoveryErrorKind.inlineSubPackage, sub.name);
         const recipePath = normalizeRepoPath(sub.path) ~ "/dub.sdl";
         auto manifest = readDubManifest(repoRoot.buildPath(recipePath));
         if (manifest.hasError)
             return unreadable(recipePath, text(manifest.error));
-        recipes ~= SubPackageRecipe(sub.path, manifest.value);
+        read.recipes ~= SubPackageRecipe(sub.path, manifest.value);
     }
-    return buildPackageGraph(root.value.name, recipes, role, hostTokens);
+    return planOk!DiscoveryError(read);
 }
 
 version (unittest)
