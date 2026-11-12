@@ -448,7 +448,8 @@
       # is the docs page `docs/apps/fileset-explorer/index.md`, string-imported,
       # hence `extraSources`. The grammar bundle parses that page, highlights
       # the query's fences and the Export tab's code: defaulted to the one the
-      # flake builds, as the terminal's is.
+      # flake builds, as the terminal's is. Send opens the iroh bridge at run
+      # time (`X18`), so the wrapper names it.
       packages.fileset-explorer = config.legacyPackages.buildSparklesApp (finalAttrs: {
         pname = "fileset-explorer";
         version = "0.1.0";
@@ -464,6 +465,7 @@
         postFixup = ''
           wrapProgram $out/bin/${finalAttrs.pname} \
             --set-default SPARKLES_TS_GRAMMAR_PATH ${config.packages.ts-grammars} \
+            --set-default SPARKLES_IROH_SEND_LIB ${config.packages.sparkles-iroh-send}/lib/libsparkles_iroh_send.so \
             --prefix PATH : ${lib.makeBinPath [ pkgs.fontconfig ]}
         '';
 

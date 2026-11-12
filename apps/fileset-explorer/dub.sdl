@@ -19,6 +19,8 @@ dependency "sparkles:source-view" path="../.."
 stringImportPaths "../../docs/apps/fileset-explorer"
 dependency "sparkles:ui" path="../.."
 dependency "sparkles:ui-app" path="../.."
+// Send (`FXS`): the iroh bridge, opened at run time (`X18`), so nothing links Rust.
+dependency "sparkles:iroh-send" path="../.."
 
 // `--render-plain` (FXU8) paints one frame into a cell grid with no terminal:
 // `sparkles:ui-tui` and `sparkles:tui`, named by every configuration but

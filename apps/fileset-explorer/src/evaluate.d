@@ -12,8 +12,13 @@ import std.conv : text;
 import sparkles.base.io.errors : ErrorKind;
 import sparkles.base.vfs.handles : ambientAuthority, DirRef, openRoot;
 import sparkles.base.vfs.types : Rights;
-import sparkles.build_primitives.content_addressing.castore : toCastoreText;
-import sparkles.build_primitives.content_addressing.nar : CastoreNar, toSri;
+import std.digest.sha : SHA1, SHA256;
+
+import sparkles.build_primitives.content_addressing.castore : CastoreDirectory, toCastoreText;
+import sparkles.build_primitives.content_addressing.collection : collectionOf, CollectionFile, IrohCollection;
+import sparkles.build_primitives.content_addressing.git : GitTree, toGitSri, toHex, toSwhid;
+import sparkles.build_primitives.content_addressing.nar : NarScheme, toSri;
+import sparkles.build_primitives.content_addressing.store_path : defaultStoreName, nixStorePath;
 import sparkles.build_primitives.fileset.driver : InlineExecutor;
 import sparkles.build_primitives.fileset.fso : EntryOrder, FsoKind, FsoMetadata;
 import sparkles.build_primitives.fileset.pattern : CasePolicy;
@@ -31,6 +36,15 @@ struct Root
 
     /// Whether this is an in-memory tree.
     bool inMemory() const @safe pure nothrow @nogc => literal !is null;
+
+    /// The label a collection of its files carries (`FXS1`): `name` when
+    /// given, else the directory's own name, as `sendme` would name it.
+    string label() const @safe
+    {
+        import std.path : absolutePath, baseName, buildNormalizedPath;
+
+        return name.length ? name : baseName(buildNormalizedPath(absolutePath(dir)));
+    }
 }
 
 /// One member of the fileset.
@@ -110,6 +124,15 @@ struct Outcome
     string castore;         /// the castore id, as Snix prints it
     string narHash;         /// the SRI `NarHash`
     ulong narSize;          ///
+    string storePath;       /// where Nix would copy it, as `source` (`CAP1`)
+    string gitTree;         /// git's SHA-1 tree id, in hex
+    string gitSri;          /// ... as Nix's git hashing prints it (`CAG3`)
+    string swhid;           /// ... as a SWHID
+    string collection;      /// iroh's collection, in hex; empty with `collectionError`
+    string collectionError; /// why the fileset has no collection (`CAI3`)
+    size_t collectionLinks; /// links a collection leaves out (`CAI2`)
+    CollectionFile[] collectionFiles; /// its files, in its order, paths from the root
+    string label;           /// the collection's label
     string[2][] extensions; /// the commonest extensions, `[ext, count]`, most first
     string[] hints;         /// what a bare call name meant (`FXL9`)
 
@@ -206,7 +229,9 @@ private void resolveInto(V, Rights R)(DirRef!(V, R) dir, in Root root, ref Outco
 
     if (withIds || o.bytes <= autoIdBytes)
     {
-        CastoreNar!(FsoRef!(V, Rights.readOnly)) ids;
+        // Every name in one read, castore and the collection sharing BLAKE3
+        // (`CAT2`, `CAT4`).
+        NarScheme!(SHA256, FsoRef!(V, Rights.readOnly), CastoreDirectory, GitTree!SHA1, IrohCollection) ids;
         auto id = resolveScheme(dir, sets, compiled.set, ids, exec);
         if (!id.hasError)
         {
@@ -214,6 +239,22 @@ private void resolveInto(V, Rights R)(DirRef!(V, R) dir, in Root root, ref Outco
             o.castore = toCastoreText(id.value.ids[0].digest).idup;
             o.narHash = toSri(id.value.nar.digest).idup;
             o.narSize = id.value.nar.size;
+            const path = nixStorePath(id.value.nar.digest, defaultStoreName);
+            o.storePath = path.hasValue ? path.value : path.error;
+            const git = id.value.ids[1].digest;
+            o.gitTree = toHex(git)[].idup;
+            o.gitSri = toGitSri(git)[].idup;
+            o.swhid = toSwhid(git)[].idup;
+            o.label = root.label;
+            auto c = collectionOf(id.value.ids[2], o.label);
+            if (c.hasValue)
+            {
+                o.collection = toHex(c.value.root)[].idup;
+                o.collectionLinks = c.value.links;
+                o.collectionFiles = c.value.files;
+            }
+            else
+                o.collectionError = c.error;
         }
     }
 }
