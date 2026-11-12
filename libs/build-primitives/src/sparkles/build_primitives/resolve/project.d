@@ -791,6 +791,9 @@ struct TestRoot
     /// Whether the configuration is generated, and so needs a test-root
     /// module as its main source file.
     bool generated;
+    /// The configuration a generated one copies (`unittest`, or the default);
+    /// the configuration itself when nothing is generated.
+    string base;
     /// The root's D sources, relative to its directory, that the test root
     /// imports: every one but the main file and `package.d` files.
     string[] testedSources;
@@ -816,9 +819,12 @@ TestRoot addTestRunnerConfiguration(Project project, const BuildPlatform platfor
     if (settings.targetType == TargetType.none)
         fail(text("the configuration `", baseConfiguration, "` of `", root.name, "` has target type none"));
     if (settings.targetType == TargetType.executable && baseConfiguration == "unittest")
-        return TestRoot(baseConfiguration, false);
+        return TestRoot(baseConfiguration, false, baseConfiguration);
     if (settings.sourceFiles.length == 0)
-        return TestRoot(defaultConfiguration(project, platform), false);
+    {
+        const configuration = defaultConfiguration(project, platform);
+        return TestRoot(configuration, false, configuration);
+    }
 
     const name = text(root.name.replace(".", "-").replace(":", "-"), "-test-", baseConfiguration);
     auto base = root.configuration(baseConfiguration);
@@ -839,7 +845,7 @@ TestRoot addTestRunnerConfiguration(Project project, const BuildPlatform platfor
     if (mainFile.isAbsolutePath)
         mainFile = relativePathTo(mainFile, root.directory);
 
-    TestRoot result = TestRoot(name, true);
+    TestRoot result = TestRoot(name, true, baseConfiguration);
     foreach (file; settings.sourceFiles)
     {
         if (!file.endsWith(".d"))
