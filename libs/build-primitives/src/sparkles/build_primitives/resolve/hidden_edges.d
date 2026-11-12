@@ -10,13 +10,14 @@ the recipe line, in every configuration it occurs in. There is no exception.
 */
 module sparkles.build_primitives.resolve.hidden_edges;
 
-import std.algorithm.searching : canFind, startsWith;
+import std.algorithm.searching : canFind;
 import std.conv : text;
 
 import sparkles.build_primitives.resolve.driver : ResolveDriver;
 import sparkles.build_primitives.resolve.paths : isAbsolutePath, normalizedPath;
 import sparkles.build_primitives.resolve.project : Package;
 import sparkles.build_primitives.resolve.recipe : SettingsTemplate;
+import sparkles.build_primitives.workspace.package_graph : longestPrefixOwner;
 
 /// A package and the directory it owns.
 struct PackageLocation
@@ -93,10 +94,13 @@ private HiddenEdge[] hiddenIn(const Package p, const ref SettingsTemplate declar
                 const path = locate(value, p.directory);
                 if (path is null)
                     continue;
-                const owner = ownerOf(path, all);
+                const at = longestPrefixOwner!(l => l.directory)(all, path);
+                if (at < 0)
+                    continue;
+                const owner = &all[at];
                 // An inline subpackage shares its base's directory: a reach
                 // into it is a reach into its own.
-                if (owner is null || owner.name == p.name || owner.directory == p.directory
+                if (owner.name == p.name || owner.directory == p.directory
                     || dependencies.canFind(owner.name))
                     continue;
                 edges ~= HiddenEdge(p.name, p.recipe,
@@ -127,26 +131,6 @@ private string locate(string value, string directory) @safe pure
     if (expanded.canFind('$'))
         return null;
     return expanded.isAbsolutePath ? normalizedPath(expanded) : normalizedPath(directory, expanded);
-}
-
-// The package owning `path`: the one with the longest directory containing
-// it, or null.
-private const(PackageLocation)* ownerOf(string path, return scope const PackageLocation[] all)
-    @safe pure nothrow
-{
-    const(PackageLocation)* owner;
-    size_t longest;
-    foreach (ref location; all)
-    {
-        const d = location.directory;
-        const inside = path == d || (path.startsWith(d) && path.length > d.length && path[d.length] == '/');
-        if (inside && d.length > longest)
-        {
-            owner = &location;
-            longest = d.length;
-        }
-    }
-    return owner;
 }
 
 // The line of each directive occurrence in a recipe: from the SDL document,

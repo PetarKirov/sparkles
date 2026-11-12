@@ -27,14 +27,14 @@
  * $(LIST
  *   * A run emits listings for $(B every) module it compiled, dependencies
  *     included — testing `sparkles:input` also writes listings for
- *     `sparkles:base`. Attribution is the caller's job; see $(LREF ownedBy).
+ *     `sparkles:base`. Attribution is the caller's job; see $(LREF reportedUnder).
  *   * Without `--DRT-covopt=dstpath:DIR` they are written to the process's
  *     working directory, which for `dub test` is the repository root.
  * )
  */
 module coverage;
 
-import std.algorithm : startsWith;
+import sparkles.build_primitives.workspace.package_graph : longestPrefixOwner;
 import sparkles.code_instrumentation.coverage.formats.dmd : parseDmdCoverage;
 
 /// One source file's line coverage, counted from a `.lst` body.
@@ -84,23 +84,27 @@ FileCoverage parseCoverageListing(const(char)[] contents) @safe
 }
 
 /**
- * Whether `path` is a source file of sub-package `pkg`.
+ * Whether `path` is reported under the sub-package at `pkgDir`: whether it is
+ * the owner of the path among `packageDirs`, the package whose directory is
+ * the longest prefix of it (`longestPrefixOwner`, the repository's one
+ * ownership rule).
  *
  * A run's listings cover its dependencies too, so a package's number would
  * otherwise include everything beneath it — and `sparkles:base`'s coverage
- * would be counted once per package in the repository.
+ * would be counted once per package in the repository. A nested package's
+ * files are its own, not also its enclosing package's.
  *
  * Params:
  *   path = a repository-relative source path from a listing's trailer
  *   pkgDir = the sub-package directory as the root manifest spells it
  *      (`libs/input`, `apps/ci`)
+ *   packageDirs = every sub-package's directory, `pkgDir` among them
  */
-bool ownedBy(scope const(char)[] path, scope const(char)[] pkgDir) @safe pure nothrow
+bool reportedUnder(scope const(char)[] path, scope const(char)[] pkgDir, scope const(string)[] packageDirs)
+    @safe pure nothrow
 {
-    import std.algorithm : startsWith;
-
-    return path.startsWith(pkgDir) && path.length > pkgDir.length
-        && path[pkgDir.length] == '/';
+    const at = longestPrefixOwner!(d => d)(packageDirs, path);
+    return at >= 0 && packageDirs[at] == pkgDir && path.length > pkgDir.length;
 }
 
 @("ci.coverage.parseCoverageListing")
@@ -150,22 +154,28 @@ unittest
     assert(parseCoverageListing("").path is null);
 }
 
-@("ci.coverage.ownedBy")
+@("ci.coverage.reportedUnder")
 @safe pure nothrow
 unittest
 {
-    // A package owns its own tree and nothing else — a run's listings include
-    // every dependency it compiled.
-    assert("libs/input/src/sparkles/input/tier.d".ownedBy("libs/input"));
-    assert(!"libs/base/src/sparkles/base/buffer.d".ownedBy("libs/input"));
+    static immutable string[4] dirs = ["libs/input", "libs/base", "libs/base/text-wasm", "libs/ui"];
+
+    // A package reports its own tree and nothing else — a run's listings
+    // include every dependency it compiled.
+    assert("libs/input/src/sparkles/input/tier.d".reportedUnder("libs/input", dirs[]));
+    assert(!"libs/base/src/sparkles/base/buffer.d".reportedUnder("libs/input", dirs[]));
 
     // A prefix that is not a path component must not match: `libs/ui` does not
     // own `libs/ui-tui`, which is a different sub-package.
-    assert(!"libs/ui-tui/src/sparkles/ui_tui/session.d".ownedBy("libs/ui"));
-    assert("libs/ui/src/sparkles/ui/canvas.d".ownedBy("libs/ui"));
+    assert(!"libs/ui-tui/src/sparkles/ui_tui/session.d".reportedUnder("libs/ui", dirs[]));
+    assert("libs/ui/src/sparkles/ui/canvas.d".reportedUnder("libs/ui", dirs[]));
+
+    // A nested package's files are its own, not its enclosing package's.
+    assert("libs/base/text-wasm/src/t.d".reportedUnder("libs/base/text-wasm", dirs[]));
+    assert(!"libs/base/text-wasm/src/t.d".reportedUnder("libs/base", dirs[]));
 
     // The directory itself is not one of its own files.
-    assert(!"libs/ui".ownedBy("libs/ui"));
+    assert(!"libs/ui".reportedUnder("libs/ui", dirs[]));
 }
 
 /**
@@ -174,9 +184,10 @@ unittest
  * Params:
  *   dir = directory the run's `.lst` files were written to
  *   name = the sub-package's short name, for reporting
- *   pkgDir = its directory, for $(LREF ownedBy) attribution
+ *   pkgDir = its directory
+ *   packageDirs = every sub-package's directory, for $(LREF reportedUnder)
  */
-PackageCoverage collectCoverage(string dir, string name, string pkgDir)
+PackageCoverage collectCoverage(string dir, string name, string pkgDir, scope const(string)[] packageDirs)
 {
     import std.algorithm : filter, map, sort;
     import std.array : array;
@@ -187,7 +198,7 @@ PackageCoverage collectCoverage(string dir, string name, string pkgDir)
     foreach (entry; dir.dirEntries("*.lst", SpanMode.shallow))
     {
         const cov = parseCoverageListing(entry.name.readText);
-        if (cov.path is null || !cov.path.ownedBy(pkgDir))
+        if (cov.path is null || !cov.path.reportedUnder(pkgDir, packageDirs))
             continue;
         r.files ~= cov;
         r.covered += cov.covered;

@@ -3889,8 +3889,9 @@ Reports only. There is no threshold and nothing fails on a low number: D's
 imported modules too, so the figure is a trend indicator rather than a contract.
 Gating on it would buy noise.
 
-A package's row counts only files beneath its own directory
-($(REF ownedBy, coverage)), because the merged set describes the whole
+A package's row counts only the files it owns, beneath its own directory and no
+nested package's
+($(REF reportedUnder, coverage)), because the merged set describes the whole
 repository — every module any package compiled. What merging changes is the
 *number*: a file now carries the coverage every package's tests gave it, not
 just its own package's, which is both the more useful figure and the one a
@@ -3914,7 +3915,7 @@ private void reportCoverage(in string[] subPackages, in CoverageRun cov,
 
     PackageCoverage[] results;
     foreach (pkg; subPackages)
-        results ~= collectCoverage(cov.dir, pkg.baseName, pkg);
+        results ~= collectCoverage(cov.dir, pkg.baseName, pkg, subPackages);
     results.sort!((a, b) => a.percent < b.percent);
 
     static void writePercent(W)(ref W w, double p)
