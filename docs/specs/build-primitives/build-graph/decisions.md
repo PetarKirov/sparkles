@@ -1251,3 +1251,149 @@ tests exercise the rule.
 
 **Revisit when** a recipe in scope adopts `optional`, or resolution runs
 without lockfiles.
+
+## D47: An input set follows the resolver's configurations (accepted)
+
+**Question.** A package's input set depends on the configuration it is built
+in, and dub chooses a dependency's configuration per request: `text-lab`
+builds `sparkles:ui-app` in `gui-vulkan`, which builds `sparkles:ui` in
+`gpu-effects`, while a terminal-only consumer builds `ui` in `library`. Which
+configuration does the input set a selection consults follow
+([fileset-native workspace](./fileset-native-workspace.md), BGW12)?
+
+**Alternatives.**
+
+- The workspace's rule (TDS2): `unittest` for a test, else the first
+  configuration the host allows. One set per package and no resolution, but
+  unsound: for `text-lab` it takes `ui`'s `library` and `ui-app`'s `tui`, so
+  `ui`'s generated shaders and the Vulkan backend are in no set it consults.
+- The union over every configuration. Sound and one set per package, but
+  `ui`'s test configuration reaches `libs/dql/src`, so an edit to `dql`
+  would select every dependent of `ui`; and `ui-app`'s union makes `text-lab`
+  depend on `ui-tui` and `ui-raylib`.
+- The resolver's answer per request, with a fallback for a query that has
+  no request.
+
+**Choice.** The resolver's answer, accepted by the owner on 2026-11-12.
+Input sets are keyed by package and configuration, and a request's closure
+is the set of pairs its resolution chose (`Resolution.configurations`). A
+query with no request of its own, such as `--since` with no target, asks over
+the requests the command would make: for `ci`, the test root of each package
+`ci --test` runs and each build configuration of each application. The
+union over every configuration was rejected as that fallback because it
+over-selects for every such query.
+
+**Trade-offs.** Selection needs a resolution per request, which until the
+resolver reads through the VFS (W3) reads recipes once per request. A new
+kind of request has to be added to the command's list, or its changes are
+judged by the other requests' closures only.
+
+**Revisit when** a command needs to ask about a package outside every request
+it makes.
+
+## D48: One leaf digest, BLAKE3 (accepted)
+
+**Question.** The build graph keys a file by SHA-256
+([BGK2](./SPEC.md#_5-keys-and-the-input-manifest)); the fileset's default
+identity, snix's castore, is BLAKE3. One digest cache is to serve every
+reader (BGW9). Which digest is its leaf?
+
+**Alternatives.**
+
+- SHA-256 everywhere: matches Nix and git's SHA-256 object format; slower to
+  compute, with no verified partial reads.
+- Both: no specification changes, and every file hashed twice.
+- BLAKE3 everywhere.
+
+**Choice.** BLAKE3, accepted by the owner on 2026-11-12. A file's content is
+hashed once, by BLAKE3, and the build graph's input manifests and keys move
+to it. Each consumer keeps its own tree encoding over that leaf. SHA-256 is
+computed only where an external format demands it, such as a Nix source
+whose NAR hash is pinned, at the point of export.
+
+**Trade-offs.** BGK2's statement and every recorded manifest change digest;
+the store has no manifests to migrate yet. A NAR hash still reads the bytes
+again, because NAR hashes the serialization, not the leaves.
+
+**Revisit when** an external store the build publishes to requires another
+leaf digest for its content-addressed entries.
+
+## D49: The names at the worktree root are a workspace input (accepted)
+
+**Question.** The D frontend looks for an imported module relative to its
+working directory before it searches the import paths, and compiles run in
+the repository root ([BGA5](./SPEC.md#_4-the-action-graph)). A directory
+created at the root with a module package's name, such as `sparkles/`, would
+shadow every module beneath it, and no input set claims it. How does
+selection stay sound?
+
+**Alternatives.**
+
+- Make the compiler skip the lookup, a change to the toolchain fork.
+- Compile in an empty working directory, which every relative path of every
+  recipe would have to survive.
+- Make the paths such a lookup could find an input of every package.
+
+**Choice.** The last, accepted by the owner on 2026-11-12. The workspace
+inputs hold every D or C source directly beneath the root and everything
+beneath a top-level directory named as a top-level package of an importable
+module: the first components of the modules under every import root, with
+the toolchain's (`std`, `core`, `etc`, `ldc`, `object`). A change to one
+affects every request. In this repository no top-level directory has such a
+name, so the rule costs nothing until someone creates one.
+
+**Trade-offs.** The names come from listing the import roots' first level,
+which materialization does anyway; until then (W0–W2) the consumer supplies
+them. The lookup stays possible, so BGW10's residue still checks the absent
+candidates for reuse.
+
+**Revisit when** the toolchain can be told to skip the working-directory
+lookup.
+
+## D50: Watching on Linux, macOS and Windows (accepted)
+
+**Question.** The event loop's watcher is inotify, and takes a path under
+ambient authority. Is a Linux-first watch, with a periodic lossy rescan
+elsewhere, acceptable for `--watch`?
+
+**Choice.** No: W6 delivers a tree watcher on all three hosts, inotify on
+Linux, FSEvents on macOS and `ReadDirectoryChangesW` on Windows, decided by
+the owner on 2026-11-12. Each meets BGW14's loss rules, and the periodic
+rescan remains the fallback for a host or file system none of them covers.
+
+**Trade-offs.** W6 roughly triples its platform work, and only the Linux
+watcher can be exercised on the development host; the others are verified
+by CI on their hosts.
+
+**Revisit when** a host the build supports offers none of the three.
+
+## D51: Untracked files are inputs (accepted)
+
+**Question.** A compiler reads an untracked module, so an input set, taken
+from the disk, holds it. `ci`'s checks ask git for tracked files, which no
+fileset leaf expresses. Do untracked files count, and does a leaf for git's
+index come now?
+
+**Choice.** Untracked files count, accepted by the owner on 2026-11-12: an
+input set is resolved from the disk, through the ignore rules, as the
+compiler sees it. `ci`'s tracked-file checks keep asking git. A fileset leaf
+for git's index is added when a check that moves to filesets needs it, and
+not before.
+
+**Revisit when** a check is moved to filesets and needs the tracked-only
+view.
+
+## D52: A test's run-time inputs stay undeclared for now (accepted)
+
+**Question.** [BGX2](./SPEC.md#_9-test-actions-and-result-reuse) requires a
+test to declare what it reads at run time, and names no syntax: a
+user-defined attribute on the test, a fileset in the recipe, or something
+else?
+
+**Choice.** Deferred, decided by the owner on 2026-11-12. Until a syntax
+exists, a test node's read claim is its package's input set and its
+closure's, and freshness (BGW18) stays off for tests, so a test verdict is
+not reused outside the Nix sandbox.
+
+**Revisit when** file claims in the task model (W5) are delivered, or a
+test suite's reruns cost enough to matter.

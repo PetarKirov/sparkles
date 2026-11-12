@@ -1,5 +1,5 @@
 ---
-status: draft
+status: accepted
 owner: sparkles:build-primitives
 reviewed: 2026-11-12
 ---
@@ -67,7 +67,8 @@ materialization and identity, change and watching, and filesets in the task
 model. Section 8 says which principle decided each choice, §9 records the
 alternatives rejected, and §10 the prior art. Section 11 is the delivery plan,
 §12 the evidence, §13 the amendments other specifications need, and §14 the
-questions left to the owner. The prototype this design was tested against is
+owner's decisions on the questions the design left open. The prototype
+this design was tested against is
 `sparkles.build_primitives.workspace.input_sets`.
 
 ## 1. Invariants
@@ -387,8 +388,9 @@ every input set, and one kind always does: the D frontend looks for an
 imported module relative to the compiler's working directory before it
 searches the import paths, and a compile runs in the repository root
 ([BGA5](./SPEC.md#_4-the-action-graph)). Those candidates are no part of the
-bound. BGW10 accounts for them, and question 8 of §14 asks whether to remove
-them.
+bound. BGW10 accounts for them when a result is reused, and the workspace
+inputs (BGW12) hold the paths such a lookup could find, so selection
+accounts for them too ([D49](./decisions.md#d49-the-names-at-the-worktree-root-are-a-workspace-input-accepted)).
 
 ```d
 Fileset declaredReads(ref InputSets inputs, scope const(uint)[] dependencyClosure);
@@ -462,7 +464,10 @@ recording time from the file system's own clock, which is how a caller
 obtains the stamp FSC3 asks for, and BGK5 always hashes a file whose
 modification time lies in the future. A file's content **must** be hashed at
 most once per run, whichever of the manifest, the state id or a Nix source
-needs it.
+needs it. That one digest is BLAKE3
+([D48](./decisions.md#d48-one-leaf-digest-blake3-accepted)): each consumer
+encodes its own tree over the leaf, and SHA-256 is computed only where an
+external format demands it, at export.
 
 **BGW10: The state id is a gate, never a key.** A result **may** be reused
 without checking the entries of its manifest that lie in its declared read
@@ -507,24 +512,37 @@ Only a resolution knows a link's target.
 
 ## 6. Change: affected sets, invalidation and watching
 
-**BGW12: Affected packages.** The packages a change set affects **must** be
-the packages claiming one of its paths, and every package that depends on one
-of those at any distance. A package is affected as a dependency only through
-the configuration its dependents build it in: a path that only its test
-configuration claims affects the package and none of its dependents. A
-change to a workspace input affects every package. A path that no package
-claims and that is no workspace input affects no package. A selection seeded
-only by such paths is the empty-selection error the task DAG defines, and it
-names the paths.
+**BGW12: Affected requests.** A **request** is what a command resolves and
+builds: a root package, its configuration or test root, and a platform. Its
+**closure** is the set of package and configuration pairs its resolution
+chose, the root's included (`Resolution.configurations`). Input sets are
+keyed by those pairs (BGW3). The requests a change set affects **must** be
+those whose closure holds a pair claiming one of its paths. A change to a
+workspace input affects every request. A path that no pair claims and that
+is no workspace input affects no request. A selection seeded only by such
+paths is the empty-selection error the task DAG defines, and it names the
+paths.
+
+A pair is affected only through the requests that reach it: a path that only
+`ui`'s test configuration claims affects `ui`'s test root and no request that
+builds `ui` as a dependency, because none of those closures holds
+`ui:unittest`. A command whose query has no request of its own, such as
+`--since` with no target, asks over the requests it would make: for `ci`, the
+test root of each package `ci --test` runs and each build configuration of
+each application. A package is affected when a request rooted at it is
+([D47](./decisions.md#d47-an-input-set-follows-the-resolver-s-configurations-accepted)).
 
 ```d
+struct ConfiguredPackage { uint package_; string configuration; }
+struct Request { string name; ConfiguredPackage[] closure; }   // closure sorted, each pair once
+
 // Prototype: `affectedBy` in workspace/input_sets.d.
-AffectedPackages affectedBy(ref InputSets inputs, const ref PackageGraph graph,
+AffectedRequests affectedBy(ref InputSets inputs, scope const(Request)[] requests,
     scope const(string)[] changed) @safe nothrow;
 ```
 
 The workspace inputs shrink the hand-written invalidator list to what cannot
-be derived. Three kinds of entry make them up:
+be derived. Four kinds of entry make them up:
 
 - **Planning's read set** (BGP1): the root recipe, the lockfiles and whatever
   else planning read. Derived, so it cannot name a path that does not exist.
@@ -533,14 +551,21 @@ be derived. Three kinds of entry make them up:
   affects every package. Derived from the package graph.
 - **The toolchain's definition:** the files that pin the compiler and the
   shell. No plan reads them, so they stay a fileset the consumer declares.
+- **What the compiler's working-directory lookup could find** (BGW7): every D
+  or C source directly beneath the worktree root, and everything beneath a
+  top-level directory named as the first component of an importable module,
+  the toolchain's (`std`, `core`, `etc`, `ldc`) included
+  ([D49](./decisions.md#d49-the-names-at-the-worktree-root-are-a-workspace-input-accepted)).
+  The names come from the first level of every import root, which
+  materialization lists anyway; until it does, the consumer states them.
 
 _Rationale:_ the result is sound and coarse. A dependent reads only some of a
 dependency's modules, and which ones is in its manifest. Selection chooses
 packages to plan; keys decide what runs.
 
-The prototype computes one configuration per package and does not yet apply
-the configuration rule, so the first row of §3.1 counts 24 dependents of
-`ui` that the rule excludes.
+Closures are what narrow the first row of §3.1: the 24 dependents of `ui` it
+counts build `ui` in `library`, and no closure of theirs holds `ui:unittest`,
+the pair that claims `libs/dql/src`.
 
 **BGW13: Change sources are interchangeable.** Every source of change
 **must** produce the same value, and every consumer **must** accept any
@@ -571,7 +596,8 @@ existence probe is needed, because membership is decided without the file.
 
 **BGW14: The watch list is what the resolution listed.** A watch of a set of
 packages **must** cover exactly the directories that materializing their
-input sets listed (`InputState.listed`).
+input sets listed (`InputState.listed`), which the fileset machine reports
+([`FSS9`](../filesets/SPEC.md#8-the-scheme-seam-fss)).
 
 - **Watch before list.** A directory **must** be watched before it is listed,
   so that no change falls between the listing and the watch.
@@ -742,7 +768,9 @@ claims conflict when one path is the other or lies beneath it.
   one exclusive key.
 - **Read of a write.** A node that reads what another writes **must** be
   ordered with it by a path of edges. Validation rejects a graph in which
-  neither precedes the other, naming both nodes and the path.
+  neither precedes the other, naming both nodes and the path. Inferring the
+  edge was rejected: it would hide the planner's mistake
+  ([T15](../task-dag/decisions.md#t15-an-unordered-read-of-a-write-rejects-the-graph)).
 
 _Rationale:_ the verdicts are proofs in one direction. `skip` and `reject`
 show that no member can lie there, so a pair declared conflict-free is. A
@@ -880,15 +908,15 @@ so.
 
 **Declared inputs, observed inputs, and identity.**
 
-| System             | What the source shows                                                                                                                                                                                                                                                                          | Bearing                                                                                          |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| Cargo (`e7155031`) | A compiler unit's inputs come from the compiler's dependency file, and a unit with none is stale (`src/compiler/fingerprint/mod.rs:236-241`, `:961-963`). A build script that has not run yet watches "the whole crate", and afterwards only what it declared (`:1741-1746`, `:1879-1897`)     | Invariant 2's two tiers: a coarse set before the first run, the observed one after               |
-| Pants              | A process carries its inputs as one digest value (`src/python/pants/engine/process.py:105-116`), and that digest is the root of its cache key (`src/rust/process_execution/src/cache.rs:82-94`)                                                                                                | Alternative 2 where it fits: an action with no manifest                                          |
-| Buck2              | A fingerprinted directory of a command's inputs is built before it runs and is the action digest's input root (`app/buck2_execute/src/execute/request.rs:209-260`, `…/command_executor.rs:210`, `:405-407`)                                                                                    | The declared read set's tree, as BGN2 uses it                                                    |
-| Bazel              | Locally, an order-independent digest of each input's path and metadata is folded with the action key (`…/actions/MetadataDigestUtils.java:54-71`, `…/actions/cache/ActionCache.java:501-517`). Remotely, a tree digest of the inputs is (`…/remote/merkletree/MerkleTree.java:45-47`)          | Two identities for one input set, a flat one and a tree, chosen per consumer (question 1 of §14) |
-| Nx, Turborepo      | A task's hash covers the hashes of its input files and of the tasks it depends on (`packages/nx/src/native/tasks/hashers/hash_project_files.rs:36-97`; `crates/turborepo-hash/src/lib.rs:56-84`)                                                                                               | Alternative 2 as a whole design, for tasks whose reads cannot be observed                        |
-| snix castore       | A directory's id is BLAKE3 over a canonical message of three sorted lists (`snix/castore/src/nodes/directory.rs:71-73`). Ingestion takes no filter; the filter is applied a layer above, pruning rejected directories (`snix/glue/src/builtins/import.rs:15-105`)                              | The tree id of BGW9, and selection kept apart from identity                                      |
-| dub (`48a55109`)   | Source paths are expanded with `dirEntries`, dropping hidden entries (`source/dub/recipe/packagerecipe.d:234-300`). The build id hashes settings and no file content (`source/dub/generators/build.d:351-370`), and staleness compares modification times over the expanded lists (`:400-437`) | The lists BGW8 must reproduce, and the behaviour the build graph replaces                        |
+| System             | What the source shows                                                                                                                                                                                                                                                                          | Bearing                                                                                                             |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Cargo (`e7155031`) | A compiler unit's inputs come from the compiler's dependency file, and a unit with none is stale (`src/compiler/fingerprint/mod.rs:236-241`, `:961-963`). A build script that has not run yet watches "the whole crate", and afterwards only what it declared (`:1741-1746`, `:1879-1897`)     | Invariant 2's two tiers: a coarse set before the first run, the observed one after                                  |
+| Pants              | A process carries its inputs as one digest value (`src/python/pants/engine/process.py:105-116`), and that digest is the root of its cache key (`src/rust/process_execution/src/cache.rs:82-94`)                                                                                                | Alternative 2 where it fits: an action with no manifest                                                             |
+| Buck2              | A fingerprinted directory of a command's inputs is built before it runs and is the action digest's input root (`app/buck2_execute/src/execute/request.rs:209-260`, `…/command_executor.rs:210`, `:405-407`)                                                                                    | The declared read set's tree, as BGN2 uses it                                                                       |
+| Bazel              | Locally, an order-independent digest of each input's path and metadata is folded with the action key (`…/actions/MetadataDigestUtils.java:54-71`, `…/actions/cache/ActionCache.java:501-517`). Remotely, a tree digest of the inputs is (`…/remote/merkletree/MerkleTree.java:45-47`)          | Two identities for one input set, a flat one and a tree, the leaf one digest and the tree chosen per consumer (D48) |
+| Nx, Turborepo      | A task's hash covers the hashes of its input files and of the tasks it depends on (`packages/nx/src/native/tasks/hashers/hash_project_files.rs:36-97`; `crates/turborepo-hash/src/lib.rs:56-84`)                                                                                               | Alternative 2 as a whole design, for tasks whose reads cannot be observed                                           |
+| snix castore       | A directory's id is BLAKE3 over a canonical message of three sorted lists (`snix/castore/src/nodes/directory.rs:71-73`). Ingestion takes no filter; the filter is applied a layer above, pruning rejected directories (`snix/glue/src/builtins/import.rs:15-105`)                              | The tree id of BGW9, and selection kept apart from identity                                                         |
+| dub (`48a55109`)   | Source paths are expanded with `dirEntries`, dropping hidden entries (`source/dub/recipe/packagerecipe.d:234-300`). The build id hashes settings and no file content (`source/dub/generators/build.d:351-370`), and staleness compares modification times over the expanded lists (`:400-437`) | The lists BGW8 must reproduce, and the behaviour the build graph replaces                                           |
 
 **Watching, and what a change invalidates.**
 
@@ -915,15 +943,15 @@ action digest, and whether its output claims are checked across targets.
 Each milestone leaves `dub test :build-primitives` and `ci`'s build green. A
 milestone's gate names the tests that must exist and pass.
 
-| Milestone | Delivers                                                                                                                                                                                                                                                              | Deletes                                                                                                                                                                                                                                   | Gate                                                                                                                                                                                                         |
-| --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| W0        | The prototype: `judge` and `selects`; `readWorkspaceRecipes`; `packageInputSets`, `eachClaimant`, `affectedBy`, `startRoots`                                                                                                                                          | Nothing                                                                                                                                                                                                                                   | The `input_sets` tests, including the one over this repository's recipes                                                                                                                                     |
-| W1        | `Workspace` and `readWorkspace` over the VFS, with its read set (BGW1). `discoverPackages`, `ci`'s package lists and `dub_recipe`'s sub-package lookup take it. The evaluator iterates its reachable nodes; an expression digest (§3.4)                               | `apps/ci/src/dub_deps.d`'s `parseSubPackages`; `discoverPackages`' own reading                                                                                                                                                            | Discovery over a tree literal with no `std.file`; a query benchmark whose cost does not grow with the arena                                                                                                  |
-| W2        | Selection by claims (BGW6, BGW12): `selectPackages` seeds claimants; removed paths need no probe and no base ownership map; workspace inputs derived from the read set. The hidden-edge lint as reaches (BGW7). One `owner` (BGW2)                                    | `Invalidator` and `invalidatorFor`; every entry of `apps/ci/src/repository_invalidators.d` but the toolchain's definition, which becomes a declared fileset; `existsInWorktree`; `ownerOf` in `hidden_edges.d`; `ownedBy` in `coverage.d` | The `select` tests, with the three reaches of this repository as fixtures; oracle 13 unchanged; the task-DAG specification's ownership requirement amended (§13)                                             |
-| W3        | Symbolic resolution and materialization (BGW8): settings hold filesets; lists come from one resolution per distinct root set, shared across requests. The resolver reads through the VFS. This is the "file access through the VFS" item of the build-graph plan's E2 | `ResolveDriver`, `SystemDriver`, `MemoryDriver`, `collectFiles`; the `Project` and `Package` classes' recipe reading                                                                                                                      | Oracle 1 over the 621 requests with zero new disagreements; a test that adds a file and sees the list change without resolving again; no `std.file` under `resolve/`                                         |
-| W4        | Input states and ids (BGW9), the single digest cache, the gate (BGW10) and link claims (BGW11). The machine reports every directory it lists                                                                                                                          | The separate statement of BGK5's cache                                                                                                                                                                                                    | The fileset cache oracle extended to input states; a test in which an edit to a link's target selects the linking package                                                                                    |
-| W5        | File claims in the task model (BGW16–BGW19): `FileClaims`, conflict validation, `TaskFresh` and `TaskStale`, claims in dry runs and reporters                                                                                                                         | `rewriteClaim` and the `workspace-write:` convention                                                                                                                                                                                      | Executor tests: overlapping tree and file writes serialize; an unordered read of a write is rejected; a fresh node emits `TaskFresh` and starts no process                                                   |
-| W6        | Watching (BGW13–BGW15): a tree watcher in `sparkles:event-horizon` that maps watch descriptors to paths, batches events and reports loss; `ci build --watch` and `ci test --watch` as loops of runs                                                                   | Nothing                                                                                                                                                                                                                                   | A test over a scratch tree for each row of BGW15's table; a forced overflow yields a lossy set and a full materialization; the trace of §6 reproduced, counting `stat` and read calls through a counting VFS |
+| Milestone | Delivers                                                                                                                                                                                                                                                                   | Deletes                                                                                                                                                                                                                                   | Gate                                                                                                                                                                                                                                                         |
+| --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| W0        | The prototype: `judge` and `selects`; `readWorkspaceRecipes`; input sets keyed by package and configuration, requests from resolutions (D47), `eachClaimant`, `affectedBy` over requests, the workspace inputs with the working-directory names (D49), `startRoots`        | `packageInputSets`' role rule and `dependencyClosure`                                                                                                                                                                                     | The `input_sets` tests, including one over this repository's resolutions: an edit to `libs/ui/src` affects `text-lab`'s request, one to `libs/dql/src` affects `ui`'s test root and none of `ui`'s dependents                                                |
+| W1        | `Workspace` and `readWorkspace` over the VFS, with its read set (BGW1). `discoverPackages`, `ci`'s package lists and `dub_recipe`'s sub-package lookup take it. The evaluator iterates its reachable nodes; an expression digest (§3.4)                                    | `apps/ci/src/dub_deps.d`'s `parseSubPackages`; `discoverPackages`' own reading                                                                                                                                                            | Discovery over a tree literal with no `std.file`; a query benchmark whose cost does not grow with the arena                                                                                                                                                  |
+| W2        | Selection by claims (BGW6, BGW12): `selectPackages` seeds claimants; removed paths need no probe and no base ownership map; workspace inputs derived from the read set. The hidden-edge lint as reaches (BGW7). One `owner` (BGW2)                                         | `Invalidator` and `invalidatorFor`; every entry of `apps/ci/src/repository_invalidators.d` but the toolchain's definition, which becomes a declared fileset; `existsInWorktree`; `ownerOf` in `hidden_edges.d`; `ownedBy` in `coverage.d` | The `select` tests, with the three reaches of this repository as fixtures; oracle 13 unchanged; the task-DAG specification's ownership requirement amended (§13)                                                                                             |
+| W3        | Symbolic resolution and materialization (BGW8): settings hold filesets; lists come from one resolution per distinct root set, shared across requests. The resolver reads through the VFS. This is the "file access through the VFS" item of the build-graph plan's E2      | `ResolveDriver`, `SystemDriver`, `MemoryDriver`, `collectFiles`; the `Project` and `Package` classes' recipe reading                                                                                                                      | Oracle 1 over the 621 requests with zero new disagreements; a test that adds a file and sees the list change without resolving again; no `std.file` under `resolve/`                                                                                         |
+| W4        | Input states and ids (BGW9), the single digest cache, the gate (BGW10) and link claims (BGW11). The machine reports every directory it lists                                                                                                                               | The separate statement of BGK5's cache                                                                                                                                                                                                    | The fileset cache oracle extended to input states; a test in which an edit to a link's target selects the linking package                                                                                                                                    |
+| W5        | File claims in the task model (BGW16–BGW19): `FileClaims`, conflict validation, `TaskFresh` and `TaskStale`, claims in dry runs and reporters                                                                                                                              | `rewriteClaim` and the `workspace-write:` convention                                                                                                                                                                                      | Executor tests: overlapping tree and file writes serialize; an unordered read of a write is rejected; a fresh node emits `TaskFresh` and starts no process                                                                                                   |
+| W6        | Watching (BGW13–BGW15): a tree watcher in `sparkles:event-horizon` on Linux (inotify), macOS (FSEvents) and Windows (`ReadDirectoryChangesW`), D50, that maps watches to paths, batches events and reports loss; `ci build --watch` and `ci test --watch` as loops of runs | Nothing                                                                                                                                                                                                                                   | A test over a scratch tree for each row of BGW15's table; a forced overflow yields a lossy set and a full materialization; the trace of §6 reproduced, counting `stat` and read calls through a counting VFS; each watcher's tests run on its own host in CI |
 
 W1 and W2 need nothing that is not delivered. W3 is the largest and carries
 the dub-agreement risk. W5 does not depend on W3 or W4 and can be taken
@@ -979,8 +1007,8 @@ attacked §§4–7, and made a cold read of the opening.
   difference between BGK5 and the subtree cache's rule (BGW9).
 - **Fixed in the prototype:** C source directories, globs in `sourceFiles`,
   a package without a recipe, two path-parsing errors.
-- **Deferred:** the compiler's working-directory lookup, which question 8 of
-  §14 owns.
+- **Deferred:** the compiler's working-directory lookup, since decided by
+  the owner (D49).
 - **Cold read:** the reader restated the problem, approach, scope and
   non-goals correctly, and had to guess "capability VFS", which the
   introduction links.
@@ -990,61 +1018,59 @@ The repairs were made after the review and are not covered by it.
 ## 13. Amendments to other specifications
 
 Accepting this design changes these requirements. Each is an amendment to
-make in the owning document, not a second statement here.
+make in the owning document, not a second statement here, and each is made
+by the milestone that delivers the behaviour it states, so that no
+specification describes what the code does not yet do.
 
-| Document                                   | Requirement                                             | Change                                                                                                      |
-| ------------------------------------------ | ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| [Task DAG](../task-dag/SPEC.md)            | TDS6, change ownership by longest directory prefix      | A changed path seeds its claimants (BGW12). Ownership stays for attribution                                 |
-| [Task DAG](../task-dag/SPEC.md)            | TDS2, the configuration whose dependencies are read     | Agree with the resolver on optional dependencies, which D46 settles differently                             |
-| [Task DAG](../task-dag/SPEC.md)            | TDM7, exclusive keys as path claims                     | File claims (BGW16, BGW17); keys stay for resources that are not files                                      |
-| [`ci` task DAG](../../ci/task-dag/SPEC.md) | CIC5, the invalidator list checked against the read set | The file entries are the read set; the policy entry is the planning command's own closure (BGW12)           |
-| [Build graph](./SPEC.md)                   | BGK5 and BGF6                                           | One statement with the subtree cache's (BGW9), keeping the clock probe and the future-time rule             |
-| [Build graph](./SPEC.md)                   | BGK6, BGK8, BGN2, BGR8                                  | Restate over the declared read set (BGW7, BGW10)                                                            |
-| [Build graph decisions](./decisions.md)    | D24's revisit condition                                 | Met by BGW11                                                                                                |
-| [Filesets](../filesets/SPEC.md)            | The stream sink                                         | The machine reports every directory it lists, before listing it (BGW14). Watching itself stays out of scope |
+| Document                                   | Requirement                                             | Change                                                                                                                                                                | Made in                 |
+| ------------------------------------------ | ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- |
+| [Task DAG](../task-dag/SPEC.md)            | TDS6, change ownership by longest directory prefix      | A changed path seeds the requests whose closures claim it (BGW12). Ownership stays for attribution                                                                    | W2                      |
+| [Task DAG](../task-dag/SPEC.md)            | TDS2, the configuration whose dependencies are read     | The configurations a request's resolution chose (D47), which also settles optional dependencies as D46 does; a query with no request asks over the command's requests | W2                      |
+| [Task DAG](../task-dag/SPEC.md)            | TDM7, exclusive keys as path claims                     | File claims (BGW16, BGW17), with an unordered read of a write rejected (T15); keys stay for resources that are not files                                              | W5                      |
+| [`ci` task DAG](../../ci/task-dag/SPEC.md) | CIC5, the invalidator list checked against the read set | The file entries are the read set; the policy entry is the planning command's own closure; the toolchain's definition stays declared (BGW12)                          | W2                      |
+| [Build graph](./SPEC.md)                   | BGR8, the hidden-edge lint                              | A reach whose owner is not a dependency (BGW7)                                                                                                                        | W2                      |
+| [Build graph](./SPEC.md)                   | BGK2, the manifest's digest                             | BLAKE3 (D48)                                                                                                                                                          | W4                      |
+| [Build graph](./SPEC.md)                   | BGK5 and BGF6                                           | One statement with the subtree cache's (BGW9), keeping the clock probe and the future-time rule                                                                       | W4                      |
+| [Build graph](./SPEC.md)                   | BGK6, BGK8, BGN2                                        | Restate over the declared read set (BGW7, BGW10)                                                                                                                      | W4                      |
+| [Build graph decisions](./decisions.md)    | D24's revisit condition                                 | Met by BGW11                                                                                                                                                          | W4                      |
+| [Filesets](../filesets/SPEC.md)            | The stream sink                                         | The machine reports every directory it lists, before listing it: `FSS9`, stated and planned (A26). Watching itself stays out of scope                                 | stated; delivered in W4 |
 
-## 14. Open questions
+## 14. Decisions
 
-Each names what it blocks.
+The design left eight questions to the owner, who answered them on
+2026-11-12. Each answer is recorded where it binds, and changes the design
+as stated here.
 
-1. **Which digest is the leaf of the shared cache?** The build graph keys by
-   SHA-256 and the fileset's default identity is BLAKE3. Hashing each file
-   twice is the cost of keeping both. The recommendation is one leaf digest,
-   the one the store uses, with the tree encoding chosen per consumer.
-   Blocks W4.
-2. **Which configuration does an input set follow?** The prototype uses the
-   workspace's rule: `unittest` for tests, else the first the host allows.
-   dub chooses per request, and a dependency's configuration can depend on
-   who asks. The recommendation is the resolver's answer everywhere, with the
-   union over a package's configurations as the set a command uses when it
-   has no request. Blocks W2's amendment of TDS2.
-3. **Do untracked files count?** A compiler reads an untracked module, so an
-   input set holds it. `ci`'s checks ask git for tracked files, which no
-   fileset leaf expresses. Whether those checks move to filesets, and whether
-   an index-backed leaf is wanted, is open. Blocks nothing in W0–W6.
-4. **How does a test declare what it reads at run time?** BGX2 requires the
-   declaration and names no syntax. Until one exists, a test node's read
-   claim is its package's territory and its closure's input sets, and
-   freshness (BGW18) stays off for tests. Blocks reuse of test verdicts
-   outside the Nix sandbox.
-5. **Is a Linux-first watch acceptable?** The event loop's watcher is inotify
-   and takes a path under ambient authority
-   (`libs/event-horizon/src/sparkles/event_horizon/watch.d:58-78`). Other
-   hosts would fall back to a periodic lossy change set, which is correct
-   and slower. Blocks W6's scope.
-6. **Should an unordered read of a write be an error or an inferred edge?**
-   BGW17 rejects the graph. Inferring the edge is friendlier and hides a
-   planner's mistake. Blocks W5.
-7. **Does the fileset specification accept the directory report?** It is one
-   call on the sink and no watcher, but the specification lists watching as
-   a non-goal, and its owner should say whether the report crosses that
-   line. Blocks W4.
-8. **Should the compiler stop looking in its working directory?** The D
-   frontend tries an imported module relative to the working directory before
-   the import paths, and compiles run in the repository root (BGW7). A
-   directory created at the root with a package's name can therefore shadow a
-   module, and no package claims it. BGW10's residue keeps results sound.
-   Selection is not: until the fork's compiler can be told to skip that
-   lookup, the names at the worktree root would have to be a workspace input,
-   so that a new top-level entry affects every package. Blocks W2's claim of
-   soundness for `--since`.
+1. **The leaf of the shared cache is BLAKE3**
+   ([D48](./decisions.md#d48-one-leaf-digest-blake3-accepted)). A file is
+   hashed once; each consumer encodes its own tree over the leaf, and
+   SHA-256 is computed only at export (BGW9). W4 moves BGK2.
+2. **An input set follows the resolver's configurations**
+   ([D47](./decisions.md#d47-an-input-set-follows-the-resolver-s-configurations-accepted)).
+   Input sets are keyed by package and configuration, and a request's closure
+   is what its resolution chose; a query with no request asks over the
+   requests the command makes (BGW12). The workspace's rule and the union
+   over every configuration were rejected.
+3. **Untracked files are inputs**
+   ([D51](./decisions.md#d51-untracked-files-are-inputs-accepted)). An input
+   set is resolved from the disk, through the ignore rules; a fileset leaf
+   for git's index waits until a check needs it.
+4. **A test's run-time inputs stay undeclared for now**
+   ([D52](./decisions.md#d52-a-test-s-run-time-inputs-stay-undeclared-for-now-accepted)).
+   A test node reads its package's and its closure's input sets, and its
+   verdict is not reused outside the Nix sandbox.
+5. **Watching covers Linux, macOS and Windows**
+   ([D50](./decisions.md#d50-watching-on-linux-macos-and-windows-accepted)),
+   with inotify, FSEvents and `ReadDirectoryChangesW` (W6). The periodic
+   lossy rescan stays as the fallback for anything else.
+6. **An unordered read of a write rejects the graph**
+   ([T15](../task-dag/decisions.md#t15-an-unordered-read-of-a-write-rejects-the-graph)),
+   as BGW17 states; no edge is inferred.
+7. **The fileset machine reports the directories it lists**
+   ([A26](../filesets/decisions.md#a26-the-machine-reports-every-directory-it-lists)),
+   as `FSS9`; watching stays out of the fileset specification's scope.
+8. **The names the compiler's working-directory lookup could find are a
+   workspace input**
+   ([D49](./decisions.md#d49-the-names-at-the-worktree-root-are-a-workspace-input-accepted)),
+   so a new top-level `sparkles/` affects every request and `--since` stays
+   sound without a change to the compiler (BGW7, BGW12).
