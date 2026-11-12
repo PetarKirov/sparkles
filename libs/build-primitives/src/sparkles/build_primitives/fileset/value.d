@@ -622,6 +622,45 @@ struct FilesetEvaluator
         @safe nothrow @nogc
         => verdictOf(sets, path, EntryFacts.stat(executable)) == FileVerdict.accept;
 
+    /**
+    Judges the file at `path` against every fileset the root is built from,
+    so that $(LREF selects) can then answer for each of them: one walk of the
+    path decides membership in many sets at once. Unlike $(LREF verdictOf) it
+    walks every directory of the path even after the root rules the file
+    out, because a part of a difference may still hold what the whole does
+    not. Never fails (FSV5).
+    */
+    void judge(ref const Filesets sets, scope const(char)[] path, EntryFacts facts)
+        @safe nothrow @nogc
+    {
+        auto a = pathState[0 .. words], b = pathState[words .. 2 * words];
+        rootState(sets, a);
+        size_t from = 0;
+        foreach (i, c; path)
+        {
+            if (c != '/')
+                continue;
+            if (i > from)
+            {
+                cast(void) enter(sets, a, path[from .. i], b);
+                auto t = a;
+                a = b;
+                b = t;
+            }
+            from = i + 1;
+        }
+        cast(void) fileVerdict(sets, a, path[from .. $], facts);
+    }
+
+    /**
+    Whether `part`, a fileset the root is built from, holds the file the last
+    $(LREF judge) was given. `part` must be the root or one of its operands,
+    at any depth.
+    */
+    bool selects(Fileset part) const @safe pure nothrow @nogc
+    in (part.node <= root_.node && reachable[part.node], "not a part of this evaluator's fileset")
+        => tri[part.node] == Tri.yes;
+
     private void enterIgnored(ref const Filesets sets, in FilesetNode n, scope const ulong[] parent,
         scope const(char)[] name, scope ulong[] child) @safe nothrow @nogc
     {
@@ -672,6 +711,28 @@ struct FilesetEvaluator
     assert(ev.contains(sets, "src/x/b.d"));
     assert(!ev.contains(sets, "src/gen/c.d"));
     assert(!ev.contains(sets, "lib/a.d"));
+}
+
+/// One walk of a path answers for every part of a fileset.
+@("fileset.value.judgeSelectsEachPart")
+@safe nothrow @nogc unittest
+{
+    auto sets = Filesets(CasePolicy.sensitive);
+    const a = sets.glob("/a/src/**/*.d").value;
+    const b = sets.union_(sets.glob("/b/src/**/*.d").value, sets.glob("/a/src/shared/**").value);
+    const hidden = sets.glob("/a/src/**/.*").value;
+    const visible = sets.difference(a, hidden);
+    auto ev = FilesetEvaluator(sets, sets.unionOf(visible, b));
+
+    ev.judge(sets, "a/src/shared/x.d", EntryFacts.init);
+    assert(ev.selects(a) && ev.selects(b) && ev.selects(visible), "a file two parts hold");
+    ev.judge(sets, "b/src/y.d", EntryFacts.init);
+    assert(!ev.selects(a) && ev.selects(b));
+    // The whole rules it out, yet a part of the difference still holds it.
+    ev.judge(sets, "a/src/.cache/z.d", EntryFacts.init);
+    assert(ev.selects(a) && ev.selects(hidden) && !ev.selects(visible) && !ev.selects(ev.root));
+    ev.judge(sets, "c/README.md", EntryFacts.init);
+    assert(!ev.selects(a) && !ev.selects(b) && !ev.selects(ev.root));
 }
 
 /// FSV3: a pattern naming a directory selects the files beneath it.
