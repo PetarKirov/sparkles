@@ -40,7 +40,7 @@ contributes no file, and one created later is already covered.
 +/
 module sparkles.build_primitives.workspace.input_sets;
 
-import sparkles.build_primitives.dub_manifest : DubPlatformValues, platformsAllowHost;
+import sparkles.build_primitives.dub_manifest : DubDependency, DubPlatformValues, platformsAllowHost;
 import sparkles.build_primitives.fileset.listing : escapeGlob;
 import sparkles.build_primitives.fileset.pattern : CasePolicy;
 import sparkles.build_primitives.fileset.plan : Plan, plan;
@@ -140,8 +140,14 @@ to any of it affects every request.
 */
 struct WorkspaceInputs
 {
-    /// Repository-relative fileset patterns: the root recipe, the lockfiles,
-    /// the files that define the toolchain.
+    /// The repository-relative files planning read (BGP1): the recipes
+    /// (`Workspace.reads`) and the lockfiles. One a package's set claims,
+    /// such as a sub-package's recipe, is that package's input; the rest,
+    /// the root recipe first, are workspace inputs. Derived, so none names a
+    /// file that is not there.
+    string[] read;
+    /// Repository-relative fileset patterns no plan reads: the files that
+    /// define the toolchain and the shell.
     string[] patterns;
     /// The first components of the importable modules (`sparkles`, `std`,
     /// `core`, …): beneath a top-level directory of such a name, a module
@@ -169,6 +175,7 @@ struct InputSets
     private Fileset[] whole_;   // inputs and sources: what one key's evaluator judges
     private string[][] roots_;  // each key's start roots: the index a query consults first
     private bool[] opaque_;     // each key: an opaque entry concerns it
+    private uint[][] dependsOn_; // each key: the in-graph packages its recipe depends on
     private FilesetEvaluator[] judges_; // made when a key is first a candidate
     private bool[] judging_;
     private Fileset workspace_;
@@ -306,6 +313,78 @@ struct InputSets
         }
         return plan(sets_, u);
     }
+
+    /// The packages of the graph that set `index`'s recipe depends on, at
+    /// its top level or in its configuration, in package order.
+    const(uint)[] dependenciesOf(size_t index) const return @safe pure nothrow @nogc => dependsOn_[index];
+
+    /**
+    Every set's reaches (§2): its start roots that lie outside its package's
+    territory, by set, then root. `graph` is the one the sets were built
+    from.
+    */
+    Reach[] reaches(const ref PackageGraph graph) const @safe pure nothrow
+    {
+        Reach[] result;
+        foreach (i, roots; roots_)
+        {
+            const self = keys_[i].package_;
+            foreach (root; roots)
+            {
+                const owner = graph.owner(root);
+                if (owner == self)
+                    continue;
+                uint[] into;
+                foreach (q, ref p; graph.packages)
+                    if (q != self && (q == owner || beneath(p.path, root)))
+                        into ~= cast(uint) q;
+                result ~= Reach(i, root, into);
+            }
+        }
+        return result;
+    }
+
+    /**
+    The hidden edges (BGR8) as the sets show them: each package a set reaches
+    into that its recipe does not depend on. Comparison alone: the paths
+    were resolved when the sets were built (BGW7).
+    */
+    HiddenReach[] hiddenReaches(const ref PackageGraph graph) const @safe pure nothrow
+    {
+        import std.algorithm.searching : canFind;
+
+        HiddenReach[] result;
+        foreach (ref reach; reaches(graph))
+            foreach (q; reach.into)
+                if (!dependsOn_[reach.set].canFind(q))
+                    result ~= HiddenReach(reach.set, reach.root, q);
+        return result;
+    }
+
+    // Whether `path` is `dir` or lies beneath it; everything lies beneath `""`.
+    private static bool beneath(scope const(char)[] path, scope const(char)[] dir) @safe pure nothrow @nogc
+        => dir.length == 0 || (path.length >= dir.length && path[0 .. dir.length] == dir
+            && (path.length == dir.length || path[dir.length] == '/'));
+}
+
+/// A start root of a set that lies outside its package's territory: the set
+/// reads files its package does not own (§2).
+struct Reach
+{
+    size_t set;  /// the set's index
+    string root; /// repository-relative
+    /// The packages whose files may lie beneath it: its owner and every
+    /// package whose directory it holds, the set's own excluded; in package
+    /// order. Empty for a root in no package, such as a documentation tree.
+    uint[] into;
+}
+
+/// A reach into a package its set's recipe does not depend on.
+struct HiddenReach
+{
+    size_t set;    /// the set's index
+    string root;   /// the reach's root
+    uint package_; /// the package reached
 }
 
 /**
@@ -334,7 +413,7 @@ InputSets inputSets(const ref PackageGraph graph, scope const(SubPackageRecipe)[
             // Nothing is known of what it reads: say so, not an empty set.
             b.report("", "recipe", p.path, OpaqueReason.noRecipe);
             b.begin();
-            result.add(ConfiguredPackage(cast(uint) i, ""), b, true);
+            result.add(ConfiguredPackage(cast(uint) i, ""), b, true, null);
             continue;
         }
         const manifest = &found.manifest;
@@ -350,7 +429,8 @@ InputSets inputSets(const ref PackageGraph graph, scope const(SubPackageRecipe)[
             b.block(*manifest, hostTokens);
             b.configuration = c.name;
             b.block(c, hostTokens);
-            result.add(ConfiguredPackage(cast(uint) i, c.name), b, b.opaque);
+            result.add(ConfiguredPackage(cast(uint) i, c.name), b, b.opaque,
+                inGraph(graph, manifest.dependencies, c.dependencies));
         }
         if (!any)
         {
@@ -358,14 +438,24 @@ InputSets inputSets(const ref PackageGraph graph, scope const(SubPackageRecipe)[
             b.configuration = "";
             b.top(*manifest);
             b.block(*manifest, hostTokens);
-            result.add(ConfiguredPackage(cast(uint) i, ""), b, b.opaque);
+            result.add(ConfiguredPackage(cast(uint) i, ""), b, b.opaque, inGraph(graph, manifest.dependencies, null));
         }
     }
+    result.judges_ = new FilesetEvaluator[result.keys_.length];
+    result.judging_ = new bool[result.keys_.length];
 
-    // The workspace inputs: the stated patterns, the working-directory
-    // lookup's paths, and the planner's own inputs.
+    // The workspace inputs: what planning read and no set claims, the stated
+    // patterns, the working-directory lookup's paths, and the planner's own
+    // inputs.
     auto sets = &result.sets_;
     Fileset w = sets.nothing;
+    foreach (path; workspace.read)
+    {
+        bool claimed;
+        result.eachClaimant(path, (size_t _) { claimed = true; });
+        if (!claimed)
+            w = sets.union_(w, sets.glob("/" ~ escapeGlob(path)).value);
+    }
     foreach (pattern; workspace.patterns)
     {
         auto g = sets.glob("/" ~ pattern);
@@ -384,8 +474,6 @@ InputSets inputSets(const ref PackageGraph graph, scope const(SubPackageRecipe)[
         if (k >= 0)
             w = sets.union_(w, result.inputs_[k]);
     }
-    result.judges_ = new FilesetEvaluator[result.keys_.length];
-    result.judging_ = new bool[result.keys_.length];
     result.workspace_ = w;
     auto roots = plan(result.sets_, w);
     foreach (k; 0 .. roots.length)
@@ -395,7 +483,8 @@ InputSets inputSets(const ref PackageGraph graph, scope const(SubPackageRecipe)[
 
 // Records the set `b` built for `pair`. Keys arrive in package order, and
 // within a package in recipe order, so the package's run is sorted here.
-private void add(ref InputSets s, ConfiguredPackage pair, scope ref Builder b, bool opaque) @safe nothrow
+private void add(ref InputSets s, ConfiguredPackage pair, scope ref Builder b, bool opaque, uint[] dependencies)
+    @safe nothrow
 {
     s.keys_ ~= pair;
     s.inputs_ ~= b.inputs();
@@ -407,6 +496,7 @@ private void add(ref InputSets s, ConfiguredPackage pair, scope ref Builder b, b
         own ~= roots[k].idup;
     s.roots_ ~= own;
     s.opaque_ ~= opaque;
+    s.dependsOn_ ~= dependencies;
 
     // Insertion into the package's sorted run.
     for (size_t at = s.keys_.length - 1; at > 0 && s.keys_[at] < s.keys_[at - 1]; --at)
@@ -417,7 +507,28 @@ private void add(ref InputSets s, ConfiguredPackage pair, scope ref Builder b, b
         swapAt(s.whole_, at);
         swapAt(s.roots_, at);
         swapAt(s.opaque_, at);
+        swapAt(s.dependsOn_, at);
     }
+}
+
+// The packages of `graph` that a recipe's top level and one configuration
+// depend on, in package order, each once.
+private uint[] inGraph(const ref PackageGraph graph, scope const(DubDependency)[] top,
+    scope const(DubDependency)[] configuration) @safe pure nothrow
+{
+    import std.algorithm.sorting : sort;
+    import std.algorithm.iteration : uniq;
+    import std.array : array;
+
+    uint[] result;
+    foreach (ref d; top ~ configuration)
+    {
+        const at = graph.indexOf(PackageId(d.name));
+        if (at >= 0)
+            result ~= cast(uint) at;
+    }
+    result.sort();
+    return result.uniq.array;
 }
 
 private void swapAt(T)(T[] a, size_t at)
@@ -1125,6 +1236,7 @@ unittest
     workspace.moduleRoots = ["sparkles", "std", "core", "etc", "ldc"];
     auto sets = inputSets(graph, read.recipes, host, workspace);
 
+    string[] resolverHidden; // `package:configuration reached`, from every resolution
     Request ask(string name, string subPackage, bool testRoot)
     {
         auto request = ResolveRequest(directory: root, subPackage: subPackage, platform: platform,
@@ -1133,6 +1245,13 @@ unittest
             request.registry[n] = s;
         const r = resolve(request, driver);
         assert(!r.hasError, text(name, ": ", r.hasError ? r.error.message : ""));
+        foreach (ref e; r.value.hiddenEdges)
+        {
+            const edge = text(e.package_["sparkles:".length .. $], ":", e.configuration, " ",
+                e.reached["sparkles:".length .. $]);
+            if (!resolverHidden.canFind(edge))
+                resolverHidden ~= edge;
+        }
         return requestOf(name, r.value, graph);
     }
 
@@ -1141,6 +1260,8 @@ unittest
         ask("ui (test root)", "ui", true),
         ask("core-cli", "core-cli", false),
     ];
+    // For its hidden edge alone.
+    cast(void) ask("profiling-counters (test root)", "profiling-counters", true);
     // Every pair a resolution chose has a set.
     foreach (ref r; requests)
         foreach (pair; r.closure)
@@ -1198,6 +1319,104 @@ unittest
     assert(listed.canFind("apps/text-lab") && listed.canFind("libs/base"), listed.text);
     assert(!listed.canFind("") && !listed.canFind("docs") && !listed.canFind("apps/hue"), listed.text);
     assert(roots.length < graph.packages.length, "fewer roots than packages");
+
+    // This repository's reaches into other packages. Two are hidden edges
+    // that the recipes say are test-only and the build graph's E1 removes,
+    // and the lint over the sets finds what the resolver's (oracle 13) finds.
+    string[] intoPackages;
+    foreach (ref r; sets.reaches(graph))
+        if (r.into.length)
+        {
+            const k = sets.key(r.set);
+            intoPackages ~= text(graph.packages[k.package_].shortName, ":", k.configuration, " ", r.root);
+        }
+    assert(intoPackages == [
+        "font-oracle:unittest libs/font/test",
+        "profiling-counters:unittest libs/test-harness/src",
+        "ui:unittest libs/dql/src",
+    ], intoPackages.text);
+    string[] hidden;
+    foreach (ref h; sets.hiddenReaches(graph))
+        hidden ~= text(graph.packages[sets.key(h.set).package_].shortName, ":", sets.key(h.set).configuration, " ",
+            graph.packages[h.package_].shortName);
+    assert(hidden == ["profiling-counters:unittest test-harness", "ui:unittest dql"], hidden.text);
+    import std.algorithm.sorting : sort;
+
+    resolverHidden.sort();
+    assert(resolverHidden == hidden, resolverHidden.text);
+}
+
+/// A reach is a start root outside the package's territory; one into a
+/// package the configuration does not depend on is a hidden edge (BGR8),
+/// found by comparing the reach's packages with the recipe's dependencies.
+@("build_primitives.workspace.input_sets.InputSets.reachesAndHiddenEdges")
+@safe
+unittest
+{
+    auto f = fixture();
+    string name(size_t set)
+    {
+        const k = f.sets.key(set);
+        return text(f.graph.packages[k.package_].shortName, k.configuration.length ? ":" : "", k.configuration);
+    }
+
+    string[] reached;
+    foreach (ref r; f.sets.reaches(f.graph))
+        reached ~= text(name(r.set), " ", r.root, " ", r.into.map!(q => f.graph.packages[q].shortName));
+    assert(reached == [
+        `counters:unittest libs/harness/src ["harness"]`,
+        `ui:gpu-effects docs/specs/ui []`,
+        `ui:library docs/specs/ui []`,
+        `ui:unittest docs/specs/ui []`,
+        `ui:unittest libs/dql/src ["dql"]`,
+    ], reached.text);
+
+    string[] hidden;
+    foreach (ref h; f.sets.hiddenReaches(f.graph))
+        hidden ~= text(name(h.set), " ", h.root, " ", f.graph.packages[h.package_].shortName);
+    assert(hidden == ["counters:unittest libs/harness/src harness", "ui:unittest libs/dql/src dql"], hidden.text);
+
+    // A dependency, at the top level or in the configuration, declares the
+    // reach.
+    const recipes = [
+        recipe("libs/harness", `name "harness"`),
+        recipe("libs/counters", `name "counters"
+dependency "sparkles:harness" path="../.."
+configuration "unittest" {
+    sourcePaths "../harness/src"
+}`),
+        recipe("libs/dql", `name "dql"`),
+        recipe("libs/ui", `name "ui"
+configuration "unittest" {
+    sourcePaths "../dql/src"
+    dependency "sparkles:dql" path="../.."
+}`),
+    ];
+    const graph = buildPackageGraph("sparkles", recipes, RecipeRole.build, linux).value;
+    auto declared = inputSets(graph, recipes, linux, WorkspaceInputs.init);
+    assert(declared.reaches(graph).length == 2);
+    assert(declared.hiddenReaches(graph).length == 0);
+}
+
+/// What planning read is a workspace input unless a package claims it: the
+/// root recipe and the lockfiles are, a sub-package's recipe is its own.
+@("build_primitives.workspace.input_sets.inputSets.readFilesNoSetClaims")
+@safe
+unittest
+{
+    auto f = fixture(WorkspaceInputs(read: ["dub.sdl", "dub.selections.json", "libs/base/dub.sdl", "libs/ui/dub.sdl"],
+        patterns: ["flake.lock", "nix/shells/**"]));
+    assert(f.sets.inWorkspace("dub.sdl"));
+    assert(f.sets.inWorkspace("dub.selections.json"));
+    assert(!f.sets.inWorkspace("libs/base/dub.sdl"));
+    assert(f.claimants("libs/base/dub.sdl") == ["base"]);
+    assert(!f.sets.inWorkspace("libs/ui/dub.sdl"));
+    // The toolchain's definition is stated, as no plan reads it.
+    assert(f.sets.inWorkspace("flake.lock"));
+    assert(f.sets.inWorkspace("nix/shells/default.nix"));
+    // A read file is one path, not a pattern.
+    assert(!f.sets.inWorkspace("dub.sdl.orig"));
+    assert(!f.sets.inWorkspace("docs/dub.sdl"));
 }
 
 /// A C source includes from its own directory, so the directory is read
