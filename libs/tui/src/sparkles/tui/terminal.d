@@ -25,8 +25,9 @@ version (RawTerminal):
 
 import core.stdc.stdlib : getenv;
 import core.stdc.string : strlen;
-import core.sys.posix.termios : ECHO, ICANON, IEXTEN, ISIG, tcgetattr, TCSAFLUSH,
-    TCSANOW, tcsetattr, termios, VMIN, VTIME;
+import core.sys.posix.termios : BRKINT, CS8, CSIZE, ECHO, ECHONL, ICANON, ICRNL,
+    IEXTEN, IGNBRK, IGNCR, INLCR, ISIG, ISTRIP, IXOFF, IXON, OPOST, PARENB, PARMRK,
+    tcgetattr, TCSAFLUSH, TCSANOW, tcsetattr, termios, VMIN, VTIME;
 import core.sys.posix.unistd : STDIN_FILENO, STDOUT_FILENO, write;
 
 import sparkles.base.buffer : SharedBuffer;
@@ -39,6 +40,49 @@ import sparkles.tui.cell : Grid;
 import sparkles.tui.images : ImagePlacement, KittyImages;
 import sparkles.tui.sixel : CellPixels, SixelImages;
 import sparkles.tui.render : Screen;
+
+version (linux) private extern (C) int openpty(int* master, int* slave,
+    char* name, const void* termp, const void* size);
+
+/// Raw input preserves control bytes, line endings and UTF-8, then restores the terminal.
+@("terminal.open.rawBytesAndRestore")
+@system unittest
+{
+    import sparkles.test_runner.skip : skipTest;
+    version (linux)
+    {
+        import core.sys.posix.fcntl : fcntl, F_GETFL, F_SETFL, O_NONBLOCK;
+        import core.sys.posix.poll : poll, POLLIN, pollfd;
+        import core.sys.posix.termios : ICRNL, ISTRIP, IXON;
+        import core.sys.posix.unistd : close, read;
+        int master, slave;
+        if (openpty(&master, &slave, null, null, null) != 0)
+            skipTest("A private PTY could not be allocated.");
+        scope (exit) { close(slave); close(master); }
+        termios before;
+        assert(tcgetattr(slave, &before) == 0);
+        before.c_iflag |= IXON | ICRNL | ISTRIP;
+        assert(tcsetattr(slave, TCSANOW, &before) == 0);
+        assert(tcgetattr(slave, &before) == 0);
+        auto terminal = Terminal.open(TerminalOptions(false, false, false), slave, slave);
+        assert(terminal.active);
+        scope (exit) terminal.close();
+        const expected = "\x13\x11\r\n\xC3\xA9";
+        assert(write(master, expected.ptr, expected.length) == expected.length);
+        assert(fcntl(slave, F_SETFL, fcntl(slave, F_GETFL) | O_NONBLOCK) == 0);
+        pollfd descriptor = {fd: slave, events: POLLIN};
+        assert(poll(&descriptor, 1, 100) == 1);
+        char[32] received;
+        const count = read(slave, received.ptr, received.length);
+        assert(count == expected.length && received[0 .. count] == expected);
+        terminal.close();
+        termios restored;
+        assert(tcgetattr(slave, &restored) == 0);
+        assert(restored.c_iflag == before.c_iflag && restored.c_oflag == before.c_oflag
+            && restored.c_lflag == before.c_lflag && restored.c_cflag == before.c_cflag);
+    }
+    else skipTest("This raw-input regression currently exercises Linux PTYs.");
+}
 
 /// What $(LREF Terminal.open) sets up (and $(LREF Terminal.close) tears down).
 struct TerminalOptions
@@ -84,8 +128,9 @@ struct Terminal
     // hoisted into this label.
     nothrow:
 
-    /// Enter raw mode on `inFd` and apply `opts`, writing setup to `outFd` (both
-    /// default to stdin/stdout; pass an explicit tty fd to drive, say, a pty).
+    /// Enter byte-preserving raw mode on `inFd` and apply `opts`, writing setup
+    /// to `outFd` (both default to stdin/stdout; explicit fds can drive a pty).
+    /// Ctrl+S/Q, CR/LF and UTF-8 pass through unchanged. Close restores the flags.
     /// `active` is false if `inFd` isn't a real terminal (nothing was changed).
     static Terminal open(TerminalOptions opts = TerminalOptions(),
         int inFd = STDIN_FILENO, int outFd = STDOUT_FILENO) @trusted
@@ -98,7 +143,12 @@ struct Terminal
             return t; // not a tty — leave inactive
 
         auto raw = t._orig;
-        raw.c_lflag &= ~(ECHO | ICANON | ISIG | IEXTEN);
+        // Byte-oriented input: neither line-ending translation, parity/strip
+        // processing nor software flow control may consume editor keys/paste.
+        raw.c_iflag &= ~(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL | IXON | IXOFF);
+        raw.c_oflag &= ~OPOST;
+        raw.c_lflag &= ~(ECHO | ECHONL | ICANON | ISIG | IEXTEN);
+        raw.c_cflag = (raw.c_cflag & ~(CSIZE | PARENB)) | CS8;
         raw.c_cc[VMIN] = 1;
         raw.c_cc[VTIME] = 0;
         tcsetattr(inFd, TCSAFLUSH, &raw);
