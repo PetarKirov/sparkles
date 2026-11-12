@@ -40,7 +40,7 @@ contributes no file, and one created later is already covered.
 +/
 module sparkles.build_primitives.workspace.input_sets;
 
-import sparkles.build_primitives.dub_manifest : DubDependency, DubPlatformValues, platformsAllowHost;
+import sparkles.build_primitives.dub_manifest : DubDependency, DubManifest, DubPlatformValues, platformsAllowHost;
 import sparkles.build_primitives.fileset.listing : escapeGlob;
 import sparkles.build_primitives.fileset.pattern : CasePolicy;
 import sparkles.build_primitives.fileset.plan : Plan, plan;
@@ -185,6 +185,7 @@ struct InputSets
     private string[][] roots_;  // each key's start roots: the index a query consults first
     private bool[] opaque_;     // each key: an opaque entry concerns it
     private uint[][] dependsOn_; // each key: the in-graph packages its recipe depends on
+    private uint[][] generators_; // each key: the generators its configuration runs, into `generators`
     private FilesetEvaluator[] judges_; // made when a key is first a candidate
     private bool[] judging_;
     private Fileset workspace_;
@@ -195,6 +196,24 @@ struct InputSets
     /// The recipe entries no set could hold, by package, then configuration,
     /// then recipe order; each once.
     OpaqueDirective[] opaque;
+
+    /// The generators the recipes run that the resolver recognizes (D53),
+    /// in package order, each once.
+    Generator[] generators;
+
+    /// The generators set `index`'s configuration runs: indices into
+    /// `generators`.
+    const(uint)[] generatorsOf(size_t index) const return @safe pure nothrow @nogc => generators_[index];
+
+    /// The generator whose output directory holds the repository-relative
+    /// `path`, or -1: such a path is the generator's write, no set's input.
+    ptrdiff_t writerOf(scope const(char)[] path) const @safe pure nothrow @nogc
+    {
+        foreach (i, ref g; generators)
+            if (beneath(path, g.output))
+                return i;
+        return -1;
+    }
 
     /// The number of sets.
     size_t length() const @safe pure nothrow @nogc => keys_.length;
@@ -396,6 +415,180 @@ struct HiddenReach
     uint package_; /// the package reached
 }
 
+/// The package of the one generator the resolver recognizes (D53).
+enum shaderCompiler = "shader-compile";
+
+/**
+A `preGenerateCommands` entry the resolver recognizes as a generator, typed
+(D53, BGG1): a tool that compiles one configuration of the package that runs
+it into one output directory. Its reads are those of two requests, the tool's
+application and the package in that configuration, so it is no opaque entry,
+and its output directory is a write, no input.
+*/
+struct Generator
+{
+    uint package_;        /// the package whose recipe runs it
+    string configuration; /// the block that states it; `""` for the top level
+    uint tool;            /// the tool's package: `shader-compile`
+    string inputs;        /// the configuration of `package_` it compiles: `shaders`
+    string output;        /// the repository-relative directory it writes
+    string command;       /// as the recipe writes it
+}
+
+/**
+Adds to `request`'s closure the closures of the generators that closure runs
+(D53): for each, the request for its tool's default configuration and the
+request for its package in the configuration it compiles, which
+`resolveFor(package_, configuration)` makes, `configuration` null for a
+package's default. What those requests run is added too, to a fixed point,
+and each pair is asked for once. An unresolved generator request leaves
+`request` unresolved.
+*/
+void addGenerators(ref Request request, const ref InputSets inputs,
+    scope Request delegate(uint package_, string configuration) @safe resolveFor) @safe
+{
+    import std.algorithm.sorting : sort;
+
+    bool[ConfiguredPackage] asked, held;
+    foreach (pair; request.closure)
+        held[pair] = true;
+    for (size_t at = 0; at < request.closure.length; ++at)
+    {
+        const k = inputs.indexOf(request.closure[at]);
+        if (k < 0)
+            continue;
+        foreach (g; inputs.generatorsOf(k))
+        {
+            const generator = &inputs.generators[g];
+            foreach (need; [ConfiguredPackage(generator.tool, null),
+                    ConfiguredPackage(generator.package_, generator.inputs)])
+            {
+                if (need in asked)
+                    continue;
+                asked[need] = true;
+                const r = resolveFor(need.package_, need.configuration);
+                if (r.unresolved.length && request.unresolved is null)
+                    request.unresolved = r.unresolved;
+                foreach (pair; r.closure)
+                    if (pair !in held)
+                    {
+                        held[pair] = true;
+                        request.closure ~= pair;
+                    }
+            }
+        }
+    }
+    request.closure.sort();
+}
+
+// A shader compiler command, as `dub run` states it.
+private struct ShaderCommand
+{
+    string toolDirectory; // repository-relative
+    string output;        // repository-relative
+    string inputs = "shaders";
+}
+
+/*
+Whether `command`, run from `packageDirectory`, is the shader compiler's
+shape, and what it names: `$DUB run [--temp-build] [-q] --root=<tool> --
+--package=$PACKAGE_DIR --out=<dir> [--config=<name>] [--if-stale] [--quiet]
+[--keep]`. Any other word, a quote, a tool path (`--ldc=`) or an output
+outside the package makes it unrecognized: it stays opaque, never guessed at.
+*/
+private bool parseShaderCommand(string packageDirectory, string command, out ShaderCommand s)
+    @safe pure nothrow
+{
+    static bool takes(string word, string option, out string value) @safe pure nothrow @nogc
+    {
+        if (word.length < option.length || word[0 .. option.length] != option)
+            return false;
+        value = word[option.length .. $];
+        return true;
+    }
+
+    string[] words;
+    size_t start;
+    foreach (i, c; command ~ " ")
+    {
+        if (c == '"' || c == '\'' || c == '\\' || c == '`' || c == ';' || c == '&' || c == '|')
+            return false;
+        if (c == ' ' || c == '\t')
+        {
+            if (i > start)
+                words ~= command[start .. i];
+            start = i + 1;
+        }
+    }
+    if (words.length < 3 || (words[0] != "$DUB" && words[0] != "${DUB}") || words[1] != "run")
+        return false;
+
+    string root, value;
+    size_t at = 2;
+    for (; at < words.length && words[at] != "--"; ++at)
+        if (takes(words[at], "--root=", value))
+            root = value;
+        else if (words[at] != "--temp-build" && words[at] != "-q" && words[at] != "--quiet")
+            return false;
+    if (at == words.length || root is null)
+        return false;
+
+    bool own;
+    string output;
+    foreach (word; words[at + 1 .. $])
+        if (takes(word, "--package=", value))
+            own = value == "$PACKAGE_DIR" || value == "${PACKAGE_DIR}";
+        else if (takes(word, "--out=", value))
+            output = value;
+        else if (takes(word, "--config=", value) && value.length)
+            s.inputs = value;
+        else if (word != "--if-stale" && word != "--quiet" && word != "-q" && word != "--keep")
+            return false;
+    if (!own || output is null)
+        return false;
+
+    OpaqueReason why;
+    if (!repositoryPath(packageDirectory, root, s.toolDirectory, why)
+            || !repositoryPath(packageDirectory, output, s.output, why))
+        return false;
+    // The output lies in the package's directory, below it.
+    return s.output.length > packageDirectory.length && s.output[0 .. packageDirectory.length] == packageDirectory
+        && s.output[packageDirectory.length] == '/';
+}
+
+// The index of the shader compiler's package if it lives at `directory`, or -1.
+private ptrdiff_t shaderCompilerAt(const ref PackageGraph graph, scope const(char)[] directory) @safe pure nothrow
+{
+    foreach (i, ref p; graph.packages)
+        if (p.path == directory && p.shortName == shaderCompiler)
+            return i;
+    return -1;
+}
+
+// What the generators a recipe runs write, in any configuration: no input of
+// any of the package's sets.
+private Fileset generatedBy(ref Filesets sets, const ref PackageGraph graph, string packageDirectory,
+    const ref DubManifest manifest, scope const(string)[] hostTokens) @safe nothrow
+{
+    Fileset written = sets.nothing;
+    void scan(scope const(DubPlatformValues)[] entries)
+    {
+        foreach (ref entry; entries)
+            if (entry.platform.length == 0 || platformsAllowHost([entry.platform], hostTokens))
+                foreach (command; entry.values)
+                {
+                    ShaderCommand s;
+                    if (parseShaderCommand(packageDirectory, command, s) && shaderCompilerAt(graph, s.toolDirectory) >= 0)
+                        written = sets.union_(written, sets.glob("/" ~ escapeGlob(s.output) ~ "/**").value);
+                }
+    }
+
+    scan(manifest.preGenerateCommands);
+    foreach (ref c; manifest.configurations)
+        scan(c.preGenerateCommands);
+    return written;
+}
+
 /**
 Builds the input set of every package of `graph`, in every configuration its
 recipe in `recipes` declares for a host described by `hostTokens`, and the
@@ -416,7 +609,8 @@ InputSets inputSets(const ref PackageGraph graph, scope const(SubPackageRecipe)[
                 found = &r;
                 break;
             }
-        auto b = Builder(&result.sets_, &result.opaque, cast(uint) i, p.path);
+        auto b = Builder(&result.sets_, &result.opaque, cast(uint) i, p.path, &graph, &result.generators,
+            result.sets_.nothing);
         if (found is null)
         {
             // Nothing is known of what it reads: say so, not an empty set.
@@ -426,6 +620,7 @@ InputSets inputSets(const ref PackageGraph graph, scope const(SubPackageRecipe)[
             continue;
         }
         const manifest = &found.manifest;
+        b.written = generatedBy(result.sets_, graph, p.path, *manifest, hostTokens);
         bool any;
         foreach (ref c; manifest.configurations)
         {
@@ -506,6 +701,7 @@ private void add(ref InputSets s, ConfiguredPackage pair, scope ref Builder b, b
     s.roots_ ~= own;
     s.opaque_ ~= opaque;
     s.dependsOn_ ~= dependencies;
+    s.generators_ ~= b.running.dup;
 
     // Insertion into the package's sorted run.
     for (size_t at = s.keys_.length - 1; at > 0 && s.keys_[at] < s.keys_[at - 1]; --at)
@@ -517,6 +713,7 @@ private void add(ref InputSets s, ConfiguredPackage pair, scope ref Builder b, b
         swapAt(s.roots_, at);
         swapAt(s.opaque_, at);
         swapAt(s.dependsOn_, at);
+        swapAt(s.generators_, at);
     }
 }
 
@@ -554,23 +751,51 @@ private struct Builder
     OpaqueDirective[]* opaques;
     uint index;
     string directory;     // repository-relative
+    const(PackageGraph)* graph;
+    Generator[]* generators;
+    Fileset written;      // what the package's generators write: no input of its sets
     string configuration; // the block being read; `""` for the top level
 
     Fileset compiled, excluded, read;
     bool opaque;          // an opaque entry concerns this set
+    uint[] running;       // the generators this set's configuration runs
 
     void begin() scope @safe nothrow
     {
         compiled = sets.nothing;
         excluded = sets.nothing;
         opaque = false;
+        running = null;
         // The recipe itself.
         read = literal("dub.sdl", "dub.sdl");
     }
 
-    Fileset inputs() scope @safe nothrow @nogc => sets.union_(read, compiled);
+    Fileset inputs() scope @safe nothrow @nogc => sets.difference(sets.union_(read, compiled), written);
 
-    Fileset sources() scope @safe nothrow @nogc => sets.difference(compiled, excluded);
+    Fileset sources() scope @safe nothrow @nogc => sets.difference(compiled, sets.union_(excluded, written));
+
+    // Records a `preGenerateCommands` entry as a generator this set runs, if
+    // it is one the resolver knows (D53).
+    bool recognize(string command) scope @safe nothrow
+    {
+        ShaderCommand s;
+        if (!parseShaderCommand(directory.idup, command, s))
+            return false;
+        const tool = shaderCompilerAt(*graph, s.toolDirectory);
+        if (tool < 0)
+            return false;
+        size_t at = generators.length;
+        foreach (k, ref g; *generators)
+            if (g.package_ == index && g.configuration == configuration && g.command == command)
+            {
+                at = k;
+                break;
+            }
+        if (at == generators.length)
+            *generators ~= Generator(index, configuration.idup, cast(uint) tool, s.inputs, s.output, command);
+        running ~= cast(uint) at;
+        return true;
+    }
 
     // Records an opaque entry once, and marks this set.
     void report(scope const(char)[] block, scope const(char)[] directive, scope const(char)[] value,
@@ -649,9 +874,13 @@ private struct Builder
             if (carriesPath(v, linkerPathFlags))
                 report(configuration, "lflags", v, OpaqueReason.pathFlag);
         });
+        each("preGenerateCommands", settings.preGenerateCommands, (v) {
+            if (!recognize(v))
+                report(configuration, "preGenerateCommands", v, OpaqueReason.command);
+        });
         // `dub run` and `dub test` run the target between the run commands.
-        static foreach (directive; ["preGenerateCommands", "postGenerateCommands", "preBuildCommands",
-                "postBuildCommands", "preRunCommands", "postRunCommands"])
+        static foreach (directive; ["postGenerateCommands", "preBuildCommands", "postBuildCommands",
+                "preRunCommands", "postRunCommands"])
             each(directive, __traits(getMember, settings, directive),
                 v => report(configuration, directive, v, OpaqueReason.command));
     }
@@ -1263,7 +1492,19 @@ unittest
             if (!resolverHidden.canFind(edge))
                 resolverHidden ~= edge;
         }
-        return requestOf(name, r.value, graph);
+        auto made = requestOf(name, r.value, graph);
+        // What the generators it runs read: the tool's application and the
+        // package's device configuration (D53).
+        addGenerators(made, sets, (uint package_, string configuration) {
+            auto g = ResolveRequest(directory: root, subPackage: graph.packages[package_].shortName,
+                configuration: configuration, platform: platform);
+            foreach (n, s; registry.value)
+                g.registry[n] = s;
+            const resolved = resolve(g, driver);
+            assert(!resolved.hasError, text(name, ": ", resolved.hasError ? resolved.error.message : ""));
+            return requestOf(graph.packages[package_].shortName, resolved.value, graph);
+        });
+        return made;
     }
 
     const requests = [
@@ -1285,8 +1526,10 @@ unittest
     alias affected = (string path) => named(requests, affectedBy(sets, requests, [path]).affected);
     // A module of `base` affects all three.
     assert(affected("libs/base/src/sparkles/base/buffer.d") == ["text-lab", "ui (test root)", "core-cli"]);
-    // `ui`'s tests compile `dql`'s sources; nothing else that builds `ui` does.
-    assert(affected("libs/dql/src/sparkles/dql/package.d") == ["ui (test root)"]);
+    // `ui`'s tests compile `dql`'s sources; nothing else that builds `ui`
+    // does. text-lab's shader compiler reaches `dql` through
+    // `wired-sdl-select`, so a change there may change its shaders.
+    assert(affected("libs/dql/src/sparkles/dql/package.d") == ["text-lab", "ui (test root)"]);
     // Documentation beside a recipe is in no input set.
     const readme = affectedBy(sets, requests, ["libs/base/README.md"]);
     assert(named(requests, readme.affected) == [] && readme.unclaimed == ["libs/base/README.md"]);
@@ -1307,19 +1550,37 @@ unittest
     assert(claimants("libs/test-harness/src/sparkles/test_harness/package.d").canFind("profiling-counters:unittest"));
     assert(claimants("libs/font/test/sparkles/font/fixtures.d").canFind("font-oracle:unittest"));
 
-    // The shader generators are commands: what they read is not stated, so a
-    // request that reaches one is uncertain until generators are typed.
-    // The only other entries no set can hold: the profiler's Tracy
-    // configurations read through a variable, outside the repository.
+    // The shader generators are typed (D53): each compiles its package's
+    // `shaders` configuration with `shader-compile` into `generated/shaders`.
+    string[] generators;
+    foreach (ref g; sets.generators)
+        generators ~= text(graph.packages[g.package_].shortName, " ", g.configuration, " ",
+            graph.packages[g.tool].shortName, " ", g.inputs, " ", g.output);
+    assert(generators == [
+        "ui gpu-effects shader-compile shaders libs/ui/generated/shaders",
+        "ui-vulkan library shader-compile shaders libs/ui-vulkan/generated/shaders",
+        "ui-vulkan unittest shader-compile shaders libs/ui-vulkan/generated/shaders",
+        "vulkan-wsi gpu-shaders shader-compile shaders libs/vulkan-wsi/generated/shaders",
+    ], generators.text);
+    // The only entries no set can hold: the profiler's Tracy configurations
+    // read through a variable, outside the repository.
     assert(sets.opaque.map!(o => text(graph.packages[o.package_].shortName, " ", o.configuration, " ",
         o.directive, " ", o.reason)).array == [
         "profiling tracy cImportPaths variable", "profiling tracy lflags pathFlag",
         "profiling unittest-tracy cImportPaths variable", "profiling unittest-tracy lflags pathFlag",
-        "ui gpu-effects preGenerateCommands command", "ui-vulkan library preGenerateCommands command",
-        "ui-vulkan unittest preGenerateCommands command", "vulkan-wsi gpu-shaders preGenerateCommands command",
     ], sets.opaque.text);
-    assert(affectedBy(sets, requests, ["README.md"]).uncertain[0], "text-lab reaches a generator");
+
+    // text-lab's request is certain, and holds what its shaders are compiled
+    // from and with.
+    assert(!affectedBy(sets, requests, ["README.md"]).uncertain[0], "text-lab's generators are typed");
     assert(!affectedBy(sets, requests, ["README.md"]).uncertain[2], "core-cli reaches none");
+    assert(affected("libs/ui/shaders/sparkles/ui/shaders/blur.d").canFind("text-lab"));
+    assert(affected("apps/shader-compile/src/app.d") == ["text-lab"]);
+    // What a generator writes is its output, no request's input.
+    const shader = "libs/ui/generated/shaders/blur.frag.glsl";
+    assert(claimants(shader) == [], claimants(shader).text);
+    assert(sets.writerOf(shader) == 0);
+    assert(affectedBy(sets, requests, [shader]).unclaimed == [shader]);
 
     // `ci build --watch :text-lab`: its start roots are a few package
     // directories, not the repository.
@@ -1355,6 +1616,80 @@ unittest
 
     resolverHidden.sort();
     assert(resolverHidden == hidden, resolverHidden.text);
+}
+
+/// The shader compiler's command is a typed generator (D53): no opaque entry,
+/// its output no input, and a request that runs it holds the closures of its
+/// tool and of the configuration it compiles. Any other shape stays opaque.
+@("build_primitives.workspace.input_sets.generators.shaderCompiler")
+@safe
+unittest
+{
+    enum run = `"$DUB run --temp-build -q --root=$PACKAGE_DIR/../../apps/shader-compile -- --package=$PACKAGE_DIR `;
+    const recipes = [
+        recipe("libs/base", `name "base"`),
+        recipe("libs/wired", `name "wired"`),
+        recipe("apps/shader-compile", `name "shader-compile"
+dependency "sparkles:wired" path="../.."`),
+        recipe("libs/fx", `name "fx"
+dependency "sparkles:base" path="../.."
+stringImportPaths "generated/shaders"
+configuration "library" {
+    preGenerateCommands ` ~ run ~ `--out=$PACKAGE_DIR/generated/shaders --if-stale"
+}
+configuration "shaders" {
+    sourcePaths "src" "shaders"
+}
+configuration "odd" {
+    preGenerateCommands ` ~ run ~ `--out=$PACKAGE_DIR/generated/shaders --ldc=/opt/ldc2"
+    preGenerateCommands ` ~ run ~ `--out=$PACKAGE_DIR/../elsewhere"
+    preGenerateCommands "$DUB run --root=$PACKAGE_DIR/../wired -- --package=$PACKAGE_DIR --out=$PACKAGE_DIR/g"
+    preGenerateCommands "make shaders"
+}`),
+    ];
+    const graph = buildPackageGraph("sparkles", recipes, RecipeRole.build, linux).value;
+    auto sets = inputSets(graph, recipes, linux, WorkspaceInputs.init);
+    alias index = (string name) => cast(uint) graph.indexOf(PackageId("sparkles:" ~ name));
+
+    assert(sets.generators.length == 1, sets.generators.text);
+    const g = sets.generators[0];
+    assert(g.package_ == index("fx") && g.configuration == "library" && g.tool == index("shader-compile")
+        && g.inputs == "shaders" && g.output == "libs/fx/generated/shaders", g.text);
+
+    // The library is certain; the odd configuration's entries are not: a
+    // tool path, an output outside the package, another package as the tool,
+    // and a command of any other shape.
+    const library = sets.indexOf(ConfiguredPackage(index("fx"), "library"));
+    assert(!sets.isOpaque(library));
+    assert(sets.generatorsOf(library) == [0]);
+    assert(sets.opaque.length == 4, sets.opaque.text);
+    assert(sets.isOpaque(sets.indexOf(ConfiguredPackage(index("fx"), "odd"))));
+
+    // The output is the generator's write, in no set of the package.
+    const shader = "libs/fx/generated/shaders/blur.spv";
+    assert(sets.writerOf(shader) == 0);
+    bool claimed;
+    sets.eachClaimant(shader, (size_t _) { claimed = true; });
+    assert(!claimed);
+
+    // A request that builds fx's library holds the tool's closure and fx's
+    // shaders configuration, each asked for once.
+    auto request = Request("app", [ConfiguredPackage(index("base"), ""), ConfiguredPackage(index("fx"), "library")]);
+    string[] asked;
+    addGenerators(request, sets, (uint package_, string configuration) {
+        asked ~= text(graph.packages[package_].shortName, ":", configuration);
+        Request r;
+        if (package_ == index("shader-compile"))
+            r.closure = [ConfiguredPackage(index("shader-compile"), ""), ConfiguredPackage(index("wired"), "")];
+        else
+            r.closure = [ConfiguredPackage(index("base"), ""), ConfiguredPackage(package_, configuration)];
+        return r;
+    });
+    assert(asked == ["shader-compile:", "fx:shaders"], asked.text);
+    assert(request.closure.map!(p => text(graph.packages[p.package_].shortName, ":", p.configuration)).array
+        == ["base:", "fx:library", "fx:shaders", "shader-compile:", "wired:"], request.closure.text);
+    const affected = affectedBy(sets, [request], ["libs/fx/shaders/blur.d", "apps/shader-compile/src/app.d"]);
+    assert(affected.affected == [true] && affected.uncertain == [false]);
 }
 
 /// A reach is a start root outside the package's territory; one into a
