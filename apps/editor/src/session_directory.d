@@ -44,6 +44,7 @@ class SessionDirectory
     }
 
     string path() const @safe pure nothrow @nogc => path_;
+    bool owned() const @safe pure nothrow @nogc => descriptor.valid;
     void close() @safe nothrow @nogc { descriptor.close(); }
 
     /**

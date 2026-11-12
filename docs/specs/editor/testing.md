@@ -488,3 +488,35 @@ fields are refused, and the earlier version-1 prototype is reported as
 unsupported and preserved. No application recovery writer used that prototype.
 Round trips cover the richer metadata; caret validation also refuses positions
 inside combining sequences or CRLF graphemes. All 34 editor tests pass.
+
+### Captured sessions and background checkpoint writer — 2026-11-12
+
+The editor suite passes 37 tests. `SessionSnapshot` retains persistent text
+roots and copies selection/constraint metadata without flattening document
+contents. Its sealed capture remains unchanged after later document edits;
+serialization into the record happens on the CPU worker. GC arrays contain
+class references or numeric metadata, never reference-counted Text values.
+
+`CheckpointWriter` keeps one running write and one latest desired snapshot.
+Tests drive continuous edits every 10 ms and verify submission at the original
+250 ms deadline. An older receipt advances the durable revision without
+claiming later input; explicit flush submits the latest state. The writer
+tracks observation revisions separately from immutable file generations,
+retains failures until a successful durable receipt, and exposes overdue
+updates without claiming a hardware latency guarantee. Shutdown drains
+accepted work and publishes receipts before releasing the directory lease;
+newer unsubmitted input still requires explicit flush.
+
+The checked [checkpoint probe](../../../apps/editor/tools/checkpoint-fault-probe.d)
+and [fault runner](../../../apps/editor/tools/checkpoint-faults.d) inject a real
+directory `fsync` failure in the writer thread. Generation 4 remains committed
+but unconfirmed, durable revision 3 remains acknowledged, and retry of the
+same observation uses generation 5 before acknowledging revision 4. The
+verifier associates split unfinished/resumed strace lines by thread and checks
+that the injected operation names the archive directory. An Argon Medium
+adversarial review reported no confirmed findings in this bounded worker and
+snapshot scope.
+
+Application wiring, archive retention, startup recovery offers, exit flushing
+and actual one-second/device acceptance remain open. The app does not yet
+enable checkpoint writes to user state directories.
