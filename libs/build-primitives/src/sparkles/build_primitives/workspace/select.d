@@ -1,14 +1,24 @@
 /++
 Focused package selection ([SPEC TDS4–TDS8](../../../../../../docs/specs/build-primitives/task-dag/SPEC.md)):
-`--from` selectors, `--since` change ownership and repository-wide
-invalidators, dependency and dependent closure, platform eligibility, and the
-reasons each package was selected.
+`--from` selectors, `--since` change sets judged by the packages' input sets,
+dependency and dependent closure, platform eligibility, and the reasons each
+package was selected.
+
+A changed path selects by claims, not by directories
+([design](../../../../../../docs/specs/build-primitives/build-graph/fileset-native-workspace.md),
+BGW6, BGW12): a package is seeded when a request rooted at it is affected, that
+is, when a package and configuration of the request's closure claims the
+path, when a workspace input holds it, or, for a request whose reads are not
+all stated, on any change. Where the path lies decides only who it is
+reported under.
 
 $(LREF selectPackages) is pure: it evaluates the selection algebra over a
-$(REF PackageGraph, sparkles,build_primitives,workspace,package_graph) and a description of what
-changed. $(LREF gitChangesSince) is the one part that runs git — through
-`runGit`, so an inherited `GIT_DIR` cannot redirect it — and produces that
-description.
+$(REF PackageGraph, sparkles,build_primitives,workspace,package_graph) and the
+seeds $(LREF seedsByClaims) derived from a change set. $(LREF gitChangesSince)
+is the one part that runs git, through `runGit`, so an inherited `GIT_DIR`
+cannot redirect it. $(LREF planPackages) puts the two together for a
+repository: it reads the workspace, resolves the requests and builds the
+input sets.
 +/
 module sparkles.build_primitives.workspace.select;
 
@@ -21,70 +31,14 @@ import sparkles.base.text.wire_names : AnyFormat, WireCase;
 import sparkles.base.text.writers : writeEnumMemberName, writeValue;
 
 import sparkles.build_primitives.task.model : PlanExpected, planErr, planOk;
-import sparkles.build_primitives.workspace.package_graph : longestPrefixOwner, normalizeRepoPath, PackageEdge,
-    PackageGraph, PackageId, RecipeRole;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Repository-wide invalidators
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// A path that, when changed, selects every package: a file, or a directory
-/// prefix ending in `/`.
-struct Invalidator
-{
-    string path; ///
-
-    /// Whether repository-relative `changed` is this path or lies under it.
-    bool matches(scope const(char)[] changed) const @safe pure nothrow @nogc
-        => path.length && path[$ - 1] == '/' ? changed.startsWith(path) : changed == path;
-}
-
-/**
-The rule in `rules` that `path` hits, or null. The consumer owns the list
-([SPEC TDS6]): it is declarative and grows only by editing it — `ci`'s is
-`repository_invalidators.repositoryInvalidators`.
-*/
-const(Invalidator)* invalidatorFor(return scope const(Invalidator)[] rules, scope const(char)[] path)
-    @safe pure nothrow @nogc
-{
-    foreach (ref rule; rules)
-        if (rule.matches(path))
-            return &rule;
-    return null;
-}
-
-///
-@("build_primitives.workspace.select.invalidatorFor.filesAndPrefixes")
-@safe pure nothrow @nogc
-unittest
-{
-    static immutable Invalidator[2] rules = [Invalidator("dub.sdl"), Invalidator("nix/packages/")];
-    assert(invalidatorFor(rules[], "dub.sdl") is &rules[0]);
-    assert(invalidatorFor(rules[], "nix/packages/dub-builder/default.nix") is &rules[1]);
-    // A file rule is exact; a prefix rule stops at its `/`.
-    assert(!invalidatorFor(rules[], "libs/base/dub.sdl"));
-    assert(!invalidatorFor(rules[], "nix/packagesx"));
-    assert(!invalidatorFor(null, "dub.sdl"));
-}
+import sparkles.build_primitives.workspace.discovery : Workspace;
+import sparkles.build_primitives.workspace.input_sets : ConfiguredPackage, InputSets, Request;
+import sparkles.build_primitives.workspace.package_graph : normalizeRepoPath, PackageEdge, PackageGraph, PackageId,
+    RecipeRole;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The selection algebra
 // ─────────────────────────────────────────────────────────────────────────────
-
-/// A path changed since the base revision.
-struct ChangedPath
-{
-    string path;  /// repository-relative, `/`-separated
-    bool deleted; /// absent from the working tree
-}
-
-/// A package as the base revision declared it: what a deleted path is also
-/// resolved against.
-struct BasePackage
-{
-    PackageId id; ///
-    string path;  ///
-}
 
 /// What to select. Without `from` and `since`, every package is seeded.
 struct SelectionRequest
@@ -92,14 +46,11 @@ struct SelectionRequest
     /// `--from` selectors, each a short name, qualified name, or path, or a
     /// git-style glob over any of those.
     const(string)[] from;
-    /// Whether `--since` was given; `changes` and `basePackages` then
-    /// describe the change set.
+    /// Whether `--since` was given; `changes` then seeds.
     bool since;
-    const(ChangedPath)[] changes; ///
-    const(BasePackage)[] basePackages; ///
-    /// Paths that select every package when changed, checked before
-    /// ownership ([SPEC TDS6]).
-    const(Invalidator)[] invalidators;
+    /// With `since`: the seeds the change set gives, by graph index
+    /// ($(LREF seedsByClaims)).
+    ChangeSeeds changes;
     bool dependencies; /// `--dependencies`
     bool dependents;   /// `--dependents`
 }
@@ -108,12 +59,15 @@ struct SelectionRequest
 @WireCase(CaseStyle.kebabCase)
 enum ReasonKind
 {
-    all,          /// no selector was given
-    from,         /// a `--from` selector matched; `detail` is the selector
-    changed,      /// a changed path it owns; `detail` is the path
-    invalidator,  /// a repository-wide input changed; `detail` is the path
-    dependencyOf, /// a selected package depends on it; `detail` is that package
-    dependentOf,  /// it depends on a selected package; `detail` is that package
+    all,            /// no selector was given
+    from,           /// a `--from` selector matched; `detail` is the selector
+    changed,        /// its request claims a changed path; `detail` is the path
+    workspaceInput, /// a workspace input changed; `detail` is the path
+    /// what its request reads is not all stated, and something changed;
+    /// `detail` says what is not stated
+    uncertain,
+    dependencyOf,   /// a selected package depends on it; `detail` is that package
+    dependentOf,    /// it depends on a selected package; `detail` is that package
 }
 
 /// One reason.
@@ -175,6 +129,87 @@ struct SelectionError
         }
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Seeds from claims
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// What a change set seeds.
+struct ChangeSeeds
+{
+    /// By graph index: the reasons the package is seeded; empty when it is
+    /// not.
+    SelectionReason[][] byPackage;
+    /// The changed paths no set and no workspace input holds, in the order
+    /// given: they affect no request (BGW12).
+    string[] unclaimed;
+}
+
+/**
+The seeds a change to the repository-relative `changed` paths gives
+(BGW12): the root of each request whose closure holds a pair claiming one
+(`changed`), of every request when a workspace input holds one
+(`workspaceInput`), and of each request whose reads are not all stated when
+anything changed (`uncertain`, BGW4), over the `graph` the sets were built
+from.
+
+A path need not exist: membership is decided without the file, so a removed
+path is judged like any other (BGW13). Nor are the base revision's sets
+needed. A set that held a removed path at the base revision and does not now
+was changed by its recipe or by the root recipe, and that recipe is itself a
+changed path, claimed by its package or a workspace input. Reads no file.
+*/
+ChangeSeeds seedsByClaims(ref InputSets inputs, const ref PackageGraph graph, scope const(Request)[] requests,
+    scope const(string)[] changed) @safe nothrow
+{
+    ChangeSeeds seeds;
+    seeds.byPackage = new SelectionReason[][graph.packages.length];
+    auto claimedBy = new string[][inputs.length];
+    string[] everywhere;
+    foreach (path; changed)
+    {
+        bool any;
+        inputs.eachClaimant(path, (size_t i) {
+            claimedBy[i] ~= path;
+            any = true;
+        });
+        if (inputs.inWorkspace(path))
+        {
+            everywhere ~= path;
+            any = true;
+        }
+        if (!any)
+            seeds.unclaimed ~= path;
+    }
+
+    foreach (ref request; requests)
+    {
+        if (request.root < 0)
+            continue;
+        auto reasons = &seeds.byPackage[request.root];
+        foreach (path; everywhere)
+            *reasons ~= SelectionReason(ReasonKind.workspaceInput, path);
+        string unstated = request.unresolved;
+        foreach (pair; request.closure)
+        {
+            const k = inputs.indexOf(pair);
+            if (k < 0 || inputs.isOpaque(k))
+                if (unstated is null)
+                    unstated = describe(graph, pair, k < 0 ? "has no input set" : "has an opaque entry");
+            if (k >= 0)
+                foreach (path; claimedBy[k])
+                    *reasons ~= SelectionReason(ReasonKind.changed, path);
+        }
+        if (unstated !is null && changed.length)
+            *reasons ~= SelectionReason(ReasonKind.uncertain, unstated);
+    }
+    return seeds;
+}
+
+// `sparkles:ui (gpu-effects) has an opaque entry`.
+private string describe(const ref PackageGraph graph, ConfiguredPackage pair, string what) @safe pure nothrow
+    => graph.packages[pair.package_].id.name ~ (pair.configuration.length ? " (" ~ pair.configuration ~ ")" : "")
+        ~ " " ~ what;
 
 /**
 Whether `text` matches the git-style glob `pattern` as a whole: `*` and `?`
@@ -269,6 +304,7 @@ bool isGlob(scope const(char)[] selector) @safe pure nothrow @nogc
     return false;
 }
 
+
 /**
 Evaluates [SPEC TDS7]'s algebra: seed from `--from` and/or `--since` (their
 union), or every package; add the transitive dependency and/or dependent
@@ -277,8 +313,9 @@ unioned, so neither expands the other's result; mark platform-ineligible
 packages skipped; sort by id and induce the edges among the selected.
 
 Errors: a selector (literal or glob) that matches nothing, and a seed that is
-empty — a misspelled selector or an empty change set never becomes a green
-no-op. Selected packages that are all platform-skipped are not an error.
+empty — a misspelled selector or a change set no request claims never
+becomes a green no-op. The empty seed's error names the changed paths nothing
+claims. Selected packages that are all platform-skipped are not an error.
 */
 PlanExpected!(Selection, SelectionError) selectPackages(const ref PackageGraph graph,
     const ref SelectionRequest request, scope const(string)[] hostTokens) @safe pure nothrow
@@ -318,36 +355,16 @@ PlanExpected!(Selection, SelectionError) selectPackages(const ref PackageGraph g
     }
 
     if (request.since)
-        foreach (ref change; request.changes)
-        {
-            if (invalidatorFor(request.invalidators, change.path))
-            {
-                foreach (i; 0 .. count)
-                    seed(i, ReasonKind.invalidator, change.path);
-                continue;
-            }
-            const current = graph.owner(change.path);
-            if (current >= 0)
-                seed(current, ReasonKind.changed, change.path);
-            if (!change.deleted)
-                continue;
-            // A deleted path also counts for the package that owned it at
-            // the base revision, if that package still exists.
-            const based = longestPrefixOwner(request.basePackages, change.path);
-            if (based < 0)
-                continue;
-            const now = graph.indexOf(request.basePackages[based].id);
-            if (now >= 0 && now != current)
-                seed(now, ReasonKind.changed, change.path);
-        }
+        foreach (i, rs; request.changes.byPackage)
+            foreach (r; rs)
+                seed(i, r.kind, r.detail);
 
     bool any;
     foreach (s; seeded)
         any |= s;
     if (!any)
         return planErr!Selection(SelectionError(SelectionErrorKind.emptySelection,
-            request.since ? "no package owns a path changed since the base revision"
-                : "no package was seeded"));
+            request.since ? noRequestClaims(request.changes.unclaimed) : "no package was seeded"));
 
     // Both closures start from the seed alone, so the union is the same
     // whichever is computed first.
@@ -380,6 +397,23 @@ PlanExpected!(Selection, SelectionError) selectPackages(const ref PackageGraph g
     import core.lifetime : move;
 
     return planOk!SelectionError(move(selection));
+}
+
+// The empty-selection detail of `--since`: what changed that nothing claims.
+private string noRequestClaims(scope const(string)[] unclaimed) @safe pure nothrow
+{
+    enum shown = 5;
+    string detail = "no request claims a path changed since the base revision";
+    foreach (i, path; unclaimed)
+    {
+        if (i == shown)
+        {
+            detail ~= ", …";
+            break;
+        }
+        detail ~= (i ? ", " : ": ") ~ path;
+    }
+    return detail;
 }
 
 // Adds the transitive closure of `seed` in one direction to `selected`,
@@ -472,27 +506,25 @@ void writeSelectionPlan(Writer)(ref Writer w, const ref Selection selection)
 /// What `--since` found.
 struct SinceChanges
 {
-    string baseRef;              /// the revision named or resolved
-    string mergeBase;            /// `merge-base(baseRef, HEAD)`
-    ChangedPath[] changes;       /// sorted by path
-    BasePackage[] basePackages;  /// the packages the merge base declared
+    string baseRef;   /// the revision named or resolved
+    string mergeBase; /// `merge-base(baseRef, HEAD)`
+    string[] changes; /// repository-relative, sorted, each once
 }
 
 /**
 The paths changed from `merge-base(sinceRef, HEAD)` through the working tree
-— committed, staged, unstaged, and untracked-but-not-ignored — and the
-packages the merge base declared.
+— committed, staged, unstaged, and untracked-but-not-ignored.
 
 A null `sinceRef` resolves the current branch's upstream, else `origin/main`;
 neither existing is `SelectionErrorKind.baseUnresolved`. Each path appears
-once; `ChangedPath.deleted` says it is absent from the working tree, however
-the index and the base differ. Renames count as a deletion plus an addition.
-Every git call goes through `runGit`.
+once, whether it was created, modified or removed: input sets judge a path
+without the file, so whether it exists does not matter ($(LREF seedsByClaims)).
+Renames count as a removal plus a creation. Every git call goes through
+`runGit`.
 */
 PlanExpected!(SinceChanges, SelectionError) gitChangesSince(string repoRoot, string sinceRef) @safe
 {
     import std.string : strip;
-    import sparkles.build_primitives.dub_manifest : parseDubManifest;
     import sparkles.build_primitives.git_env : runGit;
 
     alias fail = (kind, detail) => planErr!SinceChanges(SelectionError(kind, detail));
@@ -537,10 +569,9 @@ PlanExpected!(SinceChanges, SelectionError) gitChangesSince(string repoRoot, str
         since.mergeBase = mergeBase.output.strip;
 
         // Three views of "changed": the worktree against the base, the index
-        // against the base (a path staged and then deleted from the
-        // worktree is in neither the base nor the worktree), and untracked
-        // files. A path may appear in several; it is reported once, and
-        // `deleted` is what the worktree says, not what one view said.
+        // against the base (a path staged and then removed from the worktree
+        // is in neither the base nor the worktree), and untracked files. A
+        // path may appear in several; it is reported once.
         bool[string] changed; // membership only; the result is sorted below
         const worktree = git(["diff", "--name-only", "-z", "--no-renames", since.mergeBase, "--"]);
         if (worktree.status != 0)
@@ -561,52 +592,16 @@ PlanExpected!(SinceChanges, SelectionError) gitChangesSince(string repoRoot, str
             changed[path] = true;
 
         foreach (path, _; changed)
-            since.changes ~= ChangedPath(path, !existsInWorktree(repoRoot, path));
-
-        // The base revision's package map, for deleted paths. A recipe the
-        // base cannot show or parse simply contributes no package.
-        const rootRecipe = git(["show", since.mergeBase ~ ":dub.sdl"]);
-        if (rootRecipe.status == 0)
-        {
-            auto root = parseDubManifest(rootRecipe.output);
-            if (root.hasValue && root.value.name.length)
-                foreach (ref sub; root.value.subPackages)
-                {
-                    if (!sub.path.length)
-                        continue;
-                    const path = normalizeRepoPath(sub.path);
-                    const recipe = git(["show", since.mergeBase ~ ":" ~ path ~ "/dub.sdl"]);
-                    if (recipe.status != 0)
-                        continue;
-                    auto manifest = parseDubManifest(recipe.output);
-                    if (manifest.hasValue && manifest.value.name.length)
-                        since.basePackages ~= BasePackage(
-                            PackageId(root.value.name ~ ":" ~ manifest.value.name), path);
-                }
-        }
+            since.changes ~= path;
     }
     catch (Exception e)
         return fail(SelectionErrorKind.gitFailed, e.msg);
 
-    since.changes.sort!((a, b) => a.path < b.path);
+    since.changes.sort();
 
     import core.lifetime : move;
 
     return planOk!SelectionError(move(since));
-}
-
-// Whether repository-relative `path` names something in the working tree
-// (a dangling symlink counts: the link itself is there).
-private bool existsInWorktree(string repoRoot, string path) @safe
-{
-    import std.file : exists, isSymlink;
-    import std.path : buildPath;
-
-    const full = repoRoot.buildPath(path);
-    try
-        return full.exists || full.isSymlink;
-    catch (Exception)
-        return false;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -616,14 +611,37 @@ private bool existsInWorktree(string repoRoot, string path) @safe
 /// `ci test`'s focused-selection options ([SPEC TDS4, TDS5]).
 struct FocusOptions
 {
+    import sparkles.build_primitives.resolve.platform : BuildPlatform;
+    import sparkles.build_primitives.resolve.project : RegistrySources;
+
     const(string)[] from; /// `--from`
     bool since;           /// `--since` given
     string sinceRef;      /// its value; null resolves the upstream, else `origin/main`
     bool dependencies;    /// `--dependencies`
     bool dependents;      /// `--dependents`
-    /// The consumer's repository-wide inputs ([SPEC TDS6]).
-    const(Invalidator)[] invalidators;
+
+    /**
+    What the consumer states of the workspace inputs (BGW12): the toolchain's
+    definition as `patterns`, the importable modules' first components as
+    `moduleRoots`, and, in `read`, the files besides the recipes that
+    planning read, such as the lockfiles the registry came from. The
+    recipes and the planner's inputs are added.
+    */
+    WorkspaceInputs workspace;
+    /// The package of the command that plans: its own sets are workspace
+    /// inputs (D54). `sparkles:ci`.
+    string plannerPackage;
+    /// The libraries it plans and runs the work with: their closures are
+    /// workspace inputs (D54). `sparkles:build-primitives`.
+    const(string)[] plannerLibraries;
+
+    /// The platform requests are resolved for.
+    BuildPlatform platform;
+    /// The source directory of each registry package.
+    RegistrySources registry;
 }
+
+import sparkles.build_primitives.workspace.input_sets : WorkspaceInputs;
 
 /// A discovered graph and the selection made from it.
 struct PackagePlan
@@ -632,36 +650,57 @@ struct PackagePlan
     Selection selection; ///
     /// What `--since` found; `baseRef` is empty without `--since`.
     SinceChanges since;
+    /// The requests a `--since` selection judged, one per package, by graph
+    /// index; empty without `--since`.
+    Request[] requests;
 }
 
 /**
-Discovers the package graph under `repoRoot` for `role`, queries git when
-`--since` is given, and selects ([SPEC TDS7] steps 1–10). Side-effect free
-apart from reading recipes and running read-only git queries, so a dry run
-may call it.
+Reads the workspace under `repoRoot`, builds its package graph for `role`,
+and selects ([SPEC TDS7] steps 1–10). With `--since`, it also queries git,
+resolves one request per package (its test root for `RecipeRole.test`, its
+default configuration for `RecipeRole.build`), builds the input sets, and
+seeds by claims. Side-effect free apart from reading recipes and the trees
+resolution lists, and running read-only git queries, so a dry run may call
+it.
+
+A package the host's platforms exclude is not resolved: its request is its
+own sets, and it is reported skipped. A request that fails to resolve is its
+root's own sets and uncertain, so any change selects it.
 */
 PlanExpected!(PackagePlan, SelectionError) planPackages(string repoRoot, RecipeRole role,
-    const ref FocusOptions options, scope const(string)[] hostTokens) @safe
+    const FocusOptions options, scope const(string)[] hostTokens) @safe
 {
     import std.conv : text;
     import core.lifetime : move;
-    import sparkles.build_primitives.workspace.package_graph : discoverPackages;
+    import sparkles.build_primitives.workspace.discovery : readWorkspaceAt;
+    import sparkles.build_primitives.workspace.package_graph : buildPackageGraph;
+
+    alias fail = (kind, detail) => planErr!PackagePlan(SelectionError(kind, detail));
 
     PackagePlan plan;
-    auto graph = discoverPackages(repoRoot, role, hostTokens);
+    auto workspace = readWorkspaceAt(repoRoot);
+    if (workspace.hasError)
+        return fail(SelectionErrorKind.discoveryFailed, text(workspace.error));
+    auto graph = buildPackageGraph(workspace.value.rootName, workspace.value.recipes, role, hostTokens);
     if (graph.hasError)
-        return planErr!PackagePlan(SelectionError(SelectionErrorKind.discoveryFailed, text(graph.error)));
+        return fail(SelectionErrorKind.discoveryFailed, text(graph.error));
     plan.graph = move(graph.value);
 
+    SelectionRequest request = SelectionRequest(options.from, options.since,
+        dependencies: options.dependencies, dependents: options.dependents);
     if (options.since)
     {
         auto since = gitChangesSince(repoRoot, options.sinceRef);
         if (since.hasError)
             return planErr!PackagePlan(since.error);
         plan.since = move(since.value);
+
+        auto inputs = workspaceInputSets(repoRoot, plan.graph, workspace.value, options, hostTokens);
+        plan.requests = packageRequests(repoRoot, plan.graph, inputs, role, options, hostTokens);
+        request.changes = seedsByClaims(inputs, plan.graph, plan.requests, plan.since.changes);
     }
-    const request = SelectionRequest(options.from, options.since, plan.since.changes,
-        plan.since.basePackages, options.invalidators, options.dependencies, options.dependents);
+
     auto selection = selectPackages(plan.graph, request, hostTokens);
     if (selection.hasError)
         return planErr!PackagePlan(selection.error);
@@ -669,6 +708,93 @@ PlanExpected!(PackagePlan, SelectionError) planPackages(string repoRoot, RecipeR
     return planOk!SelectionError(move(plan));
 }
 
+/// The input sets of `graph`'s packages, read from `workspace`, with the
+/// workspace inputs: what `options` states, the recipes read, and the planner's
+/// inputs (D54), the planner's libraries resolved for `options.platform`.
+InputSets workspaceInputSets(string repoRoot, const ref PackageGraph graph,
+    const ref Workspace workspace, const ref FocusOptions options, scope const(string)[] hostTokens) @safe
+{
+    import sparkles.build_primitives.workspace.input_sets : inputSets;
+
+    WorkspaceInputs stated;
+    stated.read = workspace.reads.paths ~ options.workspace.read.dup;
+    stated.patterns = options.workspace.patterns.dup;
+    stated.moduleRoots = options.workspace.moduleRoots.dup;
+
+    foreach (library; options.plannerLibraries)
+    {
+        const at = graph.indexOf(PackageId(library));
+        if (at < 0)
+            continue;
+        auto r = resolveRequest(repoRoot, graph, cast(uint) at, testRoot: false, options);
+        stated.planner ~= r.closure;
+        if (r.unresolved.length)
+            stated.planner ~= ConfiguredPackage(cast(uint) at, "");
+    }
+    const planner = graph.indexOf(PackageId(options.plannerPackage));
+    if (planner >= 0)
+    {
+        auto r = resolveRequest(repoRoot, graph, cast(uint) planner, testRoot: false, options);
+        foreach (pair; r.closure)
+            if (pair.package_ == planner)
+                stated.planner ~= pair;
+    }
+    return inputSets(graph, workspace.recipes, hostTokens, stated);
+}
+
+// One request per package, by graph index (BGW12, D47).
+private Request[] packageRequests(string repoRoot, const ref PackageGraph graph, ref InputSets inputs,
+    RecipeRole role, const ref FocusOptions options, scope const(string)[] hostTokens) @safe
+{
+    Request[] requests;
+    foreach (i, ref p; graph.packages)
+    {
+        Request r;
+        if (p.platforms.allows(hostTokens))
+            r = resolveRequest(repoRoot, graph, cast(uint) i, testRoot: role == RecipeRole.test, options);
+        else
+        {
+            r.name = p.id.name;
+            r.root = i;
+        }
+        if (r.closure.length == 0)
+            foreach (k; 0 .. inputs.length)
+                if (inputs.key(k).package_ == i)
+                    r.closure ~= inputs.key(k);
+        requests ~= r;
+    }
+    return requests;
+}
+
+// The request for package `index` of `graph`; unresolved, with an empty
+// closure, when resolution fails.
+private Request resolveRequest(string repoRoot, const ref PackageGraph graph, uint index, bool testRoot,
+    const ref FocusOptions options) @safe
+{
+    import sparkles.build_primitives.resolve.configure : resolve, ResolveRequest;
+    import sparkles.build_primitives.resolve.driver : SystemDriver;
+    import sparkles.build_primitives.resolve.platform : BuildPlatform;
+    import sparkles.build_primitives.workspace.input_sets : requestOf;
+
+    const p = &graph.packages[index];
+    const o = &options.platform;
+    auto platform = BuildPlatform(o.platform.dup, o.architecture.dup, o.compiler, o.compilerBinary,
+        o.frontendVersion, o.compilerVersion);
+    auto request = ResolveRequest(directory: repoRoot, subPackage: p.shortName, platform: platform,
+        testRoot: testRoot);
+    foreach (name, source; options.registry)
+        request.registry[name] = source;
+    const resolved = resolve(request, new SystemDriver);
+    if (resolved.hasError)
+    {
+        Request r;
+        r.name = p.id.name;
+        r.root = index;
+        r.unresolved = resolved.error.message;
+        return r;
+    }
+    return requestOf(p.id.name, resolved.value, graph);
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests
@@ -676,14 +802,9 @@ PlanExpected!(PackagePlan, SelectionError) planPackages(string repoRoot, RecipeR
 
 version (unittest)
 {
-    import sparkles.build_primitives.workspace.package_graph : buildPackageGraph, recipe;
+    import sparkles.build_primitives.workspace.package_graph : buildPackageGraph, recipe, SubPackageRecipe;
 
     private enum string[] linux = ["linux", "posix"];
-
-    // A consumer's list, as `ci` declares its own.
-    private static immutable Invalidator[2] fixtureInvalidatorRules = [
-        Invalidator("dub.sdl"), Invalidator("dub.selections.json")];
-    private const(Invalidator)[] fixtureInvalidators() @safe pure nothrow @nogc => fixtureInvalidatorRules[];
 
     // base <- wsi (osx-only) <- ui <- ui-tui <- hue; base <- fuzzy; and
     // text-wasm, nested in base's directory, depends on it.
@@ -707,7 +828,7 @@ dependency "sparkles:ui-tui" path="../.."`),
         ], RecipeRole.test, linux).value;
     }
 
-    private string plan(const ref PackageGraph graph, SelectionRequest request) @safe
+    private string plan(const ref PackageGraph graph, const SelectionRequest request) @safe
     {
         import std.array : appender;
         import std.conv : text;
@@ -718,6 +839,104 @@ dependency "sparkles:ui-tui" path="../.."`),
         auto w = appender!string;
         writeSelectionPlan(w, selected.value);
         return w[];
+    }
+
+    // This repository's three reaches, as recipes: the counters' tests
+    // compile the harness, the font oracle's tests read font's test data,
+    // and ui's tests compile dql. `viewer` builds ui with a generator
+    // command, so what it reads is not all stated.
+    private SubPackageRecipe[] reachRecipes() @safe pure
+        => [
+            recipe("libs/base", `name "base"`),
+            recipe("libs/test-harness", `name "test-harness"
+dependency "sparkles:base" path="../.."`),
+            recipe("libs/profiling-counters", `name "profiling-counters"
+dependency "sparkles:base" path="../.."
+configuration "library" {
+}
+configuration "unittest" {
+    sourcePaths "src" "../test-harness/src"
+    importPaths "src" "../test-harness/src"
+}`),
+            recipe("libs/font", `name "font"
+dependency "sparkles:base" path="../.."
+configuration "library" {
+}
+configuration "unittest" {
+    importPaths "src" "test"
+}`),
+            recipe("libs/font-oracle", `name "font-oracle"
+dependency "sparkles:font" path="../.."
+configuration "library" {
+}
+configuration "unittest" {
+    importPaths "src" "test" "../font/test"
+    sourceFiles "../font/test/sparkles/font/fixtures.d"
+}`),
+            recipe("libs/dql", `name "dql"
+dependency "sparkles:base" path="../.."`),
+            recipe("libs/ui", `name "ui"
+dependency "sparkles:base" path="../.."
+configuration "library" {
+}
+configuration "unittest" {
+    sourcePaths "src" "../dql/src"
+    importPaths "src" "../dql/src"
+}
+configuration "gpu-effects" {
+    preGenerateCommands "shader-compile --out generated"
+}`),
+            recipe("apps/hue", `name "hue"
+dependency "sparkles:ui" path="../.."`),
+            recipe("apps/viewer", `name "viewer"
+dependency "sparkles:ui" path="../.."
+subConfiguration "sparkles:ui" "gpu-effects"`),
+        ];
+
+    // The reaches' graph, input sets and requests: each package's test
+    // root, made by hand as a resolution would make it.
+    private struct Reaches
+    {
+        PackageGraph graph;
+        InputSets inputs;
+        Request[] requests;
+
+        ConfiguredPackage pair(string name, string configuration = "") const @safe
+            => ConfiguredPackage(cast(uint) graph.indexOf(PackageId("sparkles:" ~ name)), configuration);
+
+        void add(string name, ConfiguredPackage[] closure) @safe
+        {
+            closure.sort();
+            requests ~= Request(name, closure, root: graph.indexOf(PackageId("sparkles:" ~ name)));
+        }
+
+        // The plan `--since` makes of `changed`.
+        string since(scope const(string)[] changed...) @safe
+        {
+            auto seeds = seedsByClaims(inputs, graph, requests, changed);
+            return plan(graph, SelectionRequest(since: true, changes: seeds));
+        }
+    }
+
+    private Reaches reaches(WorkspaceInputs workspace = WorkspaceInputs.init) @safe
+    {
+        import sparkles.build_primitives.workspace.input_sets : inputSets;
+
+        const recipes = reachRecipes();
+        Reaches r;
+        r.graph = buildPackageGraph("sparkles", recipes, RecipeRole.test, linux).value;
+        r.inputs = inputSets(r.graph, recipes, linux, workspace);
+        ConfiguredPackage p(string name, string configuration = "") => r.pair(name, configuration);
+        r.add("base", [p("base")]);
+        r.add("test-harness", [p("base"), p("test-harness")]);
+        r.add("profiling-counters", [p("base"), p("profiling-counters", "unittest")]);
+        r.add("font", [p("base"), p("font", "unittest")]);
+        r.add("font-oracle", [p("base"), p("font", "library"), p("font-oracle", "unittest")]);
+        r.add("dql", [p("base"), p("dql")]);
+        r.add("ui", [p("base"), p("ui", "unittest")]);
+        r.add("hue", [p("base"), p("ui", "library"), p("hue")]);
+        r.add("viewer", [p("base"), p("ui", "gpu-effects"), p("viewer")]);
+        return r;
     }
 }
 
@@ -773,6 +992,7 @@ unittest
     assert(!plan(graph, SelectionRequest(from: ["libs/*"])).canFind("text-wasm"));
 }
 
+
 @("build_primitives.workspace.select.selectPackages.emptyMatchesAreErrors")
 @safe
 unittest
@@ -781,60 +1001,104 @@ unittest
     assert(plan(graph, SelectionRequest(from: ["bsae"])) == "unmatched-selector: bsae");
     assert(plan(graph, SelectionRequest(from: ["base", "sparkles:nope-*"]))
         == "unmatched-selector: sparkles:nope-*");
-    // A `--since` whose changes no package owns seeds nothing.
-    assert(plan(graph, SelectionRequest(since: true, changes: [ChangedPath("README.md")]))
-        == "empty-selection: no package owns a path changed since the base revision");
+    // A `--since` whose changes no request claims seeds nothing, and says
+    // what changed.
+    auto unclaimed = ChangeSeeds(new SelectionReason[][graph.packages.length],
+        ["README.md", "a", "b", "c", "d", "e"]);
+    assert(plan(graph, SelectionRequest(since: true, changes: unclaimed))
+        == "empty-selection: no request claims a path changed since the base revision: README.md, a, b, c, d, …");
     assert(plan(graph, SelectionRequest(since: true))
-        == "empty-selection: no package owns a path changed since the base revision");
+        == "empty-selection: no request claims a path changed since the base revision");
 }
 
-@("build_primitives.workspace.select.selectPackages.sinceOwnershipDeletionsAndInvalidators")
+/// A changed path seeds the requests whose closures claim it, wherever it
+/// lies: a reach selects the reaching package's test root and nothing that
+/// builds it as a dependency.
+@("build_primitives.workspace.select.seedsByClaims.reaches")
 @safe
 unittest
 {
-    const graph = fixtureGraph();
-    // The longest prefix owns a path; a path outside every package selects
-    // nothing; `--from` unions with `--since`.
-    assert(plan(graph, SelectionRequest(from: ["fuzzy"], since: true, changes: [
-        ChangedPath("libs/base/text-wasm/src/a.d"),
-        ChangedPath("libs/base/src/b.d"),
-        ChangedPath("docs/index.md"),
-    ])) ==
-        "packages (3):\n"
-        ~ "  sparkles:base: changed=libs/base/src/b.d\n"
-        ~ "  sparkles:fuzzy: from=fuzzy\n"
-        ~ "  sparkles:text-wasm: changed=libs/base/text-wasm/src/a.d\n"
-        ~ "edges (2):\n"
-        ~ "  sparkles:base -> sparkles:fuzzy\n"
-        ~ "  sparkles:base -> sparkles:text-wasm\n");
-
-    // A deleted path counts for its current owner and for the package that
-    // owned it at the base — here `ui`, which used to live at `libs/old-ui`.
-    assert(plan(graph, SelectionRequest(since: true,
-        changes: [ChangedPath("libs/old-ui/src/x.d", deleted: true),
-            ChangedPath("libs/base/text-wasm/gone.d", deleted: true)],
-        basePackages: [BasePackage(PackageId("sparkles:ui"), "libs/old-ui"),
-            BasePackage(PackageId("sparkles:base"), "libs/base"),
-            BasePackage(PackageId("sparkles:text-wasm"), "libs/base/text-wasm")])) ==
+    auto r = reaches();
+    r.requests = r.requests[0 .. $ - 1]; // without viewer, which is uncertain
+    // dql's sources: dql, and ui's tests, which compile them. hue builds ui
+    // as a library, whose set does not hold them.
+    assert(r.since("libs/dql/src/sparkles/dql/query.d") ==
         "packages (2):\n"
-        ~ "  sparkles:text-wasm: changed=libs/base/text-wasm/gone.d\n"
-        ~ "  sparkles:ui: changed=libs/old-ui/src/x.d\n"
+        ~ "  sparkles:dql: changed=libs/dql/src/sparkles/dql/query.d\n"
+        ~ "  sparkles:ui: changed=libs/dql/src/sparkles/dql/query.d\n"
+        ~ "edges (0):\n", r.since("libs/dql/src/sparkles/dql/query.d"));
+    // The harness's sources: the harness and the counters' tests.
+    assert(r.since("libs/test-harness/src/sparkles/test_harness/run.d") ==
+        "packages (2):\n"
+        ~ "  sparkles:profiling-counters: changed=libs/test-harness/src/sparkles/test_harness/run.d\n"
+        ~ "  sparkles:test-harness: changed=libs/test-harness/src/sparkles/test_harness/run.d\n"
         ~ "edges (0):\n");
+    // font's test data: font's tests and the oracle's, not what builds the
+    // font library.
+    assert(r.since("libs/font/test/sparkles/font/fixtures.d") ==
+        "packages (2):\n"
+        ~ "  sparkles:font: changed=libs/font/test/sparkles/font/fixtures.d\n"
+        ~ "  sparkles:font-oracle: changed=libs/font/test/sparkles/font/fixtures.d\n"
+        ~ "edges (1):\n"
+        ~ "  sparkles:font -> sparkles:font-oracle\n");
+    // A package's own recipe is its input, not every package's.
+    assert(r.since("libs/dql/dub.sdl") ==
+        "packages (1):\n  sparkles:dql: changed=libs/dql/dub.sdl\nedges (0):\n");
+}
 
-    // A repository-wide input selects everything; without the consumer's
-    // list it is an ordinary path outside every package.
-    const all = plan(graph, SelectionRequest(since: true, changes: [ChangedPath("dub.selections.json")],
-        invalidators: fixtureInvalidators));
-    assert(all.startsWith("packages (7):\n  sparkles:base: invalidator=dub.selections.json\n"));
-    assert(plan(graph, SelectionRequest(since: true, changes: [ChangedPath("dub.selections.json")]))
-        .startsWith("empty-selection"));
+/// A path is judged without the file, so a removed one needs neither a probe
+/// nor the base revision's packages; a workspace input seeds every request;
+/// documentation seeds none.
+@("build_primitives.workspace.select.seedsByClaims.removedWorkspaceAndUnclaimed")
+@safe
+unittest
+{
+    auto r = reaches(WorkspaceInputs(read: ["dub.sdl", "libs/ui/dub.sdl"], patterns: ["flake.lock"]));
+    r.requests = r.requests[0 .. $ - 1]; // without viewer, which is uncertain
 
-    // Invalidators are checked before ownership: a rule inside a package
-    // directory selects every package, not just its owner.
-    static immutable Invalidator[1] inside = [Invalidator("libs/base/src/core.d")];
-    const owned = plan(graph, SelectionRequest(since: true, changes: [ChangedPath("libs/base/src/core.d")],
-        invalidators: inside[]));
-    assert(owned.startsWith("packages (7):\n  sparkles:base: invalidator=libs/base/src/core.d\n"), owned);
+    // Nothing here exists: the sets were built from recipe text.
+    const removed = r.since("libs/base/src/sparkles/base/gone.d");
+    assert(removed.startsWith("packages (8):\n  sparkles:base: changed=libs/base/src/sparkles/base/gone.d\n"),
+        removed);
+
+    const root = r.since("dub.sdl");
+    assert(root.startsWith("packages (8):\n  sparkles:base: workspace-input=dub.sdl\n"), root);
+    assert(r.since("flake.lock").canFind("  sparkles:hue: workspace-input=flake.lock\n"));
+    // A sub-package's recipe that planning read is its package's input.
+    assert(r.since("libs/ui/dub.sdl") ==
+        "packages (2):\n"
+        ~ "  sparkles:hue: changed=libs/ui/dub.sdl\n"
+        ~ "  sparkles:ui: changed=libs/ui/dub.sdl\n"
+        ~ "edges (1):\n"
+        ~ "  sparkles:ui -> sparkles:hue\n");
+
+    assert(r.since("README.md", "libs/ui/README.md") == "empty-selection: no request claims a path changed "
+        ~ "since the base revision: README.md, libs/ui/README.md");
+    // Claimed and unclaimed together: the claimed ones seed.
+    assert(r.since("README.md", "libs/dql/src/q.d").startsWith("packages (2):\n"));
+}
+
+/// A request whose reads are not all stated is seeded by any change (BGW4):
+/// one that reaches a generator's configuration, and one that failed to
+/// resolve.
+@("build_primitives.workspace.select.seedsByClaims.uncertain")
+@safe
+unittest
+{
+    auto r = reaches();
+    assert(r.since("README.md") ==
+        "packages (1):\n"
+        ~ "  sparkles:viewer: uncertain=sparkles:ui (gpu-effects) has an opaque entry\n"
+        ~ "edges (0):\n");
+    // It is still seeded by what it claims, for a reader of the plan.
+    assert(r.since("libs/ui/src/a.d").canFind("  sparkles:viewer: changed=libs/ui/src/a.d, "
+        ~ "uncertain=sparkles:ui (gpu-effects) has an opaque entry\n"));
+    // Nothing changed: nothing is seeded, uncertain or not.
+    assert(r.since().startsWith("empty-selection"));
+
+    r.requests[2].unresolved = "no DUB recipe in libs/profiling-counters";
+    assert(r.since("README.md").canFind(
+        "  sparkles:profiling-counters: uncertain=no DUB recipe in libs/profiling-counters\n"));
 }
 
 @("build_primitives.workspace.select.selectPackages.closuresAreAFixedPointUnion")
@@ -893,13 +1157,15 @@ dependency "sparkles:a" path="../.."`),
     assert(cyclic.hasError);
 }
 
+
 @("build_primitives.workspace.select.gitChangesSince.fixtureRepository")
 @system
 unittest
 {
+    import std.file : remove;
+    import std.path : buildPath;
     import sparkles.build_primitives.testing : gitAvailable, TmpGitRepo;
     import sparkles.test_runner.skip : skipTest;
-    import sparkles.build_primitives.workspace.package_graph : discoverPackages;
 
     if (!gitAvailable)
         return skipTest("git is not on PATH");
@@ -926,7 +1192,7 @@ unittest
     assert(repo.git(["checkout", "-q", "feature"]).status == 0);
 
     // On the branch: a committed change, a moved package, a staged change,
-    // an unstaged deletion, an untracked file, and an ignored one.
+    // an unstaged removal, an untracked file, and an ignored one.
     repo.writeFile("libs/b/src/b.d", "module b; // edited\n");
     assert(repo.git(["mv", "libs/old-d", "libs/d"]).status == 0);
     repo.writeFile("dub.sdl", "name \"sparkles\"\nsubPackage \"libs/a\"\nsubPackage \"libs/b\"\n"
@@ -935,9 +1201,6 @@ unittest
     repo.writeFile("libs/a/src/staged.d", "module staged;\n");
     assert(repo.git(["add", "libs/a/src/staged.d"]).status == 0);
     assert(repo.git(["rm", "-q", "--cached", "README.md"]).status == 0);
-    import std.file : remove;
-    import std.path : buildPath;
-
     remove(repo.dir.buildPath("README.md"));
     repo.writeFile("libs/c/build/out.o", "ignored\n");
     repo.writeFile("libs/c/new.d", "module fresh;\n");
@@ -945,54 +1208,28 @@ unittest
     const since = gitChangesSince(repo.dir, "main");
     assert(since.hasValue, since.hasError ? since.error.detail : null);
     assert(since.value.baseRef == "main");
-    import std.algorithm.iteration : map;
-    import std.array : array;
-
     assert(since.value.changes == [
-        ChangedPath("README.md", deleted: true),
-        ChangedPath("dub.sdl"),
-        ChangedPath("libs/a/src/staged.d"),
-        ChangedPath("libs/b/src/b.d"),
-        ChangedPath("libs/c/new.d"),
-        ChangedPath("libs/d/dub.sdl"),
-        ChangedPath("libs/d/src/d.d"),
-        ChangedPath("libs/old-d/dub.sdl", deleted: true),
-        ChangedPath("libs/old-d/src/d.d", deleted: true),
+        "README.md",
+        "dub.sdl",
+        "libs/a/src/staged.d",
+        "libs/b/src/b.d",
+        "libs/c/new.d",
+        "libs/d/dub.sdl",
+        "libs/d/src/d.d",
+        "libs/old-d/dub.sdl",
+        "libs/old-d/src/d.d",
     ], "unexpected changes");
-    assert(since.value.basePackages.map!(p => p.id.name ~ "@" ~ p.path).array
-        == ["sparkles:a@libs/a", "sparkles:b@libs/b", "sparkles:c@libs/c", "sparkles:d@libs/old-d"]);
-
-    // The root recipe changed, so this branch selects everything; without
-    // that invalidator, ownership alone decides.
-    auto graph = discoverPackages(repo.dir, RecipeRole.test, linux).value;
-    auto request = SelectionRequest(since: true, changes: since.value.changes,
-        basePackages: since.value.basePackages, invalidators: fixtureInvalidators);
-    auto all = selectPackages(graph, request, linux).value;
-    assert(all.packages.length == 4);
-    assert(all.packages[0].reasons[$ - 1] == SelectionReason(ReasonKind.invalidator, "dub.sdl"));
-
-    auto owned = since.value.changes.dup;
-    owned = owned[0 .. 1] ~ owned[2 .. $];
-    request.changes = owned;
-    const focused = plan(graph, request);
-    assert(focused ==
-        "packages (4):\n"
-        ~ "  sparkles:a: changed=libs/a/src/staged.d\n"
-        ~ "  sparkles:b: changed=libs/b/src/b.d\n"
-        ~ "  sparkles:c: changed=libs/c/new.d\n"
-        ~ "  sparkles:d: changed=libs/d/dub.sdl, changed=libs/d/src/d.d,"
-        ~ " changed=libs/old-d/dub.sdl, changed=libs/old-d/src/d.d\n"
-        ~ "edges (1):\n"
-        ~ "  sparkles:a -> sparkles:b\n", focused);
 }
 
 /// The planner end to end on a fixture repository: `--from c --since main
-/// --dependents` prints a deterministic plan.
+/// --dependents` resolves each package's test root and prints a
+/// deterministic plan.
 @("build_primitives.workspace.select.planPackages.fixtureRepository")
 @system
 unittest
 {
     import std.array : appender;
+    import sparkles.build_primitives.resolve.platform : BuildPlatform;
     import sparkles.build_primitives.testing : gitAvailable, TmpGitRepo;
     import sparkles.test_runner.skip : skipTest;
 
@@ -1006,27 +1243,49 @@ unittest
     repo.writeFile("libs/b/dub.sdl", "name \"b\"\nconfiguration \"library\" {\n}\nconfiguration \"unittest\" {\n"
         ~ "    dependency \"sparkles:a\" path=\"../..\"\n}\n");
     repo.writeFile("libs/c/dub.sdl", "name \"c\"\nplatforms \"windows\"\n");
+    repo.writeFile("libs/b/src/b.d", "module b;\n");
     repo.commitAll("base");
     assert(repo.git(["checkout", "-q", "-b", "feature"]).status == 0);
     repo.writeFile("libs/a/src/a.d", "module a;\n");
 
-    const options = FocusOptions(from: ["c"], since: true, sinceRef: "main", dependents: true);
+    auto options = FocusOptions(from: ["c"], since: true, sinceRef: "main", dependents: true);
+    options.platform = BuildPlatform(linux, ["x86_64"], "ldc", "ldc2", 2111, "1.41.0");
     auto planned = planPackages(repo.dir, RecipeRole.test, options, linux);
     assert(planned.hasValue, planned.hasError ? planned.error.detail : null);
     auto w = appender!string;
     writeSelectionPlan(w, planned.value.selection);
+    // b's test root depends on a, so a's new module is its input too.
     assert(w[] ==
         "packages (3):\n"
         ~ "  sparkles:a: changed=libs/a/src/a.d\n"
-        ~ "  sparkles:b: dependent-of=sparkles:a\n"
+        ~ "  sparkles:b: changed=libs/a/src/a.d\n"
         ~ "  sparkles:c [platform-skipped]: from=c\n"
         ~ "edges (1):\n"
         ~ "  sparkles:a -> sparkles:b\n", w[]);
+    foreach (ref r; planned.value.requests)
+        assert(r.unresolved is null, r.unresolved);
+
+    // The root recipe is a workspace input: a change to it seeds every
+    // request.
+    repo.writeFile("dub.sdl", "name \"sparkles\"\nsubPackage \"libs/c\"\nsubPackage \"libs/a\"\n"
+        ~ "subPackage \"libs/b\"\n// edited\n");
+    auto all = planPackages(repo.dir, RecipeRole.test, FocusOptions(since: true, sinceRef: "main",
+        platform: options.platform), linux);
+    auto allPlan = appender!string;
+    writeSelectionPlan(allPlan, all.value.selection);
+    {
+        import std.conv : text;
+
+        allPlan.put(text("changes: ", all.value.since.changes,
+            "\nstatus: ", repo.git(["status", "--porcelain"]).output));
+    }
+    assert(all.value.selection.packages.length == 3, allPlan[]);
+    assert(all.value.selection.packages[1].reasons[$ - 1] == SelectionReason(ReasonKind.workspaceInput, "dub.sdl"));
 
     // `build` reads the default configuration: b's edge to a is gone.
-    auto built = planPackages(repo.dir, RecipeRole.build, options, linux);
+    const built = planPackages(repo.dir, RecipeRole.build, FocusOptions(from: ["c"], dependents: true), linux);
     assert(built.value.selection.edges.length == 0);
-    assert(built.value.selection.packages.length == 2);
+    assert(built.value.selection.packages.length == 1);
 
     const unmatched = FocusOptions(from: ["zz"]);
     assert(planPackages(repo.dir, RecipeRole.test, unmatched, linux).error
@@ -1059,9 +1318,10 @@ unittest
 
     const since = gitChangesSince(repo.dir, "HEAD");
     assert(since.hasValue, since.hasError ? since.error.detail : null);
-    assert(since.value.changes == [ChangedPath("kept.d"), ChangedPath("staged.d", deleted: true)],
-        "one entry per path, `deleted` meaning absent from the worktree");
+    assert(since.value.changes == ["kept.d", "staged.d"],
+        "one entry per path, whether or not the worktree has it");
 }
+
 
 @("build_primitives.workspace.select.gitChangesSince.defaultBaseAndErrors")
 @system

@@ -300,7 +300,7 @@ Sparkles differs in load-bearing ways:
 | Topological command | Builds follow the in-tree dependency graph. Tests do not wait for other packages' tests, only for the builds their binaries need.                |
 | Job count           | Weighted capacity. A compiler-heavy task can consume more than one unit.                                                                         |
 | `--from`            | Matches Sparkles package name, qualified name, or path. It does not mean "start at this textual position."                                       |
-| `--since`           | Uses Git change ownership plus explicit repository-wide invalidators, not workspace manifest timestamps.                                         |
+| `--since`           | Uses Git's changed paths judged by the packages' input sets, not directory ownership or workspace manifest timestamps.                           |
 | Recursive selection | Explicit `--dependencies` and `--dependents`; there is no implicit Yarn `-R`/`-A` mode.                                                          |
 | Interlacing         | Line-atomic, prefixed event streaming on TTY and non-TTY alike. Raw byte chunks are never written concurrently.                                  |
 | Failure             | A structured outcome, with blocked, cancelled, skipped, and degraded distinct from failed.                                                       |
@@ -314,30 +314,28 @@ algebra](../../build-primitives/task-dag/SPEC.md#_2-package-discovery-and-focuse
 Only `ci test` and `ci pipeline` accept focused selectors; docs and example
 commands keep their file selectors.
 
-**CIC5: The repository's invalidators.** These repository-relative paths
-**must** select every package, ahead of package ownership:
+**CIC5: The repository's workspace inputs.** A change to any of these
+**must** select every package under `--since`
+([BGW12](../../build-primitives/build-graph/fileset-native-workspace.md#_6-change-affected-sets-invalidation-and-watching)):
 
-- `dub.sdl`, `dub.selections.json`, `nix/dub-lock.json` and
+- the files planning reads that no package's input set claims: `dub.sdl`
+  and the lockfiles `dub.selections.json`, `nix/dub-lock.json` and
   `nix/ci-dub-lock.json`;
-- `flake.nix`, `flake.lock`, `nix/d-toolchain.nix` and `nix/shells/`;
-- `libs/build-primitives/src/sparkles/build_primitives/task/`,
-  `libs/build-primitives/src/sparkles/build_primitives/workspace/`,
-  the build graph's modules and `dub_manifest.d` under the same directory;
-- `apps/ci/src/commands/`, `apps/ci/src/cli.d`, `apps/ci/src/ci_main.d`,
-  `apps/ci/src/app.d` and `apps/ci/tools/standardize-build-settings.d`;
-- `nix/packages/`, which builds the native libraries and import paths that
-  every package's actions read.
+- the toolchain's and the shells' definition, which no plan reads and so is
+  stated: `flake.nix`, `flake.lock`, `nix/d-toolchain.nix`, `nix/shells/**`,
+  and `nix/packages/**`, which builds the native libraries and import paths
+  every package's actions read;
+- the planner's inputs: the closure of `sparkles:build-primitives`, which
+  plans and runs the work, and the input set of `sparkles:ci` itself
+  ([D54](../../build-primitives/build-graph/decisions.md#d54-the-planner-s-inputs-are-its-planning-library-s-closure-and-its-own-sources-accepted));
+- what the compiler's working-directory lookup could find: the D and C
+  sources directly beneath the root, and the trees `sparkles/`, `std/`,
+  `core/`, `etc/` and `ldc/` there.
 
-The list **must** cover the build graph's planning read set
-([BGP1](../../build-primitives/build-graph/SPEC.md#_11-public-surface)): a test
-fails when a path in the read set of the repository's own plan lies in no
-package's directory and under no invalidator.
-
-Other `apps/ci/` changes select only `ci`, which owns them.
-
-> [!NOTE]
-> TODO: `apps/ci/src/repository_invalidators.d` lists the build graph's
-> modules once they exist; the read-set check above fails until it does.
+Only the second and the module names are a list, in
+`apps/ci/src/repository_inputs.d`; the rest is derived, so it cannot name a
+path that is not there. A package's own recipe, and every other path, selects
+the packages whose requests claim it.
 
 ## 5. Command graphs
 

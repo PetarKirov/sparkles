@@ -1421,3 +1421,28 @@ at.
 
 **Revisit when** a recipe declares a generator that is not the shader
 compiler.
+
+## D54: The planner's inputs are its planning library's closure and its own sources (accepted)
+
+**Question.** BGW12 makes the planning command's dependency closure a
+workspace input: a change to anything the planner is built from could change
+every plan. `ci`'s closure is 30 of the repository's 73 packages, because
+`ci` reaches `ui`, `syntax` and `twoslash` through `docs`, so an edit to any
+of them would select every package under `--since`. Take the whole closure,
+a narrower one, or split `ci`'s planner into a package of its own?
+
+**Choice.** The narrower closure, decided by the owner on 2026-11-13: the
+closure of the library the command plans and runs the work with
+(`sparkles:build-primitives`) and the command's own package's sets
+(`sparkles:ci`'s sources and recipe), each still derived from resolutions
+rather than listed by hand. The consumer names the two packages
+(`FocusOptions.plannerLibraries` and `plannerPackage`).
+
+**Trade-offs.** It is unsound where a `ci` mode outside planning changes how a
+package is tested through a module that only `docs` reaches. `ci`'s own tests
+cover its modes, and an edit to `ci`'s sources still selects everything.
+Splitting the planner out would make the rule exact, at the cost of a
+refactor of `apps/ci` outside this design.
+
+**Revisit when** `ci`'s planning and test-driving code moves into a package
+of its own: its closure is then the rule's.

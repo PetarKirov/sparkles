@@ -137,18 +137,25 @@ and untracked paths. `--since` with no value resolves the current branch's
 upstream, and `origin/main` when there is none. Failure to resolve a base is an
 actionable selection error.
 
-**TDS6: Path ownership.** A changed path **must** select:
+**TDS6: Changed paths select by claims.** A changed path **must** seed the
+root of each request whose closure holds a package and configuration whose
+input set claims it, and the root of every request when a workspace input
+holds it
+([BGW12](../build-graph/fileset-native-workspace.md#_6-change-affected-sets-invalidation-and-watching)).
+A request whose reads are not all stated, because its resolution failed or
+its closure reaches an opaque entry, **must** be seeded by any change. A
+request is the package's test root for a test selection and its default
+configuration for a build.
 
-- every package, if it matches one of the consumer's **invalidators**, checked
-  before package ownership;
-- otherwise, the package with the longest directory-prefix match;
-- for a deleted path, also the package that owned it in the base tree, if that
-  package still exists, so a package that moved stays selected.
-
-A rename counts as a deletion plus an addition. A path outside every package
-selects nothing. The invalidator list is declarative and unit-tested, and it
-does not silently grow from arbitrary top-level changes. The repository's list
-is part of the [`apps/ci` command specification](../../ci/task-dag/SPEC.md#_4-selection-policy).
+Where a path lies does not decide what it selects: a path in no package's
+directory selects the packages that read it, and documentation beside a
+recipe selects none. A removed path is judged like any other, without the
+file and without the base revision's packages, and a rename counts as a
+removal plus a creation. A path that no request claims and no workspace input
+holds selects nothing. The workspace inputs are derived (the files planning
+read and the planner's closure) except the toolchain's definition, which the
+consumer states; the repository's statement is part of the
+[`apps/ci` command specification](../../ci/task-dag/SPEC.md#_4-selection-policy).
 
 ### 2.4 Selection algebra
 
@@ -157,7 +164,7 @@ is part of the [`apps/ci` command specification](../../ci/task-dag/SPEC.md#_4-se
 1. Discover and validate the full package graph.
 2. If neither `--from` nor `--since` is present, seed all packages.
 3. If only `--from` is present, seed its union of matches.
-4. If only `--since` is present, seed changed packages.
+4. If only `--since` is present, seed the packages TDS6 selects.
 5. If both are present, seed the union of both match sets.
 6. If `--dependencies` is present, add the transitive dependency closure.
 7. If `--dependents` is present, add the transitive reverse-dependency closure.
