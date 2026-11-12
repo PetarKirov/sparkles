@@ -116,6 +116,19 @@ reporting `ENOSYS`, `EINVAL` and `ENOTSUP` as `unsupported`; `linkat` without
 `MemVfs` offers `renameNoReplaceAt` and `setPermissions`, which it records
 as a `PosixMode` sharing; it has no hard links.
 
+<a id="vfb9-directory-paths"></a>
+**VFB9: Directory paths.** A backend **may** report the absolute path of a
+directory it holds: `pathOf(dir, buffer)` writes it into `buffer` and returns
+its length, failing with `nameTooLong` when it does not fit; `hasPathOf!V` is
+true exactly then. The path is the one the operating system holds for the
+handle, its links resolved, never the text a root was opened with, so a link
+`symlinkTo` makes ([`VFO10`](./SPEC.md#vfo10-symbolic-link-targets)) names
+where the capability points. `BlockingVfs` **must** offer it on Linux, by
+`readlink` of `/proc/self/fd/<fd>`, and on macOS by `fcntl` with
+`F_GETPATH`; on Windows it does not yet. `MemVfs` offers it, as `/` and the
+directory's path from the tree's root, and counts it as a stat. `RingVfs`
+offers it where `BlockingVfs` does, calling it inline: it reads no file.
+
 ## 2. Native results
 
 A native backend classifies every failure once, where the system call
