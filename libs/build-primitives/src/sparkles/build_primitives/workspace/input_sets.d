@@ -6,8 +6,10 @@ fileset of the files its own compile can read, derived from its recipe
 BGW3–BGW6).
 
 A package's directory says where it lives. Its input set says what it reads:
-its recipe, the modules under its source and import paths, its string
-imports and the files it names one by one, wherever the recipe points. The
+its recipe, the modules under its source paths, every file under its import
+and string-import roots, and the files it names one by one, wherever the
+recipe points. An import root is taken whole, as the build graph's keys take
+it (BGK6): what a compile may read there is not decided by a file's name. The
 two differ in both directions. A `README.md` beside a recipe is in the
 directory and in no input set; a source path of `../harness/src` is in the
 input set and in another package's directory.
@@ -233,9 +235,9 @@ private struct Builder
                 compiled = sets.union_(compiled, under("sourcePaths", candidate, ["*.d"]));
         if (!statedUnqualified(recipe.importPaths))
             foreach (candidate; ["source", "src"])
-                read = sets.union_(read, under("importPaths", candidate, ["*.d", "*.di"]));
+                read = sets.union_(read, root("importPaths", candidate));
         if (!statedUnqualified(recipe.stringImportPaths))
-            read = sets.union_(read, under("stringImportPaths", "views", null));
+            read = sets.union_(read, root("stringImportPaths", "views"));
     }
 
     // What one block of settings reaches: the recipe's top level, or a
@@ -260,11 +262,11 @@ private struct Builder
         each("excludedSourceFiles", settings.excludedSourceFiles,
             v => cast(void)(excluded = sets.union_(excluded, pattern("excludedSourceFiles", v))));
         each("importPaths", settings.importPaths,
-            v => cast(void)(read = sets.union_(read, under("importPaths", v, ["*.d", "*.di"]))));
+            v => cast(void)(read = sets.union_(read, root("importPaths", v))));
         each("cImportPaths", settings.cImportPaths,
-            v => cast(void)(read = sets.union_(read, under("cImportPaths", v, ["*.h"]))));
+            v => cast(void)(read = sets.union_(read, root("cImportPaths", v))));
         each("stringImportPaths", settings.stringImportPaths,
-            v => cast(void)(read = sets.union_(read, under("stringImportPaths", v, null))));
+            v => cast(void)(read = sets.union_(read, root("stringImportPaths", v))));
         each("extraDependencyFiles", settings.extraDependencyFiles,
             v => cast(void)(read = sets.union_(read, pattern("extraDependencyFiles", v))));
         each("copyFiles", settings.copyFiles,
@@ -273,9 +275,9 @@ private struct Builder
             compiled = sets.union_(compiled, literal("mainSourceFile", settings.mainSourceFile));
     }
 
-    // The files beneath the recipe directory `written` whose names match one
-    // of `names` (every file for none), without those dub skips: any with a
-    // hidden component beneath that directory.
+    // The modules beneath the recipe directory `written`: the files whose names
+    // match one of `names`, without those dub skips, any with a hidden component
+    // beneath that directory.
     Fileset under(string directive, string written, scope const(string)[] names) scope @safe nothrow
     {
         string dir;
@@ -283,11 +285,19 @@ private struct Builder
             return sets.nothing;
         const base = dir.length ? "/" ~ escapeGlob(dir) : "";
         Fileset found = sets.nothing;
-        if (names.length == 0)
-            found = glob(directive, written, base ~ "/**");
         foreach (name; names)
             found = sets.union_(found, glob(directive, written, base ~ "/**/" ~ name));
         return sets.difference(found, glob(directive, written, base ~ "/**/.*"));
+    }
+
+    // Every file beneath the recipe directory `written`: a root a compile
+    // searches, taken whole.
+    Fileset root(string directive, string written) scope @safe nothrow
+    {
+        string dir;
+        if (!place(directive, written, dir))
+            return sets.nothing;
+        return glob(directive, written, dir.length ? "/" ~ escapeGlob(dir) ~ "/**" : "/**");
     }
 
     // The one file `written` names.
@@ -555,9 +565,16 @@ unittest
     assert(claimants(sets, graph, "libs/base/dub.sdl") == ["base"]);
     // In the package's directory, in no input set.
     assert(claimants(sets, graph, "libs/base/README.md") == []);
-    assert(claimants(sets, graph, "libs/base/src/notes.txt") == []);
-    assert(claimants(sets, graph, "libs/base/src/.cache/a.d") == [], "dub skips hidden components");
+    assert(claimants(sets, graph, "libs/base/docs/guide.md") == []);
     assert(graph.packages[graph.owner("libs/base/README.md")].shortName == "base");
+    // An import root is claimed whole; only modules are compiled, and none
+    // with a hidden component, as dub skips them.
+    const base = graph.indexOf(PackageId("sparkles:base"));
+    assert(claimants(sets, graph, "libs/base/src/notes.txt") == ["base"]);
+    assert(claimants(sets, graph, "libs/base/src/.cache/a.d") == ["base"]);
+    assert(sets.compiles(base, "libs/base/src/a.d"));
+    assert(!sets.compiles(base, "libs/base/src/notes.txt"));
+    assert(!sets.compiles(base, "libs/base/src/.cache/a.d"));
 
     // In another package's directory, in this one's input set.
     assert(claimants(sets, graph, "libs/harness/src/h.d") == ["counters", "harness"]);
