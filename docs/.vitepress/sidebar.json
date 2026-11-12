@@ -622,6 +622,10 @@
         "link": "/libs/image/"
       },
       {
+        "text": "iroh-send",
+        "link": "/libs/iroh-send/"
+      },
+      {
         "text": "font",
         "link": "/libs/font/",
         "collapsed": true,

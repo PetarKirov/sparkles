@@ -251,4 +251,4 @@ linking it: `dub` builds and tests need no Rust toolchain, the explorer runs
 without it (`FXS8`), and the APK carries it as one more library (`FXS9`).
 
 **Revisit** when the native port reaches the blobs protocol: the provider
-seam (`isBlobProvider`) is what a D provider would fill.
+seam (`BlobProvider`) is what a D provider would fill.

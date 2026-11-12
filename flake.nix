@@ -292,6 +292,7 @@
         ./nix/packages/json-test-suite.nix
         ./nix/packages/snix-castore.nix
         ./nix/packages/bao-outboard.nix
+        ./nix/packages/sparkles-iroh-send.nix
         ./nix/packages/wired-bench-yyjson.nix
         ./nix/packages/wired-bench-cpp-shim.nix
         ./nix/packages/wired-bench-rs.nix

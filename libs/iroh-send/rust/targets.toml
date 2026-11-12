@@ -1,0 +1,12 @@
+
+# Appended to sendme 0.37's Cargo.toml by nix/packages/sparkles-iroh-send.nix:
+# the bridge and the collection oracle, as targets of the `sendme` package,
+# so that its Cargo.lock builds them unchanged.
+[lib]
+name = "sparkles_iroh_send"
+path = "src/sparkles_iroh_send.rs"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "iroh-collection"
+path = "src/iroh_collection.rs"
