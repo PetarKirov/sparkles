@@ -252,3 +252,33 @@ without it (`FXS8`), and the APK carries it as one more library (`FXS9`).
 
 **Revisit** when the native port reaches the blobs protocol: the provider
 seam (`BlobProvider`) is what a D provider would fill.
+
+## X19: Subcommands, `view` the default (accepted)
+
+_Chosen by the owner on 2026-11-12._
+
+**Question.** The explorer grew three things to do besides showing the
+
+screen: print its numbers, send a fileset, and write the query for another
+
+system (`--emit`). One flat command line mixes them. How are they named?
+
+**Choice.** Subcommands, as `sparkles:core-cli`'s `git` and `docker`
+
+examples have them: `view`, `stats`, `send` and `emit` (`FXC1`–`FXC4`).
+
+`view` is the default, so `fileset-explorer --query Q` opens the explorer
+
+as before; `--dir` and `--query` are shared options, accepted on either
+
+side of the subcommand; `send` asks before it serves, and `--yes` answers
+
+for it; `--emit` became `emit`.
+
+**Rejected.** Requiring a subcommand, which breaks every bare
+
+`fileset-explorer` already typed; the query as a positional argument of
+
+`stats` and `send`, which gives the same thing two spellings; keeping
+
+`--emit` beside the subcommands; a `send` that never asks.
