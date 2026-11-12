@@ -156,7 +156,8 @@ Params:
         a no-op.
     shutdown = called once after the loop and its daemons stop, before the
         host's surface closes, as `(ref host)`. Defaults to a no-op.
-    close = called for a native window-close request, as `(ref host)`. The
+    close = called for a native window-close request or an ungrabbed terminal
+        interrupt, as `(ref host)`. The
         default calls `host.quit()`. A callback may defer that call while
         rendering a decision; native close requests alone no longer close it.
     cfg = the run configuration, including the window/font request
@@ -249,7 +250,7 @@ RunOutcome run(alias present, alias handle, alias draw = noDraw,
                     {
                         import sparkles.ui_app.tui_loop : runTui;
 
-                        return runTui!(present, handle, draw, setup, shutdown)(cfg)
+                        return runTui!(present, handle, draw, setup, shutdown, close)(cfg)
                             ? RunOutcome.ok : RunOutcome.openFailed;
                     }
                 }

@@ -46,7 +46,7 @@ import sparkles.ui.canvas : DrawOp;
 import sparkles.ui.geometry : Size;
 import sparkles.ui_app.backend : Backend;
 import sparkles.ui_app.host : FrameOps, HostState, isHost, modsOf, noDraw,
-    noSetup, noShutdown, RunConfig, withRealSize;
+    noSetup, noShutdown, quitOnClose, RunConfig, withRealSize;
 import sparkles.ui_tui.session : TerminalRequest, TerminalSession;
 
 /**
@@ -264,11 +264,16 @@ operations painted into the grid and before the cell diff, so an application
 painting cells of its own lands on top of the display list and still gets
 diffed. A skipped frame skips it too.
 
+An ungrabbed Ctrl+C calls `close`, whose default approves immediately. An
+application may defer approval through the same callback as native closure.
+Input loss still tears the loop down and runs `shutdown` without waiting for
+a decision on a closed input channel.
+
 Returns `false` when the terminal could not be put into raw mode, which is the
 caller's cue to fall back rather than paint into nothing.
 */
 bool runTui(alias present, alias handle, alias draw = noDraw,
-    alias setup = noSetup, alias shutdown = noShutdown)(in RunConfig cfg)
+    alias setup = noSetup, alias shutdown = noShutdown, alias close = quitOnClose)(in RunConfig cfg)
 {
     import sparkles.ui.style : defaultTwoslashPalette;
     import sparkles.ui_tui.grid_canvas : paintGrid;
@@ -460,7 +465,7 @@ bool runTui(alias present, alias handle, alias draw = noDraw,
                             // modifier poll, so the stream is the level.
                             host.noteModifiers(modsOf(e, host.modifiers));
                             if (interrupts(e, host.keyboardGrabbed))
-                                host.quit();
+                                close(host);
                             else
                                 handle(host, withRealSize(e, host.size));
                         }
@@ -502,7 +507,7 @@ bool runTui(alias present, alias handle, alias draw = noDraw,
         // `HST17`: a tty has no modifier poll, so the stream is the level.
         host.noteModifiers(modsOf(e, host.modifiers));
         if (interrupts(e, host.keyboardGrabbed))
-            host.quit();
+            close(host);
         else
             handle(host, withRealSize(e, host.size));
         frame();
@@ -512,7 +517,7 @@ bool runTui(alias present, alias handle, alias draw = noDraw,
 
 /**
 Whether `e` is the interrupt the host answers itself (design-system `KBD3`):
-`Ctrl-C`, which raw mode delivers as a key rather than a signal, quits — unless
+`Ctrl-C`, which raw mode delivers as a key rather than a signal, requests closure — unless
 the application holds the keyboard for an embedded shell
 (`HostState.grabKeyboard`), which must receive it. No application binds it.
 */
