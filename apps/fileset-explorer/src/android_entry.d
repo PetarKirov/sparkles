@@ -18,7 +18,7 @@ import sparkles.wsi.platform.android : AndroidWsiMain, logFailure;
 
 import evaluate : Root;
 import launch : defaultQuery, explorerGui, launch, sonameQueriesRoot;
-import send : prepareIrohSend, sendStoreParent;
+import send : prepareIrohSend, sendStoreParent, shareText;
 import sparkles.android.activity : nativeActivity;
 import sparkles.android.jni : JniFrame;
 import sparkles.iroh_send : IrohSend;
@@ -42,6 +42,12 @@ void androidMain()
     sendStoreParent = buildPath(data, "send");
     mkdirRecurse(sendStoreParent);
     prepareIrohSend = &installJniContext;
+    // Send's Share hands the receive command to the share sheet (`FXS4`).
+    shareText = (string text) {
+        import sparkles.android.intents : androidShare = shareText;
+
+        return androidShare(text, "sendme receive");
+    };
     GuiOptions gui = explorerGui;
     gui.gui = true;
     gui.fontDir = [buildPath(data, "fonts")];

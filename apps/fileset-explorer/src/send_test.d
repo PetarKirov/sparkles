@@ -31,7 +31,10 @@ import sparkles.ui_app.run_app : runAppRecorded;
 import evaluate : Root;
 import explorer : ExplorerApp;
 import render : keyScript, renderFrame;
-import send : BlobProvider, SendStage;
+import send : BlobProvider, SendStage, shareText;
+
+// What the share sheet stand-in was handed (`FXS4`).
+private string[] shared_;
 
 private enum wide = Size(220, 60);
 
@@ -293,6 +296,19 @@ private ExplorerApp* sender(ref Fixture f, Scripted provider)
     const copied = clickOn("Copy");
     assert(copied.clipboardWrites == ["sendme receive blobCOPY"], text(copied.clipboardWrites));
     assert(renderFrame(*app, "", wide).canFind("sendme receive blobCOPY  ✓ copied"));
+    // No share sheet here, so no Share; with one, Share hands it the command,
+    // and a sheet that cannot open says why.
+    assert(!renderFrame(*app, "", wide).canFind("Share"));
+    shareText = (string text) {
+        shared_ ~= text;
+        return text.length ? null : "no share sheet";
+    };
+    scope (exit) shareText = null;
+    clickOn("Share");
+    assert(shared_ == ["sendme receive blobCOPY"], text(shared_));
+    shareText = (string text) => "the share sheet did not start";
+    clickOn("Share");
+    assert(renderFrame(*app, "", wide).canFind("share       the share sheet did not start"));
     clickOn("Stop");
     assert(provider.stopped && app.sending.stage == SendStage.idle);
 }
