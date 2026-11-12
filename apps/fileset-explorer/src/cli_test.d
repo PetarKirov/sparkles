@@ -1,0 +1,254 @@
+/// The command line's subcommands (`FXC1`–`FXC3`).
+module cli_test;
+
+import std.algorithm.iteration : filter;
+import std.algorithm.searching : canFind, startsWith;
+import std.array : array, join, split;
+import std.conv : text;
+import std.sumtype : match;
+
+import sparkles.core_cli.args : parseCli;
+import sparkles.iroh_send : SendFile, SendPhase, SendState;
+
+import cli : Emit, Explorer, SendCommand, sendCommand, SendIo, StatsCommand, statsCommand, View;
+import evaluate : Root;
+import explorer : ExplorerApp;
+import send : BlobProvider;
+import stats : formatStats;
+
+/// FXC1: no subcommand is `view`; `--dir` and `--query` go on either side of
+/// a subcommand; `--help` lists the four.
+@("fileset_explorer.FXC1.subcommands")
+@system unittest
+{
+    auto bare = parseCli!Explorer(["fileset-explorer", "--query", "src/**", "--render-plain"]);
+    assert(bare, bare.error.message);
+    assert(bare.value.query == "src/**");
+    assert(bare.value.command.match!((ref View v) => v.renderPlain, (ref _) => false), "the default is view");
+
+    foreach (args; [["fileset-explorer", "--dir", "d", "stats"], ["fileset-explorer", "stats", "--dir", "d"]])
+    {
+        auto parsed = parseCli!Explorer(args);
+        assert(parsed, parsed.error.message);
+        assert(parsed.value.dir == "d", args.join(" "));
+        assert(parsed.value.command.match!((ref StatsCommand _) => true, (ref _) => false), args.join(" "));
+    }
+    auto emit = parseCli!Explorer(["fileset-explorer", "emit", "nix", "--query", "q", "--nix-globs", "expand"]);
+    assert(emit, emit.error.message);
+    assert(emit.value.command.match!((ref Emit e) => e.target == "nix" && e.nixGlobs == "expand", (ref _) => false));
+    auto sending = parseCli!Explorer(["fileset-explorer", "send", "--yes", "--no-relay"]);
+    assert(sending, sending.error.message);
+    assert(sending.value.command.match!((ref SendCommand s) => s.yes && s.noRelay, (ref _) => false));
+
+    auto help = parseCli!Explorer(["fileset-explorer", "--help"]);
+    assert(!help && help.error.isHelp);
+    foreach (sub; ["view", "stats", "send", "emit"])
+        assert(help.error.help.canFind(sub), sub);
+}
+
+// A directory of files, removed when the test ends.
+private struct Fixture
+{
+    string dir;
+
+    static Fixture make(string label, string[string] files)
+    {
+        import std.file : mkdirRecurse, tempDir, write;
+        import std.path : buildPath, dirName;
+        import std.process : thisProcessID;
+
+        Fixture f;
+        f.dir = buildPath(tempDir, text("fxc-", thisProcessID, "-", label), "proj");
+        foreach (name, contents; files)
+        {
+            mkdirRecurse(dirName(buildPath(f.dir, name)));
+            write(buildPath(f.dir, name), contents);
+        }
+        return f;
+    }
+
+    void remove()
+    {
+        import std.file : rmdirRecurse;
+        import std.path : dirName;
+
+        rmdirRecurse(dirName(dir));
+    }
+}
+
+// The lines but the wall time, which differs between two resolutions.
+private string[] untimed(string s) => s.split('\n').filter!(l => !l.startsWith("resolved in")).array;
+
+/// FXC2: `stats` prints the Stats tab's lines without its Send section,
+/// names included; a query that does not parse exits 1.
+@("fileset_explorer.FXC2.stats")
+@system unittest
+{
+    auto f = Fixture.make("stats", ["src/a.d": "module a;", "src/b.d": "module b;", "README.md": "# r"]);
+    scope (exit) f.remove();
+    string output, error;
+    assert(statsCommand(Root(dir: f.dir), "src/**", false, output, error) == 0, error);
+    auto app = new ExplorerApp(Root(dir: f.dir), "src/**");
+    assert(untimed(output) == untimed(formatStats(app.statsLinesAlone())), output);
+    assert(output.canFind("members     2\n") && output.canFind("store path  /nix/store/"), output);
+    assert(output.canFind("iroh        " ~ app.shown.collection), output);
+    assert(!output.canFind("send"), "no Send section");
+
+    assert(statsCommand(Root(dir: f.dir), "(src", false, output, error) == 1);
+    assert(error.startsWith("fileset-explorer: ") && output.length == 0, error);
+}
+
+/// FXC2: over the live limit the names wait for `--ids`.
+@("fileset_explorer.FXC2.ids")
+@system unittest
+{
+    import evaluate : autoIdBytes;
+
+    char[] big = new char[autoIdBytes + 1];
+    big[] = 'x';
+    auto f = Fixture.make("ids", ["big": big.idup]);
+    scope (exit) f.remove();
+    string output, error;
+    assert(statsCommand(Root(dir: f.dir), "all()", false, output, error) == 0, error);
+    assert(output.canFind("ids         over 32.0 MiB: stats --ids computes them") && !output.canFind("castore"),
+        output);
+    assert(statsCommand(Root(dir: f.dir), "all()", true, output, error) == 0, error);
+    assert(output.canFind("castore     blake3-") && output.canFind("store path  /nix/store/"), output);
+}
+
+// ----------------------------------------------------------------- send
+
+// A provider that plays `script`, one state a poll, and records its calls.
+private final class Scripted : BlobProvider
+{
+    SendFile[] started;
+    size_t starts;
+    bool stopped;
+    SendState[] script;
+    private size_t at;
+
+    void start(in SendFile[] files)
+    {
+        started = files.dup;
+        ++starts;
+    }
+
+    SendState poll()
+    {
+        const s = script[at < script.length ? at : $ - 1];
+        if (at < script.length)
+            ++at;
+        return s;
+    }
+
+    void stop()
+    {
+        stopped = true;
+    }
+}
+
+// `send`'s outputs, and an interrupt after `polls` waits.
+private struct Recorded
+{
+    string[] out_, err;
+    size_t waits;
+    size_t polls = 3;
+    bool asked;
+    bool answer;
+
+    SendIo io(bool interactive) return
+    {
+        SendIo io;
+        io.out_ = (string s) { out_ ~= s; };
+        io.err = (string s) { err ~= s; };
+        io.interrupted = () => waits >= polls;
+        io.wait = (d) { ++waits; };
+        io.interactive = interactive;
+        io.ask = (string q) { asked = true; return answer; };
+        return io;
+    }
+}
+
+private ubyte[32] fromHex(string hex) @safe pure
+{
+    import std.conv : to;
+
+    ubyte[32] b;
+    foreach (i; 0 .. 32)
+        b[i] = hex[2 * i .. 2 * i + 2].to!ubyte(16);
+    return b;
+}
+
+private SendState serving(string collection, string ticket)
+{
+    SendState s;
+    s.phase = SendPhase.serving;
+    s.hasHash = true;
+    s.hash = fromHex(collection);
+    s.ticket = ticket;
+    s.peers = 1;
+    s.bytesSent = 42;
+    return s;
+}
+
+/// FXC3: `send --yes` starts the provider once with the members, prints the
+/// receive command alone on standard output, and stops it when interrupted.
+@("fileset_explorer.FXC3.sendYes")
+@system unittest
+{
+    import std.path : buildPath;
+
+    auto f = Fixture.make("send", ["a.d": "module a;", "sub/b.md": "# b"]);
+    scope (exit) f.remove();
+    const collection = new ExplorerApp(Root(dir: f.dir), "all()").shown.collection; // the ids, live
+    auto provider = new Scripted;
+    provider.script = [serving(collection, "blobCLI")];
+    Recorded r;
+    auto io = r.io(interactive: false);
+    const status = sendCommand(Root(dir: f.dir), "all()", true, (out string why) => cast(BlobProvider) provider, io);
+    assert(status == 0, r.err.join);
+    assert(r.out_ == ["sendme receive blobCLI\n"], text(r.out_));
+    assert(provider.starts == 1 && provider.stopped);
+    assert(provider.started == [SendFile("proj/a.d", buildPath(f.dir, "a.d")),
+        SendFile("proj/sub/b.md", buildPath(f.dir, "sub/b.md"))], text(provider.started));
+    const err = r.err.join;
+    assert(err.canFind("send: 2 files") && err.canFind("send: collection " ~ collection)
+        && err.canFind("anyone with the ticket") && err.canFind("send: serving")
+        && err.canFind("1 connected") && err.canFind("send: stopped"), err);
+}
+
+/// FXC3: without `--yes`, nothing starts without a terminal, nor when the
+/// person answers no; a failing provider exits 1 with its reason.
+@("fileset_explorer.FXC3.sendRefuses")
+@system unittest
+{
+    auto f = Fixture.make("refuse", ["a.d": "module a;"]);
+    scope (exit) f.remove();
+    auto provider = new Scripted;
+    provider.script = [SendState.init];
+    auto make = (out string why) => cast(BlobProvider) provider;
+
+    Recorded noTerminal;
+    auto io = noTerminal.io(interactive: false);
+    assert(sendCommand(Root(dir: f.dir), "all()", false, make, io) == 1);
+    assert(provider.starts == 0 && noTerminal.err.join.canFind("--yes"), noTerminal.err.join);
+
+    Recorded no;
+    auto asking = no.io(interactive: true);
+    assert(sendCommand(Root(dir: f.dir), "all()", false, make, asking) == 1);
+    assert(no.asked && provider.starts == 0);
+
+    SendState failed;
+    failed.phase = SendPhase.failed;
+    failed.error = "boom";
+    provider.script = [failed];
+    Recorded r;
+    auto io2 = r.io(interactive: false);
+    assert(sendCommand(Root(dir: f.dir), "all()", true, make, io2) == 1);
+    assert(r.err.join.canFind("the send failed: boom"), r.err.join);
+
+    Recorded memory;
+    auto io3 = memory.io(interactive: false);
+    assert(sendCommand(Root(literal: "a = 1\n", name: "t"), "all()", true, make, io3) == 1);
+    assert(memory.err.join.canFind("held in memory"), memory.err.join);
+}

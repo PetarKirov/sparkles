@@ -71,7 +71,7 @@ Emitted exportFor(Target t, NixGlobs mode, in Root root, const Query q, const Ou
 }
 
 /**
-`fileset-explorer --emit` (`FXE11`): `query` beneath `dir` written for the
+`fileset-explorer emit` (`FXE11`): `query` beneath `dir` written for the
 target `targetName_`. Returns the exit status: 0 with the code in `output`;
 2 with the refusal in `error`; 1 for a bad argument or a query that does not
 resolve.
@@ -82,7 +82,7 @@ int emitCommand(string dir, string query, string targetName_, string globMode, o
     Target t;
     if (!targetNamed(targetName_, t))
     {
-        error = "--emit takes nix, git-pathspec, gitignore, rsync, tar, cargo, bazel or dub\n";
+        error = "emit takes nix, git-pathspec, gitignore, rsync, tar, cargo, bazel or dub\n";
         return 1;
     }
     NixGlobs mode;

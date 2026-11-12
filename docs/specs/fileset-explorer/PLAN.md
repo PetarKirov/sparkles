@@ -30,4 +30,4 @@ verified and every commit green.
 | M17       | Subcommands: `view` the default, `stats`, `send` and `emit`                                                                                                                                                                             | `FXC1`–`FXC4`, `FXE11`, `FXU8`                                |
 
 Progress: M1–M12 are delivered, M11 and M12 checked on the tablet too; M13 is delivered on Linux and seen on the Android emulator and the tablet; every row of the ledger is verified, the Cargo and
-Bazel oracles when their tools are on `PATH`. M14 and M15 are delivered on Linux, the transport checked against `sendme` itself; M16 is delivered, a fileset sent from the tablet and received on the desktop.
+Bazel oracles when their tools are on `PATH`. M14 and M15 are delivered on Linux, the transport checked against `sendme` itself; M16 is delivered, a fileset sent from the tablet and received on the desktop; M17 is delivered on Linux.

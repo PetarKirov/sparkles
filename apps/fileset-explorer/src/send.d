@@ -37,17 +37,19 @@ final class IrohProvider : BlobProvider
 {
     private IrohSend lib;
     private SendSession session;
+    private bool noRelay;
 
-    ///
-    this(IrohSend lib) @safe
+    /// With `noRelay`, its tickets carry direct addresses only.
+    this(IrohSend lib, bool noRelay = false) @safe
     {
         this.lib = lib;
+        this.noRelay = noRelay;
     }
 
     ///
     void start(in SendFile[] files)
     {
-        session = lib.start(files, sendStoreParent);
+        session = lib.start(files, sendStoreParent, noRelay);
     }
 
     ///
@@ -75,7 +77,8 @@ has not. Android's is `ACTION_SEND` (`FXS4`).
 string function(string text) shareText;
 
 /// Opens the iroh bridge; `null` and the reason when it cannot be loaded.
-BlobProvider openIrohProvider(out string why)
+/// With `noRelay`, its tickets carry direct addresses only.
+BlobProvider openIrohProvider(out string why, bool noRelay = false)
 {
     auto lib = loadIrohSend();
     if (lib.hasError)
@@ -89,7 +92,7 @@ BlobProvider openIrohProvider(out string why)
             why = problem;
             return null;
         }
-    return new IrohProvider(lib.value);
+    return new IrohProvider(lib.value, noRelay);
 }
 
 /// Where Send is.
