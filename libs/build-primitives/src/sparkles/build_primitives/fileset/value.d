@@ -656,6 +656,11 @@ struct FilesetEvaluator
     Whether `part`, a fileset the root is built from, holds the file the last
     $(LREF judge) was given. `part` must be the root or one of its operands,
     at any depth.
+
+    Only a proof counts: a part whose answer depends on metadata the facts
+    did not carry (FSA4), or on `.gitignore` scopes that only a resolution
+    reads, is not selected. A caller that must not miss a member asks only
+    of parts built from patterns.
     */
     bool selects(Fileset part) const @safe pure nothrow @nogc
     in (part.node <= root_.node && reachable[part.node], "not a part of this evaluator's fileset")
