@@ -48,6 +48,7 @@ enum OpaqueReason : ubyte
     variable,          /// it names a variable other than a leading `$PACKAGE_DIR`
     outsideRepository, /// it is absolute, or climbs above the repository root
     notAPattern,       /// it is no fileset pattern
+    noRecipe,          /// the package's recipe is not among those given
 }
 
 /// A recipe path that became part of no input set.
@@ -182,16 +183,21 @@ PackageInputSets packageInputSets(const ref PackageGraph graph, scope const(SubP
     {
         auto b = Builder(&result.sets_, &result.opaque, cast(uint) i, p.path);
         b.begin();
+        bool found;
         foreach (ref r; recipes)
         {
             if (normalizeRepoPath(r.path) != p.path)
                 continue;
+            found = true;
             b.top(r.manifest);
             b.block(r.manifest, hostTokens);
             if (const config = activeConfiguration(r.manifest, role, hostTokens))
                 b.block(*config, hostTokens);
             break;
         }
+        // Nothing is known of what it reads: say so, not an empty set.
+        if (!found)
+            result.opaque ~= OpaqueDirective(cast(uint) i, "recipe", p.path, OpaqueReason.noRecipe);
         result.inputs_[i] = b.inputs();
         result.sources_[i] = b.sources();
         result.whole_[i] = result.sets_.union_(result.inputs_[i], result.sources_[i]);
@@ -255,10 +261,19 @@ private struct Builder
 
         each("sourcePaths", settings.sourcePaths,
             v => cast(void)(compiled = sets.union_(compiled, under("sourcePaths", v, ["*.d"]))));
-        each("cSourcePaths", settings.cSourcePaths,
-            v => cast(void)(compiled = sets.union_(compiled, under("cSourcePaths", v, ["*.c", "*.i"]))));
-        each("sourceFiles", settings.sourceFiles,
-            v => cast(void)(compiled = sets.union_(compiled, literal("sourceFiles", v))));
+        // A C source includes from its own directory, and the preprocessor
+        // reports no lookup that failed there: the root is read whole.
+        each("cSourcePaths", settings.cSourcePaths, (v) {
+            compiled = sets.union_(compiled, under("cSourcePaths", v, ["*.c", "*.i"]));
+            read = sets.union_(read, root("cSourcePaths", v));
+        });
+        each("sourceFiles", settings.sourceFiles, (v) {
+            compiled = sets.union_(compiled, pattern("sourceFiles", v));
+            if (isCSource(v))
+                read = sets.union_(read, root("sourceFiles", directoryOf(v)));
+        });
+        each("injectSourceFiles", settings.injectSourceFiles,
+            v => cast(void)(compiled = sets.union_(compiled, pattern("injectSourceFiles", v))));
         each("excludedSourceFiles", settings.excludedSourceFiles,
             v => cast(void)(excluded = sets.union_(excluded, pattern("excludedSourceFiles", v))));
         each("importPaths", settings.importPaths,
@@ -309,13 +324,18 @@ private struct Builder
         return glob(directive, written, "/" ~ escapeGlob(path));
     }
 
-    // The files the glob `written` selects, anchored at the package.
+    // The files the glob `written` selects, anchored at the package. The
+    // package's own directory is matched literally; a glob that climbs out
+    // of it is taken as written.
     Fileset pattern(string directive, string written) scope @safe nothrow
     {
         string path;
         if (!place(directive, written, path))
             return sets.nothing;
-        return glob(directive, written, "/" ~ path);
+        const inside = directory.length && path.length > directory.length
+            && path[0 .. directory.length] == directory && path[directory.length] == '/';
+        return glob(directive, written,
+            inside ? "/" ~ escapeGlob(directory) ~ path[directory.length .. $] : "/" ~ path);
     }
 
     Fileset glob(string directive, string written, string text) scope @safe nothrow
@@ -341,6 +361,19 @@ private struct Builder
     }
 }
 
+// Whether `path` names a C source: `.c` or `.i`.
+private bool isCSource(scope const(char)[] path) @safe pure nothrow @nogc
+    => path.length > 2 && (path[$ - 2 .. $] == ".c" || path[$ - 2 .. $] == ".i");
+
+// The directory part of the recipe path `path`; `.` when it has none.
+private string directoryOf(string path) @safe pure nothrow @nogc
+{
+    foreach_reverse (i, c; path)
+        if (c == '/' || c == '\\')
+            return path[0 .. i];
+    return ".";
+}
+
 // Whether `entries` holds an occurrence with no platform: what dub's
 // `"" in template.sourcePaths` asks.
 private bool statedUnqualified(scope const(DubPlatformValues)[] entries) @safe pure nothrow @nogc
@@ -362,13 +395,17 @@ bool repositoryPath(scope const(char)[] packageDirectory, scope const(char)[] wr
     out OpaqueReason why) @safe pure nothrow
 {
     enum own = "$PACKAGE_DIR";
-    if (written.length >= own.length && written[0 .. own.length] == own)
+    // The variable ends where a name would: `$PACKAGE_DIRS` is another one.
+    static bool endsName(scope const(char)[] rest) @safe pure nothrow @nogc
+        => rest.length == 0 || rest[0] == '/' || rest[0] == '\\';
+    if (written.length >= own.length && written[0 .. own.length] == own && endsName(written[own.length .. $]))
     {
         written = written[own.length .. $];
         while (written.length && (written[0] == '/' || written[0] == '\\'))
             written = written[1 .. $];
     }
-    else if (written.length && (written[0] == '/' || written[0] == '\\'))
+    else if ((written.length && (written[0] == '/' || written[0] == '\\'))
+        || (written.length > 1 && written[1] == ':')) // a drive: `C:/…`
     {
         why = OpaqueReason.outsideRepository;
         return false;
@@ -434,6 +471,8 @@ unittest
         && why == OpaqueReason.outsideRepository);
     assert(!repositoryPath("libs/ui", "/usr/include", placed, why) && why == OpaqueReason.outsideRepository);
     assert(!repositoryPath("libs/ui", "$GENERATED/src", placed, why) && why == OpaqueReason.variable);
+    assert(!repositoryPath("libs/ui", "$PACKAGE_DIRS/src", placed, why) && why == OpaqueReason.variable);
+    assert(!repositoryPath("libs/ui", `C:/d/src`, placed, why) && why == OpaqueReason.outsideRepository);
 }
 
 /// What a change to some paths can affect.
@@ -708,4 +747,37 @@ unittest
     assert(listed.canFind("apps/text-lab") && listed.canFind("libs/base"));
     assert(!listed.canFind("") && !listed.canFind("docs") && !listed.canFind("apps/hue"));
     assert(roots.length < built.packages.length, "fewer roots than packages");
+}
+
+/// A C source includes from its own directory, so the directory is read
+/// whole; a package with no recipe is reported, never given an empty set.
+@("build_primitives.workspace.input_sets.packageInputSets.cSourcesAndMissingRecipes")
+@safe
+unittest
+{
+    const recipes = [
+        recipe("libs/shaping", `name "shaping"
+sourcePaths "d"
+importPaths "d"
+sourceFiles "c/impl.c" "gen/*.d"
+cSourcePaths "csrc"`),
+        recipe("libs/other", `name "other"`),
+    ];
+    const graph = buildPackageGraph("sparkles", recipes, RecipeRole.build, linux).value;
+    auto sets = packageInputSets(graph, recipes, RecipeRole.build, linux);
+    const shaping = graph.indexOf(PackageId("sparkles:shaping"));
+
+    assert(sets.compiles(shaping, "libs/shaping/c/impl.c"));
+    assert(claimants(sets, graph, "libs/shaping/c/local.h") == ["shaping"]);
+    assert(!sets.compiles(shaping, "libs/shaping/c/local.h"));
+    assert(sets.compiles(shaping, "libs/shaping/csrc/deep/x.c"));
+    assert(claimants(sets, graph, "libs/shaping/csrc/deep/x.h") == ["shaping"]);
+    // A named source file may be a glob.
+    assert(sets.compiles(shaping, "libs/shaping/gen/a.d"));
+    assert(!sets.compiles(shaping, "libs/shaping/gen/deep/a.d"));
+    assert(sets.opaque.length == 0);
+
+    auto partial = packageInputSets(graph, recipes[0 .. 1], RecipeRole.build, linux);
+    assert(partial.opaque.length == 1 && partial.opaque[0].reason == OpaqueReason.noRecipe);
+    assert(graph.packages[partial.opaque[0].package_].shortName == "other");
 }
