@@ -16,22 +16,43 @@ import std.range.primitives : put;
 import std.experimental.allocator.mallocator : Mallocator;
 
 import sparkles.base.buffer : UniqueBuffer;
-import sparkles.build_primitives.dub_manifest : readDubManifest;
+import sparkles.build_primitives.workspace.discovery : readWorkspaceAt, Workspace;
 import sparkles.wired.sdl : parseEmbeddedSdlDocument, sdlDubRecipe, sdlEditor,
     SdlQualifiedName, SdlScalar, SdlScalarKind;
 import sparkles.wired.sdl.select : SdlSelector;
 
-/// Parses sub-package paths from the root `dub.sdl`.
-@safe
-string[] parseSubPackages(string repoRoot)
+/**
+The repository's workspace
+($(REF readWorkspaceAt, sparkles,build_primitives,workspace,discovery)): its
+recipes, read once per process and per root, through the capability VFS. Null
+when it cannot be read; a repository with no root recipe is no workspace and
+says nothing, and any other failure is logged as an error.
+*/
+const(Workspace)* repositoryWorkspace(string repoRoot) @safe
 {
-    auto manifest = readDubManifest(repoRoot.buildPath("dub.sdl"));
-    if (manifest.hasError)
-        return [];
-    return manifest.value.subPackages
-        .map!(sub => sub.path)
-        .filter!(path => path.length > 0)
-        .array;
+    import sparkles.base.logger : error;
+    import sparkles.build_primitives.workspace.package_graph : DiscoveryErrorKind;
+
+    static Workspace*[string] read;
+    if (auto known = repoRoot in read)
+        return *known;
+    auto w = readWorkspaceAt(repoRoot);
+    Workspace* result;
+    if (w.hasValue)
+        result = new Workspace(w.value.tupleof);
+    else if (w.error.kind != DiscoveryErrorKind.noRootRecipe)
+        error(i"the workspace cannot be read: $(w.error)");
+    read[repoRoot] = result;
+    return result;
+}
+
+/// The sub-packages' directories, as the root `dub.sdl` lists them; none when
+/// the workspace cannot be read.
+@safe
+string[] subPackageDirectories(string repoRoot)
+{
+    const w = repositoryWorkspace(repoRoot);
+    return w is null ? [] : w.packageDirectories;
 }
 
 /// Names of all packages — root + subpackages — that live in this repo.
@@ -42,22 +63,8 @@ string[] parseSubPackages(string repoRoot)
 @safe
 string[] inTreePackageNames(string repoRoot)
 {
-    auto rootName = repoRoot.buildPath("dub.sdl").readPackageName;
-    if (rootName.length == 0)
-        return [];
-
-    return rootName ~ repoRoot.parseSubPackages
-        .map!(subPath => repoRoot.buildPath(subPath, "dub.sdl").readPackageName)
-        .filter!(subName => subName.length > 0)
-        .map!(subName => rootName ~ ":" ~ subName)
-        .array;
-}
-
-@safe
-private string readPackageName(string dubSdlPath)
-{
-    const manifest = readDubManifest(dubSdlPath);
-    return manifest.hasValue && manifest.value.name.length ? manifest.value.name : null;
+    const w = repositoryWorkspace(repoRoot);
+    return w is null ? [] : w.packageNames;
 }
 
 /// Writes `code` to `writer`, with the embedded recipe's
@@ -204,33 +211,6 @@ unittest
         == "/+ dub.sdl:\n    dependency \"sparkles\" version=\"*\" {\n+/\n");
 }
 
-@("dub_deps.readPackageName")
-@safe
-unittest
-{
-    auto tmp = TmpFS.create();
-    const root = tmp.dir();
-
-    // Missing file returns null
-    assert(readPackageName(buildPath(root, "missing.sdl")) is null);
-
-    // The recipe's `name`, wherever it sits; a `name` inside a block is not it
-    const sdlPath = tmp.writeFileAt("dub.sdl",
-        "// header comment\n"
-        ~ "description \"a package\"\n"
-        ~ "subPackage {\n    name \"inline\"\n}\n"
-        ~ "name \"sparkles\"\n");
-    assert(readPackageName(sdlPath) == "sparkles");
-
-    // Two names are ambiguous, not first-one-wins
-    const twoNames = tmp.writeFileAt("two.sdl", "name \"a\"\nname \"b\"\n");
-    assert(readPackageName(twoNames) is null);
-
-    // dub.sdl with no `name` field returns null
-    const noNamePath = tmp.writeFileAt("no-name.sdl", "description \"missing name\"\n");
-    assert(readPackageName(noNamePath) is null);
-}
-
 @("dub_deps.inTreePackageNames")
 @safe
 unittest
@@ -245,15 +225,20 @@ unittest
     tmp.writeFileAt("dub.sdl",
         "name \"sparkles\"\n"
         ~ "subPackage \"libs/core-cli\"\n"
-        ~ "subPackage \"libs/test-utils\"\n"
-        ~ "subPackage \"libs/broken\"\n");
+        ~ "subPackage \"libs/test-utils\"\n");
     tmp.writeFileAt("libs/core-cli/dub.sdl", "name \"core-cli\"\n");
     tmp.writeFileAt("libs/test-utils/dub.sdl", "name \"test-utils\"\n");
-    tmp.ensureSubdir("libs/broken"); // listed but has no dub.sdl
-
     auto names = inTreePackageNames(root);
     assert(names == ["sparkles", "sparkles:core-cli", "sparkles:test-utils"],
         "unexpected names: " ~ names.to!string);
+    assert(subPackageDirectories(root) == ["libs/core-cli", "libs/test-utils"]);
+
+    // A listed package with no recipe: the workspace cannot be read, and is
+    // reported rather than read in part.
+    auto brokenTmp = TmpFS.create("ci-in-tree-broken");
+    brokenTmp.writeFileAt("dub.sdl", "name \"sparkles\"\nsubPackage \"libs/broken\"\n");
+    brokenTmp.ensureSubdir("libs/broken");
+    assert(inTreePackageNames(brokenTmp.dir()).length == 0);
 
     // No root dub.sdl → empty
     auto emptyTmp = TmpFS.create("ci-in-tree-empty");

@@ -174,7 +174,7 @@ import sparkles.docs.glossary : checkGlossary, frontMatterOwner, glossaryDataPat
     glossaryReferences, GlossaryReference, loadGlossary;
 import spec_evidence : backlogPath, Citation, citationsIn, ratchet, renderBacklog,
     unresolvedCitations;
-import dub_deps : inTreePackageNames, parseSubPackages, writeInTreeDeps;
+import dub_deps : inTreePackageNames, subPackageDirectories, writeInTreeDeps;
 import sparkles.build_primitives.dub_manifest : DubManifest;
 import slow_tests : exactNamesPattern, matrixJson, SlowTestJob, slowTestsInListing, slowTestsInSource;
 import coverage : collectCoverage, PackageCoverage;
@@ -3546,7 +3546,7 @@ private int runDubBuildMode(bool failFast)
     info(i"repository root: $(repoRoot)");
 
     info(i"parsing dub.sdl sub-packages");
-    auto subPackages = parseSubPackages(repoRoot);
+    auto subPackages = subPackageDirectories(repoRoot);
     if (subPackages.length == 0)
     {
         error(i"No sub-packages found in dub.sdl");
@@ -3632,7 +3632,7 @@ private int runBuildEachCommitMode(string base, string[] requested, bool failFas
 
     string[] unknown;
     const pkgs = selectPackages(requested.length ? requested
-        : defaultEachCommitPackages.dup, parseSubPackages(repoRoot), unknown);
+        : defaultEachCommitPackages.dup, subPackageDirectories(repoRoot), unknown);
     if (unknown.length)
     {
         error(i"--packages: no sub-package named $(unknown.join(", "))");
@@ -3783,7 +3783,7 @@ private int runDubTestsMode(bool failFast, bool coverage, bool sanitize = false)
     info(i"repository root: $(repoRoot)");
 
     info(i"parsing dub.sdl sub-packages");
-    auto subPackages = parseSubPackages(repoRoot);
+    auto subPackages = subPackageDirectories(repoRoot);
     if (subPackages.length == 0)
     {
         error(i"No sub-packages found in dub.sdl");
@@ -4101,7 +4101,7 @@ private int runExtractedTestsMode(bool failFast)
     info(i"repository root: $(repoRoot)");
 
     info(i"scanning sub-packages for @betterC / @wasm");
-    auto subPackages = parseSubPackages(repoRoot);
+    auto subPackages = subPackageDirectories(repoRoot);
     if (subPackages.length == 0)
     {
         error(i"No sub-packages found in dub.sdl");
@@ -4200,7 +4200,7 @@ private SlowTestJob[] collectSlowTests(string repoRoot, in string[] packageNames
     import std.path : extension, relativePath;
 
     SlowTestJob[] jobs;
-    foreach (pkg; parseSubPackages(repoRoot))
+    foreach (pkg; subPackageDirectories(repoRoot))
     {
         const name = pkg.baseName;
         if (packageNames.length && !packageNames.canFind(name))
@@ -4324,7 +4324,7 @@ private int runSlowTestsMode(in string[] packageNames, in string[] testNames, bo
         processed = i + 1;
         if (selected.length == 0)
             continue;
-        foreach (path; parseSubPackages(repoRoot))
+        foreach (path; subPackageDirectories(repoRoot))
             if (path.baseName == pkg)
                 mkdirRecurse(buildPath(repoRoot, path, "build"));
 
