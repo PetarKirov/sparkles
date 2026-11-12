@@ -557,3 +557,19 @@ This is recording-host and native-filesystem evidence. CLI startup does not
 yet enable user-state writes: startup discovery/restore offers must be wired
 first. Abrupt rendering-host teardown, Android lifecycle behavior and the
 one-second latency bound on actual devices remain acceptance gates.
+
+### Background discovery and prepared restore state — 2026-11-13
+
+The editor suite passes 45 tests, and the checked Vulkan build succeeds.
+Discovery scans immediate archive directories on the maintenance worker,
+skips live owners and holds a lease for every outstanding offer. A second
+application instance cannot offer the same leased archive. A damaged newest
+generation falls back to the newest valid older one without changing either
+the damaged file or the source document. A valid empty generation prevents
+resurrection of older tabs.
+
+Restore offers prepare document objects on the worker, preserving saved-byte
+baselines, BOM/line-ending conventions, selection affinity and goal columns,
+scroll positions, protected intervals, language and durability warnings.
+Tests verify these independently specified values. Application offer controls
+and adoption ordering remain open; CLI user-state writes remain disabled.

@@ -7,9 +7,10 @@ import session_archive : ArchiveCleanup, pruneSessionArchive;
 import session_checkpoint : CheckpointWriter;
 import session_directory : SessionDirectory;
 import session_snapshot : SessionSnapshot;
+import session_discovery : discoverSessions, RecoveryCatalog, RecoveryOffer;
 import sparkles.event_horizon.raw_pool : CpuJob, RawCompletion, RawCpuPool, RawPoolResult;
 
-private enum Maintenance : ubyte { initialize, cleanup }
+private enum Maintenance : ubyte { initialize, cleanup, discover }
 
 private final class MaintenanceJob
 {
@@ -17,8 +18,56 @@ private final class MaintenanceJob
     string base, root, error;
     SessionDirectory directory;
     ArchiveCleanup cleanup;
+    RecoveryCatalog catalog;
     ulong through;
     bool done;
+}
+
+/// Startup offers are prepared in the background while another instance keeps its lease.
+@("editor.recovery.backgroundDiscovery")
+@safe unittest
+{
+    version (linux) {}
+    else
+    {
+        import sparkles.test_runner.skip : skipTest;
+        skipTest("Recovery directory leases currently require Linux.");
+    }
+    import core.thread : Thread;
+    import session_archive : appendSessionGeneration;
+    import session_record : SessionRecord, SessionTab, SessionSelection;
+    import sparkles.test_utils.tmpfs : TmpFS;
+    import std.path : buildPath;
+    auto fixture = TmpFS.create();
+    const base = buildPath(fixture.dir, "sessions");
+    auto old = SessionDirectory.create(base, fixture.dir);
+    assert(old.hasValue);
+    SessionRecord record;
+    record.generation = 1;
+    record.active = 7;
+    record.tabs = [SessionTab(id: 7, name: "draft", content: "interrupted draft",
+        selections: [SessionSelection(0, 0)])];
+    assert(appendSessionGeneration(old.value.path, record).hasValue);
+    old.value.close();
+    auto recovery = new RecoverySession(base, fixture.dir);
+    scope (exit) recovery.shutdown();
+    const deadline = MonoTime.currTime + 3.seconds;
+    while (!recovery.discoveryComplete && MonoTime.currTime < deadline)
+    {
+        recovery.poll();
+        (() @trusted => Thread.yield())();
+    }
+    assert(recovery.discoveryComplete && recovery.offerCount == 1);
+    assert(recovery.offer(0).record.tabs[0].content == "interrupted draft");
+    auto another = new RecoverySession(base, fixture.dir);
+    scope (exit) another.shutdown();
+    while (!another.discoveryComplete && MonoTime.currTime < deadline)
+    {
+        another.poll();
+        (() @trusted => Thread.yield())();
+    }
+    assert(another.discoveryComplete && another.offerCount == 0,
+        "An outstanding offer retains its lease instead of appearing in two instances.");
 }
 
 /**
@@ -35,10 +84,12 @@ final class RecoverySession
     private SessionDirectory directory;
     private CheckpointWriter writer;
     private SessionSnapshot latest;
+    private RecoveryOffer[] offers;
     private string base, root, initializationError, cleanupNotice;
     private ulong revision, cleanedThrough, flushedRevision;
     private MonoTime firstObserved, retryAt;
     private bool started, stopped, flushing, haveFirstObserved;
+    private bool discovered;
 
     /// The platform supplies an existing durable namespace root enclosing the archive registry.
     this(string base, string root) @safe nothrow
@@ -55,6 +106,10 @@ final class RecoverySession
     bool pending() const @safe pure nothrow @nogc => revision > durableRevision;
     bool ready() const @safe pure nothrow @nogc => writer !is null;
     bool maintenanceBusy() const @safe pure nothrow @nogc => job !is null;
+    bool discoveryComplete() const @safe pure nothrow @nogc => discovered;
+    size_t offerCount() const @safe pure nothrow @nogc => offers.length;
+    RecoveryOffer offer(size_t index) @safe pure nothrow @nogc
+        in (index < offers.length) => offers[index];
     string error() const @safe pure nothrow @nogc
         => initializationError.length ? initializationError : writer is null ? null : writer.error;
     string notice() const @safe pure nothrow @nogc
@@ -101,6 +156,12 @@ final class RecoverySession
                 }
                 else retryAt = now + 1.seconds;
             }
+            else if (finished.kind == Maintenance.discover)
+            {
+                offers = finished.catalog.offers;
+                discovered = true;
+                if (finished.catalog.issues.length) cleanupNotice = finished.catalog.issues[0];
+            }
             else if (finished.cleanup.issues.length) cleanupNotice = finished.cleanup.issues[0];
         }
         if (writer is null)
@@ -120,7 +181,14 @@ final class RecoverySession
             writer.flush(now);
         }
         else writer.poll(now);
-        if (job is null && writer.durableGeneration > cleanedThrough)
+        if (job is null && !discovered)
+        {
+            auto requested = new MaintenanceJob;
+            requested.kind = Maintenance.discover;
+            requested.base = base;
+            submit(requested);
+        }
+        else if (job is null && writer.durableGeneration > cleanedThrough)
         {
             auto requested = new MaintenanceJob;
             requested.kind = Maintenance.cleanup;
@@ -160,6 +228,8 @@ final class RecoverySession
         if (started) pool.shutdown(true);
         RawCompletion completion;
         while (pool.pollCompletion(completion) == RawPoolResult.accepted) completion.dispatch();
+        foreach (offered; offers) offered.close();
+        if (job !is null) foreach (offered; job.catalog.offers) offered.close();
         if (writer !is null) writer.shutdown();
         else if (job !is null && job.directory !is null) job.directory.close();
     }
@@ -189,6 +259,7 @@ final class RecoverySession
             if (created.hasError) requested.error = created.error.message;
             else requested.directory = created.value;
         }
+        else if (requested.kind == Maintenance.discover) requested.catalog = discoverSessions(requested.base);
         else requested.cleanup = pruneSessionArchive(requested.directory, requested.through);
     }
 
