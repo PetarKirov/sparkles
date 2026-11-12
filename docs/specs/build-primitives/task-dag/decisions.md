@@ -192,3 +192,24 @@ whole on one line.
 
 **Revisit when** output is held back per task anyway, so block matching
 costs nothing more.
+
+## T15: An unordered read of a write rejects the graph
+
+**Question.** When task nodes carry file claims
+([fileset-native workspace](../build-graph/fileset-native-workspace.md),
+BGW16), a node may read what another writes while no path of edges orders
+the two. Reject the graph, or infer the edge from writer to reader?
+
+**Alternatives.**
+
+- Infer the edge, silently: friendlier, and it hides a planner that forgot
+  the dependency, and can close a cycle the planner never wrote.
+- Infer it and warn: plans keep working, and the warning is easy to ignore.
+- Reject the graph, naming both nodes and the overlapping path.
+
+**Choice.** Reject, accepted by the owner on 2026-11-12 (BGW17). Validation
+fails before anything runs, as it does for a cycle (TDS1), so a planner's
+mistake is found at the plan that makes it.
+
+**Revisit when** a planner can only know an order from claims, with no other
+way to state the edge.

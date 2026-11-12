@@ -982,6 +982,24 @@ allow.
 **Revisit** if a consumer wants cycles to be a hard error: it can still
 refuse a resolution with any incomplete entry.
 
+### A26 — The machine reports every directory it lists
+
+Watching stays a non-goal of this specification ([§1](./SPEC.md#1-purpose-and-scope)).
+A watch built on resolutions still needs to know every directory a
+resolution listed, members or not, and to hear of each before it is listed,
+so that no change falls between the listing and the watch
+([fileset-native workspace](../build-graph/fileset-native-workspace.md),
+BGW14). Only the machine knows it: a sink hears directories that hold
+members, and those selected whole and found empty.
+
+Accepted by the owner on 2026-11-12: the sink hears each directory the
+machine is about to list (`FSS9`). It is one call and carries no watcher; the
+watch lives in the event loop. A scheme that does not ask for it pays
+nothing.
+
+**Revisit** if a consumer needs the report for directories a resolution
+skipped by verdict: those are never listed, and so never reported.
+
 ## Open
 
 ### D2 — Whether `NarHash` is stored or recomputed (resolved)
