@@ -110,6 +110,7 @@ neither be painted nor be hot, by construction.
 */
 HoverTarget[] hoverTargets(in WidgetTree tree, in Frame[] frames) pure nothrow
 {
+    if (!tree.nodes.length) return null;
     HoverTarget[] targets;
 
     // `clip` is in the node's own cells; (`sx`, `sy`) is how far its
@@ -168,6 +169,13 @@ HoverTarget[] hoverTargets(in WidgetTree tree, in Frame[] frames) pure nothrow
     walk(tree.root, unclipped(), 0, 0, Scissor(-float.infinity,
         -float.infinity, float.infinity, float.infinity));
     return targets;
+}
+
+/// Empty views, including a final quit frame, have no hit targets.
+@("ui.state.hoverTargets.emptyTree")
+@safe pure nothrow unittest
+{
+    assert(hoverTargets(WidgetTree.init, null).length == 0);
 }
 
 @("ui.state.hoverTargets.subCellScrollHitsWhatIsPainted")
